@@ -21,13 +21,11 @@ use outbe_promis::{
 };
 use outbe_tee::in_process::InProcessTeeContext;
 use outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test;
-use outbe_tee::protocol::{EnclaveResponse, PayloadLane};
 use outbe_tee::resident::ResidentOfferMaterial;
 use outbe_tee::witness::{
     BlockWitnessFault, EnclaveWitnessEntryV1, EnclaveWitnessTapeV1, TxWitnessV1,
     WitnessExecutionMode, WitnessExecutionScope, WitnessState,
 };
-use outbe_tee::TransportError;
 
 const GROUP: &[u8] = b"promis-witness-group-signature-v1!!!!!";
 
@@ -49,14 +47,6 @@ fn prepared(seed: u8) -> Arc<InProcessTeeContext> {
         ResidentOfferMaterial::for_test(GROUP.to_vec(), chain_id(), 0, 0).expect("offer material");
     context.activate_for_test(offer).expect("activate offer");
     context
-}
-
-fn reject_payload(
-    _: &InProcessTeeContext,
-    _: PayloadLane,
-    _: &[u8],
-) -> std::result::Result<EnclaveResponse, TransportError> {
-    Err(TransportError::UnexpectedResponse)
 }
 
 fn tx_witness(
@@ -179,7 +169,7 @@ fn execute(
     context: Arc<InProcessTeeContext>,
     request: MineGratisFromPromisRequestV1,
 ) -> MineGratisFromPromisResultV1 {
-    let _guard = set_in_process_tee_context_for_test(Some((context, reject_payload)));
+    let _guard = set_in_process_tee_context_for_test(Some(context));
     mine_gratis_from_promis(request).expect("mine")
 }
 
@@ -195,7 +185,7 @@ fn recorded_tag_22_entry_matches_an_independent_encode() {
     let request = mine_request(9);
     let context = prepared(4);
     let leader = context.attestation_public();
-    let _guard = set_in_process_tee_context_for_test(Some((Arc::clone(&context), reject_payload)));
+    let _guard = set_in_process_tee_context_for_test(Some(Arc::clone(&context)));
     let state = Arc::new(Mutex::new(tx_witness(
         WitnessExecutionMode::ProposerRecord,
         leader,
@@ -279,7 +269,7 @@ fn semantic_divergence_on_tag_22_latches_semantic_mismatch() {
         tx_tape(tag22_entry(&divergent)),
     )));
     let error = {
-        let _guard = set_in_process_tee_context_for_test(Some((verifier, reject_payload)));
+        let _guard = set_in_process_tee_context_for_test(Some(verifier));
         let _scope = WitnessExecutionScope::enter(state.clone());
         mine_gratis_from_promis(request).unwrap_err()
     };
@@ -325,7 +315,7 @@ fn non_canonical_tag_22_bytes_latch_tape_invalid_at_cursor_zero() {
         ] {
             let state = Arc::new(Mutex::new(tx_witness(mode, leader, tx_tape(entry.clone()))));
             let _guard = if mode == WitnessExecutionMode::VerifierWithEnclave {
-                set_in_process_tee_context_for_test(Some((prepared(9), reject_payload)))
+                set_in_process_tee_context_for_test(Some(prepared(9)))
             } else {
                 set_in_process_tee_context_for_test(None)
             };

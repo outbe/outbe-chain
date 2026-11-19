@@ -10,7 +10,7 @@
 //! `MineEncryptedNodV1` uses tag `9` or `8`. Those pairs are different postcard
 //! schemas. The outer tag selects the schema. The body has no second discriminant.
 
-use alloy_primitives::B256;
+use alloy_primitives::{Address, B256};
 use outbe_tee::in_process::InProcessTeeContext;
 use outbe_tee::resident::StateKeyHandle;
 use outbe_tee::witness::TypedWitnessPayload;
@@ -18,7 +18,7 @@ use outbe_tee::{tee_consensus_typed_call, tee_session_typed_call, CallMeta, Tran
 use serde::{de::DeserializeOwned, Serialize};
 use thiserror::Error;
 
-use super::confidential::Domain;
+use super::confidential::{domain_for, Domain, Ledger};
 
 /// Highest frozen V1 domain response discriminant.
 pub const V1_RESPONSE_TAG_MAX: u8 = 22;
@@ -478,6 +478,72 @@ pub fn session_witness_call<T>(
     tee_session_typed_call(meta, execute)
 }
 
+#[cfg(any(test, feature = "test-utils"))]
+thread_local! {
+    static PAUSE_BEFORE_ACCOUNT_KEY_EXPORT: std::cell::Cell<Option<fn()>> =
+        const { std::cell::Cell::new(None) };
+}
+
+/// Restores the previous account-query export pause on drop.
+#[cfg(any(test, feature = "test-utils"))]
+#[doc(hidden)]
+pub struct AccountQueryPauseGuard {
+    previous: Option<fn()>,
+    _not_send: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl Drop for AccountQueryPauseGuard {
+    fn drop(&mut self) {
+        PAUSE_BEFORE_ACCOUNT_KEY_EXPORT.with(|slot| slot.set(self.previous.take()));
+    }
+}
+
+/// Hold this thread inside `try_derive_sealed_account_keys`, before key export.
+#[cfg(any(test, feature = "test-utils"))]
+#[doc(hidden)]
+pub fn pause_account_query_for_test(pause: fn()) -> AccountQueryPauseGuard {
+    let previous = PAUSE_BEFORE_ACCOUNT_KEY_EXPORT.with(|slot| slot.replace(Some(pause)));
+    AccountQueryPauseGuard {
+        previous,
+        _not_send: std::marker::PhantomData,
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+fn pause_before_account_key_export() {
+    if let Some(pause) = PAUSE_BEFORE_ACCOUNT_KEY_EXPORT.with(|slot| slot.take()) {
+        pause();
+    }
+}
+
+/// Seal one ledger's account keys for an owner-signed account query.
+///
+/// Returns `None` only when no resident runtime is installed.
+pub fn try_derive_sealed_account_keys(
+    ledger: Ledger,
+    account: Address,
+    requester_ephemeral: [u8; 32],
+    owner_sig: [u8; 65],
+) -> Option<Result<outbe_tee::resident::SealedAccountKeysExport, TransportError>> {
+    let domain = domain_for(ledger);
+    session_witness_call(
+        CallMeta::session_only("derive_account_keys"),
+        move |context| {
+            let state_key = derive_resident_state_key(context, domain, 0)?;
+            let keys = domain
+                .account_keys
+                .derive_account_keys(&state_key, account)
+                .map_err(TransportError::enclave_error)?;
+            #[cfg(any(test, feature = "test-utils"))]
+            pause_before_account_key_export();
+            domain
+                .export_sealed_account_keys(&keys, &owner_sig, &requester_ephemeral)
+                .map_err(TransportError::enclave_error)
+        },
+    )
+}
+
 /// Derive `domain`'s state key from the resident offer material bound to `context`.
 pub fn derive_resident_state_key(
     context: &InProcessTeeContext,
@@ -486,7 +552,7 @@ pub fn derive_resident_state_key(
 ) -> Result<StateKeyHandle, TransportError> {
     context
         .state_key_handle(domain.state_info(), epoch)
-        .map_err(TransportError::enclave_error)
+        .map_err(|err| outbe_tee::InProcessDispatchError::Resident(err).into())
 }
 
 fn prefix_tag(tag: WitnessResponseTag, body: Vec<u8>) -> Vec<u8> {

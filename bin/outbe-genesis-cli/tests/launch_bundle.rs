@@ -119,12 +119,14 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
     assert!(output_dir.join("DEPLOY.md").is_file());
     assert!(output_dir.join(".bb-crs/bn254_g1.dat").is_file());
 
+    let removed_unit = format!("systemd/{}-{}.service", "outbe", "enclave");
+    let removed_service = format!("{}-{}", "outbe", "enclave.service");
     for index in 0..4 {
         let directory = output_dir.join(format!("validator-{index}"));
         for removed in [
             "run-enclave.sh",
             "run-tee-renew.sh",
-            "systemd/outbe-enclave.service",
+            removed_unit.as_str(),
             "systemd/outbe-tee-renew.service",
             "systemd/outbe-tee-renew.timer",
         ] {
@@ -160,7 +162,7 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
                     "aesmd.service",
                     "/dev/sgx_enclave",
                     "outbe-tee-enclave",
-                    "outbe-enclave.service",
+                    removed_service.as_str(),
                     "outbe-tee-renew",
                     "/var/lib/outbe/tee",
                     "/opt/outbe/sgx",
@@ -309,12 +311,13 @@ fn distribution_archives_exclude_removed_sidecar() {
             );
         }
         assert!(joined.contains(&format!("keys/validator-{index}")));
+        let removed_service = format!("{}-{}", "outbe", "enclave.service");
         for removed in [
             "sgx/",
             "outbe-tee-enclave",
             "run-enclave.sh",
             "run-tee-renew.sh",
-            "outbe-enclave.service",
+            removed_service.as_str(),
             "outbe-tee-renew.service",
             "outbe-tee-renew.timer",
         ] {

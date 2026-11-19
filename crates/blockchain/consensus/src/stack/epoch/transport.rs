@@ -314,11 +314,8 @@ mod resident_channel_tests {
             attestation_mode: AttestationMode::NoAttestationDev,
         };
         let context = Arc::new(outbe_tee::test_utils::resident_context(7, binding));
-        let _resident = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(
-            (context, |_, _, _| {
-                Err(outbe_tee::TransportError::UnexpectedResponse)
-            }),
-        ));
+        let _resident =
+            outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(context));
         let mut registered = Vec::new();
         let channels = register_tee_channels(|id, _| {
             registered.push(id);

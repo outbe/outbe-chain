@@ -9,7 +9,6 @@ publish.workspace = true
 outbe-core-common.workspace = true
 outbe-system-common.workspace = true
 outbe-emission.workspace = true
-outbe-enclave.workspace = true
 outbe-fidelity.workspace = true
 outbe-lysis.workspace = true
 outbe-macros.workspace = true
@@ -58,31 +57,13 @@ bench-utils = []
 # Enabled by the node binary in release builds. Asserts, at compile time, that
 # the attestation-skipping in-process stand-in is not in this build.
 production-enclave = []
-# `outbe-enclave/engine` stays until bmk.10 deletes the enclave crate.
 test-enclave = [
     "outbe-tee/test-utils",
     "outbe-core-common/dev-keys",
     "outbe-fidelity/test-enclave",
     "outbe-nod/test-enclave",
-    "outbe-enclave/engine",
 ]
 test-utils = ["outbe-primitives/test-utils"]
-
-# Wired in S2 domain dispersal (bmk.5..bmk.9), cleaned in bmk.10
-[package.metadata.cargo-machete]
-ignored = [
-    "ark-bn254",
-    "ark-ff",
-    "ed25519-dalek",
-    "hex",
-    "k256",
-    "outbe-gratis",
-    "outbe-promis",
-    "outbe-zk",
-    "ring",
-    "x25519-dalek",
-    "zeroize",
-]
 
 [lints]
 workspace = true

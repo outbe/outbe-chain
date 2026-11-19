@@ -151,7 +151,7 @@ pub fn apply_nod_group_load_operation(
     };
     let applied = recorded(
         "apply_nod_group_load_op_v1",
-        move |context| execute_group_load(context, &request, expected.inputs),
+        move |context| execute_group_load(context, &request, expected),
         move |key, value| auth_group_load(key, expected, value),
     )?;
     Ok(applied.record)
@@ -224,29 +224,32 @@ fn execute_amount_read(
 ) -> Result<NodAmountReadV1, TransportError> {
     require_resident_chain(context, nod.terms.chain_id)?;
     let amount = nod_encryption::decrypt_nod(&nod_state_key(context)?, nod).map_err(reject)?;
-    let attestation_tag = sign_bytes(context, &nod_read_preimage(expected, amount));
-    Ok(NodAmountReadV1 {
+    let value = NodAmountReadV1 {
         amount,
         inputs_canonical_hash: expected,
-        attestation_tag,
-    })
+        attestation_tag: sign_bytes(context, &nod_read_preimage(expected, amount)),
+    };
+    auth_amount_read(&context.attestation_public(), expected, &value)?;
+    Ok(value)
 }
 
 fn execute_group_load(
     context: &InProcessTeeContext,
     request: &NodGroupLoadOpRequestV1,
-    expected: B256,
+    expected: GroupLoadExpect,
 ) -> Result<NodGroupLoadOpAppliedV1, TransportError> {
     require_resident_chain(context, request.chain_id)?;
     let record = nod_encryption::apply_nod_group_load_operation(&nod_state_key(context)?, request)
         .map_err(reject)?;
-    let preimage =
-        nod_group_load_attestation_preimage(expected, &record).map_err(TransportError::codec)?;
-    Ok(NodGroupLoadOpAppliedV1 {
+    let preimage = nod_group_load_attestation_preimage(expected.inputs, &record)
+        .map_err(TransportError::codec)?;
+    let value = NodGroupLoadOpAppliedV1 {
         record,
-        inputs_canonical_hash: expected,
+        inputs_canonical_hash: expected.inputs,
         attestation_tag: sign_bytes(context, &preimage),
-    })
+    };
+    auth_group_load(&context.attestation_public(), expected, &value)?;
+    Ok(value)
 }
 
 fn execute_group_read(
@@ -257,12 +260,13 @@ fn execute_group_read(
     require_resident_chain(context, record.chain_id)?;
     let amount =
         nod_encryption::read_nod_group_load(&nod_state_key(context)?, record).map_err(reject)?;
-    let attestation_tag = sign_bytes(context, &nod_group_load_read_preimage(expected, amount));
-    Ok(NodGroupLoadReadV1 {
+    let value = NodGroupLoadReadV1 {
         amount,
         inputs_canonical_hash: expected,
-        attestation_tag,
-    })
+        attestation_tag: sign_bytes(context, &nod_group_load_read_preimage(expected, amount)),
+    };
+    auth_group_read(&context.attestation_public(), expected, &value)?;
+    Ok(value)
 }
 
 fn execute_quote(
@@ -282,11 +286,13 @@ fn execute_quote(
         &encrypted_payment,
     )
     .map_err(TransportError::codec)?;
-    Ok(NodQuoteEncryptedV1 {
+    let value = NodQuoteEncryptedV1 {
         encrypted_payment,
         inputs_canonical_hash: expected,
         attestation_tag: sign_bytes(context, &preimage),
-    })
+    };
+    auth_quote(&context.attestation_public(), expected, &value)?;
+    Ok(value)
 }
 
 fn auth_amount_read(
@@ -409,4 +415,65 @@ fn expected_version(request: &NodGroupLoadOpRequestV1) -> Result<u64, TransportE
 
 fn reject(error: impl std::error::Error + Send + Sync + 'static) -> TransportError {
     TransportError::enclave_error(error)
+}
+
+/// Signed tag 10, 19, 20, and 21 bodies from one resident context.
+#[cfg(feature = "test-enclave")]
+#[derive(Clone)]
+pub struct SignedNodHost {
+    /// Tag 10.
+    pub amount: NodAmountReadV1,
+    /// Tag 19.
+    pub applied: NodGroupLoadOpAppliedV1,
+    /// Tag 20.
+    pub load: NodGroupLoadReadV1,
+    /// Tag 21.
+    pub quote: NodQuoteEncryptedV1,
+    amount_inputs: B256,
+    load_expect: GroupLoadExpect,
+    load_inputs: B256,
+    quote_inputs: B256,
+}
+
+#[cfg(feature = "test-enclave")]
+impl SignedNodHost {
+    /// Run the four host authenticators against this snapshot's attestation key.
+    pub fn authenticate(&self, key: &[u8; 32]) -> Result<(), TransportError> {
+        auth_amount_read(key, self.amount_inputs, &self.amount)?;
+        auth_group_load(key, self.load_expect, &self.applied)?;
+        auth_group_read(key, self.load_inputs, &self.load)?;
+        auth_quote(key, self.quote_inputs, &self.quote)
+    }
+}
+
+/// Sign the four recorded NOD responses on `context` and authenticate them there.
+#[cfg(feature = "test-enclave")]
+pub fn sign_nod_host_for_test(
+    context: &InProcessTeeContext,
+    nod: &EncryptedNodV1,
+    request: &NodGroupLoadOpRequestV1,
+    load: &EncryptedNodGroupLoadV1,
+    quote: (&NodQuoteContextV1, U256),
+) -> Result<SignedNodHost, TransportError> {
+    let amount_inputs = nod_read_hash(nod).map_err(TransportError::codec)?;
+    let load_expect = GroupLoadExpect {
+        inputs: nod_group_load_inputs_hash(request).map_err(TransportError::codec)?,
+        chain_id: request.chain_id,
+        scope: request.scope,
+        version: expected_version(request)?,
+    };
+    let (quote, payment_minor) = quote;
+    let load_inputs = nod_group_load_read_hash(load).map_err(TransportError::codec)?;
+    let quote_inputs =
+        nod_quote_inputs_hash(nod, quote, payment_minor).map_err(TransportError::codec)?;
+    Ok(SignedNodHost {
+        amount: execute_amount_read(context, nod, amount_inputs)?,
+        applied: execute_group_load(context, request, load_expect)?,
+        load: execute_group_read(context, load, load_inputs)?,
+        quote: execute_quote(context, nod, quote, payment_minor, quote_inputs)?,
+        amount_inputs,
+        load_expect,
+        load_inputs,
+        quote_inputs,
+    })
 }

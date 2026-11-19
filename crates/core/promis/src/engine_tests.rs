@@ -615,6 +615,36 @@ fn conserve_seed(seed: B256) {
     }
 }
 
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+    #[test]
+    fn promis_sequences_shrink_and_conserve(
+        steps in proptest::collection::vec((promis_op_strategy(), promis_amount_strategy()), 0..32)
+    ) {
+        conserve(&steps, "proptest");
+    }
+}
+
+fn promis_op_strategy() -> impl proptest::strategy::Strategy<Value = PromisOp> {
+    use proptest::prelude::Just;
+    use proptest::prop_oneof;
+    prop_oneof![Just(PromisOp::Mint), Just(PromisOp::Burn)]
+}
+
+fn promis_amount_strategy() -> impl proptest::strategy::Strategy<Value = U256> {
+    use proptest::prelude::{any, Just};
+    use proptest::prop_oneof;
+    use proptest::strategy::Strategy;
+    prop_oneof![
+        Just(U256::ZERO),
+        Just(U256::from(1u64)),
+        (0u64..=1_000u64).prop_map(U256::from),
+        any::<u64>().prop_map(U256::from),
+        Just(U256::MAX - U256::from(1u64)),
+        Just(U256::MAX),
+    ]
+}
+
 #[test]
 fn random_promis_ledgers_conserve_value() {
     conserve_seed(B256::repeat_byte(0x42));

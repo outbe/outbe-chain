@@ -1,9 +1,9 @@
 use alloy_primitives::B256;
 
-use super::{ParticipantAnnounce, PayloadLane};
+use super::ParticipantAnnounce;
 
-/// Direct resident infrastructure requests, plus the opaque
-/// [`Self::Payload`] carrier for upper-layer application protocols.
+/// Direct resident infrastructure requests. Application protocols call the
+/// resident context directly and do not travel through this enum.
 #[derive(Clone, PartialEq, Eq)]
 pub enum EnclaveRequest {
     /// Return the enclave's public keys.
@@ -51,8 +51,6 @@ pub enum EnclaveRequest {
         round: u64,
         participant_bls: Vec<Vec<u8>>,
     },
-    /// Opaque application-layer request envelope routed to the upper-layer enclave protocol.
-    Payload { lane: PayloadLane, payload: Vec<u8> },
 }
 
 impl EnclaveRequest {
@@ -69,23 +67,14 @@ impl EnclaveRequest {
             Self::DkgNetworkKeyPartial { .. } => "dkg_network_key_partial",
             Self::DkgFinalizeNetworkKey { .. } => "dkg_finalize_network_key",
             Self::DkgParticipantAnnounceV1 { .. } => "dkg_participant_announce_v1",
-            Self::Payload { .. } => "payload",
         }
     }
 }
 
 impl core::fmt::Debug for EnclaveRequest {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self {
-            Self::Payload { lane, payload } => f
-                .debug_struct("Payload")
-                .field("lane", lane)
-                .field("payload_len", &payload.len())
-                .finish(),
-            other => f
-                .debug_struct("EnclaveRequest")
-                .field("label", &other.label())
-                .finish_non_exhaustive(),
-        }
+        f.debug_struct("EnclaveRequest")
+            .field("label", &self.label())
+            .finish_non_exhaustive()
     }
 }

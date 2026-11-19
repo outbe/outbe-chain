@@ -18,14 +18,11 @@ use outbe_nod::nod_encryption::encrypt_nod;
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
 use outbe_system_common::time::WorldwideDay;
-use outbe_tee::in_process::InProcessTeeContext;
 use outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test;
-use outbe_tee::protocol::{EnclaveResponse, PayloadLane};
 use outbe_tee::resident::{ResidentOfferMaterial, StateKeyHandle};
 use outbe_tee::witness::{
     EnclaveWitnessTapeV1, WitnessExecutionMode, WitnessExecutionScope, WitnessState,
 };
-use outbe_tee::TransportError;
 
 #[test]
 fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
@@ -200,7 +197,7 @@ fn resident_dispatch_mines_and_signs_deterministic_refusals() {
         },
     };
     let leader = context.attestation_public();
-    let _guard = set_in_process_tee_context_for_test(Some((Arc::clone(&context), reject)));
+    let _guard = set_in_process_tee_context_for_test(Some(Arc::clone(&context)));
     let state = Arc::new(Mutex::new(WitnessState::new(
         WitnessExecutionMode::ProposerRecord,
         Some(leader),
@@ -227,12 +224,4 @@ fn resident_dispatch_mines_and_signs_deterministic_refusals() {
     };
     let decoded = IGratis::Rejected::abi_decode(bytes).expect("Rejected");
     assert!(decoded.value.contains("invalid modify authorization"));
-}
-
-fn reject(
-    _: &InProcessTeeContext,
-    _: PayloadLane,
-    _: &[u8],
-) -> std::result::Result<EnclaveResponse, TransportError> {
-    Err(TransportError::UnexpectedResponse)
 }

@@ -20,11 +20,9 @@ use outbe_fidelity::{
 };
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
-use outbe_tee::in_process::InProcessTeeContext;
 use outbe_tee::in_process_dispatch::{
     in_process_tee_context, replace_in_process_tee_context, set_in_process_tee_context_for_test,
 };
-use outbe_tee::protocol::{EnclaveResponse, PayloadLane};
 use outbe_tee::resident::ResidentOfferMaterial;
 use outbe_tee::witness::{
     BlockWitnessFault, EnclaveWitnessEntryV1, EnclaveWitnessTapeV1, WitnessExecutionMode,
@@ -51,19 +49,11 @@ fn offer() -> ResidentOfferMaterial {
     ResidentOfferMaterial::for_test(GROUP.to_vec(), chain_id(), 0, 0).expect("offer material")
 }
 
-fn reject_payload(
-    _: &InProcessTeeContext,
-    _: PayloadLane,
-    _: &[u8],
-) -> std::result::Result<EnclaveResponse, TransportError> {
-    Err(TransportError::UnexpectedResponse)
-}
-
 fn install(seed: u8) -> (outbe_tee::in_process_dispatch::InProcessTestGuard, [u8; 32]) {
     let context = Arc::new(outbe_tee::test_utils::resident_context(seed, binding()));
     context.activate_for_test(offer()).expect("activate offer");
     let leader = context.attestation_public();
-    let guard = set_in_process_tee_context_for_test(Some((context, reject_payload)));
+    let guard = set_in_process_tee_context_for_test(Some(context));
     (guard, leader)
 }
 
@@ -125,7 +115,7 @@ fn with_other_enclave<T>(
         .activate_for_test(offer())
         .expect("activate verifier offer");
     assert_ne!(leader, context.attestation_public());
-    let _guard = set_in_process_tee_context_for_test(Some((context, reject_payload)));
+    let _guard = set_in_process_tee_context_for_test(Some(context));
     let state = Arc::new(Mutex::new(WitnessState::new(
         WitnessExecutionMode::VerifierWithEnclave,
         Some(leader),
@@ -304,7 +294,7 @@ fn rpc_direct_checks_the_executing_context_and_ignores_a_later_swap() {
     let first = Arc::new(outbe_tee::test_utils::resident_context(4, binding()));
     first.activate_for_test(offer()).expect("activate offer");
     let leader = first.attestation_public();
-    let _guard = set_in_process_tee_context_for_test(Some((Arc::clone(&first), reject_payload)));
+    let _guard = set_in_process_tee_context_for_test(Some(Arc::clone(&first)));
     let second = Arc::new(outbe_tee::test_utils::resident_context(9, binding()));
     second
         .activate_for_test(offer())
@@ -338,6 +328,20 @@ fn rpc_direct_checks_the_executing_context_and_ignores_a_later_swap() {
         &cohort_result.attestation_tag,
     )
     .unwrap();
+    let mut swapped_cohort = cohort.clone();
+    swapped_cohort.section.timestamp += 1;
+    let substituted = verify_fidelity_cohort_attestation(
+        &leader,
+        fidelity_cohort_canonical_hash(&swapped_cohort),
+        &cohort_result,
+        &cohort_result.attestation_tag,
+    )
+    .expect_err("substituted cohort request");
+    assert!(matches!(
+        substituted,
+        TransportError::AppAttestation { descriptor, .. }
+            if descriptor == outbe_fidelity::FIDELITY_ATTESTATION
+    ));
     verify_fidelity_query_attestation(&leader, query_hash, &queried, &queried.attestation_tag)
         .unwrap();
     let mut flipped = cohort_result.clone();

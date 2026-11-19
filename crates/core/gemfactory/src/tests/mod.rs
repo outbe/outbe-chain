@@ -1,14 +1,14 @@
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_enclave::promis::{
-    decrypt_balance, derive_account_keys, derive_view_key, modify_mac, ModifyOperation,
-};
-use outbe_enclave::protocol::PromisOp;
 use outbe_gem::{api as gem_api, GemContract, GemItemState, GemState, GemView};
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_promis::PromisOp;
+use outbe_promis::{
+    decrypt_balance, derive_account_keys, derive_view_key, modify_mac, ModifyOperation,
+};
 use outbe_promisfactory::api::ModifyAuth;
 use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, EmissionDate};

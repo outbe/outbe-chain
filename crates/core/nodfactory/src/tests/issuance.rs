@@ -483,7 +483,7 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
             issued[0].payload.as_ref(),
             item.encrypted.encrypted_gratis_amount.as_slice()
         );
-        let view_key = outbe_enclave::nod_encryption::derive_view_key(
+        let view_key = outbe_nod::nod_encryption::derive_view_key(
             &outbe_nod::test_support::state_key(),
             item.owner,
         )

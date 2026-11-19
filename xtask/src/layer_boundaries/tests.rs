@@ -9,7 +9,7 @@ use super::*;
 fn sample_metadata_json(repo_root: &Path, dep_kind_field: &str) -> String {
     let bc_manifest = repo_root.join("crates/blockchain/primitives/Cargo.toml");
     let bc_peer = repo_root.join("crates/blockchain/tee/Cargo.toml");
-    let core_manifest = repo_root.join("crates/core/enclave/Cargo.toml");
+    let core_manifest = repo_root.join("crates/sample/core/Cargo.toml");
     let kind_value = if dep_kind_field == "normal" {
         serde_json::Value::Null
     } else {
@@ -29,11 +29,11 @@ fn sample_metadata_json(repo_root: &Path, dep_kind_field: &str) -> String {
                 "manifest_path": bc_peer,
                 "dependencies": [
                     { "name": "outbe-primitives", "kind": null },
-                    { "name": "outbe-enclave", "kind": kind_value }
+                    { "name": "sample-core", "kind": kind_value }
                 ]
             },
             {
-                "name": "outbe-enclave",
+                "name": "sample-core",
                 "manifest_path": core_manifest,
                 "dependencies": []
             }
@@ -59,8 +59,8 @@ fn metadata_inspector_rejects_normal_build_and_dev_edges_outside_blockchain() {
             vec![LayerViolation::ForbiddenManifestDependency {
                 source_package: "outbe-tee".to_owned(),
                 kind: expected_kind,
-                target_package: "outbe-enclave".to_owned(),
-                target_manifest: root.join("crates/core/enclave/Cargo.toml"),
+                target_package: "sample-core".to_owned(),
+                target_manifest: root.join("crates/sample/core/Cargo.toml"),
             }]
         );
     }
@@ -98,7 +98,7 @@ fn source_scanner_allows_dcap_internal_paths_and_two_readonly_release_pins_only(
     fs::create_dir_all(tee_dir.join("src")).unwrap();
     fs::create_dir_all(tee_dir.join("tests/fixtures")).unwrap();
     fs::create_dir_all(root.join("release")).unwrap();
-    fs::create_dir_all(root.join("crates/core/enclave/src")).unwrap();
+    fs::create_dir_all(root.join("crates/sample/core/src")).unwrap();
 
     fs::write(tee_dir.join("Cargo.toml"), "[package]\nname = \"tee\"\n").unwrap();
     fs::write(tee_dir.join("src/helper.rs"), "pub const X: u8 = 1;\n").unwrap();
@@ -106,10 +106,10 @@ fn source_scanner_allows_dcap_internal_paths_and_two_readonly_release_pins_only(
     fs::write(root.join("release/project-toolchain-v1.json"), "{}").unwrap();
     fs::write(root.join("release/dcap-native-qvl-v1.json"), "{}").unwrap();
     fs::write(root.join("release/other.json"), "{}").unwrap();
-    fs::write(root.join("crates/core/enclave/src/lib.rs"), "// outside\n").unwrap();
+    fs::write(root.join("crates/sample/core/src/lib.rs"), "// outside\n").unwrap();
 
     let valid_source = r#"
-        // #[path = "../../../../crates/core/enclave/src/lib.rs"]
+        // #[path = "../../../../crates/sample/core/src/lib.rs"]
         const QUOTE_CHAR: char = '"';
         const LITERAL: &str = "include_str!(\"../../../../release/other.json\")";
         #[derive(Debug)]
@@ -133,14 +133,14 @@ fn source_scanner_allows_dcap_internal_paths_and_two_readonly_release_pins_only(
     );
 
     let bad_source = r#"
-        #[cfg_attr(test, path = "../../../../crates/core/enclave/src/lib.rs")]
+        #[cfg_attr(test, path = "../../../../crates/sample/core/src/lib.rs")]
         mod leaked_code;
         #[path = "../../../../release/project-toolchain-v1.json"]
         mod code_from_json;
         const OTHER_PIN: &str = include_str!("../../../../release/other.json");
         const ESCAPED_MANIFEST: &[u8] = include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../core/enclave/src/lib.rs"
+            "/../../sample/core/src/lib.rs"
         ));
     "#;
     fs::write(tee_dir.join("src/lib.rs"), bad_source).unwrap();
@@ -176,8 +176,8 @@ fn cargo_tree_args_and_inspector_cover_all_features_and_dev_build_edges() {
             PathBuf::from("/repo/crates/system/zerofee/Cargo.toml"),
         ),
         (
-            "outbe-enclave".to_owned(),
-            PathBuf::from("/repo/crates/core/enclave/Cargo.toml"),
+            "sample-core".to_owned(),
+            PathBuf::from("/repo/crates/sample/core/Cargo.toml"),
         ),
     ]);
     let tree = "\
@@ -188,7 +188,7 @@ secret-domain v0.1.0 (/repo/excluded/secret-domain)
 radicle-cob v0.17.0 (/repo/vendor/heartwood/crates/radicle-cob)
 outbe-zerofee feature \"default\"
 outbe-zerofee v0.1.0 (/repo/crates/system/zerofee)
-outbe-enclave v0.1.0 (/repo/crates/core/enclave)
+sample-core v0.1.0 (/repo/crates/sample/core)
 ";
     assert_eq!(
         find_resolved_tree_violations(
@@ -198,10 +198,10 @@ outbe-enclave v0.1.0 (/repo/crates/core/enclave)
         ),
         vec![
             LayerViolation::ForbiddenResolvedTreeEdge {
-                target_package: "outbe-enclave".to_owned(),
+                target_package: "outbe-zerofee".to_owned(),
             },
             LayerViolation::ForbiddenResolvedTreeEdge {
-                target_package: "outbe-zerofee".to_owned(),
+                target_package: "sample-core".to_owned(),
             },
             LayerViolation::ForbiddenResolvedTreeEdge {
                 target_package: "secret-domain".to_owned(),
@@ -312,7 +312,7 @@ fn build_and_tests_scanner_rejects_cross_layer_path_string_literals() {
     .unwrap();
     fs::write(
         tee_dir.join("tests/smoke.rs"),
-        "const CORE: &str = \"crates/core/enclave/src/lib.rs\";\nconst BIN: &str = \"bin/outbe-chain/src/main.rs\";\n",
+        "const CORE: &str = \"crates/core/common/src/lib.rs\";\nconst BIN: &str = \"bin/outbe-chain/src/main.rs\";\n",
     )
     .unwrap();
     let (_, _, violations) =
@@ -333,7 +333,7 @@ fn build_and_tests_scanner_rejects_cross_layer_path_string_literals() {
             LayerViolation::ForbiddenCrossLayerPathLiteral {
                 source_file: tee_dir.join("tests/smoke.rs"),
                 line: 1,
-                literal: "crates/core/enclave/src/lib.rs".to_owned(),
+                literal: "crates/core/common/src/lib.rs".to_owned(),
             },
             LayerViolation::ForbiddenCrossLayerPathLiteral {
                 source_file: tee_dir.join("tests/smoke.rs"),

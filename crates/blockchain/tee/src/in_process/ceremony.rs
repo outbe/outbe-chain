@@ -248,7 +248,6 @@ impl InProcessTeeContext {
                     group_public_key,
                 })
             }
-            _ => Err(InProcessError::UnsupportedCeremonyRequest),
         }
     }
 }
@@ -273,13 +272,6 @@ mod tests {
     fn announcement_and_open_enforce_ceremony_and_signed_recipient_binding() {
         let context =
             test_support::context(AttestationMode::NoAttestationDev, ProofSourceV1::NoHardware);
-        assert!(matches!(
-            context.founding_request(&EnclaveRequest::Payload {
-                lane: crate::protocol::PayloadLane::Execution,
-                payload: Vec::new(),
-            }),
-            Err(InProcessError::UnsupportedCeremonyRequest)
-        ));
         let participants = vec![context.tee_bls_public_bytes()];
         let hash = dkg_participant_set_hash_v1(&participants).unwrap();
         let id = dkg_ceremony_id_v1(&context.manifest.network_binding(), 0, hash).unwrap();

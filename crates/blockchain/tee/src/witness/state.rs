@@ -171,10 +171,7 @@ fn local_answer(
             if matches!(
                 error,
                 TransportError::EnclaveError(_)
-                    | TransportError::InProcess(
-                        crate::InProcessDispatchError::Domain(_)
-                            | crate::InProcessDispatchError::LaneDenied { .. }
-                    )
+                    | TransportError::InProcess(crate::InProcessDispatchError::Domain(_))
             ) {
                 unsigned_failure(state)?;
             } else {
@@ -268,7 +265,12 @@ fn verifier_call(
     transport: impl FnOnce() -> Result<([u8; 32], EnclaveResponse), TransportError>,
     authenticate: impl Fn(&[u8; 32], &EnclaveResponse) -> Result<(), TransportError>,
 ) -> Result<([u8; 32], EnclaveResponse), TransportError> {
-    let response: EnclaveResponse = ctx.entry.clone().into();
+    let response = EnclaveResponse::try_from(ctx.entry.clone()).map_err(|_| {
+        if let Ok(mut state) = locked(handle) {
+            state.latch(BlockWitnessFault::TapeInvalid);
+        }
+        TransportError::UnexpectedResponse
+    })?;
     if let Err(error) = authenticate(&ctx.leader_key, &response) {
         locked(handle)?.latch(BlockWitnessFault::TapeInvalid);
         return Err(error);
@@ -312,10 +314,7 @@ fn note_typed_transport_error(
         error,
         TransportError::EnclaveError(_)
             | TransportError::EnclaveCause { .. }
-            | TransportError::InProcess(
-                crate::InProcessDispatchError::Domain(_)
-                    | crate::InProcessDispatchError::LaneDenied { .. }
-            )
+            | TransportError::InProcess(crate::InProcessDispatchError::Domain(_))
     ) {
         unsigned_failure(handle)
     } else {

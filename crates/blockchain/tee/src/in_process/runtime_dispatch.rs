@@ -105,8 +105,7 @@ impl InProcessTeeContext {
 mod tests {
     use super::*;
     use crate::{
-        in_process_dispatch::set_in_process_tee_context_for_test,
-        protocol::{EnclaveRequest, PayloadLane},
+        in_process_dispatch::set_in_process_tee_context_for_test, protocol::EnclaveRequest,
         CallMeta,
     };
     use metrics_util::debugging::{DebugValue, DebuggingRecorder};
@@ -118,33 +117,16 @@ mod tests {
             AttestationMode::NoAttestationDev,
             super::super::ProofSourceV1::NoHardware,
         );
-        let _runtime = set_in_process_tee_context_for_test(Some((Arc::new(context), |_, _, _| {
-            Err(crate::InProcessDispatchError::UnsupportedRequest.into())
-        })));
+        let _runtime = set_in_process_tee_context_for_test(Some(Arc::new(context)));
         let recorder = DebuggingRecorder::new();
         let snapshots = recorder.snapshotter();
         metrics::with_local_recorder(&recorder, || {
-            let request = EnclaveRequest::Payload {
-                lane: PayloadLane::Canary,
-                payload: Vec::new(),
-            };
-            assert!(
-                crate::canary_request_with_meta(CallMeta::session_only("probe"), &request).is_err()
-            );
-            assert!(!snapshots
-                .snapshot()
-                .into_vec()
-                .iter()
-                .any(|(key, _, _, _)| key.key().name().contains("execution_")));
-            let request = EnclaveRequest::Payload {
-                lane: PayloadLane::Execution,
-                payload: Vec::new(),
-            };
-            assert!(
-                crate::try_in_process_request(CallMeta::recorded("transition"), &request)
-                    .unwrap()
-                    .is_err()
-            );
+            assert!(crate::try_in_process_request(
+                CallMeta::recorded("transition"),
+                &EnclaveRequest::GetPublicKeys,
+            )
+            .unwrap()
+            .is_ok());
         });
         let values = snapshots.snapshot().into_vec();
         let metric = |name: &str| {
@@ -172,10 +154,7 @@ mod tests {
         context
             .activate_for_test(super::super::test_support::material(&context, 5))
             .unwrap();
-        let _runtime =
-            set_in_process_tee_context_for_test(Some((Arc::clone(&context), |_, _, _| {
-                Err(crate::InProcessDispatchError::UnsupportedRequest.into())
-            })));
+        let _runtime = set_in_process_tee_context_for_test(Some(Arc::clone(&context)));
         let error = crate::verify_dcap_evidence_v1(&[1], &[2], 100).unwrap_err();
         assert!(matches!(
             error,

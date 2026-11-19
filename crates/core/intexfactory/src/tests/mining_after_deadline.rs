@@ -3,10 +3,10 @@
 
 use super::*;
 use alloy_sol_types::SolEvent;
-use outbe_enclave::promis::{
+use outbe_promis::PromisOp;
+use outbe_promis::{
     decrypt_balance, derive_account_keys, derive_view_key, modify_mac, ModifyOperation,
 };
-use outbe_enclave::protocol::PromisOp;
 use outbe_vaultrouter::settlement::SettlementPayment;
 
 const RELAYER: Address = Address::repeat_byte(0x5e);

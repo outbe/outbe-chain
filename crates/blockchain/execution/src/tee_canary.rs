@@ -33,8 +33,7 @@ pub struct TeeCanaryConfig {
 /// against a scripted fake instead of the global.
 pub trait EnclaveRequester: Send + Sync + 'static {
     fn request(&self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError>;
-    /// Send a canary request with explicit [`CallMeta`] so opaque `Payload` probes preserve
-    /// their exact domain `op` metric label.
+    /// Send a canary request with explicit [`CallMeta`] so the metric label stays the caller's.
     fn request_with_meta(
         &self,
         meta: CallMeta,
@@ -354,9 +353,8 @@ mod tests {
         ) -> CanaryTickOutcome {
             match requester.request_with_meta(
                 CallMeta::session_only("canary_decrypt_test"),
-                &EnclaveRequest::Payload {
-                    lane: outbe_tee::protocol::PayloadLane::Canary,
-                    payload: Vec::new(),
+                &EnclaveRequest::DkgStartDealer {
+                    ceremony_id: alloy_primitives::B256::ZERO,
                 },
             ) {
                 Ok(_) => CanaryTickOutcome::Success { latency_ms: 1 },
@@ -654,7 +652,7 @@ mod tests {
         let decrypt_failure = FakeRequester::new(vec![
             ("get_public_keys", Ok(public_keys_response(true))),
             (
-                "payload",
+                "dkg_start_dealer",
                 Err(TransportError::EnclaveError("denied".into())),
             ),
         ]);

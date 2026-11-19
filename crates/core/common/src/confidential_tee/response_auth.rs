@@ -137,13 +137,68 @@ mod tests {
         };
         verify_signed_domain(&lysis_spec, LYSIS, reason).unwrap();
         verify_signed_domain(&mint_spec, MINT, reason).unwrap();
-        let crossed = verify_signed_domain(&lysis_spec, MINT, reason).unwrap_err();
-        assert!(matches!(
-            crossed
-                .source()
-                .and_then(|cause| cause.downcast_ref::<TeeAttestationError>()),
-            Some(TeeAttestationError::SignatureMismatch(_))
-        ));
+        for (spec, domain) in [(&lysis_spec, MINT), (&mint_spec, LYSIS)] {
+            let crossed = verify_signed_domain(spec, domain, reason).unwrap_err();
+            assert!(matches!(
+                crossed
+                    .source()
+                    .and_then(|cause| cause.downcast_ref::<TeeAttestationError>()),
+                Some(TeeAttestationError::SignatureMismatch(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn rejection_tag_rejects_a_different_expected_input_hash() {
+        let signer = SigningKey::from_bytes(&[0x54; 32]);
+        let public = signer.verifying_key().to_bytes();
+        let reason = "fixed rejection";
+        let signed_hash = B256::repeat_byte(0x62);
+        let different_hash = B256::repeat_byte(0x63);
+        let descriptor = super::super::errors::NOD_MINT_REJECTED;
+        for domain in [LYSIS, MINT] {
+            let signed = attestation(domain, signed_hash, reason).unwrap();
+            let tag = signer.sign(&signed).to_bytes();
+            let spec = ResponseAuthSpec {
+                attestation_pub: &public,
+                descriptor,
+                expected_inputs_hash: signed_hash,
+                actual_inputs_hash: signed_hash,
+                tag: &tag,
+            };
+            verify_signed_domain(&spec, domain, reason).unwrap();
+            let mismatched = verify_signed_domain(
+                &ResponseAuthSpec {
+                    expected_inputs_hash: different_hash,
+                    ..spec
+                },
+                domain,
+                reason,
+            )
+            .unwrap_err();
+            assert!(matches!(
+                mismatched
+                    .source()
+                    .and_then(|cause| cause.downcast_ref::<TeeAttestationError>()),
+                Some(TeeAttestationError::InputsHashMismatch { .. })
+            ));
+            let moved = verify_signed_domain(
+                &ResponseAuthSpec {
+                    expected_inputs_hash: different_hash,
+                    actual_inputs_hash: different_hash,
+                    ..spec
+                },
+                domain,
+                reason,
+            )
+            .unwrap_err();
+            assert!(matches!(
+                moved
+                    .source()
+                    .and_then(|cause| cause.downcast_ref::<TeeAttestationError>()),
+                Some(TeeAttestationError::SignatureMismatch(_))
+            ));
+        }
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! Private RPC authority revokes synchronously and reopens without losing resident keys.
 use super::*;
-use outbe_enclave::protocol::{derive_account_keys_message, eip191_hash, Ledger};
+use outbe_core_common::confidential_tee::{derive_account_keys_message, eip191_hash, Ledger};
 use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_tee::authority::{TeeAuthorityChannel, TeeAuthorityState as State};
 use reth_provider::test_utils::NoopProvider;
@@ -19,13 +19,9 @@ async fn private_rpc_revokes_before_work_and_reopens_real_sealed_exports() {
     let context = crate::tee_canary_probe::test_support::context(8);
     crate::tee_canary_probe::test_support::activate(&context);
     let public_key = context.network_encryption_public().unwrap();
-    let _runtime = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
+    let _runtime = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(
         Arc::clone(&context),
-        |context, lane, payload| {
-            assert_eq!(lane, outbe_tee::protocol::PayloadLane::AccountQuery);
-            outbe_enclave::host::domain_in_process::dispatch_payload(context, lane, payload)
-        },
-    )));
+    ));
     let authority = TeeAuthorityChannel::default();
     let provider: Arc<
         NoopProvider<reth_chainspec::ChainSpec<OutbeHeader>, outbe_primitives::OutbePrimitives>,
@@ -41,7 +37,7 @@ async fn private_rpc_revokes_before_work_and_reopens_real_sealed_exports() {
     let eph = B256::from(x25519_dalek::PublicKey::from(&eph_secret).to_bytes());
     let day = outbe_system_common::time::WorldwideDay::new(20250115);
     let subject = TributeSourceSubject {
-        checkpoint: outbe_enclave::tribute_source::TributeSourceCheckpoint {
+        checkpoint: outbe_tribute::confidential::TributeSourceCheckpoint {
             block_number: 1,
             block_hash: B256::repeat_byte(1),
             state_root: B256::repeat_byte(2),

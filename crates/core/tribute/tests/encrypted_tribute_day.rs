@@ -203,9 +203,7 @@ fn resident_dispatch_replays_day_writes_and_preserves_frozen_history() {
     };
 
     let context = Arc::new(resident::context(54322345));
-    let _guard = set_in_process_tee_context_for_test(Some((Arc::clone(&context), |_, _, _| {
-        Err(outbe_tee::TransportError::UnexpectedResponse)
-    })));
+    let _guard = set_in_process_tee_context_for_test(Some(Arc::clone(&context)));
     let request = day_request(U256::from(71));
     let issued = host_apply(request.clone()).unwrap();
     let key = resident::state(&context, derive_tribute_state_key);

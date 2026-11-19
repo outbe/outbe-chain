@@ -656,13 +656,7 @@ pub fn assert_stage2(rendered: &str, types: &HashMap<&str, &str>) {
 
 mod canary {
     use super::*;
-    use alloy_primitives::{B256, U256};
-    use ed25519_dalek::{Signer, SigningKey};
-    use outbe_enclave::protocol::{
-        inputs_canonical_hash, tribute_offer_attestation_preimage, EnclaveRequest as DomainRequest,
-        EnclaveResponse as DomainResponse, EncryptedTributeOffer, TributeOfferResult,
-        TributeOfferStatus,
-    };
+    use ed25519_dalek::SigningKey;
     use outbe_execution::tee_canary::{
         run_tee_canary_worker, EnclaveRequester, TeeCanaryConfig, TeeCanaryTarget,
     };
@@ -676,15 +670,21 @@ mod canary {
 
     pub(super) async fn emit_ticks() {
         emit_resident_ticks().await;
-        for (fail, expected) in [(true, TeeEnclaveHealthState::Degraded)] {
+        for expected in [TeeEnclaveHealthState::Degraded] {
+            let resident = resident_fixture::context(4);
+            resident_fixture::activate(&resident);
+            assert_ne!(
+                resident.network_encryption_public().expect("offer key"),
+                TRIBUTE_OFFER_PUB
+            );
             let status = TeeEnclaveHealthChannel::default();
             let shutdown = CancellationToken::new();
-            let period = Duration::from_secs(60);
+            let period = Duration::from_millis(5);
             let worker = tokio::spawn(run_tee_canary_worker(
                 TeeCanaryTarget::new(
                     FakeEnclaveRequester {
-                        fail,
                         key: SigningKey::from_bytes(&[9; 32]),
+                        resident,
                     },
                     TributeCanaryProbe,
                 ),
@@ -759,69 +759,52 @@ mod canary {
         .await
     }
 
+    const TRIBUTE_OFFER_PUB: [u8; 32] = [0x11; 32];
+
+    std::thread_local! {
+        static PROBE_RESIDENT: std::cell::RefCell<
+            Option<outbe_tee::in_process_dispatch::InProcessTestGuard>,
+        > = const { std::cell::RefCell::new(None) };
+    }
+
+    /// The canary probe runs on the blocking pool. Install the override there.
+    fn bind_mismatched_resident(context: &Arc<outbe_tee::in_process::InProcessTeeContext>) {
+        PROBE_RESIDENT.with(|slot| {
+            if slot.borrow().is_some() {
+                return;
+            }
+            *slot.borrow_mut() = Some(
+                outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(
+                    Arc::clone(context),
+                )),
+            );
+        });
+    }
+
     struct FakeEnclaveRequester {
-        fail: bool,
         key: SigningKey,
+        resident: Arc<outbe_tee::in_process::InProcessTeeContext>,
     }
 
     impl EnclaveRequester for FakeEnclaveRequester {
         fn request(&self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+            bind_mismatched_resident(&self.resident);
             match request {
                 EnclaveRequest::GetPublicKeys => Ok(EnclaveResponse::PublicKeys {
                     offer_key_ready: true,
-                    recipient_x25519_pub: [0x0B; 32],
+                    recipient_x25519_pub: TRIBUTE_OFFER_PUB,
                     attestation_pub: self.key.verifying_key().to_bytes(),
                     noise_static_pub: [0x0C; 32],
                     tee_bls_pub: Vec::new(),
                     dkg_enc_pub: [0x0D; 32],
                     dkg_enc_sig: Vec::new(),
                 }),
-                EnclaveRequest::Payload { payload, .. } => {
-                    match DomainRequest::decode_wire_canonical(payload)? {
-                        DomainRequest::ProcessTributeOfferBatch { offers } if !self.fail => {
-                            self.batch(&offers)
-                        }
-                        DomainRequest::ProcessTributeOfferBatch { .. } => {
-                            Err(TransportError::EnclaveError("scripted failure".into()))
-                        }
-                        other => panic!("unexpected canary domain request: {other:?}"),
-                    }
-                }
                 _ => panic!("unexpected canary request: {request:?}"),
             }
         }
 
         fn attestation_pub(&self) -> Option<[u8; 32]> {
             Some(self.key.verifying_key().to_bytes())
-        }
-    }
-
-    impl FakeEnclaveRequester {
-        fn batch(
-            &self,
-            offers: &[EncryptedTributeOffer],
-        ) -> Result<EnclaveResponse, TransportError> {
-            let results = vec![TributeOfferResult {
-                token_id: B256::repeat_byte(1),
-                owner: offers[0].owner,
-                issuance_amount_minor: U256::from(1),
-                nominal_amount_minor: U256::from(1),
-                effective_reference_price_minor: U256::from(2_000_000),
-                su_hashes: Vec::new(),
-                wallet_addresses: Vec::new(),
-                sra_addresses: Vec::new(),
-                zk_expected_hashes: None,
-                status: TributeOfferStatus::Created,
-            }];
-            let hash = inputs_canonical_hash(offers);
-            let preimage =
-                tribute_offer_attestation_preimage(hash, &results).expect("attestation preimage");
-            DomainResponse::TributeOfferBatch {
-                results,
-                inputs_canonical_hash: hash,
-                attestation_tag: self.key.sign(&preimage).to_bytes().to_vec(),
-            }
-            .into_wire_response()
         }
     }
 }

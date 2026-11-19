@@ -60,16 +60,13 @@ pub use errors::{
 pub use host_collateral::acquire_dcap_collateral_v1;
 pub use in_process::GeneratedDcapQuoteV1;
 #[cfg(any(test, feature = "test-utils"))]
-pub use in_process_dispatch::{
-    canary_attestation_pub, canary_request_with_meta, try_account_query,
-};
+pub use in_process_dispatch::canary_attestation_pub;
 pub use in_process_dispatch::{
     in_process_tee_context, install_in_process_tee_context, is_enclave_configured,
     prepare_no_attestation_dev_onboarding_artifact_v1, replace_in_process_tee_context,
     resident_network_encryption_public_key_state_v1, resident_network_encryption_public_key_v1,
-    try_account_query_with_meta, try_in_process_request, verify_dcap_evidence_v1,
-    verify_dcap_registration_and_seal_v1, InProcessDispatchError, InProcessPayloadHandler,
-    InstallError,
+    try_in_process_request, verify_dcap_evidence_v1, verify_dcap_registration_and_seal_v1,
+    InProcessDispatchError, InstallError,
 };
 pub use node_host::{
     construct_finalized_replacement_authorization_v1, load_replacement_candidate_relay,

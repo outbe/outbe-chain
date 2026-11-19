@@ -106,12 +106,18 @@ fn onboarding_and_registry_sealing_vectors() {
     assert_eq!(hex::encode(artifact.nonce), "be5a7377c545f58c6176fadc");
     assert_eq!(hex::encode(artifact.ciphertext), "749e350209694623d6c6eb931d5950d5631ed922568376d9603417176f69accd548a1655caf00ffc264d5b70ea5d21443a6f3793a39021f3a55756ac902b4ff1");
     let sealed = encrypt_share_deterministic(&[0x11; 32], &recipient_public, &[0x44; 48]).unwrap();
+    let sealed_bytes = sealed.to_bytes();
     assert_eq!(
         hex::encode(sealed.ephemeral_pub),
         "7b4e909bbe7ffe44c465a220037d608ee35897d31ef972f07f74892cb0f73f13"
     );
     assert_eq!(hex::encode(sealed.nonce), "b964f7d7c875c855b509ec3d");
     assert_eq!(hex::encode(sealed.ciphertext), "9b48118c9544a28b30b914929a793efaccc9fd56b02192afe1c98c563a49604fe209053a6d342c030113e0ed0beb97eca7749c25ebaeb389c08e305a4eca629e");
+    let again = encrypt_share_deterministic(&[0x11; 32], &recipient_public, &[0x44; 48]).unwrap();
+    assert_eq!(sealed_bytes, again.to_bytes());
+    let other_recipient = [0x55; 32];
+    let other = encrypt_share_deterministic(&[0x11; 32], &other_recipient, &[0x44; 48]).unwrap();
+    assert_ne!(sealed_bytes, other.to_bytes());
 }
 
 #[test]

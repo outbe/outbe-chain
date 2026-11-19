@@ -1,23 +1,65 @@
 //! Context-bound canary adapter; the existing worker owns scheduling and failure metrics.
 use super::*;
-use outbe_execution::tee_canary::{run_tee_canary_worker, TeeCanaryConfig, TeeCanaryTarget};
+use outbe_execution::tee_canary::{
+    run_tee_canary_worker, CanaryTickOutcome, EnclaveRequester, TeeCanaryConfig, TeeCanaryProbe,
+    TeeCanaryTarget,
+};
 use outbe_tee::{
     in_process::InProcessTeeContext,
     protocol::{EnclaveRequest, EnclaveResponse},
     CallMeta, InProcessDispatchError, TeeEnclaveHealthChannel, TransportError,
 };
-use std::{sync::Arc, time::Instant};
+use std::{
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 use tokio_util::sync::CancellationToken;
 
-struct ResidentCanaryRequester(Arc<InProcessTeeContext>);
+/// One resident generation for a canary tick.
+///
+/// `fallback` is only the startup context used before a runtime is installed.
+/// `current` is the single snapshot shared by `GetPublicKeys` and decrypt.
+struct ResidentLane {
+    fallback: Arc<InProcessTeeContext>,
+    current: Mutex<Option<Arc<InProcessTeeContext>>>,
+}
 
-impl ResidentCanaryRequester {
-    fn context(&self) -> Arc<InProcessTeeContext> {
-        outbe_tee::in_process_tee_context().unwrap_or_else(|| Arc::clone(&self.0))
+impl ResidentLane {
+    fn installed_or_fallback(&self) -> Arc<InProcessTeeContext> {
+        outbe_tee::in_process_tee_context().unwrap_or_else(|| Arc::clone(&self.fallback))
     }
 
+    fn begin_tick(&self) -> Arc<InProcessTeeContext> {
+        let context = self.installed_or_fallback();
+        *self.current.lock().expect("canary tick") = Some(Arc::clone(&context));
+        context
+    }
+
+    fn tick_snapshot(&self) -> Arc<InProcessTeeContext> {
+        self.current
+            .lock()
+            .expect("canary tick")
+            .clone()
+            .unwrap_or_else(|| self.installed_or_fallback())
+    }
+
+    fn end_tick(&self) {
+        *self.current.lock().expect("canary tick") = None;
+    }
+}
+
+fn resident_lane(fallback: Arc<InProcessTeeContext>) -> Arc<ResidentLane> {
+    Arc::new(ResidentLane {
+        fallback,
+        current: Mutex::new(None),
+    })
+}
+
+struct ResidentCanaryRequester(Arc<ResidentLane>);
+
+impl ResidentCanaryRequester {
     fn dispatch(&self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
-        let context = self.context();
+        let context = self.0.begin_tick();
         match request {
             EnclaveRequest::GetPublicKeys => {
                 let ready = context
@@ -41,18 +83,7 @@ impl ResidentCanaryRequester {
                     dkg_enc_sig: Vec::new(),
                 })
             }
-            EnclaveRequest::Payload {
-                lane: PayloadLane::Canary,
-                payload,
-            } => outbe_enclave::host::domain_in_process::dispatch_payload(
-                &context,
-                PayloadLane::Canary,
-                payload,
-            ),
-            _ => Err(InProcessDispatchError::LaneDenied {
-                lane: PayloadLane::Canary,
-            }
-            .into()),
+            _ => Err(InProcessDispatchError::UnsupportedRequest.into()),
         }
     }
 }
@@ -77,7 +108,22 @@ impl EnclaveRequester for ResidentCanaryRequester {
     }
 
     fn attestation_pub(&self) -> Option<[u8; 32]> {
-        Some(self.context().attestation_public())
+        Some(self.0.tick_snapshot().attestation_public())
+    }
+}
+
+struct BoundCanary(Arc<ResidentLane>);
+
+impl TeeCanaryProbe for BoundCanary {
+    fn probe_decrypt(
+        &self,
+        requester: &dyn EnclaveRequester,
+        offer_pub: &[u8; 32],
+    ) -> CanaryTickOutcome {
+        let context = self.0.tick_snapshot();
+        let outcome = super::decrypt_canary_on(requester, &context, offer_pub);
+        self.0.end_tick();
+        outcome
     }
 }
 
@@ -89,13 +135,169 @@ impl TributeCanaryProbe {
         status: TeeEnclaveHealthChannel,
         shutdown: CancellationToken,
     ) {
+        let lane = resident_lane(context);
         run_tee_canary_worker(
-            TeeCanaryTarget::new(ResidentCanaryRequester(context), Self),
+            TeeCanaryTarget::new(
+                ResidentCanaryRequester(Arc::clone(&lane)),
+                BoundCanary(lane),
+            ),
             config,
             status,
             shutdown,
         )
         .await;
+    }
+}
+
+#[cfg(test)]
+mod bound_canary_tests {
+    use super::*;
+    use outbe_execution::tee_canary::CanaryTickOutcome;
+    use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
+
+    struct Silent;
+
+    impl EnclaveRequester for Silent {
+        fn request(&self, _request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+            Err(TransportError::UnexpectedResponse)
+        }
+
+        fn attestation_pub(&self) -> Option<[u8; 32]> {
+            None
+        }
+    }
+
+    fn offer_material(
+        context: &InProcessTeeContext,
+        seed: u8,
+    ) -> outbe_tee::resident::ResidentOfferMaterial {
+        outbe_tee::resident::ResidentOfferMaterial::for_test(
+            vec![seed; 96],
+            alloy_primitives::B256::from(context.manifest().chain_id),
+            0,
+            0,
+        )
+        .expect("offer material")
+    }
+
+    #[test]
+    fn bound_canary_rejects_a_cold_key_and_opens_after_activation() {
+        let cold = crate::tee_canary_probe::test_support::context(6);
+        assert!(matches!(
+            BoundCanary(super::resident_lane(Arc::clone(&cold)))
+                .probe_decrypt(&Silent, &[0x44; 32]),
+            CanaryTickOutcome::Failure {
+                unreachable: true,
+                ..
+            }
+        ));
+        crate::tee_canary_probe::test_support::activate(&cold);
+        let offer_pub = cold.network_encryption_public().expect("offer public");
+        let lane = super::resident_lane(cold);
+        let requester = ResidentCanaryRequester(Arc::clone(&lane));
+        assert!(matches!(
+            BoundCanary(lane).probe_decrypt(&requester, &offer_pub),
+            CanaryTickOutcome::Success { .. }
+        ));
+    }
+
+    #[test]
+    fn bound_canary_decrypts_the_promoted_resident() {
+        let old = crate::tee_canary_probe::test_support::context(3);
+        old.activate_for_test(offer_material(&old, 5))
+            .expect("old offer");
+        let promoted = crate::tee_canary_probe::test_support::context(9);
+        promoted
+            .activate_for_test(offer_material(&promoted, 9))
+            .expect("promoted offer");
+        let cold = crate::tee_canary_probe::test_support::context(11);
+        let old_pub = old.network_encryption_public().expect("old key");
+        let promoted_pub = promoted.network_encryption_public().expect("promoted key");
+        assert_ne!(old_pub, promoted_pub);
+        assert!(old.offer_key_ready().expect("old readiness"));
+        assert!(!cold.offer_key_ready().expect("cold readiness"));
+
+        let shared = super::resident_lane(Arc::clone(&old));
+        let requester = ResidentCanaryRequester(Arc::clone(&shared));
+        let probe = BoundCanary(Arc::clone(&shared));
+        let _guard = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(
+            Arc::clone(&old),
+        ));
+
+        requester
+            .request(&EnclaveRequest::GetPublicKeys)
+            .expect("old keys");
+        let pinned = shared
+            .current
+            .lock()
+            .expect("canary tick")
+            .clone()
+            .expect("snapshot");
+        assert!(Arc::ptr_eq(&pinned, &old));
+        assert!(matches!(
+            super::decrypt_canary_on(&requester, &pinned, &promoted_pub),
+            CanaryTickOutcome::Failure {
+                unreachable: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            probe.probe_decrypt(&requester, &old_pub),
+            CanaryTickOutcome::Success { .. }
+        ));
+
+        outbe_tee::replace_in_process_tee_context::<InProcessDispatchError>(
+            &old,
+            Arc::clone(&promoted),
+            || Ok(()),
+        )
+        .expect("promote hot resident");
+        requester
+            .request(&EnclaveRequest::GetPublicKeys)
+            .expect("promoted keys");
+        let pinned = shared
+            .current
+            .lock()
+            .expect("canary tick")
+            .clone()
+            .expect("promoted snapshot");
+        assert!(Arc::ptr_eq(&pinned, &promoted));
+        assert!(matches!(
+            super::decrypt_canary_on(&requester, &pinned, &old_pub),
+            CanaryTickOutcome::Failure {
+                unreachable: false,
+                ..
+            }
+        ));
+        assert!(matches!(
+            probe.probe_decrypt(&requester, &promoted_pub),
+            CanaryTickOutcome::Success { .. }
+        ));
+
+        outbe_tee::replace_in_process_tee_context::<InProcessDispatchError>(
+            &promoted,
+            Arc::clone(&cold),
+            || Ok(()),
+        )
+        .expect("promote cold resident");
+        assert!(old.offer_key_ready().expect("old key stays ready"));
+        requester
+            .request(&EnclaveRequest::GetPublicKeys)
+            .expect("cold keys");
+        let pinned = shared
+            .current
+            .lock()
+            .expect("canary tick")
+            .clone()
+            .expect("cold snapshot");
+        assert!(Arc::ptr_eq(&pinned, &cold));
+        assert!(matches!(
+            probe.probe_decrypt(&requester, &old_pub),
+            CanaryTickOutcome::Failure {
+                unreachable: true,
+                ..
+            }
+        ));
     }
 }
 
@@ -108,11 +310,9 @@ mod rpc_tests {
     #[tokio::test]
     async fn periodic_canary_publishes_pre_key_and_ready_json_with_context_uptime() {
         let context = crate::tee_canary_probe::test_support::context(8);
-        let _context_guard =
-            outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
-                Arc::clone(&context),
-                outbe_enclave::host::domain_in_process::dispatch_payload,
-            )));
+        let _context_guard = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(
+            Some(Arc::clone(&context)),
+        );
         let channel = TeeEnclaveHealthChannel::default();
         let shutdown = CancellationToken::new();
         let worker = tokio::spawn(TributeCanaryProbe::run_in_process_worker(
@@ -176,24 +376,21 @@ mod metrics_tests {
     #[test]
     fn resident_requests_report_real_metrics_once_without_synthetic_gauges() {
         let context = crate::tee_canary_probe::test_support::context(8);
-        let requester = ResidentCanaryRequester(Arc::clone(&context));
+        let requester = ResidentCanaryRequester(super::resident_lane(Arc::clone(&context)));
         let recorder = DebuggingRecorder::new();
         let snapshots = recorder.snapshotter();
         metrics::with_local_recorder(&recorder, || {
             let error = requester
                 .request_with_meta(
                     CallMeta::session_only("denied_probe"),
-                    &EnclaveRequest::Payload {
-                        lane: PayloadLane::AccountQuery,
-                        payload: Vec::new(),
+                    &EnclaveRequest::DkgStartDealer {
+                        ceremony_id: alloy_primitives::B256::ZERO,
                     },
                 )
                 .unwrap_err();
             assert!(matches!(
                 error,
-                TransportError::InProcess(InProcessDispatchError::LaneDenied {
-                    lane: PayloadLane::Canary
-                })
+                TransportError::InProcess(InProcessDispatchError::UnsupportedRequest)
             ));
             let response = requester.request(&EnclaveRequest::GetPublicKeys).unwrap();
             assert!(matches!(response, EnclaveResponse::PublicKeys {
@@ -246,5 +443,95 @@ mod metrics_tests {
             .labels()
             .any(|item| item.key() == "request" && item.value() == "denied_probe"));
         assert_eq!(errors[0].3, DebugValue::Counter(1));
+    }
+
+    #[test]
+    fn bound_canary_emits_offer_batch_request_metrics() {
+        struct Silent;
+
+        impl EnclaveRequester for Silent {
+            fn request(
+                &self,
+                _request: &EnclaveRequest,
+            ) -> Result<EnclaveResponse, TransportError> {
+                Err(TransportError::UnexpectedResponse)
+            }
+
+            fn attestation_pub(&self) -> Option<[u8; 32]> {
+                None
+            }
+        }
+
+        let cold = crate::tee_canary_probe::test_support::context(6);
+        assert_offer_batch(Some("in_process"), || {
+            assert!(matches!(
+                BoundCanary(super::resident_lane(Arc::clone(&cold)))
+                    .probe_decrypt(&Silent, &[0x44; 32]),
+                CanaryTickOutcome::Failure {
+                    unreachable: true,
+                    ..
+                }
+            ));
+        });
+        crate::tee_canary_probe::test_support::activate(&cold);
+        let offer_pub = cold.network_encryption_public().expect("offer public");
+        let lane = super::resident_lane(cold);
+        let requester = ResidentCanaryRequester(Arc::clone(&lane));
+        assert_offer_batch(None, || {
+            assert!(matches!(
+                BoundCanary(lane).probe_decrypt(&requester, &offer_pub),
+                CanaryTickOutcome::Success { .. }
+            ));
+        });
+        assert_offer_batch(Some("unavailable"), || {
+            assert!(matches!(
+                TributeCanaryProbe.probe_decrypt(&Silent, &[0x44; 32]),
+                CanaryTickOutcome::Failure {
+                    unreachable: true,
+                    ..
+                }
+            ));
+        });
+    }
+
+    fn assert_offer_batch(class: Option<&str>, probe: impl FnOnce()) {
+        let recorder = DebuggingRecorder::new();
+        let snapshots = recorder.snapshotter();
+        metrics::with_local_recorder(&recorder, probe);
+        let values = snapshots.snapshot().into_vec();
+        let duration = values
+            .iter()
+            .find(|(key, _, _, _)| offer_batch(key.key(), "outbe_tee_client_request_duration_ms"))
+            .unwrap_or_else(|| panic!("missing offer-batch duration"));
+        assert!(
+            matches!(&duration.3, DebugValue::Histogram(samples) if samples.len() == 1),
+            "{:?}",
+            duration.3
+        );
+        let errors = values
+            .iter()
+            .filter(|(key, _, _, _)| {
+                offer_batch(key.key(), "outbe_tee_client_request_errors_total")
+            })
+            .collect::<Vec<_>>();
+        match class {
+            None => assert!(errors.is_empty()),
+            Some(class) => {
+                assert_eq!(errors.len(), 1);
+                assert_eq!(errors[0].3, DebugValue::Counter(1));
+                assert!(errors[0]
+                    .0
+                    .key()
+                    .labels()
+                    .any(|item| { item.key() == "class" && item.value() == class }));
+            }
+        }
+    }
+
+    fn offer_batch(key: &metrics::Key, name: &str) -> bool {
+        key.name() == name
+            && key.labels().any(|item| {
+                item.key() == "request" && item.value() == "process_tribute_offer_batch"
+            })
     }
 }

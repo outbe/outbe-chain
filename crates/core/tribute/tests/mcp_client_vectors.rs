@@ -394,9 +394,7 @@ fn historical_mcp_signature_authorizes_resident_account_key_export() {
     use outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test;
 
     let context = Arc::new(resident::context(54322345));
-    let _guard = set_in_process_tee_context_for_test(Some((Arc::clone(&context), |_, _, _| {
-        Err(outbe_tee::TransportError::UnexpectedResponse)
-    })));
+    let _guard = set_in_process_tee_context_for_test(Some(Arc::clone(&context)));
     let all = vectors();
     let v = &all["deriveKeys"];
     let account = v["account"].as_str().unwrap().parse().unwrap();

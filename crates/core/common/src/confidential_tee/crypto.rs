@@ -161,5 +161,22 @@ mod tests {
         let source = error.source().expect("ring source");
         assert!(source.downcast_ref::<ring::error::Unspecified>().is_some());
         assert!(TeeError::DecryptFailed(None).source().is_none());
+        let round = chacha20poly1305_encrypt(&key, &nonce, b"decode me").unwrap();
+        assert_eq!(round.len(), b"decode me".len() + 16);
+        assert_eq!(
+            chacha20poly1305_decrypt(&key, &nonce, &round).unwrap(),
+            b"decode me"
+        );
+        assert!(chacha20poly1305_decrypt(&key, &[0; 12], &round).is_err());
+        assert!(chacha20poly1305_decrypt(&[0; 32], &nonce, &round).is_err());
+        let short = ecdhe_tribute_offer_decrypt(
+            &OfferKeyHandle::for_test([0; 32]),
+            &[0; 32],
+            &[0; 32],
+            &[0; 11],
+            &[],
+        )
+        .unwrap_err();
+        assert!(matches!(short, TeeError::InvalidNonce(11)));
     }
 }

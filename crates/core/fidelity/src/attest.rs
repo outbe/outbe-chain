@@ -56,3 +56,44 @@ pub fn verify_fidelity_query_attestation(
         fidelity_query_attestation_preimage(inputs_canonical_hash, result)
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::FidelityQueryResult;
+    use alloy_primitives::U256;
+    use ed25519_dalek::{Signer, SigningKey};
+    use outbe_tee::TeeAttestationError;
+
+    #[test]
+    fn query_tag_rejects_a_foreign_domain_and_names_fidelity_attestation() {
+        let sk = SigningKey::from_bytes(&[7u8; 32]);
+        let pk = sk.verifying_key().to_bytes();
+        let hash = B256::repeat_byte(0xAB);
+        let fidelity = FidelityQueryResult {
+            rcfi: U256::from(5u64),
+            efficiency: U256::from(6u64),
+            league: 7,
+            inputs_canonical_hash: hash,
+            attestation_tag: Vec::new(),
+        };
+        let tag = sk
+            .sign(&fidelity_query_attestation_preimage(hash, &fidelity).unwrap())
+            .to_bytes();
+        verify_fidelity_query_attestation(&pk, hash, &fidelity, &tag).unwrap();
+        let mut foreign = b"outbe/tee/gratis-attestation/v1".to_vec();
+        foreign.extend_from_slice(hash.as_slice());
+        foreign.extend_from_slice(&0u32.to_be_bytes());
+        let foreign_tag = sk.sign(&foreign).to_bytes();
+        let cross =
+            verify_fidelity_query_attestation(&pk, hash, &fidelity, &foreign_tag).unwrap_err();
+        assert_eq!(cross.metric_class(), "fidelity_attestation");
+        assert!(matches!(
+            &cross,
+            TransportError::AppAttestation {
+                descriptor,
+                source: TeeAttestationError::SignatureMismatch(_),
+            } if *descriptor == FIDELITY_ATTESTATION
+        ));
+    }
+}

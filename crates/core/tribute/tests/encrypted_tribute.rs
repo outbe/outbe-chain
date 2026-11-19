@@ -261,9 +261,7 @@ fn resident_dispatch_reads_tribute_and_rejects_tampering() {
     let key = resident::state(&context, derive_tribute_state_key);
     let f = fixture();
     let encrypted = encrypt_tribute(&key, f.encrypted.context.clone(), &f.amounts).unwrap();
-    let _guard = set_in_process_tee_context_for_test(Some((Arc::clone(&context), |_, _, _| {
-        Err(outbe_tee::TransportError::UnexpectedResponse)
-    })));
+    let _guard = set_in_process_tee_context_for_test(Some(Arc::clone(&context)));
     let leader = context.attestation_public();
     let state = Arc::new(Mutex::new(WitnessState::new(
         WitnessExecutionMode::ProposerRecord,

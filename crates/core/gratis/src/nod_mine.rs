@@ -418,6 +418,18 @@ mod tests {
             attestation_tag: tag,
         };
         assert!(authenticate_refusal(expected, &key, &rejection).is_ok());
+        let wrong_domain = EncryptedNodMintRejectedV1 {
+            reason: reason.to_owned(),
+            inputs_canonical_hash: expected,
+            attestation_tag: signer
+                .sign(&attestation(b"outbe/lysis/rejected", expected, reason).unwrap())
+                .to_bytes()
+                .to_vec(),
+        };
+        assert!(matches!(
+            authenticate_refusal(expected, &key, &wrong_domain),
+            Err(TransportError::AppAttestation { .. })
+        ));
         let MineRound::Refused(got) =
             finish(expected, DualWitnessAnswer::Rejected(rejection.clone())).unwrap()
         else {

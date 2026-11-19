@@ -68,10 +68,7 @@ async fn supervisor_publishes_finalized_successor_only_once() {
         )
         .unwrap(),
     );
-    let _dispatch = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
-        old,
-        outbe_enclave::host::domain_in_process::dispatch_payload,
-    )));
+    let _dispatch = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(old));
     let provider = support::provider(&candidate, 105, 1_800_000_000, 1_800_001_000, false).0;
     let protocol = Arc::new(OutbeRuntime::new());
 
@@ -315,10 +312,7 @@ async fn resident_successor_updates_live_identity_only_after_durable_promotion()
 
         owner.stage_candidate(candidate.clone()).unwrap();
         let _dispatch =
-            outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
-                old.clone(),
-                outbe_enclave::host::domain_in_process::dispatch_payload,
-            )));
+            outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(old.clone()));
         let mut persisted = 0;
         let result = promote_finalized_successor(&owner, &shared, &protocol, &candidate, || {
             persisted += 1;
@@ -404,10 +398,8 @@ fn moving_finalized_head_defers_resident_successor_promotion_until_a_fresh_read(
     )
     .unwrap();
     owner.stage_candidate(candidate.clone()).unwrap();
-    let _dispatch = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
-        old.clone(),
-        outbe_enclave::host::domain_in_process::dispatch_payload,
-    )));
+    let _dispatch =
+        outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(old.clone()));
     let (previous, _, _) = support::provider(&candidate, 105, 1_800_000_000, 1_800_001_000, false);
     let (mut advanced, _, _) =
         support::provider(&candidate, 106, 1_800_000_001, 1_800_001_000, false);
@@ -469,10 +461,8 @@ fn restaged_candidate_cannot_be_overwritten_by_an_older_promotion() {
     .unwrap();
     owner.stage_candidate(candidate.clone()).unwrap();
     owner.stage_candidate(newer.clone()).unwrap();
-    let _dispatch = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
-        old.clone(),
-        outbe_enclave::host::domain_in_process::dispatch_payload,
-    )));
+    let _dispatch =
+        outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(old.clone()));
     let result = owner.promote(
         candidate,
         LocalTeeAdmissionAnchorV1 {

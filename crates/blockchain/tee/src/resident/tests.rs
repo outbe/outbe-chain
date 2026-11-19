@@ -290,6 +290,11 @@ fn deterministic_onboarding_is_exact_and_rejects_nonce_recipient_or_context_chan
         artifact,
         encrypt_onboarding_artifact_v1(&group, context).unwrap()
     );
+    let mut changed_context = context;
+    changed_context.intent_hash = B256::repeat_byte(0x41);
+    let changed = encrypt_onboarding_artifact_v1(&group, changed_context).unwrap();
+    assert_ne!(artifact.nonce, changed.nonce);
+    assert_ne!(artifact.ciphertext, changed.ciphertext);
     let imported = decrypt_onboarding_artifact_v1(&recipient, &artifact).unwrap();
     assert_eq!(imported.public(), group.public());
     let a = imported
@@ -303,7 +308,10 @@ fn deterministic_onboarding_is_exact_and_rejects_nonce_recipient_or_context_chan
     assert_eq!(a, b);
     let mut tampered = artifact.clone();
     tampered.nonce[0] ^= 1;
-    assert!(decrypt_onboarding_artifact_v1(&recipient, &tampered).is_err());
+    assert!(matches!(
+        decrypt_onboarding_artifact_v1(&recipient, &tampered),
+        Err(TeeCryptoError::InvalidContext)
+    ));
     tampered = artifact.clone();
     tampered.context.intent_hash = B256::ZERO;
     assert!(decrypt_onboarding_artifact_v1(&recipient, &tampered).is_err());

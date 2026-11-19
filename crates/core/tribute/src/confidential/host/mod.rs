@@ -14,7 +14,7 @@ pub use canary::{decrypt_canary_tribute_offer, open_canary_tribute_offer};
 pub use day::{apply_day_operation, execute_lysis_fractions, read_day_amount, read_day_fractions};
 pub use keys::{derive_tribute_keys, DeriveTributeKeysRequest, SealedTributeKeys};
 pub use nod::{encrypt_nod_for_tribute, issue_nod_from_tribute};
-pub use offers::{process_encrypted_offer_batch, process_offer_batch};
+pub use offers::{process_encrypted_offer_batch, process_offer_batch, process_offer_batch_with};
 pub use schema::{
     EncryptedTributeOfferBatchV2, LysisFractionsExecutedV1, NodEncryptedForTributeV1,
     NodIssuedFromTributeV1, TributeAmountsReadV2, TributeDayAmountReadV2,

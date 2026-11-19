@@ -7,7 +7,6 @@ publish.workspace = true
 
 [dependencies]
 outbe-core-common.workspace = true
-outbe-enclave.workspace = true
 outbe-fidelity.workspace = true
 outbe-gratis.workspace = true
 outbe-macros.workspace = true
@@ -23,14 +22,13 @@ ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
-zeroize.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 outbe-tee = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 # Promis' own unit tests run the confidential path against the in-process engine.
-outbe-enclave = { workspace = true, features = ["engine", "dev-keys"] }
 
 [features]
 default = []
@@ -44,28 +42,11 @@ test-utils = ["outbe-primitives/test-utils"]
 production-enclave = []
 # Exposes the in-process enclave stand-in so other crates' tests can drive the
 # confidential Promis path.
-# `outbe-enclave/*` stays until bmk.10 deletes the enclave crate.
 test-enclave = [
     "outbe-tee/test-utils",
     "outbe-core-common/dev-keys",
     "outbe-fidelity/test-enclave",
     "outbe-gratis/test-enclave",
-    "outbe-enclave/engine",
-    "outbe-enclave/dev-keys",
-]
-
-# Wired in S2 domain dispersal (bmk.5..bmk.9), cleaned in bmk.10
-[package.metadata.cargo-machete]
-ignored = [
-    "ed25519-dalek",
-    "hex",
-    "outbe-fidelity",
-    "outbe-gratis",
-    "postcard",
-    "ring",
-    "serde",
-    "serde_json",
-    "zeroize",
 ]
 
 [lints]

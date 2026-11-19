@@ -1,7 +1,7 @@
 //! Domain-neutral enclave call metadata, canonical preimage builders, and
 //! Ed25519 attestation verification primitives.
 //!
-//! Higher-layer crates (`outbe-enclave`) construct domain request hashes and
+//! Domain crates construct request hashes and
 //! response preimages over these primitives while `outbe-tee` owns dispatch,
 //! witness recording/replay, and Ed25519 verification.
 
@@ -365,10 +365,7 @@ mod witness_parts {
     ) {
         let verifier = std::sync::Arc::new(crate::test_utils::resident_context(9, binding()));
         assert_ne!(leader_key, verifier.attestation_public());
-        let guard = crate::in_process_dispatch::set_in_process_tee_context_for_test(Some((
-            verifier,
-            |_ctx, _lane, _bytes| Err(crate::TransportError::UnexpectedResponse),
-        )));
+        let guard = crate::in_process_dispatch::set_in_process_tee_context_for_test(Some(verifier));
         let state = std::sync::Arc::new(std::sync::Mutex::new(crate::witness::WitnessState::new(
             mode,
             Some(leader_key),

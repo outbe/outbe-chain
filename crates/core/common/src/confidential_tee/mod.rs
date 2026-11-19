@@ -1,6 +1,6 @@
 //! Domain-shared confidential ledger cryptography and witness envelopes.
 //!
-//! Domain crates depend on this module instead of `outbe-enclave`. Byte strings
+//! Domain crates depend on this module for shared ledger cryptography. Byte strings
 //! for HKDF labels, offer salt, and witness response tags stay frozen.
 
 mod confidential;
@@ -53,7 +53,9 @@ pub use v2_balance_decrypt::{
 pub use witness_envelope::{
     consensus_witness_call, decode_canonical_body, decode_tagged_payload,
     derive_resident_state_key, encode_canonical_body, encode_tagged_payload, session_witness_call,
-    CanonicalBodyDecoder, CanonicalBodyEncoder, DualWitnessAnswer, TaggedWitnessParts,
-    TaggedWitnessRef, WitnessDomainWire, WitnessResponseTag, WitnessSchema, WitnessTagError,
-    NON_RECORDABLE_V1_TAGS, V1_RESPONSE_TAG_MAX,
+    try_derive_sealed_account_keys, CanonicalBodyDecoder, CanonicalBodyEncoder, DualWitnessAnswer,
+    TaggedWitnessParts, TaggedWitnessRef, WitnessDomainWire, WitnessResponseTag, WitnessSchema,
+    WitnessTagError, NON_RECORDABLE_V1_TAGS, V1_RESPONSE_TAG_MAX,
 };
+#[cfg(any(test, feature = "test-utils"))]
+pub use witness_envelope::{pause_account_query_for_test, AccountQueryPauseGuard};

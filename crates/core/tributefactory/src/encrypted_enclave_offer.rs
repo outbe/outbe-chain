@@ -1,97 +1,31 @@
 //! Verify encrypted offer responses before the factory mutates chain state.
 
-use alloy_primitives::B256;
-use outbe_enclave::{
-    consensus_domain_call,
-    protocol::{EnclaveRequest, EnclaveResponse, EncryptedTributeOffer, TributeOfferStatus},
-    tribute_v2::{self, EncryptedTributeOfferResultV2},
-};
 use outbe_primitives::error::Result;
 use outbe_tee::TransportError;
+use outbe_tribute::confidential::{
+    encrypted_offer_inputs_hash, EncryptedTributeOffer, EncryptedTributeOfferResultV2,
+    TributeOfferStatus,
+};
 
 use crate::errors::TributeFactoryError;
-
-struct SignedOfferBatch {
-    results: Vec<EncryptedTributeOfferResultV2>,
-    inputs_hash: B256,
-    tag: Vec<u8>,
-}
 
 pub(crate) fn process_encrypted_offers(
     chain_id: u64,
     offers: &[EncryptedTributeOffer],
 ) -> Result<Vec<EncryptedTributeOfferResultV2>> {
-    let expected_hash = tribute_v2::encrypted_offer_inputs_hash(chain_id, offers);
-    let request = EnclaveRequest::ProcessEncryptedTributeOfferBatchV2 {
-        offers: offers.to_vec(),
-    };
-    let (key, response) = consensus_domain_call(
-        "ProcessEncryptedTributeOfferBatchV2",
-        &request,
-        || TransportError::Unavailable("enclave session unavailable".into()),
-        |key, response| match response {
-            EnclaveResponse::EncryptedTributeOfferBatchV2 {
-                results,
-                inputs_canonical_hash,
-                attestation_tag,
-            } => {
-                if *inputs_canonical_hash != expected_hash {
-                    return Err(TransportError::UnexpectedResponse);
+    let results =
+        outbe_tribute::confidential::host::process_encrypted_offer_batch(chain_id, offers.to_vec())
+            .map_err(|error| -> outbe_primitives::error::PrecompileError {
+                match error {
+                    TransportError::EnclaveError(message) => {
+                        TributeFactoryError::EncryptedOfferEnclaveError(message).into()
+                    }
+                    other => TributeFactoryError::sidecar_unavailable(other).into(),
                 }
-                let preimage =
-                    tribute_v2::encrypted_offer_attestation_preimage(expected_hash, results)
-                        .map_err(TransportError::codec)?;
-                tribute_v2::verify_attestation(key, &preimage, attestation_tag)
-            }
-            _ => Err(TransportError::UnexpectedResponse),
-        },
-    )
-    .map_err(|error| -> outbe_primitives::error::PrecompileError {
-        match error {
-            TransportError::EnclaveError(message) => {
-                TributeFactoryError::EncryptedOfferEnclaveError(message).into()
-            }
-            other => TributeFactoryError::sidecar_unavailable(other).into(),
-        }
-    })?;
-    match response {
-        EnclaveResponse::EncryptedTributeOfferBatchV2 {
-            results,
-            inputs_canonical_hash,
-            attestation_tag,
-        } => validate_response(
-            chain_id,
-            offers,
-            SignedOfferBatch {
-                results,
-                inputs_hash: inputs_canonical_hash,
-                tag: attestation_tag,
-            },
-            &key,
-        ),
-        _ => Err(TributeFactoryError::UnexpectedEncryptedOfferResponse.into()),
-    }
-}
-
-fn validate_response(
-    chain_id: u64,
-    offers: &[EncryptedTributeOffer],
-    batch: SignedOfferBatch,
-    key: &[u8; 32],
-) -> Result<Vec<EncryptedTributeOfferResultV2>> {
-    let SignedOfferBatch {
-        results,
-        inputs_hash,
-        tag,
-    } = batch;
-    let expected = tribute_v2::encrypted_offer_inputs_hash(chain_id, offers);
-    if inputs_hash != expected || results.len() != offers.len() {
+            })?;
+    if results.len() != offers.len() {
         return Err(TributeFactoryError::EncryptedOfferInputOrCountMismatch.into());
     }
-    let preimage = tribute_v2::encrypted_offer_attestation_preimage(expected, &results)
-        .map_err(TributeFactoryError::attestation_preimage_encode)?;
-    tribute_v2::verify_attestation(key, &preimage, &tag)
-        .map_err(TributeFactoryError::offer_attestation_invalid)?;
     for (offer, result) in offers.iter().zip(&results) {
         validate_record_context(chain_id, offer, result)?;
     }
@@ -122,7 +56,7 @@ fn validate_record_context(
         offer
             .reference_wwd_vwap_minor
             .max(offer.reference_scurve_minor),
-        tribute_v2::encrypted_offer_inputs_hash(chain_id, std::slice::from_ref(offer)),
+        encrypted_offer_inputs_hash(chain_id, std::slice::from_ref(offer)),
     );
     let actual = (
         context.chain_id,
@@ -140,11 +74,21 @@ fn validate_record_context(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
     use super::*;
-    use alloy_primitives::{Address, U256};
+    use alloy_primitives::{Address, B256, U256};
     use ed25519_dalek::{Signer, SigningKey};
+    use outbe_core_common::confidential_tee::{encode_tagged_payload, WitnessResponseTag};
     use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
+    use outbe_primitives::error::PrecompileError;
     use outbe_system_common::time::WorldwideDay;
+    use outbe_tee::witness::{
+        EnclaveWitnessEntryV1, EnclaveWitnessTapeV1, WitnessExecutionMode, WitnessExecutionScope,
+        WitnessState,
+    };
+    use outbe_tribute::confidential::encrypted_offer_attestation_preimage;
+    use outbe_tribute::confidential::host::EncryptedTributeOfferBatchV2;
 
     struct Fixture {
         offer: EncryptedTributeOffer,
@@ -169,7 +113,7 @@ mod tests {
                 zk_context: None,
             };
             let digest = outbe_core_common::wwd_entity_id::derive_poseidon_digest(owner, day);
-            let body = outbe_enclave::tribute_encryption::encrypt_tribute(
+            let body = outbe_tribute::confidential::encrypt_tribute(
                 &outbe_tee::resident::StateKeyHandle::for_test([7; 32]),
                 TributeContextV2 {
                     chain_id: 1,
@@ -181,10 +125,7 @@ mod tests {
                     issuance_currency: 840,
                     reference_currency: 978,
                     tribute_price_minor: U256::from(300),
-                    offer_input_hash: tribute_v2::encrypted_offer_inputs_hash(
-                        1,
-                        std::slice::from_ref(&offer),
-                    ),
+                    offer_input_hash: encrypted_offer_inputs_hash(1, std::slice::from_ref(&offer)),
                 },
                 &TributeAmountsV2 {
                     issuance_amount_minor: U256::from(100),
@@ -207,26 +148,58 @@ mod tests {
                 signer: SigningKey::from_bytes(&[0x33; 32]),
             }
         }
-        fn validate(
-            &self,
-            result: EncryptedTributeOfferResultV2,
-        ) -> Result<Vec<EncryptedTributeOfferResultV2>> {
-            let offers = std::slice::from_ref(&self.offer);
-            let hash = tribute_v2::encrypted_offer_inputs_hash(1, offers);
-            let results = vec![result];
-            let message = tribute_v2::encrypted_offer_attestation_preimage(hash, &results).unwrap();
-            let tag = self.signer.sign(&message).to_bytes();
-            validate_response(
-                1,
-                offers,
-                SignedOfferBatch {
-                    results,
-                    inputs_hash: hash,
-                    tag: tag.to_vec(),
-                },
-                self.signer.verifying_key().as_bytes(),
-            )
-        }
+    }
+
+    fn replay(
+        offers: &[EncryptedTributeOffer],
+        results: Vec<EncryptedTributeOfferResultV2>,
+        inputs_hash: B256,
+        tag: Vec<u8>,
+        leader: &[u8; 32],
+    ) -> Result<Vec<EncryptedTributeOfferResultV2>> {
+        let body = EncryptedTributeOfferBatchV2 {
+            results,
+            inputs_canonical_hash: inputs_hash,
+            attestation_tag: Vec::new(),
+        };
+        let payload =
+            encode_tagged_payload(WitnessResponseTag::EncryptedTributeOfferBatchV2, &body)
+                .expect("witness payload");
+        let state = Arc::new(Mutex::new(WitnessState::new(
+            WitnessExecutionMode::VerifierReplay,
+            Some(*leader),
+            EnclaveWitnessTapeV1 {
+                prefix: vec![EnclaveWitnessEntryV1::Payload {
+                    payload,
+                    inputs_canonical_hash: inputs_hash,
+                    attestation_tag: tag,
+                }],
+                txs: Vec::new(),
+            },
+        )));
+        let _scope = WitnessExecutionScope::enter(Arc::clone(&state));
+        process_encrypted_offers(1, offers)
+    }
+
+    fn sign_tag(
+        signer: &SigningKey,
+        inputs_hash: B256,
+        results: &[EncryptedTributeOfferResultV2],
+    ) -> Vec<u8> {
+        let preimage =
+            encrypted_offer_attestation_preimage(inputs_hash, results).expect("preimage");
+        signer.sign(&preimage).to_bytes().to_vec()
+    }
+
+    fn assert_host_attestation(result: Result<Vec<EncryptedTributeOfferResultV2>>, needle: &str) {
+        let Err(PrecompileError::EnclaveUnavailable(message)) = result else {
+            panic!("production path accepted the tape: {result:?}");
+        };
+        assert!(message.contains(needle), "{message}");
+        assert_ne!(
+            message,
+            TributeFactoryError::EncryptedOfferInputOrCountMismatch.to_string()
+        );
     }
 
     #[test]
@@ -236,10 +209,7 @@ mod tests {
             fixture.offer.owner,
             fixture.result.tribute.as_ref().unwrap().context.owner
         );
-        assert_eq!(
-            fixture.validate(fixture.result.clone()).unwrap(),
-            vec![fixture.result]
-        );
+        validate_record_context(1, &fixture.offer, &fixture.result).expect("matching context");
     }
 
     #[test]
@@ -260,7 +230,7 @@ mod tests {
         ] {
             let mut result = fixture.result.clone();
             mutate(result.tribute.as_mut().unwrap());
-            assert!(fixture.validate(result).is_err());
+            assert!(validate_record_context(1, &fixture.offer, &result).is_err());
         }
     }
 
@@ -268,48 +238,46 @@ mod tests {
     fn wrong_signature_input_hash_count_and_missing_created_body_are_rejected() {
         let fixture = Fixture::new();
         let offers = std::slice::from_ref(&fixture.offer);
-        let hash = tribute_v2::encrypted_offer_inputs_hash(1, offers);
-        let key = fixture.signer.verifying_key().to_bytes();
-        assert!(validate_response(
-            1,
+        let live = encrypted_offer_inputs_hash(1, offers);
+        let leader = fixture.signer.verifying_key().to_bytes();
+        let matched = vec![fixture.result.clone()];
+        assert_host_attestation(
+            replay(offers, matched.clone(), live, vec![0; 64], &leader),
+            "signature invalid",
+        );
+        let other_hash = B256::repeat_byte(0x5A);
+        assert_ne!(other_hash, live);
+        assert_host_attestation(
+            replay(
+                offers,
+                matched,
+                other_hash,
+                sign_tag(&fixture.signer, live, std::slice::from_ref(&fixture.result)),
+                &leader,
+            ),
+            "inputs canonical hash mismatch",
+        );
+        let empty = Vec::new();
+        let Err(PrecompileError::EnclaveUnavailable(message)) = replay(
             offers,
-            SignedOfferBatch {
-                results: vec![fixture.result.clone()],
-                inputs_hash: hash,
-                tag: vec![0; 64]
-            },
-            &key
-        )
-        .is_err());
-        assert!(validate_response(
-            1,
-            offers,
-            SignedOfferBatch {
-                results: vec![fixture.result.clone()],
-                inputs_hash: B256::ZERO,
-                tag: Vec::new()
-            },
-            &key
-        )
-        .is_err());
-        assert!(validate_response(
-            1,
-            offers,
-            SignedOfferBatch {
-                results: Vec::new(),
-                inputs_hash: hash,
-                tag: Vec::new()
-            },
-            &key
-        )
-        .is_err());
+            empty.clone(),
+            live,
+            sign_tag(&fixture.signer, live, &empty),
+            &leader,
+        ) else {
+            panic!("count guard returned the tape");
+        };
+        assert_eq!(
+            message,
+            TributeFactoryError::EncryptedOfferInputOrCountMismatch.to_string()
+        );
         let mut missing = fixture.result.clone();
         missing.tribute = None;
-        assert!(fixture.validate(missing).is_err());
+        assert!(validate_record_context(1, &fixture.offer, &missing).is_err());
         let mut rejected = fixture.result.clone();
         rejected.status = TributeOfferStatus::Rejected {
             reason: "fixture".into(),
         };
-        assert!(fixture.validate(rejected).is_err());
+        assert!(validate_record_context(1, &fixture.offer, &rejected).is_err());
     }
 }

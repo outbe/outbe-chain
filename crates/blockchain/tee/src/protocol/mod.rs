@@ -11,17 +11,6 @@ pub use enclave_response::{
     EnclaveRequestCountsV1, EnclaveResponse,
 };
 
-/// Resident execution lane for opaque application-layer [`EnclaveRequest::Payload`] calls.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum PayloadLane {
-    /// Block execution and authenticated NodeHost consensus/RPC read-only calls.
-    Execution,
-    /// Background canary liveness/readiness probes.
-    Canary,
-    /// Off-chain user account key-derivation RPC queries.
-    AccountQuery,
-}
-
 /// One DKG participant's ceremony-scoped identity. `enc_sig` authenticates:
 /// - the full network binding
 /// - the ceremony id and round

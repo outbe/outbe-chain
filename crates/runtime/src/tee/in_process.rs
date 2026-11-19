@@ -51,10 +51,7 @@ pub(super) fn initialize(
         proof,
     )?);
     let expected_enclave_id = Some(context.manifest().enclave_id()?);
-    outbe_tee::install_in_process_tee_context(
-        context,
-        outbe_enclave::host::domain_in_process::dispatch_payload,
-    )?;
+    outbe_tee::install_in_process_tee_context(context)?;
     Ok(outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
         reth_p2p_public,
         expected_enclave_id,

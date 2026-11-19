@@ -77,3 +77,20 @@ pub(crate) fn decrypt_onboarding_artifact_v1(
     }
     Ok(material)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{KEY_INFO, NONCE_INFO};
+
+    const DKG_SHARE_INFO: &[u8] = b"outbe/tee/dkg-share/v1";
+    const REGISTRY_NONCE_INFO: &[u8] = b"outbe/tee/registry-seal-nonce/v1";
+
+    #[test]
+    fn onboarding_domains_are_distinct_from_existing_share_domains() {
+        assert_ne!(KEY_INFO, NONCE_INFO);
+        assert_ne!(KEY_INFO, DKG_SHARE_INFO);
+        assert_ne!(KEY_INFO, REGISTRY_NONCE_INFO);
+        assert_ne!(NONCE_INFO, DKG_SHARE_INFO);
+        assert_ne!(NONCE_INFO, REGISTRY_NONCE_INFO);
+    }
+}

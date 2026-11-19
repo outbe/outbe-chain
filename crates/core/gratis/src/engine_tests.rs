@@ -1,8 +1,8 @@
 //! Known-answer and conservation checks for the Gratis engine.
 //!
-//! The historical proptest drew 64 sequences of length `0..32`. This crate does
-//! not depend on proptest, so that shape stays a deterministic table. A second
-//! test draws one `B256` seed and checks 64 sequences of length `0..=32`.
+//! The deterministic corpus stays. A proptest draws 64 sequences of length
+//! `0..32` and shrinks failures. A seeded test checks 64 sequences of length
+//! `0..=32`.
 
 use alloy_primitives::{hex, Address, B256, U256, U512};
 use outbe_core_common::confidential_tee::{
@@ -580,6 +580,42 @@ fn gratis_ledgers_conserve_value() {
     for steps in &sequences {
         conserve(steps, "deterministic corpus");
     }
+}
+
+proptest::proptest! {
+    #![proptest_config(proptest::test_runner::Config::with_cases(64))]
+    #[test]
+    fn gratis_sequences_shrink_and_conserve(
+        steps in proptest::collection::vec((gratis_op_strategy(), gratis_amount_strategy()), 0..32)
+    ) {
+        conserve(&steps, "proptest");
+    }
+}
+
+fn gratis_op_strategy() -> impl proptest::strategy::Strategy<Value = GratisOp> {
+    use proptest::prelude::Just;
+    use proptest::prop_oneof;
+    prop_oneof![
+        Just(GratisOp::Mint),
+        Just(GratisOp::Burn),
+        Just(GratisOp::Pledge),
+        Just(GratisOp::ReleasePledged),
+        Just(GratisOp::BurnPledged),
+    ]
+}
+
+fn gratis_amount_strategy() -> impl proptest::strategy::Strategy<Value = U256> {
+    use proptest::prelude::{any, Just};
+    use proptest::prop_oneof;
+    use proptest::strategy::Strategy;
+    prop_oneof![
+        Just(U256::ZERO),
+        Just(U256::from(1u64)),
+        (0u64..=1_000u64).prop_map(U256::from),
+        any::<u64>().prop_map(U256::from),
+        Just(U256::MAX - U256::from(1u64)),
+        Just(U256::MAX),
+    ]
 }
 
 #[test]

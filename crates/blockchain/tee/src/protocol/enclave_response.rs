@@ -62,8 +62,8 @@ fn push_decimal(buf: &mut Vec<u8>, mut value: usize) {
     buf.extend_from_slice(&digits[index..]);
 }
 
-/// Resident infrastructure responses, plus the
-/// opaque [`Self::Payload`] carrier for upper-layer application protocols.
+/// Resident infrastructure responses. Application witness bytes stay on
+/// [`crate::witness::EnclaveWitnessEntryV1::Payload`] and are not carried here.
 #[derive(Clone, PartialEq, Eq)]
 pub enum EnclaveResponse {
     /// Canonical accepted verdict or stable reject code.
@@ -130,30 +130,11 @@ pub enum EnclaveResponse {
         onboarding_artifact: Vec<u8>,
         attestation_tag: Vec<u8>,
     },
-    /// Opaque application-layer response envelope carrying tag-free canonical
-    /// payload bytes alongside the witness-tape commitment and local-only signature.
-    Payload {
-        recordable: bool,
-        payload: Vec<u8>,
-        inputs_canonical_hash: B256,
-        attestation_tag: Vec<u8>,
-    },
 }
 
 impl core::fmt::Debug for EnclaveResponse {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::Payload {
-                recordable,
-                payload,
-                inputs_canonical_hash,
-                ..
-            } => f
-                .debug_struct("Payload")
-                .field("recordable", recordable)
-                .field("payload_len", &payload.len())
-                .field("inputs_canonical_hash", inputs_canonical_hash)
-                .finish(),
             Self::Error { message } => f.debug_struct("Error").field("message", message).finish(),
             _ => f.debug_struct("EnclaveResponse").finish_non_exhaustive(),
         }

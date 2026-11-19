@@ -166,3 +166,41 @@ pub(crate) fn map_consensus_error(
         },
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn map_consensus_error_keeps_the_historical_sentences() {
+        let rows = [
+            (
+                TransportError::UnexpectedResponse,
+                "tee_enclave_nondeterminism",
+                true,
+            ),
+            (
+                TransportError::app_attestation(
+                    crate::PROMIS_OP_ATTESTATION,
+                    outbe_tee::TeeAttestationError::InvalidSignatureLength { actual: 1 },
+                ),
+                "tee_promis_attestation_invalid:",
+                false,
+            ),
+            (
+                TransportError::EnclaveError("denied".into()),
+                "enclave ApplyPromisOp error: denied",
+                true,
+            ),
+        ];
+        for (error, sentence, exact) in rows {
+            let PrecompileError::EnclaveUnavailable(message) =
+                PrecompileError::from(map_consensus_error("ApplyPromisOp", error))
+            else {
+                panic!("expected EnclaveUnavailable");
+            };
+            assert_eq!(exact, message == sentence, "{message}");
+            assert!(exact || message.starts_with(sentence), "{message}");
+        }
+    }
+}

@@ -7,7 +7,6 @@ publish.workspace = true
 
 [dependencies]
 outbe-core-common.workspace = true
-outbe-enclave.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
 outbe-system-common.workspace = true
@@ -18,7 +17,6 @@ alloy-sol-types.workspace = true
 ed25519-dalek.workspace = true
 hex.workspace = true
 postcard.workspace = true
-ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -28,7 +26,6 @@ zeroize.workspace = true
 outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 # Fidelity's own tests run the confidential path against the in-process engine.
-outbe-enclave = { workspace = true, features = ["engine", "dev-keys"] }
 # Sign EIP-191 owner authorizations for the query-path tests.
 k256.workspace = true
 
@@ -44,24 +41,9 @@ test-utils = ["outbe-primitives/test-utils"]
 production-enclave = []
 # Exposes the in-process enclave stand-in so other crates' tests can drive the
 # confidential Fidelity path (mirrors gratis' `test-enclave`).
-# `outbe-enclave/*` stays until bmk.10 deletes the enclave crate.
 test-enclave = [
     "outbe-tee/test-utils",
     "outbe-core-common/dev-keys",
-    "outbe-enclave/engine",
-    "outbe-enclave/dev-keys",
-]
-
-# Wired in S2 domain dispersal (bmk.5..bmk.9), cleaned in bmk.10
-[package.metadata.cargo-machete]
-ignored = [
-    "hex",
-    "outbe-core-common",
-    "postcard",
-    "ring",
-    "serde",
-    "serde_json",
-    "zeroize",
 ]
 
 [lints]

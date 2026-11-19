@@ -163,10 +163,56 @@ mod tests {
             encrypt_tribute_offer_with(&offer_pub, [9u8; 32], [1u8; 12], plaintext.as_bytes())
                 .expect("encrypt");
         assert_eq!(ciphertext, again);
+        let ephemeral_pub =
+            x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([9u8; 32])).to_bytes();
+        let opened = super::super::crypto::ecdhe_tribute_offer_decrypt(
+            &outbe_tee::resident::OfferKeyHandle::for_test([7u8; 32]),
+            &OFFER_HKDF_SALT,
+            &ephemeral_pub,
+            &[1u8; 12],
+            &ciphertext,
+        )
+        .expect("offer decrypt");
+        assert_eq!(opened, plaintext.as_bytes());
         let (random, _nonce, ephemeral) =
             encrypt_tribute_offer(&offer_pub, plaintext.as_bytes()).expect("encrypt random");
         assert_eq!(random.len(), ciphertext.len());
         assert_ne!(ephemeral, [0u8; 32]);
+    }
+
+    #[test]
+    fn ecdhe_tribute_offer_roundtrip_with_explicit_salt() {
+        use super::super::crypto::{
+            chacha20poly1305_encrypt, ecdhe_tribute_offer_decrypt, hkdf_sha256,
+        };
+        let offer_pub =
+            x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([7u8; 32])).to_bytes();
+        let custom_salt = [3u8; 32];
+        assert_ne!(custom_salt, OFFER_HKDF_SALT);
+        let plaintext = b"{\"hello\":\"tribute\"}";
+        let shared = x25519_dalek::StaticSecret::from([9u8; 32])
+            .diffie_hellman(&x25519_dalek::PublicKey::from(offer_pub));
+        let key = hkdf_sha256(&custom_salt, shared.as_bytes(), OFFER_HKDF_INFO).expect("hkdf");
+        let ephemeral_pub =
+            x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([9u8; 32])).to_bytes();
+        let custom_ct = chacha20poly1305_encrypt(&key, &[1u8; 12], plaintext).expect("encrypt");
+        let opened = ecdhe_tribute_offer_decrypt(
+            &outbe_tee::resident::OfferKeyHandle::for_test([7u8; 32]),
+            &custom_salt,
+            &ephemeral_pub,
+            &[1u8; 12],
+            &custom_ct,
+        )
+        .expect("custom salt");
+        assert_eq!(opened, plaintext);
+        assert!(ecdhe_tribute_offer_decrypt(
+            &outbe_tee::resident::OfferKeyHandle::for_test([7u8; 32]),
+            &OFFER_HKDF_SALT,
+            &ephemeral_pub,
+            &[1u8; 12],
+            &custom_ct,
+        )
+        .is_err());
     }
 
     #[test]
@@ -201,5 +247,22 @@ mod tests {
             alice_ct,
             encrypt_tee_amount_with(&tee_pub, (chain, eve), amount, secret, nonce).unwrap()
         );
+        let other_chain = B256::repeat_byte(0x44);
+        let chain_ct =
+            encrypt_tee_amount_with(&tee_pub, (other_chain, alice), amount, secret, nonce).unwrap();
+        assert_ne!(alice_ct, chain_ct);
+        let key = outbe_tee::resident::OfferKeyHandle::for_test([7u8; 32]);
+        assert_eq!(
+            super::super::crypto::decrypt_tee_amount(&key, &alice_ct, chain, alice).unwrap(),
+            amount
+        );
+        assert!(matches!(
+            super::super::crypto::decrypt_tee_amount(&key, &alice_ct, chain, eve),
+            Err(super::super::errors::TeeError::Resident(_))
+        ));
+        assert!(matches!(
+            super::super::crypto::decrypt_tee_amount(&key, &chain_ct, chain, alice),
+            Err(super::super::errors::TeeError::Resident(_))
+        ));
     }
 }

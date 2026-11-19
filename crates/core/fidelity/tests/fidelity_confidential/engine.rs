@@ -143,7 +143,7 @@ fn fidelity_known_answer_vectors() {
         2_000_000,
     )));
 
-    // To regenerate: `cargo test -p outbe-enclave fidelity_known_answer -- --nocapture`
+    // To regenerate: `cargo test -p outbe-fidelity fidelity_known_answer -- --nocapture`
     // with the asserts commented out, then paste.
     assert_eq!(
         sk.compute_test_mac(b"kat", b"state"),

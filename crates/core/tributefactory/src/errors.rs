@@ -116,9 +116,6 @@ pub enum TributeFactoryError {
     #[error("enclave ProcessTributeOfferBatch error: {0}")]
     EnclaveBatchError(String),
 
-    #[error("unexpected enclave response: {0:?}")]
-    UnexpectedEnclaveResponse(Box<outbe_enclave::protocol::EnclaveResponse>),
-
     #[error("tee_enclave_nondeterminism: inputs_canonical_hash mismatch")]
     InputsCanonicalHashMismatch,
 
@@ -202,7 +199,6 @@ impl From<TributeFactoryError> for PrecompileError {
             | TributeFactoryError::TeeSidecarUnavailableWithReason(_)
             | TributeFactoryError::EnclaveBatchError(_)
             | TributeFactoryError::EncryptedOfferEnclaveError(_)
-            | TributeFactoryError::UnexpectedEnclaveResponse(_)
             | TributeFactoryError::UnexpectedEncryptedOfferResponse
             | TributeFactoryError::InputsCanonicalHashMismatch
             | TributeFactoryError::OfferAttestationInvalid(_)

@@ -19,17 +19,21 @@ use outbe_nod::nod_encryption::{
 };
 use outbe_nod::nod_host::{
     apply_nod_group_load_operation, encrypt_nod_quote as encrypt_quote_host, read_nod_amount,
-    read_nod_group_load, NodAmountReadV1, NodGroupLoadOpAppliedV1, NodGroupLoadReadV1,
-    NodQuoteEncryptedV1,
+    read_nod_group_load, sign_nod_host_for_test, NodAmountReadV1, NodGroupLoadOpAppliedV1,
+    NodGroupLoadReadV1, NodQuoteEncryptedV1, SignedNodHost,
 };
 use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
+use outbe_tee::call_context::current_witness_state;
 use outbe_tee::in_process::InProcessTeeContext;
-use outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test;
+use outbe_tee::in_process_dispatch::{
+    in_process_tee_context, replace_in_process_tee_context, set_in_process_tee_context_for_test,
+};
 use outbe_tee::resident::StateKeyHandle;
 use outbe_tee::witness::{
     BlockWitnessFault, EnclaveWitnessEntryV1, EnclaveWitnessTapeV1, WitnessExecutionMode,
     WitnessExecutionScope, WitnessState,
 };
+use outbe_tee::InProcessDispatchError;
 use outbe_tee::TransportError;
 
 const TERMS: &str = r#"{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"league_id":7,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978}"#;
@@ -260,9 +264,7 @@ fn resident(seed: u8) -> Arc<InProcessTeeContext> {
 fn install(
     context: &Arc<InProcessTeeContext>,
 ) -> outbe_tee::in_process_dispatch::InProcessTestGuard {
-    set_in_process_tee_context_for_test(Some((Arc::clone(context), |_ctx, _lane, _bytes| {
-        Err(TransportError::UnexpectedResponse)
-    })))
+    set_in_process_tee_context_for_test(Some(Arc::clone(context)))
 }
 
 fn enter(
@@ -698,6 +700,103 @@ fn encrypt_nod_quote_accepts_the_fixed_ed25519_vector() {
     assert_eq!(state.lock().unwrap().prefix_cursor, 1);
     assert_eq!(state.lock().unwrap().first_witness_fault, None);
     drop(scope);
+}
+
+fn flip_signed_tag(signed: &mut SignedNodHost, which: usize) {
+    let tag = match which {
+        0 => &mut signed.amount.attestation_tag,
+        1 => &mut signed.applied.attestation_tag,
+        2 => &mut signed.load.attestation_tag,
+        _ => &mut signed.quote.attestation_tag,
+    };
+    assert_eq!(tag.len(), 64);
+    tag[0] ^= 1;
+}
+
+#[test]
+fn rpc_direct_authenticates_all_four_tags_without_staging() {
+    let first = resident(4);
+    let leader = first.attestation_public();
+    let key = derive_resident_state_key(&first, &NOD_DOMAIN, 0).unwrap();
+    let nod = encrypt_nod(&key, terms(), U256::from(17)).unwrap();
+    let request = load_request(17);
+    let quote: NodQuoteContextV1 = parse(QUOTE_CONTEXT);
+    let _guard = install(&first);
+    let second = resident(9);
+    assert_ne!(leader, second.attestation_public());
+    let state = Arc::new(Mutex::new(WitnessState::new(
+        WitnessExecutionMode::RpcDirect,
+        Some(second.attestation_public()),
+        EnclaveWitnessTapeV1::default(),
+    )));
+    let _scope = WitnessExecutionScope::enter(Arc::clone(&state));
+    assert!(current_witness_state().is_some());
+
+    let amount = read_nod_amount(&nod).unwrap();
+    let applied = apply_nod_group_load_operation(request.clone()).unwrap();
+    let load_amount = read_nod_group_load(&applied).unwrap();
+    let payment = encrypt_quote_host(&nod, quote.clone(), U256::from(18)).unwrap();
+    assert_eq!(amount, U256::from(17));
+    assert_eq!(load_amount, U256::from(17));
+    assert!(!payment.is_empty());
+    assert!(current_witness_state().is_some());
+
+    let signed =
+        sign_nod_host_for_test(&first, &nod, &request, &applied, (&quote, U256::from(18))).unwrap();
+    assert_eq!(signed.amount.amount, amount);
+    assert_eq!(signed.applied.record, applied);
+    assert_eq!(signed.load.amount, load_amount);
+    assert_eq!(signed.quote.encrypted_payment, payment);
+    signed.authenticate(&leader).unwrap();
+
+    replace_in_process_tee_context(&first, Arc::clone(&second), || {
+        Ok::<(), InProcessDispatchError>(())
+    })
+    .unwrap();
+    assert_eq!(
+        in_process_tee_context().unwrap().attestation_public(),
+        second.attestation_public()
+    );
+    assert_eq!(amount, U256::from(17));
+    assert_eq!(load_amount, U256::from(17));
+    assert_eq!(read_nod_amount(&nod).unwrap(), amount);
+    assert_eq!(read_nod_group_load(&applied).unwrap(), load_amount);
+    assert_eq!(
+        encrypt_quote_host(&nod, quote.clone(), U256::from(18)).unwrap(),
+        payment
+    );
+    assert_eq!(
+        apply_nod_group_load_operation(request.clone()).unwrap(),
+        applied
+    );
+    signed.authenticate(&leader).unwrap();
+    let resigned =
+        sign_nod_host_for_test(&second, &nod, &request, &applied, (&quote, U256::from(18)))
+            .unwrap();
+    assert_ne!(
+        resigned.amount.attestation_tag,
+        signed.amount.attestation_tag
+    );
+    assert_ne!(
+        resigned.applied.attestation_tag,
+        signed.applied.attestation_tag
+    );
+    assert_ne!(resigned.load.attestation_tag, signed.load.attestation_tag);
+    assert_ne!(resigned.quote.attestation_tag, signed.quote.attestation_tag);
+    assert!(signed.authenticate(&second.attestation_public()).is_err());
+    assert!(current_witness_state().is_some());
+
+    for which in 0..4 {
+        let mut corrupt = signed.clone();
+        flip_signed_tag(&mut corrupt, which);
+        assert!(matches!(
+            corrupt.authenticate(&leader),
+            Err(TransportError::AppAttestation { .. })
+        ));
+    }
+    let witness = state.lock().unwrap();
+    assert!(witness.staged.is_empty());
+    assert_eq!(witness.prefix_cursor, 0);
 }
 
 #[test]

@@ -23,13 +23,12 @@ use outbe_tee::in_process_dispatch::{
     in_process_tee_context, replace_in_process_tee_context, set_in_process_tee_context_for_test,
     InProcessTestGuard,
 };
-use outbe_tee::protocol::{EnclaveResponse, PayloadLane};
 use outbe_tee::resident::ResidentOfferMaterial;
 use outbe_tee::witness::{
     BlockWitnessFault, EnclaveWitnessEntryV1, EnclaveWitnessTapeV1, TxWitnessV1,
     WitnessExecutionMode, WitnessExecutionScope, WitnessState,
 };
-use outbe_tee::{InProcessDispatchError, TransportError};
+use outbe_tee::InProcessDispatchError;
 
 const GROUP: &[u8] = b"promis-witness-group-signature-v1!!!!!";
 
@@ -49,14 +48,6 @@ fn offer() -> ResidentOfferMaterial {
     ResidentOfferMaterial::for_test(GROUP.to_vec(), chain_id(), 0, 0).expect("offer material")
 }
 
-fn reject_payload(
-    _: &InProcessTeeContext,
-    _: PayloadLane,
-    _: &[u8],
-) -> std::result::Result<EnclaveResponse, TransportError> {
-    Err(TransportError::UnexpectedResponse)
-}
-
 fn prepared(seed: u8) -> Arc<InProcessTeeContext> {
     let context = Arc::new(outbe_tee::test_utils::resident_context(seed, binding()));
     context.activate_for_test(offer()).expect("activate offer");
@@ -70,7 +61,7 @@ fn dormant(seed: u8) -> Arc<InProcessTeeContext> {
 fn install(seed: u8) -> (InProcessTestGuard, [u8; 32]) {
     let context = prepared(seed);
     let leader = context.attestation_public();
-    let guard = set_in_process_tee_context_for_test(Some((context, reject_payload)));
+    let guard = set_in_process_tee_context_for_test(Some(context));
     (guard, leader)
 }
 
@@ -179,7 +170,7 @@ fn with_other_enclave<T>(
 ) -> T {
     let context = prepared(9);
     assert_ne!(leader, context.attestation_public());
-    let _guard = set_in_process_tee_context_for_test(Some((context, reject_payload)));
+    let _guard = set_in_process_tee_context_for_test(Some(context));
     let state = Arc::new(Mutex::new(WitnessState::new(
         WitnessExecutionMode::VerifierWithEnclave,
         Some(leader),
@@ -393,7 +384,7 @@ fn applied_ops_round_trip_on_tx_zero_for_tags_2_and_22() {
         );
         let context = prepared(9);
         assert_ne!(leader, context.attestation_public());
-        let _guard = set_in_process_tee_context_for_test(Some((context, reject_payload)));
+        let _guard = set_in_process_tee_context_for_test(Some(context));
         let verified = consume_tx(
             WitnessExecutionMode::VerifierWithEnclave,
             leader,
@@ -538,7 +529,7 @@ fn classify(
     call: impl FnOnce() -> PrecompileError,
 ) -> (PrecompileError, WitnessState) {
     let leader = context.attestation_public();
-    let _guard = set_in_process_tee_context_for_test(Some((context, reject_payload)));
+    let _guard = set_in_process_tee_context_for_test(Some(context));
     let mut blank = WitnessState::new(
         WitnessExecutionMode::ProposerRecord,
         Some(leader),
@@ -630,6 +621,70 @@ fn wrong_payload_tags_are_tape_invalid_before_the_cursor_moves() {
         || mine_gratis_from_promis(mine),
         "witness payload tag 2 does not match expected 22",
     );
+
+    let foreign_gratis = encode_tagged_payload(
+        WitnessResponseTag::GratisOpApplied,
+        &outbe_gratis::GratisOpResult {
+            status: outbe_gratis::GratisOpStatus::Applied,
+            new_balance: Vec::new(),
+            new_pledged: Vec::new(),
+            event_amount: U256::ZERO,
+            next_op_nonce: 0,
+            fidelity: None,
+            inputs_canonical_hash: B256::ZERO,
+            attestation_tag: Vec::new(),
+            encrypted_event_amount: Vec::new(),
+        },
+    )
+    .expect("tag 1 body");
+    assert_eq!(
+        foreign_gratis[0],
+        WitnessResponseTag::GratisOpApplied.value()
+    );
+    assert_ne!(promis_op_canonical_hash(&mint_request(7)), B256::ZERO);
+    assert_wrong_tag(
+        zero_hash_tape(foreign_gratis),
+        || apply_promis_op(mint_request(7)),
+        "witness payload tag 1 does not match expected 2",
+    );
+
+    let foreign_promis = encode_tagged_payload(
+        WitnessResponseTag::PromisOpApplied,
+        &PromisOpResult {
+            status: PromisOpStatus::Applied,
+            new_balance: Vec::new(),
+            event_amount: U256::ZERO,
+            next_op_nonce: 0,
+            inputs_canonical_hash: B256::ZERO,
+            attestation_tag: Vec::new(),
+            encrypted_event_amount: Vec::new(),
+        },
+    )
+    .expect("tag 2 body");
+    assert_eq!(
+        foreign_promis[0],
+        WitnessResponseTag::PromisOpApplied.value()
+    );
+    assert_ne!(
+        mine_gratis_from_promis_canonical_hash(&mine_request(9, false, false)),
+        B256::ZERO
+    );
+    assert_wrong_tag(
+        zero_hash_tape(foreign_promis),
+        || mine_gratis_from_promis(mine_request(9, false, false)),
+        "witness payload tag 2 does not match expected 22",
+    );
+}
+
+fn zero_hash_tape(payload: Vec<u8>) -> EnclaveWitnessTapeV1 {
+    EnclaveWitnessTapeV1 {
+        prefix: vec![EnclaveWitnessEntryV1::Payload {
+            payload,
+            inputs_canonical_hash: B256::ZERO,
+            attestation_tag: vec![0; 64],
+        }],
+        txs: Vec::new(),
+    }
 }
 
 fn assert_wrong_tag<T: std::fmt::Debug>(
@@ -647,6 +702,10 @@ fn assert_wrong_tag<T: std::fmt::Debug>(
     let error = call().unwrap_err();
     let sentence = format!("{error}");
     assert!(sentence.contains(expected), "{sentence}");
+    assert!(
+        !sentence.contains("tee_enclave_nondeterminism"),
+        "{sentence}"
+    );
     let witness = state.lock().expect("witness lock");
     assert_eq!(
         witness.first_witness_fault,
@@ -667,7 +726,7 @@ struct RpcRound {
 fn rpc_round() -> RpcRound {
     let first = prepared(4);
     let leader = first.attestation_public();
-    let guard = set_in_process_tee_context_for_test(Some((Arc::clone(&first), reject_payload)));
+    let guard = set_in_process_tee_context_for_test(Some(Arc::clone(&first)));
     let second = prepared(9);
     assert_ne!(leader, second.attestation_public());
     let state = Arc::new(Mutex::new(WitnessState::new(
@@ -790,7 +849,7 @@ fn resign(context: &InProcessTeeContext, mut result: PromisOpResult) -> PromisOp
 }
 
 fn execute(context: Arc<InProcessTeeContext>, request: PromisOpRequest) -> PromisOpResult {
-    let _guard = set_in_process_tee_context_for_test(Some((context, reject_payload)));
+    let _guard = set_in_process_tee_context_for_test(Some(context));
     apply_promis_op(request).expect("promis op")
 }
 
@@ -833,7 +892,7 @@ fn semantic_divergence_on_tag_2_latches_semantic_mismatch() {
         tx_tape(tag2_entry(&divergent)),
     )));
     let error = {
-        let _guard = set_in_process_tee_context_for_test(Some((verifier, reject_payload)));
+        let _guard = set_in_process_tee_context_for_test(Some(verifier));
         let _scope = WitnessExecutionScope::enter(state.clone());
         apply_promis_op(request).unwrap_err()
     };
@@ -877,7 +936,7 @@ fn non_canonical_tag_2_bytes_latch_tape_invalid_at_cursor_zero() {
         ] {
             let state = Arc::new(Mutex::new(tx_witness(mode, leader, tx_tape(entry.clone()))));
             let _guard = if mode == WitnessExecutionMode::VerifierWithEnclave {
-                set_in_process_tee_context_for_test(Some((prepared(9), reject_payload)))
+                set_in_process_tee_context_for_test(Some(prepared(9)))
             } else {
                 set_in_process_tee_context_for_test(None)
             };
@@ -899,7 +958,7 @@ fn recorded_tag_2_entry_matches_an_independent_encode() {
     let request = mint_request(1);
     let context = prepared(4);
     let leader = context.attestation_public();
-    let _guard = set_in_process_tee_context_for_test(Some((Arc::clone(&context), reject_payload)));
+    let _guard = set_in_process_tee_context_for_test(Some(Arc::clone(&context)));
     let state = Arc::new(Mutex::new(tx_witness(
         WitnessExecutionMode::ProposerRecord,
         leader,

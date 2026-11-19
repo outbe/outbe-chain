@@ -11,10 +11,9 @@ use std::sync::{Arc, Mutex};
 const TEST_DOMAIN_TAG: &[u8] = b"outbe/tee/test-payload-read/v1";
 
 fn response(amount: u64) -> EnclaveResponse {
-    EnclaveResponse::Payload {
-        recordable: true,
-        payload: U256::from(amount).to_be_bytes::<32>().to_vec(),
-        inputs_canonical_hash: B256::ZERO,
+    EnclaveResponse::DcapVerificationFinishedV1 {
+        request_hash: B256::ZERO,
+        outcome: U256::from(amount).to_be_bytes::<32>().to_vec(),
         attestation_tag: vec![0; 64],
     }
 }
@@ -60,8 +59,8 @@ fn record_stages_and_replay_never_calls_transport() {
     assert_eq!(key, [1; 32]);
     assert!(matches!(
         resp,
-        EnclaveResponse::Payload { ref payload, .. }
-            if payload.as_slice() == U256::from(7).to_be_bytes::<32>()
+        EnclaveResponse::DcapVerificationFinishedV1 { ref outcome, .. }
+            if outcome.as_slice() == U256::from(7).to_be_bytes::<32>()
     ));
     assert_eq!(replay.lock().unwrap().prefix_cursor, 1);
     assert_eq!(replay.lock().unwrap().first_witness_fault, None);
@@ -133,30 +132,28 @@ fn unsigned_user_candidate_is_not_a_block_fault_but_prefix_is() {
 
 fn signed_response(signer: &ed25519_dalek::SigningKey, amount: u64) -> EnclaveResponse {
     use ed25519_dalek::Signer;
-    let payload = U256::from(amount).to_be_bytes::<32>().to_vec();
-    let preimage = canonical_attestation_preimage(TEST_DOMAIN_TAG, B256::ZERO, &payload).unwrap();
-    EnclaveResponse::Payload {
-        recordable: true,
-        payload,
-        inputs_canonical_hash: B256::ZERO,
+    let outcome = U256::from(amount).to_be_bytes::<32>().to_vec();
+    let preimage = canonical_attestation_preimage(TEST_DOMAIN_TAG, B256::ZERO, &outcome).unwrap();
+    EnclaveResponse::DcapVerificationFinishedV1 {
+        request_hash: B256::ZERO,
+        outcome,
         attestation_tag: signer.sign(&preimage).to_bytes().to_vec(),
     }
 }
 
 fn verify_signed(key: &[u8; 32], response: &EnclaveResponse) -> Result<(), TransportError> {
-    let EnclaveResponse::Payload {
-        recordable: true,
-        payload,
-        inputs_canonical_hash,
+    let EnclaveResponse::DcapVerificationFinishedV1 {
+        request_hash,
+        outcome,
         attestation_tag,
     } = response
     else {
         return Err(TransportError::UnexpectedResponse);
     };
-    if *inputs_canonical_hash != B256::ZERO {
+    if *request_hash != B256::ZERO {
         return Err(TransportError::UnexpectedResponse);
     }
-    let preimage = canonical_attestation_preimage(TEST_DOMAIN_TAG, B256::ZERO, payload)
+    let preimage = canonical_attestation_preimage(TEST_DOMAIN_TAG, B256::ZERO, outcome)
         .map_err(TransportError::AttestationPreimageSerialization)?;
     verify_enclave_attestation(key, &preimage, attestation_tag).map_err(TransportError::attestation)
 }

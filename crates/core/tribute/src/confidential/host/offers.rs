@@ -26,6 +26,25 @@ pub fn process_offer_batch(
     Ok(answer.results)
 }
 
+/// Process one captured resident batch and return the signed enclave hash.
+///
+/// A hash that differs from [`inputs_canonical_hash`] stays in the batch.
+/// [`process_offer_batch`] still rejects that mismatch before authentication.
+pub fn process_offer_batch_with(
+    context: &InProcessTeeContext,
+    offers: Vec<EncryptedTributeOffer>,
+) -> Result<TributeOfferBatch, TransportError> {
+    let (results, hashed) = call::with_offer(context, |handle| {
+        Ok(process_tribute_offer_batch(&material(handle), &offers))
+    })?;
+    let preimage = tribute_offer_attestation_preimage(hashed, &results).map_err(call::reject)?;
+    Ok(TributeOfferBatch {
+        results,
+        inputs_canonical_hash: hashed,
+        attestation_tag: call::sign(context, &preimage),
+    })
+}
+
 /// Process an encrypted offer batch and record tag 11.
 ///
 /// `chain_id` is the request chain mixed into the frozen inputs hash. The

@@ -1,7 +1,7 @@
-//! Domain-neutral direct dispatch. No lane lock is held across a payload callback.
+//! Domain-neutral direct dispatch of resident infrastructure requests.
 use crate::{
     in_process::{InProcessError, InProcessTeeContext},
-    protocol::{EnclaveRequest, EnclaveResponse, PayloadLane},
+    protocol::{EnclaveRequest, EnclaveResponse},
     CallMeta, TransportError,
 };
 use std::sync::{Arc, RwLock};
@@ -11,10 +11,6 @@ pub use verification::{
     prepare_no_attestation_dev_onboarding_artifact_v1, verify_dcap_evidence_v1,
     verify_dcap_registration_and_seal_v1,
 };
-
-/// Domain adapter supplied by the engine owner, preserving typed failures.
-pub type InProcessPayloadHandler =
-    fn(&InProcessTeeContext, PayloadLane, &[u8]) -> Result<EnclaveResponse, TransportError>;
 
 /// Install-time failure for the process-global resident runtime.
 #[derive(Debug, thiserror::Error)]
@@ -39,8 +35,6 @@ pub enum InProcessDispatchError {
     Resident(#[from] InProcessError),
     #[error("local enclave permanent offer key is not ready; no recovery or fallback exists")]
     OfferKeyNotReady(#[source] InProcessError),
-    #[error("request is not permitted on lane {lane:?}")]
-    LaneDenied { lane: PayloadLane },
     #[error("unsupported in-process infrastructure request")]
     UnsupportedRequest,
     #[error("domain dispatch failed: {0}")]
@@ -50,14 +44,12 @@ pub enum InProcessDispatchError {
 #[derive(Clone)]
 struct Runtime {
     context: Arc<InProcessTeeContext>,
-    payload: InProcessPayloadHandler,
 }
 static RUNTIME: RwLock<Option<Runtime>> = RwLock::new(None);
 
-/// Install one identity and its domain callback atomically for all three lanes.
+/// Install one resident identity for infrastructure and typed domain calls.
 pub fn install_in_process_tee_context(
     context: Arc<InProcessTeeContext>,
-    payload: InProcessPayloadHandler,
 ) -> Result<(), InstallError> {
     let mut runtime = RUNTIME
         .write()
@@ -65,7 +57,7 @@ pub fn install_in_process_tee_context(
     if runtime.is_some() {
         return Err(InstallError::AlreadyInitialized);
     }
-    *runtime = Some(Runtime { context, payload });
+    *runtime = Some(Runtime { context });
     Ok(())
 }
 
@@ -132,22 +124,14 @@ pub fn try_in_process_request(
     request_with_attestation(meta, request).map(|result| result.map(|(_, response)| response))
 }
 
-pub(crate) fn resident_request_lane(request: &EnclaveRequest) -> PayloadLane {
-    match request {
-        EnclaveRequest::Payload { lane, .. } => *lane,
-        _ => PayloadLane::Execution,
-    }
-}
-
 /// Bind the response to the exact resident context that dispatched it.
 pub(crate) fn request_with_attestation(
     meta: CallMeta,
     request: &EnclaveRequest,
 ) -> Option<Result<([u8; 32], EnclaveResponse), TransportError>> {
     let runtime = runtime()?;
-    let lane = resident_request_lane(request);
     Some(
-        request_on(&runtime, meta, request, lane)
+        request_on(&runtime, meta, request)
             .map(|response| (runtime.context.attestation_public(), response)),
     )
 }
@@ -158,8 +142,7 @@ fn execute_request(
 ) -> Result<EnclaveResponse, TransportError> {
     let context = &runtime.context;
     match request {
-        EnclaveRequest::Payload { lane, payload } => (runtime.payload)(context, *lane, payload),
-        EnclaveRequest::GetPublicKeys => (|| {
+        EnclaveRequest::GetPublicKeys => {
             let ready = context
                 .offer_key_ready()
                 .map_err(InProcessDispatchError::from)?;
@@ -178,7 +161,7 @@ fn execute_request(
                 dkg_enc_pub: context.dkg_enc_public(),
                 dkg_enc_sig: Vec::new(),
             })
-        })(),
+        }
         _ => Err(InProcessDispatchError::UnsupportedRequest.into()),
     }
 }
@@ -192,18 +175,14 @@ fn dispatch_resident_request(
     Ok((runtime.context.attestation_public(), response))
 }
 
-/// One session snapshot: lane metrics, duration, and the response share `runtime`.
+/// One session snapshot: duration and the response share the captured `runtime`.
 pub(crate) fn dispatch_session_snapshot(
     meta: CallMeta,
     request: &EnclaveRequest,
 ) -> Option<Result<([u8; 32], EnclaveResponse), TransportError>> {
     let runtime = runtime()?;
-    let lane = resident_request_lane(request);
-    let _in_flight =
-        (lane == PayloadLane::Execution).then(crate::metrics::ExecutionInFlightGuard::new);
-    if lane == PayloadLane::Execution {
-        crate::metrics::record_tee_execution_lock_wait_ms(std::time::Duration::ZERO);
-    }
+    let _in_flight = crate::metrics::ExecutionInFlightGuard::new();
+    crate::metrics::record_tee_execution_lock_wait_ms(std::time::Duration::ZERO);
     let started = std::time::Instant::now();
     let result = dispatch_resident_request(&runtime, request);
     crate::metrics::record_request_duration(meta.label, started.elapsed());
@@ -217,14 +196,10 @@ fn request_on(
     runtime: &Runtime,
     meta: CallMeta,
     request: &EnclaveRequest,
-    lane: PayloadLane,
 ) -> Result<EnclaveResponse, TransportError> {
-    let _in_flight =
-        (lane == PayloadLane::Execution).then(crate::metrics::ExecutionInFlightGuard::new);
-    if lane == PayloadLane::Execution {
-        // Direct execution has no execution mutex, so its lock-wait sample is exactly zero.
-        crate::metrics::record_tee_execution_lock_wait_ms(std::time::Duration::ZERO);
-    }
+    let _in_flight = crate::metrics::ExecutionInFlightGuard::new();
+    // Direct execution has no execution mutex, so its lock-wait sample is exactly zero.
+    crate::metrics::record_tee_execution_lock_wait_ms(std::time::Duration::ZERO);
     let started = std::time::Instant::now();
     let result = execute_request(runtime, request);
     crate::metrics::record_request_duration(meta.label, started.elapsed());
@@ -234,53 +209,9 @@ fn request_on(
     result
 }
 
-/// Reject incorrectly routed requests before invoking a domain callback.
-fn request_on_lane(
-    meta: CallMeta,
-    request: &EnclaveRequest,
-    lane: PayloadLane,
-) -> Option<Result<EnclaveResponse, TransportError>> {
-    let runtime = runtime()?;
-    Some(
-        if matches!(request, EnclaveRequest::Payload {lane: actual, ..} if *actual == lane)
-            || (lane == PayloadLane::Canary && matches!(request, EnclaveRequest::GetPublicKeys))
-        {
-            request_on(&runtime, meta, request, lane)
-        } else {
-            Err(InProcessDispatchError::LaneDenied { lane }.into())
-        },
-    )
-}
-
 /// Whether a resident runtime is installed on this execution path.
 pub fn is_enclave_configured() -> bool {
     in_process_tee_context().is_some()
-}
-
-/// Run an account-query request on its dedicated lane.
-#[cfg(any(test, feature = "test-utils"))]
-pub fn try_account_query(
-    request: &EnclaveRequest,
-) -> Option<Result<EnclaveResponse, TransportError>> {
-    try_account_query_with_meta(CallMeta::session_only(request.label()), request)
-}
-
-/// Run an authorized account query with explicit call metadata.
-pub fn try_account_query_with_meta(
-    meta: CallMeta,
-    request: &EnclaveRequest,
-) -> Option<Result<EnclaveResponse, TransportError>> {
-    request_on_lane(meta, request, PayloadLane::AccountQuery)
-}
-
-/// Run a canary probe with explicit call metadata.
-#[cfg(any(test, feature = "test-utils"))]
-pub fn canary_request_with_meta(
-    meta: CallMeta,
-    request: &EnclaveRequest,
-) -> Result<EnclaveResponse, TransportError> {
-    request_on_lane(meta, request, PayloadLane::Canary)
-        .ok_or(InProcessDispatchError::ContextNotInstalled)?
 }
 
 /// Read the active resident attestation key without waiting for execution.
@@ -351,9 +282,9 @@ impl Drop for InProcessTestGuard {
 /// Override only this test thread, including explicitly disabling the installed runtime.
 #[cfg(any(test, feature = "test-utils"))]
 pub fn set_in_process_tee_context_for_test(
-    runtime: Option<(Arc<InProcessTeeContext>, InProcessPayloadHandler)>,
+    context: Option<Arc<InProcessTeeContext>>,
 ) -> InProcessTestGuard {
-    let runtime = runtime.map(|(context, payload)| Runtime { context, payload });
+    let runtime = context.map(|context| Runtime { context });
     let previous = TEST_RUNTIME.with(|slot| slot.replace(Some(runtime)));
     InProcessTestGuard {
         previous,
@@ -364,20 +295,11 @@ pub fn set_in_process_tee_context_for_test(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{EnclaveResponse, PayloadLane};
     use crate::test_utils::resident_context;
     use alloy_primitives::{B256, U256};
     use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
     use std::error::Error;
     use std::sync::Arc;
-
-    fn unused_payload(
-        _: &InProcessTeeContext,
-        _: PayloadLane,
-        _: &[u8],
-    ) -> Result<EnclaveResponse, TransportError> {
-        Err(TransportError::UnexpectedResponse)
-    }
 
     #[test]
     fn unonboarded_offer_key_is_typed_and_node_local() {
@@ -387,7 +309,7 @@ mod tests {
             attestation_mode: AttestationMode::NoAttestationDev,
         };
         let context = Arc::new(resident_context(7, binding));
-        let _guard = set_in_process_tee_context_for_test(Some((context, unused_payload)));
+        let _guard = set_in_process_tee_context_for_test(Some(context));
         let error = resident_network_encryption_public_key_v1().unwrap_err();
         assert!(error.is_node_local());
         let TransportError::InProcess(InProcessDispatchError::OfferKeyNotReady(source)) = &error
@@ -402,27 +324,10 @@ mod tests {
     }
 
     thread_local! {
-        static SEEN_KEY: std::cell::Cell<Option<[u8; 32]>> = const { std::cell::Cell::new(None) };
         static NEXT_CONTEXT: std::cell::RefCell<Option<Arc<InProcessTeeContext>>> =
             const { std::cell::RefCell::new(None) };
         static HELD_GUARD: std::cell::RefCell<Option<InProcessTestGuard>> =
             const { std::cell::RefCell::new(None) };
-    }
-
-    fn swapping_payload(
-        context: &InProcessTeeContext,
-        _: PayloadLane,
-        _: &[u8],
-    ) -> Result<EnclaveResponse, TransportError> {
-        SEEN_KEY.with(|seen| seen.set(Some(context.attestation_public())));
-        let next = NEXT_CONTEXT
-            .with(|slot| slot.borrow_mut().take())
-            .expect("successor context");
-        let guard = set_in_process_tee_context_for_test(Some((next, unused_payload)));
-        HELD_GUARD.with(|slot| *slot.borrow_mut() = Some(guard));
-        Ok(EnclaveResponse::Error {
-            message: "first".into(),
-        })
     }
 
     /// Drops the successor guard before the outer install guard restores the thread.
@@ -431,7 +336,6 @@ mod tests {
         fn drop(&mut self) {
             HELD_GUARD.with(|slot| drop(slot.borrow_mut().take()));
             NEXT_CONTEXT.with(|slot| drop(slot.borrow_mut().take()));
-            SEEN_KEY.with(|slot| slot.set(None));
         }
     }
 
@@ -446,28 +350,23 @@ mod tests {
         let second = Arc::new(resident_context(9, binding));
         assert_ne!(first.attestation_public(), second.attestation_public());
         NEXT_CONTEXT.with(|slot| *slot.borrow_mut() = Some(Arc::clone(&second)));
-        let _outer =
-            set_in_process_tee_context_for_test(Some((Arc::clone(&first), swapping_payload)));
+        let _outer = set_in_process_tee_context_for_test(Some(Arc::clone(&first)));
         let _release = ReleaseSnapshotSwap;
-        let (key, response) = crate::tee_call::tee_session_call(
+        let seen = crate::tee_call::tee_session_typed_call(
             CallMeta::session_only("snapshot"),
-            &EnclaveRequest::Payload {
-                lane: PayloadLane::Execution,
-                payload: vec![1],
+            |context| {
+                let seen = context.attestation_public();
+                let next = NEXT_CONTEXT
+                    .with(|slot| slot.borrow_mut().take())
+                    .expect("successor context");
+                let guard = set_in_process_tee_context_for_test(Some(next));
+                HELD_GUARD.with(|slot| *slot.borrow_mut() = Some(guard));
+                Ok(seen)
             },
-            |_, _| Ok(()),
         )
         .expect("runtime installed")
         .expect("session call");
-        let seen = SEEN_KEY.with(|slot| slot.get()).expect("payload ran");
-        assert_eq!(key, seen);
-        assert_eq!(key, first.attestation_public());
-        assert_eq!(
-            response,
-            EnclaveResponse::Error {
-                message: "first".into(),
-            }
-        );
+        assert_eq!(seen, first.attestation_public());
         assert_eq!(
             in_process_tee_context()
                 .expect("successor installed")

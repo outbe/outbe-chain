@@ -17,12 +17,12 @@ use outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS;
 
 use alloy_sol_types::SolCall;
 use outbe_credis::CredisContract;
-use outbe_enclave::gratis::{
-    decrypt_balance, decrypt_pledged, derive_account_keys, derive_view_key, modify_mac,
-};
-use outbe_enclave::protocol::{GratisOp, ModifyAuth};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave;
+use outbe_gratis::{
+    decrypt_balance, decrypt_pledged, derive_account_keys, derive_view_key, modify_mac,
+};
+use outbe_gratis::{GratisOp, ModifyAuth};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -613,7 +613,7 @@ pub fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> Modify
     ModifyAuth {
         mac: modify_mac(
             &mk,
-            &outbe_enclave::gratis::ModifyOperation {
+            &outbe_gratis::ModifyOperation {
                 account: owner,
                 op,
                 amount,

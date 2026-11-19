@@ -126,6 +126,8 @@ mod system_execution_verifier;
 mod system_failure_codes;
 mod timestamp;
 mod witness_parity;
+mod witness_quote_nod;
+mod witness_two_heights;
 
 #[test]
 fn executor_context_uses_canonical_chain_identity() {

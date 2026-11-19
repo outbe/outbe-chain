@@ -29,8 +29,8 @@ radicle-crypto = { workspace = true, features = ["ssh"] }
 outbe-zerofee.workspace = true
 outbe-zk.workspace = true
 # TEE public status and owner-local offer encryption.
-outbe-enclave.workspace = true
 outbe-tee.workspace = true
+outbe-core-common.workspace = true
 outbe-update.workspace = true
 
 # CLI

@@ -1,7 +1,6 @@
 use alloy_primitives::B256;
 use outbe_tee::{
     dcap_protocol::DcapOnboardingContextV1,
-    errors::TransportError,
     finalized_admission::{
         MAX_COMMITTEE_TRANSITION_RECORD_BYTES, MAX_FINALIZED_ADMISSION_RECORD_BYTES,
     },
@@ -83,10 +82,9 @@ fn resident_upgrade_export_checks_proof_and_keeps_donor_material() {
     let public = donor.network_encryption_public().unwrap();
     let mut recipient = context();
     recipient.network_encryption_public = public;
-    let _runtime = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
+    let _runtime = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(
         std::sync::Arc::clone(&donor),
-        |_, _, _| Err(TransportError::UnexpectedResponse),
-    )));
+    ));
     // Even an installed resident donor must not turn malformed finalized proof into an export.
     assert!(export_from_network_source(recipient, &proof(), false).is_err());
     assert_eq!(donor.network_encryption_public().unwrap(), public);

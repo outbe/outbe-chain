@@ -3,13 +3,12 @@
 //! The shared offer key stays behind the in-process handle API. Missing
 //! resident context is a node-local fault, not a deterministic EVM revert.
 
+#[cfg(test)]
 use alloy_primitives::B256;
-use outbe_enclave::protocol::{
-    EnclaveRequest as DomainRequest, EnclaveResponse as DomainResponse, EncryptedTributeOffer,
-    TributeOfferResult, TributeOfferStatus,
-};
-use outbe_enclave::{try_with_domain_enclave, verify_tribute_offer_attestation};
 use outbe_primitives::error::PrecompileError;
+#[cfg(test)]
+use outbe_tribute::confidential::verify_tribute_offer_attestation;
+use outbe_tribute::confidential::{EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus};
 
 use crate::errors::TributeFactoryError;
 
@@ -19,14 +18,11 @@ use crate::errors::TributeFactoryError;
 /// The host then issues the Tributes from those fields plus its own request inputs
 /// (no host recompute of the private economics).
 ///
-/// The host recomputes `inputs_canonical_hash` from the request it sent and
-/// compares it to the enclave's hash. A mismatch is enclave non-determinism
-/// (`tee_enclave_nondeterminism`). The host then verifies the per-offer
-/// `attestation_tag` (an Ed25519 signature over the inputs hash + results) against
-/// the attestation key pinned for the enclave session. This check binds the results
-/// to that peer (`tee_offer_attestation_invalid` on failure). The host then discards
-/// the tag and never writes it to chain state. Both checks live in
-/// [`validate_tribute_offer_batch_response`] so they are unit-testable without a sidecar.
+/// The resident host recomputes `inputs_canonical_hash` from the request it sent
+/// and verifies the attestation tag before this function returns. A mismatch is
+/// enclave non-determinism. A bad tag is `tee_offer_attestation_invalid`. The tag
+/// is discarded and never written to chain state. This function then checks that
+/// each created offer echoes the host price.
 ///
 /// Failure classification (aligned with `gratis::enclave_client::apply_gratis_op`):
 /// every failure of THIS function is a node-local fault (`PrecompileError::EnclaveUnavailable`):
@@ -42,45 +38,20 @@ use crate::errors::TributeFactoryError;
 pub fn process_tribute_offer_batch_via_enclave(
     offers: &[EncryptedTributeOffer],
 ) -> Result<Vec<TributeOfferResult>, PrecompileError> {
-    // Route through the process-global enclave session (shared with the TEE registry
-    // seal). Pin the attestation key from the installed identity before the
-    // call. `None` means no client is configured -> typed `tee_sidecar_unavailable`.
-    let request = DomainRequest::ProcessTributeOfferBatch {
-        offers: offers.to_vec(),
-    };
-    let (attestation_pub, response) =
-        try_with_domain_enclave(&request).ok_or(TributeFactoryError::TeeSidecarUnavailable)?;
-    let response = response.map_err(|error| match error {
-        outbe_tee::TransportError::EnclaveError(message) => {
-            TributeFactoryError::EnclaveBatchError(message)
-        }
-        other => TributeFactoryError::sidecar_unavailable(other),
-    })?;
-
-    match response {
-        DomainResponse::TributeOfferBatch {
-            results,
-            inputs_canonical_hash,
-            attestation_tag,
-        } => validate_tribute_offer_batch_response(
-            offers,
-            results,
-            inputs_canonical_hash,
-            &attestation_pub,
-            &attestation_tag,
-        ),
-        other => Err(TributeFactoryError::UnexpectedEnclaveResponse(Box::new(other)).into()),
-    }
+    let results = outbe_tribute::confidential::host::process_offer_batch(offers.to_vec()).map_err(
+        |error| match error {
+            outbe_tee::TransportError::EnclaveError(message) => {
+                TributeFactoryError::EnclaveBatchError(message)
+            }
+            other => TributeFactoryError::sidecar_unavailable(other),
+        },
+    )?;
+    validate_effective_reference_prices(offers, &results)?;
+    Ok(results)
 }
 
-/// Validate the enclave's `TributeOfferBatch` response:
-/// 1. The canonical-inputs hash equals the host's recompute over the exact request it
-///    sent (non-determinism detector -> `tee_enclave_nondeterminism`).
-/// 2. The per-offer attestation tag verifies against the pinned attestation key
-///    (-> `tee_offer_attestation_invalid`).
-///
-/// Both failures are node-local (`EnclaveUnavailable`), never deterministic reverts.
-/// Returns the results on success. Pure (no transport) so it is unit-testable.
+/// Validate a scripted offer batch without a resident runtime.
+#[cfg(test)]
 fn validate_tribute_offer_batch_response(
     offers: &[EncryptedTributeOffer],
     results: Vec<TributeOfferResult>,
@@ -88,7 +59,7 @@ fn validate_tribute_offer_batch_response(
     attestation_pub: &[u8; 32],
     attestation_tag: &[u8],
 ) -> Result<Vec<TributeOfferResult>, PrecompileError> {
-    let expected = outbe_enclave::protocol::inputs_canonical_hash(offers);
+    let expected = outbe_tribute::confidential::inputs_canonical_hash(offers);
     if inputs_canonical_hash != expected {
         return Err(TributeFactoryError::InputsCanonicalHashMismatch.into());
     }
@@ -131,8 +102,8 @@ fn validate_effective_reference_prices(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{Address, U256};
-    use outbe_enclave::protocol::{inputs_canonical_hash, WorldwideDay};
+    use alloy_primitives::{Address, B256, U256};
+    use outbe_tribute::confidential::{inputs_canonical_hash, WorldwideDay};
 
     const NEXT_DAY: WorldwideDay = WorldwideDay::new(20250116);
 

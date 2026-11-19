@@ -313,7 +313,6 @@ mod executing_context {
     use alloy_primitives::{Address, U256};
     use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
     use outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test;
-    use outbe_tee::protocol::{EnclaveResponse, PayloadLane};
     use outbe_tee::resident::ResidentOfferMaterial;
     use std::sync::Arc;
 
@@ -340,14 +339,6 @@ mod executing_context {
         .expect("offer material");
         context.activate_for_test(material).expect("activate offer");
         context
-    }
-
-    fn reject(
-        _: &InProcessTeeContext,
-        _: PayloadLane,
-        _: &[u8],
-    ) -> std::result::Result<EnclaveResponse, TransportError> {
-        Err(TransportError::UnexpectedResponse)
     }
 
     fn mint_request(ctx: &InProcessTeeContext) -> GratisOpRequest {
@@ -406,11 +397,11 @@ mod executing_context {
         let first = context(4);
         let second = context(9);
         assert_ne!(first.attestation_public(), second.attestation_public());
-        let _guard = set_in_process_tee_context_for_test(Some((Arc::clone(&first), reject)));
+        let _guard = set_in_process_tee_context_for_test(Some(Arc::clone(&first)));
         let request = mint_request(&first);
         let expected = gratis_op_canonical_hash(&request);
         let signed = execute_apply(&first, expected, &request).expect("signed mint");
-        let _successor = set_in_process_tee_context_for_test(Some((second.clone(), reject)));
+        let _successor = set_in_process_tee_context_for_test(Some(second.clone()));
         assert_eq!(
             outbe_tee::in_process_tee_context()
                 .expect("successor")

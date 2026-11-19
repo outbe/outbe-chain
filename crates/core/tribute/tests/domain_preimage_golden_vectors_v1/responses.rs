@@ -149,10 +149,7 @@ where
         },
     ));
     let leader = context.attestation_public();
-    let _guard = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
-        context,
-        |_context, _lane, _bytes| Err(TransportError::UnexpectedResponse),
-    )));
+    let _guard = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(context));
     let state = Arc::new(Mutex::new(WitnessState::new(
         WitnessExecutionMode::ProposerRecord,
         Some(leader),

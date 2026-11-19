@@ -88,10 +88,7 @@ fn binding() -> outbe_primitives::tee_attestation_v1::NetworkBindingV1 {
 fn install_context() -> (crate::in_process_dispatch::InProcessTestGuard, [u8; 32]) {
     let context = std::sync::Arc::new(crate::test_utils::resident_context(4, binding()));
     let leader = context.attestation_public();
-    let guard = crate::in_process_dispatch::set_in_process_tee_context_for_test(Some((
-        context,
-        |_ctx, _lane, _bytes| Err(crate::TransportError::UnexpectedResponse),
-    )));
+    let guard = crate::in_process_dispatch::set_in_process_tee_context_for_test(Some(context));
     (guard, leader)
 }
 

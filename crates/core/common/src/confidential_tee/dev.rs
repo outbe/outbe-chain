@@ -138,11 +138,32 @@ mod tests {
         let secret = [0x21; 32];
         let public = PublicKey::from(&StaticSecret::from(secret)).to_bytes();
         let sealed = encrypt_share(&public, b"share-bytes").unwrap();
+        assert_ne!(sealed.ciphertext.as_slice(), b"share-bytes".as_slice());
         let opened = decrypt_share(&secret, &sealed).unwrap();
         assert_eq!(opened, b"share-bytes");
+        let parsed = EncryptedShare::from_bytes(&sealed.to_bytes()).unwrap();
+        assert_eq!(parsed, sealed);
+        assert_eq!(decrypt_share(&secret, &parsed).unwrap(), b"share-bytes");
+        assert!(decrypt_share(&[0x44; 32], &sealed).is_err());
+        let laid_out = EncryptedShare {
+            ephemeral_pub: [0xAA; 32],
+            nonce: [0xBB; 12],
+            ciphertext: vec![0xCC, 0xDD, 0xEE],
+        };
+        let wire = laid_out.to_bytes();
+        assert_eq!(&wire[..32], &[0xAA; 32]);
+        assert_eq!(&wire[32..44], &[0xBB; 12]);
+        assert_eq!(&wire[44..], &[0xCC, 0xDD, 0xEE]);
+        assert!(EncryptedShare::from_bytes(&[0; 43]).is_err());
+        let empty = EncryptedShare {
+            ephemeral_pub: [1; 32],
+            nonce: [2; 12],
+            ciphertext: Vec::new(),
+        };
+        assert_eq!(empty.to_bytes().len(), 44);
         assert_eq!(
-            EncryptedShare::from_bytes(&sealed.to_bytes()).unwrap(),
-            sealed
+            EncryptedShare::from_bytes(&empty.to_bytes()).unwrap(),
+            empty
         );
     }
 }

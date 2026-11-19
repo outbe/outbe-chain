@@ -187,10 +187,7 @@ fn witness_context(seed: u8) -> std::sync::Arc<outbe_tee::in_process::InProcessT
 fn install_context(
     context: std::sync::Arc<outbe_tee::in_process::InProcessTeeContext>,
 ) -> outbe_tee::in_process_dispatch::InProcessTestGuard {
-    outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
-        context,
-        |_ctx, _lane, _bytes| Err(TransportError::UnexpectedResponse),
-    )))
+    outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(context))
 }
 
 fn signed_body(amount: u64, inputs: B256) -> SignedBody {
@@ -648,4 +645,212 @@ fn replay_rejects_trailing_noncanonical_inner_tag_and_hash_mismatch() {
         .source()
         .and_then(|cause| cause.downcast_ref::<postcard::Error>())
         .is_some());
+}
+
+#[test]
+fn blocked_account_query_does_not_serialize_execution() {
+    use std::sync::{mpsc, Barrier, Mutex, OnceLock};
+    use std::time::Duration;
+    static GATES: OnceLock<(Barrier, Barrier)> = OnceLock::new();
+    fn hold() {
+        let gates = GATES.get().expect("account-query gates");
+        gates.0.wait();
+        gates.1.wait();
+    }
+    let gates = GATES.get_or_init(|| (Barrier::new(2), Barrier::new(2)));
+    let context = witness_context(7);
+    context
+        .activate_for_test(
+            outbe_tee::resident::ResidentOfferMaterial::for_test(
+                vec![5; 96],
+                B256::from(context.manifest().chain_id),
+                0,
+                0,
+            )
+            .expect("offer material"),
+        )
+        .expect("activate");
+    let leader = context.attestation_public();
+    let (completed, completion) = mpsc::channel();
+    std::thread::scope(|scope| {
+        let query_context = std::sync::Arc::clone(&context);
+        let query = scope.spawn(move || {
+            let _runtime = install_context(query_context);
+            let _pause = pause_account_query_for_test(hold);
+            try_derive_sealed_account_keys(
+                Ledger::Gratis,
+                alloy_primitives::Address::repeat_byte(2),
+                [3; 32],
+                [0; 65],
+            )
+        });
+        gates.0.wait();
+        let consensus_context = std::sync::Arc::clone(&context);
+        scope.spawn(move || {
+            use outbe_tee::witness::{
+                EnclaveWitnessTapeV1, WitnessExecutionMode, WitnessExecutionScope, WitnessState,
+            };
+            let _runtime = install_context(consensus_context);
+            let state = std::sync::Arc::new(Mutex::new(WitnessState::new(
+                WitnessExecutionMode::ProposerRecord,
+                Some(leader),
+                EnclaveWitnessTapeV1::default(),
+            )));
+            let _scope = WitnessExecutionScope::enter(std::sync::Arc::clone(&state));
+            let recorded = consensus_witness_call(
+                CallMeta::recorded("signed_witness"),
+                {
+                    let body = signed_body(1, B256::repeat_byte(0x5a));
+                    move |resident| sign_body(resident, body)
+                },
+                authenticate_body,
+            );
+            assert!(state.lock().expect("witness").staged.len() == 1);
+            completed.send(recorded).expect("consensus result");
+        });
+        let execution = completion.recv_timeout(Duration::from_secs(5));
+        gates.1.wait();
+        assert!(execution
+            .expect("consensus finished while the account query stayed blocked")
+            .is_ok());
+        let error = query
+            .join()
+            .expect("account query")
+            .expect("runtime installed")
+            .expect_err("invalid owner signature");
+        assert!(
+            matches!(error, TransportError::EnclaveCause { .. }) && !error.is_node_local(),
+            "{error}"
+        );
+    });
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct PromisLocal {
+    n: u8,
+    inputs_canonical_hash: B256,
+    attestation_tag: Vec<u8>,
+}
+
+impl WitnessSchema for PromisLocal {
+    const TAG: WitnessResponseTag = WitnessResponseTag::PromisOpApplied;
+
+    fn inputs_canonical_hash(&self) -> B256 {
+        self.inputs_canonical_hash
+    }
+
+    fn attestation_tag(&self) -> &[u8] {
+        &self.attestation_tag
+    }
+
+    fn set_attestation_tag(&mut self, tag: Vec<u8>) {
+        self.attestation_tag = tag;
+    }
+}
+
+#[test]
+fn proposer_record_local_decode_failure_is_local_unavailable() {
+    use outbe_tee::witness::{
+        BlockWitnessFault, EnclaveWitnessTapeV1, TypedWitnessPayload, WitnessExecutionMode,
+        WitnessExecutionScope, WitnessState,
+    };
+    use std::sync::{Arc, Mutex};
+    let context = witness_context(4);
+    let leader = context.attestation_public();
+    let _guard = install_context(Arc::clone(&context));
+    let inputs = B256::repeat_byte(0x5a);
+    let clean = PromisLocal {
+        n: 1,
+        inputs_canonical_hash: inputs,
+        attestation_tag: Vec::new(),
+    };
+    let mut trailing = encode_tagged_payload(WitnessResponseTag::PromisOpApplied, &clean).unwrap();
+    trailing.push(0x00);
+    let unstripped = encode_tagged_payload(
+        WitnessResponseTag::PromisOpApplied,
+        &PromisLocal {
+            attestation_tag: vec![9],
+            ..clean.clone()
+        },
+    )
+    .unwrap();
+    let mut overlong = encode_tagged_payload(WitnessResponseTag::PromisOpApplied, &clean).unwrap();
+    let length_at = overlong.len() - 1;
+    assert_eq!(overlong[length_at], 0);
+    overlong.splice(length_at..length_at + 1, [0x80, 0x00]);
+    let hash_mismatch = encode_tagged_payload(
+        WitnessResponseTag::PromisOpApplied,
+        &PromisLocal {
+            inputs_canonical_hash: B256::repeat_byte(0x11),
+            ..clean.clone()
+        },
+    )
+    .unwrap();
+    let local = |payload: Vec<u8>, expected: WitnessTagError| {
+        let state = Arc::new(Mutex::new(WitnessState::new(
+            WitnessExecutionMode::ProposerRecord,
+            Some(leader),
+            EnclaveWitnessTapeV1::default(),
+        )));
+        state.lock().expect("witness").tx_index = Some(0);
+        let _scope = WitnessExecutionScope::enter(Arc::clone(&state));
+        let error = outbe_tee::tee_consensus_typed_call(
+            CallMeta::recorded("local_result"),
+            {
+                let clean = clean.clone();
+                move |_| Ok(clean)
+            },
+            move |_| {
+                Ok(TypedWitnessPayload {
+                    payload,
+                    inputs_canonical_hash: inputs,
+                    attestation_tag: vec![7, 7],
+                })
+            },
+            |key, wire| {
+                super::decode_domain_wire(key, wire, &|_: &[u8; 32], _: &PromisLocal| {
+                    Err(TransportError::UnexpectedResponse)
+                })
+            },
+        )
+        .expect_err("local payload");
+        let witness = state.lock().expect("witness");
+        assert_eq!(
+            witness.first_witness_fault,
+            Some(BlockWitnessFault::LocalUnavailable)
+        );
+        assert!(witness.staged.is_empty());
+        assert_eq!(tag_error::<PromisLocal>(Err(error)), expected);
+    };
+    local(trailing, WitnessTagError::TrailingBytes);
+    local(unstripped, WitnessTagError::InnerAttestationTag);
+    local(overlong, WitnessTagError::NonCanonical);
+    local(hash_mismatch, WitnessTagError::InputsHashMismatch);
+    local(vec![3], WitnessTagError::NonRecordable { tag: 3 });
+    local(vec![6], WitnessTagError::NonRecordable { tag: 6 });
+
+    let state = Arc::new(Mutex::new(WitnessState::new(
+        WitnessExecutionMode::ProposerRecord,
+        Some(leader),
+        EnclaveWitnessTapeV1::default(),
+    )));
+    state.lock().expect("witness").tx_index = Some(0);
+    let _scope = WitnessExecutionScope::enter(Arc::clone(&state));
+    let corrupt = consensus_witness_call(
+        CallMeta::recorded("local_result"),
+        |resident| {
+            let mut body = sign_body(resident, signed_body(11, inputs))?;
+            body.attestation_tag[0] ^= 0xff;
+            Ok(body)
+        },
+        authenticate_body,
+    )
+    .expect_err("corrupt attestation tag");
+    let witness = state.lock().expect("witness");
+    assert_eq!(
+        witness.first_witness_fault,
+        Some(BlockWitnessFault::LocalUnavailable)
+    );
+    assert!(witness.staged.is_empty());
+    assert!(matches!(corrupt, TransportError::AppAttestation { .. }));
 }

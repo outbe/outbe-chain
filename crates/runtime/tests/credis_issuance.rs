@@ -2,13 +2,13 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_credisfactory::precompile::ICredisFactory;
-use outbe_enclave::gratis::{
-    decrypt_balance, decrypt_pledged, derive_account_keys, derive_view_key, modify_mac,
-};
-use outbe_enclave::protocol::{GratisOp, ModifyAuth};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratis::precompile::IGratis;
+use outbe_gratis::{
+    decrypt_balance, decrypt_pledged, derive_account_keys, derive_view_key, modify_mac,
+};
+use outbe_gratis::{GratisOp, ModifyAuth};
 use outbe_gratisfactory::precompile::IGratisFactory;
 use outbe_oracle::{
     schema::OracleContract,
@@ -204,7 +204,7 @@ fn source_auth(
     ModifyAuth {
         mac: modify_mac(
             key,
-            &outbe_enclave::gratis::ModifyOperation {
+            &outbe_gratis::ModifyOperation {
                 account: OWNER,
                 op,
                 amount: U256::from(GRATIS),

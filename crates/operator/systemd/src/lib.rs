@@ -362,11 +362,12 @@ mod tests {
             base_dir: "/opt/outbe-chain",
             validator_index: 2,
         });
+        let removed_service = format!("{}-{}", "outbe", "enclave.service");
         for unit in joining.iter().chain(&founding) {
             assert!(!unit.name.contains("enclave"));
             assert!(!unit.name.contains("tee-renew"));
             for removed in [
-                "outbe-enclave.service",
+                removed_service.as_str(),
                 "aesmd.service",
                 "/opt/outbe/sgx",
                 "/var/lib/outbe/tee",

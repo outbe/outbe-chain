@@ -21,7 +21,6 @@ use outbe_tee::witness::{
     BlockWitnessFault, EnclaveWitnessEntryV1, EnclaveWitnessTapeV1, TxWitnessV1,
     WitnessExecutionMode, WitnessExecutionScope, WitnessState,
 };
-use outbe_tee::TransportError;
 use outbe_tribute::confidential::encrypt_tribute;
 use outbe_tribute::confidential::host::{
     decrypt_canary_tribute_offer, derive_tribute_keys, open_canary_tribute_offer,
@@ -56,9 +55,7 @@ fn activated(seed: u8) -> Arc<InProcessTeeContext> {
 fn install(
     context: &Arc<InProcessTeeContext>,
 ) -> outbe_tee::in_process_dispatch::InProcessTestGuard {
-    set_in_process_tee_context_for_test(Some((Arc::clone(context), |_, _, _| {
-        Err(TransportError::UnexpectedResponse)
-    })))
+    set_in_process_tee_context_for_test(Some(Arc::clone(context)))
 }
 
 fn enter(

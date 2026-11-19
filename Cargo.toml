@@ -65,7 +65,6 @@ members = [
     "crates/core/stablecoin",
     "crates/core/stablecoinfactory",
     "crates/core/common",
-    "crates/core/enclave",
     # binaries
     "bin/outbe-up",
     "bin/outbe-chain",
@@ -153,7 +152,6 @@ default-members = [
     "crates/core/stablecoin",
     "crates/core/stablecoinfactory",
     "crates/core/common",
-    "crates/core/enclave",
     # binaries
     "bin/outbe-up",
     "bin/outbe-chain",
@@ -240,7 +238,6 @@ radicle-log = { path = "vendor/heartwood/crates/radicle-log" }
 radicle-node = { path = "vendor/heartwood/crates/radicle-node", default-features = false, features = ["socket2"] }
 radicle-signals = { path = "vendor/heartwood/crates/radicle-signals" }
 # Core - outbe
-outbe-enclave = { path = "crates/core/enclave" }
 outbe-gratis = { path = "crates/core/gratis" }
 outbe-promis = { path = "crates/core/promis" }
 outbe-promisfactory = { path = "crates/core/promisfactory" }

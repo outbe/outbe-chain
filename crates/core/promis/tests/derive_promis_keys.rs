@@ -19,7 +19,6 @@ use outbe_promis::{
 };
 use outbe_tee::in_process::InProcessTeeContext;
 use outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test;
-use outbe_tee::protocol::{EnclaveResponse, PayloadLane};
 use outbe_tee::resident::{
     AccountKeysHandle, OfferKeyHandle, ResidentOfferMaterial, StateKeyHandle,
 };
@@ -27,7 +26,6 @@ use outbe_tee::witness::{
     EnclaveWitnessEntryV1, EnclaveWitnessTapeV1, WitnessExecutionMode, WitnessExecutionScope,
     WitnessState,
 };
-use outbe_tee::TransportError;
 use ring::agreement::{agree_ephemeral, EphemeralPrivateKey, UnparsedPublicKey, X25519};
 use ring::rand::SystemRandom;
 
@@ -46,14 +44,6 @@ fn chain_id() -> B256 {
     B256::from(binding().chain_id)
 }
 
-fn reject_payload(
-    _: &InProcessTeeContext,
-    _: PayloadLane,
-    _: &[u8],
-) -> std::result::Result<EnclaveResponse, TransportError> {
-    Err(TransportError::UnexpectedResponse)
-}
-
 fn installed() -> (
     outbe_tee::in_process_dispatch::InProcessTestGuard,
     Arc<InProcessTeeContext>,
@@ -61,7 +51,7 @@ fn installed() -> (
     let context = Arc::new(outbe_tee::test_utils::resident_context(4, binding()));
     let offer = ResidentOfferMaterial::for_test(GROUP.to_vec(), chain_id(), 0, 0).expect("offer");
     context.activate_for_test(offer).expect("activate");
-    let guard = set_in_process_tee_context_for_test(Some((Arc::clone(&context), reject_payload)));
+    let guard = set_in_process_tee_context_for_test(Some(Arc::clone(&context)));
     (guard, context)
 }
 

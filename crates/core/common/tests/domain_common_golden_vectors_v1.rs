@@ -638,19 +638,8 @@ fn binding() -> NetworkBindingV1 {
 fn install_context() -> (outbe_tee::in_process_dispatch::InProcessTestGuard, [u8; 32]) {
     let context = Arc::new(outbe_tee::test_utils::resident_context(4, binding()));
     let leader = context.attestation_public();
-    let guard = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
-        context,
-        reject_payload,
-    )));
+    let guard = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(context));
     (guard, leader)
-}
-
-fn reject_payload(
-    _context: &outbe_tee::in_process::InProcessTeeContext,
-    _lane: outbe_tee::protocol::PayloadLane,
-    _bytes: &[u8],
-) -> Result<outbe_tee::protocol::EnclaveResponse, TransportError> {
-    Err(TransportError::UnexpectedResponse)
 }
 
 const WITNESS_DOMAIN: &[u8] = b"outbe/witness/golden/v1";
@@ -694,10 +683,7 @@ fn authenticate_amount(key: &[u8; 32], value: &SignedAmount) -> Result<(), Trans
 fn record_signed(seed: u8, value: SignedAmount) -> (Vec<EnclaveWitnessEntryV1>, [u8; 32]) {
     let context = Arc::new(outbe_tee::test_utils::resident_context(seed, binding()));
     let key = context.attestation_public();
-    let _guard = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
-        context,
-        reject_payload,
-    )));
+    let _guard = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(context));
     let state = Arc::new(Mutex::new(WitnessState::new(
         WitnessExecutionMode::ProposerRecord,
         Some(key),
@@ -818,10 +804,8 @@ fn distinct_validator_keys_ignore_attestation_tag_and_reject_divergence() {
         leader_sig.as_slice(),
         sign_attestation_tag(verifier.as_ref(), &preimage).as_slice()
     );
-    let _guard = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some((
-        verifier,
-        reject_payload,
-    )));
+    let _guard =
+        outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(verifier));
     let state = Arc::new(Mutex::new(WitnessState::new(
         WitnessExecutionMode::VerifierWithEnclave,
         Some(leader),

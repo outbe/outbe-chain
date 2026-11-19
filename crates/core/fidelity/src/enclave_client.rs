@@ -471,7 +471,6 @@ mod executing_context {
     use outbe_primitives::error::PrecompileError;
     use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
     use outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test;
-    use outbe_tee::protocol::{EnclaveResponse, PayloadLane};
     use outbe_tee::resident::ResidentOfferMaterial;
     use outbe_tee::witness::{
         EnclaveWitnessTapeV1, WitnessExecutionMode, WitnessExecutionScope, WitnessState,
@@ -501,14 +500,6 @@ mod executing_context {
         .expect("offer material");
         context.activate_for_test(material).expect("activate offer");
         context
-    }
-
-    fn reject(
-        _: &InProcessTeeContext,
-        _: PayloadLane,
-        _: &[u8],
-    ) -> std::result::Result<EnclaveResponse, TransportError> {
-        Err(TransportError::UnexpectedResponse)
     }
 
     fn cohort_req() -> FidelityCohortRequest {
@@ -552,7 +543,7 @@ mod executing_context {
     #[test]
     fn rpc_direct_execute_rejects_a_foreign_hash_and_a_corrupt_tag() {
         let ctx = context(4);
-        let _guard = set_in_process_tee_context_for_test(Some((Arc::clone(&ctx), reject)));
+        let _guard = set_in_process_tee_context_for_test(Some(Arc::clone(&ctx)));
         let state = Arc::new(Mutex::new(WitnessState::new(
             WitnessExecutionMode::RpcDirect,
             Some(ctx.attestation_public()),
@@ -618,7 +609,7 @@ mod executing_context {
         let first = context(4);
         let second = context(9);
         assert_ne!(first.attestation_public(), second.attestation_public());
-        let _guard = set_in_process_tee_context_for_test(Some((Arc::clone(&first), reject)));
+        let _guard = set_in_process_tee_context_for_test(Some(Arc::clone(&first)));
 
         let cohort = cohort_req();
         let cohort_hash = fidelity_cohort_canonical_hash(&cohort);
@@ -634,7 +625,7 @@ mod executing_context {
             panic!("empty owner signature is a signed rejection");
         };
 
-        let _successor = set_in_process_tee_context_for_test(Some((second.clone(), reject)));
+        let _successor = set_in_process_tee_context_for_test(Some(second.clone()));
         assert_eq!(
             outbe_tee::in_process_tee_context()
                 .expect("successor")
