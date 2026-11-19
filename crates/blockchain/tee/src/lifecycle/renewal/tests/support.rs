@@ -126,6 +126,7 @@ pub(crate) struct Chain {
     pub sent: Mutex<Vec<Vec<u8>>>,
     pub receipt: Option<LifecycleReceiptV1>,
     pub upgrade_reply: Option<LifecycleOnboardingProofV1>,
+    pub upgrade_checkpoint: Mutex<Option<LifecycleCheckpointV1>>,
     pub wrong_hash: bool,
     pub nonce_error: bool,
     pub journal_path: std::path::PathBuf,
@@ -139,6 +140,7 @@ impl Chain {
             sent: Mutex::new(vec![]),
             receipt: None,
             upgrade_reply: None,
+            upgrade_checkpoint: Mutex::new(None),
             wrong_hash: false,
             nonce_error: false,
             journal_path: root.join("tee-service-tx-v1/journal.json"),
@@ -225,13 +227,24 @@ impl LifecycleChainPort for Chain {
     }
     async fn upgrade_key(
         &self,
-        _: LifecycleCheckpointV1,
+        at: LifecycleCheckpointV1,
         _: &crate::dcap_protocol::DcapOnboardingContextV1,
-        _: &crate::upgrade_transfer::UpgradeKeyProofV1,
+        proof: &crate::upgrade_transfer::UpgradeKeyProofV1,
     ) -> PortResult<LifecycleOnboardingProofV1> {
-        self.upgrade_reply
-            .clone()
-            .ok_or_else(|| LifecyclePortError::Source(std::io::Error::other("unused")))
+        proof
+            .validate()
+            .map_err(|err| LifecyclePortError::Source(std::io::Error::other(err)))?;
+        *self.upgrade_checkpoint.lock().unwrap() = Some(at);
+        let artifact = self
+            .upgrade_reply
+            .as_ref()
+            .ok_or_else(|| LifecyclePortError::Source(std::io::Error::other("unused")))?
+            .artifact
+            .clone();
+        Ok(LifecycleOnboardingProofV1 {
+            artifact,
+            proof: proof.clone(),
+        })
     }
 }
 

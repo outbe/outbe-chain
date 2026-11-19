@@ -29,10 +29,13 @@ pub(super) async fn advance<P: LifecycleChainPort, S: EnrollmentSignerV1>(
 ) -> Result<EnrollmentOutcome, EnrollmentError<P::Error, S::Error>> {
     let SubmissionContext { live, config, view } = context;
     if let Some(record) = journal.load()? {
-        if record.sender != config.sender {
+        if record.sender != config.sender || blocks_fresh_register(&record) {
             return Err(EnrollmentError::WrongServiceTransaction);
         }
-        if record.public_intent.target.enclave_id == live.manifest().enclave_id()?
+        // A terminal RebuildRequired Renew or UpgradeCancel is not a registration
+        // predecessor. submit_fresh replaces it. A live Pending non-Register does not.
+        if record.kind == ServiceTxKindV1::Register
+            && record.public_intent.target.enclave_id == live.manifest().enclave_id()?
             && matches!(
                 record.state,
                 ServiceTxStateV1::Pending | ServiceTxStateV1::RebuildRequired
@@ -294,12 +297,21 @@ fn prepare<E: std::error::Error + 'static, S: EnrollmentSignerV1>(
     Ok(record)
 }
 
+/// A Pending Renew, UpgradeCancel, or any other non-Register still owns the journal.
+/// Terminal RebuildRequired of those kinds is replaced by `submit_fresh`, not decoded here.
+fn blocks_fresh_register(record: &ServiceTxRecordV1) -> bool {
+    record.state == ServiceTxStateV1::Pending && record.kind != ServiceTxKindV1::Register
+}
+
 fn pending_intent<E: std::error::Error + 'static, S: std::error::Error + 'static>(
     record: &ServiceTxRecordV1,
     live: &InProcessTeeContext,
     sender: Address,
 ) -> Result<RegistrationIntentV1, EnrollmentError<E, S>> {
-    if record.kind != ServiceTxKindV1::Register || record.sender != sender {
+    if blocks_fresh_register(record)
+        || record.kind != ServiceTxKindV1::Register
+        || record.sender != sender
+    {
         return Err(EnrollmentError::WrongServiceTransaction);
     }
     let mut bytes = &record.raw_signed_tx[1..];

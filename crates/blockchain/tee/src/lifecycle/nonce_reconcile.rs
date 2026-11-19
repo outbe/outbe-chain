@@ -128,15 +128,16 @@ async fn reconcile_nonce<P: LifecycleChainPort>(
             nonce: record.nonce,
         });
     }
-    if record.state == ServiceTxStateV1::RebuildRequired {
-        return Err(ReconcileError::CheckpointMismatch);
-    }
-    // A lost recipient does not make its broadcast transaction unmineable.
+    // An external operator transaction (for example staking unjail) can sit above
+    // an expired renew before it finalizes. That gap is not a checkpoint conflict.
     if latest > record.nonce || pending > record.nonce {
         return Ok(ServiceTxReconciliationV1::WaitForFinality {
             latest_nonce: latest,
             pending_nonce: pending,
         });
+    }
+    if record.state == ServiceTxStateV1::RebuildRequired {
+        return Err(ReconcileError::CheckpointMismatch);
     }
     // A same-nonce replacement cannot execute alongside the old signed transaction.
     Ok(if same_process {

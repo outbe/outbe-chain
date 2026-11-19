@@ -300,6 +300,7 @@ impl AdmissionFixture {
             state_root,
             extra_data: Vec::new(),
             parent_hash: admission.block_hash,
+            base_fee_per_gas: None,
         });
         let mut certified = compact(&admission);
         certified.finalization = descendant.finalization.clone();
@@ -410,6 +411,7 @@ pub fn wrong_committee_certificate(proof: &FinalizedAdmissionWitnessV1) -> Vec<u
             state_root: header.state_root(),
             extra_data: header.extra_data().to_vec(),
             parent_hash: header.parent_hash(),
+            base_fee_per_gas: None,
         })
         .finalization
 }

@@ -401,6 +401,57 @@ async fn external_nonce_waits_for_finality_then_rebuilds_without_replacing_live_
 }
 
 #[tokio::test]
+async fn expired_renew_rebuild_waits_for_an_inflight_operator_nonce() {
+    let (root, mut journal, live, mut record, mut chain) = fixture();
+    record.kind = ServiceTxKindV1::Renew;
+    journal.begin(record.clone()).unwrap();
+    let mut binding = applied(&record);
+    binding.valid_until = 150;
+    chain.binding = Some(binding);
+    chain.at.timestamp = 200;
+    chain.nonces = [record.nonce; 3];
+    assert_eq!(
+        reconcile_service_tx_v1(&chain, &mut journal, &live)
+            .await
+            .unwrap(),
+        ServiceTxReconciliationV1::RebuildAndResign {
+            nonce: record.nonce
+        }
+    );
+    assert_eq!(
+        journal.load().unwrap().unwrap().state,
+        ServiceTxStateV1::RebuildRequired
+    );
+    let path = root.path().join("tee-service-tx-v1/journal.json");
+    let rebuilt = std::fs::read(&path).unwrap();
+    for nonces in [
+        [record.nonce, record.nonce + 1, record.nonce + 1],
+        [record.nonce, record.nonce, record.nonce + 1],
+    ] {
+        chain.nonces = nonces;
+        assert_eq!(
+            reconcile_service_tx_v1(&chain, &mut journal, &live)
+                .await
+                .unwrap(),
+            ServiceTxReconciliationV1::WaitForFinality {
+                latest_nonce: nonces[1],
+                pending_nonce: nonces[2],
+            }
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), rebuilt);
+    }
+    chain.nonces = [record.nonce; 3];
+    chain.binding.as_mut().unwrap().valid_until = 9_000;
+    assert!(matches!(
+        reconcile_service_tx_v1(&chain, &mut journal, &live)
+            .await
+            .unwrap_err(),
+        ReconcileError::CheckpointMismatch
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), rebuilt);
+}
+
+#[tokio::test]
 async fn restarted_process_discards_old_recipient_only_after_chain_reconciliation() {
     for finalized in [false, true] {
         let (_root, mut journal, _old, record, mut chain) = fixture();

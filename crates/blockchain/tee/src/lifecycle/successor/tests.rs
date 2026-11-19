@@ -1,9 +1,10 @@
 use super::*;
 use crate::lifecycle::renewal::tests::support::{self, Chain, Signer};
+use crate::lifecycle::renewal::RenewalError;
 use crate::lifecycle::test_finality as finality;
 use crate::lifecycle::*;
 use crate::registry_view::FinalizedStagedSuccessorPolicyV1;
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 mod fixtures;
 
 #[tokio::test]
@@ -43,7 +44,7 @@ async fn prepare_candidate_key_import_verifies_real_genesis_bls_mpt_before_key_r
     let mut chain = Chain::new(view, root.path());
     let signer = Signer::default();
     let mut journal = ServiceTxJournalV1::open(root.path()).unwrap();
-    let (attempt, outcome) = prepare_successor_v1(
+    let (mut attempt, outcome) = prepare_successor_v1(
         &chain,
         &signer,
         (&source, &candidate),
@@ -66,7 +67,7 @@ async fn prepare_candidate_key_import_verifies_real_genesis_bls_mpt_before_key_r
     let material = source
         .prepare_no_attestation_dev_onboarding_artifact_v2(attempt.context)
         .unwrap();
-    let admission = fixtures::AdmissionFixture::new(&genesis, &attempt.context);
+    let admission = fixtures::AdmissionFixture::new(&genesis, &attempt.context, 42);
     let supplied = LifecycleOnboardingProofV1 {
         artifact: material.onboarding_artifact.into(),
         proof: UpgradeKeyProofV1 {
@@ -80,24 +81,88 @@ async fn prepare_candidate_key_import_verifies_real_genesis_bls_mpt_before_key_r
             admission: admission.proof.encode_canonical().unwrap().into(),
         },
     };
-    let mut bad = supplied.clone();
-    let mut forged = admission.proof.clone();
-    forged.registry_storage[0].nodes[0][0] ^= 1;
-    bad.proof.admission = forged.encode_canonical().unwrap().into();
-    chain.upgrade_reply = Some(bad);
+    let mut forged_witness = admission.proof.clone();
+    forged_witness.registry_storage[0].nodes[0][0] ^= 1;
+    let mut forged = supplied.proof.clone();
+    forged.admission = forged_witness.encode_canonical().unwrap().into();
+    chain.view.checkpoint.base_fee_per_gas = U256::from(99);
+    chain.upgrade_reply = Some(supplied.clone());
+    *chain.upgrade_checkpoint.lock().unwrap() = None;
     assert!(
-        provision_successor_v1(&chain, &signer, &candidate, &attempt, &supplied.proof)
+        provision_successor_v1(&chain, &signer, &candidate, &attempt, &forged)
             .await
             .is_err()
     );
     assert!(!candidate.offer_key_ready().unwrap());
-    chain.upgrade_reply = Some(supplied.clone());
+    let priced_fee = chain.upgrade_checkpoint.lock().unwrap().unwrap();
+    assert_eq!(priced_fee.base_fee_per_gas, U256::from(42));
+    assert_ne!(
+        priced_fee.base_fee_per_gas,
+        chain.view.checkpoint.base_fee_per_gas
+    );
+    let proof_header = admission_header(&supplied.proof);
+    assert_eq!(proof_header.base_fee_per_gas, Some(42));
+    let original = chain.view.checkpoint;
+    pin_finality(&mut chain, proof_header.number - 1, B256::repeat_byte(0x44));
+    *chain.upgrade_checkpoint.lock().unwrap() = None;
+    assert!(matches!(
+        provision_successor_v1(&chain, &signer, &candidate, &attempt, &supplied.proof).await,
+        Err(SuccessorError::Lifecycle(RenewalError::BindingMismatch))
+    ));
+    assert!(chain.upgrade_checkpoint.lock().unwrap().is_none());
+    assert!(!candidate.offer_key_ready().unwrap());
+    let mut tampered = supplied.proof.clone();
+    let mut admission = tampered.admission.to_vec();
+    admission[1] ^= 0xff;
+    tampered.admission = admission.into();
+    pin_finality(&mut chain, proof_header.number + 8, B256::repeat_byte(0x46));
+    chain.view.checkpoint.state_root = B256::repeat_byte(0x47);
+    assert!(
+        provision_successor_v1(&chain, &signer, &candidate, &attempt, &tampered)
+            .await
+            .is_err()
+    );
+    assert!(!candidate.offer_key_ready().unwrap());
     assert_eq!(
         provision_successor_v1(&chain, &signer, &candidate, &attempt, &supplied.proof)
             .await
             .unwrap(),
         SuccessorStep::KeyReady
     );
+    let seen = chain.upgrade_checkpoint.lock().unwrap().unwrap();
+    assert_eq!(
+        (
+            seen.height,
+            seen.hash,
+            seen.state_root,
+            seen.base_fee_per_gas
+        ),
+        (
+            proof_header.number,
+            proof_header.hash_slow(),
+            proof_header.state_root,
+            U256::from(42)
+        )
+    );
+    assert!(seen.height < chain.view.checkpoint.height);
+    assert_ne!(
+        seen.base_fee_per_gas,
+        chain.view.checkpoint.base_fee_per_gas
+    );
+    assert_ne!(
+        (seen.hash, seen.state_root),
+        (chain.view.checkpoint.hash, chain.view.checkpoint.state_root)
+    );
+    chain.view.candidate.as_mut().unwrap().context_hash = B256::repeat_byte(0x99);
+    assert!(matches!(
+        provision_successor_v1(&chain, &signer, &candidate, &attempt, &supplied.proof).await,
+        Err(SuccessorError::CandidateChanged)
+    ));
+    chain.view.candidate = journal.load().unwrap().unwrap().public_intent.candidate;
+    chain.view.checkpoint = original;
+    chain.view.schedule.finalized_height = original.height;
+    chain.view.schedule.finalized_hash = original.hash;
+    chain.view.schedule.finalized_timestamp = original.timestamp;
     assert_eq!(candidate.network_encryption_public().unwrap(), public);
     let intent = candidate::transition_intent::<Chain, Signer>(
         &candidate,
@@ -122,6 +187,26 @@ async fn prepare_candidate_key_import_verifies_real_genesis_bls_mpt_before_key_r
     ));
     let saved = journal.load().unwrap().unwrap();
     assert_eq!(saved.kind, ServiceTxKindV1::UpgradeTransition);
+    let signed = decode_intent(&saved).unwrap();
+    let source = candidate::source_target(chain.view.binding.as_ref().unwrap());
+    assert_ne!(saved.public_intent.target, source);
+    assert_ne!(
+        source.enclave_id,
+        candidate.manifest().enclave_id().unwrap()
+    );
+    assert_eq!(
+        saved.public_intent.target,
+        crate::lifecycle::renewal::prepare::target_v1(&signed).unwrap()
+    );
+    assert_eq!(
+        transition_successor_v1(&chain, &signer, &candidate, &mut journal, &attempt)
+            .await
+            .unwrap(),
+        SuccessorStep::Submitted {
+            transaction_hash: saved.tx_hash,
+            replayed: true
+        }
+    );
     assert_eq!(
         reconcile_successor_v1(&chain, &signer, &candidate, &mut journal)
             .await
@@ -131,6 +216,150 @@ async fn prepare_candidate_key_import_verifies_real_genesis_bls_mpt_before_key_r
             replayed: true
         }
     );
+    let path = chain.journal_path.clone();
+    let mut wire: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let unclamped = wire["record"]["public_intent"]["target"]["valid_until"].clone();
+    wire["record"]["public_intent"]["target"]["valid_until"] =
+        serde_json::json!(unclamped.as_u64().unwrap() - 500);
+    std::fs::write(&path, serde_json::to_vec(&wire).unwrap()).unwrap();
+    assert!(matches!(
+        transition_successor_v1(&chain, &signer, &candidate, &mut journal, &attempt).await,
+        Err(SuccessorError::CandidateMismatch)
+    ));
+    assert_eq!(journal.load().unwrap().unwrap().tx_hash, saved.tx_hash);
+    wire["record"]["public_intent"]["target"]["valid_until"] = unclamped;
+    std::fs::write(&path, serde_json::to_vec(&wire).unwrap()).unwrap();
+    let full_until = attempt.prepare_intent.requested_valid_until;
+    std::fs::remove_file(&path).unwrap();
+    attempt.prepare_intent.requested_valid_until = full_until - 500;
+    chain.view.candidate.as_mut().unwrap().valid_until = full_until - 500;
+    assert!(matches!(
+        transition_successor_v1(&chain, &signer, &candidate, &mut journal, &attempt)
+            .await
+            .unwrap(),
+        SuccessorStep::Submitted {
+            replayed: false,
+            ..
+        }
+    ));
+    let shortened = journal.load().unwrap().unwrap();
+    let shortened_intent = decode_intent(&shortened).unwrap();
+    assert_eq!(shortened.public_intent.target.valid_until, full_until - 500);
+    assert_eq!(
+        shortened.public_intent.target,
+        crate::lifecycle::renewal::prepare::target_v1(&shortened_intent).unwrap()
+    );
+    attempt.prepare_intent.requested_valid_until = full_until;
+    chain.view.candidate.as_mut().unwrap().valid_until = full_until;
+    assert_eq!(
+        transition_successor_v1(&chain, &signer, &candidate, &mut journal, &attempt)
+            .await
+            .unwrap(),
+        SuccessorStep::Submitted {
+            transaction_hash: shortened.tx_hash,
+            replayed: true
+        }
+    );
+    let saved = shortened;
+    let mut wire: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let mut foreign = saved.public_intent.target.clone();
+    foreign.enclave_id = B256::repeat_byte(0x5a);
+    foreign.binding_id = B256::repeat_byte(0x5b);
+    wire["record"]["public_intent"]["target"] = serde_json::to_value(&foreign).unwrap();
+    std::fs::write(&path, serde_json::to_vec(&wire).unwrap()).unwrap();
+    assert!(matches!(
+        transition_successor_v1(&chain, &signer, &candidate, &mut journal, &attempt).await,
+        Err(SuccessorError::CandidateMismatch)
+    ));
+    assert_eq!(journal.load().unwrap().unwrap().tx_hash, saved.tx_hash);
+    wire["record"]["public_intent"]["target"] =
+        serde_json::to_value(&saved.public_intent.target).unwrap();
+    std::fs::write(&path, serde_json::to_vec(&wire).unwrap()).unwrap();
+    let displaced_nonce = saved.nonce + 1;
+    chain.nonces = [displaced_nonce; 3];
+    assert_eq!(
+        transition_successor_v1(&chain, &signer, &candidate, &mut journal, &attempt)
+            .await
+            .unwrap(),
+        SuccessorStep::RebuildRequired {
+            nonce: displaced_nonce
+        }
+    );
+    let rebuilt = journal.load().unwrap().unwrap();
+    assert_eq!(rebuilt.state, ServiceTxStateV1::RebuildRequired);
+    assert_eq!(rebuilt.tx_hash, saved.tx_hash);
+    assert_eq!(rebuilt.nonce, saved.nonce);
+    let sent = chain.sent.lock().unwrap().len();
+    assert!(matches!(
+        transition_successor_v1(&chain, &signer, &candidate, &mut journal, &attempt)
+            .await
+            .unwrap(),
+        SuccessorStep::Submitted {
+            replayed: false,
+            ..
+        }
+    ));
+    let resigned = journal.load().unwrap().unwrap();
+    assert_eq!(resigned.kind, ServiceTxKindV1::UpgradeTransition);
+    assert_eq!(resigned.state, ServiceTxStateV1::Pending);
+    assert_eq!(resigned.nonce, displaced_nonce);
+    assert_ne!(resigned.tx_hash, saved.tx_hash);
+    assert_eq!(chain.sent.lock().unwrap().len(), sent + 1);
+    let staged = chain.view.successor_policy.as_mut().unwrap();
+    staged.policy.policy_version += 1;
+    staged.policy.activation_height = 1;
+    assert_ne!(
+        staged.policy.policy_hash().unwrap(),
+        attempt.prepare_intent.policy_hash
+    );
+    apply_target(chain.binding(), &resigned.public_intent.target);
+    chain.view.candidate = None;
+    assert_eq!(
+        transition_successor_v1(&chain, &signer, &candidate, &mut journal, &attempt)
+            .await
+            .unwrap(),
+        SuccessorStep::Finalized
+    );
+    let finalized = journal.load().unwrap().unwrap();
+    assert_eq!(finalized.tx_hash, resigned.tx_hash);
+    assert_eq!(finalized.state, ServiceTxStateV1::Completed);
+    assert_eq!(chain.sent.lock().unwrap().len(), sent + 1);
+}
+
+fn apply_target(
+    binding: &mut crate::registry_view::RenewalBindingV1,
+    target: &ServiceBindingTargetV1,
+) {
+    binding.node_id_hash = target.node_id_hash;
+    binding.enclave_id = target.enclave_id;
+    binding.binding_id = target.binding_id;
+    binding.binding_version = target.binding_version;
+    binding.registration_version = target.registration_version;
+    binding.renewal_nonce = target.renewal_nonce;
+    binding.transition_nonce = target.transition_nonce;
+    binding.valid_until = target.valid_until;
+    binding.policy_hash = target.policy_hash;
+    binding.recipient_x25519 = target.recipient_x25519;
+}
+
+fn admission_header(proof: &crate::upgrade_transfer::UpgradeKeyProofV1) -> alloy_consensus::Header {
+    use alloy_rlp::Decodable as _;
+    let witness =
+        crate::finalized_admission::FinalizedAdmissionWitnessV1::decode_canonical(&proof.admission)
+            .unwrap();
+    let mut rlp = witness.admission.header.as_slice();
+    let header = alloy_consensus::Header::decode(&mut rlp).unwrap();
+    assert!(rlp.is_empty());
+    header
+}
+
+fn pin_finality(chain: &mut Chain, height: u64, hash: B256) {
+    chain.view.checkpoint.height = height;
+    chain.view.checkpoint.hash = hash;
+    chain.view.schedule.finalized_height = height;
+    chain.view.schedule.finalized_hash = hash;
 }
 
 fn successor_view(source: &crate::in_process::InProcessTeeContext) -> LifecycleRegistryStateV1 {

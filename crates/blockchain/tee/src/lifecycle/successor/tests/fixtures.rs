@@ -58,7 +58,11 @@ impl AdmissionFixture {
             genesis_consensus_keys: genesis.public_keys_min_pk(),
         }
     }
-    pub fn new(genesis: &FinalityCommitteeFixture, context: &DcapOnboardingContextV1) -> Self {
+    pub fn new(
+        genesis: &FinalityCommitteeFixture,
+        context: &DcapOnboardingContextV1,
+        base_fee_per_gas: u64,
+    ) -> Self {
         let (state_root, registry_account, registry_storage) = registry_opening(context);
         let successor = FinalityCommitteeFixture::new(50);
         let first = genesis.certify_block(
@@ -68,7 +72,16 @@ impl AdmissionFixture {
             B256::repeat_byte(0x81),
             successor.preannounce_extra_data(Epoch::new(1)),
         );
-        let second = successor.certify_block(Epoch::new(1), 2, 1000, state_root, vec![]);
+        // Fee is sealed into H1 before the child binds parent_hash to that header.
+        let second = successor.certify_child_block(super::finality::CertifiedChildBlockInput {
+            epoch: Epoch::new(1),
+            height: 2,
+            timestamp: 1000,
+            state_root,
+            extra_data: vec![],
+            parent_hash: B256::ZERO,
+            base_fee_per_gas: Some(base_fee_per_gas),
+        });
         let child = successor.certify_child_block(super::finality::CertifiedChildBlockInput {
             epoch: Epoch::new(1),
             height: 3,
@@ -76,6 +89,7 @@ impl AdmissionFixture {
             state_root,
             extra_data: vec![],
             parent_hash: second.block_hash,
+            base_fee_per_gas: None,
         });
         let mut admission = compact(&second);
         admission.finalization = child.finalization.clone();
