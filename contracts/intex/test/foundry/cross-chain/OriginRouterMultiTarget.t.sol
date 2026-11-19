@@ -122,9 +122,14 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     }
 
     // --- Call notice ---
-    function _countCallNoticeSent(Vm.Log[] memory logs, uint32 chain) internal pure returns (uint256 n) {
+    function _countCallNoticeSent(Vm.Log[] memory logs, uint32 chain, bytes14[] memory ids)
+        internal
+        pure
+        returns (uint256 n)
+    {
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].topics[0] == IOriginRouter.IntexSeriesCallNoticeSent.selector) {
+                assertEq(bytes14(logs[i].topics[2]), ids[n], "the series of the notice, in order");
                 assertEq(uint256(logs[i].topics[3]), chain, "only the chain the leg left for");
                 n++;
             }
@@ -142,7 +147,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         vm.prank(factory);
         IOriginRouter.FailedCallNoticeLeg[] memory kept =
             origin.sendIntexSeriesCallNotice(DAY, uint64(block.timestamp), ids);
-        assertEq(_countCallNoticeSent(vm.getRecordedLogs(), TARGET_A), 2, "one event per series that left");
+        assertEq(_countCallNoticeSent(vm.getRecordedLogs(), TARGET_A, ids), 2, "one event per series that left");
         assertEq(kept.length, 1, "one kept leg");
         assertEq(kept[0].dstChainId, TARGET_B);
         assertFalse(origin.getFailedMessageSend(kept[0].idx).sent);
@@ -150,7 +155,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.registerRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
         vm.recordLogs();
         origin.retryMessageSend(kept[0].idx);
-        assertEq(_countCallNoticeSent(vm.getRecordedLogs(), TARGET_B), 2, "the retry that leaves emits them");
+        assertEq(_countCallNoticeSent(vm.getRecordedLogs(), TARGET_B, ids), 2, "the retry that leaves emits them");
     }
 
     // --- Registry ---

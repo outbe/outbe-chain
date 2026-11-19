@@ -488,8 +488,11 @@ contract OriginRouter is
         FailedCallNoticeLeg[] memory kept = new FailedCallNoticeLeg[](snapshot.length);
         uint256 keptCount;
         for (uint256 i = 0; i < snapshot.length; ++i) {
-            if (_sendOrKeepFailed(snapshot[i], payload, gasLimit) == bytes32(0)) {
-                kept[keptCount++] = FailedCallNoticeLeg(snapshot[i], _os().nextFailedMessageSendIdx - 1);
+            // A kept leg takes the next index, whatever id the gateway gives a sent one.
+            uint256 idx = _os().nextFailedMessageSendIdx;
+            _sendOrKeepFailed(snapshot[i], payload, gasLimit);
+            if (_os().nextFailedMessageSendIdx != idx) {
+                kept[keptCount++] = FailedCallNoticeLeg({dstChainId: snapshot[i], idx: idx});
             }
         }
         failedLegs = new FailedCallNoticeLeg[](keptCount);
