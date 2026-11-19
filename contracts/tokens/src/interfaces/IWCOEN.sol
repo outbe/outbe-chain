@@ -14,10 +14,4 @@ interface IWCOEN is IERC20Metadata {
 
     /// @notice Burn `wad` WCOEN of the caller and send it the same amount of native COEN.
     function withdraw(uint256 wad) external;
-
-    /// @notice Raise the allowance of `guy` by `wad`.
-    function increaseAllowance(address guy, uint256 wad) external returns (bool);
-
-    /// @notice Lower the allowance of `guy` by `wad`.
-    function decreaseAllowance(address guy, uint256 wad) external returns (bool);
 }

@@ -48,22 +48,6 @@ contract WCOEN is IWCOEN {
         return true;
     }
 
-    function increaseAllowance(address guy, uint256 wad) public returns (bool) {
-        allowance[msg.sender][guy] += wad;
-        emit Approval(msg.sender, guy, allowance[msg.sender][guy]);
-        return true;
-    }
-
-    function decreaseAllowance(address guy, uint256 wad) public returns (bool) {
-        uint256 currentAllowance = allowance[msg.sender][guy];
-        require(currentAllowance >= wad);
-        unchecked {
-            allowance[msg.sender][guy] = currentAllowance - wad;
-        }
-        emit Approval(msg.sender, guy, allowance[msg.sender][guy]);
-        return true;
-    }
-
     function transfer(address dst, uint256 wad) public returns (bool) {
         return transferFrom(msg.sender, dst, wad);
     }
