@@ -643,3 +643,107 @@ fn metadosis_starts_at_the_offering_end() {
         assert!(!is_day_allocated(&ctx, 20_240_103));
     });
 }
+
+const NOT_ALLOCATED: Option<u8> = None;
+
+/// One second after `hour`:00 UTC on 2024-01-`day`.
+fn jan(day: u64, hour: u64) -> u64 {
+    GENESIS_TS + (day - 1) * SECONDS_PER_DAY + hour * 3_600 + 1
+}
+
+fn started_cycle() -> HashMapStorageProvider {
+    let mut storage = cycle_storage();
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
+    storage.enter(|handle| {
+        run_cycle_tick(&genesis_block(handle, GENESIS_TS + 60)).unwrap();
+    });
+    storage
+}
+
+/// Runs one block per entry, then checks each listed day: `None` when it is not allocated,
+/// else its Metadosis state.
+/// A block number, its timestamp, and each checked day with its expected state.
+type CheckedBlock<'a> = (u64, u64, &'a [(u32, Option<u8>)]);
+
+fn run_blocks(storage: &mut HashMapStorageProvider, blocks: &[CheckedBlock<'_>]) {
+    for &(block_number, timestamp, expected) in blocks {
+        storage.set_block_number(block_number);
+        storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
+        storage.enter(|handle| {
+            let ctx = dispatch_at(handle.clone(), block_number, timestamp);
+            for &(day, state) in expected {
+                let actual = is_day_allocated(&ctx, day).then(|| {
+                    outbe_emission::api::get_emission_day_record(handle.clone(), day)
+                        .unwrap()
+                        .unwrap()
+                        .metadosis_state
+                });
+                assert_eq!(actual, state, "day {day} after block {block_number}");
+            }
+        });
+    }
+}
+
+#[test]
+fn a_stop_of_three_days_gives_each_day_its_allocation_and_metadosis_in_one_block() {
+    use outbe_emission::schema::metadosis_state::COMPLETED;
+    let mut storage = started_cycle();
+    // The chain stops after the Metadosis of 20240101 and runs again at 13:00 UTC on 2024-01-05.
+    run_blocks(
+        &mut storage,
+        &[
+            (2, jan(2, 12), &[(20_240_101, Some(COMPLETED))]),
+            (
+                3,
+                jan(5, 13),
+                &[(20_240_102, Some(COMPLETED)), (20_240_103, NOT_ALLOCATED)],
+            ),
+            (
+                4,
+                jan(5, 14),
+                &[(20_240_103, Some(COMPLETED)), (20_240_104, NOT_ALLOCATED)],
+            ),
+            (
+                5,
+                jan(5, 15),
+                &[(20_240_104, Some(COMPLETED)), (20_240_105, NOT_ALLOCATED)],
+            ),
+            (6, jan(6, 12), &[(20_240_105, Some(COMPLETED))]),
+        ],
+    );
+}
+
+#[test]
+fn a_stop_between_the_allocation_and_its_metadosis_runs_each_metadosis_one_run_later() {
+    use outbe_emission::schema::metadosis_state::{COMPLETED, PENDING};
+    let mut storage = started_cycle();
+    // The chain stops after the allocation of 20240101 at 00:00 UTC on 2024-01-02, before its
+    // Metadosis, and runs again at 13:00 UTC on 2024-01-05.
+    run_blocks(
+        &mut storage,
+        &[
+            (2, jan(2, 0), &[(20_240_101, Some(PENDING))]),
+            (
+                3,
+                jan(5, 13),
+                &[(20_240_101, Some(COMPLETED)), (20_240_102, Some(PENDING))],
+            ),
+            (
+                4,
+                jan(5, 14),
+                &[(20_240_102, Some(COMPLETED)), (20_240_103, Some(PENDING))],
+            ),
+            (
+                5,
+                jan(5, 15),
+                &[(20_240_103, Some(COMPLETED)), (20_240_104, Some(PENDING))],
+            ),
+            (
+                6,
+                jan(5, 16),
+                &[(20_240_104, Some(COMPLETED)), (20_240_105, NOT_ALLOCATED)],
+            ),
+            (7, jan(6, 12), &[(20_240_105, Some(COMPLETED))]),
+        ],
+    );
+}
