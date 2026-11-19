@@ -79,9 +79,9 @@ pub fn dispatch(
                     })
                 }),
                 // Off-chain the owner brute-forces `nonce` so the work hash
-                // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8), over the
-                // series id `intexId` names, has the protocol's leading zero bytes. `seq` is the on-chain
-                // per-(series, owner) counter.
+                // SHA256(tag ++ intexId_be32 ++ owner ++ seq_be8 ++ nonce_be8 ++ promisAmount_be32)
+                // has the protocol's leading zero bytes. `seq` is the on-chain per-(series, owner)
+                // counter.
                 minePromis(c) => mutate(&storage, c, caller, |_sender, c| {
                     let auth = outbe_promisfactory::api::ModifyAuth {
                         mac: c.mac.0,
