@@ -26,9 +26,10 @@
     "@shared/=../shared/src/",
     "@precompiles/=../precompiles/src/",
     "@tokens/=../tokens/src/",
+    "@crosschain/=../crosschain/src/",
   ]
-  # @shared, @precompiles and @tokens sources live outside this project.
-  allow_paths = ["../shared/src", "../precompiles/src", "../tokens/src"]
+  # @shared, @precompiles, @tokens and @crosschain sources live outside this project.
+  allow_paths = ["../shared/src", "../precompiles/src", "../tokens/src", "../crosschain/src"]
 
 
 [profile.ci]
