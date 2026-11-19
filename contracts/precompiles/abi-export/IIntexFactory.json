@@ -285,7 +285,7 @@
   },
   {
     "type": "event",
-    "name": "IntexSeriesCallNoticeFailed",
+    "name": "IntexSeriesCallNoticeSendFailed",
     "inputs": [
       {
         "name": "seriesId",
@@ -294,10 +294,16 @@
         "internalType": "bytes14"
       },
       {
-        "name": "calledAt",
-        "type": "uint64",
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "errorData",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint64"
+        "internalType": "bytes"
       }
     ],
     "anonymous": false

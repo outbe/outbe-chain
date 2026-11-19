@@ -13,9 +13,9 @@ use alloy_sol_types::SolEvent;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::{MAX_REFUSED_RUNS_PER_BLOCK, NOTICE_RETRY_SECONDS};
 use outbe_intexfactory::notify::{
-    call_notice_attempts, notice_retry_at, pack_call_notice, send_called_notices, with_retry_at,
+    call_notice_attempts, notice_retry_at, pack_call_notice, send_call_notices, with_retry_at,
 };
-use outbe_intexfactory::precompile::IIntexFactory::IntexSeriesCallNoticeFailed;
+use outbe_intexfactory::precompile::IIntexFactory::IntexSeriesCallNoticeSendFailed;
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -110,7 +110,7 @@ fn drain_at(handle: &StorageHandle<'_>, now: u64) {
         },
         handle.clone(),
     );
-    send_called_notices(&ctx).expect("a refused notice never fails the send");
+    send_call_notices(&ctx).expect("a refused notice never fails the send");
 }
 
 fn queue_bounds(handle: &StorageHandle<'_>) -> (u32, u32) {
@@ -245,11 +245,11 @@ fn queued(handle: &StorageHandle<'_>, index: u32) -> U256 {
         .unwrap()
 }
 
-fn failed_notices(storage: &HashMapStorageProvider) -> Vec<IntexSeriesCallNoticeFailed> {
+fn failed_notices(storage: &HashMapStorageProvider) -> Vec<IntexSeriesCallNoticeSendFailed> {
     storage
         .get_events(INTEX_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| IntexSeriesCallNoticeFailed::decode_log_data(log).ok())
+        .filter_map(|log| IntexSeriesCallNoticeSendFailed::decode_log_data(log).ok())
         .collect()
 }
 
@@ -318,7 +318,10 @@ fn a_notice_refused_at_the_cap_is_dropped_with_an_event() {
     let dropped = failed_notices(&storage);
     assert_eq!(dropped.len(), 1);
     assert_eq!(SeriesId::from(dropped[0].seriesId), series(0));
-    assert_eq!(dropped[0].calledAt, CALLED_AT);
+    assert_eq!(
+        dropped[0].dstChainId, 0,
+        "no router names the chains of the day"
+    );
 }
 
 #[test]

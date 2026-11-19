@@ -3,7 +3,7 @@
 
 pub use outbe_core_common::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS};
 
-/// Router calls a call notice gets before it is dropped.
+/// Tries a call notice gets for each target chain. The first send is try 1.
 pub const MAX_CALL_NOTICE_ATTEMPTS: u8 = 8;
 
 /// Pause before a refused notice is sent again, so the 8 sends span about 35 minutes

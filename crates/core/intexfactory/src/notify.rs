@@ -1,18 +1,27 @@
-//! Queue of call notices, sent every block after the call slice. A refused notice
-//! waits [`NOTICE_RETRY_SECONDS`] before its next attempt.
+//! Queue of call notices, sent every block after the call slice, and the queue of the legs
+//! the router kept for one chain each. A refused notice or a kept leg waits
+//! [`NOTICE_RETRY_SECONDS`] before its next try, and gets at most [`MAX_CALL_NOTICE_ATTEMPTS`].
 
-use alloy_primitives::U256;
+use alloy_primitives::{Bytes, FixedBytes, U256};
+use alloy_sol_types::{SolCall, SolError, SolValue};
 use outbe_intex::SeriesId;
 use outbe_primitives::storage::types::Storable;
-use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
+use outbe_primitives::{
+    block::BlockRuntimeContext,
+    error::{PassFailure, PrecompileError, Result},
+    storage::StorageHandle,
+};
 use outbe_system_common::pass_budget::PassBudget;
 use outbe_system_common::time::EmissionDate;
 
+use crate::called::revert_data;
 use crate::constants::{
-    MAX_CALL_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_BLOCK, MAX_SERIES_PER_MARK, NOTICE_RETRY_SECONDS,
+    MAX_CALL_NOTICE_ATTEMPTS, MAX_REFUSED_RUNS_PER_BLOCK, MAX_SERIES_PER_MARK,
+    NOTICE_RETRY_SECONDS, ORIGIN_ROUTER_ADDRESS,
 };
-use crate::precompile::IIntexFactory::IntexSeriesCallNoticeFailed;
+use crate::precompile::IIntexFactory::IntexSeriesCallNoticeSendFailed;
 use crate::schema::IntexFactoryContract;
+use crate::sol_ext::IOriginRouter;
 
 /// Bit offset of the refused-attempt count, in the byte above the call time.
 const ATTEMPTS_SHIFT: usize = 64;
@@ -44,6 +53,41 @@ pub fn with_retry_at(entry: U256, retry_at: u64) -> U256 {
     (entry & !(U256::from(u64::MAX) << RETRY_AT_SHIFT)) | (U256::from(retry_at) << RETRY_AT_SHIFT)
 }
 
+/// Bit offsets of a kept leg: the router's message index in the low 64 bits, then the chain,
+/// the failed tries and the time it may go out again.
+const LEG_CHAIN_SHIFT: usize = 64;
+const LEG_ATTEMPTS_SHIFT: usize = 96;
+const LEG_RETRY_AT_SHIFT: usize = 104;
+
+/// A leg the router kept for one chain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeptLeg {
+    /// The router's index of the kept message.
+    pub idx: u64,
+    pub dst_chain_id: u32,
+    /// Failed tries so far, the first send included.
+    pub attempts: u8,
+    pub retry_at: u64,
+}
+
+impl KeptLeg {
+    pub fn pack(self) -> U256 {
+        U256::from(self.idx)
+            | (U256::from(self.dst_chain_id) << LEG_CHAIN_SHIFT)
+            | (U256::from(self.attempts) << LEG_ATTEMPTS_SHIFT)
+            | (U256::from(self.retry_at) << LEG_RETRY_AT_SHIFT)
+    }
+
+    pub fn unpack(word: U256) -> Self {
+        Self {
+            idx: (word & U256::from(u64::MAX)).to::<u64>(),
+            dst_chain_id: ((word >> LEG_CHAIN_SHIFT) & U256::from(u32::MAX)).to::<u32>(),
+            attempts: ((word >> LEG_ATTEMPTS_SHIFT) & U256::from(u8::MAX)).to::<u8>(),
+            retry_at: ((word >> LEG_RETRY_AT_SHIFT) & U256::from(u64::MAX)).to::<u64>(),
+        }
+    }
+}
+
 /// Whether a Called entry belongs to the run a message is being built for. The wire carries
 /// one day and one call time for the whole batch, so both must match for a series to ride along.
 pub fn joins_run(day: EmissionDate, called_at: u64, series_day: EmissionDate, ts: u64) -> bool {
@@ -69,6 +113,13 @@ pub(crate) fn enqueue_notice(factory: &IntexFactoryContract, entry: U256) -> Res
     Ok(())
 }
 
+pub(crate) fn enqueue_leg(factory: &IntexFactoryContract, leg: KeptLeg) -> Result<()> {
+    let tail = factory.leg_tail.read()?;
+    factory.leg_at.write(&tail, leg.pack())?;
+    factory.leg_tail.write(tail.saturating_add(1))?;
+    Ok(())
+}
+
 /// Sends the queued notices, one write of the sweep budget per router call.
 /// The walk stops at the first entry not yet due: a refused one waits its pause, and the
 /// queue behind it waits no longer than one pause.
@@ -86,21 +137,27 @@ fn run_notice_unit(
     }
 }
 
-pub fn send_called_notices(ctx: &BlockRuntimeContext) -> Result<()> {
+pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let factory = IntexFactoryContract::new(ctx.storage.clone());
-    let head = factory.notify_head.read()?;
-    let tail = factory.notify_tail.read()?;
-    if head >= tail {
-        return Ok(());
-    }
-    let budget = PassBudget::per_block();
     let mut send = NoticeSend {
         factory: &factory,
         storage: &ctx.storage,
         now: ctx.block.timestamp,
-        stop: tail,
-        budget,
+        stop: factory.notify_tail.read()?,
+        budget: PassBudget::per_block(),
     };
+    let refused_runs = send_notices(ctx, &mut send)?;
+    retry_kept_legs(&mut send, refused_runs)
+}
+
+/// Walks the notice queue. Returns the count of wholly refused runs at its end.
+fn send_notices(ctx: &BlockRuntimeContext, send: &mut NoticeSend<'_, '_>) -> Result<u32> {
+    let factory = send.factory;
+    let head = factory.notify_head.read()?;
+    let tail = send.stop;
+    if head >= tail {
+        return Ok(0);
+    }
     let mut index = head;
     let mut refused_runs: u32 = 0;
     while index < tail
@@ -108,7 +165,7 @@ pub fn send_called_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         && refused_runs < MAX_REFUSED_RUNS_PER_BLOCK
         && notice_retry_at(factory.notify_at.read(&index)?) <= send.now
     {
-        let Some((consumed, refused)) = run_notice_unit(ctx, &mut send, index)? else {
+        let Some((consumed, refused)) = run_notice_unit(ctx, send, index)? else {
             break;
         };
         index += consumed;
@@ -119,6 +176,38 @@ pub fn send_called_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         factory.notify_tail.write(0)?;
     } else {
         factory.notify_head.write(index)?;
+    }
+    Ok(refused_runs)
+}
+
+/// Sends the due kept legs again, one write of the budget per leg. The walk stops at the
+/// first leg not yet due, and at a lack of gas, which counts no try.
+fn retry_kept_legs(send: &mut NoticeSend<'_, '_>, mut refused_runs: u32) -> Result<()> {
+    let factory = send.factory;
+    let head = factory.leg_head.read()?;
+    let tail = factory.leg_tail.read()?;
+    if head >= tail {
+        return Ok(());
+    }
+    let mut index = head;
+    while index < tail && !send.budget.spent() && refused_runs < MAX_REFUSED_RUNS_PER_BLOCK {
+        let leg = KeptLeg::unpack(factory.leg_at.read(&index)?);
+        if leg.retry_at > send.now {
+            break;
+        }
+        send.budget.admit_writes(1);
+        let Some(failed) = send.retry_leg(leg)? else {
+            break;
+        };
+        factory.leg_at.clear(&index)?;
+        index += 1;
+        refused_runs = if failed { refused_runs + 1 } else { 0 };
+    }
+    if index >= factory.leg_tail.read()? {
+        factory.leg_head.write(0)?;
+        factory.leg_tail.write(0)?;
+    } else {
+        factory.leg_head.write(index)?;
     }
     Ok(())
 }
@@ -172,18 +261,41 @@ impl NoticeSend<'_, '_> {
             factory.notify_at.clear(&slot)?;
         }
         self.budget.admit_writes(router_calls(run.len()));
-        let refused = crate::called::notify_called(self.storage, emission_day, called_at, &run)?;
-        let all_refused = refused.len() == run.len();
+        let outcome = crate::called::notify_called(self.storage, emission_day, called_at, &run)?;
+        let all_refused = outcome.refused.len() == run.len();
+        // A kept leg failed one try more than its run had.
+        let prior = entries
+            .iter()
+            .map(|e| call_notice_attempts(*e))
+            .max()
+            .unwrap_or(0);
+        for leg in &outcome.kept {
+            enqueue_leg(
+                self.factory,
+                KeptLeg {
+                    idx: leg.idx.saturating_to::<u64>(),
+                    dst_chain_id: leg.dstChainId,
+                    attempts: prior.saturating_add(1),
+                    retry_at: self.now.saturating_add(NOTICE_RETRY_SECONDS),
+                },
+            )?;
+        }
         // A refused entry goes behind this block's window and waits out its pause.
         for entry in entries {
-            if refused.contains(&unpack_call_notice(entry).0) {
-                self.requeue_refused(entry)?;
+            let series_id = unpack_call_notice(entry).0;
+            if let Some((_, error_data)) = outcome.refused.iter().find(|(id, _)| *id == series_id) {
+                self.requeue_refused(entry, emission_day, error_data.clone())?;
             }
         }
         Ok((index - at, all_refused))
     }
 
-    fn requeue_refused(&self, entry: U256) -> Result<()> {
+    fn requeue_refused(
+        &self,
+        entry: U256,
+        emission_day: EmissionDate,
+        error_data: Bytes,
+    ) -> Result<()> {
         let attempts = call_notice_attempts(entry).saturating_add(1);
         if attempts < MAX_CALL_NOTICE_ATTEMPTS {
             let retry_at = self.now.saturating_add(NOTICE_RETRY_SECONDS);
@@ -200,11 +312,120 @@ impl NoticeSend<'_, '_> {
             attempts,
             "call notice: all sends failed"
         );
+        // The router refused the whole message, so no chain of the day took it. Chain 0 stands
+        // for the day when the router cannot name its chains.
+        let chains = match self.targets_of(emission_day) {
+            Ok(chains) if !chains.is_empty() => chains,
+            Err(error) if error.pass_failure() == PassFailure::Propagate => return Err(error),
+            _ => vec![0],
+        };
+        for dst_chain_id in chains {
+            self.emit_send_failed(series_id.into(), dst_chain_id, error_data.clone())?;
+        }
+        Ok(())
+    }
+
+    /// Sends one kept leg again. Returns whether the try failed, or `None` when gas ran out.
+    fn retry_leg(&mut self, leg: KeptLeg) -> Result<Option<bool>> {
+        let sent = self.storage.with_checkpoint(|| {
+            self.storage.call(
+                ORIGIN_ROUTER_ADDRESS,
+                U256::ZERO,
+                IOriginRouter::retryMessageSendCall {
+                    idx: U256::from(leg.idx),
+                }
+                .abi_encode()
+                .into(),
+            )
+        });
+        let error = match sent {
+            Ok(_) => return Ok(Some(false)),
+            Err(error) => error,
+        };
+        match error.pass_failure() {
+            PassFailure::Propagate => return Err(error),
+            PassFailure::Stop => return Ok(None),
+            PassFailure::Skip => {}
+        }
+        let error_data = revert_data(error);
+        // Another account sent the kept message first.
+        if error_data.starts_with(&IOriginRouter::NoFailedMessageSend::SELECTOR) {
+            return Ok(Some(false));
+        }
+        let attempts = leg.attempts.saturating_add(1);
+        if attempts < MAX_CALL_NOTICE_ATTEMPTS {
+            enqueue_leg(
+                self.factory,
+                KeptLeg {
+                    attempts,
+                    retry_at: self.now.saturating_add(NOTICE_RETRY_SECONDS),
+                    ..leg
+                },
+            )?;
+            return Ok(Some(true));
+        }
+        tracing::warn!(
+            target: "outbe::intexfactory",
+            idx = leg.idx,
+            dst_chain_id = leg.dst_chain_id,
+            attempts,
+            "call notice: all tries to a chain failed, the message stays kept"
+        );
+        let series = match self.kept_series(leg.idx) {
+            Ok(series) => series,
+            Err(error) if error.pass_failure() == PassFailure::Propagate => return Err(error),
+            Err(_) => Vec::new(),
+        };
+        for series_id in series {
+            self.emit_send_failed(series_id, leg.dst_chain_id, error_data.clone())?;
+        }
+        Ok(Some(true))
+    }
+
+    /// The series of a kept call notice: its body is `abi.encode(emissionDay, calledAt, seriesIds)`
+    /// after the two header bytes.
+    fn kept_series(&self, idx: u64) -> Result<Vec<FixedBytes<14>>> {
+        let returned = self.storage.staticcall(
+            ORIGIN_ROUTER_ADDRESS,
+            IOriginRouter::getFailedMessageSendCall {
+                idx: U256::from(idx),
+            }
+            .abi_encode()
+            .into(),
+        )?;
+        let kept = IOriginRouter::getFailedMessageSendCall::abi_decode_returns(&returned)
+            .map_err(|_| PrecompileError::RevertBytes(returned.clone()))?;
+        let body = kept.payload.get(2..).unwrap_or_default();
+        let (_, _, series) = <(u32, u64, Vec<FixedBytes<14>>)>::abi_decode_params(body)
+            .map_err(|_| PrecompileError::RevertBytes(kept.payload.clone()))?;
+        Ok(series)
+    }
+
+    fn targets_of(&self, emission_day: EmissionDate) -> Result<Vec<u32>> {
+        let returned = self.storage.staticcall(
+            ORIGIN_ROUTER_ADDRESS,
+            IOriginRouter::targetsOfCall {
+                emissionDay: emission_day.value(),
+            }
+            .abi_encode()
+            .into(),
+        )?;
+        IOriginRouter::targetsOfCall::abi_decode_returns(&returned)
+            .map_err(|_| PrecompileError::RevertBytes(returned))
+    }
+
+    fn emit_send_failed(
+        &self,
+        series_id: FixedBytes<14>,
+        dst_chain_id: u32,
+        error_data: Bytes,
+    ) -> Result<()> {
         crate::runtime::emit_event(
             self.storage,
-            IntexSeriesCallNoticeFailed {
-                seriesId: series_id.into(),
-                calledAt: called_at,
+            IntexSeriesCallNoticeSendFailed {
+                seriesId: series_id,
+                dstChainId: dst_chain_id,
+                errorData: error_data,
             },
         )
     }

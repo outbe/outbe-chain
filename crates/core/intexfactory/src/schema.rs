@@ -63,6 +63,17 @@ pub struct IntexFactoryContract {
     /// it was refused, and the time it may go out again.
     #[attribute(order = 26)]
     pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
+
+    // Call notice legs the router kept for one chain each, retried in order. Head and tail
+    // reset to 0 whenever the queue drains empty.
+    #[attribute(order = 27)]
+    pub leg_head: outbe_primitives::storage::dsl::Value<u32>,
+    #[attribute(order = 28)]
+    pub leg_tail: outbe_primitives::storage::dsl::Value<u32>,
+    /// Queue index -> the router's kept message index packed with its chain, its failed tries
+    /// and the time it may go out again.
+    #[attribute(order = 29)]
+    pub leg_at: outbe_primitives::storage::dsl::Map<u32, U256>,
 }
 
 impl IntexFactoryContract<'_> {

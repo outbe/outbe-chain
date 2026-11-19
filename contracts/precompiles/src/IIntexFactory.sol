@@ -147,9 +147,11 @@ interface IIntexFactory {
         uint32 units
     );
 
-    /// @notice All 8 sends of the series' call notice failed, so the chain sends it no more
-    ///         and the targets were not told of the call.
-    event IntexSeriesCallNoticeFailed(bytes14 indexed seriesId, uint64 calledAt);
+    /// @notice All 8 tries of the series' call notice to `dstChainId` failed, so the factory sends
+    ///         it to that chain no more. A kept message stays in the origin router for anyone to
+    ///         resend. `errorData` is the revert data of the last try. `dstChainId` is 0 when
+    ///         the router refused the whole message and could not name the chains of the day.
+    event IntexSeriesCallNoticeSendFailed(bytes14 indexed seriesId, uint32 indexed dstChainId, bytes errorData);
 
     /// @notice `amountMinor` native COEN (18 decimals) of `emissionDay`'s auction proceeds from
     ///         `srcChainId` was burned.

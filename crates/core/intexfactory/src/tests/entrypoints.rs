@@ -102,6 +102,9 @@ fn intex_factory_slot_layout_is_pinned() {
             f.notify_head.slot(),
             f.notify_tail.slot(),
             f.notify_at.base_slot(),
+            f.leg_head.slot(),
+            f.leg_tail.slot(),
+            f.leg_at.base_slot(),
         ];
         for (index, slot) in slots.into_iter().enumerate() {
             assert_eq!(slot, U256::from(index), "field #{index}");
@@ -128,7 +131,7 @@ fn send_notices_in_block(
             s.clone(),
         );
         // The cycle runtime runs each trigger inside its own checkpoint.
-        s.with_checkpoint(|| crate::notify::send_called_notices(&ctx))
+        s.with_checkpoint(|| crate::notify::send_call_notices(&ctx))
     })
 }
 
