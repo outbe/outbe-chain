@@ -660,11 +660,11 @@ fn started_cycle() -> HashMapStorageProvider {
     storage
 }
 
-/// Runs one block per entry, then checks each listed day: `None` when it is not allocated,
-/// else its Metadosis state.
 /// A block number, its timestamp, and each checked day with its expected state.
 type CheckedBlock<'a> = (u64, u64, &'a [(u32, Option<u8>)]);
 
+/// Runs one block per entry, then checks each listed day: `None` when it is not allocated,
+/// else its Metadosis state.
 fn run_blocks(storage: &mut HashMapStorageProvider, blocks: &[CheckedBlock<'_>]) {
     for &(block_number, timestamp, expected) in blocks {
         storage.set_block_number(block_number);
