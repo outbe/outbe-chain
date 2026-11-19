@@ -27,6 +27,7 @@ interface IERC7786TokenBridge {
         uint256 gasLimit
     ) external payable returns (bytes32 sendId);
 
-    /// @notice Send `amount` that the token has just burned to 0x…dEaD on `destinationDomain`.
+    /// @notice Sends `amount`, which the token has just burned from 0x…dEaD, to 0x…dEaD on
+    ///         `destinationDomain`. Only the token can call it.
     function sendBurned(uint32 destinationDomain, uint256 amount) external payable returns (bytes32 sendId);
 }
