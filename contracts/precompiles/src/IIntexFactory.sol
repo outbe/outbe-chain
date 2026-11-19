@@ -122,6 +122,15 @@ interface IIntexFactory {
     ///         `SeriesNotIssued` once the series is Called or Forfeited.
     function getCallProgress(uint256 intexId) external view returns (CallProgress memory);
 
+    /// @notice The series was force-called. It settles until `settlementDeadline`, inclusive.
+    event IntexSeriesCalled(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint64 calledAt,
+        uint64 settlementDeadline
+    );
+
     /// @notice A new series was created from a cleared auction.
     event IntexSeriesOpened(
         bytes14 indexed seriesId,
