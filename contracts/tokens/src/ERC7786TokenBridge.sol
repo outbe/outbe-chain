@@ -16,6 +16,7 @@ import {IStablecoin} from "@precompiles/IStablecoin.sol";
 import {DEAD_ADDRESS} from "@shared/BurnAddress.sol";
 import {IGatewayQuote} from "@crosschain/interfaces/IGatewayQuote.sol";
 import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
+import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
 
 /// @title ERC7786TokenBridge
 /// @notice ERC-7786 fungible token bridge supporting lock/unlock, ERC-7802 burn/mint, and
@@ -26,7 +27,13 @@ import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 ///      Interchain Account on other chains. The owner adds a peer for a new domain and authorizes
 ///      upgrades. UUPS upgradeable behind an ERC1967 proxy: the token, the hub, the mode and the
 ///      decimals are implementation immutables, so every upgrade must pass the same values.
-contract ERC7786TokenBridge is OwnableUpgradeable, UUPSUpgradeable, ReentrancyGuardTransient, IERC7786Recipient {
+contract ERC7786TokenBridge is
+    OwnableUpgradeable,
+    UUPSUpgradeable,
+    ReentrancyGuardTransient,
+    IERC7786Recipient,
+    IERC7786TokenBridge
+{
     using SafeERC20 for IERC20;
     using InteroperableAddress for bytes;
 

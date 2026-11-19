@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
-import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
+import {IERC7786TokenBridge} from "@tokens/interfaces/IERC7786TokenBridge.sol";
 
 /// @notice Progress of a day's bids relay: the span that the first round froze, the next chunk to
 ///         send, and whether the completeness marker has left. Five bytes, so one slot.
