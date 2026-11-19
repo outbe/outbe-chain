@@ -266,7 +266,10 @@ impl RenewalEpoch {
 pub(super) struct PrivateExecutionUnavailable;
 
 pub(super) fn require_enclave_session() -> RpcResult<()> {
-    let state = outbe_tee::authority::current_tee_authority_state();
+    let state = outbe_tee::authority::tee_authority_watch()
+        .map_or_else(outbe_tee::authority::TeeAuthorityState::default, |watch| {
+            watch.ensure_current()
+        });
     if !(state.is_authority_open()
         && state.has_verified_resident_key()
         && state.has_finalized_lease())

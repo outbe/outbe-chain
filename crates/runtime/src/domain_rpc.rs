@@ -333,9 +333,13 @@ pub async fn account_query_through_authority_gate(
 fn require_private_authority(
     watch: Option<&outbe_tee::authority::TeeAuthorityWatch>,
 ) -> RpcResult<()> {
-    let state = watch.map_or_else(outbe_tee::authority::current_tee_authority_state, |watch| {
-        watch.snapshot()
-    });
+    let state = match watch {
+        Some(watch) => watch.ensure_current(),
+        None => outbe_tee::authority::tee_authority_watch().map_or_else(
+            outbe_tee::authority::TeeAuthorityState::default,
+            |installed| installed.ensure_current(),
+        ),
+    };
     if state.is_authority_open() && state.has_verified_resident_key() {
         Ok(())
     } else {

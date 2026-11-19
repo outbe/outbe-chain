@@ -1,6 +1,8 @@
 //! Reversible process-local authority, independent of resident execution keys.
 
-use std::sync::RwLock;
+use std::cell::Cell;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, RwLock, Weak};
 
 use alloy_primitives::B256;
 use tokio::sync::watch;
@@ -40,21 +42,63 @@ impl TeeAuthorityState {
     }
 }
 
+#[derive(Clone)]
+struct InstalledRefresh {
+    generation: u64,
+    hook: Arc<dyn Fn() + Send + Sync>,
+}
+
+struct AuthorityShared {
+    observed_finalized_height: AtomicU64,
+    applied_finalized_height: AtomicU64,
+    /// Bumped on install and on guard stop. In-flight refresh publishes only its own generation.
+    refresh_generation: AtomicU64,
+    /// Set when the guard stops. Cleared only by the next [`TeeAuthorityChannel::install_sync_refresh`].
+    retired: AtomicBool,
+    refresh: Mutex<Option<InstalledRefresh>>,
+    /// Serializes door-side refresh so a second reader waits for the first verdict.
+    refresh_gate: Mutex<()>,
+    /// Serializes publication with guard retirement.
+    publish_gate: Mutex<()>,
+    /// `notify_one` permit for the lease guard. Independent of the shared lifecycle notifier.
+    guard_wakeup: tokio::sync::Notify,
+    sender: Weak<watch::Sender<TeeAuthorityState>>,
+}
+
 /// Publisher owned by the admission lifecycle, never a source of key material.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TeeAuthorityChannel {
-    sender: watch::Sender<TeeAuthorityState>,
+    sender: Arc<watch::Sender<TeeAuthorityState>>,
+    shared: Arc<AuthorityShared>,
 }
 
 impl TeeAuthorityChannel {
     /// Creates a channel from facts already verified by the admission lifecycle.
     pub fn new(initial: TeeAuthorityState) -> Self {
         let (sender, _) = watch::channel(initial);
-        Self { sender }
+        let sender = Arc::new(sender);
+        let shared = Arc::new(AuthorityShared {
+            observed_finalized_height: AtomicU64::new(0),
+            applied_finalized_height: AtomicU64::new(0),
+            refresh_generation: AtomicU64::new(0),
+            retired: AtomicBool::new(false),
+            refresh: Mutex::new(None),
+            refresh_gate: Mutex::new(()),
+            publish_gate: Mutex::new(()),
+            guard_wakeup: tokio::sync::Notify::new(),
+            sender: Arc::downgrade(&sender),
+        });
+        Self { sender, shared }
     }
 
     /// Replaces the snapshot even when no subscribers are currently present.
+    ///
+    /// A refresh pinned on this thread publishes only for that guard generation.
     pub fn publish(&self, state: TeeAuthorityState) {
+        if let Some(generation) = pinned_refresh_generation() {
+            let _ = self.publish_if_generation(generation, state);
+            return;
+        }
         self.sender.send_replace(state);
     }
 
@@ -62,12 +106,153 @@ impl TeeAuthorityChannel {
     pub fn subscribe(&self) -> TeeAuthorityWatch {
         TeeAuthorityWatch {
             receiver: self.sender.subscribe(),
+            shared: Arc::clone(&self.shared),
         }
     }
 
     /// Copies the current verdict without retaining a watch read lock.
     pub fn snapshot(&self) -> TeeAuthorityState {
         *self.sender.borrow()
+    }
+
+    /// Records a finalized height the admission owner has not applied yet.
+    pub fn note_observed_finalized_height(&self, height: u64) {
+        note_monotonic(&self.shared.observed_finalized_height, height);
+    }
+
+    /// Records the finalized height whose admission verdict is already published.
+    pub fn note_applied_finalized_height(&self, height: u64) {
+        note_monotonic(&self.shared.applied_finalized_height, height);
+    }
+
+    /// Highest finalized height noted for this publisher.
+    pub fn observed_finalized_height(&self) -> u64 {
+        self.shared
+            .observed_finalized_height
+            .load(Ordering::Acquire)
+    }
+
+    /// Highest finalized height applied to the published verdict.
+    pub fn applied_finalized_height(&self) -> u64 {
+        self.shared.applied_finalized_height.load(Ordering::Acquire)
+    }
+
+    /// One-permit wakeup for lease-guard polling. Lifecycle fan-out stays on the shared notifier.
+    pub fn guard_notified(&self) -> tokio::sync::futures::Notified<'_> {
+        self.shared.guard_wakeup.notified()
+    }
+
+    /// Holds the door-refresh lock. A caller that already holds it must not call this again.
+    pub fn lock_refresh_gate(&self) -> std::sync::MutexGuard<'_, ()> {
+        lock_mutex(&self.shared.refresh_gate)
+    }
+
+    /// Generation captured by the refresh that is allowed to publish.
+    pub fn refresh_generation(&self) -> u64 {
+        self.shared.refresh_generation.load(Ordering::Acquire)
+    }
+
+    /// Accepts `sampled` only while that generation is still an active guard.
+    ///
+    /// Sample before waiting on [`Self::lock_refresh_gate`]. A stop refuses both
+    /// the sampled generation and the generation stored by the stop. Generation
+    /// zero remains publishable until the first guard is installed. Only a new
+    /// [`Self::install_sync_refresh`] accepts a generation again.
+    pub fn accept_sampled_refresh(&self, sampled: u64) -> Option<u64> {
+        let _publish = lock_mutex(&self.shared.publish_gate);
+        if self.shared.retired.load(Ordering::Acquire) {
+            return None;
+        }
+        let current = self.shared.refresh_generation.load(Ordering::Acquire);
+        (current == sampled).then_some(current)
+    }
+
+    /// Publishes only when `generation` is still the installed guard generation.
+    pub fn publish_if_generation(&self, generation: u64, state: TeeAuthorityState) -> bool {
+        let _gate = lock_mutex(&self.shared.publish_gate);
+        if self.shared.retired.load(Ordering::Acquire)
+            || self.shared.refresh_generation.load(Ordering::Acquire) != generation
+        {
+            return false;
+        }
+        if *self.sender.borrow() != state {
+            self.sender.send_replace(state);
+        }
+        true
+    }
+
+    /// Publishes closure for `generation` and keeps a resident execution key.
+    pub fn publish_failure_if_generation(&self, generation: u64, has_resident: bool) -> bool {
+        let _gate = lock_mutex(&self.shared.publish_gate);
+        if self.shared.retired.load(Ordering::Acquire)
+            || self.shared.refresh_generation.load(Ordering::Acquire) != generation
+        {
+            return false;
+        }
+        let current = *self.sender.borrow();
+        let closed = failure_state(current, has_resident);
+        if current != closed {
+            self.sender.send_replace(closed);
+        }
+        true
+    }
+
+    /// Installs the admission owner's synchronous refresh.
+    ///
+    /// The hook reads the provider and publishes with [`Self::publish_if_generation`].
+    /// It must not call [`TeeAuthorityWatch::ensure_current`] on this channel.
+    pub fn install_sync_refresh(&self, hook: impl Fn() + Send + Sync + 'static) {
+        let _publish = lock_mutex(&self.shared.publish_gate);
+        self.shared.retired.store(false, Ordering::Release);
+        let generation = self
+            .shared
+            .refresh_generation
+            .fetch_add(1, Ordering::AcqRel)
+            + 1;
+        *lock_mutex(&self.shared.refresh) = Some(InstalledRefresh {
+            generation,
+            hook: Arc::new(hook),
+        });
+    }
+
+    /// Drops the synchronous refresh and invalidates an in-flight generation.
+    pub fn clear_sync_refresh(&self) {
+        let _publish = lock_mutex(&self.shared.publish_gate);
+        self.retire_generation();
+    }
+
+    /// Caller holds `publish_gate`. Marks the generation retired and drops the hook.
+    fn retire_generation(&self) {
+        self.shared.retired.store(true, Ordering::Release);
+        self.shared
+            .refresh_generation
+            .fetch_add(1, Ordering::AcqRel);
+        *lock_mutex(&self.shared.refresh) = None;
+    }
+
+    /// Stops the guard: invalidates its generation, then publishes closure under the same lock.
+    pub fn retire_publisher(&self, has_resident: bool) {
+        let _publish = lock_mutex(&self.shared.publish_gate);
+        self.retire_generation();
+        let current = *self.sender.borrow();
+        let closed = failure_state(current, has_resident);
+        if current != closed {
+            self.sender.send_replace(closed);
+        }
+    }
+}
+
+impl std::fmt::Debug for TeeAuthorityChannel {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TeeAuthorityChannel")
+            .field("state", &self.snapshot())
+            .field(
+                "observed_finalized_height",
+                &self.observed_finalized_height(),
+            )
+            .field("applied_finalized_height", &self.applied_finalized_height())
+            .finish()
     }
 }
 
@@ -78,9 +263,10 @@ impl Default for TeeAuthorityChannel {
 }
 
 /// Read-only, cloneable view for consensus, private RPC and key-transfer gates.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct TeeAuthorityWatch {
     receiver: watch::Receiver<TeeAuthorityState>,
+    shared: Arc<AuthorityShared>,
 }
 
 impl TeeAuthorityWatch {
@@ -88,20 +274,165 @@ impl TeeAuthorityWatch {
     pub fn snapshot(&self) -> TeeAuthorityState {
         let state = *self.receiver.borrow();
         if self.receiver.has_changed().is_err() {
-            if state.has_verified_resident_key() {
-                TeeAuthorityState::SuspendedPolicyMismatch
-            } else {
-                TeeAuthorityState::UnkeyedAwaitingAdmission
-            }
+            closed_without_publisher(state)
         } else {
             state
         }
+    }
+
+    /// Reads the provider whenever a refresh hook is installed.
+    ///
+    /// A second caller waits on the refresh lock and then reads again. A lagging
+    /// provider, or a newer observed height that arrived during the read, does
+    /// not return the previous `Armed` verdict. A missing hook closes authority
+    /// when the observed height is ahead and keeps a resident execution key.
+    pub fn ensure_current(&self) -> TeeAuthorityState {
+        if pinned_refresh_generation().is_some() {
+            return self.snapshot();
+        }
+        let _gate = lock_mutex(&self.shared.refresh_gate);
+        self.converge()
+    }
+
+    fn converge(&self) -> TeeAuthorityState {
+        for _ in 0..2 {
+            let installed = lock_mutex(&self.shared.refresh).clone();
+            let Some(installed) = installed else {
+                return self.snapshot_or_close_lag();
+            };
+            let generation = installed.generation;
+            let _pin = PinnedRefreshGeneration::enter(generation);
+            (installed.hook)();
+            if self.applied_finalized_height() >= self.observed_finalized_height() {
+                return self.snapshot();
+            }
+            if self.refresh_generation() != generation {
+                return self.snapshot();
+            }
+        }
+        self.close_lagging_authority();
+        self.snapshot()
+    }
+
+    fn refresh_generation(&self) -> u64 {
+        self.shared.refresh_generation.load(Ordering::Acquire)
+    }
+
+    fn snapshot_or_close_lag(&self) -> TeeAuthorityState {
+        if self.observed_finalized_height() > self.applied_finalized_height() {
+            self.close_lagging_authority();
+        }
+        self.snapshot()
+    }
+
+    /// Records a finalized height the admission owner has not applied yet.
+    pub fn note_observed_finalized_height(&self, height: u64) {
+        note_monotonic(&self.shared.observed_finalized_height, height);
+    }
+
+    /// Highest finalized height noted for this watch.
+    pub fn observed_finalized_height(&self) -> u64 {
+        self.shared
+            .observed_finalized_height
+            .load(Ordering::Acquire)
+    }
+
+    /// Highest finalized height applied to the published verdict.
+    pub fn applied_finalized_height(&self) -> u64 {
+        self.shared.applied_finalized_height.load(Ordering::Acquire)
     }
 
     /// Waits for a publication; publisher shutdown retains the typed watch error.
     pub async fn changed(&mut self) -> Result<(), watch::error::RecvError> {
         self.receiver.changed().await
     }
+
+    fn close_lagging_authority(&self) {
+        let current = self.snapshot();
+        if !current.is_authority_open() {
+            return;
+        }
+        let Some(sender) = self.shared.sender.upgrade() else {
+            return;
+        };
+        sender.send_replace(closed_without_publisher(current));
+    }
+
+    fn wake_guard(&self) {
+        self.shared.guard_wakeup.notify_one();
+    }
+}
+
+impl std::fmt::Debug for TeeAuthorityWatch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TeeAuthorityWatch")
+            .field("state", &self.snapshot())
+            .field(
+                "observed_finalized_height",
+                &self.observed_finalized_height(),
+            )
+            .field("applied_finalized_height", &self.applied_finalized_height())
+            .finish()
+    }
+}
+
+fn note_monotonic(slot: &AtomicU64, height: u64) {
+    slot.fetch_max(height, Ordering::Release);
+}
+
+fn failure_state(current: TeeAuthorityState, has_resident: bool) -> TeeAuthorityState {
+    if has_resident || current.has_verified_resident_key() {
+        TeeAuthorityState::SuspendedPolicyMismatch
+    } else {
+        TeeAuthorityState::UnkeyedAwaitingAdmission
+    }
+}
+
+std::thread_local! {
+    static PINNED_REFRESH_GENERATION: Cell<Option<u64>> = const { Cell::new(None) };
+}
+
+/// Generation pinned by the refresh running on this thread, if any.
+pub fn pinned_refresh_generation() -> Option<u64> {
+    PINNED_REFRESH_GENERATION.with(Cell::get)
+}
+
+/// Pins `generation` until drop so a nested publish cannot observe a newer guard.
+pub struct PinnedRefreshGeneration {
+    previous: Option<u64>,
+}
+
+impl PinnedRefreshGeneration {
+    fn enter(generation: u64) -> Self {
+        let previous = PINNED_REFRESH_GENERATION.with(|cell| cell.replace(Some(generation)));
+        Self { previous }
+    }
+}
+
+impl Drop for PinnedRefreshGeneration {
+    fn drop(&mut self) {
+        PINNED_REFRESH_GENERATION.with(|cell| cell.set(self.previous));
+    }
+}
+
+/// Pins `generation` for the current thread until the guard drops.
+pub fn pin_refresh_generation(generation: u64) -> PinnedRefreshGeneration {
+    PinnedRefreshGeneration::enter(generation)
+}
+
+fn closed_without_publisher(state: TeeAuthorityState) -> TeeAuthorityState {
+    if state.has_verified_resident_key() {
+        TeeAuthorityState::SuspendedPolicyMismatch
+    } else {
+        TeeAuthorityState::UnkeyedAwaitingAdmission
+    }
+}
+
+fn lock_mutex<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// Failure to bind the process-wide authority publisher.
@@ -134,6 +465,14 @@ pub fn install_tee_authority_watch(
 /// Reads the same process-wide authority source from any infrastructure crate.
 pub fn tee_authority_watch() -> Option<TeeAuthorityWatch> {
     TEE_AUTHORITY_WATCH.read().ok()?.clone()
+}
+
+/// Notes the finalized height and stores one lease-guard permit on the installed watch.
+pub fn note_finalized_authority_revision(height: u64) {
+    if let Some(watch) = tee_authority_watch() {
+        watch.note_observed_finalized_height(height);
+        watch.wake_guard();
+    }
 }
 
 /// Missing or unavailable installation always denies authority and key presence.
@@ -177,6 +516,7 @@ pub fn tee_authority_test_guard() -> TeeAuthorityTestGuard {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::AtomicBool;
 
     const ARMED: TeeAuthorityState = TeeAuthorityState::Armed {
         enclave_id: B256::repeat_byte(7),
@@ -299,5 +639,208 @@ mod tests {
         channel.publish(ARMED);
         assert_eq!(watch.snapshot(), ARMED);
         assert!(watch.snapshot().has_finalized_lease());
+    }
+
+    #[test]
+    fn lagged_finalized_head_refreshes_or_closes_before_the_cached_verdict() {
+        let channel = TeeAuthorityChannel::new(ARMED);
+        let watch = channel.subscribe();
+        channel.note_applied_finalized_height(4);
+        let verdict = std::sync::Arc::new(std::sync::Mutex::new(ARMED));
+        let published = std::sync::Arc::clone(&verdict);
+        let publisher = channel.clone();
+        channel.install_sync_refresh(move || {
+            let state = *published.lock().expect("verdict lock");
+            publisher.publish(state);
+            publisher.note_applied_finalized_height(publisher.observed_finalized_height());
+        });
+        assert!(watch.ensure_current().is_authority_open());
+        for (height, closed) in [
+            (5, TeeAuthorityState::SuspendedJailed),
+            (6, TeeAuthorityState::SuspendedLeaseExpired),
+        ] {
+            *verdict.lock().expect("verdict lock") = closed;
+            channel.note_observed_finalized_height(height);
+            let state = watch.ensure_current();
+            assert_eq!(state, closed);
+            assert!(state.has_verified_resident_key());
+            assert!(!state.is_authority_open());
+            assert_eq!(watch.snapshot(), closed);
+        }
+        let unhooked = TeeAuthorityChannel::new(ARMED);
+        let unhooked_watch = unhooked.subscribe();
+        unhooked.note_applied_finalized_height(1);
+        unhooked.note_observed_finalized_height(2);
+        let closed = unhooked_watch.ensure_current();
+        assert_eq!(closed, TeeAuthorityState::SuspendedPolicyMismatch);
+        assert!(closed.has_verified_resident_key());
+        assert!(!closed.is_authority_open());
+        assert_eq!(unhooked.applied_finalized_height(), 1);
+    }
+
+    #[test]
+    fn installed_watch_records_a_monotonic_finalized_revision() {
+        let _guard = tee_authority_test_guard();
+        let channel = TeeAuthorityChannel::new(ARMED);
+        install_tee_authority_watch(channel.subscribe()).unwrap();
+        note_finalized_authority_revision(12);
+        assert_eq!(channel.observed_finalized_height(), 12);
+        note_finalized_authority_revision(11);
+        assert_eq!(channel.observed_finalized_height(), 12);
+        clear_tee_authority_watch_for_test();
+        note_finalized_authority_revision(20);
+        assert_eq!(channel.observed_finalized_height(), 12);
+    }
+
+    #[test]
+    fn concurrent_reader_waits_until_refresh_publishes_the_closed_verdict() {
+        use std::sync::{Barrier, Mutex};
+        use std::time::Duration;
+        let channel = TeeAuthorityChannel::new(ARMED);
+        let watch = channel.subscribe();
+        channel.note_applied_finalized_height(1);
+        let started = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let publisher = channel.clone();
+        let started_hook = Arc::clone(&started);
+        let release_hook = Arc::clone(&release);
+        let first_pass = Arc::new(AtomicBool::new(true));
+        channel.install_sync_refresh(move || {
+            if first_pass.swap(false, Ordering::AcqRel) {
+                started_hook.wait();
+                release_hook.wait();
+            }
+            publisher.publish(TeeAuthorityState::SuspendedJailed);
+            publisher.note_applied_finalized_height(publisher.observed_finalized_height());
+        });
+        channel.note_observed_finalized_height(2);
+        let first = watch.clone();
+        let reader = std::thread::spawn(move || first.ensure_current());
+        started.wait();
+        let second = watch.clone();
+        let waiting = Arc::new(Mutex::new(None));
+        let slot = Arc::clone(&waiting);
+        let concurrent = std::thread::spawn(move || {
+            let state = second.ensure_current();
+            *slot.lock().expect("verdict slot") = Some(state);
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        assert!(waiting.lock().expect("verdict slot").is_none());
+        release.wait();
+        assert_eq!(
+            reader.join().expect("reader"),
+            TeeAuthorityState::SuspendedJailed
+        );
+        concurrent.join().expect("concurrent reader");
+        let state = waiting.lock().expect("verdict slot").expect("verdict");
+        assert_eq!(state, TeeAuthorityState::SuspendedJailed);
+        assert!(state.has_verified_resident_key());
+        assert!(!state.is_authority_open());
+    }
+
+    #[test]
+    fn provider_lag_or_a_newer_observed_height_does_not_return_stale_armed() {
+        use std::sync::atomic::AtomicBool;
+        let channel = TeeAuthorityChannel::new(ARMED);
+        let watch = channel.subscribe();
+        let provider_height = Arc::new(AtomicU64::new(5));
+        let passes = Arc::new(AtomicU64::new(0));
+        let publisher = channel.clone();
+        let height = Arc::clone(&provider_height);
+        let seen = Arc::clone(&passes);
+        channel.install_sync_refresh(move || {
+            let pass = seen.fetch_add(1, Ordering::AcqRel);
+            let head = height.load(Ordering::Acquire);
+            if pass == 0 {
+                publisher.publish(ARMED);
+                publisher.note_applied_finalized_height(head);
+                publisher.note_observed_finalized_height(head + 1);
+                height.store(head + 1, Ordering::Release);
+                return;
+            }
+            publisher.publish(TeeAuthorityState::SuspendedJailed);
+            publisher.note_applied_finalized_height(height.load(Ordering::Acquire));
+        });
+        channel.note_applied_finalized_height(4);
+        channel.note_observed_finalized_height(5);
+        let state = watch.ensure_current();
+        assert_eq!(state, TeeAuthorityState::SuspendedJailed);
+        assert!(state.has_verified_resident_key());
+        assert!(passes.load(Ordering::Acquire) >= 2);
+
+        let channel = TeeAuthorityChannel::new(ARMED);
+        let watch = channel.subscribe();
+        channel.note_applied_finalized_height(7);
+        channel.note_observed_finalized_height(7);
+        let provider_height = Arc::new(AtomicU64::new(8));
+        let jailed = Arc::new(AtomicBool::new(true));
+        let publisher = channel.clone();
+        let height = Arc::clone(&provider_height);
+        let closed = Arc::clone(&jailed);
+        channel.install_sync_refresh(move || {
+            let head = height.load(Ordering::Acquire);
+            if head < publisher.observed_finalized_height() {
+                return;
+            }
+            let state = if closed.load(Ordering::Acquire) {
+                TeeAuthorityState::SuspendedJailed
+            } else {
+                ARMED
+            };
+            publisher.publish(state);
+            publisher.note_applied_finalized_height(head);
+        });
+        let state = watch.ensure_current();
+        assert_eq!(state, TeeAuthorityState::SuspendedJailed);
+        assert_eq!(channel.applied_finalized_height(), 8);
+    }
+
+    #[test]
+    fn stopped_generation_cannot_republish_armed() {
+        use std::sync::Barrier;
+        let channel = TeeAuthorityChannel::new(ARMED);
+        let started = Arc::new(Barrier::new(2));
+        let release = Arc::new(Barrier::new(2));
+        let publisher = channel.clone();
+        let started_hook = Arc::clone(&started);
+        let release_hook = Arc::clone(&release);
+        channel.install_sync_refresh(move || {
+            let generation = pinned_refresh_generation().expect("pinned generation");
+            started_hook.wait();
+            release_hook.wait();
+            assert!(!publisher.publish_if_generation(generation, ARMED));
+        });
+        channel.note_observed_finalized_height(3);
+        let watch = channel.subscribe();
+        let reader = std::thread::spawn(move || watch.ensure_current());
+        started.wait();
+        channel.retire_publisher(true);
+        release.wait();
+        let state = reader.join().expect("reader");
+        assert!(!state.is_authority_open());
+        assert!(state.has_verified_resident_key());
+        assert!(!channel.snapshot().is_authority_open());
+        assert!(!channel.publish_if_generation(1, ARMED));
+    }
+
+    #[test]
+    fn retired_refresh_rejects_the_sampled_generation_and_the_generation_after_stop() {
+        let channel = TeeAuthorityChannel::new(ARMED);
+        assert_eq!(channel.accept_sampled_refresh(0), Some(0));
+        channel.install_sync_refresh(|| {});
+        let active = channel.refresh_generation();
+        assert_eq!(channel.accept_sampled_refresh(active), Some(active));
+        assert!(channel.accept_sampled_refresh(0).is_none());
+        channel.retire_publisher(true);
+        assert!(channel.accept_sampled_refresh(active).is_none());
+        assert!(channel
+            .accept_sampled_refresh(channel.refresh_generation())
+            .is_none());
+        assert!(!channel.snapshot().is_authority_open());
+        assert!(channel.snapshot().has_verified_resident_key());
+        channel.install_sync_refresh(|| {});
+        let restarted = channel.refresh_generation();
+        assert_eq!(channel.accept_sampled_refresh(restarted), Some(restarted));
+        assert!(channel.accept_sampled_refresh(active).is_none());
     }
 }

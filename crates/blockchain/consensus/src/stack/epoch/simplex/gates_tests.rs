@@ -227,3 +227,85 @@ fn live_authority_and_cached_membership_gate_after_check_and_resume() {
     assert_eq!(sender.send(Recipients::All, vec![5], true).len(), 1);
     assert_eq!(count.load(Ordering::SeqCst), 2);
 }
+
+#[derive(Clone, Copy)]
+struct RefreshHead {
+    height: u64,
+    jailed: bool,
+    timestamp: u64,
+    valid_until: u64,
+}
+
+fn vote_sender_blocks_on_first_send(head: RefreshHead, expected: State) {
+    let facts = Arc::new(std::sync::Mutex::new(RefreshHead {
+        height: 7,
+        jailed: false,
+        timestamp: 1_800_000_000,
+        valid_until: 1_800_001_000,
+    }));
+    let channel = TeeAuthorityChannel::default();
+    let watch = channel.subscribe();
+    let published = Arc::clone(&facts);
+    let publisher = channel.clone();
+    channel.install_sync_refresh(move || {
+        let seen = *published.lock().expect("provider head");
+        let verdict = if seen.jailed {
+            State::SuspendedJailed
+        } else if seen.timestamp >= seen.valid_until {
+            State::SuspendedLeaseExpired
+        } else {
+            State::Armed {
+                enclave_id: B256::repeat_byte(1),
+                valid_until: seen.valid_until,
+            }
+        };
+        publisher.publish(verdict);
+        publisher.note_applied_finalized_height(seen.height);
+    });
+    channel.note_observed_finalized_height(7);
+    assert!(watch.ensure_current().is_authority_open());
+    *facts.lock().expect("provider head") = head;
+    channel.note_observed_finalized_height(head.height);
+    // The shift does not publish. The first send is the refresh that reads it.
+    assert!(channel.snapshot().is_authority_open());
+    let count = Arc::new(AtomicUsize::new(0));
+    let permission: Permission = Arc::new(move || {
+        authority_signer_enabled(Some(&watch), true, true, RadicleVotingGate::SignerAllowed)
+            .unwrap()
+    });
+    let mut sender = VoteSenderGate::new(
+        CountingSender {
+            peer: bls12381::PrivateKey::from_seed(1).public_key(),
+            count: count.clone(),
+        },
+        permission,
+    );
+    assert!(sender.send(Recipients::All, vec![1], true).is_empty());
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    let closed = channel.snapshot();
+    assert_eq!(closed, expected);
+    assert!(closed.has_verified_resident_key());
+    assert!(!closed.is_authority_open());
+}
+
+#[test]
+fn vote_sender_first_send_blocks_on_jailed_and_on_lease_expiry() {
+    vote_sender_blocks_on_first_send(
+        RefreshHead {
+            height: 8,
+            jailed: true,
+            timestamp: 1_800_000_000,
+            valid_until: 1_800_001_000,
+        },
+        State::SuspendedJailed,
+    );
+    vote_sender_blocks_on_first_send(
+        RefreshHead {
+            height: 9,
+            jailed: false,
+            timestamp: 1_800_000_000,
+            valid_until: 1_800_000_000,
+        },
+        State::SuspendedLeaseExpired,
+    );
+}
