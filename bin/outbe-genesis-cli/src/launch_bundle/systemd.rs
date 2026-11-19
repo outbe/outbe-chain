@@ -150,7 +150,8 @@ as_root systemctl daemon-reload\n\
 if \"$START\"; then\n\
   as_root systemctl enable --now outbe-validator.target >/dev/null\n\
 else\n\
-  as_root systemctl disable --now outbe-validator.target >/dev/null 2>&1 || true\n\
+  as_root systemctl stop outbe-validator.target >/dev/null 2>&1 || true\n\
+  as_root rm -f /etc/systemd/system/multi-user.target.wants/outbe-validator.target\n\
 fi\n\
 ",
         root_helper = ROOT_HELPER,

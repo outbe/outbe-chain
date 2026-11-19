@@ -371,7 +371,9 @@ fn caddy_systemd_units_and_confidential_vm_runtime() {
     assert!(!install_systemd.contains("\nsudo "));
     assert!(install_systemd.contains("disable --now outbe-tee-renew.timer"));
     assert!(install_systemd.contains("enable --now outbe-validator.target"));
-    assert!(install_systemd.contains("disable --now outbe-validator.target"));
+    assert!(install_systemd.contains("systemctl stop outbe-validator.target"));
+    assert!(install_systemd
+        .contains("rm -f /etc/systemd/system/multi-user.target.wants/outbe-validator.target"));
     assert!(install_systemd.contains(&format!("SYSTEMD_DIR={}/systemd", output_dir.display())));
     assert!(install_systemd.contains(&format!("STATE_DIR={}/state", output_dir.display())));
     assert!(install_systemd.contains("$STATE_DIR/feeder"));
