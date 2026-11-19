@@ -514,6 +514,11 @@ const ROUTER: alloy_primitives::Address = outbe_intexfactory::constants::ORIGIN_
 /// [`KEPT_IDX`] and answers its reads. `retryMessageSend` gets no answer, so every retry fails.
 fn keep_one_leg(series_ids: &[SeriesId]) -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    stub_kept_leg(&mut storage, series_ids);
+    storage
+}
+
+fn stub_kept_leg(storage: &mut HashMapStorageProvider, series_ids: &[SeriesId]) {
     storage.stub_sub_call_at_selector(
         ROUTER,
         IOriginRouter::sendIntexSeriesCallNoticeCall::SELECTOR,
@@ -542,7 +547,6 @@ fn keep_one_leg(series_ids: &[SeriesId]) -> HashMapStorageProvider {
         )
         .into(),
     );
-    storage
 }
 
 fn accept_retries(storage: &mut HashMapStorageProvider) {
@@ -708,4 +712,23 @@ fn a_day_with_no_target_chain_drops_its_notice() {
         assert!(kept_legs(&handle).is_empty());
     });
     assert!(failed_notices(&storage).is_empty());
+}
+
+/// Seven whole refusals and a kept leg at the eighth send are eight tries of that chain.
+#[test]
+fn a_leg_kept_at_the_last_try_fails_at_once() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    fail_tries(&mut storage, 7);
+    stub_kept_leg(&mut storage, &[series(0)]);
+    StorageHandle::enter(&mut storage, |handle| {
+        drain_at(&handle, NOW + 7 * NOTICE_RETRY_SECONDS);
+        assert_eq!(queue_bounds(&handle), (0, 0));
+        assert!(kept_legs(&handle).is_empty(), "no ninth try");
+        drain_at(&handle, NOW + 8 * NOTICE_RETRY_SECONDS);
+    });
+    assert_eq!(retries(&storage), 0);
+    let failed = failed_notices(&storage);
+    assert_eq!(failed.len(), 1);
+    assert_eq!(SeriesId::from(failed[0].seriesId), series(0));
+    assert_eq!(failed[0].dstChainId, KEPT_CHAIN);
 }

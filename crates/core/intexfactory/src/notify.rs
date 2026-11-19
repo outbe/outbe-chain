@@ -147,7 +147,7 @@ pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         budget: PassBudget::per_block(),
     };
     let refused_runs = send_notices(ctx, &mut send)?;
-    retry_kept_legs(&mut send, refused_runs)
+    retry_kept_legs(ctx, &mut send, refused_runs)
 }
 
 /// Walks the notice queue. Returns the count of wholly refused runs at its end.
@@ -181,8 +181,13 @@ fn send_notices(ctx: &BlockRuntimeContext, send: &mut NoticeSend<'_, '_>) -> Res
 }
 
 /// Sends the due kept legs again, one write of the budget per leg. The walk stops at the
-/// first leg not yet due, and at a lack of gas, which counts no try.
-fn retry_kept_legs(send: &mut NoticeSend<'_, '_>, mut refused_runs: u32) -> Result<()> {
+/// first leg not yet due, and when this frame runs out of gas, which counts no try. A lack of
+/// gas inside the router's own send is a failed try.
+fn retry_kept_legs(
+    ctx: &BlockRuntimeContext,
+    send: &mut NoticeSend<'_, '_>,
+    mut refused_runs: u32,
+) -> Result<()> {
     let factory = send.factory;
     let head = factory.leg_head.read()?;
     let tail = factory.leg_tail.read()?;
@@ -196,10 +201,16 @@ fn retry_kept_legs(send: &mut NoticeSend<'_, '_>, mut refused_runs: u32) -> Resu
             break;
         }
         send.budget.admit_writes(1);
-        let Some(failed) = send.retry_leg(leg)? else {
-            break;
+        let unit = ctx.storage.with_checkpoint(|| {
+            let failed = send.retry_leg(leg)?;
+            factory.leg_at.clear(&index)?;
+            Ok(failed)
+        });
+        let failed = match unit {
+            Ok(failed) => failed,
+            Err(error) if error.pass_failure() == PassFailure::Stop => break,
+            Err(error) => return Err(error),
         };
-        factory.leg_at.clear(&index)?;
         index += 1;
         refused_runs = if failed { refused_runs + 1 } else { 0 };
     }
@@ -215,7 +226,6 @@ fn retry_kept_legs(send: &mut NoticeSend<'_, '_>, mut refused_runs: u32) -> Resu
 /// What a resend of a kept leg came to.
 enum Resend {
     Delivered,
-    OutOfGas,
     Refused(Bytes),
 }
 
@@ -270,21 +280,21 @@ impl NoticeSend<'_, '_> {
         self.budget.admit_writes(router_calls(run.len()));
         let outcome = crate::called::notify_called(self.storage, emission_day, called_at, &run)?;
         let all_refused = outcome.refused.len() == run.len();
-        // A kept leg failed one try more than its run had.
+        // A kept leg failed one try more than its run had. Its revert data stays in the router.
         let prior = entries
             .iter()
             .map(|e| call_notice_attempts(*e))
             .max()
             .unwrap_or(0);
         for leg in &outcome.kept {
-            enqueue_leg(
-                self.factory,
+            self.keep_leg(
                 KeptLeg {
                     idx: leg.idx.saturating_to::<u64>(),
                     dst_chain_id: leg.dstChainId,
                     attempts: prior.saturating_add(1),
-                    retry_at: self.now.saturating_add(NOTICE_RETRY_SECONDS),
+                    retry_at: 0,
                 },
+                Bytes::new(),
             )?;
         }
         // A refused entry goes behind this block's window and waits out its pause.
@@ -323,7 +333,7 @@ impl NoticeSend<'_, '_> {
         // for the day when the router cannot name its chains.
         let chains = match self.targets_of(emission_day) {
             Ok(chains) if !chains.is_empty() => chains,
-            Err(error) if error.pass_failure() == PassFailure::Propagate => return Err(error),
+            Err(error) if error.pass_failure() != PassFailure::Skip => return Err(error),
             _ => vec![0],
         };
         for dst_chain_id in chains {
@@ -332,14 +342,13 @@ impl NoticeSend<'_, '_> {
         Ok(())
     }
 
-    /// Sends one kept leg again. Returns whether the try failed, or `None` when gas ran out.
-    fn retry_leg(&mut self, leg: KeptLeg) -> Result<Option<bool>> {
+    /// Sends one kept leg again. Returns whether the try failed.
+    fn retry_leg(&self, leg: KeptLeg) -> Result<bool> {
         match self.resend(leg.idx)? {
-            Resend::Delivered => Ok(Some(false)),
-            Resend::OutOfGas => Ok(None),
+            Resend::Delivered => Ok(false),
             Resend::Refused(error_data) => {
                 self.refuse_leg(leg, error_data)?;
-                Ok(Some(true))
+                Ok(true)
             }
         }
     }
@@ -360,8 +369,7 @@ impl NoticeSend<'_, '_> {
             return Ok(Resend::Delivered);
         };
         match error.pass_failure() {
-            PassFailure::Propagate => Err(error),
-            PassFailure::Stop => Ok(Resend::OutOfGas),
+            PassFailure::Propagate | PassFailure::Stop => Err(error),
             PassFailure::Skip => {
                 let error_data = revert_data(error);
                 // Another account sent the kept message first.
@@ -379,12 +387,23 @@ impl NoticeSend<'_, '_> {
     /// Counts a failed try of a leg: it waits out its pause, or after the last try its series
     /// get the failure event and the message stays kept in the router.
     fn refuse_leg(&self, leg: KeptLeg, error_data: Bytes) -> Result<()> {
-        let attempts = leg.attempts.saturating_add(1);
+        self.keep_leg(
+            KeptLeg {
+                attempts: leg.attempts.saturating_add(1),
+                ..leg
+            },
+            error_data,
+        )
+    }
+
+    /// Queues a leg that failed `leg.attempts` tries for its next one, or after the last try
+    /// emits the failure event of its series. The message stays kept in the router.
+    fn keep_leg(&self, leg: KeptLeg, error_data: Bytes) -> Result<()> {
+        let attempts = leg.attempts;
         if attempts < MAX_CALL_NOTICE_ATTEMPTS {
             return enqueue_leg(
                 self.factory,
                 KeptLeg {
-                    attempts,
                     retry_at: self.now.saturating_add(NOTICE_RETRY_SECONDS),
                     ..leg
                 },
@@ -399,7 +418,7 @@ impl NoticeSend<'_, '_> {
         );
         let series = match self.kept_series(leg.idx) {
             Ok(series) => series,
-            Err(error) if error.pass_failure() == PassFailure::Propagate => return Err(error),
+            Err(error) if error.pass_failure() != PassFailure::Skip => return Err(error),
             Err(_) => Vec::new(),
         };
         for series_id in series {
