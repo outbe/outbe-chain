@@ -5,7 +5,7 @@ use outbe_tee::{lifecycle::successor::*, registry_view::NodeBindingSelectorV1};
 pub(super) struct ResidentSuccessor {
     pub(super) candidate: Arc<InProcessTeeContext>,
     pub(super) attempt: SuccessorAttemptV1,
-    pub(super) finalized: bool,
+    pub(super) activation: Option<LifecycleCheckpointV1>,
     pub(super) cold: bool,
 }
 
@@ -30,6 +30,7 @@ impl TeeLifecycleSupervisor {
             b.enclave_id == pending.attempt.prepare_intent.enclave_id
                 && b.binding_id == pending.attempt.prepare_intent.binding_id
         }) {
+            validate_activation_checkpoint(&pending.candidate, view.checkpoint)?;
             reconcile_attempt(
                 &self.port,
                 &self.signer,
@@ -37,7 +38,7 @@ impl TeeLifecycleSupervisor {
                 &mut self.journal,
             )
             .await?;
-            pending.finalized = true;
+            pending.activation.get_or_insert(view.checkpoint);
             self.phase = RenewalUpgradePhaseV1::Finalized;
             return Ok(());
         }
@@ -167,7 +168,7 @@ impl TeeLifecycleSupervisor {
         self.successor = Some(ResidentSuccessor {
             candidate,
             attempt,
-            finalized: false,
+            activation: None,
             cold,
         });
         self.phase = RenewalUpgradePhaseV1::CandidatePrepared;
@@ -190,7 +191,7 @@ impl TeeLifecycleSupervisor {
     pub(super) fn cold_finalized(&self) -> bool {
         self.successor
             .as_ref()
-            .is_some_and(|pending| pending.finalized && pending.cold)
+            .is_some_and(|pending| pending.activation.is_some() && pending.cold)
     }
 
     pub(super) fn complete_cold_recovery(
@@ -232,13 +233,21 @@ impl TeeLifecycleSupervisor {
                 &candidate,
                 record,
             )?;
+            if let (Some(owner), Some(snapshot)) = (owner, owner_guard.as_deref_mut()) {
+                // Do not expose the old enclave's open verdict after switching dispatch.
+                crate::admission_authority::publish_state(
+                    &owner.authority,
+                    outbe_tee::TeeAuthorityState::SuspendedPolicyMismatch,
+                );
+                owner
+                    .authority
+                    .note_observed_finalized_height(anchor.finalized_height);
+                snapshot.identity.expected_enclave_id = Some(enclave_id);
+                snapshot.context = candidate.clone();
+                snapshot.gate = TeeLeaseGuardGateV1::Pending(anchor);
+            }
             Ok::<(), SuccessorRuntimeError>(())
         })?;
-        if let Some(snapshot) = owner_guard.as_deref_mut() {
-            snapshot.identity.expected_enclave_id = Some(enclave_id);
-            snapshot.context = candidate.clone();
-            snapshot.gate = TeeLeaseGuardGateV1::Pending(anchor);
-        }
         self.live = candidate;
         self.phase = phase;
         self.successor = None;
@@ -283,7 +292,7 @@ impl TeeLifecycleSupervisor {
             return Ok(());
         }
         owner.stage_candidate(pending.candidate.clone())?;
-        if !pending.finalized {
+        if pending.activation.is_none() {
             return Ok(());
         }
         promote_finalized_successor(owner, provider, protocol, &pending.candidate, || {
@@ -464,6 +473,32 @@ fn ensure_marker_clearable(
     }
 }
 
+fn validate_activation_checkpoint(
+    candidate: &InProcessTeeContext,
+    activation: LifecycleCheckpointV1,
+) -> Result<outbe_tee::in_process::admission::VerifiedAdmissionAnchorV1, SuccessorRuntimeError> {
+    let verified = candidate
+        .admission_anchor()?
+        .ok_or(SuccessorRuntimeError::MissingAdmission)?;
+    let same_height = activation.height == verified.block_number;
+    let preserves_checkpoint = (activation.hash, activation.state_root, activation.timestamp)
+        == (
+            verified.block_hash,
+            verified.state_root,
+            verified.consensus_timestamp,
+        );
+    if activation.height < verified.block_number
+        || activation.timestamp < verified.consensus_timestamp
+        || (same_height && !preserves_checkpoint)
+    {
+        return Err(SuccessorRuntimeError::ActivationCheckpointMismatch {
+            activation_height: activation.height,
+            proof_height: verified.block_number,
+        });
+    }
+    Ok(verified)
+}
+
 fn finalized_join_anchor(
     successor: &ResidentSuccessor,
 ) -> Result<
@@ -473,10 +508,10 @@ fn finalized_join_anchor(
     ),
     SuccessorRuntimeError,
 > {
-    let verified = successor
-        .candidate
-        .admission_anchor()?
+    let activation = successor
+        .activation
         .ok_or(SuccessorRuntimeError::MissingAdmission)?;
+    let verified = validate_activation_checkpoint(&successor.candidate, activation)?;
     let intent = &successor.attempt.prepare_intent;
     Ok((
         outbe_tee::FinalizedJoinAdmissionAnchorV1 {
@@ -490,9 +525,11 @@ fn finalized_join_anchor(
             finalized_state_root: verified.state_root,
             finalized_consensus_timestamp: verified.consensus_timestamp,
         },
+        // Unlike the durable key-import proof, local lease admission needs
+        // the checkpoint that actually contains the new active binding.
         LocalTeeAdmissionAnchorV1 {
-            finalized_height: verified.block_number,
-            finalized_hash: verified.block_hash,
+            finalized_height: activation.height,
+            finalized_hash: activation.hash,
         },
     ))
 }
@@ -567,6 +604,11 @@ pub(crate) enum SuccessorRuntimeError {
     MissingCandidate,
     #[error("successor finalized admission unavailable")]
     MissingAdmission,
+    #[error("successor activation at {activation_height} disagrees with verified preparation at {proof_height}")]
+    ActivationCheckpointMismatch {
+        activation_height: u64,
+        proof_height: u64,
+    },
     #[error("local finalized checkpoint changed during promotion")]
     MovingFinality,
     #[error("cold recovery marker update failed")]

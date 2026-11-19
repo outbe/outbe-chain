@@ -13,14 +13,21 @@ use outbe_tee::{
 };
 use serde_json::{json, Value};
 
+#[path = "rpc/history.rs"]
 mod history;
+#[path = "rpc/opening.rs"]
 mod opening;
+#[path = "rpc/proof.rs"]
 mod proof;
+#[path = "rpc/receipt.rs"]
 mod receipt;
+#[path = "rpc/registry.rs"]
 mod registry;
+#[path = "rpc/send.rs"]
 mod send;
 use send::RejectedNonce;
 #[cfg(test)]
+#[path = "rpc/tests.rs"]
 mod tests;
 
 #[derive(Debug, thiserror::Error)]

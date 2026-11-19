@@ -32,6 +32,8 @@ mod launch_tests;
 pub use configuration::{
     apply_outbe_gas_price_oracle_defaults, command_requires_crs, outbe_default_txpool_values,
 };
+#[cfg(feature = "test-hooks")]
+pub use launch::prepare_validator_for_test;
 pub use launch::run_node;
 pub(crate) use launch::LaunchConfig;
 pub use metrics_recorder::install_outbe_prometheus_recorder;
@@ -42,7 +44,10 @@ pub use system_tx::{
 #[cfg(any(test, feature = "test-hooks"))]
 pub use tee_canary_probe::TributeCanaryProbe;
 #[cfg(feature = "test-hooks")]
-pub use tee_supervisor::test_hooks::{LifecycleAuthorityProbe, LifecycleAuthorityProbeError};
+pub use tee_supervisor::test_hooks::{
+    tee_launch_profile_for_test, LifecycleAuthorityProbe, LifecycleAuthorityProbeError,
+    LifecycleSupervisorProbe,
+};
 pub use wiring::OutbeRuntime;
 
 #[cfg(test)]

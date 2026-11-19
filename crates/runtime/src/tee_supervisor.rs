@@ -123,7 +123,7 @@ impl TeeLifecycleSupervisor {
         if self
             .successor
             .as_ref()
-            .is_some_and(|pending| pending.finalized && pending.cold)
+            .is_some_and(|pending| pending.activation.is_some() && pending.cold)
         {
             return Ok(engine::Step::SuccessorRequired);
         }
@@ -225,7 +225,10 @@ impl driver::LifecycleTask for TeeLifecycleSupervisor {
                 })
             }
             engine::Step::SuccessorRequired
-                if self.successor.as_ref().is_some_and(|s| s.finalized) =>
+                if self
+                    .successor
+                    .as_ref()
+                    .is_some_and(|s| s.activation.is_some()) =>
             {
                 Some(self.complete_cold_recovery(None)?)
             }

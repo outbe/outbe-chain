@@ -18,6 +18,51 @@ use outbe_tee::{
     TeeAuthorityChannel, TeeAuthorityState,
 };
 
+pub(super) fn activation_at(candidate: &InProcessTeeContext) -> LifecycleCheckpointV1 {
+    let proved = candidate.admission_anchor().unwrap().unwrap();
+    LifecycleCheckpointV1 {
+        height: proved.block_number + 1,
+        hash: B256::repeat_byte(0xEA),
+        state_root: B256::repeat_byte(0xEB),
+        timestamp: proved.consensus_timestamp + 1,
+        base_fee_per_gas: U256::from(1),
+        chain_id: u64::try_from(U256::from_be_bytes(candidate.manifest().chain_id)).unwrap(),
+        genesis_hash: candidate.manifest().genesis_hash,
+    }
+}
+
+#[test]
+fn finalized_activation_cannot_rewind_or_replace_verified_prepare_checkpoint() {
+    let root = tempfile::tempdir().unwrap();
+    let key = NodeHostIdentityKey::create_new(&root.path().join("host-key")).unwrap();
+    let committee = FinalityCommitteeFixture::new(10);
+    let (old, descriptor) = source_for_promotion(&key, &committee);
+    let candidate = fresh_candidate(&old, descriptor).unwrap();
+    admit_successor(&old, &candidate, &committee);
+    let proved = candidate.admission_anchor().unwrap().unwrap();
+    let later = activation_at(&candidate);
+    assert!(validate_activation_checkpoint(&candidate, later).is_ok());
+    for invalid in [
+        LifecycleCheckpointV1 {
+            height: proved.block_number - 1,
+            ..later
+        },
+        LifecycleCheckpointV1 {
+            height: proved.block_number,
+            ..later
+        },
+        LifecycleCheckpointV1 {
+            timestamp: proved.consensus_timestamp - 1,
+            ..later
+        },
+    ] {
+        assert!(matches!(
+            validate_activation_checkpoint(&candidate, invalid),
+            Err(SuccessorRuntimeError::ActivationCheckpointMismatch { .. })
+        ));
+    }
+}
+
 #[tokio::test]
 async fn supervisor_publishes_finalized_successor_only_once() {
     use outbe_tee::lifecycle::enrollment::load_live_join_admission_anchor_v1;
@@ -53,7 +98,7 @@ async fn supervisor_publishes_finalized_successor_only_once() {
     supervisor.successor = Some(ResidentSuccessor {
         candidate: candidate.clone(),
         attempt,
-        finalized: true,
+        activation: Some(activation_at(&candidate)),
         cold: false,
     });
     supervisor.phase = RenewalUpgradePhaseV1::Finalized;
@@ -539,7 +584,7 @@ fn complete_cold_recovery_updates_global_context_identity_and_anchor() {
     supervisor.successor = Some(ResidentSuccessor {
         candidate: candidate.clone(),
         attempt,
-        finalized: true,
+        activation: Some(activation_at(&candidate)),
         cold: true,
     });
     let (_, _, identity) = support::provider(&old, 7, 1_800_000_000, 1_800_001_000, false);
@@ -575,5 +620,11 @@ fn complete_cold_recovery_updates_global_context_identity_and_anchor() {
     let persisted = load_live_join_admission_anchor_v1(root.path(), &candidate)
         .unwrap()
         .expect("anchor persisted");
-    assert_eq!(persisted.finalized_hash, anchor.finalized_hash);
+    let activation = activation_at(&candidate);
+    assert_eq!(anchor.finalized_hash, activation.hash);
+    assert_eq!(anchor.finalized_height, activation.height);
+    assert_eq!(
+        persisted.finalized_hash,
+        candidate.admission_anchor().unwrap().unwrap().block_hash
+    );
 }

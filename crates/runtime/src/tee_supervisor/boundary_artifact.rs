@@ -9,6 +9,14 @@ use outbe_primitives::{
 };
 
 pub(super) fn boundary_extra(committee: &FinalityCommitteeFixture) -> Vec<u8> {
+    boundary_extra_for(
+        committee
+            .outcome(commonware_consensus::types::Epoch::new(0))
+            .into(),
+    )
+}
+
+pub(super) fn boundary_extra_for(outcome: Bytes) -> Vec<u8> {
     let artifact = DkgBoundaryArtifact {
         epoch: 0,
         dkg_cycle: 0,
@@ -20,7 +28,7 @@ pub(super) fn boundary_extra(committee: &FinalityCommitteeFixture) -> Vec<u8> {
         vrf_group_public_key_bytes: Bytes::new(),
         committee_set_hash: B256::ZERO,
         is_validator_set_change: false,
-        outcome: Bytes::from(committee.outcome(commonware_consensus::types::Epoch::new(0))),
+        outcome,
         is_full_dkg: true,
         reshare: ReshareResult {
             new_active_set: Vec::new(),

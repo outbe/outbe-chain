@@ -1,3 +1,4 @@
+use super::super::tests::activation_at;
 use super::*;
 
 fn planted_cold() -> (
@@ -41,9 +42,9 @@ fn planted_cold() -> (
     )
     .unwrap();
     supervisor.successor = Some(ResidentSuccessor {
+        activation: Some(activation_at(&candidate)),
         candidate,
         attempt,
-        finalized: true,
         cold: true,
     });
     let owner = armed_owner(&old);
@@ -144,7 +145,7 @@ fn directory_marker_rejects_cold_recovery_before_any_publish() {
     supervisor.successor = Some(ResidentSuccessor {
         candidate: candidate.clone(),
         attempt,
-        finalized: true,
+        activation: Some(activation_at(&candidate)),
         cold: true,
     });
     let owner = armed_owner(&old);
@@ -235,7 +236,7 @@ fn complete_cold_recovery_overwrites_anchor_from_a_previous_enclave() {
         persisted.enclave_id,
         candidate.manifest().enclave_id().unwrap()
     );
-    assert_eq!(persisted.finalized_hash, anchor.finalized_hash);
+    assert_eq!(anchor.finalized_hash, activation_at(&candidate).hash);
     assert_eq!(persisted.finalized_hash, hash);
 }
 
@@ -298,7 +299,7 @@ async fn clear_cold_marker_failure_keeps_switched_memory_and_marker_until_the_ne
         .await
         .expect("pre-sync keeps a committed cold promotion");
     let prepared = prepared.expect("finalized cold successor publishes the anchor");
-    assert_eq!(prepared.finalized_hash, hash);
+    assert_eq!(prepared.finalized_hash, activation_at(&candidate).hash);
     assert_eq!(
         std::fs::read(root.path().join("tee-cold-recovery-v1")).unwrap(),
         marker

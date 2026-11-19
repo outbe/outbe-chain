@@ -1,11 +1,16 @@
 //! Reuse the existing cryptographic fixture, advancing its exact lease checkpoint.
 use super::*;
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{Bytes, B256, U256};
 use commonware_consensus::types::Epoch;
 use outbe_primitives::{
     addresses::TEE_REGISTRY_ADDRESS, tee_attestation_v1::TrustedNetworkDescriptorV1,
 };
-use outbe_tee::{dcap_protocol::DcapOnboardingContextV1, finalized_admission::CertifiedHeaderV1};
+use outbe_tee::{
+    dcap_protocol::DcapOnboardingContextV1,
+    finalized_admission::{
+        CertifiedHeaderV1, FinalizedAdmissionWitnessV1, MptAccountProofV1, MptStorageProofV1,
+    },
+};
 pub use shared::onboarding_context;
 pub fn context(
     seed: u8,
@@ -27,6 +32,7 @@ pub fn context(
 
 pub fn descriptor(genesis: &finality::FinalityCommitteeFixture) -> TrustedNetworkDescriptorV1 {
     let mut descriptor = shared::AdmissionFixture::descriptor(genesis);
+    descriptor.network_binding.chain_id = U256::from(TEST_CHAIN_ID).to_be_bytes();
     descriptor.network_binding.genesis_hash = B256::repeat_byte(0x11);
     descriptor
 }
@@ -91,7 +97,7 @@ pub fn finalized_proof(
     fixture
 }
 
-fn compact(signed: finality::CertifiedBlockFixture) -> CertifiedHeaderV1 {
+pub(super) fn compact(signed: finality::CertifiedBlockFixture) -> CertifiedHeaderV1 {
     let decoded = outbe_consensus::committee_chain::decode_public_finalized_block(
         &signed.finalization,
         &signed.block,
@@ -102,6 +108,33 @@ fn compact(signed: finality::CertifiedBlockFixture) -> CertifiedHeaderV1 {
         finalization: signed.finalization,
         header: alloy_consensus::private::alloy_rlp::encode(decoded.block.header()),
         descendants: Vec::new(),
+    }
+}
+
+pub(super) fn registry_witness(
+    admission: CertifiedHeaderV1,
+    account: reth_trie::TrieAccount,
+    nodes: &[Bytes],
+    openings: impl IntoIterator<Item = (B256, U256, Vec<Bytes>)>,
+) -> FinalizedAdmissionWitnessV1 {
+    let storage = openings
+        .into_iter()
+        .map(|(key, value, nodes)| MptStorageProofV1 {
+            key,
+            value,
+            nodes: nodes.into_iter().map(|node| node.to_vec()).collect(),
+        })
+        .collect();
+    FinalizedAdmissionWitnessV1 {
+        admission,
+        registry_account: MptAccountProofV1 {
+            nonce: account.nonce,
+            balance: account.balance,
+            code_hash: account.code_hash,
+            storage_root: account.storage_root,
+            nodes: nodes.iter().map(|node| node.to_vec()).collect(),
+        },
+        registry_storage: storage,
     }
 }
 

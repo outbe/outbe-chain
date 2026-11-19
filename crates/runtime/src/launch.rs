@@ -153,9 +153,9 @@ where
         let tee_canary_status = outbe_tee::TeeEnclaveHealthChannel::disabled();
         let tee_canary_status_for_rpc = tee_canary_status.clone();
 
-        let founding_resident = needs_founding_lifecycle(&args, evm_signer.is_some());
         let founding_lifecycle = Arc::new(std::sync::Mutex::new(None));
-        let founding_slot = Arc::clone(&founding_lifecycle);
+        let stage_founding_lifecycle =
+            founding_lifecycle_stager(&args, evm_signer.is_some(), Arc::clone(&founding_lifecycle));
         let NodeHandle {
             node,
             node_exit_future,
@@ -213,7 +213,7 @@ where
                     let outbe_rpc = outbe_api.into_rpc();
                     let domain_rpc = domain_api.into_rpc();
                     let eth = ctx.registry.module_for(&eth_module_selection());
-                    store_founding_module(founding_resident, eth, &outbe_rpc, &founding_slot)?;
+                    stage_founding_lifecycle(eth, &outbe_rpc)?;
                     crate::domain_rpc::register_outbe_rpc_if_configured(
                         ctx.modules,
                         outbe_rpc,
@@ -468,11 +468,43 @@ async fn prepare_after_validator_bls(
     .await
 }
 
+#[cfg(feature = "test-hooks")]
+pub async fn prepare_validator_for_test(
+    config: &LaunchConfig,
+    args: &ConsensusArgs,
+    node_data_dir: PathBuf,
+    initial_tee_policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    cancellation: &tokio_util::sync::CancellationToken,
+) -> eyre::Result<()> {
+    prepare_after_validator_bls(
+        config,
+        args,
+        node_data_dir,
+        initial_tee_policy,
+        cancellation,
+    )
+    .await
+    .map(|_| ())
+}
+
 fn needs_founding_lifecycle(args: &ConsensusArgs, has_signer: bool) -> bool {
     args.upstream.is_none() && has_signer
 }
 
-fn consensus_operating_mode(
+/// Stage the local lifecycle RPC from the launch inputs, regardless of operator HTTP.
+pub(crate) fn founding_lifecycle_stager<O>(
+    args: &ConsensusArgs,
+    has_signer: bool,
+    slot: Arc<std::sync::Mutex<Option<jsonrpsee::Methods>>>,
+) -> impl FnOnce(jsonrpsee::RpcModule<()>, &O) -> eyre::Result<()>
+where
+    O: Clone + Into<jsonrpsee::Methods>,
+{
+    let founding_resident = needs_founding_lifecycle(args, has_signer);
+    move |eth, outbe_rpc| store_founding_module(founding_resident, eth, outbe_rpc, &slot)
+}
+
+pub(crate) fn consensus_operating_mode(
     is_validator: bool,
 ) -> outbe_primitives::consensus::ConsensusOperatingMode {
     if is_validator {

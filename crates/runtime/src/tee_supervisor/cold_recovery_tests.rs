@@ -381,6 +381,30 @@ impl ColdChain {
         });
     }
 
+    fn advance_without_proof(&mut self) {
+        let prior = self.served;
+        let extra = plain_extra();
+        let (mut at, finalization, block) = certify(
+            &self.committee,
+            prior.hash,
+            (prior.height + 1, prior.timestamp + 1, prior.state_root),
+            extra.clone(),
+        );
+        at.chain_id = prior.chain_id;
+        at.genesis_hash = prior.genesis_hash;
+        self.staged = Some(ProofHead {
+            at,
+            parent: prior.hash,
+            extra,
+            finalization,
+            block,
+            opening: Value::Null,
+            artifact: Bytes::new(),
+            intent_hash: B256::ZERO,
+        });
+        self.arm();
+    }
+
     fn promote_transition(&mut self) {
         let intent = self.transition.clone().expect("transition intent");
         self.binding.node_id_hash = intent.node_id.node_id_hash().unwrap();
@@ -393,6 +417,8 @@ impl ColdChain {
         self.binding.valid_until = intent.requested_valid_until;
         self.binding.policy_hash = intent.policy_hash;
         self.binding.recipient_x25519 = B256::from(intent.recipient_x25519);
+        self.pending_context = B256::ZERO;
+        self.advance_without_proof();
     }
 
     fn dispatch(&self, to: Address, data: &[u8]) -> Result<Vec<u8>, String> {
@@ -700,6 +726,19 @@ async fn cancel_required_retries_cold_prepare_and_verifies_the_second_intent() {
         (live.clone(), root.path().to_owned(), descriptor),
     )
     .unwrap();
+    let owner = armed_owner(&live);
+    let watch = owner.authority.subscribe();
+    let (source_provider, network, _) = support::provider(&live, 1, 999, 1_800_001_000, false);
+    let protocol = crate::OutbeRuntime::new();
+    assert!(owner
+        .refresh(&source_provider, &protocol, &network)
+        .unwrap()
+        .is_authority_open());
+    let _dispatch =
+        outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(live.clone()));
+    assert!(
+        matches!(watch.snapshot(), outbe_tee::TeeAuthorityState::Armed { enclave_id, .. } if enclave_id == live.manifest().enclave_id().unwrap())
+    );
     supervisor.advance_successor().await.expect("cold prepare");
     let first = supervisor.successor.as_ref().unwrap();
     let first_enclave = first.candidate.manifest().enclave_id().unwrap();
@@ -711,6 +750,7 @@ async fn cancel_required_retries_cold_prepare_and_verifies_the_second_intent() {
             && cold_recovery_marked(root.path())
     );
     chain.lock().unwrap().arm();
+    let first_prepare_height = chain.lock().unwrap().served.height;
     supervisor
         .advance_successor()
         .await
@@ -735,7 +775,12 @@ async fn cancel_required_retries_cold_prepare_and_verifies_the_second_intent() {
         .expect("upgrade cancel");
     assert!(supervisor.successor.is_none() && chain.lock().unwrap().cancels == 1);
     assert!(cold_recovery_marked(root.path()));
-    chain.lock().unwrap().account_pending = 5;
+    {
+        let mut row = chain.lock().unwrap();
+        row.account_pending = 5;
+        row.advance_without_proof();
+        assert!(row.served.height > first_prepare_height);
+    }
     supervisor
         .advance_successor()
         .await
@@ -767,37 +812,96 @@ async fn cancel_required_retries_cold_prepare_and_verifies_the_second_intent() {
         );
         assert_ne!(row.proof_hashes[0], row.proof_hashes[1]);
     }
-    {
+    let activation = {
         let mut row = chain.lock().unwrap();
         row.promote_transition();
         binding = row.binding.clone();
-    }
+        row.served
+    };
     assert_eq!(binding.enclave_id, second_enclave);
     supervisor.advance_successor().await.expect("finalize");
     let done = supervisor.successor.as_ref().unwrap();
-    assert!(done.finalized && done.cold);
-    let owner = armed_owner(&live);
-    let _dispatch = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(live));
+    assert_eq!(done.activation, Some(activation));
+    assert!(done.cold);
+    let proof = candidate.admission_anchor().unwrap().unwrap();
+    let mut admitted_provider =
+        activation_provider(&chain.lock().unwrap(), &candidate, source_provider);
     let anchor = supervisor
         .complete_cold_recovery(Some(&owner))
         .expect("cold recovery");
+    assert_eq!(anchor.finalized_height, activation.height);
+    assert_eq!(anchor.finalized_hash, activation.hash);
     assert!(Arc::ptr_eq(&supervisor.live, &candidate));
     assert!(Arc::ptr_eq(
         &outbe_tee::in_process_tee_context().unwrap(),
         &candidate
     ));
     assert!(Arc::ptr_eq(&owner.lock().unwrap().context, &candidate));
+    let snapshot = owner.lock().unwrap().clone();
+    assert_eq!(snapshot.identity.expected_enclave_id, Some(second_enclave));
+    assert_eq!(snapshot.gate, TeeLeaseGuardGateV1::Pending(anchor));
+    assert_eq!(
+        watch.snapshot(),
+        outbe_tee::TeeAuthorityState::SuspendedPolicyMismatch
+    );
+    // A published owner may still be ahead of local replay. The guard cannot
+    // open until the local canonical marker is the finalized activation.
+    admitted_provider.finalized = Some(alloy_eips::BlockNumHash::new(
+        activation.height,
+        activation.hash,
+    ));
+    owner
+        .refresh(&admitted_provider, &protocol, &network)
+        .unwrap();
+    assert_eq!(
+        watch.snapshot(),
+        outbe_tee::TeeAuthorityState::Armed {
+            enclave_id: second_enclave,
+            valid_until: binding.valid_until,
+        }
+    );
+    assert_eq!(owner.lock().unwrap().gate, TeeLeaseGuardGateV1::Armed);
+
     assert!(!cold_recovery_marked(root.path()) && supervisor.successor.is_none());
     let persisted = load_live_join_admission_anchor_v1(root.path(), &candidate)
         .unwrap()
         .expect("anchor.bin preserved");
     assert_eq!(persisted.intent_hash, second_intent);
-    assert_eq!(persisted.finalized_hash, anchor.finalized_hash);
+    assert_eq!(persisted.finalized_hash, proof.block_hash);
+    assert!(anchor.finalized_height > proof.block_number);
     assert!(root
         .path()
         .join("tee-live-join-admission-v1/anchor.bin")
         .is_file());
     handle.stop().unwrap();
+}
+
+fn activation_provider(
+    served: &ColdChain,
+    candidate: &InProcessTeeContext,
+    source: crate::launch_tests::admission_provider::FinalizedMockProvider,
+) -> crate::launch_tests::admission_provider::FinalizedMockProvider {
+    let activation = served.served;
+    let (mut provider, _, _) = support::provider(
+        candidate,
+        activation.height,
+        activation.timestamp,
+        served.binding.valid_until,
+        false,
+    );
+    let mut headers = provider.inner.headers.lock();
+    headers.retain(|_, header| header.number() == 0);
+    for record in &served.past {
+        let block = outbe_consensus::committee_chain::decode_public_block(&record.block).unwrap();
+        headers.insert(record.at.hash, block.header().clone());
+        if record.at.height < activation.height {
+            provider
+                .historical_states
+                .insert(record.at.hash, source.inner.clone());
+        }
+    }
+    drop(headers);
+    provider
 }
 
 #[path = "cold_recovery_publish.rs"]

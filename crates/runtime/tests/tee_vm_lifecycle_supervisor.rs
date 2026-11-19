@@ -14,19 +14,36 @@ use outbe_tee::{
     lifecycle::{enrollment::*, renewal::*, *},
 };
 use std::{path::PathBuf, sync::Arc};
+
+const TEST_CHAIN_ID: u64 = outbe_primitives::tee_genesis_v1::NO_ATTESTATION_DEV_CHAIN_ID;
 #[path = "tee_vm_lifecycle_supervisor/authority.rs"]
 mod authority;
 #[path = "../src/admission_provider.rs"]
 mod authority_provider;
-
+#[path = "tee_vm_lifecycle_supervisor/authority_rpc.rs"]
+mod authority_rpc;
+#[path = "../src/tee_supervisor/boundary_artifact.rs"]
+mod boundary_artifact;
 #[path = "../../blockchain/tee/src/lifecycle/enrollment/tests/chain.rs"]
 mod chain;
+#[path = "tee_vm_lifecycle_supervisor/chain_storage.rs"]
+mod chain_storage;
+#[path = "tee_vm_lifecycle_supervisor/cold_upgrade_seam.rs"]
+mod cold_upgrade_seam;
 #[path = "../src/tee_supervisor/driver.rs"]
 mod driver;
 #[path = "../src/tee_supervisor/engine.rs"]
 mod engine;
+#[path = "tee_vm_lifecycle_supervisor/execution_committee.rs"]
+mod execution_committee;
+#[path = "tee_vm_lifecycle_supervisor/moving_head_rpc.rs"]
+mod moving_head_rpc;
 #[path = "tee_vm_lifecycle_supervisor/proof.rs"]
 mod proof;
+#[path = "tee_vm_lifecycle_supervisor/rejoin_and_moving_head.rs"]
+mod rejoin_and_moving_head;
+#[path = "tee_vm_lifecycle_supervisor/rejoin_execution.rs"]
+mod rejoin_execution;
 #[path = "../src/tee_supervisor/retry.rs"]
 mod retry;
 #[path = "tee_vm_lifecycle_supervisor/running.rs"]
@@ -37,6 +54,22 @@ mod shared;
 use chain::{Chain as FixtureChain, Signer};
 use proof::ObservedChain as Chain;
 
+fn provision_host_key(dir: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let host = dir.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
+    std::fs::create_dir(&host).unwrap();
+    let key = host.join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1);
+    std::fs::write(&key, [4; 32]).unwrap();
+    std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+fn test_signers() -> (Arc<outbe_evm::OutbeEvmSigner>, k256::ecdsa::SigningKey) {
+    (
+        Arc::new(outbe_evm::OutbeEvmSigner::from_secret_bytes([7; 32]).unwrap()),
+        k256::ecdsa::SigningKey::from_slice(&[3; 32]).unwrap(),
+    )
+}
+
 struct Harness {
     dir: PathBuf,
     live: Arc<InProcessTeeContext>,
@@ -45,17 +78,12 @@ struct Harness {
 }
 impl Harness {
     fn new() -> Self {
-        use std::os::unix::fs::PermissionsExt;
         let genesis = finality::FinalityCommitteeFixture::new(10);
         let descriptor = proof::descriptor(&genesis);
         let live = Arc::new(proof::context(11, &descriptor));
         let dir = std::env::temp_dir().join(format!("tee-vm-lifecycle-{}", B256::random()));
         std::fs::create_dir(&dir).unwrap();
-        let host = dir.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
-        std::fs::create_dir(&host).unwrap();
-        let key = host.join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1);
-        std::fs::write(&key, [4; 32]).unwrap();
-        std::fs::set_permissions(key, std::fs::Permissions::from_mode(0o600)).unwrap();
+        provision_host_key(&dir);
         let journal = ServiceTxJournalV1::open(&dir).unwrap();
         let at = LifecycleCheckpointV1 {
             height: 10,
@@ -63,12 +91,14 @@ impl Harness {
             state_root: B256::repeat_byte(2),
             timestamp: 1000,
             base_fee_per_gas: U256::from(1),
-            chain_id: 676,
+            chain_id: TEST_CHAIN_ID,
             genesis_hash: descriptor.network_binding.genesis_hash,
         };
-        let mut policy =
-            outbe_primitives::tee_test_utils::no_attestation_dev_policy_v1(676, at.genesis_hash)
-                .unwrap();
+        let mut policy = outbe_primitives::tee_test_utils::no_attestation_dev_policy_v1(
+            TEST_CHAIN_ID,
+            at.genesis_hash,
+        )
+        .unwrap();
         policy.maximum_lease = 7200;
         policy.minimum_lease = 3600;
         let chain = Chain::new(FixtureChain {
@@ -135,7 +165,7 @@ impl Harness {
             .clone()
     }
     fn finalize(&mut self) {
-        outbe_consensus::config::init_consensus_chain_id(676).unwrap();
+        outbe_consensus::config::init_consensus_chain_id(TEST_CHAIN_ID).unwrap();
         let genesis = finality::FinalityCommitteeFixture::new(10);
         let donor = proof::context(1, &proof::descriptor(&genesis));
         // Only the donor is seeded; the recipient must pass the production verifier.

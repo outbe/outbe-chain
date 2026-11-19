@@ -10,7 +10,7 @@ pub(crate) struct SeededTeeState {
 #[derive(Clone)]
 pub(crate) struct FinalizedMockProvider {
     pub(crate) inner: reth_provider::test_utils::MockEthProvider<outbe_primitives::OutbePrimitives>,
-    finalized: Option<alloy_eips::BlockNumHash>,
+    pub(crate) finalized: Option<alloy_eips::BlockNumHash>,
     pub(crate) finalized_observations:
         std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<alloy_eips::BlockNumHash>>>,
     pub(crate) historical_states: std::collections::HashMap<

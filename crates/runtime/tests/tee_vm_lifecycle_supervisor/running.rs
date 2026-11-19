@@ -50,16 +50,16 @@ impl driver::LifecycleTask for Task {
         Ok(step)
     }
 }
-struct Running {
-    state: Arc<Mutex<Harness>>,
-    authority: outbe_tee::TeeAuthorityChannel,
+pub(super) struct Running {
+    pub(super) state: Arc<Mutex<Harness>>,
+    pub(super) authority: outbe_tee::TeeAuthorityChannel,
     cancellation: CancellationToken,
     wake: Arc<Notify>,
     events: mpsc::UnboundedReceiver<Event>,
     handle: tokio::task::JoinHandle<()>,
 }
 impl Running {
-    fn new(h: Harness, validator: bool) -> Self {
+    pub(super) fn new(h: Harness, validator: bool) -> Self {
         let state = Arc::new(Mutex::new(h));
         let cancellation = CancellationToken::new();
         let wake = Arc::new(Notify::new());
@@ -97,7 +97,10 @@ impl Running {
             handle,
         }
     }
-    async fn until(&mut self, predicate: impl Fn(&engine::Step) -> bool) -> engine::Step {
+    pub(super) async fn until(
+        &mut self,
+        predicate: impl Fn(&engine::Step) -> bool,
+    ) -> engine::Step {
         loop {
             match self
                 .events
@@ -110,11 +113,11 @@ impl Running {
             }
         }
     }
-    async fn change(&self, change: impl FnOnce(&mut Harness)) {
+    pub(super) async fn change(&self, change: impl FnOnce(&mut Harness)) {
         change(&mut *self.state.lock().await);
         self.wake.notify_one();
     }
-    async fn finish_join(&mut self) {
+    pub(super) async fn finish_join(&mut self) {
         self.until(|s| {
             matches!(
                 s,
@@ -132,7 +135,7 @@ impl Running {
         .await;
         while !matches!(self.events.recv().await.unwrap(), Event::Prepared) {}
     }
-    async fn stop(self) {
+    pub(super) async fn stop(self) {
         self.cancellation.cancel();
         self.handle.await.unwrap();
     }
