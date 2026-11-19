@@ -533,9 +533,11 @@ fn settle_series_7(storage: &mut HashMapStorageProvider, snapshot: U256) -> Stri
     StorageHandle::enter(storage, |s| {
         runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::ONE,
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::ONE,
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
@@ -675,9 +677,11 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
     StorageHandle::enter(&mut storage, |s| {
         let err = runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::ONE,
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::ONE,
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),

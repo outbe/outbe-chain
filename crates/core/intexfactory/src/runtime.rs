@@ -219,17 +219,28 @@ pub(crate) fn owner_balances(
     })
 }
 
+/// Units of one series that one owner holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OwnerUnits {
+    pub series_id: SeriesId,
+    pub owner: Address,
+    pub units: U256,
+}
+
 /// Settle paying the cost from `payer` in `asset` by ERC20 transfer. The settled
 /// units stay with `owner`. An issuance-currency payment must name the VWAP
 /// snapshot required at this block, and the cost must fit the payer's cap.
 pub fn settle_intex(
     storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    owner: Address,
-    units: U256,
+    held: OwnerUnits,
     payment: SettlementPayment,
     amount_cap_minor: U256,
 ) -> Result<()> {
+    let OwnerUnits {
+        series_id,
+        owner,
+        units,
+    } = held;
     let SettlementPayment {
         payer,
         asset,

@@ -353,9 +353,11 @@ fn erc20_settle_asks_the_router_to_take_the_cost_from_the_caller() {
             runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::from(2)).unwrap();
         let err = runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::from(2),
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::from(2),
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
@@ -393,15 +395,17 @@ fn erc20_settle_rejects_an_unaccepted_asset_before_any_transfer() {
         let foreign = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
         assert!(runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::from(1),
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::from(1)
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: foreign,
                 snapshot_id: U256::ZERO
             },
-            amount_cap(),
+            amount_cap()
         )
         .is_err());
         assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
@@ -417,15 +421,17 @@ fn settle_rejects_zero_amount() {
     with_factory(|s| {
         assert!(runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::ZERO,
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::ZERO
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO
             },
-            amount_cap(),
+            amount_cap()
         )
         .is_err());
     });
@@ -436,15 +442,17 @@ fn settle_rejects_missing_series() {
     with_factory(|s| {
         assert!(runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::from(1),
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::from(1)
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO
             },
-            amount_cap(),
+            amount_cap()
         )
         .is_err());
     });
@@ -471,9 +479,11 @@ fn settle_rejects_expired_deadline() {
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
         let err = runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::from(1),
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::from(1),
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
@@ -505,9 +515,11 @@ fn settle_stays_open_through_the_transit_margin() {
     StorageHandle::enter(&mut storage, |s| {
         let err = runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::from(1),
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::from(1),
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
@@ -539,9 +551,11 @@ fn a_series_called_past_its_deadline_stays_closed() {
     StorageHandle::enter(&mut storage, |s| {
         let err = runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::from(1),
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::from(1),
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
@@ -855,9 +869,11 @@ fn other() -> Address {
 fn settle_capped(s: &StorageHandle<'_>, cap: U256) -> String {
     runtime::settle_intex(
         s,
-        sid(7),
-        owner(),
-        U256::from(2),
+        runtime::OwnerUnits {
+            series_id: sid(7),
+            owner: owner(),
+            units: U256::from(2),
+        },
         SettlementPayment {
             payer: other(),
             asset: settlement_asset(),

@@ -54,9 +54,11 @@ pub fn dispatch(
                 settleIntex(c) => mutate_void(&storage, c, caller, |sender, c| {
                     runtime::settle_intex(
                         &storage,
-                        series_of(&storage, c.intexId)?,
-                        c.owner,
-                        c.units,
+                        runtime::OwnerUnits {
+                            series_id: series_of(&storage, c.intexId)?,
+                            owner: c.owner,
+                            units: c.units,
+                        },
                         SettlementPayment {
                             payer: sender,
                             asset: c.asset,

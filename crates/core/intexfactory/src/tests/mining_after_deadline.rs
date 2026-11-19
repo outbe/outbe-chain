@@ -82,9 +82,11 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
         // The unpaid unit is closed.
         let closed = runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::ONE,
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::ONE,
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),

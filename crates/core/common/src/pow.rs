@@ -62,16 +62,13 @@ pub fn compute_mining_pow_hash(
     mining_sequence: u64,
     nonce: u64,
 ) -> [u8; 32] {
-    let mut data = [0u8; MINING_PREIMAGE_LEN];
-    write_preimage(
-        &mut data,
+    sha256(&preimage(
         domain.tag(),
         right_id,
         owner,
         mining_sequence,
         nonce,
-    );
-    sha256(&data)
+    ))
 }
 
 /// SHA256 over the common preimage with [`INTEX_MINING_DOMAIN_TAG`], then `amount_be32`.
@@ -82,33 +79,34 @@ pub fn compute_intex_mining_pow_hash(
     nonce: u64,
     amount: U256,
 ) -> [u8; 32] {
-    let mut data = [0u8; INTEX_MINING_PREIMAGE_LEN];
-    write_preimage(
-        &mut data[..MINING_PREIMAGE_LEN],
+    let common = preimage(
         INTEX_MINING_DOMAIN_TAG,
         intex_id,
         owner,
         mining_sequence,
         nonce,
     );
+    let mut data = [0u8; INTEX_MINING_PREIMAGE_LEN];
+    data[..MINING_PREIMAGE_LEN].copy_from_slice(&common);
     data[MINING_PREIMAGE_LEN..].copy_from_slice(&amount.to_be_bytes::<32>());
     sha256(&data)
 }
 
-fn write_preimage(
-    data: &mut [u8],
+fn preimage(
     tag: &[u8; MINING_DOMAIN_TAG_LEN],
     right_id: U256,
     owner: Address,
     mining_sequence: u64,
     nonce: u64,
-) {
+) -> [u8; MINING_PREIMAGE_LEN] {
     const TAG: usize = MINING_DOMAIN_TAG_LEN;
+    let mut data = [0u8; MINING_PREIMAGE_LEN];
     data[..TAG].copy_from_slice(tag);
     data[TAG..TAG + 32].copy_from_slice(&right_id.to_be_bytes::<32>());
     data[TAG + 32..TAG + 52].copy_from_slice(owner.as_slice());
     data[TAG + 52..TAG + 60].copy_from_slice(&mining_sequence.to_be_bytes());
-    data[TAG + 60..TAG + 68].copy_from_slice(&nonce.to_be_bytes());
+    data[TAG + 60..].copy_from_slice(&nonce.to_be_bytes());
+    data
 }
 
 fn sha256(data: &[u8]) -> [u8; 32] {

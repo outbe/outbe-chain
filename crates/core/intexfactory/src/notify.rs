@@ -212,6 +212,13 @@ fn retry_kept_legs(send: &mut NoticeSend<'_, '_>, mut refused_runs: u32) -> Resu
     Ok(())
 }
 
+/// What a resend of a kept leg came to.
+enum Resend {
+    Delivered,
+    OutOfGas,
+    Refused(Bytes),
+}
+
 /// One block's send: the queue window it walks and the router calls left.
 struct NoticeSend<'a, 'storage> {
     factory: &'a IntexFactoryContract<'storage>,
@@ -327,42 +334,61 @@ impl NoticeSend<'_, '_> {
 
     /// Sends one kept leg again. Returns whether the try failed, or `None` when gas ran out.
     fn retry_leg(&mut self, leg: KeptLeg) -> Result<Option<bool>> {
+        match self.resend(leg.idx)? {
+            Resend::Delivered => Ok(Some(false)),
+            Resend::OutOfGas => Ok(None),
+            Resend::Refused(error_data) => {
+                self.refuse_leg(leg, error_data)?;
+                Ok(Some(true))
+            }
+        }
+    }
+
+    fn resend(&self, idx: u64) -> Result<Resend> {
         let sent = self.storage.with_checkpoint(|| {
             self.storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
                 IOriginRouter::retryMessageSendCall {
-                    idx: U256::from(leg.idx),
+                    idx: U256::from(idx),
                 }
                 .abi_encode()
                 .into(),
             )
         });
-        let error = match sent {
-            Ok(_) => return Ok(Some(false)),
-            Err(error) => error,
+        let Err(error) = sent else {
+            return Ok(Resend::Delivered);
         };
         match error.pass_failure() {
-            PassFailure::Propagate => return Err(error),
-            PassFailure::Stop => return Ok(None),
-            PassFailure::Skip => {}
+            PassFailure::Propagate => Err(error),
+            PassFailure::Stop => Ok(Resend::OutOfGas),
+            PassFailure::Skip => {
+                let error_data = revert_data(error);
+                // Another account sent the kept message first.
+                let sent_by_another =
+                    error_data.starts_with(&IOriginRouter::NoFailedMessageSend::SELECTOR);
+                Ok(if sent_by_another {
+                    Resend::Delivered
+                } else {
+                    Resend::Refused(error_data)
+                })
+            }
         }
-        let error_data = revert_data(error);
-        // Another account sent the kept message first.
-        if error_data.starts_with(&IOriginRouter::NoFailedMessageSend::SELECTOR) {
-            return Ok(Some(false));
-        }
+    }
+
+    /// Counts a failed try of a leg: it waits out its pause, or after the last try its series
+    /// get the failure event and the message stays kept in the router.
+    fn refuse_leg(&self, leg: KeptLeg, error_data: Bytes) -> Result<()> {
         let attempts = leg.attempts.saturating_add(1);
         if attempts < MAX_CALL_NOTICE_ATTEMPTS {
-            enqueue_leg(
+            return enqueue_leg(
                 self.factory,
                 KeptLeg {
                     attempts,
                     retry_at: self.now.saturating_add(NOTICE_RETRY_SECONDS),
                     ..leg
                 },
-            )?;
-            return Ok(Some(true));
+            );
         }
         tracing::warn!(
             target: "outbe::intexfactory",
@@ -379,7 +405,7 @@ impl NoticeSend<'_, '_> {
         for series_id in series {
             self.emit_send_failed(series_id, leg.dst_chain_id, error_data.clone())?;
         }
-        Ok(Some(true))
+        Ok(())
     }
 
     /// The series of a kept call notice: its body is `abi.encode(emissionDay, calledAt, seriesIds)`
