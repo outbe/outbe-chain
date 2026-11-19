@@ -27,20 +27,19 @@ fn parse_compressed_node_id(raw: &str) -> Result<[u8; 33], NodeIdParseError> {
 }
 
 #[derive(clap::Args)]
+#[command(group(clap::ArgGroup::new("binding_selector")
+    .args(["node_data_dir", "node_id", "validator"])
+    .multiple(false)))]
 pub struct StatusArgs {
     /// Derive the NodeHost selector from `<dir>/discovery-secret`.
     /// Omit, with `--node-id` and `--validator`, for network status without local files.
-    #[arg(long, conflicts_with_all = ["node_id", "validator"])]
+    #[arg(long)]
     pub(super) node_data_dir: Option<PathBuf>,
     /// Compressed secp256k1 P2P public key that selects the NodeHost binding.
-    #[arg(
-        long,
-        value_parser = parse_compressed_node_id,
-        conflicts_with_all = ["node_data_dir", "validator"]
-    )]
+    #[arg(long, value_parser = parse_compressed_node_id)]
     pub(super) node_id: Option<[u8; 33]>,
     /// Validator address that selects the enclave binding.
-    #[arg(long, conflicts_with_all = ["node_data_dir", "node_id"])]
+    #[arg(long)]
     pub(super) validator: Option<Address>,
     /// Custody format of `<dir>/discovery-secret`: plaintext, encrypted, or os-level.
     #[arg(
@@ -57,10 +56,10 @@ pub struct StatusArgs {
         value_name = "SECRET"
     )]
     pub(super) reth_passphrase: Option<String>,
-    /// Emit warning once an unsafe lease is this many blocks from freeze.
-    #[arg(long, default_value_t = 600, requires = "node_data_dir")]
+    /// Emit warning once an unsafe lease is this many blocks from freeze (requires a binding selector).
+    #[arg(long, default_value_t = 600, requires = "binding_selector")]
     pub(super) warning_blocks: u64,
-    /// Emit critical once an unsafe lease is this many blocks from freeze.
-    #[arg(long, default_value_t = 120, requires = "node_data_dir")]
+    /// Emit critical once an unsafe lease is this many blocks from freeze (requires a binding selector).
+    #[arg(long, default_value_t = 120, requires = "binding_selector")]
     pub(super) critical_blocks: u64,
 }

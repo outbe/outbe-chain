@@ -1,8 +1,8 @@
 //! Reversible process-local authority, independent of resident execution keys.
 
-use std::cell::Cell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
+use std::thread::{self, ThreadId};
 
 use alloy_primitives::B256;
 use tokio::sync::watch;
@@ -45,7 +45,7 @@ impl TeeAuthorityState {
 #[derive(Clone)]
 struct InstalledRefresh {
     generation: u64,
-    hook: Arc<dyn Fn() + Send + Sync>,
+    hook: Arc<dyn Fn(u64) + Send + Sync>,
 }
 
 struct AuthorityShared {
@@ -58,11 +58,34 @@ struct AuthorityShared {
     refresh: Mutex<Option<InstalledRefresh>>,
     /// Serializes door-side refresh so a second reader waits for the first verdict.
     refresh_gate: Mutex<()>,
+    refresh_owner_thread: Mutex<Option<ThreadId>>,
     /// Serializes publication with guard retirement.
     publish_gate: Mutex<()>,
     /// `notify_one` permit for the lease guard. Independent of the shared lifecycle notifier.
     guard_wakeup: tokio::sync::Notify,
     sender: Weak<watch::Sender<TeeAuthorityState>>,
+}
+
+impl AuthorityShared {
+    fn lock_refresh_gate(&self) -> RefreshGateGuard<'_> {
+        let gate = lock_mutex(&self.refresh_gate);
+        *lock_mutex(&self.refresh_owner_thread) = Some(thread::current().id());
+        RefreshGateGuard {
+            owner: &self.refresh_owner_thread,
+            _gate: gate,
+        }
+    }
+}
+
+struct RefreshGateGuard<'a> {
+    owner: &'a Mutex<Option<ThreadId>>,
+    _gate: MutexGuard<'a, ()>,
+}
+
+impl Drop for RefreshGateGuard<'_> {
+    fn drop(&mut self) {
+        *lock_mutex(self.owner) = None;
+    }
 }
 
 /// Publisher owned by the admission lifecycle, never a source of key material.
@@ -84,6 +107,7 @@ impl TeeAuthorityChannel {
             retired: AtomicBool::new(false),
             refresh: Mutex::new(None),
             refresh_gate: Mutex::new(()),
+            refresh_owner_thread: Mutex::new(None),
             publish_gate: Mutex::new(()),
             guard_wakeup: tokio::sync::Notify::new(),
             sender: Arc::downgrade(&sender),
@@ -92,13 +116,7 @@ impl TeeAuthorityChannel {
     }
 
     /// Replaces the snapshot even when no subscribers are currently present.
-    ///
-    /// A refresh pinned on this thread publishes only for that guard generation.
     pub fn publish(&self, state: TeeAuthorityState) {
-        if let Some(generation) = pinned_refresh_generation() {
-            let _ = self.publish_if_generation(generation, state);
-            return;
-        }
         self.sender.send_replace(state);
     }
 
@@ -143,8 +161,8 @@ impl TeeAuthorityChannel {
     }
 
     /// Holds the door-refresh lock. A caller that already holds it must not call this again.
-    pub fn lock_refresh_gate(&self) -> std::sync::MutexGuard<'_, ()> {
-        lock_mutex(&self.shared.refresh_gate)
+    pub fn lock_refresh_gate(&self) -> impl Drop + '_ {
+        self.shared.lock_refresh_gate()
     }
 
     /// Generation captured by the refresh that is allowed to publish.
@@ -199,9 +217,8 @@ impl TeeAuthorityChannel {
 
     /// Installs the admission owner's synchronous refresh.
     ///
-    /// The hook reads the provider and publishes with [`Self::publish_if_generation`].
-    /// It must not call [`TeeAuthorityWatch::ensure_current`] on this channel.
-    pub fn install_sync_refresh(&self, hook: impl Fn() + Send + Sync + 'static) {
+    /// The hook receives its generation for [`Self::publish_if_generation`].
+    pub fn install_sync_refresh(&self, hook: impl Fn(u64) + Send + Sync + 'static) {
         let _publish = lock_mutex(&self.shared.publish_gate);
         self.shared.retired.store(false, Ordering::Release);
         let generation = self
@@ -287,30 +304,31 @@ impl TeeAuthorityWatch {
     /// not return the previous `Armed` verdict. A missing hook closes authority
     /// when the observed height is ahead and keeps a resident execution key.
     pub fn ensure_current(&self) -> TeeAuthorityState {
-        if pinned_refresh_generation().is_some() {
+        if *lock_mutex(&self.shared.refresh_owner_thread) == Some(thread::current().id()) {
             return self.snapshot();
         }
-        let _gate = lock_mutex(&self.shared.refresh_gate);
+        let _gate = self.shared.lock_refresh_gate();
         self.converge()
     }
 
     fn converge(&self) -> TeeAuthorityState {
-        for _ in 0..2 {
+        for pass in 0..2 {
             let installed = lock_mutex(&self.shared.refresh).clone();
             let Some(installed) = installed else {
                 return self.snapshot_or_close_lag();
             };
             let generation = installed.generation;
-            let _pin = PinnedRefreshGeneration::enter(generation);
-            (installed.hook)();
+            (installed.hook)(generation);
             if self.applied_finalized_height() >= self.observed_finalized_height() {
                 return self.snapshot();
             }
             if self.refresh_generation() != generation {
                 return self.snapshot();
             }
+            if pass == 1 {
+                self.close_lagging_authority(Some(generation));
+            }
         }
-        self.close_lagging_authority();
         self.snapshot()
     }
 
@@ -320,7 +338,7 @@ impl TeeAuthorityWatch {
 
     fn snapshot_or_close_lag(&self) -> TeeAuthorityState {
         if self.observed_finalized_height() > self.applied_finalized_height() {
-            self.close_lagging_authority();
+            self.close_lagging_authority(None);
         }
         self.snapshot()
     }
@@ -347,7 +365,7 @@ impl TeeAuthorityWatch {
         self.receiver.changed().await
     }
 
-    fn close_lagging_authority(&self) {
+    fn close_lagging_authority(&self, generation: Option<u64>) {
         let current = self.snapshot();
         if !current.is_authority_open() {
             return;
@@ -355,7 +373,17 @@ impl TeeAuthorityWatch {
         let Some(sender) = self.shared.sender.upgrade() else {
             return;
         };
-        sender.send_replace(closed_without_publisher(current));
+        let closed = closed_without_publisher(current);
+        if let Some(generation) = generation {
+            TeeAuthorityChannel {
+                sender,
+                shared: Arc::clone(&self.shared),
+            }
+            .publish_if_generation(generation, closed);
+        } else {
+            // No hook owns this fallback verdict.
+            sender.send_replace(closed);
+        }
     }
 
     fn wake_guard(&self) {
@@ -387,38 +415,6 @@ fn failure_state(current: TeeAuthorityState, has_resident: bool) -> TeeAuthority
     } else {
         TeeAuthorityState::UnkeyedAwaitingAdmission
     }
-}
-
-std::thread_local! {
-    static PINNED_REFRESH_GENERATION: Cell<Option<u64>> = const { Cell::new(None) };
-}
-
-/// Generation pinned by the refresh running on this thread, if any.
-pub fn pinned_refresh_generation() -> Option<u64> {
-    PINNED_REFRESH_GENERATION.with(Cell::get)
-}
-
-/// Pins `generation` until drop so a nested publish cannot observe a newer guard.
-pub struct PinnedRefreshGeneration {
-    previous: Option<u64>,
-}
-
-impl PinnedRefreshGeneration {
-    fn enter(generation: u64) -> Self {
-        let previous = PINNED_REFRESH_GENERATION.with(|cell| cell.replace(Some(generation)));
-        Self { previous }
-    }
-}
-
-impl Drop for PinnedRefreshGeneration {
-    fn drop(&mut self) {
-        PINNED_REFRESH_GENERATION.with(|cell| cell.set(self.previous));
-    }
-}
-
-/// Pins `generation` for the current thread until the guard drops.
-pub fn pin_refresh_generation(generation: u64) -> PinnedRefreshGeneration {
-    PinnedRefreshGeneration::enter(generation)
 }
 
 fn closed_without_publisher(state: TeeAuthorityState) -> TeeAuthorityState {
@@ -649,9 +645,9 @@ mod tests {
         let verdict = std::sync::Arc::new(std::sync::Mutex::new(ARMED));
         let published = std::sync::Arc::clone(&verdict);
         let publisher = channel.clone();
-        channel.install_sync_refresh(move || {
+        channel.install_sync_refresh(move |generation| {
             let state = *published.lock().expect("verdict lock");
-            publisher.publish(state);
+            assert!(publisher.publish_if_generation(generation, state));
             publisher.note_applied_finalized_height(publisher.observed_finalized_height());
         });
         assert!(watch.ensure_current().is_authority_open());
@@ -667,15 +663,19 @@ mod tests {
             assert!(!state.is_authority_open());
             assert_eq!(watch.snapshot(), closed);
         }
-        let unhooked = TeeAuthorityChannel::new(ARMED);
-        let unhooked_watch = unhooked.subscribe();
-        unhooked.note_applied_finalized_height(1);
-        unhooked.note_observed_finalized_height(2);
-        let closed = unhooked_watch.ensure_current();
-        assert_eq!(closed, TeeAuthorityState::SuspendedPolicyMismatch);
-        assert!(closed.has_verified_resident_key());
-        assert!(!closed.is_authority_open());
-        assert_eq!(unhooked.applied_finalized_height(), 1);
+        for hooked in [false, true] {
+            let lagging = TeeAuthorityChannel::new(ARMED);
+            if hooked {
+                lagging.install_sync_refresh(|_| {});
+            }
+            lagging.note_applied_finalized_height(1);
+            lagging.note_observed_finalized_height(2);
+            let closed = lagging.subscribe().ensure_current();
+            assert_eq!(closed, TeeAuthorityState::SuspendedPolicyMismatch);
+            assert!(closed.has_verified_resident_key());
+            assert!(!closed.is_authority_open());
+            assert_eq!(lagging.applied_finalized_height(), 1);
+        }
     }
 
     #[test]
@@ -705,12 +705,12 @@ mod tests {
         let started_hook = Arc::clone(&started);
         let release_hook = Arc::clone(&release);
         let first_pass = Arc::new(AtomicBool::new(true));
-        channel.install_sync_refresh(move || {
+        channel.install_sync_refresh(move |generation| {
             if first_pass.swap(false, Ordering::AcqRel) {
                 started_hook.wait();
                 release_hook.wait();
             }
-            publisher.publish(TeeAuthorityState::SuspendedJailed);
+            assert!(publisher.publish_if_generation(generation, TeeAuthorityState::SuspendedJailed));
             publisher.note_applied_finalized_height(publisher.observed_finalized_height());
         });
         channel.note_observed_finalized_height(2);
@@ -748,17 +748,17 @@ mod tests {
         let publisher = channel.clone();
         let height = Arc::clone(&provider_height);
         let seen = Arc::clone(&passes);
-        channel.install_sync_refresh(move || {
+        channel.install_sync_refresh(move |generation| {
             let pass = seen.fetch_add(1, Ordering::AcqRel);
             let head = height.load(Ordering::Acquire);
             if pass == 0 {
-                publisher.publish(ARMED);
+                assert!(publisher.publish_if_generation(generation, ARMED));
                 publisher.note_applied_finalized_height(head);
                 publisher.note_observed_finalized_height(head + 1);
                 height.store(head + 1, Ordering::Release);
                 return;
             }
-            publisher.publish(TeeAuthorityState::SuspendedJailed);
+            assert!(publisher.publish_if_generation(generation, TeeAuthorityState::SuspendedJailed));
             publisher.note_applied_finalized_height(height.load(Ordering::Acquire));
         });
         channel.note_applied_finalized_height(4);
@@ -777,7 +777,7 @@ mod tests {
         let publisher = channel.clone();
         let height = Arc::clone(&provider_height);
         let closed = Arc::clone(&jailed);
-        channel.install_sync_refresh(move || {
+        channel.install_sync_refresh(move |generation| {
             let head = height.load(Ordering::Acquire);
             if head < publisher.observed_finalized_height() {
                 return;
@@ -787,12 +787,36 @@ mod tests {
             } else {
                 ARMED
             };
-            publisher.publish(state);
+            assert!(publisher.publish_if_generation(generation, state));
             publisher.note_applied_finalized_height(head);
         });
         let state = watch.ensure_current();
         assert_eq!(state, TeeAuthorityState::SuspendedJailed);
         assert_eq!(channel.applied_finalized_height(), 8);
+    }
+
+    #[test]
+    fn nested_refresh_reuses_only_the_same_channels_snapshot() {
+        let outer = TeeAuthorityChannel::new(ARMED);
+        let inner = TeeAuthorityChannel::new(ARMED);
+        let outer_watch = outer.subscribe();
+        let inner_watch = inner.subscribe();
+        let publisher = inner.clone();
+        inner.install_sync_refresh(move |generation| {
+            assert!(publisher.publish_if_generation(generation, TeeAuthorityState::SuspendedJailed));
+        });
+        let outer_reentry = outer_watch.clone();
+        let (send, receive) = std::sync::mpsc::channel();
+        outer.install_sync_refresh(move |_| {
+            let states = (outer_reentry.ensure_current(), inner_watch.ensure_current());
+            send.send(states).unwrap();
+        });
+        let reader = std::thread::spawn(move || outer_watch.ensure_current());
+        let states = receive.recv_timeout(std::time::Duration::from_secs(5));
+        outer.clear_sync_refresh();
+        inner.clear_sync_refresh();
+        assert_eq!(states.unwrap(), (ARMED, TeeAuthorityState::SuspendedJailed));
+        assert_eq!(reader.join().unwrap(), ARMED);
     }
 
     #[test]
@@ -804,8 +828,7 @@ mod tests {
         let publisher = channel.clone();
         let started_hook = Arc::clone(&started);
         let release_hook = Arc::clone(&release);
-        channel.install_sync_refresh(move || {
-            let generation = pinned_refresh_generation().expect("pinned generation");
+        channel.install_sync_refresh(move |generation| {
             started_hook.wait();
             release_hook.wait();
             assert!(!publisher.publish_if_generation(generation, ARMED));
@@ -827,7 +850,7 @@ mod tests {
     fn retired_refresh_rejects_the_sampled_generation_and_the_generation_after_stop() {
         let channel = TeeAuthorityChannel::new(ARMED);
         assert_eq!(channel.accept_sampled_refresh(0), Some(0));
-        channel.install_sync_refresh(|| {});
+        channel.install_sync_refresh(|_| {});
         let active = channel.refresh_generation();
         assert_eq!(channel.accept_sampled_refresh(active), Some(active));
         assert!(channel.accept_sampled_refresh(0).is_none());
@@ -838,7 +861,7 @@ mod tests {
             .is_none());
         assert!(!channel.snapshot().is_authority_open());
         assert!(channel.snapshot().has_verified_resident_key());
-        channel.install_sync_refresh(|| {});
+        channel.install_sync_refresh(|_| {});
         let restarted = channel.refresh_generation();
         assert_eq!(channel.accept_sampled_refresh(restarted), Some(restarted));
         assert!(channel.accept_sampled_refresh(active).is_none());

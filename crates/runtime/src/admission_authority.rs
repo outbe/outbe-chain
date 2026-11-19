@@ -75,15 +75,8 @@ pub(crate) fn publish_state(channel: &outbe_tee::TeeAuthorityChannel, next: TeeA
 }
 
 /// Failure never erases a previously verified execution key.
-fn publish_failure(channel: &outbe_tee::TeeAuthorityChannel, has_resident: bool) {
-    publish_state(
-        channel,
-        if has_resident || channel.snapshot().has_verified_resident_key() {
-            TeeAuthorityState::SuspendedPolicyMismatch
-        } else {
-            TeeAuthorityState::UnkeyedAwaitingAdmission
-        },
-    );
+fn publish_failure(channel: &outbe_tee::TeeAuthorityChannel, generation: u64, has_resident: bool) {
+    channel.publish_failure_if_generation(generation, has_resident);
 }
 
 #[cfg(test)]

@@ -476,13 +476,21 @@ fn status_cli_accepts_one_binding_selector() {
         }
     }
 
-    match Tee::try_parse_from(["tee", "status", "--node-id", &node_id])
-        .unwrap()
-        .cmd
+    match Tee::try_parse_from([
+        "tee",
+        "status",
+        "--node-id",
+        &node_id,
+        "--warning-blocks",
+        "500",
+    ])
+    .unwrap()
+    .cmd
     {
         crate::commands::tee::TeeCmd::Status(args) => {
             assert!(args.node_id.is_some());
             assert!(args.node_data_dir.is_none() && args.validator.is_none());
+            assert_eq!((args.warning_blocks, args.critical_blocks), (500, 120));
         }
     }
 
@@ -491,12 +499,17 @@ fn status_cli_accepts_one_binding_selector() {
         "status",
         "--validator",
         "0x1111111111111111111111111111111111111111",
+        "--warning-blocks",
+        "500",
+        "--critical-blocks",
+        "100",
     ])
     .unwrap()
     .cmd
     {
         crate::commands::tee::TeeCmd::Status(args) => {
             assert_eq!(args.validator, Some(Address::repeat_byte(0x11)));
+            assert_eq!((args.warning_blocks, args.critical_blocks), (500, 100));
         }
     }
     assert!(Tee::try_parse_from([
@@ -508,6 +521,16 @@ fn status_cli_accepts_one_binding_selector() {
         "0x1111111111111111111111111111111111111111",
     ])
     .is_err());
+    assert!(Tee::try_parse_from(["tee", "status"]).is_ok());
+    for flag in ["--warning-blocks", "--critical-blocks"] {
+        let Err(error) = Tee::try_parse_from(["tee", "status", flag, "100"]) else {
+            panic!("a custom lease margin requires a binding selector");
+        };
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
 
     match Tee::try_parse_from(["tee", "status", "--node-id", "zz"]) {
         Err(error) => assert!(error_chain_has_hex_source(&error)),

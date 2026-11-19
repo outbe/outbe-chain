@@ -247,7 +247,7 @@ fn vote_sender_blocks_on_first_send(head: RefreshHead, expected: State) {
     let watch = channel.subscribe();
     let published = Arc::clone(&facts);
     let publisher = channel.clone();
-    channel.install_sync_refresh(move || {
+    channel.install_sync_refresh(move |generation| {
         let seen = *published.lock().expect("provider head");
         let verdict = if seen.jailed {
             State::SuspendedJailed
@@ -259,7 +259,7 @@ fn vote_sender_blocks_on_first_send(head: RefreshHead, expected: State) {
                 valid_until: seen.valid_until,
             }
         };
-        publisher.publish(verdict);
+        assert!(publisher.publish_if_generation(generation, verdict));
         publisher.note_applied_finalized_height(seen.height);
     });
     channel.note_observed_finalized_height(7);

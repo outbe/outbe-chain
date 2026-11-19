@@ -133,11 +133,12 @@ impl UpgradeProviderHead {
 
 fn publish_upgrade_provider_head(
     publisher: &outbe_tee::authority::TeeAuthorityChannel,
+    generation: u64,
     head: UpgradeProviderHead,
 ) {
     let height = head.height();
     if height >= publisher.observed_finalized_height() {
-        publisher.publish(head.authority());
+        assert!(publisher.publish_if_generation(generation, head.authority()));
         publisher.note_applied_finalized_height(height);
     }
 }
@@ -155,8 +156,12 @@ async fn upgrade_key_v1_closes_from_fresh_armed(next: UpgradeProviderHead) {
     install_tee_authority_watch(channel.subscribe()).unwrap();
     let published = std::sync::Arc::clone(&head);
     let publisher = channel.clone();
-    channel.install_sync_refresh(move || {
-        publish_upgrade_provider_head(&publisher, *published.lock().expect("provider head"));
+    channel.install_sync_refresh(move |generation| {
+        publish_upgrade_provider_head(
+            &publisher,
+            generation,
+            *published.lock().expect("provider head"),
+        );
     });
     channel.note_observed_finalized_height(7);
     let provider: Arc<

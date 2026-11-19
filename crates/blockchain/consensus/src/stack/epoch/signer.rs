@@ -433,7 +433,7 @@ mod authority_tests {
         let watch = channel.subscribe();
         let published = std::sync::Arc::clone(&head);
         let publisher = channel.clone();
-        channel.install_sync_refresh(move || {
+        channel.install_sync_refresh(move |generation| {
             let facts = *published.lock().expect("provider head");
             if facts.height < publisher.observed_finalized_height() {
                 return;
@@ -446,7 +446,7 @@ mod authority_tests {
                     valid_until: facts.valid_until,
                 },
             };
-            publisher.publish(closed);
+            assert!(publisher.publish_if_generation(generation, closed));
             publisher.note_applied_finalized_height(facts.height);
         });
         channel.note_observed_finalized_height(7);

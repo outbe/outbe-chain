@@ -47,6 +47,7 @@ pub(crate) struct LiveTeeRuntimeV1 {
     active: Mutex<LiveTeeSnapshotV1>,
     staged_candidate: Mutex<Option<Arc<InProcessTeeContext>>>,
     armed: Mutex<Option<tokio::sync::watch::Sender<bool>>>,
+    sync_failed_state: Mutex<Option<TeeAuthorityState>>,
     bootstrap_allowed: AtomicBool,
     pub(crate) authority: TeeAuthorityChannel,
 }
@@ -69,6 +70,7 @@ impl LiveTeeRuntimeV1 {
             active: Mutex::new(active),
             staged_candidate: Mutex::new(None),
             armed: Mutex::new(None),
+            sync_failed_state: Mutex::new(None),
             authority,
         })
     }
@@ -119,7 +121,7 @@ impl LiveTeeRuntimeV1 {
     ///
     /// `upgradeKey`, `derive*Keys`, and Signer call the hook on every freshness
     /// check. The hook does not own this runtime, and it publishes only for the
-    /// generation pinned by that check.
+    /// generation passed by that check.
     pub(crate) fn bind_sync_refresh<P>(
         self: &Arc<Self>,
         provider: P,
@@ -135,11 +137,25 @@ impl LiveTeeRuntimeV1 {
             + 'static,
     {
         let owner = Arc::downgrade(self);
-        self.authority.install_sync_refresh(move || {
+        self.authority.install_sync_refresh(move |generation| {
             let Some(owner) = owner.upgrade() else {
                 return;
             };
-            let _ = owner.refresh_pinned(&provider, protocol.as_ref(), &chain);
+            let result = owner.refresh_pinned(&provider, protocol.as_ref(), &chain, generation);
+            let mut failed_state = owner
+                .sync_failed_state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            match result {
+                Ok(_) => *failed_state = None,
+                Err(error) => {
+                    let next = owner.authority.snapshot();
+                    if *failed_state != Some(next) {
+                        tracing::warn!(%error, ?next, "TEE synchronous authority refresh failed; failing closed");
+                        *failed_state = Some(next);
+                    }
+                }
+            }
         });
     }
 
@@ -156,9 +172,6 @@ impl LiveTeeRuntimeV1 {
             + crate::HeaderProvider<Header = crate::OutbeHeader>
             + crate::StateProviderFactory,
     {
-        if outbe_tee::authority::pinned_refresh_generation().is_some() {
-            return self.refresh_pinned(provider, protocol, chain);
-        }
         // Sample before the gate. A stop that lands while this call waits must
         // not become the generation this refresh is allowed to publish.
         let sampled = self.authority.refresh_generation();
@@ -166,8 +179,7 @@ impl LiveTeeRuntimeV1 {
         let Some(generation) = self.authority.accept_sampled_refresh(sampled) else {
             return Ok(self.authority.snapshot());
         };
-        let _pin = outbe_tee::authority::pin_refresh_generation(generation);
-        self.refresh_pinned(provider, protocol, chain)
+        self.refresh_pinned(provider, protocol, chain, generation)
     }
 
     fn refresh_pinned<P>(
@@ -175,13 +187,17 @@ impl LiveTeeRuntimeV1 {
         provider: &P,
         protocol: &dyn outbe_consensus::protocol_state::EngineProtocolState,
         chain: &outbe_execution::tee_remote_session::RegistryChainIdentity,
+        generation: u64,
     ) -> eyre::Result<outbe_tee::TeeAuthorityState>
     where
         P: crate::BlockIdReader
             + crate::HeaderProvider<Header = crate::OutbeHeader>
             + crate::StateProviderFactory,
     {
-        let mut active = self.lock()?;
+        let mut active = self.active.lock().map_err(|_| {
+            super::publish_failure(&self.authority, generation, false);
+            LiveTeeError::LockPoisoned
+        })?;
         let resident = active
             .context
             .offer_key_ready()
@@ -199,17 +215,17 @@ impl LiveTeeRuntimeV1 {
             (provider, protocol),
             (chain, identity),
             (&mut active.gate, &mut bootstrap),
-            &self.authority,
+            (&self.authority, generation),
             || resident,
         );
         self.bootstrap_allowed.store(bootstrap, Ordering::Relaxed);
         let result = if self.authority.applied_finalized_height()
             < self.authority.observed_finalized_height()
         {
-            super::publish_failure(&self.authority, has_resident);
+            super::publish_failure(&self.authority, generation, has_resident);
             Ok(self.authority.snapshot())
         } else if result.is_err() {
-            super::publish_failure(&self.authority, has_resident);
+            super::publish_failure(&self.authority, generation, has_resident);
             result
         } else {
             result
@@ -217,7 +233,10 @@ impl LiveTeeRuntimeV1 {
         if let Some(armed) = self
             .armed
             .lock()
-            .map_err(|_| LiveTeeError::LockPoisoned)?
+            .map_err(|_| {
+                super::publish_failure(&self.authority, generation, has_resident);
+                LiveTeeError::LockPoisoned
+            })?
             .as_ref()
         {
             let open = self.authority.snapshot().is_authority_open();

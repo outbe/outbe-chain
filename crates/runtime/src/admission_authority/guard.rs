@@ -64,7 +64,7 @@ pub(crate) fn tick<P>(
         outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     ),
     (gate, allow_bootstrap): (&mut TeeLeaseGuardGateV1, &mut bool),
-    authority: &TeeAuthorityChannel,
+    (authority, generation): (&TeeAuthorityChannel, u64),
     resident: impl FnOnce() -> eyre::Result<Option<alloy_primitives::B256>>,
 ) -> eyre::Result<TeeAuthorityState>
 where
@@ -100,8 +100,6 @@ where
         } else {
             state
         };
-    let generation = outbe_tee::authority::pinned_refresh_generation()
-        .unwrap_or_else(|| authority.refresh_generation());
     if !authority.publish_if_generation(generation, state) {
         return Ok(authority.snapshot());
     }
@@ -280,6 +278,50 @@ mod sync_refresh_tests {
             chain,
             protocol,
         }
+    }
+
+    #[test]
+    fn same_height_post_fcu_signal_rearms_the_lagging_guard() {
+        use outbe_tee::authority::{
+            install_tee_authority_watch, note_finalized_authority_revision,
+            tee_authority_test_guard,
+        };
+        use std::future::Future;
+        use std::task::{Context, Poll, Waker};
+
+        let _guard = tee_authority_test_guard();
+        let armed = fresh_armed();
+        install_tee_authority_watch(armed.channel.subscribe()).unwrap();
+        let poll_wakeup = || {
+            let mut wakeup = std::pin::pin!(armed.channel.guard_notified());
+            wakeup
+                .as_mut()
+                .poll(&mut Context::from_waker(Waker::noop()))
+        };
+        let refresh_on_signal = || {
+            assert_eq!(poll_wakeup(), Poll::Ready(()));
+            armed
+                .owner
+                .refresh(&armed.provider, armed.protocol.as_ref(), &armed.chain)
+                .unwrap()
+        };
+
+        note_finalized_authority_revision(8);
+        assert_eq!(
+            refresh_on_signal(),
+            TeeAuthorityState::SuspendedPolicyMismatch
+        );
+        assert_eq!(armed.channel.observed_finalized_height(), 8);
+        assert_eq!(armed.channel.applied_finalized_height(), 7);
+
+        *armed.provider.0.lock().expect("provider lock") =
+            support::provider(&armed.context, 8, 1_800_000_000, 1_800_001_000, false).0;
+        assert!(poll_wakeup().is_pending());
+        note_finalized_authority_revision(8);
+        assert!(refresh_on_signal().has_finalized_lease());
+        assert_eq!(armed.channel.observed_finalized_height(), 8);
+        assert_eq!(armed.channel.applied_finalized_height(), 8);
+        assert!(armed.channel.snapshot().has_finalized_lease());
     }
 
     #[test]
