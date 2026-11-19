@@ -115,6 +115,7 @@ impl RpcLifecyclePort {
                         proved: target.height,
                         fresh_height: fresh.height,
                         fresh: Box::new(fresh),
+                        source: Box::new(error),
                     })
                 } else {
                     Err(error.into())

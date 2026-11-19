@@ -516,9 +516,11 @@ where
     if !founding_resident {
         return Ok(None);
     }
+    use eyre::WrapErr as _;
     lifecycle
         .merge(outbe_rpc.clone())
-        .map_err(|error| eyre::eyre!("lifecycle outbe merge failed: {error}"))?;
+        .map_err(eyre::Report::new)
+        .wrap_err("lifecycle outbe merge failed")?;
     Ok(Some(lifecycle.into()))
 }
 

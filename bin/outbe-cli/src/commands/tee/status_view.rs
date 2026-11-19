@@ -158,14 +158,31 @@ fn node_host_public_from_discovery_secret(
 ) -> Result<[u8; 33]> {
     let path = node_data_dir.join("discovery-secret");
     let (metadata, raw) = read_discovery_secret_file(&path)?;
-    let secret = if bls::reads_as_protected_custody(&raw) {
-        ensure_private_custody_mode(&path, &metadata)?;
-        bls::load_secp256k1_secret_from_bytes(&raw, backend)
-            .map_err(classify_discovery_secret_error)?
-    } else {
-        decode_plaintext_reth_secret(&raw)?
-    };
+    let secret = decode_discovery_secret(&path, &metadata, &raw, backend)?;
     Ok(compressed_reth_p2p_public(&secret)?)
+}
+
+fn decode_discovery_secret(
+    path: &Path,
+    metadata: &Metadata,
+    raw: &[u8],
+    backend: &KeyBackend,
+) -> Result<Zeroizing<[u8; 32]>, TeeStatusError> {
+    match backend {
+        KeyBackend::Plaintext => {
+            if bls::reads_as_protected_custody(raw) {
+                return Err(TeeStatusError::invalid_backend_format());
+            }
+            decode_plaintext_reth_secret(raw)
+        }
+        // The node loader auto-detects custody and still accepts a mode-0600
+        // Reth plaintext file when the selected backend is encrypted or os-level.
+        KeyBackend::Encrypted(_) | KeyBackend::OsLevel => {
+            ensure_private_custody_mode(path, metadata)?;
+            bls::load_secp256k1_secret_from_bytes(raw, backend)
+                .map_err(TeeStatusError::from_custody_report)
+        }
+    }
 }
 
 fn read_discovery_secret_file(path: &Path) -> Result<(Metadata, Zeroizing<Vec<u8>>)> {
@@ -173,82 +190,48 @@ fn read_discovery_secret_file(path: &Path) -> Result<(Metadata, Zeroizing<Vec<u8
         .read(true)
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)
-        .map_err(|error| TeeStatusError::ReadDiscoverySecret(eyre::Report::from(error)))?;
-    let metadata = file
-        .metadata()
-        .map_err(|error| TeeStatusError::ReadDiscoverySecret(eyre::Report::from(error)))?;
+        .map_err(TeeStatusError::read_discovery_io)?;
+    let metadata = file.metadata().map_err(TeeStatusError::read_discovery_io)?;
     if !metadata.file_type().is_file() {
-        return Err(TeeStatusError::InvalidDiscoverySecret(eyre::eyre!(
-            "discovery-secret must be a regular file"
-        ))
-        .into());
+        return Err(TeeStatusError::invalid_not_regular_file().into());
     }
     let mut raw = Zeroizing::new(Vec::new());
     file.take(DISCOVERY_SECRET_READ_LIMIT + 1)
         .read_to_end(&mut raw)
-        .map_err(|error| TeeStatusError::ReadDiscoverySecret(eyre::Report::from(error)))?;
+        .map_err(TeeStatusError::read_discovery_io)?;
     if raw.len() > DISCOVERY_SECRET_READ_LIMIT as usize {
-        return Err(TeeStatusError::InvalidDiscoverySecret(eyre::eyre!(
-            "discovery-secret exceeds {DISCOVERY_SECRET_READ_LIMIT} bytes"
-        ))
-        .into());
+        return Err(TeeStatusError::invalid_too_large().into());
     }
     Ok((metadata, raw))
 }
 
-fn ensure_private_custody_mode(path: &Path, metadata: &Metadata) -> Result<()> {
+fn ensure_private_custody_mode(path: &Path, metadata: &Metadata) -> Result<(), TeeStatusError> {
     let mode = metadata.permissions().mode();
     if mode & 0o077 == 0 {
         return Ok(());
     }
-    Err(TeeStatusError::InvalidDiscoverySecret(eyre::Report::from(
-        outbe_simplex::errors::BlsKeyError::InsecureFileMode {
-            kind: "secp256k1 secret".to_owned(),
-            path: path.display().to_string(),
-            mode: mode & 0o777,
-        },
-    ))
-    .into())
+    Err(TeeStatusError::invalid_insecure_mode(path, mode & 0o777))
 }
 
 fn decode_plaintext_reth_secret(raw: &[u8]) -> Result<Zeroizing<[u8; 32]>, TeeStatusError> {
     const HEX_LEN: usize = 64;
     if raw.len() != HEX_LEN {
-        return Err(TeeStatusError::InvalidDiscoverySecret(eyre::eyre!(
-            "discovery-secret must be 64 ASCII hex bytes"
-        )));
+        return Err(TeeStatusError::invalid_plaintext_length());
     }
     let mut secret = Zeroizing::new([0_u8; 32]);
-    hex::decode_to_slice(raw, &mut secret[..])
-        .map_err(|error| TeeStatusError::InvalidDiscoverySecret(eyre::Report::from(error)))?;
+    hex::decode_to_slice(raw, &mut secret[..]).map_err(TeeStatusError::invalid_hex)?;
     Ok(secret)
 }
 
-fn classify_discovery_secret_error(error: eyre::Report) -> TeeStatusError {
-    let missing = error.chain().any(|item| {
-        item.downcast_ref::<std::io::Error>()
-            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
-    });
-    if missing {
-        TeeStatusError::ReadDiscoverySecret(error)
-    } else {
-        TeeStatusError::InvalidDiscoverySecret(error)
-    }
-}
-
 fn compressed_reth_p2p_public(secret: &[u8; 32]) -> Result<[u8; 33], TeeStatusError> {
-    let signing = k256::ecdsa::SigningKey::from_slice(secret)
-        .map_err(|error| TeeStatusError::InvalidDiscoverySecret(eyre::Report::from(error)))?;
+    let signing =
+        k256::ecdsa::SigningKey::from_slice(secret).map_err(TeeStatusError::invalid_secp256k1)?;
     signing
         .verifying_key()
         .to_encoded_point(true)
         .as_bytes()
         .try_into()
-        .map_err(|_| {
-            TeeStatusError::InvalidDiscoverySecret(eyre::eyre!(
-                "compressed SEC1 public key must be 33 bytes"
-            ))
-        })
+        .map_err(|_| TeeStatusError::invalid_compressed_length())
 }
 
 fn lease_is_safe_for_next_freeze(

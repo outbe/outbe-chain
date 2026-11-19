@@ -276,19 +276,6 @@ fn read_secret_file(path: &Path) -> Result<Zeroizing<Vec<u8>>> {
     Ok(Zeroizing::new(bytes))
 }
 
-fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
-    let start = bytes
-        .iter()
-        .position(|byte| !byte.is_ascii_whitespace())
-        .unwrap_or(bytes.len());
-    let end = bytes
-        .iter()
-        .rposition(|byte| !byte.is_ascii_whitespace())
-        .map(|index| index + 1)
-        .unwrap_or(start);
-    &bytes[start..end]
-}
-
 fn decode_custody_material(raw: &[u8], backend: &KeyBackend) -> Result<Zeroizing<Vec<u8>>> {
     if raw.starts_with(ENC_MAGIC) {
         return decrypt_custody(raw, backend);
@@ -297,7 +284,10 @@ fn decode_custody_material(raw: &[u8], backend: &KeyBackend) -> Result<Zeroizing
         let hex_str = Zeroizing::new(keychain_get_password(&service, &account)?);
         return decode_hex_zeroizing(hex_str.as_bytes()).wrap_err("invalid hex in keychain entry");
     }
-    decode_hex_zeroizing(trim_ascii_whitespace(raw)).wrap_err("invalid hex in key file")
+    // `raw` is borrowed from the `Zeroizing<Vec<u8>>` held by `load_raw`.
+    // `trim` covers NBSP and other Unicode whitespace without allocating a String.
+    let text = std::str::from_utf8(raw)?;
+    decode_hex_zeroizing(text.trim().as_bytes()).wrap_err("invalid hex in key file")
 }
 
 /// Decode hex into a buffer that is wiped if a later character is invalid.

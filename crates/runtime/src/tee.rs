@@ -236,7 +236,7 @@ where
         return Ok(Some(build(methods, signer)?));
     }
     if is_validator && upstream.is_none() && evm_signer.is_some() {
-        eyre::bail!("founding validator has no in-process lifecycle module");
+        return Err(in_process::AutonomousStartupError::MissingLocalLifecycleRpc.into());
     }
     Ok(None)
 }
@@ -283,7 +283,7 @@ pub(crate) fn start_runtime_workers(
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .is_some();
     if direct_founding && !slot_ready {
-        eyre::bail!("founding validator has no in-process lifecycle module");
+        return Err(in_process::AutonomousStartupError::MissingLocalLifecycleRpc.into());
     }
     let founding_resident = if direct_founding {
         Some(
@@ -496,7 +496,7 @@ where
             )
             .map_err(|error| eyre::Report::new(*error))
         })?
-        .ok_or_else(|| eyre::eyre!("founding validator has no in-process lifecycle module"))?;
+        .ok_or(in_process::AutonomousStartupError::MissingLocalLifecycleRpc)?;
     Ok(spawn_supervisor_run(Some(supervisor), run, shutdown))
 }
 

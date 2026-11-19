@@ -329,6 +329,7 @@ async fn epoch_transition_is_deferred_at_the_boundary_and_a_bad_signature_is_not
         state_root: opening.state_root,
         extra_data: extra2.clone(),
         parent_hash: first.block_hash,
+        base_fee_per_gas: None,
     });
     let third = committee.certify_child_block(CertifiedChildBlockInput {
         epoch: epoch1,
@@ -337,6 +338,7 @@ async fn epoch_transition_is_deferred_at_the_boundary_and_a_bad_signature_is_not
         state_root: opening.state_root,
         extra_data: Vec::new(),
         parent_hash: second.block_hash,
+        base_fee_per_gas: None,
     });
     let foreign = FinalityCommitteeFixture::new(99);
     let broken = foreign.certify_child_block(CertifiedChildBlockInput {
@@ -346,6 +348,7 @@ async fn epoch_transition_is_deferred_at_the_boundary_and_a_bad_signature_is_not
         state_root: opening.state_root,
         extra_data: Vec::new(),
         parent_hash: third.block_hash,
+        base_fee_per_gas: None,
     });
     let mut rows = HashMap::new();
     rows.insert(1, row_from(&first, B256::ZERO, state1, extra1));
@@ -413,7 +416,7 @@ async fn epoch_transition_is_deferred_at_the_boundary_and_a_bad_signature_is_not
     };
     assert!(matches!(
         port.admission_history(bad).await,
-        Err(RpcLifecycleError::Unauthenticated)
+        Err(RpcLifecycleError::Unauthenticated(..))
     ));
     let during = counts(&calls, "eth_getBlockByNumber");
     assert!(during.iter().all(|args| {
@@ -424,7 +427,7 @@ async fn epoch_transition_is_deferred_at_the_boundary_and_a_bad_signature_is_not
     calls.lock().unwrap().clear();
     assert!(matches!(
         port.admission_history(bad).await,
-        Err(RpcLifecycleError::Unauthenticated)
+        Err(RpcLifecycleError::Unauthenticated(..))
     ));
     assert!(counts(&calls, "eth_getBlockByNumber")
         .iter()
@@ -499,6 +502,7 @@ async fn outgoing_committee_still_signs_the_block_after_preannounce() {
         state_root: opening.state_root,
         extra_data: extra_pre.clone(),
         parent_hash: anchor.block_hash,
+        base_fee_per_gas: None,
     });
     let still_outgoing = committee.certify_child_block(CertifiedChildBlockInput {
         epoch: epoch0,
@@ -507,6 +511,7 @@ async fn outgoing_committee_still_signs_the_block_after_preannounce() {
         state_root: opening.state_root,
         extra_data: Vec::new(),
         parent_hash: announced.block_hash,
+        base_fee_per_gas: None,
     });
     let activated = committee.certify_child_block(CertifiedChildBlockInput {
         epoch: epoch1,
@@ -515,6 +520,7 @@ async fn outgoing_committee_still_signs_the_block_after_preannounce() {
         state_root: opening.state_root,
         extra_data: Vec::new(),
         parent_hash: still_outgoing.block_hash,
+        base_fee_per_gas: None,
     });
     let mut rows = HashMap::new();
     rows.insert(1, row_from(&anchor, B256::ZERO, state1, extra1));
@@ -626,12 +632,12 @@ async fn unauthenticated_certificate_is_not_pinned() {
     };
     assert!(matches!(
         port.admission_history(at).await,
-        Err(RpcLifecycleError::Unauthenticated)
+        Err(RpcLifecycleError::Unauthenticated(..))
     ));
     calls.lock().unwrap().clear();
     assert!(matches!(
         port.admission_history(at).await,
-        Err(RpcLifecycleError::Unauthenticated)
+        Err(RpcLifecycleError::Unauthenticated(..))
     ));
     assert!(counts(&calls, "eth_getBlockByNumber")
         .iter()
@@ -691,6 +697,55 @@ async fn known_receipt_skips_foreign_logs_and_does_not_scan() {
     );
     assert!(counts(&calls, "eth_getLogs").is_empty());
     assert_eq!(counts(&calls, "eth_getProof").len(), 1);
+    handle.stop().unwrap();
+}
+
+#[tokio::test]
+async fn finalized_receipt_remembers_success_for_onboarding_without_send() {
+    let at = checkpoint();
+    let context = context_for(at);
+    let artifact = DcapOnboardingArtifactV1 {
+        context,
+        nonce: [3; 12],
+        ciphertext: vec![4; 16],
+    };
+    let sealed = ITeeRegistryV1::OfferKeySealedForRegistryV1 {
+        nodeIdHash: context.node_id_hash,
+        sealedOfferKey: artifact.encode_canonical().unwrap().into(),
+    }
+    .encode_log_data();
+    let registered = ITeeRegistryV1::EnclaveRegisteredV1 {
+        nodeIdHash: context.node_id_hash,
+        enclaveId: context.enclave_id,
+        bindingId: context.binding_id,
+        validUntil: 90,
+        bindingVersion: 1,
+    }
+    .encode_log_data();
+    let tx = B256::repeat_byte(0x59);
+    let (port, handle, calls) = receipt_port(
+        at,
+        tx,
+        vec![sealed_log(at, tx, registered), sealed_log(at, tx, sealed)],
+    )
+    .await;
+    assert!(
+        port.finalized_receipt(at, tx)
+            .await
+            .unwrap()
+            .unwrap()
+            .success
+    );
+    let error = port.onboarding(at, context.intent_hash).await.unwrap_err();
+    assert!(
+        !matches!(
+            error,
+            RpcLifecycleError::InvalidProof(ProofFailure::InvalidReceipt)
+        ),
+        "bound receipt log must pass validation before assemble, got {error}"
+    );
+    assert!(counts(&calls, "eth_sendRawTransaction").is_empty());
+    assert!(counts(&calls, "eth_getLogs").is_empty());
     handle.stop().unwrap();
 }
 
@@ -839,6 +894,7 @@ async fn serve_epoch_chain(
             state_root: opening.state_root,
             extra_data: extra.clone(),
             parent_hash: parent,
+            base_fee_per_gas: None,
         });
         rows.insert(height, row_from(&block, parent, opening.state_root, extra));
         parent = block.block_hash;

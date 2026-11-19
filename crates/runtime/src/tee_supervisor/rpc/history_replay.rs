@@ -7,11 +7,22 @@ use outbe_primitives::reshare_artifact::{decode_outbe_block_artifacts, Consensus
 use outbe_tee::finalized_admission::*;
 use serde_json::{json, Value};
 
-fn unauthenticated(failed: bool) -> Result<(), RpcLifecycleError> {
-    if failed {
-        Err(RpcLifecycleError::Unauthenticated)
-    } else {
+fn reject(reason: UnauthenticatedInvariant) -> RpcLifecycleError {
+    RpcLifecycleError::Unauthenticated(UnauthenticatedError::Invariant(reason))
+}
+
+fn ensure(holds: bool, reason: UnauthenticatedInvariant) -> Result<(), RpcLifecycleError> {
+    if holds {
         Ok(())
+    } else {
+        Err(reject(reason))
+    }
+}
+
+fn auth_cause(error: eyre::Report) -> CommitteeAuthCause {
+    match error.downcast::<outbe_consensus::errors::FollowError>() {
+        Ok(follow) => CommitteeAuthCause::Follow(follow),
+        Err(report) => CommitteeAuthCause::Report(report),
     }
 }
 
@@ -77,11 +88,11 @@ impl super::RpcLifecyclePort {
         }
         let anchor_outcome =
             trusted_outcome(&target, history.anchor.as_deref().map(|bytes| &**bytes))
-                .ok_or(RpcLifecycleError::Unauthenticated)?;
+                .ok_or_else(|| reject(UnauthenticatedInvariant::MissingTrustedOutcome))?;
         let descriptor = self
             .network_descriptor()
             .filter(|descriptor| !descriptor.genesis_consensus_keys.is_empty())
-            .ok_or(RpcLifecycleError::Unauthenticated)?;
+            .ok_or_else(|| reject(UnauthenticatedInvariant::MissingNetworkDescriptor))?;
         if let Err(error) = self.authenticate(
             history,
             &descriptor,
@@ -120,17 +131,21 @@ impl super::RpcLifecyclePort {
                     Default::default(),
                     anchor_outcome,
                 )
-                .map_err(|_| RpcLifecycleError::Unauthenticated)?;
+                .map_err(|error| {
+                    RpcLifecycleError::Unauthenticated(UnauthenticatedError::CommitteeChain(
+                        auth_cause(error),
+                    ))
+                })?;
             verifier = Some(super::VerifierCheckpoint { chain, applied: 0 });
         }
         let checkpoint = verifier
             .as_mut()
-            .ok_or(RpcLifecycleError::Unauthenticated)?;
+            .ok_or_else(|| reject(UnauthenticatedInvariant::MissingVerifier))?;
         replay_new(checkpoint, &history.transitions)?;
         let active = checkpoint
             .chain
             .highest_registered()
-            .ok_or(RpcLifecycleError::Unauthenticated)?;
+            .ok_or_else(|| reject(UnauthenticatedInvariant::MissingCommittee))?;
         if history.boundary_transition.is_some() && epoch == active.next() {
             history.promote_boundary()?;
             replay_new(checkpoint, &history.transitions)?;
@@ -138,7 +153,11 @@ impl super::RpcLifecyclePort {
         checkpoint
             .chain
             .verify_finalization(epoch, finalization)
-            .map_err(|_| RpcLifecycleError::Unauthenticated)?;
+            .map_err(|error| {
+                RpcLifecycleError::Unauthenticated(UnauthenticatedError::VerifyFinalization(
+                    auth_cause(error),
+                ))
+            })?;
         self.set_verifier(verifier);
         Ok(())
     }
@@ -167,7 +186,9 @@ fn measured_anchor(
         anchor_outcome,
     )
     .map(|_| ())
-    .map_err(|_| RpcLifecycleError::Unauthenticated)
+    .map_err(|source| {
+        RpcLifecycleError::Unauthenticated(UnauthenticatedError::AdmissionVerifier(source))
+    })
 }
 
 fn replay_new(
@@ -187,55 +208,80 @@ fn replay_transition(
 ) -> Result<(), RpcLifecycleError> {
     use alloy_consensus::Sealable as _;
     use alloy_rlp::Decodable as _;
-    let transition = CertifiedHeaderV1::decode_canonical(encoded)
-        .map_err(|_| RpcLifecycleError::Unauthenticated)?;
+    let transition = CertifiedHeaderV1::decode_canonical(encoded).map_err(|source| {
+        RpcLifecycleError::Unauthenticated(UnauthenticatedError::Canonical(source))
+    })?;
     let finalization = outbe_consensus::committee_chain::decode_public_finalization(
         &transition.finalization,
         outbe_consensus::bls::MAX_COMMITTEE_MEMBERS,
     )
-    .map_err(|_| RpcLifecycleError::Unauthenticated)?;
+    .map_err(|source| {
+        RpcLifecycleError::Unauthenticated(UnauthenticatedError::PublicFinalization(source))
+    })?;
     let mut bytes = transition.header.as_slice();
     let header = outbe_primitives::OutbeHeader::decode(&mut bytes)
-        .map_err(|_| RpcLifecycleError::Unauthenticated)?;
-    unauthenticated(!bytes.is_empty())?;
+        .map_err(|source| RpcLifecycleError::Unauthenticated(UnauthenticatedError::Rlp(source)))?;
+    ensure(bytes.is_empty(), UnauthenticatedInvariant::TrailingHeader)?;
     let mut signed = header.hash_slow();
     let mut previous_number = header.number();
     let mut previous_hash = signed;
     for child in &transition.descendants {
         let mut child_bytes = child.as_slice();
-        let decoded = outbe_primitives::OutbeHeader::decode(&mut child_bytes)
-            .map_err(|_| RpcLifecycleError::Unauthenticated)?;
-        unauthenticated(
-            !child_bytes.is_empty()
-                || previous_number.checked_add(1) != Some(decoded.number())
-                || decoded.parent_hash() != previous_hash,
+        let decoded =
+            outbe_primitives::OutbeHeader::decode(&mut child_bytes).map_err(|source| {
+                RpcLifecycleError::Unauthenticated(UnauthenticatedError::Rlp(source))
+            })?;
+        ensure(
+            child_bytes.is_empty(),
+            UnauthenticatedInvariant::TrailingHeader,
+        )?;
+        ensure(
+            previous_number.checked_add(1) == Some(decoded.number())
+                && decoded.parent_hash() == previous_hash,
+            UnauthenticatedInvariant::DescendantChain,
         )?;
         previous_number = decoded.number();
         previous_hash = decoded.hash_slow();
         signed = previous_hash;
     }
-    unauthenticated(finalization.proposal.payload != outbe_consensus::digest::Digest(signed))?;
+    ensure(
+        finalization.proposal.payload == outbe_consensus::digest::Digest(signed),
+        UnauthenticatedInvariant::PayloadDigest,
+    )?;
     let epoch = finalization.proposal.round.epoch();
     let expected = chain
         .highest_registered()
-        .ok_or(RpcLifecycleError::Unauthenticated)?;
-    unauthenticated(epoch != expected)?;
+        .ok_or_else(|| reject(UnauthenticatedInvariant::MissingCommittee))?;
+    ensure(epoch == expected, UnauthenticatedInvariant::EpochMismatch)?;
     chain
         .verify_finalization(epoch, &finalization)
-        .map_err(|_| RpcLifecycleError::Unauthenticated)?;
-    let artifacts = decode_outbe_block_artifacts(header.extra_data().as_ref())
-        .map_err(|_| RpcLifecycleError::Unauthenticated)?;
+        .map_err(|error| {
+            RpcLifecycleError::Unauthenticated(UnauthenticatedError::VerifyFinalization(
+                auth_cause(error),
+            ))
+        })?;
+    let artifacts =
+        decode_outbe_block_artifacts(header.extra_data().as_ref()).map_err(|source| {
+            RpcLifecycleError::Unauthenticated(UnauthenticatedError::Artifacts(source))
+        })?;
     let (next, outcome) = match artifacts.consensus_header_artifact {
         Some(ConsensusHeaderArtifact::CommitteePreAnnounce {
             epoch: next,
             outcome,
         }) => (next, outcome),
-        _ => return Err(RpcLifecycleError::Unauthenticated),
+        _ => Err(reject(UnauthenticatedInvariant::MissingPreAnnounce))?,
     };
-    unauthenticated(epoch.get().checked_add(1) != Some(next))?;
+    ensure(
+        epoch.get().checked_add(1) == Some(next),
+        UnauthenticatedInvariant::PreAnnounceEpoch,
+    )?;
     chain
         .register_epoch_from_outcome(epoch.next(), &outcome)
-        .map_err(|_| RpcLifecycleError::Unauthenticated)?;
+        .map_err(|error| {
+            RpcLifecycleError::Unauthenticated(UnauthenticatedError::CommitteeChain(auth_cause(
+                error,
+            )))
+        })?;
     chain.retain_only_highest();
     Ok(())
 }

@@ -241,7 +241,7 @@ impl RpcLifecyclePort {
         }
         let (block, compact) = match self.certified(height, history).await {
             Ok(certified) => certified,
-            Err(error @ RpcLifecycleError::Unauthenticated) => {
+            Err(error @ RpcLifecycleError::Unauthenticated(..)) => {
                 self.clear_history();
                 return Err(error);
             }

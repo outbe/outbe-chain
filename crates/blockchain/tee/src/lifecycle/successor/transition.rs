@@ -161,10 +161,17 @@ fn upgrade_proof_checkpoint<P: LifecycleChainPort, S: LifecycleSignerV1>(
     use alloy_rlp::Decodable as _;
     let witness =
         crate::finalized_admission::FinalizedAdmissionWitnessV1::decode_canonical(&proof.admission)
-            .map_err(|_| RenewalError::<P::Error, S::Error>::BindingMismatch)?;
+            .map_err(|source| {
+                RenewalError::<P::Error, S::Error>::UpgradeProofCheckpoint(
+                    UpgradeProofCheckpointError::Witness(source),
+                )
+            })?;
     let mut rlp = witness.admission.header.as_slice();
-    let header = alloy_consensus::Header::decode(&mut rlp)
-        .map_err(|_| RenewalError::<P::Error, S::Error>::BindingMismatch)?;
+    let header = alloy_consensus::Header::decode(&mut rlp).map_err(|source| {
+        RenewalError::<P::Error, S::Error>::UpgradeProofCheckpoint(
+            UpgradeProofCheckpointError::Header(source),
+        )
+    })?;
     let hash = header.hash_slow();
     let Some(base_fee) = header.base_fee_per_gas.map(U256::from) else {
         return Err(RenewalError::<P::Error, S::Error>::BindingMismatch.into());

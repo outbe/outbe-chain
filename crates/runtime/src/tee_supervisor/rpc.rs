@@ -60,13 +60,67 @@ pub(crate) enum RpcLifecycleError {
     #[error("quantity exceeds supported width")]
     Overflow,
     #[error("finality certificate failed authentication")]
-    Unauthenticated,
+    Unauthenticated(#[source] UnauthenticatedError),
     #[error("eth proof window moved from height {proved} to {fresh_height}")]
     ProofWindowMoved {
         proved: u64,
         fresh_height: u64,
         fresh: Box<LifecycleCheckpointV1>,
+        #[source]
+        source: Box<jsonrpsee::core::client::Error>,
     },
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum UnauthenticatedError {
+    #[error("canonical committee record rejected")]
+    Canonical(#[source] outbe_tee::finalized_admission::FinalizedAdmissionCodecError),
+    #[error("header RLP rejected")]
+    Rlp(#[source] alloy_consensus::private::alloy_rlp::Error),
+    #[error("block artifacts rejected")]
+    Artifacts(#[source] outbe_primitives::error::PrecompileError),
+    #[error("public finalization rejected")]
+    PublicFinalization(#[source] outbe_consensus::committee_chain::PublicFinalizedBlockDecodeError),
+    #[error("admission verifier rejected the anchor")]
+    AdmissionVerifier(#[source] outbe_tee::in_process::InProcessError),
+    #[error("committee chain rejected the anchor")]
+    CommitteeChain(#[source] CommitteeAuthCause),
+    #[error("BLS finalization verification failed")]
+    VerifyFinalization(#[source] CommitteeAuthCause),
+    #[error("epoch or digest invariant failed")]
+    Invariant(#[source] UnauthenticatedInvariant),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum CommitteeAuthCause {
+    #[error(transparent)]
+    Follow(#[from] outbe_consensus::errors::FollowError),
+    #[error(transparent)]
+    Report(eyre::Report),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum UnauthenticatedInvariant {
+    #[error("trusted boundary outcome is missing")]
+    MissingTrustedOutcome,
+    #[error("trusted network descriptor is missing")]
+    MissingNetworkDescriptor,
+    #[error("committee verifier is missing")]
+    MissingVerifier,
+    #[error("no committee is registered")]
+    MissingCommittee,
+    #[error("header RLP has trailing bytes")]
+    TrailingHeader,
+    #[error("descendant header chain is not consecutive")]
+    DescendantChain,
+    #[error("finalization payload does not match the header digest")]
+    PayloadDigest,
+    #[error("certificate epoch is not the registered epoch")]
+    EpochMismatch,
+    #[error("pre-announce epoch is not the successor")]
+    PreAnnounceEpoch,
+    #[error("consensus artifact is not a committee pre-announce")]
+    MissingPreAnnounce,
 }
 
 impl From<jsonrpsee::core::client::Error> for RpcLifecycleError {
@@ -430,7 +484,11 @@ impl LifecycleChainPort for RpcLifecyclePort {
         at: LifecycleCheckpointV1,
         tx_hash: B256,
     ) -> Result<Option<LifecycleReceiptV1>, LifecyclePortError<Self::Error>> {
-        Ok(self.receipt(at, tx_hash).await?)
+        let receipt = self.receipt(at, tx_hash).await?;
+        if receipt.as_ref().is_some_and(|receipt| receipt.success) {
+            self.remember_sealed(tx_hash);
+        }
+        Ok(receipt)
     }
     async fn onboarding_proof(
         &self,

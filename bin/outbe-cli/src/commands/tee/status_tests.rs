@@ -360,6 +360,36 @@ fn file_mode(path: &std::path::Path) -> u32 {
 }
 
 #[tokio::test]
+async fn status_explicit_backend_accepts_mode_600_plaintext_discovery_secret() {
+    const GENERATOR: [u8; 33] = [
+        0x02, 0x79, 0xbe, 0x66, 0x7e, 0xf9, 0xdc, 0xbb, 0xac, 0x55, 0xa0, 0x62, 0x95, 0xce, 0x87,
+        0x0b, 0x07, 0x02, 0x9b, 0xfc, 0xdb, 0x2d, 0xce, 0x28, 0xd9, 0x59, 0xf2, 0x81, 0x5b, 0x16,
+        0xf8, 0x17, 0x98,
+    ];
+    let scalar = b"0000000000000000000000000000000000000000000000000000000000000001";
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("discovery-secret");
+    write_exact_mode(&path, scalar, 0o600);
+    for (backend, passphrase) in [
+        ("encrypted", Some("unused-passphrase".to_owned())),
+        ("os-level", None),
+    ] {
+        let args = StatusArgs {
+            node_data_dir: Some(scratch.path().to_path_buf()),
+            reth_key_backend: backend.to_owned(),
+            reth_passphrase: passphrase,
+            ..status_args()
+        };
+        let mut rpc = status_rpc();
+        bind_node(&mut rpc, NodeBindingSelectorV1::NodeHost(GENERATOR), 2_100);
+        let status = read_status(&rpc, &args).await.unwrap();
+        assert_eq!(status["binding"]["validUntil"], 2_100, "{backend}");
+    }
+    assert_eq!(std::fs::read(&path).unwrap(), scalar);
+    assert_eq!(file_mode(&path), 0o600);
+}
+
+#[tokio::test]
 async fn status_encrypted_discovery_secret_selects_the_independent_node_id() {
     let scratch = tempfile::tempdir().unwrap();
     let seed = [9; 32];

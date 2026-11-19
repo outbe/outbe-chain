@@ -176,6 +176,8 @@ pub(super) enum AutonomousStartupError {
     Activation(#[from] outbe_tee::errors::TeeAttestationActivationError),
     #[error("resident context unavailable after initialization")]
     MissingContext,
+    #[error("founding validator has no in-process lifecycle module")]
+    MissingLocalLifecycleRpc,
     #[error(transparent)]
     Supervisor(#[from] crate::tee_supervisor::RuntimeSupervisorError),
     #[error(transparent)]

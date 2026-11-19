@@ -42,6 +42,8 @@ pub enum RenewalError<E: std::error::Error + 'static, S: std::error::Error + 'st
     Signing(#[source] S),
     #[error("finalized view or resident identity mismatch")]
     BindingMismatch,
+    #[error("upgrade proof checkpoint decode rejected")]
+    UpgradeProofCheckpoint(#[source] UpgradeProofCheckpointError),
     #[error("service counter overflow")]
     CounterOverflow,
     #[error("collateral does not cover the requested lease")]
@@ -59,6 +61,14 @@ pub enum RenewalError<E: std::error::Error + 'static, S: std::error::Error + 'st
     StalePending,
     #[error("pending renewal calldata ABI rejected")]
     PendingCalldata(#[source] alloy_sol_types::Error),
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum UpgradeProofCheckpointError {
+    #[error("upgrade proof admission witness rejected")]
+    Witness(#[source] crate::finalized_admission::FinalizedAdmissionCodecError),
+    #[error("upgrade proof header rejected")]
+    Header(#[source] alloy_rlp::Error),
 }
 
 pub(crate) type StepResult<T, P, S> =

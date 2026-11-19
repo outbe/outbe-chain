@@ -129,6 +129,7 @@ fn certify(
         state_root,
         extra_data: extra,
         parent_hash: parent,
+        base_fee_per_gas: Some(1),
     });
     let header = outbe_consensus::committee_chain::decode_public_block(&certified.block)
         .unwrap()
@@ -140,7 +141,7 @@ fn certify(
             hash: certified.block_hash,
             state_root: header.state_root(),
             timestamp: header.timestamp(),
-            base_fee_per_gas: U256::from(1),
+            base_fee_per_gas: U256::from(header.base_fee_per_gas().expect("fee sealed")),
             chain_id: 0,
             genesis_hash: B256::ZERO,
         },

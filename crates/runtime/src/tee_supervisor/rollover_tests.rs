@@ -293,6 +293,7 @@ fn served_chain(
             state_root,
             extra_data: boundary.clone(),
             parent_hash: h1_hash,
+            base_fee_per_gas: None,
         },
     );
     let block = outbe_consensus::committee_chain::decode_public_block(&certified.block).unwrap();
