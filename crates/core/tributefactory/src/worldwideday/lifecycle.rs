@@ -49,13 +49,13 @@ pub fn compute_wwd_schedule(wwd: WorldwideDay) -> Result<(NewWwdSchedule, u64)> 
     let forming_end = forming_start
         .checked_add(outbe_chain_constants::get_metadosis_forming_period_seconds())
         .ok_or(WwdCallerError::FormingWindowOverflow)?;
-    let offerings_start = forming_end
-        .checked_add(outbe_chain_constants::get_metadosis_lookback_delay_seconds())
-        .ok_or(WwdCallerError::LookbackWindowOverflow)?;
+    let offerings_start = forming_start
+        .checked_add(outbe_chain_constants::OFFERING_START_AFTER_FORMING_START_SECONDS)
+        .ok_or(WwdCallerError::OfferingWindowOverflow)?;
     let offering_end = offerings_start
         .checked_add(outbe_chain_constants::get_metadosis_offering_period_seconds())
         .ok_or(WwdCallerError::OfferingWindowOverflow)?;
-    let day = timestamp_to_date_key(offering_end);
+    let day = next_date_key(wwd.value()).map_err(super::errors::date_step_error)?;
     let metadosis_start = outbe_emission::api::compute_metadosis_start(day)?;
     Ok((
         NewWwdSchedule {

@@ -16,8 +16,8 @@ fn typed_queries_distinguish_missing_days_from_active_schedule() {
         let expected_forming_start = wwd.start_timestamp().unwrap();
         let expected_forming_end =
             expected_forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
-        let expected_offerings_start =
-            expected_forming_end + outbe_chain_constants::get_metadosis_lookback_delay_seconds();
+        let expected_offerings_start = expected_forming_start
+            + outbe_chain_constants::OFFERING_START_AFTER_FORMING_START_SECONDS;
         let expected_offering_end = expected_offerings_start
             + outbe_chain_constants::get_metadosis_offering_period_seconds();
         assert_eq!(day.worldwide_day, wwd);

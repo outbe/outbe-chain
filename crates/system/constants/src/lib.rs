@@ -12,16 +12,15 @@ pub const GENESIS_CONFIG_KEY: &str = "outbeProtocol";
 pub const PROTOCOL_CONSTANTS_SCHEMA_VERSION: u16 = 1;
 
 pub const DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
-/// Production lookback. Forming plus this delay is 3 UTC days, so E = D+4.
-pub const DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS: u64 = 22 * 60 * 60;
-pub const MIN_METADOSIS_LOOKBACK_DELAY_SECONDS: u64 = 22 * 60 * 60;
 pub const DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS: u64 = 50 * 60 * 60;
-const DELAY_AFTER_OFFERING_SECONDS: u64 = 12 * 60 * 60;
-/// `ceil((50 + 22 + 50 + 12) hours / 24 hours) + 1`.
-pub const MAX_PIPELINE_WWDS: usize = ((DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS
-    + DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS
+/// The offering window of WorldwideDay D is WorldwideDay D+1, so E = D+1.
+pub const OFFERING_START_AFTER_FORMING_START_SECONDS: u64 = SECONDS_PER_DAY;
+/// A WorldwideDay is sealed at the first midnight after its offering end.
+const SEAL_DELAY_AFTER_OFFERING_SECONDS: u64 = 12 * 60 * 60;
+/// `ceil((24 + 50 + 12) hours / 24 hours) + 1`.
+pub const MAX_PIPELINE_WWDS: usize = ((OFFERING_START_AFTER_FORMING_START_SECONDS
     + DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS
-    + DELAY_AFTER_OFFERING_SECONDS)
+    + SEAL_DELAY_AFTER_OFFERING_SECONDS)
     .div_ceil(SECONDS_PER_DAY) as usize)
     + 1;
 pub const DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS: u64 = 86_400;
@@ -39,7 +38,6 @@ pub const DEFAULT_DAY_VWAP_MIN_COVERAGE: [u64; 2] = [2, 3];
 pub struct GenesisProtocolParametersV1 {
     pub governance_voting_window_blocks: u64,
     pub metadosis_forming_period_seconds: u64,
-    pub metadosis_lookback_delay_seconds: u64,
     pub metadosis_offering_period_seconds: u64,
     pub vwap_lookback_seconds: u64,
     pub vwap_update_interval_seconds: u64,
@@ -50,7 +48,6 @@ pub struct GenesisProtocolParametersV1 {
 const DEFAULTS: GenesisProtocolParametersV1 = GenesisProtocolParametersV1 {
     governance_voting_window_blocks: DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS,
     metadosis_forming_period_seconds: DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS,
-    metadosis_lookback_delay_seconds: DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS,
     metadosis_offering_period_seconds: DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS,
     vwap_lookback_seconds: DEFAULT_VWAP_LOOKBACK_SECONDS,
     vwap_update_interval_seconds: DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS,
@@ -62,15 +59,8 @@ const _: () = {
     assert!(
         DEFAULTS.metadosis_offering_period_seconds == DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS
     );
-    assert!((DEFAULTS.metadosis_forming_period_seconds
-        + DEFAULTS.metadosis_lookback_delay_seconds)
-        .is_multiple_of(SECONDS_PER_DAY));
-    assert!(MIN_METADOSIS_LOOKBACK_DELAY_SECONDS == DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS);
-    assert!(
-        (DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS + DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS)
-            .is_multiple_of(SECONDS_PER_DAY)
-    );
-    assert!(MAX_PIPELINE_WWDS == 7);
+    assert!(OFFERING_START_AFTER_FORMING_START_SECONDS < DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS);
+    assert!(MAX_PIPELINE_WWDS == 5);
 };
 
 impl Default for GenesisProtocolParametersV1 {
@@ -87,8 +77,6 @@ struct GenesisProtocolOverridesV1 {
     #[serde(default)]
     schema_version: Option<u16>,
     #[serde(default)]
-    metadosis: MetadosisOverridesV1,
-    #[serde(default)]
     oracle: OracleOverridesV1,
 }
 
@@ -99,12 +87,6 @@ struct OracleOverridesV1 {
     vwap_update_interval_seconds: Option<u64>,
     vwap_policy_version: Option<u32>,
     day_vwap_min_coverage: Option<[u64; 2]>,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct MetadosisOverridesV1 {
-    lookback_delay_seconds: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -132,10 +114,6 @@ impl GenesisProtocolParametersV1 {
                 .voting_window_blocks
                 .unwrap_or(defaults.governance_voting_window_blocks),
             metadosis_forming_period_seconds: defaults.metadosis_forming_period_seconds,
-            metadosis_lookback_delay_seconds: overrides
-                .metadosis
-                .lookback_delay_seconds
-                .unwrap_or(defaults.metadosis_lookback_delay_seconds),
             metadosis_offering_period_seconds: defaults.metadosis_offering_period_seconds,
             vwap_lookback_seconds: overrides
                 .oracle
@@ -184,32 +162,6 @@ impl GenesisProtocolParametersV1 {
                 actual: self.metadosis_offering_period_seconds,
             });
         }
-        if self.metadosis_lookback_delay_seconds < MIN_METADOSIS_LOOKBACK_DELAY_SECONDS
-            || self.metadosis_lookback_delay_seconds > DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS
-        {
-            return Err(ProtocolConstantsError::InvalidValue {
-                field: "metadosis.lookbackDelaySeconds",
-                requirement: "be at least 22 hours and no greater than the production default",
-                actual: self.metadosis_lookback_delay_seconds,
-            });
-        }
-        if !(self.metadosis_forming_period_seconds + self.metadosis_lookback_delay_seconds)
-            .is_multiple_of(SECONDS_PER_DAY)
-        {
-            return Err(ProtocolConstantsError::InvalidValue {
-                field: "metadosis.lookbackDelaySeconds",
-                requirement: "make forming plus lookback a whole number of UTC days",
-                actual: self.metadosis_lookback_delay_seconds,
-            });
-        }
-        self.metadosis_forming_period_seconds
-            .checked_add(self.metadosis_lookback_delay_seconds)
-            .and_then(|value| value.checked_add(self.metadosis_offering_period_seconds))
-            .ok_or(ProtocolConstantsError::InvalidValue {
-                field: "metadosis pipeline",
-                requirement: "fit u64 seconds",
-                actual: u64::MAX,
-            })?;
         Ok(())
     }
 
@@ -352,10 +304,6 @@ fn parameters() -> &'static GenesisProtocolParametersV1 {
 
 pub fn get_metadosis_forming_period_seconds() -> u64 {
     parameters().metadosis_forming_period_seconds
-}
-
-pub fn get_metadosis_lookback_delay_seconds() -> u64 {
-    parameters().metadosis_lookback_delay_seconds
 }
 
 pub fn get_metadosis_offering_period_seconds() -> u64 {
@@ -504,7 +452,6 @@ mod tests {
             (
                 get_governance_voting_window_blocks(),
                 get_metadosis_forming_period_seconds(),
-                get_metadosis_lookback_delay_seconds(),
                 get_metadosis_offering_period_seconds(),
                 get_vwap_lookback_seconds(),
                 get_vwap_update_interval_seconds(),
@@ -513,7 +460,6 @@ mod tests {
             (
                 defaults.governance_voting_window_blocks,
                 defaults.metadosis_forming_period_seconds,
-                defaults.metadosis_lookback_delay_seconds,
                 defaults.metadosis_offering_period_seconds,
                 defaults.vwap_lookback_seconds,
                 defaults.vwap_update_interval_seconds,
@@ -523,59 +469,10 @@ mod tests {
     }
 
     #[test]
-    fn explicit_fields_override_independently_without_exposing_origin() {
-        let resolved = GenesisProtocolParametersV1::resolve(Some(&json!({
-            "schemaVersion": 1,
-            "metadosis": {
-                "lookbackDelaySeconds": 22 * 3_600
-            },
-        })))
-        .unwrap();
-
-        assert_eq!(
-            resolved.metadosis_forming_period_seconds,
-            DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS
-        );
-        assert_eq!(resolved.metadosis_lookback_delay_seconds, 22 * 3_600);
-        assert_eq!(
-            resolved.metadosis_offering_period_seconds,
-            DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS
-        );
-    }
-
-    #[test]
-    fn lookback_accepts_the_production_and_testnet_bounds() {
-        for lookback in [
-            MIN_METADOSIS_LOOKBACK_DELAY_SECONDS,
-            DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS,
-        ] {
-            let resolved = GenesisProtocolParametersV1::resolve(Some(&json!({
-                "metadosis": { "lookbackDelaySeconds": lookback }
-            })))
-            .unwrap();
-            assert_eq!(resolved.metadosis_lookback_delay_seconds, lookback);
-            assert_eq!(
-                resolved.metadosis_forming_period_seconds,
-                DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS
-            );
-            assert_eq!(
-                resolved.metadosis_offering_period_seconds,
-                DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS
-            );
-        }
-    }
-
-    #[test]
     fn malformed_unknown_and_unsafe_values_are_rejected() {
         assert!(matches!(
             GenesisProtocolParametersV1::resolve(Some(&json!({
                 "unknown": 1
-            }))),
-            Err(ProtocolConstantsError::InvalidJson(_))
-        ));
-        assert!(matches!(
-            GenesisProtocolParametersV1::resolve(Some(&json!({
-                "metadosis": { "unknownField": 30 }
             }))),
             Err(ProtocolConstantsError::InvalidJson(_))
         ));
@@ -587,49 +484,18 @@ mod tests {
                 Err(ProtocolConstantsError::UnsupportedSchemaVersion(version))
             );
         }
-        let forming = GenesisProtocolParametersV1::resolve(Some(&json!({
-            "metadosis": { "formingPeriodSeconds": 60 }
-        })))
-        .expect_err("forming is not an override");
-        assert!(forming.to_string().contains("unknown field"), "{forming}");
-        assert!(
-            forming.to_string().contains("formingPeriodSeconds"),
-            "{forming}"
-        );
-        let offering = GenesisProtocolParametersV1::resolve(Some(&json!({
-            "metadosis": { "offeringPeriodSeconds": 120 }
-        })))
-        .expect_err("offering is not an override");
-        assert!(offering.to_string().contains("unknown field"), "{offering}");
-        assert!(
-            offering.to_string().contains("offeringPeriodSeconds"),
-            "{offering}"
-        );
-        let advance = GenesisProtocolParametersV1::resolve(Some(&json!({
-            "metadosis": { "advanceIntervalSeconds": 10 }
-        })))
-        .expect_err("advance interval is not an override");
-        assert!(advance.to_string().contains("unknown field"), "{advance}");
-        assert!(
-            advance.to_string().contains("advanceIntervalSeconds"),
-            "{advance}"
-        );
-        for lookback in [
-            0,
-            21 * 60 * 60,
-            23 * 60 * 60,
-            DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS + 24 * 60 * 60,
+        for knob in [
+            "lookbackDelaySeconds",
+            "formingPeriodSeconds",
+            "offeringPeriodSeconds",
+            "advanceIntervalSeconds",
         ] {
-            assert_eq!(
-                GenesisProtocolParametersV1::resolve(Some(&json!({
-                    "metadosis": { "lookbackDelaySeconds": lookback }
-                }))),
-                Err(ProtocolConstantsError::InvalidValue {
-                    field: "metadosis.lookbackDelaySeconds",
-                    requirement: "be at least 22 hours and no greater than the production default",
-                    actual: lookback,
-                })
-            );
+            let error = GenesisProtocolParametersV1::resolve(Some(&json!({
+                "metadosis": { knob: 60 }
+            })))
+            .expect_err("the Metadosis windows take no override");
+            assert!(error.to_string().contains("unknown field"), "{error}");
+            assert!(error.to_string().contains("metadosis"), "{error}");
         }
     }
 
@@ -686,31 +552,18 @@ mod tests {
                 actual: 49 * 60 * 60,
             })
         );
-
-        let unaligned_lookback = GenesisProtocolParametersV1 {
-            metadosis_lookback_delay_seconds: DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS - 3_600,
-            ..DEFAULTS
-        };
-        assert_eq!(
-            unaligned_lookback.validate_offering_window(),
-            Err(ProtocolConstantsError::InvalidValue {
-                field: "metadosis.lookbackDelaySeconds",
-                requirement: "be at least 22 hours and no greater than the production default",
-                actual: DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS - 3_600,
-            })
-        );
     }
 
     #[test]
     fn genesis_reader_resolves_config_without_alloc_state() {
         let expected = GenesisProtocolParametersV1::resolve(Some(&json!({
-            "metadosis": { "lookbackDelaySeconds": 22 * 3_600 },
+            "governance": { "votingWindowBlocks": 17 },
         })))
         .unwrap();
         let genesis = json!({
             "config": {
                 "outbeProtocol": {
-                    "metadosis": { "lookbackDelaySeconds": 22 * 3_600 },
+                    "governance": { "votingWindowBlocks": 17 },
                 }
             }
         });

@@ -16,13 +16,11 @@ use crate::schema::OracleContract;
 pub const SCURVE_RING_SLOTS: u64 = 32;
 
 // A Tribute reads the curve in force at the oldest WWD still in an offering
-// window, and every newer curve. That WWD started at most forming + lookback
-// delay + offering ago, and a pair starts at most one curve for each WWD.
+// window, and every newer curve. That WWD started at most one day plus the
+// offering period ago, and a pair starts at most one curve for each WWD.
 // The ring holds those curves plus the one in force before them.
-// Genesis can only shorten these periods, so the defaults bound them.
 const _: () = assert!(
-    (outbe_chain_constants::DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS
-        + outbe_chain_constants::DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS
+    (outbe_chain_constants::OFFERING_START_AFTER_FORMING_START_SECONDS
         + outbe_chain_constants::DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS)
         .div_ceil(SECONDS_PER_DAY)
         < SCURVE_RING_SLOTS

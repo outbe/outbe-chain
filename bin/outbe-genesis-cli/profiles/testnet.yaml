@@ -95,17 +95,6 @@ feeder_seeds: testnet/seeds.yaml
 # min_stake: "10000000000000000000000000"           # 10000000 COEN minimum stake
 # contracts_dir: contracts/predeploys
 
-# Protocol timings, copied verbatim into config.outbeProtocol.
-# ONLY a `test-protocol-overrides` build accepts this field; a production
-# binary rejects the genesis outright. Use it for localnet and E2E networks,
-# never for a production one, which runs the built-in schedule. Omit the
-# section to run on the built-in defaults (50h forming, 22h lookback delay,
-# 50h offering). A short-window network must state them here.
-protocol_constants:
-  schemaVersion: 1
-  metadosis:
-    lookbackDelaySeconds: 79200
-
 # --- Protocol parameters ---------------------------------------------------
 # A network.yaml of your own may override any of these. Scalars replace, lists
 # replace as a whole, mappings merge key by key.

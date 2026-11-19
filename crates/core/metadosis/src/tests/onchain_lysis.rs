@@ -32,7 +32,7 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
         let forming_end =
             forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
         let offerings_start =
-            forming_end + outbe_chain_constants::get_metadosis_lookback_delay_seconds();
+            forming_start + outbe_chain_constants::OFFERING_START_AFTER_FORMING_START_SECONDS;
         let offering_end =
             offerings_start + outbe_chain_constants::get_metadosis_offering_period_seconds();
         let binding = outbe_system_common::metadosis_bindings::metadosis_process_ready_binding(

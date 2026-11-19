@@ -19,9 +19,6 @@ pub enum MetadosisCallerError {
     #[error("Metadosis forming window overflow")]
     FormingWindowOverflow,
 
-    #[error("Metadosis lookback window overflow")]
-    LookbackWindowOverflow,
-
     #[error("Metadosis offering window overflow")]
     OfferingWindowOverflow,
 
@@ -53,9 +50,6 @@ impl From<MetadosisCallerError> for PrecompileError {
                 revert_with(I::FormedDayLimitImmutable {})
             }
             MetadosisCallerError::FormingWindowOverflow => revert_with(I::FormingWindowOverflow {}),
-            MetadosisCallerError::LookbackWindowOverflow => {
-                revert_with(I::LookbackWindowOverflow {})
-            }
             MetadosisCallerError::OfferingWindowOverflow => {
                 revert_with(I::OfferingWindowOverflow {})
             }
