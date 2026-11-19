@@ -166,6 +166,11 @@ contract ERC7786TokenBridgeTest is Test {
         assertEq(bnbWcoen.balanceOf(DEAD_ADDRESS), 0);
         assertEq(bnbWcoen.totalSupply(), 0);
         assertEq(address(bnbGateway).balance, 1);
+        // The transport sends the extra fee to the refundAddress attribute: the caller of burnDead.
+        assertEq(
+            bnbGateway.lastFirstAttribute(),
+            abi.encodeWithSelector(bytes4(keccak256("refundAddress(address)")), intruder)
+        );
         assertEq(outbeWcoen.balanceOf(address(outbeWcoenBridge)), 0);
         assertEq(outbeWcoen.balanceOf(DEAD_ADDRESS), 0);
         assertEq(outbeWcoen.totalSupply(), 0);
@@ -180,7 +185,7 @@ contract ERC7786TokenBridgeTest is Test {
     function test_RevertWhen_SendBurnedFromNonToken() public {
         vm.prank(intruder);
         vm.expectRevert(abi.encodeWithSelector(ERC7786TokenBridge.UnauthorizedToken.selector, intruder));
-        bnbWcoenBridge.sendBurned(OUTBE, 1);
+        bnbWcoenBridge.sendBurned(OUTBE, 1, intruder);
     }
 
     function test_Quote_DelegatesToBridge() public {

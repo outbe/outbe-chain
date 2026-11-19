@@ -142,7 +142,9 @@ contract ERC7786TokenBridge is OwnableUpgradeable, UUPSUpgradeable, ReentrancyGu
         amount = _onSend(msg.sender, amount);
 
         bytes memory payload = _encodePayload(msg.sender, to, amount, "");
-        sendId = bridge.sendMessage{value: msg.value}(_remoteBridge(destinationDomain), payload, _sendAttributes(0));
+        sendId = bridge.sendMessage{value: msg.value}(
+            _remoteBridge(destinationDomain), payload, _sendAttributes(0, msg.sender)
+        );
 
         emit CrosschainTransferSent(sendId, destinationDomain, msg.sender, to, amount);
     }
@@ -167,20 +169,28 @@ contract ERC7786TokenBridge is OwnableUpgradeable, UUPSUpgradeable, ReentrancyGu
         amount = _onSend(msg.sender, amount);
 
         bytes memory payload = _encodePayload(msg.sender, to, amount, extraData);
-        sendId =
-            bridge.sendMessage{value: msg.value}(_remoteBridge(destinationDomain), payload, _sendAttributes(gasLimit));
+        sendId = bridge.sendMessage{value: msg.value}(
+            _remoteBridge(destinationDomain), payload, _sendAttributes(gasLimit, msg.sender)
+        );
 
         emit CrosschainTransferSent(sendId, destinationDomain, msg.sender, to, amount);
     }
 
     /// @notice Sends `amount`, which the token has just burned from 0x…dEaD, to 0x…dEaD on
     ///         `destinationDomain`. Only the token can call it, so no backing moves without that burn.
-    function sendBurned(uint32 destinationDomain, uint256 amount) external payable returns (bytes32 sendId) {
+    /// @param refundTo Gets the part of `msg.value` above the fee back. The token gives its caller.
+    function sendBurned(uint32 destinationDomain, uint256 amount, address refundTo)
+        external
+        payable
+        returns (bytes32 sendId)
+    {
         if (msg.sender != address(token)) revert UnauthorizedToken(msg.sender);
         if (amount == 0) revert InvalidAmount();
 
         bytes memory payload = _encodePayload(DEAD_ADDRESS, DEAD_ADDRESS, amount, "");
-        sendId = bridge.sendMessage{value: msg.value}(_remoteBridge(destinationDomain), payload, new bytes[](0));
+        sendId = bridge.sendMessage{value: msg.value}(
+            _remoteBridge(destinationDomain), payload, _sendAttributes(0, refundTo)
+        );
 
         emit CrosschainTransferSent(sendId, destinationDomain, DEAD_ADDRESS, DEAD_ADDRESS, amount);
     }
@@ -250,11 +260,11 @@ contract ERC7786TokenBridge is OwnableUpgradeable, UUPSUpgradeable, ReentrancyGu
         attrs[0] = abi.encodeWithSelector(GAS_LIMIT_ATTR, gasLimit);
     }
 
-    /// @dev The attributes of a user send: the gas attribute (when `gasLimit` is not 0) and the
-    ///      refundAddress attribute, so the transport sends the extra fee back to the caller.
-    function _sendAttributes(uint256 gasLimit) internal view returns (bytes[] memory attrs) {
+    /// @dev The attributes of a send: the gas attribute (when `gasLimit` is not 0) and the
+    ///      refundAddress attribute, so the transport sends the extra fee back to `refundTo`.
+    function _sendAttributes(uint256 gasLimit, address refundTo) internal pure returns (bytes[] memory attrs) {
         attrs = new bytes[](gasLimit == 0 ? 1 : 2);
-        attrs[0] = abi.encodeWithSelector(REFUND_ADDRESS_ATTR, msg.sender);
+        attrs[0] = abi.encodeWithSelector(REFUND_ADDRESS_ATTR, refundTo);
         if (gasLimit != 0) attrs[1] = abi.encodeWithSelector(GAS_LIMIT_ATTR, gasLimit);
     }
 
