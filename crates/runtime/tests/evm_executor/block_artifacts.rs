@@ -4,14 +4,16 @@ use outbe_system_common::time::SECONDS_PER_DAY;
 #[test]
 fn proposer_and_validator_state_matches_after_a_gem_issue() {
     use outbe_gem::precompile::IGem;
-    use outbe_gemfactory::{precompile::IGemFactory, schema::GemPosition, GemFactoryContract};
+    use outbe_gemfactory::{
+        precompile::IGemFactory, schema::GemFactoryPosition, GemFactoryContract,
+    };
     use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
     use outbe_system_common::addresses::GEM_FACTORY_ADDRESS;
 
     outbe_chain_constants::initialize(None).unwrap();
     // The minimal parity variant issues a Gem from a seeded merchant position.
     let block_ts = fixtures::TEST_BLOCK_TIMESTAMP_BASE + 1;
-    let position_id = U256::from(1);
+    let gem_factory_position_id = U256::from(1);
     let user: reth_ethereum::TransactionSigned = TxEip1559 {
         chain_id: CHAIN_ID,
         nonce: 0,
@@ -21,7 +23,7 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
         to: TxKind::Call(GEM_FACTORY_ADDRESS),
         value: U256::ZERO,
         input: IGemFactory::issueGemCall {
-            positionId: position_id,
+            gemFactoryPositionId: gem_factory_position_id,
             owner: OWNER,
             promisLoadMinor: U256::from(1_000_000),
             issuanceCurrency: 840,
@@ -46,9 +48,9 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
                 GemFactoryContract::new(storage.clone())
                     .positions
-                    .create(&GemPosition {
-                        position_id,
-                        merchant: Address(*user.signer()),
+                    .create(&GemFactoryPosition {
+                        gem_factory_position_id,
+                        owner: Address(*user.signer()),
                         // Dated by the priced day, which floors the merchant gem.
                         source_series_id: outbe_intex::SeriesId::pack(
                             outbe_system_common::time::previous_date_key(

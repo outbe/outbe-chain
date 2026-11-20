@@ -10,12 +10,12 @@ interface IGemFactory {
     error SettlementDeadlinePassed();
     error SourceIntexNotFound();
     error SourceIntexNotIssued();
-    error PositionNotFound();
-    error NotPositionOwner();
-    error PositionAlreadyExists();
+    error GemFactoryPositionNotFound();
+    error NotGemFactoryPositionOwner();
+    error GemFactoryPositionAlreadyExists();
     error IndexOutOfBounds();
     error InsufficientCapacity();
-    error PositionExpired();
+    error ExpiredGemFactoryPosition();
     error InsufficientProofOfWork();
     error CannotMineInIssueBlock();
     error InvalidCurrency(uint16 currency);
@@ -25,24 +25,23 @@ interface IGemFactory {
     error ZeroPromisLoad();
     error EmptyMemberSlotDuringCleanup(bytes32 groupKey);
     error MissingMemberRecordDuringCleanup(bytes32 groupKey, uint256 gemId);
-    error PositionNotExpired();
     error MissingGroupForCall(bytes32 group);
     error IneligibleGroupMember(bytes32 groupKey, uint256 gemId);
     error CallPriceOverflow();
     error DateStep(uint8 kind, uint32 dateKey);
 
-    /// @notice Send the caller's Intex units of `sourceIntexId` to the Gem Factory (burning
-    ///         `units` via IntexNFT1155) and issue a GemPosition NFT to the caller.
-    ///         Returns the new `positionId`.
-    function issueGemPosition(uint256 sourceIntexId, uint256 units) external returns (uint256 positionId);
+    /// @notice Send the caller's Intex units of `intexId` to the Gem Factory (burning
+    ///         `units` via IntexNFT1155) and create a GemFactory position owned by the caller.
+    ///         Returns the new `gemFactoryPositionId`.
+    function createGemFactoryPosition(uint256 intexId, uint256 units) external returns (uint256 gemFactoryPositionId);
     /// @notice Issue one Merchant gem to `owner` in the currencies the merchant names,
-    ///         draining the position's capacity. Only the position's merchant (the caller)
+    ///         draining the position's capacity. Only the position's owner (the caller)
     ///         may call. `issuanceCurrency` is any ISO 4217 code, `referenceCurrency` an
     ///         oracle reference currency. A merchant issues one owner one Gem of a sub-series
     ///         in each block, so a second one in the same sub-series and block reverts
     ///         `AlreadyExists`.
     function issueGem(
-        uint256 positionId,
+        uint256 gemFactoryPositionId,
         address owner,
         uint256 promisLoadMinor,
         uint16 issuanceCurrency,
@@ -87,17 +86,17 @@ interface IGemFactory {
         view
         returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
 
-    // --- GemPosition NFT (ERC-721-style, non-transferable; owner = merchant) ---
+    // --- GemFactory position (ERC-721-style, non-transferable; owner = merchant) ---
     // An expired position stays readable until the cleanup deletes it.
     /// @notice Number of GemPositions owned by `owner`.
     function balanceOf(address owner) external view returns (uint256);
-    /// @notice Merchant that owns the position `positionId`.
-    function ownerOf(uint256 positionId) external view returns (address);
-    /// @notice Metadata URI for the position `positionId`.
-    function tokenURI(uint256 positionId) external view returns (string memory);
+    /// @notice Merchant that owns the position `gemFactoryPositionId`.
+    function ownerOf(uint256 gemFactoryPositionId) external view returns (address);
+    /// @notice Metadata URI for the position `gemFactoryPositionId`.
+    function tokenURI(uint256 gemFactoryPositionId) external view returns (string memory);
     function tokensByOwner(address owner) external view returns (uint256[] memory tokenIds);
-    /// @notice Full terms of the position `positionId`.
-    function getPosition(uint256 positionId) external view returns (PositionData memory);
+    /// @notice Full terms of the position `gemFactoryPositionId`.
+    function getGemFactoryPosition(uint256 gemFactoryPositionId) external view returns (GemFactoryPositionData memory);
 
     /// @notice How close a right is to its group's call. The window ends at the last
     ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.
@@ -122,9 +121,9 @@ interface IGemFactory {
     function getCallProgress(uint256 gemId) external view returns (CallProgress memory);
 
     /// @notice A merchant's Intex in the Gem Factory: the pool Merchant gems are drawn from.
-    struct PositionData {
-        uint256 positionId;
-        address merchant;
+    struct GemFactoryPositionData {
+        uint256 gemFactoryPositionId;
+        address owner;
         uint256 sourceIntexId;
         /// @notice The source Intex series, readable after the series is gone.
         bytes14 sourceSeriesId;
@@ -151,8 +150,8 @@ interface IGemFactory {
         uint64 callNoticePeriod
     );
     /// @notice A merchant sent Intex units into a new position.
-    event GemPositionCreated(
-        uint256 indexed positionId,
+    event GemFactoryPositionCreated(
+        uint256 indexed gemFactoryPositionId,
         address indexed owner,
         bytes14 indexed seriesId,
         uint16 issuanceCurrency,

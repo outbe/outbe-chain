@@ -23,7 +23,7 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: load,
                 issuance_currency: 840,
@@ -65,7 +65,7 @@ fn issue_merchant_gem_anchors_entry_to_source() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -88,7 +88,7 @@ fn issue_merchant_gem_charges_one_minor_unit_when_the_cost_rounds_to_zero() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: U256::ONE,
                 issuance_currency: 840,
@@ -111,7 +111,7 @@ fn issue_merchant_gem_rejects_non_merchant() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: BOB,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -121,7 +121,7 @@ fn issue_merchant_gem_rejects_non_merchant() {
         assert_eq!(
             r.unwrap_err().to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::GemFactoryError::NotPositionOwner
+                crate::errors::GemFactoryError::NotGemFactoryPositionOwner
             )
             .to_string()
         );
@@ -138,7 +138,7 @@ fn issue_merchant_gem_over_capacity_rejects() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: over,
                 issuance_currency: 840,
@@ -166,7 +166,7 @@ fn an_unpriced_source_emission_day_issues_nothing() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -202,7 +202,7 @@ fn equal_prices_take_the_market_price() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -216,14 +216,14 @@ fn equal_prices_take_the_market_price() {
 
 fn issue_in(
     storage: &StorageHandle<'_>,
-    position_id: U256,
+    gem_factory_position_id: U256,
     (issuance_currency, reference_currency): (u16, u16),
 ) -> outbe_primitives::error::Result<U256> {
     runtime::issue_merchant_gem(
         storage,
         crate::schema::MerchantGemIssueParams {
             caller: ALICE,
-            position_id,
+            gem_factory_position_id,
             owner: BOB,
             promis_load_minor: six_decimal_unit(),
             issuance_currency,
@@ -305,12 +305,12 @@ fn issue_merchant_gem_after_expiry_rejects() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         // Craft a position whose issued_at is already past the validity window.
-        let position_id = U256::from(1u64);
+        let gem_factory_position_id = U256::from(1u64);
         let mut factory = GemFactoryContract::new(storage.clone());
         factory
-            .add_position(&GemPosition {
-                position_id,
-                merchant: ALICE,
+            .add_position(&GemFactoryPosition {
+                gem_factory_position_id,
+                owner: ALICE,
                 source_series_id: source_series_id(),
                 remaining_capacity_minor: U256::from(100u64) * six_decimal_unit(),
                 issued_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,
@@ -322,7 +322,7 @@ fn issue_merchant_gem_after_expiry_rejects() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id,
+                gem_factory_position_id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -332,7 +332,7 @@ fn issue_merchant_gem_after_expiry_rejects() {
         assert_eq!(
             r.unwrap_err().to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::GemFactoryError::PositionExpired
+                crate::errors::GemFactoryError::ExpiredGemFactoryPosition
             )
             .to_string()
         );
@@ -365,7 +365,7 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
                 &storage,
                 crate::schema::MerchantGemIssueParams {
                     caller: ALICE,
-                    position_id: id,
+                    gem_factory_position_id: id,
                     owner: BOB,
                     promis_load_minor: load,
                     issuance_currency: 840,
@@ -398,7 +398,7 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
     assert_eq!(
         expired.unwrap_err().to_string(),
         outbe_primitives::error::PrecompileError::from(
-            crate::errors::GemFactoryError::PositionExpired
+            crate::errors::GemFactoryError::ExpiredGemFactoryPosition
         )
         .to_string()
     );
@@ -416,7 +416,7 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -495,7 +495,7 @@ fn issue_merchant_gem_takes_the_higher_entry() {
                 storage,
                 crate::schema::MerchantGemIssueParams {
                     caller: ALICE,
-                    position_id: id,
+                    gem_factory_position_id: id,
                     owner: BOB,
                     promis_load_minor: six_decimal_unit(),
                     issuance_currency: 840,
@@ -537,7 +537,7 @@ fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -566,7 +566,7 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
             &storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: position,
+                gem_factory_position_id: position,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -605,11 +605,13 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
 
     let opened: Vec<_> = events
         .iter()
-        .filter_map(|log| crate::precompile::IGemFactory::GemPositionCreated::decode_log(log).ok())
+        .filter_map(|log| {
+            crate::precompile::IGemFactory::GemFactoryPositionCreated::decode_log(log).ok()
+        })
         .map(|log| log.data)
         .collect();
     assert_eq!(opened.len(), 1);
-    assert_eq!(opened[0].positionId, position);
+    assert_eq!(opened[0].gemFactoryPositionId, position);
     assert_eq!(opened[0].owner, ALICE);
     assert_eq!(
         outbe_intex::SeriesId::from(opened[0].seriesId),
@@ -636,14 +638,14 @@ fn set_source_price(storage: &StorageHandle<'_>, price: U256) {
 
 fn merchant_gem_to(
     storage: &StorageHandle<'_>,
-    position_id: U256,
+    gem_factory_position_id: U256,
     owner: Address,
 ) -> outbe_primitives::error::Result<U256> {
     runtime::issue_merchant_gem(
         storage,
         crate::schema::MerchantGemIssueParams {
             caller: ALICE,
-            position_id,
+            gem_factory_position_id,
             owner,
             promis_load_minor: six_decimal_unit(),
             issuance_currency: 840,

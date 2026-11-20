@@ -19,7 +19,7 @@ pub struct GemIssueParams {
 #[derive(Debug, Clone, Copy)]
 pub struct MerchantGemIssueParams {
     pub caller: Address,
-    pub position_id: U256,
+    pub gem_factory_position_id: U256,
     pub owner: Address,
     pub promis_load_minor: U256,
     pub issuance_currency: u16,
@@ -34,16 +34,15 @@ pub struct GemMiningProof {
 }
 
 /// A merchant's Gem Factory position: the pool of Promis capacity from which the
-/// Gem Factory issues Merchant gems. The position is a single-owner, non-transferable
-/// NFT (owner = `merchant`), keyed by `position_id`. `merchant == 0` means "no
-/// position".
-#[storage_record(exists_field = merchant)]
-pub struct GemPosition {
+/// Gem Factory issues Merchant gems, keyed by `gem_factory_position_id`. Only its `owner`
+/// issues from it. `owner == 0` means "no position".
+#[storage_record(exists_field = owner)]
+pub struct GemFactoryPosition {
     #[key]
-    pub position_id: U256,
+    pub gem_factory_position_id: U256,
 
     #[attribute(order = 0)]
-    pub merchant: Address,
+    pub owner: Address,
 
     #[attribute(order = 1)]
     pub source_series_id: SeriesId,
@@ -63,7 +62,7 @@ pub struct GemPosition {
     pub expires_at: u64,
 }
 
-impl GemPosition {
+impl GemFactoryPosition {
     /// Hourly position membership is independent of daily queue scheduling.
     pub const GROUP_HOUR_SECONDS: u64 = 3_600;
 
@@ -84,7 +83,7 @@ pub struct GemFactoryContract {
     pub total_capacity_minor: outbe_primitives::storage::dsl::Value<U256>,
 
     #[attribute(order = 2)]
-    pub positions: outbe_primitives::storage::dsl::Map<U256, GemPosition>,
+    pub positions: outbe_primitives::storage::dsl::Map<U256, GemFactoryPosition>,
 
     /// Each merchant's positions.
     #[attribute(order = 3)]
@@ -150,13 +149,13 @@ pub struct GemFactoryContract {
 }
 
 impl GemFactoryContract<'_> {
-    /// `keccak256(source_series_id || merchant || block_number_be)`. A series is held by many
-    /// owners and any may send units, so the merchant tells two positions of one block apart.
+    /// `keccak256(source_series_id || owner || block_number_be)`. A series is held by many
+    /// owners and any may send units, so the owner tells two positions of one block apart.
     pub fn generate_position_id(
         source_series_id: SeriesId,
-        merchant: Address,
+        owner: Address,
         block_number: u64,
     ) -> U256 {
-        source_series_id.right_id(&[merchant.as_slice(), &block_number.to_be_bytes()])
+        source_series_id.right_id(&[owner.as_slice(), &block_number.to_be_bytes()])
     }
 }

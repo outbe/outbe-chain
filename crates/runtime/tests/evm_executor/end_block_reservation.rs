@@ -368,7 +368,7 @@ fn end_block_cursor_rejects_wrong_order_duplicate_or_mismatched_gas_limit() {
 fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_before_intex_and_credis(
 ) {
     use outbe_credis::{CleanupQueue as CredisCleanupQueue, CredisContract};
-    use outbe_gemfactory::{schema::GemPosition, GemFactoryContract};
+    use outbe_gemfactory::{schema::GemFactoryPosition, GemFactoryContract};
     use outbe_intex::SeriesId;
     use outbe_intexfactory::IntexFactoryContract;
     use outbe_oracle::schema::OracleContract;
@@ -435,9 +435,9 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             .unwrap();
 
             let gf = GemFactoryContract::new(storage);
-            let pos = GemPosition {
-                position_id: U256::from(1u64),
-                merchant: OWNER,
+            let pos = GemFactoryPosition {
+                gem_factory_position_id: U256::from(1u64),
+                owner: OWNER,
                 source_series_id: stale_series,
                 remaining_capacity_minor: expired_capacity,
                 issued_at: expires_at - SECONDS_PER_DAY,
@@ -448,7 +448,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
                 gf.owner_position_ids.list(&OWNER),
                 gf.owner_position_index.clone(),
             )
-            .insert(pos.position_id)
+            .insert(pos.gem_factory_position_id)
             .unwrap();
             outbe_core_common::deadline_queue::push(
                 &TestExpiryQueue(&gf),
@@ -460,7 +460,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
                 gf.hour_positions.list(&expired_hour),
                 gf.hour_position_index.clone(),
             )
-            .insert(pos.position_id)
+            .insert(pos.gem_factory_position_id)
             .unwrap();
             gf.hour_capacity_minor
                 .write(&expired_hour, expired_capacity)

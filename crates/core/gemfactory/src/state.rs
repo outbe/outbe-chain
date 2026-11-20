@@ -1,4 +1,4 @@
-//! GemPosition NFT bookkeeping: issue (create record, owner and expiry-hour lists),
+//! GemFactory position bookkeeping: issue (create record, owner and expiry-hour lists),
 //! expiry and deletion, and the ERC-721-style read views. Positions are single-owner
 //! and non-transferable, mirroring the `gem` crate's NFT ledger.
 
@@ -9,7 +9,7 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::indexed_list::IndexedList;
 
 use crate::errors::GemFactoryError;
-use crate::schema::{GemFactoryContract, GemPosition};
+use crate::schema::{GemFactoryContract, GemFactoryPosition};
 
 /// Zero denotes an empty queue slot. Hour zero is a valid position group.
 pub(crate) fn position_queue_entry(hour: u64) -> Result<u64> {
@@ -40,13 +40,14 @@ impl<'s> GemFactoryContract<'s> {
 
     /// Issue a position NFT: create the record, list it under its merchant and its
     /// expiry hour, and queue the hour on its first position. Rejects a duplicate
-    /// `position_id`.
-    pub(crate) fn add_position(&mut self, pos: &GemPosition) -> Result<()> {
-        if self.positions.exists(pos.position_id)? {
-            return Err(GemFactoryError::PositionAlreadyExists.into());
+    /// `gem_factory_position_id`.
+    pub(crate) fn add_position(&mut self, pos: &GemFactoryPosition) -> Result<()> {
+        if self.positions.exists(pos.gem_factory_position_id)? {
+            return Err(GemFactoryError::GemFactoryPositionAlreadyExists.into());
         }
         self.positions.create(pos)?;
-        self.owner_index(pos.merchant).insert(pos.position_id)?;
+        self.owner_index(pos.owner)
+            .insert(pos.gem_factory_position_id)?;
         let hour = pos.expiry_hour();
         if self.hour_position_count(hour)? == 0 {
             deadline_queue::push(
@@ -55,7 +56,7 @@ impl<'s> GemFactoryContract<'s> {
                 pos.expires_at,
             )?;
         }
-        self.hour_index(hour).insert(pos.position_id)?;
+        self.hour_index(hour).insert(pos.gem_factory_position_id)?;
         let capacity = self
             .hour_capacity_minor
             .read(&hour)?
@@ -95,12 +96,13 @@ impl<'s> GemFactoryContract<'s> {
     }
 
     /// Deletes an expired position, and forgets its hour with the last one.
-    pub(crate) fn delete_position(&mut self, record: &GemPosition) -> Result<()> {
+    pub(crate) fn delete_position(&mut self, record: &GemFactoryPosition) -> Result<()> {
         let hour = record.expiry_hour();
-        self.owner_index(record.merchant)
-            .remove(record.position_id)?;
-        self.hour_index(hour).remove(record.position_id)?;
-        self.positions.delete(record.position_id)?;
+        self.owner_index(record.owner)
+            .remove(record.gem_factory_position_id)?;
+        self.hour_index(hour)
+            .remove(record.gem_factory_position_id)?;
+        self.positions.delete(record.gem_factory_position_id)?;
         if self.hour_position_count(hour)? == 0 {
             self.hour_capacity_minor.clear(&hour)?;
             let entry = position_queue_entry(hour)?;
@@ -114,7 +116,7 @@ impl<'s> GemFactoryContract<'s> {
 
     /// What the position can still issue: nothing once it expired, whether or not the
     /// cleanup has deleted it yet.
-    pub(crate) fn remaining_capacity(&self, pos: &GemPosition) -> Result<U256> {
+    pub(crate) fn remaining_capacity(&self, pos: &GemFactoryPosition) -> Result<U256> {
         let now = self.storage.now_secs()?;
         Ok(match now >= pos.expires_at {
             true => U256::ZERO,
@@ -126,28 +128,28 @@ impl<'s> GemFactoryContract<'s> {
         self.owner_position_ids.list(&owner).len()
     }
 
-    pub fn owner_of(&self, position_id: U256) -> Result<Address> {
+    pub fn owner_of(&self, gem_factory_position_id: U256) -> Result<Address> {
         let pos = self
             .positions
-            .get(position_id)?
-            .ok_or(GemFactoryError::PositionNotFound)?;
-        Ok(pos.merchant)
+            .get(gem_factory_position_id)?
+            .ok_or(GemFactoryError::GemFactoryPositionNotFound)?;
+        Ok(pos.owner)
     }
 
     pub fn tokens_by_owner(&self, owner: Address) -> Result<Vec<U256>> {
         self.owner_position_ids.list(&owner).read_all()
     }
 
-    pub fn token_uri(&self, position_id: U256) -> Result<String> {
+    pub fn token_uri(&self, gem_factory_position_id: U256) -> Result<String> {
         let pos = self
             .positions
-            .get(position_id)?
-            .ok_or(GemFactoryError::PositionNotFound)?;
+            .get(gem_factory_position_id)?
+            .ok_or(GemFactoryError::GemFactoryPositionNotFound)?;
         // TODO: replace hand-rolled JSON with type-safe serialization (serde struct).
         let json = format!(
-            "{{\"name\":\"GemPosition #{}\",\"attributes\":[{{\"trait_type\":\"merchant\",\"value\":\"{}\"}},{{\"trait_type\":\"source_series_id\",\"value\":\"{}\"}},{{\"trait_type\":\"remaining_capacity\",\"value\":\"{}\"}},{{\"trait_type\":\"issued_at\",\"value\":{}}}]}}",
-            position_id,
-            pos.merchant,
+            "{{\"name\":\"GemFactoryPosition #{}\",\"attributes\":[{{\"trait_type\":\"merchant\",\"value\":\"{}\"}},{{\"trait_type\":\"source_series_id\",\"value\":\"{}\"}},{{\"trait_type\":\"remaining_capacity\",\"value\":\"{}\"}},{{\"trait_type\":\"issued_at\",\"value\":{}}}]}}",
+            gem_factory_position_id,
+            pos.owner,
             pos.source_series_id,
             self.remaining_capacity(&pos)?,
             pos.issued_at,

@@ -11,13 +11,13 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     runtime::issue_gem(storage, params)
 }
 
-pub fn issue_gem_position(
+pub fn create_gem_factory_position(
     storage: &StorageHandle<'_>,
     caller: Address,
     source_series_id: SeriesId,
     units: U256,
 ) -> Result<U256> {
-    runtime::issue_gem_position(storage, caller, source_series_id, units)
+    runtime::create_gem_factory_position(storage, caller, source_series_id, units)
 }
 
 pub fn issue_merchant_gem(

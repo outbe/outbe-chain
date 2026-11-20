@@ -56,7 +56,7 @@ fn issue_gem_position_burns_sends_and_issues_nft() {
 
         let factory = GemFactoryContract::new(storage.clone());
         let rec = factory.positions.get(id).unwrap().unwrap();
-        assert_eq!(rec.merchant, ALICE);
+        assert_eq!(rec.owner, ALICE);
         assert_eq!(rec.source_series_id, source_series_id());
         assert_eq!(rec.remaining_capacity_minor, capacity);
         assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
@@ -119,7 +119,7 @@ fn position_of_15_units_issues_6_and_gives_back_9() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: U256::from(6u64) * unit,
                 issuance_currency: 840,
@@ -180,7 +180,7 @@ fn a_drained_position_returns_nothing_and_is_deleted() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: sent_capacity(six_decimal_u128()),
                 issuance_currency: 840,
@@ -207,8 +207,12 @@ fn a_drained_position_returns_nothing_and_is_deleted() {
 #[test]
 fn issue_gem_position_unknown_source_rejects() {
     with_storage(None, |storage| {
-        let r =
-            runtime::issue_gem_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS));
+        let r = runtime::create_gem_factory_position(
+            storage,
+            ALICE,
+            source_series_id(),
+            U256::from(SENT_UNITS),
+        );
         assert_eq!(
             r.unwrap_err().to_string(),
             outbe_primitives::error::PrecompileError::from(

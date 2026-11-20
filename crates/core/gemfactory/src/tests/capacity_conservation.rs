@@ -11,7 +11,7 @@ use outbe_promislimit::PromisLimitContract;
 use outbe_system_common::addresses::GEM_FACTORY_ADDRESS;
 use outbe_system_common::time::SECONDS_PER_DAY;
 
-use crate::{positions_expired, schema::GemPosition, GemFactoryContract};
+use crate::{positions_expired, schema::GemFactoryPosition, GemFactoryContract};
 
 const EXPIRES: u64 = 1_704_153_600;
 /// `EXPIRES` is midnight, so its deadline day closes the following midnight.
@@ -27,7 +27,7 @@ fn position_queue_encoding_preserves_zero_and_maximum_supported_hours() {
     for hour in [
         0,
         1,
-        max_deadline / crate::schema::GemPosition::GROUP_HOUR_SECONDS,
+        max_deadline / crate::schema::GemFactoryPosition::GROUP_HOUR_SECONDS,
     ] {
         let entry = position_queue_entry(hour).unwrap();
         assert_ne!(entry, 0);
@@ -51,9 +51,9 @@ fn daily_position_expiry_preserves_hour_topics() {
             (4, day + 86_400),
         ] {
             factory
-                .add_position(&GemPosition {
-                    position_id: U256::from(id),
-                    merchant: Address::repeat_byte(1),
+                .add_position(&GemFactoryPosition {
+                    gem_factory_position_id: U256::from(id),
+                    owner: Address::repeat_byte(1),
                     source_series_id: SeriesId::pack(20_240_101, *b"USD", b'U').unwrap(),
                     remaining_capacity_minor: U256::from(REMAINDER),
                     issued_at: day - SECONDS_PER_DAY,
@@ -176,9 +176,9 @@ fn world() -> HashMapStorageProvider {
     StorageHandle::enter(&mut p, |s| {
         let mut factory = GemFactoryContract::new(s);
         factory
-            .add_position(&GemPosition {
-                position_id: U256::from(1),
-                merchant: Address::repeat_byte(1),
+            .add_position(&GemFactoryPosition {
+                gem_factory_position_id: U256::from(1),
+                owner: Address::repeat_byte(1),
                 source_series_id: SeriesId::pack(20_240_101, *b"USD", b'U').unwrap(),
                 remaining_capacity_minor: U256::from(REMAINDER),
                 issued_at: EXPIRES - SECONDS_PER_DAY,

@@ -140,12 +140,12 @@ impl DeadlineHandler<u64> for PositionCleanup<'_> {
         error.record_pass_failure()
     }
 
-    fn process_member(&mut self, _hour: u64, position_id: U256) -> Result<()> {
+    fn process_member(&mut self, _hour: u64, gem_factory_position_id: U256) -> Result<()> {
         let record = self
             .factory
             .positions
-            .get(position_id)?
-            .ok_or(GemFactoryError::PositionNotFound)?;
+            .get(gem_factory_position_id)?
+            .ok_or(GemFactoryError::GemFactoryPositionNotFound)?;
         self.factory.delete_position(&record)?;
         self.deleted = self.deleted.saturating_add(1);
         Ok(())

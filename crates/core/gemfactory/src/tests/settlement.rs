@@ -354,8 +354,13 @@ fn a_series_in_any_reference_currency_can_be_sent() {
             },
         )
         .unwrap();
-        runtime::issue_gem_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS))
-            .unwrap();
+        runtime::create_gem_factory_position(
+            storage,
+            ALICE,
+            source_series_id(),
+            U256::from(SENT_UNITS),
+        )
+        .unwrap();
     });
 }
 

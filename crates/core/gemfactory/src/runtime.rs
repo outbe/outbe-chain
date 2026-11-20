@@ -14,8 +14,8 @@ use outbe_system_common::stablecoin::iso_4217_alpha;
 use outbe_core_common::pow;
 
 use crate::errors::GemFactoryError;
-use crate::precompile::IGemFactory::{GemPositionCreated, GemSeriesOpened};
-use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
+use crate::precompile::IGemFactory::{GemFactoryPositionCreated, GemSeriesOpened};
+use crate::schema::{GemFactoryContract, GemFactoryPosition, GemIssueParams};
 use crate::sol_ext::IIntexNFT1155;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
@@ -160,11 +160,11 @@ fn load_view(storage: &StorageHandle<'_>, gem_id: U256) -> Result<GemView> {
     gem_api::get_view(storage, gem_id)?.ok_or_else(|| GemFactoryError::GemNotFound.into())
 }
 
-/// Issue a GemPosition NFT from the merchant's selected `units` of Issued Intex.
+/// Create a GemFactory position from the merchant's selected `units` of Issued Intex.
 /// The merchant can transfer a partial holding. Its Promis capacity equals the source
 /// load times the burned units.
-/// Return the issued `position_id`.
-pub fn issue_gem_position(
+/// Return the issued `gem_factory_position_id`.
+pub fn create_gem_factory_position(
     storage: &StorageHandle<'_>,
     caller: Address,
     source_series_id: SeriesId,
@@ -198,13 +198,13 @@ pub fn issue_gem_position(
     )?;
     outbe_intex::api::release_if_spent(storage, source_series_id)?;
 
-    let position_id =
+    let gem_factory_position_id =
         GemFactoryContract::generate_position_id(source_series_id, caller, storage.block_number()?);
 
     let mut factory = GemFactoryContract::new(storage.clone());
-    let position = GemPosition {
-        position_id,
-        merchant: caller,
+    let position = GemFactoryPosition {
+        gem_factory_position_id,
+        owner: caller,
         source_series_id,
         remaining_capacity_minor: capacity,
         issued_at,
@@ -220,8 +220,8 @@ pub fn issue_gem_position(
 
     emit_event(
         storage,
-        GemPositionCreated {
-            positionId: position_id,
+        GemFactoryPositionCreated {
+            gemFactoryPositionId: gem_factory_position_id,
             owner: caller,
             seriesId: source_series_id.into(),
             issuanceCurrency: series.issuance_currency,
@@ -230,7 +230,7 @@ pub fn issue_gem_position(
         },
     )?;
 
-    Ok(position_id)
+    Ok(gem_factory_position_id)
 }
 
 /// Burn `units` of the merchant's Issued Intex (BURNER_ROLE). Reverts on zero units
@@ -262,7 +262,7 @@ pub fn issue_merchant_gem(
 ) -> Result<U256> {
     let crate::schema::MerchantGemIssueParams {
         caller,
-        position_id,
+        gem_factory_position_id,
         owner,
         promis_load_minor: promis_load,
         issuance_currency,
@@ -279,15 +279,15 @@ pub fn issue_merchant_gem(
     let mut factory = GemFactoryContract::new(storage.clone());
     let mut record = factory
         .positions
-        .get(position_id)?
-        .ok_or(GemFactoryError::PositionNotFound)?;
-    if record.merchant != caller {
-        return Err(GemFactoryError::NotPositionOwner.into());
+        .get(gem_factory_position_id)?
+        .ok_or(GemFactoryError::GemFactoryPositionNotFound)?;
+    if record.owner != caller {
+        return Err(GemFactoryError::NotGemFactoryPositionOwner.into());
     }
 
     let now = storage.now_secs()?;
     if now >= record.expires_at {
-        return Err(GemFactoryError::PositionExpired.into());
+        return Err(GemFactoryError::ExpiredGemFactoryPosition.into());
     }
     let remaining = record
         .remaining_capacity_minor
@@ -447,16 +447,16 @@ pub fn quote_settlement(
 /// The full terms of a Gem Factory position.
 pub fn position_data(
     storage: &StorageHandle<'_>,
-    position_id: U256,
-) -> Result<crate::precompile::IGemFactory::PositionData> {
+    gem_factory_position_id: U256,
+) -> Result<crate::precompile::IGemFactory::GemFactoryPositionData> {
     let factory = GemFactoryContract::new(storage.clone());
     let record = factory
         .positions
-        .get(position_id)?
-        .ok_or(GemFactoryError::PositionNotFound)?;
-    Ok(crate::precompile::IGemFactory::PositionData {
-        positionId: record.position_id,
-        merchant: record.merchant,
+        .get(gem_factory_position_id)?
+        .ok_or(GemFactoryError::GemFactoryPositionNotFound)?;
+    Ok(crate::precompile::IGemFactory::GemFactoryPositionData {
+        gemFactoryPositionId: record.gem_factory_position_id,
+        owner: record.owner,
         sourceIntexId: outbe_intex::intex_id(record.source_series_id),
         sourceSeriesId: record.source_series_id.into(),
         remainingCapacityMinor: factory.remaining_capacity(&record)?,

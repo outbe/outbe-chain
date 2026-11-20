@@ -19,7 +19,7 @@ use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 const POSITION_VALIDITY_SECONDS: u64 = outbe_gem::GemParams::MAINNET.position_validity;
 use crate::positions_expired;
 use crate::runtime;
-use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
+use crate::schema::{GemFactoryContract, GemFactoryPosition, GemIssueParams};
 use crate::sol_ext::{IReferenceCurrency, IERC20};
 use alloy_sol_types::SolCall;
 use outbe_vaultrouter::precompile::IVaultRouter;
@@ -317,8 +317,8 @@ fn seed_source_series(
     }
 }
 
-/// Seed an Intex series and send the merchant's whole holding into a GemPosition
-/// NFT (burn stubbed via `with_storage`). Returns the `position_id`.
+/// Seed an Intex series and send the merchant's whole holding into a GemFactoryPosition
+/// NFT (burn stubbed via `with_storage`). Returns the `gem_factory_position_id`.
 fn seed_and_send(storage: &StorageHandle, entry: U256, promis_load: u128) -> U256 {
     seed_source_series(
         storage,
@@ -326,7 +326,8 @@ fn seed_and_send(storage: &StorageHandle, entry: U256, promis_load: u128) -> U25
         promis_load,
         outbe_intex::IntexCallTrigger::default(),
     );
-    runtime::issue_gem_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS)).unwrap()
+    runtime::create_gem_factory_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS))
+        .unwrap()
 }
 
 const SOURCE_NOTICE_SECONDS: u32 = 3_600;
@@ -347,7 +348,7 @@ fn seed_called_source(storage: &StorageHandle, called_at: u64) {
 }
 
 fn send_whole_holding(storage: &StorageHandle) -> outbe_primitives::error::Result<U256> {
-    runtime::issue_gem_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS))
+    runtime::create_gem_factory_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS))
 }
 
 /// The refusal leaves storage and events as they were, before any burn.
@@ -423,7 +424,7 @@ fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
         storage,
         crate::schema::MerchantGemIssueParams {
             caller: ALICE,
-            position_id: id,
+            gem_factory_position_id: id,
             owner: BOB,
             promis_load_minor: six_decimal_unit(),
             issuance_currency: 840,
