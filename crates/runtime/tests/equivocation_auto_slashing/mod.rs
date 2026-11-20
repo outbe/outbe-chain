@@ -198,6 +198,7 @@ pub async fn launch_configured(
         evm_signer: Some(signer),
         runtime_host: Some(Arc::new(outbe_runtime::OutbeRuntime::new())),
         pool_policy: Arc::new(outbe_runtime::OutbeRuntime::new()),
+        rpc_protection: Default::default(),
     };
     let temp = tempfile::TempDir::new()?;
     let db = reth_ethereum::provider::db::init_db(

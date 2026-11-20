@@ -23,6 +23,7 @@ reth-chainspec.workspace = true
 reth-basic-payload-builder.workspace = true
 reth-consensus-common.workspace = true
 reth-node-builder.workspace = true
+reth-node-core.workspace = true
 reth-ethereum-payload-builder.workspace = true
 reth-db.workspace = true
 reth-errors.workspace = true
@@ -49,8 +50,10 @@ alloy-primitives.workspace = true
 alloy-rlp.workspace = true
 alloy-rpc-types-engine.workspace = true
 eyre.workspace = true
+jsonrpsee.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
+tower.workspace = true
 tracing.workspace = true
 futures.workspace = true
 metrics.workspace = true
@@ -64,7 +67,8 @@ reth-stages-api = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8
 reth-static-file = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.8.1" }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
-reth-node-core.workspace = true
+jsonrpsee = { workspace = true, features = ["http-client", "ws-client"] }
+reqwest.workspace = true
 serde_json.workspace = true
 hex.workspace = true
 reth-trie = { workspace = true, features = ["test-utils"] }
