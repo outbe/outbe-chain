@@ -1,7 +1,7 @@
 [
   {
     "type": "function",
-    "name": "distribute",
+    "name": "burnIntexAuctionProceeds",
     "inputs": [
       {
         "name": "emissionDay",

@@ -25,7 +25,7 @@ use outbe_primitives::{
         encode_outbe_block_artifacts, ConsensusHeaderArtifact, OutbeBlockArtifacts,
     },
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
-    tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID,
+    tee_genesis_v1::NO_ATTESTATION_DEV_CHAIN_ID,
     OutbeBuiltPayload, OutbeHeader, OutbePayloadAttributes, OutbePrimitives,
 };
 use outbe_system_common::units::SCALE_1E6_U256;
@@ -150,12 +150,12 @@ fn genesis_dev_tee_bootstrap(
     committee_snapshot_hash: B256,
 ) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
     use outbe_primitives::tee_test_utils::{
-        gramine_direct_bootstrap_v2, gramine_direct_policy_v1, DevValidatorV1,
+        no_attestation_dev_bootstrap_v2, no_attestation_dev_policy_v1, DevValidatorV1,
     };
 
-    let policy = gramine_direct_policy_v1(chain_id, genesis_hash)
-        .expect("test GramineDirectDev policy is canonical");
-    gramine_direct_bootstrap_v2(
+    let policy = no_attestation_dev_policy_v1(chain_id, genesis_hash)
+        .expect("test NoAttestationDev policy is canonical");
+    no_attestation_dev_bootstrap_v2(
         policy,
         committee_snapshot_hash,
         1,
@@ -165,7 +165,7 @@ fn genesis_dev_tee_bootstrap(
             bls_minpk_public: TEST_CONSENSUS_PUBLIC_KEY,
         }],
     )
-    .expect("test GramineDirectDev OST3 payload is canonical")
+    .expect("test NoAttestationDev OST3 payload is canonical")
 }
 
 fn active_native_provider(
@@ -269,16 +269,16 @@ fn build_active_payload_case(
         "test must build at least one proposal"
     );
     use outbe_primitives::tee_test_utils::{
-        gramine_direct_policy_v1, tee_attestation_v1_extra_field,
+        no_attestation_dev_policy_v1, tee_attestation_v1_extra_field,
     };
 
     let mut chain_spec = ChainSpecBuilder::mainnet()
         .with_fork(EthereumHardfork::Paris, ForkCondition::Block(0))
         .build();
-    chain_spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
-    chain_spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
-    let policy = gramine_direct_policy_v1(chain_spec.chain().id(), chain_spec.genesis_hash())
-        .expect("test GramineDirectDev policy is canonical");
+    chain_spec.chain = NO_ATTESTATION_DEV_CHAIN_ID.into();
+    chain_spec.genesis.config.chain_id = NO_ATTESTATION_DEV_CHAIN_ID;
+    let policy = no_attestation_dev_policy_v1(chain_spec.chain().id(), chain_spec.genesis_hash())
+        .expect("test NoAttestationDev policy is canonical");
     chain_spec.genesis.config.extra_fields.insert(
         "teeAttestationV1".to_owned(),
         tee_attestation_v1_extra_field(&policy).expect("test TEE activation manifest is canonical"),

@@ -36,6 +36,9 @@ pub struct FeederConfig {
     /// Remote chains to vote a gas price for. The node serves this section.
     #[serde(default)]
     pub gas_providers: Vec<crate::gas::GasProviderConfig>,
+    /// Currencies to vote a policy rate for. The node serves this section.
+    #[serde(default)]
+    pub rate_providers: Vec<crate::rates::RateProviderConfig>,
     /// JSON-RPC of each external EVM network, keyed by chain id. A
     /// `dex_providers` or `onchain_providers` entry without its own
     /// `rpc_endpoint` uses the URL for its `chain_id`.
@@ -487,6 +490,7 @@ mod tests {
             dex_providers: vec![],
             onchain_providers: vec![],
             gas_providers: vec![],
+            rate_providers: vec![],
             rpc_endpoints: Default::default(),
             health: None,
         }

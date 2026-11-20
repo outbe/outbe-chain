@@ -216,12 +216,7 @@ fn forfeit_by_owner(
                 storage.clone(),
                 source,
                 amount,
-                super::auth(
-                    outbe_enclave::protocol::GratisOp::Mint,
-                    source,
-                    amount,
-                    nonce,
-                ),
+                super::auth(outbe_gratis::GratisOp::Mint, source, amount, nonce),
             )?;
             let now = storage.now_secs()?;
             outbe_fidelity::api::cohort_in(
@@ -240,12 +235,7 @@ fn forfeit_by_owner(
                 storage.clone(),
                 source,
                 amount,
-                super::auth(
-                    outbe_enclave::protocol::GratisOp::Pledge,
-                    source,
-                    amount,
-                    nonce + 1,
-                ),
+                super::auth(outbe_gratis::GratisOp::Pledge, source, amount, nonce + 1),
                 probe,
             )?;
             contract

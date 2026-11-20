@@ -350,13 +350,6 @@ pub fn verify_qvl_manifest_with_expectations(
         manifest.get("target").and_then(Value::as_str) == Some("x86_64-unknown-linux-gnu"),
         "native-QVL V1 target must be x86_64-unknown-linux-gnu"
     );
-    let gramine_ver = expectations.pin["gramine"]["version"]
-        .as_str()
-        .unwrap_or("1.9");
-    ensure!(
-        manifest.get("gramine_version").and_then(Value::as_str) == Some(gramine_ver),
-        "native-QVL V1 requires exact Gramine {gramine_ver}"
-    );
     let dcap = manifest
         .get("intel_dcap")
         .ok_or_else(|| eyre!("native-QVL manifest is missing intel_dcap"))?;

@@ -147,9 +147,8 @@ use dkg::startup::{
 };
 
 use epoch::signer::{
-    epoch_validation_inputs, radicle_signer_enabled, register_epoch_validation_providers,
-    validate_validator_evm_signer, wait_for_radicle_role_change, EpochValidationCommittee,
-    EpochValidationProviders, ValidatorEvmIdentity,
+    epoch_validation_inputs, register_epoch_validation_providers, validate_validator_evm_signer,
+    EpochValidationCommittee, EpochValidationProviders, ValidatorEvmIdentity,
 };
 
 pub use epoch::watchdog::{

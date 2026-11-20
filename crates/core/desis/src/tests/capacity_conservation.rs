@@ -17,7 +17,7 @@ use crate::{
     constants::ORIGIN_ROUTER_ADDRESS,
     precompile::IDesis,
     runtime,
-    schema::{AuctionStage, BidData, DesisContract},
+    schema::{AuctionStage, DesisContract, IntexAuctionBidData},
 };
 
 const NOW: u64 = 1_704_067_205;
@@ -61,9 +61,10 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
                 .unwrap();
             oracle.utc_day_vwap_last_finalized.write(day).unwrap();
         }
-        crate::api::brief_auction(
+        crate::api::schedule_auction(s.clone(), DAY).unwrap();
+        crate::api::set_desis_limit(
             s.clone(),
-            crate::api::AuctionBrief {
+            crate::api::DesisLimit {
                 emission_day: DAY,
                 desis_limit_minor: U256::from(LIMIT),
                 has_limit: true,
@@ -77,7 +78,7 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
     }
     StorageHandle::enter(&mut p, |s| {
         let bids = if units > 0 {
-            vec![BidData {
+            vec![IntexAuctionBidData {
                 bidder_address: Address::repeat_byte(1),
                 intex_bid_rate: 200,
                 timestamp: 0,
@@ -88,10 +89,11 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
         } else {
             vec![]
         };
-        runtime::process_bids_batch(
+        runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
+                receive_id: alloy_primitives::B256::ZERO,
                 emission_day: DAY,
                 src_chain_id: CHAIN,
             },
@@ -100,10 +102,11 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
             bids,
         )
         .unwrap();
-        runtime::process_bids_done(
+        runtime::complete_intex_auction_bids(
             s,
             runtime::Inbound {
                 caller: ORIGIN_ROUTER_ADDRESS,
+                receive_id: alloy_primitives::B256::ZERO,
                 emission_day: DAY,
                 src_chain_id: CHAIN,
             },
@@ -208,8 +211,8 @@ fn full_sale_returns_only_the_dust_once() {
     let cleared = p
         .get_events(DESIS_ADDRESS)
         .iter()
-        .filter_map(|e| IDesis::IntexAuctionCompleted::decode_log_data(e).ok())
-        .map(|e| e.units)
+        .filter_map(|e| IDesis::DesisCompleted::decode_log_data(e).ok())
+        .map(|e| e.quantity)
         .collect::<Vec<_>>();
     assert_eq!(cleared, vec![3]);
     StorageHandle::enter(&mut p, |s| {

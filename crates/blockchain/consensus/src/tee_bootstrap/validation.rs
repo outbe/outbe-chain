@@ -3,26 +3,7 @@ use super::*;
 pub(super) fn evidence_intent(evidence: &AttestationEvidenceV1) -> &RegistrationIntentV1 {
     match evidence {
         AttestationEvidenceV1::Dcap(value) => &value.intent,
-        AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum BootstrapEvidenceKind {
-    Dcap,
-    GramineDirectDev,
-}
-
-pub(super) fn bootstrap_evidence_kind(
-    policy: AttestationMode,
-    production_session: bool,
-) -> eyre::Result<BootstrapEvidenceKind> {
-    match (policy, production_session) {
-        (AttestationMode::DcapRequired, true) => Ok(BootstrapEvidenceKind::Dcap),
-        (AttestationMode::DcapRequired, false) => {
-            Err(crate::errors::TeeBootstrapError::DcapRequiredCannotUseDevelopmentSession.into())
-        }
-        (AttestationMode::GramineDirectDev, _) => Ok(BootstrapEvidenceKind::GramineDirectDev),
+        AttestationEvidenceV1::NoAttestationDev(value) => &value.intent,
     }
 }
 
@@ -118,7 +99,7 @@ pub(super) fn validate_submission(
             crate::errors::TeeBootstrapError::SubmissionNotCanonicalCommitteeRegistration.into(),
         );
     }
-    if let AttestationEvidenceV1::GramineDirectDev(dev) = &submission.evidence {
+    if let AttestationEvidenceV1::NoAttestationDev(dev) = &submission.evidence {
         if dev.dev_attestation_public != intent.attestation_ed25519
             || dev.dev_signature != submission.enclave_signature
         {
@@ -190,7 +171,7 @@ mod validation_regression {
             validator_signature: signer.sign_hash(&binding.binding_hash().unwrap()).unwrap(),
             node_binding_signature: node_signature(binding.binding_hash().unwrap()),
             validator_binding: binding,
-            evidence: AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+            evidence: AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
                 dev_attestation_public: intent.attestation_ed25519,
                 dev_signature: enclave_signature,
                 intent,
@@ -206,7 +187,7 @@ mod validation_regression {
     ) -> &mut RegistrationIntentV1 {
         match &mut submission.evidence {
             AttestationEvidenceV1::Dcap(value) => &mut value.intent,
-            AttestationEvidenceV1::GramineDirectDev(value) => &mut value.intent,
+            AttestationEvidenceV1::NoAttestationDev(value) => &mut value.intent,
         }
     }
 
@@ -259,7 +240,7 @@ mod validation_regression {
         let (base, policy, committee) = fixture();
         for alter_public in [true, false] {
             let mut submission = base.clone();
-            let AttestationEvidenceV1::GramineDirectDev(dev) = &mut submission.evidence else {
+            let AttestationEvidenceV1::NoAttestationDev(dev) = &mut submission.evidence else {
                 unreachable!()
             };
             if alter_public {
@@ -271,7 +252,7 @@ mod validation_regression {
                 validate_submission(&submission, &policy, &committee)
                     .unwrap_err()
                     .to_string(),
-                "OST3 GramineDirectDev evidence does not match the outer enclave proof"
+                "OST3 NoAttestationDev evidence does not match the outer enclave proof"
             );
         }
     }

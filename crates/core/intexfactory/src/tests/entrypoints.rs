@@ -140,7 +140,7 @@ fn a_node_local_failure_inside_the_call_notice_send_fails_the_drain() {
 
     let mut provider = RouterFaultProvider::new(
         factory_provider(),
-        IOriginRouter::sendMarkCalledCall::SELECTOR,
+        IOriginRouter::sendIntexSeriesCallNoticeCall::SELECTOR,
     );
     let queued = [
         pack_call_notice(sid(7), ISSUED_AT),

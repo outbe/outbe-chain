@@ -19,7 +19,7 @@
   },
   {
     "type": "function",
-    "name": "COMMIT_BOND_ABANDON_DELAY",
+    "name": "BID_BOND_ABANDON_DELAY",
     "inputs": [],
     "outputs": [
       {
@@ -45,19 +45,6 @@
   },
   {
     "type": "function",
-    "name": "REFUND_ABANDON_DELAY",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "RELAYER_ROLE",
     "inputs": [],
     "outputs": [
@@ -71,7 +58,20 @@
   },
   {
     "type": "function",
-    "name": "UNFINALIZED_REFUND_DELAY",
+    "name": "RETURN_ABANDON_DELAY",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "UNFINALIZED_RETURN_DELAY",
     "inputs": [],
     "outputs": [
       {
@@ -149,6 +149,35 @@
   },
   {
     "type": "function",
+    "name": "auctionStatus",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "hasLocks",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "isFinalized",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "totalLocked",
+        "type": "uint128",
+        "internalType": "uint128"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "authorizeClaim",
     "inputs": [
       {
@@ -198,98 +227,12 @@
   },
   {
     "type": "function",
-    "name": "claimAbandonedCommitBond",
+    "name": "chargeIntexAuctionAsset",
     "inputs": [
       {
         "name": "emissionDay",
         "type": "uint32",
         "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "claimAbandonedRefund",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "compact",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract ITheCompact"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "currentAssetVersion",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "dayPaymentToken",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IERC20"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "finalizeAuction",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "receiveId",
-        "type": "bytes32",
-        "internalType": "bytes32"
       },
       {
         "name": "winners",
@@ -333,7 +276,52 @@
   },
   {
     "type": "function",
-    "name": "getAssetVersion",
+    "name": "compact",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract ITheCompact"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "currentIntexAuctionAssetVersion",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "dayIntexAuctionAsset",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IERC20"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getIntexAuctionAssetVersion",
     "inputs": [
       {
         "name": "version",
@@ -345,7 +333,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct IEscrowAdapter.AssetVersion",
+        "internalType": "struct IEscrowAdapter.IntexAuctionAssetVersion",
         "components": [
           {
             "name": "compact",
@@ -353,7 +341,7 @@
             "internalType": "address"
           },
           {
-            "name": "paymentToken",
+            "name": "asset",
             "type": "address",
             "internalType": "contract IERC20"
           },
@@ -363,7 +351,7 @@
             "internalType": "uint256"
           },
           {
-            "name": "paymentScale",
+            "name": "assetScale",
             "type": "uint256",
             "internalType": "uint256"
           }
@@ -374,36 +362,7 @@
   },
   {
     "type": "function",
-    "name": "getAuctionStatus",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "hasLocks",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "isFinalized",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "totalLocked",
-        "type": "uint128",
-        "internalType": "uint128"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getBidLock",
+    "name": "getIntexAuctionBidBond",
     "inputs": [
       {
         "name": "emissionDay",
@@ -420,7 +379,48 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct IEscrowAdapter.BidLock",
+        "internalType": "struct IEscrowAdapter.IntexAuctionBidBond",
+        "components": [
+          {
+            "name": "amount",
+            "type": "uint128",
+            "internalType": "uint128"
+          },
+          {
+            "name": "lockedAt",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "assetVersion",
+            "type": "uint8",
+            "internalType": "uint8"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getIntexAuctionBidLock",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct IEscrowAdapter.IntexAuctionBidLock",
         "components": [
           {
             "name": "lockedAmount",
@@ -446,76 +446,6 @@
             "name": "quantity",
             "type": "uint16",
             "internalType": "uint16"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getClaimableRefund",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "amount",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "claimableAt",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "getCommitBond",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "tuple",
-        "internalType": "struct IEscrowAdapter.CommitBond",
-        "components": [
-          {
-            "name": "amount",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
-            "name": "lockedAt",
-            "type": "uint32",
-            "internalType": "uint32"
-          },
-          {
-            "name": "assetVersion",
-            "type": "uint8",
-            "internalType": "uint8"
           }
         ]
       }
@@ -611,13 +541,26 @@
   },
   {
     "type": "function",
-    "name": "intexAuctionContract",
+    "name": "intexAuction",
     "inputs": [],
     "outputs": [
       {
         "name": "",
         "type": "address",
         "internalType": "address"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "intexAuctionAsset",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IERC20"
       }
     ],
     "stateMutability": "view"
@@ -673,30 +616,20 @@
   },
   {
     "type": "function",
-    "name": "lockCommitBond",
-    "inputs": [
+    "name": "lockId",
+    "inputs": [],
+    "outputs": [
       {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint128",
-        "internalType": "uint128"
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "lockFunds",
+    "name": "lockIntexAuctionAsset",
     "inputs": [
       {
         "name": "emissionDay",
@@ -729,16 +662,26 @@
   },
   {
     "type": "function",
-    "name": "lockId",
-    "inputs": [],
-    "outputs": [
+    "name": "lockIntexAuctionBidBond",
+    "inputs": [
       {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint128",
+        "internalType": "uint128"
       }
     ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -749,19 +692,6 @@
         "name": "",
         "type": "bytes12",
         "internalType": "bytes12"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "paymentToken",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IERC20"
       }
     ],
     "stateMutability": "view"
@@ -818,7 +748,25 @@
   },
   {
     "type": "function",
-    "name": "releaseCommitBond",
+    "name": "renounceRole",
+    "inputs": [
+      {
+        "name": "role",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "callerConfirmation",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "returnAbandonedIntexAuctionAsset",
     "inputs": [
       {
         "name": "emissionDay",
@@ -836,7 +784,7 @@
   },
   {
     "type": "function",
-    "name": "releaseRefund",
+    "name": "returnIntexAuctionAsset",
     "inputs": [
       {
         "name": "emissionDay",
@@ -865,21 +813,32 @@
   },
   {
     "type": "function",
-    "name": "renounceRole",
+    "name": "returnableAmount",
     "inputs": [
       {
-        "name": "role",
-        "type": "bytes32",
-        "internalType": "bytes32"
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
       },
       {
-        "name": "callerConfirmation",
+        "name": "bidder",
         "type": "address",
         "internalType": "address"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
+    "outputs": [
+      {
+        "name": "amount",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "claimableAt",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -892,6 +851,29 @@
       },
       {
         "name": "account",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setDependencies",
+    "inputs": [
+      {
+        "name": "_intexAuction",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_compact",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_asset",
         "type": "address",
         "internalType": "address"
       }
@@ -933,6 +915,47 @@
   },
   {
     "type": "function",
+    "name": "unlockAbandonedIntexAuctionBidBond",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "unlockIntexAuctionBidBond",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "upgradeToAndCall",
     "inputs": [
       {
@@ -950,37 +973,14 @@
     "stateMutability": "payable"
   },
   {
-    "type": "function",
-    "name": "wire",
-    "inputs": [
-      {
-        "name": "_intexAuction",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_compact",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_paymentToken",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
     "type": "event",
-    "name": "AssetRetired",
+    "name": "EscrowDependenciesSet",
     "inputs": [
       {
-        "name": "version",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
+        "name": "intexAuction",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
       },
       {
         "name": "compact",
@@ -989,209 +989,29 @@
         "internalType": "address"
       },
       {
-        "name": "paymentToken",
+        "name": "asset",
         "type": "address",
         "indexed": false,
         "internalType": "address"
       },
       {
-        "name": "lockId",
-        "type": "uint256",
+        "name": "assetDecimals",
+        "type": "uint8",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint8"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "AuctionEscrowFinalized",
+    "name": "EscrowProceedsRecipientSet",
     "inputs": [
       {
-        "name": "receiveId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "totalRefunded",
-        "type": "uint128",
-        "indexed": false,
-        "internalType": "uint128"
-      },
-      {
-        "name": "totalPaid",
-        "type": "uint128",
-        "indexed": false,
-        "internalType": "uint128"
-      },
-      {
-        "name": "bidsProcessed",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BidderRefundFailed",
-    "inputs": [
-      {
-        "name": "receiveId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
+        "name": "recipient",
         "type": "address",
-        "indexed": true,
+        "indexed": false,
         "internalType": "address"
-      },
-      {
-        "name": "reason",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "CommitBondLocked",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint128",
-        "indexed": false,
-        "internalType": "uint128"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "CommitBondReleased",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint128",
-        "indexed": false,
-        "internalType": "uint128"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "FinalizationNoOp",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidsProcessed",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "FundsLocked",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint128",
-        "indexed": false,
-        "internalType": "uint128"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "FundsRefunded",
-    "inputs": [
-      {
-        "name": "receiveId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "bidder",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amount",
-        "type": "uint128",
-        "indexed": false,
-        "internalType": "uint128"
       }
     ],
     "anonymous": false
@@ -1211,13 +1031,248 @@
   },
   {
     "type": "event",
-    "name": "ProceedsRecipientSet",
+    "name": "IntexAuctionAssetCharged",
     "inputs": [
       {
-        "name": "recipient",
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
         "type": "address",
         "indexed": false,
         "internalType": "address"
+      },
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionAssetLocked",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionAssetReturned",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionAssetVersionRetired",
+    "inputs": [
+      {
+        "name": "version",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "compact",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "lockId",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionBidBondLocked",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionBidBondUnlocked",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionWinNoteCreateFailed",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "errorData",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionWinNoteCreated",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "bidder",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "quantity",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -1311,49 +1366,6 @@
     "anonymous": false
   },
   {
-    "type": "event",
-    "name": "Wired",
-    "inputs": [
-      {
-        "name": "intexAuctionOld",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "intexAuctionNew",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "compactOld",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "compactNew",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "paymentTokenOld",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "paymentTokenNew",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
     "type": "error",
     "name": "AccessControlBadConfirmation",
     "inputs": []
@@ -1392,8 +1404,19 @@
   },
   {
     "type": "error",
-    "name": "BidAlreadyLocked",
-    "inputs": []
+    "name": "ChargeExceedsLock",
+    "inputs": [
+      {
+        "name": "locked",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "charged",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -1423,33 +1446,7 @@
   },
   {
     "type": "error",
-    "name": "CommitBondAlreadyLocked",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CommitBondNotFound",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CommitBondNotYetAbandoned",
-    "inputs": [
-      {
-        "name": "claimableAt",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "now_",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "DayAssetRetired",
+    "name": "DayIntexAuctionAssetRetired",
     "inputs": [
       {
         "name": "emissionDay",
@@ -1491,6 +1488,75 @@
   },
   {
     "type": "error",
+    "name": "IntexAuctionAssetAmountOverflow",
+    "inputs": [
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionAssetDecimals",
+    "inputs": [
+      {
+        "name": "actual",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionAssetNotYetReturnable",
+    "inputs": [
+      {
+        "name": "returnableAt",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "nowTs",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionBidAlreadyLocked",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionBidBondAlreadyLocked",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionBidBondNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionBidBondNotYetAbandoned",
+    "inputs": [
+      {
+        "name": "unlockableAt",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "nowTs",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "InvalidInitialization",
     "inputs": []
   },
@@ -1516,7 +1582,7 @@
   },
   {
     "type": "error",
-    "name": "NothingToRefund",
+    "name": "NothingToReturn",
     "inputs": []
   },
   {
@@ -1537,7 +1603,7 @@
   },
   {
     "type": "error",
-    "name": "PartialFillOutsideChunk",
+    "name": "PartialFillOutsidePage",
     "inputs": [
       {
         "name": "partialIndex",
@@ -1553,44 +1619,6 @@
   },
   {
     "type": "error",
-    "name": "PaymentAmountOverflow",
-    "inputs": [
-      {
-        "name": "amount",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PaymentExceedsLock",
-    "inputs": [
-      {
-        "name": "locked",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "paid",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "PaymentTokenDecimals",
-    "inputs": [
-      {
-        "name": "actual",
-        "type": "uint8",
-        "internalType": "uint8"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ProceedsRecipientNotSet",
     "inputs": []
   },
@@ -1601,31 +1629,15 @@
   },
   {
     "type": "error",
-    "name": "RefundNotYetAbandoned",
+    "name": "ReturnNotYetAbandoned",
     "inputs": [
       {
-        "name": "claimableAt",
+        "name": "returnableAt",
         "type": "uint32",
         "internalType": "uint32"
       },
       {
-        "name": "now_",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RefundNotYetClaimable",
-    "inputs": [
-      {
-        "name": "claimableAt",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "now_",
+        "name": "nowTs",
         "type": "uint32",
         "internalType": "uint32"
       }

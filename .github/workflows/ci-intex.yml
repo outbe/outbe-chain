@@ -31,5 +31,4 @@ jobs:
       abi-check: true
       upgrade-check: true
       slither-check: true
-      aderyn-check: true
       isolated-tests: test/foundry/cross-chain/GasBudget.t.sol

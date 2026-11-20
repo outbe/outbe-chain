@@ -304,7 +304,7 @@ impl TeeRegistryGasScheduleV1 {
         )?;
         let qvl = match mode {
             AttestationMode::DcapRequired => self.qvl_dcap(evidence_len, active_rule_count)?,
-            AttestationMode::GramineDirectDev => self.qvl_dev(evidence_len, active_rule_count)?,
+            AttestationMode::NoAttestationDev => self.qvl_dev(evidence_len, active_rule_count)?,
         };
         let input_charge = checked_mul(self.input_byte, checked_usize(input_len)?)?;
         let mutator_gas = match kind {

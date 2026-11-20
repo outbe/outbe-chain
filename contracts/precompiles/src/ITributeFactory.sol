@@ -56,7 +56,7 @@ interface ITributeFactory {
         external
         view
         returns (uint32 day, uint64 formingStart, uint64 formingEnd, uint64 offeringsStart, uint64 offeringEnd);
-    function getActiveWorldwideDays() external view returns (uint32[] memory wwds);
+    function activeWorldwideDays() external view returns (uint32[] memory wwds);
 
     // The caller need not be a registered L2 operator.
     // `chainId` selects a registered L2 and `version` selects an exact

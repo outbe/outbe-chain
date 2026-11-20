@@ -55,11 +55,6 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
         return _origin().openOrders[orderId];
     }
 
-    // ============ Events ============
-
-    /// @notice Emitted when a nonce is invalidated for an address
-    event NonceInvalidation(address indexed owner, uint256 nonce);
-
     // ============ External Functions ============
 
     /**
@@ -118,15 +113,6 @@ abstract contract OriginSettlerBase is OrderStatusStorage, RouterAccessors, IOri
         returns (ResolvedCrossChainOrder memory _resolvedOrder)
     {
         (_resolvedOrder,,) = _resolveOrder(_order);
-    }
-
-    /**
-     * @notice Invalidates a nonce for the user calling the function
-     * @param _nonce The nonce to invalidate
-     */
-    function invalidateNonces(uint256 _nonce) external {
-        _useNonce(msg.sender, _nonce);
-        emit NonceInvalidation(msg.sender, _nonce);
     }
 
     /**

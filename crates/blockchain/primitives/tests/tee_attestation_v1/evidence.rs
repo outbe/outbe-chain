@@ -29,7 +29,7 @@ fn dcap_evidence_roundtrips_and_rejects_duplicate_unknown_and_trailing_component
 
     let mut duplicate = match evidence.clone() {
         AttestationEvidenceV1::Dcap(value) => value,
-        AttestationEvidenceV1::GramineDirectDev(_) => unreachable!(),
+        AttestationEvidenceV1::NoAttestationDev(_) => unreachable!(),
     };
     duplicate.components[7].kind = DcapCollateralKind::QeIdentity;
     assert_eq!(
@@ -116,7 +116,7 @@ fn dcap_evidence_requires_transition_proof_only_for_transition() {
     let attestation = ed25519_dalek::SigningKey::from_bytes(&[0x77; 32]);
     let mut transition = match dcap_evidence_with_component_bytes(1) {
         AttestationEvidenceV1::Dcap(value) => value,
-        AttestationEvidenceV1::GramineDirectDev(_) => unreachable!(),
+        AttestationEvidenceV1::NoAttestationDev(_) => unreachable!(),
     };
     transition.intent.chain_id = [0x10; 32];
     transition.intent.operation = AttestationOperationV1::TransitionEnclaveMeasurement;
@@ -157,7 +157,7 @@ fn evidence_variant_rejects_an_intent_for_another_attestation_mode() {
     let AttestationEvidenceV1::Dcap(value) = &mut dcap else {
         unreachable!()
     };
-    value.intent.attestation_mode = AttestationMode::GramineDirectDev;
+    value.intent.attestation_mode = AttestationMode::NoAttestationDev;
 
     assert_eq!(
         dcap.encode_canonical().unwrap_err(),

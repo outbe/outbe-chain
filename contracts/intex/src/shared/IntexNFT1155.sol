@@ -24,8 +24,10 @@ import {IntexMetadata} from "./libs/IntexMetadata.sol";
  *      precompile on Outbe: a settlement burns them here.
  */
 contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, IIntexNFT1155 {
-    /// @notice Bridge relayer role. It gates series lifecycle and bridge crosschainBurn/crosschainMint.
-    bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
+    /// @notice Router role: TargetRouter. It can call `createSeries` and `markCalled`.
+    bytes32 public constant ROUTER_ROLE = keccak256("ROUTER_ROLE");
+    /// @notice Bridge role: IntexNFT1155Bridge. It can call `crosschainBurn` and `crosschainMint`.
+    bytes32 public constant BRIDGE_ROLE = keccak256("BRIDGE_ROLE");
     /// @notice Auction role. It can call `issueIntex` for a winner.
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
     /// @notice Burner role: the IntexFactory and GemFactory precompiles on Outbe. It can call `burnIntex`.
@@ -95,7 +97,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function createSeries(IIntexNFT1155.CreateSeriesParams calldata params) external onlyRole(RELAYER_ROLE) {
+    function createSeries(IIntexNFT1155.CreateSeriesParams calldata params) external onlyRole(ROUTER_ROLE) {
         IntexNFT1155Storage storage $ = _s();
         uint256 iTok = _issuedTokenId(params.seriesId);
 
@@ -186,7 +188,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
-    function markCalled(bytes14 seriesId, uint64 calledAt) external onlyRole(RELAYER_ROLE) {
+    function markCalled(bytes14 seriesId, uint64 calledAt) external onlyRole(ROUTER_ROLE) {
         uint256 tokenId = _issuedTokenId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) {
@@ -212,10 +214,9 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @inheritdoc IERC1155Bridgeable
     /// @dev Bridge crosschainBurn gating:
-    ///      - Series state `Issued`: bridge allowed for `RELAYER_ROLE`
-    ///        (voluntary, owner-initiated moves while the series is tradable).
+    ///      - Series state `Issued`: allowed (voluntary, owner-initiated moves while the series is tradable).
     ///      - Series state `Called`: allowed to any recipient until the settlement deadline.
-    function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
+    function crosschainBurn(address from, address to, uint256 tokenId, uint256 amount) external onlyRole(BRIDGE_ROLE) {
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) revert NonexistentToken(tokenId);
         if (from == address(0)) revert ZeroAddress("from", from);
@@ -231,15 +232,15 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         // CEI ok: write before _burn for symmetry with mint. _burn fires no acceptance callback
         // (OZ ERC1155 skips it when to == address(0)), so no read-only-reentrancy surface here.
-        // forge-lint: disable-next-line(unsafe-typecast) aderyn-ignore-next-line(unsafe-casting) -- amount <= balance <= totalSupply (uint32); _burn reverts otherwise
+        // forge-lint: disable-next-line(unsafe-typecast) -- amount <= balance <= totalSupply (uint32); _burn reverts otherwise
         data.totalSupply -= uint32(amount);
         _burn(from, tokenId, amount);
     }
 
     /// @inheritdoc IERC1155Bridgeable
-    /// @dev Bridge crosschainMint mirrors `crosschainBurn`: `RELAYER_ROLE` throughout. Until the transit
+    /// @dev Bridge crosschainMint mirrors `crosschainBurn`: `BRIDGE_ROLE` throughout. Until the transit
     ///      margin past the deadline ends, the bridge may still mint into a Called series so a hop lands.
-    function crosschainMint(address to, uint256 tokenId, uint256 amount) external onlyRole(RELAYER_ROLE) {
+    function crosschainMint(address to, uint256 tokenId, uint256 amount) external onlyRole(BRIDGE_ROLE) {
         if (to == address(0)) revert ZeroAddress("to", to);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) revert NonexistentToken(tokenId);

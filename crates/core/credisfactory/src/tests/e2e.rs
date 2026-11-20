@@ -2,7 +2,7 @@
 use crate::{runtime, tests::*};
 use alloy_primitives::{Address, U256};
 use outbe_credis::{CredisContract, CredisState};
-use outbe_enclave::protocol::GratisOp;
+use outbe_gratis::GratisOp;
 use outbe_gratisfactory::runtime::{cancel_pledge, pledge_of};
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;

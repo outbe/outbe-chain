@@ -4,12 +4,9 @@
 use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_system_common::address_pair::AddressPair;
-use outbe_system_common::time::WorldwideDay;
 use std::collections::BTreeSet;
 
-use super::{
-    GenesisAggregateVote, GenesisScurveEntry, GenesisSnapshot, OracleGenesisConfig, PolicyRate,
-};
+use super::{GenesisAggregateVote, GenesisScurveEntry, GenesisSnapshot, OracleGenesisConfig};
 use crate::errors::OracleError;
 use crate::schema::OracleContract;
 
@@ -41,7 +38,7 @@ pub fn export_genesis(
     let aggregate_votes = export_aggregate_votes(oracle)?;
     let snapshots = export_snapshots(oracle)?;
     let scurve_entries = export_scurve_entries(oracle)?;
-    let policy_rates = export_policy_rates(oracle)?;
+    let policy_rate_currencies = oracle.policy_rate_currencies.read_all()?;
 
     Ok(OracleGenesisConfig {
         vote_period,
@@ -54,7 +51,7 @@ pub fn export_genesis(
         pairs,
         initial_rates,
         feeder_delegations,
-        policy_rates,
+        policy_rate_currencies,
         penalty_counters,
         aggregate_votes,
         snapshots,
@@ -134,36 +131,22 @@ fn export_snapshots(oracle: &OracleContract) -> Result<Vec<GenesisSnapshot>> {
     Ok(snapshots)
 }
 
-/// Export the stored S-curves, oldest first within each pair.
+/// Export the S-curve of each pair that has one.
 fn export_scurve_entries(oracle: &OracleContract) -> Result<Vec<GenesisScurveEntry>> {
-    let (bases, quotes, peak_days, peak_prices) = crate::scurve::get_all_scurve_data(oracle)?;
+    let (bases, quotes, start_hours, peak_prices) = crate::scurve::get_all_scurve_data(oracle)?;
     Ok(bases
         .into_iter()
         .zip(quotes)
-        .zip(peak_days.into_iter().zip(peak_prices))
+        .zip(start_hours.into_iter().zip(peak_prices))
         .map(
-            |((base, quote), (peak_day, peak_price))| GenesisScurveEntry {
+            |((base, quote), (start_hour, peak_price))| GenesisScurveEntry {
                 base,
                 quote,
-                peak_day: WorldwideDay::new(peak_day as u32),
+                start_hour,
                 peak_price,
             },
         )
         .collect())
-}
-
-/// Export the policy-rate registry in its stored order.
-fn export_policy_rates(oracle: &OracleContract) -> Result<Vec<PolicyRate>> {
-    let policy_iso_codes = oracle.policy_rate_currencies.read_all()?;
-    let mut policy_rates = Vec::with_capacity(policy_iso_codes.len());
-    for iso_code in policy_iso_codes {
-        let annual_rate_1e6 = oracle.policy_rate.read(&iso_code)?;
-        policy_rates.push(PolicyRate {
-            iso_code,
-            annual_rate_1e6,
-        });
-    }
-    Ok(policy_rates)
 }
 
 fn export_aggregate_votes(oracle: &OracleContract) -> Result<Vec<GenesisAggregateVote>> {

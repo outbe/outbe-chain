@@ -247,21 +247,6 @@
     },
     "artifact": {
       "additionalProperties": false,
-      "allOf": [
-        {
-          "if": {
-            "properties": {
-              "role": {
-                "const": "tee-enclave"
-              }
-            },
-            "required": ["role"]
-          },
-          "then": {
-            "required": ["tee"]
-          }
-        }
-      ],
       "properties": {
         "classification": {
           "enum": ["production", "test-only"]
@@ -291,10 +276,7 @@
             "native-package",
             "sbom",
             "oci-manifest",
-            "compose-descriptor",
-            "sgx-rendered-manifest",
-            "sgx-sigstruct",
-            "gramine-runtime-tree"
+            "compose-descriptor"
           ]
         },
         "media_type": {
@@ -321,7 +303,6 @@
             "operator-cli",
             "key-generation",
             "price-feed",
-            "tee-enclave",
             "operator-sidecar",
             "installer"
           ]

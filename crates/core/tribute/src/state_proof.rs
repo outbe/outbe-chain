@@ -41,7 +41,7 @@ pub fn retained_source_binding(
             return Err(invalid("retained Tribute source does not match its index"));
         }
     }
-    outbe_enclave::tribute_source::source_binding(tribute, index, &words)
+    crate::confidential::source_binding(tribute, index, &words)
         .map_err(|error| invalid(error.to_string()))
 }
 
@@ -51,7 +51,7 @@ pub type TributeSourceWords = (EncryptedTributeV2, u32, Vec<(B256, U256)>);
 /// Reads the encrypted tribute record, its day index, and expected storage words for `tribute_id`.
 pub fn read_tribute_source_words(
     storage: StorageHandle<'_>,
-    subject: &outbe_enclave::tribute_source::TributeSourceSubject,
+    subject: &crate::confidential::TributeSourceSubject,
     tribute_id: WwdEntityId,
 ) -> Result<TributeSourceWords> {
     let record = crate::state_api::get_retained_record(&storage, tribute_id)?
@@ -80,8 +80,8 @@ pub struct TributeStateProofSubject {
     pub tribute_count: u32,
 }
 
-impl From<outbe_enclave::tribute_source::TributeSourceSubject> for TributeStateProofSubject {
-    fn from(source: outbe_enclave::tribute_source::TributeSourceSubject) -> Self {
+impl From<crate::confidential::TributeSourceSubject> for TributeStateProofSubject {
+    fn from(source: crate::confidential::TributeSourceSubject) -> Self {
         Self {
             checkpoint: FinalizedStateCheckpoint {
                 block_number: source.checkpoint.block_number,
@@ -199,8 +199,8 @@ impl TributeRecordStateProof {
         &self,
         contract: &TributeContract<'_>,
         subject: &TributeStateProofSubject,
-    ) -> Result<outbe_enclave::tribute_source::TributeStateSource> {
-        Ok(outbe_enclave::tribute_source::TributeStateSource {
+    ) -> Result<crate::confidential::TributeStateSource> {
+        Ok(crate::confidential::TributeStateSource {
             tribute: self.tribute.clone(),
             day_index: self.day_index,
             expected_words: expected_record_words(

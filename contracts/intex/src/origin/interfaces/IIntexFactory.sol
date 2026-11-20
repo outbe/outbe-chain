@@ -6,5 +6,5 @@ interface IIntexFactory {
     /// @notice Burn native auction proceeds and credit them to the Promis limit pool in whole units.
     /// @param emissionDay Emission day (yyyymmdd) the proceeds belong to.
     /// @param srcChainId Target chain the proceeds arrived from.
-    function distribute(uint32 emissionDay, uint32 srcChainId) external payable;
+    function burnIntexAuctionProceeds(uint32 emissionDay, uint32 srcChainId) external payable;
 }

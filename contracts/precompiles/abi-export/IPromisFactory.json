@@ -30,45 +30,6 @@
   },
   {
     "type": "function",
-    "name": "mineGratis",
-    "inputs": [
-      {
-        "name": "encryptedPromisMinor",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "promisMac",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "promisOpNonce",
-        "type": "uint64",
-        "internalType": "uint64"
-      },
-      {
-        "name": "gratisMac",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "gratisOpNonce",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "encryptedGratisMinor",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "supportsInterface",
     "inputs": [
       {

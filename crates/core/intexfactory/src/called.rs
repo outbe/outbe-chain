@@ -189,7 +189,7 @@ pub(crate) fn notify_called(
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
-                IOriginRouter::sendMarkCalledCall {
+                IOriginRouter::sendIntexSeriesCallNoticeCall {
                     emissionDay: emission_day.value(),
                     calledAt: called_at,
                     seriesIds: chunk.iter().map(|id| (*id).into()).collect(),

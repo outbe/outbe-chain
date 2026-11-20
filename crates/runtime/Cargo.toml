@@ -33,22 +33,22 @@ outbe-desis.workspace = true
 outbe-emission.workspace = true
 outbe-engine.workspace = true
 outbe-evm.workspace = true
-outbe-fidelity.workspace = true
+outbe-fidelity = { workspace = true, features = ["engine"] }
 outbe-gem.workspace = true
 outbe-gemfactory.workspace = true
-outbe-gratis.workspace = true
+outbe-gratis = { workspace = true, features = ["engine"] }
 outbe-gratisfactory.workspace = true
 outbe-hyperlanecontroller.workspace = true
 outbe-intex.workspace = true
 outbe-intexfactory.workspace = true
 outbe-l2registry.workspace = true
 outbe-metadosis.workspace = true
-outbe-nod.workspace = true
+outbe-nod = { workspace = true, features = ["engine"] }
 outbe-nodfactory.workspace = true
 outbe-execution.workspace = true
 outbe-oracle.workspace = true
 outbe-primitives.workspace = true
-outbe-promis.workspace = true
+outbe-promis = { workspace = true, features = ["engine"] }
 outbe-promislimit.workspace = true
 outbe-promisfactory.workspace = true
 outbe-radicle.workspace = true
@@ -59,10 +59,9 @@ outbe-stablecoinfactory.workspace = true
 outbe-stablecoinpolicy.workspace = true
 outbe-staking.workspace = true
 outbe-system-common.workspace = true
-outbe-enclave.workspace = true
 outbe-tee.workspace = true
 outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
-outbe-tribute.workspace = true
+outbe-tribute = { workspace = true, features = ["engine"] }
 outbe-tributefactory.workspace = true
 outbe-txpool.workspace = true
 outbe-update.workspace = true
@@ -110,10 +109,10 @@ tracing.workspace = true
 x25519-dalek.workspace = true
 
 [dev-dependencies]
+outbe-execution = { workspace = true, features = ["test-utils"] }
 metrics-util = "0.20"
 metrics-process.workspace = true
 serde_yaml_ng.workspace = true
-outbe-enclave = { workspace = true, features = ["engine", "test-utils"] }
 outbe-runtime = { path = ".", features = ["test-hooks"] }
 alloy-trie.workspace = true
 alloy-genesis.workspace = true
@@ -137,12 +136,12 @@ commonware-p2p.workspace = true
 commonware-parallel.workspace = true
 commonware-consensus.workspace = true
 commonware-cryptography.workspace = true
-commonware-storage.workspace = true
 commonware-utils.workspace = true
 futures.workspace = true
 eyre.workspace = true
 k256.workspace = true
 outbe-consensus = { workspace = true, features = ["test-utils"] }
+outbe-core-common = { workspace = true, features = ["test-utils"] }
 outbe-gratis = { workspace = true, features = ["test-enclave", "test-utils"] }
 rand-commonware.workspace = true
 commonware-actor.workspace = true
@@ -150,12 +149,10 @@ log.workspace = true
 outbe-radicle-runtime.workspace = true
 radicle = { workspace = true, features = ["test"] }
 radicle-signals.workspace = true
-rand_core.workspace = true
 outbe-nod = { workspace = true, features = ["test-utils", "test-enclave"] }
 outbe-nodfactory = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-tee = { workspace = true, features = ["test-utils"] }
-outbe-tee-enclave = { workspace = true, features = ["mock"] }
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
 revm.workspace = true
 outbe-teeregistry.workspace = true
@@ -191,7 +188,6 @@ proptest.workspace = true
 alloy-sol-types.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-postcard.workspace = true
 reth-chain-state.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 tempfile.workspace = true

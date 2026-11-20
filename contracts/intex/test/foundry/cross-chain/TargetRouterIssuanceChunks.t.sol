@@ -31,18 +31,14 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(address(this), address(this));
         router = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
 
-        router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
-        router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
-        intex.grantRole(intex.RELAYER_ROLE(), address(router));
+        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
+        router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
+        intex.grantRole(intex.ROUTER_ROLE(), address(router));
     }
 
     // --- helpers ---
 
-    function _series(bytes14 seriesId)
-        internal
-        view
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload memory payload)
-    {
+    function _series(bytes14 seriesId) internal view returns (BridgeMsgCodec.IntexSeriesPayload memory payload) {
         payload.seriesId = seriesId;
         payload.emissionDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
@@ -56,14 +52,12 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         payload.callPriceMinor = 200e6;
     }
 
-    function _deliver(uint16 chunkIndex, uint16 totalChunks, BridgeMsgCodec.IssuanceInstructionsPayload[] memory series)
-        internal
-    {
+    function _deliver(uint16 pageIndex, uint16 totalPages, BridgeMsgCodec.IntexSeriesPayload[] memory series) internal {
         _deliver(
             OUTBE_CHAIN_ID,
             originSender,
             address(router),
-            BridgeMsgCodec.encodeIssuanceInstructions(DAY, chunkIndex, totalChunks, series)
+            BridgeMsgCodec.encodeIntexSeries(DAY, pageIndex, totalPages, series)
         );
     }
 
@@ -73,15 +67,10 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         _deliver(0, 1, IssuanceBatchLib.one(_series(USD)));
         assertTrue(intex.seriesExists(USD), "first delivery creates");
 
-        vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.InboundMessageIgnored(
-            OUTBE_CHAIN_ID,
-            BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
-            bytes32(uint256(DAY) << 16),
-            InboundReason.DUPLICATE
-        );
+        vm.expectEmit(false, true, false, true, address(router));
+        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, InboundReason.DUPLICATE);
         _deliver(0, 1, IssuanceBatchLib.one(_series(USD)));
-        (uint16 seen, uint16 total) = router.issuanceChunks(DAY);
+        (uint16 seen, uint16 total) = router.getIntexIssuanceState(DAY);
         assertEq(seen, 1, "repeat is not counted");
         assertEq(total, 1, "total unchanged");
     }
@@ -91,42 +80,32 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     function test_AChunkDisagreeingOnTheTotalIsSkipped() public {
         _deliver(0, 2, IssuanceBatchLib.one(_series(USD)));
 
-        vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.InboundMessageIgnored(
-            OUTBE_CHAIN_ID,
-            BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
-            bytes32((uint256(DAY) << 16) | 1),
-            InboundReason.CONFLICT
-        );
+        vm.expectEmit(false, true, false, true, address(router));
+        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, InboundReason.CONFLICT);
         _deliver(1, 3, IssuanceBatchLib.one(_series(EUR)));
         assertFalse(intex.seriesExists(EUR), "nothing of the conflicting chunk applied");
-        (uint16 seen,) = router.issuanceChunks(DAY);
+        (uint16 seen,) = router.getIntexIssuanceState(DAY);
         assertEq(seen, 1, "conflicting chunk not counted");
     }
 
     function test_ASeriesNamedUnderOtherTermsSkipsTheWholeChunk() public {
         _deliver(0, 2, IssuanceBatchLib.one(_series(USD)));
 
-        BridgeMsgCodec.IssuanceInstructionsPayload[] memory chunk = new BridgeMsgCodec.IssuanceInstructionsPayload[](2);
+        BridgeMsgCodec.IntexSeriesPayload[] memory chunk = new BridgeMsgCodec.IntexSeriesPayload[](2);
         chunk[0] = _series(EUR);
         chunk[1] = _series(USD);
         chunk[1].entryPriceMinor = 101e6; // disagrees with the series this chain already holds
 
-        vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.InboundMessageIgnored(
-            OUTBE_CHAIN_ID,
-            BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
-            bytes32((uint256(DAY) << 16) | 1),
-            InboundReason.CONFLICT
-        );
+        vm.expectEmit(false, true, false, true, address(router));
+        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, InboundReason.CONFLICT);
         _deliver(1, 2, chunk);
         assertFalse(intex.seriesExists(EUR), "the healthy series of the chunk is not created either");
-        assertFalse(router.issuanceChunkApplied(DAY, 1), "chunk stays unapplied so a corrected resend can land");
+        assertFalse(router.intexSeriesPageApplied(DAY, 1), "chunk stays unapplied so a corrected resend can land");
     }
 
     function test_ACorrectedResendOfASkippedChunkLands() public {
         _deliver(0, 2, IssuanceBatchLib.one(_series(USD)));
-        BridgeMsgCodec.IssuanceInstructionsPayload[] memory chunk = new BridgeMsgCodec.IssuanceInstructionsPayload[](2);
+        BridgeMsgCodec.IntexSeriesPayload[] memory chunk = new BridgeMsgCodec.IntexSeriesPayload[](2);
         chunk[0] = _series(EUR);
         chunk[1] = _series(USD);
         chunk[1].entryPriceMinor = 101e6;
@@ -139,41 +118,34 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     }
 
     function test_ASeriesWithNoSupplyIsInvalidNotALoop() public {
-        BridgeMsgCodec.IssuanceInstructionsPayload memory p = _series(USD);
+        BridgeMsgCodec.IntexSeriesPayload memory p = _series(USD);
         p.issuedUnits = 0;
-        vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.InboundMessageIgnored(
-            OUTBE_CHAIN_ID, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, bytes32(uint256(DAY) << 16), InboundReason.INVALID
-        );
+        vm.expectEmit(false, true, false, true, address(router));
+        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, InboundReason.INVALID);
         _deliver(0, 1, IssuanceBatchLib.one(p));
         assertFalse(intex.seriesExists(USD), "nothing created");
-        assertFalse(router.issuanceChunkApplied(DAY, 0), "a corrected resend can still land");
+        assertFalse(router.intexSeriesPageApplied(DAY, 0), "a corrected resend can still land");
     }
 
     function test_ADuplicateSeriesWithOtherTermsInsideOneChunkIsAConflict() public {
-        BridgeMsgCodec.IssuanceInstructionsPayload[] memory chunk = new BridgeMsgCodec.IssuanceInstructionsPayload[](2);
+        BridgeMsgCodec.IntexSeriesPayload[] memory chunk = new BridgeMsgCodec.IntexSeriesPayload[](2);
         chunk[0] = _series(USD);
         chunk[1] = _series(USD);
         chunk[1].entryPriceMinor = 101e6;
 
-        vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.InboundMessageIgnored(
-            OUTBE_CHAIN_ID,
-            BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
-            bytes32(uint256(DAY) << 16),
-            InboundReason.CONFLICT
-        );
+        vm.expectEmit(false, true, false, true, address(router));
+        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, InboundReason.CONFLICT);
         _deliver(0, 1, chunk);
         assertFalse(intex.seriesExists(USD), "nothing of the chunk applied");
     }
 
     function test_ASeriesNamedTwiceInsideOneChunkIsCreatedOnce() public {
-        BridgeMsgCodec.IssuanceInstructionsPayload[] memory chunk = new BridgeMsgCodec.IssuanceInstructionsPayload[](2);
+        BridgeMsgCodec.IntexSeriesPayload[] memory chunk = new BridgeMsgCodec.IntexSeriesPayload[](2);
         chunk[0] = _series(USD);
         chunk[1] = _series(USD);
         _deliver(0, 1, chunk);
         assertTrue(intex.seriesExists(USD));
-        assertTrue(router.issuanceChunkApplied(DAY, 0), "chunk applied");
+        assertTrue(router.intexSeriesPageApplied(DAY, 0), "chunk applied");
     }
 
     // --- completeness ---
@@ -187,7 +159,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         vm.expectEmit(true, true, true, true, address(router));
         emit ITargetRouter.IssuanceCompleted(DAY, 3);
         _deliver(1, 3, IssuanceBatchLib.one(_series(USD)));
-        (uint16 seen, uint16 total) = router.issuanceChunks(DAY);
+        (uint16 seen, uint16 total) = router.getIntexIssuanceState(DAY);
         assertEq(seen, 3, "every chunk counted");
         assertEq(total, 3, "total as declared");
     }

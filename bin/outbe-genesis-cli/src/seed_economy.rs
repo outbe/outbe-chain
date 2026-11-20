@@ -5,8 +5,8 @@ use serde_json::{Map, Value};
 
 use crate::error::GenesisError;
 use crate::seed_codec::{
-    address_as_u256, address_bytes, alloc_balance_hex, data_slot, first_worldwide_day, parse_u256,
-    StorageBuilder, ORACLE_ADDRESS, VAULT_ROUTER_STABLECOIN_SOURCES,
+    address_as_u256, address_bytes, alloc_balance_hex, data_slot, parse_u256, StorageBuilder,
+    ORACLE_ADDRESS, SECONDS_PER_DAY, VAULT_ROUTER_STABLECOIN_SOURCES,
     VAULT_ROUTER_STABLECOIN_TARGETS,
 };
 use crate::seed_oracle::seed_oracle;
@@ -59,6 +59,12 @@ pub fn seed_vault_router(storage: &mut StorageBuilder) -> Result<(), GenesisErro
     Ok(())
 }
 
+/// 00:00 UTC of the first Worldwide Day the chain makes, in Unix seconds: the
+/// start hour of each seeded S-curve.
+fn first_worldwide_day_start(genesis_timestamp: u64) -> u64 {
+    genesis_timestamp.saturating_sub(12 * 60 * 60) / SECONDS_PER_DAY * SECONDS_PER_DAY
+}
+
 /// Seed the Oracle section into `alloc`. `genesis_timestamp` is the header timestamp.
 pub fn seed_economic_state(
     seed: &Value,
@@ -70,7 +76,7 @@ pub fn seed_economic_state(
         seed_oracle(
             &mut oracle_storage,
             oracle,
-            genesis_timestamp.map(first_worldwide_day),
+            genesis_timestamp.map(first_worldwide_day_start),
         )?;
         merge_storage_into_alloc(alloc, ORACLE_ADDRESS, &oracle_storage)?;
     }

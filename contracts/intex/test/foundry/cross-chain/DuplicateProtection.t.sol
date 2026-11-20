@@ -45,17 +45,17 @@ contract DuplicateProtectionTest is CrossChainTest {
         batchDst = DeployProxy.intexNFT1155Bridge(address(intexDst), address(bridge), admin);
 
         // Outbound recipient for the send.
-        batchSrc.setRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(batchDst)));
+        batchSrc.registerRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(batchDst)));
         // Inbound peer authentication: the loopback bridge stamps the sender chainId as `block.chainid`, so the
         // destination must recognize the source adapter under that chainId.
-        batchDst.setRemoteMessenger(uint32(block.chainid), _interop(uint32(block.chainid), address(batchSrc)));
+        batchDst.registerRemoteMessenger(uint32(block.chainid), _interop(uint32(block.chainid), address(batchSrc)));
 
-        // Series in a bridgeable (Issued) state on both chains, with the adapters granted RELAYER_ROLE so
+        // Series in a bridgeable (Issued) state on both chains, with the adapters granted BRIDGE_ROLE so
         // crosschainBurn/crosschainMint succeed.
         _seedSeries(intexSrc);
         _seedSeries(intexDst);
-        intexSrc.grantRole(intexSrc.RELAYER_ROLE(), address(batchSrc));
-        intexDst.grantRole(intexDst.RELAYER_ROLE(), address(batchDst));
+        intexSrc.grantRole(intexSrc.BRIDGE_ROLE(), address(batchSrc));
+        intexDst.grantRole(intexDst.BRIDGE_ROLE(), address(batchDst));
 
         // Mint on the source so the caller (an EOA that can receive/hold ERC1155) has a balance to bridge.
         intexSrc.issueIntex(sender, 1, SERIES_ID);

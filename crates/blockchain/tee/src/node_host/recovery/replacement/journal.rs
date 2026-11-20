@@ -5,7 +5,7 @@ use super::super::super::{
     ReplacementCandidateRecordV1,
 };
 use super::replacement_authorization;
-use crate::{NodeHostNoiseKey, TransportError};
+use crate::{node_host::NodeHostIdentityKey, TransportError};
 use outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1;
 use std::fs::{self, File};
 
@@ -78,7 +78,7 @@ impl ReplacementPresence {
 pub(super) fn reconcile_candidate_journal(
     paths: &NodeHostPaths,
     active: &EnclaveInitializationManifestV1,
-    node_host: &NodeHostNoiseKey,
+    node_host: &NodeHostIdentityKey,
     presence: &mut ReplacementPresence,
 ) -> Result<(), TransportError> {
     if presence.candidate_next_exists {

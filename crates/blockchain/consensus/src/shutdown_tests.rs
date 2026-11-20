@@ -144,12 +144,18 @@ fn global_stop_reopens_voter_journal_and_resumes_without_conflicting_votes() {
         &crate::config::outbe_app_namespace(),
         participants.clone(),
         signing_key,
-        dkg.polynomial,
+        dkg.polynomial.clone(),
         dkg.shares[0].clone(),
     )
     .expect("single-validator hybrid signer");
+    let verifier = HybridScheme::<MinSig>::verifier(
+        &crate::config::outbe_app_namespace(),
+        participants,
+        dkg.polynomial,
+    )
+    .unwrap();
     let mut recorded = Vec::<RecordedVote>::new();
-    for _ in 0..2 {
+    for signer_enabled in [true, false, true] {
         let previous_view = recorded.iter().map(|vote| vote.view()).max();
         let config = tokio::Config::default()
             .with_worker_threads(1)
@@ -157,7 +163,11 @@ fn global_stop_reopens_voter_journal_and_resumes_without_conflicting_votes() {
             .with_catch_panics(true)
             .with_storage_directory(storage.path());
         let public_key = public_key.clone();
-        let scheme = scheme.clone();
+        let scheme = if signer_enabled {
+            scheme.clone()
+        } else {
+            verifier.clone()
+        };
         let votes = tokio::Runner::new(config).start(|context| async move {
             let sender = NullSender {
                 participants: vec![public_key.clone()],
@@ -184,7 +194,7 @@ fn global_stop_reopens_voter_journal_and_resumes_without_conflicting_votes() {
                 reporter,
                 strategy: Sequential,
                 forward: ForwardPolicy::Disabled,
-                partition: "shutdown_voter_journal".to_owned(),
+                partition: crate::stack::epoch::simplex::epoch_partition(epoch, signer_enabled),
                 epoch,
                 floor: Floor::Genesis(mock_genesis(epoch)),
                 mailbox_size: NZUsize!(64),
@@ -206,8 +216,18 @@ fn global_stop_reopens_voter_journal_and_resumes_without_conflicting_votes() {
 
             // Receiving a vote observes the production sync-before-broadcast path.
             // On restart require progress beyond the previously observed view.
-            let mut votes = collect_resumed_votes(&votes_rx, previous_view)
-                .expect("journal restart must resume outbound voting");
+            let mut votes = if signer_enabled {
+                collect_resumed_votes(&votes_rx, previous_view)
+                    .expect("journal restart must resume outbound voting")
+            } else {
+                // Exercise several native voter timeout turns while the verifier WAL is open.
+                context.sleep(Duration::from_millis(50)).await;
+                assert!(
+                    votes_rx.try_recv().is_err(),
+                    "native verifier must emit no votes"
+                );
+                Vec::new()
+            };
             let (started_tx, started_rx) = mpsc::sync_channel(1);
             let (release_tx, release_rx) = mpsc::channel::<()>();
             let blocking = context

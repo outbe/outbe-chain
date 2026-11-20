@@ -10,7 +10,9 @@ pub(crate) struct SeededTeeState {
 #[derive(Clone)]
 pub(crate) struct FinalizedMockProvider {
     pub(crate) inner: reth_provider::test_utils::MockEthProvider<outbe_primitives::OutbePrimitives>,
-    finalized: Option<alloy_eips::BlockNumHash>,
+    pub(crate) finalized: Option<alloy_eips::BlockNumHash>,
+    pub(crate) finalized_observations:
+        std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<alloy_eips::BlockNumHash>>>,
     pub(crate) historical_states: std::collections::HashMap<
         alloy_primitives::B256,
         reth_provider::test_utils::MockEthProvider<outbe_primitives::OutbePrimitives>,
@@ -72,7 +74,12 @@ impl reth_provider::BlockIdReader for FinalizedMockProvider {
     fn finalized_block_num_hash(
         &self,
     ) -> reth_provider::ProviderResult<Option<alloy_eips::BlockNumHash>> {
-        Ok(self.finalized)
+        Ok(self
+            .finalized_observations
+            .lock()
+            .unwrap()
+            .pop_front()
+            .or(self.finalized))
     }
 }
 
@@ -338,6 +345,7 @@ pub(crate) fn build_tee_admission_mock_provider(
             inner: provider,
             finalized,
             historical_states: HashMap::new(),
+            finalized_observations: Default::default(),
             fail_state_read: false,
         },
         outbe_execution::tee_remote_session::RegistryChainIdentity {

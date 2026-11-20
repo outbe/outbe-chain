@@ -1,11 +1,10 @@
 use super::{
-    ack_envelope, bootstrap_evidence_kind, new_delivery_tracker, BootstrapEvidenceKind,
-    DeliveryTracker, DELIVERY_ACK, DELIVERY_DATA, DELIVERY_ID_LEN,
+    ack_envelope, new_delivery_tracker, DeliveryTracker, DELIVERY_ACK, DELIVERY_DATA,
+    DELIVERY_ID_LEN,
 };
 use alloy_primitives::B256;
 use commonware_cryptography::{bls12381, Signer as _};
 use commonware_p2p::Recipients;
-use outbe_primitives::tee_attestation_v1::AttestationMode;
 
 /// Only transport ordering and time are controlled. Both exchanges and
 /// delivery acknowledgements use the production implementation.
@@ -397,23 +396,6 @@ mod identity_phase_regression {
 }
 
 #[test]
-fn bootstrap_evidence_depends_on_policy_not_local_session_security() {
-    assert_eq!(
-        bootstrap_evidence_kind(AttestationMode::DcapRequired, true).unwrap(),
-        BootstrapEvidenceKind::Dcap
-    );
-    assert_eq!(
-        bootstrap_evidence_kind(AttestationMode::GramineDirectDev, true).unwrap(),
-        BootstrapEvidenceKind::GramineDirectDev
-    );
-    assert_eq!(
-        bootstrap_evidence_kind(AttestationMode::GramineDirectDev, false).unwrap(),
-        BootstrapEvidenceKind::GramineDirectDev
-    );
-    assert!(bootstrap_evidence_kind(AttestationMode::DcapRequired, false).is_err());
-}
-
-#[test]
 fn delivery_tracker_retries_only_unacknowledged_peers() {
     let (peer_a, peer_b, mut tracker) = known_peer_delivery(0x11, 101, 102);
     let envelope = tracker
@@ -604,3 +586,5 @@ fn bootstrap_pending_gauges_follow_delivery_lifecycle() {
         assert_pending(0.0, 0.0);
     });
 }
+
+mod founding;
