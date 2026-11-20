@@ -6,7 +6,6 @@ import {Test} from "forge-std/Test.sol";
 import {ERC7786Bridge} from "src/ERC7786Bridge.sol";
 import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol";
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
-import {LoopbackGatewayAdapter} from "src/adapters/LoopbackGatewayAdapter.sol";
 import {HandOver} from "script/4_HandOver.s.sol";
 import {CROSSCHAIN_BRIDGE} from "@precompiles/ICrosschainBridge.sol";
 import {EndpointV2Mock} from "./mocks/MockLayerZeroEndpoint.sol";
@@ -37,16 +36,14 @@ contract HandOverTest is Test {
         LayerZeroGatewayAdapter lz = Proxies.layerZero(address(endpoint), address(script));
         HyperlaneGatewayAdapter hl = Proxies.hyperlane(address(new MockHyperlaneMailbox(1)), address(script));
         ERC7786Bridge bridge = Proxies.bridge(address(script), address(hl));
-        LoopbackGatewayAdapter lb = Proxies.loopback(address(bridge), address(script));
 
-        script.handOver(address(script), GOVERNANCE, address(bridge), address(lz), address(hl), address(lb));
-        script.handOver(address(script), GOVERNANCE, address(bridge), address(lz), address(hl), address(lb));
+        script.handOver(address(script), GOVERNANCE, address(bridge), address(lz), address(hl));
+        script.handOver(address(script), GOVERNANCE, address(bridge), address(lz), address(hl));
 
         assertEq(bridge.owner(), GOVERNANCE, "bridge");
         assertEq(lz.owner(), GOVERNANCE, "LayerZero adapter");
         assertEq(endpoint.delegate(), GOVERNANCE, "LayerZero delegate");
         assertEq(hl.owner(), GOVERNANCE, "Hyperlane adapter");
-        assertEq(lb.owner(), GOVERNANCE, "loopback adapter");
     }
 
     function test_GovernanceOwner_IsCrosschainBridgeOnOutbeAndItsAccountElsewhere() public {

@@ -60,7 +60,7 @@ contract PrepareUpgradeTest is Test {
         vm.setEnv("CREATE3_FACTORY_ADDRESS", vm.toString(address(factory)));
         vm.setEnv("CONTRACT_SALT", SALT);
 
-        // A Hyperlane-only stack: no LayerZero or loopback adapter here.
+        // A Hyperlane-only stack: no LayerZero adapter here.
         vm.startPrank(deployer);
         adapter = HyperlaneGatewayAdapter(
             _deploy(

@@ -8,14 +8,12 @@ import {Create3Factory} from "@shared/Create3Factory.sol";
 import {Create3Proxy} from "@shared/Create3Proxy.sol";
 import {LayerZeroGatewayAdapter} from "src/adapters/LayerZeroGatewayAdapter.sol";
 import {HyperlaneGatewayAdapter} from "src/adapters/HyperlaneGatewayAdapter.sol";
-import {LoopbackGatewayAdapter} from "src/adapters/LoopbackGatewayAdapter.sol";
 import {SALT_VERSION} from "@shared/SaltVersion.sol";
 
 /// @dev Deploys the gateway adapters as UUPS proxies via CREATE3 (same address on every chain).
 ///      `run()` deploys each adapter only if its endpoint env is set:
 ///      - LayerZero when `LZ_ENDPOINT` is present.
 ///      - Hyperlane when `HYPERLANE_MAILBOX` is present.
-///      - The loopback (same-chain) adapter when `WIRE_LOOPBACK` is true.
 ///
 ///      The deployer owns the adapters until `4_HandOver` gives them to governance.
 ///
@@ -39,9 +37,6 @@ contract DeployAdapters is Script {
         if (mailbox != address(0)) {
             console2.log("HyperlaneGatewayAdapter:", deployHyperlaneAdapter(factory, salt, deployer, mailbox));
         }
-        if (vm.envOr("WIRE_LOOPBACK", false)) {
-            console2.log("LoopbackGatewayAdapter:", deployLoopbackAdapter(factory, salt, deployer, deployer));
-        }
         vm.stopBroadcast();
     }
 
@@ -62,19 +57,6 @@ contract DeployAdapters is Script {
         bytes32 saltHash = keccak256(abi.encodePacked("HyperlaneGatewayAdapter", salt));
         address impl = address(new HyperlaneGatewayAdapter(mailbox));
         bytes memory init = abi.encodeCall(HyperlaneGatewayAdapter.initialize, (owner));
-        return Create3Proxy.deploy(Create3Factory(factory), saltHash, impl, init);
-    }
-
-    function deployLoopbackAdapter(address factory, string memory salt, address deployer, address owner)
-        public
-        returns (address)
-    {
-        // The hub address is CREATE3-deterministic, so the script can deploy the adapter before the
-        // bridge itself.
-        address hub = Create3Factory(factory).predict(deployer, keccak256(abi.encodePacked("ERC7786Bridge", salt)));
-        bytes32 saltHash = keccak256(abi.encodePacked("LoopbackGatewayAdapter", salt));
-        address impl = address(new LoopbackGatewayAdapter(hub));
-        bytes memory init = abi.encodeCall(LoopbackGatewayAdapter.initialize, (owner));
         return Create3Proxy.deploy(Create3Factory(factory), saltHash, impl, init);
     }
 }

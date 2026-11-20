@@ -15,8 +15,7 @@ import {SALT_VERSION} from "@shared/SaltVersion.sol";
 ///      CREATE3 address across chains, so remote addresses equal the local ones (computed here).
 ///      The env only lists `(chainId, eid)`. The script wires each adapter only if its endpoint env
 ///      is present (LZ_ENDPOINT / HYPERLANE_MAILBOX). For Hyperlane, the script assumes that the
-///      remote domain is equal to the chain id. When `WIRE_LOOPBACK` is true, the script wires the
-///      local chain itself as a destination through the loopback adapter.
+///      remote domain is equal to the chain id.
 ///
 /// Run it before `4_HandOver`, while the deployer still owns the hub and the adapters.
 ///
@@ -32,7 +31,6 @@ contract ConfigureBridge is Script {
 
         bool hasLz = vm.envOr("LZ_ENDPOINT", address(0)) != address(0);
         bool hasHl = vm.envOr("HYPERLANE_MAILBOX", address(0)) != address(0);
-        bool wireLoopback = vm.envOr("WIRE_LOOPBACK", false);
 
         address bridgeAddr = _compute(factory, salt, deployer, "ERC7786Bridge");
         address lzAdapter = hasLz ? _compute(factory, salt, deployer, "LayerZeroGatewayAdapter") : address(0);
@@ -40,19 +38,9 @@ contract ConfigureBridge is Script {
 
         vm.startBroadcast(deployerPk);
         configureBridge(bridgeAddr, lzAdapter, hlAdapter);
-        if (wireLoopback) configureLoopback(bridgeAddr, _compute(factory, salt, deployer, "LoopbackGatewayAdapter"));
         vm.stopBroadcast();
 
         console2.log("=== Configure bridge complete ===");
-    }
-
-    /// @dev Routes the local chain through the loopback adapter. The hub becomes its own remote,
-    ///      and the adapter becomes the local chain's gateway. Requires an active broadcast whose
-    ///      sender owns the bridge.
-    function configureLoopback(address bridgeAddr, address loopbackAdapter) public {
-        ERC7786Bridge(bridgeAddr).registerRemoteBridge(InteroperableAddress.formatEvmV1(block.chainid, bridgeAddr));
-        ERC7786Bridge(bridgeAddr).setGateway(block.chainid, loopbackAdapter);
-        console2.log("wired loopback for local chainId:", block.chainid);
     }
 
     /// @dev Wires the local hub to its counterparts on each `REMOTE_CHAIN_IDS`. Requires an active
