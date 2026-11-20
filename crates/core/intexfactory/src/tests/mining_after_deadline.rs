@@ -3,17 +3,17 @@
 
 use super::*;
 use alloy_sol_types::SolEvent;
-use outbe_enclave::promis::{
-    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
+use outbe_promis::PromisOp;
+use outbe_promis::{
+    decrypt_balance, derive_account_keys, derive_view_key, modify_mac, ModifyOperation,
 };
-use outbe_enclave::protocol::PromisOp;
 use outbe_vaultrouter::settlement::SettlementPayment;
 
 const RELAYER: Address = Address::repeat_byte(0x5e);
 
 fn promis_auth(account: Address, amount: U256, nonce: u64) -> outbe_promisfactory::api::ModifyAuth {
     let sk = outbe_promis::enclave_client::test_enclave::state_key();
-    let mk = derive_modify_key(&sk, account).unwrap();
+    let mk = derive_account_keys(&sk, account).unwrap();
     outbe_promisfactory::api::ModifyAuth {
         mac: modify_mac(
             &mk,

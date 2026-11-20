@@ -3,15 +3,23 @@
     {
       "classification": "production",
       "features": [],
-      "install_profiles": ["operator-tools", "validator"],
+      "install_profiles": [
+        "operator-tools",
+        "validator"
+      ],
       "name": "outbe-up",
       "package": "outbe-up",
       "role": "installer"
     },
     {
       "classification": "production",
-      "features": [],
-      "install_profiles": ["full-node", "validator"],
+      "features": [
+        "native-dcap"
+      ],
+      "install_profiles": [
+        "full-node",
+        "validator"
+      ],
       "name": "outbe-chain",
       "package": "outbe-chain",
       "role": "node"
@@ -19,7 +27,9 @@
     {
       "classification": "production",
       "features": [],
-      "install_profiles": ["operator-tools"],
+      "install_profiles": [
+        "operator-tools"
+      ],
       "name": "outbe-cli",
       "package": "outbe-cli",
       "role": "operator-cli"
@@ -27,7 +37,9 @@
     {
       "classification": "production",
       "features": [],
-      "install_profiles": ["operator-tools"],
+      "install_profiles": [
+        "operator-tools"
+      ],
       "name": "outbe-keygen",
       "package": "outbe-keygen",
       "role": "key-generation"
@@ -35,7 +47,9 @@
     {
       "classification": "production",
       "features": [],
-      "install_profiles": ["price-oracle"],
+      "install_profiles": [
+        "price-oracle"
+      ],
       "name": "outbe-feeder",
       "package": "outbe-feeder",
       "role": "price-feed"
@@ -43,24 +57,18 @@
     {
       "classification": "production",
       "features": [],
-      "install_profiles": ["validator"],
+      "install_profiles": [
+        "validator"
+      ],
       "name": "outbe-radicle",
       "package": "outbe-radicle-sidecar",
       "role": "operator-sidecar"
-    },
-    {
-      "classification": "production",
-      "features": ["production-dcap-release"],
-      "install_profiles": ["full-node", "validator"],
-      "name": "outbe-tee-enclave",
-      "package": "outbe-tee-enclave",
-      "role": "tee-enclave"
     }
   ],
   "builder": {
     "base_images": [
       "rust:1.96.0-bookworm@sha256:64d9b7f60e3abb08d477cad983d0a3743acc53a19369ba4482510184c9c807e5",
-      "gramineproject/gramine:1.9-noble@sha256:bdf2d0ef9bd09fa10684e14fbe822236df35708d58a852209c5f235842ecb6d7"
+      "ubuntu:24.04@sha256:1e0a86e57d247923571b75e0aaf48a1449cf8c543d51fb3e07a4a7d7bfa79316"
     ],
     "id": "https://github.com/outbe/outbe-chain/project-toolchain/v1",
     "recipe": "Dockerfile.project-toolchain",
@@ -78,7 +86,8 @@
       "libsgx-headers=2.29.100.1-noble1",
       "libssl-dev=3.0.13-0ubuntu3.12",
       "libstdc++6=14.2.0-4ubuntu2~24.04.1",
-      "pkg-config=1.8.1-2build1"
+      "pkg-config=1.8.1-2build1",
+      "python3=3.12.3-0ubuntu2.1"
     ]
   },
   "cargo": {
@@ -102,6 +111,7 @@
   },
   "inputs": [
     ".cargo/config.toml",
+    "bin/outbe-chain/Cargo.toml",
     "Cargo.lock",
     "Cargo.toml",
     "crates/operator/systemd/Cargo.toml",

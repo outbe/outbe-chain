@@ -133,7 +133,6 @@ contract Router is BaseRouter, UUPSUpgradeable, IERC7786Recipient {
 
         (uint256 srcChainId, address srcRouter) = sender.parseEvmV1Calldata();
         if (srcChainId > type(uint32).max) revert DomainTooLarge(srcChainId);
-        // aderyn-ignore-next-line(unsafe-casting) -- bounded just above
         uint32 originDomain = uint32(srcChainId);
         bytes32 messageSender = TypeCasts.addressToBytes32(srcRouter);
 

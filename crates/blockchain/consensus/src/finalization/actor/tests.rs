@@ -19,6 +19,48 @@ fn digest_of(block: &ConsensusBlock) -> Digest {
     block.digest()
 }
 
+fn wakeup_is_ready(future: &mut std::pin::Pin<&mut impl std::future::Future<Output = ()>>) -> bool {
+    let waker = std::task::Waker::noop();
+    let mut context = std::task::Context::from_waker(waker);
+    future.as_mut().poll(&mut context).is_ready()
+}
+
+#[tokio::test]
+async fn finalization_wakeup_fans_out_without_losing_the_guard_permit() {
+    let _guard = outbe_tee::authority::tee_authority_test_guard();
+    let channel = outbe_tee::TeeAuthorityChannel::default();
+    outbe_tee::authority::install_tee_authority_watch(channel.subscribe()).unwrap();
+    let shared = std::sync::Arc::new(tokio::sync::Notify::new());
+
+    let mut lifecycle = std::pin::pin!(shared.notified());
+    assert!(!wakeup_is_ready(&mut lifecycle));
+    super::publish_finalized_wakeup(Some(&shared), 8);
+    assert!(
+        wakeup_is_ready(&mut lifecycle),
+        "parked lifecycle subscriber must observe the shared fan-out"
+    );
+    let mut guard = std::pin::pin!(channel.guard_notified());
+    assert!(
+        wakeup_is_ready(&mut guard),
+        "guard permit must survive while the guard is outside notified()"
+    );
+    assert_eq!(channel.observed_finalized_height(), 8);
+
+    let mut lifecycle = std::pin::pin!(shared.notified());
+    let mut guard = std::pin::pin!(channel.guard_notified());
+    assert!(!wakeup_is_ready(&mut lifecycle));
+    assert!(!wakeup_is_ready(&mut guard));
+    super::publish_finalized_wakeup(Some(&shared), 9);
+    assert!(wakeup_is_ready(&mut lifecycle));
+    assert!(wakeup_is_ready(&mut guard));
+    assert_eq!(channel.observed_finalized_height(), 9);
+
+    super::publish_finalized_wakeup(None, 10);
+    assert_eq!(channel.observed_finalized_height(), 10);
+    let mut guard = std::pin::pin!(channel.guard_notified());
+    assert!(wakeup_is_ready(&mut guard));
+}
+
 /// `FinalizationActor::process_finalization` rekeys the
 /// reporter-buffered (view-keyed) late finalize votes to the now-known block
 /// number. Drives the real actor method directly with an already-resolved
@@ -524,14 +566,24 @@ fn finalization_error(error: eyre::Report) -> crate::errors::FinalizationError {
         .unwrap_or_else(|error| panic!("expected FinalizationError, got {error:#}"))
 }
 
-fn insert_canonical_cn_witness(
-    store: &FinalizedParentCertStore,
+struct CanonicalCnWitness {
     epoch: u64,
     view: u64,
     parent_view: u64,
     block_hash: B256,
+}
+
+fn insert_canonical_cn_witness(
+    store: &FinalizedParentCertStore,
+    witness: CanonicalCnWitness,
     committee: &[Address],
 ) {
+    let CanonicalCnWitness {
+        epoch,
+        view,
+        parent_view,
+        block_hash,
+    } = witness;
     let valid_provider = scheme_provider(epoch, committee.len() as u8);
     let scheme = valid_provider.scoped(Epoch::new(epoch)).expect("scheme");
     let prelude =
@@ -586,10 +638,12 @@ fn snapshot_mismatch_is_contained_without_halting() {
             let proof_key = CertifiedParentProofKey::new(EPOCH, VIEW, digest.0);
             insert_canonical_cn_witness(
                 &harness.store,
-                EPOCH,
-                VIEW,
-                PARENT_VIEW,
-                digest.0,
+                CanonicalCnWitness {
+                    epoch: EPOCH,
+                    view: VIEW,
+                    parent_view: PARENT_VIEW,
+                    block_hash: digest.0,
+                },
                 &committee,
             );
             buffer_vote(&harness.late, EPOCH, VIEW, PARENT_VIEW, digest.0);

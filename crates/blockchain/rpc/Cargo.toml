@@ -34,6 +34,7 @@ thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
+outbe-tee = { workspace = true, features = ["test-utils"] }
 tempfile.workspace = true
 commonware-cryptography.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }

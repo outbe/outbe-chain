@@ -1,7 +1,7 @@
 //! Canonical block-1 TEE bootstrap payload.
 //!
 //! Production `DcapRequired` payloads deduplicate complete Intel collateral.
-//! A separate `GramineDirectDev` chain uses the same OST3 envelope with direct
+//! A separate `NoAttestationDev` chain uses the same OST3 envelope with direct
 //! development evidence and an empty collateral pool.
 
 pub mod assembly;
@@ -18,7 +18,7 @@ use crate::system_tx::{
 };
 use crate::tee_attestation_v1::{
     AttestationEvidenceV1, AttestationMode, AttestationOperationV1, CodecError,
-    DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, GramineDirectEvidenceV1,
+    DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1, NoAttestationDevEvidenceV1,
     RegistrationIntentV1, SystemGasScheduleV1, TeeBootstrapGasInputV1, TeePolicyV1,
     TeeRegistryGasScheduleV1, ValidatorNodeBindingV1, MAX_ATTESTATION_EVIDENCE_BYTES,
     MAX_COLLATERAL_COMPONENT_BYTES, MAX_EVIDENCE_CALL_FRAMING_BYTES, MAX_QUOTE_BYTES,
@@ -37,7 +37,7 @@ pub enum TeeBootstrapParticipantEvidenceV2 {
         quote: Vec<u8>,
         collateral_component_indices: [u16; 8],
     },
-    GramineDirectDev {
+    NoAttestationDev {
         dev_attestation_public: [u8; 32],
         dev_signature: [u8; 64],
     },
@@ -160,7 +160,7 @@ impl TeeBootstrapV2 {
                 .len()
                 .checked_mul(8)
                 .ok_or(CodecError::ArithmeticOverflow)?,
-            AttestationMode::GramineDirectDev => 0,
+            AttestationMode::NoAttestationDev => 0,
         };
         system_schedule.tee_bootstrap_precharge(
             tee_registry_schedule,
@@ -208,7 +208,7 @@ impl TeeBootstrapV2 {
                     checked_add_len(&mut len, quote.len())?;
                     checked_add_len(&mut len, 8 * 2)?;
                 }
-                TeeBootstrapParticipantEvidenceV2::GramineDirectDev { .. } => {
+                TeeBootstrapParticipantEvidenceV2::NoAttestationDev { .. } => {
                     checked_add_len(&mut len, 32 + 64)?;
                 }
             }

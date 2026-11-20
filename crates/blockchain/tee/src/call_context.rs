@@ -127,81 +127,6 @@ pub fn resolve() -> std::result::Result<EnclaveCallContextV1, crate::TransportEr
     }
 }
 
-pub fn starts_stream(request: &crate::protocol::EnclaveRequest) -> bool {
-    use crate::protocol::EnclaveRequest::*;
-    matches!(
-        request,
-        BeginDcapVerificationV1 { .. }
-            | BeginDcapOnboardingVerificationV1 { .. }
-            | BeginDcapOnboardingArtifactIngestV1 { .. }
-            | BeginUpgradeKeyTransferV1 { .. }
-    )
-}
-pub fn continues_stream(request: &crate::protocol::EnclaveRequest) -> bool {
-    use crate::protocol::EnclaveRequest::*;
-    matches!(
-        request,
-        DcapVerificationChunkV1 { .. }
-            | FinishDcapVerificationV1 { .. }
-            | DcapOnboardingArtifactChunkV1 { .. }
-            | CommitDcapOnboardingArtifactRecordV1 { .. }
-            | FinishDcapOnboardingArtifactIngestV1 { .. }
-    )
-}
-fn finishes_stream(request: &crate::protocol::EnclaveRequest) -> bool {
-    use crate::protocol::EnclaveRequest::*;
-    matches!(
-        request,
-        FinishDcapVerificationV1 { .. } | FinishDcapOnboardingArtifactIngestV1 { .. }
-    )
-}
-
-/// A multi-frame operation is one call, even if the chain advances while the
-/// caller downloads its next record. Keep the Begin context through Finish.
-#[derive(Default)]
-pub struct StreamContext {
-    context: Option<EnclaveCallContextV1>,
-}
-impl StreamContext {
-    pub fn for_request(
-        &mut self,
-        request: &crate::protocol::EnclaveRequest,
-    ) -> std::result::Result<EnclaveCallContextV1, crate::TransportError> {
-        let context = if continues_stream(request) {
-            self.context
-                .ok_or(crate::errors::TeeClientVerificationError::StreamMissingCallContext)?
-        } else {
-            resolve()?
-        };
-        if starts_stream(request) {
-            self.context = Some(context);
-        }
-        if finishes_stream(request) {
-            self.context = None;
-        }
-        Ok(context)
-    }
-
-    pub fn accept(
-        &mut self,
-        request: &crate::protocol::EnclaveRequest,
-        context: EnclaveCallContextV1,
-    ) -> std::result::Result<(), crate::TransportError> {
-        if continues_stream(request) && self.context != Some(context) {
-            return Err(crate::TransportError::EnclaveError(
-                "enclave stream context changed".into(),
-            ));
-        }
-        if starts_stream(request) {
-            self.context = Some(context);
-        }
-        if finishes_stream(request) {
-            self.context = None;
-        }
-        Ok(())
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -300,52 +225,6 @@ mod tests {
                 Err(PrecompileError::Revert(message)) if message == "enclave call context integer overflow"
             ));
         });
-    }
-
-    #[test]
-    fn stream_freezes_begin_context_and_rejects_changed_frames() {
-        use crate::protocol::EnclaveRequest;
-        let begin = EnclaveRequest::BeginDcapVerificationV1 {
-            request_hash: B256::ZERO,
-            evidence_len: 1,
-            policy_len: 1,
-            block_timestamp: 7,
-        };
-        let chunk = EnclaveRequest::DcapVerificationChunkV1 {
-            request_hash: B256::ZERO,
-            offset: 0,
-            bytes: vec![1],
-        };
-        let finish = EnclaveRequest::FinishDcapVerificationV1 {
-            request_hash: B256::ZERO,
-        };
-        let old = EnclaveCallContextV1 {
-            block_number: 100,
-            protocol_version: 2,
-            ..Default::default()
-        };
-        let next = EnclaveCallContextV1 {
-            block_number: 101,
-            protocol_version: 3,
-            ..old
-        };
-        let mut sender = StreamContext::default();
-        let mut receiver = StreamContext::default();
-        {
-            let _scope = ContextScope::enter(old);
-            receiver
-                .accept(&begin, sender.for_request(&begin).unwrap())
-                .unwrap();
-        }
-        let _scope = ContextScope::enter(next);
-        assert_eq!(sender.for_request(&chunk).unwrap(), old);
-        assert!(receiver.accept(&chunk, next).is_err());
-        receiver.accept(&chunk, old).unwrap();
-        receiver
-            .accept(&finish, sender.for_request(&finish).unwrap())
-            .unwrap();
-        assert_eq!(sender.for_request(&EnclaveRequest::Health).unwrap(), next);
-        assert!(sender.for_request(&chunk).is_err());
     }
 }
 

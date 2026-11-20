@@ -233,7 +233,6 @@ contract EscrowAdapter is
         // CEI deviation: allocatorId / lockTag depend on __registerAllocator's return. Admin-only.
         // A re-entrant `compact` lacks DEFAULT_ADMIN_ROLE, so re-entry can't reach here.
         if ($.allocatorId == 0) {
-            // aderyn-fp-next-line(reentrancy-state-change)
             $.allocatorId = $.compact.__registerAllocator(address(this), "");
             $.lockTag = _buildLockTag($.allocatorId, Scope.ChainSpecific, ResetPeriod.OneMinute);
         }

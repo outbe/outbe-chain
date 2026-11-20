@@ -1,7 +1,7 @@
 use super::harness::*;
 
 use alloy_primitives::{Bytes, B256};
-use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
+use outbe_primitives::tee_genesis_v1::NO_ATTESTATION_DEV_CHAIN_ID;
 use reth_ethereum::{chainspec::MAINNET, evm::revm::db::State};
 use reth_evm::{
     execute::{BlockBuilder, Executor, ProviderError},
@@ -113,7 +113,7 @@ fn genesis_block_with_header_artifact_reexecutes_deterministically() {
     let begin_system_txs = config
         .build_begin_system_txs(
             1,
-            GRAMINE_DIRECT_DEV_CHAIN_ID,
+            NO_ATTESTATION_DEV_CHAIN_ID,
             outbe_primitives::system_tx::protocol_block_gas_limit(1),
             parent.hash(),
             &attrs.inner.extra_data,

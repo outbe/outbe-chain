@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) const CHAIN_ID: u64 = outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
+pub(super) const CHAIN_ID: u64 = outbe_primitives::tee_genesis_v1::NO_ATTESTATION_DEV_CHAIN_ID;
 
 pub(super) const GENESIS_HASH: B256 = B256::repeat_byte(0x11);
 

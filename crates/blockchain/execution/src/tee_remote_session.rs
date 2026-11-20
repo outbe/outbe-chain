@@ -16,17 +16,14 @@ use outbe_primitives::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
     },
-    tee_attestation_v1::{
-        AttestationEvidenceV1, NodeHostAuthorizationWitnessV1, NodeIdV1, TeePolicyV1,
-    },
+    tee_attestation_v1::{NodeHostAuthorizationWitnessV1, NodeIdV1, TeePolicyV1},
     tee_registry_abi_v1::NodeEnclaveBindingV1,
 };
 use outbe_tee::{
     admit_remote_session_v1, construct_finalized_replacement_authorization_v1,
-    load_replacement_candidate_submission, AuthorizedEnclaveClient, FinalizedRegistryBindingV1,
-    FinalizedRegistryViewV1, FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1,
-    RemoteSessionAdmissionError, RemoteSessionAdmissionV1, RemoteSessionExpectationV1,
-    RemoteSessionTicketV1, TransportError,
+    FinalizedRegistryBindingV1, FinalizedRegistryViewV1, FinalizedReplacementAuthorizationV1,
+    FinalizedReplacementBindingV1, RemoteSessionAdmissionError, RemoteSessionAdmissionV1,
+    RemoteSessionExpectationV1, TransportError,
 };
 use reth_provider::{BlockIdReader, HeaderProvider, StateProviderFactory};
 use reth_storage_api::StateProvider;
@@ -107,6 +104,10 @@ impl ConsensusFinalizedBlockV1 {
 
 #[derive(Debug, thiserror::Error)]
 pub enum LocalRegistryAdmissionError {
+    #[error("local resident context does not match the finalized target binding")]
+    LocalContextMismatch,
+    #[error("resident identity validation failed")]
+    Resident(#[from] outbe_tee::in_process::InProcessError),
     #[error("local consensus-finalized block is unavailable")]
     FinalizedBlockUnavailable,
     #[error("local consensus-finalized block identity is malformed")]
@@ -197,23 +198,23 @@ pub enum ExternalRegistryAdmissionError {
     Admission(#[from] RemoteSessionAdmissionError),
 }
 
-/// Production node-local route for authorizing one remote session.
+/// Test fixture for the resident finalized-registry admission boundary.
 ///
 /// This deep module owns the complete authority sequence. It:
 /// 1. Resolves the node's current consensus-finalized head.
 /// 2. Reads both exact Registry bindings.
 /// 3. Validates the source witness and lease.
-/// 4. Installs one bounded one-use ticket in the local enclave.
+/// 4. Binds admission to the resident enclave identity.
 ///
-/// Transporting that ticket to the already chosen peer is deliberately outside
-/// this interface and carries no authority.
+/// Transporting the admission to the chosen peer is outside this interface.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn authorize_local_finalized_remote_session_v1<P>(
     provider: &P,
-    local_enclave: &mut AuthorizedEnclaveClient,
+    local_enclave: &outbe_tee::in_process::InProcessTeeContext,
     chain: RegistryChainIdentity,
     request: RemoteSessionRequest<'_>,
     session: &dyn TeeSessionStateReader,
-) -> Result<RemoteSessionTicketV1, LocalRegistryAdmissionError>
+) -> Result<RemoteSessionAdmissionV1, LocalRegistryAdmissionError>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
@@ -230,6 +231,7 @@ where
 /// node integration tests. The caller cannot supply or retain a finalized
 /// marker: this operation reads the node's current marker itself.
 #[doc(hidden)]
+#[cfg(any(test, feature = "test-utils"))]
 pub fn admit_local_finalized_remote_session_v1<P>(
     provider: &P,
     chain: RegistryChainIdentity,
@@ -267,26 +269,31 @@ pub struct ReplacementAuthorizationRequest<'a> {
     pub node_data_dir: &'a Path,
     pub node_id: &'a NodeIdV1,
 }
+#[cfg(any(test, feature = "test-utils"))]
 struct LocalRemoteSessionOperation<'a, P> {
     provider: &'a P,
     chain: RegistryChainIdentity,
     request: RemoteSessionRequest<'a>,
     session: &'a dyn TeeSessionStateReader,
 }
+#[cfg(any(test, feature = "test-utils"))]
 impl<P> LocalRemoteSessionOperation<'_, P>
 where
     P: HeaderProvider<Header = OutbeHeader> + StateProviderFactory,
 {
     fn authorize(
         self,
-        local_enclave: &mut AuthorizedEnclaveClient,
-    ) -> Result<RemoteSessionTicketV1, LocalRegistryAdmissionError> {
-        let admission = self.admit()?;
-        local_enclave
-            .authorize_remote_session(&admission)
-            .map_err(Into::into)
+        local_enclave: &outbe_tee::in_process::InProcessTeeContext,
+    ) -> Result<RemoteSessionAdmissionV1, LocalRegistryAdmissionError> {
+        self.admit_for_context(Some(local_enclave))
     }
     fn admit(self) -> Result<RemoteSessionAdmissionV1, LocalRegistryAdmissionError> {
+        self.admit_for_context(None)
+    }
+    fn admit_for_context(
+        self,
+        context: Option<&outbe_tee::in_process::InProcessTeeContext>,
+    ) -> Result<RemoteSessionAdmissionV1, LocalRegistryAdmissionError> {
         with_local_finalized_registry(
             self.provider,
             self.chain.chain_id,
@@ -301,6 +308,46 @@ where
                     .node_binding(storage.clone(), self.request.target_node)
                     .map_err(registry_error)?
                     .ok_or(LocalRegistryAdmissionError::TargetBindingMissing)?;
+
+                if let Some(context) = context {
+                    let manifest = context.manifest();
+                    let enclave_id = manifest
+                        .enclave_id()
+                        .map_err(outbe_tee::in_process::InProcessError::from)?;
+                    let host = context
+                        .authorization_witness()?
+                        .authorization_hash()
+                        .map_err(outbe_tee::in_process::InProcessError::from)?;
+                    let identity_matches = (
+                        &manifest.node_id,
+                        manifest.chain_id,
+                        manifest.genesis_hash,
+                        context.identity().network_binding,
+                        context.identity().reth_p2p_public,
+                    ) == (
+                        self.request.target_node,
+                        view.chain_id,
+                        view.genesis_hash,
+                        manifest.network_binding(),
+                        manifest.node_id.reth_p2p_public,
+                    );
+                    let binding_matches = (
+                        target.enclave_id,
+                        target.node_host_authorization_hash,
+                        target.noise_responder_x25519.0,
+                        target.attestation_ed25519.0,
+                        target.recipient_x25519.0,
+                    ) == (
+                        enclave_id,
+                        host,
+                        context.noise_public(),
+                        manifest.attestation_ed25519,
+                        manifest.recipient_x25519,
+                    );
+                    if !identity_matches || !binding_matches {
+                        return Err(LocalRegistryAdmissionError::LocalContextMismatch);
+                    }
+                }
 
                 if !binding_codes_admitted(
                     reader,
@@ -390,13 +437,8 @@ where
         genesis_hash,
         session,
         |view, reader, storage| {
-            let finalized_binding = read_finalized_replacement_binding(
-                view,
-                reader,
-                storage.clone(),
-                node_data_dir,
-                node_id,
-            )?;
+            let finalized_binding =
+                read_finalized_replacement_binding(view, reader, storage.clone(), node_id)?;
             let authorization =
                 construct_finalized_replacement_authorization_v1(node_data_dir, &finalized_binding)
                     .map_err(LocalRegistryAdmissionError::replacement_authorization)?;
@@ -426,36 +468,13 @@ fn read_finalized_replacement_binding(
     view: FinalizedRegistryViewV1,
     reader: &dyn TeeSessionStateReader,
     storage: StorageHandle<'_>,
-    node_data_dir: &Path,
     node_id: &NodeIdV1,
 ) -> Result<FinalizedReplacementBindingV1, LocalRegistryAdmissionError> {
     let binding = reader
         .node_binding(storage, node_id)
         .map_err(registry_error)?
         .ok_or(LocalRegistryAdmissionError::ReplacementBindingMissing)?;
-    let submission = load_replacement_candidate_submission(node_data_dir)
-        .map_err(LocalRegistryAdmissionError::replacement_authorization)?;
-    let submission = submission.ok_or_else(|| {
-        LocalRegistryAdmissionError::ReplacementAuthorization(
-            "durable replacement submission is missing".into(),
-        )
-    })?;
-    let AttestationEvidenceV1::Dcap(dcap) =
-        AttestationEvidenceV1::decode_canonical(submission.evidence())
-            .map_err(LocalRegistryAdmissionError::replacement_authorization)?
-    else {
-        return Err(LocalRegistryAdmissionError::ReplacementAuthorization(
-            "durable replacement evidence is not DCAP".into(),
-        ));
-    };
-    let intent_hash = dcap
-        .intent
-        .intent_hash()
-        .map_err(LocalRegistryAdmissionError::replacement_authorization)?;
-    if !replacement_intent_matches(&binding, &dcap.intent, intent_hash) {
-        return Err(LocalRegistryAdmissionError::ReplacementBindingMissing);
-    }
-    let finalized_binding = FinalizedReplacementBindingV1 {
+    Ok(FinalizedReplacementBindingV1 {
         view,
         node_id_hash: binding.node_id_hash,
         enclave_id: binding.enclave_id,
@@ -468,24 +487,7 @@ fn read_finalized_replacement_binding(
         attestation_ed25519: binding.attestation_ed25519.into(),
         noise_responder_x25519: binding.noise_responder_x25519.into(),
         node_host_authorization_hash: binding.node_host_authorization_hash,
-    };
-
-    Ok(finalized_binding)
-}
-fn replacement_intent_matches(
-    binding: &NodeEnclaveBindingV1,
-    intent: &outbe_primitives::tee_attestation_v1::RegistrationIntentV1,
-    intent_hash: B256,
-) -> bool {
-    if binding.intent_hash != intent_hash {
-        return false;
-    }
-    if binding.enclave_id != intent.enclave_id || binding.binding_id != intent.binding_id {
-        return false;
-    }
-    binding.binding_version == intent.binding_version
-        && binding.registration_version == intent.registration_version
-        && binding.transition_nonce == intent.transition_nonce
+    })
 }
 
 /// Inspect only node-local consensus-finalized rollout state. This supplies

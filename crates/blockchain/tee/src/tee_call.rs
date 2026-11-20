@@ -1,8 +1,8 @@
 //! Domain-neutral enclave call metadata, canonical preimage builders, and
 //! Ed25519 attestation verification primitives.
 //!
-//! Higher-layer crates (`outbe-enclave`) construct domain request hashes and
-//! response preimages over these primitives while `outbe-tee` owns transport,
+//! Domain crates construct request hashes and
+//! response preimages over these primitives while `outbe-tee` owns dispatch,
 //! witness recording/replay, and Ed25519 verification.
 
 use alloy_primitives::{keccak256, B256};
@@ -17,7 +17,7 @@ pub use crate::witness::consensus_call;
 pub struct CallMeta {
     /// Stable telemetry label (`op` label in metrics and witness traces).
     pub label: &'static str,
-    /// Whether transport may retry once on a broken socket.
+    /// Whether the operation is safe to execute again.
     pub idempotent: bool,
     /// Whether consensus execution records this call on the block witness tape.
     pub recordable: bool,
@@ -89,7 +89,7 @@ pub enum TeeAttestationError {
 pub fn tee_consensus_call(
     meta: CallMeta,
     request: &crate::protocol::EnclaveRequest,
-    missing_sidecar_err: impl FnOnce() -> crate::TransportError,
+    missing_context_err: impl FnOnce() -> crate::TransportError,
     authenticate: impl Fn(
         &[u8; 32],
         &crate::protocol::EnclaveResponse,
@@ -103,47 +103,73 @@ pub fn tee_consensus_call(
     consensus_call(
         meta.label,
         || {
-            let (session_key, wire_result) = crate::try_with_enclave(|session| {
-                (
-                    session.attestation_pub(),
-                    session.request_with_meta(meta, request),
-                )
-            })
-            .ok_or_else(missing_sidecar_err)?;
-            Ok((session_key, wire_result?))
+            crate::in_process_dispatch::request_with_attestation(meta, request)
+                .ok_or_else(missing_context_err)?
         },
         authenticate,
     )
 }
 
-/// Execute a non-consensus session operation on `session` and authenticate the response.
+/// Execute a witness-recorded typed consensus call, failing closed if `!meta.recordable`.
 ///
-/// Fails closed if `meta.recordable` is `true` so consensus-recorded calls never
-/// bypass the block witness tape.
-pub fn tee_session_call_on(
-    session: &mut crate::EnclaveSession,
+/// Live execution invokes `execute` on the resident context with no request
+/// serialization. `encode` runs only when the witness tape is recording or a
+/// verifier is comparing a live answer. `VerifierReplay` returns
+/// `decode_and_auth` of the recorded [`crate::witness::EnclaveWitnessEntryV1::Payload`]
+/// fields and does not call `execute`.
+pub fn tee_consensus_typed_call<T>(
     meta: CallMeta,
-    request: &crate::protocol::EnclaveRequest,
-    authenticate: impl FnOnce(
+    execute: impl FnOnce(&crate::in_process::InProcessTeeContext) -> Result<T, crate::TransportError>,
+    encode: impl FnOnce(&T) -> Result<crate::witness::TypedWitnessPayload, crate::TransportError>,
+    decode_and_auth: impl Fn(
         &[u8; 32],
-        &crate::protocol::EnclaveResponse,
-    ) -> Result<(), crate::TransportError>,
-) -> Result<([u8; 32], crate::protocol::EnclaveResponse), crate::TransportError> {
-    if meta.recordable {
-        return Err(crate::TransportError::Codec(
-            "recordable call routed to non-consensus tee_session_call".into(),
+        crate::witness::TypedWitnessPayloadRef<'_>,
+    ) -> Result<T, crate::TransportError>,
+) -> Result<T, crate::TransportError> {
+    if !meta.recordable {
+        return Err(crate::TransportError::codec(
+            crate::errors::TypedCallRouteError::NonRecordableConsensus,
         ));
     }
-    let key = session.attestation_pub();
-    let response = session.request_with_meta(meta, request)?;
-    authenticate(&key, &response)?;
-    Ok((key, response))
+    crate::witness::consensus_typed_call(
+        || {
+            let context = crate::in_process_dispatch::in_process_tee_context()
+                .ok_or(crate::InProcessDispatchError::ContextNotInstalled)?;
+            let started = std::time::Instant::now();
+            let value = execute(&context);
+            crate::metrics::record_request_duration(meta.label, started.elapsed());
+            if let Err(error) = &value {
+                crate::metrics::record_request_error(meta.label, error.metric_class());
+            }
+            Ok((context.attestation_public(), value?))
+        },
+        encode,
+        decode_and_auth,
+    )
 }
 
-/// Execute a non-consensus session operation against the process-global execution session
+/// Execute a non-consensus typed closure in memory.
+///
+/// Returns `None` only when no resident runtime is installed. A recordable
+/// call fails closed. Argument and result bytes are not serialized.
+pub fn tee_session_typed_call<T>(
+    meta: CallMeta,
+    execute: impl FnOnce(&crate::in_process::InProcessTeeContext) -> Result<T, crate::TransportError>,
+) -> Option<Result<T, crate::TransportError>> {
+    if meta.recordable {
+        return Some(Err(crate::TransportError::codec(
+            crate::errors::TypedCallRouteError::RecordableSession,
+        )));
+    }
+    crate::in_process_dispatch::try_session_typed(meta, execute)
+}
+
+/// Execute a non-consensus operation against the resident runtime
 /// and authenticate the response before returning it.
 ///
-/// Returns `None` only when no enclave session is installed.
+/// Returns `None` only when no resident runtime is installed.
+/// The request and its attestation key come from one runtime snapshot.
+/// Lane occupancy, duration, and the error counter are recorded once.
 pub fn tee_session_call(
     meta: CallMeta,
     request: &crate::protocol::EnclaveRequest,
@@ -157,7 +183,11 @@ pub fn tee_session_call(
             "recordable call routed to non-consensus tee_session_call".into(),
         )));
     }
-    crate::try_with_enclave(|session| tee_session_call_on(session, meta, request, authenticate))
+    let dispatched = crate::in_process_dispatch::dispatch_session_snapshot(meta, request)?;
+    Some(dispatched.and_then(|(key, response)| {
+        authenticate(&key, &response)?;
+        Ok((key, response))
+    }))
 }
 
 /// Compute `keccak256(domain || serde_json::to_vec(value))`.
@@ -254,83 +284,225 @@ pub fn verify_signed_rejection(
 }
 
 #[cfg(test)]
-mod tests {
-    use ed25519_dalek::{Signer as _, SigningKey};
+#[path = "tee_call_tests.rs"]
+mod tests;
 
+#[cfg(test)]
+mod witness_parts {
     use super::*;
 
-    #[test]
-    fn signed_rejection_and_lazy_attestation_enforce_domain_hash_and_tag_len() {
-        let signer = SigningKey::from_bytes(&[0x5a; 32]);
-        let pubkey = signer.verifying_key().to_bytes();
-        let hash = canonical_domain_hash(b"outbe/test/input/v1", &"payload").unwrap();
-        let reason = "rejected-for-test";
-        let preimage =
-            canonical_attestation_preimage(b"outbe/test/reject/v1", hash, reason).unwrap();
-        let tag = signer.sign(&preimage).to_bytes();
+    fn binding() -> outbe_primitives::tee_attestation_v1::NetworkBindingV1 {
+        use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
+        NetworkBindingV1 {
+            chain_id: alloy_primitives::U256::from(676).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(2),
+            attestation_mode: AttestationMode::NoAttestationDev,
+        }
+    }
 
-        verify_signed_rejection(
-            &pubkey,
-            SignedRejectionRef {
-                domain: b"outbe/test/reject/v1",
-                expected_inputs_hash: hash,
-                actual_inputs_hash: hash,
-                reason,
-                tag: &tag,
-            },
-        )
-        .expect("matching domain and hash verify");
-
+    fn assert_witness_unavailable(
+        error: &crate::TransportError,
+        expected: crate::errors::WitnessAvailabilityError,
+    ) {
+        assert!(error.is_node_local());
+        assert_eq!(error.metric_class(), "unavailable");
         assert!(matches!(
-            verify_signed_rejection(
-                &pubkey,
-                SignedRejectionRef {
-                    domain: b"outbe/test/other/v1",
-                    expected_inputs_hash: hash,
-                    actual_inputs_hash: hash,
-                    reason,
-                    tag: &tag,
-                },
-            ),
-            Err(TeeAttestationError::SignatureMismatch(_))
-        ));
-
-        let other_hash = B256::repeat_byte(0x99);
-        assert!(matches!(
-            verify_signed_rejection(
-                &pubkey,
-                SignedRejectionRef {
-                    domain: b"outbe/test/reject/v1",
-                    expected_inputs_hash: hash,
-                    actual_inputs_hash: other_hash,
-                    reason,
-                    tag: &tag,
-                },
-            ),
-            Err(TeeAttestationError::InputsHashMismatch { .. })
-        ));
-
-        assert!(matches!(
-            verify_enclave_attestation(&pubkey, &preimage, &tag[..63]),
-            Err(TeeAttestationError::InvalidSignatureLength { actual: 63 })
+            std::error::Error::source(error)
+                .and_then(|cause| cause.downcast_ref::<crate::errors::WitnessAvailabilityError>()),
+            Some(cause) if std::mem::discriminant(cause) == std::mem::discriminant(&expected)
         ));
     }
 
-    #[test]
-    fn tee_consensus_call_and_session_call_fail_closed_on_mismatched_recordable_flag() {
-        let req = crate::protocol::EnclaveRequest::Health;
-        let err = tee_consensus_call(
-            CallMeta::session_only("health"),
-            &req,
-            || crate::TransportError::Unavailable("none".into()),
-            |_, _| Ok(()),
-        )
-        .unwrap_err();
-        assert!(matches!(err, crate::TransportError::Codec(_)));
+    fn signed_parts(payload: Vec<u8>, inputs: B256) -> crate::witness::TypedWitnessPayload {
+        let context = crate::in_process_dispatch::in_process_tee_context().expect("context");
+        let mut preimage = payload.clone();
+        preimage.extend_from_slice(inputs.as_slice());
+        crate::witness::TypedWitnessPayload {
+            payload,
+            inputs_canonical_hash: inputs,
+            attestation_tag: context.sign_domain_attestation(&preimage).to_vec(),
+        }
+    }
 
-        let session_err = tee_session_call(CallMeta::recorded("recorded_op"), &req, |_, _| Ok(()))
-            .expect("returns fail-closed error even without installed session")
+    fn verify_signed_u64(
+        key: &[u8; 32],
+        parts: crate::witness::TypedWitnessPayloadRef<'_>,
+    ) -> Result<u64, crate::TransportError> {
+        let mut preimage = Vec::with_capacity(parts.payload.len() + 32);
+        preimage.extend_from_slice(parts.payload);
+        preimage.extend_from_slice(parts.inputs_canonical_hash.as_slice());
+        verify_enclave_attestation(key, &preimage, parts.attestation_tag)
+            .map_err(crate::TransportError::attestation)?;
+        let bytes: [u8; 8] = parts
+            .payload
+            .try_into()
+            .map_err(|_| crate::TransportError::UnexpectedResponse)?;
+        Ok(u64::from_be_bytes(bytes))
+    }
+
+    fn leader_signed_entry(
+        leader: &crate::in_process::InProcessTeeContext,
+        payload: Vec<u8>,
+        inputs: B256,
+    ) -> crate::witness::EnclaveWitnessEntryV1 {
+        let mut preimage = payload.clone();
+        preimage.extend_from_slice(inputs.as_slice());
+        crate::witness::EnclaveWitnessEntryV1::Payload {
+            payload,
+            inputs_canonical_hash: inputs,
+            attestation_tag: leader.sign_domain_attestation(&preimage).to_vec(),
+        }
+    }
+
+    fn verifier_scope(
+        mode: crate::witness::WitnessExecutionMode,
+        leader_key: [u8; 32],
+        entry: crate::witness::EnclaveWitnessEntryV1,
+    ) -> (
+        crate::in_process_dispatch::InProcessTestGuard,
+        std::sync::Arc<std::sync::Mutex<crate::witness::WitnessState>>,
+        crate::witness::WitnessExecutionScope,
+    ) {
+        let verifier = std::sync::Arc::new(crate::test_utils::resident_context(9, binding()));
+        assert_ne!(leader_key, verifier.attestation_public());
+        let guard = crate::in_process_dispatch::set_in_process_tee_context_for_test(Some(verifier));
+        let state = std::sync::Arc::new(std::sync::Mutex::new(crate::witness::WitnessState::new(
+            mode,
+            Some(leader_key),
+            crate::witness::EnclaveWitnessTapeV1 {
+                prefix: vec![entry],
+                txs: Vec::new(),
+            },
+        )));
+        let scope = crate::witness::WitnessExecutionScope::enter(state.clone());
+        (guard, state, scope)
+    }
+
+    #[test]
+    fn verifier_with_distinct_ed25519_keys_accepts_matching_payload_and_hash() {
+        use crate::witness::EnclaveWitnessEntryV1;
+        let leader = std::sync::Arc::new(crate::test_utils::resident_context(4, binding()));
+        let inputs = B256::repeat_byte(0x42);
+        let entry = leader_signed_entry(&leader, 11u64.to_be_bytes().to_vec(), inputs);
+        let leader_tag = match &entry {
+            EnclaveWitnessEntryV1::Payload {
+                payload,
+                inputs_canonical_hash,
+                attestation_tag,
+            } => {
+                assert_eq!(payload.as_slice(), 11u64.to_be_bytes());
+                assert_eq!(*inputs_canonical_hash, inputs);
+                assert_ne!(*inputs_canonical_hash, B256::ZERO);
+                attestation_tag.clone()
+            }
+            _ => panic!("leader entry is not Payload"),
+        };
+        let (_guard, state, _scope) = verifier_scope(
+            crate::witness::WitnessExecutionMode::VerifierWithEnclave,
+            leader.attestation_public(),
+            entry,
+        );
+        let value = tee_consensus_typed_call(
+            CallMeta::recorded("distinct_keys"),
+            |_| Ok(11u64),
+            |value| {
+                let parts = signed_parts(value.to_be_bytes().to_vec(), inputs);
+                assert_ne!(parts.attestation_tag, leader_tag);
+                assert_eq!(parts.payload, 11u64.to_be_bytes());
+                assert_eq!(parts.inputs_canonical_hash, inputs);
+                Ok(parts)
+            },
+            verify_signed_u64,
+        )
+        .unwrap();
+        assert_eq!(value, 11);
+        assert_eq!(state.lock().unwrap().prefix_cursor, 1);
+        assert_eq!(state.lock().unwrap().first_witness_fault, None);
+    }
+
+    #[test]
+    fn verifier_with_enclave_rejects_divergent_hash_or_payload() {
+        let leader = std::sync::Arc::new(crate::test_utils::resident_context(4, binding()));
+        let honest = B256::repeat_byte(0x42);
+        for (live_value, live_inputs) in [(11u64, B256::repeat_byte(0x43)), (12u64, honest)] {
+            let entry = leader_signed_entry(&leader, 11u64.to_be_bytes().to_vec(), honest);
+            let (_guard, state, _scope) = verifier_scope(
+                crate::witness::WitnessExecutionMode::VerifierWithEnclave,
+                leader.attestation_public(),
+                entry,
+            );
+            let error = tee_consensus_typed_call(
+                CallMeta::recorded("divergent_parts"),
+                move |_| Ok(live_value),
+                move |value| Ok(signed_parts(value.to_be_bytes().to_vec(), live_inputs)),
+                verify_signed_u64,
+            )
             .unwrap_err();
-        assert!(matches!(session_err, crate::TransportError::Codec(_)));
+            assert_witness_unavailable(
+                &error,
+                crate::errors::WitnessAvailabilityError::SemanticMismatch,
+            );
+            let witness = state.lock().unwrap();
+            assert_eq!(witness.prefix_cursor, 0);
+            assert_eq!(
+                witness.first_witness_fault,
+                Some(crate::witness::BlockWitnessFault::SemanticMismatch)
+            );
+        }
+    }
+
+    #[test]
+    fn verifier_replay_rejects_corrupt_attestation_tag_or_inputs_hash() {
+        use crate::witness::{BlockWitnessFault, EnclaveWitnessEntryV1, WitnessExecutionMode};
+        let leader = std::sync::Arc::new(crate::test_utils::resident_context(4, binding()));
+        let inputs = B256::repeat_byte(0x42);
+        let entry = leader_signed_entry(&leader, 11u64.to_be_bytes().to_vec(), inputs);
+        for corrupt_tag in [true, false] {
+            let mut bad = entry.clone();
+            match &mut bad {
+                EnclaveWitnessEntryV1::Payload {
+                    attestation_tag,
+                    inputs_canonical_hash,
+                    ..
+                } => {
+                    if corrupt_tag {
+                        attestation_tag[0] ^= 0x01;
+                    } else {
+                        let mut bytes = inputs_canonical_hash.0;
+                        bytes[0] ^= 0x01;
+                        *inputs_canonical_hash = B256::from(bytes);
+                    }
+                }
+                _ => panic!("leader entry is not Payload"),
+            }
+            let state =
+                std::sync::Arc::new(std::sync::Mutex::new(crate::witness::WitnessState::new(
+                    WitnessExecutionMode::VerifierReplay,
+                    Some(leader.attestation_public()),
+                    crate::witness::EnclaveWitnessTapeV1 {
+                        prefix: vec![bad],
+                        txs: Vec::new(),
+                    },
+                )));
+            let _scope = crate::witness::WitnessExecutionScope::enter(state.clone());
+            let error = tee_consensus_typed_call(
+                CallMeta::recorded("corrupt_replay"),
+                |_| -> Result<u64, crate::TransportError> { panic!("replay executed") },
+                |_| panic!("replay encoded"),
+                verify_signed_u64,
+            )
+            .unwrap_err();
+            assert!(matches!(
+                std::error::Error::source(&error)
+                    .and_then(|cause| cause.downcast_ref::<TeeAttestationError>()),
+                Some(TeeAttestationError::SignatureMismatch(_))
+            ));
+            let witness = state.lock().unwrap();
+            assert_eq!(witness.prefix_cursor, 0);
+            assert_eq!(
+                witness.first_witness_fault,
+                Some(BlockWitnessFault::TapeInvalid)
+            );
+        }
     }
 }

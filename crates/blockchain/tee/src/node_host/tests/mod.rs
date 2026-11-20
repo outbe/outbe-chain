@@ -1,4 +1,4 @@
-use crate::NodeHostNoiseKey;
+use crate::node_host::NodeHostIdentityKey;
 
 use alloy_primitives::keccak256;
 use alloy_primitives::Address;
@@ -31,7 +31,6 @@ use fixtures::{
     DirectorySync, ReplacementFixture,
 };
 
-mod committed_join;
 mod durable_preflight;
 
 mod replacement;

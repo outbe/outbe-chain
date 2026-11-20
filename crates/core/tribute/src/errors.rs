@@ -188,15 +188,4 @@ impl From<TributeError> for PrecompileError {
     }
 }
 
-/// Wraps a test-enclave decryption error in an enclave transport error.
-#[cfg(any(test, feature = "test-enclave"))]
-pub(crate) fn enclave_transport_error(error: impl std::fmt::Display) -> outbe_tee::TransportError {
-    outbe_tee::TransportError::EnclaveError(error.to_string())
-}
-
 pub type TributeResult<T> = std::result::Result<T, TributeError>;
-
-#[cfg(any(test, feature = "test-enclave"))]
-pub(crate) fn body_read_corruption(error: impl std::fmt::Display) -> PrecompileError {
-    PrecompileError::BodyReadCorruption(error.to_string())
-}
