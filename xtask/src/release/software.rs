@@ -638,6 +638,7 @@ mod tests {
         )
         .unwrap();
         assert!(output.join("profiles/testnet.yaml").is_file());
+        assert!(output.join("profiles/devnet/pairs.toml").is_file());
         assert!(output.join("contracts/predeploys").is_dir());
     }
 }

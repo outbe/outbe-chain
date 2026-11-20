@@ -1,0 +1,11 @@
+# Self-contained devnet oracle input. The built-in mock provider returns a
+# deterministic COEN/840 price and requires no external RPC, API key or feed.
+
+[[currency_pairs]]
+base = "COEN"
+quote = "840"
+markets = [{ provider = "mock" }]
+
+[[deviation_thresholds]]
+base = "COEN"
+threshold = "2.0"

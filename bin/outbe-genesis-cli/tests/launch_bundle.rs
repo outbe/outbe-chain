@@ -293,6 +293,26 @@ fn feeder_pairs_and_config_templates() {
         .contains("markets = [{ provider = \"binance\", quote = \"USDT\" }]"));
     assert!(!binance_toml.contains("chain_denom"));
     assert!(!binance_toml.contains("rest ="));
+
+    let mock_cfg = merge_obj(
+        minimal_config("/keys"),
+        json!({
+            "feeder_pairs": "devnet/pairs.toml",
+            "price_provider": "mock",
+        }),
+    );
+    let mock_toml = feeder_config(
+        &mock_cfg,
+        0,
+        &json!({"address": format!("0x{}", "11".repeat(20))}),
+        &"22".repeat(32),
+    )
+    .expect("mock feeder_config");
+    assert!(!mock_toml.contains("[[api_providers]]"));
+    assert!(!mock_toml.contains("rest ="));
+    assert!(feeder_pairs(&mock_cfg)
+        .expect("mock feeder_pairs")
+        .contains("provider = \"mock\""));
 }
 
 #[test]
