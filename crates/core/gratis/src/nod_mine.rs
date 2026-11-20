@@ -5,8 +5,7 @@
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::confidential_tee::{
-    attestation, consensus_witness_call, hash, DualWitnessAnswer, WitnessResponseTag,
-    WitnessSchema, FIDELITY, GRATIS, NOD,
+    attestation, consensus_witness_call, hash, DualWitnessAnswer, FIDELITY, GRATIS, NOD,
 };
 use outbe_core_common::nod_encryption::EncryptedNodV1;
 use outbe_fidelity::{
@@ -76,37 +75,12 @@ pub struct EncryptedNodMintRejectedV1 {
     pub attestation_tag: Vec<u8>,
 }
 
-impl WitnessSchema for MineEncryptedNodResultV1 {
-    const TAG: WitnessResponseTag = WitnessResponseTag::EncryptedNodMinedV1;
+outbe_core_common::impl_confidential_witness_schema!(MineEncryptedNodResultV1, EncryptedNodMinedV1);
 
-    fn inputs_canonical_hash(&self) -> B256 {
-        self.inputs_canonical_hash
-    }
-
-    fn attestation_tag(&self) -> &[u8] {
-        &self.attestation_tag
-    }
-
-    fn set_attestation_tag(&mut self, tag: Vec<u8>) {
-        self.attestation_tag = tag;
-    }
-}
-
-impl WitnessSchema for EncryptedNodMintRejectedV1 {
-    const TAG: WitnessResponseTag = WitnessResponseTag::EncryptedNodMintRejectedV1;
-
-    fn inputs_canonical_hash(&self) -> B256 {
-        self.inputs_canonical_hash
-    }
-
-    fn attestation_tag(&self) -> &[u8] {
-        &self.attestation_tag
-    }
-
-    fn set_attestation_tag(&mut self, tag: Vec<u8>) {
-        self.attestation_tag = tag;
-    }
-}
+outbe_core_common::impl_confidential_witness_schema!(
+    EncryptedNodMintRejectedV1,
+    EncryptedNodMintRejectedV1
+);
 
 /// Resident keys for one mine. The pure engine does not read the host context.
 #[derive(Clone, Copy)]

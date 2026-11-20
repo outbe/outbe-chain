@@ -5,7 +5,6 @@
 //! discriminant. Cohort ops stay off the witness tape (tag 0, session-only).
 
 use alloy_primitives::B256;
-use outbe_core_common::confidential_tee::{WitnessResponseTag, WitnessSchema};
 
 use crate::protocol::{FidelityLeagueEntry, FidelityQueryResult};
 
@@ -31,50 +30,11 @@ pub struct FidelityQueryRejection {
     pub attestation_tag: Vec<u8>,
 }
 
-impl WitnessSchema for FidelityLeagueSnapshot {
-    const TAG: WitnessResponseTag = WitnessResponseTag::FidelityLeaguesSnapshotted;
+outbe_core_common::impl_confidential_witness_schema!(
+    FidelityLeagueSnapshot,
+    FidelityLeaguesSnapshotted
+);
 
-    fn inputs_canonical_hash(&self) -> B256 {
-        self.inputs_canonical_hash
-    }
+outbe_core_common::impl_confidential_witness_schema!(FidelityQueryResult, FidelityIndexQueried);
 
-    fn attestation_tag(&self) -> &[u8] {
-        &self.attestation_tag
-    }
-
-    fn set_attestation_tag(&mut self, tag: Vec<u8>) {
-        self.attestation_tag = tag;
-    }
-}
-
-impl WitnessSchema for FidelityQueryResult {
-    const TAG: WitnessResponseTag = WitnessResponseTag::FidelityIndexQueried;
-
-    fn inputs_canonical_hash(&self) -> B256 {
-        self.inputs_canonical_hash
-    }
-
-    fn attestation_tag(&self) -> &[u8] {
-        &self.attestation_tag
-    }
-
-    fn set_attestation_tag(&mut self, tag: Vec<u8>) {
-        self.attestation_tag = tag;
-    }
-}
-
-impl WitnessSchema for FidelityQueryRejection {
-    const TAG: WitnessResponseTag = WitnessResponseTag::FidelityQueryRejected;
-
-    fn inputs_canonical_hash(&self) -> B256 {
-        self.inputs_canonical_hash
-    }
-
-    fn attestation_tag(&self) -> &[u8] {
-        &self.attestation_tag
-    }
-
-    fn set_attestation_tag(&mut self, tag: Vec<u8>) {
-        self.attestation_tag = tag;
-    }
-}
+outbe_core_common::impl_confidential_witness_schema!(FidelityQueryRejection, FidelityQueryRejected);

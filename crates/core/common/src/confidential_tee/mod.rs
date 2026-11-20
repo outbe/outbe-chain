@@ -33,9 +33,10 @@ pub use dev::{
     GRATIS_CHAIN, GRATIS_GROUP_SIG, OFFER_SECRET_KEY,
 };
 pub use errors::{
-    parse_tribute_draft_id, BalanceClientError, ComputeError, DraftIdHexError, EnclaveClientError,
-    LocalCryptoError, TeeError, TributeSourceError, FIDELITY_ATTESTATION, GRATIS_OP_ATTESTATION,
-    NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION, TRIBUTE_OFFER_ATTESTATION, TRIBUTE_SOURCE_REJECTED,
+    map_consensus_transport_error, parse_tribute_draft_id, BalanceClientError, ComputeError,
+    DraftIdHexError, EnclaveClientError, LocalCryptoError, TeeError, TributeSourceError,
+    FIDELITY_ATTESTATION, GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION,
+    TRIBUTE_OFFER_ATTESTATION, TRIBUTE_SOURCE_REJECTED,
 };
 pub use offer_encrypt::{
     canary_offer_json, encrypt_tee_amount, encrypt_tee_amount_with, encrypt_tribute_offer,
@@ -43,8 +44,8 @@ pub use offer_encrypt::{
     ENCRYPTED_TEE_AMOUNT_LEN, OFFER_HKDF_INFO, OFFER_HKDF_SALT, PROMIS_MINE_HKDF_INFO,
 };
 pub use response_auth::{
-    attestation, hash, sign_attestation_tag, verify_response_attestation, verify_signed_domain,
-    ResponseAuthSpec,
+    attestation, hash, sign_attestation_tag, verify_bound_witness_attestation,
+    verify_response_attestation, verify_signed_domain, ResponseAuthSpec,
 };
 pub use v2_balance_decrypt::{
     decrypt_fidelity_cohorts, decrypt_gratis_balance, decrypt_nod_for_owner,
@@ -52,10 +53,11 @@ pub use v2_balance_decrypt::{
 };
 pub use witness_envelope::{
     consensus_witness_call, decode_canonical_body, decode_tagged_payload,
-    derive_resident_state_key, encode_canonical_body, encode_tagged_payload, session_witness_call,
-    try_derive_sealed_account_keys, CanonicalBodyDecoder, CanonicalBodyEncoder, DualWitnessAnswer,
-    TaggedWitnessParts, TaggedWitnessRef, WitnessDomainWire, WitnessResponseTag, WitnessSchema,
-    WitnessTagError, NON_RECORDABLE_V1_TAGS, V1_RESPONSE_TAG_MAX,
+    derive_resident_state_key, encode_canonical_body, encode_tagged_payload,
+    seal_resident_account_keys, session_witness_call, try_derive_sealed_account_keys,
+    CanonicalBodyDecoder, CanonicalBodyEncoder, DualWitnessAnswer, TaggedWitnessParts,
+    TaggedWitnessRef, WitnessDomainWire, WitnessResponseTag, WitnessSchema, WitnessTagError,
+    NON_RECORDABLE_V1_TAGS, V1_RESPONSE_TAG_MAX,
 };
 #[cfg(any(test, feature = "test-utils"))]
 pub use witness_envelope::{pause_account_query_for_test, AccountQueryPauseGuard};

@@ -76,45 +76,10 @@ impl std::error::Error for OpText {
     }
 }
 
-/// Fatal Promis failure. Consensus ops surface these as unavailable, except the
-/// local result checks, which revert.
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum PromisFatalError {
-    /// No in-process runtime is installed.
-    #[error("tee_sidecar_unavailable: {context}")]
-    SidecarUnavailable {
-        /// Operation label.
-        context: &'static str,
-    },
-    /// The runtime returned a transport failure other than hash or attestation.
-    #[error("tee_sidecar_unavailable: {context}: {source}")]
-    SidecarRequestFailed {
-        /// Operation label.
-        context: &'static str,
-        /// Transport failure.
-        #[source]
-        source: TransportError,
-    },
-    /// The enclave rejected the operation.
-    #[error("enclave {context} error: {message}")]
-    EnclaveOpError {
-        /// Operation label.
-        context: &'static str,
-        /// Inner enclave sentence. The transport error is its source.
-        #[source]
-        message: OpText,
-    },
-    /// The echoed inputs hash does not match the host's canonical hash.
-    #[error("tee_enclave_nondeterminism")]
-    EnclaveNondeterminism,
-    /// The Ed25519 attestation tag did not verify.
-    #[error("tee_promis_attestation_invalid: {source}")]
-    AttestationInvalid {
-        /// Attestation failure.
-        #[source]
-        source: TransportError,
-    },
+outbe_core_common::define_confidential_fatal_error! {
+    /// Fatal Promis failure. Consensus ops surface these as unavailable, except the
+    /// local result checks, which revert.
+    PromisFatalError, OpText, "tee_promis_attestation_invalid: {source}";
     /// Owner blobs did not match the request.
     #[error("owner movement result mismatch")]
     OwnerResultMismatch,
@@ -149,22 +114,7 @@ pub(crate) fn map_consensus_error(
     operation: &'static str,
     error: TransportError,
 ) -> PromisFatalError {
-    match error {
-        TransportError::UnexpectedResponse => PromisFatalError::EnclaveNondeterminism,
-        TransportError::EnclaveError(_) | TransportError::EnclaveCause { .. } => {
-            PromisFatalError::EnclaveOpError {
-                context: operation,
-                message: OpText(error),
-            }
-        }
-        TransportError::AppAttestation { .. } => {
-            PromisFatalError::AttestationInvalid { source: error }
-        }
-        other => PromisFatalError::SidecarRequestFailed {
-            context: operation,
-            source: other,
-        },
-    }
+    PromisFatalError::from_consensus_transport(operation, error)
 }
 
 #[cfg(test)]

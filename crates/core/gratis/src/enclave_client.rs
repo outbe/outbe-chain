@@ -8,7 +8,8 @@ use std::fmt::Write as _;
 
 use alloy_primitives::{Address, B256};
 use outbe_core_common::confidential_tee::{
-    consensus_witness_call, session_witness_call, FIDELITY, GRATIS,
+    consensus_witness_call, seal_resident_account_keys, session_witness_call,
+    verify_bound_witness_attestation, FIDELITY, GRATIS,
 };
 use outbe_fidelity::apply_cohort_section;
 use outbe_primitives::error::{PrecompileError, Result};
@@ -130,29 +131,33 @@ fn fidelity_reason(error: &impl std::fmt::Display) -> String {
     reason
 }
 
+impl From<(Address, outbe_tee::resident::SealedAccountKeysExport)> for SealedGratisKeys {
+    fn from((account, s): (Address, outbe_tee::resident::SealedAccountKeysExport)) -> Self {
+        Self {
+            account,
+            sealed: s.sealed,
+            nonce: s.nonce,
+            enclave_ephemeral_pubkey: s.enclave_ephemeral_pubkey,
+        }
+    }
+}
+
 fn execute_derive(
     context: &InProcessTeeContext,
-    request: &DeriveGratisKeysRequest,
+    req: &DeriveGratisKeysRequest,
 ) -> std::result::Result<SealedGratisKeys, TransportError> {
-    let signature: [u8; 65] = request
-        .owner_sig
-        .as_slice()
-        .try_into()
-        .map_err(|_| TransportError::enclave_error(DeriveKeysError::OwnerSignatureLength))?;
-    let state_key = resident_state_key(context, &GRATIS, STATE_EPOCH)?;
-    let keys = GRATIS
-        .account_keys
-        .derive_account_keys(&state_key, request.account)
-        .map_err(TransportError::enclave_error)?;
-    let sealed = GRATIS
-        .export_sealed_account_keys(&keys, &signature, &request.requester_ephemeral_pubkey)
-        .map_err(TransportError::enclave_error)?;
-    Ok(SealedGratisKeys {
-        account: request.account,
-        sealed: sealed.sealed,
-        nonce: sealed.nonce,
-        enclave_ephemeral_pubkey: sealed.enclave_ephemeral_pubkey,
-    })
+    let input = (
+        req.account,
+        req.owner_sig.as_slice(),
+        &req.requester_ephemeral_pubkey,
+    );
+    seal_resident_account_keys(
+        context,
+        (&GRATIS, STATE_EPOCH),
+        input,
+        || DeriveKeysError::OwnerSignatureLength,
+        |a, s| SealedGratisKeys::from((a, s)),
+    )
 }
 
 fn authenticate_apply(
@@ -160,15 +165,7 @@ fn authenticate_apply(
     key: &[u8; 32],
     result: &GratisOpResult,
 ) -> std::result::Result<(), TransportError> {
-    if result.inputs_canonical_hash != expected {
-        return Err(TransportError::UnexpectedResponse);
-    }
-    verify_gratis_op_attestation(
-        key,
-        result.inputs_canonical_hash,
-        result,
-        &result.attestation_tag,
-    )
+    verify_bound_witness_attestation(expected, key, result, verify_gratis_op_attestation)
 }
 
 fn finish_apply(expected: B256, result: GratisOpResult) -> Result<GratisOpResult> {

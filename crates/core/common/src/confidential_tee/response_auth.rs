@@ -10,6 +10,21 @@ use outbe_tee::{
 use serde::Serialize;
 
 use super::errors::inputs_hash_mismatch;
+use super::witness_envelope::WitnessSchema;
+
+/// Bind the echoed hash to the request before checking the response's attestation.
+pub fn verify_bound_witness_attestation<T: WitnessSchema>(
+    expected: B256,
+    key: &[u8; 32],
+    response: &T,
+    verify: impl FnOnce(&[u8; 32], B256, &T, &[u8]) -> Result<(), TransportError>,
+) -> Result<(), TransportError> {
+    let actual = response.inputs_canonical_hash();
+    if actual != expected {
+        return Err(TransportError::UnexpectedResponse);
+    }
+    verify(key, actual, response, response.attestation_tag())
+}
 
 /// Compute `keccak256(domain || serde_json::to_vec(value))`.
 pub fn hash<T: Serialize + ?Sized>(domain: &[u8], value: &T) -> Result<B256, serde_json::Error> {

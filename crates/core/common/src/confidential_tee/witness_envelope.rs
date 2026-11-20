@@ -20,6 +20,29 @@ use thiserror::Error;
 
 use super::confidential::{domain_for, Domain, Ledger};
 
+/// Implement the frozen witness tag and metadata accessors for an existing response body.
+#[macro_export]
+macro_rules! impl_confidential_witness_schema {
+    ($body:ty, $tag:ident) => {
+        impl $crate::confidential_tee::WitnessSchema for $body {
+            const TAG: $crate::confidential_tee::WitnessResponseTag =
+                $crate::confidential_tee::WitnessResponseTag::$tag;
+
+            fn inputs_canonical_hash(&self) -> ::alloy_primitives::B256 {
+                self.inputs_canonical_hash
+            }
+
+            fn attestation_tag(&self) -> &[u8] {
+                &self.attestation_tag
+            }
+
+            fn set_attestation_tag(&mut self, tag: Vec<u8>) {
+                self.attestation_tag = tag;
+            }
+        }
+    };
+}
+
 /// Highest frozen V1 domain response discriminant.
 pub const V1_RESPONSE_TAG_MAX: u8 = 22;
 
@@ -553,6 +576,31 @@ pub fn derive_resident_state_key(
     context
         .state_key_handle(domain.state_info(), epoch)
         .map_err(|err| outbe_tee::InProcessDispatchError::Resident(err).into())
+}
+
+/// Seal a signed query's account keys using the resident context already captured by the caller.
+pub fn seal_resident_account_keys<E, T>(
+    context: &InProcessTeeContext,
+    (domain, epoch): (&Domain, u64),
+    (account, signature, requester): (Address, &[u8], &[u8; 32]),
+    invalid_signature: impl FnOnce() -> E,
+    into_response: impl FnOnce(Address, outbe_tee::resident::SealedAccountKeysExport) -> T,
+) -> Result<T, TransportError>
+where
+    E: std::error::Error + Send + Sync + 'static,
+{
+    let signature: &[u8; 65] = signature
+        .try_into()
+        .map_err(|_| TransportError::enclave_error(invalid_signature()))?;
+    let state_key = derive_resident_state_key(context, domain, epoch)?;
+    let keys = domain
+        .account_keys
+        .derive_account_keys(&state_key, account)
+        .map_err(TransportError::enclave_error)?;
+    let sealed = domain
+        .export_sealed_account_keys(&keys, signature, requester)
+        .map_err(TransportError::enclave_error)?;
+    Ok(into_response(account, sealed))
 }
 
 fn prefix_tag(tag: WitnessResponseTag, body: Vec<u8>) -> Vec<u8> {

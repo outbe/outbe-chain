@@ -84,45 +84,10 @@ impl std::error::Error for OpText {
     }
 }
 
-/// Fatal Gratis failure. Consensus ops surface these as unavailable, except the
-/// stand-in and the local result checks, which revert.
-#[derive(Debug, Error)]
-#[non_exhaustive]
-pub enum GratisFatalError {
-    /// No in-process runtime is installed.
-    #[error("tee_sidecar_unavailable: {context}")]
-    SidecarUnavailable {
-        /// Operation label.
-        context: &'static str,
-    },
-    /// The runtime returned a transport failure other than hash or attestation.
-    #[error("tee_sidecar_unavailable: {context}: {source}")]
-    SidecarRequestFailed {
-        /// Operation label.
-        context: &'static str,
-        /// Transport failure.
-        #[source]
-        source: TransportError,
-    },
-    /// The enclave rejected the operation.
-    #[error("enclave {context} error: {message}")]
-    EnclaveOpError {
-        /// Operation label.
-        context: &'static str,
-        /// Inner enclave sentence. The transport error is its source.
-        #[source]
-        message: OpText,
-    },
-    /// The echoed inputs hash does not match the host's canonical hash.
-    #[error("tee_enclave_nondeterminism")]
-    EnclaveNondeterminism,
-    /// The Ed25519 attestation tag did not verify.
-    #[error("tee_gratis_attestation_invalid: {source}")]
-    AttestationInvalid {
-        /// Attestation failure.
-        #[source]
-        source: TransportError,
-    },
+outbe_core_common::define_confidential_fatal_error! {
+    /// Fatal Gratis failure. Consensus ops surface these as unavailable, except the
+    /// stand-in and the local result checks, which revert.
+    GratisFatalError, OpText, "tee_gratis_attestation_invalid: {source}";
     /// The in-process stand-in failed before a witness round-trip.
     #[error("{source}")]
     TestEnclave {
@@ -182,22 +147,7 @@ pub(crate) fn map_consensus_error(
     operation: &'static str,
     error: TransportError,
 ) -> GratisFatalError {
-    match error {
-        TransportError::UnexpectedResponse => GratisFatalError::EnclaveNondeterminism,
-        TransportError::EnclaveError(_) | TransportError::EnclaveCause { .. } => {
-            GratisFatalError::EnclaveOpError {
-                context: operation,
-                message: OpText(error),
-            }
-        }
-        TransportError::AppAttestation { .. } => {
-            GratisFatalError::AttestationInvalid { source: error }
-        }
-        other => GratisFatalError::SidecarRequestFailed {
-            context: operation,
-            source: other,
-        },
-    }
+    GratisFatalError::from_consensus_transport(operation, error)
 }
 
 /// A verified NOD mint refusal. The reason is already the signed consensus string.

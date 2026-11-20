@@ -7,6 +7,92 @@ use alloy_primitives::B256;
 use outbe_tee::{AppErrorDescriptor, TeeAttestationError, TransportError};
 use thiserror::Error;
 
+/// Define the shared fatal variants while retaining each domain's error type and extra variants.
+#[macro_export]
+macro_rules! define_confidential_fatal_error {
+    ($(#[$doc:meta])* $name:ident, $op_text:ident, $attestation:literal; $($extra:tt)*) => {
+        $(#[$doc])*
+        #[derive(Debug, ::thiserror::Error)]
+        #[non_exhaustive]
+        pub enum $name {
+            /// No in-process runtime is installed.
+            #[error("tee_sidecar_unavailable: {context}")]
+            SidecarUnavailable {
+                /// Operation label.
+                context: &'static str,
+            },
+            /// The runtime returned an unclassified transport failure.
+            #[error("tee_sidecar_unavailable: {context}: {source}")]
+            SidecarRequestFailed {
+                /// Operation label.
+                context: &'static str,
+                /// Transport failure.
+                #[source]
+                source: ::outbe_tee::TransportError,
+            },
+            /// The enclave rejected the operation.
+            #[error("enclave {context} error: {message}")]
+            EnclaveOpError {
+                /// Operation label.
+                context: &'static str,
+                /// Inner enclave sentence. The transport error is its source.
+                #[source]
+                message: $op_text,
+            },
+            /// The echoed inputs hash does not match the host's canonical hash.
+            #[error("tee_enclave_nondeterminism")]
+            EnclaveNondeterminism,
+            /// The Ed25519 attestation tag did not verify.
+            #[error($attestation)]
+            AttestationInvalid {
+                /// Attestation failure.
+                #[source]
+                source: ::outbe_tee::TransportError,
+            },
+            $($extra)*
+        }
+
+        impl $name {
+            /// Classify a recorded witness transport failure onto the historical domain sentences.
+            #[allow(dead_code)]
+            pub(crate) fn from_consensus_transport(
+                operation: &'static str,
+                error: ::outbe_tee::TransportError,
+            ) -> Self {
+                $crate::confidential_tee::map_consensus_transport_error(
+                    error,
+                    Self::EnclaveNondeterminism,
+                    |source| Self::EnclaveOpError {
+                        context: operation,
+                        message: $op_text(source),
+                    },
+                    |source| Self::AttestationInvalid { source },
+                    |source| Self::SidecarRequestFailed {
+                        context: operation,
+                        source,
+                    },
+                )
+            }
+        }
+    };
+}
+
+/// Classify a recorded operation's transport failure before adding domain context.
+pub fn map_consensus_transport_error<E>(
+    error: TransportError,
+    mismatch: E,
+    rejected: impl FnOnce(TransportError) -> E,
+    invalid_attestation: impl FnOnce(TransportError) -> E,
+    unavailable: impl FnOnce(TransportError) -> E,
+) -> E {
+    match error {
+        TransportError::UnexpectedResponse => mismatch,
+        TransportError::EnclaveError(_) | TransportError::EnclaveCause { .. } => rejected(error),
+        TransportError::AppAttestation { .. } => invalid_attestation(error),
+        other => unavailable(other),
+    }
+}
+
 /// Tribute offer, read, day, or NOD attestation failure descriptor.
 pub const TRIBUTE_OFFER_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
     "tribute_offer_attestation",

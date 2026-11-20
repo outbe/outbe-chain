@@ -7,7 +7,8 @@
 
 use alloy_primitives::{Address, B256};
 use outbe_core_common::confidential_tee::{
-    consensus_witness_call, session_witness_call, FIDELITY, GRATIS, PROMIS,
+    consensus_witness_call, seal_resident_account_keys, session_witness_call,
+    verify_bound_witness_attestation, FIDELITY, GRATIS, PROMIS,
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::in_process::InProcessTeeContext;
@@ -162,25 +163,22 @@ fn execute_derive(
     context: &InProcessTeeContext,
     request: &DerivePromisKeysRequest,
 ) -> std::result::Result<SealedPromisKeys, TransportError> {
-    let signature: [u8; 65] = request
-        .owner_sig
-        .as_slice()
-        .try_into()
-        .map_err(|_| TransportError::enclave_error(DeriveKeysError::OwnerSignatureLength))?;
-    let state_key = resident_state_key(context, &PROMIS, STATE_EPOCH)?;
-    let keys = PROMIS
-        .account_keys
-        .derive_account_keys(&state_key, request.account)
-        .map_err(TransportError::enclave_error)?;
-    let sealed = PROMIS
-        .export_sealed_account_keys(&keys, &signature, &request.requester_ephemeral_pubkey)
-        .map_err(TransportError::enclave_error)?;
-    Ok(SealedPromisKeys {
-        account: request.account,
-        sealed: sealed.sealed,
-        nonce: sealed.nonce,
-        enclave_ephemeral_pubkey: sealed.enclave_ephemeral_pubkey,
-    })
+    seal_resident_account_keys(
+        context,
+        (&PROMIS, STATE_EPOCH),
+        (
+            request.account,
+            request.owner_sig.as_slice(),
+            &request.requester_ephemeral_pubkey,
+        ),
+        || DeriveKeysError::OwnerSignatureLength,
+        |account, sealed| SealedPromisKeys {
+            account,
+            sealed: sealed.sealed,
+            nonce: sealed.nonce,
+            enclave_ephemeral_pubkey: sealed.enclave_ephemeral_pubkey,
+        },
+    )
 }
 
 fn authenticate_promis(
@@ -188,15 +186,7 @@ fn authenticate_promis(
     key: &[u8; 32],
     result: &PromisOpResult,
 ) -> std::result::Result<(), TransportError> {
-    if result.inputs_canonical_hash != expected {
-        return Err(TransportError::UnexpectedResponse);
-    }
-    verify_promis_op_attestation(
-        key,
-        result.inputs_canonical_hash,
-        result,
-        &result.attestation_tag,
-    )
+    verify_bound_witness_attestation(expected, key, result, verify_promis_op_attestation)
 }
 
 fn authenticate_mine(
