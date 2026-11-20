@@ -7,7 +7,7 @@ use outbe_primitives::storage::proof::FinalizedStateCheckpoint;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::{
-        proof::{AccountStorageProof, StateProofLimits},
+        proof::{AccountStorageProof, StateProofError, StateProofLimits},
         readonly::ReadOnlyStorageProvider,
         types::Storable,
         StorageHandle,
@@ -26,23 +26,23 @@ pub fn retained_source_binding(
 ) -> Result<B256> {
     let contract = TributeContract::new(storage.clone());
     let source = crate::state_api::get_retained_record(storage, id)?
-        .ok_or_else(|| invalid("retained Tribute source is missing"))?;
+        .ok_or(TributeStateProofError::RetainedSourceMissing)?;
     let tribute = source
         .encrypted()
-        .ok_or_else(|| invalid("Tribute source is not encrypted"))?;
+        .ok_or(TributeStateProofError::SourceNotEncrypted)?;
     let position = contract.day_id_position.read(&id)?;
     if position == 0 || position > subject.tribute_count {
-        return Err(invalid("retained Tribute source position mismatch"));
+        return Err(TributeStateProofError::RetainedSourcePositionMismatch.into());
     }
     let index = position - 1;
     let words = expected_record_words(&contract, subject, index, tribute)?;
     for (slot, expected) in &words {
         if storage.sload(TRIBUTE_ADDRESS, U256::from_be_bytes(slot.0))? != *expected {
-            return Err(invalid("retained Tribute source does not match its index"));
+            return Err(TributeStateProofError::RetainedSourceIndexMismatch.into());
         }
     }
-    crate::confidential::source_binding(tribute, index, &words)
-        .map_err(|error| invalid(error.to_string()))
+    Ok(crate::confidential::source_binding(tribute, index, &words)
+        .map_err(TributeStateProofError::SourceBinding)?)
 }
 
 /// Encrypted tribute record, its day index, and expected `(slot, word)` storage pairs.
@@ -55,15 +55,15 @@ pub fn read_tribute_source_words(
     tribute_id: WwdEntityId,
 ) -> Result<TributeSourceWords> {
     let record = crate::state_api::get_retained_record(&storage, tribute_id)?
-        .ok_or_else(|| invalid("Tribute source is missing"))?;
+        .ok_or(TributeStateProofError::SourceMissing)?;
     let tribute = record
         .encrypted()
-        .ok_or_else(|| invalid("Tribute source is not encrypted"))?
+        .ok_or(TributeStateProofError::SourceNotEncrypted)?
         .clone();
     let contract = TributeContract::new(storage);
     let position = contract.day_id_position.read(&tribute_id)?;
     if position == 0 || position > subject.tribute_count {
-        return Err(invalid("Tribute source position mismatch"));
+        return Err(TributeStateProofError::SourcePositionMismatch.into());
     }
     let day_index = position - 1;
     let node_subject = TributeStateProofSubject::from(*subject);
@@ -108,7 +108,7 @@ impl TributeStateProofSubject {
 
     fn validate(&self) -> Result<()> {
         if !self.is_complete() {
-            return Err(invalid("incomplete finalized Tribute proof subject"));
+            return Err(TributeStateProofError::IncompleteSubject.into());
         }
         Ok(())
     }
@@ -140,13 +140,11 @@ pub fn expected_record_words(
     let context = &tribute.context;
     let expected_id = derive_poseidon_entity_id(context.owner, context.worldwide_day);
     if !subject.matches_context(day_index, tribute) || expected_id != context.tribute_id {
-        return Err(invalid(
-            "Tribute source identity does not match its subject",
-        ));
+        return Err(TributeStateProofError::SourceIdentityMismatch.into());
     }
     let position = day_index
         .checked_add(1)
-        .ok_or_else(|| invalid("Tribute source index overflow"))?;
+        .ok_or(TributeStateProofError::SourceIndexOverflow)?;
     let entry = contract.records.entry(context.tribute_id);
     let day_ids = contract.day_ids.list(&subject.worldwide_day);
     let mut words = vec![
@@ -186,7 +184,7 @@ pub fn expected_record_words(
     );
     words.sort_unstable_by_key(|(slot, _)| *slot);
     if words.windows(2).any(|words| words[0].0 == words[1].0) {
-        return Err(invalid("Tribute source storage slots overlap"));
+        return Err(TributeStateProofError::StorageSlotsOverlap.into());
     }
     Ok(words
         .into_iter()
@@ -222,7 +220,7 @@ impl TributeRecordStateProof {
         let verified = self
             .account
             .verify(TRIBUTE_ADDRESS, subject.checkpoint.state_root, limits)
-            .map_err(|error| invalid(error.to_string()))?;
+            .map_err(TributeStateProofError::AccountProof)?;
         let mut provider = ReadOnlyStorageProvider::new_with_chain_identity(
             verified,
             subject.chain_id,
@@ -238,13 +236,11 @@ impl TributeRecordStateProof {
                     .zip(&self.account.slots)
                     .any(|((slot, _), opening)| *slot != opening.slot)
             {
-                return Err(invalid(
-                    "Tribute proof does not open the exact source slots",
-                ));
+                return Err(TributeStateProofError::ProofSlotMismatch.into());
             }
             for (slot, word) in expected {
                 if storage.sload(TRIBUTE_ADDRESS, U256::from_be_bytes(slot.0))? != word {
-                    return Err(invalid("Tribute proof word does not match its source"));
+                    return Err(TributeStateProofError::ProofWordMismatch.into());
                 }
             }
             Ok(())
@@ -252,8 +248,42 @@ impl TributeRecordStateProof {
     }
 }
 
-fn invalid(message: impl Into<String>) -> PrecompileError {
-    PrecompileError::storage(message)
+#[derive(Debug, thiserror::Error)]
+enum TributeStateProofError {
+    #[error("retained Tribute source is missing")]
+    RetainedSourceMissing,
+    #[error("Tribute source is missing")]
+    SourceMissing,
+    #[error("Tribute source is not encrypted")]
+    SourceNotEncrypted,
+    #[error("retained Tribute source position mismatch")]
+    RetainedSourcePositionMismatch,
+    #[error("Tribute source position mismatch")]
+    SourcePositionMismatch,
+    #[error("retained Tribute source does not match its index")]
+    RetainedSourceIndexMismatch,
+    #[error("incomplete finalized Tribute proof subject")]
+    IncompleteSubject,
+    #[error("Tribute source identity does not match its subject")]
+    SourceIdentityMismatch,
+    #[error("Tribute source index overflow")]
+    SourceIndexOverflow,
+    #[error("Tribute source storage slots overlap")]
+    StorageSlotsOverlap,
+    #[error("Tribute proof does not open the exact source slots")]
+    ProofSlotMismatch,
+    #[error("Tribute proof word does not match its source")]
+    ProofWordMismatch,
+    #[error("{0}")]
+    SourceBinding(#[source] outbe_tee::TransportError),
+    #[error("{0}")]
+    AccountProof(#[source] StateProofError),
+}
+
+impl From<TributeStateProofError> for PrecompileError {
+    fn from(error: TributeStateProofError) -> Self {
+        PrecompileError::storage(error.to_string())
+    }
 }
 
 #[cfg(test)]

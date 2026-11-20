@@ -685,39 +685,39 @@ mod tests {
                 2,
             )
             .unwrap();
-        assert!(binding
-            .ensure_exact_release_measurements(
+        assert!(matches!(
+            binding.ensure_exact_release_measurements(
                 B256::repeat_byte(0x44),
                 B256::repeat_byte(0x33),
                 1,
                 2,
-            )
-            .unwrap_err()
-            .contains("signed bundle measurement"));
+            ),
+            Err(TeeAttestationActivationError::ReleaseMeasurementMismatch)
+        ));
 
         let mut non_intel_root = binding.clone();
         non_intel_root.policy.intel_root_der_hash = B256::repeat_byte(0x99);
-        assert!(non_intel_root
-            .ensure_exact_release_measurements(
+        assert!(matches!(
+            non_intel_root.ensure_exact_release_measurements(
                 B256::repeat_byte(0x22),
                 B256::repeat_byte(0x33),
                 1,
                 2,
-            )
-            .unwrap_err()
-            .contains("canonical initial policy"));
+            ),
+            Err(TeeAttestationActivationError::NonCanonicalInitialDcapPolicy)
+        ));
 
         let mut tightened = binding;
         tightened.policy.accepted_platform_tcb_statuses = PlatformTcbStatusSetV1::UpToDateOnly;
-        assert!(tightened
-            .ensure_exact_release_measurements(
+        assert!(matches!(
+            tightened.ensure_exact_release_measurements(
                 B256::repeat_byte(0x22),
                 B256::repeat_byte(0x33),
                 1,
                 2,
-            )
-            .unwrap_err()
-            .contains("UpToDate | SWHardeningNeeded | ConfigurationAndSWHardeningNeeded"));
+            ),
+            Err(TeeAttestationActivationError::InvalidDcapTcbStatuses)
+        ));
     }
 
     #[test]
@@ -733,19 +733,21 @@ mod tests {
     fn mismatched_identity_or_hash_fails_closed() {
         let chain_id = TESTNET_CHAIN_ID;
         let genesis_hash = B256::repeat_byte(0x44);
-        assert!(validate_activation(
-            activation(chain_id, genesis_hash, AttestationMode::DcapRequired),
-            chain_id + 1,
-            genesis_hash
-        )
-        .unwrap_err()
-        .contains("identity"));
+        assert!(matches!(
+            validate_activation(
+                activation(chain_id, genesis_hash, AttestationMode::DcapRequired),
+                chain_id + 1,
+                genesis_hash
+            ),
+            Err(TeeAttestationActivationError::PolicyScheduleChainSpecIdentityMismatch)
+        ));
 
         let mut wrong_hash = activation(chain_id, genesis_hash, AttestationMode::DcapRequired);
         wrong_hash.policy_schedule_hash = B256::repeat_byte(0x55);
-        assert!(validate_activation(wrong_hash, chain_id, genesis_hash)
-            .unwrap_err()
-            .contains("schedule hash"));
+        assert!(matches!(
+            validate_activation(wrong_hash, chain_id, genesis_hash),
+            Err(TeeAttestationActivationError::PolicyScheduleHashMismatch)
+        ));
     }
 
     #[test]
@@ -782,29 +784,41 @@ mod tests {
         );
 
         let unknown_chain_id = TESTNET_CHAIN_ID + 1;
-        assert!(validate_activation(
-            activation(
+        assert!(matches!(
+            validate_activation(
+                activation(
+                    unknown_chain_id,
+                    dev_genesis_hash,
+                    AttestationMode::NoAttestationDev,
+                ),
                 unknown_chain_id,
                 dev_genesis_hash,
-                AttestationMode::NoAttestationDev,
             ),
-            unknown_chain_id,
-            dev_genesis_hash,
-        )
-        .unwrap_err()
-        .contains("devnet or testnet chain ID"));
+            Err(
+                TeeAttestationActivationError::NoAttestationDevChainIdDisallowed {
+                    devnet: NO_ATTESTATION_DEV_CHAIN_ID,
+                    testnet: TESTNET_CHAIN_ID,
+                }
+            )
+        ));
 
-        assert!(validate_activation(
-            activation(
+        assert!(matches!(
+            validate_activation(
+                activation(
+                    MAINNET_CHAIN_ID,
+                    dev_genesis_hash,
+                    AttestationMode::NoAttestationDev,
+                ),
                 MAINNET_CHAIN_ID,
                 dev_genesis_hash,
-                AttestationMode::NoAttestationDev,
             ),
-            MAINNET_CHAIN_ID,
-            dev_genesis_hash,
-        )
-        .unwrap_err()
-        .contains("devnet or testnet chain ID"));
+            Err(
+                TeeAttestationActivationError::NoAttestationDevChainIdDisallowed {
+                    devnet: NO_ATTESTATION_DEV_CHAIN_ID,
+                    testnet: TESTNET_CHAIN_ID,
+                }
+            )
+        ));
 
         let devnet_dcap = validate_activation(
             activation(
@@ -821,28 +835,63 @@ mod tests {
             AttestationMode::DcapRequired
         );
 
-        assert!(validate_activation(
-            activation(
+        assert!(matches!(
+            validate_activation(
+                activation(
+                    unknown_chain_id,
+                    dev_genesis_hash,
+                    AttestationMode::DcapRequired,
+                ),
                 unknown_chain_id,
                 dev_genesis_hash,
-                AttestationMode::DcapRequired,
             ),
-            unknown_chain_id,
-            dev_genesis_hash,
-        )
-        .unwrap_err()
-        .contains("devnet, testnet, or mainnet chain ID"));
+            Err(
+                TeeAttestationActivationError::DcapRequiredChainIdDisallowed {
+                    devnet: NO_ATTESTATION_DEV_CHAIN_ID,
+                    testnet: TESTNET_CHAIN_ID,
+                    mainnet: MAINNET_CHAIN_ID,
+                }
+            )
+        ));
     }
 
     #[test]
     fn malformed_or_oversized_schedule_is_rejected_before_decode() {
-        assert!(decode_bounded_hex("abcd")
-            .unwrap_err()
-            .contains("0x-prefixed"));
-        assert!(decode_bounded_hex("0x0").unwrap_err().contains("canonical"));
+        assert!(matches!(
+            decode_bounded_hex("abcd"),
+            Err(TeeAttestationActivationError::PolicyScheduleMissingHexPrefix)
+        ));
+        assert!(matches!(
+            decode_bounded_hex("0x0"),
+            Err(TeeAttestationActivationError::PolicyScheduleNotCanonicalHex)
+        ));
         let oversized = format!("0x{}", "00".repeat(MAX_TEE_POLICY_SCHEDULE_BYTES + 1));
-        assert!(decode_bounded_hex(&oversized)
-            .unwrap_err()
-            .contains("exceeds"));
+        assert!(matches!(
+            decode_bounded_hex(&oversized),
+            Err(
+                TeeAttestationActivationError::PolicyScheduleExceedsMaxBytes {
+                    max_bytes: MAX_TEE_POLICY_SCHEDULE_BYTES,
+                }
+            )
+        ));
+        let invalid_hex = decode_bounded_hex("0xzz").unwrap_err();
+        assert!(matches!(
+            invalid_hex,
+            TeeAttestationActivationError::DecodePolicyScheduleHex(_)
+        ));
+        let cause = std::error::Error::source(&invalid_hex)
+            .expect("DecodePolicyScheduleHex preserves ActivationCause");
+        assert!(cause
+            .source()
+            .and_then(|inner| inner.downcast_ref::<hex::FromHexError>())
+            .is_some());
+    }
+
+    #[test]
+    fn activation_cause_equality_uses_arc_identity() {
+        let first = decode_bounded_hex("0xzz").unwrap_err();
+        let second = decode_bounded_hex("0xzz").unwrap_err();
+        assert_eq!(first.clone(), first);
+        assert_ne!(first, second);
     }
 }

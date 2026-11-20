@@ -1,12 +1,15 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_core_common::confidential_tee::ModifyOperation;
+use outbe_core_common::confidential_tee::{ModifyOperation, TeeError};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_fidelity::FidelityCohortOp;
 use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
 use outbe_gratis::{GratisOp, ModifyAuth};
-use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+use outbe_primitives::{
+    error::PrecompileError,
+    storage::{hashmap::HashMapStorageProvider, StorageHandle},
+};
 use outbe_promis::enclave_client::test_enclave as promis_enclave;
 use outbe_promis::PromisOp;
 
@@ -100,6 +103,132 @@ fn promis_auth() -> ModifyAuth {
     }
 }
 
+#[derive(Debug, thiserror::Error)]
+enum ConfidentialScenarioError {
+    #[error(transparent)]
+    Precompile(#[from] PrecompileError),
+    #[error(transparent)]
+    Tee(#[from] TeeError),
+    #[error("{0}")]
+    Capture(String),
+    #[error("confidential balance does not match minted amount")]
+    BalanceMismatch,
+}
+
+impl ConfidentialScenario {
+    fn execute_mint(&self, storage: StorageHandle<'_>) -> Result<(), ConfidentialScenarioError> {
+        match self.path {
+            ConfidentialPath::Promis => outbe_promisfactory::api::mint_from_gem(
+                storage,
+                U256::ONE,
+                ACCOUNT,
+                U256::from(AMOUNT),
+                promis_auth(),
+            )?,
+            ConfidentialPath::Gratis => {
+                outbe_gratis::api::mint(storage, ACCOUNT, U256::from(AMOUNT), gratis_auth())?
+            }
+            ConfidentialPath::GratisWithFidelity => {
+                let section = outbe_fidelity::api::cohort_section(
+                    storage.clone(),
+                    ACCOUNT,
+                    FidelityCohortOp::In,
+                    T_NOW,
+                )?;
+                let outcome = outbe_gratis::api::mint_with_fidelity(
+                    storage.clone(),
+                    ACCOUNT,
+                    U256::from(AMOUNT),
+                    gratis_auth(),
+                    section,
+                )?;
+                outbe_fidelity::api::apply_fidelity_outcome(storage, ACCOUNT, &outcome)?;
+            }
+            ConfidentialPath::Gratisfactory => {
+                outbe_gratisfactory::api::mint(storage, ACCOUNT, U256::from(AMOUNT), gratis_auth())?
+            }
+        }
+        Ok(())
+    }
+
+    fn read_post_state(
+        &self,
+        storage: StorageHandle<'_>,
+    ) -> Result<(U256, bool), ConfidentialScenarioError> {
+        let fidelity_applied = match self.path {
+            ConfidentialPath::GratisWithFidelity | ConfidentialPath::Gratisfactory => {
+                outbe_fidelity::api::league(storage.clone(), ACCOUNT)? > 0
+            }
+            _ => false,
+        };
+        let balance = match self.path {
+            ConfidentialPath::Promis => {
+                let key = outbe_promis::derive_view_key(&promis_enclave::state_key(), ACCOUNT)?;
+                let blob = outbe_promis::api::balance_ct(storage, ACCOUNT)?;
+                outbe_promis::decrypt_balance(&key, ACCOUNT, &blob)?
+            }
+            _ => {
+                let key = outbe_gratis::derive_view_key(&gratis_enclave::state_key(), ACCOUNT)?;
+                let blob = outbe_gratis::api::balance_ct(storage, ACCOUNT)?;
+                outbe_gratis::decrypt_balance(&key, ACCOUNT, &blob)?
+            }
+        };
+        Ok((balance, fidelity_applied))
+    }
+
+    fn run_once_typed(
+        &self,
+        prepared: &PreparedConfidential,
+    ) -> Result<Observation, ConfidentialScenarioError> {
+        let mut provider = prepared.provider.clone();
+        provider.set_gas_limit(BLOCK_GAS_LIMIT);
+        provider.enable_production_storage_gas_metering();
+        provider.enable_storage_trace();
+        let event_offset = provider.get_ordered_events().len();
+        let started = Instant::now();
+        StorageHandle::enter(&mut provider, |storage| self.execute_mint(storage))?;
+        let runtime_gas = StorageHandle::enter(&mut provider, |storage| {
+            Ok::<_, ConfidentialScenarioError>(storage.gas_used()?)
+        })?;
+        let latency_ns = elapsed_ns(started);
+        let captured = capture_execution(
+            &provider,
+            event_offset,
+            GasLedger::SystemInternal,
+            runtime_gas,
+            "confidential_ledger",
+        )
+        .map_err(ConfidentialScenarioError::Capture)?;
+
+        let (balance, fidelity_applied) =
+            StorageHandle::enter(&mut provider, |storage| self.read_post_state(storage))?;
+        if balance != U256::from(AMOUNT) {
+            return Err(ConfidentialScenarioError::BalanceMismatch);
+        }
+
+        let component = match self.path {
+            ConfidentialPath::Promis => "chain.promis.mint",
+            ConfidentialPath::Gratis => "chain.gratis.mint",
+            ConfidentialPath::GratisWithFidelity => "chain.gratis.mint_with_fidelity",
+            ConfidentialPath::Gratisfactory => "chain.gratisfactory.mint",
+        };
+        let mut observation = Observation::new(
+            [(GasLedger::SystemInternal, captured.gas_total)],
+            captured.gas_components,
+        )
+        .with_total_latency(latency_ns)
+        .with_latency(component, latency_ns)
+        .with_postcondition("confidential.balance_matches", "true")
+        .with_postcondition(
+            "confidential.fidelity_applied",
+            fidelity_applied.to_string(),
+        );
+        observation.storage = captured.storage;
+        observation.events = captured.events;
+        Ok(observation)
+    }
+}
+
 impl BenchmarkScenario for ConfidentialScenario {
     type Prepared = PreparedConfidential;
 
@@ -136,113 +265,7 @@ impl BenchmarkScenario for ConfidentialScenario {
     }
 
     fn run_once(&self, prepared: &Self::Prepared) -> Result<Observation, String> {
-        let mut provider = prepared.provider.clone();
-        provider.set_gas_limit(BLOCK_GAS_LIMIT);
-        provider.enable_production_storage_gas_metering();
-        provider.enable_storage_trace();
-        let event_offset = provider.get_ordered_events().len();
-        let started = Instant::now();
-        StorageHandle::enter(&mut provider, |storage| match self.path {
-            ConfidentialPath::Promis => outbe_promisfactory::api::mint_from_gem(
-                storage,
-                U256::ONE,
-                ACCOUNT,
-                U256::from(AMOUNT),
-                promis_auth(),
-            )
-            .map_err(|error| error.to_string()),
-            ConfidentialPath::Gratis => {
-                outbe_gratis::api::mint(storage, ACCOUNT, U256::from(AMOUNT), gratis_auth())
-                    .map_err(|error| error.to_string())
-            }
-            ConfidentialPath::GratisWithFidelity => {
-                let section = outbe_fidelity::api::cohort_section(
-                    storage.clone(),
-                    ACCOUNT,
-                    FidelityCohortOp::In,
-                    T_NOW,
-                )
-                .map_err(|error| error.to_string())?;
-                let outcome = outbe_gratis::api::mint_with_fidelity(
-                    storage.clone(),
-                    ACCOUNT,
-                    U256::from(AMOUNT),
-                    gratis_auth(),
-                    section,
-                )
-                .map_err(|error| error.to_string())?;
-                outbe_fidelity::api::apply_fidelity_outcome(storage, ACCOUNT, &outcome)
-                    .map_err(|error| error.to_string())
-            }
-            ConfidentialPath::Gratisfactory => {
-                outbe_gratisfactory::api::mint(storage, ACCOUNT, U256::from(AMOUNT), gratis_auth())
-                    .map_err(|error| error.to_string())
-            }
-        })?;
-        let runtime_gas = StorageHandle::enter(&mut provider, |storage| {
-            storage.gas_used().map_err(|error| error.to_string())
-        })?;
-        let latency_ns = elapsed_ns(started);
-        let captured = capture_execution(
-            &provider,
-            event_offset,
-            GasLedger::SystemInternal,
-            runtime_gas,
-            "confidential_ledger",
-        )?;
-
-        let (balance, fidelity_applied) = StorageHandle::enter(&mut provider, |storage| {
-            let fidelity_applied = match self.path {
-                ConfidentialPath::GratisWithFidelity | ConfidentialPath::Gratisfactory => {
-                    outbe_fidelity::api::league(storage.clone(), ACCOUNT)
-                        .map(|league| league > 0)
-                        .map_err(|error| error.to_string())?
-                }
-                _ => false,
-            };
-            let balance = match self.path {
-                ConfidentialPath::Promis => {
-                    let key = outbe_promis::derive_view_key(&promis_enclave::state_key(), ACCOUNT)
-                        .map_err(|error| error.to_string())?;
-                    let blob = outbe_promis::api::balance_ct(storage, ACCOUNT)
-                        .map_err(|error| error.to_string())?;
-                    outbe_promis::decrypt_balance(&key, ACCOUNT, &blob)
-                        .map_err(|error| error.to_string())?
-                }
-                _ => {
-                    let key = outbe_gratis::derive_view_key(&gratis_enclave::state_key(), ACCOUNT)
-                        .map_err(|error| error.to_string())?;
-                    let blob = outbe_gratis::api::balance_ct(storage, ACCOUNT)
-                        .map_err(|error| error.to_string())?;
-                    outbe_gratis::decrypt_balance(&key, ACCOUNT, &blob)
-                        .map_err(|error| error.to_string())?
-                }
-            };
-            Ok::<_, String>((balance, fidelity_applied))
-        })?;
-        if balance != U256::from(AMOUNT) {
-            return Err("confidential balance does not match minted amount".to_owned());
-        }
-
-        let component = match self.path {
-            ConfidentialPath::Promis => "chain.promis.mint",
-            ConfidentialPath::Gratis => "chain.gratis.mint",
-            ConfidentialPath::GratisWithFidelity => "chain.gratis.mint_with_fidelity",
-            ConfidentialPath::Gratisfactory => "chain.gratisfactory.mint",
-        };
-        let mut observation = Observation::new(
-            [(GasLedger::SystemInternal, captured.gas_total)],
-            captured.gas_components,
-        )
-        .with_total_latency(latency_ns)
-        .with_latency(component, latency_ns)
-        .with_postcondition("confidential.balance_matches", "true")
-        .with_postcondition(
-            "confidential.fidelity_applied",
-            fidelity_applied.to_string(),
-        );
-        observation.storage = captured.storage;
-        observation.events = captured.events;
-        Ok(observation)
+        self.run_once_typed(prepared)
+            .map_err(|error| error.to_string())
     }
 }

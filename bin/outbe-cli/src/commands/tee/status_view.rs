@@ -9,7 +9,7 @@ use std::{
 
 use alloy_primitives::Address;
 use alloy_sol_types::SolCall;
-use eyre::{bail, Result};
+use eyre::Result;
 use outbe_primitives::tee_attestation_v1::AttestationMode;
 use outbe_simplex::bls::{self, KeyBackend, KeyBackendNameError};
 use outbe_tee::registry_view::{read_finalized_registry_view_v1, NodeBindingSelectorV1};
@@ -103,33 +103,25 @@ pub(super) async fn read_status(client: &(impl Rpc + Sync), args: &StatusArgs) -
     }))
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("pass only one of --node-data-dir, --node-id, or --validator")]
+struct ConflictingBindingSelectorsError;
+
 /// `None` keeps the historical network-wide validator-zero selector and hides
 /// the binding. A selected host or validator shows the finalized binding.
 fn binding_selector(args: &StatusArgs) -> Result<Option<NodeBindingSelectorV1>> {
-    let choices = [
-        args.node_data_dir.is_some(),
-        args.node_id.is_some(),
-        args.validator.is_some(),
-    ]
-    .into_iter()
-    .filter(|present| *present)
-    .count();
-    if choices > 1 {
-        bail!("pass only one of --node-data-dir, --node-id, or --validator");
+    match (args.node_data_dir.as_deref(), args.node_id, args.validator) {
+        (Some(dir), None, None) => {
+            let backend = reth_discovery_backend(args)?;
+            Ok(Some(NodeBindingSelectorV1::NodeHost(
+                node_host_public_from_discovery_secret(dir, &backend)?,
+            )))
+        }
+        (None, Some(node_id), None) => Ok(Some(NodeBindingSelectorV1::NodeHost(node_id))),
+        (None, None, Some(validator)) => Ok(Some(NodeBindingSelectorV1::Validator(validator))),
+        (None, None, None) => Ok(None),
+        _ => Err(ConflictingBindingSelectorsError.into()),
     }
-    if let Some(dir) = args.node_data_dir.as_deref() {
-        let backend = reth_discovery_backend(args)?;
-        return Ok(Some(NodeBindingSelectorV1::NodeHost(
-            node_host_public_from_discovery_secret(dir, &backend)?,
-        )));
-    }
-    if let Some(node_id) = args.node_id {
-        return Ok(Some(NodeBindingSelectorV1::NodeHost(node_id)));
-    }
-    if let Some(validator) = args.validator {
-        return Ok(Some(NodeBindingSelectorV1::Validator(validator)));
-    }
-    Ok(None)
 }
 
 /// Same custody selector the node launcher uses for `<datadir>/discovery-secret`.
