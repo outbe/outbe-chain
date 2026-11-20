@@ -27,16 +27,19 @@ on:
   pull_request:
     paths:
       - "Dockerfile.project-toolchain"
+      - "mise.toml"
+      - "contracts/intex/mise.toml"
       - "release/project-toolchain-v1.json"
       - "release/apt/**"
-  # A push to main republishes only when the Dockerfile itself changes. The
-  # recipe also reads release/project-toolchain-v1.json, release/apt/ubuntu.sources,
-  # mise.toml and contracts/intex/mise.toml. After one of those changes on main,
-  # republish manually.
+  # A push to main republishes whenever an input consumed by the image changes.
   push:
     branches: ["main"]
     paths:
       - "Dockerfile.project-toolchain"
+      - "mise.toml"
+      - "contracts/intex/mise.toml"
+      - "release/project-toolchain-v1.json"
+      - "release/apt/**"
 
 permissions:
   contents: read
