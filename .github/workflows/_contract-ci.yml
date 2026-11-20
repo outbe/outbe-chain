@@ -39,7 +39,7 @@ jobs:
     name: Forge Format
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -56,7 +56,7 @@ jobs:
     name: Compile Contracts
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -79,7 +79,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -110,7 +110,7 @@ jobs:
     name: Forge Lint
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -133,7 +133,7 @@ jobs:
     if: ${{ inputs.abi-check }}
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -168,7 +168,7 @@ jobs:
     if: ${{ inputs.upgrade-check }}
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
@@ -201,7 +201,7 @@ jobs:
     if: ${{ inputs.slither-check }}
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     defaults:
       run:
         working-directory: contracts/${{ inputs.project }}
