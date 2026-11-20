@@ -96,9 +96,9 @@ pub(crate) fn clearing_run_gas(
         let key = DesisContract::chain_key(history_day, chain_id);
         bids = bids.max(u64::from(contract.chain_bid_count.read(&key)?));
     }
-    let chunks = bids.div_ceil(MAX_PAYLOAD_ARRAY_LEN as u64).max(1);
+    let pages = bids.div_ceil(MAX_PAYLOAD_ARRAY_LEN as u64).max(1);
     let cost = CLEARING_FIXED_GAS
-        .saturating_add(chunks.saturating_mul(CLEARING_PAGE_GAS))
+        .saturating_add(pages.saturating_mul(CLEARING_PAGE_GAS))
         .saturating_add(bids.saturating_mul(CLEARING_BID_GAS));
     Ok(cost.saturating_mul(3) / 2)
 }
@@ -264,22 +264,22 @@ fn clear_inner(
         if !result.bidder_chains.contains(&chain_id) {
             continue;
         }
-        let chunks = intex_auction_winners_pages(&result, chain_id)?;
-        let total_chunks = chunks.len() as u16;
-        for (chunk_index, chunk) in chunks.into_iter().enumerate() {
+        let pages = intex_auction_winners_pages(&result, chain_id)?;
+        let total_pages = pages.len() as u16;
+        for (page_index, page) in pages.into_iter().enumerate() {
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
                 IOriginRouter::sendIntexAuctionWinnersCall {
                     dstChainId: chain_id,
                     emissionDay: emission_day.into(),
-                    pageIndex: chunk_index as u16,
-                    totalPages: total_chunks,
+                    pageIndex: page_index as u16,
+                    totalPages: total_pages,
                     clearingRate: u64::from(result.clearing_rate),
                     basis: config.escrow_basis_minor(),
-                    winners: chunk.winners,
-                    partialIndex: chunk.partial_index,
-                    partialWon: chunk.partial_won,
+                    winners: page.winners,
+                    partialIndex: page.partial_index,
+                    partialWon: page.partial_won,
                 }
                 .abi_encode()
                 .into(),
@@ -294,11 +294,11 @@ fn clear_inner(
 /// closes the day on a chain whose bids all lost. Bounded by the codec's arrival set,
 /// which is one 256-bit word wide.
 pub(crate) fn intex_auction_winners_page_count(winners: usize) -> Result<usize> {
-    let chunks = winners.div_ceil(MAX_PAYLOAD_ARRAY_LEN).max(1);
-    if chunks > MAX_INTEX_AUCTION_WINNERS_PAGES {
+    let pages = winners.div_ceil(MAX_PAYLOAD_ARRAY_LEN).max(1);
+    if pages > MAX_INTEX_AUCTION_WINNERS_PAGES {
         return Err(DesisError::ReturnFanOutTooLarge(winners).into());
     }
-    Ok(chunks)
+    Ok(pages)
 }
 
 /// One REFUND_INSTRUCTIONS message: a run of a chain's winners and the partial fill among them.
@@ -306,7 +306,7 @@ pub(crate) fn intex_auction_winners_page_count(winners: usize) -> Result<usize> 
 pub(crate) struct IntexAuctionWinnersPage {
     pub(crate) winners: Vec<Address>,
     pub(crate) partial_index: u16,
-    /// Units the partially filled winner received; 0 when the chunk has none.
+    /// Units the partially filled winner received; 0 when the page has none.
     pub(crate) partial_won: u16,
 }
 
@@ -330,10 +330,10 @@ pub(crate) fn intex_auction_winners_pages(
         winners.push(result.winners[j]);
     }
 
-    let total_chunks = intex_auction_winners_page_count(winners.len())?;
-    Ok((0..total_chunks)
-        .map(|chunk_index| {
-            let start = chunk_index * MAX_PAYLOAD_ARRAY_LEN;
+    let total_pages = intex_auction_winners_page_count(winners.len())?;
+    Ok((0..total_pages)
+        .map(|page_index| {
+            let start = page_index * MAX_PAYLOAD_ARRAY_LEN;
             let end = (start + MAX_PAYLOAD_ARRAY_LEN).min(winners.len());
             let (partial_index, partial_won) = match partial {
                 Some((at, won)) if (start..end).contains(&at) => ((at - start) as u16, won),

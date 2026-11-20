@@ -142,7 +142,7 @@ contract BodyVersionTest is Test {
         bytes memory packet = BridgeMsgCodec.encodeBidsPage(1, 30101, 0, 1, new address[](0), new uint256[](0));
         packet[0] = 0x99;
         vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.UnsupportedBodyVersion.selector, 0x99));
-        this.exposedDecodeBidsBatch(packet);
+        this.exposedDecodeBidsPage(packet);
     }
 
     function test_BridgeCodec_UnknownBodyVersion_AuctionStageCollectingBids_Reverts() public {
@@ -189,7 +189,7 @@ contract BodyVersionTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(BridgeMsgCodec.IntexAuctionBidsArrayLengthMismatch.selector, uint256(2), uint256(1))
         );
-        this.exposedDecodeBidsBatch(packet);
+        this.exposedDecodeBidsPage(packet);
     }
 
     function test_BridgeCodec_BidsBatch_BatchIndexTotal_RoundTrips() public view {
@@ -204,20 +204,20 @@ contract BodyVersionTest is Test {
 
         bytes memory lastPacket =
             BridgeMsgCodec.encodeBidsPage(1, 30101, 1, 2, bidders, BidPackLib.pack(quantities, rates, timestamps));
-        (,, uint16 idxLast, uint16 totalLast,,) = this.exposedDecodeBidsBatch(lastPacket);
-        assertEq(idxLast, 1, "batchIndex should round-trip");
+        (,, uint16 idxLast, uint16 totalLast,,) = this.exposedDecodeBidsPage(lastPacket);
+        assertEq(idxLast, 1, "pageIndex should round-trip");
         assertEq(totalLast, 2, "totalPages should round-trip");
 
         bytes memory midPacket =
             BridgeMsgCodec.encodeBidsPage(1, 30101, 0, 2, bidders, BidPackLib.pack(quantities, rates, timestamps));
-        (,, uint16 idxMid, uint16 totalMid,,) = this.exposedDecodeBidsBatch(midPacket);
-        assertEq(idxMid, 0, "batchIndex=0 should round-trip");
+        (,, uint16 idxMid, uint16 totalMid,,) = this.exposedDecodeBidsPage(midPacket);
+        assertEq(idxMid, 0, "pageIndex=0 should round-trip");
         assertEq(totalMid, 2, "totalPages should round-trip");
     }
 
     // --- External wrappers so calldata-slice helpers can be invoked via vm.expectRevert ---
 
-    function exposedDecodeBidsBatch(bytes calldata p)
+    function exposedDecodeBidsPage(bytes calldata p)
         external
         pure
         returns (uint32, uint32, uint16, uint16, address[] memory, uint256[] memory)

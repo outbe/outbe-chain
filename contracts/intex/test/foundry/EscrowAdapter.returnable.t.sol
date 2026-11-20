@@ -10,7 +10,7 @@ import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
 /// @dev `returnableAmount` must report exactly what `returnIntexAuctionAsset` then pays, from exactly when
 ///      it pays it.
-contract EscrowAdapterClaimableTest is Test {
+contract EscrowAdapterReturnableTest is Test {
     EscrowAdapter internal escrow;
     MockTheCompact internal compact;
     MockWCOEN internal token;
@@ -69,34 +69,34 @@ contract EscrowAdapterClaimableTest is Test {
     /// @dev The claim pays the view's amount in full, not a wei earlier than its timestamp, and
     ///      leaves nothing after.
     function _assertClaimMatchesView(uint128 expectedAmount, uint32 expectedAt) internal {
-        (uint128 amount, uint32 claimableAt) = escrow.returnableAmount(DAY, bidder);
+        (uint128 amount, uint32 returnableAt) = escrow.returnableAmount(DAY, bidder);
         assertEq(amount, expectedAmount, "amount");
-        assertEq(claimableAt, expectedAt, "claimable at");
+        assertEq(returnableAt, expectedAt, "returnable at");
 
-        if (claimableAt != 0) {
-            vm.warp(claimableAt - 1);
+        if (returnableAt != 0) {
+            vm.warp(returnableAt - 1);
             vm.expectRevert(
                 abi.encodeWithSelector(
-                    IEscrowAdapter.IntexAuctionAssetNotYetReturnable.selector, claimableAt, claimableAt - 1
+                    IEscrowAdapter.IntexAuctionAssetNotYetReturnable.selector, returnableAt, returnableAt - 1
                 )
             );
             _refund(DAY, bidder);
-            vm.warp(claimableAt);
+            vm.warp(returnableAt);
         }
 
         uint256 before = token.balanceOf(bidder);
         _refund(DAY, bidder);
         assertEq(token.balanceOf(bidder) - before, amount, "the claim pays what the view reported");
 
-        (amount, claimableAt) = escrow.returnableAmount(DAY, bidder);
+        (amount, returnableAt) = escrow.returnableAmount(DAY, bidder);
         assertEq(amount, 0, "nothing left");
-        assertEq(claimableAt, 0, "no date either");
+        assertEq(returnableAt, 0, "no date either");
     }
 
     function test_NothingToClaimWithoutALock() public view {
-        (uint128 amount, uint32 claimableAt) = escrow.returnableAmount(DAY, address(0xDEAD));
+        (uint128 amount, uint32 returnableAt) = escrow.returnableAmount(DAY, address(0xDEAD));
         assertEq(amount, 0);
-        assertEq(claimableAt, 0);
+        assertEq(returnableAt, 0);
     }
 
     function test_ADayThatNeverFinalizedOwesThePrincipal() public {
@@ -120,9 +120,9 @@ contract EscrowAdapterClaimableTest is Test {
 
     function test_ASettledLockHasNothingToClaim() public {
         _finalize(_only(bidder), 1_000_000, true);
-        (uint128 amount, uint32 claimableAt) = escrow.returnableAmount(DAY, bidder);
+        (uint128 amount, uint32 returnableAt) = escrow.returnableAmount(DAY, bidder);
         assertEq(amount, 0);
-        assertEq(claimableAt, 0);
+        assertEq(returnableAt, 0);
     }
 
     function test_AClaimDeletesTheLock() public {

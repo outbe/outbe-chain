@@ -51,15 +51,15 @@ contract RecordingDesis {
         uint32 srcChainId,
         uint16, /* pageIndex */
         uint16 totalPages,
-        address[] calldata bidderAddresses,
+        address[] calldata pageBidders,
         uint256[] calldata packedBids
     ) external {
         lastDay = emissionDay;
         lastSrcChainId = srcChainId;
         lastTotalBatches = totalPages;
-        for (uint256 i = 0; i < bidderAddresses.length; i++) {
+        for (uint256 i = 0; i < pageBidders.length; i++) {
             (uint16 q, uint32 r,,,) = BridgeMsgCodec.unpackBid(packedBids[i]);
-            bidders.push(bidderAddresses[i]);
+            bidders.push(pageBidders[i]);
             quantities.push(q);
             rates.push(r);
         }

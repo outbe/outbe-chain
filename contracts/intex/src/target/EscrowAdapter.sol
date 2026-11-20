@@ -550,7 +550,7 @@ contract EscrowAdapter is
     function _returnable(AuctionEscrowState storage state, IntexAuctionBidLock storage lock)
         private
         view
-        returns (uint128 returnedAmount, uint32 claimableAt)
+        returns (uint128 returnedAmount, uint32 returnableAt)
     {
         if (lock.status == LockStatus.Won) return (lock.lockedAmount, 0);
         if (!state.finalized) return (lock.lockedAmount, lock.lockedAt + UNFINALIZED_RETURN_DELAY);
@@ -573,7 +573,7 @@ contract EscrowAdapter is
         external
         view
         override
-        returns (uint128 amount, uint32 claimableAt)
+        returns (uint128 amount, uint32 returnableAt)
     {
         EscrowAdapterStorage storage $ = _s();
         IntexAuctionBidLock storage lock = $.bidLocks[emissionDay][bidder];

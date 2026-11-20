@@ -61,11 +61,6 @@ interface ITargetRouter {
         uint32 winnersCount
     );
 
-    /// @notice Emitted when a mark-called message is received from Outbe.
-    /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param seriesId Series identifier.
-    event MarkCalledReceived(uint32 indexed srcChainId, bytes14 indexed seriesId);
-
     /// @notice Emitted when the proceeds of one page leave for Outbe, at the first try or at a retry that works.
     event IntexAuctionProceedsSent(
         bytes32 indexed sendId, uint32 indexed emissionDay, uint32 indexed pageIndex, uint256 amountMinor
@@ -82,11 +77,10 @@ interface ITargetRouter {
     /// @notice Emitted when an admin sets IntexAuction, the Intex contract and the escrow. Only the new values.
     event TargetRouterDependenciesSet(address intexAuction, address intexContract, address escrow);
 
-    /// @notice Emitted when a Called mark waits in its series' slot because the series has not landed here yet.
-    /// @param seriesId Series the mark is for.
-    event MarkParked(bytes14 indexed seriesId);
-    /// @notice Emitted when a slotted mark is applied to its series.
-    event ParkedMarkApplied(bytes14 indexed seriesId);
+    /// @notice Emitted when a call notice cannot be applied to its series here, and the notice waits.
+    ///         `errorData` is empty when the call left no revert data, for example while the series has not
+    ///         landed. The token reports the call once applied.
+    event IntexSeriesCallNoticeApplyFailed(bytes14 indexed seriesId, uint32 indexed srcChainId, bytes errorData);
 
     // --- Errors ---
     /// @notice Zero address provided.

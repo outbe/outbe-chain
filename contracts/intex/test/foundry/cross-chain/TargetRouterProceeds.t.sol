@@ -11,6 +11,22 @@ import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
+/// @dev An OriginRouter on Outbe itself: it names WCOEN and records the local hand-over.
+contract LocalOriginRouter {
+    address public wcoen;
+    uint32 public lastEmissionDay;
+    uint32 public lastPageIndex;
+    uint256 public lastAmount;
+
+    constructor(address token) {
+        wcoen = token;
+    }
+
+    function receiveLocalProceeds(uint32 emissionDay, uint32 pageIndex, uint256 amount) external {
+        (lastEmissionDay, lastPageIndex, lastAmount) = (emissionDay, pageIndex, amount);
+    }
+}
+
 /// @dev Minimal EscrowAdapter stand-in. `chargeIntexAuctionAsset` returns a configured totalPaid. The mock
 ///      also exposes `paymentToken`.
 contract MockEscrowAdapter {
@@ -186,6 +202,29 @@ contract TargetRouterProceedsTest is CrossChainTest {
         assertEq(a, AMOUNT);
         assertTrue(exists);
         assertFalse(done);
+    }
+
+    function test_on_outbe_the_proceeds_of_a_page_go_to_the_origin_router_with_no_send_id() public {
+        uint32 local = uint32(block.chainid);
+        LocalOriginRouter origin = new LocalOriginRouter(address(wcoen));
+        TargetRouter outbeTarget = DeployProxy.targetRouter(address(bridge), address(this), local);
+        outbeTarget.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        outbeTarget.registerRemoteMessenger(local, _interop(local, originSender));
+        outbeTarget.setProceedsRoute(address(tokenBridge), address(origin));
+        escrow.setTotalPaid(AMOUNT);
+
+        address[] memory winners = new address[](1);
+        winners[0] = bidder;
+        bytes memory packet = BridgeMsgCodec.encodeIntexAuctionWinners(SERIES_ID, 1, 2, 600_000, 1e6, winners, 0, 0);
+        vm.expectEmit(true, true, true, true, address(outbeTarget));
+        emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), SERIES_ID, 1, AMOUNT);
+        _deliver(local, originSender, address(outbeTarget), packet);
+
+        assertEq(tokenBridge.calls(), 0, "the Outbe route does not use the token bridge");
+        assertEq(origin.lastEmissionDay(), SERIES_ID);
+        assertEq(origin.lastPageIndex(), 1, "the hand-over carries the page");
+        assertEq(origin.lastAmount(), AMOUNT);
+        assertEq(wcoen.allowance(address(outbeTarget), address(origin)), AMOUNT, "the origin router may pull it");
     }
 
     function test_RefundInstructions_OnOutbeParksProceedsNotInWcoen() public {

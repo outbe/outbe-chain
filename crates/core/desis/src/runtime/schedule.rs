@@ -220,7 +220,7 @@ fn cancel_auction(
     reason: u8,
 ) -> Result<()> {
     if stage != AuctionStage::None {
-        send_auction_cancel(storage, emission_day, reason)?;
+        send_intex_auction_cancel(storage, emission_day, reason)?;
     }
     contract.emit(IDesis::DesisCanceled {
         emissionDay: emission_day.into(),

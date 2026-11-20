@@ -133,13 +133,13 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
         return BRIDGE.sendMessage{value: fee}(recipient, payload, attributes);
     }
 
-    /// @dev Require that `msg.value` covers `fee`, and refund the excess to the caller.
+    /// @dev Require that `msg.value` covers `fee`, and return the excess to the caller.
     function _takeFeeFromCaller(uint256 fee) private {
         if (msg.value < fee) revert MsgValueBelowFee(msg.value, fee);
-        uint256 refund = msg.value - fee;
-        if (refund > 0) {
+        uint256 excess = msg.value - fee;
+        if (excess > 0) {
             // slither-disable-next-line arbitrary-send-eth
-            (bool ok,) = msg.sender.call{value: refund}("");
+            (bool ok,) = msg.sender.call{value: excess}("");
             if (!ok) revert ReturnFailed();
         }
     }
