@@ -260,14 +260,18 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
 
 #[test]
 fn native_completion_briefs_the_emission_day() {
+    let day = outbe_system_common::time::EmissionDate::new(DAY);
     let mut provider = fixture();
+    StorageHandle::enter(&mut provider, |storage| {
+        outbe_desis::api::schedule_auction(storage, day).unwrap();
+    });
     run(&mut provider).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
         let desis = outbe_desis::schema::DesisContract::new(storage);
-        let day = outbe_system_common::time::EmissionDate::new(DAY);
+        assert_eq!(desis.desis_limit_set.read(&day).unwrap(), 1);
         assert_eq!(
             desis.auction_stage.read(&day).unwrap(),
-            outbe_desis::schema::AuctionStage::Briefed as u8
+            outbe_desis::schema::AuctionStage::None as u8
         );
     });
 }
@@ -428,4 +432,43 @@ fn one_rule_for_metadosis_limit() {
             );
         });
     }
+}
+
+fn block_at(storage: StorageHandle<'_>, timestamp: u64) -> BlockRuntimeContext<'_> {
+    BlockRuntimeContext::new(
+        BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
+            block_number: 10,
+            timestamp,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: u64::max(CLOCK, 1),
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
+        storage,
+    )
+}
+
+#[test]
+fn failed_metadosis_cancels_the_auction_of_its_day() {
+    let day = outbe_system_common::time::EmissionDate::new(DAY);
+    let mut provider = fixture_with_amounts(LIMIT, &[NOMINAL + 1]);
+    StorageHandle::enter(&mut provider, |storage| {
+        outbe_desis::api::schedule_auction(storage.clone(), day).unwrap();
+        crate::commands::fail_metadosis(&block_at(storage.clone(), CLOCK), DAY).unwrap();
+        let desis = outbe_desis::schema::DesisContract::new(storage.clone());
+        assert_eq!(
+            desis.cancel_reason.read(&day).unwrap(),
+            outbe_desis::constants::CANCELED_NO_LIMIT
+        );
+
+        let anchor = u64::from(desis.auction_at.read(&day).unwrap());
+        outbe_desis::advance_auctions(&block_at(storage.clone(), anchor)).unwrap();
+        assert_eq!(
+            desis.auction_stage.read(&day).unwrap(),
+            outbe_desis::schema::AuctionStage::Canceled as u8
+        );
+    });
 }

@@ -77,10 +77,10 @@ pub(super) fn verify_accepted_auction_cleanup(
             );
             if block == 8 {
                 assert_eq!(auction.chain_bid_count.read(&key).unwrap(), 0);
-                assert_eq!(auction.chain_done.read(&key).unwrap(), 0);
-                assert_eq!(auction.chain_done_batches.read(&key).unwrap(), 0);
-                assert_eq!(auction.chain_done_bids.read(&key).unwrap(), 0);
-                assert_eq!(auction.chain_total_batches.read(&key).unwrap(), 0);
+                assert_eq!(auction.bids_completed.read(&key).unwrap(), 0);
+                assert_eq!(auction.completed_pages.read(&key).unwrap(), 0);
+                assert_eq!(auction.completed_bids.read(&key).unwrap(), 0);
+                assert_eq!(auction.chain_total_pages.read(&key).unwrap(), 0);
                 assert_eq!(auction.chain_arrived_mask.read(&key).unwrap(), U256::ZERO);
                 assert_eq!(auction.cleanup_pending.read(&day).unwrap(), 2);
                 assert_eq!(auction.cleanup_head.read().unwrap(), 0);
@@ -104,12 +104,12 @@ pub(super) fn verify_accepted_auction_cleanup(
         });
     }
     assert!(first_logs.iter().any(|log| {
-        outbe_desis::precompile::IDesis::IntexAuctionCompleted::decode_log(log).is_ok()
-            || outbe_desis::precompile::IDesis::IntexAuctionFailed::decode_log(log).is_ok()
+        outbe_desis::precompile::IDesis::DesisCompleted::decode_log(log).is_ok()
+            || outbe_desis::precompile::IDesis::DesisFailed::decode_log(log).is_ok()
     }));
     assert!(!ctx.journaled_state.logs().iter().any(|log| {
-        outbe_desis::precompile::IDesis::IntexAuctionCompleted::decode_log(log).is_ok()
-            || outbe_desis::precompile::IDesis::IntexAuctionFailed::decode_log(log).is_ok()
+        outbe_desis::precompile::IDesis::DesisCompleted::decode_log(log).is_ok()
+            || outbe_desis::precompile::IDesis::DesisFailed::decode_log(log).is_ok()
             || outbe_intexfactory::precompile::IIntexFactory::IntexSeriesOpened::decode_log(log)
                 .is_ok()
             || outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded::decode_log(log)
@@ -135,7 +135,7 @@ pub(super) fn assert_cleanup_page(storage: StorageHandle<'_>, chains: u32) {
     let day = EmissionDate::new(20240101);
 
     let before = storage.gas_used().unwrap();
-    outbe_desis::process_cleanup(storage.clone()).unwrap();
+    outbe_desis::run_cleanup(storage.clone()).unwrap();
     let cost = storage.gas_used().unwrap() - before;
     assert!(cost <= 2_560_000);
     let auction = outbe_desis::DesisContract::new(storage);
@@ -171,7 +171,7 @@ pub(super) fn assert_cleanup_page(storage: StorageHandle<'_>, chains: u32) {
             for chain in 2..=4 {
                 assert_eq!(
                     auction
-                        .chain_total_batches
+                        .chain_total_pages
                         .read(&outbe_desis::DesisContract::chain_key(day, chain))
                         .unwrap(),
                     0

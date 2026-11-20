@@ -112,7 +112,7 @@ pub fn handle_cycle_tick_with_tasks(
         ctx,
         CycleWorkerId::DesisCleanup,
         crate::tasks::DESIS_CLEANUP_WORKER_BUDGET_GAS,
-        |ctx| outbe_desis::process_cleanup(ctx.storage.clone()),
+        |ctx| outbe_desis::run_cleanup(ctx.storage.clone()),
     )?;
     #[cfg(feature = "test-utils")]
     record_cycle_gas_sample(ctx, observation_before, handler_gas)?;

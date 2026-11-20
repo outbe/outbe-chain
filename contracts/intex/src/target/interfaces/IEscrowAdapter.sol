@@ -9,7 +9,7 @@ library EscrowTimes {
     ///         principal, anchored at the lock's `lockedAt`. The earliest lock comes at `commitEnd`,
     ///         so the first refund opens at `commitEnd` plus this window. The auction reads a day
     ///         without a result at that time as failed and takes no later one.
-    uint32 internal constant UNFINALIZED_REFUND_DELAY = 48 hours;
+    uint32 internal constant UNFINALIZED_RETURN_DELAY = 48 hours;
 }
 
 /**
@@ -23,7 +23,7 @@ interface IEscrowAdapter {
     // --- Types ---
 
     /// @notice Lock status for a bid. `Won`: the payment left with the day's proceeds. The lock keeps
-    ///         the change for `releaseRefund` and the units won for `redeemWinNote`. A redeemed or refunded
+    ///         the change for `returnIntexAuctionAsset` and the units won for `redeemWinNote`. A redeemed or refunded
     ///         lock is deleted and reads as `None`.
     enum LockStatus {
         None,
@@ -34,7 +34,7 @@ interface IEscrowAdapter {
     /// @notice Bid lock data stored per series per bidder.
     /// @dev Slot-packed: `lockedAmount` (16B) + `lockedAt` (4B) + `status` (1B) + `bidRate` (4B) + `quantity` (2B)
     ///      = 27B, one slot.
-    struct BidLock {
+    struct IntexAuctionBidLock {
         /// @notice Amount of payment-token the lock still holds. For a winner, the change.
         uint128 lockedAmount;
         /// @notice Timestamp when the lock was created (UNIX seconds).
@@ -47,7 +47,7 @@ interface IEscrowAdapter {
         uint16 quantity;
     }
 
-    /// @notice The clearing terms a day's winners paid at, taken from its first refund chunk.
+    /// @notice The clearing terms a day's winners charged at, taken from its first refund chunk.
     struct DayClearing {
         /// @notice Clearing rate (`1e6` fixed-point, share of the escrow basis).
         uint64 clearingRate;
@@ -63,7 +63,7 @@ interface IEscrowAdapter {
         ///         lower it. This keeps `assetVersion` meaningful for a day whose locks are all
         ///         claimed.
         uint32 lockCount;
-        /// @notice Timestamp when `finalizeAuction` flipped `finalized = true` (UNIX seconds).
+        /// @notice Timestamp when `chargeIntexAuctionAsset` flipped `finalized = true` (UNIX seconds).
         ///         It is 0 if the series escrow was never finalized.
         uint32 finalizedAt;
         /// @notice Whether the series escrow is finalized.
@@ -73,14 +73,14 @@ interface IEscrowAdapter {
         uint8 assetVersion;
     }
 
-    /// @notice Commit-entry bond taken at `commitBid` and held until reveal/cancel/claim.
+    /// @notice Commit-entry bond taken at `commitIntexAuctionBid` and held until reveal/cancel/claim.
     /// @dev Existence sentinel is `amount > 0`. The escrow deletes the record on release, so a
     ///      commit->cancel->commit cycle can re-lock within the same series.
-    struct CommitBond {
+    struct IntexAuctionBidBond {
         /// @notice Amount of payment-token bonded.
         uint128 amount;
         /// @notice Timestamp when the bond was locked (UNIX seconds). Anchors the
-        ///         escrow-local `claimAbandonedCommitBond` safety window.
+        ///         escrow-local `unlockAbandonedIntexAuctionBidBond` safety window.
         uint32 lockedAt;
         /// @notice Asset version the bond was taken under.
         uint8 assetVersion;
@@ -88,106 +88,63 @@ interface IEscrowAdapter {
 
     /// @notice A payment token and Compact position the escrow rotated away from. Locks and bonds taken
     ///         under it keep withdrawing from it.
-    struct AssetVersion {
+    struct IntexAuctionAssetVersion {
         /// @notice The Compact the position lives in.
         address compact;
         /// @notice Payment token the position holds.
-        IERC20 paymentToken;
+        IERC20 asset;
         /// @notice The Compact resource lock id of the position.
         uint256 lockId;
         /// @notice Payment-token units in one protocol unit, fixed when the token was wired.
-        uint256 paymentScale;
+        uint256 assetScale;
     }
 
     // --- Events ---
 
-    /// @notice Emitted when funds are locked for a bid during reveal.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param bidder Bidder whose funds were locked.
-    /// @param amount Amount of payment-token locked.
-    event FundsLocked(uint32 indexed emissionDay, address indexed bidder, uint128 amount);
-
-    /// @notice Emitted when a commit-entry bond is locked at `commitBid`.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param bidder Bidder whose bond was taken.
-    /// @param amount Amount of payment-token bonded.
-    event CommitBondLocked(uint32 indexed emissionDay, address indexed bidder, uint128 amount);
-
-    /// @notice Emitted when a commit-entry bond is returned to its owner (reveal, cancel,
-    ///         auction-side claim, or the escrow-local abandoned-bond claim).
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param bidder Bidder the bond was returned to.
-    /// @param amount Amount of payment-token returned.
-    event CommitBondReleased(uint32 indexed emissionDay, address indexed bidder, uint128 amount);
-
-    /// @notice Emitted when funds are refunded to a bidder.
-    /// @param receiveId `bytes32(0)`: only a claim pays a refund. A bridge message never does.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param bidder Bidder who received the refund.
-    /// @param amount Amount refunded to the bidder.
-    event FundsRefunded(bytes32 indexed receiveId, uint32 indexed emissionDay, address indexed bidder, uint128 amount);
-
-    /// @notice Emitted for each refund chunk the escrow applies.
-    /// @param receiveId Inbound bridge message that carried the chunk.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param totalRefunded Change the chunk's winners are now owed.
-    /// @param totalPaid Winning payments routed to the proceeds recipient.
-    /// @param bidsProcessed Winners the chunk carried.
-    event AuctionEscrowFinalized(
-        bytes32 indexed receiveId,
-        uint32 indexed emissionDay,
-        uint128 totalRefunded,
-        uint128 totalPaid,
-        uint32 bidsProcessed
+    /// @notice Emitted at the reveal, when the escrow locks the asset of the bid, in the asset scale.
+    event IntexAuctionAssetLocked(
+        uint32 indexed emissionDay, address indexed bidder, address asset, uint256 amountMinor
     );
 
-    /// @notice Emitted on each successful `wire()` call (initial + rotations).
-    /// @dev Carries old+new for every dependency so a rotation is reconstructible from the log
-    ///      alone. The `*Old` fields are `address(0)` on the initial wire.
-    /// @param intexAuctionOld IntexAuction address before this wire.
-    /// @param intexAuctionNew IntexAuction address after this wire.
-    /// @param compactOld The Compact address before this wire.
-    /// @param compactNew The Compact address after this wire.
-    /// @param paymentTokenOld Active payment-token address before this wire.
-    /// @param paymentTokenNew Active payment-token address after this wire.
-    event Wired(
-        address intexAuctionOld,
-        address intexAuctionNew,
-        address compactOld,
-        address compactNew,
-        address paymentTokenOld,
-        address paymentTokenNew
+    /// @notice Emitted for each winner, when the escrow charges the lock at the clearing rate. The change
+    ///         stays locked.
+    event IntexAuctionAssetCharged(
+        uint32 indexed emissionDay, address indexed bidder, address asset, uint256 amountMinor
     );
 
-    /// @notice Emitted when a rotation retires the active asset. Locks and bonds taken under it
-    ///         keep using it.
-    /// @param version Version number the retired asset keeps.
-    /// @param compact The Compact the retired position lives in.
-    /// @param paymentToken Payment token of the retired position.
-    /// @param lockId Resource lock id of the retired position.
-    event AssetRetired(uint8 indexed version, address compact, address paymentToken, uint256 lockId);
-
-    /// @notice Emitted when the escrow cannot settle a winner in a refund chunk, because:
-    ///         - its lock is not live,
-    ///         - the partial fill does not fit it, or
-    ///         - its payment would exceed it.
-    ///         The lock stays as it was.
-    /// @param receiveId Inbound bridge message that carried the chunk.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param bidder Winner that was skipped.
-    /// @param reason Encoded error naming why.
-    event BidderRefundFailed(
-        bytes32 indexed receiveId, uint32 indexed emissionDay, address indexed bidder, bytes reason
+    /// @notice Emitted when the escrow gives asset back: the asset of a bid that lost, or the change of a winner.
+    /// @param reason 0 a return or a redeem, 1 the safety path after 30 days.
+    event IntexAuctionAssetReturned(
+        uint32 indexed emissionDay, address indexed bidder, address asset, uint256 amountMinor, uint8 reason
     );
 
-    /// @notice Emitted when a refund chunk carried winners and settled none of them.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param bidsProcessed Winners the chunk carried, all skipped.
-    event FinalizationNoOp(uint32 indexed emissionDay, uint32 bidsProcessed);
+    /// @notice Emitted at the commit, when the escrow locks the bid bond.
+    event IntexAuctionBidBondLocked(
+        uint32 indexed emissionDay, address indexed bidder, address asset, uint256 amountMinor
+    );
 
-    /// @notice Emitted when the finalized-proceeds recipient is configured.
-    /// @param recipient Address receiving each series' finalized proceeds.
-    event ProceedsRecipientSet(address recipient);
+    /// @notice Emitted when the escrow gives the whole bond back.
+    /// @param reason 0 a reveal or a cancel, 1 an unlock 24 hours after the reveal end with no reveal,
+    ///        2 the safety path after 30 days.
+    event IntexAuctionBidBondUnlocked(
+        uint32 indexed emissionDay, address indexed bidder, address asset, uint256 amountMinor, uint8 reason
+    );
+
+    /// @notice Emitted for each winner, when the escrow creates its IntexAuctionWinNote.
+    event IntexAuctionWinNoteCreated(uint32 indexed emissionDay, address indexed bidder, uint32 quantity);
+
+    /// @notice Emitted when the escrow cannot create the note of one winner. It charges nothing and keeps
+    ///         the lock.
+    event IntexAuctionWinNoteCreateFailed(uint32 indexed emissionDay, address indexed bidder, bytes errorData);
+
+    /// @notice Emitted when an admin sets the auction, The Compact and the asset. Only the new values.
+    event EscrowDependenciesSet(address intexAuction, address compact, address asset, uint8 assetDecimals);
+
+    /// @notice Emitted when an admin changes the asset or The Compact. Open locks and bonds keep the old version.
+    event IntexAuctionAssetVersionRetired(uint8 indexed version, address compact, address asset, uint256 lockId);
+
+    /// @notice Emitted when an admin sets the address that gets the charge of each page.
+    event EscrowProceedsRecipientSet(address recipient);
 
     // --- Errors ---
 
@@ -199,24 +156,24 @@ interface IEscrowAdapter {
     error ZeroValue(string f);
     /// @notice Payment token reports fewer decimals than the protocol amounts carry.
     /// @param actual Decimals the token reports.
-    error PaymentTokenDecimals(uint8 actual);
+    error IntexAuctionAssetDecimals(uint8 actual);
     /// @notice A protocol amount does not fit `uint128` once scaled to the payment token.
     /// @param amount The scaled amount.
-    error PaymentAmountOverflow(uint256 amount);
+    error IntexAuctionAssetAmountOverflow(uint256 amount);
     /// @notice Bidder already has locked funds for this series.
-    error BidAlreadyLocked();
+    error IntexAuctionBidAlreadyLocked();
     /// @notice Lock is not in the active state required for this operation.
     error LockNotActive();
     /// @notice Series escrow has already been finalized.
     error AlreadyFinalized();
     /// @notice A winner's payment at the day's clearing terms would exceed its lock.
     /// @param locked Locked amount.
-    /// @param paid Payment the clearing terms work out.
-    error PaymentExceedsLock(uint128 locked, uint256 paid);
+    /// @param charged Charge the clearing terms work out.
+    error ChargeExceedsLock(uint128 locked, uint256 charged);
     /// @notice A refund chunk names a partially filled winner outside the winners it carries.
     /// @param partialIndex Index the partial fill points at.
     /// @param winners Winners the chunk carries.
-    error PartialFillOutsideChunk(uint16 partialIndex, uint256 winners);
+    error PartialFillOutsidePage(uint16 partialIndex, uint256 winners);
     /// @notice A partial fill is not smaller than the quantity the winner locked for.
     /// @param won Units the winner received.
     /// @param quantity Units the lock was taken for.
@@ -239,62 +196,64 @@ interface IEscrowAdapter {
     /// @notice A lock was offered for a day whose earlier locks sit under a retired asset.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param assetVersion Asset version the day is bound to.
-    error DayAssetRetired(uint32 emissionDay, uint8 assetVersion);
+    error DayIntexAuctionAssetRetired(uint32 emissionDay, uint8 assetVersion);
     /// @notice Finalization produced proceeds but no recipient is configured.
     error ProceedsRecipientNotSet();
     /// @notice A winner's lock holds no change to refund.
-    error NothingToRefund();
+    error NothingToReturn();
     /// @notice The auction cannot change while bidders still have something to claim through it.
     error LocksOutstanding();
     /// @notice A refund was claimed before the safety window elapsed.
-    /// @param claimableAt Earliest unix-seconds timestamp the refund can be claimed at.
-    /// @param now_ Current block timestamp.
-    error RefundNotYetClaimable(uint32 claimableAt, uint32 now_);
-    /// @notice `lockCommitBond` called while the bidder already holds a live bond for the series.
-    error CommitBondAlreadyLocked();
+    /// @param returnableAt Earliest unix-seconds timestamp the refund can be claimed at.
+    /// @param nowTs Current block timestamp.
+    error IntexAuctionAssetNotYetReturnable(uint32 returnableAt, uint32 nowTs);
+    /// @notice `lockIntexAuctionBidBond` called while the bidder already holds a live bond for the series.
+    error IntexAuctionBidBondAlreadyLocked();
     /// @notice No live commit bond exists for the series/bidder pair.
-    error CommitBondNotFound();
-    /// @notice `claimAbandonedCommitBond` was called before the escrow-local safety window elapsed.
-    /// @param claimableAt Earliest unix-seconds timestamp the bond can be claimed at.
-    /// @param now_ Current block timestamp.
-    error CommitBondNotYetAbandoned(uint32 claimableAt, uint32 now_);
+    error IntexAuctionBidBondNotFound();
+    /// @notice `unlockAbandonedIntexAuctionBidBond` was called before the escrow-local safety window elapsed.
+    /// @param unlockableAt Earliest unix-seconds timestamp the bond can be claimed at.
+    /// @param nowTs Current block timestamp.
+    error IntexAuctionBidBondNotYetAbandoned(uint32 unlockableAt, uint32 nowTs);
 
     // --- Admin ---
 
     /// @notice Wire contract dependencies.
-    /// @dev Rotating `_paymentToken` or `_compact` retires the active asset under its version.
+    /// @dev Rotating `_asset` or `_compact` retires the active asset under its version.
     ///      Locks and bonds taken under it keep withdrawing from it. The auction changes only once
     ///      `hasOutstandingLocks` is false: its bidders claim through it.
     /// @param _intexAuction IntexAuction contract address.
     /// @param _compact The Compact contract address.
-    /// @param _paymentToken Active payment-token address.
-    function wire(address _intexAuction, address _compact, address _paymentToken) external;
+    /// @param _asset Active payment-token address.
+    function setDependencies(address _intexAuction, address _compact, address _asset) external;
 
     // --- Auction Integration ---
 
     /// @notice Lock funds for a bid during the reveal stage. Callable only by the IntexAuction contract.
-    /// @dev The bidder must approve this contract to spend `paymentToken` beforehand. The escrow
+    /// @dev The bidder must approve this contract to spend `asset` beforehand. The escrow
     ///      locks `quantity * basis * bidRate / 1e6`, scaled to the active payment token.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @param basis Per-Intex escrow basis: the day's PROMIS load, in protocol units.
     /// @param bidRate Bid rate (1e6 fixed-point).
     /// @param quantity Intex units the bid asked for.
-    function lockFunds(uint32 emissionDay, address bidder, uint128 basis, uint32 bidRate, uint16 quantity) external;
+    function lockIntexAuctionAsset(uint32 emissionDay, address bidder, uint128 basis, uint32 bidRate, uint16 quantity)
+        external;
 
-    /// @notice Lock the commit-entry bond at `commitBid`. Callable only by the IntexAuction contract.
-    /// @dev The bidder must approve this contract to spend `paymentToken` beforehand. The Compact
+    /// @notice Lock the commit-entry bond at `commitIntexAuctionBid`. Callable only by the IntexAuction contract.
+    /// @dev The bidder must approve this contract to spend `asset` beforehand. The Compact
     ///      holds the bond under the same lock id as bid escrow.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address the bond is taken from (and later returned to).
-    /// @param amount Protocol bond amount (the day's `commitBondMinor`), scaled to the active payment token.
-    function lockCommitBond(uint32 emissionDay, address bidder, uint128 amount) external;
+    /// @param amount Protocol bond amount (the day's `bidBondMinor`), scaled to the active payment token.
+    function lockIntexAuctionBidBond(uint32 emissionDay, address bidder, uint128 amount) external;
 
     /// @notice Return a live commit bond to its owner. Callable only by the IntexAuction contract
-    ///         (reveal, cancel, and the auction-side stage-aware claim path).
+    ///         (reveal, cancel, and the auction-side stage-aware path).
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose bond is returned.
-    function releaseCommitBond(uint32 emissionDay, address bidder) external;
+    /// @param reason 0 a reveal or a cancel, 1 an unlock with no reveal.
+    function unlockIntexAuctionBidBond(uint32 emissionDay, address bidder, uint8 reason) external;
 
     /// @notice Redeem a winner's WinNote: pay the change it still holds and return the units won.
     ///         Callable only by the IntexAuction contract, which issues the units.
@@ -304,11 +263,11 @@ interface IEscrowAdapter {
     function redeemWinNote(uint32 emissionDay, address bidder) external returns (uint16 units);
 
     /// @notice Active payment token used for bid escrow (WCOEN).
-    function paymentToken() external view returns (IERC20);
+    function intexAuctionAsset() external view returns (IERC20);
 
     /// @notice Payment token of the asset a day locked under. Its proceeds leave in this token.
     /// @param emissionDay Emission day (yyyymmdd).
-    function dayPaymentToken(uint32 emissionDay) external view returns (IERC20);
+    function dayIntexAuctionAsset(uint32 emissionDay) external view returns (IERC20);
 
     /// @notice Recipient of finalized auction proceeds (the router routing them cross-chain).
     function proceedsRecipient() external view returns (address);
@@ -320,13 +279,11 @@ interface IEscrowAdapter {
 
     /// @notice Apply one refund chunk: take each winner's payment at the day's clearing terms and
     ///         mark the rest of its lock owed. This function pays nothing to bidders. Every
-    ///         bidder collects through the auction's `claimRefund`. A bidder that the day's chunks
+    ///         bidder collects through the auction's `returnIntexAuctionAsset`. A bidder that the day's chunks
     ///         never name lost.
     /// @dev A winner's lock leaves `Locked` on its first chunk, so none pays twice. `completesDay`
     ///      closes the day.
     /// @param emissionDay Emission day (yyyymmdd).
-    /// @param receiveId Inbound bridge message id that carried the chunk. The function threads it
-    ///        into the emitted events.
     /// @param winners Winners on this chain in the chunk.
     /// @param partialIndex Index of the partially filled winner. The function reads it only when
     ///        `partialWon` is non-zero.
@@ -335,9 +292,8 @@ interface IEscrowAdapter {
     /// @param basis The day's escrow basis.
     /// @param completesDay Whether this is the day's last chunk.
     /// @return totalPaid Proceeds transferred to the caller for cross-chain routing to the origin.
-    function finalizeAuction(
+    function chargeIntexAuctionAsset(
         uint32 emissionDay,
-        bytes32 receiveId,
         address[] calldata winners,
         uint16 partialIndex,
         uint16 partialWon,
@@ -352,66 +308,72 @@ interface IEscrowAdapter {
     ///         - A winner collects its change at once. The lock keeps the units won for `redeemWinNote`.
     ///         - A bidder that the finalized day never named collects its full principal at once.
     ///         - A bidder whose day never finalized collects its full principal after
-    ///           `UNFINALIZED_REFUND_DELAY`.
+    ///           `UNFINALIZED_RETURN_DELAY`.
     ///         A lock already gone on a finalized day pays nothing and reports closed.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address whose locked principal is being claimed.
     /// @return closed Whether the lock is gone after the call.
     /// @return finalized Whether the day is finalized.
-    function releaseRefund(uint32 emissionDay, address bidder) external returns (bool closed, bool finalized);
+    function returnIntexAuctionAsset(uint32 emissionDay, address bidder) external returns (bool closed, bool finalized);
 
-    /// @notice Escrow-local safety valve for a lock stranded past `REFUND_ABANDON_DELAY` (e.g. the
+    /// @notice Escrow-local safety valve for a lock stranded past `RETURN_ABANDON_DELAY` (e.g. the
     ///         auction contract stopped working). It is time-based only and never consults the
     ///         auction. It pays the stored `bidder`, not `msg.sender`, and only money: a winner's
     ///         units stay in its lock.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose lock is being claimed.
-    function claimAbandonedRefund(uint32 emissionDay, address bidder) external;
+    function returnAbandonedIntexAuctionAsset(uint32 emissionDay, address bidder) external;
 
-    /// @notice `claimAbandonedRefund` was called before the escrow-local safety window elapsed.
-    /// @param claimableAt Earliest unix-seconds timestamp the refund can be claimed at.
-    /// @param now_ Current block timestamp.
-    error RefundNotYetAbandoned(uint32 claimableAt, uint32 now_);
+    /// @notice `returnAbandonedIntexAuctionAsset` was called before the escrow-local safety window elapsed.
+    /// @param returnableAt Earliest unix-seconds timestamp the refund can be claimed at.
+    /// @param nowTs Current block timestamp.
+    error ReturnNotYetAbandoned(uint32 returnableAt, uint32 nowTs);
 
     /// @notice Escrow-local safety valve for a commit bond stranded past
-    ///         `COMMIT_BOND_ABANDON_DELAY` (e.g. the auction contract was rotated away while the
+    ///         `BID_BOND_ABANDON_DELAY` (e.g. the auction contract was rotated away while the
     ///         bond was live). It is time-based only and never consults the auction. It pays the
     ///         stored `bidder`, not `msg.sender`. The stage-aware fast path lives on IntexAuction.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose bond is being claimed.
-    function claimAbandonedCommitBond(uint32 emissionDay, address bidder) external;
+    function unlockAbandonedIntexAuctionBidBond(uint32 emissionDay, address bidder) external;
 
     // --- Views ---
 
     /// @notice Get bid lock information.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address whose lock is being read.
-    /// @return lock The stored `BidLock` record for the series/bidder pair.
-    function getBidLock(uint32 emissionDay, address bidder) external view returns (BidLock memory lock);
+    /// @return lock The stored `IntexAuctionBidLock` record for the series/bidder pair.
+    function getIntexAuctionBidLock(uint32 emissionDay, address bidder)
+        external
+        view
+        returns (IntexAuctionBidLock memory lock);
 
-    /// @notice What the auction's `claimRefund` would pay `bidder` for the day, and from when. Zero once nothing is left to
+    /// @notice What the auction's `returnIntexAuctionAsset` would pay `bidder` for the day, and from when. Zero once nothing is left to
     ///         claim: a settled or claimed lock is gone.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @return amount Refund the claim would pay.
-    /// @return claimableAt Earliest unix-seconds timestamp the claim succeeds at.
-    function getClaimableRefund(uint32 emissionDay, address bidder)
+    /// @return returnableAt Earliest unix-seconds timestamp the claim succeeds at.
+    function returnableAmount(uint32 emissionDay, address bidder)
         external
         view
-        returns (uint128 amount, uint32 claimableAt);
+        returns (uint128 amount, uint32 returnableAt);
 
     /// @notice Get commit bond information. A zero `amount` means no live bond.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address whose bond is being read.
-    /// @return bond The stored `CommitBond` record for the series/bidder pair.
-    function getCommitBond(uint32 emissionDay, address bidder) external view returns (CommitBond memory bond);
+    /// @return bond The stored `IntexAuctionBidBond` record for the series/bidder pair.
+    function getIntexAuctionBidBond(uint32 emissionDay, address bidder)
+        external
+        view
+        returns (IntexAuctionBidBond memory bond);
 
     /// @notice Get series escrow status.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @return hasLocks True if the series ever took a lock. Claimed locks do not lower it.
     /// @return isFinalized True if the series escrow is finalized.
     /// @return totalLocked Total payment-token currently locked for the series.
-    function getAuctionStatus(uint32 emissionDay)
+    function auctionStatus(uint32 emissionDay)
         external
         view
         returns (bool hasLocks, bool isFinalized, uint128 totalLocked);
@@ -421,10 +383,10 @@ interface IEscrowAdapter {
     function hasOutstandingLocks() external view returns (bool outstanding);
 
     /// @notice Version number of the active asset.
-    function currentAssetVersion() external view returns (uint8 version);
+    function currentIntexAuctionAssetVersion() external view returns (uint8 version);
 
     /// @notice The asset a version refers to. The active version reads the live wiring.
     /// @param version Asset version.
     /// @return asset The Compact, payment token, lock id and payment scale of that version.
-    function getAssetVersion(uint8 version) external view returns (AssetVersion memory asset);
+    function getIntexAuctionAssetVersion(uint8 version) external view returns (IntexAuctionAssetVersion memory asset);
 }

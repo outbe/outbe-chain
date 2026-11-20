@@ -100,7 +100,7 @@ contract DeployTarget is BaseScript {
 
         // Peer the router with the OriginRouter (same address on every chain via CREATE3).
         TargetRouter(payable(router))
-            .setRemoteMessenger(
+            .registerRemoteMessenger(
                 originChainId,
                 InteroperableAddress.formatEvmV1(originChainId, predictProxy(factory, deployer, "OriginRouter"))
             );
@@ -112,7 +112,7 @@ contract DeployTarget is BaseScript {
             uint32 cid = uint32(targetChainIds[i]);
             if (cid == local) continue;
             IntexNFT1155Bridge(payable(nftBridge))
-                .setRemoteMessenger(cid, InteroperableAddress.formatEvmV1(cid, bridgePeer));
+                .registerRemoteMessenger(cid, InteroperableAddress.formatEvmV1(cid, bridgePeer));
         }
 
         // Proceeds route: the escrow hands finalized proceeds to the router, which bridges them

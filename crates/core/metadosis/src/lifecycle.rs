@@ -1,7 +1,10 @@
 //! EmissionDay and WorldwideDay lifecycle orchestration.
 
 use outbe_emission::schema::metadosis_state;
-use outbe_primitives::{block::BlockRuntimeContext, error::Result};
+use outbe_primitives::{
+    block::BlockRuntimeContext,
+    error::{PassFailure, Result},
+};
 use outbe_promislimit::PromisLimitContract;
 use outbe_system_common::time::WorldwideDay;
 use outbe_tributefactory::TributeFactoryContract;
@@ -83,11 +86,28 @@ pub(crate) fn complete_metadosis(
     Ok(())
 }
 
+/// Ask Desis to cancel the auction of a day whose Metadosis did not complete. A Desis revert does
+/// not stop the failure path: an auction with no brief cancels itself at the end of its reveal stage.
+fn cancel_auction_of(metadosis: &MetadosisContract<'_>, day: u32) -> Result<()> {
+    let storage = metadosis.storage.clone();
+    match storage
+        .clone()
+        .with_checkpoint(|| outbe_desis::api::cancel_auction(storage.clone(), day.into()))
+    {
+        Err(err) if err.record_pass_failure() == PassFailure::Skip => {
+            tracing::warn!(target: "outbe::metadosis", day, error = ?err, "auction cancel skipped");
+            Ok(())
+        }
+        result => result,
+    }
+}
+
 pub(crate) fn cancel_metadosis(
     metadosis: &mut MetadosisContract<'_>,
     day: u32,
     reason: u8,
 ) -> Result<()> {
+    cancel_auction_of(metadosis, day)?;
     if metadosis.emission_days().get(day)?.is_some() {
         let record =
             outbe_emission::api::record_metadosis_canceled(metadosis.storage.clone(), day)?;
@@ -112,6 +132,7 @@ pub(crate) fn fail_metadosis(
     day: u32,
     reason: u8,
 ) -> Result<()> {
+    cancel_auction_of(metadosis, day)?;
     if metadosis.emission_days().get(day)?.is_some() {
         let (record, limit_minor) =
             outbe_emission::api::record_metadosis_failed(metadosis.storage.clone(), day)?;

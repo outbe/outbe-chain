@@ -32,7 +32,7 @@ contract MockIntexFactory {
         shouldRevert = v;
     }
 
-    function distribute(uint32 emissionDay, uint32 srcChainId) external payable {
+    function burnIntexAuctionProceeds(uint32 emissionDay, uint32 srcChainId) external payable {
         require(!shouldRevert, "distribute failed");
         calls++;
         lastEmissionDay = emissionDay;
@@ -66,10 +66,10 @@ contract OriginRouterProceedsTest is CrossChainTest {
         wcoen = new MockWCOEN();
         vm.deal(address(wcoen), 1_000e6); // native backing for unwrap
 
-        origin.wire(address(desis), address(factory));
+        origin.setDependencies(address(desis), address(factory));
         origin.setProceedsRoute(tokenBridge, address(wcoen));
         // Peer the proceeds hook authenticates `from` against.
-        origin.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, targetRouter));
+        origin.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, targetRouter));
         from = _interop(BNB_CHAIN_ID, targetRouter);
 
         // Register BNB and seed the day's target snapshot: proceeds authenticate the source against it.
@@ -81,17 +81,16 @@ contract OriginRouterProceedsTest is CrossChainTest {
 
     /// @dev Fire a minimal STAGE_START (as the DESIS_ROLE owner) so `seriesTargets[day]` is populated.
     function _seedDaySnapshot(uint32 day) internal {
-        IOriginRouter.AuctionStageStartParams memory p;
+        IOriginRouter.IntexAuctionStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = day;
-        p.dayState = 1;
         vm.prank(address(desis));
-        origin.sendAuctionStageStart(p);
+        origin.sendIntexAuctionStart(p);
     }
 
     function _receive(uint32 sourceDomain, uint256 amount, uint32 emissionDay) internal returns (bytes4) {
         vm.prank(tokenBridge);
-        return origin.onCrosschainTokensReceived(sourceDomain, from, amount, abi.encode(emissionDay));
+        return origin.onCrosschainTokensReceived(sourceDomain, from, amount, abi.encode(emissionDay, uint32(0)));
     }
 
     function test_OnReceive_DistributesToFactory() public {
@@ -103,21 +102,21 @@ contract OriginRouterProceedsTest is CrossChainTest {
         assertEq(factory.lastSrcChainId(), BNB_CHAIN_ID);
         assertEq(factory.lastValue(), AMOUNT);
         // Fully routed: nothing parked, no native stranded on the router.
-        assertEq(origin.parkedProceeds(0).amount, 0);
+        assertEq(origin.getFailedIntexAuctionProceedsReceive(0).amount, 0);
         assertEq(address(origin).balance, 0);
     }
 
     function test_OnReceive_ParksOnDistributeFailure() public {
         factory.setShouldRevert(true);
 
-        vm.expectEmit(true, true, false, true, address(origin));
-        emit IOriginRouter.ProceedsParked(0, EMISSION_DAY, AMOUNT);
+        vm.expectEmit(true, true, true, false, address(origin));
+        emit IOriginRouter.IntexAuctionProceedsReceiveFailed(0, EMISSION_DAY, BNB_CHAIN_ID, 0, AMOUNT, "");
         bytes4 magic = _receive(BNB_CHAIN_ID, AMOUNT, EMISSION_DAY);
 
         // The transfer still settles (magic returned), and the router holds the native for retry.
         assertEq(magic, IERC7786TokenReceiver.onCrosschainTokensReceived.selector);
         assertEq(factory.calls(), 0);
-        IOriginRouter.ParkedProceeds memory p = origin.parkedProceeds(0);
+        IOriginRouter.FailedIntexAuctionProceedsReceive memory p = origin.getFailedIntexAuctionProceedsReceive(0);
         assertEq(p.emissionDay, EMISSION_DAY);
         assertEq(p.amount, AMOUNT);
         assertEq(p.settled, false);
@@ -129,13 +128,11 @@ contract OriginRouterProceedsTest is CrossChainTest {
         _receive(BNB_CHAIN_ID, AMOUNT, EMISSION_DAY);
 
         factory.setShouldRevert(false);
-        vm.expectEmit(true, true, false, true, address(origin));
-        emit IOriginRouter.ParkedProceedsDistributed(0, EMISSION_DAY, AMOUNT);
-        origin.distributeParkedProceeds(0);
+        origin.retryIntexAuctionProceedsReceive(0);
 
         assertEq(factory.calls(), 1);
         assertEq(factory.lastValue(), AMOUNT);
-        assertEq(origin.parkedProceeds(0).settled, true);
+        assertEq(origin.getFailedIntexAuctionProceedsReceive(0).settled, true);
         assertEq(address(origin).balance, 0);
     }
 
@@ -143,26 +140,26 @@ contract OriginRouterProceedsTest is CrossChainTest {
         factory.setShouldRevert(true);
         _receive(BNB_CHAIN_ID, AMOUNT, EMISSION_DAY);
         factory.setShouldRevert(false);
-        origin.distributeParkedProceeds(0);
+        origin.retryIntexAuctionProceedsReceive(0);
 
-        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NoParkedProceeds.selector, uint256(0)));
-        origin.distributeParkedProceeds(0);
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NoFailedIntexAuctionProceedsReceive.selector, uint256(0)));
+        origin.retryIntexAuctionProceedsReceive(0);
     }
 
     function test_RevertWhen_RetryUnknownIdx() public {
-        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NoParkedProceeds.selector, uint256(99)));
-        origin.distributeParkedProceeds(99);
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NoFailedIntexAuctionProceedsReceive.selector, uint256(99)));
+        origin.retryIntexAuctionProceedsReceive(99);
     }
 
     function test_RevertWhen_CallerNotTokenBridge() public {
         vm.prank(stranger);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.UnauthorizedProceedsCaller.selector, stranger));
-        origin.onCrosschainTokensReceived(BNB_CHAIN_ID, from, AMOUNT, abi.encode(EMISSION_DAY));
+        origin.onCrosschainTokensReceived(BNB_CHAIN_ID, from, AMOUNT, abi.encode(EMISSION_DAY, uint32(0)));
     }
 
     function test_RevertWhen_LocalProceedsCallerNotTargetRouter() public {
         uint32 local = uint32(block.chainid);
-        origin.setRemoteMessenger(local, _interop(local, targetRouter));
+        origin.registerRemoteMessenger(local, _interop(local, targetRouter));
         origin.addTarget(local);
         _seedDaySnapshot(EMISSION_DAY + 1);
 
@@ -170,17 +167,17 @@ contract OriginRouterProceedsTest is CrossChainTest {
         vm.expectRevert(
             abi.encodeWithSelector(IOriginRouter.UnauthorizedProceedsSender.selector, _interop(local, stranger))
         );
-        origin.receiveLocalProceeds(EMISSION_DAY + 1, AMOUNT);
+        origin.receiveLocalProceeds(EMISSION_DAY + 1, 0, AMOUNT);
 
         vm.prank(targetRouter);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.UnexpectedProceedsSource.selector, local));
-        origin.receiveLocalProceeds(EMISSION_DAY, AMOUNT);
+        origin.receiveLocalProceeds(EMISSION_DAY, 0, AMOUNT);
     }
 
     function test_RevertWhen_WrongSourceDomain() public {
         vm.prank(tokenBridge);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.UnexpectedProceedsSource.selector, uint32(999)));
-        origin.onCrosschainTokensReceived(999, from, AMOUNT, abi.encode(EMISSION_DAY));
+        origin.onCrosschainTokensReceived(999, from, AMOUNT, abi.encode(EMISSION_DAY, uint32(0)));
     }
 
     function test_RevertWhen_ProceedsSenderSpoofed() public {
@@ -189,6 +186,6 @@ contract OriginRouterProceedsTest is CrossChainTest {
         bytes memory spoofed = _interop(BNB_CHAIN_ID, stranger);
         vm.prank(tokenBridge);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.UnauthorizedProceedsSender.selector, spoofed));
-        origin.onCrosschainTokensReceived(BNB_CHAIN_ID, spoofed, AMOUNT, abi.encode(EMISSION_DAY));
+        origin.onCrosschainTokensReceived(BNB_CHAIN_ID, spoofed, AMOUNT, abi.encode(EMISSION_DAY, uint32(0)));
     }
 }
