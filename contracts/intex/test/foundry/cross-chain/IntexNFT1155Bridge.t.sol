@@ -53,8 +53,8 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
         srcBatch = DeployProxy.intexNFT1155Bridge(address(srcToken), address(bridge), admin);
         dstBatch = DeployProxy.intexNFT1155Bridge(address(dstToken), address(bridge), admin);
 
-        srcBatch.setRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(dstBatch)));
-        dstBatch.setRemoteMessenger(SRC_CHAIN_ID, _interop(SRC_CHAIN_ID, address(srcBatch)));
+        srcBatch.registerRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(dstBatch)));
+        dstBatch.registerRemoteMessenger(SRC_CHAIN_ID, _interop(SRC_CHAIN_ID, address(srcBatch)));
 
         for (uint32 i = 0; i < 2; i++) {
             uint32 day = i == 0 ? SERIES_A_DAY : SERIES_B_DAY;

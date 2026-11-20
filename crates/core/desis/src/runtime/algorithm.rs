@@ -2,7 +2,7 @@ use super::*;
 
 /// Sort chain-tagged bids: descending rate, ascending timestamp on tie. The sort is
 /// stable, so remaining ties keep the snapshot's chain order. The order is deterministic.
-pub(super) fn sort_bids(bids: &mut [(u32, BidData)]) {
+pub(super) fn sort_bids(bids: &mut [(u32, IntexAuctionBidData)]) {
     bids.sort_by(|(_, a), (_, b)| {
         b.intex_bid_rate
             .cmp(&a.intex_bid_rate)
@@ -23,8 +23,8 @@ pub(crate) fn rate_lock(qty: u64, basis: u128, rate: u32) -> u128 {
 
 /// Uniform-rate clearing: allocate sorted bids until no `desis_limit_units` remain. The
 /// clearing rate is the last allocated bid's. lock/pay uses the shared scale-1e6 denominator.
-pub(super) fn calculate_clearing(
-    bids: &[(u32, BidData)],
+pub(super) fn compute_clearing(
+    bids: &[(u32, IntexAuctionBidData)],
     config: &AuctionConfig,
     desis_limit_units: u32,
     min_qty: u16,
@@ -39,13 +39,13 @@ pub(super) fn calculate_clearing(
 
     let escrow_basis = config.escrow_basis_minor();
     let mut total_allocated: u32 = 0;
-    let mut clearing_rate: u32 = config.min_intex_bid_rate;
+    let mut clearing_rate: u32 = config.min_bid_rate;
 
     for (i, (chain_id, bid)) in bids.iter().enumerate() {
         if total_allocated >= desis_limit_units {
             break;
         }
-        if bid.intex_bid_rate < config.min_intex_bid_rate {
+        if bid.intex_bid_rate < config.min_bid_rate {
             continue;
         }
         if bid.intex_quantity < min_qty {
@@ -70,16 +70,16 @@ pub(super) fn calculate_clearing(
     }
 
     let mut all_bidders: Vec<Address> = Vec::with_capacity(len);
-    let mut refunded_amounts: Vec<u128> = Vec::with_capacity(len);
+    let mut returned_amounts: Vec<u128> = Vec::with_capacity(len);
     let mut paid_amounts: Vec<u128> = Vec::with_capacity(len);
     let mut bidder_chains: Vec<u32> = Vec::with_capacity(len);
 
     for (i, (chain_id, bid)) in bids.iter().enumerate() {
         all_bidders.push(bid.bidder_address);
         bidder_chains.push(*chain_id);
-        let (paid, refunded) = paid_and_refunded(bid, won_by_index[i], escrow_basis, clearing_rate);
+        let (paid, returned) = paid_and_returned(bid, won_by_index[i], escrow_basis, clearing_rate);
         paid_amounts.push(paid);
-        refunded_amounts.push(refunded);
+        returned_amounts.push(returned);
     }
 
     ClearingResult {
@@ -91,14 +91,14 @@ pub(super) fn calculate_clearing(
         winner_currencies,
         partial_winner,
         all_bidders,
-        refunded_amounts,
+        returned_amounts,
         paid_amounts,
         bidder_chains,
     }
 }
 
-fn paid_and_refunded(
-    bid: &BidData,
+fn paid_and_returned(
+    bid: &IntexAuctionBidData,
     won: u32,
     escrow_basis: u128,
     clearing_rate: u32,
@@ -112,8 +112,8 @@ fn paid_and_refunded(
     if won > 0 {
         // Uniform clearing: winners pay at the clearing rate. Refund the rest.
         let paid = rate_lock(u64::from(won), escrow_basis, clearing_rate);
-        let refunded = locked.saturating_sub(paid);
-        (paid, refunded)
+        let returned = locked.saturating_sub(paid);
+        (paid, returned)
     } else {
         (0, locked)
     }

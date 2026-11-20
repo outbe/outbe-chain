@@ -39,6 +39,7 @@ serde_json.workspace = true
 tracing.workspace = true
 metrics.workspace = true
 thiserror.workspace = true
+zeroize.workspace = true
 reth-primitives-traits.workspace = true
 
 [dev-dependencies]

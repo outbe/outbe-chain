@@ -3,6 +3,7 @@ mod commit;
 mod operations;
 mod ownership;
 use super::*;
+pub(super) use operations::live_rejoin_allowed_v1;
 
 struct ReverseOwnersV1 {
     enclave: B256,
@@ -43,6 +44,7 @@ impl TeeRegistry<'_> {
             return self.commit_upgrade_candidate_v1(&mutation, &context);
         }
         self.consume_upgrade_candidate_v1(&mutation, &context)?;
+        self.revoke_previous_live_registration_v1(&mutation, &context, current.as_ref())?;
         self.write_active_binding_v1(&mutation, &context)?;
         self.emit_binding_mutation_v1(&mutation, &context)?;
         Ok(V1RegistrationOutcome::Created)

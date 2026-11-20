@@ -30,13 +30,13 @@ pub enum DesisError {
     UnpricedReferenceCurrency(u16),
 
     #[error("chain relayed {0} bidders, more than the refund fan-out can carry")]
-    RefundFanOutTooLarge(usize),
+    ReturnFanOutTooLarge(usize),
 
     #[error("relayed bid names a currency no series id can spell: issuance {0}, reference {1}")]
-    UnspellableBidCurrency(u16, u16),
+    UnspellableIntexAuctionBidCurrency(u16, u16),
 
     #[error("relayed bid batch carries {0} bids, over the {1} the codec may send")]
-    BidBatchTooLarge(usize, usize),
+    IntexAuctionBidsPageTooLarge(usize, usize),
 
     #[error("Desis Allocation {allocation} exceeds Desis Limit {limit} for emission day {day}")]
     DesisAllocationExceedsLimit {
@@ -45,14 +45,14 @@ pub enum DesisError {
         limit: U256,
     },
 
-    #[error("processBidsBatch: array length mismatch")]
-    BatchArrayLengthMismatch,
+    #[error("collectIntexAuctionBids: array length mismatch")]
+    PageArrayLengthMismatch,
 
     #[error("brief anchor exceeds u32")]
-    BriefAnchorExceedsU32,
+    DesisLimitAnchorExceedsU32,
 
     #[error("min bid quantity scaling overflow")]
-    MinBidQuantityScalingOverflow,
+    MinIntexAuctionBidQuantityScalingOverflow,
 
     #[error("targetsOf undecodable")]
     TargetsOfUndecodable,
@@ -60,14 +60,14 @@ pub enum DesisError {
     #[error("emission day {0} has {1} targets, more than the cap")]
     TooManyTargets(EmissionDate, usize),
 
-    #[error("processBidsBatch: batch total mismatch")]
-    BatchTotalMismatch,
+    #[error("collectIntexAuctionBids: page total mismatch")]
+    PageTotalMismatch,
 
-    #[error("processBidsDone: invalid total batches")]
-    InvalidTotalBatches,
+    #[error("completeIntexAuctionBids: invalid total pages")]
+    InvalidTotalPages,
 
-    #[error("processBidsBatch: invalid batch index/total")]
-    InvalidBatchIndexOrTotal,
+    #[error("collectIntexAuctionBids: invalid page index/total")]
+    InvalidPageIndexOrTotal,
 
     #[error("schedule timestamp exceeds u32")]
     ScheduleTimestampExceedsU32,
@@ -109,19 +109,21 @@ impl From<DesisError> for PrecompileError {
             DesisError::UnpricedReferenceCurrency(value) => {
                 revert_with(I::UnpricedReferenceCurrency { value })
             }
-            DesisError::RefundFanOutTooLarge(value) => revert_with(I::RefundFanOutTooLarge {
+            DesisError::ReturnFanOutTooLarge(value) => revert_with(I::ReturnFanOutTooLarge {
                 value: u64::try_from(value).unwrap_or(u64::MAX),
             }),
-            DesisError::UnspellableBidCurrency(issuance, reference_currency) => {
-                revert_with(I::UnspellableBidCurrency {
+            DesisError::UnspellableIntexAuctionBidCurrency(issuance, reference_currency) => {
+                revert_with(I::UnspellableIntexAuctionBidCurrency {
                     issuance,
                     referenceCurrency: reference_currency,
                 })
             }
-            DesisError::BidBatchTooLarge(count, max) => revert_with(I::BidBatchTooLarge {
-                count: u64::try_from(count).unwrap_or(u64::MAX),
-                max: u64::try_from(max).unwrap_or(u64::MAX),
-            }),
+            DesisError::IntexAuctionBidsPageTooLarge(count, max) => {
+                revert_with(I::IntexAuctionBidsPageTooLarge {
+                    count: u64::try_from(count).unwrap_or(u64::MAX),
+                    max: u64::try_from(max).unwrap_or(u64::MAX),
+                })
+            }
             DesisError::DesisAllocationExceedsLimit {
                 day,
                 allocation,
@@ -131,10 +133,10 @@ impl From<DesisError> for PrecompileError {
                 allocation,
                 limit,
             }),
-            DesisError::BatchArrayLengthMismatch => revert_with(I::BatchArrayLengthMismatch {}),
-            DesisError::BriefAnchorExceedsU32 => revert_with(I::BriefAnchorExceedsU32 {}),
-            DesisError::MinBidQuantityScalingOverflow => {
-                revert_with(I::MinBidQuantityScalingOverflow {})
+            DesisError::PageArrayLengthMismatch => revert_with(I::PageArrayLengthMismatch {}),
+            DesisError::DesisLimitAnchorExceedsU32 => revert_with(I::DesisLimitAnchorExceedsU32 {}),
+            DesisError::MinIntexAuctionBidQuantityScalingOverflow => {
+                revert_with(I::MinIntexAuctionBidQuantityScalingOverflow {})
             }
             DesisError::TargetsOfUndecodable => revert_with(I::TargetsOfUndecodable {}),
             DesisError::TooManyTargets(day, count) => revert_with(I::TooManyTargets {
@@ -142,9 +144,9 @@ impl From<DesisError> for PrecompileError {
                 count: count as u64,
                 max: MAX_TARGET_CHAINS as u64,
             }),
-            DesisError::BatchTotalMismatch => revert_with(I::BatchTotalMismatch {}),
-            DesisError::InvalidTotalBatches => revert_with(I::InvalidTotalBatches {}),
-            DesisError::InvalidBatchIndexOrTotal => revert_with(I::InvalidBatchIndexOrTotal {}),
+            DesisError::PageTotalMismatch => revert_with(I::PageTotalMismatch {}),
+            DesisError::InvalidTotalPages => revert_with(I::InvalidTotalPages {}),
+            DesisError::InvalidPageIndexOrTotal => revert_with(I::InvalidPageIndexOrTotal {}),
             DesisError::ScheduleTimestampExceedsU32 => {
                 revert_with(I::ScheduleTimestampExceedsU32 {})
             }

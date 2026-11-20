@@ -116,6 +116,21 @@ contract ERC7786TokenBridgeComposedTest is Test {
         assertEq(receiver.balanceAtHook(), amount);
     }
 
+    /// @dev The transport sends the extra fee to the refundAddress attribute, so it must be the user.
+    function test_Send_NamesTheCallerAsTheRefundAddress() public {
+        uint256 amount = 100e6;
+        usdt.mint(alice, 2 * amount);
+        bytes memory expected = abi.encodeWithSelector(bytes4(keccak256("refundAddress(address)")), alice);
+
+        vm.startPrank(alice);
+        usdt.approve(address(bnbUsdtBridge), 2 * amount);
+        bnbUsdtBridge.send(OUTBE, address(receiver), amount);
+        assertEq(bnbGateway.lastFirstAttribute(), expected, "send");
+        bnbUsdtBridge.sendAndCall(OUTBE, address(receiver), amount, hex"01", 500_000);
+        assertEq(bnbGateway.lastFirstAttribute(), expected, "sendAndCall");
+        vm.stopPrank();
+    }
+
     function test_Send_PlainDoesNotInvokeHook() public {
         uint256 amount = 100e6;
         usdt.mint(alice, amount);

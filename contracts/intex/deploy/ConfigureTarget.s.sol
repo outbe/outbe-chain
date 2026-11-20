@@ -57,29 +57,29 @@ contract ConfigureTarget is BaseScript {
         requireDeployed(t.router);
 
         IntexAuction auction = IntexAuction(t.auction);
-        if (address(auction.escrowContract()) != t.escrow) {
+        if (address(auction.escrow()) != t.escrow) {
             requireDeployerAdmin(t.auction, deployer);
-            auction.wire(t.escrow);
+            auction.setEscrow(t.escrow);
             console.log("IntexAuction wired");
         }
 
         EscrowAdapter escrow = EscrowAdapter(payable(t.escrow));
         if (
-            escrow.intexAuctionContract() != t.auction || address(escrow.compact()) != t.compact
-                || address(escrow.paymentToken()) != t.wcoen
+            escrow.intexAuction() != t.auction || address(escrow.compact()) != t.compact
+                || address(escrow.intexAuctionAsset()) != t.wcoen
         ) {
             requireDeployerAdmin(t.escrow, deployer);
-            escrow.wire(t.auction, t.compact, t.wcoen);
+            escrow.setDependencies(t.auction, t.compact, t.wcoen);
             console.log("EscrowAdapter wired");
         }
 
         TargetRouter router = TargetRouter(payable(t.router));
         if (
-            address(router.auction()) != t.auction || address(router.intex()) != t.nft
-                || address(router.escrowAdapter()) != t.escrow
+            address(router.intexAuction()) != t.auction || address(router.intexContract()) != t.nft
+                || address(router.escrow()) != t.escrow
         ) {
             requireDeployerAdmin(t.router, deployer);
-            router.wire(t.auction, t.nft, t.escrow);
+            router.setDependencies(t.auction, t.nft, t.escrow);
             console.log("TargetRouter wired");
         }
 

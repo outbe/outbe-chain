@@ -37,7 +37,7 @@ contract EscrowAdapterInvariantsTest is Test {
         paymentToken = new MockWCOEN();
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(paymentToken));
+        escrow.setDependencies(auction, address(compact), address(paymentToken));
         vm.prank(admin);
         escrow.setProceedsRecipient(bridger);
         compact.setResetPeriodSeconds(0);
@@ -52,16 +52,16 @@ contract EscrowAdapterInvariantsTest is Test {
 
     function _refund(uint32 emissionDay, address bidder) internal {
         vm.prank(auction);
-        escrow.releaseRefund(emissionDay, bidder);
+        escrow.returnIntexAuctionAsset(emissionDay, bidder);
     }
 
     function _assertSeriesInvariant(uint32 emissionDay, address[3] memory bidders) internal view {
         uint128 sum = 0;
         for (uint256 i = 0; i < bidders.length; i++) {
             // A winner's lock holds only its change.
-            sum += escrow.getBidLock(emissionDay, bidders[i]).lockedAmount;
+            sum += escrow.getIntexAuctionBidLock(emissionDay, bidders[i]).lockedAmount;
         }
-        (,, uint128 totalLocked) = escrow.getAuctionStatus(emissionDay);
+        (,, uint128 totalLocked) = escrow.auctionStatus(emissionDay);
         assertEq(sum, totalLocked, "per-series totalLocked drift");
     }
 
@@ -84,7 +84,7 @@ contract EscrowAdapterInvariantsTest is Test {
         _assertSeriesInvariant(s2, bidders);
 
         // Permissionless refund of one lock on s1 after the 72h safety window.
-        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
+        vm.warp(block.timestamp + escrow.UNFINALIZED_RETURN_DELAY());
         _refund(s1, bidderA);
         _assertSeriesInvariant(s1, bidders);
         _assertSeriesInvariant(s2, bidders);
@@ -106,14 +106,14 @@ contract EscrowAdapterInvariantsTest is Test {
 
     function _lock(uint32 emissionDay, address bidder, uint32 bidRate, uint16 quantity) internal {
         vm.prank(auction);
-        escrow.lockFunds(emissionDay, bidder, BASIS, bidRate, quantity);
+        escrow.lockIntexAuctionAsset(emissionDay, bidder, BASIS, bidRate, quantity);
     }
 
     function _finalize(uint32 emissionDay, address winner) internal {
         address[] memory winners = new address[](1);
         winners[0] = winner;
         vm.prank(bridger);
-        escrow.finalizeAuction(emissionDay, bytes32(uint256(emissionDay)), winners, 0, 0, CLEARING_RATE, BASIS, true);
+        escrow.chargeIntexAuctionAsset(emissionDay, winners, 0, 0, CLEARING_RATE, BASIS, true);
     }
 
     /// @dev Sanity check that the invariant helper catches injected drift.

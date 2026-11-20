@@ -279,7 +279,6 @@ fn reserved_genesis_keys() -> BTreeSet<&'static str> {
         "remote_keys_dir",
         "rpc_bind_ip",
         "consensus_use_local_defaults",
-        "enclave_runner",
     ]
     .into_iter()
     .collect()

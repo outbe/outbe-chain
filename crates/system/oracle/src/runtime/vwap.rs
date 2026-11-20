@@ -3,7 +3,7 @@
 use alloy_primitives::U256;
 use outbe_primitives::error::Result;
 use outbe_system_common::address_pair::AddressPair;
-use outbe_system_common::time::{WorldwideDay, SECONDS_PER_DAY};
+use outbe_system_common::time::SECONDS_PER_DAY;
 
 use super::{pair_series, PairSeries, VwapAccumulator};
 use crate::constants::VWAP_HOUR_SECONDS;
@@ -200,8 +200,7 @@ impl OracleContract<'_> {
         let vwap = self
             .try_calculate_vwap(pair, day_start, day_end)?
             .unwrap_or(U256::ZERO);
-        let scurve_value =
-            crate::scurve::scurve_value(self, pair, WorldwideDay::from_timestamp(timestamp))?;
+        let scurve_value = crate::scurve::scurve_value(self, pair, timestamp)?;
 
         let (nominal, source) = if vwap.is_zero() && scurve_value.is_zero() {
             (U256::ZERO, "none".to_string())

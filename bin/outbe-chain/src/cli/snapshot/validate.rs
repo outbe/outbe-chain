@@ -131,7 +131,7 @@ mod tests {
             "--output".into(),
             output.to_str().unwrap().into(),
             "--mode".into(),
-            "gramine-direct-dev".into(),
+            "no-attestation-dev".into(),
         ])
         .unwrap();
         output.into_os_string()

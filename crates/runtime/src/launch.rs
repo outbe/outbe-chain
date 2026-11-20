@@ -1,12 +1,20 @@
 use crate::*;
 use outbe_consensus::protocol_state::EngineProtocolState;
 use outbe_evm::EvmRuntimeHost;
-use outbe_execution::tee_remote_session::TeeSessionStateReader;
 use outbe_radicle::protocol_state::RadicleProtocolState;
 use outbe_rpc::state_reader::OutbeRpcStateReader;
 use outbe_txpool::TxPoolZeroFeePolicy;
 
 pub(crate) type LaunchConfig = reth_node_builder::NodeConfig<ChainSpec<OutbeHeader>>;
+
+pub(crate) fn launcher_shutdown_tokens() -> (
+    tokio_util::sync::CancellationToken,
+    tokio_util::sync::CancellationToken,
+) {
+    let shutdown_token = tokio_util::sync::CancellationToken::new();
+    let worker_shutdown_token = tokio_util::sync::CancellationToken::new();
+    (shutdown_token, worker_shutdown_token)
+}
 
 /// Run the main node (Reth execution + Commonware consensus).
 pub fn run_node<P, V>() -> eyre::Result<()>
@@ -14,11 +22,6 @@ where
     P: ChainSpecParser<ChainSpec = ChainSpec<OutbeHeader>>,
     V: RpcModuleValidator,
 {
-    // TEE offer decryption routes exclusively through the enclave sidecar
-    // (`--tee-enclave-socket` -> persistent production NodeHost authorization).
-    // The offer-decryption key exists only inside the enclave (single path, no
-    // in-process key material).
-
     // Pool lifetime hardening. Must run BEFORE CLI parsing: clap reads these as
     // its own defaults, so explicit `--txpool.*` flags still win.
     let _ = outbe_default_txpool_values().try_init();
@@ -50,7 +53,7 @@ where
     // In other full-node mode, the launcher spawns no thread and these stay unused.
     let (node_tx, node_rx) = oneshot::channel::<consensus::ConsensusLaunch>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
-    let shutdown_token = tokio_util::sync::CancellationToken::new();
+    let (shutdown_token, worker_shutdown_token) = launcher_shutdown_tokens();
     // A terminal protocol outcome must drain Radicle without racing the main
     // signal branch into aborting the stack before it returns its primary error.
     let radicle_shutdown_token = shutdown_token.child_token();
@@ -104,6 +107,8 @@ where
                 let shutdown = launcher_shutdown.clone();
                 let result: eyre::Result<()> = async move {
         let mut builder = builder;
+        // Drop the consensus guard and join its thread before retiring TEE authority.
+        let _cancel_workers_on_launcher_drop = worker_shutdown_token.clone().drop_guard();
         let _cancel_on_launcher_drop = shutdown_token.clone().drop_guard();
         args.validate()?;
         let (radicle_preflight, radicle_status) = radicle::preflight(&args).await?;
@@ -130,17 +135,19 @@ where
             .data_dir()
             .to_path_buf();
         install_selected_reth_identity(builder.config_mut(), &args)?;
-        let (evm_signer, local_tee_identity, tee_admission_anchor) =
-            tee::prepare(
-                builder.config(), &args, node_data_dir.clone(), &initial_tee_policy,
-            ).await?;
+        // A missing or corrupt BLS key must fail before registerEnclave spends gas.
+        let (evm_signer, local_tee_identity, tee_admission_anchor, tee_supervisor) =
+            prepare_after_validator_bls(
+                builder.config(),
+                &args,
+                node_data_dir.clone(),
+                &initial_tee_policy,
+                &shutdown_token,
+            )
+            .await?;
 
         validate_adr005_node_mode(args.is_validator, args.upstream.is_some())?;
-        bridge.set_operating_mode(if args.is_validator {
-            outbe_primitives::consensus::ConsensusOperatingMode::Verifier
-        } else {
-            outbe_primitives::consensus::ConsensusOperatingMode::Follower
-        });
+        bridge.set_operating_mode(consensus_operating_mode(args.is_validator));
         let proof_chain_id = builder.config().chain.chain().id();
         let genesis_hash = builder.config().chain.genesis_hash();
         let outbe_execution = build_outbe_execution(
@@ -152,9 +159,14 @@ where
         let radicle_status_for_rpc = radicle_status.clone();
         // Canary-fed enclave health. The tee-canary worker (spawned after node launch)
         // publishes it, and `outbe_consensusStatus.enclave` reads it.
+        let tee_authority = outbe_tee::TeeAuthorityChannel::default();
+        outbe_consensus::protocol_state::install_tee_authority_watch(tee_authority.subscribe())?;
         let tee_canary_status = outbe_tee::TeeEnclaveHealthChannel::disabled();
         let tee_canary_status_for_rpc = tee_canary_status.clone();
 
+        let founding_lifecycle = Arc::new(std::sync::Mutex::new(None));
+        let stage_founding_lifecycle =
+            founding_lifecycle_stager(&args, evm_signer.is_some(), Arc::clone(&founding_lifecycle));
         let NodeHandle {
             node,
             node_exit_future,
@@ -207,11 +219,16 @@ where
                     let domain_api = crate::domain_rpc::OutbeDomainRpcHandler::new(
                         provider,
                         (proof_chain_id, genesis_hash),
-                    );
+                    ).with_authority_watch(outbe_tee::tee_authority_watch()
+                        .ok_or(outbe_consensus::protocol_state::EngineProtocolError::NotInstalled)?);
+                    let outbe_rpc = outbe_api.into_rpc();
+                    let domain_rpc = domain_api.into_rpc();
+                    let eth = ctx.registry.module_for(&eth_module_selection());
+                    stage_founding_lifecycle(eth, &outbe_rpc)?;
                     crate::domain_rpc::register_outbe_rpc_if_configured(
                         ctx.modules,
-                        outbe_api.into_rpc(),
-                        domain_api.into_rpc(),
+                        outbe_rpc,
+                        domain_rpc,
                     )?;
                     info!("outbe_* RPC namespace registered where configured");
                     Ok(())
@@ -222,27 +239,19 @@ where
             .wrap_err("failed launching execution node")?;
 
         shutdown.observe_engine_exit(&node.task_executor, node_exit_future)?;
-
         let tee::TeeRuntimeWorkers {
-            mut tee_lease_exit_rx,
             tee_lease_guard_handle,
             tee_canary_handle,
-            upgrade_promotion,
-            upgrade_handle,
             finalization_notify,
             tee_lease_armed_rx,
             tee_lease_armed_tx: _tee_lease_armed_tx,
         } = tee::start_runtime_workers(
-            (
-                Arc::clone(&runtime_for_launcher) as Arc<dyn EngineProtocolState>,
-                Arc::clone(&runtime_for_launcher) as Arc<dyn TeeSessionStateReader>,
-            ),
-            (&node, &args),
+            (Arc::clone(&runtime_for_launcher), tee_supervisor, &founding_lifecycle),
+            (&node, &args, evm_signer.as_ref()),
             (proof_chain_id, genesis_hash, &node_data_dir),
             (local_tee_identity, tee_admission_anchor, &initial_tee_policy),
-            (tee_canary_status.clone(), shutdown_token.clone(), shutdown.clone()),
-        )
-        .await?;
+            (tee_canary_status.clone(), tee_authority, worker_shutdown_token.clone(), shutdown.clone()),
+        )?;
 
         let (radicle_consensus, radicle_observer, radicle_drained) = radicle::start(
             &node,
@@ -281,7 +290,7 @@ where
                 signer,
                 bridge.equivocation_evidence_mailbox().clone(),
                 min_block_time,
-                shutdown_token.clone(),
+                worker_shutdown_token.clone(),
             ))
         } else {
             None
@@ -312,8 +321,7 @@ where
             let exit_cause = crate::shutdown::wait_for_launcher_exit(
                 &shutdown,
                 Some(&mut consensus_dead_rx),
-                &upgrade_promotion,
-                tee_lease_exit_rx.as_mut(),
+                None,
             ).await;
 
             tracing::debug!(?exit_cause, "draining application before global execution shutdown");
@@ -322,13 +330,12 @@ where
             let _ = crate::shutdown::wait_for_launcher_exit(
                 &shutdown,
                 None,
-                &upgrade_promotion,
-                tee_lease_exit_rx.as_mut(),
+                None,
             ).await;
         }
 
         crate::shutdown::drain_launcher_tasks(
-            &shutdown_token,
+            &worker_shutdown_token,
             &shutdown,
             crate::shutdown::LauncherDrainTasks {
                 tee_lease_guard_handle,
@@ -336,7 +343,6 @@ where
                 tee_canary_handle,
                 txpool_maintenance_handle,
                 equivocation_slasher_handle,
-                upgrade_handle,
             },
         ).await;
 
@@ -430,6 +436,137 @@ fn install_selected_reth_identity(
     Ok(())
 }
 
+/// Load the persistent validator BLS key before TEE onboarding.
+///
+/// Followers and keyless full nodes do not carry this key. Validator launches,
+/// with or without `--upstream`, fail here when the file is missing or corrupt.
+fn ensure_validator_bls_loaded(args: &ConsensusArgs) -> eyre::Result<()> {
+    if !args.is_validator {
+        return Ok(());
+    }
+    let path = args.signing_key.as_ref().ok_or(
+        outbe_consensus::errors::BlsKeyError::MissingCustodyFile {
+            path: "--consensus.signing-key".to_owned(),
+        },
+    )?;
+    let backend = args.key_backend().wrap_err("invalid BLS key backend")?;
+    outbe_consensus::validators::load_signing_key(path, &backend)
+        .wrap_err("failed to load validator BLS signing key")?;
+    Ok(())
+}
+
+/// Production launch seam: validator BLS, then `tee::prepare` on the same route.
+async fn prepare_after_validator_bls(
+    config: &LaunchConfig,
+    args: &ConsensusArgs,
+    node_data_dir: PathBuf,
+    initial_tee_policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    cancellation: &tokio_util::sync::CancellationToken,
+) -> eyre::Result<(
+    Option<Arc<OutbeEvmSigner>>,
+    outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
+    Option<crate::admission::LocalTeeAdmissionAnchorV1>,
+    Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
+)> {
+    ensure_validator_bls_loaded(args)?;
+    tee::prepare(
+        config,
+        args,
+        node_data_dir,
+        initial_tee_policy,
+        cancellation,
+    )
+    .await
+}
+
+#[cfg(feature = "test-hooks")]
+pub async fn prepare_validator_for_test(
+    config: &LaunchConfig,
+    args: &ConsensusArgs,
+    node_data_dir: PathBuf,
+    initial_tee_policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    cancellation: &tokio_util::sync::CancellationToken,
+) -> eyre::Result<()> {
+    prepare_after_validator_bls(
+        config,
+        args,
+        node_data_dir,
+        initial_tee_policy,
+        cancellation,
+    )
+    .await
+    .map(|_| ())
+}
+
+fn needs_founding_lifecycle(args: &ConsensusArgs, has_signer: bool) -> bool {
+    args.upstream.is_none() && has_signer
+}
+
+/// Stage the local lifecycle RPC from the launch inputs, regardless of operator HTTP.
+pub(crate) fn founding_lifecycle_stager<O>(
+    args: &ConsensusArgs,
+    has_signer: bool,
+    slot: Arc<std::sync::Mutex<Option<jsonrpsee::Methods>>>,
+) -> impl FnOnce(jsonrpsee::RpcModule<()>, &O) -> eyre::Result<()>
+where
+    O: Clone + Into<jsonrpsee::Methods>,
+{
+    let founding_resident = needs_founding_lifecycle(args, has_signer);
+    move |eth, outbe_rpc| store_founding_module(founding_resident, eth, outbe_rpc, &slot)
+}
+
+pub(crate) fn consensus_operating_mode(
+    is_validator: bool,
+) -> outbe_primitives::consensus::ConsensusOperatingMode {
+    if is_validator {
+        outbe_primitives::consensus::ConsensusOperatingMode::Verifier
+    } else {
+        outbe_primitives::consensus::ConsensusOperatingMode::Follower
+    }
+}
+
+pub(crate) fn store_founding_module<O>(
+    founding_resident: bool,
+    eth: jsonrpsee::RpcModule<()>,
+    outbe_rpc: &O,
+    founding_slot: &std::sync::Mutex<Option<jsonrpsee::Methods>>,
+) -> eyre::Result<()>
+where
+    O: Clone + Into<jsonrpsee::Methods>,
+{
+    if let Some(methods) = stage_founding_lifecycle_module(founding_resident, eth, outbe_rpc)? {
+        *founding_slot
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(methods);
+    }
+    Ok(())
+}
+
+fn eth_module_selection() -> reth_rpc_server_types::RpcModuleSelection {
+    reth_rpc_server_types::RpcModuleSelection::try_from_selection(["eth"])
+        .expect("eth is a standard RPC module")
+}
+
+/// In-process eth + outbe module for a founding node. Operator HTTP is not used.
+pub(crate) fn stage_founding_lifecycle_module<O>(
+    founding_resident: bool,
+    mut lifecycle: jsonrpsee::RpcModule<()>,
+    outbe_rpc: &O,
+) -> eyre::Result<Option<jsonrpsee::Methods>>
+where
+    O: Clone + Into<jsonrpsee::Methods>,
+{
+    if !founding_resident {
+        return Ok(None);
+    }
+    use eyre::WrapErr as _;
+    lifecycle
+        .merge(outbe_rpc.clone())
+        .map_err(eyre::Report::new)
+        .wrap_err("lifecycle outbe merge failed")?;
+    Ok(Some(lifecycle.into()))
+}
+
 fn log_consensus_launch_mode(is_validator: bool, has_upstream: bool) -> bool {
     if is_validator {
         info!("outbe node launched in VALIDATOR mode");
@@ -440,5 +577,125 @@ fn log_consensus_launch_mode(is_validator: bool, has_upstream: bool) -> bool {
     } else {
         info!("outbe node launched in FULL NODE mode - no consensus thread spawned");
         false
+    }
+}
+
+#[cfg(test)]
+mod bls_load_tests {
+    use super::*;
+    use clap::Parser;
+    use commonware_math::algebra::Random;
+
+    #[derive(Parser)]
+    struct ArgsCli {
+        #[command(flatten)]
+        consensus: ConsensusArgs,
+    }
+
+    fn validator_args(signing_key: &std::path::Path, upstream: bool) -> ConsensusArgs {
+        let mut command = vec![
+            "test",
+            "--validator",
+            "--consensus.signing-key",
+            signing_key.to_str().expect("utf8 path"),
+        ];
+        if upstream {
+            command.extend(["--upstream", "http://upstream:8545"]);
+        }
+        ArgsCli::try_parse_from(command)
+            .expect("validator args")
+            .consensus
+    }
+
+    #[tokio::test]
+    async fn corrupt_bls_with_upstream_fails_before_tee_prepare() {
+        use std::sync::atomic::Ordering;
+        let root = tempfile::tempdir().unwrap();
+        let hex_path = root.path().join("signing-key.hex");
+        std::fs::write(&hex_path, b"not-a-bls-key").unwrap();
+        let bls_path = root.path().join("bad-bls.hex");
+        std::fs::write(&bls_path, b"abcd").unwrap();
+        let missing = root.path().join("missing-key.hex");
+        let _ = crate::outbe_default_txpool_values().try_init();
+        let config = reth_node_builder::NodeConfig::new(Arc::new(crate::ChainSpec::<
+            crate::OutbeHeader,
+        >::default()));
+        let policy = outbe_primitives::tee_genesis_v1::initial_tee_policy_v1(
+            outbe_primitives::tee_genesis_v1::InitialTeeProfileV1::NoAttestationDev,
+            outbe_primitives::chain::DEVNET_CHAIN_ID,
+            alloy_primitives::B256::repeat_byte(0x11),
+        )
+        .unwrap();
+        let prepared = tee::PREPARE_ENTRIES.load(Ordering::SeqCst);
+        let sent = tee::REGISTER_ENCLAVE_SENDS.load(Ordering::SeqCst);
+        type PreservedCause = fn(&eyre::Report) -> bool;
+        let cases: [(&std::path::Path, PreservedCause); 3] = [
+            (&hex_path, |error| {
+                error
+                    .chain()
+                    .any(|cause| cause.downcast_ref::<hex::FromHexError>().is_some())
+            }),
+            (&missing, |error| {
+                error
+                    .chain()
+                    .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
+            }),
+            (&bls_path, |error| {
+                error.chain().any(|cause| {
+                    cause
+                        .downcast_ref::<outbe_consensus::errors::BlsKeyError>()
+                        .is_some()
+                })
+            }),
+        ];
+        for (path, preserved) in cases {
+            let args = validator_args(path, true);
+            assert!(args.upstream.is_some());
+            let error = match prepare_after_validator_bls(
+                &config,
+                &args,
+                root.path().to_path_buf(),
+                &policy,
+                &tokio_util::sync::CancellationToken::new(),
+            )
+            .await
+            {
+                Err(error) => error,
+                Ok(_) => panic!("corrupt BLS must fail on the launch route"),
+            };
+            assert!(preserved(&error), "{error:?}");
+        }
+        assert_eq!(tee::PREPARE_ENTRIES.load(Ordering::SeqCst), prepared);
+        assert_eq!(tee::REGISTER_ENCLAVE_SENDS.load(Ordering::SeqCst), sent);
+    }
+
+    #[test]
+    fn valid_bls_reaches_tee_prepare_and_followers_skip_the_key() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("signing-key.hex");
+        let key = commonware_cryptography::bls12381::PrivateKey::random(
+            rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+        );
+        outbe_consensus::bls::save_individual_key(
+            &path,
+            &key,
+            &outbe_consensus::bls::KeyBackend::Plaintext,
+        )
+        .unwrap();
+        let args = validator_args(&path, true);
+        let mut prepared = false;
+        (|| -> eyre::Result<()> {
+            ensure_validator_bls_loaded(&args)?;
+            prepared = true;
+            Ok(())
+        })()
+        .unwrap();
+        assert!(prepared);
+
+        let mut follower = args.clone();
+        follower.is_validator = false;
+        follower.signing_key = None;
+        follower.upstream = Some("http://upstream:8545".into());
+        ensure_validator_bls_loaded(&follower).unwrap();
     }
 }

@@ -31,14 +31,14 @@ contract IntexAuctionUupsTest is Test {
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
             promisLoadMinor: 1000,
-            minIntexBidRate: 1,
+            minBidRate: 1,
             prices: ReferenceCurrencyPriceLib.onePriced(840, 1, 1),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
-            minIntexBidQuantity: 1,
-            commitBondMinor: 0
+            minBidQuantity: 1,
+            bidBondMinor: 0
         });
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, schedule, params);
+        auction.startAuction(emissionDay, schedule, params);
     }
 
     function test_Initialize_GrantsRoles() public view {
@@ -75,9 +75,9 @@ contract IntexAuctionUupsTest is Test {
     function test_Upgrade_PreservesStateAndSwapsImplementation() public {
         _startAuction(20260612);
         vm.prank(bidder);
-        auction.commitBid(20260612, keccak256("commit"));
+        auction.commitIntexAuctionBid(20260612, keccak256("commit"));
         vm.prank(admin);
-        auction.wire(makeAddr("escrow"));
+        auction.setEscrow(makeAddr("escrow"));
 
         IntexAuction newImpl = new IntexAuction();
         vm.prank(admin);
@@ -85,9 +85,9 @@ contract IntexAuctionUupsTest is Test {
 
         bytes32 implSlot = vm.load(address(auction), ERC1967Utils.IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(implSlot))), address(newImpl));
-        assertEq(auction.committedBidsByHash(20260612, bidder), keccak256("commit"));
-        assertEq(address(auction.escrowContract()), makeAddr("escrow"));
-        assertEq(uint8(auction.getAuctionStage(20260612)), uint8(IIntexAuction.AuctionStage.CommittingBids));
+        assertEq(auction.committedIntexAuctionBidsByHash(20260612, bidder), keccak256("commit"));
+        assertEq(address(auction.escrow()), makeAddr("escrow"));
+        assertEq(uint8(auction.auctionStage(20260612)), uint8(IIntexAuction.AuctionStage.CommittingBids));
         assertTrue(auction.hasRole(auction.RELAYER_ROLE(), bridger));
     }
 }

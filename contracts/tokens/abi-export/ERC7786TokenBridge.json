@@ -308,6 +308,11 @@
         "name": "amount",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "refundTo",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [

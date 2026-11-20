@@ -11,7 +11,7 @@ import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/// @dev Minimal EscrowAdapter stand-in. `finalizeAuction` returns a configured totalPaid. The mock
+/// @dev Minimal EscrowAdapter stand-in. `chargeIntexAuctionAsset` returns a configured totalPaid. The mock
 ///      also exposes `paymentToken`.
 contract MockEscrowAdapter {
     IERC20 public paymentToken;
@@ -21,7 +21,7 @@ contract MockEscrowAdapter {
         paymentToken = token;
     }
 
-    function dayPaymentToken(uint32) external view returns (IERC20) {
+    function dayIntexAuctionAsset(uint32) external view returns (IERC20) {
         return paymentToken;
     }
 
@@ -29,7 +29,7 @@ contract MockEscrowAdapter {
         totalPaidToReturn = v;
     }
 
-    function finalizeAuction(uint32, bytes32, address[] calldata, uint16, uint16, uint64, uint128, bool)
+    function chargeIntexAuctionAsset(uint32, address[] calldata, uint16, uint16, uint64, uint128, bool)
         external
         view
         returns (uint128)
@@ -37,7 +37,7 @@ contract MockEscrowAdapter {
         return totalPaidToReturn;
     }
 
-    function getAuctionStatus(uint32) external pure returns (bool, bool, uint128) {
+    function auctionStatus(uint32) external pure returns (bool, bool, uint128) {
         return (false, false, 0);
     }
 }
@@ -110,15 +110,15 @@ contract TargetRouterProceedsTest is CrossChainTest {
         escrow = new MockEscrowAdapter(IERC20(address(wcoen)));
         tokenBridge = new MockTokenBridge(IERC20(address(wcoen)));
 
-        target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
-        target.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
+        target.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        target.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
         target.setProceedsRoute(address(tokenBridge), originRouter);
     }
 
     function _deliverRefund(uint32 emissionDay) internal {
         address[] memory winners = new address[](1);
         winners[0] = bidder;
-        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(emissionDay, 0, 1, 600_000, 1e6, winners, 0, 0);
+        bytes memory packet = BridgeMsgCodec.encodeIntexAuctionWinners(emissionDay, 0, 1, 600_000, 1e6, winners, 0, 0);
         _deliver(OUTBE_CHAIN_ID, originSender, address(target), packet);
     }
 
@@ -134,7 +134,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
         target.setProceedsRoute(address(tokenBridge), address(0));
     }
 
-    function test_RefundInstructions_RoutesProceeds() public {
+    function test_proceeds_of_a_page_carry_the_page_index() public {
         escrow.setTotalPaid(AMOUNT);
 
         _deliverRefund(SERIES_ID);
@@ -143,7 +143,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
         assertEq(tokenBridge.lastDomain(), OUTBE_CHAIN_ID);
         assertEq(tokenBridge.lastTo(), originRouter);
         assertEq(tokenBridge.lastAmount(), AMOUNT);
-        assertEq(tokenBridge.lastExtraData(), abi.encode(SERIES_ID));
+        assertEq(tokenBridge.lastExtraData(), abi.encode(SERIES_ID, uint32(0)));
         assertEq(tokenBridge.lastGas(), IntexGas.PROCEEDS_COMPOSE);
         assertEq(tokenBridge.valueReceived(), tokenBridge.fee());
         // Router approved the bridge to pull the proceeds.
@@ -164,7 +164,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
 
         // Finalization still settled. The router parked the send instead of rolling back.
         assertEq(tokenBridge.calls(), 0);
-        (uint32 s, uint16 chunk, uint128 a, bool exists, bool done) = target.parkedProceeds(0);
+        (uint32 s, uint16 chunk, uint128 a, bool exists, bool done) = target.getFailedIntexAuctionProceedsSend(0);
         assertEq(s, SERIES_ID);
         assertEq(chunk, 0, "the parked route keeps its chunk");
         assertEq(a, AMOUNT);
@@ -180,7 +180,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
         _deliverRefund(SERIES_ID);
 
         assertEq(otherBridge.calls(), 0, "nothing sent in a token the bridge does not move");
-        (uint32 s, uint16 chunk, uint128 a, bool exists, bool done) = target.parkedProceeds(0);
+        (uint32 s, uint16 chunk, uint128 a, bool exists, bool done) = target.getFailedIntexAuctionProceedsSend(0);
         assertEq(s, SERIES_ID);
         assertEq(chunk, 0, "the parked route keeps its chunk");
         assertEq(a, AMOUNT);
@@ -194,16 +194,16 @@ contract TargetRouterProceedsTest is CrossChainTest {
         MockWCOEN originWcoen = new MockWCOEN();
         origin.setProceedsRoute(address(tokenBridge), address(originWcoen));
         TargetRouter outbeTarget = DeployProxy.targetRouter(address(bridge), address(this), local);
-        outbeTarget.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
-        outbeTarget.setRemoteMessenger(local, _interop(local, originSender));
+        outbeTarget.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        outbeTarget.registerRemoteMessenger(local, _interop(local, originSender));
         outbeTarget.setProceedsRoute(address(tokenBridge), address(origin));
         escrow.setTotalPaid(AMOUNT);
 
         address[] memory winners = new address[](1);
         winners[0] = bidder;
-        bytes memory packet = BridgeMsgCodec.encodeRefundInstructions(SERIES_ID, 0, 1, 600_000, 1e6, winners, 0, 0);
+        bytes memory packet = BridgeMsgCodec.encodeIntexAuctionWinners(SERIES_ID, 0, 1, 600_000, 1e6, winners, 0, 0);
         vm.expectEmit(true, true, false, true, address(outbeTarget));
-        emit ITargetRouter.ProceedsParked(
+        emit ITargetRouter.IntexAuctionProceedsSendFailed(
             0,
             SERIES_ID,
             0,
@@ -213,7 +213,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
         _deliver(local, originSender, address(outbeTarget), packet);
 
         assertEq(tokenBridge.calls(), 0, "the Outbe route does not use the token bridge");
-        (uint32 s,, uint128 a, bool exists, bool done) = outbeTarget.parkedProceeds(0);
+        (uint32 s,, uint128 a, bool exists, bool done) = outbeTarget.getFailedIntexAuctionProceedsSend(0);
         assertEq(s, SERIES_ID);
         assertEq(a, AMOUNT);
         assertTrue(exists);
@@ -226,15 +226,13 @@ contract TargetRouterProceedsTest is CrossChainTest {
         _deliverRefund(SERIES_ID);
 
         tokenBridge.setShouldRevert(false);
-        vm.expectEmit(true, false, false, true, address(target));
-        emit ITargetRouter.ProceedsRouted(SERIES_ID, 0, AMOUNT);
-        vm.expectEmit(true, true, false, true, address(target));
-        emit ITargetRouter.ParkedProceedsResent(0, SERIES_ID);
-        target.resendParkedProceeds(0);
+        vm.expectEmit(false, true, true, true, address(target));
+        emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), SERIES_ID, 0, AMOUNT);
+        target.retryIntexAuctionProceedsSend(0);
 
         assertEq(tokenBridge.calls(), 1);
         assertEq(tokenBridge.lastAmount(), AMOUNT);
-        (,,,, bool done) = target.parkedProceeds(0);
+        (,,,, bool done) = target.getFailedIntexAuctionProceedsSend(0);
         assertTrue(done);
     }
 
@@ -243,14 +241,16 @@ contract TargetRouterProceedsTest is CrossChainTest {
         tokenBridge.setShouldRevert(true);
         _deliverRefund(SERIES_ID);
         tokenBridge.setShouldRevert(false);
-        target.resendParkedProceeds(0);
+        target.retryIntexAuctionProceedsSend(0);
 
         vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyResolved.selector, uint256(0)));
-        target.resendParkedProceeds(0);
+        target.retryIntexAuctionProceedsSend(0);
     }
 
     function test_RevertWhen_FlushUnknownIdx() public {
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoSuchParkedProceeds.selector, uint256(99)));
-        target.resendParkedProceeds(99);
+        vm.expectRevert(
+            abi.encodeWithSelector(ITargetRouter.NoSuchFailedIntexAuctionProceedsSend.selector, uint256(99))
+        );
+        target.retryIntexAuctionProceedsSend(99);
     }
 }

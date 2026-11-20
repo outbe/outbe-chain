@@ -121,7 +121,7 @@ macro_rules! define_exact_routes {
 
 define_exact_routes! {
     GRATIS_ADDRESS => (outbe_gratis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_gratis::precompile::PAYABLE_SELECTORS),
-    GRATIS_FACTORY_ADDRESS => (outbe_gratisfactory::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_gratisfactory::precompile::PAYABLE_SELECTORS),
+    GRATIS_FACTORY_ADDRESS => (outbe_gratisfactory::precompile::dispatch, default_base_gas, ValuePolicy::Payable, outbe_gratisfactory::precompile::PAYABLE_SELECTORS),
     PROMIS_ADDRESS => (outbe_promis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_promis::precompile::PAYABLE_SELECTORS),
     PROMIS_FACTORY_ADDRESS => (outbe_promisfactory::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_promisfactory::precompile::PAYABLE_SELECTORS),
     TRIBUTE_ADDRESS => (outbe_tribute::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_tribute::precompile::PAYABLE_SELECTORS),

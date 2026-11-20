@@ -120,30 +120,28 @@ contract UpgradeDrillTest is CrossChainTest {
         });
         IIntexAuction.AuctionParams memory params = IIntexAuction.AuctionParams({
             promisLoadMinor: 1000,
-            minIntexBidRate: 1,
+            minBidRate: 1,
             prices: ReferenceCurrencyPriceLib.onePriced(840, 1, 1),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
-            minIntexBidQuantity: 1,
-            commitBondMinor: 0
+            minBidQuantity: 1,
+            bidBondMinor: 0
         });
 
         vm.startPrank(admin);
-        auction.wire(escrow);
-        auction.auctionStart(20260614, IIntexAuction.DayState.Live, schedule, params);
+        auction.setEscrow(escrow);
+        auction.startAuction(20260614, schedule, params);
         vm.stopPrank();
         vm.prank(bidder);
-        auction.commitBid(20260614, keccak256("commit"));
+        auction.commitIntexAuctionBid(20260614, keccak256("commit"));
 
         IntexAuctionV2 newImpl = new IntexAuctionV2();
         vm.prank(admin);
         auction.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(auction), address(newImpl));
-        assertEq(address(auction.escrowContract()), escrow, "escrow wiring lost");
-        assertEq(auction.committedBidsByHash(20260614, bidder), keccak256("commit"), "commit lost");
-        assertEq(
-            uint8(auction.getAuctionStage(20260614)), uint8(IIntexAuction.AuctionStage.CommittingBids), "stage lost"
-        );
+        assertEq(address(auction.escrow()), escrow, "escrow wiring lost");
+        assertEq(auction.committedIntexAuctionBidsByHash(20260614, bidder), keccak256("commit"), "commit lost");
+        assertEq(uint8(auction.auctionStage(20260614)), uint8(IIntexAuction.AuctionStage.CommittingBids), "stage lost");
     }
 
     function test_Drill_EscrowAdapter() public {
@@ -153,7 +151,7 @@ contract UpgradeDrillTest is CrossChainTest {
         address auction = makeAddr("auction");
 
         vm.prank(admin);
-        escrow.wire(auction, address(compactMock), address(token));
+        escrow.setDependencies(auction, address(compactMock), address(token));
         uint96 allocatorId = escrow.allocatorId();
         bytes12 lockTag = escrow.lockTag();
 
@@ -162,8 +160,8 @@ contract UpgradeDrillTest is CrossChainTest {
         escrow.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(escrow), address(newImpl));
-        assertEq(escrow.intexAuctionContract(), auction, "auction wiring lost");
-        assertEq(address(escrow.paymentToken()), address(token), "token wiring lost");
+        assertEq(escrow.intexAuction(), auction, "auction wiring lost");
+        assertEq(address(escrow.intexAuctionAsset()), address(token), "token wiring lost");
         assertEq(escrow.allocatorId(), allocatorId, "allocatorId lost");
         assertEq(escrow.lockTag(), lockTag, "lockTag lost");
         assertTrue(escrow.hasRole(escrow.AUCTION_ROLE(), auction), "auction role lost");
@@ -177,22 +175,21 @@ contract UpgradeDrillTest is CrossChainTest {
         uint32 day = 20260614;
 
         vm.startPrank(admin);
-        origin.wire(address(desisMock), factory);
-        origin.setRemoteMessenger(B_CHAIN_ID, remote);
+        origin.setDependencies(address(desisMock), factory);
+        origin.registerRemoteMessenger(B_CHAIN_ID, remote);
         origin.addTarget(B_CHAIN_ID);
         vm.stopPrank();
 
         // Freeze the day's target snapshot, then drop the peer so the clearing leg parks.
-        IOriginRouter.AuctionStageStartParams memory p;
+        IOriginRouter.IntexAuctionStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = day;
-        p.dayState = 1;
         vm.prank(address(desisMock));
-        origin.sendAuctionStageStart(p);
+        origin.sendIntexAuctionStart(p);
         vm.prank(admin);
-        origin.setRemoteMessenger(B_CHAIN_ID, "");
+        origin.registerRemoteMessenger(B_CHAIN_ID, "");
         vm.prank(address(desisMock));
-        origin.sendAuctionStageCollectingBids(day, B_CHAIN_ID, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
+        origin.sendIntexAuctionClearingStart(day, B_CHAIN_ID, IntexGas.INTEX_AUCTION_CLEARING_START);
 
         OriginRouterV2 newImpl = new OriginRouterV2(address(bridge));
         vm.prank(admin);
@@ -206,16 +203,16 @@ contract UpgradeDrillTest is CrossChainTest {
         uint32[] memory snapshot = origin.targetsOf(day);
         assertEq(snapshot.length, 1, "day snapshot lost");
         assertEq(snapshot[0], B_CHAIN_ID, "day snapshot chain lost");
-        IOriginRouter.ParkedMessage memory parked = origin.parkedMessage(0);
+        IOriginRouter.FailedMessageSend memory parked = origin.getFailedMessageSend(0);
         assertEq(parked.dstChainId, B_CHAIN_ID, "parked send lost");
         assertFalse(parked.sent, "parked send flag lost");
 
         // The park queue stays functional: restore the peer and flush post-upgrade.
         vm.prank(admin);
-        origin.setRemoteMessenger(B_CHAIN_ID, remote);
+        origin.registerRemoteMessenger(B_CHAIN_ID, remote);
         assertEq(origin.remoteMessenger(B_CHAIN_ID), remote, "remote messenger lost");
-        origin.resendParkedMessage(0);
-        assertTrue(origin.parkedMessage(0).sent, "flush broken after upgrade");
+        origin.retryMessageSend(0);
+        assertTrue(origin.getFailedMessageSend(0).sent, "flush broken after upgrade");
     }
 
     function test_Drill_TargetRouter() public {
@@ -226,8 +223,8 @@ contract UpgradeDrillTest is CrossChainTest {
         bytes memory remote = _interop(A_CHAIN_ID, address(0xCAFE));
 
         vm.startPrank(admin);
-        target.wire(auction, intex, escrow);
-        target.setRemoteMessenger(A_CHAIN_ID, remote);
+        target.setDependencies(auction, intex, escrow);
+        target.registerRemoteMessenger(A_CHAIN_ID, remote);
         vm.stopPrank();
 
         TargetRouterV2 newImpl = new TargetRouterV2(address(bridge), A_CHAIN_ID);
@@ -235,8 +232,8 @@ contract UpgradeDrillTest is CrossChainTest {
         target.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(target), address(newImpl));
-        assertEq(address(target.auction()), auction, "auction wiring lost");
-        assertEq(address(target.escrowAdapter()), escrow, "escrow wiring lost");
+        assertEq(address(target.intexAuction()), auction, "auction wiring lost");
+        assertEq(address(target.escrow()), escrow, "escrow wiring lost");
         assertEq(target.remoteMessenger(A_CHAIN_ID), remote, "remote messenger lost");
     }
 
@@ -247,7 +244,7 @@ contract UpgradeDrillTest is CrossChainTest {
         bytes memory remote = _interop(B_CHAIN_ID, address(0xBEEF));
 
         vm.startPrank(admin);
-        batch.setRemoteMessenger(B_CHAIN_ID, remote);
+        batch.registerRemoteMessenger(B_CHAIN_ID, remote);
         batch.grantRole(batch.DEFAULT_ADMIN_ROLE(), relayer);
         vm.stopPrank();
 

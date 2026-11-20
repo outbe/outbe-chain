@@ -13,6 +13,7 @@ import {
 import {AllocatedTransfer} from "the-compact/src/types/Claims.sol";
 import {Component} from "the-compact/src/types/Components.sol";
 import {ISolverEscrow} from "../../interfaces/ISolverEscrow.sol";
+import {IDestinationSettler} from "../../interfaces/IDestinationSettler.sol";
 
 /// @title OriginSettler
 /// @notice Origin chain settlement contract for cross-chain swaps
@@ -72,6 +73,10 @@ abstract contract OriginSettler is OriginSettlerBase {
             emit RefundSkipped(_orderId);
             return;
         }
+
+        // A second check of the deadline, independent of the destination chain. A revert keeps the
+        // message in the transport, which delivers it again after the deadline.
+        if (block.timestamp <= orderData.fillDeadline) revert IDestinationSettler.OrderFillNotExpired();
 
         _statuses().orderStatus[_orderId] = REFUNDED;
 

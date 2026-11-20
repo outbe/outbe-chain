@@ -57,6 +57,38 @@ markets = [
   { provider = "pyth" },
 ]
 
+# Policy rate of a currency: the overnight reference rate, annual. The feeder
+# reads the rate and its date from `url`. `kind` names the form of the answer.
+[[rate_providers]]
+currency = "840"   # USD, SOFR, Federal Reserve Bank of New York
+kind = "nyfed"
+url = "https://markets.newyorkfed.org/api/rates/secured/sofr/last/1.json"
+
+[[rate_providers]]
+currency = "978"   # EUR, €STR, European Central Bank
+kind = "ecb"
+url = "https://data-api.ecb.europa.eu/service/data/EST/B.EU000A2X2A25.WT?lastNObservations=1&format=jsondata"
+
+[[rate_providers]]
+currency = "826"   # GBP, SONIA, Bank of England (CSV)
+kind = "boe"
+url = "https://www.bankofengland.co.uk/boeapps/database/_iadb-fromshowcolumns.asp?csv.x=yes&SeriesCodes=IUDSOIA&CSVF=TN&UsingCodes=Y&VPD=Y&VFD=N"
+
+[[rate_providers]]
+currency = "392"   # JPY, TONA, Bank of Japan
+kind = "boj"
+url = "https://www.stat-search.boj.or.jp/api/v1/getDataCode?format=json&lang=en&db=FM01&code=STRDCLUCON"
+
+[[rate_providers]]
+currency = "344"   # HKD, HIBOR overnight, Hong Kong Monetary Authority
+kind = "hkma"
+url = "https://api.hkma.gov.hk/public/market-data-and-statistics/daily-monetary-statistics/daily-figures-interbank-liquidity?pagesize=1"
+
+[[rate_providers]]
+currency = "156"   # CNY, DR001, China Foreign Exchange Trade System
+kind = "cfets"
+url = "https://www.chinamoney.com.cn/r/cms/www/chinamoney/data/currency/prr-md.json"
+
 [[deviation_thresholds]]
 base = "COEN"
 threshold = "2.0"

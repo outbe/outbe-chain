@@ -1,6 +1,24 @@
 use super::*;
 
 impl TeeRegistry<'_> {
+    pub(super) fn revoke_previous_live_registration_v1(
+        &self,
+        mutation: &VerifiedClaimsMutationV1<'_>,
+        context: &MutationContextV1,
+        previous: Option<&NodeEnclaveBindingV1>,
+    ) -> Result<()> {
+        if mutation.expected_operation == AttestationOperationV1::RegisterEnclave {
+            if let Some(previous) = previous {
+                if context.now < previous.valid_until
+                    && previous.enclave_id != mutation.intent.enclave_id
+                {
+                    self.v1_revoked_enclave.write(&previous.enclave_id, true)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn validate_intent_envelope_v1(
         &self,
         mutation: &VerifiedClaimsMutationV1<'_>,

@@ -1,0 +1,359 @@
+use super::{
+    proposal::{Permission, ProposalGate},
+    sender::VoteSenderGate,
+};
+use crate::{
+    digest::Digest,
+    stack::epoch::signer::authority_signer_enabled,
+    validators::{
+        validator_status_can_vote, VALIDATOR_STATUS_ACTIVE, VALIDATOR_STATUS_EXITING,
+        VALIDATOR_STATUS_PENDING,
+    },
+};
+use alloy_primitives::B256;
+use commonware_actor::{Feedback, Unreliable};
+use commonware_consensus::{
+    simplex::Plan,
+    types::{Epoch, Round, View},
+    Automaton, CertifiableAutomaton, Relay,
+};
+use commonware_cryptography::{bls12381, Signer as _};
+use commonware_p2p::{CheckedSender, LimitedSender, Recipients, Sender as _};
+use commonware_runtime::IoBufs;
+use commonware_utils::channel::oneshot;
+use outbe_radicle::integration::RadicleVotingGate;
+use outbe_tee::{TeeAuthorityChannel, TeeAuthorityState as State};
+use std::{
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Arc,
+    },
+    time::SystemTime,
+};
+
+#[derive(Clone, Default)]
+struct Application(Arc<AtomicUsize>);
+impl Automaton for Application {
+    type Context = ();
+    type Digest = Digest;
+    async fn propose(&mut self, _: ()) -> oneshot::Receiver<Digest> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        let (tx, rx) = oneshot::channel();
+        let _ = tx.send(Digest(B256::repeat_byte(9)));
+        rx
+    }
+    async fn verify(&mut self, _: (), _: Digest) -> oneshot::Receiver<bool> {
+        let (tx, rx) = oneshot::channel();
+        let _ = tx.send(true);
+        rx
+    }
+}
+impl CertifiableAutomaton for Application {}
+impl Relay for Application {
+    type Digest = Digest;
+    type PublicKey = bls12381::PublicKey;
+    type Plan = Plan<Self::PublicKey>;
+    fn broadcast(&mut self, _: Digest, _: Self::Plan) -> Feedback {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        Feedback::Ok
+    }
+}
+#[derive(Clone)]
+struct CountingSender {
+    peer: bls12381::PublicKey,
+    count: Arc<AtomicUsize>,
+}
+impl LimitedSender for CountingSender {
+    type PublicKey = bls12381::PublicKey;
+    type Checked<'a> = Self;
+    fn check(&mut self, _: Recipients<Self::PublicKey>) -> Result<Self::Checked<'_>, SystemTime> {
+        Ok(self.clone())
+    }
+}
+impl CheckedSender for CountingSender {
+    type PublicKey = bls12381::PublicKey;
+    fn recipients(&self) -> Vec<Self::PublicKey> {
+        vec![self.peer.clone()]
+    }
+    fn send(self, _: impl Into<IoBufs> + Send, _: bool) -> Unreliable<Feedback> {
+        self.count.fetch_add(1, Ordering::SeqCst);
+        Unreliable::Outcome(Feedback::Ok)
+    }
+}
+
+#[tokio::test]
+async fn canonical_role_matrix_gates_votes_certificates_and_proposals() {
+    let states = [
+        (
+            State::ArmedBootstrap {
+                enclave_id: B256::repeat_byte(1),
+            },
+            true,
+        ),
+        (
+            State::Armed {
+                enclave_id: B256::repeat_byte(1),
+                valid_until: 100,
+            },
+            true,
+        ),
+        (State::SuspendedJailed, false),
+        (State::SuspendedLeaseExpired, false),
+        (State::SuspendedPolicyMismatch, false),
+        (State::UnkeyedAwaitingAdmission, false),
+    ];
+    // Stable ABI ACTIVE/EXITING retain authority; PENDING (including readiness) and JAILED do not.
+    let statuses = [
+        (VALIDATOR_STATUS_ACTIVE, true),
+        (VALIDATOR_STATUS_EXITING, true),
+        (VALIDATOR_STATUS_PENDING, false),
+        (crate::protocol_state::VALIDATOR_STATUS_JAILED, false),
+    ];
+    for (state, open) in states {
+        for (status, eligible) in statuses {
+            for (share, radicle) in [(false, false), (false, true), (true, false), (true, true)] {
+                assert_role_case(
+                    state,
+                    status,
+                    share,
+                    radicle,
+                    open && eligible && share && radicle,
+                )
+                .await;
+            }
+        }
+    }
+    assert!(!authority_signer_enabled(None, true, true, RadicleVotingGate::SignerAllowed).unwrap());
+}
+
+async fn assert_role_case(state: State, status: u8, share: bool, radicle: bool, expected: bool) {
+    let channel = TeeAuthorityChannel::new(state);
+    let watch = channel.subscribe();
+    let gate = if radicle {
+        RadicleVotingGate::SignerAllowed
+    } else {
+        RadicleVotingGate::Verifier
+    };
+    let permission: Permission = Arc::new(move || {
+        authority_signer_enabled(Some(&watch), validator_status_can_vote(status), share, gate)
+            .unwrap()
+    });
+    assert_eq!(
+        permission(),
+        expected,
+        "status={status}, state={state:?}, share={share}, radicle={radicle}"
+    );
+    let count = Arc::new(AtomicUsize::new(0));
+    let inner = CountingSender {
+        peer: bls12381::PrivateKey::from_seed(1).public_key(),
+        count: count.clone(),
+    };
+    for mut sender in [
+        VoteSenderGate::new(inner.clone(), permission.clone()),
+        VoteSenderGate::new(inner, permission.clone()),
+    ] {
+        assert_eq!(
+            !sender.send(Recipients::All, vec![1], true).is_empty(),
+            expected
+        );
+    }
+    assert_eq!(count.load(Ordering::SeqCst), if expected { 2 } else { 0 });
+    assert_proposals(permission, expected).await;
+}
+
+async fn assert_proposals(permission: Permission, expected: bool) {
+    let round = Round::new(Epoch::new(1), View::new(2));
+    let payload = Digest(B256::repeat_byte(9));
+    let app = Application::default();
+    let proposals = app.0.clone();
+    let mut app = ProposalGate::new(app, permission);
+    assert_eq!(app.propose(()).await.await.is_ok(), expected);
+    assert_eq!(
+        app.broadcast(payload, Plan::Propose { round }),
+        if expected {
+            Feedback::Ok
+        } else {
+            Feedback::Backoff
+        }
+    );
+    assert_eq!(
+        proposals.load(Ordering::SeqCst),
+        if expected { 2 } else { 0 }
+    );
+    assert!(app.verify((), payload).await.await.unwrap());
+    assert!(app.certify(round, payload).await.await.unwrap());
+}
+
+#[test]
+fn live_authority_and_cached_membership_gate_after_check_and_resume() {
+    let channel = TeeAuthorityChannel::new(State::ArmedBootstrap {
+        enclave_id: B256::repeat_byte(1),
+    });
+    let watch = channel.subscribe();
+    let accountable = Arc::new(AtomicBool::new(true));
+    let cached = accountable.clone();
+    let permission: Permission = Arc::new(move || {
+        authority_signer_enabled(
+            Some(&watch),
+            cached.load(Ordering::Acquire),
+            true,
+            RadicleVotingGate::SignerAllowed,
+        )
+        .unwrap()
+    });
+    let count = Arc::new(AtomicUsize::new(0));
+    let inner = CountingSender {
+        peer: bls12381::PrivateKey::from_seed(1).public_key(),
+        count: count.clone(),
+    };
+    let mut sender = VoteSenderGate::new(inner, permission);
+    let checked = sender.check(Recipients::All).unwrap();
+    channel.publish(State::SuspendedJailed);
+    assert!(checked.recipients().is_empty());
+    assert!(!checked.send(vec![1], true).accepted());
+    assert_eq!(count.load(Ordering::SeqCst), 0);
+    channel.publish(State::Armed {
+        enclave_id: B256::repeat_byte(1),
+        valid_until: 100,
+    });
+    assert_eq!(sender.send(Recipients::All, vec![2], true).len(), 1);
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    let checked = sender.check(Recipients::All).unwrap();
+    accountable.store(false, Ordering::Release);
+    assert!(!checked.send(vec![3], true).accepted());
+    assert!(sender.send(Recipients::All, vec![4], true).is_empty());
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+    accountable.store(true, Ordering::Release);
+    assert_eq!(sender.send(Recipients::All, vec![5], true).len(), 1);
+    assert_eq!(count.load(Ordering::SeqCst), 2);
+}
+
+#[derive(Clone, Copy)]
+struct RefreshHead {
+    height: u64,
+    jailed: bool,
+    timestamp: u64,
+    valid_until: u64,
+}
+
+fn vote_sender_blocks_on_first_send(head: RefreshHead, expected: State, lag_before_fcu: bool) {
+    use futures::FutureExt as _;
+    use outbe_tee::authority::{
+        install_tee_authority_watch, note_execution_finalized_authority_revision,
+        note_finalized_authority_revision, tee_authority_test_guard,
+    };
+
+    let _authority_port = lag_before_fcu.then(tee_authority_test_guard);
+    let facts = Arc::new(std::sync::Mutex::new(RefreshHead {
+        height: 7,
+        jailed: false,
+        timestamp: 1_800_000_000,
+        valid_until: 1_800_001_000,
+    }));
+    let channel = TeeAuthorityChannel::default();
+    let watch = channel.subscribe();
+    let published = Arc::clone(&facts);
+    let publisher = channel.clone();
+    let probes = Arc::new(AtomicUsize::new(0));
+    let hook_probes = Arc::clone(&probes);
+    channel.install_sync_refresh(move |generation| {
+        hook_probes.fetch_add(1, Ordering::Relaxed);
+        let seen = *published.lock().expect("provider head");
+        if seen.height < publisher.observed_finalized_height() {
+            return;
+        }
+        let verdict = if seen.jailed {
+            State::SuspendedJailed
+        } else if seen.timestamp >= seen.valid_until {
+            State::SuspendedLeaseExpired
+        } else {
+            State::Armed {
+                enclave_id: B256::repeat_byte(1),
+                valid_until: seen.valid_until,
+            }
+        };
+        assert!(publisher.publish_if_generation(generation, verdict));
+        publisher.note_applied_finalized_height(seen.height);
+    });
+    channel.note_observed_finalized_height(7);
+    assert!(watch.ensure_current().is_authority_open());
+    let mut changes = channel.subscribe();
+    let count = Arc::new(AtomicUsize::new(0));
+    let permission: Permission = Arc::new(move || {
+        authority_signer_enabled(Some(&watch), true, true, RadicleVotingGate::SignerAllowed)
+            .unwrap()
+    });
+    let mut sender = VoteSenderGate::new(
+        CountingSender {
+            peer: bls12381::PrivateKey::from_seed(1).public_key(),
+            count: count.clone(),
+        },
+        permission,
+    );
+    if lag_before_fcu {
+        install_tee_authority_watch(channel.subscribe()).unwrap();
+        note_finalized_authority_revision(head.height);
+        let before = probes.load(Ordering::Relaxed);
+        for _ in 0..3 {
+            assert_eq!(sender.send(Recipients::All, vec![1], true).len(), 1);
+        }
+        assert_eq!(probes.load(Ordering::Relaxed), before + 1);
+        assert!(changes.changed().now_or_never().is_none());
+    }
+    *facts.lock().expect("provider head") = head;
+    if lag_before_fcu {
+        note_execution_finalized_authority_revision(head.height);
+    } else {
+        channel.note_observed_finalized_height(head.height);
+    }
+    // The observation does not publish. The first send probes the new provider state.
+    assert!(channel.snapshot().is_authority_open());
+    assert!(sender.send(Recipients::All, vec![1], true).is_empty());
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        if lag_before_fcu { 3 } else { 0 }
+    );
+    let closed = channel.snapshot();
+    assert_eq!(closed, expected);
+    assert!(closed.has_verified_resident_key());
+    assert!(!closed.is_authority_open());
+    assert!(changes.changed().now_or_never().unwrap().is_ok());
+}
+
+#[test]
+fn vote_sender_first_send_blocks_on_jailed_and_on_lease_expiry() {
+    vote_sender_blocks_on_first_send(
+        RefreshHead {
+            height: 8,
+            jailed: true,
+            timestamp: 1_800_000_000,
+            valid_until: 1_800_001_000,
+        },
+        State::SuspendedJailed,
+        false,
+    );
+    vote_sender_blocks_on_first_send(
+        RefreshHead {
+            height: 9,
+            jailed: false,
+            timestamp: 1_800_000_000,
+            valid_until: 1_800_000_000,
+        },
+        State::SuspendedLeaseExpired,
+        false,
+    );
+}
+
+#[test]
+fn vote_sender_reuses_confirmed_authority_until_same_height_post_fcu() {
+    vote_sender_blocks_on_first_send(
+        RefreshHead {
+            height: 8,
+            jailed: true,
+            timestamp: 1_800_000_000,
+            valid_until: 1_800_001_000,
+        },
+        State::SuspendedJailed,
+        true,
+    );
+}

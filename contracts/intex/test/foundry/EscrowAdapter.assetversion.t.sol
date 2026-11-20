@@ -37,7 +37,7 @@ contract EscrowAdapterAssetVersionTest is Test {
         tokenA = new MockWCOEN();
         tokenB = new MockWCOEN();
         escrow = DeployProxy.escrowAdapter(admin, admin);
-        escrow.wire(admin, COMPACT, address(tokenA));
+        escrow.setDependencies(admin, COMPACT, address(tokenA));
         escrow.grantRole(escrow.RELAYER_ROLE(), admin);
         escrow.setProceedsRecipient(proceeds);
     }
@@ -46,7 +46,7 @@ contract EscrowAdapterAssetVersionTest is Test {
         deal(address(token), who, LOCK);
         vm.prank(who);
         token.approve(address(escrow), type(uint256).max);
-        escrow.lockFunds(day, who, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(day, who, LOCK_UNITS, 1_000_000, 1);
     }
 
     function _positionOf(address compactAt, uint256 lockId) internal view returns (uint256) {
@@ -58,36 +58,38 @@ contract EscrowAdapterAssetVersionTest is Test {
         uint256 lockIdA = escrow.lockId();
 
         vm.expectEmit(true, false, false, true, address(escrow));
-        emit IEscrowAdapter.AssetRetired(0, COMPACT, address(tokenA), lockIdA);
-        escrow.wire(admin, COMPACT, address(tokenB));
+        emit IEscrowAdapter.IntexAuctionAssetVersionRetired(0, COMPACT, address(tokenA), lockIdA);
+        escrow.setDependencies(admin, COMPACT, address(tokenB));
 
-        assertEq(escrow.currentAssetVersion(), 1, "the active asset moved on");
-        IEscrowAdapter.AssetVersion memory retired = escrow.getAssetVersion(0);
+        assertEq(escrow.currentIntexAuctionAssetVersion(), 1, "the active asset moved on");
+        IEscrowAdapter.IntexAuctionAssetVersion memory retired = escrow.getIntexAuctionAssetVersion(0);
         assertEq(retired.compact, COMPACT, "retired compact");
-        assertEq(address(retired.paymentToken), address(tokenA), "retired token");
+        assertEq(address(retired.asset), address(tokenA), "retired token");
         assertEq(retired.lockId, lockIdA, "retired lock id");
         assertEq(escrow.lockId(), 0, "the new asset bootstraps its own lock");
-        assertEq(address(escrow.getAssetVersion(1).paymentToken), address(tokenB), "active version reads the wiring");
+        assertEq(
+            address(escrow.getIntexAuctionAssetVersion(1).asset), address(tokenB), "active version reads the wiring"
+        );
         assertEq(_positionOf(COMPACT, lockIdA), LOCK, "the locked funds stayed where they were");
     }
 
     function test_MoneyLeftUnderARetiredAssetStillCountsAsOutstanding() public {
         _lock(DAY_1, alice, tokenA);
-        escrow.wire(admin, COMPACT, address(tokenB));
+        escrow.setDependencies(admin, COMPACT, address(tokenB));
         assertEq(escrow.lockId(), 0, "the active asset holds nothing yet");
 
         assertTrue(escrow.hasOutstandingLocks(), "the retired position still holds the lock");
         vm.expectRevert(IEscrowAdapter.LocksOutstanding.selector);
-        escrow.wire(makeAddr("auction2"), COMPACT, address(tokenB));
+        escrow.setDependencies(makeAddr("auction2"), COMPACT, address(tokenB));
     }
 
     function test_ADayLockedBeforeARotationIsClaimedInItsOwnAsset() public {
         _lock(DAY_1, alice, tokenA);
         uint256 lockIdA = escrow.lockId();
-        escrow.wire(admin, COMPACT, address(tokenB));
+        escrow.setDependencies(admin, COMPACT, address(tokenB));
 
-        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
-        escrow.releaseRefund(DAY_1, alice);
+        vm.warp(block.timestamp + escrow.UNFINALIZED_RETURN_DELAY());
+        escrow.returnIntexAuctionAsset(DAY_1, alice);
 
         assertEq(tokenA.balanceOf(alice), LOCK, "refunded in the token it was locked in");
         assertEq(tokenB.balanceOf(alice), 0, "never in the rotated token");
@@ -97,14 +99,14 @@ contract EscrowAdapterAssetVersionTest is Test {
     function test_ADayLockedBeforeARotationFinalizesInItsOwnAsset() public {
         _lock(DAY_1, alice, tokenA);
         _lock(DAY_1, bob, tokenA);
-        escrow.wire(admin, COMPACT, address(tokenB));
+        escrow.setDependencies(admin, COMPACT, address(tokenB));
         vm.warp(block.timestamp + 5 minutes);
 
         address[] memory winners = new address[](1);
         winners[0] = bob;
-        escrow.finalizeAuction(DAY_1, bytes32(uint256(1)), winners, 0, 0, 500_000, 1000e6, true);
-        escrow.releaseRefund(DAY_1, alice);
-        escrow.releaseRefund(DAY_1, bob);
+        escrow.chargeIntexAuctionAsset(DAY_1, winners, 0, 0, 500_000, 1000e6, true);
+        escrow.returnIntexAuctionAsset(DAY_1, alice);
+        escrow.returnIntexAuctionAsset(DAY_1, bob);
 
         assertEq(tokenA.balanceOf(alice), LOCK, "loser refunded in the day's token");
         assertEq(tokenA.balanceOf(bob), LOCK / 2, "winner refunded in the day's token");
@@ -114,60 +116,60 @@ contract EscrowAdapterAssetVersionTest is Test {
 
     function test_ADayLockedBeforeARotationPaysAtItsOwnScale() public {
         _lock(DAY_1, bob, tokenA);
-        escrow.wire(admin, COMPACT, address(new MockERC20("Token", "TKN", 6)));
+        escrow.setDependencies(admin, COMPACT, address(new MockERC20("Token", "TKN", 6)));
         vm.warp(block.timestamp + 5 minutes);
 
         address[] memory winners = new address[](1);
         winners[0] = bob;
-        escrow.finalizeAuction(DAY_1, bytes32(uint256(1)), winners, 0, 0, 500_000, 1000e6, true);
+        escrow.chargeIntexAuctionAsset(DAY_1, winners, 0, 0, 500_000, 1000e6, true);
 
         assertEq(tokenA.balanceOf(proceeds), LOCK / 2, "paid at the day's 18-decimal scale");
     }
 
     function test_ADayKeepsItsPaymentTokenAcrossARotation() public {
         _lock(DAY_1, alice, tokenA);
-        escrow.wire(admin, COMPACT, address(tokenB));
+        escrow.setDependencies(admin, COMPACT, address(tokenB));
 
-        assertEq(address(escrow.dayPaymentToken(DAY_1)), address(tokenA), "the day's own token");
-        assertEq(address(escrow.paymentToken()), address(tokenB), "the active token moved on");
+        assertEq(address(escrow.dayIntexAuctionAsset(DAY_1)), address(tokenA), "the day's own token");
+        assertEq(address(escrow.intexAuctionAsset()), address(tokenB), "the active token moved on");
     }
 
     function test_ADayAfterARotationLocksUnderTheNewAsset() public {
         _lock(DAY_1, alice, tokenA);
         uint256 lockIdA = escrow.lockId();
-        escrow.wire(admin, COMPACT, address(tokenB));
+        escrow.setDependencies(admin, COMPACT, address(tokenB));
 
         _lock(DAY_2, bob, tokenB);
         uint256 lockIdB = escrow.lockId();
         assertTrue(lockIdB != 0 && lockIdB != lockIdA, "a separate position");
 
-        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
-        escrow.releaseRefund(DAY_2, bob);
+        vm.warp(block.timestamp + escrow.UNFINALIZED_RETURN_DELAY());
+        escrow.returnIntexAuctionAsset(DAY_2, bob);
         assertEq(tokenB.balanceOf(bob), LOCK, "refunded in the new token");
         assertEq(_positionOf(COMPACT, lockIdA), LOCK, "the old day's funds untouched");
     }
 
     function test_ALateLockIntoARetiredDayReverts() public {
         _lock(DAY_1, alice, tokenA);
-        escrow.wire(admin, COMPACT, address(tokenB));
+        escrow.setDependencies(admin, COMPACT, address(tokenB));
 
         deal(address(tokenB), bob, LOCK);
         vm.prank(bob);
         tokenB.approve(address(escrow), type(uint256).max);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.DayAssetRetired.selector, DAY_1, uint8(0)));
-        escrow.lockFunds(DAY_1, bob, LOCK_UNITS, 1_000_000, 1);
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.DayIntexAuctionAssetRetired.selector, DAY_1, uint8(0)));
+        escrow.lockIntexAuctionAsset(DAY_1, bob, LOCK_UNITS, 1_000_000, 1);
     }
 
     function test_ACommitBondTakenBeforeARotationIsReleasedInItsOwnAsset() public {
         deal(address(tokenA), alice, LOCK);
         vm.prank(alice);
         tokenA.approve(address(escrow), type(uint256).max);
-        escrow.lockCommitBond(DAY_1, alice, LOCK_UNITS);
-        assertEq(escrow.getCommitBond(DAY_1, alice).assetVersion, 0, "bond remembers its asset");
+        escrow.lockIntexAuctionBidBond(DAY_1, alice, LOCK_UNITS);
+        assertEq(escrow.getIntexAuctionBidBond(DAY_1, alice).assetVersion, 0, "bond remembers its asset");
 
-        escrow.wire(admin, COMPACT, address(tokenB));
+        escrow.setDependencies(admin, COMPACT, address(tokenB));
         vm.warp(block.timestamp + 5 minutes);
-        escrow.releaseCommitBond(DAY_1, alice);
+        escrow.unlockIntexAuctionBidBond(DAY_1, alice, 0);
 
         assertEq(tokenA.balanceOf(alice), LOCK, "bond returned in the token it was taken in");
     }
@@ -175,14 +177,14 @@ contract EscrowAdapterAssetVersionTest is Test {
     function test_RotatingTheCompactKeepsOldDaysOnTheOldCompact() public {
         _lock(DAY_1, alice, tokenA);
         uint256 lockIdOld = escrow.lockId();
-        escrow.wire(admin, COMPACT_2, address(tokenA));
+        escrow.setDependencies(admin, COMPACT_2, address(tokenA));
 
         _lock(DAY_2, bob, tokenA);
         uint256 lockIdNew = escrow.lockId();
 
-        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
-        escrow.releaseRefund(DAY_1, alice);
-        escrow.releaseRefund(DAY_2, bob);
+        vm.warp(block.timestamp + escrow.UNFINALIZED_RETURN_DELAY());
+        escrow.returnIntexAuctionAsset(DAY_1, alice);
+        escrow.returnIntexAuctionAsset(DAY_2, bob);
 
         assertEq(tokenA.balanceOf(alice), LOCK, "old day refunded");
         assertEq(tokenA.balanceOf(bob), LOCK, "new day refunded");

@@ -4,46 +4,62 @@ pragma solidity 0.8.30;
 /// @title IOriginRouter
 /// @author Outbe
 /// @notice Interface for the Outbe-side router. It broadcasts auction/series messages to every
-///         registered target chain. It receives BIDS_BATCH / BIDS_DONE back from each chain over
+///         registered target chain. It receives BIDS_BATCH / BIDS_TOTALS back from each chain over
 ///         the protocol-agnostic ERC-7786 bridge.
 /// @dev Auction messages use `emissionDay` as key. Series (issuance/mark) messages use `seriesId`.
 ///      The target set is a registry (see {addTarget}). The router takes a snapshot of it per day
 ///      at STAGE_START, so a mid-day membership change never reshapes an in-flight auction.
 ///      Broadcast sends fan out over the snapshot. Addressed sends carry a leading `dstChainId`,
 ///      and the router checks it against the snapshot. Every leg is isolated (see
-///      {resendParkedMessage}). The router parks a single failing leg and never reverts the
+///      {retryMessageSend}). The router parks a single failing leg and never reverts the
 ///      fan-out. The contract's relay float funds the sends (`msg.value` must be 0). `quote*`
 ///      return the native fee. Inbound delivery arrives via
 ///      {ERC7786MessengerBase-receiveMessage}.
 interface IOriginRouter {
     // --- Events ---
-    /// @notice Emitted when a BIDS_BATCH is received from a target chain.
-    /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param bidsCount Number of bids received.
-    event BidsBatchReceived(uint32 indexed srcChainId, uint32 indexed emissionDay, uint256 bidsCount);
 
-    /// @notice Emitted when a target's unfinished relay is answered with another round.
-    /// @param sendId Transport id of the CLEARING that carries the round.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param dstChainId Chain whose relay carries on.
-    /// @param nextBatch First chunk the target still has to send.
-    /// @param totalBatches Chunks the day's relay spans.
-    event BidsRelayRoundSent(
+    /// @notice Emitted for each target chain, when the start of the day leaves.
+    event IntexAuctionStartSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint32 indexed dstChainId);
+
+    /// @notice Emitted when the clearing start leaves for a chain: at the reveal end, and again after the
+    ///         pause message of that chain.
+    event IntexAuctionClearingStartSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint32 indexed dstChainId);
+
+    /// @notice Emitted when one page of the winners leaves for a chain.
+    event IntexAuctionWinnersSent(
         bytes32 indexed sendId,
         uint32 indexed emissionDay,
         uint32 indexed dstChainId,
-        uint16 nextBatch,
-        uint16 totalBatches
+        uint32 pageIndex,
+        uint32 totalPages,
+        uint32 winnersCount
     );
 
-    /// @notice Emitted when a BIDS_DONE completeness marker is received from a target chain.
-    /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param totalBatches Number of BIDS_BATCH messages the source relayed for this day.
-    /// @param totalBids Total bids the source relayed for this day.
-    event BidsDoneReceived(
-        uint32 indexed srcChainId, uint32 indexed emissionDay, uint16 totalBatches, uint32 totalBids
+    /// @notice Emitted when the router cannot send a message and keeps it. No Sent event comes then.
+    /// @param key The day, or the day and the page.
+    event MessageSendFailed(
+        uint256 indexed idx, uint32 indexed dstChainId, uint8 msgType, bytes32 key, bytes errorData
+    );
+
+    /// @notice Emitted when a whole message arrives and the router does nothing with it.
+    /// @param reason One of the `InboundReason` codes.
+    event MessageIgnored(bytes32 indexed receiveId, uint32 indexed srcChainId, uint8 reason);
+
+    /// @notice Emitted when an admin sets Desis and the Intex factory. Only the new values.
+    event OriginRouterDependenciesSet(address desis, address intexFactory);
+
+    /// @notice Emitted when an admin sets the token transfer contract and WCOEN.
+    event OriginRouterProceedsRouteSet(address tokenBridge, address wcoen);
+
+    /// @notice Emitted when the router received the proceeds of a page but could not give them to the
+    ///         Intex factory. It keeps them.
+    event IntexAuctionProceedsReceiveFailed(
+        uint256 indexed idx,
+        uint32 indexed emissionDay,
+        uint32 indexed srcChainId,
+        uint32 pageIndex,
+        uint256 amountMinor,
+        bytes errorData
     );
 
     /// @notice Emitted when a chain is registered as an auction target.
@@ -51,27 +67,20 @@ interface IOriginRouter {
     /// @notice Emitted when a chain is deregistered as an auction target.
     event TargetRemoved(uint32 indexed chainId);
 
-    /// @notice Emitted when an outbound leg fails to dispatch and is parked for a permissionless flush.
-    /// @param idx Parked-send index.
-    /// @param dstChainId Destination chainId of the parked leg.
-    /// @param msgType Codec message type of the parked payload.
-    event MessageParked(uint256 indexed idx, uint32 indexed dstChainId, uint8 msgType);
-    /// @notice Emitted when a parked outbound leg is flushed successfully.
-    event ParkedMessageResent(uint256 indexed idx, uint32 indexed dstChainId, bytes32 sendId);
-
-    /// @notice Emitted when an auction stage message is sent to a target chain.
+    /// @notice Emitted when the cancel of a day is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param emissionDay Emission day (yyyymmdd).
-    /// @param stageType Codec message type (start/reveal/clearing).
-    event AuctionStageSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint8 stageType);
+    /// @param dstChainId Target chain of the send.
+    event IntexAuctionCancelSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint32 indexed dstChainId);
 
-    /// @notice Emitted when an auction result is sent to a target chain.
-    /// @param sendId Bridge send identifier.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param issuedUnits Number of Intex units issued.
-    /// @param clearingRate Uniform clearing rate (`1e6` fixed-point).
-    event AuctionResultSent(
-        bytes32 indexed sendId, uint32 indexed emissionDay, uint32 issuedUnits, uint64 clearingRate
+    /// @notice Emitted when the result leaves for one chain, with the won quantity and winning bids of
+    ///         that chain.
+    event IntexAuctionResultSent(
+        bytes32 indexed sendId,
+        uint32 indexed emissionDay,
+        uint32 indexed dstChainId,
+        uint32 wonQuantity,
+        uint32 wonBidsCount
     );
 
     /// @notice Emitted when issuance instructions are sent to a target chain.
@@ -80,32 +89,10 @@ interface IOriginRouter {
     /// @param seriesCount Number of series the chunk carries.
     event IssuanceInstructionsSent(bytes32 indexed sendId, bytes14 indexed seriesId, uint256 seriesCount);
 
-    /// @notice Emitted when refund instructions are sent to a target chain.
-    /// @param sendId Bridge send identifier.
-    /// @param emissionDay Emission day (yyyymmdd).
-    /// @param instructionsCount Winners in the chunk.
-    event RefundInstructionsSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint256 instructionsCount);
-
     /// @notice Emitted when a mark-called message is sent to a target chain.
     /// @param sendId Bridge send identifier.
     /// @param seriesId Series identifier.
     event MarkCalledSent(bytes32 indexed sendId, bytes14 indexed seriesId);
-
-    /// @notice Emitted when `wire` updates the `desis` and `intexFactory` dependencies and rotates their roles.
-    /// @param desisOld Previous `desis` (zero on first wiring).
-    /// @param desisNew New `desis` granted `DESIS_ROLE`.
-    /// @param intexFactoryOld Previous `intexFactory` (zero on first wiring).
-    /// @param intexFactoryNew New `intexFactory` granted `INTEX_FACTORY_ROLE`.
-    event DependenciesWired(address desisOld, address desisNew, address intexFactoryOld, address intexFactoryNew);
-
-    /// @notice Emitted when the proceeds route (token bridge + WCOEN) is set.
-    event ProceedsRouteSet(address tokenBridge, address wcoen);
-    /// @notice Emitted when inbound auction proceeds are handed to the factory to be burned.
-    event ProceedsDistributed(uint32 indexed emissionDay, uint256 amount);
-    /// @notice Emitted when distribution failed and the proceeds were parked for retry.
-    event ProceedsParked(uint256 indexed idx, uint32 indexed emissionDay, uint256 amount);
-    /// @notice Emitted when a parked distribution was retried successfully.
-    event ParkedProceedsDistributed(uint256 indexed idx, uint32 indexed emissionDay, uint256 amount);
 
     /// @notice Caller of the proceeds hook is not the wired token bridge.
     error UnauthorizedProceedsCaller(address caller);
@@ -114,11 +101,11 @@ interface IOriginRouter {
     /// @notice Proceeds arrived from a source sender other than the registered peer for its chain.
     error UnauthorizedProceedsSender(bytes from);
     /// @notice No live parked distribution at `idx`.
-    error NoParkedProceeds(uint256 idx);
+    error NoFailedIntexAuctionProceedsReceive(uint256 idx);
 
     // --- Types ---
     /// @notice Auction proceeds unwrapped on Outbe but not yet distributed, awaiting permissionless retry.
-    struct ParkedProceeds {
+    struct FailedIntexAuctionProceedsReceive {
         uint32 emissionDay;
         uint32 srcChainId;
         uint128 amount;
@@ -126,7 +113,7 @@ interface IOriginRouter {
     }
 
     /// @notice An outbound leg that failed to dispatch, retained for a permissionless flush.
-    struct ParkedMessage {
+    struct FailedMessageSend {
         uint32 dstChainId;
         uint64 gasLimit;
         bool sent;
@@ -142,7 +129,7 @@ interface IOriginRouter {
 
     /// @notice Auction stage start parameters. The struct groups them so that the calldata layout
     ///         stays resilient against stack limits.
-    struct AuctionStageStartParams {
+    struct IntexAuctionStartParams {
         uint32 emissionDay;
         /// @notice End of the commit stage (UNIX seconds).
         uint32 commitEnd;
@@ -153,7 +140,7 @@ interface IOriginRouter {
         /// @notice PROMIS-units per Intex unit (1e6).
         uint128 promisLoadMinor;
         /// @notice Minimum acceptable bid rate (`1e6` fixed-point, % of the escrow basis).
-        uint32 minIntexBidRate;
+        uint32 minBidRate;
         /// @notice Entry and call price of every currency the day can clear in.
         ReferenceCurrencyPrice[] prices;
         /// @notice Called->deadline window in seconds (0 = default).
@@ -163,17 +150,15 @@ interface IOriginRouter {
         /// @notice Call-trigger threshold in seconds.
         uint32 callThreshold;
         /// @notice Minimum quantity per bid (Intex units).
-        uint16 minIntexBidQuantity;
+        uint16 minBidQuantity;
         /// @notice Commit-entry bond in protocol units (1e6). 0 disables the bond.
-        uint128 commitBondMinor;
-        /// @notice Final emission-day state (1 = Live, 2 = Cancelled).
-        uint8 dayState;
+        uint128 bidBondMinor;
     }
 
     /// @notice Issuance instruction parameters. The struct groups them so that the calldata layout
     ///         stays resilient against stack limits.
     /// @dev `issuedUnits` must equal the auction's cleared count.
-    struct IssuanceInstructionsParams {
+    struct IntexSeriesParams {
         bytes14 seriesId;
         /// @notice Emission day the series was derived from (provenance, carried to the
         ///         destination NFT).
@@ -212,17 +197,11 @@ interface IOriginRouter {
     /// @notice `sendLeg` is an internal self-call seam. The caller was not this contract.
     error OnlySelf();
     /// @notice No live parked send at `idx`.
-    error NoParkedMessage(uint256 idx);
+    error NoFailedMessageSend(uint256 idx);
+    /// @notice The kept START belongs to a day whose cancel was sent.
+    error IntexAuctionDayCanceled(uint32 emissionDay);
     /// @notice Empty array provided.
     error EmptyArray();
-
-    /// @notice The router acknowledged an authenticated inbound message, or one item of it, without
-    ///         effect.
-    /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param msgType Codec message type.
-    /// @param key Identity of the ignored effect (emission day, series id, chunk, ...) as the handler keys it.
-    /// @param reason One of the `InboundReason` codes.
-    event InboundMessageIgnored(uint32 indexed srcChainId, uint8 indexed msgType, bytes32 indexed key, uint8 reason);
 
     /// @notice Address wired as `desis` does not advertise `IDesis` via ERC-165 or is an EOA.
     /// @param wired Address that failed the interface probe.
@@ -232,12 +211,12 @@ interface IOriginRouter {
     /// @notice Wire contract dependencies and grant the demand/supply roles.
     /// @param desis Desis contract. It must advertise `IDesis` via ERC-165. It gets `DESIS_ROLE`.
     /// @param intexFactory IntexFactory precompile. It gets `INTEX_FACTORY_ROLE`.
-    function wire(address desis, address intexFactory) external;
+    function setDependencies(address desis, address intexFactory) external;
 
     /// @notice Register (or clear) the matching messenger on `chainId` as an ERC-7930 interoperable address.
     /// @param chainId Destination/source chainId.
     /// @param interop ERC-7930 interoperable address (empty to clear).
-    function setRemoteMessenger(uint32 chainId, bytes calldata interop) external;
+    function registerRemoteMessenger(uint32 chainId, bytes calldata interop) external;
 
     /// @notice Register `chainId` as an auction target. Its peer messenger must already be set.
     ///         At most 16 targets. Restricted to admin.
@@ -255,34 +234,38 @@ interface IOriginRouter {
     // --- Send ---
     /// @notice Broadcast auction stage start to every registered target, and take a snapshot of the
     ///         target set for the day. Restricted to `DESIS_ROLE`.
-    function sendAuctionStageStart(AuctionStageStartParams calldata params) external payable;
+    function sendIntexAuctionStart(IntexAuctionStartParams calldata params) external payable;
+    /// @notice Broadcast the cancel of a started day to every chain of its snapshot. Restricted to `DESIS_ROLE`.
+    function sendIntexAuctionCancel(uint32 emissionDay, uint8 reason) external payable;
     /// @notice Broadcast the collecting-bids stage to one chain of the day's snapshot. Restricted to `DESIS_ROLE`.
-    function sendAuctionStageCollectingBids(uint32 emissionDay, uint32 dstChainId, uint256 gasLimit) external payable;
+    function sendIntexAuctionClearingStart(uint32 emissionDay, uint32 dstChainId, uint256 gasLimit) external payable;
     /// @notice Send auction result to a single target chain. Restricted to `DESIS_ROLE`.
-    function sendAuctionResult(
+    function sendIntexAuctionResult(
         uint32 dstChainId,
         uint32 emissionDay,
-        uint32 issuedUnits,
-        uint64 auctionClearingRate,
-        uint32 wonBidsCount
+        uint32 wonQuantity,
+        uint32 wonBidsCount,
+        uint32 quantity,
+        uint64 clearingRate,
+        uint64 totalDemand
     ) external payable returns (bytes32 sendId);
-    /// @notice Send one chain one chunk (`chunkIndex` of `totalChunks`) of the series of `emissionDay` it must
+    /// @notice Send one chain one chunk (`pageIndex` of `totalPages`) of the series of `emissionDay` it must
     ///         create. Restricted to `INTEX_FACTORY_ROLE`.
-    function sendIssuanceInstructions(
+    function sendIntexSeries(
         uint32 dstChainId,
         uint32 emissionDay,
-        uint16 chunkIndex,
-        uint16 totalChunks,
-        IssuanceInstructionsParams[] calldata series
+        uint16 pageIndex,
+        uint16 totalPages,
+        IntexSeriesParams[] calldata series
     ) external payable returns (bytes32 sendId);
     /// @notice Send one chunk of a day's refunds to a single target chain. The chunk holds the
     ///         winners on that chain and the day's clearing terms. A chain whose bids all lost still gets one
     ///         empty chunk, which closes its day. Restricted to `DESIS_ROLE`.
-    function sendRefundInstructions(
+    function sendIntexAuctionWinners(
         uint32 dstChainId,
         uint32 emissionDay,
-        uint16 chunkIndex,
-        uint16 totalChunks,
+        uint16 pageIndex,
+        uint16 totalPages,
         uint64 clearingRate,
         uint128 basis,
         address[] calldata winners,
@@ -293,16 +276,18 @@ interface IOriginRouter {
     ///         series that share both the decision that called them and its timestamp.
     ///         Restricted to `INTEX_FACTORY_ROLE`.
     /// @dev `calledAt` is the origin's own stamp, so delivery lag never lengthens a target's deadline.
-    function sendMarkCalled(uint32 emissionDay, uint64 calledAt, bytes14[] calldata seriesIds) external payable;
+    function sendIntexSeriesCallNotice(uint32 emissionDay, uint64 calledAt, bytes14[] calldata seriesIds)
+        external
+        payable;
 
     /// @notice Permissionless flush of a parked outbound leg.
-    function resendParkedMessage(uint256 idx) external;
+    function retryMessageSend(uint256 idx) external;
     /// @notice Parked outbound leg by index.
-    function parkedMessage(uint256 idx) external view returns (ParkedMessage memory);
+    function getFailedMessageSend(uint256 idx) external view returns (FailedMessageSend memory);
 
-    /// @notice How many messages have ever parked. `sent` in {parkedMessage} tells which are
+    /// @notice How many messages have ever parked. `sent` in {getFailedMessageSend} tells which are
     ///         resolved.
-    function parkedMessageCount() external view returns (uint256);
+    function failedMessageSendCount() external view returns (uint256);
 
     // --- Proceeds ---
     /// @notice Set the WCOEN token bridge (authorized proceeds-hook caller) and the WCOEN token to unwrap.
@@ -314,14 +299,18 @@ interface IOriginRouter {
     /// @notice Takes the proceeds of a chunk from the target router on this chain, which needs no
     ///         token bridge. Only that router may call it.
     /// @param emissionDay Day the proceeds belong to.
+    /// @param pageIndex Page of the winners the proceeds come from.
     /// @param amount WCOEN the router approved for this call.
-    function receiveLocalProceeds(uint32 emissionDay, uint256 amount) external;
+    function receiveLocalProceeds(uint32 emissionDay, uint32 pageIndex, uint256 amount) external;
     /// @notice Parked proceeds awaiting retry, by enqueue index.
-    function parkedProceeds(uint256 idx) external view returns (ParkedProceeds memory);
+    function getFailedIntexAuctionProceedsReceive(uint256 idx)
+        external
+        view
+        returns (FailedIntexAuctionProceedsReceive memory);
 
-    /// @notice How many proceeds have ever parked. `settled` in {parkedProceeds} tells which are
-    ///         resolved.
-    function parkedProceedsCount() external view returns (uint256);
+    /// @notice How many proceeds have ever parked. `settled` in {getFailedIntexAuctionProceedsReceive} tells
+    ///         which are resolved.
+    function failedIntexAuctionProceedsReceiveCount() external view returns (uint256);
     /// @notice Permissionless retry of a parked distribution.
-    function distributeParkedProceeds(uint256 idx) external;
+    function retryIntexAuctionProceedsReceive(uint256 idx) external;
 }

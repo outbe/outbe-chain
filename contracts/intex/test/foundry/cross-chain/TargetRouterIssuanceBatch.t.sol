@@ -23,16 +23,12 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(address(this), address(this));
         router = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
 
-        router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
-        router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
+        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
+        router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.ROUTER_ROLE(), address(router));
     }
 
-    function _series(bytes14 seriesId)
-        internal
-        view
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload memory payload)
-    {
+    function _series(bytes14 seriesId) internal view returns (BridgeMsgCodec.IntexSeriesPayload memory payload) {
         payload.seriesId = seriesId;
         payload.emissionDay = DAY;
         payload.issuedAt = uint32(block.timestamp);
@@ -46,23 +42,21 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         payload.callPriceMinor = 200e6;
     }
 
-    function _deliver(BridgeMsgCodec.IssuanceInstructionsPayload[] memory series) internal {
+    function _deliver(BridgeMsgCodec.IntexSeriesPayload[] memory series) internal {
         _deliver(0, 1, series);
     }
 
-    function _deliver(uint16 chunkIndex, uint16 totalChunks, BridgeMsgCodec.IssuanceInstructionsPayload[] memory series)
-        internal
-    {
+    function _deliver(uint16 pageIndex, uint16 totalPages, BridgeMsgCodec.IntexSeriesPayload[] memory series) internal {
         _deliver(
             OUTBE_CHAIN_ID,
             originSender,
             address(router),
-            BridgeMsgCodec.encodeIssuanceInstructions(DAY, chunkIndex, totalChunks, series)
+            BridgeMsgCodec.encodeIntexSeries(DAY, pageIndex, totalPages, series)
         );
     }
 
     function test_OneMessageCreatesEverySeriesItCarries() public {
-        BridgeMsgCodec.IssuanceInstructionsPayload[] memory series = new BridgeMsgCodec.IssuanceInstructionsPayload[](3);
+        BridgeMsgCodec.IntexSeriesPayload[] memory series = new BridgeMsgCodec.IntexSeriesPayload[](3);
         series[0] = _series("20250101-USD-U");
         series[1] = _series("20250101-EUR-E");
         series[2] = _series("20250101-TRY-U");
@@ -76,7 +70,7 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
     }
 
     function test_ASeriesRepeatedInALaterMessageIsCreatedOnce() public {
-        BridgeMsgCodec.IssuanceInstructionsPayload[] memory head = new BridgeMsgCodec.IssuanceInstructionsPayload[](1);
+        BridgeMsgCodec.IntexSeriesPayload[] memory head = new BridgeMsgCodec.IntexSeriesPayload[](1);
         head[0] = _series("20250101-USD-U");
         _deliver(0, 2, head);
 
@@ -84,7 +78,7 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
         _deliver(1, 2, head);
 
         assertTrue(intex.seriesExists("20250101-USD-U"));
-        (uint16 seen, uint16 total) = router.issuanceChunks(DAY);
+        (uint16 seen, uint16 total) = router.getIntexIssuanceState(DAY);
         assertEq(seen, 2, "both chunks applied");
         assertEq(total, 2);
     }
@@ -92,13 +86,12 @@ contract TargetRouterIssuanceBatchTest is CrossChainTest {
     function test_AFullMessageStaysUnderTheSendCeiling() public view {
         // The cap is a count, not bytes. So pin that the worst case it admits still fits the wire.
         uint256 seriesCount = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE;
-        BridgeMsgCodec.IssuanceInstructionsPayload[] memory series =
-            new BridgeMsgCodec.IssuanceInstructionsPayload[](seriesCount);
+        BridgeMsgCodec.IntexSeriesPayload[] memory series = new BridgeMsgCodec.IntexSeriesPayload[](seriesCount);
         for (uint256 s = 0; s < seriesCount; s++) {
             series[s] = _series(bytes14(uint112(uint256(0x3230323530313031) + s)));
         }
 
-        uint256 encoded = BridgeMsgCodec.encodeIssuanceInstructions(DAY, 0, 1, series).length;
+        uint256 encoded = BridgeMsgCodec.encodeIntexSeries(DAY, 0, 1, series).length;
         assertLt(encoded, 10_000, "a full message must fit the bridge send ceiling");
     }
 }

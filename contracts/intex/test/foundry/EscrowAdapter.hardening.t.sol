@@ -86,7 +86,7 @@ contract EscrowAdapterHardeningTest is Test {
         paymentToken = new MockWCOEN();
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(paymentToken));
+        escrow.setDependencies(auction, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
     }
 
@@ -102,11 +102,11 @@ contract EscrowAdapterHardeningTest is Test {
         _fund(bidderA, max);
 
         vm.prank(auction);
-        escrow.lockFunds(SERIES, bidderA, units, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(SERIES, bidderA, units, 1_000_000, 1);
 
-        (,, uint128 totalLocked) = escrow.getAuctionStatus(SERIES);
+        (,, uint128 totalLocked) = escrow.auctionStatus(SERIES);
         assertEq(totalLocked, max, "totalLocked");
-        assertEq(escrow.getBidLock(SERIES, bidderA).lockedAmount, max, "lockedAmount");
+        assertEq(escrow.getIntexAuctionBidLock(SERIES, bidderA).lockedAmount, max, "lockedAmount");
         assertEq(compact.balanceOf(address(escrow), escrow.lockId()), max, "pooled balance");
     }
 
@@ -114,8 +114,10 @@ contract EscrowAdapterHardeningTest is Test {
         uint128 units = type(uint128).max / 1e12 + 1;
 
         vm.prank(auction);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.PaymentAmountOverflow.selector, uint256(units) * 1e12));
-        escrow.lockFunds(SERIES, bidderA, units, 1_000_000, 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(IEscrowAdapter.IntexAuctionAssetAmountOverflow.selector, uint256(units) * 1e12)
+        );
+        escrow.lockIntexAuctionAsset(SERIES, bidderA, units, 1_000_000, 1);
     }
 
     function test_Boundary_TotalLockedOverflow_Reverts() public {
@@ -125,13 +127,13 @@ contract EscrowAdapterHardeningTest is Test {
         _fund(bidderB, 1e12);
 
         vm.prank(auction);
-        escrow.lockFunds(SERIES, bidderA, units, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(SERIES, bidderA, units, 1_000_000, 1);
 
         vm.prank(auction);
         vm.expectRevert(abi.encodeWithSignature("Panic(uint256)", 0x11));
-        escrow.lockFunds(SERIES, bidderB, 1, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(SERIES, bidderB, 1, 1_000_000, 1);
 
-        (,, uint128 totalLocked) = escrow.getAuctionStatus(SERIES);
+        (,, uint128 totalLocked) = escrow.auctionStatus(SERIES);
         assertEq(totalLocked, max, "totalLocked unchanged after overflow revert");
         assertEq(compact.balanceOf(address(escrow), escrow.lockId()), max, "pooled balance unchanged");
     }
@@ -142,7 +144,7 @@ contract EscrowAdapterHardeningTest is Test {
         FeeOnTransferToken feeToken = new FeeOnTransferToken(100);
 
         vm.prank(admin);
-        feeEscrow.wire(auction, address(feeCompact), address(feeToken));
+        feeEscrow.setDependencies(auction, address(feeCompact), address(feeToken));
         feeCompact.setResetPeriodSeconds(0);
 
         feeToken.mint(bidderA, 1_000e18);
@@ -151,9 +153,9 @@ contract EscrowAdapterHardeningTest is Test {
 
         vm.prank(auction);
         vm.expectRevert();
-        feeEscrow.lockFunds(SERIES, bidderA, 1_000e6, 1_000_000, 1);
+        feeEscrow.lockIntexAuctionAsset(SERIES, bidderA, 1_000e6, 1_000_000, 1);
 
-        (,, uint128 totalLocked) = feeEscrow.getAuctionStatus(SERIES);
+        (,, uint128 totalLocked) = feeEscrow.auctionStatus(SERIES);
         assertEq(totalLocked, 0, "no state written on a fee-token lock");
     }
 }

@@ -1,222 +1,319 @@
-//! Host-side enclave client for the confidential Promis write path.
+//! Host caller for confidential Promis writes and account-key delivery.
 //!
-//! Every Promis state transition routes through the enclave. [`crate::runtime`] does these
-//! steps:
-//!
-//! 1. Read the current ciphertext from committed storage.
-//! 2. Hand it and the op to the enclave via [`apply_promis_op`].
-//! 3. Store the returned ciphertext verbatim.
-//!
-//! This module mirrors `gratis::enclave_client`. It has the same determinism (canonical-hash
-//! recheck) and attestation (verify-then-discard) guarantees. It has the same
-//! `tee_sidecar_unavailable` failure mode when no enclave is configured.
+//! `ApplyPromisOp` is witness-recorded. Its inputs hash is fixed before the
+//! call and checked again inside `execute` against the same context that signed. A foreign chain is a signed modify-MAC
+//! rejection, not a host chain check. `outbe_derivePromisKeys` is session-only.
 
-use outbe_enclave::protocol::{
-    promis_op_canonical_hash, EnclaveRequest, EnclaveResponse, MineGratisFromPromisRequestV1,
-    MineGratisFromPromisResultV1, PromisOpRequest, PromisOpResult,
+use alloy_primitives::{Address, B256};
+use outbe_core_common::confidential_tee::{
+    consensus_witness_call, seal_resident_account_keys, session_witness_call,
+    verify_bound_witness_attestation, PROMIS,
 };
-use outbe_primitives::error::Result;
-use outbe_tee::TransportError;
+use outbe_primitives::error::{PrecompileError, Result};
+use outbe_tee::in_process::InProcessTeeContext;
+use outbe_tee::{CallMeta, TransportError};
+use thiserror::Error;
 
-use crate::errors::PromisFatalError;
+use crate::attest::verify_promis_op_attestation;
+use crate::engine::apply_op;
+use crate::errors::{map_consensus_error, PromisFatalError};
+use crate::protocol::{
+    promis_op_attestation_preimage, promis_op_canonical_hash, PromisOpRequest, PromisOpResult,
+};
+use crate::resident::resident_state_key;
 
-/// Run one Promis op inside the enclave and validate the response.
-///
-/// Determinism: recompute the canonical inputs hash and reject a mismatch
-/// (`tee_enclave_nondeterminism`). Attestation: verify the tag against the enclave
-/// key pinned from its quote (`tee_promis_attestation_invalid`), then discard it.
-/// Nothing writes it to state. A missing enclave is `tee_sidecar_unavailable`.
-/// All of these are `Fatal` (a node/consensus fault, not a user revert). A
-/// *business* rejection is in `PromisOpResult::status`, and the caller handles
-/// it.
-pub(crate) fn apply_promis_op(req: PromisOpRequest) -> Result<PromisOpResult> {
+const APPLY_OP: &str = "ApplyPromisOp";
+const DERIVE_OP: &str = "outbe_derivePromisKeys";
+const STATE_EPOCH: u64 = 0;
+
+/// Sealed Promis view and modify keys for `outbe_derivePromisKeys`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SealedPromisKeys {
+    /// Account the keys belong to.
+    pub account: Address,
+    /// Ciphertext sealed to the caller's ephemeral key.
+    pub sealed: Vec<u8>,
+    /// AEAD nonce.
+    pub nonce: [u8; 12],
+    /// Enclave X25519 ephemeral public key.
+    pub enclave_ephemeral_pubkey: [u8; 32],
+}
+
+/// Owner-authorized request for [`derive_promis_keys`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DerivePromisKeysRequest {
+    /// Account whose keys are sealed.
+    pub account: Address,
+    /// Caller X25519 public key.
+    pub requester_ephemeral_pubkey: [u8; 32],
+    /// 65-byte owner signature over the Promis derive-keys message.
+    pub owner_sig: Vec<u8>,
+}
+
+#[derive(Debug, Error)]
+enum DeriveKeysError {
+    #[error("owner signature must be 65 bytes")]
+    OwnerSignatureLength,
+}
+
+/// Run one Promis op. A business rejection stays inside the returned result.
+pub fn apply_promis_op(req: PromisOpRequest) -> Result<PromisOpResult> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::try_apply(&req) {
         return Ok(result);
     }
-
-    let expected_hash = promis_op_canonical_hash(&req);
-    let request = EnclaveRequest::ApplyPromisOp {
-        request: Box::new(req),
-    };
-    let (attestation_pub, response) = outbe_enclave::consensus_domain_call(
-        "ApplyPromisOp",
-        &request,
-        || TransportError::Unavailable("enclave session unavailable".into()),
-        |key, response| match response {
-            EnclaveResponse::PromisOpApplied { result } => {
-                if result.inputs_canonical_hash != expected_hash {
-                    return Err(TransportError::UnexpectedResponse);
-                }
-                outbe_enclave::verify_promis_op_attestation(
-                    key,
-                    result.inputs_canonical_hash,
-                    result,
-                    &result.attestation_tag,
-                )
-            }
-            _ => Err(TransportError::UnexpectedResponse),
-        },
+    let expected = promis_op_canonical_hash(&req);
+    let result = consensus_witness_call(
+        CallMeta::recorded(APPLY_OP),
+        |context| execute_promis(context, expected, &req),
+        |key, result| authenticate_promis(expected, key, result),
     )
-    .map_err(|error| match error {
-        TransportError::EnclaveError(message) => PromisFatalError::EnclaveOpError(message),
-        other => PromisFatalError::sidecar_request_failed(other),
-    })?;
+    .map_err(|error| map_consensus_error(APPLY_OP, error))?;
+    finish_promis(expected, result)
+}
 
-    let result = match response {
-        EnclaveResponse::PromisOpApplied { result } => *result,
-        other => return Err(PromisFatalError::UnexpectedEnclaveResponse(Box::new(other)).into()),
-    };
+/// Seal the account's Promis keys. This call is not written to the witness tape.
+pub fn derive_promis_keys(request: DerivePromisKeysRequest) -> Result<SealedPromisKeys> {
+    let sealed = session_witness_call(CallMeta::session_only(DERIVE_OP), |context| {
+        execute_derive(context, &request)
+    })
+    .ok_or(PromisFatalError::SidecarUnavailable { context: DERIVE_OP })?
+    .map_err(map_derive_error)?;
+    Ok(sealed)
+}
 
-    if result.inputs_canonical_hash != expected_hash {
-        return Err(PromisFatalError::EnclaveNondeterminism.into());
+/// An owner-proof rejection stays a request failure. A resident outage stays unavailable.
+fn map_derive_error(error: TransportError) -> PrecompileError {
+    if error.is_node_local() {
+        return map_consensus_error(DERIVE_OP, error).into();
     }
-    outbe_enclave::verify_promis_op_attestation(
-        &attestation_pub,
-        result.inputs_canonical_hash,
-        &result,
-        &result.attestation_tag,
-    )
-    .map_err(PromisFatalError::attestation_invalid)?;
+    PrecompileError::FatalWithCause(Box::new(map_consensus_error(DERIVE_OP, error)))
+}
+
+fn execute_promis(
+    context: &InProcessTeeContext,
+    expected: B256,
+    req: &PromisOpRequest,
+) -> std::result::Result<PromisOpResult, TransportError> {
+    let key = resident_state_key(context, &PROMIS, STATE_EPOCH)?;
+    let mut result = apply_op(&key, req);
+    let preimage = promis_op_attestation_preimage(result.inputs_canonical_hash, &result)
+        .map_err(TransportError::codec)?;
+    result.attestation_tag = context.sign_domain_attestation(&preimage).to_vec();
+    authenticate_promis(expected, &context.attestation_public(), &result)?;
     Ok(result)
 }
 
-/// Run the combined Promis->Gratis conversion inside the enclave and validate the response.
-pub(crate) fn mine_gratis_from_promis(
-    req: MineGratisFromPromisRequestV1,
-) -> Result<MineGratisFromPromisResultV1> {
-    #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(res) = test_enclave::try_mine_gratis(&req) {
-        return Ok(res);
-    }
-
-    let request = EnclaveRequest::MineGratisFromPromisV1 {
-        request: Box::new(req),
-    };
-    let response = outbe_enclave::balance_client::execute_confidential_balance_op(request)?;
-    let EnclaveResponse::GratisMinedFromPromisV1 { result } = response else {
-        return Err(PromisFatalError::UnexpectedEnclaveResponse(Box::new(response)).into());
-    };
-    Ok(*result)
+fn execute_derive(
+    context: &InProcessTeeContext,
+    request: &DerivePromisKeysRequest,
+) -> std::result::Result<SealedPromisKeys, TransportError> {
+    seal_resident_account_keys(
+        context,
+        (&PROMIS, STATE_EPOCH),
+        (
+            request.account,
+            request.owner_sig.as_slice(),
+            &request.requester_ephemeral_pubkey,
+        ),
+        || DeriveKeysError::OwnerSignatureLength,
+        |account, sealed| SealedPromisKeys {
+            account,
+            sealed: sealed.sealed,
+            nonce: sealed.nonce,
+            enclave_ephemeral_pubkey: sealed.enclave_ephemeral_pubkey,
+        },
+    )
 }
 
-/// In-process enclave stand-in for tests (this crate's tests and any downstream
-/// crate that enables the `test-enclave` feature). It runs the **real**
-/// `outbe_enclave::promis::apply_op` engine against a fixed dev state key, so
-/// tests exercise the full confidential path without an SGX sidecar. This path
-/// does not check attestation. The crate root rejects
-/// `all(feature = "test-enclave", feature = "production-enclave")` at compile
-/// time and CI's `no-test-deps` gate rejects `test-enclave` in the production
-/// dependency graph, so this stand-in cannot reach a production build.
+fn authenticate_promis(
+    expected: B256,
+    key: &[u8; 32],
+    result: &PromisOpResult,
+) -> std::result::Result<(), TransportError> {
+    verify_bound_witness_attestation(expected, key, result, verify_promis_op_attestation)
+}
+
+fn finish_promis(expected: B256, result: PromisOpResult) -> Result<PromisOpResult> {
+    if result.inputs_canonical_hash != expected {
+        return Err(PromisFatalError::EnclaveNondeterminism.into());
+    }
+    Ok(result)
+}
+
+/// In-process stand-in. It runs the real engine and skips attestation.
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use super::*;
-    use alloy_primitives::B256;
+    use crate::engine::{
+        derive_account_keys, derive_promis_state_key, modify_mac, ModifyOperation,
+    };
+    use crate::protocol::{ModifyAuth, PromisOp};
+    use alloy_primitives::U256;
     use std::cell::RefCell;
 
     thread_local! {
-        static STATE_KEY: RefCell<Option<[u8; 32]>> = const { RefCell::new(None) };
+        static STATE_KEY: RefCell<Option<outbe_tee::resident::StateKeyHandle>> = const { RefCell::new(None) };
     }
 
-    /// Fixed dev group signature + chain/epoch, so the derived state key (and thus
-    /// every account's view/modify key) is deterministic across a test process.
-    const DEV_GROUP_SIG: &[u8] = b"outbe-dev-promis-group-signature-fixed-seed!!";
-    const DEV_CHAIN: B256 = B256::repeat_byte(0xC1);
     const DEV_EPOCH: u64 = 0;
+    const PROMIS_GROUP_SIG: &[u8] = b"outbe-dev-promis-group-signature-fixed-seed!!";
+    const PROMIS_CHAIN: B256 = B256::repeat_byte(0xC1);
+    fn offer(group: &[u8], chain: B256) -> outbe_tee::resident::ResidentOfferMaterial {
+        outbe_tee::resident::ResidentOfferMaterial::for_test(group.to_vec(), chain, DEV_EPOCH, 0)
+            .expect("dev offer material")
+    }
 
-    /// Install the in-process enclave for the current thread.
+    fn fixture_key() -> outbe_tee::resident::StateKeyHandle {
+        let material = offer(PROMIS_GROUP_SIG, PROMIS_CHAIN);
+        derive_promis_state_key(&material, PROMIS_CHAIN, DEV_EPOCH)
+            .expect("derive dev promis state key")
+    }
+
+    /// Install the stand-in for this thread.
     pub fn install() {
-        let key =
-            outbe_enclave::promis::derive_promis_state_key(DEV_GROUP_SIG, DEV_CHAIN, DEV_EPOCH)
-                .expect("derive dev promis state key");
-        STATE_KEY.with(|k| *k.borrow_mut() = Some(*key));
+        STATE_KEY.with(|key| *key.borrow_mut() = Some(fixture_key()));
     }
 
-    /// Remove the in-process enclave for the current thread.
+    /// Remove the stand-in for this thread.
     pub fn uninstall() {
-        STATE_KEY.with(|k| *k.borrow_mut() = None);
+        STATE_KEY.with(|key| *key.borrow_mut() = None);
     }
 
-    /// The modify authorization a client would send for `op` on chain 1.
-    pub fn modify_auth(
-        op: outbe_enclave::protocol::PromisOp,
-        account: alloy_primitives::Address,
-        amount: alloy_primitives::U256,
-        nonce: u64,
-    ) -> outbe_enclave::protocol::ModifyAuth {
-        use outbe_enclave::promis::{derive_modify_key, modify_mac, ModifyOperation};
-        let mk = derive_modify_key(&state_key(), account).unwrap();
-        outbe_enclave::protocol::ModifyAuth {
+    /// Dev state handle, so a test can build a MAC and open a balance.
+    pub fn state_key() -> outbe_tee::resident::StateKeyHandle {
+        assert!(
+            STATE_KEY.with(|key| key.borrow().is_some()),
+            "test enclave not installed"
+        );
+        fixture_key()
+    }
+
+    /// Authorization bound to chain 1 and the installed fixture key.
+    pub fn modify_auth(op: PromisOp, account: Address, amount: U256, nonce: u64) -> ModifyAuth {
+        let key = derive_account_keys(&state_key(), account).expect("account keys");
+        ModifyAuth {
             mac: modify_mac(
-                &mk,
+                &key,
                 &ModifyOperation {
                     account,
                     op,
                     amount,
                     op_nonce: nonce,
-                    chain_id: B256::from(alloy_primitives::U256::from(1u64)),
+                    chain_id: B256::from(U256::from(1u64)),
                 },
             ),
             op_nonce: nonce,
         }
     }
 
-    /// Encrypt a `mineGratis` amount to the test-enclave's dev TEE public key.
-    /// The test chain id is `1`, matching [`crate::runtime`]'s dev storage.
-    pub fn encrypt_mine_gratis_amount(
-        account: alloy_primitives::Address,
-        amount: alloy_primitives::U256,
-    ) -> Vec<u8> {
-        outbe_enclave::offer_encrypt::encrypt_tee_amount(
-            &outbe_enclave::dev::offer_public_key(),
-            B256::from(alloy_primitives::U256::from(1u64)),
+    pub(crate) fn try_apply(req: &PromisOpRequest) -> Option<PromisOpResult> {
+        STATE_KEY.with(|slot| slot.borrow().as_ref().map(|key| apply_op(key, req)))
+    }
+}
+
+#[cfg(test)]
+mod executing_context {
+    use super::*;
+    use crate::engine::{derive_account_keys, modify_mac, ModifyOperation};
+    use crate::protocol::{ModifyAuth, PromisOp};
+    use alloy_primitives::{Address, U256};
+    use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
+    use outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test;
+    use outbe_tee::resident::ResidentOfferMaterial;
+    use std::sync::Arc;
+
+    fn binding() -> NetworkBindingV1 {
+        NetworkBindingV1 {
+            chain_id: U256::from(1u64).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(2),
+            attestation_mode: AttestationMode::NoAttestationDev,
+        }
+    }
+
+    fn chain() -> B256 {
+        B256::from(binding().chain_id)
+    }
+
+    fn context(seed: u8) -> Arc<InProcessTeeContext> {
+        let context = Arc::new(outbe_tee::test_utils::resident_context(seed, binding()));
+        let material = ResidentOfferMaterial::for_test(
+            b"promis-witness-group-signature-v1!!!!!".to_vec(),
+            chain(),
+            0,
+            0,
+        )
+        .expect("offer material");
+        context.activate_for_test(material).expect("activate offer");
+        context
+    }
+
+    fn mint_request(ctx: &InProcessTeeContext) -> PromisOpRequest {
+        let account = Address::repeat_byte(0x11);
+        let amount = U256::from(7u64);
+        let state_key = resident_state_key(ctx, &PROMIS, STATE_EPOCH).expect("promis key");
+        let keys = derive_account_keys(&state_key, account).expect("account keys");
+        let operation = ModifyOperation {
+            account,
+            op: PromisOp::Mint,
+            amount,
+            op_nonce: 0,
+            chain_id: chain(),
+        };
+        PromisOpRequest {
+            op: PromisOp::Mint,
+            chain_id: chain(),
             account,
             amount,
-        )
-        .expect("encrypt mine_gratis amount")
-        .to_vec()
+            current_balance: Vec::new(),
+            modify_auth: ModifyAuth {
+                mac: modify_mac(&keys, &operation),
+                op_nonce: 0,
+            },
+        }
     }
 
-    /// The dev state key, so tests can derive view/modify keys to build auth and
-    /// decrypt balances exactly as a client would.
-    pub fn state_key() -> [u8; 32] {
-        STATE_KEY
-            .with(|k| *k.borrow())
-            .expect("test enclave not installed")
+    #[test]
+    fn execute_rejects_a_foreign_hash_before_the_signature() {
+        let ctx = context(4);
+        let request = mint_request(&ctx);
+        let expected = promis_op_canonical_hash(&request);
+        assert!(matches!(
+            execute_promis(&ctx, B256::ZERO, &request),
+            Err(TransportError::UnexpectedResponse)
+        ));
+        let signed = execute_promis(&ctx, expected, &request).expect("signed mint");
+        let mut corrupt = signed.clone();
+        corrupt.attestation_tag[0] ^= 0xff;
+        assert!(matches!(
+            authenticate_promis(expected, &ctx.attestation_public(), &corrupt),
+            Err(TransportError::AppAttestation { .. })
+        ));
+        corrupt.attestation_tag = signed.attestation_tag.clone();
+        corrupt.inputs_canonical_hash = B256::ZERO;
+        assert!(matches!(
+            authenticate_promis(expected, &ctx.attestation_public(), &corrupt),
+            Err(TransportError::UnexpectedResponse)
+        ));
     }
 
-    pub(crate) fn try_apply(req: &PromisOpRequest) -> Option<PromisOpResult> {
-        STATE_KEY.with(|k| {
-            k.borrow()
-                .map(|key| outbe_enclave::promis::apply_op(&key, req))
-        })
-    }
-
-    pub(crate) fn try_mine_gratis(
-        req: &MineGratisFromPromisRequestV1,
-    ) -> Option<MineGratisFromPromisResultV1> {
-        STATE_KEY.with(|k| {
-            k.borrow().map(|promis_state_key| {
-                let gratis_state_key = outbe_enclave::gratis::derive_gratis_state_key(
-                    outbe_enclave::dev::GRATIS_GROUP_SIG,
-                    outbe_enclave::dev::GRATIS_CHAIN,
-                    DEV_EPOCH,
-                )
-                .expect("derive dev gratis state key");
-                let fidelity_state_key = outbe_enclave::fidelity::derive_fidelity_state_key(
-                    outbe_enclave::dev::FIDELITY_GROUP_SIG,
-                    outbe_enclave::dev::fidelity_chain(),
-                    DEV_EPOCH,
-                )
-                .expect("derive dev fidelity state key");
-                let keys = outbe_enclave::promis::MineGratisKeys {
-                    offer_secret: &outbe_enclave::dev::OFFER_SECRET_KEY,
-                    promis_state_key: &promis_state_key,
-                    gratis_state_key: &gratis_state_key,
-                    fidelity_state_key: &fidelity_state_key,
-                };
-                outbe_enclave::promis::apply_mine_gratis(keys, req)
-            })
-        })
+    #[test]
+    fn finish_keeps_the_first_signature_after_the_global_context_is_replaced() {
+        let first = context(4);
+        let second = context(9);
+        assert_ne!(first.attestation_public(), second.attestation_public());
+        let _guard = set_in_process_tee_context_for_test(Some(Arc::clone(&first)));
+        let request = mint_request(&first);
+        let expected = promis_op_canonical_hash(&request);
+        let signed = execute_promis(&first, expected, &request).expect("signed mint");
+        let _successor = set_in_process_tee_context_for_test(Some(second.clone()));
+        assert_eq!(
+            outbe_tee::in_process_tee_context()
+                .expect("successor")
+                .attestation_public(),
+            second.attestation_public()
+        );
+        assert!(authenticate_promis(expected, &second.attestation_public(), &signed).is_err());
+        assert!(finish_promis(expected, signed).is_ok());
     }
 }

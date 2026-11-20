@@ -7,6 +7,7 @@ compile_error!(
 );
 
 pub mod codec;
+pub mod confidential;
 pub mod day_schema;
 mod day_state;
 pub mod enclave_client;

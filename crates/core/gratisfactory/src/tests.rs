@@ -7,9 +7,9 @@ use alloy_primitives::{address, Address, Bytes, FixedBytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolInterface};
 
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
-use outbe_enclave::gratis::{decrypt_balance, decrypt_pledged, derive_view_key};
-use outbe_enclave::protocol::{GratisOp, ModifyAuth};
 use outbe_gratis::enclave_client::test_enclave;
+use outbe_gratis::{decrypt_balance, decrypt_pledged, derive_view_key};
+use outbe_gratis::{GratisOp, ModifyAuth};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::{GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS};
@@ -35,7 +35,7 @@ fn chain_b256() -> B256 {
 /// Build the modify authorization a client holding `owner`'s modify key sends for
 /// `op` on `amount` at `op_nonce`.
 fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> ModifyAuth {
-    test_enclave::modify_auth(outbe_enclave::gratis::ModifyOperation {
+    test_enclave::modify_auth(outbe_gratis::ModifyOperation {
         account: owner,
         op,
         amount,
@@ -686,8 +686,8 @@ fn encrypted_nod(amount: U256) -> outbe_core_common::nod_encryption::EncryptedNo
     use outbe_core_common::nod_encryption::NodTermsV1;
     use outbe_system_common::time::WorldwideDay;
     let day = WorldwideDay::new(20250115);
-    outbe_enclave::nod_encryption::encrypt_nod(
-        &[0x5a; 32],
+    outbe_nod::nod_encryption::encrypt_nod(
+        &outbe_tee::resident::StateKeyHandle::for_test([0x5a; 32]),
         NodTermsV1 {
             chain_id: CHAIN_ID,
             nod_id: U256::from_be_bytes([7; 32]),
@@ -820,8 +820,7 @@ fn open_account(storage: &StorageHandle<'_>, account: Address) -> (U256, U256) {
     let vk = derive_view_key(&test_enclave::state_key(), account).unwrap();
     let balance = outbe_gratis::api::balance_ct(storage.clone(), account).unwrap();
     let pledged = outbe_gratis::api::pledged_ct(storage.clone(), account).unwrap();
-    let balance =
-        outbe_enclave::gratis_decrypt::decrypt_gratis_balance(&vk, account, &balance).unwrap();
+    let balance = outbe_gratis::decrypt_balance(&vk, account, &balance).unwrap();
     // The pledged blob is bound to the pledged field, so the balance opener cannot read it.
     let pledged = if pledged.is_empty() {
         U256::ZERO
@@ -848,8 +847,7 @@ fn token_deltas(logs: &[alloy_primitives::LogData], account: Address) -> Vec<(bo
             None
         };
         if let Some((mint, blob)) = opened {
-            let amount =
-                outbe_enclave::gratis_decrypt::decrypt_gratis_balance(&vk, account, &blob).unwrap();
+            let amount = outbe_gratis::decrypt_balance(&vk, account, &blob).unwrap();
             deltas.push((mint, amount));
         }
     }
@@ -992,4 +990,132 @@ fn view_key_reconstructs_gratis_through_pledge_and_burn() {
         pledge_names(provider.get_events(GRATIS_FACTORY_ADDRESS)),
         ["created", "canceled", "created", "sent", "released", "burned"]
     );
+}
+
+fn mine_gratis_call(gratis_minor: U256, op_nonce: u64) -> Bytes {
+    Bytes::from(
+        IGratisFactory::IGratisFactoryCalls::mineGratis(IGratisFactory::mineGratisCall {
+            mac: FixedBytes(auth(GratisOp::Mint, alice(), gratis_minor, op_nonce).mac),
+            opNonce: op_nonce,
+        })
+        .abi_encode(),
+    )
+}
+
+/// Dispatch `mineGratis` the way the payable route does: credit `value` to the
+/// factory first.
+fn mine_gratis(storage: &StorageHandle<'_>, call: &Bytes, value: U256) -> Result<U256, String> {
+    storage
+        .increase_balance(GRATIS_FACTORY_ADDRESS, value)
+        .unwrap();
+    dispatch(storage.clone(), call, alice(), value)
+        .map(|out| IGratisFactory::mineGratisCall::abi_decode_returns(&out).unwrap())
+        .map_err(|err| err.to_string())
+}
+
+fn promis_limit(storage: &StorageHandle<'_>) -> U256 {
+    outbe_promislimit::PromisLimitContract::new(storage.clone())
+        .promis_limit()
+        .unwrap()
+}
+
+/// 2 COEN in, 2 Gratis out. The COEN is burned into the Promis Limit and the
+/// mint records the acquisition cohort.
+#[test]
+fn mine_gratis_burns_coen_into_the_promis_limit_and_mints_gratis() {
+    const ONE_YEAR_SECS: u64 = 365 * SECONDS_PER_DAY;
+    let mut provider = test_storage();
+    let gratis_minor = U256::from(2_000_000u64);
+    let value = checked_protocol_to_native(gratis_minor).unwrap();
+    StorageHandle::enter(&mut provider, |storage| {
+        let minted = mine_gratis(&storage, &mine_gratis_call(gratis_minor, 0), value).unwrap();
+        assert_eq!(minted, gratis_minor);
+        assert_eq!(view_balance(&storage, alice()), gratis_minor);
+        assert_eq!(storage.balance(GRATIS_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+        assert_eq!(promis_limit(&storage), gratis_minor);
+        let later = CREATED_AT + ONE_YEAR_SECS;
+        assert_eq!(
+            outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap(),
+            MAX_LEAGUE
+        );
+    });
+    let mined: Vec<_> = provider
+        .get_events(GRATIS_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| IGratisFactory::GratisMinedFromCoen::decode_log_data(log).ok())
+        .collect();
+    let added: Vec<_> = provider
+        .get_events(outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS)
+        .iter()
+        .filter_map(|log| {
+            outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded::decode_log_data(log).ok()
+        })
+        .collect();
+    let deltas = token_deltas(provider.get_events(GRATIS_ADDRESS), alice());
+    fidelity_enclave::uninstall();
+    test_enclave::uninstall();
+
+    assert_eq!(mined.len(), 1);
+    assert_eq!(mined[0].account, alice());
+    assert_eq!(mined[0].gratisMinor, gratis_minor);
+    assert_eq!(added.len(), 1);
+    assert_eq!(added[0].source, 47);
+    assert_eq!(added[0].amountMinor, gratis_minor);
+    assert_eq!(deltas, vec![(true, gratis_minor)]);
+}
+
+#[test]
+fn mine_gratis_rejects_zero_and_fractional_coen() {
+    with_env(|storage| {
+        let invalid = outbe_primitives::error::PrecompileError::from(
+            crate::errors::GratisFactoryError::InvalidCoenAmount,
+        )
+        .to_string();
+        let one = U256::ONE;
+        let fractional = checked_protocol_to_native(one).unwrap() + U256::ONE;
+        for value in [U256::ZERO, fractional] {
+            let err = mine_gratis(&storage, &mine_gratis_call(one, 0), value).unwrap_err();
+            assert_eq!(err, invalid);
+        }
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(promis_limit(&storage), U256::ZERO);
+    });
+}
+
+/// A MAC over a different amount fails the mint, and the burn reverts with it.
+#[test]
+fn mine_gratis_with_a_bad_mac_burns_nothing() {
+    with_env(|storage| {
+        let gratis_minor = U256::from(1_000u64);
+        let value = checked_protocol_to_native(gratis_minor).unwrap();
+        let call = mine_gratis_call(gratis_minor + U256::ONE, 0);
+        mine_gratis(&storage, &call, value).unwrap_err();
+
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(promis_limit(&storage), U256::ZERO);
+        assert_eq!(storage.balance(GRATIS_FACTORY_ADDRESS).unwrap(), value);
+    });
+}
+
+/// `mineGratis` then `mineCoen` of the same amount restores the native balance.
+#[test]
+fn mine_gratis_then_mine_coen_round_trips() {
+    with_env(|storage| {
+        let gratis_minor = U256::from(1_000u64);
+        let value = checked_protocol_to_native(gratis_minor).unwrap();
+        mine_gratis(&storage, &mine_gratis_call(gratis_minor, 0), value).unwrap();
+
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::mineCoen(IGratisFactory::mineCoenCall {
+                gratisMinor: gratis_minor,
+                mac: FixedBytes(auth(GratisOp::Burn, alice(), gratis_minor, 1).mac),
+                opNonce: 1,
+            })
+            .abi_encode(),
+        );
+        dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
+
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(storage.balance(alice()).unwrap(), value);
+    });
 }

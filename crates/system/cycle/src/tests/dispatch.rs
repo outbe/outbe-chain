@@ -806,3 +806,23 @@ fn repeated_settled_cycle_slot_replays_without_any_storage_or_event_write() {
         run_emission_limit_daily(&replay).unwrap();
     });
 }
+
+#[test]
+fn the_day_allocation_schedules_its_auction_at_the_next_midnight() {
+    let day = outbe_system_common::time::EmissionDate::new(20_240_101);
+    let mut storage = cycle_storage();
+    storage.enter(|handle| {
+        genesis_block(handle.clone(), GENESIS_TS + 60);
+    });
+    storage.set_block_number(2);
+    storage.enter(|handle| {
+        let ctx = runtime_context(block_ctx(2, GENESIS_TS + SECONDS_PER_DAY + 60), handle);
+        run_emission_limit_daily(&ctx).unwrap();
+        let desis = outbe_desis::DesisContract::new(ctx.storage.clone());
+        assert_ne!(desis.sched_active_slot.read(&day).unwrap(), 0);
+        assert_eq!(
+            u64::from(desis.auction_at.read(&day).unwrap()),
+            outbe_system_common::time::date_key_to_utc_timestamp(20_240_102).unwrap()
+        );
+    });
+}
