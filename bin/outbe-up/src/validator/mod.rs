@@ -20,7 +20,6 @@ pub mod status;
 pub mod sync;
 pub mod wait;
 
-pub const FULL_NODE: &str = "outbe-full-node.service";
 pub const VALIDATOR_TARGET: &str = "outbe-validator.target";
 pub const VALIDATOR_SERVICE: &str = "outbe-validator.service";
 

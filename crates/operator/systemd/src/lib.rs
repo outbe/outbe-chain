@@ -65,7 +65,6 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
             limit_nofile: 65_535,
             wanted_by: "outbe-validator.target",
         }),
-        render_service(&joining_full_node_spec(outbe_up)),
         render_service(&joining_validator_spec(outbe_up)),
         render_service(&ServiceSpec {
             name: "outbe-feeder.service",
@@ -192,51 +191,6 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
     units
 }
 
-fn joining_full_node_spec(outbe_up: &str) -> ServiceSpec {
-    ServiceSpec {
-        name: "outbe-full-node.service",
-        description: "Outbe certified full node",
-        unit_directives: lines(&[
-            "After=network-online.target",
-            "Wants=network-online.target",
-            "Conflicts=outbe-validator.service",
-        ]),
-        service_directives: lines(&[
-            "EnvironmentFile=/opt/outbe-chain/validator.env",
-            "Environment=RUST_MIN_STACK=16777216",
-            "ExecStart=/opt/outbe-chain/outbe-chain node \\",
-            "  --chain /opt/outbe-chain/genesis.json \\",
-            "  --datadir /opt/outbe-chain/validator-0/data \\",
-            "  --engine.persistence-threshold 0 \\",
-            "  --engine.memory-block-buffer-target 0 \\",
-            "  --consensus.storage-dir /opt/outbe-chain/validator-0/consensus \\",
-            "  --http \\",
-            "  --http.addr ${OUTBE_RPC_BIND_IP} \\",
-            "  --http.port 8545 \\",
-            "  --http.api eth,net,web3,outbe \\",
-            "  --authrpc.port 8551 \\",
-            "  --port 30303 \\",
-            "  --discovery.port 30303 \\",
-            "  --nat extip:${OUTBE_EXTERNAL_IP} \\",
-            "  --discovery.v5.addr 0.0.0.0 \\",
-            "  --discovery.v5.port 31303 \\",
-            "  --p2p-secret-key /opt/outbe-chain/keys/reth-p2p-secret.hex \\",
-            "  --bootnodes ${OUTBE_BOOTNODES} \\",
-            "  $OUTBE_CONSENSUS_EXTRA_ARGS \\",
-            "  --metrics 127.0.0.1:9101 \\",
-            "  --ipcpath /opt/outbe-chain/validator-0/data/reth.ipc \\",
-            "  --log.file.directory /opt/outbe-chain/validator-0/logs \\",
-            "  --upstream ${OUTBE_CERTIFIED_RPC}",
-            &format!("ExecStartPost={outbe_up} internal wait-rpc"),
-        ]),
-        sandbox_directives: lines(&[
-            "ReadWritePaths=/opt/outbe-chain/keys /opt/outbe-chain/validator-0",
-        ]),
-        limit_nofile: 1_048_576,
-        wanted_by: "multi-user.target",
-    }
-}
-
 fn joining_validator_spec(outbe_up: &str) -> ServiceSpec {
     ServiceSpec {
         name: "outbe-validator.service",
@@ -244,7 +198,6 @@ fn joining_validator_spec(outbe_up: &str) -> ServiceSpec {
         unit_directives: lines(&[
             "After=network-online.target outbe-radicle.service",
             "Wants=network-online.target outbe-radicle.service",
-            "Conflicts=outbe-full-node.service",
             "PartOf=outbe-validator.target",
         ]),
         service_directives: lines(&[
@@ -434,11 +387,9 @@ mod tests {
             assert!(!unit.content.contains("%i"));
             assert!(!unit.content.contains("@.service"));
         }
-        let full_node = unit(&joining, "outbe-full-node.service");
-        assert!(full_node.contains("--upstream"));
-        assert!(!full_node.contains("wait-full-node-dependencies"));
-        assert!(!full_node.contains("--validator"));
-        assert!(!full_node.contains("radicle.control-socket"));
+        assert!(joining
+            .iter()
+            .all(|unit| unit.name != "outbe-full-node.service"));
 
         let validator = unit(&joining, "outbe-validator.service");
         assert!(validator
