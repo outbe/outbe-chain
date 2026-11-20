@@ -581,6 +581,12 @@ contract AuctionTest is Test {
         vm.expectRevert();
         vm.prank(bridger);
         auction.setEscrow(address(0xBEEF));
+
+        MockAuctionEscrow rotated = new MockAuctionEscrow();
+        vm.expectEmit(true, true, true, true, address(auction));
+        emit IIntexAuction.EscrowSet(address(rotated));
+        vm.prank(admin);
+        auction.setEscrow(address(rotated));
     }
 
     function test_SetIntexContract_AdminOnlyAndNonZero() public {

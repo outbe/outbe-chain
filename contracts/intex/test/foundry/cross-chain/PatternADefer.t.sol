@@ -198,6 +198,7 @@ contract PatternADeferTest is CrossChainTest {
 
         // Deliver with enough gas for a chunk or two, not for the day: exactly what a tight budget does.
         bytes memory packet = BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY);
+        vm.recordLogs();
         (bool delivered,) = address(bridge).call{gas: 4_500_000}(
             abi.encodeCall(
                 bridge.deliverAs,
@@ -205,6 +206,7 @@ contract PatternADeferTest is CrossChainTest {
             )
         );
         assertTrue(delivered, "the delivery itself must survive");
+        _assertStopEvents(vm.getRecordedLogs(), 1, 0, 0);
 
         (uint16 nextPage, uint16 totalPages, bool done) = bnbRouter.getIntexAuctionBidsSendState(SERIES_ID_DAY);
         assertFalse(done, "the day is unfinished");
@@ -220,38 +222,20 @@ contract PatternADeferTest is CrossChainTest {
     function test_TM_ARoundThatSentNothingDoesNotReport() public {
         // Zero float, so the round reverts whole before any chunk leaves.
         assertEq(address(bnbRouter).balance, 0);
+        vm.recordLogs();
         _deliverBridge(BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY));
+        _assertStopEvents(vm.getRecordedLogs(), 0, 0, 1);
 
         assertEq(bridge.lastPayload().length, 0, "nothing was sent, so nothing was reported");
     }
 
-    /// @dev Each way a run of the bids stops gives exactly one of the three stop events.
-    function test_each_stop_of_the_bids_has_one_event() public {
-        uint256 clean = vm.snapshotState();
-
-        _stopTightly(false);
-        _assertStopEvents(vm.getRecordedLogs(), 1, 0, 0);
-        vm.revertToState(clean);
-
-        _stopTightly(true);
-        _assertStopEvents(vm.getRecordedLogs(), 0, 1, 0);
-        vm.revertToState(clean);
-
-        // Zero float: no page can leave.
-        vm.recordLogs();
-        _deliverBridge(BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY));
-        _assertStopEvents(vm.getRecordedLogs(), 0, 0, 1);
-    }
-
-    /// @dev A run with gas for some pages, not the day. `pauseFails` makes the pause message revert.
-    function _stopTightly(bool pauseFails) internal {
+    /// @dev A run that sent some pages but whose pause cannot leave gives only the pause failure.
+    function test_a_pause_that_cannot_leave_is_its_only_stop_event() public {
         stubAuction.setBidCount(130);
         vm.deal(address(bnbRouter), 10 ether);
-        if (pauseFails) {
-            vm.mockCallRevert(
-                address(bnbRouter), abi.encodeCall(TargetRouter.sendIntexAuctionBidsPause, (SERIES_ID_DAY)), "pause"
-            );
-        }
+        vm.mockCallRevert(
+            address(bnbRouter), abi.encodeCall(TargetRouter.sendIntexAuctionBidsPause, (SERIES_ID_DAY)), "pause"
+        );
         bytes memory packet = BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY);
         vm.recordLogs();
         (bool delivered,) = address(bridge).call{gas: 4_500_000}(
@@ -261,6 +245,7 @@ contract PatternADeferTest is CrossChainTest {
             )
         );
         assertTrue(delivered, "the delivery itself must survive");
+        _assertStopEvents(vm.getRecordedLogs(), 0, 1, 0);
     }
 
     function _assertStopEvents(Vm.Log[] memory logs, uint256 pauseSent, uint256 pauseFailed, uint256 sendFailed)

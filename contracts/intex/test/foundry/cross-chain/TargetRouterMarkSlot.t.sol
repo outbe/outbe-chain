@@ -196,6 +196,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i; i < logs.length; ++i) {
             assertTrue(logs[i].topics[0] != ITargetRouter.MessageIgnored.selector, "no ignore event");
+            assertTrue(logs[i].topics[0] != ITargetRouter.IntexSeriesCallNoticeApplyFailed.selector, "no failure event");
         }
     }
 }

@@ -165,6 +165,7 @@ fn a_partial_clear_balances_and_a_repeat_tick_is_quiet() {
         relay_bids(s, SRC_CHAIN, 1, 200);
         assert_eq!(clear(s).issued_units, 1);
     });
+    assert_eq!(end_event(&storage), IDesis::DesisCompleted::SIGNATURE_HASH);
     assert_limit_identity(&mut storage, U256::from(2 * LOAD_MINOR));
     assert_eq!(
         amount_of::<IDesis::DesisLimitAllocated>(&storage),
@@ -360,6 +361,7 @@ fn a_failed_auction_reports_the_stage_before_the_zero_allocation() {
         .unwrap()
         .stage;
     assert_eq!(stage as u8, AuctionStage::CommittingBids as u8);
+    assert_eq!(end_event(&storage), IDesis::DesisFailed::SIGNATURE_HASH);
     assert_limit_identity(&mut storage, U256::from(10 * LOAD_MINOR));
     assert_eq!(
         amount_of::<IDesis::DesisLimitAllocated>(&storage),

@@ -224,6 +224,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
         assertEq(origin.lastEmissionDay(), SERIES_ID);
         assertEq(origin.lastPageIndex(), 1, "the hand-over carries the page");
         assertEq(origin.lastAmount(), AMOUNT);
+        assertEq(wcoen.allowance(address(outbeTarget), address(origin)), AMOUNT, "the origin router may pull it");
     }
 
     function test_RefundInstructions_OnOutbeParksProceedsNotInWcoen() public {
