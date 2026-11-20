@@ -115,7 +115,7 @@ contract LoopbackGatewayAdapter is OwnableUpgradeable, UUPSUpgradeable, IERC7786
 
     /// @inheritdoc IERC7786GatewaySource
     function supportsAttribute(bytes4 selector) public pure virtual returns (bool) {
-        return selector == GasLimitAttribute.SELECTOR;
+        return selector == GasLimitAttribute.SELECTOR || selector == GasLimitAttribute.REFUND_SELECTOR;
     }
 
     /// @inheritdoc IERC7786GatewaySource

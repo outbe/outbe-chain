@@ -36,7 +36,7 @@ abstract contract OriginStageSendGasBase is Test {
         HUB.setGateway(OUTBE, hyperlane);
     }
 
-    function _params(uint32 day) internal view returns (IOriginRouter.AuctionStageStartParams memory p) {
+    function _params(uint32 day) internal view returns (IOriginRouter.IntexAuctionStartParams memory p) {
         uint16[6] memory isoCodes = [uint16(840), 978, 392, 826, 156, 344];
         p.prices = new IOriginRouter.ReferenceCurrencyPrice[](isoCodes.length);
         for (uint256 i; i < isoCodes.length; ++i) {
@@ -47,27 +47,26 @@ abstract contract OriginStageSendGasBase is Test {
         p.revealEnd = uint32(block.timestamp + 2 days);
         p.issuanceEnd = uint32(block.timestamp + 3 days);
         p.promisLoadMinor = 1e12;
-        p.minIntexBidRate = 1_000_000;
+        p.minBidRate = 1_000_000;
         p.callNoticePeriod = 86_400;
         p.callWindow = 86_400;
         p.callThreshold = 3_600;
-        p.minIntexBidQuantity = 1;
-        p.commitBondMinor = 1_000_000;
-        p.dayState = 1;
+        p.minBidQuantity = 1;
+        p.bidBondMinor = 1_000_000;
     }
 
     function _start(uint32 day) internal returns (uint256 spent) {
-        IOriginRouter.AuctionStageStartParams memory p = _params(day);
+        IOriginRouter.IntexAuctionStartParams memory p = _params(day);
         vm.prank(DESIS);
         uint256 before = gasleft();
-        ROUTER.sendAuctionStageStart(p);
+        ROUTER.sendIntexAuctionStart(p);
         spent = before - gasleft();
     }
 
     function _collect(uint32 day, uint32 chainId) internal returns (uint256 spent) {
         vm.prank(DESIS);
         uint256 before = gasleft();
-        ROUTER.sendAuctionStageCollectingBids(day, chainId, 2_000_000);
+        ROUTER.sendIntexAuctionClearingStart(day, chainId, 2_000_000);
         spent = before - gasleft();
     }
 }
@@ -86,7 +85,7 @@ contract OriginStageStartGasTest is OriginStageSendGasBase {
         vm.prank(GOVERNANCE);
         ROUTER.addTarget(OUTBE);
         emit log_named_uint("start_bsc_sepolia_outbe", _start(DAY + 2));
-        assertEq(ROUTER.parkedMessageCount(), 0, "a send parked");
+        assertEq(ROUTER.failedMessageSendCount(), 0, "a send parked");
     }
 }
 
@@ -102,6 +101,6 @@ contract OriginCollectingFanOutGasTest is OriginStageSendGasBase {
         emit log_named_uint("fanout_bsc_first", _collect(DAY, BSC));
         emit log_named_uint("fanout_sepolia_next", _collect(DAY, SEPOLIA));
         emit log_named_uint("fanout_outbe", _collect(DAY, OUTBE));
-        assertEq(ROUTER.parkedMessageCount(), 0, "a send parked");
+        assertEq(ROUTER.failedMessageSendCount(), 0, "a send parked");
     }
 }

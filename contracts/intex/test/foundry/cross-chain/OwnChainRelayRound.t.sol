@@ -24,36 +24,32 @@ contract BidsStub {
         count = n;
     }
 
-    function auctionStart(
-        uint32,
-        IIntexAuction.DayState,
-        IIntexAuction.AuctionSchedule calldata,
-        IIntexAuction.AuctionParams calldata
-    ) external {}
+    function startAuction(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
+        external {}
 
-    function startAwaitingResult(uint32) external {}
+    function startAuctionClearing(uint32) external {}
 
-    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+    function auctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
         return IIntexAuction.AuctionStage.AwaitingResult;
     }
 
-    function revealedBidsCount(uint32) external view returns (uint256) {
+    function revealedIntexAuctionBidsCount(uint32) external view returns (uint256) {
         return count;
     }
 
-    function revealedBidsSlice(uint32, uint256 offset, uint256 limit)
+    function revealedIntexAuctionBidsSlice(uint32, uint256 offset, uint256 limit)
         external
         view
-        returns (IIntexAuction.SubmittedBidData[] memory slice)
+        returns (IIntexAuction.SubmittedIntexAuctionBidData[] memory slice)
     {
         uint256 length = count;
-        if (offset >= length) return new IIntexAuction.SubmittedBidData[](0);
+        if (offset >= length) return new IIntexAuction.SubmittedIntexAuctionBidData[](0);
         uint256 end = offset + limit;
         if (end > length) end = length;
-        slice = new IIntexAuction.SubmittedBidData[](end - offset);
+        slice = new IIntexAuction.SubmittedIntexAuctionBidData[](end - offset);
         for (uint256 i = 0; i < slice.length; ++i) {
-            slice[i] = IIntexAuction.SubmittedBidData({
-                bidderAddress: address(uint160(0xBEEF + offset + i)),
+            slice[i] = IIntexAuction.SubmittedIntexAuctionBidData({
+                bidder: address(uint160(0xBEEF + offset + i)),
                 intexBidRate: 100e6,
                 intexQuantity: 1,
                 timestamp: uint32(block.timestamp),
@@ -130,59 +126,58 @@ contract OwnChainRelayRoundTest is Test {
 
         origin = DeployProxy.originRouter(address(bridge), admin);
         desis = address(new MockDesis());
-        origin.wire(desis, makeAddr("factory"));
+        origin.setDependencies(desis, makeAddr("factory"));
 
         target = DeployProxy.targetRouter(address(bridge), admin, self);
         stub = new BidsStub();
-        target.wire(address(stub), makeAddr("intex"), makeAddr("escrow"));
+        target.setDependencies(address(stub), makeAddr("intex"), makeAddr("escrow"));
 
-        origin.setRemoteMessenger(self, InteroperableAddress.formatEvmV1(self, address(target)));
+        origin.registerRemoteMessenger(self, InteroperableAddress.formatEvmV1(self, address(target)));
         origin.addTarget(self);
-        target.setRemoteMessenger(self, InteroperableAddress.formatEvmV1(self, address(origin)));
+        target.registerRemoteMessenger(self, InteroperableAddress.formatEvmV1(self, address(origin)));
 
         vm.deal(address(origin), 100 ether);
         vm.deal(address(target), 100 ether);
 
-        IOriginRouter.AuctionStageStartParams memory p;
+        IOriginRouter.IntexAuctionStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = DAY;
-        p.dayState = 1;
         vm.prank(desis);
-        origin.sendAuctionStageStart(p);
+        origin.sendIntexAuctionStart(p);
         _relayAll();
-        assertEq(origin.parkedMessageCount(), 0, "the start leg must land");
+        assertEq(origin.failedMessageSendCount(), 0, "the start leg must land");
     }
 
     /// @dev A day too heavy for one round: the router sends the next round as any other leg, and
     ///      the rounds carry the day without a park or a push.
     function test_AnUnfinishedOwnChainDaySendsItsNextRound() public {
         stub.setCount(1_536);
-        vm.expectCall(desis, abi.encodeWithSelector(IDesis.processBidsBatch.selector, DAY, self), 24);
-        vm.expectCall(desis, abi.encodeCall(IDesis.processBidsDone, (DAY, self, 24, 1_536)), 1);
+        vm.expectCall(desis, abi.encodeWithSelector(IDesis.collectIntexAuctionBids.selector), 24);
+        vm.expectCall(desis, abi.encodeWithSelector(IDesis.completeIntexAuctionBids.selector), 1);
 
         vm.prank(desis);
-        origin.sendAuctionStageCollectingBids(DAY, self, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
+        origin.sendIntexAuctionClearingStart(DAY, self, IntexGas.INTEX_AUCTION_CLEARING_START);
         uint256 rounds = _relayAll();
 
-        (uint16 nextBatch, uint16 totalBatches, bool done) = target.bidsRelay(DAY);
-        assertEq(totalBatches, 24, "1,536 bids span 24 chunks");
+        (uint16 nextPage, uint16 totalPages, bool done) = target.getIntexAuctionBidsSendState(DAY);
+        assertEq(totalPages, 24, "1,536 bids span 24 chunks");
         assertGt(rounds, 1, "one round cannot carry the day");
         assertTrue(done, "the rounds carried the day");
-        assertEq(nextBatch, totalBatches, "every chunk left");
-        assertEq(origin.parkedMessageCount(), 0, "no round parks");
+        assertEq(nextPage, totalPages, "every chunk left");
+        assertEq(origin.failedMessageSendCount(), 0, "no round parks");
     }
 
     /// @dev Every page of a 130-bid day on Outbe reaches Desis, with no push from outside.
     function test_EveryPageOfAnOwnChainDayReachesDesis() public {
         stub.setCount(130);
-        vm.expectCall(desis, abi.encodeWithSelector(IDesis.processBidsBatch.selector, DAY, self), 3);
-        vm.expectCall(desis, abi.encodeCall(IDesis.processBidsDone, (DAY, self, 3, 130)), 1);
+        vm.expectCall(desis, abi.encodeWithSelector(IDesis.collectIntexAuctionBids.selector), 3);
+        vm.expectCall(desis, abi.encodeWithSelector(IDesis.completeIntexAuctionBids.selector), 1);
 
         vm.prank(desis);
-        origin.sendAuctionStageCollectingBids(DAY, self, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
+        origin.sendIntexAuctionClearingStart(DAY, self, IntexGas.INTEX_AUCTION_CLEARING_START);
         _relayAll();
 
-        assertEq(origin.parkedMessageCount(), 0, "no round parks");
+        assertEq(origin.failedMessageSendCount(), 0, "no round parks");
     }
 
     /// @dev Delivers every announced message, each in a call of its own, until none is left.
@@ -195,7 +190,7 @@ contract OwnChainRelayRoundTest is Test {
                 if (logs[i].emitter != address(bridge) || logs[i].topics[0] != RelayedBridge.Sent.selector) continue;
                 (bytes memory sender, bytes memory recipient, bytes memory payload, uint256 gasLimit) =
                     abi.decode(logs[i].data, (bytes, bytes, bytes, uint256));
-                if (uint8(payload[1]) == BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS) ++rounds;
+                if (uint8(payload[1]) == BridgeMsgCodec.MSG_INTEX_AUCTION_CLEARING_START) ++rounds;
                 bridge.deliver(sender, recipient, payload, gasLimit);
                 ++delivered;
             }

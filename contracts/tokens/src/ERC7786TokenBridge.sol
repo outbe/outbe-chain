@@ -14,6 +14,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {IStablecoin} from "@precompiles/IStablecoin.sol";
 
 import {DEAD_ADDRESS} from "@shared/BurnAddress.sol";
+import {GAS_LIMIT_ATTR, REFUND_ADDRESS_ATTR} from "@shared/GatewayAttributes.sol";
 import {IGatewayQuote} from "@crosschain/interfaces/IGatewayQuote.sol";
 import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
 import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
@@ -90,9 +91,6 @@ contract ERC7786TokenBridge is
     error UnauthorizedRemoteBridge(bytes sender);
     error DecimalsMismatch(uint8 sourceDecimals, uint8 localDecimals);
 
-    /// @dev `executionGasLimit(uint256)` ERC-7786 attribute understood by the bridge hub's gateways.
-    bytes4 private constant GAS_LIMIT_ATTR = bytes4(keccak256("executionGasLimit(uint256)"));
-
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address token_, address bridge_, TokenBridgeMode mode_) {
         if (token_ == address(0)) revert InvalidToken();
@@ -151,7 +149,9 @@ contract ERC7786TokenBridge is
         amount = _onSend(msg.sender, amount);
 
         bytes memory payload = _encodePayload(msg.sender, to, amount, "");
-        sendId = bridge.sendMessage{value: msg.value}(_remoteBridge(destinationDomain), payload, new bytes[](0));
+        sendId = bridge.sendMessage{value: msg.value}(
+            _remoteBridge(destinationDomain), payload, _sendAttributes(0, msg.sender)
+        );
 
         emit CrosschainTransferSent(sendId, destinationDomain, msg.sender, to, amount);
     }
@@ -176,20 +176,28 @@ contract ERC7786TokenBridge is
         amount = _onSend(msg.sender, amount);
 
         bytes memory payload = _encodePayload(msg.sender, to, amount, extraData);
-        sendId =
-            bridge.sendMessage{value: msg.value}(_remoteBridge(destinationDomain), payload, _gasAttributes(gasLimit));
+        sendId = bridge.sendMessage{value: msg.value}(
+            _remoteBridge(destinationDomain), payload, _sendAttributes(gasLimit, msg.sender)
+        );
 
         emit CrosschainTransferSent(sendId, destinationDomain, msg.sender, to, amount);
     }
 
     /// @notice Sends `amount`, which the token has just burned from 0x…dEaD, to 0x…dEaD on
     ///         `destinationDomain`. Only the token can call it, so no backing moves without that burn.
-    function sendBurned(uint32 destinationDomain, uint256 amount) external payable returns (bytes32 sendId) {
+    /// @param refundTo Gets the part of `msg.value` above the fee back. The token gives its caller.
+    function sendBurned(uint32 destinationDomain, uint256 amount, address refundTo)
+        external
+        payable
+        returns (bytes32 sendId)
+    {
         if (msg.sender != address(token)) revert UnauthorizedToken(msg.sender);
         if (amount == 0) revert InvalidAmount();
 
         bytes memory payload = _encodePayload(DEAD_ADDRESS, DEAD_ADDRESS, amount, "");
-        sendId = bridge.sendMessage{value: msg.value}(_remoteBridge(destinationDomain), payload, new bytes[](0));
+        sendId = bridge.sendMessage{value: msg.value}(
+            _remoteBridge(destinationDomain), payload, _sendAttributes(0, refundTo)
+        );
 
         emit CrosschainTransferSent(sendId, destinationDomain, DEAD_ADDRESS, DEAD_ADDRESS, amount);
     }
@@ -257,6 +265,14 @@ contract ERC7786TokenBridge is
         if (gasLimit == 0) return new bytes[](0);
         attrs = new bytes[](1);
         attrs[0] = abi.encodeWithSelector(GAS_LIMIT_ATTR, gasLimit);
+    }
+
+    /// @dev The attributes of a send: the gas attribute (when `gasLimit` is not 0) and the
+    ///      refundAddress attribute, so the transport sends the extra fee back to `refundTo`.
+    function _sendAttributes(uint256 gasLimit, address refundTo) internal pure returns (bytes[] memory attrs) {
+        attrs = new bytes[](gasLimit == 0 ? 1 : 2);
+        attrs[0] = abi.encodeWithSelector(REFUND_ADDRESS_ATTR, refundTo);
+        if (gasLimit != 0) attrs[1] = abi.encodeWithSelector(GAS_LIMIT_ATTR, gasLimit);
     }
 
     /// @return The amount to credit on the destination. For a lock, this is the amount that arrived,

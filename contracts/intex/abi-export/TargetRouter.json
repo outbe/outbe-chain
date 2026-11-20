@@ -73,7 +73,7 @@
   },
   {
     "type": "function",
-    "name": "applyMarkOne",
+    "name": "applyIntexSeriesCallNotice",
     "inputs": [
       {
         "name": "seriesId",
@@ -91,7 +91,33 @@
   },
   {
     "type": "function",
-    "name": "applyParkedMark",
+    "name": "escrow",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IEscrowAdapter"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "failedIntexAuctionProceedsSendCount",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "failedIntexSeriesCallNoticeApply",
     "inputs": [
       {
         "name": "seriesId",
@@ -99,25 +125,57 @@
         "internalType": "bytes14"
       }
     ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "auction",
-    "inputs": [],
     "outputs": [
       {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IIntexAuction"
+        "name": "calledAt",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "stateMutability": "view"
   },
   {
     "type": "function",
-    "name": "bidsRelay",
+    "name": "getFailedIntexAuctionProceedsSend",
+    "inputs": [
+      {
+        "name": "idx",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "pageIndex",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "amount",
+        "type": "uint128",
+        "internalType": "uint128"
+      },
+      {
+        "name": "exists",
+        "type": "bool",
+        "internalType": "bool"
+      },
+      {
+        "name": "done",
+        "type": "bool",
+        "internalType": "bool"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getIntexAuctionBidsSendState",
     "inputs": [
       {
         "name": "emissionDay",
@@ -127,12 +185,12 @@
     ],
     "outputs": [
       {
-        "name": "nextBatch",
+        "name": "nextPage",
         "type": "uint16",
         "internalType": "uint16"
       },
       {
-        "name": "totalBatches",
+        "name": "totalPages",
         "type": "uint16",
         "internalType": "uint16"
       },
@@ -146,13 +204,48 @@
   },
   {
     "type": "function",
-    "name": "escrowAdapter",
-    "inputs": [],
+    "name": "getIntexAuctionReturnState",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
     "outputs": [
       {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IEscrowAdapter"
+        "name": "seen",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "total",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getIntexIssuanceState",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "seen",
+        "type": "uint16",
+        "internalType": "uint16"
+      },
+      {
+        "name": "total",
+        "type": "uint16",
+        "internalType": "uint16"
       }
     ],
     "stateMutability": "view"
@@ -233,7 +326,20 @@
   },
   {
     "type": "function",
-    "name": "intex",
+    "name": "intexAuction",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IIntexAuction"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "intexContract",
     "inputs": [],
     "outputs": [
       {
@@ -246,7 +352,7 @@
   },
   {
     "type": "function",
-    "name": "issuanceChunkApplied",
+    "name": "intexSeriesPageApplied",
     "inputs": [
       {
         "name": "emissionDay",
@@ -254,7 +360,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "chunkIndex",
+        "name": "pageIndex",
         "type": "uint16",
         "internalType": "uint16"
       }
@@ -264,30 +370,6 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "issuanceChunks",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "seen",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "total",
-        "type": "uint16",
-        "internalType": "uint16"
       }
     ],
     "stateMutability": "view"
@@ -301,77 +383,6 @@
         "name": "",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "parkedMark",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "internalType": "bytes14"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "calledAt",
-        "type": "uint64",
-        "internalType": "uint64"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "parkedProceeds",
-    "inputs": [
-      {
-        "name": "idx",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "chunkIndex",
-        "type": "uint16",
-        "internalType": "uint16"
-      },
-      {
-        "name": "amount",
-        "type": "uint128",
-        "internalType": "uint128"
-      },
-      {
-        "name": "exists",
-        "type": "bool",
-        "internalType": "bool"
-      },
-      {
-        "name": "done",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "parkedProceedsCount",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -420,49 +431,17 @@
   },
   {
     "type": "function",
-    "name": "refundChunks",
+    "name": "registerRemoteMessenger",
     "inputs": [
       {
-        "name": "emissionDay",
+        "name": "chainId",
         "type": "uint32",
         "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "seen",
-        "type": "uint16",
-        "internalType": "uint16"
       },
       {
-        "name": "total",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "relayBids",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "relayBidsToOutbe",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "interop",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -507,12 +486,12 @@
   },
   {
     "type": "function",
-    "name": "reportBidsRemaining",
+    "name": "retryIntexAuctionProceedsSend",
     "inputs": [
       {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
+        "name": "idx",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [],
@@ -520,12 +499,12 @@
   },
   {
     "type": "function",
-    "name": "resendParkedProceeds",
+    "name": "retryIntexSeriesCallNoticeApply",
     "inputs": [
       {
-        "name": "idx",
-        "type": "uint256",
-        "internalType": "uint256"
+        "name": "seriesId",
+        "type": "bytes14",
+        "internalType": "bytes14"
       }
     ],
     "outputs": [],
@@ -551,7 +530,46 @@
   },
   {
     "type": "function",
-    "name": "routeProceedsExt",
+    "name": "sendIntexAuctionBids",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sendIntexAuctionBidsPause",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sendIntexAuctionBidsToOutbe",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "sendIntexAuctionProceedsExt",
     "inputs": [
       {
         "name": "emissionDay",
@@ -559,7 +577,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "chunkIndex",
+        "name": "pageIndex",
         "type": "uint16",
         "internalType": "uint16"
       },
@@ -567,6 +585,29 @@
         "name": "amount",
         "type": "uint128",
         "internalType": "uint128"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "setDependencies",
+    "inputs": [
+      {
+        "name": "_intexAuction",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_intexContract",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "_escrow",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [],
@@ -585,24 +626,6 @@
         "name": "_originRouter",
         "type": "address",
         "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "setRemoteMessenger",
-    "inputs": [
-      {
-        "name": "chainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "interop",
-        "type": "bytes",
-        "internalType": "bytes"
       }
     ],
     "outputs": [],
@@ -659,52 +682,11 @@
     "stateMutability": "payable"
   },
   {
-    "type": "function",
-    "name": "wire",
-    "inputs": [
-      {
-        "name": "_auction",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_intex",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_escrowAdapter",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
     "type": "event",
-    "name": "AuctionResultReceived",
+    "name": "Initialized",
     "inputs": [
       {
-        "name": "srcChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "issuedUnits",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "clearingRate",
+        "name": "version",
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
@@ -714,14 +696,8 @@
   },
   {
     "type": "event",
-    "name": "AuctionStageReceived",
+    "name": "IntexAuctionBidsPauseSendFailed",
     "inputs": [
-      {
-        "name": "srcChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
       {
         "name": "emissionDay",
         "type": "uint32",
@@ -729,17 +705,29 @@
         "internalType": "uint32"
       },
       {
-        "name": "stageType",
-        "type": "uint8",
+        "name": "nextPage",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "uint8"
+        "internalType": "uint32"
+      },
+      {
+        "name": "totalPages",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "errorData",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "BidsBatchSent",
+    "name": "IntexAuctionBidsPauseSent",
     "inputs": [
       {
         "name": "sendId",
@@ -751,20 +739,94 @@
         "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "nextPage",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "totalPages",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionBidsSendFailed",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "nextPage",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "totalPages",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "errorData",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexAuctionBidsSent",
+    "inputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "pageIndex",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "totalPages",
+        "type": "uint32",
+        "indexed": false,
         "internalType": "uint32"
       },
       {
         "name": "bidsCount",
-        "type": "uint256",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "BidsDoneSent",
+    "name": "IntexAuctionBidsTotalsSent",
     "inputs": [
       {
         "name": "sendId",
@@ -779,10 +841,10 @@
         "internalType": "uint32"
       },
       {
-        "name": "totalBatches",
-        "type": "uint16",
+        "name": "totalPages",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "uint16"
+        "internalType": "uint32"
       },
       {
         "name": "totalBids",
@@ -795,8 +857,14 @@
   },
   {
     "type": "event",
-    "name": "BidsRelayComplete",
+    "name": "IntexAuctionProceedsSendFailed",
     "inputs": [
+      {
+        "name": "idx",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
       {
         "name": "emissionDay",
         "type": "uint32",
@@ -804,42 +872,29 @@
         "internalType": "uint32"
       },
       {
-        "name": "totalBatches",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "BidsRelayIncomplete",
-    "inputs": [
-      {
-        "name": "emissionDay",
+        "name": "pageIndex",
         "type": "uint32",
-        "indexed": true,
+        "indexed": false,
         "internalType": "uint32"
       },
       {
-        "name": "nextBatch",
-        "type": "uint16",
+        "name": "amountMinor",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "uint16"
+        "internalType": "uint256"
       },
       {
-        "name": "totalBatches",
-        "type": "uint16",
+        "name": "errorData",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint16"
+        "internalType": "bytes"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "BidsRemainingSent",
+    "name": "IntexAuctionProceedsSent",
     "inputs": [
       {
         "name": "sendId",
@@ -854,24 +909,30 @@
         "internalType": "uint32"
       },
       {
-        "name": "nextBatch",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
+        "name": "pageIndex",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       },
       {
-        "name": "totalBatches",
-        "type": "uint16",
+        "name": "amountMinor",
+        "type": "uint256",
         "indexed": false,
-        "internalType": "uint16"
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "BidsRemainingUnreported",
+    "name": "IntexAuctionWinnersReceived",
     "inputs": [
+      {
+        "name": "receiveId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
       {
         "name": "emissionDay",
         "type": "uint32",
@@ -879,60 +940,28 @@
         "internalType": "uint32"
       },
       {
-        "name": "nextBatch",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "totalBatches",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "InboundMessageIgnored",
-    "inputs": [
-      {
         "name": "srcChainId",
         "type": "uint32",
         "indexed": true,
         "internalType": "uint32"
       },
       {
-        "name": "msgType",
-        "type": "uint8",
-        "indexed": true,
-        "internalType": "uint8"
+        "name": "pageIndex",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       },
       {
-        "name": "key",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
+        "name": "totalPages",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       },
       {
-        "name": "reason",
-        "type": "uint8",
+        "name": "winnersCount",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "Initialized",
-    "inputs": [
-      {
-        "name": "version",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -948,7 +977,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "totalChunks",
+        "name": "totalPages",
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
@@ -1009,121 +1038,14 @@
   },
   {
     "type": "event",
-    "name": "ParkedMarkApplied",
+    "name": "MessageIgnored",
     "inputs": [
       {
-        "name": "seriesId",
-        "type": "bytes14",
+        "name": "receiveId",
+        "type": "bytes32",
         "indexed": true,
-        "internalType": "bytes14"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ParkedProceedsResent",
-    "inputs": [
-      {
-        "name": "idx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
+        "internalType": "bytes32"
       },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ProceedsParked",
-    "inputs": [
-      {
-        "name": "idx",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "chunkIndex",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "reason",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ProceedsRouteSet",
-    "inputs": [
-      {
-        "name": "tokenBridge",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "originRouter",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ProceedsRouted",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "chunkIndex",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "amount",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RefundInstructionsReceived",
-    "inputs": [
       {
         "name": "srcChainId",
         "type": "uint32",
@@ -1131,16 +1053,23 @@
         "internalType": "uint32"
       },
       {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "instructionsCount",
-        "type": "uint256",
+        "name": "reason",
+        "type": "uint8",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "ParkedMarkApplied",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
       }
     ],
     "anonymous": false
@@ -1241,6 +1170,50 @@
   },
   {
     "type": "event",
+    "name": "TargetRouterDependenciesSet",
+    "inputs": [
+      {
+        "name": "intexAuction",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "intexContract",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "escrow",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "TargetRouterProceedsRouteSet",
+    "inputs": [
+      {
+        "name": "tokenBridge",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "originRouter",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "Upgraded",
     "inputs": [
       {
@@ -1297,22 +1270,6 @@
   },
   {
     "type": "error",
-    "name": "BidsArrayLengthMismatch",
-    "inputs": [
-      {
-        "name": "bidders",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "packedBids",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ERC1967InvalidImplementation",
     "inputs": [
       {
@@ -1345,6 +1302,22 @@
         "name": "",
         "type": "bytes",
         "internalType": "bytes"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "IntexAuctionBidsArrayLengthMismatch",
+    "inputs": [
+      {
+        "name": "bidders",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "packedBids",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ]
   },
@@ -1397,18 +1370,7 @@
   },
   {
     "type": "error",
-    "name": "NoBidsToRelay",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "NoParkedMark",
+    "name": "NoFailedIntexSeriesCallNoticeApply",
     "inputs": [
       {
         "name": "seriesId",
@@ -1419,7 +1381,18 @@
   },
   {
     "type": "error",
-    "name": "NoSuchParkedProceeds",
+    "name": "NoIntexAuctionBidsToSend",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "NoSuchFailedIntexAuctionProceedsSend",
     "inputs": [
       {
         "name": "idx",
@@ -1488,11 +1461,6 @@
   },
   {
     "type": "error",
-    "name": "RefundFailed",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RemoteMessengerChainMismatch",
     "inputs": [
       {
@@ -1517,6 +1485,11 @@
         "internalType": "uint32"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "ReturnFailed",
+    "inputs": []
   },
   {
     "type": "error",
@@ -1547,7 +1520,7 @@
   },
   {
     "type": "error",
-    "name": "TooManyBidsBatches",
+    "name": "TooManyIntexAuctionBidsPages",
     "inputs": [
       {
         "name": "emissionDay",
@@ -1555,7 +1528,7 @@
         "internalType": "uint32"
       },
       {
-        "name": "totalBatches",
+        "name": "totalPages",
         "type": "uint16",
         "internalType": "uint16"
       }

@@ -16,7 +16,7 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
             onboarding_artifact: vec![2],
             attestation_tag: tag.clone(),
         },
-        EnclaveWitnessEntryV1::GramineDirectDevOnboardingArtifactPreparedV2 {
+        EnclaveWitnessEntryV1::NoAttestationDevOnboardingArtifactPreparedV2 {
             request_hash: B256::ZERO,
             onboarding_artifact: vec![2],
             attestation_tag: tag.clone(),
@@ -32,10 +32,14 @@ fn entries() -> Vec<EnclaveWitnessEntryV1> {
 #[test]
 fn all_frozen_variants_round_trip_conversion_and_serialize_with_indices_zero_through_three() {
     for (index, entry) in entries().into_iter().enumerate() {
-        let response = EnclaveResponse::from(entry.clone());
-        let converted = EnclaveWitnessEntryV1::try_from(response.clone()).unwrap();
-        assert_eq!(converted, entry);
-        assert_eq!(EnclaveResponse::from(converted), response);
+        if matches!(entry, EnclaveWitnessEntryV1::Payload { .. }) {
+            assert!(EnclaveResponse::try_from(entry.clone()).is_err());
+        } else {
+            let response = EnclaveResponse::try_from(entry.clone()).unwrap();
+            let converted = EnclaveWitnessEntryV1::try_from(response.clone()).unwrap();
+            assert_eq!(converted, entry);
+            assert_eq!(EnclaveResponse::try_from(converted).unwrap(), response);
+        }
         let encoded = postcard::to_allocvec(&entry).unwrap();
         assert_eq!(encoded[0], index as u8, "variant index {index}");
     }
@@ -52,7 +56,7 @@ fn semantic_equality_ignores_only_attestation_tag() {
             | EnclaveWitnessEntryV1::DcapOnboardingVerificationFinishedV1 {
                 attestation_tag, ..
             }
-            | EnclaveWitnessEntryV1::GramineDirectDevOnboardingArtifactPreparedV2 {
+            | EnclaveWitnessEntryV1::NoAttestationDevOnboardingArtifactPreparedV2 {
                 attestation_tag,
                 ..
             }
@@ -73,7 +77,7 @@ fn mutate_commitment(entry: &mut EnclaveWitnessEntryV1) {
     match entry {
         EnclaveWitnessEntryV1::DcapVerificationFinishedV1 { request_hash, .. }
         | EnclaveWitnessEntryV1::DcapOnboardingVerificationFinishedV1 { request_hash, .. }
-        | EnclaveWitnessEntryV1::GramineDirectDevOnboardingArtifactPreparedV2 {
+        | EnclaveWitnessEntryV1::NoAttestationDevOnboardingArtifactPreparedV2 {
             request_hash,
             ..
         } => {
@@ -118,8 +122,7 @@ fn unsupported_and_non_recordable_responses_are_not_witness_entries() {
         message: "err".into()
     })
     .is_err());
-    assert!(EnclaveWitnessEntryV1::try_from(EnclaveResponse::Payload {
-        recordable: false,
+    assert!(EnclaveResponse::try_from(EnclaveWitnessEntryV1::Payload {
         payload: vec![1],
         inputs_canonical_hash: B256::ZERO,
         attestation_tag: vec![0; 64],

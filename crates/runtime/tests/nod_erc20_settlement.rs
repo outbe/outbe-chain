@@ -4,9 +4,9 @@ mod settlement;
 
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_enclave::gratis::{derive_modify_key, modify_mac};
-use outbe_enclave::protocol::GratisOp;
 use outbe_gratis::enclave_client::test_enclave;
+use outbe_gratis::GratisOp;
+use outbe_gratis::{derive_account_keys, modify_mac};
 use outbe_nod::{precompile::INod, NodIssueParams};
 use outbe_nodfactory::precompile::INodFactory;
 use outbe_primitives::{
@@ -59,12 +59,12 @@ impl Rail for Nod {
                 asset: ASSET,
             },
         );
-        let view_key = outbe_enclave::nod_encryption::derive_view_key(
-            &outbe_nod::test_support::NETWORK_SECRET,
+        let view_key = outbe_nod::nod_encryption::derive_view_key(
+            &outbe_nod::test_support::state_key(),
             OWNER,
         )
         .unwrap();
-        let cost = outbe_enclave::nod_decrypt::decrypt_nod_quote_for_owner(
+        let cost = outbe_nod::test_support::decrypt_quote(
             &view_key,
             &outbe_core_common::nod_encryption::NodQuoteContextV1 {
                 chain_id: CHAIN_ID,
@@ -174,10 +174,10 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
     let nonce = (0..1_000_000)
         .find(|n| outbe_nodfactory::runtime::validate_pow(nod, OWNER, *n).is_ok())
         .unwrap();
-    let key = derive_modify_key(&test_enclave::state_key(), OWNER).unwrap();
+    let key = derive_account_keys(&test_enclave::state_key(), OWNER).unwrap();
     let mac = modify_mac(
         &key,
-        &outbe_enclave::gratis::ModifyOperation {
+        &outbe_gratis::ModifyOperation {
             account: OWNER,
             op: GratisOp::Mint,
             amount: U256::from(GRATIS_LOAD),
@@ -195,10 +195,9 @@ fn erc20_settlement_moves_exact_full_width_cost_and_preserves_mining() {
             opNonce: 0,
         },
     );
-    let view_key =
-        outbe_enclave::gratis::derive_view_key(&test_enclave::state_key(), OWNER).unwrap();
+    let view_key = outbe_gratis::derive_view_key(&test_enclave::state_key(), OWNER).unwrap();
     assert_eq!(
-        outbe_enclave::gratis_decrypt::decrypt_gratis_balance(&view_key, OWNER, &minted).unwrap(),
+        outbe_gratis::decrypt_balance(&view_key, OWNER, &minted).unwrap(),
         U256::from(GRATIS_LOAD)
     );
 }

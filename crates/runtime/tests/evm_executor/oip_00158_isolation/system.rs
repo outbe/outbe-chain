@@ -84,14 +84,11 @@ fn local_transport_panics_abort_block_in_both_enclave_roles_without_failure_rece
         let mut state = seeded(|_| {});
         let (mut ctx, begin) = context(&config);
         if verifier {
-            let entry =
-                EnclaveWitnessEntryV1::try_from(outbe_tee::protocol::EnclaveResponse::Payload {
-                    recordable: true,
-                    payload: vec![1],
-                    inputs_canonical_hash: B256::ZERO,
-                    attestation_tag: vec![0; 64],
-                })
-                .unwrap();
+            let entry = EnclaveWitnessEntryV1::DcapVerificationFinishedV1 {
+                request_hash: B256::ZERO,
+                outcome: vec![1],
+                attestation_tag: vec![0; 64],
+            };
             let tape = EnclaveWitnessTapeV1 {
                 prefix: vec![],
                 txs: vec![TxWitnessV1 {

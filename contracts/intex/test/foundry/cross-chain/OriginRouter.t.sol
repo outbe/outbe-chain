@@ -6,6 +6,7 @@ import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
@@ -76,43 +77,42 @@ contract OriginRouterTest is CrossChainTest {
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         // Wire adapters (register remote messengers)
-        originRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(targetRouter)));
-        targetRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
+        originRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(targetRouter)));
+        targetRouter.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
 
         // Register BNB as the single auction target and fund the relay float.
         originRouter.addTarget(BNB_CHAIN_ID);
         vm.deal(address(originRouter), 10 ether);
 
         // Wire Outbe adapter
-        originRouter.wire(desis, intexFactory);
+        originRouter.setDependencies(desis, intexFactory);
 
         // Wire BNB adapter
-        targetRouter.wire(address(auction), address(intex), admin);
+        targetRouter.setDependencies(address(auction), address(intex), admin);
     }
 
     // --- Helpers ---
-    /// @dev Build a baseline AuctionStageStartParams payload keyed by EMISSION_DAY.
-    function _baseStageStartParams() internal view returns (IOriginRouter.AuctionStageStartParams memory) {
-        return IOriginRouter.AuctionStageStartParams({
+    /// @dev Build a baseline IntexAuctionStartParams payload keyed by EMISSION_DAY.
+    function _baseStageStartParams() internal view returns (IOriginRouter.IntexAuctionStartParams memory) {
+        return IOriginRouter.IntexAuctionStartParams({
             emissionDay: EMISSION_DAY,
             commitEnd: uint32(block.timestamp + 3600),
             revealEnd: uint32(block.timestamp + 5400),
             issuanceEnd: uint32(block.timestamp + 7200),
             promisLoadMinor: 1000,
-            minIntexBidRate: 50e6,
+            minBidRate: 50e6,
             prices: ReferenceCurrencyPriceLib.one(840, 100e6, 25e6),
             callNoticePeriod: 0,
             callWindow: 0,
             callThreshold: 0,
-            minIntexBidQuantity: 1,
-            commitBondMinor: 0,
-            dayState: 1
+            minBidQuantity: 1,
+            bidBondMinor: 0
         });
     }
 
-    function _baseIssuanceParams() internal view returns (IOriginRouter.IssuanceInstructionsParams[] memory batch) {
-        batch = new IOriginRouter.IssuanceInstructionsParams[](1);
-        batch[0] = IOriginRouter.IssuanceInstructionsParams({
+    function _baseIssuanceParams() internal view returns (IOriginRouter.IntexSeriesParams[] memory batch) {
+        batch = new IOriginRouter.IntexSeriesParams[](1);
+        batch[0] = IOriginRouter.IntexSeriesParams({
             seriesId: SERIES_ID,
             emissionDay: EMISSION_DAY,
             issuedAt: uint32(block.timestamp),
@@ -147,20 +147,20 @@ contract OriginRouterTest is CrossChainTest {
         OriginRouter newRouter = DeployProxy.originRouter(address(bridge), admin);
 
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.ZeroAddress.selector, "desis"));
-        newRouter.wire(address(0), intexFactory);
+        newRouter.setDependencies(address(0), intexFactory);
     }
 
     // --- Access Control Tests ---
     function test_sendAuctionStageStart_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendAuctionStageStart{value: 0.1 ether}(_baseStageStartParams());
+        originRouter.sendIntexAuctionStart{value: 0.1 ether}(_baseStageStartParams());
     }
 
     function test_sendMarkCalled_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendMarkCalled{value: 0.1 ether}(
+        originRouter.sendIntexSeriesCallNotice{value: 0.1 ether}(
             EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.one(SERIES_ID)
         );
     }
@@ -168,21 +168,21 @@ contract OriginRouterTest is CrossChainTest {
     function test_sendAuctionStageCollectingBids_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendAuctionStageCollectingBids{value: 0.1 ether}(
-            EMISSION_DAY, BNB_CHAIN_ID, IntexGas.AUCTION_STAGE_COLLECTING_BIDS
+        originRouter.sendIntexAuctionClearingStart{value: 0.1 ether}(
+            EMISSION_DAY, BNB_CHAIN_ID, IntexGas.INTEX_AUCTION_CLEARING_START
         );
     }
 
     function test_sendAuctionResult_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendAuctionResult{value: 0.1 ether}(BNB_CHAIN_ID, EMISSION_DAY, 10_000, 100e6, 50);
+        originRouter.sendIntexAuctionResult{value: 0.1 ether}(BNB_CHAIN_ID, EMISSION_DAY, 0, 50, 10_000, 100e6, 0);
     }
 
     function test_sendIssuanceInstructions_revert_unauthorized() public {
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendIssuanceInstructions{value: 0.1 ether}(BNB_CHAIN_ID, EMISSION_DAY, 0, 1, _baseIssuanceParams());
+        originRouter.sendIntexSeries{value: 0.1 ether}(BNB_CHAIN_ID, EMISSION_DAY, 0, 1, _baseIssuanceParams());
     }
 
     function test_sendRefundInstructions_revert_unauthorized() public {
@@ -191,7 +191,7 @@ contract OriginRouterTest is CrossChainTest {
 
         vm.prank(user);
         vm.expectRevert();
-        originRouter.sendRefundInstructions{value: 0.1 ether}(
+        originRouter.sendIntexAuctionWinners{value: 0.1 ether}(
             BNB_CHAIN_ID, EMISSION_DAY, 0, 1, 600_000, 1e6, winners, 0, 0
         );
     }
@@ -200,34 +200,72 @@ contract OriginRouterTest is CrossChainTest {
     function test_sendIssuanceInstructions_ok() public {
         // Fire STAGE_START first so the day's target snapshot exists for the membership check.
         vm.prank(desis);
-        originRouter.sendAuctionStageStart(_baseStageStartParams());
+        originRouter.sendIntexAuctionStart(_baseStageStartParams());
 
         vm.prank(intexFactory);
-        originRouter.sendIssuanceInstructions(BNB_CHAIN_ID, EMISSION_DAY, 0, 1, _baseIssuanceParams());
+        originRouter.sendIntexSeries(BNB_CHAIN_ID, EMISSION_DAY, 0, 1, _baseIssuanceParams());
     }
 
     function test_sendRefundInstructions_emptyWinners_ok() public {
         // A chain whose bids all lost still gets a chunk, which closes its day.
         vm.prank(desis);
-        originRouter.sendAuctionStageStart(_baseStageStartParams());
+        originRouter.sendIntexAuctionStart(_baseStageStartParams());
 
         vm.prank(desis);
-        originRouter.sendRefundInstructions(BNB_CHAIN_ID, EMISSION_DAY, 0, 1, 600_000, 1e6, new address[](0), 0, 0);
+        originRouter.sendIntexAuctionWinners(BNB_CHAIN_ID, EMISSION_DAY, 0, 1, 600_000, 1e6, new address[](0), 0, 0);
     }
 
     function test_sendRefundInstructions_revert_partial_outside_winners() public {
         vm.prank(desis);
-        originRouter.sendAuctionStageStart(_baseStageStartParams());
+        originRouter.sendIntexAuctionStart(_baseStageStartParams());
 
         address[] memory winners = new address[](2);
         winners[0] = address(0x1);
         winners[1] = address(0x2);
 
         vm.prank(desis);
-        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidRefundPartial.selector, uint16(2), uint256(2)));
-        originRouter.sendRefundInstructions{value: 0.1 ether}(
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidReturnPartial.selector, uint16(2), uint256(2)));
+        originRouter.sendIntexAuctionWinners{value: 0.1 ether}(
             BNB_CHAIN_ID, EMISSION_DAY, 0, 1, 600_000, 1e6, winners, 2, 1
         );
+    }
+
+    function _fullWinnersPage() private pure returns (address[] memory winners) {
+        winners = new address[](BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN);
+        for (uint256 i; i < winners.length; ++i) {
+            winners[i] = address(uint160(0x1000 + i));
+        }
+    }
+
+    function test_winners_page_sent_event_reads_the_page_and_its_winners() public {
+        vm.prank(desis);
+        originRouter.sendIntexAuctionStart(_baseStageStartParams());
+        address[] memory winners = _fullWinnersPage();
+
+        vm.expectEmit(false, true, true, true, address(originRouter));
+        emit IOriginRouter.IntexAuctionWinnersSent(bytes32(0), EMISSION_DAY, BNB_CHAIN_ID, 3, 7, uint32(winners.length));
+        vm.prank(desis);
+        uint256 before = gasleft();
+        originRouter.sendIntexAuctionWinners(BNB_CHAIN_ID, EMISSION_DAY, 3, 7, 600_000, 1e6, winners, 0, 0);
+        assertLt(before - gasleft(), 2_000_000, "a full page reads its fields without copying the payload");
+    }
+
+    function test_kept_winners_page_is_keyed_by_its_day_and_page() public {
+        vm.prank(desis);
+        originRouter.sendIntexAuctionStart(_baseStageStartParams());
+        originRouter.registerRemoteMessenger(BNB_CHAIN_ID, "");
+
+        vm.recordLogs();
+        vm.prank(desis);
+        originRouter.sendIntexAuctionWinners(BNB_CHAIN_ID, EMISSION_DAY, 3, 7, 600_000, 1e6, _fullWinnersPage(), 0, 0);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        bytes32 key;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == IOriginRouter.MessageSendFailed.selector) {
+                (, key,) = abi.decode(logs[i].data, (uint8, bytes32, bytes));
+            }
+        }
+        assertEq(key, bytes32((uint256(EMISSION_DAY) << 16) | 3));
     }
 
     // --- ERC165 Tests ---

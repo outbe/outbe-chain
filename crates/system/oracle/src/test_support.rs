@@ -8,7 +8,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 
 use crate::api::{
-    current_vwap_snapshot, register_pair, set_exchange_rate, AddressPair, RateObservation,
+    current_vwap_24h_snapshot, register_pair, set_exchange_rate, AddressPair, RateObservation,
 };
 use crate::constants::{DAY_TYPE_PAIR, VWAP_HOUR_SECONDS};
 use crate::schema::OracleContract;
@@ -90,7 +90,7 @@ pub fn seed_covered_trailing_window(
     rate: U256,
     volume: U256,
 ) -> Result<()> {
-    let snapshot = current_vwap_snapshot(storage.clone())?;
+    let snapshot = current_vwap_24h_snapshot(storage.clone())?;
     let mut oracle = OracleContract::new(storage.clone());
     let vote_period = oracle.config_vote_period.read()?.max(1);
     let (mut hour, mut block) = (snapshot.start(), 1);

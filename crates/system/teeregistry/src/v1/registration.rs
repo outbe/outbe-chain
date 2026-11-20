@@ -6,6 +6,7 @@ impl TeeRegistry<'_> {
         &self,
         caller: Address,
         binding: &ValidatorNodeBindingV1,
+        attestation_mode: AttestationMode,
     ) -> Result<RegistrationCallerContextV1> {
         if caller != Address::from(binding.validator) {
             return Err(TeeRegistryError::RegistrationCallerAssociationMismatch.into());
@@ -16,24 +17,23 @@ impl TeeRegistry<'_> {
             if !associated_node.is_zero() {
                 return Err(TeeRegistryError::RegistrationCallerAlreadyAssociated.into());
             }
-            return Ok(RegistrationCallerContextV1 {
-                expired_rejoin: false,
-            });
+            return Ok(RegistrationCallerContextV1 { rejoin: false });
         };
         if associated_node != binding.node_id_hash {
             return Err(
                 TeeRegistryError::RegistrationCallerNotAssociatedWithExistingNodeHost.into(),
             );
         }
-        let expired_rejoin = self.storage.now_secs()? >= current.valid_until;
-        if expired_rejoin
+        let rejoin = self.storage.now_secs()? >= current.valid_until
+            || mutation::live_rejoin_allowed_v1(attestation_mode);
+        if rejoin
             && ValidatorSet::new(self.storage.clone())
                 .get_validator(caller)?
                 .is_some_and(|record| record.status == validator_status::JAILED)
         {
             return Err(TeeRegistryError::JailedValidatorCannotRejoin.into());
         }
-        Ok(RegistrationCallerContextV1 { expired_rejoin })
+        Ok(RegistrationCallerContextV1 { rejoin })
     }
 
     #[cfg(feature = "tee-attestation-v1")]
@@ -72,7 +72,7 @@ impl TeeRegistry<'_> {
             .map_err(|error| revert_codec("attestation evidence is not canonical", error))?;
         let intent = match &decoded {
             AttestationEvidenceV1::Dcap(value) => &value.intent,
-            AttestationEvidenceV1::GramineDirectDev(value) => &value.intent,
+            AttestationEvidenceV1::NoAttestationDev(value) => &value.intent,
         };
         Self::require_initial_binding_target_v1(intent, binding)
     }
@@ -130,7 +130,7 @@ impl TeeRegistry<'_> {
         association: V1RegistrationOutcome,
         context: RegistrationCallerContextV1,
     ) -> Result<V1RegistrationOutcome> {
-        match (registration, association, context.expired_rejoin) {
+        match (registration, association, context.rejoin) {
             (V1RegistrationOutcome::Created, V1RegistrationOutcome::Created, false)
             | (V1RegistrationOutcome::Created, V1RegistrationOutcome::Idempotent, true)
             | (V1RegistrationOutcome::Idempotent, V1RegistrationOutcome::Idempotent, _) => {
@@ -214,7 +214,8 @@ impl TeeRegistry<'_> {
         let binding = association.binding;
 
         Self::require_initial_binding_evidence_target_v1(evidence, binding)?;
-        let caller_context = self.require_registration_caller_v1(caller, binding)?;
+        let caller_context =
+            self.require_registration_caller_v1(caller, binding, policy.attestation_mode)?;
         self.register_and_associate_v1(association, caller_context, |registry| {
             let registration = registry.apply_evidence_mutation_with_active_policy_v1(
                 AttestationOperationV1::RegisterEnclave,
@@ -249,7 +250,8 @@ impl TeeRegistry<'_> {
         let binding = association.binding;
 
         Self::require_initial_binding_evidence_target_v1(evidence, binding)?;
-        let caller_context = self.require_registration_caller_v1(caller, binding)?;
+        let caller_context =
+            self.require_registration_caller_v1(caller, binding, policy.attestation_mode)?;
         self.register_and_associate_v1(association, caller_context, |registry| {
             registry.apply_evidence_mutation_with_onboarding_v1(
                 AttestationOperationV1::RegisterEnclave,

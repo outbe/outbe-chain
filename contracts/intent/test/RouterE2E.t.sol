@@ -11,6 +11,7 @@ import {Auction} from "../src/Auction.sol";
 import {SolverAllocator} from "../src/allocators/SolverAllocator.sol";
 import {SolverEscrow} from "../src/SolverEscrow.sol";
 import {OnchainCrossChainOrder} from "../src/interfaces/OrderTypes.sol";
+import {IDestinationSettler} from "../src/interfaces/IDestinationSettler.sol";
 import {OrderData, OrderEncoder} from "../src/libs/OrderEncoder.sol";
 import {RouterMessage} from "../src/libs/RouterMessage.sol";
 import {TypeCasts} from "../src/libs/TypeCasts.sol";
@@ -240,6 +241,22 @@ contract RouterE2E is BaseTest {
         assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.CLAIMED(), "claimed by other");
     }
 
+    /// @dev The transport sends the extra fee to the refundAddress attribute, so it must be the caller.
+    function test_refund_namesTheCallerAsTheRefundAddress() public {
+        (, OnchainCrossChainOrder memory order) = _openOrder();
+        vm.warp(order.fillDeadline + 1);
+        OnchainCrossChainOrder[] memory orders = new OnchainCrossChainOrder[](1);
+        orders[0] = order;
+
+        vm.prank(kakaroto);
+        destinationRouter.refund(orders);
+
+        assertEq(
+            destBridge.lastFirstAttribute(),
+            abi.encodeWithSelector(bytes4(keccak256("refundAddress(address)")), kakaroto)
+        );
+    }
+
     function test_open_refund() public {
         (bytes32 orderId, OnchainCrossChainOrder memory order) = _openOrder();
 
@@ -264,6 +281,31 @@ contract RouterE2E is BaseTest {
             "origin lock released"
         );
         assertEq(afterRefund[balanceId[kakaroto]], beforeRefund[balanceId[kakaroto]] + amount, "user refunded");
+    }
+
+    /// @dev OIP-00399: the order id binds only `orderData`, so the outer `fillDeadline` of the caller
+    ///      proves nothing. A refund before the deadline of the order data reverts.
+    function test_refund_RevertWhen_OnlyTheOuterDeadlineIsPast() public {
+        (bytes32 orderId, OnchainCrossChainOrder memory order) = _openOrder();
+
+        OnchainCrossChainOrder[] memory orders = new OnchainCrossChainOrder[](1);
+        orders[0] =
+            OnchainCrossChainOrder({fillDeadline: 0, orderDataType: order.orderDataType, orderData: order.orderData});
+
+        // An order that no solver claimed.
+        vm.expectRevert(IDestinationSettler.OrderFillNotExpired.selector);
+        destinationRouter.refund(orders);
+
+        // A CLAIMED order: the early refund must not slash the solver.
+        _doFullAuction(vegeta, orderId, amount, order.orderData);
+        destinationRouter.claimOrder(orderId, order.orderData);
+        assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.CLAIMED(), "claimed");
+
+        vm.expectRevert(IDestinationSettler.OrderFillNotExpired.selector);
+        destinationRouter.refund(orders);
+
+        assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.CLAIMED(), "still claimed");
+        assertEq(originRouter.orderStatus(orderId), originRouter.OPENED(), "still open on origin");
     }
 
     /// @dev An oversized inbound batch must be rejected up front so it cannot make delivery

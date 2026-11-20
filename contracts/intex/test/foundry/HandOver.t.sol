@@ -35,7 +35,7 @@ contract HandOverTest is Test {
 
         assertTrue(nft.hasRole(admin, GOVERNANCE), "governance is admin");
         assertFalse(nft.hasRole(admin, address(script)), "deployer is not admin");
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), address(0xB0B)), "operational roles stay");
+        assertTrue(nft.hasRole(nft.ROUTER_ROLE(), address(0xB0B)), "operational roles stay");
     }
 
     function test_GovernanceOwner_IsCrosschainBridgeOnOutbeAndItsAccountElsewhere() public {

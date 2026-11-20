@@ -16,25 +16,29 @@ contract MockDesis {
     }
 
     /// @dev Accepts every BIDS_BATCH delivery and discards it. Tests that exercise the inbound
-    ///      OM dispatch path rely on this no-op so `_handleBidsBatch` can complete without
+    ///      OM dispatch path rely on this no-op so `_handleBidsPage` can complete without
     ///      pulling in the full Desis dependency graph.
-    function processBidsBatch(
+    function collectIntexAuctionBids(
+        bytes32, /* receiveId */
         uint32, /* emissionDay */
         uint32, /* srcChainId */
-        uint16, /* batchIndex */
-        uint16, /* totalBatches */
-        address[] calldata, /* bidderAddresses */
+        uint16, /* pageIndex */
+        uint16, /* totalPages */
+        address[] calldata, /* bidders */
         uint256[] calldata /* packedBids */
-    ) external {}
+    )
+        external {}
 
-    /// @dev Accepts every BIDS_DONE completeness marker and discards it, as `processBidsBatch`
+    /// @dev Accepts every BIDS_TOTALS completeness marker and discards it, as `collectIntexAuctionBids`
     ///      does.
-    function processBidsDone(
+    function completeIntexAuctionBids(
+        bytes32, /* receiveId */
         uint32, /* emissionDay */
         uint32, /* srcChainId */
-        uint16, /* totalBatches */
+        uint16, /* totalPages */
         uint32 /* totalBids */
-    ) external {}
+    )
+        external {}
 
     /// @dev Open for intake by default, so a day under relay behaves as the common case.
     IDesis.AuctionStage private _stage = IDesis.AuctionStage.RevealingBids;
@@ -43,7 +47,7 @@ contract MockDesis {
         _stage = stage;
     }
 
-    function getAuctionStage(
+    function auctionStage(
         uint32 /* seriesId */
     )
         external
@@ -53,7 +57,7 @@ contract MockDesis {
         return _stage;
     }
 
-    function getBidsCount(
+    function intexAuctionBidsCount(
         uint32 /* seriesId */
     )
         external

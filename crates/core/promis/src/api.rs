@@ -5,7 +5,7 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-pub use outbe_enclave::protocol::ModifyAuth;
+pub use crate::protocol::ModifyAuth;
 
 use crate::runtime;
 use crate::schema::Promis;

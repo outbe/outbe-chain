@@ -29,9 +29,9 @@ pub const DEFAULT_GOVERNANCE_VOTING_WINDOW_BLOCKS: u64 = 86_400;
 /// blocks between its approval and the first block where `applyApproved` may
 /// run it.
 pub const MIN_GOVERNANCE_EXECUTION_DELAY_BLOCKS: u64 = 50;
-pub const DEFAULT_VWAP_LOOKBACK_SECONDS: u64 = 8 * 60 * 60;
-pub const DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS: u64 = 60 * 60;
-pub const DEFAULT_VWAP_POLICY_VERSION: u32 = 1;
+/// The window of the 24-hour VWAP. It moves at each whole UTC hour. No
+/// genesis value changes it.
+pub const VWAP_24H_WINDOW_SECONDS: u64 = 24 * 60 * 60;
 /// Coverage share `[numerator, denominator]` a UTC day needs for its VWAP.
 pub const DEFAULT_DAY_VWAP_MIN_COVERAGE: [u64; 2] = [2, 3];
 
@@ -41,9 +41,6 @@ pub struct GenesisProtocolParametersV1 {
     pub metadosis_forming_period_seconds: u64,
     pub metadosis_lookback_delay_seconds: u64,
     pub metadosis_offering_period_seconds: u64,
-    pub vwap_lookback_seconds: u64,
-    pub vwap_update_interval_seconds: u64,
-    pub vwap_policy_version: u32,
     pub day_vwap_min_coverage: [u64; 2],
 }
 
@@ -52,9 +49,6 @@ const DEFAULTS: GenesisProtocolParametersV1 = GenesisProtocolParametersV1 {
     metadosis_forming_period_seconds: DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS,
     metadosis_lookback_delay_seconds: DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS,
     metadosis_offering_period_seconds: DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS,
-    vwap_lookback_seconds: DEFAULT_VWAP_LOOKBACK_SECONDS,
-    vwap_update_interval_seconds: DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS,
-    vwap_policy_version: DEFAULT_VWAP_POLICY_VERSION,
     day_vwap_min_coverage: DEFAULT_DAY_VWAP_MIN_COVERAGE,
 };
 
@@ -95,9 +89,6 @@ struct GenesisProtocolOverridesV1 {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct OracleOverridesV1 {
-    vwap_lookback_seconds: Option<u64>,
-    vwap_update_interval_seconds: Option<u64>,
-    vwap_policy_version: Option<u32>,
     day_vwap_min_coverage: Option<[u64; 2]>,
 }
 
@@ -137,18 +128,6 @@ impl GenesisProtocolParametersV1 {
                 .lookback_delay_seconds
                 .unwrap_or(defaults.metadosis_lookback_delay_seconds),
             metadosis_offering_period_seconds: defaults.metadosis_offering_period_seconds,
-            vwap_lookback_seconds: overrides
-                .oracle
-                .vwap_lookback_seconds
-                .unwrap_or(defaults.vwap_lookback_seconds),
-            vwap_update_interval_seconds: overrides
-                .oracle
-                .vwap_update_interval_seconds
-                .unwrap_or(defaults.vwap_update_interval_seconds),
-            vwap_policy_version: overrides
-                .oracle
-                .vwap_policy_version
-                .unwrap_or(defaults.vwap_policy_version),
             day_vwap_min_coverage: overrides
                 .oracle
                 .day_vwap_min_coverage
@@ -214,36 +193,6 @@ impl GenesisProtocolParametersV1 {
     }
 
     fn validate_oracle_windows(self) -> Result<(), ProtocolConstantsError> {
-        validate_nonzero_at_most(
-            "oracle.vwapLookbackSeconds",
-            self.vwap_lookback_seconds,
-            DEFAULT_VWAP_LOOKBACK_SECONDS,
-        )?;
-        validate_nonzero_at_most(
-            "oracle.vwapUpdateIntervalSeconds",
-            self.vwap_update_interval_seconds,
-            DEFAULT_VWAP_UPDATE_INTERVAL_SECONDS,
-        )?;
-        // Whole hours keep every VWAP window on the hour grid of the coverage rule.
-        if !self.vwap_update_interval_seconds.is_multiple_of(3_600)
-            || !SECONDS_PER_DAY.is_multiple_of(self.vwap_update_interval_seconds)
-        {
-            return Err(ProtocolConstantsError::InvalidValue {
-                field: "oracle.vwapUpdateIntervalSeconds",
-                requirement: "be a whole number of hours that divides a UTC day",
-                actual: self.vwap_update_interval_seconds,
-            });
-        }
-        if !self
-            .vwap_lookback_seconds
-            .is_multiple_of(self.vwap_update_interval_seconds)
-        {
-            return Err(ProtocolConstantsError::InvalidValue {
-                field: "oracle.vwapLookbackSeconds",
-                requirement: "be a whole number of update intervals",
-                actual: self.vwap_lookback_seconds,
-            });
-        }
         let [numerator, denominator] = self.day_vwap_min_coverage;
         let [default_numerator, default_denominator] = DEFAULT_DAY_VWAP_MIN_COVERAGE;
         if denominator == 0
@@ -255,13 +204,6 @@ impl GenesisProtocolParametersV1 {
                 requirement:
                     "have a non-zero denominator and no greater share than the production default",
                 actual: numerator,
-            });
-        }
-        if self.vwap_policy_version == 0 {
-            return Err(ProtocolConstantsError::InvalidValue {
-                field: "oracle.vwapPolicyVersion",
-                requirement: "be non-zero",
-                actual: 0,
             });
         }
         Ok(())
@@ -370,18 +312,6 @@ pub fn get_governance_voting_window_blocks() -> u64 {
 /// may run: one voting window after the unlock, included.
 pub fn approved_action_expiry(unlock_height: u64) -> u64 {
     unlock_height.saturating_add(get_governance_voting_window_blocks())
-}
-
-pub fn get_vwap_lookback_seconds() -> u64 {
-    parameters().vwap_lookback_seconds
-}
-
-pub fn get_vwap_update_interval_seconds() -> u64 {
-    parameters().vwap_update_interval_seconds
-}
-
-pub fn get_vwap_policy_version() -> u32 {
-    parameters().vwap_policy_version
 }
 
 /// `(numerator, denominator)`.
@@ -506,20 +436,30 @@ mod tests {
                 get_metadosis_forming_period_seconds(),
                 get_metadosis_lookback_delay_seconds(),
                 get_metadosis_offering_period_seconds(),
-                get_vwap_lookback_seconds(),
-                get_vwap_update_interval_seconds(),
-                get_vwap_policy_version(),
             ),
             (
                 defaults.governance_voting_window_blocks,
                 defaults.metadosis_forming_period_seconds,
                 defaults.metadosis_lookback_delay_seconds,
                 defaults.metadosis_offering_period_seconds,
-                defaults.vwap_lookback_seconds,
-                defaults.vwap_update_interval_seconds,
-                defaults.vwap_policy_version,
             )
         );
+    }
+
+    #[test]
+    fn oracle_has_no_vwap_policy() {
+        assert_eq!(VWAP_24H_WINDOW_SECONDS, 24 * 3_600);
+        for field in [
+            "vwapLookbackSeconds",
+            "vwapUpdateIntervalSeconds",
+            "vwapPolicyVersion",
+        ] {
+            let genesis = json!({ "oracle": { field: 3_600 } });
+            assert!(
+                GenesisProtocolParametersV1::resolve(Some(&genesis)).is_err(),
+                "{field}"
+            );
+        }
     }
 
     #[test]

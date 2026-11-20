@@ -53,7 +53,7 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     error RemoteMessengerChainMismatch(uint32 chainId, uint256 embeddedChainId);
     error NotEnoughNative(uint256 balance);
     error MsgValueBelowFee(uint256 provided, uint256 required);
-    error RefundFailed();
+    error ReturnFailed();
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor(address bridge_) {
@@ -78,7 +78,7 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
 
     /// @dev Registers (or clears, with empty bytes) the matching messenger on `chainId`. The
     ///      concrete contract is responsible for auth (AccessControl lives there).
-    function _setRemoteMessenger(uint32 chainId, bytes calldata interop) internal {
+    function _registerRemoteMessenger(uint32 chainId, bytes calldata interop) internal {
         // Inbound auth derives the key from the sender's own bytes, so the interop must embed the
         // same chainId as the key. A mismatch would silently blackhole every message from that
         // chain.
@@ -140,7 +140,7 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
         if (refund > 0) {
             // slither-disable-next-line arbitrary-send-eth
             (bool ok,) = msg.sender.call{value: refund}("");
-            if (!ok) revert RefundFailed();
+            if (!ok) revert ReturnFailed();
         }
     }
 

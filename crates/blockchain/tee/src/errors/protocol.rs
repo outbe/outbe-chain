@@ -2,8 +2,6 @@
 
 use thiserror::Error;
 
-use super::TransportError;
-
 /// Malformed field or framing reasons in [`crate::finalized_admission::FinalizedAdmissionCodecError`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum FinalizedAdmissionMalformedReason {
@@ -38,7 +36,7 @@ impl FinalizedAdmissionMalformedReason {
     }
 }
 
-/// Errors produced during upgrade key transfer validation and streaming.
+/// Errors produced while checking resident upgrade proof bounds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum UpgradeTransferError {
     #[error("upgrade proof dimensions exceed limits")]
@@ -49,28 +47,6 @@ pub enum UpgradeTransferError {
     ProofSizeOverflow,
     #[error("upgrade proof exceeds aggregate limit")]
     ExceedsAggregateLimit,
-    #[error("invalid upgrade context")]
-    InvalidUpgradeContext,
-    #[error("offset overflow")]
-    OffsetOverflow,
-    #[error("chunk overflow")]
-    ChunkOverflow,
-    #[error("source enclave is not configured")]
-    SourceEnclaveNotConfigured,
-    #[error("source artifact codec")]
-    SourceArtifactCodec,
-    #[error("source returned a different recipient context")]
-    SourceRecipientContextMismatch,
-    #[error("source artifact encoding")]
-    SourceArtifactEncoding,
-    #[error("artifact codec")]
-    ArtifactCodec,
-}
-
-impl From<UpgradeTransferError> for TransportError {
-    fn from(error: UpgradeTransferError) -> Self {
-        Self::EnclaveError(error.to_string())
-    }
 }
 
 /// Wire decoding errors for TEE DKG gossip messages.

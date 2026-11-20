@@ -1,33 +1,32 @@
 //! Typed errors for the host-side TEE integration crate.
 
 mod call_context;
-mod client_verification;
-mod dcap_fixture;
 mod host_collateral;
 mod protocol;
-mod quote;
-mod session;
 mod tee_attestation_activation;
 mod tee_crypto;
 mod transport;
+mod verification;
 
 pub use call_context::{CallContextError, CallContextProviderError};
-pub use client_verification::{NodeHostRecordError, TeeClientVerificationError};
-pub use dcap_fixture::{DcapFixtureError, NativeQvlError};
-pub use host_collateral::HostCollateralError;
+pub(crate) use call_context::{
+    TypedCallRouteError, WitnessAvailabilityError, WitnessCandidateRejected,
+};
+pub use outbe_dcap::errors::HostCollateralError;
+pub use outbe_dcap::errors::QuoteParseError;
+pub use outbe_dcap::errors::{DcapFixtureError, NativeQvlError};
 pub use protocol::{
     FinalizedAdmissionMalformedReason, TeeDkgMalformedWireReason, TeeDkgUnexpectedResponseReason,
     UpgradeTransferError,
 };
-pub use quote::QuoteParseError;
-pub use session::DevIdentityMismatchError;
-pub use tee_attestation_activation::TeeAttestationActivationError;
+pub use tee_attestation_activation::{ActivationCause, TeeAttestationActivationError};
 pub use tee_crypto::TeeCryptoError;
 pub use transport::{AppErrorDescriptor, TransportError};
+pub use verification::{NodeHostRecordError, TeeVerificationError};
 
 #[cfg(test)]
 mod tests {
-    use super::{AppErrorDescriptor, TeeClientVerificationError, TransportError};
+    use super::{AppErrorDescriptor, TransportError};
     use crate::tee_call::TeeAttestationError;
 
     const TEST_ATTESTATION_DESCRIPTOR: AppErrorDescriptor =
@@ -36,9 +35,15 @@ mod tests {
         AppErrorDescriptor::new("test_app_rejected", "test operation rejected");
 
     #[test]
-    fn a_missing_sidecar_is_this_nodes_fault() {
-        let error: TransportError = TeeClientVerificationError::TeeSidecarNotConfigured.into();
-        assert!(matches!(error, TransportError::Unavailable(_)), "{error}");
+    fn a_missing_resident_runtime_is_this_nodes_fault() {
+        let error: TransportError = crate::InProcessDispatchError::ContextNotInstalled.into();
+        assert!(
+            matches!(
+                error,
+                TransportError::InProcess(crate::InProcessDispatchError::ContextNotInstalled)
+            ),
+            "{error}"
+        );
         assert!(error.is_node_local());
         assert_eq!(error.metric_class(), "unavailable");
     }
@@ -57,19 +62,7 @@ mod tests {
             TransportError::app_rejected(TEST_REJECTION_DESCRIPTOR, "x"),
         ] {
             assert!(!error.is_node_local(), "{error}");
-            assert!(!error.is_connection_fault(), "{error}");
         }
-        for error in [
-            TransportError::IoTimeout {
-                operation: "x",
-                timeout_secs: 1,
-            },
-            TransportError::Noise("x".into()),
-            TransportError::Handshake("x".into()),
-            TransportError::SessionRevoked("x"),
-            TransportError::IdentityMismatch("x".into()),
-        ] {
-            assert!(error.is_node_local(), "{error}");
-        }
+        assert!(TransportError::Io(std::io::ErrorKind::NotFound.into()).is_node_local());
     }
 }

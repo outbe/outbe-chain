@@ -61,10 +61,6 @@ interface IOriginSettler {
     /// @return ResolvedCrossChainOrder hydrated order data including the inputs and outputs of the order
     function resolve(OnchainCrossChainOrder calldata order) external view returns (ResolvedCrossChainOrder memory);
 
-    /// @notice Invalidates a nonce for the caller, preventing its future use
-    /// @param nonce The nonce to invalidate
-    function invalidateNonces(uint256 nonce) external;
-
     /// @notice Checks whether a given nonce is still valid (unused) for an address
     /// @param from The address whose nonce validity is being checked
     /// @param nonce The nonce to check

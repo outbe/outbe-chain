@@ -12,11 +12,9 @@ use alloy_primitives::U256;
 use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::units::SCALE_1E6_U256;
 
-pub use query::{
-    get_all_scurve_data, get_all_scurve_data_for_pair, get_scurve_entries, scurve_value,
-};
-pub(crate) use store::process_wwd_scurves;
-pub use store::{store_scurve_entry, SCURVE_RING_SLOTS};
+pub use query::{curve, get_all_scurve_data, scurve_value};
+pub(crate) use store::process_hourly_scurves;
+pub use store::store_scurve_entry;
 
 /// S-curve period in days.
 pub const PERIOD: usize = 128;
@@ -198,8 +196,6 @@ mod tests {
     use outbe_system_common::address_pair::AddressPair;
     use outbe_system_common::units::SCALE_1E6_U64 as COEN840_SCALE;
 
-    use outbe_system_common::time::WorldwideDay;
-
     use super::*;
     use crate::schema::OracleContract;
 
@@ -323,12 +319,15 @@ mod tests {
         assert!(ts - day < SECONDS_PER_DAY);
     }
 
-    /// WWD `day` days after 2024-01-01.
-    fn wwd(day: u64) -> WorldwideDay {
-        WorldwideDay::from_timestamp(
-            outbe_system_common::time::date_key_to_utc_timestamp(20_240_101).unwrap()
-                + day * SECONDS_PER_DAY,
-        )
+    /// 2024-01-01 10:00 UTC, a whole hour.
+    const START: u64 = 1_704_103_200;
+
+    fn hour(n: u64) -> u64 {
+        START + n * 3_600
+    }
+
+    fn day(n: u64) -> u64 {
+        START + n * SECONDS_PER_DAY
     }
 
     fn with_pair(test: impl FnOnce(&mut OracleContract, AddressPair)) {
@@ -353,58 +352,47 @@ mod tests {
     #[test]
     fn a_curve_continues_after_day_128() {
         with_pair(|oracle, pair| {
-            assert!(store_scurve_entry(oracle, pair, wwd(0), price6(500)).unwrap());
+            assert!(store_scurve_entry(oracle, pair, START, price6(500)).unwrap());
 
-            assert_eq!(scurve_value(oracle, pair, wwd(0)).unwrap(), price6(500));
-            assert_eq!(scurve_value(oracle, pair, wwd(127)).unwrap(), price6(460));
-            assert_eq!(scurve_value(oracle, pair, wwd(128)).unwrap(), price6(460));
+            assert_eq!(scurve_value(oracle, pair, START).unwrap(), price6(500));
+            assert_eq!(scurve_value(oracle, pair, day(127)).unwrap(), price6(460));
+            assert_eq!(scurve_value(oracle, pair, day(128)).unwrap(), price6(460));
+        });
+    }
+
+    #[test]
+    fn a_curve_counts_whole_periods_of_24_h_from_its_start_hour() {
+        with_pair(|oracle, pair| {
+            store_scurve_entry(oracle, pair, START, price6(100)).unwrap();
+
+            assert_eq!(scurve_value(oracle, pair, START - 1).unwrap(), U256::ZERO);
+            assert_eq!(scurve_value(oracle, pair, hour(23)).unwrap(), price6(100));
+            assert_eq!(scurve_value(oracle, pair, day(1) - 1).unwrap(), price6(100));
             assert_eq!(
-                get_scurve_entries(oracle, pair, wwd(128)).unwrap(),
-                (vec![wwd(0).into()], vec![price6(500)], vec![price6(460)])
+                scurve_value(oracle, pair, day(1)).unwrap(),
+                compute_scurve_value(price6(100), 1)
             );
         });
     }
 
     #[test]
-    fn a_price_at_or_below_the_newest_curve_starts_no_curve() {
+    fn a_price_at_or_below_the_curve_starts_no_curve() {
         with_pair(|oracle, pair| {
-            store_scurve_entry(oracle, pair, wwd(0), price6(100)).unwrap();
+            store_scurve_entry(oracle, pair, START, price6(100)).unwrap();
 
-            assert!(!store_scurve_entry(oracle, pair, wwd(10), price6(90)).unwrap());
-            assert!(!store_scurve_entry(oracle, pair, wwd(0), price6(200)).unwrap());
+            assert!(!store_scurve_entry(oracle, pair, day(10), price6(90)).unwrap());
+            assert!(!store_scurve_entry(oracle, pair, START, price6(200)).unwrap());
             // At day 128 the curve is at 92, so 93 starts a curve below the old peak.
-            assert!(store_scurve_entry(oracle, pair, wwd(128), price6(93)).unwrap());
-            assert_eq!(oracle.scurve_len.read(&pair).unwrap(), 2);
+            assert!(store_scurve_entry(oracle, pair, day(128), price6(93)).unwrap());
+            assert_eq!(curve(oracle, pair).unwrap(), Some((day(128), price6(93))));
         });
     }
 
     #[test]
-    fn a_new_curve_keeps_the_older_one_for_earlier_wwds() {
+    fn a_start_off_the_hour_grid_is_rejected() {
         with_pair(|oracle, pair| {
-            store_scurve_entry(oracle, pair, wwd(0), price6(100)).unwrap();
-            store_scurve_entry(oracle, pair, wwd(9), price6(105)).unwrap();
-
-            assert_eq!(
-                scurve_value(oracle, pair, wwd(5)).unwrap(),
-                compute_scurve_value(price6(100), 5)
-            );
-            assert_eq!(scurve_value(oracle, pair, wwd(9)).unwrap(), price6(105));
-        });
-    }
-
-    #[test]
-    fn the_next_curve_overwrites_the_oldest_in_a_full_ring() {
-        with_pair(|oracle, pair| {
-            for day in 0..=SCURVE_RING_SLOTS {
-                store_scurve_entry(oracle, pair, wwd(day), price6(100 + day)).unwrap();
-            }
-
-            assert_eq!(scurve_value(oracle, pair, wwd(0)).unwrap(), U256::ZERO);
-            assert_eq!(scurve_value(oracle, pair, wwd(1)).unwrap(), price6(101));
-            assert_eq!(
-                get_all_scurve_data_for_pair(oracle, pair).unwrap().0.len() as u64,
-                SCURVE_RING_SLOTS
-            );
+            assert!(store_scurve_entry(oracle, pair, START + 1, price6(100)).is_err());
+            assert!(store_scurve_entry(oracle, pair, 0, price6(100)).is_err());
         });
     }
 
@@ -412,52 +400,42 @@ mod tests {
     fn curves_are_isolated_by_pair() {
         with_pair(|oracle, usd| {
             let eur = register_test_pair_with_iso(oracle, 978);
-            store_scurve_entry(oracle, usd, wwd(0), price6(100)).unwrap();
-            store_scurve_entry(oracle, eur, wwd(0), price6(200)).unwrap();
-            store_scurve_entry(oracle, usd, wwd(1), price6(150)).unwrap();
+            store_scurve_entry(oracle, usd, START, price6(100)).unwrap();
+            store_scurve_entry(oracle, eur, START, price6(200)).unwrap();
+            store_scurve_entry(oracle, usd, day(1), price6(150)).unwrap();
 
-            assert_eq!(scurve_value(oracle, usd, wwd(1)).unwrap(), price6(150));
+            assert_eq!(scurve_value(oracle, usd, day(1)).unwrap(), price6(150));
             assert_eq!(
-                scurve_value(oracle, eur, wwd(1)).unwrap(),
+                scurve_value(oracle, eur, day(1)).unwrap(),
                 compute_scurve_value(price6(200), 1)
             );
         });
     }
 
     #[test]
-    fn a_wwd_starts_a_curve_only_when_its_utc_day_has_a_vwap() {
+    fn scurve_peaks_from_the_24_hour_vwap() {
         with_pair(|oracle, usd| {
             let cad = register_test_pair_with_iso(oracle, 124);
-            let usd_index = oracle.pair_index_of(usd).unwrap();
-            let cad_index = oracle.pair_index_of(cad).unwrap();
-            oracle
-                .record_utc_day_vwap(wwd(1).value(), usd_index, price6(1))
-                .unwrap();
-            oracle
-                .record_utc_day_vwap(wwd(1).value(), cad_index, price6(1))
-                .unwrap();
-            let vwaps = [(usd, price6(100)), (cad, price6(100))];
 
-            process_wwd_scurves(oracle, wwd(0), &vwaps).unwrap();
-            assert_eq!(oracle.scurve_len.read(&usd).unwrap(), 0);
-
-            process_wwd_scurves(oracle, wwd(1), &vwaps).unwrap();
-            assert_eq!(scurve_value(oracle, usd, wwd(1)).unwrap(), price6(100));
+            // The first 24-hour VWAP of a reference currency starts its curve.
             // CAD is not a reference currency.
-            assert_eq!(oracle.scurve_len.read(&cad).unwrap(), 0);
-        });
-    }
-
-    #[test]
-    fn a_zero_wwd_vwap_starts_no_curve() {
-        with_pair(|oracle, usd| {
-            let index = oracle.pair_index_of(usd).unwrap();
-            oracle
-                .record_utc_day_vwap(wwd(0).value(), index, price6(1))
+            process_hourly_scurves(oracle, hour(0), &[(usd, price6(100)), (cad, price6(100))])
                 .unwrap();
+            assert_eq!(curve(oracle, usd).unwrap(), Some((hour(0), price6(100))));
+            assert_eq!(curve(oracle, cad).unwrap(), None);
 
-            process_wwd_scurves(oracle, wwd(0), &[(usd, U256::ZERO)]).unwrap();
-            assert_eq!(oracle.scurve_len.read(&usd).unwrap(), 0);
+            // A VWAP at or below the curve starts no curve.
+            process_hourly_scurves(oracle, hour(1), &[(usd, price6(100))]).unwrap();
+            assert_eq!(curve(oracle, usd).unwrap(), Some((hour(0), price6(100))));
+
+            // A VWAP above the curve starts a curve at that hour. At its start
+            // hour the curve has the value of that VWAP.
+            process_hourly_scurves(oracle, hour(2), &[(usd, price6(105))]).unwrap();
+            assert_eq!(curve(oracle, usd).unwrap(), Some((hour(2), price6(105))));
+            assert_eq!(scurve_value(oracle, usd, hour(2)).unwrap(), price6(105));
+
+            // Each pair keeps one curve.
+            assert_eq!(get_all_scurve_data(oracle).unwrap().0.len(), 1);
         });
     }
 }

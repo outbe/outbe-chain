@@ -10,6 +10,8 @@ contract MockERC7786Bridge is IERC7786GatewaySource {
 
     uint256 public immutable localChainId;
     uint256 public feeQuote;
+    /// @dev The first attribute of the most recent send, empty when the send had none.
+    bytes public lastFirstAttribute;
     mapping(uint256 chainId => MockERC7786Bridge) public remoteBridges;
 
     error NoRemoteBridge(uint256 chainId);
@@ -39,11 +41,12 @@ contract MockERC7786Bridge is IERC7786GatewaySource {
         return feeQuote;
     }
 
-    function sendMessage(bytes calldata recipient, bytes calldata payload, bytes[] calldata)
+    function sendMessage(bytes calldata recipient, bytes calldata payload, bytes[] calldata attributes)
         external
         payable
         returns (bytes32)
     {
+        lastFirstAttribute = attributes.length == 0 ? bytes("") : attributes[0];
         (uint256 dstChainId, address target) = recipient.parseEvmV1Calldata();
         MockERC7786Bridge dst = remoteBridges[dstChainId];
         require(address(dst) != address(0), NoRemoteBridge(dstChainId));

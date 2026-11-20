@@ -40,7 +40,7 @@ pub fn dispatch(
             }),
             ownerOf(c) => view(c, |c| tribute.owner_of(WwdEntityId::from(c.tributeId))),
             tokenURI(c) => view(c, |c| tribute.token_uri(WwdEntityId::from(c.tributeId))),
-            getDayTotals(c) => view(c, |c| {
+            dayTotals(c) => view(c, |c| {
                 let day =
                     outbe_emission::api::get_emission_day_record(storage.clone(), c.emissionDay)?
                         .map(|record| record.wwd)

@@ -1,5 +1,8 @@
 //! Stage 2 production emitters and their explicit Prometheus wire contract.
 
+#[path = "../../src/tee_canary_probe/test_support.rs"]
+mod resident_fixture;
+
 use std::{
     collections::HashMap,
     sync::{Arc, Mutex},
@@ -55,10 +58,8 @@ pub async fn emit() {
 }
 
 fn emit_tee_client() {
-    record_request_duration("health", Duration::from_millis(5));
-    record_request_error("health", "codec");
-    record_reconnect("ok");
-    record_session_generation(1);
+    record_request_duration("get_public_keys", Duration::from_millis(5));
+    record_request_error("get_public_keys", "codec");
 }
 
 async fn emit_staleness() {
@@ -655,13 +656,7 @@ pub fn assert_stage2(rendered: &str, types: &HashMap<&str, &str>) {
 
 mod canary {
     use super::*;
-    use alloy_primitives::{B256, U256};
-    use ed25519_dalek::{Signer, SigningKey};
-    use outbe_enclave::protocol::{
-        inputs_canonical_hash, tribute_offer_attestation_preimage, EnclaveRequest as DomainRequest,
-        EnclaveResponse as DomainResponse, EncryptedTributeOffer, TributeOfferResult,
-        TributeOfferStatus,
-    };
+    use ed25519_dalek::SigningKey;
     use outbe_execution::tee_canary::{
         run_tee_canary_worker, EnclaveRequester, TeeCanaryConfig, TeeCanaryTarget,
     };
@@ -669,23 +664,27 @@ mod canary {
     use outbe_tee::{
         canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthState},
         errors::TransportError,
-        protocol::{EnclaveHealthStatusV1, EnclaveRequest, EnclaveResponse},
+        protocol::{EnclaveRequest, EnclaveResponse},
     };
     use tokio_util::sync::CancellationToken;
 
     pub(super) async fn emit_ticks() {
-        for (fail, expected) in [
-            (false, TeeEnclaveHealthState::Ready),
-            (true, TeeEnclaveHealthState::Degraded),
-        ] {
+        emit_resident_ticks().await;
+        for expected in [TeeEnclaveHealthState::Degraded] {
+            let resident = resident_fixture::context(4);
+            resident_fixture::activate(&resident);
+            assert_ne!(
+                resident.network_encryption_public().expect("offer key"),
+                TRIBUTE_OFFER_PUB
+            );
             let status = TeeEnclaveHealthChannel::default();
             let shutdown = CancellationToken::new();
-            let period = Duration::from_secs(60);
+            let period = Duration::from_millis(5);
             let worker = tokio::spawn(run_tee_canary_worker(
                 TeeCanaryTarget::new(
                     FakeEnclaveRequester {
-                        fail,
                         key: SigningKey::from_bytes(&[9; 32]),
+                        resident,
                     },
                     TributeCanaryProbe,
                 ),
@@ -703,6 +702,49 @@ mod canary {
         }
     }
 
+    async fn emit_resident_ticks() {
+        let context = resident_fixture::context(8);
+        let status = TeeEnclaveHealthChannel::default();
+        let shutdown = CancellationToken::new();
+        let period = Duration::from_millis(5);
+        let worker = tokio::spawn(TributeCanaryProbe::run_in_process_worker(
+            Arc::clone(&context),
+            TeeCanaryConfig {
+                interval: period,
+                failure_threshold: 1,
+            },
+            status.clone(),
+            shutdown.clone(),
+        ));
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while status.snapshot().health_probe_supported != Some(false) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("pre-key resident tick");
+        let before_key = status.snapshot();
+        assert_eq!(before_key.state, TeeEnclaveHealthState::Starting);
+        assert!(!before_key.offer_key_ready);
+        assert_eq!(before_key.consecutive_failures, 0);
+        assert!(before_key.last_failure.is_none());
+        resident_fixture::activate(&context);
+        let observed = observe_tick(
+            &status,
+            TeeEnclaveHealthState::Ready,
+            Duration::from_secs(10),
+        )
+        .await;
+        shutdown.cancel();
+        worker.await.expect("resident worker stopped");
+        observed.expect("real resident decrypt tick");
+        let ready = status.snapshot();
+        assert!(ready.offer_key_ready);
+        assert_eq!(ready.health_probe_supported, Some(false));
+        assert!(ready.enclave.is_none());
+        assert!(ready.last_canary_latency_ms.is_some());
+    }
+
     async fn observe_tick(
         status: &TeeEnclaveHealthChannel,
         expected: TeeEnclaveHealthState,
@@ -717,37 +759,46 @@ mod canary {
         .await
     }
 
+    const TRIBUTE_OFFER_PUB: [u8; 32] = [0x11; 32];
+
+    std::thread_local! {
+        static PROBE_RESIDENT: std::cell::RefCell<
+            Option<outbe_tee::in_process_dispatch::InProcessTestGuard>,
+        > = const { std::cell::RefCell::new(None) };
+    }
+
+    /// The canary probe runs on the blocking pool. Install the override there.
+    fn bind_mismatched_resident(context: &Arc<outbe_tee::in_process::InProcessTeeContext>) {
+        PROBE_RESIDENT.with(|slot| {
+            if slot.borrow().is_some() {
+                return;
+            }
+            *slot.borrow_mut() = Some(
+                outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(
+                    Arc::clone(context),
+                )),
+            );
+        });
+    }
+
     struct FakeEnclaveRequester {
-        fail: bool,
         key: SigningKey,
+        resident: Arc<outbe_tee::in_process::InProcessTeeContext>,
     }
 
     impl EnclaveRequester for FakeEnclaveRequester {
         fn request(&self, request: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
+            bind_mismatched_resident(&self.resident);
             match request {
-                EnclaveRequest::Health => Ok(EnclaveResponse::HealthStatus {
-                    status: Box::new(health()),
-                }),
                 EnclaveRequest::GetPublicKeys => Ok(EnclaveResponse::PublicKeys {
                     offer_key_ready: true,
-                    recipient_x25519_pub: [0x0B; 32],
+                    recipient_x25519_pub: TRIBUTE_OFFER_PUB,
                     attestation_pub: self.key.verifying_key().to_bytes(),
                     noise_static_pub: [0x0C; 32],
                     tee_bls_pub: Vec::new(),
                     dkg_enc_pub: [0x0D; 32],
                     dkg_enc_sig: Vec::new(),
                 }),
-                EnclaveRequest::Payload { payload, .. } => {
-                    match DomainRequest::decode_wire_canonical(payload)? {
-                        DomainRequest::ProcessTributeOfferBatch { offers } if !self.fail => {
-                            self.batch(&offers)
-                        }
-                        DomainRequest::ProcessTributeOfferBatch { .. } => {
-                            Err(TransportError::EnclaveError("scripted failure".into()))
-                        }
-                        other => panic!("unexpected canary domain request: {other:?}"),
-                    }
-                }
                 _ => panic!("unexpected canary request: {request:?}"),
             }
         }
@@ -755,45 +806,5 @@ mod canary {
         fn attestation_pub(&self) -> Option<[u8; 32]> {
             Some(self.key.verifying_key().to_bytes())
         }
-    }
-
-    impl FakeEnclaveRequester {
-        fn batch(
-            &self,
-            offers: &[EncryptedTributeOffer],
-        ) -> Result<EnclaveResponse, TransportError> {
-            let results = vec![TributeOfferResult {
-                token_id: B256::repeat_byte(1),
-                owner: offers[0].owner,
-                issuance_amount_minor: U256::from(1),
-                nominal_amount_minor: U256::from(1),
-                effective_reference_price_minor: U256::from(2_000_000),
-                su_hashes: Vec::new(),
-                wallet_addresses: Vec::new(),
-                sra_addresses: Vec::new(),
-                zk_expected_hashes: None,
-                status: TributeOfferStatus::Created,
-            }];
-            let hash = inputs_canonical_hash(offers);
-            let preimage =
-                tribute_offer_attestation_preimage(hash, &results).expect("attestation preimage");
-            DomainResponse::TributeOfferBatch {
-                results,
-                inputs_canonical_hash: hash,
-                attestation_tag: self.key.sign(&preimage).to_bytes().to_vec(),
-            }
-            .into_wire_response()
-        }
-    }
-
-    fn health() -> EnclaveHealthStatusV1 {
-        serde_json::from_value(serde_json::json!({
-            "uptime_s": 10, "offer_key_ready": true,
-            "heap": { "current_bytes": 1024, "peak_bytes": 2048 },
-            "requests": { "total": 2, "errored": 1, "denied": 0 },
-            "classes": { "initialized": 0, "founding_keyless": 0, "keyless_onboarding": 0,
-                "ready": 2, "dev_source_seal": 0, "dev_recipient_ingest": 0 }
-        }))
-        .expect("enclave health fixture")
     }
 }

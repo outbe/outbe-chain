@@ -6,7 +6,8 @@ use outbe_primitives::storage::dsl::{Map, Value};
 use outbe_system_common::time::EmissionDate;
 
 use crate::schema::{
-    AuctionConfig, AuctionStage, BidData, DesisContract, IntexCallTrigger, ReferenceCurrencyPrice,
+    AuctionConfig, AuctionStage, DesisContract, IntexAuctionBidData, IntexCallTrigger,
+    ReferenceCurrencyPrice,
 };
 
 impl<'storage> DesisContract<'storage> {
@@ -31,7 +32,7 @@ impl<'storage> DesisContract<'storage> {
         if day.value() == 0
             || !matches!(
                 self.read_stage(day)?,
-                AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed
+                AuctionStage::Completed | AuctionStage::Canceled | AuctionStage::Failed
             )
         {
             return Err(crate::DesisError::InvalidCleanupState.into());
@@ -86,9 +87,9 @@ impl<'storage> DesisContract<'storage> {
                     .read(&emission_day)?,
                 transit_margin_seconds: self.config_transit_margin_seconds.read(&emission_day)?,
             },
-            min_intex_bid_rate: self.config_min_bid_rate.read(&emission_day)?,
-            min_intex_bid_quantity: self.config_min_bid_quantity.read(&emission_day)? as u16,
-            commit_bond_minor: u128::try_from(self.config_commit_bond_minor.read(&emission_day)?)
+            min_bid_rate: self.config_min_bid_rate.read(&emission_day)?,
+            min_bid_quantity: self.config_min_bid_quantity.read(&emission_day)? as u16,
+            bid_bond_minor: u128::try_from(self.config_bid_bond_minor.read(&emission_day)?)
                 .map_err(|_| crate::DesisError::InvalidEmissionDay(emission_day))?,
             reference_prices: self.read_reference_prices(emission_day)?,
         })
@@ -129,11 +130,11 @@ impl<'storage> DesisContract<'storage> {
         self.config_transit_margin_seconds
             .write(&emission_day, cfg.call_trigger.transit_margin_seconds)?;
         self.config_min_bid_rate
-            .write(&emission_day, cfg.min_intex_bid_rate)?;
+            .write(&emission_day, cfg.min_bid_rate)?;
         self.config_min_bid_quantity
-            .write(&emission_day, u32::from(cfg.min_intex_bid_quantity))?;
-        self.config_commit_bond_minor
-            .write(&emission_day, U256::from(cfg.commit_bond_minor))?;
+            .write(&emission_day, u32::from(cfg.min_bid_quantity))?;
+        self.config_bid_bond_minor
+            .write(&emission_day, U256::from(cfg.bid_bond_minor))?;
         self.reference_price_count
             .write(&emission_day, cfg.reference_prices.len() as u32)?;
         for (index, row) in cfg.reference_prices.iter().enumerate() {
@@ -154,7 +155,7 @@ impl<'storage> DesisContract<'storage> {
         &self,
         emission_day: EmissionDate,
         chain_id: u32,
-        bid: &BidData,
+        bid: &IntexAuctionBidData,
     ) -> Result<u32> {
         let chain_key = Self::chain_key(emission_day, chain_id);
         let index = self.chain_bid_count.read(&chain_key)?;
@@ -170,11 +171,11 @@ impl<'storage> DesisContract<'storage> {
         emission_day: EmissionDate,
         chain_id: u32,
         index: u32,
-    ) -> Result<BidData> {
+    ) -> Result<IntexAuctionBidData> {
         let key = Self::bid_key(emission_day, chain_id, index);
         let packed = self.bid_packed.read(&key)?;
         let limbs = packed.as_limbs();
-        Ok(BidData {
+        Ok(IntexAuctionBidData {
             bidder_address: self.bid_bidder.read(&key)?,
             intex_bid_rate: limbs[0] as u32,
             timestamp: limbs[1] as u32,
@@ -189,7 +190,7 @@ impl<'storage> DesisContract<'storage> {
         emission_day: EmissionDate,
         chain_id: u32,
         index: u32,
-        bid: &BidData,
+        bid: &IntexAuctionBidData,
     ) -> Result<()> {
         let key = Self::bid_key(emission_day, chain_id, index);
         self.bid_bidder.write(&key, bid.bidder_address)?;
@@ -211,7 +212,7 @@ impl<'storage> DesisContract<'storage> {
         &self,
         emission_day: EmissionDate,
         chain_ids: &[u32],
-    ) -> Result<Vec<(u32, BidData)>> {
+    ) -> Result<Vec<(u32, IntexAuctionBidData)>> {
         let mut bids = Vec::new();
         for &chain_id in chain_ids {
             let count = self

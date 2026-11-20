@@ -27,7 +27,7 @@ contract ReenteringPeer {
     }
 
     function receiveMessage(bytes32, bytes calldata, bytes calldata) external payable returns (bytes4) {
-        try ORIGIN.resendParkedMessage(IDX) {}
+        try ORIGIN.retryMessageSend(IDX) {}
         catch (bytes memory reason) {
             innerRevert = bytes4(reason);
         }
@@ -36,12 +36,12 @@ contract ReenteringPeer {
 }
 
 /// @dev Multi-target OriginRouter behavior: registry, broadcast fan-out over the frozen day snapshot, addressed-send
-///      membership, per-leg parking + flush, and inbound BIDS_DONE. Delivery is off (sends only record).
+///      membership, per-leg parking + flush, and inbound BIDS_TOTALS. Delivery is off (sends only record).
 contract OriginRouterMultiTargetTest is CrossChainTest {
     uint32 internal constant TARGET_A = 3;
     uint32 internal constant TARGET_B = 4;
     uint32 internal constant DAY = 20_260_716;
-    bytes32 internal constant STAGE_SENT_SIG = keccak256("AuctionStageSent(bytes32,uint32,uint8)");
+    bytes32 internal constant STAGE_SENT_SIG = keccak256("IntexAuctionStartSent(bytes32,uint32,uint32)");
 
     OriginRouter internal origin;
     address internal desis;
@@ -54,30 +54,71 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         _setUpBridge();
         origin = DeployProxy.originRouter(address(bridge), admin);
         desis = address(new MockDesis());
-        origin.wire(desis, factory);
-        origin.setRemoteMessenger(TARGET_A, _interop(TARGET_A, peerA));
-        origin.setRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
+        origin.setDependencies(desis, factory);
+        origin.registerRemoteMessenger(TARGET_A, _interop(TARGET_A, peerA));
+        origin.registerRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
         origin.addTarget(TARGET_A);
         origin.addTarget(TARGET_B);
     }
 
-    function _params(uint32 day) internal pure returns (IOriginRouter.AuctionStageStartParams memory p) {
+    function _params(uint32 day) internal pure returns (IOriginRouter.IntexAuctionStartParams memory p) {
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = day;
-        p.dayState = 1;
     }
 
     function _fireStart(uint32 day) internal {
         vm.prank(desis);
-        origin.sendAuctionStageStart(_params(day));
+        origin.sendIntexAuctionStart(_params(day));
     }
 
-    /// @dev Count `AuctionStageSent` emissions in the recorded logs (one per fan-out leg).
+    /// @dev Count `IntexAuctionStartSent` emissions in the recorded logs (one per fan-out leg).
     function _countStageSent() internal returns (uint256 n) {
+        return _countTopic(STAGE_SENT_SIG);
+    }
+
+    // --- Cancel ---
+    function test_cancel_goes_to_the_frozen_snapshot_of_the_day() public {
+        _fireStart(DAY);
+        origin.removeTarget(TARGET_B);
+
+        vm.recordLogs();
+        vm.prank(desis);
+        origin.sendIntexAuctionCancel(DAY, 1);
         Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 sent;
         for (uint256 i; i < logs.length; ++i) {
-            if (logs[i].topics[0] == STAGE_SENT_SIG) n++;
+            if (logs[i].topics[0] == IOriginRouter.IntexAuctionCancelSent.selector) {
+                assertEq(uint256(logs[i].topics[2]), DAY, "day");
+                sent++;
+            }
         }
+        assertEq(sent, 2, "both chains the day started on, also the removed one");
+    }
+
+    function test_cancel_revert_dayNeverStarted() public {
+        vm.prank(desis);
+        vm.expectRevert(IOriginRouter.NoTargets.selector);
+        origin.sendIntexAuctionCancel(DAY, 1);
+    }
+
+    function test_cancel_revert_notDesis() public {
+        _fireStart(DAY);
+        vm.expectRevert();
+        origin.sendIntexAuctionCancel(DAY, 1);
+    }
+
+    function test_a_kept_start_of_a_canceled_day_is_not_retried() public {
+        origin.registerRemoteMessenger(TARGET_B, ""); // B's START and cancel are kept
+        _fireStart(DAY);
+        vm.prank(desis);
+        origin.sendIntexAuctionCancel(DAY, 1);
+        origin.registerRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
+
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.IntexAuctionDayCanceled.selector, DAY));
+        origin.retryMessageSend(0);
+        origin.retryMessageSend(1);
+        assertFalse(origin.getFailedMessageSend(0).sent, "the START stays kept");
+        assertTrue(origin.getFailedMessageSend(1).sent, "the cancel leaves");
     }
 
     // --- Registry ---
@@ -99,11 +140,11 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
 
     function test_addTarget_revert_aboveSixteen() public {
         for (uint32 chainId = 100; chainId < 114; ++chainId) {
-            origin.setRemoteMessenger(chainId, _interop(chainId, peerA));
+            origin.registerRemoteMessenger(chainId, _interop(chainId, peerA));
             origin.addTarget(chainId);
         }
         assertEq(origin.targets().length, 16);
-        origin.setRemoteMessenger(114, _interop(114, peerA));
+        origin.registerRemoteMessenger(114, _interop(114, peerA));
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.TooManyTargets.selector, uint256(16)));
         origin.addTarget(114);
     }
@@ -142,7 +183,7 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.removeTarget(TARGET_B);
         vm.prank(desis);
         vm.expectRevert(IOriginRouter.NoTargets.selector);
-        origin.sendAuctionStageStart(_params(DAY));
+        origin.sendIntexAuctionStart(_params(DAY));
     }
 
     /// @dev Clearing is now addressed per chain (each round is sized from that chain's own
@@ -153,12 +194,16 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         origin.removeTarget(TARGET_B); // a mid-day removal must not shrink an in-flight fan-out
         vm.recordLogs();
         vm.prank(desis);
-        origin.sendAuctionStageCollectingBids(DAY, TARGET_B, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
-        assertEq(_countStageSent(), 1, "the removed target still takes the day's clearing");
+        origin.sendIntexAuctionClearingStart(DAY, TARGET_B, IntexGas.INTEX_AUCTION_CLEARING_START);
+        assertEq(
+            _countTopic(IOriginRouter.IntexAuctionClearingStartSent.selector),
+            1,
+            "the removed target still takes the day's clearing"
+        );
 
         vm.prank(desis);
         vm.expectRevert(IOriginRouter.NoTargets.selector);
-        origin.sendAuctionStageCollectingBids(DAY, 4242, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
+        origin.sendIntexAuctionClearingStart(DAY, 4242, IntexGas.INTEX_AUCTION_CLEARING_START);
     }
 
     /// @dev A round smaller than a round is worth comes back up to the floor. A round above what a
@@ -166,12 +211,12 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     function test_clearing_clampsTheAskToWhatARoundIsWorth() public {
         _fireStart(DAY);
         vm.prank(desis);
-        origin.sendAuctionStageCollectingBids(DAY, TARGET_A, 1);
-        assertEq(_lastGasAttribute(), IntexGas.AUCTION_STAGE_COLLECTING_BIDS, "clamped up to the floor");
+        origin.sendIntexAuctionClearingStart(DAY, TARGET_A, 1);
+        assertEq(_lastGasAttribute(), IntexGas.INTEX_AUCTION_CLEARING_START, "clamped up to the floor");
 
         vm.prank(desis);
-        origin.sendAuctionStageCollectingBids(DAY, TARGET_A, 100_000_000);
-        assertEq(_lastGasAttribute(), IntexGas.AUCTION_STAGE_COLLECTING_BIDS_MAX, "clamped down to the cap");
+        origin.sendIntexAuctionClearingStart(DAY, TARGET_A, 100_000_000);
+        assertEq(_lastGasAttribute(), IntexGas.INTEX_AUCTION_CLEARING_START_MAX, "clamped down to the cap");
     }
 
     function _lastGasAttribute() internal view returns (uint256) {
@@ -190,61 +235,82 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     function test_addressed_membership_enforced() public {
         _fireStart(DAY);
         vm.prank(desis);
-        origin.sendAuctionResult(TARGET_A, DAY, 100, 1e6, 5); // in snapshot: ok
+        origin.sendIntexAuctionResult(TARGET_A, DAY, 0, 5, 100, 1e6, 0); // in snapshot: ok
 
         vm.prank(desis);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NotSeriesTarget.selector, DAY, uint32(9)));
-        origin.sendAuctionResult(9, DAY, 100, 1e6, 5);
+        origin.sendIntexAuctionResult(9, DAY, 0, 5, 100, 1e6, 0);
     }
 
     function test_addressed_removedButSnapshotted_stillRoutes() public {
         _fireStart(DAY);
         origin.removeTarget(TARGET_B); // gone from the registry, still in the day's snapshot
         vm.prank(desis);
-        origin.sendAuctionResult(TARGET_B, DAY, 100, 1e6, 5); // must not revert
+        origin.sendIntexAuctionResult(TARGET_B, DAY, 0, 5, 100, 1e6, 0); // must not revert
     }
 
     // --- Per-leg park + flush ---
     function test_leg_parksOnMissingPeer_thenFlush() public {
-        origin.setRemoteMessenger(TARGET_B, ""); // drop B's peer so its leg fails. A still routes
+        origin.registerRemoteMessenger(TARGET_B, ""); // drop B's peer so its leg fails. A still routes
         _fireStart(DAY);
 
-        IOriginRouter.ParkedMessage memory p = origin.parkedMessage(0);
+        IOriginRouter.FailedMessageSend memory p = origin.getFailedMessageSend(0);
         assertEq(p.dstChainId, TARGET_B);
         assertEq(p.sent, false);
         assertGt(p.payload.length, 0);
 
-        origin.setRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
-        origin.resendParkedMessage(0);
-        assertTrue(origin.parkedMessage(0).sent);
+        origin.registerRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
+        origin.retryMessageSend(0);
+        assertTrue(origin.getFailedMessageSend(0).sent);
+    }
+
+    function test_sent_event_comes_once_when_the_message_leaves() public {
+        origin.registerRemoteMessenger(TARGET_B, ""); // B's leg fails, A's leaves
+        vm.recordLogs();
+        _fireStart(DAY);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 sent;
+        uint256 failed;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] == IOriginRouter.IntexAuctionStartSent.selector) sent++;
+            if (logs[i].topics[0] == IOriginRouter.MessageSendFailed.selector) failed++;
+        }
+        assertEq(sent, 1, "only the leg that left");
+        assertEq(failed, 1, "the kept leg");
+
+        origin.registerRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
+        vm.expectEmit(false, true, true, true, address(origin));
+        emit IOriginRouter.IntexAuctionStartSent(bytes32(0), DAY, TARGET_B);
+        vm.recordLogs();
+        origin.retryMessageSend(0);
+        assertEq(_countTopic(IOriginRouter.MessageSendFailed.selector), 0, "no failure on a retry that works");
     }
 
     function test_flush_rejectsReentry() public {
-        origin.setRemoteMessenger(TARGET_B, "");
+        origin.registerRemoteMessenger(TARGET_B, "");
         _fireStart(DAY);
         _fireStart(DAY + 1);
         ReenteringPeer peer = new ReenteringPeer(origin, 1);
-        origin.setRemoteMessenger(TARGET_B, _interop(TARGET_B, address(peer)));
+        origin.registerRemoteMessenger(TARGET_B, _interop(TARGET_B, address(peer)));
         bridge.setAutoDeliver(true);
 
-        origin.resendParkedMessage(0);
+        origin.retryMessageSend(0);
 
         assertEq(peer.innerRevert(), bytes4(keccak256("ReentrancyGuardReentrantCall()")), "re-entry rejected");
-        assertTrue(origin.parkedMessage(0).sent);
-        assertFalse(origin.parkedMessage(1).sent, "the inner flush did not run");
+        assertTrue(origin.getFailedMessageSend(0).sent);
+        assertFalse(origin.getFailedMessageSend(1).sent, "the inner flush did not run");
     }
 
     function test_flush_revert_unknown() public {
-        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NoParkedMessage.selector, uint256(0)));
-        origin.resendParkedMessage(0);
+        vm.expectRevert(abi.encodeWithSelector(IOriginRouter.NoFailedMessageSend.selector, uint256(0)));
+        origin.retryMessageSend(0);
     }
 
-    // --- Inbound BIDS_DONE ---
+    // --- Inbound BIDS_TOTALS ---
     function test_inbound_bidsDone_dispatches() public {
         _fireStart(DAY); // freeze the day's snapshot so TARGET_A is an accepted source
-        bytes memory pkt = BridgeMsgCodec.encodeBidsDone(DAY, TARGET_A, 2, 7);
-        vm.expectEmit(true, true, false, true, address(origin));
-        emit IOriginRouter.BidsDoneReceived(TARGET_A, DAY, 2, 7);
+        bytes memory pkt = BridgeMsgCodec.encodeBidsTotals(DAY, TARGET_A, 2, 7);
+        vm.expectCall(desis, abi.encodeWithSelector(IDesis.completeIntexAuctionBids.selector));
         _deliver(TARGET_A, peerA, address(origin), pkt);
     }
 
@@ -252,13 +318,13 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     ///      another CLEARING round to that chain alone. Thus a heavy day finishes without a hand.
     function test_inbound_bidsRemaining_sendsAnotherRound() public {
         _fireStart(DAY);
-        bytes memory pkt = BridgeMsgCodec.encodeBidsRemaining(DAY, TARGET_A, 2, 5);
+        bytes memory pkt = BridgeMsgCodec.encodeBidsPause(DAY, TARGET_A, 2, 5);
 
         _deliver(TARGET_A, peerA, address(origin), pkt);
 
         assertEq(
             uint8(bridge.lastPayload()[1]),
-            BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS,
+            BridgeMsgCodec.MSG_INTEX_AUCTION_CLEARING_START,
             "the answer is another clearing round"
         );
         assertEq(
@@ -271,16 +337,16 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
     function test_inbound_bidsRemaining_fromOutbeSendsTheRoundWithoutParking() public {
         uint32 local = uint32(block.chainid);
         address peerLocal = makeAddr("peerLocal");
-        origin.setRemoteMessenger(local, _interop(local, peerLocal));
+        origin.registerRemoteMessenger(local, _interop(local, peerLocal));
         origin.addTarget(local);
         _fireStart(DAY);
-        uint256 parkedBefore = origin.parkedMessageCount();
+        uint256 parkedBefore = origin.failedMessageSendCount();
 
-        _deliver(local, peerLocal, address(origin), BridgeMsgCodec.encodeBidsRemaining(DAY, local, 2, 5));
+        _deliver(local, peerLocal, address(origin), BridgeMsgCodec.encodeBidsPause(DAY, local, 2, 5));
 
-        assertEq(uint8(bridge.lastPayload()[1]), BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS, "round sent");
+        assertEq(uint8(bridge.lastPayload()[1]), BridgeMsgCodec.MSG_INTEX_AUCTION_CLEARING_START, "round sent");
         assertEq(keccak256(bridge.lastRecipient()), keccak256(_interop(local, peerLocal)), "to Outbe itself");
-        assertEq(origin.parkedMessageCount(), parkedBefore, "nothing parked");
+        assertEq(origin.failedMessageSendCount(), parkedBefore, "nothing parked");
     }
 
     /// @dev Once the day's intake has closed (cleared on the fan-in timeout, cancelled), another
@@ -290,38 +356,36 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         _fireStart(DAY);
         MockDesis(desis).setAuctionStage(IDesis.AuctionStage.Completed);
         bytes32 key = bytes32((uint256(DAY) << 32) | TARGET_A);
-        bytes memory pkt = BridgeMsgCodec.encodeBidsRemaining(DAY, TARGET_A, 2, 5);
+        bytes memory pkt = BridgeMsgCodec.encodeBidsPause(DAY, TARGET_A, 2, 5);
 
-        vm.expectEmit(true, true, true, true, address(origin));
-        emit IOriginRouter.InboundMessageIgnored(
-            TARGET_A, BridgeMsgCodec.MSG_BIDS_REMAINING, key, InboundReason.OBSOLETE
-        );
+        vm.expectEmit(false, true, false, true, address(origin));
+        emit IOriginRouter.MessageIgnored(bytes32(0), TARGET_A, InboundReason.OBSOLETE);
         _deliver(TARGET_A, peerA, address(origin), pkt);
     }
 
     function test_inbound_bidsRemaining_ignoreNonSnapshotSource() public {
         _fireStart(DAY);
-        origin.setRemoteMessenger(9, _interop(9, address(0x9999)));
+        origin.registerRemoteMessenger(9, _interop(9, address(0x9999)));
         bytes32 key = bytes32((uint256(DAY) << 32) | 9);
-        bytes memory pkt = BridgeMsgCodec.encodeBidsRemaining(DAY, 9, 1, 2);
+        bytes memory pkt = BridgeMsgCodec.encodeBidsPause(DAY, 9, 1, 2);
 
-        vm.expectEmit(true, true, true, true, address(origin));
-        emit IOriginRouter.InboundMessageIgnored(9, BridgeMsgCodec.MSG_BIDS_REMAINING, key, InboundReason.NOT_FOUND);
+        vm.expectEmit(false, true, false, true, address(origin));
+        emit IOriginRouter.MessageIgnored(bytes32(0), 9, InboundReason.NOT_FOUND);
         _deliver(9, address(0x9999), address(origin), pkt);
     }
 
     function test_inbound_bids_ignoreNonSnapshotSource() public {
         _fireStart(DAY); // snapshot = {TARGET_A, TARGET_B}. Chain 9 is a registered peer but not a target
-        origin.setRemoteMessenger(9, _interop(9, address(0x9999)));
+        origin.registerRemoteMessenger(9, _interop(9, address(0x9999)));
         bytes32 key = bytes32((uint256(DAY) << 32) | 9);
-        bytes memory batch = BridgeMsgCodec.encodeBidsBatch(DAY, 9, 0, 1, new address[](0), new uint256[](0));
-        vm.expectEmit(true, true, true, true, address(origin));
-        emit IOriginRouter.InboundMessageIgnored(9, BridgeMsgCodec.MSG_BIDS_BATCH, key, InboundReason.NOT_FOUND);
+        bytes memory batch = BridgeMsgCodec.encodeBidsPage(DAY, 9, 0, 1, new address[](0), new uint256[](0));
+        vm.expectEmit(false, true, false, true, address(origin));
+        emit IOriginRouter.MessageIgnored(bytes32(0), 9, InboundReason.NOT_FOUND);
         _deliver(9, address(0x9999), address(origin), batch);
 
-        bytes memory done = BridgeMsgCodec.encodeBidsDone(DAY, 9, 1, 0);
-        vm.expectEmit(true, true, true, true, address(origin));
-        emit IOriginRouter.InboundMessageIgnored(9, BridgeMsgCodec.MSG_BIDS_DONE, key, InboundReason.NOT_FOUND);
+        bytes memory done = BridgeMsgCodec.encodeBidsTotals(DAY, 9, 1, 0);
+        vm.expectEmit(false, true, false, true, address(origin));
+        emit IOriginRouter.MessageIgnored(bytes32(0), 9, InboundReason.NOT_FOUND);
         _deliver(9, address(0x9999), address(origin), done);
     }
 }

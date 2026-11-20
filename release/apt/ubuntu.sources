@@ -16,10 +16,10 @@
 ## This file's own digest is pinned in apt_provenance.source_files, so the
 ## timestamp cannot be changed without also updating the pin.
 ##
-## Scope: this covers the Ubuntu archive only. The Intel SGX and Gramine
-## repositories publish no snapshot service; their three packages stay pinned
-## by exact version, and a withdrawn version fails the build loudly at
-## download time rather than silently changing the closure.
+## Scope: this covers the Ubuntu archive only. The Intel SGX repository
+## publishes no snapshot service; its three packages stay pinned by exact
+## version, and a withdrawn version fails the build loudly at download time
+## rather than silently changing the closure.
 
 Types: deb
 URIs: https://snapshot.ubuntu.com/ubuntu/20260812T000000Z

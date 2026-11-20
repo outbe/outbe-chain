@@ -132,15 +132,15 @@ contract LocalHyperlaneGateway is IERC7786GatewaySource, IGatewayQuote {
 /// @dev Bids live in storage and `setUp` seeds them, so the relay reads them cold as in production.
 ///      `GasBudget.t.sol`'s stub fabricates them in memory and misses two slots per bid.
 contract StoredBidStub {
-    IIntexAuction.SubmittedBidData[] private _bids;
+    IIntexAuction.SubmittedIntexAuctionBidData[] private _bids;
     uint256 private _visible;
     uint256 private _flipGas;
 
     function seed(uint256 count) external {
         for (uint256 i = 0; i < count; ++i) {
             _bids.push(
-                IIntexAuction.SubmittedBidData({
-                    bidderAddress: address(uint160(0xCAFE + i)),
+                IIntexAuction.SubmittedIntexAuctionBidData({
+                    bidder: address(uint160(0xCAFE + i)),
                     intexBidRate: 100e6,
                     intexQuantity: 1,
                     timestamp: uint32(block.timestamp),
@@ -160,7 +160,7 @@ contract StoredBidStub {
     }
 
     /// @dev Burns what the real flip costs (452k, `GasBudget.t.sol`) so a budget test pays for it.
-    function startAwaitingResult(uint32) external view {
+    function startAuctionClearing(uint32) external view {
         uint256 floorGas = gasleft() - _flipGas;
         uint256 spin;
         while (gasleft() > floorGas) {
@@ -168,24 +168,24 @@ contract StoredBidStub {
         }
     }
 
-    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+    function auctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
         return IIntexAuction.AuctionStage.AwaitingResult;
     }
 
-    function revealedBidsCount(uint32) external view returns (uint256) {
+    function revealedIntexAuctionBidsCount(uint32) external view returns (uint256) {
         return _visible;
     }
 
-    function revealedBidsSlice(uint32, uint256 offset, uint256 limit)
+    function revealedIntexAuctionBidsSlice(uint32, uint256 offset, uint256 limit)
         external
         view
-        returns (IIntexAuction.SubmittedBidData[] memory slice)
+        returns (IIntexAuction.SubmittedIntexAuctionBidData[] memory slice)
     {
         uint256 length = _visible;
-        if (offset >= length) return new IIntexAuction.SubmittedBidData[](0);
+        if (offset >= length) return new IIntexAuction.SubmittedIntexAuctionBidData[](0);
         uint256 end = offset + limit;
         if (end > length) end = length;
-        slice = new IIntexAuction.SubmittedBidData[](end - offset);
+        slice = new IIntexAuction.SubmittedIntexAuctionBidData[](end - offset);
         for (uint256 i = 0; i < slice.length; ++i) {
             slice[i] = _bids[offset + i];
         }
@@ -194,7 +194,7 @@ contract StoredBidStub {
 
 /// @notice What one bids relay costs on a target chain, per bid count. Run with `--isolate`.
 /// @dev The round budgets are cut from the fixed part, the step 64 -> 65 (one chunk) and the step
-///      1 -> 64 (per bid). `_measure` drives `relayBidsToOutbe` as the router itself, so only the
+///      1 -> 64 (per bid). `_measure` drives `sendIntexAuctionBidsToOutbe` as the router itself, so only the
 ///      relay is in the reading: ~157k a send and ~8.7k a bid. The inbound clearing handler uses
 ///      the same entry. On top of that, the budgets carry ~40k a send for the hub's frame and nonce
 ///      write. The fixed part reads 490k-565k depending on the fork block, because what the
@@ -219,16 +219,16 @@ abstract contract RelayGasBase is Test {
         stub.setVisible(bids);
         vm.prank(address(router));
         uint256 before = gasleft();
-        router.relayBidsToOutbe(EMISSION_DAY);
+        router.sendIntexAuctionBidsToOutbe(EMISSION_DAY);
         spent = before - gasleft();
     }
 
     function _wireRouter(address bridge) internal {
         router = DeployProxy.targetRouter(bridge, admin, DST_CHAIN_ID);
-        router.setRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, originPeer));
+        router.registerRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, originPeer));
         stub = new StoredBidStub();
         stub.seed(SEEDED_BIDS);
-        router.wire(address(stub), makeAddr("intex"), makeAddr("escrow"));
+        router.setDependencies(address(stub), makeAddr("intex"), makeAddr("escrow"));
         vm.deal(address(router), 100 ether);
     }
 
@@ -284,7 +284,7 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
         _wireRouter(address(gateway));
     }
 
-    /// @notice `AUCTION_STAGE_COLLECTING_BIDS` is the budget that a chain with no history gets, so it has
+    /// @notice `INTEX_AUCTION_CLEARING_START` is the budget that a chain with no history gets, so it has
     ///         to be worth sending. The round must place at least one chunk and report the rest.
     ///         Otherwise the day stalls waiting for a hand.
     /// @dev The test drives the inbound path that a real delivery takes: peer check, hub dedup,
@@ -307,11 +307,11 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
                 uint256(1),
                 _interop(DST_CHAIN_ID, originPeer),
                 recipient,
-                BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY)
+                BridgeMsgCodec.encodeIntexAuctionClearingStart(EMISSION_DAY)
             )
         );
 
-        uint256 cap = ((IntexGas.AUCTION_STAGE_COLLECTING_BIDS * 63) / 64 * 63) / 64;
+        uint256 cap = ((IntexGas.INTEX_AUCTION_CLEARING_START * 63) / 64 * 63) / 64;
         vm.recordLogs();
         uint256 before = gasleft();
         (bool delivered,) = address(gateway).call{gas: cap}(
@@ -321,12 +321,12 @@ contract ClearingRelayRealMailboxTest is RelayGasBase {
         emit log_named_uint("floor_spent", before - gasleft());
         assertTrue(delivered, "the floor could not even carry the delivery");
 
-        (uint16 nextBatch, uint16 totalBatches, bool done) = router.bidsRelay(EMISSION_DAY);
-        emit log_named_uint("floor_chunks_placed", nextBatch);
-        assertEq(totalBatches, 4, "256 bids span four chunks");
+        (uint16 nextPage, uint16 totalPages, bool done) = router.getIntexAuctionBidsSendState(EMISSION_DAY);
+        emit log_named_uint("floor_chunks_placed", nextPage);
+        assertEq(totalPages, 4, "256 bids span four chunks");
         assertFalse(done, "the floor is not meant to finish a 256-bid day");
-        assertGe(nextBatch, 1, "the floor placed no chunk at all");
-        assertTrue(_sawTopic(ITargetRouter.BidsRemainingSent.selector), "the remainder was not reported");
+        assertGe(nextPage, 1, "the floor placed no chunk at all");
+        assertTrue(_sawTopic(ITargetRouter.IntexAuctionBidsPauseSent.selector), "the remainder was not reported");
     }
 
     function _sawTopic(bytes32 topic) private returns (bool) {

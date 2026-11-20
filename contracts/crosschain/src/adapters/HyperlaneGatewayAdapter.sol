@@ -134,7 +134,7 @@ contract HyperlaneGatewayAdapter is
 
     /// @inheritdoc IERC7786GatewaySource
     function supportsAttribute(bytes4 selector) public pure virtual returns (bool) {
-        return selector == GasLimitAttribute.SELECTOR;
+        return selector == GasLimitAttribute.SELECTOR || selector == GasLimitAttribute.REFUND_SELECTOR;
     }
 
     /// @inheritdoc IERC7786GatewaySource
@@ -151,7 +151,10 @@ contract HyperlaneGatewayAdapter is
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
         bytes memory adapterPayload = abi.encode(sender, recipient, payload);
 
-        bytes memory metadata = _metadata(GasLimitAttribute.resolve(attributes, defaultGasLimit()));
+        bytes memory metadata = _metadata(
+            GasLimitAttribute.resolve(attributes, defaultGasLimit()),
+            GasLimitAttribute.refundAddress(attributes, msg.sender)
+        );
 
         // msg.value funds the Hyperlane native fee.
         // The Hyperlane messageId is returned as sendId, to follow the delivery in the Hyperlane Explorer.
@@ -210,11 +213,11 @@ contract HyperlaneGatewayAdapter is
         require(remoteRouter != bytes32(0), RemoteRouterNotSet(domain));
     }
 
-    /// @dev Hyperlane StandardHookMetadata that overrides the destination gas limit (refunds excess
-    ///      to the caller).
+    /// @dev Hyperlane StandardHookMetadata that overrides the destination gas limit. The hooks send
+    ///      the extra fee to `refundTo`.
     ///      Layout: variant | msgValue(0) | gasLimit | refundAddress.
-    function _metadata(uint128 gasLimit) private view returns (bytes memory) {
-        return abi.encodePacked(HOOK_METADATA_VARIANT, uint256(0), uint256(gasLimit), msg.sender);
+    function _metadata(uint128 gasLimit, address refundTo) private pure returns (bytes memory) {
+        return abi.encodePacked(HOOK_METADATA_VARIANT, uint256(0), uint256(gasLimit), refundTo);
     }
 
     function _quoteWithGas(bytes calldata recipient, bytes calldata payload, uint128 gasLimit)
@@ -225,6 +228,6 @@ contract HyperlaneGatewayAdapter is
         (uint32 domain, bytes32 remoteRouter) = _route(recipient);
         bytes memory sender = InteroperableAddress.formatEvmV1(block.chainid, msg.sender);
         bytes memory adapterPayload = abi.encode(sender, recipient, payload);
-        return MAILBOX.quoteDispatch(domain, remoteRouter, adapterPayload, _metadata(gasLimit));
+        return MAILBOX.quoteDispatch(domain, remoteRouter, adapterPayload, _metadata(gasLimit, msg.sender));
     }
 }

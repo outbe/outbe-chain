@@ -17,7 +17,7 @@ pub enum EnclaveWitnessEntryV1 {
         onboarding_artifact: Vec<u8>,
         attestation_tag: Vec<u8>,
     },
-    GramineDirectDevOnboardingArtifactPreparedV2 {
+    NoAttestationDevOnboardingArtifactPreparedV2 {
         request_hash: B256,
         onboarding_artifact: Vec<u8>,
         attestation_tag: Vec<u8>,
@@ -63,12 +63,12 @@ impl EnclaveWitnessEntryV1 {
                 },
             ) => a == b && ao == bo && aa == ba,
             (
-                GramineDirectDevOnboardingArtifactPreparedV2 {
+                NoAttestationDevOnboardingArtifactPreparedV2 {
                     request_hash: a,
                     onboarding_artifact: aa,
                     ..
                 },
-                GramineDirectDevOnboardingArtifactPreparedV2 {
+                NoAttestationDevOnboardingArtifactPreparedV2 {
                     request_hash: b,
                     onboarding_artifact: ba,
                     ..
@@ -132,34 +132,28 @@ impl TryFrom<EnclaveResponse> for EnclaveWitnessEntryV1 {
                 onboarding_artifact,
                 attestation_tag,
             },
-            R::GramineDirectDevOnboardingArtifactPreparedV2 {
+            R::NoAttestationDevOnboardingArtifactPreparedV2 {
                 request_hash,
                 onboarding_artifact,
                 attestation_tag,
-            } => Self::GramineDirectDevOnboardingArtifactPreparedV2 {
+            } => Self::NoAttestationDevOnboardingArtifactPreparedV2 {
                 request_hash,
                 onboarding_artifact,
                 attestation_tag,
             },
-            R::Payload {
-                recordable: true,
-                payload,
-                inputs_canonical_hash,
-                attestation_tag,
-            } => Self::Payload {
-                payload,
-                inputs_canonical_hash,
-                attestation_tag,
-            },
+            // Application witness bytes stay on `EnclaveWitnessEntryV1::Payload`.
+            // They are not an infrastructure response.
             _ => return Err(UnsupportedEnclaveResponse),
         })
     }
 }
 
-impl From<EnclaveWitnessEntryV1> for EnclaveResponse {
-    fn from(value: EnclaveWitnessEntryV1) -> Self {
+impl TryFrom<EnclaveWitnessEntryV1> for EnclaveResponse {
+    type Error = UnsupportedEnclaveResponse;
+
+    fn try_from(value: EnclaveWitnessEntryV1) -> Result<Self, UnsupportedEnclaveResponse> {
         use EnclaveWitnessEntryV1 as W;
-        match value {
+        Ok(match value {
             W::DcapVerificationFinishedV1 {
                 request_hash,
                 outcome,
@@ -180,25 +174,16 @@ impl From<EnclaveWitnessEntryV1> for EnclaveResponse {
                 onboarding_artifact,
                 attestation_tag,
             },
-            W::GramineDirectDevOnboardingArtifactPreparedV2 {
+            W::NoAttestationDevOnboardingArtifactPreparedV2 {
                 request_hash,
                 onboarding_artifact,
                 attestation_tag,
-            } => Self::GramineDirectDevOnboardingArtifactPreparedV2 {
+            } => Self::NoAttestationDevOnboardingArtifactPreparedV2 {
                 request_hash,
                 onboarding_artifact,
                 attestation_tag,
             },
-            W::Payload {
-                payload,
-                inputs_canonical_hash,
-                attestation_tag,
-            } => Self::Payload {
-                recordable: true,
-                payload,
-                inputs_canonical_hash,
-                attestation_tag,
-            },
-        }
+            W::Payload { .. } => return Err(UnsupportedEnclaveResponse),
+        })
     }
 }

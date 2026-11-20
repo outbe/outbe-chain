@@ -79,6 +79,14 @@ contract MockHyperlaneMailbox {
     ) external payable returns (bytes32 messageId) {
         lastMetadata = metadata;
 
+        // As the Hyperlane gas paymaster: send the overpayment to the refund address of the
+        // metadata (variant 2 | msgValue 32 | gasLimit 32 | refundAddress 20), revert if it fails.
+        if (msg.value > 100) {
+            address refundTo = address(bytes20(metadata[66:86]));
+            (bool ok,) = refundTo.call{value: msg.value - 100}("");
+            require(ok, "Address: unable to send value, recipient may have reverted");
+        }
+
         MockHyperlaneMailbox dst = remoteMailboxes[destinationDomain];
         if (address(dst) == address(0)) revert RemoteMailboxNotSet(destinationDomain);
 

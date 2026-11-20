@@ -45,17 +45,18 @@ contract RecordingDesis {
         return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function processBidsBatch(
+    function collectIntexAuctionBids(
+        bytes32,
         uint32 emissionDay,
         uint32 srcChainId,
-        uint16, /* batchIndex */
-        uint16 totalBatches,
+        uint16, /* pageIndex */
+        uint16 totalPages,
         address[] calldata bidderAddresses,
         uint256[] calldata packedBids
     ) external {
         lastDay = emissionDay;
         lastSrcChainId = srcChainId;
-        lastTotalBatches = totalBatches;
+        lastTotalBatches = totalPages;
         for (uint256 i = 0; i < bidderAddresses.length; i++) {
             (uint16 q, uint32 r,,,) = BridgeMsgCodec.unpackBid(packedBids[i]);
             bidders.push(bidderAddresses[i]);
@@ -64,9 +65,11 @@ contract RecordingDesis {
         }
     }
 
-    function processBidsDone(uint32, uint32 srcChainId, uint16 totalBatches, uint32 totalBids) external {
+    function completeIntexAuctionBids(bytes32, uint32, uint32 srcChainId, uint16 totalPages, uint32 totalBids)
+        external
+    {
         doneSrcChainId = srcChainId;
-        doneTotalBatches = totalBatches;
+        doneTotalBatches = totalPages;
         doneTotalBids = totalBids;
     }
 
@@ -82,7 +85,7 @@ contract RecordingFactory {
     uint256 public lastValue;
     uint256 public calls;
 
-    function distribute(uint32 emissionDay, uint32 srcChainId) external payable {
+    function burnIntexAuctionProceeds(uint32 emissionDay, uint32 srcChainId) external payable {
         lastDay = emissionDay;
         lastSrcChainId = srcChainId;
         lastValue = msg.value;
@@ -188,26 +191,26 @@ contract LocalLoopbackTest is Test {
 
         escrow = DeployProxy.escrowAdapter(address(this), address(this));
         compact = new MockTheCompact();
-        escrow.wire(address(auction), address(compact), address(wcoen));
+        escrow.setDependencies(address(auction), address(compact), address(wcoen));
         escrow.setProceedsRecipient(address(target));
         compact.setResetPeriodSeconds(0);
 
         // Peers: each router's remote on the local chainId is the other router.
-        origin.setRemoteMessenger(local, InteroperableAddress.formatEvmV1(local, address(target)));
-        target.setRemoteMessenger(local, InteroperableAddress.formatEvmV1(local, address(origin)));
+        origin.registerRemoteMessenger(local, InteroperableAddress.formatEvmV1(local, address(target)));
+        target.registerRemoteMessenger(local, InteroperableAddress.formatEvmV1(local, address(origin)));
 
-        origin.wire(address(desis), address(factory));
+        origin.setDependencies(address(desis), address(factory));
         origin.addTarget(local);
         origin.setProceedsRoute(address(tokenBridge), address(wcoen));
 
-        target.wire(address(auction), address(intex), address(escrow));
+        target.setDependencies(address(auction), address(intex), address(escrow));
         target.setProceedsRoute(address(tokenBridge), address(origin));
 
-        auction.wire(address(escrow));
+        auction.setEscrow(address(escrow));
         auction.setIntexContract(address(intex));
         intex.grantRole(intex.AUCTION_ROLE(), address(auction));
         auction.grantRole(auction.RELAYER_ROLE(), address(target));
-        intex.grantRole(intex.RELAYER_ROLE(), address(target));
+        intex.grantRole(intex.ROUTER_ROLE(), address(target));
         escrow.grantRole(escrow.RELAYER_ROLE(), address(target));
 
         wcoen.mint(iba1, INITIAL_WCOEN_BALANCE);
@@ -218,16 +221,15 @@ contract LocalLoopbackTest is Test {
         wcoen.approve(address(escrow), type(uint256).max);
     }
 
-    function _stageStartParams() internal view returns (IOriginRouter.AuctionStageStartParams memory p) {
+    function _stageStartParams() internal view returns (IOriginRouter.IntexAuctionStartParams memory p) {
         p.emissionDay = DAY;
         p.commitEnd = uint32(startTs + 100);
         p.revealEnd = uint32(startTs + 200);
         p.issuanceEnd = uint32(startTs + 300);
         p.promisLoadMinor = PROMIS_LOAD_MINOR;
-        p.minIntexBidRate = 600_000;
+        p.minBidRate = 600_000;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1e6, 200);
-        p.minIntexBidQuantity = 1;
-        p.dayState = 1;
+        p.minBidQuantity = 1;
     }
 
     function _sig(address bidder, uint16 qty, uint32 rate, uint256 pk) internal view returns (bytes memory) {
@@ -250,38 +252,38 @@ contract LocalLoopbackTest is Test {
     function _commitAndReveal(address bidder, uint16 qty, uint32 rate, uint256 pk) internal {
         bytes memory signature = _sig(bidder, qty, rate, pk);
         vm.prank(bidder);
-        auction.revealBid(DAY, qty, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), signature);
+        auction.revealIntexAuctionBid(DAY, qty, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), signature);
     }
 
     function test_FullWalk_OriginAsTarget() public {
         // 1. STAGE_START broadcast lands synchronously: bridge -> TargetRouter -> auction.
         vm.prank(address(desis));
-        origin.sendAuctionStageStart(_stageStartParams());
-        assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.CommittingBids), "not started");
+        origin.sendIntexAuctionStart(_stageStartParams());
+        assertEq(uint8(auction.auctionStage(DAY)), uint8(IIntexAuction.AuctionStage.CommittingBids), "not started");
         uint32[] memory snapshot = origin.targetsOf(DAY);
         assertEq(snapshot.length, 1, "snapshot size");
         assertEq(snapshot[0], local, "snapshot chain");
 
         // 2. Commits during the commit window.
         vm.prank(iba1);
-        auction.commitBid(DAY, keccak256(_sig(iba1, 30, 800_000, iba1Pk)));
+        auction.commitIntexAuctionBid(DAY, keccak256(_sig(iba1, 30, 800_000, iba1Pk)));
         vm.prank(iba2);
-        auction.commitBid(DAY, keccak256(_sig(iba2, 40, 700_000, iba2Pk)));
+        auction.commitIntexAuctionBid(DAY, keccak256(_sig(iba2, 40, 700_000, iba2Pk)));
 
         // 3. Past commitEnd, the stage computes to RevealingBids. Reveals lock escrow
         //    (qty * load * rate / 1e6), converted to 18-decimal WCOEN.
         vm.warp(startTs + 101);
-        assertEq(uint8(auction.getAuctionStage(DAY)), uint8(IIntexAuction.AuctionStage.RevealingBids), "not revealing");
+        assertEq(uint8(auction.auctionStage(DAY)), uint8(IIntexAuction.AuctionStage.RevealingBids), "not revealing");
         _commitAndReveal(iba1, 30, 800_000, iba1Pk);
         _commitAndReveal(iba2, 40, 700_000, iba2Pk);
-        assertEq(uint256(escrow.getBidLock(DAY, iba1).lockedAmount), 24e18, "iba1 lock");
-        assertEq(uint256(escrow.getBidLock(DAY, iba2).lockedAmount), 28e18, "iba2 lock");
+        assertEq(uint256(escrow.getIntexAuctionBidLock(DAY, iba1).lockedAmount), 24e18, "iba1 lock");
+        assertEq(uint256(escrow.getIntexAuctionBidLock(DAY, iba2).lockedAmount), 28e18, "iba2 lock");
 
-        // 4. CLEARING: the delivery itself fires the nested bids relay (BIDS_BATCH + BIDS_DONE)
+        // 4. CLEARING: the delivery itself fires the nested bids relay (BIDS_BATCH + BIDS_TOTALS)
         //    back through the bridge to the origin. This makes three chained same-tx deliveries.
         vm.warp(startTs + 201);
         vm.prank(address(desis));
-        origin.sendAuctionStageCollectingBids(DAY, local, IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
+        origin.sendIntexAuctionClearingStart(DAY, local, IntexGas.INTEX_AUCTION_CLEARING_START);
         assertEq(desis.bidsCount(), 2, "bids not relayed");
         assertEq(desis.lastDay(), DAY, "relay day");
         assertEq(desis.lastSrcChainId(), local, "relay source chain");
@@ -290,12 +292,12 @@ contract LocalLoopbackTest is Test {
         assertEq(desis.doneTotalBatches(), 1, "marker batches");
         assertEq(desis.doneTotalBids(), 2, "marker bids");
 
-        // 5. AUCTION_RESULT: supply 50 -> iba1 wins 30, iba2 wins 20 at the uniform rate 700k.
+        // 5. INTEX_AUCTION_RESULT: supply 50 -> iba1 wins 30, iba2 wins 20 at the uniform rate 700k.
         vm.prank(address(desis));
-        origin.sendAuctionResult(local, DAY, 50, 700_000, 2);
-        IIntexAuction.AuctionResult memory result = auction.getAuctionInfo(DAY).result;
+        origin.sendIntexAuctionResult(local, DAY, 0, 2, 50, 700_000, 0);
+        IIntexAuction.IntexAuctionResult memory result = auction.getAuctionInfo(DAY).result;
         assertEq(result.issuedUnits, 50, "issued");
-        assertEq(result.auctionClearingRate, 700_000, "clearing rate");
+        assertEq(result.clearingRate, 700_000, "clearing rate");
 
         // 6. REFUND_INSTRUCTIONS: the delivery takes each winner's payment AND routes the paid wCOEN to
         //    the origin (direct hand-over + unwrap + factory hand-off), all inside the refund budget.
@@ -304,12 +306,14 @@ contract LocalLoopbackTest is Test {
         bidders[0] = iba1;
         bidders[1] = iba2;
         vm.prank(address(desis));
-        origin.sendRefundInstructions(local, DAY, 0, 1, 700_000, PROMIS_LOAD_MINOR, bidders, 1, 20);
+        origin.sendIntexAuctionWinners(local, DAY, 0, 1, 700_000, PROMIS_LOAD_MINOR, bidders, 1, 20);
 
-        assertEq(uint8(escrow.getBidLock(DAY, iba1).status), uint8(IEscrowAdapter.LockStatus.Won), "iba1 not won");
-        assertEq(escrow.getBidLock(DAY, iba2).quantity, 20, "iba2 partial");
-        auction.claimRefund(DAY, iba1);
-        auction.claimRefund(DAY, iba2);
+        assertEq(
+            uint8(escrow.getIntexAuctionBidLock(DAY, iba1).status), uint8(IEscrowAdapter.LockStatus.Won), "iba1 not won"
+        );
+        assertEq(escrow.getIntexAuctionBidLock(DAY, iba2).quantity, 20, "iba2 partial");
+        auction.returnIntexAuctionAsset(DAY, iba1);
+        auction.returnIntexAuctionAsset(DAY, iba2);
         assertEq(wcoen.balanceOf(iba1), INITIAL_WCOEN_BALANCE - 24e18 + 3e18, "iba1 refund"); // paid 30*1*0.7
         assertEq(wcoen.balanceOf(iba2), INITIAL_WCOEN_BALANCE - 28e18 + 14e18, "iba2 refund"); // paid 20*1*0.7
         assertEq(factory.calls(), 1, "proceeds not distributed");
@@ -319,8 +323,8 @@ contract LocalLoopbackTest is Test {
         assertEq(address(origin).balance, 0, "native stranded on origin");
 
         // 7. ISSUANCE_INSTRUCTIONS: the series lands on the canonical NFT via the bridge.
-        IOriginRouter.IssuanceInstructionsParams[] memory issuance = new IOriginRouter.IssuanceInstructionsParams[](1);
-        issuance[0] = IOriginRouter.IssuanceInstructionsParams({
+        IOriginRouter.IntexSeriesParams[] memory issuance = new IOriginRouter.IntexSeriesParams[](1);
+        issuance[0] = IOriginRouter.IntexSeriesParams({
             seriesId: CreateSeriesLib.seriesId(DAY),
             emissionDay: DAY,
             issuedAt: uint32(block.timestamp),
@@ -336,7 +340,7 @@ contract LocalLoopbackTest is Test {
             transitMargin: 1 hours
         });
         vm.prank(address(factory));
-        origin.sendIssuanceInstructions(local, DAY, 0, 1, issuance);
+        origin.sendIntexSeries(local, DAY, 0, 1, issuance);
         assertTrue(intex.seriesExists(CreateSeriesLib.seriesId(DAY)), "series created");
 
         // Each winner issues its own units through the auction.
@@ -347,10 +351,10 @@ contract LocalLoopbackTest is Test {
         assertEq(intex.balanceOf(iba2, tokenId), 20, "iba2 issued");
 
         // 8. Every leg executed within its IntexGas budget: nothing parked anywhere.
-        (,, bool bidsRelayed) = target.bidsRelay(DAY);
+        (,, bool bidsRelayed) = target.getIntexAuctionBidsSendState(DAY);
         assertTrue(bidsRelayed, "bids relay finished");
-        (,,, bool proceedsParked,) = target.parkedProceeds(0);
+        (,,, bool proceedsParked,) = target.getFailedIntexAuctionProceedsSend(0);
         assertFalse(proceedsParked, "proceeds route parked");
-        assertEq(origin.parkedMessage(0).payload.length, 0, "origin leg parked");
+        assertEq(origin.getFailedMessageSend(0).payload.length, 0, "origin leg parked");
     }
 }

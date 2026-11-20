@@ -39,7 +39,7 @@ function reentryGuarded(address bridge, uint32 srcChainId, address peer, address
 /// @notice Stub Auction that, during the inbound STAGE_START dispatch, tries to re-enter the router's inbound
 ///         entry. The re-entry reverts iff `receiveMessage` carries `nonReentrant`.
 /// @dev Does NOT inherit `IIntexAuction`. The high-level call dispatches by selector, so
-///      matching the `auctionStart` signature here is sufficient.
+///      matching the `startAuction` signature here is sufficient.
 contract ReentrancyProbeAuction {
     address public immutable bridge;
     uint32 public immutable srcChainId;
@@ -55,12 +55,9 @@ contract ReentrancyProbeAuction {
         router = router_;
     }
 
-    function auctionStart(
-        uint32,
-        IIntexAuction.DayState,
-        IIntexAuction.AuctionSchedule calldata,
-        IIntexAuction.AuctionParams calldata
-    ) external {
+    function startAuction(uint32, IIntexAuction.AuctionSchedule calldata, IIntexAuction.AuctionParams calldata)
+        external
+    {
         observed = true;
         guardHeld = reentryGuarded(bridge, srcChainId, peer, router);
     }
@@ -86,14 +83,16 @@ contract ReentrancyProbeDesis {
         return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function processBidsBatch(uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata) external {
+    function collectIntexAuctionBids(bytes32, uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata)
+        external
+    {
         observed = true;
         guardHeld = reentryGuarded(bridge, srcChainId, peer, router);
     }
 
-    /// @dev OriginRouter reads stage post-processBidsBatch to decide on auto-clear.
+    /// @dev OriginRouter reads stage post-collectIntexAuctionBids to decide on auto-clear.
     ///      Return `None` so the auto-clear branch is skipped in this probe-only test.
-    function getAuctionStage(uint32) external pure returns (IDesis.AuctionStage) {
+    function auctionStage(uint32) external pure returns (IDesis.AuctionStage) {
         return IDesis.AuctionStage.None;
     }
 }
@@ -119,8 +118,8 @@ contract RouterReentrancyTest is CrossChainTest {
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbeRouter = DeployProxy.originRouter(address(bridge), admin);
 
-        bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
-        outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
+        bnbRouter.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
+        outbeRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
     }
 
     function test_TM_receiveMessage_runsUnderNonReentrant() public {
@@ -128,10 +127,10 @@ contract RouterReentrancyTest is CrossChainTest {
             new ReentrancyProbeAuction(address(bridge), OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter));
         // intex / escrow / nftBridge don't fire on STAGE_START, but `wire` rejects address(0). Reuse the
         // probe so all four wires are non-zero.
-        bnbRouter.wire(address(probeAuction), address(probeAuction), address(probeAuction));
+        bnbRouter.setDependencies(address(probeAuction), address(probeAuction), address(probeAuction));
 
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageStart(
-            42, 100, 200, 300, 1e6, 5e6, ReferenceCurrencyPriceLib.one(840, 7e6, 4e6), 5, 6, 7, 3, 9e6, 1
+        bytes memory packet = BridgeMsgCodec.encodeIntexAuctionStart(
+            42, 100, 200, 300, 1e6, 5e6, ReferenceCurrencyPriceLib.one(840, 7e6, 4e6), 5, 6, 7, 3, 9e6
         );
 
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
@@ -143,18 +142,17 @@ contract RouterReentrancyTest is CrossChainTest {
     function test_OM_receiveMessage_runsUnderNonReentrant() public {
         ReentrancyProbeDesis probeDesis =
             new ReentrancyProbeDesis(address(bridge), BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter));
-        outbeRouter.wire(address(probeDesis), makeAddr("factory"));
+        outbeRouter.setDependencies(address(probeDesis), makeAddr("factory"));
 
         // Freeze day 42's snapshot with BNB so its bids pass the inbound membership check.
         outbeRouter.addTarget(BNB_CHAIN_ID);
-        IOriginRouter.AuctionStageStartParams memory p;
+        IOriginRouter.IntexAuctionStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = 42;
-        p.dayState = 1;
         vm.prank(address(probeDesis));
-        outbeRouter.sendAuctionStageStart(p);
+        outbeRouter.sendIntexAuctionStart(p);
 
-        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 0, 1, new address[](0), new uint256[](0));
+        bytes memory packet = BridgeMsgCodec.encodeBidsPage(42, BNB_CHAIN_ID, 0, 1, new address[](0), new uint256[](0));
 
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
 

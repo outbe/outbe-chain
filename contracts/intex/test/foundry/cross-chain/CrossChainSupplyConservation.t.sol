@@ -44,11 +44,11 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         adapterA = DeployProxy.intexNFT1155Bridge(address(tokenA), address(bridge), address(this));
         adapterB = DeployProxy.intexNFT1155Bridge(address(tokenB), address(bridge), address(this));
 
-        tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
-        tokenB.grantRole(tokenB.RELAYER_ROLE(), address(adapterB));
+        tokenA.grantRole(tokenA.BRIDGE_ROLE(), address(adapterA));
+        tokenB.grantRole(tokenB.BRIDGE_ROLE(), address(adapterB));
 
-        adapterA.setRemoteMessenger(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapterB)));
-        adapterB.setRemoteMessenger(A_CHAIN_ID, _interop(A_CHAIN_ID, address(adapterA)));
+        adapterA.registerRemoteMessenger(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapterB)));
+        adapterB.registerRemoteMessenger(A_CHAIN_ID, _interop(A_CHAIN_ID, address(adapterA)));
 
         tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
         tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));

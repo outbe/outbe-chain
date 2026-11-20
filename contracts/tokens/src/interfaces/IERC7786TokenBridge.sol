@@ -29,5 +29,9 @@ interface IERC7786TokenBridge {
 
     /// @notice Sends `amount`, which the token has just burned from 0x…dEaD, to 0x…dEaD on
     ///         `destinationDomain`. Only the token can call it.
-    function sendBurned(uint32 destinationDomain, uint256 amount) external payable returns (bytes32 sendId);
+    /// @param refundTo Gets the part of `msg.value` above the fee back.
+    function sendBurned(uint32 destinationDomain, uint256 amount, address refundTo)
+        external
+        payable
+        returns (bytes32 sendId);
 }
