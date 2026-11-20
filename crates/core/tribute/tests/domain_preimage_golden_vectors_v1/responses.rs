@@ -64,16 +64,10 @@ fn vectors() -> &'static [(usize, &'static str, &'static str)] {
 (20, r#"{"NodGroupLoadReadV1":{"amount":"0x11","inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82]}}"#, "14200000000000000000000000000000000000000000000000000000000000000011201111111111111111111111111111111111111111111111111111111111111111025152"),
 // 21: NodQuoteEncryptedV1
 (21, r#"{"NodQuoteEncryptedV1":{"encrypted_payment":[65,66],"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82]}}"#, "15024142201111111111111111111111111111111111111111111111111111111111111111025152"),
-// 22: GratisMinedFromPromisV1
-(22, r#"{"GratisMinedFromPromisV1":{"result":{"status":"Applied","new_promis_balance":[33],"encrypted_promis_event_amount":[34],"next_promis_op_nonce":5,"new_gratis_balance":[35],"encrypted_gratis_event_amount":[36],"next_gratis_op_nonce":6,"fidelity":{"new_blob":[33],"qualified_start_initialized":123,"league":7},"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82]}}}"#, "160001210122050123012406010121017b07201111111111111111111111111111111111111111111111111111111111111111025152"),
 // 1: GratisOpApplied
 (1, r#"{"GratisOpApplied":{"result":{"status":{"Rejected":{"reason":"gratis rejected"}},"new_balance":[33],"new_pledged":[34],"event_amount":"0x11","next_op_nonce":5,"fidelity":{"new_blob":[33],"qualified_start_initialized":123,"league":7},"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82],"encrypted_event_amount":[35]}}}"#, "01010f6772617469732072656a65637465640121012220000000000000000000000000000000000000000000000000000000000000001105010121017b072011111111111111111111111111111111111111111111111111111111111111110251520123"),
 // 2: PromisOpApplied
 (2, r#"{"PromisOpApplied":{"result":{"status":{"Rejected":{"reason":"promis rejected"}},"new_balance":[33],"event_amount":"0x11","next_op_nonce":5,"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82],"encrypted_event_amount":[35]}}}"#, "02010f70726f6d69732072656a65637465640121200000000000000000000000000000000000000000000000000000000000000011052011111111111111111111111111111111111111111111111111111111111111110251520123"),
-// 22: GratisMinedFromPromisV1
-(22, r#"{"GratisMinedFromPromisV1":{"result":{"status":{"PromisRejected":{"reason":"promis rejected"}},"new_promis_balance":[33],"encrypted_promis_event_amount":[34],"next_promis_op_nonce":5,"new_gratis_balance":[35],"encrypted_gratis_event_amount":[36],"next_gratis_op_nonce":6,"fidelity":{"new_blob":[33],"qualified_start_initialized":123,"league":7},"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82]}}}"#, "16010f70726f6d69732072656a656374656401210122050123012406010121017b07201111111111111111111111111111111111111111111111111111111111111111025152"),
-// 22: GratisMinedFromPromisV1
-(22, r#"{"GratisMinedFromPromisV1":{"result":{"status":{"GratisRejected":{"reason":"gratis rejected"}},"new_promis_balance":[33],"encrypted_promis_event_amount":[34],"next_promis_op_nonce":5,"new_gratis_balance":[35],"encrypted_gratis_event_amount":[36],"next_gratis_op_nonce":6,"fidelity":{"new_blob":[33],"qualified_start_initialized":123,"league":7},"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82]}}}"#, "16020f6772617469732072656a656374656401210122050123012406010121017b07201111111111111111111111111111111111111111111111111111111111111111025152"),
 // 18: NodIssuedFromTributeV1
 (18, r#"{"NodIssuedFromTributeV1":{"outcome":{"Issued":{"terms":{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"league_id":7,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978},"encryption_binding":"0x3333333333333333333333333333333333333333333333333333333333333333","encrypted_gratis_amount":[65]}},"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82]}}"#, "120001200000000000000000000000000000000000000000000000000000000000000002142222222222222222222222222222222222222222fcd1d40907200000000000000000000000000000000000000000000000000000000000000003c806d2072033333333333333333333333333333333333333333333333333333333333333330141201111111111111111111111111111111111111111111111111111111111111111025152"),
     ]
@@ -81,7 +75,7 @@ fn vectors() -> &'static [(usize, &'static str, &'static str)] {
 
 #[test]
 fn domain_response_postcard_vectors() {
-    let mut seen = [false; 23];
+    let mut seen = [false; 22];
     for &(index, json, encoded) in vectors() {
         seen[index] = true;
         let expected: EnclaveResponse = serde_json::from_str(json).unwrap();

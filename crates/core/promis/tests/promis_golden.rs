@@ -7,16 +7,12 @@ use outbe_core_common::confidential_tee::{
 };
 use outbe_promis::cipher::{read_amount, write_amount};
 use outbe_promis::{
-    decrypt_promis_balance, derive_promis_keys_message,
-    mine_gratis_from_promis_attestation_preimage, mine_gratis_from_promis_canonical_hash,
-    modify_mac, promis_op_attestation_preimage, promis_op_canonical_hash, MineGratisFromPromisBody,
-    MineGratisFromPromisRequestV1, MineGratisFromPromisResultV1, ModifyOperation, PromisOp,
-    PromisOpRequest, PromisOpResult,
+    decrypt_promis_balance, derive_promis_keys_message, modify_mac, promis_op_attestation_preimage,
+    promis_op_canonical_hash, ModifyOperation, PromisOp, PromisOpRequest, PromisOpResult,
 };
 use outbe_tee::resident::{AccountKeysHandle, StateKeyHandle};
 
 const PROMIS_PREIMAGE: &str = "6f757462652f7465652f70726f6d69732d6174746573746174696f6e2f76311111111111111111111111111111111111111111111111111111111111111111000000df7b22737461747573223a224170706c696564222c226e65775f62616c616e6365223a5b33335d2c226576656e745f616d6f756e74223a2230783131222c226e6578745f6f705f6e6f6e6365223a352c22696e707574735f63616e6f6e6963616c5f68617368223a22307831313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131222c226174746573746174696f6e5f746167223a5b5d2c22656e637279707465645f6576656e745f616d6f756e74223a5b33355d7d";
-const MINE_PREIMAGE: &str = "6f757462652f7465652f6d696e652d6772617469732d66726f6d2d70726f6d69732d6174746573746174696f6e2f76311111111111111111111111111111111111111111111111111111111111111111000001807b22737461747573223a224170706c696564222c226e65775f70726f6d69735f62616c616e6365223a5b33335d2c22656e637279707465645f70726f6d69735f6576656e745f616d6f756e74223a5b33345d2c226e6578745f70726f6d69735f6f705f6e6f6e6365223a352c226e65775f6772617469735f62616c616e6365223a5b33355d2c22656e637279707465645f6772617469735f6576656e745f616d6f756e74223a5b33365d2c226e6578745f6772617469735f6f705f6e6f6e6365223a362c22666964656c697479223a7b226e65775f626c6f62223a5b33335d2c227175616c69666965645f73746172745f696e697469616c697a6564223a3132332c226c6561677565223a377d2c22696e707574735f63616e6f6e6963616c5f68617368223a22307831313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131222c226174746573746174696f6e5f746167223a5b5d7d";
 const PROMIS_OWNER_BLOB: &str = "111213141516171850524f325151515151515151515151515151515151515151515151515151515151515151950f76eb13183701977ca3510b80c426f3dacad91248fa9961b5857074a00025091a5da1a6224be9617c475e65c22d71";
 const FIELD0_BLOB: &str = "000000000000000550524f328ab66079822a11c7a53c086d827f104690251044a05eb599c2abd3c3d3ad40d11677d683be6a5cfec2681a4184c710ded588be72b9e95f7fae6935d40221b7fcbaac0060ab0604ebf88c867bcb9ba40d";
 const FIELD1_BLOB: &str = "000000000000000550524f3255681f26ff5de06b7ea8b7b9c7cee1926b0f90a43db3a83c0477a7b29d9de774d8ac47647684b95ec7e4e21342a302401cd6e8a630bf833e87e4459c47c38fce52e53659e63d920333dad8b8636d74ca";
@@ -51,12 +47,9 @@ where
 }
 
 #[test]
-fn response_postcard_vectors_round_trip_tags_2_and_22() {
+fn response_postcard_vectors_round_trip_tag_2() {
     let applied: PromisOpResult = serde_json::from_str(r#"{"status":"Applied","new_balance":[33],"event_amount":"0x11","next_op_nonce":5,"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82],"encrypted_event_amount":[35]}"#).unwrap();
     let rejected: PromisOpResult = serde_json::from_str(r#"{"status":{"Rejected":{"reason":"promis rejected"}},"new_balance":[33],"event_amount":"0x11","next_op_nonce":5,"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82],"encrypted_event_amount":[35]}"#).unwrap();
-    let mined: MineGratisFromPromisBody = serde_json::from_str(r#"{"status":"Applied","new_promis_balance":[33],"encrypted_promis_event_amount":[34],"next_promis_op_nonce":5,"new_gratis_balance":[35],"encrypted_gratis_event_amount":[36],"next_gratis_op_nonce":6,"fidelity":{"new_blob":[33],"qualified_start_initialized":123,"league":7},"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82]}"#).unwrap();
-    let promis_rejected: MineGratisFromPromisBody = serde_json::from_str(r#"{"status":{"PromisRejected":{"reason":"promis rejected"}},"new_promis_balance":[33],"encrypted_promis_event_amount":[34],"next_promis_op_nonce":5,"new_gratis_balance":[35],"encrypted_gratis_event_amount":[36],"next_gratis_op_nonce":6,"fidelity":{"new_blob":[33],"qualified_start_initialized":123,"league":7},"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82]}"#).unwrap();
-    let gratis_rejected: MineGratisFromPromisBody = serde_json::from_str(r#"{"status":{"GratisRejected":{"reason":"gratis rejected"}},"new_promis_balance":[33],"encrypted_promis_event_amount":[34],"next_promis_op_nonce":5,"new_gratis_balance":[35],"encrypted_gratis_event_amount":[36],"next_gratis_op_nonce":6,"fidelity":{"new_blob":[33],"qualified_start_initialized":123,"league":7},"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82]}"#).unwrap();
     assert_tagged(
         &applied,
         WitnessResponseTag::PromisOpApplied,
@@ -66,21 +59,6 @@ fn response_postcard_vectors_round_trip_tags_2_and_22() {
         &rejected,
         WitnessResponseTag::PromisOpApplied,
         "02010f70726f6d69732072656a65637465640121200000000000000000000000000000000000000000000000000000000000000011052011111111111111111111111111111111111111111111111111111111111111110251520123",
-    );
-    assert_tagged(
-        &mined,
-        WitnessResponseTag::GratisMinedFromPromisV1,
-        "160001210122050123012406010121017b07201111111111111111111111111111111111111111111111111111111111111111025152",
-    );
-    assert_tagged(
-        &promis_rejected,
-        WitnessResponseTag::GratisMinedFromPromisV1,
-        "16010f70726f6d69732072656a656374656401210122050123012406010121017b07201111111111111111111111111111111111111111111111111111111111111111025152",
-    );
-    assert_tagged(
-        &gratis_rejected,
-        WitnessResponseTag::GratisMinedFromPromisV1,
-        "16020f6772617469732072656a656374656401210122050123012406010121017b07201111111111111111111111111111111111111111111111111111111111111111025152",
     );
 }
 
@@ -97,19 +75,6 @@ fn canonical_hash_and_attestation_vectors() {
     assert_eq!(
         hex::encode(keccak256(&preimage)),
         "7e0bc5c10c3e70bd9a4d4b9b31c53ee8855d3fa39a91575c1ab5e82e6906bf17"
-    );
-    let paired: MineGratisFromPromisRequestV1 = serde_json::from_str(r#"{"chain_id":"0x1111111111111111111111111111111111111111111111111111111111111111","account":"0x2222222222222222222222222222222222222222","encrypted_promis_amount":[113],"current_promis_balance":[81,82],"promis_modify_auth":{"mac":[51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51],"op_nonce":5},"current_gratis_balance":[97],"gratis_modify_auth":{"mac":[52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52],"op_nonce":6},"fidelity":{"op":"Out","timestamp":123,"first_qualified_start":124,"current_blob":[65,66]}}"#).unwrap();
-    assert_eq!(
-        hex::encode(mine_gratis_from_promis_canonical_hash(&paired)),
-        "0901f0aa6c47d79e683062736af5d09f408ad6743aae7628e5ec8e1366bc57bc"
-    );
-    let mined: MineGratisFromPromisResultV1 = serde_json::from_str(r#"{"status":"Applied","new_promis_balance":[33],"encrypted_promis_event_amount":[34],"next_promis_op_nonce":5,"new_gratis_balance":[35],"encrypted_gratis_event_amount":[36],"next_gratis_op_nonce":6,"fidelity":{"new_blob":[33],"qualified_start_initialized":123,"league":7},"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82]}"#).unwrap();
-    let paired_preimage =
-        mine_gratis_from_promis_attestation_preimage(B256::repeat_byte(0x11), &mined).unwrap();
-    assert_eq!(hex::encode(&paired_preimage), MINE_PREIMAGE);
-    assert_eq!(
-        hex::encode(keccak256(&paired_preimage)),
-        "24795fc71683bd4fe277e80c306adbe9f74a0b98db5a1decde4f97ba984cd3e2"
     );
     let account = Address::repeat_byte(0x22);
     let ephemeral = B256::repeat_byte(0x33);

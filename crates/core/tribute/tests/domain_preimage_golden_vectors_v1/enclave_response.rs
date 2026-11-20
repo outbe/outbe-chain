@@ -8,7 +8,7 @@ use outbe_core_common::tribute_day_encryption::EncryptedTributeDayAmountV2;
 use outbe_core_common::tribute_encryption::TributeAmountsV2;
 use outbe_fidelity::{FidelityCohortResult, FidelityLeagueEntry, FidelityQueryResult};
 use outbe_gratis::nod_mine::MineEncryptedNodResultV1;
-use outbe_gratis::{GratisOpResult, MineGratisFromPromisResultV1};
+use outbe_gratis::GratisOpResult;
 use outbe_promis::PromisOpResult;
 use outbe_tribute::confidential::{
     EncryptedTributeOfferResultV2, IssueNodFromTributeOutcomeV1, LysisFractionsResultV1,
@@ -118,8 +118,5 @@ pub enum EnclaveResponse {
         encrypted_payment: Vec<u8>,
         inputs_canonical_hash: B256,
         attestation_tag: Vec<u8>,
-    },
-    GratisMinedFromPromisV1 {
-        result: Box<MineGratisFromPromisResultV1>,
     },
 }

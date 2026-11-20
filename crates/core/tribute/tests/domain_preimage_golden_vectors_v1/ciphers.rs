@@ -3,8 +3,8 @@ use super::support_seal::encrypt_onboarding_artifact_v1;
 use super::support_share::encrypt_share_deterministic;
 use alloy_primitives::{hex, Address, B256, U256};
 use outbe_core_common::confidential_tee::{
-    decrypt_fidelity_cohorts, decrypt_gratis_balance, decrypt_promis_balance,
-    encrypt_tee_amount_with, BalanceTransition, LocalCryptoError, TeeError,
+    decrypt_fidelity_cohorts, decrypt_gratis_balance, decrypt_promis_balance, BalanceTransition,
+    LocalCryptoError, TeeError,
 };
 use outbe_core_common::{
     nod_encryption::NodTermsV1,
@@ -118,17 +118,4 @@ fn onboarding_and_registry_sealing_vectors() {
     let other_recipient = [0x55; 32];
     let other = encrypt_share_deterministic(&[0x11; 32], &other_recipient, &[0x44; 48]).unwrap();
     assert_ne!(sealed_bytes, other.to_bytes());
-}
-
-#[test]
-fn offer_hkdf_salt_cipher_vector() {
-    let actual = encrypt_tee_amount_with(
-        &hex!("0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20"),
-        (B256::repeat_byte(0x11), Address::repeat_byte(0x22)),
-        U256::from(17),
-        [0x33; 32],
-        [0x44; 12],
-    )
-    .unwrap();
-    assert_eq!(hex::encode(actual), "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1444444444444444444444444415dd34fefbe7ff9dbf9935085336f7d6fcd20f3c5ff206379ce02cb510880409996a3389fb2410081f29e11996f5d88e");
 }

@@ -6,11 +6,11 @@ use alloy_primitives::{hex, Address, B256, U256};
 use outbe_core_common::confidential_tee::{
     attestation, consensus_witness_call, decrypt_fidelity_cohorts, decrypt_gratis_balance,
     decrypt_promis_balance, derive_account_keys_message, derive_resident_state_key, domain_for,
-    eip191_hash, encrypt_tee_amount_with, event_amount_input_hash, hkdf_sha256, offer_material,
-    sign_attestation_tag, verify_response_attestation, BalanceTransition, DualWitnessAnswer,
-    EnvelopeCipherSpec, Ledger, LocalCryptoError, ModifyAuthorization, ResponseAuthSpec,
-    WitnessDomainWire, WitnessResponseTag, WitnessSchema, FIDELITY_COHORT_ENVELOPE,
-    GRATIS_BALANCE_ENVELOPE, GRATIS_OP_ATTESTATION, PROMIS_BALANCE_ENVELOPE,
+    eip191_hash, event_amount_input_hash, hkdf_sha256, offer_material, sign_attestation_tag,
+    verify_response_attestation, BalanceTransition, DualWitnessAnswer, EnvelopeCipherSpec, Ledger,
+    LocalCryptoError, ModifyAuthorization, ResponseAuthSpec, WitnessDomainWire, WitnessResponseTag,
+    WitnessSchema, FIDELITY_COHORT_ENVELOPE, GRATIS_BALANCE_ENVELOPE, GRATIS_OP_ATTESTATION,
+    PROMIS_BALANCE_ENVELOPE,
 };
 use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
 use outbe_tee::resident::{AccountKeysHandle, StateKeyHandle};
@@ -213,19 +213,6 @@ fn assert_balance_vector(
 }
 
 #[test]
-fn offer_hkdf_salt_cipher_vector() {
-    let actual = encrypt_tee_amount_with(
-        &hex!("0faa684ed28867b97f4a6a2dee5df8ce974e76b7018e3f22a1c4cf2678570f20"),
-        (B256::repeat_byte(0x11), Address::repeat_byte(0x22)),
-        U256::from(17),
-        [0x33; 32],
-        [0x44; 12],
-    )
-    .unwrap();
-    assert_eq!(hex::encode(actual), "7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b1444444444444444444444444415dd34fefbe7ff9dbf9935085336f7d6fcd20f3c5ff206379ce02cb510880409996a3389fb2410081f29e11996f5d88e");
-}
-
-#[test]
 fn resident_state_key_matches_domain_derivation() {
     let binding = binding();
     let chain = B256::from(binding.chain_id);
@@ -265,7 +252,7 @@ fn resident_attestation_tag_round_trips() {
 
 /// Independent `(variant, discriminant)` table copied from the frozen V1
 /// response golden. A swapped enum discriminant fails `literal`, not `value()`.
-const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 20] = [
+const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 19] = [
     (WitnessResponseTag::GratisOpApplied, 1),
     (WitnessResponseTag::PromisOpApplied, 2),
     (WitnessResponseTag::FidelityLeaguesSnapshotted, 4),
@@ -285,7 +272,6 @@ const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 20] = [
     (WitnessResponseTag::NodGroupLoadOpAppliedV1, 19),
     (WitnessResponseTag::NodGroupLoadReadV1, 20),
     (WitnessResponseTag::NodQuoteEncryptedV1, 21),
-    (WitnessResponseTag::GratisMinedFromPromisV1, 22),
 ];
 
 #[test]

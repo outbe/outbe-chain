@@ -54,10 +54,8 @@ pub use engine::{
     derive_view_key, modify_mac, rejected_result, ModifyOperation,
 };
 pub use protocol::{
-    derive_gratis_keys_message, gratis_op_attestation_preimage, gratis_op_canonical_hash,
-    mine_gratis_from_promis_attestation_preimage, mine_gratis_from_promis_canonical_hash, GratisOp,
-    GratisOpRequest, GratisOpResult, GratisOpStatus, MineGratisFromPromisRequestV1,
-    MineGratisFromPromisResultV1, MineGratisFromPromisStatusV1, ModifyAuth,
+    derive_gratis_keys_message, gratis_op_attestation_preimage, gratis_op_canonical_hash, GratisOp,
+    GratisOpRequest, GratisOpResult, GratisOpStatus, ModifyAuth,
 };
 pub use schema::Gratis;
 

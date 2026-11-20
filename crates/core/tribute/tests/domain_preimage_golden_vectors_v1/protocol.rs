@@ -8,8 +8,7 @@ pub use outbe_fidelity::{
 };
 pub use outbe_gratis::{
     derive_gratis_keys_message, gratis_op_attestation_preimage, gratis_op_canonical_hash,
-    mine_gratis_from_promis_attestation_preimage, mine_gratis_from_promis_canonical_hash,
-    GratisOpRequest, GratisOpResult, MineGratisFromPromisRequestV1, MineGratisFromPromisResultV1,
+    GratisOpRequest, GratisOpResult,
 };
 pub use outbe_promis::{
     promis_op_attestation_preimage, promis_op_canonical_hash, PromisOpRequest, PromisOpResult,

@@ -7,7 +7,6 @@ publish.workspace = true
 
 [dependencies]
 outbe-core-common.workspace = true
-outbe-fidelity.workspace = true
 outbe-gratis.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
@@ -45,8 +44,6 @@ production-enclave = []
 test-enclave = [
     "outbe-tee/test-utils",
     "outbe-core-common/dev-keys",
-    "outbe-fidelity/test-enclave",
-    "outbe-gratis/test-enclave",
 ]
 
 [lints]

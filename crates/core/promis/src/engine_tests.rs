@@ -2,27 +2,18 @@
 
 use alloy_primitives::{address, b256, Address, B256, U256};
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
-use outbe_core_common::confidential_tee::{
-    encrypt_tee_amount, BalanceTransition, ModifyAuthorization, GRATIS, PROMIS,
-};
-use outbe_fidelity::{FidelityCohortOp, FidelityOpSection};
-use outbe_tee::resident::{
-    AccountKeysHandle, OfferKeyHandle, ResidentOfferMaterial, StateKeyHandle,
-};
+use outbe_core_common::confidential_tee::{ModifyAuthorization, GRATIS, PROMIS};
+use outbe_tee::resident::{AccountKeysHandle, ResidentOfferMaterial, StateKeyHandle};
 use outbe_tee::TeeAttestationError;
 
-use crate::cipher;
 use crate::engine::{
-    apply_mine_gratis, apply_op, decrypt_balance, derive_account_keys, derive_promis_state_key,
-    derive_view_key, modify_mac, MineGratisKeys, ModifyOperation,
+    apply_op, decrypt_balance, derive_account_keys, derive_promis_state_key, derive_view_key,
+    modify_mac, ModifyOperation,
 };
 use crate::protocol::{
-    promis_op_attestation_preimage, MineGratisFromPromisRequestV1, MineGratisFromPromisStatusV1,
-    ModifyAuth, PromisOp, PromisOpRequest, PromisOpStatus,
+    promis_op_attestation_preimage, ModifyAuth, PromisOp, PromisOpRequest, PromisOpStatus,
 };
-use crate::{
-    verify_mine_gratis_from_promis_attestation, verify_promis_op_attestation, PROMIS_OP_ATTESTATION,
-};
+use crate::{verify_promis_op_attestation, PROMIS_OP_ATTESTATION};
 
 const CHAIN: B256 = B256::repeat_byte(0xC2);
 const GROUP: &[u8] = b"a-group-threshold-signature-~48-bytes-long!!";
@@ -368,101 +359,6 @@ fn promis_attestation_rejects_a_gratis_domain_tag_and_a_mutated_event() {
     ));
     promis.encrypted_event_amount[0] ^= 0xff;
     assert!(verify_promis_op_attestation(&pk, hash, &promis, &promis_tag).is_err());
-    let mined = crate::MineGratisFromPromisResultV1 {
-        status: MineGratisFromPromisStatusV1::Applied,
-        new_promis_balance: vec![1],
-        encrypted_promis_event_amount: vec![4],
-        next_promis_op_nonce: 1,
-        new_gratis_balance: vec![1],
-        encrypted_gratis_event_amount: vec![4],
-        next_gratis_op_nonce: 1,
-        fidelity: None,
-        inputs_canonical_hash: hash,
-        attestation_tag: Vec::new(),
-    };
-    let mine_tag = sk
-        .sign(&crate::mine_gratis_from_promis_attestation_preimage(hash, &mined).unwrap())
-        .to_bytes();
-    verify_mine_gratis_from_promis_attestation(&pk, hash, &mined, &mine_tag).unwrap();
-    assert!(verify_mine_gratis_from_promis_attestation(&pk, hash, &mined, &promis_tag).is_err());
-}
-
-#[test]
-fn mine_gratis_applies_burn_mint_and_fidelity_in() {
-    let material = ResidentOfferMaterial::for_test(GROUP.to_vec(), CHAIN, 0, 0).unwrap();
-    let promis = derive_promis_state_key(&material, CHAIN, 0).unwrap();
-    let gratis = outbe_gratis::derive_gratis_state_key(&material, CHAIN, 0).unwrap();
-    let fidelity = outbe_fidelity::derive_fidelity_state_key(&material, CHAIN, 0).unwrap();
-    let offer = OfferKeyHandle::for_test([0x42; 32]);
-    let amount = U256::from(25u64);
-    let account = alice();
-    let promis_balance = cipher::write_amount(
-        &derive_view_key(&promis, account).unwrap(),
-        BalanceTransition {
-            account,
-            field: 0,
-            previous_version: 0,
-            amount,
-            input_hash: B256::ZERO,
-        },
-    )
-    .unwrap();
-    let encrypted = encrypt_tee_amount(&offer.public(), CHAIN, account, amount).unwrap();
-    let result = apply_mine_gratis(
-        MineGratisKeys {
-            offer_secret: &offer,
-            promis_state_key: &promis,
-            gratis_state_key: &gratis,
-            fidelity_state_key: &fidelity,
-        },
-        &MineGratisFromPromisRequestV1 {
-            chain_id: CHAIN,
-            account,
-            encrypted_promis_amount: encrypted.to_vec(),
-            current_promis_balance: promis_balance,
-            promis_modify_auth: auth(&promis, account, PromisOp::Burn, amount, 0),
-            current_gratis_balance: Vec::new(),
-            gratis_modify_auth: ModifyAuth {
-                mac: outbe_gratis::modify_mac(
-                    &outbe_gratis::derive_account_keys(&gratis, account).unwrap(),
-                    &outbe_gratis::ModifyOperation {
-                        account,
-                        op: outbe_gratis::GratisOp::Mint,
-                        amount,
-                        op_nonce: 0,
-                        chain_id: CHAIN,
-                    },
-                ),
-                op_nonce: 0,
-            },
-            fidelity: FidelityOpSection {
-                op: FidelityCohortOp::In,
-                timestamp: 1_700_000_000,
-                first_qualified_start: 0,
-                current_blob: Vec::new(),
-            },
-        },
-    );
-    assert_eq!(result.status, MineGratisFromPromisStatusV1::Applied);
-    assert!(result.fidelity.is_some());
-    assert_eq!(
-        decrypt_balance(
-            &derive_view_key(&promis, account).unwrap(),
-            account,
-            &result.new_promis_balance
-        )
-        .unwrap(),
-        U256::ZERO
-    );
-    assert_eq!(
-        outbe_gratis::decrypt_balance(
-            &outbe_gratis::derive_view_key(&gratis, account).unwrap(),
-            account,
-            &result.new_gratis_balance
-        )
-        .unwrap(),
-        amount
-    );
 }
 
 fn sample_op(draw: u64) -> PromisOp {

@@ -1,22 +1,18 @@
-//! Record, replay, a second enclave, and direct RPC for Promis tags 2 and 22.
+//! Record, replay, a second enclave, and direct RPC for Promis tag 2.
 
 use std::sync::{Arc, Mutex};
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::confidential_tee::{
-    decode_tagged_payload, encode_tagged_payload, encrypt_tee_amount, BalanceTransition,
-    WitnessResponseTag,
+    decode_tagged_payload, encode_tagged_payload, WitnessResponseTag,
 };
-use outbe_fidelity::{FidelityCohortOp, FidelityOpSection};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
-use outbe_promis::enclave_client::{apply_promis_op, mine_gratis_from_promis};
+use outbe_promis::enclave_client::apply_promis_op;
 use outbe_promis::{
-    derive_account_keys, derive_view_key, mine_gratis_from_promis_canonical_hash, modify_mac,
-    promis_op_attestation_preimage, promis_op_canonical_hash,
-    verify_mine_gratis_from_promis_attestation, verify_promis_op_attestation,
-    MineGratisFromPromisRequestV1, MineGratisFromPromisStatusV1, ModifyAuth, ModifyOperation,
-    PromisOp, PromisOpRequest, PromisOpResult, PromisOpStatus,
+    derive_account_keys, modify_mac, promis_op_attestation_preimage, promis_op_canonical_hash,
+    verify_promis_op_attestation, ModifyAuth, ModifyOperation, PromisOp, PromisOpRequest,
+    PromisOpResult, PromisOpStatus,
 };
 use outbe_tee::in_process::InProcessTeeContext;
 use outbe_tee::in_process_dispatch::{
@@ -259,96 +255,6 @@ fn zero_request() -> PromisOpRequest {
     }
 }
 
-fn mine_request(
-    amount: u64,
-    foreign_chain: bool,
-    flip_gratis: bool,
-) -> MineGratisFromPromisRequestV1 {
-    let ctx = prepared(4);
-    let account = account();
-    let amount = U256::from(amount);
-    let chain = if foreign_chain {
-        B256::repeat_byte(0x5a)
-    } else {
-        chain_id()
-    };
-    let promis = promis_key(&ctx);
-    let gratis = ctx
-        .state_key_handle(outbe_core_common::confidential_tee::GRATIS.state_info(), 0)
-        .expect("gratis key");
-    let balance = outbe_promis::cipher::write_amount(
-        &derive_view_key(&promis, account).unwrap(),
-        BalanceTransition {
-            account,
-            field: 0,
-            previous_version: 0,
-            amount,
-            input_hash: B256::ZERO,
-        },
-    )
-    .unwrap();
-    let encrypted = encrypt_tee_amount(
-        &ctx.network_encryption_public().unwrap(),
-        chain,
-        account,
-        amount,
-    )
-    .unwrap();
-    let promis_keys = derive_account_keys(&promis, account).unwrap();
-    let gratis_keys = outbe_gratis::derive_account_keys(&gratis, account).unwrap();
-    let mut gratis_mac = outbe_gratis::modify_mac(
-        &gratis_keys,
-        &outbe_gratis::ModifyOperation {
-            account,
-            op: outbe_gratis::GratisOp::Mint,
-            amount,
-            op_nonce: 0,
-            chain_id: chain,
-        },
-    );
-    if flip_gratis {
-        gratis_mac[0] ^= 1;
-    }
-    MineGratisFromPromisRequestV1 {
-        chain_id: chain,
-        account,
-        encrypted_promis_amount: encrypted.to_vec(),
-        current_promis_balance: balance,
-        promis_modify_auth: ModifyAuth {
-            mac: modify_mac(
-                &promis_keys,
-                &ModifyOperation {
-                    account,
-                    op: PromisOp::Burn,
-                    amount,
-                    op_nonce: 0,
-                    chain_id: chain_id(),
-                },
-            ),
-            op_nonce: 0,
-        },
-        current_gratis_balance: Vec::new(),
-        gratis_modify_auth: ModifyAuth {
-            mac: gratis_mac,
-            op_nonce: 0,
-        },
-        fidelity: FidelityOpSection {
-            op: FidelityCohortOp::In,
-            timestamp: 1_700_000_000,
-            first_qualified_start: 0,
-            current_blob: Vec::new(),
-        },
-    }
-}
-
-fn rejection(status: &MineGratisFromPromisStatusV1) -> &str {
-    match status {
-        MineGratisFromPromisStatusV1::PromisRejected { reason }
-        | MineGratisFromPromisStatusV1::GratisRejected { reason } => reason,
-        MineGratisFromPromisStatusV1::Applied => panic!("expected a rejection"),
-    }
-}
-
 #[test]
 fn applied_promis_records_replays_and_accepts_a_different_attestation_key() {
     let request = mint_request(7);
@@ -371,39 +277,33 @@ fn applied_promis_records_replays_and_accepts_a_different_attestation_key() {
 }
 
 #[test]
-fn applied_ops_round_trip_on_tx_zero_for_tags_2_and_22() {
-    fn round_trip<T: PartialEq + std::fmt::Debug>(expected_tag: u8, call: impl Fn() -> T) {
-        let (recorded, tape, leader) = record_tx(&call);
-        assert_eq!(tx_payload_of(&tape), expected_tag);
-        let _absent = set_in_process_tee_context_for_test(None);
-        let replayed = consume_tx(
-            WitnessExecutionMode::VerifierReplay,
-            leader,
-            tape.clone(),
-            &call,
-        );
-        let context = prepared(9);
-        assert_ne!(leader, context.attestation_public());
-        let _guard = set_in_process_tee_context_for_test(Some(context));
-        let verified = consume_tx(
-            WitnessExecutionMode::VerifierWithEnclave,
-            leader,
-            tape,
-            &call,
-        );
-        assert_eq!(replayed, recorded);
-        assert_eq!(verified, recorded);
-    }
-
-    let promis = mint_request(7);
-    round_trip(WitnessResponseTag::PromisOpApplied.value(), move || {
-        apply_promis_op(promis.clone()).unwrap()
-    });
-    let mine = mine_request(9, false, false);
-    round_trip(
-        WitnessResponseTag::GratisMinedFromPromisV1.value(),
-        move || mine_gratis_from_promis(mine.clone()).unwrap(),
+fn applied_promis_round_trips_on_tx_zero() {
+    let request = mint_request(7);
+    let call = || apply_promis_op(request.clone()).unwrap();
+    let (recorded, tape, leader) = record_tx(call);
+    assert_eq!(
+        tx_payload_of(&tape),
+        WitnessResponseTag::PromisOpApplied.value()
     );
+    let _absent = set_in_process_tee_context_for_test(None);
+    let replayed = consume_tx(
+        WitnessExecutionMode::VerifierReplay,
+        leader,
+        tape.clone(),
+        call,
+    );
+
+    let context = prepared(9);
+    assert_ne!(leader, context.attestation_public());
+    let _guard = set_in_process_tee_context_for_test(Some(context));
+    let verified = consume_tx(
+        WitnessExecutionMode::VerifierWithEnclave,
+        leader,
+        tape,
+        call,
+    );
+    assert_eq!(replayed, recorded);
+    assert_eq!(verified, recorded);
 }
 
 #[test]
@@ -459,70 +359,6 @@ fn foreign_promis_chain_records_a_signed_tag_2_rejection() {
     assert!(witness.first_witness_fault.is_none());
 }
 
-#[test]
-fn applied_and_rejected_mines_record_tag_22() {
-    let applied = mine_request(9, false, false);
-    let (mined, tape, leader) = record(|| mine_gratis_from_promis(applied.clone()).unwrap());
-    assert_eq!(
-        payload_of(&tape),
-        WitnessResponseTag::GratisMinedFromPromisV1.value()
-    );
-    assert_eq!(mined.status, MineGratisFromPromisStatusV1::Applied);
-    let local = prepared(9).attestation_public();
-    assert_ne!(leader, local);
-    let replayed = replay(leader, tape.clone(), || {
-        mine_gratis_from_promis(applied.clone()).unwrap()
-    });
-    let verified = with_other_enclave(leader, tape, || mine_gratis_from_promis(applied).unwrap());
-    assert_eq!(replayed, mined);
-    assert_eq!(verified, mined);
-
-    let refused = mine_request(9, true, false);
-    let (rejected, tape, leader) = record(|| mine_gratis_from_promis(refused.clone()).unwrap());
-    assert_eq!(rejection(&rejected.status), "invalid modify authorization");
-    assert_eq!(
-        payload_of(&tape),
-        WitnessResponseTag::GratisMinedFromPromisV1.value()
-    );
-    verify_mine_gratis_from_promis_attestation(
-        &leader,
-        rejected.inputs_canonical_hash,
-        &rejected,
-        &rejected.attestation_tag,
-    )
-    .unwrap();
-    let replayed = replay(leader, tape, || mine_gratis_from_promis(refused).unwrap());
-    assert_eq!(replayed, rejected);
-
-    let flipped = mine_request(9, false, true);
-    let (gratis_rejected, tape, _leader) =
-        record(|| mine_gratis_from_promis(flipped.clone()).unwrap());
-    assert!(matches!(
-        gratis_rejected.status,
-        MineGratisFromPromisStatusV1::GratisRejected { .. }
-    ));
-    assert_eq!(
-        payload_of(&tape),
-        WitnessResponseTag::GratisMinedFromPromisV1.value()
-    );
-}
-
-#[test]
-fn replay_of_a_different_mine_request_is_tape_invalid() {
-    let first = mine_request(9, false, false);
-    let second = mine_request(10, false, false);
-    assert_ne!(
-        mine_gratis_from_promis_canonical_hash(&first),
-        mine_gratis_from_promis_canonical_hash(&second)
-    );
-    let (_value, tape, leader) = record(|| mine_gratis_from_promis(first).unwrap());
-    assert_eq!(
-        payload_of(&tape),
-        WitnessResponseTag::GratisMinedFromPromisV1.value()
-    );
-    replay_rejects(leader, tape, || mine_gratis_from_promis(second));
-}
-
 fn classify(
     user_candidate: bool,
     context: Arc<InProcessTeeContext>,
@@ -554,26 +390,10 @@ fn unavailable_message(error: PrecompileError) -> String {
 }
 
 #[test]
-fn unactivated_context_is_local_unavailable_for_both_tags() {
+fn unactivated_context_is_local_unavailable_for_promis() {
     for user_candidate in [false, true] {
         let (error, witness) = classify(user_candidate, dormant(4), || {
             apply_promis_op(mint_request(7)).unwrap_err()
-        });
-        let message = unavailable_message(error);
-        assert!(
-            message.contains("resident offer material unavailable"),
-            "{message}"
-        );
-        assert!(witness.staged.is_empty());
-        assert_eq!(witness.prefix_cursor, 0);
-        assert!(witness.candidate_rejection.is_none());
-        assert_eq!(
-            witness.first_witness_fault,
-            Some(BlockWitnessFault::LocalUnavailable)
-        );
-
-        let (error, witness) = classify(user_candidate, dormant(4), || {
-            mine_gratis_from_promis(mine_request(9, false, false)).unwrap_err()
         });
         let message = unavailable_message(error);
         assert!(
@@ -607,21 +427,6 @@ fn wrong_payload_tags_are_tape_invalid_before_the_cursor_moves() {
         "witness payload tag 1 does not match expected 2",
     );
 
-    let mine = mine_request(9, false, false);
-    let mine_tape = EnclaveWitnessTapeV1 {
-        prefix: vec![EnclaveWitnessEntryV1::Payload {
-            payload: vec![WitnessResponseTag::PromisOpApplied.value()],
-            inputs_canonical_hash: mine_gratis_from_promis_canonical_hash(&mine),
-            attestation_tag: vec![0; 64],
-        }],
-        txs: Vec::new(),
-    };
-    assert_wrong_tag(
-        mine_tape,
-        || mine_gratis_from_promis(mine),
-        "witness payload tag 2 does not match expected 22",
-    );
-
     let foreign_gratis = encode_tagged_payload(
         WitnessResponseTag::GratisOpApplied,
         &outbe_gratis::GratisOpResult {
@@ -646,33 +451,6 @@ fn wrong_payload_tags_are_tape_invalid_before_the_cursor_moves() {
         zero_hash_tape(foreign_gratis),
         || apply_promis_op(mint_request(7)),
         "witness payload tag 1 does not match expected 2",
-    );
-
-    let foreign_promis = encode_tagged_payload(
-        WitnessResponseTag::PromisOpApplied,
-        &PromisOpResult {
-            status: PromisOpStatus::Applied,
-            new_balance: Vec::new(),
-            event_amount: U256::ZERO,
-            next_op_nonce: 0,
-            inputs_canonical_hash: B256::ZERO,
-            attestation_tag: Vec::new(),
-            encrypted_event_amount: Vec::new(),
-        },
-    )
-    .expect("tag 2 body");
-    assert_eq!(
-        foreign_promis[0],
-        WitnessResponseTag::PromisOpApplied.value()
-    );
-    assert_ne!(
-        mine_gratis_from_promis_canonical_hash(&mine_request(9, false, false)),
-        B256::ZERO
-    );
-    assert_wrong_tag(
-        zero_hash_tape(foreign_promis),
-        || mine_gratis_from_promis(mine_request(9, false, false)),
-        "witness payload tag 2 does not match expected 22",
     );
 }
 
@@ -746,7 +524,7 @@ fn rpc_round() -> RpcRound {
 }
 
 #[test]
-fn rpc_direct_checks_tags_2_and_22_before_and_after_a_context_swap() {
+fn rpc_direct_checks_promis_before_and_after_a_context_swap() {
     let round = rpc_round();
     let promis = mint_request(7);
     let promis_hash = promis_op_canonical_hash(&promis);
@@ -769,24 +547,6 @@ fn rpc_direct_checks_tags_2_and_22_before_and_after_a_context_swap() {
         "amount must be positive"
     );
 
-    let mine = mine_request(9, false, false);
-    let mine_hash = mine_gratis_from_promis_canonical_hash(&mine);
-    let mined = mine_gratis_from_promis(mine.clone()).unwrap();
-    verify_mine_gratis_from_promis_attestation(
-        &round.leader,
-        mine_hash,
-        &mined,
-        &mined.attestation_tag,
-    )
-    .unwrap();
-    assert!(verify_mine_gratis_from_promis_attestation(
-        &round.second.attestation_public(),
-        mine_hash,
-        &mined,
-        &mined.attestation_tag,
-    )
-    .is_err());
-
     replace_in_process_tee_context(&round.first, Arc::clone(&round.second), || {
         Ok::<(), InProcessDispatchError>(())
     })
@@ -803,14 +563,6 @@ fn rpc_direct_checks_tags_2_and_22_before_and_after_a_context_swap() {
         promis_hash,
         &replaced,
         &replaced.attestation_tag,
-    )
-    .unwrap();
-    let replaced_mine = mine_gratis_from_promis(mine).unwrap();
-    verify_mine_gratis_from_promis_attestation(
-        &round.second.attestation_public(),
-        mine_hash,
-        &replaced_mine,
-        &replaced_mine.attestation_tag,
     )
     .unwrap();
     let witness = round.state.lock().expect("witness lock");

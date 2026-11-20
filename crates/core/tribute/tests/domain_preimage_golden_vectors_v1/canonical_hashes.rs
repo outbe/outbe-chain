@@ -19,13 +19,6 @@ fn canonical_request_hash_vectors() {
         );
     }
     {
-        let request: MineGratisFromPromisRequestV1 = serde_json::from_str(r#"{"chain_id":"0x1111111111111111111111111111111111111111111111111111111111111111","account":"0x2222222222222222222222222222222222222222","encrypted_promis_amount":[113],"current_promis_balance":[81,82],"promis_modify_auth":{"mac":[51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51],"op_nonce":5},"current_gratis_balance":[97],"gratis_modify_auth":{"mac":[52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52],"op_nonce":6},"fidelity":{"op":"Out","timestamp":123,"first_qualified_start":124,"current_blob":[65,66]}}"#).unwrap();
-        assert_eq!(
-            hex::encode(mine_gratis_from_promis_canonical_hash(&request)),
-            "0901f0aa6c47d79e683062736af5d09f408ad6743aae7628e5ec8e1366bc57bc"
-        );
-    }
-    {
         let request: FidelityCohortRequest = serde_json::from_str(r#"{"chain_id":"0x1111111111111111111111111111111111111111111111111111111111111111","account":"0x2222222222222222222222222222222222222222","amount":"0x13","section":{"op":"Out","timestamp":123,"first_qualified_start":124,"current_blob":[65,66]}}"#).unwrap();
         assert_eq!(
             hex::encode(fidelity_cohort_canonical_hash(&request)),

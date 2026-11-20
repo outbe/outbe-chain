@@ -1,10 +1,8 @@
 //! Promisfactory precompile at `0x2337`. This file does ABI dispatch only. Promis
-//! mint, burn, and `mineGratis` orchestration lives in [`crate::runtime`].
-//! `mineGratis` burns confidential Promis and mints confidential Gratis in one
-//! enclave operation. The Gratis half records the Fidelity acquisition cohort.
+//! mint and burn orchestration lives in [`crate::runtime`].
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolCall, SolInterface};
+use alloy_sol_types::{sol, SolInterface};
 
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
 use outbe_primitives::dispatch::{dispatch_call, mutate, view};
@@ -28,13 +26,6 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
-    outbe_primitives::dispatch::preflight_dynamic_bytes_len(
-        data,
-        IPromisFactory::mineGratisCall::SELECTOR,
-        0,
-        5,
-        outbe_core_common::confidential_tee::ENCRYPTED_TEE_AMOUNT_LEN,
-    )?;
     dispatch_call(
         data,
         IPromisFactory::IPromisFactoryCalls::abi_decode,
@@ -47,31 +38,6 @@ pub fn dispatch(
                         op_nonce: c.opNonce,
                     };
                     runtime::mine_coen(storage.clone(), sender, c.promisMinor, auth)
-                }),
-                mineGratis(c) => mutate(&storage, c, caller, |sender, c| {
-                    if c.encryptedPromisMinor.len()
-                        != outbe_core_common::confidential_tee::ENCRYPTED_TEE_AMOUNT_LEN
-                    {
-                        return Err(outbe_primitives::error::PrecompileError::Revert(format!(
-                            "invalid bytes length: expected {}",
-                            outbe_core_common::confidential_tee::ENCRYPTED_TEE_AMOUNT_LEN
-                        )));
-                    }
-                    let promis_auth = ModifyAuth {
-                        mac: c.promisMac.0,
-                        op_nonce: c.promisOpNonce,
-                    };
-                    let gratis_auth = ModifyAuth {
-                        mac: c.gratisMac.0,
-                        op_nonce: c.gratisOpNonce,
-                    };
-                    runtime::mine_gratis(
-                        storage.clone(),
-                        sender,
-                        c.encryptedPromisMinor.to_vec(),
-                        promis_auth,
-                        gratis_auth,
-                    )
                 }),
                 supportsInterface(c) => view(c, |c| {
                     let id: [u8; 4] = c.interfaceId.0;

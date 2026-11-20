@@ -369,25 +369,22 @@ fn stage0_onboarding_and_v2_sealing_known_answers() {
 }
 
 #[test]
-fn offer_handle_opens_frozen_client_amount_and_rejects_wrong_domain() {
+fn offer_handle_opens_frozen_tribute_offer_and_rejects_wrong_domain() {
     let key = OfferKeyHandle::for_test([0x22; 32]);
     let salt = b"outbe/tribute/offer-salt/v1\0\0\0\0\0";
-    let mut info = b"outbe/promis/mine-gratis/v1".to_vec();
-    info.extend_from_slice(&[0x11; 32]);
-    info.extend_from_slice(&[0x22; 20]);
+    let info = b"tribute-factory-encryption";
     let peer = hex!("7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14");
-    let ciphertext = hex!("15dd34fefbe7ff9dbf9935085336f7d6fcd20f3c5ff206379ce02cb510880409996a3389fb2410081f29e11996f5d88e");
+    // Independent Node.js crypto vector for X25519, HKDF-SHA256 and ChaCha20-Poly1305.
+    let ciphertext = hex!("458849d1d74bc1f6e4ec719b1e39f38e12dd67749a9568cd1a196c5536");
     let plaintext = key
-        .ecdhe_decrypt(salt, &info, &peer, &[0x44; 12], &ciphertext)
+        .ecdhe_decrypt(salt, info, &peer, &[0x44; 12], &ciphertext)
         .unwrap();
-    let mut amount = [0; 32];
-    amount[31] = 17;
-    assert_eq!(plaintext.as_slice(), amount);
+    assert_eq!(plaintext.as_slice(), b"tribute-offer");
     assert!(key
         .ecdhe_decrypt(salt, b"wrong domain", &peer, &[0x44; 12], &ciphertext)
         .is_err());
     assert!(key
-        .ecdhe_decrypt(salt, &info, &[0; 32], &[0x44; 12], &ciphertext)
+        .ecdhe_decrypt(salt, info, &[0; 32], &[0x44; 12], &ciphertext)
         .is_err());
 }
 

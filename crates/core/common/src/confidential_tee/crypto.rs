@@ -1,15 +1,13 @@
 //! AEAD, HKDF, and offer decryption shared by every confidential domain.
 
-use alloy_primitives::{Address, B256, U256};
 use outbe_tee::resident::OfferKeyHandle;
 use ring::{
     aead::{self, BoundKey},
     hkdf::{self, KeyType},
 };
-use zeroize::Zeroizing;
 
 use super::errors::TeeError;
-use super::offer_encrypt::{self, OFFER_HKDF_INFO, OFFER_HKDF_SALT};
+use super::offer_encrypt::OFFER_HKDF_INFO;
 
 struct OneNonce([u8; 12]);
 
@@ -93,33 +91,6 @@ pub fn ecdhe_tribute_offer_decrypt(
         nonce,
         ciphertext,
     )
-}
-
-/// Decrypt a 92-byte `ephemeral_pub || nonce || ciphertext` amount envelope.
-pub fn decrypt_tee_amount(
-    tribute_offer_private_key: &OfferKeyHandle,
-    encrypted_amount: &[u8],
-    chain_id: B256,
-    account: Address,
-) -> Result<U256, TeeError> {
-    if encrypted_amount.len() != offer_encrypt::ENCRYPTED_TEE_AMOUNT_LEN {
-        return Err(TeeError::DecryptFailed(None));
-    }
-    let mut ephemeral = [0u8; 32];
-    ephemeral.copy_from_slice(&encrypted_amount[..32]);
-    let info = offer_encrypt::promis_mine_key_info(chain_id, account);
-    let plaintext = Zeroizing::new(ecdhe_offer_decrypt(
-        tribute_offer_private_key,
-        (&OFFER_HKDF_SALT, &info),
-        &ephemeral,
-        &encrypted_amount[32..44],
-        &encrypted_amount[44..],
-    )?);
-    let bytes: [u8; 32] = plaintext
-        .as_slice()
-        .try_into()
-        .map_err(|_| TeeError::DecryptFailed(None))?;
-    Ok(U256::from_be_bytes(bytes))
 }
 
 fn ecdhe_offer_decrypt(

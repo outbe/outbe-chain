@@ -1,33 +1,28 @@
 //! Host caller for confidential Promis writes and account-key delivery.
 //!
-//! `ApplyPromisOp` and `MineGratisFromPromisV1` are witness-recorded. The
-//! inputs hash is fixed before the call and checked again inside `execute`
-//! against the same context that signed. A foreign chain is a signed modify-MAC
+//! `ApplyPromisOp` is witness-recorded. Its inputs hash is fixed before the
+//! call and checked again inside `execute` against the same context that signed. A foreign chain is a signed modify-MAC
 //! rejection, not a host chain check. `outbe_derivePromisKeys` is session-only.
 
 use alloy_primitives::{Address, B256};
 use outbe_core_common::confidential_tee::{
     consensus_witness_call, seal_resident_account_keys, session_witness_call,
-    verify_bound_witness_attestation, FIDELITY, GRATIS, PROMIS,
+    verify_bound_witness_attestation, PROMIS,
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::in_process::InProcessTeeContext;
 use outbe_tee::{CallMeta, TransportError};
 use thiserror::Error;
 
-use crate::attest::{verify_mine_gratis_from_promis_attestation, verify_promis_op_attestation};
-use crate::engine::{apply_mine_gratis, apply_op, MineGratisKeys};
+use crate::attest::verify_promis_op_attestation;
+use crate::engine::apply_op;
 use crate::errors::{map_consensus_error, PromisFatalError};
 use crate::protocol::{
-    mine_gratis_from_promis_attestation_preimage, mine_gratis_from_promis_canonical_hash,
-    promis_op_attestation_preimage, promis_op_canonical_hash, MineGratisFromPromisRequestV1,
-    MineGratisFromPromisResultV1, PromisOpRequest, PromisOpResult,
+    promis_op_attestation_preimage, promis_op_canonical_hash, PromisOpRequest, PromisOpResult,
 };
 use crate::resident::resident_state_key;
-use crate::witness::MineGratisFromPromisBody;
 
 const APPLY_OP: &str = "ApplyPromisOp";
-const MINE_OP: &str = "MineGratisFromPromisV1";
 const DERIVE_OP: &str = "outbe_derivePromisKeys";
 const STATE_EPOCH: u64 = 0;
 
@@ -77,24 +72,6 @@ pub fn apply_promis_op(req: PromisOpRequest) -> Result<PromisOpResult> {
     finish_promis(expected, result)
 }
 
-/// Burn Promis and mint Gratis. A business rejection stays inside the result.
-pub fn mine_gratis_from_promis(
-    req: MineGratisFromPromisRequestV1,
-) -> Result<MineGratisFromPromisResultV1> {
-    #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::try_mine_gratis(&req) {
-        return Ok(result);
-    }
-    let expected = mine_gratis_from_promis_canonical_hash(&req);
-    let result = consensus_witness_call(
-        CallMeta::recorded(MINE_OP),
-        |context| execute_mine(context, expected, &req),
-        |key, result| authenticate_mine(expected, key, result),
-    )
-    .map_err(|error| map_consensus_error(MINE_OP, error))?;
-    finish_mine(expected, result)
-}
-
 /// Seal the account's Promis keys. This call is not written to the witness tape.
 pub fn derive_promis_keys(request: DerivePromisKeysRequest) -> Result<SealedPromisKeys> {
     let sealed = session_witness_call(CallMeta::session_only(DERIVE_OP), |context| {
@@ -127,38 +104,6 @@ fn execute_promis(
     Ok(result)
 }
 
-fn execute_mine(
-    context: &InProcessTeeContext,
-    expected: B256,
-    req: &MineGratisFromPromisRequestV1,
-) -> std::result::Result<MineGratisFromPromisBody, TransportError> {
-    let promis = resident_state_key(context, &PROMIS, STATE_EPOCH)?;
-    let gratis = resident_state_key(context, &GRATIS, STATE_EPOCH)?;
-    let fidelity = resident_state_key(context, &FIDELITY, STATE_EPOCH)?;
-    let mut result = context
-        .with_offer_key_handle(|offer_secret| {
-            apply_mine_gratis(
-                MineGratisKeys {
-                    offer_secret,
-                    promis_state_key: &promis,
-                    gratis_state_key: &gratis,
-                    fidelity_state_key: &fidelity,
-                },
-                req,
-            )
-        })
-        .map_err(|err| -> TransportError {
-            outbe_tee::InProcessDispatchError::Resident(err).into()
-        })?;
-    let preimage =
-        mine_gratis_from_promis_attestation_preimage(result.inputs_canonical_hash, &result)
-            .map_err(TransportError::codec)?;
-    result.attestation_tag = context.sign_domain_attestation(&preimage).to_vec();
-    let body = MineGratisFromPromisBody(result);
-    authenticate_mine(expected, &context.attestation_public(), &body)?;
-    Ok(body)
-}
-
 fn execute_derive(
     context: &InProcessTeeContext,
     request: &DerivePromisKeysRequest,
@@ -189,37 +134,11 @@ fn authenticate_promis(
     verify_bound_witness_attestation(expected, key, result, verify_promis_op_attestation)
 }
 
-fn authenticate_mine(
-    expected: B256,
-    key: &[u8; 32],
-    result: &MineGratisFromPromisBody,
-) -> std::result::Result<(), TransportError> {
-    if result.0.inputs_canonical_hash != expected {
-        return Err(TransportError::UnexpectedResponse);
-    }
-    verify_mine_gratis_from_promis_attestation(
-        key,
-        result.0.inputs_canonical_hash,
-        &result.0,
-        &result.0.attestation_tag,
-    )
-}
-
 fn finish_promis(expected: B256, result: PromisOpResult) -> Result<PromisOpResult> {
     if result.inputs_canonical_hash != expected {
         return Err(PromisFatalError::EnclaveNondeterminism.into());
     }
     Ok(result)
-}
-
-fn finish_mine(
-    expected: B256,
-    result: MineGratisFromPromisBody,
-) -> Result<MineGratisFromPromisResultV1> {
-    if result.0.inputs_canonical_hash != expected {
-        return Err(PromisFatalError::EnclaveNondeterminism.into());
-    }
-    Ok(result.0)
 }
 
 /// In-process stand-in. It runs the real engine and skips attestation.
@@ -231,8 +150,6 @@ pub mod test_enclave {
     };
     use crate::protocol::{ModifyAuth, PromisOp};
     use alloy_primitives::U256;
-    use outbe_core_common::confidential_tee::encrypt_tee_amount;
-    use outbe_primitives::chain::DEVNET_CHAIN_ID;
     use std::cell::RefCell;
 
     thread_local! {
@@ -242,18 +159,9 @@ pub mod test_enclave {
     const DEV_EPOCH: u64 = 0;
     const PROMIS_GROUP_SIG: &[u8] = b"outbe-dev-promis-group-signature-fixed-seed!!";
     const PROMIS_CHAIN: B256 = B256::repeat_byte(0xC1);
-    const GRATIS_GROUP_SIG: &[u8] = b"outbe-dev-gratis-group-signature-fixed-seed!!";
-    const GRATIS_CHAIN: B256 = B256::repeat_byte(0xC1);
-    const FIDELITY_GROUP_SIG: &[u8] = b"outbe-dev-fidelity-group-signature-fixed-seed";
-    const OFFER_SECRET: [u8; 32] = [0x42; 32];
-
     fn offer(group: &[u8], chain: B256) -> outbe_tee::resident::ResidentOfferMaterial {
         outbe_tee::resident::ResidentOfferMaterial::for_test(group.to_vec(), chain, DEV_EPOCH, 0)
             .expect("dev offer material")
-    }
-
-    fn fidelity_chain() -> B256 {
-        B256::from(U256::from(DEVNET_CHAIN_ID))
     }
 
     fn fixture_key() -> outbe_tee::resident::StateKeyHandle {
@@ -299,49 +207,8 @@ pub mod test_enclave {
         }
     }
 
-    /// Encrypt a `mineGratis` amount to the stand-in offer key. The chain id is 1.
-    pub fn encrypt_mine_gratis_amount(account: Address, amount: U256) -> Vec<u8> {
-        let public = outbe_tee::resident::OfferKeyHandle::for_test(OFFER_SECRET).public();
-        encrypt_tee_amount(&public, B256::from(U256::from(1u64)), account, amount)
-            .expect("encrypt mine_gratis amount")
-            .to_vec()
-    }
-
     pub(crate) fn try_apply(req: &PromisOpRequest) -> Option<PromisOpResult> {
         STATE_KEY.with(|slot| slot.borrow().as_ref().map(|key| apply_op(key, req)))
-    }
-
-    pub(crate) fn try_mine_gratis(
-        req: &MineGratisFromPromisRequestV1,
-    ) -> Option<MineGratisFromPromisResultV1> {
-        STATE_KEY.with(|slot| {
-            slot.borrow().as_ref().map(|promis_state_key| {
-                let gratis_material = offer(GRATIS_GROUP_SIG, GRATIS_CHAIN);
-                let gratis_state_key = outbe_gratis::derive_gratis_state_key(
-                    &gratis_material,
-                    GRATIS_CHAIN,
-                    DEV_EPOCH,
-                )
-                .expect("derive dev gratis state key");
-                let fidelity_material = offer(FIDELITY_GROUP_SIG, fidelity_chain());
-                let fidelity_state_key = outbe_fidelity::derive_fidelity_state_key(
-                    &fidelity_material,
-                    fidelity_chain(),
-                    DEV_EPOCH,
-                )
-                .expect("derive dev fidelity state key");
-                let offer_secret = outbe_tee::resident::OfferKeyHandle::for_test(OFFER_SECRET);
-                apply_mine_gratis(
-                    MineGratisKeys {
-                        offer_secret: &offer_secret,
-                        promis_state_key,
-                        gratis_state_key: &gratis_state_key,
-                        fidelity_state_key: &fidelity_state_key,
-                    },
-                    req,
-                )
-            })
-        })
     }
 }
 

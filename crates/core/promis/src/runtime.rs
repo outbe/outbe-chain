@@ -11,20 +11,14 @@
 //! These methods are crate-private. Other crates reach them through [`crate::api`].
 //! The enclave is the sole party that sees plaintext balances (Enclave Return Rule).
 
+use crate::protocol::{ModifyAuth, PromisOp, PromisOpRequest, PromisOpResult, PromisOpStatus};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_core_common::confidential_tee::ENCRYPTED_TEE_AMOUNT_LEN;
-
-use crate::protocol::{
-    FidelityOpSection, MineGratisFromPromisRequestV1, MineGratisFromPromisResultV1,
-    MineGratisFromPromisStatusV1, ModifyAuth, PromisOp, PromisOpRequest, PromisOpResult,
-    PromisOpStatus,
-};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::PROMIS_ADDRESS;
 
-use crate::enclave_client::{apply_promis_op, mine_gratis_from_promis};
+use crate::enclave_client::apply_promis_op;
 use crate::errors::{PromisError, PromisFatalError};
 use crate::precompile::IPromis;
 use crate::schema::Promis;
@@ -169,64 +163,4 @@ pub(crate) fn burn(
             encryptedAmountMinor: result.encrypted_event_amount.into(),
         }),
     )
-}
-
-/// Inputs for [`execute_mine_gratis`].
-pub struct MineGratisInput {
-    pub caller: Address,
-    pub encrypted_promis_minor: Vec<u8>,
-    pub promis_auth: ModifyAuth,
-    pub current_gratis_balance: Vec<u8>,
-    pub gratis_auth: ModifyAuth,
-    pub fidelity: FidelityOpSection,
-}
-
-/// Execute the combined Promis->Gratis conversion in the enclave, persist the
-/// Promis burn state + `PromisBurned` event, and return the enclave result so the
-/// caller can persist the Gratis + Fidelity halves.
-pub(crate) fn execute_mine_gratis(
-    storage: &StorageHandle<'_>,
-    input: MineGratisInput,
-) -> Result<MineGratisFromPromisResultV1> {
-    if input.encrypted_promis_minor.len() != ENCRYPTED_TEE_AMOUNT_LEN {
-        return Err(PromisError::Rejected("decrypt failed".into()).into());
-    }
-    let promis = Promis::new(storage.clone());
-    let promis_nonce = input.promis_auth.op_nonce;
-    check_op_nonce(&promis, input.caller, promis_nonce)?;
-    let req = MineGratisFromPromisRequestV1 {
-        chain_id: chain_id_b256(storage)?,
-        account: input.caller,
-        encrypted_promis_amount: input.encrypted_promis_minor,
-        current_promis_balance: promis.balance_ct_of(input.caller)?,
-        promis_modify_auth: input.promis_auth,
-        current_gratis_balance: input.current_gratis_balance,
-        gratis_modify_auth: input.gratis_auth,
-        fidelity: input.fidelity,
-    };
-    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
-    let result = mine_gratis_from_promis(req)?;
-    match &result.status {
-        MineGratisFromPromisStatusV1::Applied => {}
-        MineGratisFromPromisStatusV1::PromisRejected { reason }
-        | MineGratisFromPromisStatusV1::GratisRejected { reason } => {
-            return Err(PromisError::Rejected(reason.clone()).into());
-        }
-    }
-    if result.new_promis_balance.is_empty() || result.encrypted_promis_event_amount.is_empty() {
-        return Err(PromisFatalError::OwnerResultMismatch.into());
-    }
-    if promis_nonce.checked_add(1) != Some(result.next_promis_op_nonce) {
-        return Err(PromisFatalError::WrongOpNonce.into());
-    }
-    promis.write_balance_ct(input.caller, &result.new_promis_balance)?;
-    promis.set_op_nonce(input.caller, result.next_promis_op_nonce)?;
-    storage.emit_event(
-        PROMIS_ADDRESS,
-        SolEvent::encode_log_data(&IPromis::PromisBurned {
-            account: input.caller,
-            encryptedAmountMinor: result.encrypted_promis_event_amount.clone().into(),
-        }),
-    )?;
-    Ok(result)
 }

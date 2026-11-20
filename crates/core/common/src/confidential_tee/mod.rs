@@ -21,8 +21,7 @@ pub use confidential::{
     PROMIS, PROMIS_BALANCE_ENVELOPE, TRIBUTE,
 };
 pub use crypto::{
-    chacha20poly1305_decrypt, chacha20poly1305_encrypt, decrypt_tee_amount,
-    ecdhe_tribute_offer_decrypt, hkdf_sha256,
+    chacha20poly1305_decrypt, chacha20poly1305_encrypt, ecdhe_tribute_offer_decrypt, hkdf_sha256,
 };
 #[cfg(feature = "dev-keys")]
 pub use dev::encrypt_share;
@@ -39,13 +38,13 @@ pub use errors::{
     TRIBUTE_OFFER_ATTESTATION, TRIBUTE_SOURCE_REJECTED,
 };
 pub use offer_encrypt::{
-    canary_offer_json, encrypt_tee_amount, encrypt_tee_amount_with, encrypt_tribute_offer,
-    encrypt_tribute_offer_with, promis_mine_key_info, EncryptedOfferParts,
-    ENCRYPTED_TEE_AMOUNT_LEN, OFFER_HKDF_INFO, OFFER_HKDF_SALT, PROMIS_MINE_HKDF_INFO,
+    canary_offer_json, encrypt_tribute_offer, encrypt_tribute_offer_with, EncryptedOfferParts,
+    OFFER_HKDF_INFO, OFFER_HKDF_SALT,
 };
 pub use response_auth::{
-    attestation, hash, sign_attestation_tag, verify_bound_witness_attestation,
-    verify_response_attestation, verify_signed_domain, ResponseAuthSpec,
+    attestation, hash, sign_attestation_tag, verify_app_attestation,
+    verify_bound_witness_attestation, verify_response_attestation, verify_signed_domain,
+    ResponseAuthSpec,
 };
 pub use v2_balance_decrypt::{
     decrypt_fidelity_cohorts, decrypt_gratis_balance, decrypt_nod_for_owner,

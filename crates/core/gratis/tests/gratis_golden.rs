@@ -9,10 +9,8 @@ use outbe_gratis::cipher::{read_amount, write_amount};
 use outbe_gratis::nod_mine::{EncryptedNodMintRejectedV1, MineEncryptedNodResultV1};
 use outbe_gratis::{
     decrypt_gratis_balance, decrypt_pledged, derive_gratis_keys_message,
-    gratis_op_attestation_preimage, gratis_op_canonical_hash,
-    mine_gratis_from_promis_attestation_preimage, mine_gratis_from_promis_canonical_hash,
-    modify_mac, GratisOp, GratisOpResult, MineGratisFromPromisRequestV1,
-    MineGratisFromPromisResultV1, ModifyOperation,
+    gratis_op_attestation_preimage, gratis_op_canonical_hash, modify_mac, GratisOp, GratisOpResult,
+    ModifyOperation,
 };
 use outbe_tee::resident::{AccountKeysHandle, StateKeyHandle};
 use outbe_tee::tee_call::{verify_signed_rejection, SignedRejectionRef};
@@ -99,22 +97,6 @@ fn canonical_hash_and_attestation_vectors() {
     assert_eq!(
         hex::encode(keccak256(&mine_preimage)),
         "52b8387221eb04c32aa367f8aeee2ac62868682b694b60c267d52cad90067fda"
-    );
-    let paired: MineGratisFromPromisRequestV1 = serde_json::from_str(r#"{"chain_id":"0x1111111111111111111111111111111111111111111111111111111111111111","account":"0x2222222222222222222222222222222222222222","encrypted_promis_amount":[113],"current_promis_balance":[81,82],"promis_modify_auth":{"mac":[51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51],"op_nonce":5},"current_gratis_balance":[97],"gratis_modify_auth":{"mac":[52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52,52],"op_nonce":6},"fidelity":{"op":"Out","timestamp":123,"first_qualified_start":124,"current_blob":[65,66]}}"#).unwrap();
-    assert_eq!(
-        hex::encode(mine_gratis_from_promis_canonical_hash(&paired)),
-        "0901f0aa6c47d79e683062736af5d09f408ad6743aae7628e5ec8e1366bc57bc"
-    );
-    let mined: MineGratisFromPromisResultV1 = serde_json::from_str(r#"{"status":"Applied","new_promis_balance":[33],"encrypted_promis_event_amount":[34],"next_promis_op_nonce":5,"new_gratis_balance":[35],"encrypted_gratis_event_amount":[36],"next_gratis_op_nonce":6,"fidelity":{"new_blob":[33],"qualified_start_initialized":123,"league":7},"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82]}"#).unwrap();
-    let paired_preimage =
-        mine_gratis_from_promis_attestation_preimage(B256::repeat_byte(0x11), &mined).unwrap();
-    assert_eq!(
-        hex::encode(&paired_preimage),
-        "6f757462652f7465652f6d696e652d6772617469732d66726f6d2d70726f6d69732d6174746573746174696f6e2f76311111111111111111111111111111111111111111111111111111111111111111000001807b22737461747573223a224170706c696564222c226e65775f70726f6d69735f62616c616e6365223a5b33335d2c22656e637279707465645f70726f6d69735f6576656e745f616d6f756e74223a5b33345d2c226e6578745f70726f6d69735f6f705f6e6f6e6365223a352c226e65775f6772617469735f62616c616e6365223a5b33355d2c22656e637279707465645f6772617469735f6576656e745f616d6f756e74223a5b33365d2c226e6578745f6772617469735f6f705f6e6f6e6365223a362c22666964656c697479223a7b226e65775f626c6f62223a5b33335d2c227175616c69666965645f73746172745f696e697469616c697a6564223a3132332c226c6561677565223a377d2c22696e707574735f63616e6f6e6963616c5f68617368223a22307831313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131222c226174746573746174696f6e5f746167223a5b5d7d"
-    );
-    assert_eq!(
-        hex::encode(keccak256(&paired_preimage)),
-        "24795fc71683bd4fe277e80c306adbe9f74a0b98db5a1decde4f97ba984cd3e2"
     );
     assert_eq!(
         hex::encode(derive_gratis_keys_message(

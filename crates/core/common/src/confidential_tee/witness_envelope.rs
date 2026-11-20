@@ -44,7 +44,7 @@ macro_rules! impl_confidential_witness_schema {
 }
 
 /// Highest frozen V1 domain response discriminant.
-pub const V1_RESPONSE_TAG_MAX: u8 = 22;
+pub const V1_RESPONSE_TAG_MAX: u8 = 21;
 
 /// Domain response discriminants that must not be written to the witness tape.
 pub const NON_RECORDABLE_V1_TAGS: [u8; 3] = [0, 3, 6];
@@ -91,13 +91,11 @@ pub enum WitnessResponseTag {
     NodGroupLoadReadV1 = 20,
     /// `NodQuoteEncryptedV1`.
     NodQuoteEncryptedV1 = 21,
-    /// `GratisMinedFromPromisV1`.
-    GratisMinedFromPromisV1 = 22,
 }
 
 impl WitnessResponseTag {
     /// Every recordable V1 tag, in discriminant order.
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 19] = [
         Self::GratisOpApplied,
         Self::PromisOpApplied,
         Self::FidelityLeaguesSnapshotted,
@@ -117,7 +115,6 @@ impl WitnessResponseTag {
         Self::NodGroupLoadOpAppliedV1,
         Self::NodGroupLoadReadV1,
         Self::NodQuoteEncryptedV1,
-        Self::GratisMinedFromPromisV1,
     ];
 
     /// Frozen postcard discriminant.
@@ -141,7 +138,7 @@ impl TryFrom<u8> for WitnessResponseTag {
 /// A V1 response tag cannot be placed on the consensus witness tape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum WitnessTagError {
-    /// Tag is outside `0..=22`.
+    /// Tag is outside `0..=21`.
     #[error("witness response tag {tag} is outside the frozen V1 range 0..={V1_RESPONSE_TAG_MAX}")]
     OutOfRange {
         /// Observed tag byte.

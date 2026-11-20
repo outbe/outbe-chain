@@ -88,10 +88,20 @@ pub fn verify_signed_domain<T: Serialize + ?Sized>(
             inputs_hash_mismatch(spec.expected_inputs_hash, spec.actual_inputs_hash),
         ));
     }
-    verify_enclave_attestation_lazy(spec.attestation_pub, spec.tag, || {
+    verify_app_attestation(spec.descriptor, spec.attestation_pub, spec.tag, || {
         attestation(domain, spec.expected_inputs_hash, value)
     })
-    .map_err(|cause| TransportError::app_attestation(spec.descriptor, cause))
+}
+
+/// Verify a domain preimage lazily, retaining its application descriptor and typed cause.
+pub fn verify_app_attestation(
+    descriptor: AppErrorDescriptor,
+    key: &[u8; 32],
+    tag: &[u8],
+    preimage: impl FnOnce() -> Result<Vec<u8>, serde_json::Error>,
+) -> Result<(), TransportError> {
+    verify_enclave_attestation_lazy(key, tag, preimage)
+        .map_err(|cause| TransportError::app_attestation(descriptor, cause))
 }
 
 fn verify_strict(

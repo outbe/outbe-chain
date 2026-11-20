@@ -94,69 +94,6 @@ pub struct GratisOpResult {
     pub encrypted_event_amount: Vec<u8>,
 }
 
-/// Paired Promis-burn, Gratis-mint, and Fidelity-cohort request.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MineGratisFromPromisRequestV1 {
-    /// Chain bound into both modify authorizations.
-    pub chain_id: B256,
-    /// Account that burns Promis and receives Gratis.
-    pub account: Address,
-    /// Encrypted Promis amount opened inside the enclave.
-    pub encrypted_promis_amount: Vec<u8>,
-    /// Current encrypted Promis balance.
-    pub current_promis_balance: Vec<u8>,
-    /// Promis modify authorization.
-    pub promis_modify_auth: ModifyAuth,
-    /// Current encrypted Gratis balance.
-    pub current_gratis_balance: Vec<u8>,
-    /// Gratis modify authorization for the mint.
-    pub gratis_modify_auth: ModifyAuth,
-    /// Fidelity acquisition section applied with the mint.
-    pub fidelity: FidelityOpSection,
-}
-
-/// Outcome of [`MineGratisFromPromisRequestV1`].
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum MineGratisFromPromisStatusV1 {
-    /// Both ledgers and the cohort section were applied.
-    Applied,
-    /// Promis rejected the burn. Gratis was not written.
-    PromisRejected {
-        /// Promis rejection sentence.
-        reason: String,
-    },
-    /// Gratis rejected the mint. Promis was not written.
-    GratisRejected {
-        /// Gratis rejection sentence.
-        reason: String,
-    },
-}
-
-/// Public result of a Promis-to-Gratis mine. The producer stays in Promis.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MineGratisFromPromisResultV1 {
-    /// Which ledger accepted the paired op.
-    pub status: MineGratisFromPromisStatusV1,
-    /// Replacement Promis balance blob.
-    pub new_promis_balance: Vec<u8>,
-    /// Owner-encrypted Promis burn event amount.
-    pub encrypted_promis_event_amount: Vec<u8>,
-    /// Next Promis nonce.
-    pub next_promis_op_nonce: u64,
-    /// Replacement Gratis balance blob.
-    pub new_gratis_balance: Vec<u8>,
-    /// Owner-encrypted Gratis mint event amount.
-    pub encrypted_gratis_event_amount: Vec<u8>,
-    /// Next Gratis nonce.
-    pub next_gratis_op_nonce: u64,
-    /// Fidelity receipt. Empty when the pair was rejected.
-    pub fidelity: Option<FidelityOpOutcome>,
-    /// Keccak of the canonical paired request.
-    pub inputs_canonical_hash: B256,
-    /// Ed25519 tag over the paired attestation preimage.
-    pub attestation_tag: Vec<u8>,
-}
-
 fn push_bytes(buf: &mut Vec<u8>, bytes: &[u8]) {
     buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
     buf.extend_from_slice(bytes);
@@ -196,40 +133,6 @@ pub fn gratis_op_attestation_preimage(
         b"outbe/tee/gratis-attestation/v3",
         inputs_canonical_hash,
         &cleared_gratis(result),
-    )
-}
-
-/// Keccak of the canonical Promis-to-Gratis request framing.
-#[must_use]
-pub fn mine_gratis_from_promis_canonical_hash(req: &MineGratisFromPromisRequestV1) -> B256 {
-    let mut buf = Vec::new();
-    buf.extend_from_slice(req.chain_id.as_slice());
-    buf.extend_from_slice(req.account.as_slice());
-    push_bytes(&mut buf, &req.encrypted_promis_amount);
-    push_bytes(&mut buf, &req.current_promis_balance);
-    buf.extend_from_slice(&req.promis_modify_auth.mac);
-    buf.extend_from_slice(&req.promis_modify_auth.op_nonce.to_be_bytes());
-    push_bytes(&mut buf, &req.current_gratis_balance);
-    buf.extend_from_slice(&req.gratis_modify_auth.mac);
-    buf.extend_from_slice(&req.gratis_modify_auth.op_nonce.to_be_bytes());
-    buf.push(req.fidelity.op as u8);
-    buf.extend_from_slice(&req.fidelity.timestamp.to_be_bytes());
-    buf.extend_from_slice(&req.fidelity.first_qualified_start.to_be_bytes());
-    push_bytes(&mut buf, &req.fidelity.current_blob);
-    keccak256(buf)
-}
-
-/// Domain-separated preimage signed for a Promis-to-Gratis result.
-pub fn mine_gratis_from_promis_attestation_preimage(
-    inputs_canonical_hash: B256,
-    result: &MineGratisFromPromisResultV1,
-) -> Result<Vec<u8>, serde_json::Error> {
-    let mut probe = result.clone();
-    probe.attestation_tag.clear();
-    json_preimage(
-        b"outbe/tee/mine-gratis-from-promis-attestation/v1",
-        inputs_canonical_hash,
-        &probe,
     )
 }
 

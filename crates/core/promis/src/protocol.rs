@@ -2,18 +2,11 @@
 //!
 //! Field order matches the historical enclave postcard and JSON. [`PromisOp`] is
 //! `repr(u8)` so the modify-auth tag and the canonical-hash byte stay frozen.
-//! The paired mine request and result stay the `outbe_gratis` types, so there is
-//! one postcard schema for tag 22.
 
 use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_core_common::confidential_tee::{derive_account_keys_message, Ledger, OperationTag};
 
-pub use outbe_fidelity::FidelityOpSection;
-pub use outbe_gratis::{
-    mine_gratis_from_promis_attestation_preimage, mine_gratis_from_promis_canonical_hash,
-    MineGratisFromPromisRequestV1, MineGratisFromPromisResultV1, MineGratisFromPromisStatusV1,
-    ModifyAuth,
-};
+pub use outbe_gratis::ModifyAuth;
 
 /// A Promis write the enclave applies over an encrypted per-account balance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
