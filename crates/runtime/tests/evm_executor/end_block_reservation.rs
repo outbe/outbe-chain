@@ -368,7 +368,7 @@ fn end_block_cursor_rejects_wrong_order_duplicate_or_mismatched_gas_limit() {
 fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_before_intex_and_credis(
 ) {
     use outbe_credis::{CleanupQueue as CredisCleanupQueue, CredisContract};
-    use outbe_gemfactory::{schema::GemPosition, GemFactoryContract};
+    use outbe_gemfactory::{schema::GemFactoryPosition, GemFactoryContract};
     use outbe_intex::SeriesId;
     use outbe_intexfactory::IntexFactoryContract;
     use outbe_oracle::schema::OracleContract;
@@ -386,7 +386,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
     let block_ts = TEST_BLOCK_TIMESTAMP_BASE + 2;
     let expires_at = TEST_BLOCK_TIMESTAMP_BASE - SECONDS_PER_DAY;
     let expires_day = timestamp_to_date_key(expires_at);
-    let expired_hour = expires_at / 3_600;
+    let expired_day = outbe_core_common::deadline_queue::deadline_day(expires_at).unwrap();
     let expired_capacity = U256::from(2_000_000u64);
     let stale_series = SeriesId::pack(20_240_101, *b"USD", b'U').unwrap();
 
@@ -435,35 +435,29 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             .unwrap();
 
             let gf = GemFactoryContract::new(storage);
-            let pos = GemPosition {
-                position_id: U256::from(1u64),
-                merchant: OWNER,
+            let pos = GemFactoryPosition {
+                gem_factory_position_id: U256::from(1u64),
+                owner: OWNER,
                 source_series_id: stale_series,
                 remaining_capacity_minor: expired_capacity,
                 issued_at: expires_at - SECONDS_PER_DAY,
                 expires_at,
             };
             gf.positions.create(&pos).unwrap();
-            outbe_primitives::storage::indexed_list::IndexedList::new(
-                gf.owner_position_ids.list(&OWNER),
-                gf.owner_position_index.clone(),
-            )
-            .insert(pos.position_id)
-            .unwrap();
             outbe_core_common::deadline_queue::push(
                 &TestExpiryQueue(&gf),
-                expired_hour + 1,
+                u64::from(expired_day) + 1,
                 expires_at,
             )
             .unwrap();
             outbe_primitives::storage::indexed_list::IndexedList::new(
-                gf.hour_positions.list(&expired_hour),
-                gf.hour_position_index.clone(),
+                gf.expiry_day_positions.list(&expired_day),
+                gf.expiry_day_position_index.clone(),
             )
-            .insert(pos.position_id)
+            .insert(pos.gem_factory_position_id)
             .unwrap();
-            gf.hour_capacity_minor
-                .write(&expired_hour, expired_capacity)
+            gf.expiry_day_capacity_minor
+                .write(&expired_day, expired_capacity)
                 .unwrap();
         });
 
@@ -485,7 +479,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
         validators: vec![proposer],
     };
 
-    // 1. OSND (NodFactory) executes first; GemFactory expired hour is not yet swept.
+    // 1. OSND (NodFactory) executes first; GemFactory expired day is not yet swept.
     let nod_tx = config
         .build_end_system_tx(2, CHAIN_ID, proposer, SystemTx::EndBlock { step_index: 0 })
         .unwrap();
@@ -498,9 +492,9 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
         StorageHandle::enter(&mut provider, |storage| {
             let gf = GemFactoryContract::new(storage.clone());
             assert_eq!(
-                gf.hour_capacity_minor.read(&expired_hour).unwrap(),
+                gf.expiry_day_capacity_minor.read(&expired_day).unwrap(),
                 expired_capacity,
-                "after OSND alone, GemFactory expired hour must not yet be swept"
+                "after OSND alone, GemFactory expired day must not yet be swept"
             );
             assert_eq!(
                 PromisLimitContract::new(storage).promis_limit().unwrap(),
@@ -523,9 +517,9 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
         StorageHandle::enter(&mut provider, |storage| {
             let gf = GemFactoryContract::new(storage.clone());
             assert_eq!(
-                gf.hour_capacity_minor.read(&expired_hour).unwrap(),
+                gf.expiry_day_capacity_minor.read(&expired_day).unwrap(),
                 U256::ZERO,
-                "immediately after OSGM (before OSIX and OSCR), GemFactory phase 2 expire_through must release expired hour capacity"
+                "immediately after OSGM (before OSIX and OSCR), GemFactory phase 2 expire_through must release expired day capacity"
             );
             assert_eq!(
                 PromisLimitContract::new(storage).promis_limit().unwrap(),

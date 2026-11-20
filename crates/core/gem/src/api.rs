@@ -5,8 +5,9 @@ use outbe_core_common::series_id::SeriesId;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::call_breach::group_key;
-use outbe_system_common::time::first_full_day;
+use outbe_system_common::time::{first_full_day, SECONDS_PER_DAY};
 
+use crate::constants::SECONDS_PER_HOUR;
 use crate::errors::date_step_error;
 use crate::schema::{
     CallTerms, GemAddParams, GemContract, GemGroupState, GemItemState, GemState, GemView,
@@ -33,7 +34,10 @@ pub fn add_gem_opening_sub_series(
     let call_price = params
         .call_terms
         .map_or(U256::ZERO, |terms| terms.call_price_minor);
-    let sub_series_id = sub_series_of(storage, series_id, call_price, params.entry_at_series_vwap)?;
+    let market_hour = params
+        .at_market_price
+        .then(|| utc_hour_of(params.issued_at));
+    let sub_series_id = sub_series_of(storage, series_id, call_price, market_hour)?;
     let gem_id = GemContract::generate_gem_id(
         series_id,
         sub_series_id,
@@ -62,19 +66,20 @@ pub fn add_gem_opening_sub_series(
     Ok((gem_id, opened))
 }
 
-/// The sub-series of `call_price_minor` in `series_id`: 0 for the series-date VWAP, else
-/// its number, given on first use.
+/// The sub-series of a gem in `series_id`: `market_hour` at the market price, else the
+/// number of `call_price_minor`, given from 24 on first use.
 pub fn sub_series_of(
     storage: &StorageHandle<'_>,
     series_id: SeriesId,
     call_price_minor: U256,
-    entry_at_series_vwap: bool,
+    market_hour: Option<u16>,
 ) -> Result<u16> {
-    GemContract::new(storage.clone()).sub_series_of(
-        series_id,
-        call_price_minor,
-        entry_at_series_vwap,
-    )
+    GemContract::new(storage.clone()).sub_series_of(series_id, call_price_minor, market_hour)
+}
+
+/// The UTC hour of `timestamp`, 0-23.
+pub fn utc_hour_of(timestamp: u64) -> u16 {
+    ((timestamp % SECONDS_PER_DAY) / SECONDS_PER_HOUR) as u16
 }
 
 /// Records an already built gem, opening its group with `call_terms` if it is the first.

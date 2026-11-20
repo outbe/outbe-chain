@@ -132,8 +132,8 @@ fn static_gem_factory_command_is_denied_before_domain_validation() {
 
     let result = outbe_gemfactory::precompile::dispatch(
         storage,
-        &IGemFactory::issueGemPositionCall {
-            sourceIntexId: U256::from(99),
+        &IGemFactory::createGemFactoryPositionCall {
+            intexId: U256::from(99),
             units: U256::from(1),
         }
         .abi_encode(),
@@ -200,8 +200,8 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
     let sender = Address::repeat_byte(0xc0);
     let proxy = Address::repeat_byte(0xac);
     let series = SeriesId::pack(20_261_008, *b"USD", b'U').unwrap();
-    let data = IGemFactory::issueGemPositionCall {
-        sourceIntexId: series.right_id(&[]),
+    let data = IGemFactory::createGemFactoryPositionCall {
+        intexId: series.right_id(&[]),
         units: U256::ONE,
     }
     .abi_encode();

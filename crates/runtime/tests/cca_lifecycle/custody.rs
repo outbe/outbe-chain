@@ -198,25 +198,20 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         .abi_encode()
     };
     let before = snapshot(&mut db);
-    // Both spot and an older daily VWAP are available. Neither may replace yesterday.
-    with_storage(&mut db, |storage| {
-        seed_oracle(&storage);
-        seed_vwap(
-            &storage,
-            previous_date_key(previous_date_key(timestamp_to_date_key(NOW)).expect("date step"))
-                .expect("date step"),
-            U256::from(9_000_000),
-        );
+    // Spot and the window of an earlier day are available. Neither prices the claim hour.
+    with_storage(&mut db, |storage| seed_oracle(&storage));
+    with_storage_at(&mut db, NOW - 2 * SECONDS_PER_DAY, |storage| {
+        seed_hour_vwap(&storage, U256::from(9_000_000))
     });
     for amount in [U256::ZERO, reward + U256::ONE, U256::ONE] {
         assert!(claim_reward(&mut db, claim(amount), NOW).is_err());
         assert_eq!(snapshot(&mut db), before);
     }
-    // Retry tomorrow against today's finalized VWAP, with a price distinct from spot.
+    // Retry a day later against the window of that hour, with a price distinct from spot.
     let price = U256::from(2_000_000);
     let claim_time = NOW + SECONDS_PER_DAY;
-    with_storage(&mut db, |storage| {
-        seed_vwap(&storage, timestamp_to_date_key(NOW), price)
+    with_storage_at(&mut db, claim_time, |storage| {
+        seed_hour_vwap(&storage, price)
     });
     for (target, signature, args) in [
         (AGENT_REWARD_ADDRESS, "issueCcaReward(address,uint256)", 64),

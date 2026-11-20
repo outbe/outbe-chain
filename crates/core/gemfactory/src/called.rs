@@ -76,7 +76,7 @@ impl<'storage> CallPass<'storage> for GemCallPass<'storage> {
         let through_day = outbe_core_common::deadline_queue::deadline_day(pinned_ts)?;
         match phase {
             1 => crate::forfeited::forfeit_through(ctx, through_day, budget),
-            2 => crate::positions_expired::expire_through(ctx, through_day, budget),
+            2 => crate::position_expiry::expire_through(ctx, through_day, budget),
             _ => Err(PrecompileError::revert("invalid Gem daily phase")),
         }
     }

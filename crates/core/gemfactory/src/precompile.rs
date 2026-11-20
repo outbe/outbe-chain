@@ -34,17 +34,17 @@ pub fn dispatch(
     dispatch_call(data, IGemFactory::IGemFactoryCalls::abi_decode, |call| {
         use IGemFactory::IGemFactoryCalls::*;
         match call {
-            issueGemPosition(c) => mutate(&storage, c, caller, |sender, c| {
-                let source = outbe_intex::api::find_series_by_id(&storage, c.sourceIntexId)?
+            createGemFactoryPosition(c) => mutate(&storage, c, caller, |sender, c| {
+                let source = outbe_intex::api::find_series_by_id(&storage, c.intexId)?
                     .ok_or(crate::errors::GemFactoryError::SourceIntexNotFound)?;
-                runtime::issue_gem_position(&storage, sender, source.series_id, c.units)
+                runtime::create_gem_factory_position(&storage, sender, source.series_id, c.units)
             }),
             issueGem(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::issue_merchant_gem(
                     &storage,
                     crate::schema::MerchantGemIssueParams {
                         caller: sender,
-                        position_id: c.positionId,
+                        gem_factory_position_id: c.gemFactoryPositionId,
                         owner: c.owner,
                         promis_load_minor: c.promisLoadMinor,
                         issuance_currency: c.issuanceCurrency,
@@ -96,24 +96,11 @@ pub fn dispatch(
                 })
             }),
 
-            getPosition(c) => view(c, |c| runtime::position_data(&storage, c.positionId)),
+            getGemFactoryPosition(c) => view(c, |c| {
+                runtime::position_data(&storage, c.gemFactoryPositionId)
+            }),
             getCallProgress(c) => view(c, |c| {
                 crate::call_progress::call_progress(&storage, c.gemId)
-            }),
-
-            balanceOf(c) => view(c, |c| {
-                GemFactoryContract::new(storage.clone())
-                    .balance_of(c.owner)
-                    .map(U256::from)
-            }),
-            ownerOf(c) => view(c, |c| {
-                GemFactoryContract::new(storage.clone()).owner_of(c.positionId)
-            }),
-            tokenURI(c) => view(c, |c| {
-                GemFactoryContract::new(storage.clone()).token_uri(c.positionId)
-            }),
-            tokensByOwner(c) => view(c, |c| {
-                GemFactoryContract::new(storage.clone()).tokens_by_owner(c.owner)
             }),
         }
     })

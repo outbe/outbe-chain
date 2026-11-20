@@ -17,14 +17,16 @@ use outbe_vaultrouter::settlement::SettlementPayment;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 
 const POSITION_VALIDITY_SECONDS: u64 = outbe_gem::GemParams::MAINNET.position_validity;
-use crate::positions_expired;
+use crate::position_expiry;
 use crate::runtime;
-use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
+use crate::schema::{GemFactoryContract, GemFactoryPosition, GemIssueParams};
 use crate::sol_ext::{IReferenceCurrency, IERC20};
 use alloy_sol_types::SolCall;
 use outbe_vaultrouter::precompile::IVaultRouter;
 
 const T_NOW: u64 = 1_700_000_000;
+/// The UTC hour of `T_NOW` (22:13): the sub-series of a Gem at the market price.
+const T_NOW_HOUR: u16 = 22;
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const BOB: Address = address!("0x2222222222222222222222222222222222222222");
 /// Mock settlement stablecoin passed to `settle_gem` in tests. Its `isoCode()` is
@@ -317,8 +319,8 @@ fn seed_source_series(
     }
 }
 
-/// Seed an Intex series and send the merchant's whole holding into a GemPosition
-/// NFT (burn stubbed via `with_storage`). Returns the `position_id`.
+/// Seed an Intex series and send the merchant's whole holding into a GemFactory position
+/// (burn stubbed via `with_storage`). Returns the `gem_factory_position_id`.
 fn seed_and_send(storage: &StorageHandle, entry: U256, promis_load: u128) -> U256 {
     seed_source_series(
         storage,
@@ -326,7 +328,8 @@ fn seed_and_send(storage: &StorageHandle, entry: U256, promis_load: u128) -> U25
         promis_load,
         outbe_intex::IntexCallTrigger::default(),
     );
-    runtime::issue_gem_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS)).unwrap()
+    runtime::create_gem_factory_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS))
+        .unwrap()
 }
 
 const SOURCE_NOTICE_SECONDS: u32 = 3_600;
@@ -347,7 +350,7 @@ fn seed_called_source(storage: &StorageHandle, called_at: u64) {
 }
 
 fn send_whole_holding(storage: &StorageHandle) -> outbe_primitives::error::Result<U256> {
-    runtime::issue_gem_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS))
+    runtime::create_gem_factory_position(storage, ALICE, source_series_id(), U256::from(SENT_UNITS))
 }
 
 /// The refusal leaves storage and events as they were, before any burn.
@@ -400,7 +403,7 @@ fn unallocated(storage: &StorageHandle) -> U256 {
 }
 
 /// Publishes `vwap` as the finalized COEN/`iso` VWAP of the UTC day before `T_NOW`
-/// and as the price of the covered trailing window settlement converts at.
+/// and as the 24-hour VWAP of the current hour, the market price.
 fn seed_day_vwap(storage: &StorageHandle, iso: u16, vwap: U256) {
     let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
         .unwrap()
@@ -417,13 +420,24 @@ fn seed_day_vwap(storage: &StorageHandle, iso: u16, vwap: U256) {
     .unwrap();
 }
 
+/// Covers the 24-hour COEN/`iso` window of the storage's current hour at `vwap`.
+fn seed_hour_vwap(storage: &StorageHandle, iso: u16, vwap: U256) {
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        storage,
+        outbe_oracle::api::AddressPair::new_coen_to(iso),
+        vwap,
+        six_decimal_unit(),
+    )
+    .unwrap();
+}
+
 fn merchant_entry_price(storage: &StorageHandle, source_entry: U256) -> U256 {
     let id = seed_and_send(storage, source_entry, six_decimal_u128());
     let gem_id = runtime::issue_merchant_gem(
         storage,
         crate::schema::MerchantGemIssueParams {
             caller: ALICE,
-            position_id: id,
+            gem_factory_position_id: id,
             owner: BOB,
             promis_load_minor: six_decimal_unit(),
             issuance_currency: 840,

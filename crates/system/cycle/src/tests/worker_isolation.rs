@@ -140,7 +140,7 @@ fn tail_worker_revert_budget_exceeded_and_panic_emit_cycle_worker_failed_and_pre
                 write_worker_page(ctx)?;
                 match failure {
                     0 => Err(
-                        outbe_agentreward::errors::AgentRewardError::MissingPreviousDayPrice(840)
+                        outbe_agentreward::errors::AgentRewardError::ClaimPriceUnavailable(840)
                             .into(),
                     ),
                     1 => Ok(()),

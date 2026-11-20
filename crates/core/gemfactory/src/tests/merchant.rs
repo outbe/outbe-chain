@@ -23,7 +23,7 @@ fn issue_merchant_gem_mints_issued_and_drains_capacity() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: load,
                 issuance_currency: 840,
@@ -65,7 +65,7 @@ fn issue_merchant_gem_anchors_entry_to_source() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -88,7 +88,7 @@ fn issue_merchant_gem_charges_one_minor_unit_when_the_cost_rounds_to_zero() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: U256::ONE,
                 issuance_currency: 840,
@@ -111,7 +111,7 @@ fn issue_merchant_gem_rejects_non_merchant() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: BOB,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -121,7 +121,7 @@ fn issue_merchant_gem_rejects_non_merchant() {
         assert_eq!(
             r.unwrap_err().to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::GemFactoryError::NotPositionOwner
+                crate::errors::GemFactoryError::NotGemFactoryPositionOwner
             )
             .to_string()
         );
@@ -138,7 +138,7 @@ fn issue_merchant_gem_over_capacity_rejects() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: over,
                 issuance_currency: 840,
@@ -166,7 +166,7 @@ fn an_unpriced_source_emission_day_issues_nothing() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -202,7 +202,7 @@ fn equal_prices_take_the_market_price() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -216,14 +216,14 @@ fn equal_prices_take_the_market_price() {
 
 fn issue_in(
     storage: &StorageHandle<'_>,
-    position_id: U256,
+    gem_factory_position_id: U256,
     (issuance_currency, reference_currency): (u16, u16),
 ) -> outbe_primitives::error::Result<U256> {
     runtime::issue_merchant_gem(
         storage,
         crate::schema::MerchantGemIssueParams {
             caller: ALICE,
-            position_id,
+            gem_factory_position_id,
             owner: BOB,
             promis_load_minor: six_decimal_unit(),
             issuance_currency,
@@ -237,10 +237,7 @@ fn a_merchant_gem_names_a_reference_other_than_its_source() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
-        let yesterday = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
         let eur_market = U256::from(3u64) * six_decimal_unit();
-        outbe_oracle::test_support::record_finalized_day_vwap(storage, 978, yesterday, eur_market)
-            .unwrap();
         outbe_oracle::test_support::record_finalized_day_vwap(
             storage,
             978,
@@ -248,6 +245,7 @@ fn a_merchant_gem_names_a_reference_other_than_its_source() {
             rate,
         )
         .unwrap();
+        seed_hour_vwap(storage, 978, eur_market);
 
         let gem_id = issue_in(storage, id, (978, 978)).unwrap();
         let item = gem_item(storage, gem_id);
@@ -305,12 +303,12 @@ fn issue_merchant_gem_after_expiry_rejects() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         // Craft a position whose issued_at is already past the validity window.
-        let position_id = U256::from(1u64);
+        let gem_factory_position_id = U256::from(1u64);
         let mut factory = GemFactoryContract::new(storage.clone());
         factory
-            .add_position(&GemPosition {
-                position_id,
-                merchant: ALICE,
+            .add_position(&GemFactoryPosition {
+                gem_factory_position_id,
+                owner: ALICE,
                 source_series_id: source_series_id(),
                 remaining_capacity_minor: U256::from(100u64) * six_decimal_unit(),
                 issued_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,
@@ -322,7 +320,7 @@ fn issue_merchant_gem_after_expiry_rejects() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id,
+                gem_factory_position_id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -332,7 +330,7 @@ fn issue_merchant_gem_after_expiry_rejects() {
         assert_eq!(
             r.unwrap_err().to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::GemFactoryError::PositionExpired
+                crate::errors::GemFactoryError::ExpiredGemFactoryPosition
             )
             .to_string()
         );
@@ -346,16 +344,10 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
     let (id, expires_at) = StorageHandle::enter(&mut provider, |storage| {
         let id = seed_and_send(&storage, six_decimal_unit(), six_decimal_u128());
         let expires_at = runtime::position_data(&storage, id).unwrap().expiresAt;
-        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
-            .unwrap()
+        storage
+            .set_block_timestamp(U256::from(expires_at - 1))
             .unwrap();
-        OracleContract::new(storage.clone())
-            .record_utc_day_vwap(
-                previous_date_key(timestamp_to_date_key(expires_at - 1)).expect("date step"),
-                index,
-                rate,
-            )
-            .unwrap();
+        seed_hour_vwap(&storage, 840, rate);
         (id, expires_at)
     });
     let mut issue = |now: u64, load: U256| {
@@ -365,7 +357,7 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
                 &storage,
                 crate::schema::MerchantGemIssueParams {
                     caller: ALICE,
-                    position_id: id,
+                    gem_factory_position_id: id,
                     owner: BOB,
                     promis_load_minor: load,
                     issuance_currency: 840,
@@ -398,7 +390,7 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
     assert_eq!(
         expired.unwrap_err().to_string(),
         outbe_primitives::error::PrecompileError::from(
-            crate::errors::GemFactoryError::PositionExpired
+            crate::errors::GemFactoryError::ExpiredGemFactoryPosition
         )
         .to_string()
     );
@@ -406,7 +398,7 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
 }
 
 #[test]
-fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
+fn issue_merchant_gem_prices_at_the_vwap_of_its_hour() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let vwap = U256::from(3u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
@@ -416,7 +408,7 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -434,20 +426,19 @@ fn issue_merchant_gem_prices_at_the_previous_day_vwap() {
 }
 
 #[test]
-fn issue_merchant_gem_ignores_the_trailing_settlement_window() {
+fn issue_merchant_gem_ignores_the_previous_day_vwap() {
     let rate = U256::from(2u64) * six_decimal_unit();
     let vwap = U256::from(3u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         seed_day_vwap(storage, 840, vwap);
-        let snapshot = outbe_oracle::api::current_vwap_24h_snapshot(storage.clone()).unwrap();
+        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
+            .unwrap()
+            .unwrap();
         OracleContract::new(storage.clone())
-            .write_snapshot(
-                snapshot.cutoff() - 1,
-                &[(
-                    outbe_oracle::api::DAY_TYPE_PAIR,
-                    U256::from(9u64) * six_decimal_unit(),
-                    U256::from(1_000u64) * six_decimal_unit(),
-                )],
+            .record_utc_day_vwap(
+                previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step"),
+                index,
+                U256::from(9u64) * six_decimal_unit(),
             )
             .unwrap();
         assert_eq!(merchant_entry_price(storage, six_decimal_unit()), vwap);
@@ -455,7 +446,7 @@ fn issue_merchant_gem_ignores_the_trailing_settlement_window() {
 }
 
 #[test]
-fn issue_merchant_gem_ignores_a_spot_above_the_previous_day_vwap() {
+fn issue_merchant_gem_ignores_a_spot_above_the_vwap_of_its_hour() {
     let rate = U256::from(5u64) * six_decimal_unit();
     let vwap = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
@@ -495,7 +486,7 @@ fn issue_merchant_gem_takes_the_higher_entry() {
                 storage,
                 crate::schema::MerchantGemIssueParams {
                     caller: ALICE,
-                    position_id: id,
+                    gem_factory_position_id: id,
                     owner: BOB,
                     promis_load_minor: six_decimal_unit(),
                     issuance_currency: 840,
@@ -529,15 +520,16 @@ fn an_agent_gem_prices_cost_and_call_from_the_entry_at_every_rate() {
 }
 
 #[test]
-fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
+fn issue_merchant_gem_without_a_vwap_of_its_hour_takes_no_capacity() {
     let rate = U256::from(2u64) * six_decimal_unit();
     with_storage(Some(rate), |storage| {
         let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
+        let capacity = sent_capacity(six_decimal_u128());
         let r = runtime::issue_merchant_gem(
             storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: id,
+                gem_factory_position_id: id,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -550,6 +542,12 @@ fn issue_merchant_gem_rejects_a_missing_previous_day_vwap() {
                 crate::errors::GemFactoryError::OracleUnavailable
             )
             .to_string()
+        );
+        assert_eq!(
+            runtime::position_data(storage, id)
+                .unwrap()
+                .remainingCapacityMinor,
+            capacity
         );
     });
 }
@@ -566,7 +564,7 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
             &storage,
             crate::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id: position,
+                gem_factory_position_id: position,
                 owner: BOB,
                 promis_load_minor: six_decimal_unit(),
                 issuance_currency: 840,
@@ -605,14 +603,16 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
 
     let opened: Vec<_> = events
         .iter()
-        .filter_map(|log| crate::precompile::IGemFactory::GemPositionCreated::decode_log(log).ok())
+        .filter_map(|log| {
+            crate::precompile::IGemFactory::GemFactoryPositionCreated::decode_log(log).ok()
+        })
         .map(|log| log.data)
         .collect();
     assert_eq!(opened.len(), 1);
-    assert_eq!(opened[0].positionId, position);
+    assert_eq!(opened[0].gemFactoryPositionId, position);
     assert_eq!(opened[0].owner, ALICE);
     assert_eq!(
-        outbe_intex::SeriesId::from(opened[0].seriesId),
+        outbe_intex::SeriesId::from(opened[0].sourceSeriesId),
         source_series_id()
     );
     assert_eq!(opened[0].issuanceCurrency, 840);
@@ -623,6 +623,17 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
             .to_be_bytes::<32>()
             .as_slice()
     );
+
+    // Only the merchant gem names its position, and no Gem token event does.
+    let linked: Vec<_> = events
+        .iter()
+        .filter(|log| log.address == outbe_system_common::addresses::GEM_FACTORY_ADDRESS)
+        .filter_map(|log| {
+            crate::precompile::IGemFactory::GemFactoryPositionGemIssued::decode_log(log).ok()
+        })
+        .map(|log| (log.data.gemFactoryPositionId, log.data.gemId))
+        .collect();
+    assert_eq!(linked, vec![(position, expected[0].item.gem_id)]);
 }
 
 fn set_source_price(storage: &StorageHandle<'_>, price: U256) {
@@ -636,14 +647,14 @@ fn set_source_price(storage: &StorageHandle<'_>, price: U256) {
 
 fn merchant_gem_to(
     storage: &StorageHandle<'_>,
-    position_id: U256,
+    gem_factory_position_id: U256,
     owner: Address,
 ) -> outbe_primitives::error::Result<U256> {
     runtime::issue_merchant_gem(
         storage,
         crate::schema::MerchantGemIssueParams {
             caller: ALICE,
-            position_id,
+            gem_factory_position_id,
             owner,
             promis_load_minor: six_decimal_unit(),
             issuance_currency: 840,
@@ -659,14 +670,16 @@ fn a_series_numbers_each_source_call_price_on_first_use() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_day_vwap(&storage, 840, U256::from(2u64) * unit);
         let id = seed_and_send(&storage, U256::from(3u64) * unit, six_decimal_u128());
-        // (source VWAP, sub-series): above the market numbers it, at or below takes 0.
+        let hour = T_NOW_HOUR;
+        // (source VWAP, sub-series): above the market numbers it from 24, at or below takes
+        // the issue hour.
         for (owner, source, sub_series) in [
-            (0x31, 3u64, 1u16),
-            (0x32, 4, 2),
-            (0x33, 3, 1),
-            (0x34, 1, 0),
-            (0x35, 2, 0),
-            (0x36, 4, 2),
+            (0x31, 3u64, 24u16),
+            (0x32, 4, 25),
+            (0x33, 3, 24),
+            (0x34, 1, hour),
+            (0x35, 2, hour),
+            (0x36, 4, 25),
         ] {
             set_source_price(&storage, U256::from(source) * unit);
             let gem_id = merchant_gem_to(&storage, id, Address::repeat_byte(owner)).unwrap();
@@ -690,14 +703,98 @@ fn a_series_numbers_each_source_call_price_on_first_use() {
         .filter_map(|log| crate::precompile::IGemFactory::GemSeriesOpened::decode_log(log).ok())
         .map(|log| (log.data.subSeriesId, log.data.entryPriceMinor))
         .collect();
+    let hour = T_NOW_HOUR;
     assert_eq!(
         opened,
         vec![
-            (1, U256::from(3u64) * unit),
-            (2, U256::from(4u64) * unit),
-            (0, U256::from(2u64) * unit),
+            (24, U256::from(3u64) * unit),
+            (25, U256::from(4u64) * unit),
+            (hour, U256::from(2u64) * unit),
         ]
     );
+}
+
+#[test]
+fn gem_series_is_the_issue_day_with_a_sub_series_for_each_hour() {
+    let unit = six_decimal_unit();
+    let market = U256::from(2u64) * unit;
+    let next_day = T_NOW - T_NOW % SECONDS_PER_DAY + SECONDS_PER_DAY;
+    let mut provider = test_storage(Some(market));
+    let (gems, hour_prices) = StorageHandle::enter(&mut provider, |storage| {
+        let id = seed_and_send(&storage, unit, six_decimal_u128());
+        let mut hour_prices = Vec::new();
+        let gems = [
+            (14u64, 30u64, market),
+            (15, 10, market),
+            (16, 5, U256::from(5u64) * unit),
+        ]
+        .map(|(hour, minute, seeded)| {
+            let now = next_day + hour * 3_600 + minute * 60;
+            storage.set_block_timestamp(U256::from(now)).unwrap();
+            seed_hour_vwap(&storage, 840, seeded);
+            let snapshot = outbe_oracle::api::current_vwap_24h_snapshot(storage.clone()).unwrap();
+            hour_prices.push(
+                outbe_oracle::api::vwap_24h(storage.clone(), 840, snapshot)
+                    .unwrap()
+                    .unwrap(),
+            );
+            let gem_id = merchant_gem_to(&storage, id, Address::repeat_byte(0x40 + hour as u8));
+            gem_item(&storage, gem_id.unwrap())
+        });
+        (gems, hour_prices)
+    });
+    for ((gem, hour), price) in gems.iter().zip([14u16, 15, 16]).zip(&hour_prices) {
+        assert_eq!(gem.series_id.day(), timestamp_to_date_key(next_day));
+        assert_eq!(gem.sub_series_id, hour);
+        assert_eq!(
+            gem.entry_price_minor, *price,
+            "the window that ends at {hour}:00"
+        );
+    }
+    assert_eq!(hour_prices[0], market);
+    assert_ne!(hour_prices[2], market);
+    // Two hours at one call price are two sub-series of one call group; another price is not.
+    assert_eq!(gems[0].group_key, gems[1].group_key);
+    assert_ne!(gems[0].group_key, gems[2].group_key);
+    let opened: Vec<_> = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|log| crate::precompile::IGemFactory::GemSeriesOpened::decode_log(log).ok())
+        .map(|log| log.data.subSeriesId)
+        .collect();
+    assert_eq!(opened, vec![14, 15, 16]);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let storage = &storage;
+        let group = gems[0].group_key;
+        let mut gem = GemContract::new(storage.clone());
+        let members = gem.group_sub_series(group).unwrap();
+        assert_eq!(
+            members.iter().map(|m| m.sub_series_id).collect::<Vec<_>>(),
+            vec![14, 15]
+        );
+        let called_at = next_day + 2 * SECONDS_PER_DAY;
+        let terms = gem.read_call_terms(group).unwrap();
+        crate::called::mark_called(&mut gem, group, &terms, called_at).unwrap();
+        let [first, second, other] = gems.each_ref().map(|g| gem_view(storage, g.gem_id));
+        assert_eq!(first.group_called_at, called_at);
+        assert_eq!(
+            (second.group_called_at, second.settlement_deadline()),
+            (called_at, first.settlement_deadline())
+        );
+        assert_eq!(other.group_called_at, 0);
+
+        let before = unallocated(storage);
+        daily_pass(&block_ctx(storage, day_closed(first.settlement_deadline()))).unwrap();
+        assert_eq!(
+            unallocated(storage),
+            before + gems[0].promis_load_minor + gems[1].promis_load_minor
+        );
+        assert_eq!(
+            gem_view(storage, gems[2].gem_id).item.state,
+            GemState::Issued as u8
+        );
+    });
 }
 
 #[test]
@@ -789,10 +886,10 @@ fn forfeited_gem_loads_go_to_the_promis_limit_once() {
 }
 
 #[test]
-fn a_reward_gem_is_in_the_market_sub_series() {
+fn a_reward_gem_is_in_the_sub_series_of_its_hour() {
     with_storage(Some(U256::from(2u64) * six_decimal_unit()), |storage| {
         let gem_id = issue_at_live_rate(storage, ALICE, six_decimal_unit(), 840, 840).unwrap();
-        assert_eq!(gem_item(storage, gem_id).sub_series_id, 0);
+        assert_eq!(gem_item(storage, gem_id).sub_series_id, T_NOW_HOUR);
     });
 }
 
@@ -827,7 +924,7 @@ fn a_discounted_reward_gem_shares_the_market_sub_series_with_a_merchant_gem() {
                 merchant.group_key
             )
         );
-        assert_eq!(merchant.sub_series_id, 0);
+        assert_eq!(merchant.sub_series_id, T_NOW_HOUR);
         assert_eq!(merchant.entry_price_minor, market);
         assert_eq!(reward.entry_price_minor, discounted);
     });

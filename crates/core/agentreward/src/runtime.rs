@@ -1,5 +1,5 @@
 use crate::constants::{AGENT_DISCOUNT_PCT, REWARD_BALANCE_IDLE_SECONDS};
-use crate::errors::{date_step_error, AgentRewardError};
+use crate::errors::AgentRewardError;
 use crate::precompile::IAgentReward;
 use crate::schema::{AgentRewardContract, RewardPool};
 use alloy_primitives::{Address, B256, U256};
@@ -7,7 +7,7 @@ use outbe_core_common::markup::marked_down;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::StorageHandle;
-use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
+use outbe_system_common::time::WorldwideDay;
 
 impl AgentRewardContract<'_> {
     /// Increments WAA (wallet) tribute count for an address on `day`.
@@ -208,12 +208,11 @@ impl AgentRewardContract<'_> {
     /// in this pool and can then be returned to the Promis Limit by anyone.
     ///
     /// The Gem carries the caller's `(issuance, reference)` currencies. Its entry
-    /// price is the previous UTC day's COEN VWAP in the reference currency less
+    /// price is the 24-hour COEN VWAP of the claim hour in the reference currency less
     /// [`AGENT_DISCOUNT_PCT`]; its call price marks up the full VWAP. The reference
     /// currency must be an Oracle reference currency.
     ///
-    /// Any failure reverts the call and leaves the balance intact. A missing VWAP
-    /// waits for the next day, which brings a new VWAP with it.
+    /// Any failure reverts the call and leaves the balance intact.
     pub fn claim_reward(
         &mut self,
 
@@ -303,7 +302,7 @@ fn read_tribute_counts(
     Ok(result)
 }
 
-/// Shared issuance economics and claim-day pricing for every reward pool.
+/// Shared issuance economics and claim-hour pricing for every reward pool.
 pub(crate) fn issue_reward_gem(
     storage: &StorageHandle<'_>,
 
@@ -312,9 +311,9 @@ pub(crate) fn issue_reward_gem(
 ) -> Result<U256> {
     let (owner, load) = recipient;
     outbe_oracle::api::check_reference_currency(reference_currency)?;
-    let vwap = previous_day_vwap(storage, reference_currency)?.ok_or(
-        AgentRewardError::MissingPreviousDayPrice(reference_currency),
-    )?;
+    let snapshot = outbe_oracle::api::current_vwap_24h_snapshot(storage.clone())?;
+    let vwap = outbe_oracle::api::vwap_24h(storage.clone(), reference_currency, snapshot)?
+        .ok_or(AgentRewardError::ClaimPriceUnavailable(reference_currency))?;
     let entry_price =
         marked_down(vwap, AGENT_DISCOUNT_PCT).ok_or(AgentRewardError::EntryPriceOverflow)?;
     outbe_gemfactory::api::issue_gem(
@@ -328,10 +327,4 @@ pub(crate) fn issue_reward_gem(
             call_anchor_price_minor: vwap,
         },
     )
-}
-
-fn previous_day_vwap(storage: &StorageHandle<'_>, reference_currency: u16) -> Result<Option<U256>> {
-    let now = storage.now_secs()?;
-    let day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;
-    outbe_oracle::api::get_utc_day_vwap_for_iso(storage.clone(), day, reference_currency)
 }

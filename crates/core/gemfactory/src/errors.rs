@@ -36,13 +36,13 @@ pub enum GemFactoryError {
     SourceIntexNotIssued,
 
     #[error("position not found")]
-    PositionNotFound,
+    GemFactoryPositionNotFound,
 
     #[error("only position owner can issue merchant gem")]
-    NotPositionOwner,
+    NotGemFactoryPositionOwner,
 
     #[error("position already exists")]
-    PositionAlreadyExists,
+    GemFactoryPositionAlreadyExists,
 
     #[error("index out of bounds")]
     IndexOutOfBounds,
@@ -51,7 +51,7 @@ pub enum GemFactoryError {
     InsufficientCapacity,
 
     #[error("position expired")]
-    PositionExpired,
+    ExpiredGemFactoryPosition,
 
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
@@ -79,9 +79,6 @@ pub enum GemFactoryError {
 
     #[error("gem group {group_key} member {gem_id} has no record during cleanup")]
     MissingMemberRecordDuringCleanup { group_key: B256, gem_id: U256 },
-
-    #[error("position has not expired")]
-    PositionNotExpired,
 
     #[error("gem group {group} has no record to call")]
     MissingGroupForCall { group: B256 },
@@ -123,12 +120,20 @@ impl From<GemFactoryError> for PrecompileError {
             }
             GemFactoryError::SourceIntexNotFound => revert_with(I::SourceIntexNotFound {}),
             GemFactoryError::SourceIntexNotIssued => revert_with(I::SourceIntexNotIssued {}),
-            GemFactoryError::PositionNotFound => revert_with(I::PositionNotFound {}),
-            GemFactoryError::NotPositionOwner => revert_with(I::NotPositionOwner {}),
-            GemFactoryError::PositionAlreadyExists => revert_with(I::PositionAlreadyExists {}),
+            GemFactoryError::GemFactoryPositionNotFound => {
+                revert_with(I::GemFactoryPositionNotFound {})
+            }
+            GemFactoryError::NotGemFactoryPositionOwner => {
+                revert_with(I::NotGemFactoryPositionOwner {})
+            }
+            GemFactoryError::GemFactoryPositionAlreadyExists => {
+                revert_with(I::GemFactoryPositionAlreadyExists {})
+            }
             GemFactoryError::IndexOutOfBounds => revert_with(I::IndexOutOfBounds {}),
             GemFactoryError::InsufficientCapacity => revert_with(I::InsufficientCapacity {}),
-            GemFactoryError::PositionExpired => revert_with(I::PositionExpired {}),
+            GemFactoryError::ExpiredGemFactoryPosition => {
+                revert_with(I::ExpiredGemFactoryPosition {})
+            }
             GemFactoryError::InsufficientProofOfWork => revert_with(I::InsufficientProofOfWork {}),
             GemFactoryError::CannotMineInIssueBlock => revert_with(I::CannotMineInIssueBlock {}),
             GemFactoryError::InvalidCurrency { currency } => {
@@ -149,7 +154,6 @@ impl From<GemFactoryError> for PrecompileError {
                     gemId: gem_id,
                 })
             }
-            GemFactoryError::PositionNotExpired => revert_with(I::PositionNotExpired {}),
             GemFactoryError::MissingGroupForCall { group } => {
                 revert_with(I::MissingGroupForCall { group })
             }

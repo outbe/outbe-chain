@@ -19,7 +19,7 @@ pub struct GemIssueParams {
 #[derive(Debug, Clone, Copy)]
 pub struct MerchantGemIssueParams {
     pub caller: Address,
-    pub position_id: U256,
+    pub gem_factory_position_id: U256,
     pub owner: Address,
     pub promis_load_minor: U256,
     pub issuance_currency: u16,
@@ -34,16 +34,15 @@ pub struct GemMiningProof {
 }
 
 /// A merchant's Gem Factory position: the pool of Promis capacity from which the
-/// Gem Factory issues Merchant gems. The position is a single-owner, non-transferable
-/// NFT (owner = `merchant`), keyed by `position_id`. `merchant == 0` means "no
-/// position".
-#[storage_record(exists_field = merchant)]
-pub struct GemPosition {
+/// Gem Factory issues Merchant gems, keyed by `gem_factory_position_id`. Only its `owner`
+/// issues from it. `owner == 0` means "no position".
+#[storage_record(exists_field = owner)]
+pub struct GemFactoryPosition {
     #[key]
-    pub position_id: U256,
+    pub gem_factory_position_id: U256,
 
     #[attribute(order = 0)]
-    pub merchant: Address,
+    pub owner: Address,
 
     #[attribute(order = 1)]
     pub source_series_id: SeriesId,
@@ -58,19 +57,15 @@ pub struct GemPosition {
 
     /// Deadline snapshotted from the profile when the position opened, so a later profile
     /// change cannot retroactively expire positions already in the queue. Positions
-    /// expire in groups by its hour.
+    /// expire in groups of the UTC day of `expires_at`.
     #[attribute(order = 4)]
     pub expires_at: u64,
 }
 
-impl GemPosition {
-    /// Hourly position membership is independent of daily queue scheduling.
-    pub const GROUP_HOUR_SECONDS: u64 = 3_600;
-
-    /// The expiry group: the hour `expires_at` falls in.
-    #[must_use]
-    pub fn expiry_hour(&self) -> u64 {
-        self.expires_at / Self::GROUP_HOUR_SECONDS
+impl GemFactoryPosition {
+    /// The expiry group: the UTC day `expires_at` falls in.
+    pub fn expiry_day(&self) -> outbe_primitives::error::Result<u32> {
+        outbe_core_common::deadline_queue::deadline_day(self.expires_at)
     }
 }
 
@@ -84,25 +79,18 @@ pub struct GemFactoryContract {
     pub total_capacity_minor: outbe_primitives::storage::dsl::Value<U256>,
 
     #[attribute(order = 2)]
-    pub positions: outbe_primitives::storage::dsl::Map<U256, GemPosition>,
+    pub positions: outbe_primitives::storage::dsl::Map<U256, GemFactoryPosition>,
 
-    /// Each merchant's positions.
-    #[attribute(order = 3)]
-    pub owner_position_ids:
-        outbe_primitives::storage::dsl::Map<Address, outbe_primitives::storage::dsl::List<U256>>,
-    #[attribute(order = 4)]
-    pub owner_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
-
-    /// The positions of each expiry hour, and the capacity they have left to issue.
+    /// The positions of each expiry day, and the capacity they have left to issue.
     #[attribute(order = 5)]
-    pub hour_positions:
-        outbe_primitives::storage::dsl::Map<u64, outbe_primitives::storage::dsl::List<U256>>,
+    pub expiry_day_positions:
+        outbe_primitives::storage::dsl::Map<u32, outbe_primitives::storage::dsl::List<U256>>,
     #[attribute(order = 6)]
-    pub hour_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+    pub expiry_day_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
     #[attribute(order = 7)]
-    pub hour_capacity_minor: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub expiry_day_capacity_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
 
-    // The queue stores hour groups as `hour + 1` and schedules them by UTC deadline day.
+    // The queue stores expiry days as `day + 1` and schedules them by that day.
     #[attribute(order = 8)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 9)]
@@ -124,39 +112,39 @@ pub struct GemFactoryContract {
     #[attribute(order = 17)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
-    // This queue stores encoded expired hour groups whose positions await deletion.
+    // This queue stores the encoded expired days whose positions await deletion.
     #[attribute(order = 18)]
-    pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub deletion_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 19)]
-    pub cleanup_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub deletion_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 20)]
-    pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub deletion_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 21)]
-    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub deletion_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 22)]
-    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub deletion_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 23)]
-    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub deletion_day_at: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 24)]
-    pub cleanup_entry_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
+    pub deletion_entry_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 25)]
-    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
+    pub deletion_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 26)]
-    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub deletion_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 27)]
-    pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub deletion_cursor: outbe_primitives::storage::dsl::Value<u64>,
     #[attribute(order = 28)]
-    pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
+    pub deletion_budget: outbe_primitives::storage::dsl::Value<U256>,
 }
 
 impl GemFactoryContract<'_> {
-    /// `keccak256(source_series_id || merchant || block_number_be)`. A series is held by many
-    /// owners and any may send units, so the merchant tells two positions of one block apart.
-    pub fn generate_position_id(
+    /// `keccak256(source_series_id || owner || block_number_be)`. A series is held by many
+    /// owners and any may send units, so the owner tells two positions of one block apart.
+    pub fn generate_gem_factory_position_id(
         source_series_id: SeriesId,
-        merchant: Address,
+        owner: Address,
         block_number: u64,
     ) -> U256 {
-        source_series_id.right_id(&[merchant.as_slice(), &block_number.to_be_bytes()])
+        source_series_id.right_id(&[owner.as_slice(), &block_number.to_be_bytes()])
     }
 }

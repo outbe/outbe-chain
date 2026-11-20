@@ -1186,7 +1186,7 @@
   },
   {
     "type": "event",
-    "name": "VwapCalculated",
+    "name": "Vwap24hSet",
     "inputs": [
       {
         "name": "windowEnd",

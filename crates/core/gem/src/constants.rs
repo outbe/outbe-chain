@@ -22,10 +22,16 @@ pub const CALL_THRESHOLD: u32 = 21 * SECONDS_PER_DAY_U32;
 /// the owner must settle. Once elapsed the gem is forfeited with its group.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 
-/// GemPosition validity period: an Intex in the Gem Factory expires this long after
+/// GemFactoryPosition validity period: an Intex in the Gem Factory expires this long after
 /// `issued_at`. No new gems may be issued afterward. 1 year.
 pub const POSITION_VALIDITY_SECONDS: u64 = 365 * SECONDS_PER_DAY;
 
 /// Call-price markup rate: call price = `entry x (100 + CALL_RATE_PCT) / 100`.
 /// Its breach arms a Call Event.
 pub const CALL_RATE_PCT: u16 = 128;
+
+/// Seconds in one UTC hour: a sub-series of the market price is one issue hour.
+pub const SECONDS_PER_HOUR: u64 = 3_600;
+
+/// The first sub-series of a call price above the market: 0-23 are the issue hours.
+pub const FIRST_CALL_PRICE_SUB_SERIES: u16 = 24;
