@@ -114,13 +114,15 @@ impl LostIdentityProof {
         }
     }
 
+    #[cfg(test)]
     #[must_use]
-    pub const fn nonce(&self) -> u64 {
+    pub(super) const fn nonce(&self) -> u64 {
         self.nonce
     }
 
+    #[cfg(test)]
     #[must_use]
-    pub const fn tx_hash(&self) -> B256 {
+    pub(super) const fn tx_hash(&self) -> B256 {
         self.tx_hash
     }
 
