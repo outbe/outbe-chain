@@ -77,6 +77,7 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                         U256::from(2_000_000),
                     )
                     .unwrap();
+                seed_previous_day_vwap(&storage, block_ts, U256::from(1_000_000u64));
                 seed_hour_vwap(&storage, block_ts, U256::from(1_000_000u64));
                 seed_valid_tee_nodes(storage.clone(), &[proposer]);
                 outbe_oracle::api::set_exchange_rate(
