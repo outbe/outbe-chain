@@ -25,6 +25,8 @@ use alloy_sol_types::SolCall;
 use outbe_vaultrouter::precompile::IVaultRouter;
 
 const T_NOW: u64 = 1_700_000_000;
+/// The UTC hour of `T_NOW` (22:13): the sub-series of a Gem at the market price.
+const T_NOW_HOUR: u16 = 22;
 const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 const BOB: Address = address!("0x2222222222222222222222222222222222222222");
 /// Mock settlement stablecoin passed to `settle_gem` in tests. Its `isoCode()` is
@@ -317,8 +319,8 @@ fn seed_source_series(
     }
 }
 
-/// Seed an Intex series and send the merchant's whole holding into a GemFactoryPosition
-/// NFT (burn stubbed via `with_storage`). Returns the `gem_factory_position_id`.
+/// Seed an Intex series and send the merchant's whole holding into a GemFactory position
+/// (burn stubbed via `with_storage`). Returns the `gem_factory_position_id`.
 fn seed_and_send(storage: &StorageHandle, entry: U256, promis_load: u128) -> U256 {
     seed_source_series(
         storage,

@@ -21,6 +21,8 @@ mod expiry;
 mod lifecycle;
 
 pub(crate) const T_NOW: u64 = 1_700_000_000;
+/// The UTC hour of `T_NOW` (22:13).
+pub(crate) const T_NOW_HOUR: u16 = 22;
 pub(crate) const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 pub(crate) const BOB: Address = address!("0x2222222222222222222222222222222222222222");
 pub(crate) const ISSUER: Address = address!("0x3333333333333333333333333333333333333333");

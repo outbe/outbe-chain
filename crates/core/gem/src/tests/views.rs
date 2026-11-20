@@ -316,7 +316,7 @@ fn token_uri_renders_the_gem_card() {
         let item = crate::api::get_item(storage, gem_id).unwrap().unwrap();
         assert_eq!(
             trait_value(&json, "Series").unwrap(),
-            format!("{}-{}", item.series_id, crate::api::utc_hour_of(T_NOW))
+            format!("{}-{}", item.series_id, T_NOW_HOUR)
         );
         assert!(trait_value(&json, "Call Deadline").is_none());
 

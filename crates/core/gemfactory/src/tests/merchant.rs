@@ -670,7 +670,7 @@ fn a_series_numbers_each_source_call_price_on_first_use() {
     StorageHandle::enter(&mut provider, |storage| {
         seed_day_vwap(&storage, 840, U256::from(2u64) * unit);
         let id = seed_and_send(&storage, U256::from(3u64) * unit, six_decimal_u128());
-        let hour = outbe_gem::api::utc_hour_of(T_NOW);
+        let hour = T_NOW_HOUR;
         // (source VWAP, sub-series): above the market numbers it from 24, at or below takes
         // the issue hour.
         for (owner, source, sub_series) in [
@@ -703,7 +703,7 @@ fn a_series_numbers_each_source_call_price_on_first_use() {
         .filter_map(|log| crate::precompile::IGemFactory::GemSeriesOpened::decode_log(log).ok())
         .map(|log| (log.data.subSeriesId, log.data.entryPriceMinor))
         .collect();
-    let hour = outbe_gem::api::utc_hour_of(T_NOW);
+    let hour = T_NOW_HOUR;
     assert_eq!(
         opened,
         vec![
@@ -720,40 +720,81 @@ fn gem_series_is_the_issue_day_with_a_sub_series_for_each_hour() {
     let market = U256::from(2u64) * unit;
     let next_day = T_NOW - T_NOW % SECONDS_PER_DAY + SECONDS_PER_DAY;
     let mut provider = test_storage(Some(market));
-    let gems = StorageHandle::enter(&mut provider, |storage| {
+    let (gems, hour_prices) = StorageHandle::enter(&mut provider, |storage| {
         let id = seed_and_send(&storage, unit, six_decimal_u128());
-        [(14u64, 30u64, 0x41u8), (15, 10, 0x42)].map(|(hour, minute, owner)| {
-            storage
-                .set_block_timestamp(U256::from(next_day + hour * 3_600 + minute * 60))
-                .unwrap();
-            seed_hour_vwap(&storage, 840, market);
-            let gem_id = merchant_gem_to(&storage, id, Address::repeat_byte(owner)).unwrap();
-            gem_item(&storage, gem_id)
-        })
+        let mut hour_prices = Vec::new();
+        let gems = [
+            (14u64, 30u64, market),
+            (15, 10, market),
+            (16, 5, U256::from(5u64) * unit),
+        ]
+        .map(|(hour, minute, seeded)| {
+            let now = next_day + hour * 3_600 + minute * 60;
+            storage.set_block_timestamp(U256::from(now)).unwrap();
+            seed_hour_vwap(&storage, 840, seeded);
+            let snapshot = outbe_oracle::api::current_vwap_24h_snapshot(storage.clone()).unwrap();
+            hour_prices.push(
+                outbe_oracle::api::vwap_24h(storage.clone(), 840, snapshot)
+                    .unwrap()
+                    .unwrap(),
+            );
+            let gem_id = merchant_gem_to(&storage, id, Address::repeat_byte(0x40 + hour as u8));
+            gem_item(&storage, gem_id.unwrap())
+        });
+        (gems, hour_prices)
     });
-    for (gem, hour) in gems.iter().zip([14u16, 15]) {
+    for ((gem, hour), price) in gems.iter().zip([14u16, 15, 16]).zip(&hour_prices) {
         assert_eq!(gem.series_id.day(), timestamp_to_date_key(next_day));
         assert_eq!(gem.sub_series_id, hour);
-        assert_eq!(gem.entry_price_minor, market);
-    }
-    // Two hours at one call price are two sub-series of one call group.
-    assert_eq!(gems[0].group_key, gems[1].group_key);
-    StorageHandle::enter(&mut provider, |storage| {
-        let members = GemContract::new(storage)
-            .group_sub_series(gems[0].group_key)
-            .unwrap();
         assert_eq!(
-            members.iter().map(|m| m.sub_series_id).collect::<Vec<_>>(),
-            vec![14, 15]
+            gem.entry_price_minor, *price,
+            "the window that ends at {hour}:00"
         );
-    });
+    }
+    assert_eq!(hour_prices[0], market);
+    assert_ne!(hour_prices[2], market);
+    // Two hours at one call price are two sub-series of one call group; another price is not.
+    assert_eq!(gems[0].group_key, gems[1].group_key);
+    assert_ne!(gems[0].group_key, gems[2].group_key);
     let opened: Vec<_> = provider
         .get_ordered_events()
         .iter()
         .filter_map(|log| crate::precompile::IGemFactory::GemSeriesOpened::decode_log(log).ok())
         .map(|log| log.data.subSeriesId)
         .collect();
-    assert_eq!(opened, vec![14, 15]);
+    assert_eq!(opened, vec![14, 15, 16]);
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let storage = &storage;
+        let group = gems[0].group_key;
+        let mut gem = GemContract::new(storage.clone());
+        let members = gem.group_sub_series(group).unwrap();
+        assert_eq!(
+            members.iter().map(|m| m.sub_series_id).collect::<Vec<_>>(),
+            vec![14, 15]
+        );
+        let called_at = next_day + 2 * SECONDS_PER_DAY;
+        let terms = gem.read_call_terms(group).unwrap();
+        crate::called::mark_called(&mut gem, group, &terms, called_at).unwrap();
+        let [first, second, other] = gems.each_ref().map(|g| gem_view(storage, g.gem_id));
+        assert_eq!(first.group_called_at, called_at);
+        assert_eq!(
+            (second.group_called_at, second.settlement_deadline()),
+            (called_at, first.settlement_deadline())
+        );
+        assert_eq!(other.group_called_at, 0);
+
+        let before = unallocated(storage);
+        daily_pass(&block_ctx(storage, day_closed(first.settlement_deadline()))).unwrap();
+        assert_eq!(
+            unallocated(storage),
+            before + gems[0].promis_load_minor + gems[1].promis_load_minor
+        );
+        assert_eq!(
+            gem_view(storage, gems[2].gem_id).item.state,
+            GemState::Issued as u8
+        );
+    });
 }
 
 #[test]
@@ -848,10 +889,7 @@ fn forfeited_gem_loads_go_to_the_promis_limit_once() {
 fn a_reward_gem_is_in_the_sub_series_of_its_hour() {
     with_storage(Some(U256::from(2u64) * six_decimal_unit()), |storage| {
         let gem_id = issue_at_live_rate(storage, ALICE, six_decimal_unit(), 840, 840).unwrap();
-        assert_eq!(
-            gem_item(storage, gem_id).sub_series_id,
-            outbe_gem::api::utc_hour_of(T_NOW)
-        );
+        assert_eq!(gem_item(storage, gem_id).sub_series_id, T_NOW_HOUR);
     });
 }
 
@@ -886,7 +924,7 @@ fn a_discounted_reward_gem_shares_the_market_sub_series_with_a_merchant_gem() {
                 merchant.group_key
             )
         );
-        assert_eq!(merchant.sub_series_id, outbe_gem::api::utc_hour_of(T_NOW));
+        assert_eq!(merchant.sub_series_id, T_NOW_HOUR);
         assert_eq!(merchant.entry_price_minor, market);
         assert_eq!(reward.entry_price_minor, discounted);
     });
