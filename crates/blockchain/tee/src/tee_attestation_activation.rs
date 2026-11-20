@@ -874,11 +874,13 @@ mod tests {
                 }
             )
         ));
-        let invalid_hex = decode_bounded_hex("0xzz").unwrap_err();
         assert!(matches!(
-            invalid_hex,
-            TeeAttestationActivationError::DecodePolicyScheduleHex(_)
+            decode_bounded_hex("0xzz"),
+            Err(TeeAttestationActivationError::PolicyScheduleNotCanonicalHex)
         ));
+        let invalid_hex = TeeAttestationActivationError::DecodePolicyScheduleHex(
+            crate::errors::ActivationCause::new(hex::decode("zz").unwrap_err()),
+        );
         let cause = std::error::Error::source(&invalid_hex)
             .expect("DecodePolicyScheduleHex preserves ActivationCause");
         assert!(cause
@@ -889,8 +891,12 @@ mod tests {
 
     #[test]
     fn activation_cause_equality_uses_arc_identity() {
-        let first = decode_bounded_hex("0xzz").unwrap_err();
-        let second = decode_bounded_hex("0xzz").unwrap_err();
+        let first = TeeAttestationActivationError::DecodePolicyScheduleHex(
+            crate::errors::ActivationCause::new(hex::decode("zz").unwrap_err()),
+        );
+        let second = TeeAttestationActivationError::DecodePolicyScheduleHex(
+            crate::errors::ActivationCause::new(hex::decode("zz").unwrap_err()),
+        );
         assert_eq!(first.clone(), first);
         assert_ne!(first, second);
     }
