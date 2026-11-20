@@ -147,7 +147,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         router.retryIntexSeriesCallNoticeApply(series);
     }
 
-    function test_ApplyParkedMarkIsThePermissionlessValve() public {
+    function test_RetryIntexSeriesCallNoticeApplyIsPermissionless() public {
         _deliver(_called());
         intex.createSeries(CreateSeriesLib.params(DAY, 10, 0)); // the series appears by another path
 
@@ -159,7 +159,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         router.retryIntexSeriesCallNoticeApply(series);
     }
 
-    function test_ApplyParkedMarkRevertsAndKeepsTheSlotWhileTheSeriesIsMissing() public {
+    function test_RetryIntexSeriesCallNoticeApplyRevertsAndKeepsTheSlotWhileTheSeriesIsMissing() public {
         _deliver(_called());
         vm.expectRevert();
         router.retryIntexSeriesCallNoticeApply(series);

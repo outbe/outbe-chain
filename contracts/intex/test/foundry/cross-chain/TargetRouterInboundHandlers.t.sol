@@ -289,9 +289,9 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         _lock();
         _cancel();
 
-        (uint128 amount, uint32 claimableAt) = escrow.returnableAmount(EMISSION_DAY, bidder);
+        (uint128 amount, uint32 returnableAt) = escrow.returnableAmount(EMISSION_DAY, bidder);
         assertGt(amount, 0, "the lock is owed");
-        assertEq(claimableAt, 0, "at once, with no wait for the unfinalized delay");
+        assertEq(returnableAt, 0, "at once, with no wait for the unfinalized delay");
     }
 
     function test_cancel_before_the_result_twice_is_a_duplicate() public {
@@ -324,9 +324,9 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         vm.prank(address(bnbRouter));
         auction.startAuctionClearing(EMISSION_DAY);
         _cancel();
-        (uint128 amount, uint32 claimableAt) = escrow.returnableAmount(EMISSION_DAY, bidder);
+        (uint128 amount, uint32 returnableAt) = escrow.returnableAmount(EMISSION_DAY, bidder);
         assertGt(amount, 0, "the lock is owed");
-        assertEq(claimableAt, 0, "at once");
+        assertEq(returnableAt, 0, "at once");
 
         vm.expectEmit(false, true, false, true, address(bnbRouter));
         emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, 2);

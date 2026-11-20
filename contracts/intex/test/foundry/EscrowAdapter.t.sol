@@ -688,12 +688,12 @@ contract EscrowAdapterTest is Test {
         escrow.lockIntexAuctionAsset(emissionDay1, bidder1, LOCK_UNITS, 1_000_000, 1);
 
         // One second before the delay elapses.
-        uint32 claimableAt = lockedAt + escrow.UNFINALIZED_RETURN_DELAY();
-        vm.warp(claimableAt - 1);
+        uint32 returnableAt = lockedAt + escrow.UNFINALIZED_RETURN_DELAY();
+        vm.warp(returnableAt - 1);
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                IEscrowAdapter.IntexAuctionAssetNotYetReturnable.selector, claimableAt, claimableAt - 1
+                IEscrowAdapter.IntexAuctionAssetNotYetReturnable.selector, returnableAt, returnableAt - 1
             )
         );
         _refund(emissionDay1, bidder1);

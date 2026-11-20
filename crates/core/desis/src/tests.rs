@@ -294,7 +294,7 @@ fn open_clearing(s: &StorageHandle, units: u128) {
 }
 
 /// Send the chain's BIDS_DONE marker so its intake finalizes and the clearing gate opens.
-fn mark_done(s: &StorageHandle, chain: u32, total_batches: u16, total_bids: u32) {
+fn mark_done(s: &StorageHandle, chain: u32, total_pages: u16, total_bids: u32) {
     runtime::complete_intex_auction_bids(
         s.clone(),
         runtime::Inbound {
@@ -303,7 +303,7 @@ fn mark_done(s: &StorageHandle, chain: u32, total_batches: u16, total_bids: u32)
             emission_day: EMISSION_DAY,
             src_chain_id: chain,
         },
-        total_batches,
+        total_pages,
         total_bids,
     )
     .unwrap();
@@ -313,9 +313,9 @@ fn mark_done(s: &StorageHandle, chain: u32, total_batches: u16, total_bids: u32)
 /// the done marker. The intake refuses a single oversized batch.
 fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
     let cap = u8::try_from(crate::constants::MAX_PAYLOAD_ARRAY_LEN).unwrap();
-    let total_batches = u16::from(n.div_ceil(cap));
-    for batch_index in 0..total_batches {
-        let start = u8::try_from(batch_index).unwrap() * cap;
+    let total_pages = u16::from(n.div_ceil(cap));
+    for page_index in 0..total_pages {
+        let start = u8::try_from(page_index).unwrap() * cap;
         let end = start.saturating_add(cap).min(n);
         runtime::collect_intex_auction_bids(
             s.clone(),
@@ -325,8 +325,8 @@ fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
                 emission_day: EMISSION_DAY,
                 src_chain_id: chain,
             },
-            batch_index,
-            total_batches,
+            page_index,
+            total_pages,
             (start..end)
                 .map(|i| IntexAuctionBidData {
                     bidder_address: bidder(i),
@@ -340,7 +340,7 @@ fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
         )
         .unwrap();
     }
-    mark_done(s, chain, total_batches, u32::from(n));
+    mark_done(s, chain, total_pages, u32::from(n));
 }
 
 /// Run the begin-block gate clearing for the day (every snapshot chain finalized).
@@ -1811,7 +1811,7 @@ fn process_bids_accumulate_across_batches() {
     with_storage(|s| {
         open_revealing(&s);
 
-        // Two batches (total_batches=2) accumulate for the chain. Intake stays
+        // Two batches (total_pages=2) accumulate for the chain. Intake stays
         // Revealing. Nothing auto-transitions. The chain finalizes only on its BIDS_DONE marker.
         runtime::collect_intex_auction_bids(
             s.clone(),

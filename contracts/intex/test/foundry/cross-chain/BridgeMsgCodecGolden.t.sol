@@ -177,11 +177,11 @@ contract BridgeMsgCodecGoldenTest is Test {
         (
             uint32 emissionDay,
             uint32 srcChainId,
-            uint16 batchIndex,
+            uint16 pageIndex,
             uint16 totalPages,
             address[] memory dBidders,
             uint256[] memory dPacked
-        ) = this.exposedDecodeBidsBatch(
+        ) = this.exposedDecodeBidsPage(
             BridgeMsgCodec.encodeBidsPage(
                 0x11223344, 0x0000ABCD, 0x0000, 0x0001, bidders, BidPackLib.pack(quantities, rates, timestamps)
             )
@@ -189,7 +189,7 @@ contract BridgeMsgCodecGoldenTest is Test {
 
         assertEq(emissionDay, 0x11223344, "emissionDay");
         assertEq(srcChainId, 0x0000ABCD, "srcChainId");
-        assertEq(batchIndex, 0x0000, "batchIndex");
+        assertEq(pageIndex, 0x0000, "pageIndex");
         assertEq(totalPages, 0x0001, "totalPages");
         assertEq(dBidders.length, 2, "bidders len");
         assertEq(dBidders[0], address(0xA11CE), "bidders[0]");
@@ -206,10 +206,10 @@ contract BridgeMsgCodecGoldenTest is Test {
     }
 
     function test_RoundTrip_BidsBatch_MidBatch() public view {
-        (,, uint16 batchIndex, uint16 totalPages,,) = this.exposedDecodeBidsBatch(
+        (,, uint16 pageIndex, uint16 totalPages,,) = this.exposedDecodeBidsPage(
             BridgeMsgCodec.encodeBidsPage(7, 30101, 0, 2, new address[](0), new uint256[](0))
         );
-        assertEq(batchIndex, 0, "batchIndex");
+        assertEq(pageIndex, 0, "pageIndex");
         assertEq(totalPages, 2, "totalPages");
     }
 
@@ -314,7 +314,7 @@ contract BridgeMsgCodecGoldenTest is Test {
         return BridgeMsgCodec.decodeBidsTotals(p);
     }
 
-    function exposedDecodeBidsBatch(bytes calldata p)
+    function exposedDecodeBidsPage(bytes calldata p)
         external
         pure
         returns (uint32, uint32, uint16, uint16, address[] memory, uint256[] memory)
