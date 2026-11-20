@@ -12,7 +12,8 @@ Options:
   --help             Show this help.
 
 The source checkout must be clean. DIR must be outside the source checkout and
-must not contain prior output. Only Linux x86_64 is supported by recipe v1.
+must not contain prior output. Recipe v1 builds Linux x86_64 ELFs, with native
+DCAP verification in the outbe-chain executable.
 EOF
 }
 

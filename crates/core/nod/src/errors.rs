@@ -196,9 +196,3 @@ impl From<NodError> for PrecompileError {
         }
     }
 }
-
-/// Wraps a test-enclave decryption error in an enclave transport error.
-#[cfg(any(test, feature = "test-enclave"))]
-pub(crate) fn enclave_transport_error(error: impl std::fmt::Display) -> outbe_tee::TransportError {
-    outbe_tee::TransportError::EnclaveError(error.to_string())
-}

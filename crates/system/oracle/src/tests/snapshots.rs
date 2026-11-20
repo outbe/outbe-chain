@@ -81,44 +81,11 @@ fn calculate_vwap_excludes_the_half_open_end_boundary() {
 }
 
 #[test]
-fn write_snapshot_updates_exact_prefix_and_suffix_aggregates() {
-    with_bare_coen840_oracle(|oracle, pair| {
-        let day = 1_780_012_800u64;
-
-        for (offset, price, volume) in [
-            (9 * 60 * 60 + 59 * 60, 1, 2),
-            (10 * 60 * 60, 3, 4),
-            (11 * 60 * 60 + 59 * 60, 5, 6),
-            (12 * 60 * 60, 7, 8),
-        ] {
-            oracle
-                .write_snapshot(day + offset, &[(pair, coen_iso(price), coen_iso(volume))])
-                .unwrap();
-        }
-
-        let prefix_pv = oracle.wwd_prefix_pv_sum.get_nested(&pair);
-        let prefix_vol = oracle.wwd_prefix_vol_sum.get_nested(&pair);
-        let suffix_pv = oracle.wwd_suffix_pv_sum.get_nested(&pair);
-        let suffix_vol = oracle.wwd_suffix_vol_sum.get_nested(&pair);
-        assert_eq!(
-            prefix_pv.read(&day).unwrap(),
-            coen_iso(1) * coen_iso(2) + coen_iso(3) * coen_iso(4) + coen_iso(5) * coen_iso(6)
-        );
-        assert_eq!(prefix_vol.read(&day).unwrap(), coen_iso(12));
-        assert_eq!(
-            suffix_pv.read(&day).unwrap(),
-            coen_iso(3) * coen_iso(4) + coen_iso(5) * coen_iso(6) + coen_iso(7) * coen_iso(8)
-        );
-        assert_eq!(suffix_vol.read(&day).unwrap(), coen_iso(18));
-    });
-}
-
-#[test]
 fn partial_aggregate_overflow_rolls_back_the_entire_snapshot() {
     with_bare_coen840_oracle(|oracle, pair| {
         let day = 1_780_012_800u64;
         oracle
-            .wwd_prefix_pv_sum
+            .daily_pv_sum
             .get_nested(&pair)
             .write(&day, U256::MAX)
             .unwrap();
@@ -128,19 +95,11 @@ fn partial_aggregate_overflow_rolls_back_the_entire_snapshot() {
             .unwrap_err();
         assert_typed_revert(
             &error,
-            crate::errors::OracleError::VwapOverflow("WWD prefix sum accumulation"),
+            crate::errors::OracleError::VwapOverflow("daily sum accumulation"),
         );
         assert_eq!(oracle.snapshot_write_idx.read().unwrap(), 0);
         assert_eq!(
             oracle.daily_pv_sum.get_nested(&pair).read(&day).unwrap(),
-            U256::ZERO
-        );
-        assert_eq!(
-            oracle
-                .wwd_prefix_pv_sum
-                .get_nested(&pair)
-                .read(&day)
-                .unwrap(),
             U256::MAX
         );
     });

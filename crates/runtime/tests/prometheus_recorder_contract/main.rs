@@ -437,7 +437,7 @@ const EXPRESSION_CASES: &[(&str, bool)] = &[
             false,
         ),
         ("sum(rate(reth_outbe_tee_canary_consecutive_failures[5m]))", false),
-        ("reth_outbe_tee_enclave_heap_bytes{kind=\"outbe_label_only\"}", true),
+        ("reth_outbe_tee_canary_consecutive_failures{kind=\"outbe_label_only\"}", true),
         ("delta(reth_outbe_tee_canary_consecutive_failures[5m])", true),
         (
             "rate(reth_outbe_tee_canary_latency_ms_bucket[5m]) + reth_outbe_tee_canary_consecutive_failures",

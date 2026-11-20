@@ -9,27 +9,33 @@ interface IDesis {
     /// @notice Auction lifecycle stages. Values map 1:1 to the Rust `AuctionStage` enum.
     enum AuctionStage {
         None,
-        Briefed,
         CommittingBids,
         RevealingBids,
         CollectingBids,
         Completed,
-        Cancelled,
+        Canceled,
         Failed
     }
 
-    function processBidsBatch(
+    function collectIntexAuctionBids(
+        bytes32 receiveId,
         uint32 emissionDay,
         uint32 srcChainId,
-        uint16 batchIndex,
-        uint16 totalBatches,
-        address[] calldata bidderAddresses,
+        uint16 pageIndex,
+        uint16 totalPages,
+        address[] calldata bidders,
         uint256[] calldata packedBids
     ) external;
 
-    /// @notice Per-chain completeness marker: the source relayed `totalBatches`/`totalBids` for this day.
-    function processBidsDone(uint32 emissionDay, uint32 srcChainId, uint16 totalBatches, uint32 totalBids) external;
+    /// @notice Per-chain completeness marker: the source relayed `totalPages`/`totalBids` for this day.
+    function completeIntexAuctionBids(
+        bytes32 receiveId,
+        uint32 emissionDay,
+        uint32 srcChainId,
+        uint16 totalPages,
+        uint32 totalBids
+    ) external;
 
-    function getAuctionStage(uint32 emissionDay) external view returns (AuctionStage);
-    function getBidsCount(uint32 emissionDay) external view returns (uint256);
+    function auctionStage(uint32 emissionDay) external view returns (AuctionStage);
+    function intexAuctionBidsCount(uint32 emissionDay) external view returns (uint256);
 }

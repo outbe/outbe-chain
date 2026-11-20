@@ -86,7 +86,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::zerofee::ZeroFeeCmd,
     },
-    /// TEE: register a joining validator's enclave and install the offer key.
+    /// TEE: read registry, policy, upgrade status and node-reported enclave health.
     Tee {
         #[command(subcommand)]
         cmd: commands::tee::TeeCmd,
@@ -131,7 +131,7 @@ async fn main() -> Result<()> {
         Commands::Oracle { cmd } => cmd.run(&client, private_key).await,
         Commands::Tribute { cmd } => cmd.run(&client, private_key).await,
         Commands::ZeroFee { cmd } => cmd.run(&client, private_key).await,
-        Commands::Tee { cmd } => cmd.run(&client, private_key).await,
+        Commands::Tee { cmd } => cmd.run(&client).await,
         Commands::Vote { cmd } => cmd.run(&client, private_key).await,
         Commands::Stablecoin { cmd } => cmd.run(&client, private_key).await,
         Commands::Radicle { cmd } => cmd.run(&client, private_key).await,
@@ -230,41 +230,79 @@ mod tests {
     }
 
     #[test]
-    fn tee_join_with_only_the_global_private_key_parses() {
-        let cli = Cli::try_parse_from([
-            "outbe-cli",
-            "--private-key",
-            "11d7b7a4b68f4f6a9f4ec50a4f3b1e6f6294e46147e37030262830716725f9a3",
-            "tee",
-            "join",
-            "--enclave-socket",
-            "/tmp/enclave.sock",
-            "--genesis",
-            "/tmp/genesis.json",
-            "--binding-id",
-            "0101010101010101010101010101010101010101010101010101010101010101",
-            "--valid-until",
-            "1234567890",
-        ]);
-        assert!(cli.is_ok());
+    fn tee_status_parses_without_socket_or_signer() {
+        for command in ["status", "upgrade-status"] {
+            assert!(Cli::try_parse_from(["outbe-cli", "tee", command]).is_ok());
+            assert!(Cli::try_parse_from([
+                "outbe-cli",
+                "tee",
+                command,
+                "--node-data-dir",
+                "/tmp/node",
+                "--warning-blocks",
+                "600",
+                "--critical-blocks",
+                "120",
+            ])
+            .is_ok());
+            for flag in ["--warning-blocks", "--critical-blocks"] {
+                let error = Cli::try_parse_from(["outbe-cli", "tee", command, flag, "1"])
+                    .err()
+                    .unwrap();
+                assert_eq!(
+                    error.kind(),
+                    clap::error::ErrorKind::MissingRequiredArgument
+                );
+            }
+        }
     }
 
     #[test]
-    fn tee_renew_with_the_global_private_key_parses() {
-        let cli = Cli::try_parse_from([
-            "outbe-cli",
-            "--private-key",
-            "11d7b7a4b68f4f6a9f4ec50a4f3b1e6f6294e46147e37030262830716725f9a3",
-            "tee",
+    fn tee_removed_commands_are_rejected() {
+        for command in [
+            "join",
             "renew",
-            "--enclave-socket",
-            "/tmp/enclave.sock",
-            "--node-data-dir",
-            "/tmp/node",
-            "--reth-p2p-secret-key",
-            "/tmp/reth-p2p-secret-key",
-        ]);
-        assert!(cli.is_ok());
+            "renew-now",
+            "pubkey",
+            "upgrade-prepare",
+            "upgrade-provision",
+            "upgrade-copy-root",
+            "upgrade-submit",
+            "upgrade-finalize",
+        ] {
+            let error = Cli::try_parse_from(["outbe-cli", "tee", command])
+                .err()
+                .unwrap();
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::InvalidSubcommand,
+                "{command}"
+            );
+        }
+    }
+
+    #[test]
+    fn tee_status_rejects_removed_socket_flags() {
+        for command in ["status", "upgrade-status"] {
+            for flag in ["--enclave-socket", "--candidate-enclave-socket"] {
+                let error = Cli::try_parse_from([
+                    "outbe-cli",
+                    "tee",
+                    command,
+                    "--node-data-dir",
+                    "/tmp/node",
+                    flag,
+                    "/tmp/enclave.sock",
+                ])
+                .err()
+                .unwrap();
+                assert_eq!(
+                    error.kind(),
+                    clap::error::ErrorKind::UnknownArgument,
+                    "{command} {flag}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -287,82 +325,6 @@ mod tests {
             "claim",
         ])
         .is_err());
-    }
-
-    #[test]
-    fn removed_tee_key_and_renewal_forms_are_rejected() {
-        assert!(Cli::try_parse_from([
-            "outbe-cli",
-            "tee",
-            "join",
-            "--enclave-socket",
-            "/tmp/enclave.sock",
-            "--node-evm-key",
-            "/tmp/evm-key.hex",
-            "--binding-id",
-            "0101010101010101010101010101010101010101010101010101010101010101",
-            "--valid-until",
-            "1234567890",
-        ])
-        .is_err());
-        assert!(Cli::try_parse_from([
-            "outbe-cli",
-            "tee",
-            "renew-now",
-            "--enclave-socket",
-            "/tmp/enclave.sock",
-            "--node-data-dir",
-            "/tmp/node",
-        ])
-        .is_err());
-    }
-
-    #[test]
-    fn test_cli_parse_same_platform_tee_upgrade_workflow() {
-        assert!(Cli::try_parse_from([
-            "outbe-cli",
-            "tee",
-            "upgrade-prepare",
-            "--candidate-enclave-socket",
-            "/tmp/candidate.sock",
-            "--node-data-dir",
-            "/tmp/node",
-            "--active-tee-dir",
-            "/tmp/tee-a",
-            "--candidate-tee-dir",
-            "/tmp/tee-b",
-        ])
-        .is_ok());
-        assert!(Cli::try_parse_from([
-            "outbe-cli",
-            "tee",
-            "upgrade-copy-root",
-            "--node-data-dir",
-            "/tmp/node",
-        ])
-        .is_ok());
-        assert!(Cli::try_parse_from([
-            "outbe-cli",
-            "tee",
-            "upgrade-submit",
-            "--candidate-enclave-socket",
-            "/tmp/candidate.sock",
-            "--node-data-dir",
-            "/tmp/node",
-            "--binding-id",
-            "0101010101010101010101010101010101010101010101010101010101010101",
-            "--valid-until",
-            "1234567890",
-        ])
-        .is_ok());
-        assert!(Cli::try_parse_from([
-            "outbe-cli",
-            "tee",
-            "upgrade-status",
-            "--node-data-dir",
-            "/tmp/node",
-        ])
-        .is_ok());
     }
 
     #[test]

@@ -542,12 +542,13 @@ pub(super) fn accept_auction_batches(
 ) {
     for batch in 0..batches {
         let indices = (0..64u32).map(|offset| u32::from(batch) * 64 + offset);
-        let call = outbe_desis::precompile::IDesis::processBidsBatchCall {
+        let call = outbe_desis::precompile::IDesis::collectIntexAuctionBidsCall {
+            receiveId: alloy_primitives::B256::ZERO,
             emissionDay: day.value(),
             srcChainId: chain,
-            batchIndex: batch,
-            totalBatches: batches,
-            bidderAddresses: indices
+            pageIndex: batch,
+            totalPages: batches,
+            bidders: indices
                 .clone()
                 .map(|index| {
                     numbered_test_address(0xa3, u64::from(chain) * 16384 + u64::from(index + 1))
@@ -572,10 +573,11 @@ pub(super) fn accept_auction_batches(
         )
         .unwrap();
     }
-    let done = outbe_desis::precompile::IDesis::processBidsDoneCall {
+    let done = outbe_desis::precompile::IDesis::completeIntexAuctionBidsCall {
+        receiveId: alloy_primitives::B256::ZERO,
         emissionDay: day.value(),
         srcChainId: chain,
-        totalBatches: batches,
+        totalPages: batches,
         totalBids: u32::from(batches) * 64,
     };
     outbe_desis::precompile::dispatch(
@@ -591,7 +593,7 @@ pub(super) fn accept_auction_batches(
         auction.chain_bid_count.read(&key).unwrap(),
         u32::from(batches) * 64
     );
-    assert_eq!(auction.chain_done.read(&key).unwrap(), 1);
+    assert_eq!(auction.bids_completed.read(&key).unwrap(), 1);
 }
 
 pub(crate) fn queue_accepted_cleanup(storage: StorageHandle<'_>, chains: u32) {
@@ -679,12 +681,14 @@ fn assert_deferred_state(
             assert_eq!(cycle.last_executed_at.read(&id).unwrap(), scheduled);
             assert_eq!(cycle.last_executed_block_number.read(&id).unwrap(), block);
         }
-        let first_result = router_abi::IOriginRouter::sendAuctionResultCall {
+        let first_result = router_abi::IOriginRouter::sendIntexAuctionResultCall {
             dstChainId: 1,
             emissionDay: 20240101,
-            issuedUnits: 0,
-            auctionClearingRate: 0,
+            wonQuantity: 0,
             wonBidsCount: 0,
+            quantity: 0,
+            clearingRate: 0,
+            totalDemand: 0,
         }
         .abi_encode();
         let counter = U256::from_be_bytes(keccak256(first_result).0);

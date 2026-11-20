@@ -12,4 +12,5 @@ mod arithmetic;
 mod atomicity;
 mod gas;
 mod hooks;
+mod rates;
 mod tally;

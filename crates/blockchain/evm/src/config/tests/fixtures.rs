@@ -2,8 +2,8 @@ use super::*;
 
 pub(super) fn test_chain_spec() -> std::sync::Arc<ChainSpec<OutbeHeader>> {
     let mut spec = MAINNET.as_ref().clone();
-    spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
-    spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
+    spec.chain = NO_ATTESTATION_DEV_CHAIN_ID.into();
+    spec.genesis.config.chain_id = NO_ATTESTATION_DEV_CHAIN_ID;
     spec.map_header(OutbeHeader::new).into()
 }
 

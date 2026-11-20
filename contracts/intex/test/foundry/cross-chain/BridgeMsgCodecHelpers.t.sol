@@ -23,12 +23,12 @@ contract BridgeMsgCodecHarness {
         BridgeMsgCodec.assertAddress(v);
     }
 
-    function decodeBidsBatch(bytes calldata m) external pure {
-        BridgeMsgCodec.decodeBidsBatch(m);
+    function decodeBidsPage(bytes calldata m) external pure {
+        BridgeMsgCodec.decodeBidsPage(m);
     }
 
-    function decodeRefundInstructions(bytes calldata m) external pure {
-        BridgeMsgCodec.decodeRefundInstructions(m);
+    function decodeIntexAuctionWinners(bytes calldata m) external pure {
+        BridgeMsgCodec.decodeIntexAuctionWinners(m);
     }
 }
 
@@ -56,60 +56,60 @@ contract BridgeMsgCodecHelpersTest is Test {
 
     // --- assertMinLength on variable-length payloads ---
     function test_assertMinLength_shortBidsBatch_reverts() public {
-        uint16 floor = BridgeMsgCodec.MIN_LEN_BIDS_BATCH;
+        uint16 floor = BridgeMsgCodec.MIN_LEN_BIDS_PAGE;
         bytes memory packet = new bytes(uint256(floor) - 1);
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_BIDS_BATCH,
+                BridgeMsgCodec.MSG_BIDS_PAGE,
                 uint256(floor) - 1,
                 uint256(floor)
             )
         );
-        harness.assertMinLength(packet, BridgeMsgCodec.MSG_BIDS_BATCH);
+        harness.assertMinLength(packet, BridgeMsgCodec.MSG_BIDS_PAGE);
     }
 
     function test_assertMinLength_shortRefundInstructions_reverts() public {
-        uint16 floor = BridgeMsgCodec.MIN_LEN_REFUND_INSTRUCTIONS;
+        uint16 floor = BridgeMsgCodec.MIN_LEN_INTEX_AUCTION_WINNERS;
         bytes memory packet = new bytes(uint256(floor) - 1);
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
+                BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS,
                 uint256(floor) - 1,
                 uint256(floor)
             )
         );
-        harness.assertMinLength(packet, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS);
+        harness.assertMinLength(packet, BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS);
     }
 
     function test_assertMinLength_shortIssuanceInstructions_reverts() public {
-        uint16 floor = BridgeMsgCodec.MIN_LEN_ISSUANCE_INSTRUCTIONS;
+        uint16 floor = BridgeMsgCodec.MIN_LEN_INTEX_SERIES;
         bytes memory packet = new bytes(uint256(floor) - 1);
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
+                BridgeMsgCodec.MSG_INTEX_SERIES,
                 uint256(floor) - 1,
                 uint256(floor)
             )
         );
-        harness.assertMinLength(packet, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS);
+        harness.assertMinLength(packet, BridgeMsgCodec.MSG_INTEX_SERIES);
     }
 
     // --- assertMinLength on the fixed-width-but-variable-floor helpers ---
     function test_assertMinLength_shortMarkCalled_reverts() public {
-        uint16 floor = BridgeMsgCodec.MIN_LEN_MARK_CALLED;
+        uint16 floor = BridgeMsgCodec.MIN_LEN_INTEX_SERIES_CALL_NOTICE;
         bytes memory packet = new bytes(uint256(floor) - 1);
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_MARK_CALLED,
+                BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE,
                 uint256(floor) - 1,
                 uint256(floor)
             )
         );
-        harness.assertMinLength(packet, BridgeMsgCodec.MSG_MARK_CALLED);
+        harness.assertMinLength(packet, BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE);
     }
 
     // --- minLengthFor: unknown msgType returns 0 (caller raises UnknownMsgType) ---
@@ -130,11 +130,11 @@ contract BridgeMsgCodecHelpersTest is Test {
         harness.assertAddress(bytes32(uint256(uint160(address(0xCAFE)))));
     }
 
-    // --- decodeBidsBatch: inbound over-cap rejected with BidsBatchTooLarge ---
+    // --- decodeBidsPage: inbound over-cap rejected with IntexAuctionBidsPageTooLarge ---
     function test_decodeBidsBatch_overCap_revertsBidsBatchTooLarge() public {
         // The outbound encoder caps at MAX_PAYLOAD_ARRAY_LEN. An over-cap inbound packet can only
         // arrive via a trusted-peer bug. The decode-side guard exists to reject it.
-        uint256 n = BridgeMsgCodec.MAX_BIDS_BATCH + 1;
+        uint256 n = BridgeMsgCodec.MAX_BIDS_PAGE + 1;
         address[] memory bidders = new address[](n);
         uint16[] memory quantities = new uint16[](n);
         uint32[] memory rates = new uint32[](n);
@@ -147,16 +147,18 @@ contract BridgeMsgCodecHelpersTest is Test {
         }
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
-            BridgeMsgCodec.MSG_BIDS_BATCH,
+            BridgeMsgCodec.MSG_BIDS_PAGE,
             abi.encode(uint32(42), uint32(1), uint16(0), uint16(1), bidders, quantities, rates, timestamps)
         );
         vm.expectRevert(
-            abi.encodeWithSelector(BridgeMsgCodec.BidsBatchTooLarge.selector, n, BridgeMsgCodec.MAX_BIDS_BATCH)
+            abi.encodeWithSelector(
+                BridgeMsgCodec.IntexAuctionBidsPageTooLarge.selector, n, BridgeMsgCodec.MAX_BIDS_PAGE
+            )
         );
-        harness.decodeBidsBatch(packet);
+        harness.decodeBidsPage(packet);
     }
 
-    // --- decodeRefundInstructions: partial fill outside the winners ---
+    // --- decodeIntexAuctionWinners: partial fill outside the winners ---
     function test_decodeRefundInstructions_partialOutsideWinners_reverts() public {
         // A hand-rolled body bypasses the encoder, so the decoder checks the partial index itself.
         address[] memory winners = new address[](2);
@@ -165,10 +167,10 @@ contract BridgeMsgCodecHelpersTest is Test {
 
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
-            BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
+            BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS,
             abi.encode(uint32(42), uint16(0), uint16(1), uint64(600_000), uint128(1e6), winners, uint16(2), uint16(1))
         );
-        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidRefundPartial.selector, uint16(2), uint256(2)));
-        harness.decodeRefundInstructions(packet);
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidReturnPartial.selector, uint16(2), uint256(2)));
+        harness.decodeIntexAuctionWinners(packet);
     }
 }

@@ -548,21 +548,15 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
                 )
             )
         );
-        let other_policy = outbe_oracle::api::get_vwap_snapshot_id(
-            cutoff + 3_600,
-            &outbe_oracle::api::VwapPolicy {
-                policy_version: 2,
-                ..outbe_oracle::api::DEFAULT_VWAP_POLICY
-            },
-        )
-        .unwrap();
+        // The id of an older window.
+        let other_window = U256::from(cutoff - 3_600);
         let res = runtime::settle_gem(
             &storage,
             gem_id,
             SettlementPayment {
                 payer: ALICE,
                 asset: SETTLEMENT_ASSET_EUR,
-                snapshot_id: other_policy.to_u256(),
+                snapshot_id: other_window,
             },
             amount_cap(),
         );
@@ -572,7 +566,7 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
                 "{:?}",
                 outbe_primitives::error::PrecompileError::from(
                     outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
-                        authorized: other_policy.to_u256(),
+                        authorized: other_window,
                         required,
                     }
                 )

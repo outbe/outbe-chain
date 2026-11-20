@@ -435,3 +435,36 @@ async fn offer_phase_waits_for_every_participant_and_ignores_late_dkg() -> Resul
     ));
     Ok(())
 }
+
+use outbe_tee::test_utils::resident_context;
+
+#[test]
+fn resident_ceremony_rejects_out_of_order_requests_without_resetting_identity() {
+    use outbe_primitives::tee_attestation_v1::{
+        dkg_ceremony_id_v1, dkg_participant_set_hash_v1, AttestationMode, NetworkBindingV1,
+    };
+    let binding = NetworkBindingV1 {
+        chain_id: alloy_primitives::U256::from(676).to_be_bytes(),
+        genesis_hash: CHAIN,
+        attestation_mode: AttestationMode::NoAttestationDev,
+    };
+    let context = resident_context(7, binding);
+    let mut channel = &context;
+    let participant_bls = vec![context.tee_bls_public_bytes()];
+    let hash = dkg_participant_set_hash_v1(&participant_bls).unwrap();
+    let id = dkg_ceremony_id_v1(&binding, 0, hash).unwrap();
+    let participant = context
+        .founding_announcement(id, 0, &participant_bls)
+        .unwrap();
+    let coordinator =
+        CeremonyCoordinator::new(id, 0, participant.bls_pub.clone(), vec![participant]);
+    coordinator.open(&mut channel).unwrap();
+    let before = context.tee_bls_public_bytes();
+    assert!(coordinator.finalize_dealer(&mut channel).is_err());
+    assert!(!context.offer_key_ready().unwrap());
+    assert_eq!(context.tee_bls_public_bytes(), before);
+    let dealing = coordinator.deal(&mut channel).unwrap();
+    assert_eq!(dealing.len(), 1);
+    assert!(coordinator.deal(&mut channel).is_err());
+    assert_eq!(context.tee_bls_public_bytes(), before);
+}

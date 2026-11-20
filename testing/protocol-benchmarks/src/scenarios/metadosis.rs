@@ -52,7 +52,7 @@ impl BenchmarkScenario for MetadosisScenario {
             1,
         );
         StorageHandle::enter(&mut provider, |storage| {
-            outbe_metadosis::bench_support::create_worldwide_day(
+            outbe_metadosis::bench_support::open_worldwide_day(
                 storage,
                 BLOCK_NUMBER,
                 TARGET_WWD.start_timestamp().unwrap(),
@@ -86,7 +86,7 @@ impl BenchmarkScenario for MetadosisScenario {
             captured.gas_components,
         )
         .with_total_latency(latency_ns)
-        .with_latency("chain.metadosis.create_worldwide_day", latency_ns)
+        .with_latency("chain.metadosis.open_worldwide_day", latency_ns)
         .with_postcondition("metadosis.wwd_created", "true")
         .with_postcondition("metadosis.wwd_active", "true")
         .with_postcondition("metadosis.wwd", TARGET_WWD.value().to_string());

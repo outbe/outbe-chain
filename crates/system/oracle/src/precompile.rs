@@ -6,7 +6,7 @@
 
 use crate::errors::OracleError;
 use crate::schema::OracleContract;
-use crate::window::{active_vwap_policy, get_vwap_snapshot_id, VwapSnapshotId};
+use crate::window::{vwap_24h_snapshot_id, VwapSnapshotId};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent, SolInterface};
 use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
@@ -15,7 +15,6 @@ use outbe_system_common::address_pair::AddressPair;
 use outbe_system_common::addresses::ORACLE_ADDRESS;
 use outbe_system_common::math::reference_price::pair_scales;
 use outbe_system_common::stablecoin::iso_4217_alpha;
-use outbe_system_common::time::WorldwideDay;
 use outbe_system_common::time::SECONDS_PER_DAY;
 
 /// Selectors on this precompile that accept native value. The route table binds
@@ -95,14 +94,10 @@ pub fn dispatch(
             getTwap(c) => twap(oracle, c),
             getTwaps(c) => twaps(oracle, c),
             getDayVwap(c) => day_vwap(oracle, c),
-            getVwapPolicy(_) => vwap_policy(),
-            getVwapSnapshotId(_) => vwap_snapshot_id(oracle),
-            getFinalizedWindowVwap(c) => finalized_window_vwap(oracle, c),
-            getWorldwideDayVwap(c) => worldwide_day_vwap(oracle, c),
-            getWorldwideDayVwapSnapshot(c) => worldwide_day_vwap_snapshot(oracle, c),
-            getScurveValues(c) => scurve_values(oracle, c),
+            vwap24hSnapshotId(_) => vwap_24h_snapshot(oracle),
+            vwap24h(c) => vwap_24h(oracle, c),
+            getScurve(c) => scurve(oracle, c),
             getAllScurveData(_) => all_scurve_data(oracle),
-            getAllScurveDataForPair(c) => all_scurve_data_for_pair(oracle, c),
             getReferenceCurrencies(_) => reference_currencies(),
             currencyAlphaCode(c) => currency_alpha_code(c),
             getPolicyRateCurrencies(_) => policy_rate_currencies(oracle),
@@ -172,7 +167,13 @@ fn policy_rate_currencies(oracle: &OracleContract) -> Result<Bytes> {
 }
 
 fn policy_rate(oracle: &OracleContract, c: IOracle::getPolicyRateCall) -> Result<Bytes> {
-    view(c, |c| oracle.get_policy_rate(c.isoCode))
+    view(c, |c| {
+        let (rate, published_at) = oracle.get_policy_rate(c.isoCode)?;
+        Ok(IOracle::getPolicyRateReturn {
+            rate,
+            publishedAt: published_at,
+        })
+    })
 }
 
 fn gas_prices(oracle: &OracleContract) -> Result<Bytes> {
@@ -317,7 +318,12 @@ fn submit_vote(
             .map(|t| (t.base, t.quote, t.exchangeRate, t.volume))
             .collect();
         let gas: Vec<_> = c.gas.iter().map(|g| (g.chainId, g.gasPrice)).collect();
-        let (validator, tuple_count) = oracle.submit_vote(sender, &tuples, &gas)?;
+        let rates: Vec<_> = c
+            .rates
+            .iter()
+            .map(|r| (r.currency, r.rate, r.publishedAt))
+            .collect();
+        let (validator, tuple_count) = oracle.submit_vote(sender, &tuples, &gas, &rates)?;
         // Emit event after successful vote; the count excludes rejected tuples.
         Ok(IOracle::VoteSubmitted {
             validator,
@@ -421,68 +427,20 @@ fn day_vwap(oracle: &OracleContract, c: IOracle::getDayVwapCall) -> Result<Bytes
     })
 }
 
-fn vwap_policy() -> Result<Bytes> {
-    metadata::<IOracle::getVwapPolicyCall>(|| {
-        let policy = active_vwap_policy();
-        Ok(IOracle::getVwapPolicyReturn {
-            policyVersion: policy.policy_version,
-            vwapLookbackSeconds: policy.vwap_lookback_seconds,
-            vwapUpdateIntervalSeconds: policy.vwap_update_interval_seconds,
-        })
-    })
-}
-
-fn vwap_snapshot_id(oracle: &OracleContract) -> Result<Bytes> {
-    metadata::<IOracle::getVwapSnapshotIdCall>(|| {
+fn vwap_24h_snapshot(oracle: &OracleContract) -> Result<Bytes> {
+    metadata::<IOracle::vwap24hSnapshotIdCall>(|| {
         let now = oracle.storage.now_secs()?;
-        Ok(get_vwap_snapshot_id(now, &active_vwap_policy())?.to_u256())
+        Ok(vwap_24h_snapshot_id(now)?.to_u256())
     })
 }
 
-fn finalized_window_vwap(
-    oracle: &OracleContract,
-    c: IOracle::getFinalizedWindowVwapCall,
-) -> Result<Bytes> {
+fn vwap_24h(oracle: &OracleContract, c: IOracle::vwap24hCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair(AddressPair::new_coen_to(c.currency))?;
         let snapshot = VwapSnapshotId::from_u256(c.snapshotId)?;
         oracle
-            .finalized_window_vwap(pair, snapshot)?
+            .vwap_24h(pair, snapshot)?
             .ok_or_else(|| OracleError::NoVwapData.into())
-    })
-}
-
-fn worldwide_day_vwap(
-    oracle: &OracleContract,
-    c: IOracle::getWorldwideDayVwapCall,
-) -> Result<Bytes> {
-    view(c, |c| {
-        let (pairs, vwaps, lookbacks) = oracle.calculate_vwaps(c.startTime, c.endTime)?;
-        let (bases, quotes) = split_pairs(&pairs);
-        Ok(IOracle::getWorldwideDayVwapReturn {
-            bases,
-            quotes,
-            vwaps,
-            lookbackSeconds: lookbacks,
-        })
-    })
-}
-
-fn worldwide_day_vwap_snapshot(
-    oracle: &OracleContract,
-    c: IOracle::getWorldwideDayVwapSnapshotCall,
-) -> Result<Bytes> {
-    view(c, |c| {
-        let (start_time, end_time, bases, quotes, vwaps, lookbacks) =
-            oracle.get_worldwide_day_vwap_snapshot(c.worldwideDay.into())?;
-        Ok(IOracle::getWorldwideDayVwapSnapshotReturn {
-            startTime: start_time,
-            endTime: end_time,
-            bases,
-            quotes,
-            vwaps,
-            lookbackSeconds: lookbacks,
-        })
     })
 }
 
@@ -493,46 +451,28 @@ fn worldwide_day_vwap_snapshot(
 fn scurve_value(oracle: &OracleContract, c: IOracle::getScurveValueCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
-        crate::scurve::scurve_value(oracle, pair, WorldwideDay::from_timestamp(c.timestamp))
+        crate::scurve::scurve_value(oracle, pair, c.timestamp)
     })
 }
 
-fn scurve_values(oracle: &OracleContract, c: IOracle::getScurveValuesCall) -> Result<Bytes> {
+fn scurve(oracle: &OracleContract, c: IOracle::getScurveCall) -> Result<Bytes> {
     view(c, |c| {
         let pair = oracle.require_pair_from(c.base, c.quote)?;
-        let target_day = WorldwideDay::from_timestamp(c.timestamp);
-        let (peak_days, peak_prices, values) =
-            crate::scurve::get_scurve_entries(oracle, pair, target_day)?;
-        Ok(IOracle::getScurveValuesReturn {
-            targetDay: target_day.into(),
-            peakDays: peak_days,
-            peakPrices: peak_prices,
-            values,
+        let (start_hour, peak_price) = crate::scurve::curve(oracle, pair)?.unwrap_or_default();
+        Ok(IOracle::getScurveReturn {
+            startHour: start_hour,
+            peakPrice: peak_price,
         })
     })
 }
 
 fn all_scurve_data(oracle: &OracleContract) -> Result<Bytes> {
     metadata::<IOracle::getAllScurveDataCall>(|| {
-        let (bases, quotes, peak_days, peak_prices) = crate::scurve::get_all_scurve_data(oracle)?;
+        let (bases, quotes, start_hours, peak_prices) = crate::scurve::get_all_scurve_data(oracle)?;
         Ok(IOracle::getAllScurveDataReturn {
             bases,
             quotes,
-            peakDays: peak_days,
-            peakPrices: peak_prices,
-        })
-    })
-}
-
-fn all_scurve_data_for_pair(
-    oracle: &OracleContract,
-    c: IOracle::getAllScurveDataForPairCall,
-) -> Result<Bytes> {
-    view(c, |c| {
-        let pair = oracle.require_pair_from(c.base, c.quote)?;
-        let (peak_days, peak_prices) = crate::scurve::get_all_scurve_data_for_pair(oracle, pair)?;
-        Ok(IOracle::getAllScurveDataForPairReturn {
-            peakDays: peak_days,
+            startHours: start_hours,
             peakPrices: peak_prices,
         })
     })

@@ -113,7 +113,7 @@ interface ICredis {
         uint256 principalMinor;
         /// P_out - decreases with each settlement; 0 once Settled or Forfeited.
         uint256 outstandingPrincipalMinor;
-        /// G - the pledged Gratis: principal priced at the reservation's eight-hour VWAP.
+        /// G - the pledged Gratis: principal priced at the reservation's 24-hour VWAP.
         uint256 gratisMinor;
         /// The share of G still locked; 0 once Settled or Forfeited.
         uint256 outstandingGratisMinor;

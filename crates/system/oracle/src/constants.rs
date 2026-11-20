@@ -4,20 +4,11 @@ use alloy_primitives::U256;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_system_common::address_pair::AddressPair;
 use outbe_system_common::math::reference_price::is_coen_iso_market;
+use outbe_system_common::reference_currency::REFERENCE_CURRENCY_LETTERS;
 use outbe_system_common::units::{SCALE_1E18, SCALE_1E18_U128, SCALE_1E6_U128, SCALE_1E6_U256};
 
-/// Genesis policy rate of each reference currency, as `(iso_code, annual_rate_1e6)`
-/// in ascending ISO order: the overnight rate of that currency.
-/// Keep in sync with `DEFAULT_POLICY_RATES` in
-/// `bin/outbe-genesis-cli/src/seed_oracle.rs`.
-pub const DEFAULT_POLICY_RATES: [(u16, u64); 6] = [
-    (156, 12_624), // CNY DR001 1.2624%, CFETS, 2026-10-19
-    (344, 23_667), // HKD HONIA 2.36666%, TMA 30-day compounded, 2026-10-02
-    (392, 12_280), // JPY TONA 1.228%, BoJ, 2026-10-15
-    (826, 37_344), // GBP SONIA 3.7344%, BoE, 2026-10-16
-    (840, 38_800), // USD SOFR 3.88%, NY Fed, 2026-10-16
-    (978, 24_410), // EUR €STR 2.441%, ECB, 2026-10-19
-];
+/// Cap of a policy rate vote: an annual rate of 100% at scale 1e6.
+pub const MAX_POLICY_RATE_VOTE: u64 = 1_000_000;
 
 /// Maximum age of a live COEN/ISO rate used by economic transaction paths. The raw
 /// Oracle query ABI intentionally remains historical.
@@ -34,8 +25,9 @@ pub(crate) const MAX_SNAPSHOT_EVICTIONS_PER_WRITE: u64 = 16;
 /// Width of one hourly VWAP aggregate cell.
 pub(crate) const VWAP_HOUR_SECONDS: u64 = 60 * 60;
 
-/// Hourly cells kept per pair. A cell is reused for the same hour a day later.
-pub(crate) const HOURLY_VWAP_CELLS: u64 = 24;
+/// Hourly cells kept per pair: the 24 hours of the 24-hour VWAP window and the
+/// hour that is open. So a read of the window finds each of its hours in a cell.
+pub(crate) const HOURLY_VWAP_CELLS: u64 = 25;
 
 /// Minimum coverage share of a finalized window: two thirds. It applies three
 /// times. Every hour needs that share of the tally rounds its blocks allowed
@@ -43,9 +35,9 @@ pub(crate) const HOURLY_VWAP_CELLS: u64 = 24;
 /// hours must count; an hour without blocks does not. The hours that count must
 /// together hold that share of the rounds the window's blocks allowed. Possible
 /// rounds are blocks divided by `vote_period`. Examples:
-/// - Eight hours at exactly two thirds pass.
-/// - Six full hours pass, with two empty hours or not.
-/// - Five full hours, or six hours at two thirds each, do not pass.
+/// - Twenty-four hours at exactly two thirds pass.
+/// - Sixteen full hours pass, with eight empty hours or not.
+/// - Fifteen full hours, or sixteen hours at two thirds each, do not pass.
 pub(crate) const MIN_WINDOW_COVERAGE: (u64, u64) = (2, 3);
 
 /// Maximum number of closed UTC days the begin-block lifecycle finalizes in a
@@ -58,32 +50,27 @@ pub const MAX_UTC_DAY_VWAP_BACKFILL_DAYS: u32 = 366;
 pub const DAY_TYPE_ISO: u16 = 840;
 
 /// The reference currencies as ISO 4217 numeric codes: CNY, HKD, JPY, GBP, USD,
-/// EUR. A new reference currency is a code change.
-pub const REFERENCE_CURRENCIES: [u16; 6] = [156, 344, 392, 826, 840, 978];
+/// EUR. The list with the series letters is `REFERENCE_CURRENCY_LETTERS`; a new
+/// reference currency is a code change there.
+pub const REFERENCE_CURRENCIES: [u16; REFERENCE_CURRENCY_LETTERS.len()] = {
+    let mut codes = [0; REFERENCE_CURRENCY_LETTERS.len()];
+    let mut i = 0;
+    while i < codes.len() {
+        codes[i] = REFERENCE_CURRENCY_LETTERS[i].0;
+        i += 1;
+    }
+    codes
+};
 
-// The list is sorted and unique, contains the day-type currency, and every code
-// has an ISO 4217 letter code. An Intex series id holds only the first letter of
-// that code, so the first letters must also be distinct.
+// The list contains the day-type currency, and every code has an ISO 4217
+// letter code. `REFERENCE_CURRENCY_LETTERS` checks the order and the letters.
 const _: () = {
     let mut has_day_type = false;
     let mut i = 0;
     while i < REFERENCE_CURRENCIES.len() {
         let code = REFERENCE_CURRENCIES[i];
-        assert!(i == 0 || REFERENCE_CURRENCIES[i - 1] < code);
         has_day_type |= code == DAY_TYPE_ISO;
-        let Some(alpha) = outbe_system_common::stablecoin::iso_4217_alpha(code) else {
-            panic!("reference currency without an ISO 4217 letter code");
-        };
-        let mut j = 0;
-        while j < i {
-            let Some(other) =
-                outbe_system_common::stablecoin::iso_4217_alpha(REFERENCE_CURRENCIES[j])
-            else {
-                panic!("reference currency without an ISO 4217 letter code");
-            };
-            assert!(other[0] != alpha[0]);
-            j += 1;
-        }
+        assert!(outbe_system_common::stablecoin::iso_4217_alpha(code).is_some());
         i += 1;
     }
     assert!(has_day_type);

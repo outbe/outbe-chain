@@ -9,7 +9,20 @@ use outbe_system_common::time::SECONDS_PER_DAY;
 use crate::schema::OracleContract;
 
 use super::common::*;
-use super::window::default_snapshot_at;
+
+/// The coverage rule on the window `[cutoff - 8 h, cutoff)`. The rule does not
+/// depend on the length of the window, so these tests keep eight-hour numbers.
+/// `tests::window` covers the 24-hour window.
+fn eight_hour_vwap(oracle: &OracleContract<'_>, pair: AddressPair, cutoff: u64) -> Option<U256> {
+    oracle
+        .judged_window_vwap(
+            pair,
+            cutoff - 8 * 3_600,
+            cutoff,
+            crate::constants::MIN_WINDOW_COVERAGE,
+        )
+        .unwrap()
+}
 
 /// Fills `[start, start + 8h)` with `count` evenly spaced snapshots for `pair`
 /// and records 1,800 blocks per hour. With `vote_period = 8` the window allows
@@ -39,7 +52,7 @@ fn fill_window(
 }
 
 #[test]
-fn finalized_window_vwap_requires_two_thirds_round_coverage() {
+fn window_vwap_requires_two_thirds_round_coverage() {
     let day = ATOMIC_DAY_START;
     let hour = 3_600;
     let start = day + 2 * hour;
@@ -58,12 +71,8 @@ fn finalized_window_vwap_requires_two_thirds_round_coverage() {
         oracle.register_pair(usd).unwrap();
         oracle.register_pair(eur).unwrap();
         fill_window(&mut oracle, usd, start, 1_300, Some(eur));
-        let snapshot = default_snapshot_at(cutoff + 5 * 60);
-        assert_eq!(
-            oracle.finalized_window_vwap(usd, snapshot).unwrap(),
-            Some(coen_iso(2))
-        );
-        assert_eq!(oracle.finalized_window_vwap(eur, snapshot).unwrap(), None);
+        assert_eq!(eight_hour_vwap(&oracle, usd, cutoff), Some(coen_iso(2)));
+        assert_eq!(eight_hour_vwap(&oracle, eur, cutoff), None);
         // The raw rolling read still sees the sparse pair. The gate applies only
         // to the finalized window.
         assert_eq!(
@@ -82,8 +91,7 @@ fn finalized_window_vwap_requires_two_thirds_round_coverage() {
         let usd = AddressPair::new_coen_to(840);
         oracle.register_pair(usd).unwrap();
         fill_window(&mut oracle, usd, start, 1_100, None);
-        let snapshot = default_snapshot_at(cutoff + 5 * 60);
-        assert_eq!(oracle.finalized_window_vwap(usd, snapshot).unwrap(), None);
+        assert_eq!(eight_hour_vwap(&oracle, usd, cutoff), None);
         assert_eq!(
             oracle.calculate_vwap(usd, start, cutoff).unwrap(),
             coen_iso(2)
@@ -96,19 +104,14 @@ fn finalized_window_vwap_requires_two_thirds_round_coverage() {
         let usd = AddressPair::new_coen_to(840);
         oracle.register_pair(usd).unwrap();
         fill_window(&mut oracle, usd, start, 1_200, None);
-        let snapshot = default_snapshot_at(cutoff + 5 * 60);
-        assert!(oracle
-            .finalized_window_vwap(usd, snapshot)
-            .unwrap()
-            .is_some());
+        assert!(eight_hour_vwap(&oracle, usd, cutoff).is_some());
     });
     with_storage_at(cutoff + 5 * 60, |storage| {
         let mut oracle = OracleContract::new(storage.clone());
         let usd = AddressPair::new_coen_to(840);
         oracle.register_pair(usd).unwrap();
         fill_window(&mut oracle, usd, start, 1_199, None);
-        let snapshot = default_snapshot_at(cutoff + 5 * 60);
-        assert_eq!(oracle.finalized_window_vwap(usd, snapshot).unwrap(), None);
+        assert_eq!(eight_hour_vwap(&oracle, usd, cutoff), None);
     });
 }
 
@@ -161,15 +164,13 @@ fn window_vwap_for(per_hour: [u64; 8], prices: [u64; 8]) -> Option<U256> {
         let pair = AddressPair::new_coen_to(840);
         oracle.register_pair(pair).unwrap();
         fill_hours(&mut oracle, pair, start, per_hour, prices);
-        result = oracle
-            .finalized_window_vwap(pair, default_snapshot_at(cutoff + 5 * 60))
-            .unwrap();
+        result = eight_hour_vwap(&oracle, pair, cutoff);
     });
     result
 }
 
 #[test]
-fn finalized_window_vwap_leaves_out_hours_below_two_thirds() {
+fn window_vwap_leaves_out_hours_below_two_thirds() {
     // Hour 3 has 149 of 225 rounds, one short of two thirds, at a wild price.
     // The VWAP leaves it out entirely. The seven full hours carry the window
     // (1,575 of 1,800), and the price of hour 3 never reaches the VWAP.
@@ -199,7 +200,7 @@ fn finalized_window_vwap_leaves_out_hours_below_two_thirds() {
 }
 
 #[test]
-fn finalized_window_vwap_needs_two_thirds_of_the_window_from_counting_hours() {
+fn window_vwap_needs_two_thirds_of_the_window_from_counting_hours() {
     let twos = [2; 8];
     // Six full hours and two empty ones: 1,350 of 1,800.
     assert_eq!(
@@ -260,15 +261,13 @@ fn window_vwap_with_halted_hours(halted: &[u64]) -> Option<U256> {
             }
             block += 1_800;
         }
-        result = oracle
-            .finalized_window_vwap(pair, default_snapshot_at(cutoff + 5 * 60))
-            .unwrap();
+        result = eight_hour_vwap(&oracle, pair, cutoff);
     });
     result
 }
 
 #[test]
-fn finalized_window_vwap_needs_two_thirds_of_the_hours_with_blocks() {
+fn window_vwap_needs_two_thirds_of_the_hours_with_blocks() {
     // An hour without blocks allows no round and cannot count. Two such hours
     // leave six of eight, which pass. Three leave five, which do not, however
     // well the remaining hours are covered: a halt holds the window back until
@@ -298,7 +297,7 @@ fn covered(bounds: &[u64], snapshots: &[u64], vote_period: u64) -> Option<bool> 
 }
 
 #[test]
-fn judge_window_agrees_with_the_finalized_window_vwap() {
+fn judge_window_agrees_with_the_window_vwap() {
     let twos = [2; 8];
     for per_hour in [
         [225, 225, 225, 149, 225, 225, 225, 225],
@@ -426,12 +425,7 @@ fn a_window_without_hour_notes_has_no_vwap() {
                 .write_snapshot(start + k * 3_600, &[(pair, coen_iso(2), coen_iso(1))])
                 .unwrap();
         }
-        assert_eq!(
-            oracle
-                .finalized_window_vwap(pair, default_snapshot_at(cutoff + 5 * 60))
-                .unwrap(),
-            None
-        );
+        assert_eq!(eight_hour_vwap(&oracle, pair, cutoff), None);
     });
 }
 
