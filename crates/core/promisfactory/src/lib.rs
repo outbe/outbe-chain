@@ -4,7 +4,6 @@
 //! Owns Promis mint and burn orchestration. `runtime::mint` delegates to
 //! `outbe_promis::api::mint`.
 //! `mine_coen` burns Promis through `outbe_promis::api::burn` and issues matching native COEN.
-//! `mine_gratis` converts Promis into Gratis through GratisFactory.
 
 pub mod api;
 pub mod errors;

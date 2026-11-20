@@ -32,8 +32,13 @@ keys_dir: ./keys
 # circuit version must also have a compiled binding for that L2 chain id.
 
 tee:
-  # Internal protocol name for the unattested confidential-VM policy.
-  mode: gramine-direct-dev
+  mode: no-attestation-dev            # | dcap-required
+  # dcap-required additionally needs the exact release measurements:
+  # mrenclave: "<32-byte hex>"
+  # mrsigner: "<32-byte hex>"
+  # isv_prod_id: 0
+  # minimum_isv_svn: 0
+  # minimum_tcb_evaluation_data_number: 0
 
 # --- Everything below is optional ----------------------------------------
 
@@ -42,8 +47,7 @@ tee:
 # remote_base_dir: /opt/outbe
 # remote_keys_dir: /opt/outbe/keys
 
-# Optional absolute path to the confidential-VM signer.
-# enclave_runner: /opt/outbe/outbe-tee-enclave-confidential-vm
+# TEE lifecycle runs inside the node process; no sidecar is required.
 
 # Binaries on the validator machines; default to PATH lookups.
 # node_binary: outbe-chain
@@ -72,7 +76,6 @@ tee:
 # metrics_port: 9101
 # radicle_port: 8776
 # radicle_status_port: 8876
-# tee_enclave_port: 17000
 # feeder_health_port: 9002
 
 # output: genesis.json                # also settable via --output

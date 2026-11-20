@@ -11,7 +11,7 @@ use outbe_primitives::consensus::ConsensusExecutionBridge;
 use outbe_primitives::storage::{
     direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle,
 };
-use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
+use outbe_primitives::tee_genesis_v1::NO_ATTESTATION_DEV_CHAIN_ID;
 use outbe_primitives::OutbeHeader;
 use reth_ethereum::chainspec::ChainSpec;
 use reth_ethereum::{
@@ -207,19 +207,19 @@ pub(super) fn genesis_dev_tee_bootstrap(
     committee_snapshot_hash: B256,
 ) -> outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2 {
     use outbe_primitives::tee_test_utils::{
-        gramine_direct_bootstrap_v2, gramine_direct_policy_v1, DevValidatorV1,
+        no_attestation_dev_bootstrap_v2, no_attestation_dev_policy_v1, DevValidatorV1,
     };
 
     let mut secret = [0_u8; 32];
     secret[31] = 1;
     let mut consensus_public = [0_u8; 48];
     consensus_public[0] = 1;
-    let policy = gramine_direct_policy_v1(
-        GRAMINE_DIRECT_DEV_CHAIN_ID,
+    let policy = no_attestation_dev_policy_v1(
+        NO_ATTESTATION_DEV_CHAIN_ID,
         test_chain_spec().genesis_hash(),
     )
-    .expect("test GramineDirectDev policy is canonical");
-    gramine_direct_bootstrap_v2(
+    .expect("test NoAttestationDev policy is canonical");
+    no_attestation_dev_bootstrap_v2(
         policy,
         committee_snapshot_hash,
         1,
@@ -229,7 +229,7 @@ pub(super) fn genesis_dev_tee_bootstrap(
             bls_minpk_public: consensus_public,
         }],
     )
-    .expect("test GramineDirectDev OST3 payload is canonical")
+    .expect("test NoAttestationDev OST3 payload is canonical")
 }
 
 pub(super) fn test_config(bridge: ConsensusExecutionBridge) -> OutbeEvmConfig {
@@ -243,18 +243,18 @@ pub(super) fn test_config(bridge: ConsensusExecutionBridge) -> OutbeEvmConfig {
 
 pub(super) fn test_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
     use outbe_primitives::tee_test_utils::{
-        gramine_direct_policy_v1, tee_attestation_v1_extra_field,
+        no_attestation_dev_policy_v1, tee_attestation_v1_extra_field,
     };
 
     // Outbe starts after the Merge; PREVRANDAO must be present at block 1.
     let mut spec = reth_chainspec::ChainSpecBuilder::from(&*MAINNET)
         .paris_activated()
         .build();
-    spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
-    spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
+    spec.chain = NO_ATTESTATION_DEV_CHAIN_ID.into();
+    spec.genesis.config.chain_id = NO_ATTESTATION_DEV_CHAIN_ID;
     spec.genesis.timestamp = TEST_BLOCK_ONE_TIMESTAMP - 1;
-    let policy = gramine_direct_policy_v1(spec.chain().id(), spec.genesis_hash())
-        .expect("test GramineDirectDev policy is canonical");
+    let policy = no_attestation_dev_policy_v1(spec.chain().id(), spec.genesis_hash())
+        .expect("test NoAttestationDev policy is canonical");
     spec.genesis.config.extra_fields.insert(
         "teeAttestationV1".to_owned(),
         tee_attestation_v1_extra_field(&policy).expect("test TEE activation manifest is canonical"),

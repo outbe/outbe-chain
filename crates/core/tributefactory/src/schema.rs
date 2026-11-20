@@ -25,15 +25,16 @@ pub struct TributeFactoryContract {
 
     // slot 1: WorldwideDay records (wwd -> 1-slot packed WorldwideDay)
     #[attribute(order = 1)]
-    pub worldwide_days: Map<WorldwideDay, crate::worldwideday::schema::WorldwideDay>,
+    pub worldwide_days: Map<WorldwideDay, crate::worldwide_day::schema::WorldwideDay>,
 
     // slots 2..3: unsealed pipeline WorldwideDays
     #[attribute(order = 2)]
     pub pipeline_wwd: Set<WorldwideDay>,
 
-    // slot 4: one-shot forming VWAP snapshot finalized guard (wwd -> bool)
+    // slot 4: retired. It held the guard of the forming VWAP snapshot of a
+    // WorldwideDay. The field keeps the slot of `su_hash_ring`.
     #[attribute(order = 3)]
-    pub forming_snapshot_finalized: Map<WorldwideDay, bool>,
+    pub retired_forming_snapshot_finalized: Map<WorldwideDay, bool>,
 
     // slot 5: bounded prune ring of recent SU hashes (seq % SU_HASH_RETAIN -> suHash)
     #[attribute(order = 4)]

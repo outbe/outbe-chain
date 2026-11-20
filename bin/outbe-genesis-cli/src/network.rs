@@ -49,9 +49,16 @@ pub const SEED_SECTIONS: [&str; 14] = [
     "hyperlane_controller",
 ];
 
-pub const TEE_KEYS: [&str; 1] = ["mode"];
+pub const TEE_KEYS: [&str; 6] = [
+    "mode",
+    "mrenclave",
+    "mrsigner",
+    "isv_prod_id",
+    "minimum_isv_svn",
+    "minimum_tcb_evaluation_data_number",
+];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 38] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 37] = [
     "network",
     "validators",
     "keys_dir",
@@ -72,7 +79,6 @@ const STATIC_TOP_LEVEL_KEYS: [&str; 38] = [
     "contracts_dir",
     "base_profile",
     "base_genesis",
-    "enclave_runner",
     "crs_path",
     "allow_stale_timestamp",
     "node_binary",
@@ -269,21 +275,22 @@ fn validate_tee(config: &Value, obj: &Map<String, Value>) -> Result<(), GenesisE
     let (network, _, _) = network_identity(config)?;
     let mode = tee.get("mode").and_then(Value::as_str).unwrap_or("");
     if network == "mainnet" {
-        validate_mainnet(obj)?;
+        validate_mainnet(obj, mode)?;
     }
-    validate_tee_mode(mode)
+    match mode {
+        "no-attestation-dev" | "dcap-required" => Ok(()),
+        _ => Err(GenesisError::validation(
+            "tee.mode must be no-attestation-dev or dcap-required",
+        )),
+    }
 }
 
-fn validate_tee_mode(mode: &str) -> Result<(), GenesisError> {
-    if mode != "gramine-direct-dev" {
+fn validate_mainnet(obj: &Map<String, Value>, mode: &str) -> Result<(), GenesisError> {
+    if mode != "dcap-required" {
         return Err(GenesisError::validation(
-            "only the confidential-vm genesis policy is supported",
+            "Mainnet requires tee.mode dcap-required",
         ));
     }
-    Ok(())
-}
-
-fn validate_mainnet(obj: &Map<String, Value>) -> Result<(), GenesisError> {
     if obj.contains_key("protocol_constants") {
         return Err(GenesisError::validation(
             "Mainnet forbids protocol_constants overrides and uses canonical production defaults",

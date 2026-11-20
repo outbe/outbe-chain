@@ -24,10 +24,14 @@ remappings = [
     # read one source and cannot drift.
     "@precompiles/=../precompiles/src/",
     # Protocol-wide Solidity shared across the contracts/* projects (Create3Factory, ...).
-    "@shared/=../shared/src/"
+    "@shared/=../shared/src/",
+    # The ERC-7786 hub interfaces (IGatewayQuote, ...).
+    "@crosschain/=../crosschain/src/",
+    # This project's own sources, under the name the importing projects give them.
+    "@tokens/=src/"
 ]
-# @shared sources live outside this project.
-allow_paths = ["../shared/src"]
+# @shared, @precompiles and @crosschain sources live outside this project.
+allow_paths = ["../shared/src", "../precompiles/src", "../crosschain/src"]
 
 gas_reports = ["*"]
 fs_permissions = [{ access = "read-write", path = "./" }]

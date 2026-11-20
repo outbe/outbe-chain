@@ -5,11 +5,11 @@
 //! tests. That seam does not become part of TributeFactory's product API.
 
 use outbe_core_common::wwd_entity_id::WwdEntityId;
-use outbe_enclave::protocol::{EncryptedTributeOffer, TributeOfferResult};
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
 };
+use outbe_tribute::confidential::{EncryptedTributeOffer, TributeOfferResult};
 
 use crate::schema::TributeFactoryContract;
 

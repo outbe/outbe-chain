@@ -17,6 +17,10 @@ interface IOracle {
     error PairNotVoteTarget();
     error DuplicateGasChainInVote(uint32 chainId);
     error GasChainNotVoteTarget(uint32 chainId);
+    error DuplicateRateCurrencyInVote(uint16 currency);
+    error RateCurrencyNotVoteTarget(uint16 currency);
+    error RatePublicationTimeInvalid(uint16 currency, uint64 publishedAt);
+    error VoteRateExceedsCap(uint16 currency, uint256 rate, uint256 max);
     error AlreadyVotedThisPeriod();
     error VotePriceExceedsCap(uint256 price, uint256 max);
     error VoteVolumeExceedsCap(uint256 volume, uint256 max);
@@ -31,9 +35,7 @@ interface IOracle {
     error InvalidLookbackSeconds();
     error InvalidVwapRange();
     error VwapRangeTooWide();
-    error WorldwideDayVwapSnapshotNotFound();
     error NoFinalizedUtcDayVwap();
-    error InvalidVwapPolicy();
     error InvalidVwapSnapshot();
     error NotReferenceCurrency(uint16 iso_code);
     error NoPolicyRate(uint16 iso_code);
@@ -45,8 +47,6 @@ interface IOracle {
     error SlashPercentOutOfRange(uint256 slash_fraction);
     error PolicyIsoCodeZero();
     error DuplicatePolicyIsoCode(uint16 iso_code);
-    error PolicyRatesNotSorted();
-    error PolicyRateZero(uint16 iso_code);
     error MissingPolicyRate(uint16 iso_code);
     error AggregateVoteValidatorZero();
     error DuplicateAggregateVoteValidator();
@@ -59,7 +59,7 @@ interface IOracle {
     error VoterListEntryWithoutVote();
     error MissingPairMetadata(uint32 pair_id);
     error SnapshotWriteIndexOverflow();
-    error ScurveWriteIndexOverflow();
+    error InvalidScurveStartHour();
     error SnapshotOutOfOrder();
     error NoRateForPair(address pairBase, address pairQuote);
     error DateStep(uint8 kind, uint32 dateKey);
@@ -67,24 +67,24 @@ interface IOracle {
     // Events - precompile dispatch (appear in transaction receipts)
     event VoteSubmitted(address indexed validator, uint32 tupleCount);
     event FeederDelegated(address indexed validator, address indexed feeder);
-    event VoteTargetDeactivated(address indexed base, address indexed quote);
-    event VoteTargetActivated(address indexed base, address indexed quote);
-    event ExchangeRateSet(address indexed base, address indexed quote, uint256 rate);
 
     // Events - block hooks (emitted during tally/slash/S-curve processing)
     event ExchangeRateUpdated(address indexed base, address indexed quote, uint256 rate, uint64 blockNumber);
     event TallyCompleted(uint64 blockNumber, uint32 pairsUpdated);
     event ValidatorSlashed(address indexed validator, uint64 slashPercent);
     event ValidatorForcedExit(address indexed validator);
-    /// @dev `peakDay` is the WorldwideDay the curve starts at, as a yyyymmdd date key.
-    event ScurvePeakDetected(address indexed base, address indexed quote, uint256 peakPrice, uint64 peakDay);
-    /// @notice Emitted once per pair when a closed UTC calendar day's VWAP is
-    /// finalized into state. `utcDay` is a yyyymmdd UTC date key (e.g. 20260625).
-    /// @dev Uses all three indexable topics. No further field can be indexed.
-    event VwapCalculated(uint32 indexed utcDay, address indexed base, address indexed quote, uint256 vwap);
-    /// @notice Emitted when the VWAP snapshot of a WorldwideDay is stored. `worldwideDay` is a
-    ///         yyyymmdd key at UTC+14. `pairCount` is the number of pairs with a stored VWAP.
-    event WorldwideDayVwapSet(uint32 indexed worldwideDay, uint64 startTime, uint64 endTime, uint32 pairCount);
+    /// @dev `startHour` is the whole UTC hour the new curve starts at, in Unix seconds.
+    ///      `peakPrice` is the 24-hour VWAP of that hour.
+    event ScurvePeakDetected(address indexed base, address indexed quote, uint256 peakPrice, uint64 startHour);
+    /// @notice Emitted once per pair in the first block of each UTC hour, with the
+    ///         24-hour VWAP of the window that ends at that hour. `windowEnd` is in
+    ///         Unix seconds. A pair with no 24-hour VWAP in that window has no event.
+    /// @dev The VWAP of UTC day D is the event with `windowEnd` 00:00 of day D+1.
+    ///      Uses all three indexable topics. No further field can be indexed.
+    event Vwap24hSet(uint64 indexed windowEnd, address indexed base, address indexed quote, uint256 vwap);
+    /// @notice A tally closed a new policy rate or a new publication time for
+    ///         `currency`. `rate` is annual at scale 1e6.
+    event PolicyRateSet(uint16 indexed currency, uint256 rate, uint64 publishedAt);
 
     /// @notice One quoted rate in an aggregate vote.
     /// @dev `base` and `quote` must match the direction the pair was registered
@@ -104,6 +104,14 @@ interface IOracle {
     struct GasTuple {
         uint32 chainId;
         uint256 gasPrice;
+    }
+
+    /// @notice Policy rate vote for one currency: the annual overnight rate at
+    ///         scale 1e6, and the time at which the source published it.
+    struct RateTuple {
+        uint16 currency;
+        uint256 rate;
+        uint64 publishedAt;
     }
 
     /// @notice Returns the current exchange rate for a market, quoted in the
@@ -147,12 +155,12 @@ interface IOracle {
         view
         returns (uint256 vwap);
 
-    /// @notice Returns the S-curve value at the WorldwideDay that contains `timestamp`.
-    /// @dev The value comes from the newest curve that starts at that WorldwideDay or earlier.
+    /// @notice Returns the S-curve value of a pair at `timestamp`.
+    /// @dev A pair keeps one curve, the newest. The curve counts whole periods of
+    ///      24 hours from its start hour. The value is 0 when the pair has no curve
+    ///      or `timestamp` is before the start hour of the curve.
     ///      A COEN/ISO S-curve value uses 6 decimals.
     ///      The coefficient table is the COEN/840 six-decimal table.
-    ///      A pair keeps its 32 newest curves. When it holds 32, a WorldwideDay before the
-    ///      first `peakDay` of `getAllScurveDataForPair` can return 0.
     function getScurveValue(address base, address quote, uint64 timestamp) external view returns (uint256 value);
 
     /// @notice Returns oracle parameters.
@@ -220,23 +228,15 @@ interface IOracle {
         view
         returns (uint64 success, uint64 abstain, uint64 miss, uint64 slashWindow);
 
-    // todo delete?
-    /// @notice Bootstrap write: set exchange rate (system-only, Address::ZERO caller).
-    function setExchangeRate(address base, address quote, uint256 rate) external;
-
     /// @notice Delegate feeder consent from validator to feeder address.
     function delegateFeederConsent(address feeder) external;
 
-    /// @notice Submit aggregate oracle vote: the prices of the pairs and the
-    ///         gas prices of the remote chains. Each gas chain must be a gas
-    ///         vote target, at most once.
-    function submitVote(ExchangeRateTuple[] calldata tuples, GasTuple[] calldata gas) external;
-
-    /// @notice Deactivate a pair's vote target status (system-only).
-    function deactivateVoteTarget(address base, address quote) external;
-
-    /// @notice Activate a pair's vote target status (system-only).
-    function activateVoteTarget(address base, address quote) external;
+    /// @notice Submit aggregate oracle vote: the prices of the pairs, the gas
+    ///         prices of the remote chains and the policy rates. Each gas
+    ///         chain must be a gas vote target, at most once. Each rate
+    ///         currency must be a rate vote target, at most once.
+    function submitVote(ExchangeRateTuple[] calldata tuples, GasTuple[] calldata gas, RateTuple[] calldata rates)
+        external;
 
     // --- New query functions (ORC-AUD-027) ---
 
@@ -286,24 +286,16 @@ interface IOracle {
     ///      COEN/ISO uses 6 decimals. A generic pair uses 18 decimals.
     function getDayVwap(address base, address quote) external view returns (uint256 vwap);
 
-    /// @notice Returns the trailing VWAP policy pinned by the protocol constants:
-    ///         snapshots cover `[cutoff - vwapLookbackSeconds, cutoff)` with a
-    ///         cutoff every `vwapUpdateIntervalSeconds` from the UTC epoch.
-    function getVwapPolicy()
-        external
-        view
-        returns (uint32 policyVersion, uint64 vwapLookbackSeconds, uint64 vwapUpdateIntervalSeconds);
+    /// @notice Returns the snapshot of the 24-hour VWAP at the current block.
+    /// @dev The id is the end of the window: the last whole UTC hour at or
+    ///      before the block time, in Unix seconds. The window starts 24 hours
+    ///      before it.
+    function vwap24hSnapshotId() external view returns (uint256 snapshotId);
 
-    /// @notice Returns the trailing VWAP snapshot required at the current block.
-    /// @dev Layout: `policyVersion << 128 | vwapLookbackSeconds << 96 |
-    ///      vwapUpdateIntervalSeconds << 64 | cutoff`. The window starts at
-    ///      `cutoff - vwapLookbackSeconds`.
-    function getVwapSnapshotId() external view returns (uint256 snapshotId);
-
-    /// @notice Returns the finalized COEN/`currency` VWAP over a trailing snapshot
-    ///         window, at six decimals.
+    /// @notice Returns the 24-hour COEN/`currency` VWAP of one snapshot window,
+    ///         at six decimals.
     /// @dev Any well-formed closed snapshot is readable. Compare `snapshotId` with
-    ///      `getVwapSnapshotId()` to price against the current one. Reverts for:
+    ///      `vwap24hSnapshotId()` to price against the current one. Reverts for:
     ///      - an unregistered currency
     ///      - a malformed or open snapshot
     ///      - a window without a positive price
@@ -312,7 +304,7 @@ interface IOracle {
     ///      rounds its blocks allowed. Hours that do not count are left out of the
     ///      VWAP. The hours that count must together cover two thirds of the whole
     ///      window's rounds.
-    function getFinalizedWindowVwap(uint16 currency, uint256 snapshotId) external view returns (uint256 vwap);
+    function vwap24h(uint16 currency, uint256 snapshotId) external view returns (uint256 vwap);
 
     /// @notice Returns the finalized VWAP for one UTC calendar day.
     /// @param utcDay yyyymmdd UTC date key (e.g. 20260625). Reverts if the day
@@ -325,61 +317,24 @@ interface IOracle {
     ///      COEN/ISO uses 6 decimals. A generic pair uses 18 decimals.
     function getUtcDayVwap(address base, address quote, uint32 utcDay) external view returns (uint256 vwap);
 
-    /// @notice Returns VWAPs for all active vote-target pairs over an explicit range.
-    /// @dev `startTime` and `endTime` are Unix seconds.
-    ///      A WorldwideDay key is a separate yyyymmdd value at UTC+14.
-    ///      Reverts when the range is wider than the `lookbackDuration` parameter.
-    function getWorldwideDayVwap(uint64 startTime, uint64 endTime)
-        external
-        view
-        returns (
-            address[] memory bases,
-            address[] memory quotes,
-            uint256[] memory vwaps,
-            uint64[] memory lookbackSeconds
-        );
+    /// @notice Returns the S-curve of one pair.
+    /// @return startHour The whole UTC hour the curve starts at, in Unix seconds.
+    ///         Zero when the pair has no curve.
+    /// @return peakPrice The 24-hour VWAP of that hour. A COEN/ISO price uses 6 decimals.
+    function getScurve(address base, address quote) external view returns (uint64 startHour, uint256 peakPrice);
 
-    /// @notice Returns one stored WorldwideDay VWAP snapshot.
-    /// @param worldwideDay WorldwideDay key in yyyymmdd form.
-    /// @dev A WorldwideDay uses UTC+14. It is not a UTC calendar day.
-    function getWorldwideDayVwapSnapshot(uint32 worldwideDay)
-        external
-        view
-        returns (
-            uint64 startTime,
-            uint64 endTime,
-            address[] memory bases,
-            address[] memory quotes,
-            uint256[] memory vwaps,
-            uint64[] memory lookbackSeconds
-        );
-
-    /// @notice Returns S-curve values for a pair at the WorldwideDay that contains `timestamp`.
-    /// @return targetDay That WorldwideDay, as a yyyymmdd date key.
-    /// @dev Each `peakDay` uses that same yyyymmdd unit.
-    ///      A COEN/ISO price and value use 6 decimals.
-    ///      A pair keeps its 32 newest curves. When it holds 32, a WorldwideDay before the
-    ///      first `peakDay` of `getAllScurveDataForPair` can return 0.
-    function getScurveValues(address base, address quote, uint64 timestamp)
-        external
-        view
-        returns (uint64 targetDay, uint64[] memory peakDays, uint256[] memory peakPrices, uint256[] memory values);
-
-    /// @notice Returns every stored S-curve of every registered pair.
-    /// @dev Each `peakDay` is the WorldwideDay a curve starts at, as a yyyymmdd date key.
+    /// @notice Returns the S-curve of every registered pair that has one.
+    /// @dev Each `startHour` is the whole UTC hour a curve starts at, in Unix seconds.
     ///      A COEN/ISO peak price uses 6 decimals.
     function getAllScurveData()
         external
         view
-        returns (address[] memory bases, address[] memory quotes, uint64[] memory peakDays, uint256[] memory peakPrices);
-
-    /// @notice Returns the stored S-curves of one pair, oldest first.
-    /// @dev Each `peakDay` is the WorldwideDay a curve starts at, as a yyyymmdd date key.
-    ///      A COEN/ISO peak price uses 6 decimals.
-    function getAllScurveDataForPair(address base, address quote)
-        external
-        view
-        returns (uint64[] memory peakDays, uint256[] memory peakPrices);
+        returns (
+            address[] memory bases,
+            address[] memory quotes,
+            uint64[] memory startHours,
+            uint256[] memory peakPrices
+        );
 
     /// @notice Returns the nominal price for a pair at `timestamp`.
     /// @dev Nominal price is the larger of that UTC day's VWAP and the S-curve value.
@@ -397,7 +352,7 @@ interface IOracle {
     ///      Policy rate uses a separate 1e6 scale. It is not `scurveValue`.
     /// @return nominalPrice The larger of `vwap` and `scurveValue`.
     /// @return vwap VWAP for the UTC day that contains `timestamp`.
-    /// @return scurveValue Value of the S-curve in force at the WorldwideDay that contains `timestamp`.
+    /// @return scurveValue Value of the S-curve of the pair at `timestamp`.
     ///         A COEN/ISO value uses 6 decimals.
     function getNominalPriceComponents(address base, address quote, uint64 timestamp)
         external
@@ -412,12 +367,14 @@ interface IOracle {
     ///         the table does not have.
     function currencyAlphaCode(uint16 isoCode) external view returns (string memory alphaCode);
 
-    /// @notice Returns every ISO code with an independently configured policy rate.
+    /// @notice Returns every ISO code that is a policy rate vote target.
     function getPolicyRateCurrencies() external view returns (uint16[] memory isoCodes);
 
-    /// @notice Returns the annualized policy rate (scale 1e6) for an ISO 4217
-    ///         code. Reverts when no policy rate is configured for the code.
-    function getPolicyRate(uint16 isoCode) external view returns (uint256 rate);
+    /// @notice Returns the last closed annual policy rate (scale 1e6) of an
+    ///         ISO 4217 code and the time at which its source published it.
+    ///         A rate of zero is a rate. Reverts with `NoPolicyRate` when no
+    ///         tally closed a rate for the code.
+    function getPolicyRate(uint16 isoCode) external view returns (uint256 rate, uint64 publishedAt);
 
     /// @notice Returns each chain with a gas price vote target, its gas price
     ///         in COEN-wei per unit of gas, and the time of the tally that

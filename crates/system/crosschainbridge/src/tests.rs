@@ -234,7 +234,11 @@ fn remote_and_local_generic_calls() {
             gov.call_remote(SEPOLIA, &calls).unwrap(),
             B256::repeat_byte(0xaa)
         );
-        assert!(gov.call_remote(LOCAL, &calls).is_err());
+        // The local domain is a valid target: the Interchain Account of the owner on Outbe.
+        assert_eq!(
+            gov.call_remote(LOCAL, &calls).unwrap(),
+            B256::repeat_byte(0xaa)
+        );
         assert!(gov.call_remote(SEPOLIA, &[]).is_err());
 
         gov.call_local(local_ism(), U256::ZERO, Bytes::from_static(&[1, 2, 3, 4]))

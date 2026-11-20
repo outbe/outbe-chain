@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
-import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
+import {IDesis} from "@precompiles/IDesis.sol";
 
 /// @notice Minimal stand-in that advertises the `IDesis` interface via ERC-165.
 /// @dev Lets `OriginRouter.wire` accept it during tests without pulling in the full

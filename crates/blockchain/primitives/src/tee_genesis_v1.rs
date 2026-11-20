@@ -21,13 +21,13 @@ use crate::{
     },
 };
 
-/// Primary chain ID for the runnable Gramine Direct devnet.
-pub const GRAMINE_DIRECT_DEV_CHAIN_ID: u64 = DEVNET_CHAIN_ID;
+/// Primary chain ID for the runnable no-attestation devnet.
+pub const NO_ATTESTATION_DEV_CHAIN_ID: u64 = DEVNET_CHAIN_ID;
 
 /// Returns whether an explicitly configured development policy may use this
 /// fresh-network identity. Testnet keeps requiring an explicit genesis
-/// `GramineDirectDev` policy. This is not a runtime fallback from DCAP.
-pub const fn is_gramine_direct_dev_chain_id(chain_id: u64) -> bool {
+/// `NoAttestationDev` policy. This is not a runtime fallback from DCAP.
+pub const fn is_no_attestation_dev_chain_id(chain_id: u64) -> bool {
     chain_id == DEVNET_CHAIN_ID || chain_id == TESTNET_CHAIN_ID
 }
 
@@ -45,7 +45,7 @@ pub const fn is_attestation_mode_allowed_for_chain_id(
 ) -> bool {
     match mode {
         AttestationMode::DcapRequired => is_dcap_required_chain_id(chain_id),
-        AttestationMode::GramineDirectDev => is_gramine_direct_dev_chain_id(chain_id),
+        AttestationMode::NoAttestationDev => is_no_attestation_dev_chain_id(chain_id),
     }
 }
 
@@ -70,14 +70,14 @@ pub struct ProductionSgxMeasurementV1 {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum InitialTeeProfileV1 {
     DcapRequired(ProductionSgxMeasurementV1),
-    GramineDirectDev,
+    NoAttestationDev,
 }
 
 impl InitialTeeProfileV1 {
     pub const fn attestation_mode(self) -> AttestationMode {
         match self {
             Self::DcapRequired(_) => AttestationMode::DcapRequired,
-            Self::GramineDirectDev => AttestationMode::GramineDirectDev,
+            Self::NoAttestationDev => AttestationMode::NoAttestationDev,
         }
     }
 }
@@ -107,13 +107,13 @@ pub fn initial_tee_policy_v1(
                 mainnet: MAINNET_CHAIN_ID,
             });
         }
-        AttestationMode::GramineDirectDev
+        AttestationMode::NoAttestationDev
             if !is_attestation_mode_allowed_for_chain_id(
                 chain_id,
-                AttestationMode::GramineDirectDev,
+                AttestationMode::NoAttestationDev,
             ) =>
         {
-            return Err(TeeGenesisPolicyError::InvalidGramineDirectDevChainId {
+            return Err(TeeGenesisPolicyError::InvalidNoAttestationDevChainId {
                 devnet: DEVNET_CHAIN_ID,
                 testnet: TESTNET_CHAIN_ID,
             });
@@ -142,7 +142,7 @@ pub fn initial_tee_policy_v1(
             };
             (measurement.minimum_tcb_evaluation_data_number, rule)
         }
-        InitialTeeProfileV1::GramineDirectDev => {
+        InitialTeeProfileV1::NoAttestationDev => {
             // These are domain-separated non-hardware projections used only by
             // the explicitly separate development policy. They are not SGX
             // measurements and cannot be selected by DcapRequired construction.
@@ -259,25 +259,25 @@ mod tests {
         .unwrap_err()
         .contains("devnet, testnet, or mainnet"));
         assert!(initial_tee_policy_v1(
-            InitialTeeProfileV1::GramineDirectDev,
+            InitialTeeProfileV1::NoAttestationDev,
             TESTNET_CHAIN_ID,
             genesis_hash,
         )
         .is_ok());
         assert!(initial_tee_policy_v1(
-            InitialTeeProfileV1::GramineDirectDev,
+            InitialTeeProfileV1::NoAttestationDev,
             DEVNET_CHAIN_ID,
             genesis_hash,
         )
         .is_ok());
         assert!(initial_tee_policy_v1(
-            InitialTeeProfileV1::GramineDirectDev,
+            InitialTeeProfileV1::NoAttestationDev,
             MAINNET_CHAIN_ID,
             genesis_hash,
         )
         .is_err());
         assert!(initial_tee_policy_v1(
-            InitialTeeProfileV1::GramineDirectDev,
+            InitialTeeProfileV1::NoAttestationDev,
             TESTNET_CHAIN_ID + 1,
             genesis_hash,
         )
@@ -340,8 +340,8 @@ mod tests {
     #[test]
     fn development_field_is_canonical_but_not_hardware_evidence() {
         let policy = initial_tee_policy_v1(
-            InitialTeeProfileV1::GramineDirectDev,
-            GRAMINE_DIRECT_DEV_CHAIN_ID,
+            InitialTeeProfileV1::NoAttestationDev,
+            NO_ATTESTATION_DEV_CHAIN_ID,
             B256::repeat_byte(0x44),
         )
         .unwrap();
@@ -355,7 +355,7 @@ mod tests {
             TeePolicyScheduleV1::decode_canonical(&hex::decode(encoded).unwrap()).unwrap();
         assert_eq!(
             schedule.active_policy(1).unwrap().attestation_mode,
-            AttestationMode::GramineDirectDev
+            AttestationMode::NoAttestationDev
         );
         assert_eq!(schedule.active_policy(1).unwrap(), &policy);
         assert_eq!(

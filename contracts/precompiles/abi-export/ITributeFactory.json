@@ -1,7 +1,7 @@
 [
   {
     "type": "function",
-    "name": "getActiveWorldwideDays",
+    "name": "activeWorldwideDays",
     "inputs": [],
     "outputs": [
       {

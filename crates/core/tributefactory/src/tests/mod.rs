@@ -363,20 +363,20 @@ fn seed_offer_world(storage: StorageHandle<'_>, worldwide_day: WorldwideDay) {
     );
     storage
         .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
-            crate::worldwideday::create_worldwide_day_for_date(&context, worldwide_day)
+            crate::worldwide_day::open_worldwide_day_for_date(&context, worldwide_day)
         })
         .unwrap();
 
     let mut oracle = OracleContract::new(storage.clone());
     init_from_genesis(&mut oracle, &OracleGenesisConfig::default_config()).unwrap();
-    let pair = AddressPair::new_coen_to(840);
-    let start = worldwide_day.start_timestamp().unwrap();
-    oracle
-        .write_snapshot(start + 1, &[(pair, U256::from(100), U256::ONE)])
-        .unwrap();
-    oracle
-        .store_worldwide_day_vwap_snapshot(worldwide_day, start, start + 50 * 60 * 60)
-        .unwrap();
+    // An offer reads the 24-hour VWAP of its hour.
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        &storage,
+        AddressPair::new_coen_to(840),
+        U256::from(100),
+        U256::ONE,
+    )
+    .unwrap();
 }
 
 #[test]
@@ -490,8 +490,8 @@ fn assert_real_zk_offer_with_key_source(
         ops::{self, sign_message},
         variant::MinSig,
     };
-    use outbe_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
     use outbe_l2registry::L2RegistryContract;
+    use outbe_tribute::confidential::{process_tribute_offer_batch, TributeOfferKeyMaterial};
     use outbe_zk::wire::decode_public_words;
     use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -513,10 +513,11 @@ fn assert_real_zk_offer_with_key_source(
     .unwrap();
     let offer_public_key = PublicKey::from(&StaticSecret::from(PRIVATE_KEY)).to_bytes();
     let (cipher, nonce, ephemeral) =
-        outbe_enclave::offer_encrypt::encrypt_tribute_offer(&offer_public_key, &payload).unwrap();
+        outbe_core_common::confidential_tee::encrypt_tribute_offer(&offer_public_key, &payload)
+            .unwrap();
     let key = TributeOfferKeyMaterial {
-        tribute_offer_private_key: &PRIVATE_KEY,
-        salt: &outbe_enclave::OFFER_HKDF_SALT,
+        tribute_offer_private_key: &outbe_tee::resident::OfferKeyHandle::for_test(PRIVATE_KEY),
+        salt: &outbe_core_common::confidential_tee::OFFER_HKDF_SALT,
     };
     let mut rng =
         <rand_commonware::rngs::StdRng as rand_commonware::SeedableRng>::from_seed([0x5a; 32]);
@@ -724,8 +725,8 @@ fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
         ops::{self, sign_message},
         variant::MinSig,
     };
-    use outbe_enclave::protocol::{TributeOfferResult, TributeOfferStatus};
     use outbe_l2registry::L2RegistryContract;
+    use outbe_tribute::confidential::{TributeOfferResult, TributeOfferStatus};
     use outbe_zk::demo_tribute::COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN;
 
     const CALLER: Address = Address::repeat_byte(0x77);
@@ -835,8 +836,8 @@ fn an_offer_after_the_offering_window_fails_on_an_unsealed_day() {
 
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone(), TARGET_WWD_A);
-        assert!(crate::worldwideday::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
-        let offering_end = crate::worldwideday::worldwide_day(storage.clone(), TARGET_WWD_A)
+        assert!(crate::worldwide_day::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
+        let offering_end = crate::worldwide_day::worldwide_day(storage.clone(), TARGET_WWD_A)
             .unwrap()
             .unwrap()
             .offering_end;
@@ -847,14 +848,14 @@ fn an_offer_after_the_offering_window_fails_on_an_unsealed_day() {
         assert!(!TributeContract::new(storage.clone())
             .is_day_sealed(TARGET_WWD_A)
             .unwrap());
-        assert!(!crate::worldwideday::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
+        assert!(!crate::worldwide_day::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
     });
 }
 
 #[test]
 fn offering_is_the_next_wwd() {
     let wwd = WorldwideDay::new(20_260_802);
-    let (schedule, metadosis_start) = crate::worldwideday::compute_wwd_schedule(wwd).unwrap();
+    let (schedule, metadosis_start) = crate::worldwide_day::compute_wwd_schedule(wwd).unwrap();
     let next_wwd_start = WorldwideDay::new(20_260_803).start_timestamp().unwrap();
     assert_eq!(schedule.offerings_start, next_wwd_start);
     assert_eq!(schedule.offering_end, next_wwd_start + 50 * 60 * 60);
@@ -886,8 +887,6 @@ fn offering_is_the_next_wwd() {
             },
             storage.clone(),
         );
-        let mut oracle = OracleContract::new(storage.clone());
-        let pair = AddressPair::new_coen_to(840);
         for key in [20_260_803, 20_260_804] {
             let next = WorldwideDay::new(key);
             let binding = outbe_system_common::metadosis_bindings::metadosis_process_ready_binding(
@@ -897,18 +896,11 @@ fn offering_is_the_next_wwd() {
             );
             storage
                 .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
-                    crate::worldwideday::create_worldwide_day_for_date(&context, next)
+                    crate::worldwide_day::open_worldwide_day_for_date(&context, next)
                 })
                 .unwrap();
-            let start = next.start_timestamp().unwrap();
-            oracle
-                .write_snapshot(start + 1, &[(pair, U256::from(100), U256::ONE)])
-                .unwrap();
-            oracle
-                .store_worldwide_day_vwap_snapshot(next, start, start + 50 * 60 * 60)
-                .unwrap();
         }
-        let mut offering = crate::worldwideday::offering_worldwide_days(storage).unwrap();
+        let mut offering = crate::worldwide_day::offering_worldwide_days(storage).unwrap();
         offering.sort();
         assert_eq!(
             offering,

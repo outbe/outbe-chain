@@ -12,10 +12,10 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {IOriginRouter} from "./interfaces/IOriginRouter.sol";
-import {IDesis} from "./interfaces/IDesis.sol";
-import {IIntexFactory} from "./interfaces/IIntexFactory.sol";
-import {IWCOEN} from "./interfaces/IWCOEN.sol";
-import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
+import {IDesis} from "@precompiles/IDesis.sol";
+import {IIntexFactory} from "@precompiles/IIntexFactory.sol";
+import {IWCOEN} from "@tokens/interfaces/IWCOEN.sol";
+import {IERC7786TokenReceiver} from "@tokens/interfaces/IERC7786TokenReceiver.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {InboundReason} from "../shared/libs/InboundReason.sol";
@@ -228,7 +228,6 @@ contract OriginRouter is
     function retryMessageSend(uint256 idx) external nonReentrant {
         FailedMessageSend storage p = _os().failedMessageSends[idx];
         if (p.payload.length == 0 || p.sent) revert NoFailedMessageSend(idx);
-        // aderyn-ignore-next-line(storage-array-memory-edit) -- the payload is only read
         bytes memory payload = p.payload;
         if (uint8(payload[1]) == BridgeMsgCodec.MSG_INTEX_AUCTION_START) {
             uint32 emissionDay = _dayOf(payload);
@@ -260,7 +259,7 @@ contract OriginRouter is
                 dstChainId,
                 uint16(_bodyWord(payload, 1)),
                 uint16(_bodyWord(payload, 2)),
-                // forge-lint: disable-next-line(unsafe-typecast) aderyn-ignore-next-line(unsafe-casting) -- the codec caps a page at MAX_PAYLOAD_ARRAY_LEN
+                // forge-lint: disable-next-line(unsafe-typecast) -- the codec caps a page at MAX_PAYLOAD_ARRAY_LEN
                 uint32(winnersCount)
             );
         }

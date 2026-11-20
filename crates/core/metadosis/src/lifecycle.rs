@@ -25,7 +25,7 @@ pub(crate) fn date_step_error(
 }
 
 pub(crate) fn validate_metadosis_timestamp(timestamp: u64) -> Result<()> {
-    outbe_tributefactory::worldwideday::validate_wwd_timestamp(timestamp)
+    outbe_tributefactory::worldwide_day::validate_wwd_timestamp(timestamp)
 }
 
 /// The record of `day` when its Metadosis is due: the allocation gave it its limit, and

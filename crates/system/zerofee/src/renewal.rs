@@ -151,7 +151,7 @@ mod tests {
         storage::{dsl::Map, hashmap::HashMapStorageProvider, StorageHandle},
         tee_attestation_v1::{
             AttestationEvidenceV1, AttestationMode, AttestationOperationV1,
-            GramineDirectEvidenceV1, NodeIdV1, RegistrationIntentV1,
+            NoAttestationDevEvidenceV1, NodeIdV1, RegistrationIntentV1,
             MAX_ATTESTATION_EVIDENCE_BYTES, MAX_EVIDENCE_CALL_FRAMING_BYTES,
         },
         tee_registry_abi_v1::ITeeRegistryV1,
@@ -178,7 +178,7 @@ mod tests {
             chain_id: [1; 32],
             genesis_hash: B256::repeat_byte(1),
             operation,
-            attestation_mode: AttestationMode::GramineDirectDev,
+            attestation_mode: AttestationMode::NoAttestationDev,
             policy_hash: B256::repeat_byte(2),
             node_id: NodeIdV1 {
                 reth_p2p_public: NODE_PUBLIC,
@@ -209,7 +209,7 @@ mod tests {
         node_len: usize,
         enclave_len: usize,
     ) -> Vec<u8> {
-        let evidence = AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+        let evidence = AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
             intent: intent(operation),
             dev_attestation_public: [6; 32],
             dev_signature: [9; 64],

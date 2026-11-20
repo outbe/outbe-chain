@@ -10,7 +10,7 @@ import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
-import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
+import {IDesis} from "@precompiles/IDesis.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
@@ -85,7 +85,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         // TM drives the local Intex on markCalled.
         bnbRouter.setDependencies(address(auction), address(intex), admin);
         auction.grantRole(auction.RELAYER_ROLE(), address(bnbRouter));
-        intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
+        intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
 
         outbeRouter.setDependencies(address(desis), intexFactory);
         outbeRouter.addTarget(BNB_CHAIN_ID);

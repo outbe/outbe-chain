@@ -283,7 +283,7 @@ contract IntexAuctionClaimsTest is Test {
         _createSeries(0);
         address router = makeAddr("router");
         vm.startPrank(admin);
-        intex.grantRole(intex.RELAYER_ROLE(), router);
+        intex.grantRole(intex.ROUTER_ROLE(), router);
         vm.stopPrank();
 
         vm.prank(router);

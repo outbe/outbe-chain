@@ -21,6 +21,7 @@ mod tests;
 
 const BLOCKCHAIN_REL_DIR: &str = "crates/blockchain";
 
+// Shared by blockchain crates, including the standalone DCAP build and host adapter.
 const READ_ONLY_RELEASE_ALLOWLIST: [&str; 2] = [
     "release/project-toolchain-v1.json",
     "release/dcap-native-qvl-v1.json",

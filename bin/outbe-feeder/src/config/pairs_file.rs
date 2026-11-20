@@ -46,6 +46,7 @@ const SHARED_SECTIONS: &[&str] = &[
     "dex_providers",
     "onchain_providers",
     "gas_providers",
+    "rate_providers",
 ];
 
 /// Adds the node's sources to the local table. The local table must not set

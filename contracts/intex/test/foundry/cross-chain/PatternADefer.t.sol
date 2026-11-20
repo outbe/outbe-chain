@@ -133,8 +133,8 @@ contract PatternADeferTest is CrossChainTest {
         bnbRouter.setDependencies(address(stubAuction), address(intex), admin);
 
         // The bridge burns on the local Intex.
-        intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
-        intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
+        intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridge));
+        intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
 
         // Series so markCalled + owner enumeration work.
         intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));

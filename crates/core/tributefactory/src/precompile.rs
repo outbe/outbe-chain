@@ -6,7 +6,7 @@ use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 
 use crate::runtime::OfferTributeInput;
 use crate::schema::TributeFactoryContract;
-use crate::worldwideday::queries::worldwide_day;
+use crate::worldwide_day::queries::worldwide_day;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -49,9 +49,9 @@ pub fn dispatch(
                     let factory = TributeFactoryContract::new(storage.clone());
                     worldwide_day(&factory, c)
                 }),
-                getActiveWorldwideDays(c) => view(c, |_c| {
+                activeWorldwideDays(c) => view(c, |_c| {
                     Ok(
-                        crate::worldwideday::api::offering_worldwide_days(storage.clone())?
+                        crate::worldwide_day::api::offering_worldwide_days(storage.clone())?
                             .into_iter()
                             .map(u32::from)
                             .collect::<Vec<_>>(),

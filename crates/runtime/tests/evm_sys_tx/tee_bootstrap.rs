@@ -18,7 +18,9 @@ use outbe_primitives::{
         TeeBootstrapCommitteeSignatureV2, TeeBootstrapParticipantEvidenceV2,
         TeeBootstrapParticipantV2, TeeBootstrapV2,
     },
-    tee_test_utils::{gramine_direct_bootstrap_v2, gramine_direct_policy_v1, DevValidatorV1},
+    tee_test_utils::{
+        no_attestation_dev_bootstrap_v2, no_attestation_dev_policy_v1, DevValidatorV1,
+    },
 };
 
 fn tee_signing_key(seed: u8) -> k256::ecdsa::SigningKey {
@@ -343,13 +345,13 @@ fn tee_bootstrap_v1_routes_canonical_invalid_evidence_and_writes_nothing() {
 }
 
 #[test]
-fn gramine_direct_ost3_bootstraps_once_through_the_activated_dispatch() {
+fn no_attestation_dev_ost3_bootstraps_once_through_the_activated_dispatch() {
     let seeds = [0x11_u8, 0x22, 0x33];
     let signing_keys = keys(&seeds);
     let committee = members(&signing_keys);
     let mut provider = tee_committee_storage(1, &committee);
     let snapshot_hash = write_epoch0_snapshot(&mut provider, &committee);
-    let policy = gramine_direct_policy_v1(CHAIN_ID, B256::repeat_byte(0x11)).unwrap();
+    let policy = no_attestation_dev_policy_v1(CHAIN_ID, B256::repeat_byte(0x11)).unwrap();
     let validators = seeds
         .iter()
         .enumerate()
@@ -363,7 +365,7 @@ fn gramine_direct_ost3_bootstraps_once_through_the_activated_dispatch() {
         })
         .collect::<Vec<_>>();
     let payload =
-        gramine_direct_bootstrap_v2(policy, snapshot_hash, 1, 7_201, &validators).unwrap();
+        no_attestation_dev_bootstrap_v2(policy, snapshot_hash, 1, 7_201, &validators).unwrap();
 
     run_bootstrap_v1(&mut provider, payload.clone()).unwrap();
     assert!(is_bootstrapped(&mut provider));
@@ -385,18 +387,18 @@ fn gramine_direct_ost3_bootstraps_once_through_the_activated_dispatch() {
 }
 
 #[test]
-fn gramine_direct_ost3_rejects_a_signed_wrong_snapshot_hash() {
+fn no_attestation_dev_ost3_rejects_a_signed_wrong_snapshot_hash() {
     let seeds = [0x11_u8];
     let signing_keys = keys(&seeds);
     let committee = members(&signing_keys);
     let mut provider = tee_committee_storage(1, &committee);
     let snapshot_hash = write_epoch0_snapshot(&mut provider, &committee);
-    let policy = gramine_direct_policy_v1(CHAIN_ID, B256::repeat_byte(0x11)).unwrap();
+    let policy = no_attestation_dev_policy_v1(CHAIN_ID, B256::repeat_byte(0x11)).unwrap();
     let validators = [DevValidatorV1 {
         evm_secret: [seeds[0]; 32],
         bls_minpk_public: [7_u8; 48],
     }];
-    let payload = gramine_direct_bootstrap_v2(
+    let payload = no_attestation_dev_bootstrap_v2(
         policy,
         snapshot_hash ^ B256::repeat_byte(1),
         1,

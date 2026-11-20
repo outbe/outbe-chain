@@ -5,16 +5,16 @@ import {console} from "forge-std/console.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {BaseScript} from "./BaseScript.s.sol";
-import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
+import {IDesis} from "@precompiles/IDesis.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 
 /// @title ConfigureOrigin
 /// @author Outbe
-/// @notice Wires the OriginRouter and the NFT collection on Outbe to the Desis, IntexFactory and
-///         GemFactory precompiles and to the system caller. Run it after DeployOrigin and
-///         DeployTarget, before HandOver. A step that already holds is skipped, so a re-run sends
-///         nothing.
+/// @notice Wires the OriginRouter on Outbe to the Desis and IntexFactory precompiles and to the
+///         system caller, and gives the IntexFactory and GemFactory precompiles the burner role of
+///         the NFT collection. Run it after DeployOrigin and DeployTarget, before HandOver. A step
+///         that already holds is skipped, so a re-run sends nothing.
 /// @dev Env: DEPLOYER_PK, CREATE3_FACTORY_ADDRESS, CONTRACT_SALT (optional), DESIS_ADDRESS,
 ///      INTEX_FACTORY_ADDRESS, GEM_FACTORY_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS. Needs
 ///      `--skip-simulation`: the Desis answer below exists only on this script's fork.
@@ -63,9 +63,6 @@ contract ConfigureOrigin is BaseScript {
         grantRoleIfMissing(o.router, router.INTEX_FACTORY_ROLE(), o.desis, deployer);
 
         IntexNFT1155 nft = IntexNFT1155(o.nft);
-        grantRoleIfMissing(o.nft, nft.RELAYER_ROLE(), o.system, deployer);
-        grantRoleIfMissing(o.nft, nft.RELAYER_ROLE(), o.desis, deployer);
-        grantRoleIfMissing(o.nft, nft.RELAYER_ROLE(), o.intexFactory, deployer);
         grantRoleIfMissing(o.nft, nft.BURNER_ROLE(), o.intexFactory, deployer);
         grantRoleIfMissing(o.nft, nft.BURNER_ROLE(), o.gemFactory, deployer);
     }

@@ -135,11 +135,11 @@ impl TributeContract<'_> {
         }
         .ok_or(TributeError::DayCountOverflowOrUnderflow)?;
         let operation = match record.encrypted() {
-            Some(tribute) => outbe_enclave::tribute_day::TributeDayOperationV2::Adjust {
+            Some(tribute) => crate::confidential::TributeDayOperationV2::Adjust {
                 tribute: Box::new(tribute.clone()),
                 add,
             },
-            None => outbe_enclave::tribute_day::TributeDayOperationV2::AdjustTransient {
+            None => crate::confidential::TributeDayOperationV2::AdjustTransient {
                 nominal_amount_minor: calculation_view(record)?.nominal_amount_minor,
                 add,
             },

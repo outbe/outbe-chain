@@ -1,136 +1,24 @@
-//! WorldwideDay and UTC-day VWAP finalization.
+//! UTC-day VWAP finalization.
 
-use alloy_primitives::U256;
-use alloy_sol_types::SolEvent;
 use outbe_primitives::error::Result;
-use outbe_system_common::address_pair::AddressPair;
-use outbe_system_common::addresses::ORACLE_ADDRESS;
-use outbe_system_common::time::WorldwideDay;
 use outbe_system_common::time::{date_key_to_utc_timestamp, SECONDS_PER_DAY};
 
-use super::VwapAccumulator;
-use crate::errors::OracleError;
-use crate::precompile::IOracle;
 use crate::schema::OracleContract;
 
 impl OracleContract<'_> {
-    fn try_worldwide_day_vwap(&self, pair: AddressPair, start_time: u64) -> Result<Option<U256>> {
-        let suffix_day = start_time - start_time % SECONDS_PER_DAY;
-        let full_day = suffix_day
-            .checked_add(SECONDS_PER_DAY)
-            .ok_or(OracleError::InvalidVwapRange)?;
-        let prefix_day = full_day
-            .checked_add(SECONDS_PER_DAY)
-            .ok_or(OracleError::InvalidVwapRange)?;
-        let components = [
-            (
-                self.wwd_suffix_pv_sum.get_nested(&pair).read(&suffix_day)?,
-                self.wwd_suffix_vol_sum
-                    .get_nested(&pair)
-                    .read(&suffix_day)?,
-            ),
-            (
-                self.daily_pv_sum.get_nested(&pair).read(&full_day)?,
-                self.daily_vol_sum.get_nested(&pair).read(&full_day)?,
-            ),
-            (
-                self.wwd_prefix_pv_sum.get_nested(&pair).read(&prefix_day)?,
-                self.wwd_prefix_vol_sum
-                    .get_nested(&pair)
-                    .read(&prefix_day)?,
-            ),
-        ];
-        let mut total = VwapAccumulator::default();
-        for (price_volume, volume) in components {
-            if !volume.is_zero() {
-                total.add(
-                    pair,
-                    price_volume,
-                    volume,
-                    "WWD sum accumulation",
-                    "WWD volume sum",
-                )?;
-            }
-        }
-        Ok(total.finish())
-    }
-
-    /// Calculates VWAPs for the given WorldwideDay window and stores them in
-    /// oracle state. Returns `false` when the window held no oracle data. In that
-    /// case nothing is written. This is a deterministic no-op, not an error.
-    pub fn store_worldwide_day_vwap_snapshot(
-        &mut self,
-        worldwide_day: WorldwideDay,
-        start_time: u64,
-        end_time: u64,
-    ) -> Result<bool> {
-        let storage = self.storage.clone();
-        storage.with_checkpoint(|| {
-            self.store_worldwide_day_vwap_snapshot_inner(worldwide_day, start_time, end_time)
-        })
-    }
-
-    fn store_worldwide_day_vwap_snapshot_inner(
-        &mut self,
-        worldwide_day: WorldwideDay,
-        start_time: u64,
-        end_time: u64,
-    ) -> Result<bool> {
-        require_worldwide_day_window(worldwide_day, start_time, end_time)?;
-
-        let day_vwaps = self.worldwide_day_vwaps(start_time)?;
-        if day_vwaps.is_empty() {
-            return Ok(false);
-        }
-
-        self.worldwide_day_vwap_exists.write(&worldwide_day, true)?;
-        self.worldwide_day_vwap_start
-            .write(&worldwide_day, start_time)?;
-        self.worldwide_day_vwap_end
-            .write(&worldwide_day, end_time)?;
-
-        // Keyed by the registry index, so the pair itself is already recorded in
-        // `pair_by_index`. Values not written stay zero, which reads back as "no
-        // VWAP for this pair on this day". A WorldwideDay is written once, at the
-        // Metadosis ResolveForming edge, so a second write with fewer pairs
-        // cannot leave a stale entry behind.
-        let value_map = self.worldwide_day_vwap_value.get_nested(&worldwide_day);
-        for (pair, vwap) in &day_vwaps {
-            value_map.write(&self.pair_index_of(*pair)?, *vwap)?;
-        }
-        crate::scurve::process_wwd_scurves(self, worldwide_day, &day_vwaps)?;
-
-        let event = IOracle::WorldwideDayVwapSet {
-            worldwideDay: worldwide_day.value(),
-            startTime: start_time,
-            endTime: end_time,
-            pairCount: u32::try_from(day_vwaps.len()).unwrap_or(u32::MAX),
-        };
-        self.storage
-            .emit_event(ORACLE_ADDRESS, event.encode_log_data())?;
-
-        Ok(true)
-    }
-
-    /// Returns the WorldwideDay VWAP of every vote-target pair with data, in
-    /// registry order.
-    fn worldwide_day_vwaps(&self, start_time: u64) -> Result<Vec<(AddressPair, U256)>> {
-        self.vote_target_values(|pair| self.try_worldwide_day_vwap(pair, start_time))
-    }
-
     /// Computes and persists the VWAP of every active vote-target pair for the
     /// fully-closed UTC calendar day `utc_day` (yyyymmdd UTC - *not* a
     /// WorldwideDay, which is UTC+14). The window is the canonical
     /// `[date_key_to_utc_timestamp(utc_day), +SECONDS_PER_DAY)`.
     ///
     /// The day is judged by round coverage like a VWAP window (see
-    /// [`Self::finalized_window_vwap`]), with the share of
+    /// [`Self::vwap_24h`]), with the share of
     /// `oracle.dayVwapMinCoverage` (two thirds in production). A pair that fails coverage or has no
     /// data for the day is skipped, so catch-up blocks after a halt cannot set
     /// a day price. If no pair passes, nothing is written. The day then stays
     /// empty, and the `utc_day_vwap_last_finalized` watermark tells it apart
-    /// from an unfinalized one. Emits one `VwapCalculated` event per written pair in registration
-    /// order. The method overwrites unconditionally. The caller gates
+    /// from an unfinalized one. It emits no event: the value of the day is the
+    /// `Vwap24hSet` of 00:00 of the next day. The method overwrites unconditionally. The caller gates
     /// re-finalization via that same watermark.
     pub fn finalize_utc_day_vwap(&mut self, utc_day: u32) -> Result<()> {
         let storage = self.storage.clone();
@@ -153,40 +41,8 @@ impl OracleContract<'_> {
         // recomputes over the same immutable window, so no stale entry survives.
         for (pair, vwap) in day_vwaps {
             self.record_utc_day_vwap(utc_day, self.pair_index_of(pair)?, vwap)?;
-            let event = IOracle::VwapCalculated {
-                utcDay: utc_day,
-                base: pair.address1(),
-                quote: pair.address2(),
-                vwap,
-            };
-            let event_result = self
-                .storage
-                .emit_event(ORACLE_ADDRESS, event.encode_log_data());
-            event_result?;
         }
 
         Ok(())
     }
-}
-
-/// Checks that `[start_time, end_time)` is the forming window of
-/// `worldwide_day`.
-fn require_worldwide_day_window(
-    worldwide_day: WorldwideDay,
-    start_time: u64,
-    end_time: u64,
-) -> Result<()> {
-    // The forming window is a protocol parameter, not an oracle constant.
-    // A chain that shortens it (localnet, E2E) still hands Metadosis'
-    // real window here. A second hardcoded copy would reject it.
-    let Ok(expected_start) = worldwide_day.start_timestamp() else {
-        return Err(OracleError::InvalidVwapRange.into());
-    };
-    let expected_end = expected_start
-        .checked_add(outbe_chain_constants::get_metadosis_forming_period_seconds())
-        .ok_or(OracleError::InvalidVwapRange)?;
-    if !worldwide_day.is_valid() || start_time != expected_start || end_time != expected_end {
-        return Err(OracleError::InvalidVwapRange.into());
-    }
-    Ok(())
 }

@@ -6,7 +6,7 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
-import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
+import {IDesis} from "@precompiles/IDesis.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
@@ -52,7 +52,7 @@ contract MarkBatchWireTest is CrossChainTest {
         outbeRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
 
         bnbRouter.setDependencies(address(auction), address(intex), admin);
-        intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
+        intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
 
         outbeRouter.setDependencies(address(desis), intexFactory);
         outbeRouter.addTarget(BNB_CHAIN_ID);

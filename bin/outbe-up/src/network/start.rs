@@ -54,17 +54,10 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) ->
             println!("\n{}", render(&build, &statuses));
             return Ok(());
         }
-        if let Some(failed) = statuses.iter().find(|status| {
-            [
-                &status.target,
-                &status.validator,
-                &status.enclave,
-                &status.radicle,
-                &status.feeder,
-            ]
-            .into_iter()
-            .any(|service| service == "failed")
-        }) {
+        if let Some(failed) = statuses
+            .iter()
+            .find(|status| status.services().contains(&"failed"))
+        {
             let founder = build
                 .config
                 .founders
@@ -74,7 +67,7 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) ->
             let logs = ssh
                 .capture(
                     founder,
-                    "journalctl --no-pager -n 30 -u outbe-enclave.service -u outbe-radicle.service -u outbe-feeder.service -u outbe-validator.service",
+                    "journalctl --no-pager -n 30 -u outbe-radicle.service -u outbe-feeder.service -u outbe-validator.service",
                 )
                 .unwrap_or_else(|error| format!("could not read journal: {error}"));
             bail!("{} failed during network start:\n{logs}", failed.name);

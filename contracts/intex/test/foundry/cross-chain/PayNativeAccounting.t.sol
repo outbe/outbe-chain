@@ -73,9 +73,9 @@ contract PayNativeAccountingTest is CrossChainTest {
         StubAuction stubAuction = new StubAuction();
         bnbRouter.setDependencies(address(stubAuction), address(intex), admin);
 
-        // `crosschainBurn` is `RELAYER_ROLE`-gated, so the adapter needs it on the token.
-        intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
-        intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
+        // `crosschainBurn` is `BRIDGE_ROLE`-gated, so the adapter needs it on the token.
+        intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridge));
+        intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
 
         // Series + owner balance so markCalled/owner enumeration and the entry-path bridge sends have tokens.
         intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));

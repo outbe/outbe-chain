@@ -5,6 +5,7 @@
 //! It also registers the file's pairs and stops voting on pairs that a newer
 //! file drops. A released file never changes: a new
 //! source set is a new file. `build.rs` reads the files at compile time.
+//! Each file must have a rate source for each reference currency.
 
 use alloy_primitives::Address;
 use outbe_primitives::chain::MAINNET_CHAIN_ID;
@@ -13,6 +14,7 @@ use outbe_system_common::address_pair::AddressPair;
 use outbe_system_common::asset_type::AssetType;
 use outbe_update::{encode_protocol_version, ProtocolVersion};
 
+use crate::constants::REFERENCE_CURRENCIES;
 use crate::schema::OracleContract;
 
 #[derive(Clone, Copy)]
@@ -35,6 +37,7 @@ struct Source {
     toml: &'static str,
     pairs: &'static [(Asset, Asset)],
     gas_chains: &'static [u32],
+    rate_currencies: &'static [u16],
 }
 
 impl Source {
@@ -46,6 +49,27 @@ impl Source {
 }
 
 include!(concat!(env!("OUT_DIR"), "/sources.rs"));
+
+// Each file has a rate source for each reference currency. A file without one
+// fails the build.
+const _: () = {
+    let mut file = 0;
+    while file < SOURCES.len() {
+        let currencies = SOURCES[file].rate_currencies;
+        let mut reference = 0;
+        while reference < REFERENCE_CURRENCIES.len() {
+            let mut found = false;
+            let mut i = 0;
+            while i < currencies.len() {
+                found |= currencies[i] == REFERENCE_CURRENCIES[reference];
+                i += 1;
+            }
+            assert!(found, "a reference currency has no rate source");
+            reference += 1;
+        }
+        file += 1;
+    }
+};
 
 /// The files in ascending version order. They are for mainnet only. Other
 /// networks register pairs in genesis, and their feeders keep the pairs in the
@@ -68,11 +92,12 @@ pub fn sources_for(chain_id: u64, active: ProtocolVersion) -> &'static str {
     select(table(chain_id), active).map_or("", |source| source.toml)
 }
 
-/// Registers the pairs and the gas chains of the active file once per file.
-/// Pairs that the previous file had and the active file drops stop being vote
-/// targets. They keep their registry entry and price history. The gas chains
-/// of the active file replace the earlier list. A dropped chain keeps its last
-/// gas price.
+/// Registers the pairs, the gas chains and the rate currencies of the active
+/// file once per file. Pairs that the previous file had and the active file
+/// drops stop being vote targets. They keep their registry entry and price
+/// history. The gas chains and the rate currencies of the active file replace
+/// the earlier lists. A dropped chain keeps its last gas price. A dropped
+/// currency keeps its last rate and its publication time.
 pub(crate) fn sync_pairs(
     oracle: &mut OracleContract,
     chain_id: u64,
@@ -110,6 +135,10 @@ fn sync(oracle: &mut OracleContract, table: &[Source], active: ProtocolVersion) 
     for chain_id in current.gas_chains {
         oracle.gas_chains.push(*chain_id)?;
     }
+    oracle.policy_rate_currencies.clear()?;
+    for currency in current.rate_currencies {
+        oracle.policy_rate_currencies.push(*currency)?;
+    }
     oracle.sources_synced.write(marker)
 }
 
@@ -134,12 +163,14 @@ mod tests {
                 toml: "",
                 pairs: &[USD, EUR],
                 gas_chains: &[],
+                rate_currencies: &[],
             },
             Source {
                 version: encode_protocol_version(1, 4),
                 toml: "",
                 pairs: &[USD, JPY],
                 gas_chains: &[],
+                rate_currencies: &[],
             },
         ];
         let mut storage = HashMapStorageProvider::new(1);
@@ -185,6 +216,18 @@ mod tests {
     }
 
     #[test]
+    fn sync_writes_the_rate_currencies_of_the_file() {
+        let mut storage = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut storage, |storage| {
+            let mut oracle = OracleContract::new(storage);
+            sync_pairs(&mut oracle, MAINNET_CHAIN_ID, ProtocolVersion::ZERO).unwrap();
+            let mut currencies = oracle.policy_rate_currencies.read_all().unwrap();
+            currencies.sort_unstable();
+            assert_eq!(currencies, REFERENCE_CURRENCIES.to_vec());
+        });
+    }
+
+    #[test]
     fn table_starts_at_zero_and_ascends() {
         assert_eq!(SOURCES[0].version, ProtocolVersion::ZERO);
         assert!(SOURCES
@@ -205,12 +248,14 @@ mod tests {
                 toml: "base",
                 pairs: &[],
                 gas_chains: &[],
+                rate_currencies: &[],
             },
             Source {
                 version: encode_protocol_version(1, 4),
                 toml: "v1.4",
                 pairs: &[],
                 gas_chains: &[],
+                rate_currencies: &[],
             },
         ];
         let toml = |active| select(TABLE, active).unwrap().toml;

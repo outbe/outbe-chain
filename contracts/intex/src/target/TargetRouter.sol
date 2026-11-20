@@ -11,7 +11,7 @@ import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
-import {IERC7786TokenBridge} from "./interfaces/IERC7786TokenBridge.sol";
+import {IERC7786TokenBridge} from "@tokens/interfaces/IERC7786TokenBridge.sol";
 import {IOriginRouter} from "../origin/interfaces/IOriginRouter.sol";
 import {ITargetRouter} from "./interfaces/ITargetRouter.sol";
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
@@ -308,7 +308,6 @@ contract TargetRouter is
 
         uint16 firstPage = progress.nextPage;
         uint16 batch = firstPage;
-        // aderyn-ignore-next-line(msg-value-in-loop) -- sendIntexAuctionBids is not payable; each chunk pays from the float
         while (batch < totalPages) {
             // The last chunk has to leave room for the marker that follows it in the same round.
             uint256 need =
