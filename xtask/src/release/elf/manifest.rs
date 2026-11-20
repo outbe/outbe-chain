@@ -755,6 +755,19 @@ pub fn validate_release_manifest_v1(manifest: &Value) -> Result<()> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn artifact_allowlists_match_release_manifest_schema() {
+        let schema: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../release/release-manifest-v1.schema.json"
+        )))
+        .unwrap();
+        let properties = &schema["$defs"]["artifact"]["properties"];
+        for (field, allowed) in [("kind", ARTIFACT_KINDS), ("role", ARTIFACT_ROLES)] {
+            assert_eq!(properties[field]["enum"], json!(allowed), "{field} enum");
+        }
+    }
+
     fn minimal_manifest(role: &str, kind: &str) -> Value {
         json!({
             "$schema": "https://outbe.io/schemas/release-manifest-v1.json",

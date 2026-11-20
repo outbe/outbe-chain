@@ -250,12 +250,12 @@ impl NoAttestationDevEvidenceV1 {
     pub(super) fn encode_payload(&self) -> Result<Vec<u8>, CodecError> {
         if self.intent.attestation_mode != AttestationMode::NoAttestationDev {
             return Err(CodecError::NonCanonical(
-                "Gramine evidence intent mode mismatch",
+                "DirectDev evidence intent mode mismatch",
             ));
         }
         if self.dev_attestation_public == [0; 32] {
             return Err(CodecError::NonCanonical(
-                "zero Gramine development attestation key",
+                "zero DirectDev development attestation key",
             ));
         }
         let intent = self.intent.encode_canonical()?;
@@ -312,12 +312,12 @@ impl NoAttestationDevEvidenceV1 {
         }
         if value.intent.attestation_mode != AttestationMode::NoAttestationDev {
             return Err(CodecError::NonCanonical(
-                "Gramine evidence intent mode mismatch",
+                "DirectDev evidence intent mode mismatch",
             ));
         }
         if value.dev_attestation_public == [0; 32] {
             return Err(CodecError::NonCanonical(
-                "zero Gramine development attestation key",
+                "zero DirectDev development attestation key",
             ));
         }
         Ok(value)
