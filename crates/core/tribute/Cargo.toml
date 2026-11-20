@@ -42,15 +42,12 @@ alloy-primitives = { workspace = true, features = ["rand"] }
 proptest.workspace = true
 revm.workspace = true
 tempfile.workspace = true
-# Cross-domain golden vectors (domain_preimage_golden_vectors_v1) move here in bmk.9.
 k256.workspace = true
 outbe-gratis = { workspace = true, features = ["test-enclave"] }
 outbe-promis = { workspace = true, features = ["test-enclave"] }
 
 [features]
 default = []
-# Native engine marker. Protocol deps are direct so bmk.9 does not edit this file.
-engine = []
 # Deterministic development keys. Never in a release build.
 dev-keys = ["outbe-core-common/dev-keys"]
 bench-utils = []

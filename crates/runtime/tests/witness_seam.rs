@@ -7,14 +7,15 @@ use std::sync::{Arc, Mutex};
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::confidential_tee::{
-    EnclaveClientError, LocalCryptoError, TributeSourceError, FIDELITY_ATTESTATION,
-    GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION, TRIBUTE_OFFER_ATTESTATION,
-    TRIBUTE_SOURCE_REJECTED,
+    EnclaveClientError, LocalCryptoError, TributeSourceError, WitnessResponseTag, WitnessSchema,
+    FIDELITY_ATTESTATION, GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION,
+    TRIBUTE_OFFER_ATTESTATION, TRIBUTE_SOURCE_REJECTED,
 };
 use outbe_core_common::nod_encryption::NodTermsV1;
 use outbe_fidelity::enclave_client::snapshot_leagues;
 use outbe_fidelity::{FidelitySnapshotEntry, FidelitySnapshotRequest};
 use outbe_gratis::enclave_client::apply_gratis_op;
+use outbe_gratis::nod_mine::EncryptedNodMintRejectedV1;
 use outbe_gratis::{
     derive_account_keys as gratis_keys, modify_mac as gratis_mac, GratisOp, GratisOpRequest,
     ModifyAuth, ModifyOperation as GratisModify,
@@ -658,17 +659,22 @@ fn metric_classes_and_local_crypto_error_messages_remain_exact() {
         source.to_string(),
         "Tribute source rejected: Tribute source context mismatch"
     );
+    let rejected = EncryptedNodMintRejectedV1 {
+        reason: "bad nonce".into(),
+        inputs_canonical_hash: B256::ZERO,
+        attestation_tag: Vec::new(),
+    };
+    assert_eq!(
+        <EncryptedNodMintRejectedV1 as WitnessSchema>::TAG,
+        WitnessResponseTag::EncryptedNodMintRejectedV1
+    );
     let mint = TransportError::app_rejected(NOD_MINT_REJECTED, Reason("bad nonce"));
     assert_eq!(mint.metric_class(), "nod_mint_rejected");
-    assert_eq!(mint.to_string(), "encrypted NOD mint rejected: bad nonce");
-    assert_local_crypto_sentences();
     assert_eq!(
-        EnclaveClientError::NodMintRejected {
-            reason: "bad nonce".into(),
-        }
-        .to_string(),
-        "encrypted NOD mint rejected: bad nonce"
+        mint.to_string(),
+        format!("encrypted NOD mint rejected: {}", rejected.reason)
     );
+    assert_local_crypto_sentences();
     assert_eq!(
         EnclaveClientError::TributeSourceRejected(TributeSourceError::ContextMismatch).to_string(),
         "Tribute source rejected: Tribute source context mismatch"

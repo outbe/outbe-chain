@@ -33,22 +33,22 @@ outbe-desis.workspace = true
 outbe-emission.workspace = true
 outbe-engine.workspace = true
 outbe-evm.workspace = true
-outbe-fidelity = { workspace = true, features = ["engine"] }
+outbe-fidelity.workspace = true
 outbe-gem.workspace = true
 outbe-gemfactory.workspace = true
-outbe-gratis = { workspace = true, features = ["engine"] }
+outbe-gratis.workspace = true
 outbe-gratisfactory.workspace = true
 outbe-hyperlanecontroller.workspace = true
 outbe-intex.workspace = true
 outbe-intexfactory.workspace = true
 outbe-l2registry.workspace = true
 outbe-metadosis.workspace = true
-outbe-nod = { workspace = true, features = ["engine"] }
+outbe-nod.workspace = true
 outbe-nodfactory.workspace = true
 outbe-execution.workspace = true
 outbe-oracle.workspace = true
 outbe-primitives.workspace = true
-outbe-promis = { workspace = true, features = ["engine"] }
+outbe-promis.workspace = true
 outbe-promislimit.workspace = true
 outbe-promisfactory.workspace = true
 outbe-radicle.workspace = true
@@ -61,7 +61,7 @@ outbe-staking.workspace = true
 outbe-system-common.workspace = true
 outbe-tee.workspace = true
 outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
-outbe-tribute = { workspace = true, features = ["engine"] }
+outbe-tribute.workspace = true
 outbe-tributefactory.workspace = true
 outbe-txpool.workspace = true
 outbe-update.workspace = true

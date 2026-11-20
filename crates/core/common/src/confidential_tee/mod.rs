@@ -29,13 +29,13 @@ pub use dev::encrypt_share;
 pub use dev::{
     decrypt_share, fidelity_chain, offer_key, offer_material, offer_public_key,
     CryptoResult as DevCryptoResult, EncryptedShare, FIDELITY_CHAIN_ID, FIDELITY_GROUP_SIG,
-    GRATIS_CHAIN, GRATIS_GROUP_SIG, OFFER_SECRET_KEY,
+    GRATIS_CHAIN, GRATIS_GROUP_SIG, OFFER_SECRET_KEY, PROMIS_CHAIN, PROMIS_GROUP_SIG,
 };
 pub use errors::{
-    map_consensus_transport_error, parse_tribute_draft_id, BalanceClientError, ComputeError,
-    DraftIdHexError, EnclaveClientError, LocalCryptoError, TeeError, TributeSourceError,
-    FIDELITY_ATTESTATION, GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION,
-    TRIBUTE_OFFER_ATTESTATION, TRIBUTE_SOURCE_REJECTED,
+    map_consensus_transport_error, parse_tribute_draft_id, ComputeError, DraftIdHexError,
+    EnclaveClientError, LocalCryptoError, TeeError, TributeSourceError, FIDELITY_ATTESTATION,
+    GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION, TRIBUTE_OFFER_ATTESTATION,
+    TRIBUTE_SOURCE_REJECTED,
 };
 pub use offer_encrypt::{
     canary_offer_json, encrypt_tribute_offer, encrypt_tribute_offer_with, EncryptedOfferParts,
