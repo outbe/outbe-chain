@@ -11,7 +11,7 @@ use crate::{
         rpc::RpcClient,
         validator_address,
         wait::{wait_for_rpc_chain, wait_for_sync, wait_for_verifier, wait_transaction_finalized},
-        VALIDATOR_SERVICE,
+        FEEDER_FUNDING_WEI, VALIDATOR_SERVICE,
     },
 };
 
@@ -27,7 +27,7 @@ pub async fn run() -> Result<()> {
     let validator = validator_address(&keys.join("evm-key.hex"))?;
     let feeder = validator_address(&keys.join("feeder-key.hex"))?;
 
-    progress.stage("checking synchronized resident validator and validator state");
+    progress.stage("checking synchronized validator node and on-chain state");
     ensure!(
         process::systemctl_is_active(VALIDATOR_SERVICE),
         "run `outbe-up validator sync` before promotion"
@@ -81,6 +81,7 @@ pub async fn run() -> Result<()> {
     }
 
     ensure_feeder_delegate(&mut journal, &remote, validator, feeder, &mut progress).await?;
+    ensure_feeder_funded(&mut journal, &remote, feeder, &mut progress).await?;
     let rpc_url = journal.config.network.certified_rpc.clone();
     let funding = journal
         .config
@@ -131,6 +132,38 @@ pub async fn run() -> Result<()> {
     progress.done(&format!(
         "validator {validator:#x} is promoted; DKG activation continues in the background"
     ));
+    Ok(())
+}
+
+async fn ensure_feeder_funded(
+    journal: &mut Journal,
+    remote: &RpcClient,
+    feeder: alloy_primitives::Address,
+    progress: &mut Progress,
+) -> Result<()> {
+    if !remote.balance(feeder).await?.is_zero() {
+        return Ok(());
+    }
+    progress.stage("funding the feeder signer");
+    let hash = if let Some(hash) = journal.feeder_funding_transaction.clone() {
+        hash
+    } else {
+        let output = run_outbe_cli(&[
+            "validator",
+            "fund-operational-key",
+            &format!("{feeder:#x}"),
+            &FEEDER_FUNDING_WEI.to_string(),
+        ])?;
+        let hash = transaction_hash(&output)?;
+        journal.feeder_funding_transaction = Some(hash.clone());
+        journal.save()?;
+        hash
+    };
+    wait_transaction_finalized(remote, &hash, progress).await?;
+    ensure!(
+        !remote.balance(feeder).await?.is_zero(),
+        "feeder signer funding is not visible after finality"
+    );
     Ok(())
 }
 

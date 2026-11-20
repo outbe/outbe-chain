@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::U256;
-use eyre::{bail, ensure, eyre, Result};
+use eyre::{ensure, eyre, Result};
 use outbe_system_common::time::{date_key_to_utc_timestamp, timestamp_to_date_key};
 use serde::Deserialize;
 use serde_json::Value;
@@ -283,7 +283,7 @@ fn parse(kind: RateKind, body: &str) -> Result<(U256, u64)> {
                 iso_date(&format!("20{}", text(&row["date"])?))?,
             )
         }
-        RateKind::Fixed => bail!("a fixed rate has no source"),
+        RateKind::Fixed => return Err(eyre!("a fixed rate has no source")),
     };
     Ok((percent_to_1e6(&rate)?, date))
 }
@@ -293,7 +293,7 @@ fn text(value: &Value) -> Result<String> {
     match value {
         Value::String(text) => Ok(text.clone()),
         Value::Number(number) => Ok(number.to_string()),
-        other => bail!("expected a string or a number, found {other}"),
+        other => Err(eyre!("expected a string or a number, found {other}")),
     }
 }
 

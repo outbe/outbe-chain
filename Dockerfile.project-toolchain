@@ -74,6 +74,7 @@ RUN apt-get update && \
       build-essential=12.10ubuntu1 \
       clang=1:18.0-59~exp2 \
       cmake=3.28.3-1build7 \
+      curl=8.5.0-2ubuntu10.11 \
       gcc-14-base=14.2.0-4ubuntu2~24.04.1 \
       git=1:2.43.0-1ubuntu7.3 \
       libc++-dev=1:18.0-59~exp2 \
@@ -307,10 +308,7 @@ COPY --from=builder /out/ /
 
 FROM source-builder AS software-builder
 
-ARG SOFTWARE_PROFILE=production
-
 RUN cargo xtask release build \
-      --profile "${SOFTWARE_PROFILE}" \
       --output /out \
       --inside-container
 

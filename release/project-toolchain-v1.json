@@ -2,9 +2,9 @@
   "activation": "pending-container-delivery",
   "apt_provenance": {
     "deb_closure": {
-      "count": 126,
+      "count": 127,
       "format": "sha256sum-lines-sorted-by-filename-v1",
-      "sha256": "0361ecd018a443c01415555b19bf733fcb92e75403b73b3a683ee10e34f8494c"
+      "sha256": "d5d452a29f6999312ce87ea704121273142379f97ef91aabc700d05aa619ee3d"
     },
     "source_files": [
       {
@@ -42,6 +42,7 @@
     "build-essential": "12.10ubuntu1",
     "clang": "1:18.0-59~exp2",
     "cmake": "3.28.3-1build7",
+    "curl": "8.5.0-2ubuntu10.11",
     "gcc-14-base": "14.2.0-4ubuntu2~24.04.1",
     "git": "1:2.43.0-1ubuntu7.3",
     "libc++-dev": "1:18.0-59~exp2",

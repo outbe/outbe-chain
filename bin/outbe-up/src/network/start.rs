@@ -9,21 +9,21 @@ use tokio::task::JoinSet;
 use crate::support::progress::Progress;
 
 use super::{
-    remote::{NetworkBuild, SshOptions},
+    remote::{NetworkArtifacts, SshOptions},
     status::{healthy, query_all, ready_for_hyperlane_setup, render, FounderStatus},
 };
 
 pub async fn run(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("verifying network artifacts and SSH targets");
-    let build = NetworkBuild::load(artifacts)?;
+    let build = NetworkArtifacts::load(artifacts)?;
     let ssh = SshOptions::new(ssh_key)?;
     start_founders(&build, &ssh, &mut progress).await?;
     wait_until_ready(&build, &ssh, timeout, &mut progress).await
 }
 
 async fn start_founders(
-    build: &NetworkBuild,
+    build: &NetworkArtifacts,
     ssh: &SshOptions,
     progress: &mut Progress,
 ) -> Result<()> {
@@ -49,7 +49,7 @@ async fn start_founders(
 }
 
 async fn wait_until_ready(
-    build: &NetworkBuild,
+    build: &NetworkArtifacts,
     ssh: &SshOptions,
     timeout: Duration,
     progress: &mut Progress,
@@ -99,7 +99,7 @@ async fn wait_until_ready(
 }
 
 fn fail_if_service_failed(
-    build: &NetworkBuild,
+    build: &NetworkArtifacts,
     ssh: &SshOptions,
     statuses: &[FounderStatus],
     hyperlane_configured: bool,
@@ -130,7 +130,7 @@ fn service_failed(status: &FounderStatus, hyperlane_configured: bool) -> bool {
 }
 
 fn ready_count(
-    build: &NetworkBuild,
+    build: &NetworkArtifacts,
     statuses: &[FounderStatus],
     required_peers: usize,
     hyperlane_configured: bool,
@@ -147,7 +147,10 @@ fn ready_count(
         .count()
 }
 
-async fn configure_hyperlane(build: &super::remote::NetworkBuild, ssh: &SshOptions) -> Result<()> {
+async fn configure_hyperlane(
+    build: &super::remote::NetworkArtifacts,
+    ssh: &SshOptions,
+) -> Result<()> {
     let mut tasks = JoinSet::new();
     for (index, founder) in build.config.founders.clone().into_iter().enumerate() {
         let ssh = ssh.clone();

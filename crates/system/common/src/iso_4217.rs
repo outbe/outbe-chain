@@ -197,7 +197,7 @@ pub const ISO_4217_ALPHA: &[[u8; 3]] = &[
     *b"CLF",
     *b"XSU",
     *b"USN",
-    [b'X', b'X', b'X'], // ISO 4217 code 999 (no currency)
+    *b"XXX", // ISO 4217 code 999 (no currency)
 ];
 
 const _: () = assert!(ISO_4217_ALPHA.len() == ISO_4217_NUMERIC_CODES.len());

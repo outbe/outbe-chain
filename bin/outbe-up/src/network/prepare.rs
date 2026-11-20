@@ -8,7 +8,7 @@ use walkdir::WalkDir;
 
 use crate::support::progress::Progress;
 
-use super::remote::{NetworkBuild, SshOptions};
+use super::remote::{NetworkArtifacts, SshOptions};
 
 const INSTALLER: &str = r#"#!/bin/sh
 set -eu
@@ -56,7 +56,7 @@ as_root "$base/validator-${index}/install-systemd.sh" --prepare-only
 pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("verifying network artifacts and software bundle");
-    let build = NetworkBuild::load(artifacts)?;
+    let build = NetworkArtifacts::load(artifacts)?;
     let ssh = SshOptions::new(ssh_key)?;
     let temporary = tempfile::tempdir()?;
     let software = temporary.path().join("software");

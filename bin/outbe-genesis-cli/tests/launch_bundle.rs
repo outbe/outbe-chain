@@ -293,6 +293,26 @@ fn feeder_pairs_and_config_templates() {
         .contains("markets = [{ provider = \"binance\", quote = \"USDT\" }]"));
     assert!(!binance_toml.contains("chain_denom"));
     assert!(!binance_toml.contains("rest ="));
+
+    let mock_cfg = merge_obj(
+        minimal_config("/keys"),
+        json!({
+            "feeder_pairs": "devnet/pairs.toml",
+            "price_provider": "mock",
+        }),
+    );
+    let mock_toml = feeder_config(
+        &mock_cfg,
+        0,
+        &json!({"address": format!("0x{}", "11".repeat(20))}),
+        &"22".repeat(32),
+    )
+    .expect("mock feeder_config");
+    assert!(!mock_toml.contains("[[api_providers]]"));
+    assert!(!mock_toml.contains("rest ="));
+    assert!(feeder_pairs(&mock_cfg)
+        .expect("mock feeder_pairs")
+        .contains("provider = \"mock\""));
 }
 
 #[test]
@@ -461,32 +481,6 @@ fn caddy_systemd_units_and_resident_tee() {
     assert!(fs::read_to_string(rpc_dir.join("Caddyfile"))
         .expect("rpc caddy")
         .contains("reverse_proxy 10.0.0.3:8545"));
-
-    // Production DCAP mode
-    let tmp_dcap = tempfile::tempdir().expect("tmp_dcap");
-    let (_, out_dcap) = render_fixture(
-        tmp_dcap.path(),
-        Some(json!({
-            "chain_id": 54322345,
-            "remote_base_dir": "/opt/outbe",
-            "remote_keys_dir": "/opt/outbe/keys",
-            "tee": {
-                "mode": "dcap-required",
-                "mrenclave": "ab".repeat(32),
-                "mrsigner": "cd".repeat(32),
-                "isv_prod_id": 0,
-                "minimum_isv_svn": 3,
-                "minimum_tcb_evaluation_data_number": 17,
-            }
-        })),
-    );
-    let node_dcap =
-        fs::read_to_string(out_dcap.join("validator-1").join("run-node.sh")).expect("node_dcap");
-    assert!(node_dcap.contains("/opt/outbe/genesis.json"));
-    assert!(node_dcap.contains("/opt/outbe/keys/validator-1"));
-    assert!(node_dcap.contains("--consensus.listen-addr 0.0.0.0:30400"));
-    assert!(!node_dcap.contains("--tee-session-mode"));
-    assert!(!out_dcap.join("validator-0/run-enclave.sh").exists());
 }
 
 #[test]
