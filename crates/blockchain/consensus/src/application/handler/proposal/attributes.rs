@@ -246,30 +246,23 @@ fn resolve_proposal_timestamp_millis(
     if super::super::timing::parent_ahead_of_local_clock(parent_block, now_millis) {
         crate::metrics::propose::record_parent_ahead_of_local_clock();
     }
-    // Clamp the proposed timestamp into the deterministic two-sided drift band
-    // `[parent + MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
-    // parent + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS]`. The lower bound
-    // forces each block to advance chain time. This denies a colluding leader
-    // majority the `parent + 1 ms` timestamp freeze that stalls emission and
-    // unbonding maturity. The upper bound (C-01) mirrors the validator check
-    // in `outbe-execution`'s `validate_against_parent_timestamp_millis`. Thus an
-    // honest proposer never emits a block that validators would reject as
-    // over-drifted. Both bounds match the validator rule exactly. Thus the
-    // clamp only ever shifts the timestamp into the accepted band, never out
-    // of it. After a long stall `now_millis` may exceed the cap. The chain
-    // then self-heals: it ratchets time forward by at most one band per block
-    // until it catches up to real time.
+    // Clamp the proposed timestamp into the deterministic drift band
+    // `[parent + 1, parent + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS]`. The lower
+    // bound enforces strict +1 ms monotonicity over the parent. The upper
+    // bound (C-01) mirrors the validator check in `outbe-execution`'s
+    // `validate_against_parent_timestamp_millis`. Thus an honest proposer
+    // never emits a block that validators would reject as over-drifted. After
+    // a long stall `now_millis` may exceed the cap. The chain then self-heals:
+    // it ratchets time forward by at most one band per block until it catches
+    // up to real time.
     //
-    // Exception: the genesis child has no resolved consensus parent block.
-    // Thus the band is meaningless and only monotonicity is enforced. The
-    // validator side exempts the genesis parent (`parent.number() == 0`) from
-    // both band bounds. Thus block 1 (~= genesis + now) always validates and
-    // no unbonding-lock bypass is possible at the first block.
+    // Exception: when no parent block was resolved (`parent_block == None`),
+    // `proposal_timestamp_millis` passes 0 and applies only `max(now_millis, 1)`
+    // without clamping to `0 + band`.
     proposal_timestamp_millis(
         parent_block,
         now_millis,
         outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-        outbe_primitives::consensus::MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
     )
 }
 
@@ -288,10 +281,10 @@ mod tests {
             ConsensusBlock::from_sealed(reth_ethereum::primitives::SealedBlock::seal_slow(block));
         assert_eq!(parent.timestamp_millis(), 3000);
         for (now, expected_timestamp, ahead) in [
-            (2999, 4000, true),
-            (3000, 4000, false),
-            (3001, 4000, false),
-            (3999, 4000, false),
+            (2999, 3001, true),
+            (3000, 3001, false),
+            (3001, 3001, false),
+            (3999, 3999, false),
             (4000, 4000, false),
             (4001, 4001, false),
         ] {

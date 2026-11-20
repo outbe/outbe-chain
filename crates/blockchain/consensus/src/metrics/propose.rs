@@ -6,7 +6,6 @@ use std::time::Duration;
 pub enum ProposalOutcomeLabel {
     Proposed,
     Cancelled,
-    PaceCancelled,
     ParentProofUnavailable,
     EpochStale,
     BoundaryUnavailable,
@@ -20,7 +19,6 @@ impl ProposalOutcomeLabel {
         match self {
             Self::Proposed => "proposed",
             Self::Cancelled => "cancelled",
-            Self::PaceCancelled => "pace_cancelled",
             Self::ParentProofUnavailable => "parent_proof_unavailable",
             Self::EpochStale => "epoch_stale",
             Self::BoundaryUnavailable => "boundary_unavailable",
@@ -59,7 +57,6 @@ mod tests {
         for (outcome, label) in [
             (ProposalOutcomeLabel::Proposed, "proposed"),
             (ProposalOutcomeLabel::Cancelled, "cancelled"),
-            (ProposalOutcomeLabel::PaceCancelled, "pace_cancelled"),
             (
                 ProposalOutcomeLabel::ParentProofUnavailable,
                 "parent_proof_unavailable",

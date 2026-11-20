@@ -102,12 +102,6 @@ pub(crate) enum LaunchError {
         /// Deserialization failure details.
         details: String,
     },
-    /// Indicates an invalid `minBlockTimeMs` value.
-    #[error("invalid minBlockTimeMs: {details}")]
-    InvalidMinBlockTimeMs {
-        /// Deserialization failure details.
-        details: String,
-    },
     /// Indicates that a validator EVM key is required for Radicle identity.
     #[error("validator EVM key is required for Radicle identity")]
     MissingValidatorEvmKeyForRadicle,

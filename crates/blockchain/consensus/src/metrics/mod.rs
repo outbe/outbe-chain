@@ -478,16 +478,9 @@ pub fn record_genesis_dkg_boundary_not_ready_forfeit() {
 }
 
 /// Active build + marshal cost since `propose_start`, excluding the payload
-/// resolve sleep and before any min-block-time floor pad.
+/// resolve sleep.
 pub fn record_block_build_time(duration: Duration) {
     histogram!("outbe_consensus_block_build_duration_ms").record(duration.as_secs_f64() * 1000.0);
-}
-
-/// Floor pad the proposer sleeps to reach `min_block_time` (the intended pad, or
-/// `0` on the case-C / floor-already-met no-wait path). This lets operators see,
-/// per block, how much of the cadence is real build vs. liveness pacing.
-pub fn record_block_wait_time(duration: Duration) {
-    histogram!("outbe_consensus_block_wait_duration_ms").record(duration.as_secs_f64() * 1000.0);
 }
 
 /// Record a finalize-vote admission outcome.

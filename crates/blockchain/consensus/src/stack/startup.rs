@@ -72,27 +72,14 @@ pub fn read_ms<E: std::fmt::Display>(
     }
 }
 
-/// Startup invariants for the consensus-sync timing trio (structured error, no
-/// panic): `0 < min < leader <= cert`. This function rejects a `minBlockTimeMs`
-/// of `0`. The proposer floor cannot be disabled.
-pub fn validate_timing(min_ms: u64, leader_ms: u64, cert_ms: u64) -> Result<()> {
-    if min_ms == 0 {
-        return Err(crate::errors::StackStartupError::MinBlockTimeMsZero.into());
-    }
+/// Startup invariants for the consensus-sync timing pair (structured error, no
+/// panic): `0 < leader <= cert`.
+pub fn validate_timing(leader_ms: u64, cert_ms: u64) -> Result<()> {
     if leader_ms == 0 {
         return Err(crate::errors::StackStartupError::LeaderTimeoutMsZero.into());
     }
     if cert_ms == 0 {
         return Err(crate::errors::StackStartupError::CertificationTimeoutMsZero.into());
-    }
-    if min_ms >= leader_ms {
-        return Err(
-            crate::errors::StackStartupError::MinBlockTimeExceedsLeaderTimeout {
-                min_ms,
-                leader_ms,
-            }
-            .into(),
-        );
     }
     if leader_ms > cert_ms {
         return Err(
@@ -112,21 +99,17 @@ pub fn validate_timing(min_ms: u64, leader_ms: u64, cert_ms: u64) -> Result<()> 
 /// writes them to EVM storage.
 #[derive(Clone, Copy, Debug)]
 pub struct BlockTiming {
-    pub min_block_time: std::time::Duration,
     pub leader_timeout: std::time::Duration,
     pub certification_timeout: std::time::Duration,
 }
 
-/// Read the timing trio from genesis `config` (`minBlockTimeMs` /
-/// `leaderTimeoutMs` / `certificationTimeoutMs`), each falling back to its
+/// Read the timing pair from a [`reth_chainspec::ChainSpec`] genesis `config`
+/// (`leaderTimeoutMs` / `certificationTimeoutMs`), each falling back to its
 /// `timing.rs` default, then validate the startup invariants.
-pub fn block_timing_from_genesis(node: &impl StackNodeAccess) -> Result<BlockTiming> {
-    let extra = &node.chain_spec().genesis.config.extra_fields;
-    let min_ms = read_ms(
-        extra.get_deserialized::<u64>("minBlockTimeMs"),
-        "minBlockTimeMs",
-        crate::timing::DEFAULT_MIN_BLOCK_TIME_MS,
-    )?;
+pub fn block_timing_from_chain_spec(
+    spec: &reth_chainspec::ChainSpec<OutbeHeader>,
+) -> Result<BlockTiming> {
+    let extra = &spec.genesis.config.extra_fields;
     let leader_ms = read_ms(
         extra.get_deserialized::<u64>("leaderTimeoutMs"),
         "leaderTimeoutMs",
@@ -137,12 +120,18 @@ pub fn block_timing_from_genesis(node: &impl StackNodeAccess) -> Result<BlockTim
         "certificationTimeoutMs",
         crate::timing::DEFAULT_CERTIFICATION_TIMEOUT_MS,
     )?;
-    validate_timing(min_ms, leader_ms, cert_ms)?;
+    validate_timing(leader_ms, cert_ms)?;
     Ok(BlockTiming {
-        min_block_time: std::time::Duration::from_millis(min_ms),
         leader_timeout: std::time::Duration::from_millis(leader_ms),
         certification_timeout: std::time::Duration::from_millis(cert_ms),
     })
+}
+
+/// Read the timing pair from genesis `config` (`leaderTimeoutMs` /
+/// `certificationTimeoutMs`), each falling back to its `timing.rs` default,
+/// then validate the startup invariants.
+pub fn block_timing_from_genesis(node: &impl StackNodeAccess) -> Result<BlockTiming> {
+    block_timing_from_chain_spec(&node.chain_spec())
 }
 
 pub fn genesis_hash(node: &impl StackNodeAccess) -> Result<B256> {

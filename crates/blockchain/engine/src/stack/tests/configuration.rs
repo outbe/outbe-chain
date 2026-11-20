@@ -272,7 +272,7 @@ fn marshal_init_option_height_maps_none_to_genesis_zero() {
 }
 
 // ---------------------------------------------------------------------------
-// Block-timing genesis reader / validation (Phase 0/3 of min-block-time).
+// Block-timing genesis reader / validation.
 // ---------------------------------------------------------------------------
 
 /// `read_ms` falls back to default when absent, returns present values verbatim
@@ -281,11 +281,10 @@ fn marshal_init_option_height_maps_none_to_genesis_zero() {
 #[test]
 fn read_ms_handles_absent_present_and_malformed_values() {
     for (input, key, default_ms, expected) in [
-        (None, "minBlockTimeMs", 2000, 2000),
         (None, "leaderTimeoutMs", 4000, 4000),
         (None, "certificationTimeoutMs", 8000, 8000),
-        (Some(Ok(0)), "minBlockTimeMs", 2000, 0),
-        (Some(Ok(1500)), "minBlockTimeMs", 2000, 1500),
+        (Some(Ok(0)), "leaderTimeoutMs", 4000, 0),
+        (Some(Ok(1500)), "leaderTimeoutMs", 4000, 1500),
     ] {
         assert_eq!(
             read_ms::<String>(input, key, default_ms).unwrap(),
@@ -296,29 +295,36 @@ fn read_ms_handles_absent_present_and_malformed_values() {
 
     let err = read_ms(
         Some(Err("expected u64".to_string())),
-        "minBlockTimeMs",
-        2000,
+        "leaderTimeoutMs",
+        4000,
     )
     .unwrap_err()
     .to_string();
     assert!(
-        err.contains("invalid genesis config minBlockTimeMs"),
+        err.contains("invalid genesis config leaderTimeoutMs"),
         "error: {err}"
     );
 }
 
-/// Test 11: the startup invariants reject 0, min>=leader, and leader>cert.
+/// Startup invariants reject zero timeouts and `leader > cert`.
 #[test]
 fn validate_timing_rejects_invalid_combinations() {
-    let zero = validate_timing(0, 4000, 8000).unwrap_err().to_string();
-    assert!(zero.contains("minBlockTimeMs"), "error: {zero}");
-    assert!(validate_timing(4000, 4000, 8000).is_err()); // min == leader
-    assert!(validate_timing(5000, 4000, 8000).is_err()); // min > leader
-    assert!(validate_timing(2000, 9000, 8000).is_err()); // leader > cert
+    let zero_leader = validate_timing(0, 8000).unwrap_err().to_string();
+    assert!(
+        zero_leader.contains("leaderTimeoutMs"),
+        "error: {zero_leader}"
+    );
+    let zero_cert = validate_timing(4000, 0).unwrap_err().to_string();
+    assert!(
+        zero_cert.contains("certificationTimeoutMs"),
+        "error: {zero_cert}"
+    );
+    assert!(validate_timing(9000, 8000).is_err()); // leader > cert
 }
 
-/// Test 12: the shipped defaults satisfy `0 < min < leader <= cert`.
+/// Shipped defaults and equal timeouts satisfy `0 < leader <= cert`.
 #[test]
 fn validate_timing_accepts_defaults() {
-    assert!(validate_timing(2000, 4000, 8000).is_ok());
+    assert!(validate_timing(4000, 8000).is_ok());
+    assert!(validate_timing(4000, 4000).is_ok());
 }

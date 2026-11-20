@@ -194,3 +194,57 @@ fn bridge_tracks_consensus_operating_mode_atomically() {
         assert_eq!(deserialized, mode);
     }
 }
+
+#[test]
+fn classify_and_clamp_timestamp_enforce_strict_one_ms_monotonicity_and_max_drift() {
+    let parent = 1_700_000_000_000u64;
+    let max_drift = MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS;
+
+    assert_eq!(
+        classify_timestamp_advance(parent, parent - 1, max_drift),
+        TimestampAdvance::NotAfterParent
+    );
+    assert_eq!(
+        classify_timestamp_advance(parent, parent, max_drift),
+        TimestampAdvance::NotAfterParent
+    );
+    assert_eq!(
+        classify_timestamp_advance(parent, parent + 1, max_drift),
+        TimestampAdvance::Inside { drift: 1 }
+    );
+    assert_eq!(
+        classify_timestamp_advance(parent, parent + max_drift, max_drift),
+        TimestampAdvance::Inside { drift: max_drift }
+    );
+    assert_eq!(
+        classify_timestamp_advance(parent, parent + max_drift + 1, max_drift),
+        TimestampAdvance::ExceedsMaxDrift {
+            drift: max_drift + 1,
+        }
+    );
+
+    assert_eq!(
+        clamp_timestamp_into_band(parent, parent - 5, max_drift),
+        parent + 1
+    );
+    assert_eq!(
+        clamp_timestamp_into_band(parent, parent, max_drift),
+        parent + 1
+    );
+    assert_eq!(
+        clamp_timestamp_into_band(parent, parent + 1, max_drift),
+        parent + 1
+    );
+    assert_eq!(
+        clamp_timestamp_into_band(parent, parent + 500, max_drift),
+        parent + 500
+    );
+    assert_eq!(
+        clamp_timestamp_into_band(parent, parent + max_drift + 500, max_drift),
+        parent + max_drift
+    );
+    assert_eq!(
+        clamp_timestamp_into_band(u64::MAX, u64::MAX, max_drift),
+        u64::MAX
+    );
+}

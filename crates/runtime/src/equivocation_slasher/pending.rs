@@ -33,7 +33,7 @@ pub(super) fn rank_delay(
     accused: Address,
     local: Address,
     active_committee: impl IntoIterator<Item = Address>,
-    min_block_time: Duration,
+    retry_step: Duration,
 ) -> Duration {
     let mut candidates: Vec<_> = active_committee
         .into_iter()
@@ -51,17 +51,17 @@ pub(super) fn rank_delay(
         .iter()
         .position(|(_, candidate)| *candidate == local)
         .unwrap_or(candidates.len());
-    delay(rank, min_block_time)
+    delay(rank, retry_step)
 }
 
-fn delay(rank: usize, min_block_time: Duration) -> Duration {
+fn delay(rank: usize, retry_step: Duration) -> Duration {
     let blocks = match rank {
         0 => 0,
         1..=30 => 2 * rank,
         _ => 60 + (rank % 16) * 2,
     };
     // blocks <= 90
-    min_block_time.saturating_mul(u32::try_from(blocks).unwrap_or(u32::MAX))
+    retry_step.saturating_mul(u32::try_from(blocks).unwrap_or(u32::MAX))
 }
 
 /// A replacement of our committed-nonce transaction takes precedence over queued siblings.

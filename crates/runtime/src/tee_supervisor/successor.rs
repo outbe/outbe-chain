@@ -548,12 +548,52 @@ fn finalized_join_anchor(
     ))
 }
 
+#[cfg(test)]
+static FAIL_CLEAR_COLD_MARKER_DIRS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::BTreeSet<std::path::PathBuf>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeSet::new()));
+
+#[cfg(test)]
+pub(super) struct FailClearColdMarkerGuard(std::path::PathBuf);
+
+#[cfg(test)]
+impl FailClearColdMarkerGuard {
+    pub(super) fn arm(node_data_dir: &std::path::Path) -> Self {
+        let dir = node_data_dir.to_path_buf();
+        FAIL_CLEAR_COLD_MARKER_DIRS
+            .lock()
+            .unwrap()
+            .insert(dir.clone());
+        Self(dir)
+    }
+}
+
+#[cfg(test)]
+impl Drop for FailClearColdMarkerGuard {
+    fn drop(&mut self) {
+        if let Ok(mut dirs) = FAIL_CLEAR_COLD_MARKER_DIRS.lock() {
+            dirs.remove(&self.0);
+        }
+    }
+}
+
 pub(super) fn clear_cold_marker(
     node_data_dir: &std::path::Path,
 ) -> Result<(), SuccessorRuntimeError> {
     let path = cold_marker_path(node_data_dir);
     match std::fs::symlink_metadata(&path) {
         Ok(meta) if meta.file_type().is_file() => {
+            #[cfg(test)]
+            if FAIL_CLEAR_COLD_MARKER_DIRS
+                .lock()
+                .unwrap()
+                .contains(node_data_dir)
+            {
+                return Err(SuccessorRuntimeError::Marker(std::io::Error::new(
+                    std::io::ErrorKind::PermissionDenied,
+                    "injected marker unlink failure",
+                )));
+            }
             std::fs::remove_file(path).map_err(SuccessorRuntimeError::Marker)
         }
         Ok(_) => Err(SuccessorRuntimeError::Marker(std::io::Error::new(

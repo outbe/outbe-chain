@@ -3,7 +3,7 @@ use super::{consensus_other, system_transactions};
 use alloy_consensus::BlockHeader as _;
 use outbe_primitives::consensus::{
     classify_timestamp_advance, TimestampAdvance, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-    MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS, OUTBE_MAX_BLOCK_SIZE,
+    OUTBE_MAX_BLOCK_SIZE,
 };
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_consensus_common::validation::{
@@ -218,15 +218,12 @@ fn validate_against_parent_timestamp_millis(
 ) -> Result<(), ConsensusError> {
     let timestamp = header.timestamp_millis();
     let parent_timestamp = parent.timestamp_millis();
-    // Upper drift stops one proposer from jumping chain time. The minimum
-    // advance stops a colluding majority from freezing time at parent + 1 ms.
-    // Parent block number 0 skips only the minimum. A parent timestamp of 0
-    // does not skip the upper bound.
+    // Strict +1 ms monotonicity and upper drift bound apply uniformly at all
+    // heights. A parent timestamp of 0 does not skip the upper bound.
     match classify_timestamp_advance(
         parent_timestamp,
         timestamp,
         MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-        MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
     ) {
         TimestampAdvance::NotAfterParent => Err(ConsensusError::TimestampIsInPast {
             parent_timestamp,
@@ -241,21 +238,7 @@ fn validate_against_parent_timestamp_millis(
             }
             .into(),
         ),
-        TimestampAdvance::BelowMinAdvance { drift }
-            if !outbe_primitives::block::BlockHeightRegime::for_block(parent.number())
-                .is_genesis() =>
-        {
-            Err(
-                crate::errors::ConsensusPolicyError::TimestampBelowMinAdvance {
-                    timestamp,
-                    parent: parent_timestamp,
-                    drift,
-                    min_advance: MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
-                }
-                .into(),
-            )
-        }
-        TimestampAdvance::BelowMinAdvance { .. } | TimestampAdvance::Inside { .. } => Ok(()),
+        TimestampAdvance::Inside { .. } => Ok(()),
     }
 }
 
@@ -280,7 +263,6 @@ mod timestamp_domain_tests {
     use alloy_consensus::Header;
     use outbe_primitives::consensus::{
         classify_timestamp_advance, TimestampAdvance, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-        MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
     };
     use outbe_primitives::reshare_artifact::{encode_outbe_block_artifacts, OutbeBlockArtifacts};
     use outbe_primitives::OutbeHeader;
@@ -301,46 +283,59 @@ mod timestamp_domain_tests {
     }
 
     #[test]
-    fn parent_number_zero_skips_only_the_minimum_advance() {
+    fn enforces_strict_one_ms_monotonicity_and_max_drift_at_all_heights() {
         let parent_timestamp = 1_700_000_000_000;
-        let short = parent_timestamp + 1;
+        let plus_one = parent_timestamp + 1;
         assert_eq!(
             classify_timestamp_advance(
                 parent_timestamp,
-                short,
+                plus_one,
                 MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-                MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
             ),
-            TimestampAdvance::BelowMinAdvance { drift: 1 }
+            TimestampAdvance::Inside { drift: 1 }
         );
-        assert!(validate_against_parent_timestamp_millis(
-            &header_millis(1, short),
-            &header_millis(0, parent_timestamp),
-        )
-        .is_ok());
-        let rejected = validate_against_parent_timestamp_millis(
-            &header_millis(2, short),
-            &header_millis(1, parent_timestamp),
-        )
-        .expect_err("a later parent keeps the minimum advance");
-        assert!(!matches!(
-            rejected,
-            ConsensusError::TimestampIsInPast { .. }
-        ));
-        assert!(rejected
-            .to_string()
-            .contains(&MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS.to_string()));
 
-        let over = parent_timestamp + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS + 1;
-        let over_number_zero = validate_against_parent_timestamp_millis(
-            &header_millis(1, over),
-            &header_millis(0, parent_timestamp),
-        )
-        .expect_err("parent number 0 still enforces the upper drift");
-        assert!(over_number_zero
-            .to_string()
-            .contains(&MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS.to_string()));
-        assert_ne!(rejected.to_string(), over_number_zero.to_string());
+        // Both genesis (parent.number == 0) and non-genesis (parent.number >= 1)
+        // accept a +1 ms advance even within the same integer second.
+        for parent_number in [0u64, 1u64] {
+            let parent = header_millis(parent_number, parent_timestamp);
+            let child = header_millis(parent_number + 1, plus_one);
+            assert_eq!(child.inner.timestamp, parent.inner.timestamp);
+            assert!(validate_against_parent_timestamp_millis(&child, &parent).is_ok());
+
+            // Equal and past timestamps are rejected with TimestampIsInPast.
+            for bad_ts in [parent_timestamp, parent_timestamp - 1] {
+                let err = validate_against_parent_timestamp_millis(
+                    &header_millis(parent_number + 1, bad_ts),
+                    &parent,
+                )
+                .expect_err("equal or past timestamp must be rejected");
+                assert!(matches!(
+                    err,
+                    ConsensusError::TimestampIsInPast {
+                        parent_timestamp: p,
+                        timestamp: t,
+                    } if p == parent_timestamp && t == bad_ts
+                ));
+            }
+
+            // Upper drift bound is enforced at both heights.
+            let at_max = header_millis(
+                parent_number + 1,
+                parent_timestamp + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
+            );
+            assert!(validate_against_parent_timestamp_millis(&at_max, &parent).is_ok());
+
+            let over = parent_timestamp + MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS + 1;
+            let over_err = validate_against_parent_timestamp_millis(
+                &header_millis(parent_number + 1, over),
+                &parent,
+            )
+            .expect_err("exceeding max drift must be rejected");
+            assert!(over_err
+                .to_string()
+                .contains(&MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS.to_string()));
+        }
 
         let zero_parent_timestamp = validate_against_parent_timestamp_millis(
             &header_millis(1, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS + 1),
@@ -352,7 +347,6 @@ mod timestamp_domain_tests {
                 0,
                 MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS + 1,
                 MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-                MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
             ),
             TimestampAdvance::ExceedsMaxDrift { .. }
         ));

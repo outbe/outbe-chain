@@ -4,13 +4,11 @@ use super::{
 use alloy_primitives::Bytes;
 use outbe_primitives::consensus::{
     classify_timestamp_advance, TimestampAdvance, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-    MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
 };
 use outbe_primitives::OutbeHeader;
 use reth_ethereum::{primitives::SealedBlock, Block};
 
 const BAND: u64 = 60 * 60 * 1_000; // 1h, matches MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS
-const MIN: u64 = 1_000; // matches MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS
 
 #[test]
 fn injected_clock_offset_is_explicit_and_checked() {
@@ -29,48 +27,56 @@ fn injected_clock_offset_is_explicit_and_checked() {
 fn genesis_child_uses_wall_clock_not_band() {
     // Regression: at genesis the finalization_view is unseeded (parent==0).
     // The real wall-clock (~=1.78e12 ms) must NOT be clamped to 0+band, which
-    // would put block 1 before the genesis timestamp and stall the chain. The
-    // min-advance lower bound is also skipped at genesis (monotonic-only).
+    // would put block 1 before the genesis timestamp and stall the chain.
     let now = 1_781_255_987_000u64;
-    assert_eq!(clamp_proposed_timestamp_millis(0, now, BAND, MIN), now);
+    assert_eq!(clamp_proposed_timestamp_millis(0, now, BAND), now);
+    assert_eq!(clamp_proposed_timestamp_millis(0, 0, BAND), 1);
 }
 
 #[test]
 fn real_parent_applies_band() {
     let parent = 1_781_255_987_000u64;
-    // within band, above min advance -> wall clock used
+    // within band -> wall clock used
     assert_eq!(
-        clamp_proposed_timestamp_millis(parent, parent + 2_000, BAND, MIN),
-        parent + 2_000
+        clamp_proposed_timestamp_millis(parent, parent + 1, BAND),
+        parent + 1
+    );
+    assert_eq!(
+        clamp_proposed_timestamp_millis(parent, parent + 500, BAND),
+        parent + 500
+    );
+    assert_eq!(
+        clamp_proposed_timestamp_millis(parent, parent + BAND, BAND),
+        parent + BAND
     );
     // far-future now -> capped at parent + band
     assert_eq!(
-        clamp_proposed_timestamp_millis(parent, parent + 10 * BAND, BAND, MIN),
+        clamp_proposed_timestamp_millis(parent, parent + 10 * BAND, BAND),
         parent + BAND
     );
 }
 
 #[test]
-fn lagging_clock_clamps_up_to_min_advance() {
-    // when the proposer's clock is not `MIN` past the parent (or is in the
-    // past), the clamp moves the timestamp UP to `parent + MIN`. Then the block
-    // satisfies the validator minimum-advance rule and validators accept it.
-    // The clamp does not emit `parent + 1`, which validators would now reject.
+fn lagging_clock_clamps_up_to_parent_plus_one() {
+    // When the proposer's clock is at or behind the parent, the clamp moves the
+    // timestamp up to `parent + 1` so strict +1 ms monotonicity holds.
     let parent = 1_781_255_987_000u64;
-    // now in the past -> parent + MIN (not parent + 1).
     assert_eq!(
-        clamp_proposed_timestamp_millis(parent, parent - 5, BAND, MIN),
-        parent + MIN
+        clamp_proposed_timestamp_millis(parent, parent - 5, BAND),
+        parent + 1
     );
-    // now between parent+1 and parent+MIN -> clamped up to parent + MIN.
     assert_eq!(
-        clamp_proposed_timestamp_millis(parent, parent + 500, BAND, MIN),
-        parent + MIN
+        clamp_proposed_timestamp_millis(parent, parent, BAND),
+        parent + 1
     );
-    // now exactly at the min-advance boundary -> unchanged.
+    // now strictly after parent and within band -> unchanged.
     assert_eq!(
-        clamp_proposed_timestamp_millis(parent, parent + MIN, BAND, MIN),
-        parent + MIN
+        clamp_proposed_timestamp_millis(parent, parent + 1, BAND),
+        parent + 1
+    );
+    assert_eq!(
+        clamp_proposed_timestamp_millis(parent, parent + 500, BAND),
+        parent + 500
     );
 }
 
@@ -85,7 +91,7 @@ fn proposal_timestamp_is_derived_from_the_exact_parent_block() {
     let parent = super::ConsensusBlock::from_sealed(SealedBlock::seal_slow(parent));
 
     assert_eq!(
-        proposal_timestamp_millis(Some(&parent), parent_timestamp + 10 * BAND, BAND, MIN,),
+        proposal_timestamp_millis(Some(&parent), parent_timestamp + 10 * BAND, BAND),
         parent_timestamp + BAND,
     );
 }
@@ -97,15 +103,9 @@ fn real_parent_clamp_stays_inside_the_shared_band() {
         parent,
         parent + 10 * MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
         MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-        MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
     );
     assert_eq!(
-        classify_timestamp_advance(
-            parent,
-            clamped,
-            MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-            MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
-        ),
+        classify_timestamp_advance(parent, clamped, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS),
         TimestampAdvance::Inside {
             drift: MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
         }
@@ -115,20 +115,10 @@ fn real_parent_clamp_stays_inside_the_shared_band() {
 #[test]
 fn absent_parent_timestamp_zero_is_not_a_full_band_successor() {
     let now = MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS + 5_000;
-    let clamped = clamp_proposed_timestamp_millis(
-        0,
-        now,
-        MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-        MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
-    );
+    let clamped = clamp_proposed_timestamp_millis(0, now, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS);
     assert_eq!(clamped, now);
     assert!(matches!(
-        classify_timestamp_advance(
-            0,
-            clamped,
-            MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-            MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
-        ),
+        classify_timestamp_advance(0, clamped, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS),
         TimestampAdvance::ExceedsMaxDrift { drift } if drift == now
     ));
 }
@@ -136,37 +126,19 @@ fn absent_parent_timestamp_zero_is_not_a_full_band_successor() {
 #[test]
 fn saturated_parent_has_no_in_range_successor() {
     let parent = u64::MAX - 10;
-    let clamped = clamp_proposed_timestamp_millis(
-        parent,
-        u64::MAX,
-        MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-        MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
-    );
+    let clamped =
+        clamp_proposed_timestamp_millis(parent, u64::MAX, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS);
     assert_eq!(clamped, u64::MAX);
     assert_eq!(
-        classify_timestamp_advance(
-            parent,
-            clamped,
-            MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-            MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
-        ),
-        TimestampAdvance::BelowMinAdvance { drift: 10 }
+        classify_timestamp_advance(parent, clamped, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS),
+        TimestampAdvance::Inside { drift: 10 }
     );
 
-    let capped = clamp_proposed_timestamp_millis(
-        u64::MAX,
-        u64::MAX,
-        MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-        MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
-    );
+    let capped =
+        clamp_proposed_timestamp_millis(u64::MAX, u64::MAX, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS);
     assert_eq!(capped, u64::MAX);
     assert_eq!(
-        classify_timestamp_advance(
-            u64::MAX,
-            capped,
-            MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
-            MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS,
-        ),
+        classify_timestamp_advance(u64::MAX, capped, MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS),
         TimestampAdvance::NotAfterParent
     );
 }

@@ -469,7 +469,6 @@ fn finalizer_test_shared(
         epoch_fence: ApplicationEpochFence::new(Epoch::new(0)),
         ancestry_readiness: AncestryReadiness::new(0, 0),
         payload_resolve_time: Duration::from_millis(1),
-        min_block_time: Duration::from_millis(1),
         proposer_evm_address: None,
         proposal_failure_log_limiter: Arc::new(crate::util::rate_limit::LogRateLimiter::new(
             super::PROPOSAL_FAILURE_LOG_WINDOW,
@@ -1612,36 +1611,6 @@ fn resolve_for_verify_timeout_logs_full_context() {
     assert!(
         logs.contains("digest=0xa7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7a7"),
         "digest missing; logs:\n{logs}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Minimum-block-time pacing (proposer-side liveness floor).
-// ---------------------------------------------------------------------------
-
-/// Tests 1-4: pure floor arithmetic (`min - elapsed`, saturating).
-#[test]
-fn floor_remaining_arithmetic() {
-    use super::floor_remaining;
-    // Case A - empty/fast block: most of the floor remains.
-    assert_eq!(
-        floor_remaining(Duration::from_millis(2000), Duration::from_millis(250)),
-        Duration::from_millis(1750)
-    );
-    // Case B - exec < min: wait the remainder.
-    assert_eq!(
-        floor_remaining(Duration::from_millis(2000), Duration::from_millis(1300)),
-        Duration::from_millis(700)
-    );
-    // Case C - exec >= min: no wait (saturates to zero).
-    assert_eq!(
-        floor_remaining(Duration::from_millis(2000), Duration::from_millis(2400)),
-        Duration::ZERO
-    );
-    // Zero floor: always zero (mechanism level; min=0 is rejected at config).
-    assert_eq!(
-        floor_remaining(Duration::ZERO, Duration::from_millis(123)),
-        Duration::ZERO
     );
 }
 

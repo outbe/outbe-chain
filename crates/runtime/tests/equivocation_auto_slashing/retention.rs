@@ -42,7 +42,7 @@ async fn cancellation_interrupts_a_non_slashable_retry_deadline() -> eyre::Resul
     let mailbox = EquivocationEvidenceMailbox::new();
     mailbox.push(evidence(Kind::ConflictingNotarize));
     let cancel = CancellationToken::new();
-    let worker = spawn(
+    let worker = spawn_with_retry_step_for_test(
         node.clone(),
         signer.clone(),
         mailbox.clone(),
@@ -74,7 +74,7 @@ async fn an_evicted_epoch_expires_even_a_non_slashable_validator(
     let mailbox = EquivocationEvidenceMailbox::new();
     mailbox.push(evidence(Kind::ConflictingFinalize));
     let cancel = CancellationToken::new();
-    let worker = spawn(
+    let worker = spawn_with_retry_step_for_test(
         node.clone(),
         signer.clone(),
         mailbox.clone(),
@@ -121,7 +121,7 @@ async fn retained_evidence_retry_expiration_and_deadline_cancellation() -> eyre:
     mailbox.push(evidence(Kind::NullifyFinalize));
     let cancel = CancellationToken::new();
     let before = counter("skipped", "not_slashable");
-    let worker = spawn(
+    let worker = spawn_with_retry_step_for_test(
         node.clone(),
         signer.clone(),
         mailbox.clone(),

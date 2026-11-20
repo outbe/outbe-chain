@@ -44,15 +44,6 @@ pub enum ConsensusPolicyError {
         drift: u64,
         max_drift: u64,
     },
-    #[error(
-        "block timestamp_millis {timestamp} advances parent {parent} by only {drift} ms, below the {min_advance} ms minimum advance"
-    )]
-    TimestampBelowMinAdvance {
-        timestamp: u64,
-        parent: u64,
-        drift: u64,
-        min_advance: u64,
-    },
     #[error("timestamp_millis_part {part} must be less than {max_part}")]
     InvalidTimestampMillisPart { part: u64, max_part: u64 },
     #[error("non-genesis block beneficiary must be REWARDS_ADDRESS {expected}: got {actual}")]

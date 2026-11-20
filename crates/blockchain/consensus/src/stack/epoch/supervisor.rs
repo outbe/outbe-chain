@@ -56,7 +56,6 @@ where
             "configured block-based DKG/VRF rotation"
         );
         info!(
-            min_block_time = ?self.bt.min_block_time,
             leader_timeout = ?self.bt.leader_timeout,
             certification_timeout = ?self.bt.certification_timeout,
             "consensus timeouts (genesis-sourced, no CLI override)"

@@ -25,7 +25,6 @@ const LATENCIES: &[&str] = &[
     "reth_outbe_tee_canary_latency_ms",
     "reth_outbe_tee_client_request_duration_ms",
     "reth_outbe_consensus_block_build_duration_ms",
-    "reth_outbe_consensus_block_wait_duration_ms",
     "reth_outbe_consensus_phase1_finalization_wait_ms",
     "reth_outbe_consensus_phase1_finalization_after_cn_ms",
 ];
@@ -182,7 +181,6 @@ fn emit_dkg_vrf() {
 fn emit_consensus_latencies() {
     for emit in [
         record_block_build_time,
-        record_block_wait_time,
         record_phase1_finalization_wait_ms,
         record_phase1_finalization_record_arrived_after_cn,
     ] {
