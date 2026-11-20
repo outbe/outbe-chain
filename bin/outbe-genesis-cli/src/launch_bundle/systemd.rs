@@ -127,17 +127,28 @@ case \"${{1:-}}\" in\n\
   *) echo \"usage: $0 [--prepare-only]\" >&2; exit 2 ;;\n\
 esac\n\
 UNIT_DIR=\"$(cd -- \"$(dirname -- \"${{BASH_SOURCE[0]}}\")/systemd\" && pwd)\"\n\
+SYSTEMD_DIR={base}/systemd\n\
+STATE_DIR={base}/state\n\
 \n\
 getent group outbe >/dev/null || as_root groupadd --system outbe\n\
 id -u outbe >/dev/null 2>&1 || as_root useradd --system --gid outbe \\\n  --home-dir {base} --shell /usr/sbin/nologin outbe\n\
 as_root chown -R outbe:outbe {base}\n\
-as_root install -m 0644 \"$UNIT_DIR\"/outbe-* /etc/systemd/system/\n\
+as_root install -d -m 0750 -o root -g outbe \"$STATE_DIR\"\n\
+as_root install -d -m 0700 -o outbe -g outbe \"$STATE_DIR/feeder\"\n\
+as_root install -d -m 0700 -o outbe -g outbe \"$STATE_DIR/hyperlane\"\n\
+as_root install -d -m 0755 -o root -g root \"$SYSTEMD_DIR\"\n\
+for unit in \"$UNIT_DIR\"/outbe-*; do\n\
+  name=\"${{unit##*/}}\"\n\
+  as_root install -m 0644 -o root -g root \"$unit\" \"$SYSTEMD_DIR/$name\"\n\
+  as_root ln -sfn \"$SYSTEMD_DIR/$name\" \"/etc/systemd/system/$name\"\n\
+done\n\
 as_root systemctl daemon-reload\n\
 \n\
 if \"$START\"; then\n\
   as_root systemctl enable --now outbe-validator.target >/dev/null\n\
 else\n\
-  as_root systemctl disable --now outbe-validator.target >/dev/null 2>&1 || true\n\
+  as_root systemctl stop outbe-validator.target >/dev/null 2>&1 || true\n\
+  as_root rm -f /etc/systemd/system/multi-user.target.wants/outbe-validator.target\n\
 fi\n\
 ",
         root_helper = ROOT_HELPER,
@@ -152,6 +163,10 @@ pub fn preflight_script(
     index: usize,
 ) -> Result<String, GenesisError> {
     let rpc_port = port_of(config, "rpc_port")?;
+    let hyperlane_binary = config
+        .get("hyperlane_binary")
+        .and_then(Value::as_str)
+        .unwrap_or("outbe-hyperlane-validator");
     Ok(format!(
         "\n# Read-only pre-launch check for validator {index}. Exits non-zero on anything\n\
 # that would make the network fail after start rather than before.\n\
@@ -166,13 +181,19 @@ if [ -r .bb-crs/bn254_g1.dat ]; then\n\
 else\n\
   note \"CRS\" \"MISSING .bb-crs/bn254_g1.dat\"; fail=1\n\
 fi\n\
+if [ ! -x {hyperlane_binary} ]; then\n\
+  note \"Hyperlane validator\" \"MISSING {hyperlane_binary}\"; fail=1\n\
+fi\n\
+for required in keys/validator-{index}/hyperlane-key.hex validator-{index}/hyperlane-public.toml; do\n\
+  [ -r \"$required\" ] || {{ note \"Hyperlane artifact\" \"MISSING $required\"; fail=1; }}\n\
+done\n\
 \n\
 # State from an earlier genesis belongs to a different chain; the node refuses to start on it.\n\
 for stale in validator-{index}/data validator-{index}/consensus; do\n\
   [ -e \"$stale\" ] && {{ note \"leftover state\" \"$stale - remove before a new genesis\"; fail=1; }}\n\
 done\n\
 \n\
-for port in {rpc_port}; do\n\
+for port in {rpc_port} 9000 9003; do\n\
   ss -ltn 2>/dev/null | grep -q \":$port \" && {{ note \"port $port\" \"already in use\"; fail=1; }}\n\
 done\n\
 \n\
@@ -183,6 +204,7 @@ fi\n\
 \n\
 if [ \"$fail\" = 0 ]; then echo; echo \"  preflight OK\"; else echo; echo \"  preflight FAILED\"; fi\n\
 exit \"$fail\"\n",
-        quote(base_dir)
+        quote(base_dir),
+        hyperlane_binary = quote(hyperlane_binary),
     ))
 }

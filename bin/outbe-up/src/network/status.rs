@@ -19,6 +19,9 @@ pub(super) struct FounderStatus {
     pub(super) validator: String,
     pub(super) radicle: String,
     pub(super) feeder: String,
+    pub(super) hyperlane: String,
+    pub(super) hyperlane_healthy: Option<bool>,
+    pub(super) hyperlane_controller: Option<String>,
     pub(super) chain_id: Option<u64>,
     pub(super) finalized: Option<u64>,
     pub(super) execution_peers: Option<u64>,
@@ -94,6 +97,16 @@ pub(super) async fn query_all(
 }
 
 pub(super) fn healthy(status: &FounderStatus, chain_id: u64, peers: usize) -> bool {
+    ready_for_hyperlane_setup(status, chain_id, peers)
+        && status.hyperlane == "active"
+        && status.hyperlane_healthy == Some(true)
+}
+
+pub(super) fn ready_for_hyperlane_setup(
+    status: &FounderStatus,
+    chain_id: u64,
+    peers: usize,
+) -> bool {
     let services_ready = status.services().into_iter().all(|state| state == "active");
     let chain_matches = status.chain_id == Some(chain_id);
     let finality_ready = status.finalized.is_some_and(|height| height > 0);
@@ -130,7 +143,7 @@ pub(super) fn render(build: &NetworkBuild, statuses: &[FounderStatus]) -> String
         build.config.chain_id,
         statuses.len()
     );
-    output.push_str("Founder              Services                 Finalized  Exec  Consensus\n");
+    output.push_str("Founder              Services                      Hyperlane              Finalized  Exec  Consensus\n");
     for status in statuses {
         let finalized = value(status.finalized);
         let execution = value(status.execution_peers);
@@ -155,14 +168,22 @@ pub(super) fn render(build: &NetworkBuild, statuses: &[FounderStatus]) -> String
             },
         );
         output.push_str(&format!(
-            "{:<20} {:<24} {:<10} {:<5} {}\n",
+            "{:<20} {:<29} {:<22} {:<10} {:<5} {}\n",
             status.name,
             format!(
-                "t:{} v:{} r:{} f:{}",
+                "t:{} v:{} r:{} f:{} h:{}",
                 short(&status.target),
                 short(&status.validator),
                 short(&status.radicle),
-                short(&status.feeder)
+                short(&status.feeder),
+                short(&status.hyperlane)
+            ),
+            format!(
+                "{} controller={}",
+                status
+                    .hyperlane_healthy
+                    .map_or("?", |healthy| if healthy { "ok" } else { "bad" }),
+                status.hyperlane_controller.as_deref().unwrap_or("unknown")
             ),
             finalized,
             execution,
@@ -184,6 +205,9 @@ fn query_one(ssh: &SshOptions, founder: &super::config::Founder) -> FounderStatu
             validator: "unknown".into(),
             radicle: "unknown".into(),
             feeder: "unknown".into(),
+            hyperlane: "unknown".into(),
+            hyperlane_healthy: None,
+            hyperlane_controller: None,
             chain_id: None,
             finalized: None,
             execution_peers: None,
@@ -201,7 +225,7 @@ fn query_one_inner(ssh: &SshOptions, founder: &super::config::Founder) -> Result
         )
     };
     let command = format!(
-        "printf '%s\\n' \"$(systemctl is-active outbe-validator.target 2>/dev/null || true)\" \"$(systemctl is-active outbe-validator.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-radicle.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-feeder.service 2>/dev/null || true)\"; {}; {}; {}; {}",
+        "printf '%s\\n' \"$(systemctl is-active outbe-validator.target 2>/dev/null || true)\" \"$(systemctl is-active outbe-validator.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-radicle.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-feeder.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-hyperlane-validator.service 2>/dev/null || true)\"; (curl -fsS --max-time 3 http://127.0.0.1:9003/status || true) | tr -d '\\n'; printf '\\n'; {}; {}; {}; {}",
         request("eth_chainId", "[]", 1),
         request("eth_getBlockByNumber", "[\"finalized\",false]", 2),
         request("net_peerCount", "[]", 3),
@@ -217,6 +241,19 @@ fn parse_status(name: &str, output: &str) -> FounderStatus {
     let validator = lines.next().unwrap_or("unknown").to_owned();
     let radicle = lines.next().unwrap_or("unknown").to_owned();
     let feeder = lines.next().unwrap_or("unknown").to_owned();
+    let hyperlane = lines.next().unwrap_or("unknown").to_owned();
+    let hyperlane_status = lines
+        .next()
+        .and_then(|line| serde_json::from_str::<Value>(line).ok());
+    let hyperlane_healthy = hyperlane_status
+        .as_ref()
+        .and_then(|value| value.get("healthy"))
+        .and_then(Value::as_bool);
+    let hyperlane_controller = hyperlane_status
+        .as_ref()
+        .and_then(|value| value.get("controller"))
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned);
     let chain_id = rpc_result(lines.next()).and_then(|value| parse_hex(value.as_str()?));
     let finalized =
         rpc_result(lines.next()).and_then(|value| parse_hex(value.get("number")?.as_str()?));
@@ -228,6 +265,9 @@ fn parse_status(name: &str, output: &str) -> FounderStatus {
         validator,
         radicle,
         feeder,
+        hyperlane,
+        hyperlane_healthy,
+        hyperlane_controller,
         chain_id,
         finalized,
         execution_peers,
@@ -269,6 +309,8 @@ mod tests {
 active
 active
 active
+active
+{"healthy":true,"controller":"waiting-for-controller"}
 {"result":"0x2a"}
 {"result":{"number":"0x1"}}
 {"result":"0x3"}
@@ -276,6 +318,12 @@ active
 "#;
         let mut status = parse_status("validator-0", output);
         assert!(healthy(&status, 42, 3));
+        status.hyperlane = "activating".into();
+        status.hyperlane_healthy = None;
+        assert!(ready_for_hyperlane_setup(&status, 42, 3));
+        assert!(!healthy(&status, 42, 3));
+        status.hyperlane = "active".into();
+        status.hyperlane_healthy = Some(true);
         status.finalized = Some(0);
         assert!(!healthy(&status, 42, 3));
         status.finalized = Some(1);

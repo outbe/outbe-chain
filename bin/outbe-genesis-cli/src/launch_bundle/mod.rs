@@ -19,7 +19,8 @@ use crate::seed_codec::parse_u64;
 pub use self::dist::{build_distribution, deploy_markdown};
 pub use self::scripts::{
     feeder_config, feeder_pairs, feeder_pairs_file, feeder_pairs_settings, feeder_pairs_table,
-    feeder_script, node_script, radicle_script,
+    feeder_script, hyperlane_public_config, hyperlane_script, hyperlane_setup_script, node_script,
+    radicle_script,
 };
 pub use self::systemd::{caddy_install_script, caddyfile, preflight_script, write_systemd_units};
 
@@ -204,6 +205,22 @@ fn write_validator_scripts(
         &directory.join("run-feeder.sh"),
         &feeder_script(config, index, paths.base_dir),
     )?;
+    write_script(
+        &directory.join("run-hyperlane.sh"),
+        &hyperlane_script(config, index, paths.base_dir, host, validator)?,
+    )?;
+    write_script(
+        &directory.join("configure-hyperlane.sh"),
+        &hyperlane_setup_script(config, index, paths.base_dir, host)?,
+    )?;
+    let hyperlane_config_path = directory.join("hyperlane-public.toml");
+    fs::write(
+        &hyperlane_config_path,
+        hyperlane_public_config(config, index)?,
+    )
+    .map_err(|err| GenesisError::io(&hyperlane_config_path, err))?;
+    fs::set_permissions(&hyperlane_config_path, fs::Permissions::from_mode(0o600))
+        .map_err(|err| GenesisError::io(&hyperlane_config_path, err))?;
     let caddyfile_path = directory.join("Caddyfile");
     fs::write(&caddyfile_path, caddyfile(config, host)?)
         .map_err(|err| GenesisError::io(&caddyfile_path, err))?;

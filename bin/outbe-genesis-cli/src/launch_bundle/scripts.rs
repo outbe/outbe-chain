@@ -375,3 +375,116 @@ exec {} --config {}\n",
         quote(&feeder_toml)
     )
 }
+
+/// Render the non-secret Hyperlane validator configuration for one host.
+pub fn hyperlane_public_config(config: &Value, index: usize) -> Result<String, GenesisError> {
+    let public_url = config
+        .get("hyperlane_public_urls")
+        .and_then(Value::as_array)
+        .and_then(|urls| urls.get(index))
+        .and_then(Value::as_str)
+        .ok_or_else(|| GenesisError::validation("missing Hyperlane public URL"))?;
+    let origins = config
+        .get("hyperlane_origins")
+        .and_then(Value::as_array)
+        .ok_or_else(|| GenesisError::validation("hyperlane_origins must be a list"))?;
+    let value = serde_json::json!({
+        "hyperlane": {
+            "poll_interval_secs": config
+                .get("hyperlane_poll_interval_secs")
+                .and_then(Value::as_u64)
+                .unwrap_or(30),
+            "gasless": config
+                .get("hyperlane_gasless")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        },
+        "health": {
+            "enabled": true,
+            "bind_address": "127.0.0.1:9003",
+        },
+        "storage": {
+            "db_path": "/opt/outbe-chain/state/hyperlane/db",
+        },
+        "server": {
+            "bind_address": "0.0.0.0:9000",
+            "public_url": public_url,
+        },
+        "origin": origins,
+    });
+    let value: toml::Value = serde_json::from_value(value)
+        .map_err(|error| GenesisError::validation(format!("Hyperlane TOML: {error}")))?;
+    toml::to_string_pretty(&value)
+        .map_err(|error| GenesisError::validation(format!("Hyperlane TOML: {error}")))
+}
+
+/// Render the daemon launcher. `outbe-up` injects the private key into `/run`.
+pub fn hyperlane_script(
+    config: &Value,
+    index: usize,
+    base_dir: &str,
+    host: &str,
+    validator: &Value,
+) -> Result<String, GenesisError> {
+    let chain_id = parse_u64(
+        config
+            .get("chain_id")
+            .ok_or_else(|| GenesisError::validation("chain_id is required"))?,
+    )?;
+    let address = validator
+        .get("address")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GenesisError::validation("validator missing address"))?;
+    let keys_dir = config
+        .get("remote_keys_dir")
+        .and_then(Value::as_str)
+        .unwrap_or(base_dir);
+    let rpc_bind = rpc_bind_ip(config, host)?;
+    let validator_dir = format!("{base_dir}/validator-{index}");
+    Ok(format!(
+        "\nexport OUTBE_CHAIN_ID={}\n\
+export OUTBE_RPC_BIND_IP={}\n\
+export OUTBE_VALIDATOR_ADDRESS={}\n\
+export OUTBE_HYPERLANE_KEY_PATH={}\n\
+export OUTBE_HYPERLANE_CONFIG_PATH={}\n\
+{}/outbe-up internal wait-rpc\n\
+exec {}/outbe-up internal hyperlane\n",
+        quote(&chain_id.to_string()),
+        quote(&rpc_bind.to_string()),
+        quote(address),
+        quote(&format!("{keys_dir}/validator-{index}/hyperlane-key.hex")),
+        quote(&format!("{validator_dir}/hyperlane-public.toml")),
+        quote(base_dir),
+        quote(base_dir),
+    ))
+}
+
+/// Render the idempotent on-chain delegate/fund/register setup command.
+pub fn hyperlane_setup_script(
+    config: &Value,
+    index: usize,
+    base_dir: &str,
+    host: &str,
+) -> Result<String, GenesisError> {
+    let keys_dir = config
+        .get("remote_keys_dir")
+        .and_then(Value::as_str)
+        .unwrap_or(base_dir);
+    let funding = config
+        .get("hyperlane_signer_funding_wei")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GenesisError::validation("missing hyperlane_signer_funding_wei"))?;
+    let rpc_bind = rpc_bind_ip(config, host)?;
+    Ok(format!(
+        "\nexport OUTBE_RPC_BIND_IP={}\n\
+export OUTBE_VALIDATOR_KEY_PATH={}\n\
+export OUTBE_HYPERLANE_KEY_PATH={}\n\
+export OUTBE_HYPERLANE_FUNDING_WEI={}\n\
+exec {}/outbe-up internal hyperlane-setup\n",
+        quote(&rpc_bind.to_string()),
+        quote(&format!("{keys_dir}/validator-{index}/evm-key.hex")),
+        quote(&format!("{keys_dir}/validator-{index}/hyperlane-key.hex")),
+        quote(funding),
+        quote(base_dir),
+    ))
+}

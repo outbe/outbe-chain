@@ -34,12 +34,17 @@ the completed archive with the same verifier that `outbe-up` uses.
 - `.bb-crs/bn254_g1.dat`: the verified CRS required by every node;
 - `systemd/`: canonical joining-validator services rendered by `outbe-operator-systemd`.
 
-The Hyperlane validator is payload only in this phase: no Hyperlane unit, configuration, or startup
-automation is installed.
+The lifecycle flow gives every validator a dedicated Hyperlane key, renders its public configuration,
+keeps the private key in the runtime-only configuration, and installs the canonical Hyperlane service.
+Network-specific origins and public checkpoint URLs are supplied later through `network.yaml` or the
+joining-validator operator config.
 
 Founding-validator launch bundles are generated later from this exact software set plus one fresh
 genesis and network configuration. Joining and founding units use the same templates and policy;
 their compact specifications contain only the commands, dependencies, and paths that must differ.
+Installers keep every persistent artifact under `/opt/outbe-chain`, including service state and the
+canonical unit files. They link those units into `/etc/systemd/system`; runtime-only configuration
+continues to use `/run`.
 
 ## CI
 

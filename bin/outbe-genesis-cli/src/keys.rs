@@ -247,8 +247,15 @@ pub fn discover_validators(
         let signing_key = directory.join("signing-key.hex");
         let evm_key = directory.join("evm-key.hex");
         let feeder_key = directory.join("feeder-key.hex");
+        let hyperlane_key = directory.join("hyperlane-key.hex");
         let radicle_pub = directory.join("radicle").join("keys").join("radicle.pub");
-        for required in [&signing_key, &evm_key, &feeder_key, &radicle_pub] {
+        for required in [
+            &signing_key,
+            &evm_key,
+            &feeder_key,
+            &hyperlane_key,
+            &radicle_pub,
+        ] {
             if !required.is_file() {
                 return Err(GenesisError::validation(format!(
                     "validator {index}: {} not found; generate the bundle with `outbe-keygen validator --output-dir {}`",
@@ -260,6 +267,7 @@ pub fn discover_validators(
         validators.push(json!({
             "address": evm_address_from_key_file(&evm_key)?,
             "feeder_address": evm_address_from_key_file(&feeder_key)?,
+            "hyperlane_address": evm_address_from_key_file(&hyperlane_key)?,
             "public_key": bls_public_key(keygen_binary, &signing_key)?,
             "radicle_node_id": format!("0x{}", radicle_node_id_from_public_key(&radicle_pub)?),
             "p2p_address": format!("{host}:{port}"),

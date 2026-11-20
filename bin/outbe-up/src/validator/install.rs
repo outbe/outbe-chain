@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    os::unix::fs::{MetadataExt, PermissionsExt},
+    os::unix::fs::{symlink, MetadataExt, PermissionsExt},
     path::Path,
 };
 
@@ -29,8 +29,10 @@ pub fn run() -> Result<()> {
     let root = Path::new(process::ROOT);
     let env_path = root.join("validator.env");
     let feeder = root.join("feeder-public.toml");
+    let hyperlane = root.join("hyperlane-public.toml");
     validate_local_config(&env_path)?;
     validate_local_config(&feeder)?;
+    validate_local_config(&hyperlane)?;
     let environment = read_environment(&env_path)?;
     validate_environment(&environment)?;
     validate_bundle(root)?;
@@ -44,9 +46,11 @@ pub fn run() -> Result<()> {
 
     process::chown(&env_path, 0, gid)?;
     process::chown(&feeder, 0, gid)?;
+    process::chown(&hyperlane, 0, gid)?;
     fs::set_permissions(&env_path, fs::Permissions::from_mode(0o640))?;
     fs::set_permissions(&feeder, fs::Permissions::from_mode(0o640))?;
-    install_units()?;
+    fs::set_permissions(&hyperlane, fs::Permissions::from_mode(0o640))?;
+    install_units(root)?;
     process::systemctl(&["daemon-reload"])?;
     Ok(())
 }
@@ -169,6 +173,7 @@ fn validate_bundle(root: &Path) -> Result<()> {
         "outbe-cli",
         "outbe-keygen",
         "outbe-feeder",
+        "outbe-hyperlane-validator",
         "outbe-radicle",
     ] {
         required_executable(&root.join(name))?;
@@ -221,7 +226,18 @@ fn numeric_id(flag: &str) -> Result<u32> {
 fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     let keys = root.join("keys");
     let validator = root.join("validator-0");
-    for path in [&keys, &validator] {
+    let state = root.join("state");
+    let operator_state = state.join("operator");
+    let feeder_state = state.join("feeder");
+    let hyperlane_state = state.join("hyperlane");
+    for path in [
+        &keys,
+        &validator,
+        &state,
+        &operator_state,
+        &feeder_state,
+        &hyperlane_state,
+    ] {
         if let Ok(metadata) = fs::symlink_metadata(path) {
             ensure!(
                 !metadata.file_type().is_symlink(),
@@ -246,10 +262,15 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     ] {
         create_owned_dir(&root.join(relative), 0o750, uid, gid)?;
     }
+    create_owned_dir(&state, 0o750, 0, gid)?;
+    create_owned_dir(&operator_state, 0o700, 0, 0)?;
+    create_owned_dir(&feeder_state, 0o700, uid, gid)?;
+    create_owned_dir(&hyperlane_state, 0o700, uid, gid)?;
     let secrets = [
         "signing-key.hex",
         "evm-key.hex",
         "feeder-key.hex",
+        "hyperlane-key.hex",
         "reth-p2p-secret.hex",
         "radicle/keys/radicle",
     ];
@@ -279,6 +300,7 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     }
     canonical_key(&keys.join("evm-key.hex"))?;
     canonical_key(&keys.join("feeder-key.hex"))?;
+    canonical_key(&keys.join("hyperlane-key.hex"))?;
     canonical_key(&keys.join("reth-p2p-secret.hex"))?;
     process::capture(
         root.join("outbe-keygen"),
@@ -287,11 +309,31 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     Ok(())
 }
 
-fn install_units() -> Result<()> {
+fn install_units(root: &Path) -> Result<()> {
+    let unit_dir = root.join("systemd");
+    if let Ok(metadata) = fs::symlink_metadata(&unit_dir) {
+        ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "refusing invalid systemd directory: {}",
+            unit_dir.display()
+        );
+    }
+    create_owned_dir(&unit_dir, 0o755, 0, 0)?;
     for (name, content) in assets::systemd_units()? {
-        let path = Path::new("/etc/systemd/system").join(name);
-        process::write_file(&path, content.as_bytes(), 0o644)?;
-        process::chown(&path, 0, 0)?;
+        let canonical = unit_dir.join(&name);
+        process::write_file(&canonical, content.as_bytes(), 0o644)?;
+        process::chown(&canonical, 0, 0)?;
+
+        let systemd_link = Path::new("/etc/systemd/system").join(name);
+        if let Ok(metadata) = fs::symlink_metadata(&systemd_link) {
+            ensure!(
+                !metadata.is_dir(),
+                "refusing systemd unit directory: {}",
+                systemd_link.display()
+            );
+            fs::remove_file(&systemd_link)?;
+        }
+        symlink(&canonical, &systemd_link)?;
     }
     Ok(())
 }
@@ -391,6 +433,7 @@ mod tests {
             "outbe-cli",
             "outbe-keygen",
             "outbe-feeder",
+            "outbe-hyperlane-validator",
             "outbe-radicle",
         ] {
             let path = root.path().join(name);

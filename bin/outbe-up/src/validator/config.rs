@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeSet,
     fs::{self, OpenOptions},
     io::Write,
     net::Ipv4Addr,
@@ -19,6 +20,7 @@ pub struct OperatorConfig {
     pub version: u32,
     pub network: NetworkConfig,
     pub feeder: FeederConfig,
+    pub hyperlane: HyperlaneConfig,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -41,6 +43,66 @@ pub struct NetworkConfig {
 pub struct FeederConfig {
     /// Public TOML appended to the locally generated account configuration.
     pub public_toml: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HyperlaneConfig {
+    pub public_url: String,
+    #[serde(
+        default = "default_hyperlane_poll_interval",
+        skip_serializing_if = "is_default_hyperlane_poll_interval"
+    )]
+    pub poll_interval_secs: u64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub gasless: bool,
+    #[serde(
+        default = "default_hyperlane_funding_wei",
+        skip_serializing_if = "is_default_hyperlane_funding_wei"
+    )]
+    pub signer_funding_wei: String,
+    pub origins: Vec<HyperlaneOrigin>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HyperlaneOrigin {
+    pub domain: u32,
+    pub rpc_urls: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_default_rpc_consensus")]
+    pub rpc_consensus: RpcConsensus,
+    pub reorg_period: ReorgPeriod,
+    #[serde(
+        default = "default_origin_interval",
+        skip_serializing_if = "is_default_origin_interval"
+    )]
+    pub interval_secs: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ws_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_from: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RpcConsensus {
+    #[default]
+    Majority,
+    Quorum,
+    Single,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ReorgPeriod {
+    Blocks(u64),
+    Tag(FinalityTag),
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FinalityTag {
+    Finalized,
 }
 
 impl OperatorConfig {
@@ -97,10 +159,14 @@ impl OperatorConfig {
         write_private(
             &root.join("feeder-public.toml"),
             self.feeder.public_toml.as_bytes(),
+        )?;
+        write_private(
+            &root.join("hyperlane-public.toml"),
+            self.hyperlane.public_toml()?.as_bytes(),
         )
     }
 
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         ensure!(
             self.version == CONFIG_VERSION,
             "unsupported operator config version {}",
@@ -151,6 +217,112 @@ impl OperatorConfig {
             .public_toml
             .parse::<toml::Table>()
             .wrap_err("feeder.public_toml is not valid TOML")?;
+        self.hyperlane.validate()?;
+        Ok(())
+    }
+}
+
+impl HyperlaneConfig {
+    pub fn public_toml(&self) -> Result<String> {
+        #[derive(Serialize)]
+        struct HyperlaneSection {
+            poll_interval_secs: u64,
+            gasless: bool,
+        }
+        #[derive(Serialize)]
+        struct HealthSection<'a> {
+            enabled: bool,
+            bind_address: &'a str,
+        }
+        #[derive(Serialize)]
+        struct StorageSection<'a> {
+            db_path: &'a str,
+        }
+        #[derive(Serialize)]
+        struct ServerSection<'a> {
+            bind_address: &'a str,
+            public_url: &'a str,
+        }
+        #[derive(Serialize)]
+        struct PublicConfig<'a> {
+            hyperlane: HyperlaneSection,
+            health: HealthSection<'a>,
+            storage: StorageSection<'a>,
+            server: ServerSection<'a>,
+            origin: &'a [HyperlaneOrigin],
+        }
+        toml::to_string_pretty(&PublicConfig {
+            hyperlane: HyperlaneSection {
+                poll_interval_secs: self.poll_interval_secs,
+                gasless: self.gasless,
+            },
+            health: HealthSection {
+                enabled: true,
+                bind_address: "127.0.0.1:9003",
+            },
+            storage: StorageSection {
+                db_path: "/opt/outbe-chain/state/hyperlane/db",
+            },
+            server: ServerSection {
+                bind_address: "0.0.0.0:9000",
+                public_url: &self.public_url,
+            },
+            origin: &self.origins,
+        })
+        .wrap_err("failed to serialize Hyperlane configuration")
+    }
+
+    pub(crate) fn validate(&self) -> Result<()> {
+        ensure!(
+            self.poll_interval_secs > 0,
+            "hyperlane.poll_interval_secs must be positive"
+        );
+        ensure!(
+            self.signer_funding_wei
+                .parse::<alloy_primitives::U256>()
+                .is_ok_and(|amount| !amount.is_zero()),
+            "hyperlane.signer_funding_wei must be a positive integer"
+        );
+        let public_url = reqwest::Url::parse(&self.public_url)
+            .wrap_err("hyperlane.public_url must be a valid URL")?;
+        ensure!(
+            matches!(public_url.scheme(), "http" | "https")
+                && public_url.host_str().is_some()
+                && public_url.path() == "/"
+                && public_url.query().is_none()
+                && public_url.username().is_empty(),
+            "hyperlane.public_url must be an HTTP(S) origin without path, query, or credentials"
+        );
+        ensure!(!self.origins.is_empty(), "hyperlane.origins is empty");
+        let mut domains = BTreeSet::new();
+        for origin in &self.origins {
+            ensure!(
+                domains.insert(origin.domain),
+                "duplicate Hyperlane origin domain {}",
+                origin.domain
+            );
+            ensure!(
+                origin.interval_secs > 0,
+                "Hyperlane origin {} interval_secs must be positive",
+                origin.domain
+            );
+            ensure!(
+                !origin.rpc_urls.is_empty(),
+                "Hyperlane origin {} has no rpc_urls",
+                origin.domain
+            );
+            for rpc in &origin.rpc_urls {
+                let url = reqwest::Url::parse(rpc).wrap_err_with(|| {
+                    format!("invalid Hyperlane origin {} RPC URL", origin.domain)
+                })?;
+                ensure!(
+                    matches!(url.scheme(), "http" | "https"),
+                    "Hyperlane origin {} RPC must use HTTP(S)",
+                    origin.domain
+                );
+            }
+        }
+        self.public_toml()?.parse::<toml::Table>()?;
         Ok(())
     }
 }
@@ -163,6 +335,38 @@ impl NetworkConfig {
 
 const fn default_rpc_bind_ip() -> Ipv4Addr {
     Ipv4Addr::LOCALHOST
+}
+
+const fn default_hyperlane_poll_interval() -> u64 {
+    30
+}
+
+const fn default_origin_interval() -> u64 {
+    15
+}
+
+fn default_hyperlane_funding_wei() -> String {
+    "1000000000000000000".to_owned()
+}
+
+fn is_default_hyperlane_poll_interval(value: &u64) -> bool {
+    *value == default_hyperlane_poll_interval()
+}
+
+fn is_default_hyperlane_funding_wei(value: &String) -> bool {
+    value == &default_hyperlane_funding_wei()
+}
+
+fn is_default_origin_interval(value: &u64) -> bool {
+    *value == default_origin_interval()
+}
+
+fn is_default_rpc_consensus(value: &RpcConsensus) -> bool {
+    matches!(value, RpcConsensus::Majority)
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
@@ -210,6 +414,12 @@ feeder:
   public_toml: |
     [oracle]
     sources = "local"
+hyperlane:
+  public_url: http://192.0.2.10:9000
+  origins:
+    - domain: 424242
+      rpc_urls: [https://rpc.example]
+      reorg_period: 0
 "#,
             "c".repeat(96),
         );

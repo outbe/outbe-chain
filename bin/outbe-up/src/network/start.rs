@@ -10,7 +10,7 @@ use crate::support::progress::Progress;
 
 use super::{
     remote::{NetworkBuild, SshOptions},
-    status::{healthy, query_all, render},
+    status::{healthy, query_all, ready_for_hyperlane_setup, render, FounderStatus},
 };
 
 pub async fn run(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) -> Result<()> {
@@ -18,6 +18,15 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) ->
     progress.stage("verifying network artifacts and SSH targets");
     let build = NetworkBuild::load(artifacts)?;
     let ssh = SshOptions::new(ssh_key)?;
+    start_founders(&build, &ssh, &mut progress).await?;
+    wait_until_ready(&build, &ssh, timeout, &mut progress).await
+}
+
+async fn start_founders(
+    build: &NetworkBuild,
+    ssh: &SshOptions,
+    progress: &mut Progress,
+) -> Result<()> {
     progress.stage(&format!(
         "starting {} founding validators",
         build.config.founders.len()
@@ -36,57 +45,123 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) ->
     while let Some(result) = tasks.join_next().await {
         result.wrap_err("founder start task panicked")??;
     }
+    Ok(())
+}
 
+async fn wait_until_ready(
+    build: &NetworkBuild,
+    ssh: &SshOptions,
+    timeout: Duration,
+    progress: &mut Progress,
+) -> Result<()> {
     let required_peers = build.config.founders.len().saturating_sub(1);
     let deadline = Instant::now() + timeout;
-    progress.stage("waiting for finalized consensus and healthy services");
+    let mut hyperlane_configured = false;
+    progress.stage("waiting for finalized consensus");
     loop {
-        let statuses = query_all(&build, &ssh).await?;
-        if statuses
-            .iter()
-            .all(|status| healthy(status, build.config.chain_id, required_peers))
+        let statuses = query_all(build, ssh).await?;
+        if !hyperlane_configured
+            && statuses.iter().all(|status| {
+                ready_for_hyperlane_setup(status, build.config.chain_id, required_peers)
+            })
+        {
+            progress.stage("configuring Hyperlane signers on chain");
+            configure_hyperlane(build, ssh).await?;
+            hyperlane_configured = true;
+            progress.stage("waiting for healthy Hyperlane validators");
+            continue;
+        }
+        if hyperlane_configured
+            && statuses
+                .iter()
+                .all(|status| healthy(status, build.config.chain_id, required_peers))
         {
             progress.done(&format!(
                 "network {} finalized with {} founding validators",
                 build.config.name,
                 statuses.len()
             ));
-            println!("\n{}", render(&build, &statuses));
+            println!("\n{}", render(build, &statuses));
             return Ok(());
         }
-        if let Some(failed) = statuses
-            .iter()
-            .find(|status| status.services().contains(&"failed"))
-        {
-            let founder = build
-                .config
-                .founders
-                .iter()
-                .find(|founder| founder.name == failed.name)
-                .expect("status belongs to configured founder");
-            let logs = ssh
-                .capture(
-                    founder,
-                    "journalctl --no-pager -n 30 -u outbe-radicle.service -u outbe-feeder.service -u outbe-validator.service",
-                )
-                .unwrap_or_else(|error| format!("could not read journal: {error}"));
-            bail!("{} failed during network start:\n{logs}", failed.name);
-        }
+        fail_if_service_failed(build, ssh, &statuses, hyperlane_configured)?;
         if Instant::now() >= deadline {
             bail!(
                 "network did not reach finalized consensus within {} seconds:\n{}",
                 timeout.as_secs(),
-                render(&build, &statuses)
+                render(build, &statuses)
             );
         }
-        let ready = statuses
-            .iter()
-            .filter(|status| healthy(status, build.config.chain_id, required_peers))
-            .count();
-        progress.update(&format!(
-            "waiting for finalized consensus ({ready}/{} ready)",
-            statuses.len()
-        ));
+        let ready = ready_count(build, &statuses, required_peers, hyperlane_configured);
+        progress.update(&format!("{ready} of {} ready", statuses.len()));
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
+}
+
+fn fail_if_service_failed(
+    build: &NetworkBuild,
+    ssh: &SshOptions,
+    statuses: &[FounderStatus],
+    hyperlane_configured: bool,
+) -> Result<()> {
+    let Some(failed) = statuses
+        .iter()
+        .find(|status| service_failed(status, hyperlane_configured))
+    else {
+        return Ok(());
+    };
+    let founder = build
+        .config
+        .founders
+        .iter()
+        .find(|founder| founder.name == failed.name)
+        .expect("status belongs to configured founder");
+    let logs = ssh
+        .capture(
+            founder,
+            "journalctl --no-pager -n 30 -u outbe-radicle.service -u outbe-feeder.service -u outbe-hyperlane-validator.service -u outbe-validator.service",
+        )
+        .unwrap_or_else(|error| format!("could not read journal: {error}"));
+    bail!("{} failed during network start:\n{logs}", failed.name);
+}
+
+fn service_failed(status: &FounderStatus, hyperlane_configured: bool) -> bool {
+    status.services().contains(&"failed") || hyperlane_configured && status.hyperlane == "failed"
+}
+
+fn ready_count(
+    build: &NetworkBuild,
+    statuses: &[FounderStatus],
+    required_peers: usize,
+    hyperlane_configured: bool,
+) -> usize {
+    statuses
+        .iter()
+        .filter(|status| {
+            if hyperlane_configured {
+                healthy(status, build.config.chain_id, required_peers)
+            } else {
+                ready_for_hyperlane_setup(status, build.config.chain_id, required_peers)
+            }
+        })
+        .count()
+}
+
+async fn configure_hyperlane(build: &super::remote::NetworkBuild, ssh: &SshOptions) -> Result<()> {
+    let mut tasks = JoinSet::new();
+    for (index, founder) in build.config.founders.clone().into_iter().enumerate() {
+        let ssh = ssh.clone();
+        tasks.spawn_blocking(move || {
+            let script = format!("/opt/outbe-chain/validator-{index}/configure-hyperlane.sh");
+            ssh.run_quiet(
+                &founder,
+                &format!("if [ \"$(id -u)\" -eq 0 ]; then {script}; else sudo -n {script}; fi"),
+            )
+            .wrap_err_with(|| format!("configure Hyperlane for {}", founder.name))
+        });
+    }
+    while let Some(result) = tasks.join_next().await {
+        result.wrap_err("Hyperlane setup task panicked")??;
+    }
+    Ok(())
 }

@@ -357,6 +357,7 @@ fn validator_bundle_creates_all_keys_and_valid_registration_signature() {
     assert!(dir.path().join("signing-key.hex").is_file());
     assert!(dir.path().join("evm-key.hex").is_file());
     assert!(dir.path().join("feeder-key.hex").is_file());
+    assert!(dir.path().join("hyperlane-key.hex").is_file());
     assert!(dir.path().join("radicle/keys/radicle").is_file());
     assert!(dir.path().join("radicle/keys/radicle.pub").is_file());
 

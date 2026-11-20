@@ -13,6 +13,7 @@ use eyre::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::support::progress::Progress;
+use crate::validator::config::{HyperlaneConfig, HyperlaneOrigin};
 
 pub const CONFIG_VERSION: u32 = 1;
 pub const MIN_FOUNDERS: usize = 4;
@@ -27,6 +28,7 @@ pub struct NetworkConfig {
     pub chain_id: u64,
     pub certified_rpc: String,
     pub founders: Vec<Founder>,
+    pub hyperlane: HyperlaneNetworkConfig,
     #[serde(default)]
     pub topology: Topology,
     pub genesis: Genesis,
@@ -66,6 +68,31 @@ pub struct Founder {
     pub advertise_ip: Ipv4Addr,
     #[serde(default = "loopback")]
     pub rpc_bind_ip: Ipv4Addr,
+    pub hyperlane_public_url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct HyperlaneNetworkConfig {
+    #[serde(default = "default_hyperlane_poll_interval")]
+    pub poll_interval_secs: u64,
+    #[serde(default)]
+    pub gasless: bool,
+    #[serde(default = "default_hyperlane_funding_wei")]
+    pub signer_funding_wei: String,
+    pub origins: Vec<HyperlaneOrigin>,
+}
+
+impl HyperlaneNetworkConfig {
+    pub fn for_public_url(&self, public_url: String) -> HyperlaneConfig {
+        HyperlaneConfig {
+            public_url,
+            poll_interval_secs: self.poll_interval_secs,
+            gasless: self.gasless,
+            signer_funding_wei: self.signer_funding_wei.clone(),
+            origins: self.origins.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -187,6 +214,10 @@ impl NetworkConfig {
                 "rpc_bind_ip for {} must be loopback or private",
                 founder.name
             );
+            self.hyperlane
+                .for_public_url(founder.hyperlane_public_url.clone())
+                .validate()
+                .wrap_err_with(|| format!("invalid Hyperlane config for {}", founder.name))?;
         }
 
         for (address, amount) in &self.genesis.prefunded_accounts {
@@ -317,6 +348,14 @@ const fn default_ssh_port() -> u16 {
     22
 }
 
+const fn default_hyperlane_poll_interval() -> u64 {
+    30
+}
+
+fn default_hyperlane_funding_wei() -> String {
+    "1000000000000000000".to_owned()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -331,6 +370,11 @@ chain_id: 54322345
 certified_rpc: "http://10.0.0.10:8545"
 founders:
 {}
+hyperlane:
+  origins:
+    - domain: 54322345
+      rpc_urls: ["https://rpc.example.invalid"]
+      reorg_period: 0
 topology:
   use_local_defaults: true
 genesis:
@@ -339,7 +383,8 @@ genesis:
 "#,
             (0..founder_count)
                 .map(|index| format!(
-                    "  - name: validator-{index}\n    ssh:\n      host: 192.0.2.{}\n    advertise_ip: 10.0.0.{}",
+                    "  - name: validator-{index}\n    ssh:\n      host: 192.0.2.{}\n    advertise_ip: 10.0.0.{}\n    hyperlane_public_url: http://192.0.2.{}:9000",
+                    index + 10,
                     index + 10,
                     index + 10
                 ))

@@ -541,7 +541,7 @@ PrivateKeySigner::parse()
   -> eth_sendRawTransaction
 ```
 
-`chain.chain_id` is set explicitly on each vote transaction. The journal is keyed by chain genesis, signer, and validator, and is stored in `STATE_DIRECTORY` when systemd supplies it. The validator service provisions `/var/lib/outbe-feeder` for this purpose. Without systemd, the journal is stored beside the canonical config path.
+`chain.chain_id` is set explicitly on each vote transaction. The journal is keyed by chain genesis, signer, and validator, and is stored in `STATE_DIRECTORY` when systemd supplies it. The validator service provisions `/opt/outbe-chain/state/feeder` for this purpose. Without systemd, the journal is stored beside the canonical config path.
 
 When `chain.gasless_oracle_votes = true`, the feeder still sends a normal signed EVM transaction to `Oracle.submitVote(...)`, but marks it with zero priority fee and a max fee cap high enough for Reth's public txpool protocol checks. The `outbe-txpool` crate and executor both call the system `zerofee` hook registry. The registered `OracleSubmitVoteHook` revalidates the signer, delegated feeder status, one-vote-per-period rule, zero native value, and policy size limits before waiving native fee debit. Authorized gasless `submitVote` transactions are ordered ahead of fee-paying transactions inside the Outbe txpool, so payload building considers validator votes before the normal tip market while still enforcing nonce, validity, and block gas limits. Paid `submitVote` transactions keep the normal EVM path.
 

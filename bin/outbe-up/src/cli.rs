@@ -119,6 +119,8 @@ struct InternalArgs {
 #[derive(Debug, Subcommand)]
 enum InternalCommand {
     Feeder,
+    Hyperlane,
+    HyperlaneSetup,
     WaitRpc(WaitArgs),
     WaitValidatorDependencies(WaitArgs),
 }
@@ -180,6 +182,8 @@ impl Cli {
             },
             Command::Internal(args) => match args.command {
                 InternalCommand::Feeder => validator::service::feeder(),
+                InternalCommand::Hyperlane => validator::hyperlane::run_service().await,
+                InternalCommand::HyperlaneSetup => validator::hyperlane::setup_founder().await,
                 InternalCommand::WaitRpc(args) => validator::service::wait_rpc(args.timeout).await,
                 InternalCommand::WaitValidatorDependencies(args) => {
                     validator::service::wait_validator_dependencies(args.timeout).await
