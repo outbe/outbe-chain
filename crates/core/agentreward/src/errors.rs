@@ -37,23 +37,14 @@ pub enum AgentRewardError {
     RewardDeadlineOverflow,
     #[error("nonempty reward balance has no deadline")]
     RewardDeadlineMissing,
-    #[error("agentreward has no previous-day COEN price in {0}")]
-    MissingPreviousDayPrice(u16),
+    #[error("agentreward has no 24-hour COEN price in {0} at the claim hour")]
+    ClaimPriceUnavailable(u16),
     #[error("agentreward entry price overflow")]
     EntryPriceOverflow,
     #[error("agentreward unknown reward pool {0}")]
     UnknownRewardPool(u8),
     #[error("agentreward accrual job {0} is missing")]
     AccrualJobMissing(u64),
-    #[error("date step kind {kind} from date key {date_key}")]
-    DateStep { kind: u8, date_key: u32 },
-}
-
-pub(crate) fn date_step_error(err: outbe_system_common::time::TimeError) -> PrecompileError {
-    match err.date_step() {
-        Some((kind, date_key)) => AgentRewardError::DateStep { kind, date_key }.into(),
-        None => PrecompileError::Fatal(err.to_string()),
-    }
 }
 
 fn revert_with<E: SolError>(error: E) -> PrecompileError {
@@ -87,8 +78,8 @@ impl From<AgentRewardError> for PrecompileError {
             }
             AgentRewardError::RewardDeadlineOverflow => revert_with(I::RewardDeadlineOverflow {}),
             AgentRewardError::RewardDeadlineMissing => revert_with(I::RewardDeadlineMissing {}),
-            AgentRewardError::MissingPreviousDayPrice(value) => {
-                revert_with(I::MissingPreviousDayPrice { value })
+            AgentRewardError::ClaimPriceUnavailable(iso_code) => {
+                revert_with(I::ClaimPriceUnavailable { isoCode: iso_code })
             }
             AgentRewardError::EntryPriceOverflow => revert_with(I::EntryPriceOverflow {}),
             AgentRewardError::UnknownRewardPool(value) => {
@@ -97,10 +88,6 @@ impl From<AgentRewardError> for PrecompileError {
             AgentRewardError::AccrualJobMissing(value) => {
                 revert_with(I::AccrualJobMissing { value })
             }
-            AgentRewardError::DateStep { kind, date_key } => revert_with(I::DateStep {
-                kind,
-                dateKey: date_key,
-            }),
         }
     }
 }
@@ -135,8 +122,8 @@ mod tests {
                 IAgentReward::RewardDeadlineMissing {}.abi_encode(),
             ),
             (
-                AgentRewardError::MissingPreviousDayPrice(840),
-                IAgentReward::MissingPreviousDayPrice { value: 840 }.abi_encode(),
+                AgentRewardError::ClaimPriceUnavailable(840),
+                IAgentReward::ClaimPriceUnavailable { isoCode: 840 }.abi_encode(),
             ),
             (
                 AgentRewardError::EntryPriceOverflow,

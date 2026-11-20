@@ -19,11 +19,10 @@ interface IAgentReward {
     error RewardBalanceNotExpired(uint64 deadline);
     error RewardDeadlineOverflow();
     error RewardDeadlineMissing();
-    error MissingPreviousDayPrice(uint16 value);
+    error ClaimPriceUnavailable(uint16 isoCode);
     error EntryPriceOverflow();
     error UnknownRewardPool(uint8 value);
     error AccrualJobMissing(uint64 value);
-    error DateStep(uint8 kind, uint32 dateKey);
 
     event RewardAccrued(address indexed account, uint8 indexed pool, uint32 indexed utcDay, uint256 promisLoadMinor);
     event RewardsClaimed(address indexed account, uint8 indexed pool, uint256 promisLoadMinor, uint256 gemId);
@@ -46,8 +45,8 @@ interface IAgentReward {
     /// @notice Issues `promisLoadMinor` of the caller's balance in `pool`
     /// as a Gem in the caller's `issuanceCurrency` and `referenceCurrency` (ISO 4217 numeric).
     /// `referenceCurrency` must be an Oracle reference currency. The entry price is the
-    /// previous UTC day's COEN VWAP in it less the agent discount; the call price marks
-    /// up the full VWAP. `issuanceCurrency` is any code in 1..=999.
+    /// 24-hour COEN VWAP of the claim hour in it less the agent discount; the call price
+    /// marks up the full VWAP. The Gem joins the sub-series of the claim hour. `issuanceCurrency` is any code in 1..=999.
     /// A `promisLoadMinor` of zero claims the whole pool balance. Claims must precede
     /// the balance deadline. A successful partial claim renews the remaining balance's
     /// deadline for 365 days; a full claim clears it. The first positive credit starts

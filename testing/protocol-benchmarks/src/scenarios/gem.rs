@@ -6,7 +6,7 @@ use outbe_gemfactory::GemFactoryContract;
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
+use outbe_system_common::time::EmissionDate;
 use outbe_system_common::units::{SCALE_1E6_U128, SCALE_1E6_U64};
 
 use super::support::{capture_execution, elapsed_ns};
@@ -90,16 +90,15 @@ fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
         },
     )
     .map_err(|error| error.to_string())?;
-    let oracle = OracleContract::new(storage);
-    oracle
-        .record_utc_day_vwap(
-            previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step"),
-            index,
-            rate,
-        )
-        .map_err(|error| error.to_string())?;
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        &storage,
+        outbe_oracle::api::DAY_TYPE_PAIR,
+        rate,
+        six_decimal_unit(),
+    )
+    .map_err(|error| error.to_string())?;
     // A merchant gem is floored at the source's emission-day price.
-    oracle
+    OracleContract::new(storage)
         .record_utc_day_vwap(source_series_id().day(), index, six_decimal_unit())
         .map_err(|error| error.to_string())
 }

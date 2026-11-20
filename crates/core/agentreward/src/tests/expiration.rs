@@ -199,16 +199,6 @@ fn tiny_partial_claim_renews_only_its_pool_and_full_claim_clears_deadline() {
                 .set_block_timestamp(U256::from(deadline - 1))
                 .unwrap();
             seed_oracle(&storage, ONE_COEN);
-            let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD)
-                .unwrap()
-                .unwrap();
-            outbe_oracle::schema::OracleContract::new(storage.clone())
-                .record_utc_day_vwap(
-                    previous_date_key(timestamp_to_date_key(deadline - 1)).unwrap(),
-                    index,
-                    ONE_COEN,
-                )
-                .unwrap();
             contract
                 .claim_reward(pool, ALICE, U256::ONE, (USD, USD))
                 .unwrap();

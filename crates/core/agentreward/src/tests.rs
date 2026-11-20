@@ -1,7 +1,7 @@
 use alloy_primitives::{address, Address, U256};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
-use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, WorldwideDay};
+use outbe_system_common::time::{timestamp_to_date_key, WorldwideDay};
 
 use crate::schema::RewardPool as PoolKind;
 use crate::schema::{AgentRewardContract, DayIndex, RewardPool};
@@ -610,42 +610,36 @@ fn tribute_counter_address_count_max_succeeds_then_rejects_without_slot_overwrit
     }
 }
 
-/// Registers COEN/840 with `price` as its spot and previous-day VWAP.
+/// Registers COEN/840 with `spot` as its spot rate and no VWAP.
+fn register_usd(storage: &StorageHandle<'_>, spot: U256) {
+    outbe_oracle::test_support::publish_day_type_rate(storage, spot, 1, T_NOW).unwrap();
+}
+
+/// Covers the 24-hour COEN/`iso` window of the current hour at `vwap`.
+fn seed_hour_vwap(storage: &StorageHandle<'_>, iso: u16, vwap: U256) {
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        storage,
+        outbe_oracle::api::AddressPair::new_coen_to(iso),
+        vwap,
+        U256::from(1_000_000u64),
+    )
+    .unwrap();
+}
+
+/// Registers COEN/840 with `price` as its spot and the 24-hour VWAP of the current hour.
 fn seed_oracle(storage: &StorageHandle<'_>, price: U256) {
-    outbe_oracle::test_support::publish_day_type_rate(storage, price, 1, T_NOW).unwrap();
-    seed_day_vwap(storage, price);
+    register_usd(storage, price);
+    seed_hour_vwap(storage, USD, price);
 }
 
-/// Publishes `vwap` as the COEN/840 VWAP of the UTC day before `T_NOW`. Zero clears it.
-fn seed_day_vwap(storage: &StorageHandle<'_>, vwap: U256) {
-    let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
-        .unwrap()
-        .expect("COEN/840 registered");
-    let day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
-    outbe_oracle::schema::OracleContract::new(storage.clone())
-        .record_utc_day_vwap(day, index, vwap)
-        .unwrap();
-}
-
-/// Registers COEN/`iso` with `vwap` as its previous-day VWAP, in the reference set when `reference`.
-fn price_coen_in(storage: &StorageHandle<'_>, iso: u16, vwap: U256, reference: bool) {
+/// Registers COEN/`iso` with `vwap` as the 24-hour VWAP of the current hour.
+fn price_coen_in(storage: &StorageHandle<'_>, iso: u16, vwap: U256) {
     outbe_oracle::api::register_pair(
         storage.clone(),
         outbe_oracle::api::AddressPair::new_coen_to(iso),
     )
     .unwrap();
-    let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
-        .unwrap()
-        .unwrap();
-    let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
-    oracle
-        .record_utc_day_vwap(
-            previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step"),
-            index,
-            vwap,
-        )
-        .unwrap();
-    if reference {}
+    seed_hour_vwap(storage, iso, vwap);
 }
 
 /// `price` less the agent discount, the entry of an agent reward Gem.
@@ -706,7 +700,7 @@ fn same_block_claims_with_different_currencies_have_distinct_ids() {
 
     with_contract_mut(|storage, contract| {
         seed_oracle(&storage, ONE_COEN);
-        price_coen_in(&storage, EUR, ONE_COEN, true);
+        price_coen_in(&storage, EUR, ONE_COEN);
         let mut remaining = load * U256::from(4);
         contract
             .add_claimable_reward(RewardPool::Waa, alice, remaining)
@@ -802,50 +796,56 @@ fn claim_waa_in(
 }
 
 #[test]
-fn a_claim_prices_on_the_previous_day_vwap() {
+fn reward_gem_takes_the_price_of_its_claim_hour() {
     let alice = address!("0x1111111111111111111111111111111111111111");
-    let day_vwap = U256::from(2u64) * ONE_COEN;
+    let hour_vwap = U256::from(2u64) * ONE_COEN;
 
     with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, ONE_COEN);
-        seed_day_vwap(&storage, day_vwap);
+        storage
+            .set_block_timestamp(U256::from(T_NOW - T_NOW % 86_400 + 9 * 3_600 + 20 * 60))
+            .unwrap();
+        register_usd(&storage, ONE_COEN);
+        seed_hour_vwap(&storage, USD, hour_vwap);
+        claim_waa(contract, alice, U256::from(500u64)).unwrap();
+        let gem = gem_of(&storage, alice);
+        assert_eq!(gem.item.entry_price_minor, discounted(hour_vwap));
+        let call_rate = outbe_gem::config::read(&storage).unwrap().call_rate;
+        assert_eq!(
+            gem.terms.call_price_minor,
+            outbe_core_common::markup::marked_up(hour_vwap, call_rate).unwrap()
+        );
+        assert_eq!(gem.item.sub_series_id, 9);
+    });
+}
+
+#[test]
+fn a_claim_ignores_a_spot_above_the_vwap_of_its_hour() {
+    let alice = address!("0x1111111111111111111111111111111111111111");
+    let hour_vwap = U256::from(2u64) * ONE_COEN;
+
+    with_contract_mut(|storage, contract| {
+        register_usd(&storage, U256::from(3u64) * ONE_COEN);
+        seed_hour_vwap(&storage, USD, hour_vwap);
         claim_waa(contract, alice, U256::from(500u64)).unwrap();
         assert_eq!(
             gem_of(&storage, alice).item.entry_price_minor,
-            discounted(day_vwap)
+            discounted(hour_vwap)
         );
     });
 }
 
 #[test]
-fn a_claim_ignores_a_spot_above_the_previous_day_vwap() {
-    let alice = address!("0x1111111111111111111111111111111111111111");
-    let day_vwap = U256::from(2u64) * ONE_COEN;
-
-    with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, U256::from(3u64) * ONE_COEN);
-        seed_day_vwap(&storage, day_vwap);
-        claim_waa(contract, alice, U256::from(500u64)).unwrap();
-        assert_eq!(
-            gem_of(&storage, alice).item.entry_price_minor,
-            discounted(day_vwap)
-        );
-    });
-}
-
-#[test]
-fn a_claim_without_a_previous_day_vwap_keeps_the_balance() {
+fn a_claim_without_a_vwap_of_its_hour_keeps_the_balance() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let load = U256::from(500u64);
 
     with_contract_mut(|storage, contract| {
-        seed_oracle(&storage, ONE_COEN);
-        seed_day_vwap(&storage, U256::ZERO);
+        register_usd(&storage, ONE_COEN);
         let err = claim_waa(contract, alice, load).unwrap_err();
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::AgentRewardError::MissingPreviousDayPrice(USD)
+                crate::errors::AgentRewardError::ClaimPriceUnavailable(USD)
             )
             .to_string()
         );
@@ -854,12 +854,12 @@ fn a_claim_without_a_previous_day_vwap_keeps_the_balance() {
 }
 
 #[test]
-fn a_claim_with_no_price_leaves_the_balance_for_the_next_day() {
+fn a_claim_with_no_priced_pair_keeps_the_balance() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let load = U256::from(500u64);
 
     with_contract_mut(|_storage, contract| {
-        // USD is a reference currency, with no pair, no quote and no closed day.
+        // USD is a reference currency, with no pair and no window.
         contract
             .add_claimable_reward(RewardPool::Waa, alice, load)
             .unwrap();
@@ -870,7 +870,7 @@ fn a_claim_with_no_price_leaves_the_balance_for_the_next_day() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::AgentRewardError::MissingPreviousDayPrice(USD)
+                crate::errors::AgentRewardError::ClaimPriceUnavailable(USD)
             )
             .to_string()
         );
@@ -885,7 +885,7 @@ fn a_claim_issues_the_gem_in_the_callers_currencies() {
 
     with_contract_mut(|storage, contract| {
         seed_oracle(&storage, ONE_COEN);
-        price_coen_in(&storage, EUR, eur_vwap, true);
+        price_coen_in(&storage, EUR, eur_vwap);
         claim_waa_in(contract, alice, U256::from(500u64), MYR, EUR).unwrap();
         let gem = gem_of(&storage, alice);
         assert_eq!(gem.item.issuance_currency, MYR);
@@ -903,7 +903,7 @@ fn a_claim_refuses_a_reference_outside_the_reference_set() {
         with_contract_mut(|storage, contract| {
             seed_oracle(&storage, ONE_COEN);
             if priced {
-                price_coen_in(&storage, MYR, ONE_COEN, false);
+                price_coen_in(&storage, MYR, ONE_COEN);
             }
             let err = claim_waa_in(contract, alice, load, USD, MYR).unwrap_err();
             assert_eq!(
@@ -929,7 +929,7 @@ fn a_claim_in_an_unpriced_reference_keeps_the_balance() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::AgentRewardError::MissingPreviousDayPrice(EUR)
+                crate::errors::AgentRewardError::ClaimPriceUnavailable(EUR)
             )
             .to_string()
         );
