@@ -264,6 +264,16 @@ contract OriginRouterTest is CrossChainTest {
         assertLt(before - gasleft(), 2_000_000, "a full page reads its fields without copying the payload");
     }
 
+    function test_result_sent_event_carries_the_result_of_its_chain() public {
+        vm.prank(desis);
+        originRouter.sendIntexAuctionStart(_baseStageStartParams());
+
+        vm.expectEmit(false, true, true, true, address(originRouter));
+        emit IOriginRouter.IntexAuctionResultSent(bytes32(0), EMISSION_DAY, BNB_CHAIN_ID, 40, 3);
+        vm.prank(desis);
+        originRouter.sendIntexAuctionResult(BNB_CHAIN_ID, EMISSION_DAY, 40, 3, 50, 10_000, 100e6);
+    }
+
     function test_kept_winners_page_is_keyed_by_its_day_and_page() public {
         vm.prank(desis);
         originRouter.sendIntexAuctionStart(_baseStageStartParams());
