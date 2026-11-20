@@ -8,23 +8,12 @@ import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
-import {IGatewayQuote} from "@contracts/shared/interfaces/IGatewayQuote.sol";
+import {IGatewayQuote} from "@crosschain/interfaces/IGatewayQuote.sol";
+import {IMailbox} from "@crosschain/interfaces/IHyperlane.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockERC7786Bridge} from "@test-mocks/MockERC7786Bridge.sol";
-
-interface IMailbox {
-    function dispatch(uint32 destinationDomain, bytes32 recipient, bytes calldata body, bytes calldata metadata)
-        external
-        payable
-        returns (bytes32);
-
-    function quoteDispatch(uint32 destinationDomain, bytes32 recipient, bytes calldata body, bytes calldata metadata)
-        external
-        view
-        returns (uint256);
-}
 
 /// @notice What the hub and its Hyperlane adapter do on the way out, wired to the real mailbox.
 /// @dev This file reproduces them rather than importing them from `contracts/crosschain`. Compiling

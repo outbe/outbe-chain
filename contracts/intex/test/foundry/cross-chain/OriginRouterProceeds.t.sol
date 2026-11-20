@@ -6,7 +6,7 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IOriginRouter} from "@contracts/origin/interfaces/IOriginRouter.sol";
-import {IERC7786TokenReceiver} from "@contracts/origin/interfaces/IERC7786TokenReceiver.sol";
+import {IERC7786TokenReceiver} from "@tokens/interfaces/IERC7786TokenReceiver.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 
 /// @dev WETH-style stub: `withdraw` pays native from its own pre-funded balance, standing in for WCOEN unwrap.
