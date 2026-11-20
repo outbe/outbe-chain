@@ -6,7 +6,8 @@ import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/Own
 import {PausableUpgradeable} from "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "./interfaces/IERC7786.sol";
+import {IERC7786GatewaySource, IERC7786Recipient} from "./interfaces/IERC7786.sol";
+import {IGatewayQuote} from "./interfaces/IGatewayQuote.sol";
 
 /**
  *

@@ -10,14 +10,12 @@ use crate::scurve;
 
 pub use crate::constants::{DAY_TYPE_ISO, DAY_TYPE_PAIR, REFERENCE_CURRENCIES};
 pub use crate::types::{currency_address, AddressPair, AssetType, COEN_ASSET};
-pub use crate::window::{
-    active_vwap_policy, get_vwap_snapshot_id, VwapPolicy, VwapSnapshotId, DEFAULT_VWAP_POLICY,
-};
+pub use crate::window::{vwap_24h_snapshot_id, VwapSnapshotId};
 
 use alloy_primitives::{Address, U256};
 
 use outbe_primitives::{error::Result, storage::StorageHandle};
-use outbe_system_common::time::{previous_date_key, WorldwideDay};
+use outbe_system_common::time::previous_date_key;
 
 /// Validates that `iso_code` is a reference currency.
 ///
@@ -101,16 +99,17 @@ pub fn coen_rate_for_opt(storage: StorageHandle, iso_code: u16) -> Result<Option
     Ok((!stored.is_zero()).then_some(stored))
 }
 
-/// Snapshot required at the current block under the active policy.
-pub fn current_vwap_snapshot(storage: StorageHandle) -> Result<VwapSnapshotId> {
+/// The snapshot of the current block: its 24-hour window ends at the last
+/// whole UTC hour.
+pub fn current_vwap_24h_snapshot(storage: StorageHandle) -> Result<VwapSnapshotId> {
     let now = storage.now_secs()?;
-    get_vwap_snapshot_id(now, &active_vwap_policy())
+    vwap_24h_snapshot_id(now)
 }
 
-/// Finalized COEN/`iso_code` VWAP over the snapshot's window, in the pair's
+/// The 24-hour COEN/`iso_code` VWAP of the snapshot's window, in the pair's
 /// six-decimal scale. `None` when the pair is unregistered or the window holds no
 /// positive price. An open or malformed snapshot is an error.
-pub fn get_finalized_window_vwap(
+pub fn vwap_24h(
     storage: StorageHandle,
     iso_code: u16,
     snapshot: VwapSnapshotId,
@@ -120,11 +119,11 @@ pub fn get_finalized_window_vwap(
     if oracle.pair_index_of(pair)? == 0 {
         return Ok(None);
     }
-    oracle.finalized_window_vwap(pair, snapshot)
+    oracle.vwap_24h(pair, snapshot)
 }
 
-/// Both COEN legs of a cross-currency settlement, read from the one trailing
-/// snapshot required at the current block.
+/// Both COEN legs of a cross-currency settlement, read from the one 24-hour
+/// snapshot of the current block.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SettlementFxRates {
     pub snapshot: VwapSnapshotId,
@@ -138,14 +137,13 @@ pub fn settlement_fx_rates(
     issuance_currency: u16,
     reference_currency: u16,
 ) -> Result<Option<SettlementFxRates>> {
-    let snapshot = current_vwap_snapshot(storage.clone())?;
+    let snapshot = current_vwap_24h_snapshot(storage.clone())?;
     let Some(issuance_currency_vwap_minor) =
-        get_finalized_window_vwap(storage.clone(), issuance_currency, snapshot)?
+        vwap_24h(storage.clone(), issuance_currency, snapshot)?
     else {
         return Ok(None);
     };
-    let Some(reference_currency_vwap_minor) =
-        get_finalized_window_vwap(storage, reference_currency, snapshot)?
+    let Some(reference_currency_vwap_minor) = vwap_24h(storage, reference_currency, snapshot)?
     else {
         return Ok(None);
     };
@@ -235,55 +233,54 @@ pub fn register_pair(storage: StorageHandle, pair: AddressPair) -> Result<PairIn
 
 /// Public Oracle inputs used by the Tribute enclave.
 ///
-/// Both VWAPs are exact WorldwideDay snapshots in the six-decimal COEN/ISO
-/// domain. The S-curve belongs only to the independently selected reference
-/// currency. The enclave owns the final `max(reference_vwap, reference_curve)`
-/// and cross-currency nominal arithmetic.
+/// Both VWAPs are the 24-hour VWAP of the hour of the offer, in the six-decimal
+/// COEN/ISO domain. The S-curve belongs only to the independently selected
+/// reference currency. The enclave owns the final
+/// `max(reference_vwap, reference_curve)` and cross-currency nominal arithmetic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TributePricingInputs {
-    pub issuance_wwd_vwap_minor: U256,
-    pub reference_wwd_vwap_minor: U256,
+    pub issuance_vwap_minor: U256,
+    pub reference_vwap_minor: U256,
     pub reference_scurve_minor: U256,
 }
 
-/// Reads the three canonical public pricing inputs for one Tribute.
+/// Reads the three public pricing inputs of an offer at the current block: the
+/// values of the last whole UTC hour.
 ///
 /// `None` means the issuance `COEN/<iso>` pair is not registered. Once the
-/// issuance pair exists, zero fields represent missing daily data or a missing
-/// reference pair. The Tribute host can then reject the transient unpriced
-/// condition without collapsing it into an unsupported issuance.
+/// issuance pair exists, a zero VWAP means that the pair has no 24-hour VWAP
+/// in that hour, or that the reference pair is not registered. The Tribute host
+/// can then reject the transient unpriced condition without collapsing it into
+/// an unsupported issuance.
 pub fn tribute_pricing_inputs(
     storage: StorageHandle,
     issuance_currency: u16,
     reference_currency: u16,
-    worldwide_day: WorldwideDay,
 ) -> Result<Option<TributePricingInputs>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage.clone());
     let issuance_pair = AddressPair::new_coen_to(issuance_currency);
-    let issuance_index = oracle.pair_index_of(issuance_pair)?;
-    if issuance_index == 0 {
+    if oracle.pair_index_of(issuance_pair)? == 0 {
         return Ok(None);
     }
-    let issuance_wwd_vwap_minor = oracle
-        .get_worldwide_day_vwap_for_pair(worldwide_day, issuance_index)?
+    let snapshot = current_vwap_24h_snapshot(storage)?;
+    let issuance_vwap_minor = oracle
+        .vwap_24h(issuance_pair, snapshot)?
         .unwrap_or(U256::ZERO);
     let reference_pair = AddressPair::new_coen_to(reference_currency);
-    let reference_index = oracle.pair_index_of(reference_pair)?;
-    let reference_wwd_vwap_minor = if reference_index == 0 {
-        U256::ZERO
-    } else {
-        oracle
-            .get_worldwide_day_vwap_for_pair(worldwide_day, reference_index)?
-            .unwrap_or(U256::ZERO)
-    };
-    let reference_scurve_minor = if reference_index == 0 {
-        U256::ZERO
-    } else {
-        get_scurve_value(storage, worldwide_day, reference_pair)?
-    };
+    let (reference_vwap_minor, reference_scurve_minor) =
+        if oracle.pair_index_of(reference_pair)? == 0 {
+            (U256::ZERO, U256::ZERO)
+        } else {
+            (
+                oracle
+                    .vwap_24h(reference_pair, snapshot)?
+                    .unwrap_or(U256::ZERO),
+                scurve::scurve_value(&oracle, reference_pair, snapshot.cutoff())?,
+            )
+        };
     Ok(Some(TributePricingInputs {
-        issuance_wwd_vwap_minor,
-        reference_wwd_vwap_minor,
+        issuance_vwap_minor,
+        reference_vwap_minor,
         reference_scurve_minor,
     }))
 }
@@ -313,18 +310,6 @@ pub fn set_exchange_rate(
         observation.block_number,
         observation.timestamp,
     )
-}
-
-/// Stored WorldwideDay VWAP for the pair registered under `index`, or `None`
-/// when the day has no snapshot or that pair had no data in it. Callers get the
-/// index from [`require_coen_pair`] or [`register_pair`].
-pub fn get_worldwide_day_vwap_for_pair(
-    storage: StorageHandle,
-    worldwide_day: WorldwideDay,
-    index: PairIndex,
-) -> Result<Option<U256>> {
-    let oracle: OracleContract<'_> = OracleContract::new(storage);
-    oracle.get_worldwide_day_vwap_for_pair(worldwide_day, index)
 }
 
 /// Every reference currency priced for the emission day `day`, ascending by
@@ -358,48 +343,6 @@ pub fn priced_reference_currencies_of_day(
     Ok(priced)
 }
 
-/// Stored WorldwideDay VWAP for the [`DAY_TYPE_PAIR`] (`COEN/840`), or `None`
-/// when the pair is not registered or the day has no snapshot for it.
-///
-/// Pair resolution and the snapshot lookup live here, behind one typed
-/// interface. Callers therefore never touch the oracle's internal `pair_index`
-/// map. Genuine storage faults propagate as `Err`. This keeps "no data yet"
-/// (`Ok(None)`) distinct from "oracle broken". No day colour reads this value
-/// (OIP-00320).
-pub fn day_type_pair_vwap(
-    storage: StorageHandle,
-    worldwide_day: WorldwideDay,
-) -> Result<Option<U256>> {
-    let oracle: OracleContract<'_> = OracleContract::new(storage);
-    let index = oracle.pair_index_of(DAY_TYPE_PAIR)?;
-    if index == 0 {
-        return Ok(None);
-    }
-    oracle.get_worldwide_day_vwap_for_pair(worldwide_day, index)
-}
-
-/// Computes and stores the WorldwideDay VWAP snapshot for `[start_time,
-/// end_time)`. Returns `true` if it wrote a snapshot, `false` if the window held
-/// no oracle data (a deterministic no-op, not an error).
-pub fn store_worldwide_day_vwap_snapshot(
-    storage: StorageHandle,
-    worldwide_day: WorldwideDay,
-    start_time: u64,
-    end_time: u64,
-) -> Result<bool> {
-    let mut oracle: OracleContract<'_> = OracleContract::new(storage);
-    oracle.store_worldwide_day_vwap_snapshot(worldwide_day, start_time, end_time)
-}
-
-/// Returns `true` if a non-empty WorldwideDay VWAP snapshot has been stored for `worldwide_day`.
-pub fn has_worldwide_day_vwap_snapshot(
-    storage: StorageHandle,
-    worldwide_day: WorldwideDay,
-) -> Result<bool> {
-    let oracle: OracleContract<'_> = OracleContract::new(storage);
-    oracle.worldwide_day_vwap_exists.read(&worldwide_day)
-}
-
 /// Returns the stored VWAP for `pair` on that UTC calendar day, or `None`
 /// when the day has no entry. `utc_day` is a yyyymmdd UTC date key.
 /// A day above `utc_day_vwap_last_finalized` is not finalized.
@@ -428,19 +371,16 @@ pub fn get_utc_day_vwap_for_iso(
     get_utc_day_vwap(storage, utc_day, index)
 }
 
-pub fn get_scurve_value(
-    storage: StorageHandle,
-    worldwide_day: WorldwideDay,
-    pair: AddressPair,
-) -> Result<U256> {
+/// The S-curve value of `pair` at `timestamp`, or 0 when the pair has no curve.
+pub fn get_scurve_value(storage: StorageHandle, timestamp: u64, pair: AddressPair) -> Result<U256> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
-    scurve::scurve_value(&oracle, pair, worldwide_day)
+    scurve::scurve_value(&oracle, pair, timestamp)
 }
 
-/// Annualized policy rate (scale `1e6`) for an independently registered ISO
-/// 4217 code. The Credis Factory calls it at issuance to pin the position's
-/// settlement policy without coupling it to reference-currency membership.
-pub fn get_policy_rate(storage: StorageHandle, iso_code: u16) -> Result<U256> {
+/// The last closed annual policy rate (scale `1e6`) of an ISO 4217 code and
+/// the time at which its source published it. The Credis reservation pins
+/// this rate. Fails with `NoPolicyRate` for a currency with no closed rate.
+pub fn get_policy_rate(storage: StorageHandle, iso_code: u16) -> Result<(U256, u64)> {
     let oracle: OracleContract<'_> = OracleContract::new(storage);
     oracle.get_policy_rate(iso_code)
 }

@@ -21,7 +21,7 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 /// @dev Env: DEPLOYER_PK, BRIDGE_ADDRESS, ORIGIN_CHAIN_ID (where OriginRouter lives),
 ///      TARGET_CHAIN_IDS (comma-separated, for the NFT-bridge mesh), optional WCOEN_BRIDGE
 ///      (proceeds route). The deployer is admin + delegate. The auction gets its collection and
-///      the issue role here. ConfigureTarget wires the rest (escrow/compact, relayer roles).
+///      the issue role here. ConfigureTarget wires the rest (escrow/compact, router and bridge roles).
 ///      Peers are CREATE3-deterministic across chains.
 contract DeployTarget is BaseScript {
     function run() external {
@@ -100,7 +100,7 @@ contract DeployTarget is BaseScript {
 
         // Peer the router with the OriginRouter (same address on every chain via CREATE3).
         TargetRouter(payable(router))
-            .setRemoteMessenger(
+            .registerRemoteMessenger(
                 originChainId,
                 InteroperableAddress.formatEvmV1(originChainId, predictProxy(factory, deployer, "OriginRouter"))
             );
@@ -112,7 +112,7 @@ contract DeployTarget is BaseScript {
             uint32 cid = uint32(targetChainIds[i]);
             if (cid == local) continue;
             IntexNFT1155Bridge(payable(nftBridge))
-                .setRemoteMessenger(cid, InteroperableAddress.formatEvmV1(cid, bridgePeer));
+                .registerRemoteMessenger(cid, InteroperableAddress.formatEvmV1(cid, bridgePeer));
         }
 
         // Proceeds route: the escrow hands finalized proceeds to the router, which bridges them

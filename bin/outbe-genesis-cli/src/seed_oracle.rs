@@ -8,25 +8,14 @@ use serde_json::Value;
 use crate::error::GenesisError;
 use crate::seed_codec::{
     address_as_u256, address_bytes, address_pair, asset_address, data_slot, is_iso_asset_address,
-    nested_mapping_key, parse_u256, parse_u32, parse_u64, u32_bytes, u64_bytes, StorageBuilder,
-    SECONDS_PER_DAY,
+    parse_u256, parse_u32, parse_u64, u32_bytes, StorageBuilder, SECONDS_PER_DAY,
 };
 
 /// The reference currencies. The Oracle code defines them as
 /// `REFERENCE_CURRENCIES` in crates/system/oracle/src/constants.rs, and genesis
 /// does not write them. The seeder uses this copy only to check that each one
-/// has a policy rate.
+/// is a policy rate vote target.
 pub const REFERENCE_CURRENCIES: [u32; 6] = [156, 344, 392, 826, 840, 978];
-
-/// Default overnight policy rates at scale `1e6` (`(iso_code, annual_rate_1e6)`).
-pub const DEFAULT_POLICY_RATES: [(u32, u64); 6] = [
-    (156, 12_624),
-    (344, 23_667),
-    (392, 12_280),
-    (826, 37_344),
-    (840, 38_800),
-    (978, 24_410),
-];
 
 struct ValidatedPair<'a> {
     idx: u32,
@@ -40,7 +29,7 @@ struct ValidatedPair<'a> {
 pub fn seed_oracle(
     storage: &mut StorageBuilder,
     config: &Value,
-    scurve_start: Option<u32>,
+    scurve_start: Option<u64>,
 ) -> Result<(), GenesisError> {
     let pairs = config
         .get("pairs")
@@ -302,19 +291,16 @@ fn seed_oracle_registry(
     Ok(pair_ids)
 }
 
-/// The S-curve ring of the Oracle: curves per pair, then the start WWD and the
-/// peak price per ring slot. Mirrors `scurve_len`, `scurve_peak_wwd`,
-/// `scurve_peak_price` and `SCURVE_RING_SLOTS` in crates/system/oracle.
-const SCURVE_LEN_SLOT: u64 = 82;
-const SCURVE_PEAK_WWD_SLOT: u64 = 83;
-const SCURVE_PEAK_PRICE_SLOT: u64 = 84;
-const SCURVE_RING_SLOTS: u64 = 32;
+/// The S-curve of a pair in the Oracle: its start hour and its peak price.
+/// Mirrors `scurve_start_hour` and `scurve_peak_price` in crates/system/oracle.
+const SCURVE_START_HOUR_SLOT: u64 = 82;
+const SCURVE_PEAK_PRICE_SLOT: u64 = 83;
 
 fn seed_oracle_scurves(
     storage: &mut StorageBuilder,
     config: &Value,
     pair_ids: &BTreeMap<(String, String), u32>,
-    scurve_start: Option<u32>,
+    scurve_start: Option<u64>,
 ) -> Result<(), GenesisError> {
     let Some(scurve_seeds) = config
         .get("scurve_seeds")
@@ -323,9 +309,10 @@ fn seed_oracle_scurves(
     else {
         return Ok(());
     };
-    let peak_day = scurve_start
+    let start_hour = scurve_start
+        .filter(|hour| *hour != 0 && hour.is_multiple_of(3_600))
         .ok_or_else(|| GenesisError::validation("scurve seeds need the genesis timestamp"))?;
-    let mut curves: BTreeMap<[u8; 40], u64> = BTreeMap::new();
+    let mut seeded: BTreeSet<[u8; 40]> = BTreeSet::new();
     for sc in scurve_seeds {
         let base = value_to_string(sc.get("pair_base"))?;
         let quote = value_to_string(sc.get("pair_quote"))?;
@@ -339,25 +326,13 @@ fn seed_oracle_scurves(
             .ok_or_else(|| GenesisError::validation("missing scurve peak_price"))
             .and_then(parse_u256)?;
         let key = address_pair(&base, &quote)?;
-        let slot = curves.entry(key).or_default();
-        if *slot == SCURVE_RING_SLOTS {
+        if !seeded.insert(key) {
             return Err(GenesisError::validation(format!(
-                "more than {SCURVE_RING_SLOTS} scurve seeds for {base}/{quote}"
+                "more than one scurve seed for {base}/{quote}"
             )));
         }
-        let ring_slot = u64_bytes(*slot);
-        storage.set_raw_slot(
-            nested_mapping_key(&key, &ring_slot, SCURVE_PEAK_WWD_SLOT),
-            U256::from(peak_day),
-        );
-        storage.set_raw_slot(
-            nested_mapping_key(&key, &ring_slot, SCURVE_PEAK_PRICE_SLOT),
-            peak_price,
-        );
-        *slot += 1;
-    }
-    for (key, len) in curves {
-        storage.set_mapping(SCURVE_LEN_SLOT, &key, len);
+        storage.set_mapping(SCURVE_START_HOUR_SLOT, &key, start_hour);
+        storage.set_mapping(SCURVE_PEAK_PRICE_SLOT, &key, peak_price);
     }
     Ok(())
 }
@@ -371,71 +346,53 @@ fn seed_oracle_currencies(
             "oracle.reference_currencies was removed: the Oracle code defines the reference currencies",
         ));
     }
-    seed_policy_rates(storage, config)
+    seed_policy_rate_currencies(storage, config)
 }
 
-fn seed_policy_rates(storage: &mut StorageBuilder, config: &Value) -> Result<(), GenesisError> {
-    let parsed_policy_rates: Vec<(u32, u64)> = match config
-        .get("policy_rates")
+/// Oracle slot 74: the currencies that are policy rate vote targets. The
+/// default is the reference currencies. Genesis gives no rate: the first rate
+/// of a currency comes from the first tally.
+fn seed_policy_rate_currencies(
+    storage: &mut StorageBuilder,
+    config: &Value,
+) -> Result<(), GenesisError> {
+    if config.get("policy_rates").is_some() {
+        return Err(GenesisError::validation(
+            "oracle.policy_rates was removed: genesis sets no policy rate, list the rate vote targets in oracle.policy_rate_currencies",
+        ));
+    }
+    let mut currencies: Vec<u32> = match config
+        .get("policy_rate_currencies")
         .and_then(Value::as_array)
     {
-        Some(arr) => arr
-            .iter()
-            .map(|entry| {
-                let iso = entry
-                    .get("iso_code")
-                    .ok_or_else(|| GenesisError::validation("missing policy_rates.iso_code"))
-                    .and_then(parse_u32)?;
-                let rate = entry
-                    .get("annual_rate_1e6")
-                    .ok_or_else(|| GenesisError::validation("missing policy_rates.annual_rate_1e6"))
-                    .and_then(parse_u64)?;
-                Ok((iso, rate))
-            })
-            .collect::<Result<Vec<_>, GenesisError>>()?,
-        None => DEFAULT_POLICY_RATES.to_vec(),
+        Some(codes) => codes.iter().map(parse_u32).collect::<Result<_, _>>()?,
+        None => REFERENCE_CURRENCIES.to_vec(),
     };
-    validate_policy_rates(&parsed_policy_rates)?;
-    storage.set_slot(74u64, parsed_policy_rates.len());
-    for (i, &(iso_code, rate)) in parsed_policy_rates.iter().enumerate() {
-        storage.set_raw_slot(data_slot(74u64) + U256::from(i), iso_code);
-        storage.set_mapping(75, &u32_bytes(iso_code), rate);
-    }
-    Ok(())
-}
-
-fn validate_policy_rates(parsed_policy_rates: &[(u32, u64)]) -> Result<(), GenesisError> {
-    if parsed_policy_rates.iter().any(|&(iso, _)| iso == 0) {
+    currencies.sort_unstable();
+    if currencies
+        .iter()
+        .any(|code| *code == 0 || *code > u32::from(u16::MAX))
+        || currencies.windows(2).any(|pair| pair[0] == pair[1])
+    {
         return Err(GenesisError::validation(
-            "oracle policy iso_code must be non-zero",
-        ));
-    }
-    if parsed_policy_rates.iter().any(|&(_, rate)| rate == 0) {
-        return Err(GenesisError::validation(
-            "oracle policy rate must be non-zero",
-        ));
-    }
-    let policy_isos: Vec<u32> = parsed_policy_rates.iter().map(|&(iso, _)| iso).collect();
-    if !is_sorted_unique(&policy_isos) {
-        return Err(GenesisError::validation(
-            "oracle policy rates must be sorted and unique",
+            "oracle.policy_rate_currencies: invalid or duplicate currency code",
         ));
     }
     let missing: Vec<u32> = REFERENCE_CURRENCIES
         .iter()
         .copied()
-        .filter(|iso| !policy_isos.contains(iso))
+        .filter(|iso| !currencies.contains(iso))
         .collect();
     if !missing.is_empty() {
         return Err(GenesisError::validation(format!(
-            "oracle reference currencies have no policy rate: {missing:?}"
+            "oracle reference currencies are no policy rate vote target: {missing:?}"
         )));
     }
+    storage.set_slot(74u64, currencies.len());
+    for (i, iso_code) in currencies.iter().enumerate() {
+        storage.set_raw_slot(data_slot(74u64) + U256::from(i), *iso_code);
+    }
     Ok(())
-}
-
-fn is_sorted_unique(items: &[u32]) -> bool {
-    items.windows(2).all(|w| w[0] < w[1])
 }
 
 fn value_to_string(val: Option<&Value>) -> Result<String, GenesisError> {

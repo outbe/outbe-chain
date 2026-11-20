@@ -9,7 +9,7 @@ use crate::{
         journal::Journal,
         rpc::RpcClient,
         snapshot,
-        wait::{wait_for_rpc_chain, wait_for_sync},
+        wait::{wait_for_resident, wait_for_rpc_chain, wait_for_sync},
         FULL_NODE, VALIDATOR_SERVICE, VALIDATOR_TARGET,
     },
 };
@@ -19,9 +19,8 @@ pub async fn run(snapshot_path: Option<&Path>) -> Result<()> {
     let mut journal = Journal::load()?;
     let mut progress = Progress::new();
     ensure!(
-        !process::systemctl_is_active(VALIDATOR_TARGET)
-            && !process::systemctl_is_active(VALIDATOR_SERVICE),
-        "validator stack is already active; refusing to restore or replace its data"
+        !process::systemctl_is_active(FULL_NODE),
+        "a legacy full node is active; stop it explicitly before initial validator sync"
     );
 
     if let Some(path) = snapshot_path {
@@ -35,8 +34,9 @@ pub async fn run(snapshot_path: Option<&Path>) -> Result<()> {
             }
             None => {
                 ensure!(
-                    !process::systemctl_is_active(FULL_NODE),
-                    "stop the full node before restoring a snapshot"
+                    !process::systemctl_is_active(VALIDATOR_SERVICE)
+                        && !process::systemctl_is_active(VALIDATOR_TARGET),
+                    "cannot restore a snapshot while the validator is running"
                 );
                 let resume = match journal.snapshot_restore_in_progress.as_deref() {
                     Some(existing) => {
@@ -63,15 +63,16 @@ pub async fn run(snapshot_path: Option<&Path>) -> Result<()> {
         }
     }
 
-    progress.stage("starting keyless full node");
-    process::systemctl(&["enable", "--now", FULL_NODE])?;
+    progress.stage("starting resident validator");
+    process::systemctl(&["enable", "--now", VALIDATOR_TARGET])?;
     let local = RpcClient::new(journal.config.network.local_rpc_url())?;
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
     wait_for_rpc_chain(&local, journal.config.network.chain_id, &mut progress).await?;
-    progress.stage("synchronizing keyless full node");
+    progress.stage("synchronizing resident validator");
     let (height, peers) = wait_for_sync(&local, &remote, &mut progress).await?;
+    wait_for_resident(&local, &mut progress).await?;
     progress.done(&format!(
-        "full node synchronized at finalized height {height} with {peers} peers"
+        "resident validator synchronized at finalized height {height} with {peers} peers"
     ));
     Ok(())
 }

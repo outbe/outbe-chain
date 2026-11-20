@@ -46,7 +46,7 @@ contract EscrowConservationHandler is Test {
         uint32 bidRate = uint32(bound(rateSeed, 1, 1_000_000));
         uint16 quantity = uint16(bound(quantitySeed, 1, 1_000));
         vm.prank(auction);
-        try escrow.lockFunds(_series(seriesSeed), _bidder(bidderSeed), BASIS, bidRate, quantity) {} catch {}
+        try escrow.lockIntexAuctionAsset(_series(seriesSeed), _bidder(bidderSeed), BASIS, bidRate, quantity) {} catch {}
     }
 
     function finalize(uint256 seriesSeed, uint256 bidderSeed, uint256 wonSeed, bool completesDay) external {
@@ -54,33 +54,30 @@ contract EscrowConservationHandler is Test {
         address b = _bidder(bidderSeed);
         address[] memory winners = new address[](1);
         winners[0] = b;
-        uint16 quantity = escrow.getBidLock(s, b).quantity;
+        uint16 quantity = escrow.getIntexAuctionBidLock(s, b).quantity;
         uint16 partialWon = quantity > 1 ? uint16(bound(wonSeed, 0, quantity - 1)) : 0;
         vm.prank(bridger);
-        try escrow.finalizeAuction(
-            s, keccak256(abi.encode(s, b)), winners, 0, partialWon, CLEARING_RATE, BASIS, completesDay
-        ) {}
-            catch {}
+        try escrow.chargeIntexAuctionAsset(s, winners, 0, partialWon, CLEARING_RATE, BASIS, completesDay) {} catch {}
     }
 
     function claim(uint256 seriesSeed, uint256 bidderSeed) external {
         vm.prank(auction);
-        try escrow.releaseRefund(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
+        try escrow.returnIntexAuctionAsset(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
     }
 
     function lockBond(uint256 seriesSeed, uint256 bidderSeed, uint128 amountSeed) external {
         uint128 amount = uint128(bound(amountSeed, 1, 1_000_000e6));
         vm.prank(auction);
-        try escrow.lockCommitBond(_series(seriesSeed), _bidder(bidderSeed), amount) {} catch {}
+        try escrow.lockIntexAuctionBidBond(_series(seriesSeed), _bidder(bidderSeed), amount) {} catch {}
     }
 
     function releaseBond(uint256 seriesSeed, uint256 bidderSeed) external {
         vm.prank(auction);
-        try escrow.releaseCommitBond(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
+        try escrow.unlockIntexAuctionBidBond(_series(seriesSeed), _bidder(bidderSeed), 0) {} catch {}
     }
 
     function claimAbandonedBond(uint256 seriesSeed, uint256 bidderSeed) external {
-        try escrow.claimAbandonedCommitBond(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
+        try escrow.unlockAbandonedIntexAuctionBidBond(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
     }
 
     function warp(uint256 secondsSeed) external {
@@ -110,7 +107,7 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
         paymentToken = new MockWCOEN();
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(paymentToken));
+        escrow.setDependencies(auction, address(compact), address(paymentToken));
         vm.prank(admin);
         escrow.setProceedsRecipient(bridger);
         compact.setResetPeriodSeconds(0);
@@ -145,14 +142,14 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
     function invariant_pooledBalanceEqualsSumOfTotalLocked() public view {
         uint256 sumTotalLocked;
         for (uint256 i = 0; i < emissionDays.length; i++) {
-            (,, uint128 totalLocked) = escrow.getAuctionStatus(emissionDays[i]);
+            (,, uint128 totalLocked) = escrow.auctionStatus(emissionDays[i]);
             sumTotalLocked += totalLocked;
         }
         // Commit bonds share the pooled lockId with bid escrow but are accounted separately.
         uint256 sumBonds;
         for (uint256 i = 0; i < emissionDays.length; i++) {
             for (uint256 j = 0; j < bidders.length; j++) {
-                sumBonds += escrow.getCommitBond(emissionDays[i], bidders[j]).amount;
+                sumBonds += escrow.getIntexAuctionBidBond(emissionDays[i], bidders[j]).amount;
             }
         }
         uint256 pooled = compact.balanceOf(address(escrow), escrow.lockId());
@@ -164,9 +161,9 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
         for (uint256 i = 0; i < emissionDays.length; i++) {
             uint256 held;
             for (uint256 j = 0; j < bidders.length; j++) {
-                held += escrow.getBidLock(emissionDays[i], bidders[j]).lockedAmount;
+                held += escrow.getIntexAuctionBidLock(emissionDays[i], bidders[j]).lockedAmount;
             }
-            (,, uint128 totalLocked) = escrow.getAuctionStatus(emissionDays[i]);
+            (,, uint128 totalLocked) = escrow.auctionStatus(emissionDays[i]);
             assertEq(held, totalLocked, "totalLocked != what the day's locks still hold");
         }
     }

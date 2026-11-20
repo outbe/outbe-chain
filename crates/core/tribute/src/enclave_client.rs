@@ -1,13 +1,13 @@
 //! Private amount access; public Tribute queries never call this module.
 
+use crate::confidential::{
+    IssueNodFromTributeOutcomeV1, IssueNodFromTributeRequestV1, LysisFractionsRequestV1,
+    LysisFractionsResultV1, TributeDayOpRequestV2,
+};
 use alloy_primitives::U256;
 use outbe_core_common::{
     tribute_day_encryption::EncryptedTributeDayAmountV2,
     tribute_encryption::{EncryptedTributeV2, TributeAmountsV2},
-};
-use outbe_enclave::{
-    nod_mine::{IssueNodFromTributeOutcomeV1, IssueNodFromTributeRequestV1},
-    tribute_day::{LysisFractionsRequestV1, LysisFractionsResultV1, TributeDayOpRequestV2},
 };
 use outbe_tee::TransportError;
 
@@ -15,25 +15,24 @@ pub(crate) fn apply_day_operation(
     request: TributeDayOpRequestV2,
 ) -> Result<EncryptedTributeDayAmountV2, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::with_key(|key| {
-        outbe_enclave::tribute_day::apply_day_operation(key, key, &request)
+    if let Some(result) = test_enclave::with_keys(|key, state| {
+        crate::confidential::apply_day_operation(key, state, &request)
     }) {
-        return result.map_err(crate::errors::enclave_transport_error);
+        return result.map_err(TransportError::enclave_error);
     }
-    outbe_enclave::tribute_day_client::apply_day_operation(request).map_err(TransportError::from)
+    crate::confidential::host::apply_day_operation(request)
 }
 
 pub(crate) fn execute_lysis_fractions(
     request: LysisFractionsRequestV1,
 ) -> Result<LysisFractionsResultV1, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::with_key(|key| {
-        outbe_enclave::tribute_day::execute_lysis_fractions(key, key, key, &request)
+    if let Some(result) = test_enclave::with_keys(|key, state| {
+        crate::confidential::execute_lysis_fractions(key, state, state, &request)
     }) {
-        return result.map_err(crate::errors::enclave_transport_error);
+        return result.map_err(TransportError::enclave_error);
     }
-    outbe_enclave::tribute_day_client::execute_lysis_fractions(request)
-        .map_err(TransportError::from)
+    crate::confidential::host::execute_lysis_fractions(request)
 }
 
 #[cfg(test)]
@@ -42,23 +41,23 @@ pub(crate) fn read_day_fractions(
 ) -> Result<std::collections::BTreeMap<u16, u64>, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) =
-        test_enclave::with_key(|key| outbe_enclave::tribute_day::read_day_fractions(key, record))
+        test_enclave::with_keys(|key, _| crate::confidential::read_day_fractions(key, record))
     {
-        return result.map_err(crate::errors::enclave_transport_error);
+        return result.map_err(TransportError::enclave_error);
     }
-    outbe_enclave::tribute_day_client::read_day_fractions(record).map_err(TransportError::from)
+    crate::confidential::host::read_day_fractions(record.clone())
 }
 
 pub(crate) fn issue_nod_from_tribute(
     request: IssueNodFromTributeRequestV1,
 ) -> Result<IssueNodFromTributeOutcomeV1, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::with_key(|key| {
-        outbe_enclave::nod_encryption::issue_nod_from_tribute(key, key, key, &request)
+    if let Some(result) = test_enclave::with_keys(|key, state| {
+        crate::confidential::issue_nod_from_tribute_pure(key, state, state, &request)
     }) {
-        return result.map_err(crate::errors::enclave_transport_error);
+        return result.map_err(TransportError::enclave_error);
     }
-    outbe_enclave::nod_mine::issue_nod_from_tribute(request).map_err(TransportError::from)
+    crate::confidential::host::issue_nod_from_tribute(request)
 }
 
 pub(crate) fn read_day_amount(
@@ -66,24 +65,23 @@ pub(crate) fn read_day_amount(
 ) -> Result<U256, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) =
-        test_enclave::with_key(|key| outbe_enclave::tribute_day::read_day_amount(key, record))
+        test_enclave::with_keys(|key, _| crate::confidential::read_day_amount(key, record))
     {
-        return result.map_err(crate::errors::enclave_transport_error);
+        return result.map_err(TransportError::enclave_error);
     }
-    outbe_enclave::tribute_day_client::read_day_amount(record).map_err(TransportError::from)
+    crate::confidential::host::read_day_amount(record.clone())
 }
 
 pub(crate) fn read_amounts(
     record: &EncryptedTributeV2,
 ) -> Result<TributeAmountsV2, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::with_key(|key| {
-        outbe_enclave::tribute_encryption::decrypt_tribute(key, record)
-    }) {
-        return result.map_err(crate::errors::enclave_transport_error);
+    if let Some(result) =
+        test_enclave::with_keys(|_, state| crate::confidential::decrypt_tribute(state, record))
+    {
+        return result.map_err(TransportError::enclave_error);
     }
-    outbe_enclave::tribute_client::read_tribute_amounts(std::slice::from_ref(record))
-        .map_err(TransportError::from)?
+    crate::confidential::host::read_tribute_amounts(vec![record.clone()])?
         .into_iter()
         .next()
         .ok_or(TransportError::UnexpectedResponse)
@@ -98,7 +96,13 @@ pub(crate) fn read_amounts(
 pub mod test_enclave {
     use std::cell::Cell;
     thread_local! { static INSTALLED: Cell<bool> = const { Cell::new(false) }; }
-    pub const NETWORK_SECRET: [u8; 32] = [0x5a; 32];
+    /// Opaque fixture capability; construction requires `outbe-tee/test-utils`.
+    fn offer_key() -> outbe_tee::resident::OfferKeyHandle {
+        outbe_tee::resident::OfferKeyHandle::for_test([0x5a; 32])
+    }
+    pub fn state_key() -> outbe_tee::resident::StateKeyHandle {
+        outbe_tee::resident::StateKeyHandle::for_test([0x5a; 32])
+    }
     pub struct Guard {
         previous: bool,
         _nod_guard: Option<outbe_nod::test_support::Guard>,
@@ -162,7 +166,7 @@ pub mod test_enclave {
             };
             contract.apply_day_amount(
                 totals.worldwide_day,
-                outbe_enclave::tribute_day::TributeDayOperationV2::AdjustTransient {
+                crate::confidential::TributeDayOperationV2::AdjustTransient {
                     nominal_amount_minor: delta,
                     add,
                 },
@@ -177,8 +181,8 @@ pub mod test_enclave {
     ) -> outbe_primitives::error::Result<outbe_core_common::tribute_encryption::EncryptedTributeV2>
     {
         use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
-        outbe_enclave::tribute_encryption::encrypt_tribute(
-            &NETWORK_SECRET,
+        crate::confidential::encrypt_tribute(
+            &state_key(),
             TributeContextV2 {
                 chain_id,
                 tribute_id: tribute.tribute_id,
@@ -194,10 +198,12 @@ pub mod test_enclave {
                 nominal_amount_minor: tribute.nominal_amount_minor,
             },
         )
-        .map_err(crate::errors::body_read_corruption)
+        .map_err(|err| outbe_primitives::error::PrecompileError::FatalWithCause(Box::new(err)))
     }
 
-    pub(super) fn with_key<T>(f: impl FnOnce(&[u8; 32]) -> T) -> Option<T> {
-        INSTALLED.get().then(|| f(&NETWORK_SECRET))
+    pub(super) fn with_keys<T>(
+        f: impl FnOnce(&outbe_tee::resident::OfferKeyHandle, &outbe_tee::resident::StateKeyHandle) -> T,
+    ) -> Option<T> {
+        INSTALLED.get().then(|| f(&offer_key(), &state_key()))
     }
 }

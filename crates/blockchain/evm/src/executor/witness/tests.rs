@@ -21,10 +21,9 @@ fn sign_payload_read(key: &SigningKey, inputs_hash: B256, amount: U256) -> Encla
     )
     .unwrap();
     let sig = key.sign(&preimage);
-    EnclaveResponse::Payload {
-        recordable: true,
-        payload,
-        inputs_canonical_hash: inputs_hash,
+    EnclaveResponse::DcapVerificationFinishedV1 {
+        request_hash: inputs_hash,
+        outcome: payload,
         attestation_tag: sig.to_bytes().to_vec(),
     }
 }
@@ -34,10 +33,9 @@ fn verify_payload_read(
     expected_hash: B256,
     response: &EnclaveResponse,
 ) -> Result<(), TransportError> {
-    let EnclaveResponse::Payload {
-        recordable: true,
-        payload,
-        inputs_canonical_hash,
+    let EnclaveResponse::DcapVerificationFinishedV1 {
+        outcome: payload,
+        request_hash: inputs_canonical_hash,
         attestation_tag,
     } = response
     else {
@@ -159,8 +157,8 @@ fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
         .unwrap();
         assert!(matches!(
             resp,
-            EnclaveResponse::Payload { ref payload, .. }
-                if payload.as_slice() == U256::from(42).to_be_bytes::<32>()
+            EnclaveResponse::DcapVerificationFinishedV1 { ref outcome, .. }
+                if outcome.as_slice() == U256::from(42).to_be_bytes::<32>()
         ));
     }
     {
@@ -278,8 +276,8 @@ fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
         .unwrap();
         assert!(matches!(
             resp,
-            EnclaveResponse::Payload { ref payload, .. }
-                if payload.as_slice() == U256::from(99).to_be_bytes::<32>()
+            EnclaveResponse::DcapVerificationFinishedV1 { ref outcome, .. }
+                if outcome.as_slice() == U256::from(99).to_be_bytes::<32>()
         ));
     }
     assert!(OutbeBlockExecutor::<()>::check_witness_commit_allowed_with(
@@ -500,8 +498,8 @@ fn evm_transact_witness_scope_covers_rpc_direct_prewarm_and_detached_trace() {
         .unwrap();
         assert!(matches!(
             resp,
-            EnclaveResponse::Payload { ref payload, .. }
-                if payload.as_slice() == U256::from(11).to_be_bytes::<32>()
+            EnclaveResponse::DcapVerificationFinishedV1 { ref outcome, .. }
+                if outcome.as_slice() == U256::from(11).to_be_bytes::<32>()
         ));
     });
     // tx_index = 1 (no enclave calls)
@@ -535,8 +533,8 @@ fn evm_transact_witness_scope_covers_rpc_direct_prewarm_and_detached_trace() {
             .unwrap();
             assert!(matches!(
                 resp,
-                EnclaveResponse::Payload { ref payload, .. }
-                    if payload.as_slice() == U256::from(22).to_be_bytes::<32>()
+                EnclaveResponse::DcapVerificationFinishedV1 { ref outcome, .. }
+                    if outcome.as_slice() == U256::from(22).to_be_bytes::<32>()
             ));
         },
     );

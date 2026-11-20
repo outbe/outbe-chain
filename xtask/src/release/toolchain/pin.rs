@@ -13,6 +13,8 @@ use crate::release::elf::manifest::sha256_file;
 
 pub const CONTRACT_PATH: &str = "release/project-toolchain-v1.json";
 pub const APT_SOURCES_PATH: &str = "release/apt/ubuntu.sources";
+pub const INTEL_APT_LIST_PATH: &str = "release/apt/intel-sgx.list";
+pub const INTEL_APT_KEY_PATH: &str = "release/apt/intel-sgx-deb.key";
 pub const APT_SNAPSHOT_HOST: &str = "https://snapshot.ubuntu.com/ubuntu/";
 pub const MUTABLE_APT_HOSTS: &[&str] = &[
     "archive.ubuntu.com",
@@ -23,7 +25,6 @@ pub const MUTABLE_APT_HOSTS: &[&str] = &[
 const EXPECTED_TOP_LEVEL_KEYS: &[&str] = &[
     "activation",
     "apt_provenance",
-    "gramine",
     "host_only_packages",
     "platform",
     "rust",
@@ -34,10 +35,8 @@ const EXPECTED_TOP_LEVEL_KEYS: &[&str] = &[
 ];
 
 const EXPECTED_APT_SOURCE_PATHS: &[&str] = &[
-    "/etc/apt/sources.list.d/gramine.list",
     "/etc/apt/sources.list.d/intel-sgx.list",
     "/etc/apt/sources.list.d/ubuntu.sources",
-    "/usr/share/keyrings/gramine-keyring.gpg",
     "/usr/share/keyrings/intel-sgx-deb.key",
     "/usr/share/keyrings/ubuntu-archive-keyring.gpg",
 ];
@@ -57,6 +56,7 @@ const EXPECTED_SYSTEM_PACKAGES: &[&str] = &[
     "libssl-dev",
     "libstdc++6",
     "pkg-config",
+    "python3",
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -135,7 +135,7 @@ fn validate_apt_pin(apt: &Value) -> Result<()> {
     Ok(())
 }
 
-fn validate_rust_and_gramine_pin(rust: &Value, gramine: &Value) -> Result<()> {
+fn validate_rust_pin(rust: &Value) -> Result<()> {
     let r = rust
         .as_object()
         .ok_or_else(|| eyre!("project Rust pin has an unsupported shape"))?;
@@ -165,30 +165,6 @@ fn validate_rust_and_gramine_pin(rust: &Value, gramine: &Value) -> Result<()> {
     ensure!(
         !comps.is_empty() && comps == sorted,
         "project Rust components must be unique, sorted names"
-    );
-
-    let g = gramine
-        .as_object()
-        .ok_or_else(|| eyre!("project Gramine pin has an unsupported shape"))?;
-    ensure!(
-        g.len() == 2 && g.contains_key("source_commit") && g.contains_key("version"),
-        "project Gramine pin has an unsupported shape"
-    );
-    let g_ver = g["version"]
-        .as_str()
-        .ok_or_else(|| eyre!("project Gramine version must be exact"))?;
-    ensure!(
-        g_ver.split('.').count() == 2
-            && g_ver
-                .split('.')
-                .all(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit())),
-        "project Gramine version must be exact"
-    );
-    ensure!(
-        g["source_commit"]
-            .as_str()
-            .is_some_and(|s| is_lower_hex_n(s, 40)),
-        "project Gramine source commit must be an exact lowercase Git SHA"
     );
     Ok(())
 }
@@ -277,7 +253,7 @@ pub fn load_and_validate_pin(path: &Path) -> Result<Value> {
         "project toolchain supports only linux/amd64"
     );
     validate_apt_pin(&obj["apt_provenance"])?;
-    validate_rust_and_gramine_pin(&obj["rust"], &obj["gramine"])?;
+    validate_rust_pin(&obj["rust"])?;
     validate_packages_and_zk(obj)?;
     Ok(pin)
 }
@@ -372,8 +348,8 @@ pub fn regenerate_apt_closure(repo_root: &Path, write: bool) -> Result<()> {
         .into_iter()
         .flatten()
         .filter_map(Value::as_str)
-        .find(|img| img.contains("gramineproject/gramine:"))
-        .ok_or_else(|| eyre!("ELF build contract must name a Gramine base image"))?;
+        .find(|img| img.contains("ubuntu:24.04@sha256:"))
+        .ok_or_else(|| eyre!("ELF build contract must name a digest-pinned Ubuntu base image"))?;
     let pkg_args = pin["system_packages"]
         .as_object()
         .expect("validated")
@@ -385,9 +361,17 @@ pub fn regenerate_apt_closure(repo_root: &Path, write: bool) -> Result<()> {
     let recipe = format!(
         "FROM {base_image} AS probe\n\
          ARG DEBIAN_FRONTEND=noninteractive\n\
-         COPY ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources\n\
          RUN apt-get update && \\\n\
-             apt-get install --download-only --reinstall -y --no-install-recommends \\\n\
+             mkdir -p /tmp/ca-bootstrap /etc/ssl/certs && \\\n\
+             apt-get download ca-certificates && \\\n\
+             dpkg-deb -x /ca-certificates_*.deb /tmp/ca-bootstrap/root && \\\n\
+             cat /tmp/ca-bootstrap/root/usr/share/ca-certificates/mozilla/*.crt > /etc/ssl/certs/ca-certificates.crt && \\\n\
+             rm -rf /ca-certificates_*.deb /tmp/ca-bootstrap /var/lib/apt/lists/* /var/cache/apt/archives/*.deb\n\
+         COPY ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources\n\
+         COPY intel-sgx-deb.key /usr/share/keyrings/intel-sgx-deb.key\n\
+         COPY intel-sgx.list /etc/apt/sources.list.d/intel-sgx.list\n\
+         RUN apt-get update && \\\n\
+             apt-get install --download-only --reinstall --allow-downgrades -y --no-install-recommends \\\n\
          {pkg_args} && \\\n\
              mkdir -p /out && \\\n\
              (cd /var/cache/apt/archives && sha256sum *.deb | LC_ALL=C sort -k2) > /out/apt-closure.txt\n\
@@ -400,6 +384,14 @@ pub fn regenerate_apt_closure(repo_root: &Path, write: bool) -> Result<()> {
     fs::copy(
         repo_root.join(APT_SOURCES_PATH),
         tmp.path().join("ubuntu.sources"),
+    )?;
+    fs::copy(
+        repo_root.join(INTEL_APT_LIST_PATH),
+        tmp.path().join("intel-sgx.list"),
+    )?;
+    fs::copy(
+        repo_root.join(INTEL_APT_KEY_PATH),
+        tmp.path().join("intel-sgx-deb.key"),
     )?;
     let out_dir = tmp.path().join("out");
     let status = Command::new("docker")

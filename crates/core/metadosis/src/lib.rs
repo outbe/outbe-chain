@@ -31,7 +31,7 @@ mod schema;
 pub mod test_support;
 
 pub use api::EmissionDayProjection;
-pub use outbe_tributefactory::worldwideday::WwdProjection;
+pub use outbe_tributefactory::worldwide_day::WwdProjection;
 pub use schema::EmissionDay;
 
 #[cfg(test)]

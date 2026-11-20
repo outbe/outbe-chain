@@ -5,7 +5,8 @@ pragma solidity ^0.8.30;
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "../interfaces/IERC7786.sol";
+import {IERC7786GatewaySource, IERC7786Recipient} from "../interfaces/IERC7786.sol";
+import {IGatewayQuote} from "../interfaces/IGatewayQuote.sol";
 import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
 
 /**
@@ -114,7 +115,7 @@ contract LoopbackGatewayAdapter is OwnableUpgradeable, UUPSUpgradeable, IERC7786
 
     /// @inheritdoc IERC7786GatewaySource
     function supportsAttribute(bytes4 selector) public pure virtual returns (bool) {
-        return selector == GasLimitAttribute.SELECTOR;
+        return selector == GasLimitAttribute.SELECTOR || selector == GasLimitAttribute.REFUND_SELECTOR;
     }
 
     /// @inheritdoc IERC7786GatewaySource

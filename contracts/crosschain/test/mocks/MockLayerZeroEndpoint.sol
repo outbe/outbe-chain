@@ -100,16 +100,19 @@ contract EndpointV2Mock {
         return MessagingFee({nativeFee: 100, lzTokenFee: 0});
     }
 
-    function send(
-        MessagingParams calldata _params,
-        address /*_refundAddress*/
-    )
+    function send(MessagingParams calldata _params, address _refundAddress)
         external
         payable
         onlyOApp
         returns (MessagingReceipt memory)
     {
         lastOptions = _params.options;
+
+        // As the LayerZero endpoint: send the extra native fee to the refund address, revert if it fails.
+        if (msg.value > 100) {
+            (bool ok,) = _refundAddress.call{value: msg.value - 100}("");
+            require(ok, "refund failed");
+        }
 
         EndpointV2Mock dstEndpoint = remoteEndpoints[_params.dstEid];
         if (address(dstEndpoint) == address(0)) revert RemoteEndpointNotSet(_params.dstEid);

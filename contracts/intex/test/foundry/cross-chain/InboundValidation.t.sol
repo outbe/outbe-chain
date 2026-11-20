@@ -58,12 +58,12 @@ contract InboundValidationTest is CrossChainTest {
         nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
 
         // Register remote messengers so inbound peer authentication passes and the payload is what fails.
-        bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
-        outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
-        nftBridgeBnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
+        bnbRouter.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
+        outbeRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
+        nftBridgeBnb.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
 
-        bnbRouter.wire(address(auction), address(intex), admin);
-        outbeRouter.wire(desis, intexFactory);
+        bnbRouter.setDependencies(address(auction), address(intex), admin);
+        outbeRouter.setDependencies(desis, intexFactory);
     }
 
     // ---------------------------------------------------------------
@@ -87,14 +87,15 @@ contract InboundValidationTest is CrossChainTest {
     function test_TM_ShortMarkCalled_RevertsInvalidPayloadLength() public {
         // MARK_CALLED min length = 6 (bodyVersion + msgType + seriesId(4)). Build a 5-byte packet.
         uint24 truncatedSeriesId = 20_250;
-        bytes memory packet =
-            abi.encodePacked(BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_MARK_CALLED, truncatedSeriesId);
+        bytes memory packet = abi.encodePacked(
+            BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE, truncatedSeriesId
+        );
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_MARK_CALLED,
+                BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE,
                 5,
-                BridgeMsgCodec.MIN_LEN_MARK_CALLED
+                BridgeMsgCodec.MIN_LEN_INTEX_SERIES_CALL_NOTICE
             )
         );
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
@@ -103,13 +104,16 @@ contract InboundValidationTest is CrossChainTest {
     function test_TM_ShortRefundInstructions_RevertsInvalidPayloadLength() public {
         // REFUND_INSTRUCTIONS carries one ABI-encoded array. Its minimum (HEADER_LEN + 288)
         // pins the empty-array floor. Send one byte under it to trip the per-type length check.
-        uint256 minLen = BridgeMsgCodec.MIN_LEN_REFUND_INSTRUCTIONS;
+        uint256 minLen = BridgeMsgCodec.MIN_LEN_INTEX_AUCTION_WINNERS;
         bytes memory packet = abi.encodePacked(
-            BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, new bytes(minLen - 3)
+            BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS, new bytes(minLen - 3)
         );
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS, minLen - 1, minLen
+                BridgeMsgCodec.InvalidPayloadLength.selector,
+                BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS,
+                minLen - 1,
+                minLen
             )
         );
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
@@ -118,16 +122,12 @@ contract InboundValidationTest is CrossChainTest {
     function test_TM_ShortIssuanceInstructions_RevertsInvalidPayloadLength() public {
         // ISSUANCE_INSTRUCTIONS has the largest minimum (HEADER_LEN + 544): a struct with two
         // arrays. One byte under the floor must trip the per-type length check.
-        uint256 minLen = BridgeMsgCodec.MIN_LEN_ISSUANCE_INSTRUCTIONS;
-        bytes memory packet = abi.encodePacked(
-            BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS, new bytes(minLen - 3)
-        );
+        uint256 minLen = BridgeMsgCodec.MIN_LEN_INTEX_SERIES;
+        bytes memory packet =
+            abi.encodePacked(BridgeMsgCodec.BODY_VERSION_V1, BridgeMsgCodec.MSG_INTEX_SERIES, new bytes(minLen - 3));
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
-                minLen - 1,
-                minLen
+                BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_INTEX_SERIES, minLen - 1, minLen
             )
         );
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
@@ -142,10 +142,10 @@ contract InboundValidationTest is CrossChainTest {
 
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
-            BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
+            BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS,
             abi.encode(uint32(42), uint16(0), uint16(1), uint64(600_000), uint128(1e6), winners, uint16(2), uint16(1))
         );
-        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidRefundPartial.selector, uint16(2), uint256(2)));
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidReturnPartial.selector, uint16(2), uint256(2)));
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), packet);
     }
 
@@ -172,50 +172,43 @@ contract InboundValidationTest is CrossChainTest {
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_MARK_CALLED,
+                BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE,
                 2,
-                BridgeMsgCodec.MIN_LEN_MARK_CALLED
+                BridgeMsgCodec.MIN_LEN_INTEX_SERIES_CALL_NOTICE
             )
         );
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
 
-    function test_OM_BodySrcChainIdMismatch_IsAcknowledgedAsAConflict() public {
+    function test_message_ignored_holds_the_receive_id() public {
         // Build a well-formed BIDS_BATCH whose body-srcChainId (0xDEAD) disagrees with the
         // authenticated source chainId (BNB_CHAIN_ID = 1): never acceptable, so acknowledged, not retried.
-        bytes memory packet = BridgeMsgCodec.encodeBidsBatch(42, 0xDEAD, 0, 1, new address[](0), new uint256[](0));
-        vm.expectEmit(true, true, true, true, address(outbeRouter));
-        emit IOriginRouter.InboundMessageIgnored(
-            BNB_CHAIN_ID,
-            BridgeMsgCodec.MSG_BIDS_BATCH,
-            bytes32((uint256(42) << 32) | BNB_CHAIN_ID),
-            InboundReason.CONFLICT
-        );
+        bytes memory packet = BridgeMsgCodec.encodeBidsPage(42, 0xDEAD, 0, 1, new address[](0), new uint256[](0));
+        bytes32 receiveId = keccak256(abi.encode(_interop(BNB_CHAIN_ID, address(bnbRouter)), packet));
+        vm.expectEmit(true, true, false, true, address(outbeRouter));
+        emit IOriginRouter.MessageIgnored(receiveId, BNB_CHAIN_ID, InboundReason.CONFLICT);
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
 
     function test_OM_ShortBidsBatch_RevertsInvalidPayloadLength() public {
         // Empty-arrays BIDS_BATCH. Send a one-byte-short packet (truncate the last byte of the trailing
         // length word) to trip the per-type minimum-length check.
-        bytes memory full = BridgeMsgCodec.encodeBidsBatch(42, BNB_CHAIN_ID, 0, 1, new address[](0), new uint256[](0));
+        bytes memory full = BridgeMsgCodec.encodeBidsPage(42, BNB_CHAIN_ID, 0, 1, new address[](0), new uint256[](0));
         bytes memory truncated = new bytes(full.length - 1);
         for (uint256 i = 0; i < truncated.length; i++) {
             truncated[i] = full[i];
         }
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_BIDS_BATCH,
-                full.length - 1,
-                full.length
+                BridgeMsgCodec.InvalidPayloadLength.selector, BridgeMsgCodec.MSG_BIDS_PAGE, full.length - 1, full.length
             )
         );
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), truncated);
     }
 
     function test_OM_BidsBatchTooLarge_Reverts() public {
-        // A batch above MAX_BIDS_BATCH is rejected on decode before it can be dispatched.
-        uint256 n = BridgeMsgCodec.MAX_BIDS_BATCH + 1;
+        // A batch above MAX_BIDS_PAGE is rejected on decode before it can be dispatched.
+        uint256 n = BridgeMsgCodec.MAX_BIDS_PAGE + 1;
         address[] memory bidders = new address[](n);
         uint16[] memory quantities = new uint16[](n);
         uint32[] memory rates = new uint32[](n);
@@ -227,42 +220,44 @@ contract InboundValidationTest is CrossChainTest {
             timestamps[i] = 1;
         }
         // Hand-build the over-cap payload: the outbound encoder caps at MAX_PAYLOAD_ARRAY_LEN (64),
-        // so encodeBidsBatch can no longer produce an over-cap batch. Such a message can therefore
+        // so encodeBidsPage can no longer produce an over-cap batch. Such a message can therefore
         // only reach the inbound handler via a trusted-peer bug. This is exactly the case that the
-        // inbound BidsBatchTooLarge decode guard exists to reject.
+        // inbound IntexAuctionBidsPageTooLarge decode guard exists to reject.
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
-            BridgeMsgCodec.MSG_BIDS_BATCH,
+            BridgeMsgCodec.MSG_BIDS_PAGE,
             abi.encode(uint32(42), BNB_CHAIN_ID, uint16(0), uint16(1), bidders, quantities, rates, timestamps)
         );
         vm.expectRevert(
-            abi.encodeWithSelector(BridgeMsgCodec.BidsBatchTooLarge.selector, n, BridgeMsgCodec.MAX_BIDS_BATCH)
+            abi.encodeWithSelector(
+                BridgeMsgCodec.IntexAuctionBidsPageTooLarge.selector, n, BridgeMsgCodec.MAX_BIDS_PAGE
+            )
         );
         _deliver(BNB_CHAIN_ID, address(bnbRouter), address(outbeRouter), packet);
     }
 
     // ---------------------------------------------------------------
-    // OriginRouter.wire() - Desis interface probe
+    // OriginRouter.setDependencies() - Desis interface probe
     // ---------------------------------------------------------------
 
     function test_OM_Wire_EOA_RevertsInvalidDesisInterface() public {
         OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.InvalidDesisInterface.selector, address(0xBEEF)));
-        fresh.wire(address(0xBEEF), intexFactory);
+        fresh.setDependencies(address(0xBEEF), intexFactory);
     }
 
     function test_OM_Wire_NonIDesisContract_RevertsInvalidDesisInterface() public {
         // IntexAuction is a contract but does not advertise IDesis via ERC-165.
         OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin);
         vm.expectRevert(abi.encodeWithSelector(IOriginRouter.InvalidDesisInterface.selector, address(auction)));
-        fresh.wire(address(auction), intexFactory);
+        fresh.setDependencies(address(auction), intexFactory);
     }
 
     function test_OM_Wire_MockContracts_Succeeds() public {
         OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin);
         address newDesis = address(new MockDesis());
         address newFactory = makeAddr("newFactory");
-        fresh.wire(newDesis, newFactory);
+        fresh.setDependencies(newDesis, newFactory);
         assertEq(fresh.desis(), newDesis);
         assertEq(fresh.intexFactory(), newFactory);
         assertTrue(fresh.hasRole(fresh.DESIS_ROLE(), newDesis));

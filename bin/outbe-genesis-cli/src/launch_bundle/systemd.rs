@@ -130,10 +130,7 @@ UNIT_DIR=\"$(cd -- \"$(dirname -- \"${{BASH_SOURCE[0]}}\")/systemd\" && pwd)\"\n
 \n\
 getent group outbe >/dev/null || as_root groupadd --system outbe\n\
 id -u outbe >/dev/null 2>&1 || as_root useradd --system --gid outbe \\\n  --home-dir {base} --shell /usr/sbin/nologin outbe\n\
-as_root install -d -m 0700 {base}/validator-{index}/tee /var/lib/outbe/tee\n\
 as_root chown -R outbe:outbe {base}\n\
-as_root systemctl disable --now outbe-tee-renew.timer >/dev/null 2>&1 || true\n\
-as_root rm -f /etc/systemd/system/outbe-tee-renew.timer /etc/systemd/system/outbe-tee-renew.service\n\
 as_root install -m 0644 \"$UNIT_DIR\"/outbe-* /etc/systemd/system/\n\
 as_root systemctl daemon-reload\n\
 \n\
@@ -154,21 +151,7 @@ pub fn preflight_script(
     base_dir: &str,
     index: usize,
 ) -> Result<String, GenesisError> {
-    let tee_port = port_of(config, "tee_enclave_port")?;
     let rpc_port = port_of(config, "rpc_port")?;
-    let runner = config
-        .get("enclave_runner")
-        .and_then(Value::as_str)
-        .unwrap_or("outbe-tee-enclave-confidential-vm");
-    let enclave_check = format!(
-        "runner={}\n\
-if [ -x \"$runner\" ] || command -v \"$runner\" >/dev/null 2>&1; then\n\
-  note \"confidential VM signer\" \"outbe-tee-enclave-confidential-vm\"\n\
-else\n\
-  note \"confidential VM signer\" \"MISSING $runner\"; fail=1\n\
-fi\n",
-        quote(runner)
-    );
     Ok(format!(
         "\n# Read-only pre-launch check for validator {index}. Exits non-zero on anything\n\
 # that would make the network fail after start rather than before.\n\
@@ -183,14 +166,13 @@ if [ -r .bb-crs/bn254_g1.dat ]; then\n\
 else\n\
   note \"CRS\" \"MISSING .bb-crs/bn254_g1.dat\"; fail=1\n\
 fi\n\
-{enclave_check}\n\
 \n\
 # State from an earlier genesis belongs to a different chain; the node refuses to start on it.\n\
-for stale in validator-{index}/data validator-{index}/consensus tee; do\n\
+for stale in validator-{index}/data validator-{index}/consensus; do\n\
   [ -e \"$stale\" ] && {{ note \"leftover state\" \"$stale - remove before a new genesis\"; fail=1; }}\n\
 done\n\
 \n\
-for port in {tee_port} {rpc_port}; do\n\
+for port in {rpc_port}; do\n\
   ss -ltn 2>/dev/null | grep -q \":$port \" && {{ note \"port $port\" \"already in use\"; fail=1; }}\n\
 done\n\
 \n\

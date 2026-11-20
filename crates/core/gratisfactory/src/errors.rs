@@ -26,6 +26,8 @@ pub enum GratisFactoryError {
     PledgeMismatch,
     #[error("native COEN amount overflow")]
     NativeCoenOverflow,
+    #[error("COEN amount is zero or not a whole number of Gratis minors")]
+    InvalidCoenAmount,
 }
 
 fn revert_with<E: SolError>(error: E) -> PrecompileError {
@@ -44,6 +46,7 @@ impl From<GratisFactoryError> for PrecompileError {
             GratisFactoryError::PledgeNotFound => revert_with(I::PledgeNotFound {}),
             GratisFactoryError::PledgeMismatch => revert_with(I::PledgeMismatch {}),
             GratisFactoryError::NativeCoenOverflow => revert_with(I::NativeCoenOverflow {}),
+            GratisFactoryError::InvalidCoenAmount => revert_with(I::InvalidCoenAmount {}),
         }
     }
 }

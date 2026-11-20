@@ -157,7 +157,7 @@ interface IIntexNFT1155Bridge {
     ///         address.
     /// @param chainId Destination/source chainId.
     /// @param interop ERC-7930 interoperable address (empty to clear).
-    function setRemoteMessenger(uint32 chainId, bytes calldata interop) external;
+    function registerRemoteMessenger(uint32 chainId, bytes calldata interop) external;
 
     // --- Single-recipient batch ---
     /// @notice Quotes the native fee for a batch cross-chain transfer.

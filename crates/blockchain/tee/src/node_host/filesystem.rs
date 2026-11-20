@@ -1,6 +1,7 @@
 use crate::TransportError;
 
 use outbe_primitives::filesystem::entry_exists;
+#[cfg(test)]
 use outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1;
 
 use std::fs;
@@ -18,10 +19,11 @@ use std::path::PathBuf;
 
 pub const NODE_HOST_DIRECTORY_V1: &str = "tee-node-host-v1";
 
-pub const NODE_HOST_NOISE_KEY_V1: &str = "noise-initiator.key";
+pub const NODE_HOST_IDENTITY_KEY_V1: &str = "noise-initiator.key";
 
 pub const NODE_HOST_MANIFEST_V1: &str = "initialization-manifest.bin";
 
+#[cfg(test)]
 const NODE_HOST_PENDING_MANIFEST_V1: &str = "initialization-manifest.pending";
 
 pub const NODE_HOST_REPLACEMENT_CANDIDATE_V1: &str = "replacement-candidate.v1";
@@ -48,21 +50,9 @@ const NODE_HOST_REPLACEMENT_RELAY_NEXT_V1: &str = "replacement-relay.next";
 
 const NODE_HOST_REPLACEMENT_PROMOTION_NEXT_V1: &str = "replacement-promotion.next";
 
-const NODE_HOST_COMMITTED_JOIN_SUBMISSION_NEXT_V1: &str = "committed-join-submission.next";
-
-const NODE_HOST_COMMITTED_JOIN_RELAY_NEXT_V1: &str = "committed-join-relay.next";
-
-const NODE_HOST_FINALIZED_JOIN_ADMISSION_ANCHOR_NEXT_V1: &str =
-    "finalized-join-admission-anchor.next";
-
 const NODE_HOST_STATE_LOCK_V1: &str = "state.lock";
 
 const NODE_HOST_REPLACEMENT_WRITE_SCRATCH_V1: &str = "replacement-write.tmp";
-
-const NODE_HOST_COMMITTED_JOIN_WRITE_SCRATCH_V1: &str = "committed-join-write.tmp";
-
-const NODE_HOST_FINALIZED_JOIN_ADMISSION_ANCHOR_SCRATCH_V1: &str =
-    "finalized-join-admission-anchor.tmp";
 
 pub(super) fn read_owned_bounded_file(
     path: &Path,
@@ -123,6 +113,7 @@ impl NodeHostStateLock {
     }
 }
 
+#[cfg(test)]
 pub(super) fn write_manifest_once(
     path: &Path,
     manifest: &EnclaveInitializationManifestV1,
@@ -255,27 +246,22 @@ pub(super) fn path_exists(path: &Path) -> Result<bool, TransportError> {
 pub(super) struct NodeHostPaths {
     pub(super) root: PathBuf,
     pub(super) state_lock: PathBuf,
-    pub(super) noise_key: PathBuf,
+    pub(super) identity_key: PathBuf,
     pub(super) manifest: PathBuf,
+    #[cfg(test)]
     pub(super) pending_manifest: PathBuf,
     pub(super) replacement_candidate: PathBuf,
     pub(super) replacement_submission: PathBuf,
     pub(super) replacement_relay: PathBuf,
     pub(super) replacement_promotion: PathBuf,
+    #[cfg(test)]
     pub(super) committed_join_submission: PathBuf,
-    pub(super) committed_join_relay: PathBuf,
-    pub(super) finalized_join_admission_anchor: PathBuf,
     pub(super) next_manifest: PathBuf,
     pub(super) replacement_candidate_next: PathBuf,
     pub(super) replacement_submission_next: PathBuf,
     pub(super) replacement_relay_next: PathBuf,
     pub(super) replacement_promotion_next: PathBuf,
-    pub(super) committed_join_submission_next: PathBuf,
-    pub(super) committed_join_relay_next: PathBuf,
-    pub(super) finalized_join_admission_anchor_next: PathBuf,
     pub(super) replacement_write_scratch: PathBuf,
-    pub(super) committed_join_write_scratch: PathBuf,
-    pub(super) finalized_join_admission_anchor_scratch: PathBuf,
 }
 
 impl NodeHostPaths {
@@ -283,30 +269,22 @@ impl NodeHostPaths {
         let root = node_data_dir.join(NODE_HOST_DIRECTORY_V1);
         Self {
             state_lock: root.join(NODE_HOST_STATE_LOCK_V1),
-            noise_key: root.join(NODE_HOST_NOISE_KEY_V1),
+            identity_key: root.join(NODE_HOST_IDENTITY_KEY_V1),
             manifest: root.join(NODE_HOST_MANIFEST_V1),
+            #[cfg(test)]
             pending_manifest: root.join(NODE_HOST_PENDING_MANIFEST_V1),
             replacement_candidate: root.join(NODE_HOST_REPLACEMENT_CANDIDATE_V1),
             replacement_submission: root.join(NODE_HOST_REPLACEMENT_SUBMISSION_V1),
             replacement_relay: root.join(NODE_HOST_REPLACEMENT_RELAY_V1),
             replacement_promotion: root.join(NODE_HOST_REPLACEMENT_PROMOTION_V1),
+            #[cfg(test)]
             committed_join_submission: root.join(NODE_HOST_COMMITTED_JOIN_SUBMISSION_V1),
-            committed_join_relay: root.join(NODE_HOST_COMMITTED_JOIN_RELAY_V1),
-            finalized_join_admission_anchor: root
-                .join(NODE_HOST_FINALIZED_JOIN_ADMISSION_ANCHOR_V1),
             next_manifest: root.join(NODE_HOST_NEXT_MANIFEST_V1),
             replacement_candidate_next: root.join(NODE_HOST_REPLACEMENT_CANDIDATE_NEXT_V1),
             replacement_submission_next: root.join(NODE_HOST_REPLACEMENT_SUBMISSION_NEXT_V1),
             replacement_relay_next: root.join(NODE_HOST_REPLACEMENT_RELAY_NEXT_V1),
             replacement_promotion_next: root.join(NODE_HOST_REPLACEMENT_PROMOTION_NEXT_V1),
-            committed_join_submission_next: root.join(NODE_HOST_COMMITTED_JOIN_SUBMISSION_NEXT_V1),
-            committed_join_relay_next: root.join(NODE_HOST_COMMITTED_JOIN_RELAY_NEXT_V1),
-            finalized_join_admission_anchor_next: root
-                .join(NODE_HOST_FINALIZED_JOIN_ADMISSION_ANCHOR_NEXT_V1),
             replacement_write_scratch: root.join(NODE_HOST_REPLACEMENT_WRITE_SCRATCH_V1),
-            committed_join_write_scratch: root.join(NODE_HOST_COMMITTED_JOIN_WRITE_SCRATCH_V1),
-            finalized_join_admission_anchor_scratch: root
-                .join(NODE_HOST_FINALIZED_JOIN_ADMISSION_ANCHOR_SCRATCH_V1),
             root,
         }
     }

@@ -81,7 +81,7 @@ interface IIntexFactory {
     ///         Promis limit pool in whole protocol units. Callable only by the OriginRouter.
     /// @param emissionDay Emission day (yyyymmdd) the proceeds belong to.
     /// @param srcChainId Target chain the proceeds arrived from.
-    function distribute(uint32 emissionDay, uint32 srcChainId) external payable;
+    function burnIntexAuctionProceeds(uint32 emissionDay, uint32 srcChainId) external payable;
 
     /// @notice One owner's units of a series. `issuedUnits` and `settledUnits` are the
     ///         owner's current balances on this, the origin chain, with Issued units counted

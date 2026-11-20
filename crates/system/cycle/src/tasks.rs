@@ -228,7 +228,7 @@ pub const DESIS_CLEANUP_WORKER_BUDGET_GAS: u64 = 11_520_000;
 /// Budgets use measured successful gross maxima from
 /// `crates/blockchain/evm/src/executor/tests/receipts_and_gas/calibration.rs`, multiplied by four
 /// and rounded up to 1,000 gas. In stable-id order those maxima are
-/// [381500, 50300, 991492, 50300, 2583089, 50300, 50300].
+/// [401900, 50300, 991492, 50300, 2583089, 50300, 50300].
 /// The supported nested bridge profile performs calldata copy/hash, persistent
 /// reads/writes, logs, and a real relay call. It is not a universal contract bound.
 /// `advance_auctions` takes the step bounds of Desis, measured on the deployed bridge.
@@ -248,7 +248,7 @@ pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
                     PROCESS_EMISSION_DAY_PERIOD_SECONDS,
                     PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
                 ),
-                1_526_000,
+                1_608_000,
                 TaskHandler::ProcessEmissionDay,
             ));
             spec.requires_accounting_window = true;
@@ -492,7 +492,7 @@ mod protocol_parameter_tests {
     #[test]
     fn calibrated_budgets_are_nonzero_and_follow_checked_headroom_rule() {
         let maxima = [
-            381_500u64, 50_300, 991_492, 50_300, 2_583_089, 50_300, 50_300,
+            401_900u64, 50_300, 991_492, 50_300, 2_583_089, 50_300, 50_300,
         ];
         let tasks = active_tasks().expect("calibrated task table");
         let mut total = 0u64;
@@ -511,6 +511,6 @@ mod protocol_parameter_tests {
                 .checked_add(spec.work_budget_gas())
                 .expect("combined allowances fit u64");
         }
-        assert_eq!(total, 22_093_000);
+        assert_eq!(total, 22_175_000);
     }
 }

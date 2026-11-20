@@ -75,7 +75,7 @@ fn encode_evidence(
                 put_u16(out, *index);
             }
         }
-        TeeBootstrapParticipantEvidenceV2::GramineDirectDev {
+        TeeBootstrapParticipantEvidenceV2::NoAttestationDev {
             dev_attestation_public,
             dev_signature,
         } => {
@@ -199,8 +199,8 @@ fn decode_evidence(
                 collateral_component_indices,
             })
         }
-        AttestationMode::GramineDirectDev => {
-            Ok(TeeBootstrapParticipantEvidenceV2::GramineDirectDev {
+        AttestationMode::NoAttestationDev => {
+            Ok(TeeBootstrapParticipantEvidenceV2::NoAttestationDev {
                 dev_attestation_public: decoder.array()?,
                 dev_signature: decoder.array()?,
             })
@@ -250,10 +250,10 @@ pub(super) fn logical_evidence(
                 transition_key_ready_proof: None,
             })
         }
-        TeeBootstrapParticipantEvidenceV2::GramineDirectDev {
+        TeeBootstrapParticipantEvidenceV2::NoAttestationDev {
             dev_attestation_public,
             dev_signature,
-        } => AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+        } => AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
             transition_key_ready_proof: None,
             intent: participant.intent.clone(),
             dev_attestation_public: *dev_attestation_public,

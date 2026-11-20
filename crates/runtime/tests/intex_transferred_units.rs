@@ -144,7 +144,7 @@ impl World {
         world
     }
 
-    /// Initialized in place: the admin grants the relayer and auction roles to the issuer
+    /// Initialized in place: the admin grants the router and auction roles to the issuer
     /// and the burner role to the factory precompile.
     fn install_nft(&mut self) {
         self.ok(
@@ -155,7 +155,7 @@ impl World {
             },
         );
         for (role, account) in [
-            ("RELAYER_ROLE", RELAYER),
+            ("ROUTER_ROLE", RELAYER),
             ("AUCTION_ROLE", RELAYER),
             ("BURNER_ROLE", INTEX_FACTORY_ADDRESS),
         ] {

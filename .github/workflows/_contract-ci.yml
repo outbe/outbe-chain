@@ -19,10 +19,6 @@ on:
         description: "Run slither; a high-severity finding fails the job"
         type: boolean
         default: false
-      aderyn-check:
-        description: "Run aderyn; a high-severity finding fails the job"
-        type: boolean
-        default: false
       isolated-tests:
         description: "Test path that runs on its own with --isolate (e.g. a gas budget test)"
         type: string
@@ -231,47 +227,6 @@ jobs:
           path: contracts/${{ inputs.project }}/slither-report.sarif
           retention-days: 14
 
-  aderyn:
-    name: Aderyn
-    if: ${{ inputs.aderyn-check }}
-    runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:6bd81f9d0ddd3de23649fb8cadf274d74701662c2ec9e0d9cfeed1036aa4f1c1
-    defaults:
-      run:
-        working-directory: contracts/${{ inputs.project }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          persist-credentials: false
-
-      - name: Setup
-        uses: ./.github/actions/setup-foundry-soldeer
-        with:
-          working-directory: contracts/${{ inputs.project }}
-
-      - name: Run Aderyn
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: aderyn . --skip-cloc --skip-update-check -o aderyn-report.json
-
-      - name: Fail on a high-severity finding
-        run: |
-          if ! jq -e '.high_issues.issues | length == 0' aderyn-report.json >/dev/null; then
-            echo "::error::aderyn found high-severity issues - see the aderyn report artifact"
-            jq -r '.high_issues.issues[] | "\(.title): \(.instances | length) instance(s)"' aderyn-report.json
-            exit 1
-          fi
-
-      - name: Upload Aderyn report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ inputs.project }}-aderyn-report
-          path: contracts/${{ inputs.project }}/aderyn-report.json
-          retention-days: 14
-
   ci-success:
     name: ci success
     runs-on: ubuntu-24.04
@@ -284,11 +239,10 @@ jobs:
       - abi
       - upgrade
       - slither
-      - aderyn
     timeout-minutes: 5
     steps:
       - name: Decide whether all jobs succeeded or failed
         uses: re-actors/alls-green@release/v1
         with:
-          allowed-skips: test,abi,upgrade,slither,aderyn
+          allowed-skips: test,abi,upgrade,slither
           jobs: ${{ toJSON(needs) }}

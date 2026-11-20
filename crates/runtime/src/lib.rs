@@ -4,6 +4,7 @@
 //! domain implementations and launches the process.
 
 mod admission;
+pub(crate) mod admission_authority;
 mod authority;
 mod configuration;
 mod consensus;
@@ -22,10 +23,7 @@ mod shutdown;
 mod system_tx;
 mod tee;
 mod tee_canary_probe;
-mod upgrade;
-mod upgrade_monitor;
-mod upgrade_ports;
-mod upgrade_promotion;
+mod tee_supervisor;
 mod wiring;
 
 #[cfg(test)]
@@ -34,6 +32,8 @@ mod launch_tests;
 pub use configuration::{
     apply_outbe_gas_price_oracle_defaults, command_requires_crs, outbe_default_txpool_values,
 };
+#[cfg(feature = "test-hooks")]
+pub use launch::prepare_validator_for_test;
 pub use launch::run_node;
 pub(crate) use launch::LaunchConfig;
 pub use metrics_recorder::install_outbe_prometheus_recorder;
@@ -43,19 +43,16 @@ pub use system_tx::{
 };
 #[cfg(any(test, feature = "test-hooks"))]
 pub use tee_canary_probe::TributeCanaryProbe;
+#[cfg(feature = "test-hooks")]
+pub use tee_supervisor::test_hooks::{
+    tee_launch_profile_for_test, LifecycleAuthorityProbe, LifecycleAuthorityProbeError,
+    LifecycleSupervisorProbe,
+};
 pub use wiring::OutbeRuntime;
 
 #[cfg(test)]
-pub(crate) use admission::{
-    local_validator_tee_gate_v1, select_validator_upstream_anchor_v1, LocalTeeAdmissionAnchorV1,
-};
-pub(crate) use admission::{
-    read_gated_finalized_local_tee_admission, require_upstream_fullnode_tee_admission,
-    require_validator_tee_recovery_complete_v1, run_tee_lease_guard_v1,
-    tee_lease_admission_rejection, tee_lease_exit_reason,
-    validator_admission_anchor_from_durable_v1, validator_recovery_startup_admission_rejection,
-    TeeLeaseGuardGateV1,
-};
+pub(crate) use admission::LocalTeeAdmissionAnchorV1;
+pub(crate) use admission::{tee_lease_exit_reason, TeeLeaseGuardGateV1};
 pub(crate) use clap::Parser;
 pub(crate) use commonware_runtime::{Runner, Spawner, Supervisor};
 pub(crate) use configuration::{
@@ -72,11 +69,6 @@ pub(crate) use outbe_execution::{
     OutbeBeaconConsensus, OutbeFullNode, OutbeNode,
 };
 pub(crate) use outbe_primitives::OutbeHeader;
-pub(crate) use outbe_tee::registry_view::{read_finalized_registry_view_v1, NodeBindingSelectorV1};
-pub(crate) use outbe_tee::upgrade_journal::{
-    inspect_upgrade_journal_v1, record_upgrade_finalized_v1, record_upgrade_missed_cutoff_v1,
-    record_upgrade_promoted_v1, UpgradeContextV1, UpgradeJournalSnapshotV1, UpgradeJournalStateV1,
-};
 pub(crate) use reth_chainspec::{ChainSpec, EthChainSpec};
 pub(crate) use reth_cli::chainspec::ChainSpecParser;
 pub(crate) use reth_ethereum::cli::interface::Cli;
@@ -97,7 +89,3 @@ pub(crate) use std::{
 };
 pub(crate) use tokio::sync::oneshot;
 pub(crate) use tracing::info;
-pub(crate) use upgrade::{
-    run_upgrade_promotion_worker_v1, UpgradePromotionWorkerConfigV1, TEE_UPGRADE_CRITICAL_BLOCKS,
-    TEE_UPGRADE_POLL_SECS, TEE_UPGRADE_WARNING_BLOCKS,
-};

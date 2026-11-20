@@ -29,6 +29,8 @@ const UPDATE_ADDRESS: Address =
 pub struct Head {
     pub height: u64,
     pub hash: String,
+    /// The block time, in Unix seconds.
+    pub timestamp: u64,
 }
 impl Head {
     pub fn period(&self, length: u64) -> u64 {
@@ -101,6 +103,7 @@ impl OracleClient {
                 .as_str()
                 .ok_or(OracleError::MissingBlockHash)?
                 .into(),
+            timestamp: quantity(&value["timestamp"])?,
         })
     }
     /// Timestamp of the Outbe block at `height`.
@@ -228,6 +231,29 @@ impl OracleClient {
             .call(head, ORACLE_ADDRESS, IOracle::getVoteTargetsCall {})
             .await?;
         Ok(targets.bases.into_iter().zip(targets.quotes).collect())
+    }
+    /// Keeps the rate votes of the currencies that are policy rate vote
+    /// targets at `head`. The chain rejects the whole vote if one rate names
+    /// another currency. With no rate votes, it makes no call.
+    pub async fn only_rate_targets(
+        &self,
+        head: &Head,
+        rates: Vec<crate::rates::RateVote>,
+    ) -> Result<Vec<crate::rates::RateVote>> {
+        if rates.is_empty() {
+            return Ok(rates);
+        }
+        let targets = self
+            .call(
+                head,
+                ORACLE_ADDRESS,
+                IOracle::getPolicyRateCurrenciesCall {},
+            )
+            .await?;
+        Ok(rates
+            .into_iter()
+            .filter(|(currency, _, _)| targets.contains(currency))
+            .collect())
     }
     pub async fn price_observation(
         &self,
@@ -420,7 +446,8 @@ mod tests {
             assert_eq!(
                 Head {
                     height: h,
-                    hash: String::new()
+                    hash: String::new(),
+                    timestamp: 0,
                 }
                 .period(8),
                 p

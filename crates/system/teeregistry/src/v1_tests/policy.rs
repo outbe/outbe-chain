@@ -6,8 +6,8 @@ use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
 /// The other attestation mode.
 fn other_mode(mode: AttestationMode) -> AttestationMode {
     match mode {
-        AttestationMode::DcapRequired => AttestationMode::GramineDirectDev,
-        AttestationMode::GramineDirectDev => AttestationMode::DcapRequired,
+        AttestationMode::DcapRequired => AttestationMode::NoAttestationDev,
+        AttestationMode::NoAttestationDev => AttestationMode::DcapRequired,
     }
 }
 
@@ -122,7 +122,7 @@ fn initial_policy_is_state_authority_and_is_write_once() {
 #[test]
 fn initial_policy_rejects_direct_dev_on_mainnet_before_registry_writes() {
     let genesis_hash = B256::repeat_byte(0x19);
-    let mut direct = policy_in_mode(genesis_hash, AttestationMode::GramineDirectDev);
+    let mut direct = policy_in_mode(genesis_hash, AttestationMode::NoAttestationDev);
     direct.chain_id = U256::from(MAINNET_CHAIN_ID).to_be_bytes();
     let mut provider = storage_for_chain(MAINNET_CHAIN_ID, genesis_hash);
 
@@ -135,9 +135,9 @@ fn initial_policy_rejects_direct_dev_on_mainnet_before_registry_writes() {
 fn initial_policy_accepts_both_non_mainnet_modes_and_mainnet_dcap() {
     for (chain_id, mode) in [
         (DEVNET_CHAIN_ID, AttestationMode::DcapRequired),
-        (DEVNET_CHAIN_ID, AttestationMode::GramineDirectDev),
+        (DEVNET_CHAIN_ID, AttestationMode::NoAttestationDev),
         (TESTNET_CHAIN_ID, AttestationMode::DcapRequired),
-        (TESTNET_CHAIN_ID, AttestationMode::GramineDirectDev),
+        (TESTNET_CHAIN_ID, AttestationMode::NoAttestationDev),
         (MAINNET_CHAIN_ID, AttestationMode::DcapRequired),
     ] {
         let genesis_hash = B256::from(U256::from(chain_id).to_be_bytes());
@@ -157,7 +157,7 @@ fn initial_policy_rejects_both_modes_on_an_unknown_chain_before_registry_writes(
 
     for mode in [
         AttestationMode::DcapRequired,
-        AttestationMode::GramineDirectDev,
+        AttestationMode::NoAttestationDev,
     ] {
         let genesis_hash = B256::repeat_byte(mode as u8);
         let mut initial = policy_in_mode(genesis_hash, mode);
@@ -193,7 +193,7 @@ fn stages_exactly_one_predecessor_bound_successor_policy() {
         );
 
         let mut wrong_mode = successor.clone();
-        wrong_mode.attestation_mode = AttestationMode::GramineDirectDev;
+        wrong_mode.attestation_mode = AttestationMode::NoAttestationDev;
         assert_revert_bytes(
             registry.stage_successor_policy_v1(U256::from(6), &wrong_mode),
             &ITeeRegistryV1::SuccessorV1PolicyCannotChangeAttestationMode {}.abi_encode(),
@@ -232,7 +232,7 @@ fn stages_exactly_one_predecessor_bound_successor_policy() {
 fn successor_policy_rejects_both_attestation_mode_switch_directions() {
     for active_mode in [
         AttestationMode::DcapRequired,
-        AttestationMode::GramineDirectDev,
+        AttestationMode::NoAttestationDev,
     ] {
         let genesis_hash = B256::repeat_byte(active_mode as u8);
         let current = policy_in_mode(genesis_hash, active_mode);
@@ -252,7 +252,7 @@ fn successor_policy_rejects_both_attestation_mode_switch_directions() {
 fn promotes_staged_successor_exactly_at_activation_height_and_replays_idempotently() {
     for mode in [
         AttestationMode::DcapRequired,
-        AttestationMode::GramineDirectDev,
+        AttestationMode::NoAttestationDev,
     ] {
         let genesis_hash = B256::repeat_byte(mode as u8);
         let current = policy_in_mode(genesis_hash, mode);
@@ -321,7 +321,7 @@ fn write_staged_policy_slots(
 fn promotion_rejects_a_preexisting_cross_mode_successor() {
     for active_mode in [
         AttestationMode::DcapRequired,
-        AttestationMode::GramineDirectDev,
+        AttestationMode::NoAttestationDev,
     ] {
         let genesis_hash = B256::repeat_byte(active_mode as u8);
         let current = policy_in_mode(genesis_hash, active_mode);

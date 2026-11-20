@@ -17,7 +17,6 @@ pub(super) struct FounderStatus {
     pub(super) name: String,
     pub(super) target: String,
     pub(super) validator: String,
-    pub(super) enclave: String,
     pub(super) radicle: String,
     pub(super) feeder: String,
     pub(super) chain_id: Option<u64>,
@@ -25,6 +24,12 @@ pub(super) struct FounderStatus {
     pub(super) execution_peers: Option<u64>,
     pub(super) consensus: Option<ConsensusStatus>,
     pub(super) error: Option<String>,
+}
+
+impl FounderStatus {
+    pub(super) fn services(&self) -> [&str; 4] {
+        [&self.target, &self.validator, &self.radicle, &self.feeder]
+    }
 }
 
 #[derive(Deserialize)]
@@ -89,15 +94,7 @@ pub(super) async fn query_all(
 }
 
 pub(super) fn healthy(status: &FounderStatus, chain_id: u64, peers: usize) -> bool {
-    let services_ready = [
-        status.target.as_str(),
-        status.validator.as_str(),
-        status.enclave.as_str(),
-        status.radicle.as_str(),
-        status.feeder.as_str(),
-    ]
-    .into_iter()
-    .all(|state| state == "active");
+    let services_ready = status.services().into_iter().all(|state| state == "active");
     let chain_matches = status.chain_id == Some(chain_id);
     let finality_ready = status.finalized.is_some_and(|height| height > 0);
     let execution_ready = status
@@ -105,6 +102,7 @@ pub(super) fn healthy(status: &FounderStatus, chain_id: u64, peers: usize) -> bo
         .is_some_and(|count| count >= peers as u64);
     let consensus_ready = status.consensus.as_ref().is_some_and(|value| {
         value.mode == "signer"
+            && value.resident_ready()
             && value.has_threshold_shares
             && value.connected_peers >= peers as u64
     });
@@ -140,14 +138,19 @@ pub(super) fn render(build: &NetworkBuild, statuses: &[FounderStatus]) -> String
             || "unavailable".to_owned(),
             |consensus| {
                 format!(
-                    "{} peers={} shares={}",
+                    "{} peers={} shares={} tee={}",
                     consensus.mode,
                     consensus.connected_peers,
                     if consensus.has_threshold_shares {
                         "yes"
                     } else {
                         "no"
-                    }
+                    },
+                    if consensus.resident_ready() {
+                        "ready"
+                    } else {
+                        "not-ready"
+                    },
                 )
             },
         );
@@ -155,10 +158,9 @@ pub(super) fn render(build: &NetworkBuild, statuses: &[FounderStatus]) -> String
             "{:<20} {:<24} {:<10} {:<5} {}\n",
             status.name,
             format!(
-                "t:{} v:{} e:{} r:{} f:{}",
+                "t:{} v:{} r:{} f:{}",
                 short(&status.target),
                 short(&status.validator),
-                short(&status.enclave),
                 short(&status.radicle),
                 short(&status.feeder)
             ),
@@ -180,7 +182,6 @@ fn query_one(ssh: &SshOptions, founder: &super::config::Founder) -> FounderStatu
             name: founder.name.clone(),
             target: "unreachable".into(),
             validator: "unknown".into(),
-            enclave: "unknown".into(),
             radicle: "unknown".into(),
             feeder: "unknown".into(),
             chain_id: None,
@@ -200,17 +201,20 @@ fn query_one_inner(ssh: &SshOptions, founder: &super::config::Founder) -> Result
         )
     };
     let command = format!(
-        "printf '%s\\n' \"$(systemctl is-active outbe-validator.target 2>/dev/null || true)\" \"$(systemctl is-active outbe-validator.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-enclave.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-radicle.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-feeder.service 2>/dev/null || true)\"; {}; {}; {}; {}",
+        "printf '%s\\n' \"$(systemctl is-active outbe-validator.target 2>/dev/null || true)\" \"$(systemctl is-active outbe-validator.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-radicle.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-feeder.service 2>/dev/null || true)\"; {}; {}; {}; {}",
         request("eth_chainId", "[]", 1),
         request("eth_getBlockByNumber", "[\"finalized\",false]", 2),
         request("net_peerCount", "[]", 3),
         request("outbe_consensusStatus", "[]", 4),
     );
     let output = ssh.capture(founder, &command)?;
+    Ok(parse_status(&founder.name, &output))
+}
+
+fn parse_status(name: &str, output: &str) -> FounderStatus {
     let mut lines = output.lines();
     let target = lines.next().unwrap_or("unknown").to_owned();
     let validator = lines.next().unwrap_or("unknown").to_owned();
-    let enclave = lines.next().unwrap_or("unknown").to_owned();
     let radicle = lines.next().unwrap_or("unknown").to_owned();
     let feeder = lines.next().unwrap_or("unknown").to_owned();
     let chain_id = rpc_result(lines.next()).and_then(|value| parse_hex(value.as_str()?));
@@ -218,11 +222,10 @@ fn query_one_inner(ssh: &SshOptions, founder: &super::config::Founder) -> Result
         rpc_result(lines.next()).and_then(|value| parse_hex(value.get("number")?.as_str()?));
     let execution_peers = rpc_result(lines.next()).and_then(|value| parse_hex(value.as_str()?));
     let consensus = rpc_result(lines.next()).and_then(|value| serde_json::from_value(value).ok());
-    Ok(FounderStatus {
-        name: founder.name.clone(),
+    FounderStatus {
+        name: name.to_owned(),
         target,
         validator,
-        enclave,
         radicle,
         feeder,
         chain_id,
@@ -230,7 +233,7 @@ fn query_one_inner(ssh: &SshOptions, founder: &super::config::Founder) -> Result
         execution_peers,
         consensus,
         error: None,
-    })
+    }
 }
 
 fn rpc_result(line: Option<&str>) -> Option<Value> {
@@ -261,30 +264,30 @@ mod tests {
     use super::*;
 
     #[test]
-    fn readiness_requires_finality_and_consensus() {
-        let mut status = FounderStatus {
-            name: "validator-0".into(),
-            target: "active".into(),
-            validator: "active".into(),
-            enclave: "active".into(),
-            radicle: "active".into(),
-            feeder: "active".into(),
-            chain_id: Some(42),
-            finalized: Some(1),
-            execution_peers: Some(3),
-            consensus: Some(ConsensusStatus {
-                connected_peers: 3,
-                has_threshold_shares: true,
-                mode: "signer".into(),
-                ..Default::default()
-            }),
-            error: None,
-        };
+    fn readiness_requires_live_services_finality_consensus_and_resident_tee() {
+        let output = r#"active
+active
+active
+active
+{"result":"0x2a"}
+{"result":{"number":"0x1"}}
+{"result":"0x3"}
+{"result":{"mode":"signer","connectedPeers":3,"hasThresholdShares":true,"isValidator":true,"enclave":{"state":"ready","ready":true,"offerKeyReady":true}}}
+"#;
+        let mut status = parse_status("validator-0", output);
         assert!(healthy(&status, 42, 3));
         status.finalized = Some(0);
         assert!(!healthy(&status, 42, 3));
         status.finalized = Some(1);
         status.feeder = "activating".into();
+        assert!(!healthy(&status, 42, 3));
+        status.feeder = "active".into();
+        let consensus = status.consensus.as_mut().unwrap();
+        consensus.enclave.offer_key_ready = false;
+        assert!(!healthy(&status, 42, 3));
+        let consensus = status.consensus.as_mut().unwrap();
+        consensus.enclave.offer_key_ready = true;
+        consensus.mode = "verifier".into();
         assert!(!healthy(&status, 42, 3));
     }
 }

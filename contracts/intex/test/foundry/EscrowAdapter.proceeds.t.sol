@@ -29,7 +29,7 @@ contract EscrowAdapterProceedsTest is Test {
         paymentToken = new MockWCOEN();
 
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(paymentToken));
+        escrow.setDependencies(auction, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
         paymentToken.mint(bidder1, 10_000 * 10 ** 6);
@@ -42,14 +42,14 @@ contract EscrowAdapterProceedsTest is Test {
         // of it.
         paymentToken.mint(bidder1, 1e18);
         vm.prank(auction);
-        escrow.lockFunds(emissionDay1, bidder1, 1e6, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(emissionDay1, bidder1, 1e6, 1_000_000, 1);
 
         address[] memory winners = new address[](1);
         winners[0] = bidder1;
 
         vm.expectRevert(IEscrowAdapter.ProceedsRecipientNotSet.selector);
         vm.prank(bridger);
-        escrow.finalizeAuction(emissionDay1, GUID, winners, 0, 0, 1_000_000, 1_000_000, true);
+        escrow.chargeIntexAuctionAsset(emissionDay1, winners, 0, 0, 1_000_000, 1_000_000, true);
     }
 
     function test_SetProceedsRecipient_OnlyAdmin() public {
