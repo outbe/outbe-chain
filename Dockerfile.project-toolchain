@@ -228,9 +228,8 @@ RUN test "$(mise --version | cut -d' ' -f1)" = "${MISE_VERSION#v}"
 # installed first so the remaining `cargo:` tools are fetched as prebuilt
 # binaries instead of being compiled from source.
 COPY mise.toml /opt/outbe/ci/mise.toml
-# contracts/intex pins its own tools (uv for the slither run, aderyn) in a
-# separate config; copied alone it has no parent to merge with, so this installs
-# exactly those two.
+# contracts/intex pins its own uv (for the slither run) in a separate config;
+# copied alone it has no parent to merge with, so this installs exactly that.
 COPY contracts/intex/mise.toml /opt/outbe/ci-intex/mise.toml
 #
 # Installing is not enough: a mise shim resolves its version from the config
@@ -238,15 +237,9 @@ COPY contracts/intex/mise.toml /opt/outbe/ci-intex/mise.toml
 # fails with "No version is set". Promoting the installed set to the global
 # config makes the image self-contained - a job gets working tools wherever it
 # runs, and a repository mise.toml still takes precedence where it applies.
-# Aderyn 0.6.8 release binaries were withdrawn on 2026-11-13. mise then installs
-# the leftover checksum file, which is not a binary. That tag's driver crate
-# enables #![feature(result_option_map_or_default)] and pins nightly-2025-09-20,
-# so this install uses that nightly. The image default stays rustc 1.96.0.
-# Cargo's bin directory is ahead of the mise shims, so this is the aderyn the
-# tool check runs.
 # Binary GitHub releases may use an optional token. This is the only RUN that
-# mounts it. cargo-binstall, the other cargo tools, and the aderyn source build
-# are a later RUN with no secret mount, so they cannot see GITHUB_TOKEN.
+# mounts it. cargo-binstall and the other cargo tools are a later RUN with no
+# secret mount, so they cannot see GITHUB_TOKEN.
 RUN --mount=type=secret,id=GITHUB_TOKEN,required=false \
     token="$(cat /run/secrets/GITHUB_TOKEN 2>/dev/null || true)" && \
     if [ -n "${token}" ]; then \
@@ -267,14 +260,9 @@ RUN mise --cd /opt/outbe/ci install cargo:cargo-binstall && \
     mise reshim && \
     mise use -g "cargo:sccache@latest" "cargo:cargo-llvm-cov@latest" && \
     mise reshim && \
-    rustup toolchain install nightly-2025-09-20 --profile minimal --no-self-update && \
-    RUSTUP_TOOLCHAIN=nightly-2025-09-20 \
-      CARGO_PROFILE_RELEASE_LTO=false \
-      CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
-      cargo install --locked --git https://github.com/Cyfrin/aderyn --tag aderyn-v0.6.8 aderyn && \
     rm -rf "${MISE_CACHE_DIR}" && \
     for tool in forge cast anvil cargo-nextest cargo-deny cargo-audit \
-                cog uv uvx aderyn sccache jq mold zstd python nargo bb; do \
+                cog uv uvx sccache jq mold zstd python nargo bb; do \
       "${tool}" --version >/dev/null 2>&1 \
         || { echo "ci stage tool does not run: ${tool}" >&2; exit 1; }; \
     done && \
