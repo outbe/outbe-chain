@@ -48,7 +48,7 @@ fn the_end_block_reserve_holds_both_private_passes_at_their_full_budget() {
             encrypted_event_amount: vec![0x07; GRATIS_BLOB_LEN],
         }),
     });
-    assert!(nod_read_len <= outbe_nod::api::GROUP_LOAD_READ_WITNESS_BYTES as usize);
+    assert!(nod_read_len <= outbe_nod::constants::GROUP_LOAD_READ_WITNESS_BYTES as usize);
     assert!(pledge_burn_len <= outbe_gratis::enclave_client::COLLATERAL_OP_WITNESS_BYTES as usize);
 
     // A write records at most this one entry's worth of witness.

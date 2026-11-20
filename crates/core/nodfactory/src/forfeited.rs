@@ -47,7 +47,7 @@ impl<'a, 's> NodForfeit<'a, 's> {
 }
 
 const GROUP_LOAD_READ_COST: u32 =
-    outbe_nod::api::GROUP_LOAD_READ_WITNESS_BYTES.div_ceil(WITNESS_BYTES_PER_WRITE);
+    outbe_nod::constants::GROUP_LOAD_READ_WITNESS_BYTES.div_ceil(WITNESS_BYTES_PER_WRITE);
 
 /// One series of a called group, in list order; the last one closes the group.
 #[derive(Clone, Copy)]
