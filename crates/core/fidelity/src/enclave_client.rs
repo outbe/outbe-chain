@@ -81,7 +81,7 @@ pub fn query_index(req: FidelityQueryRequest) -> Result<FidelityQueryResult> {
         move |context| execute_query(context, expected, &req),
         move |key, answer| authenticate_query(expected, key, answer),
     )
-    .map_err(|error| map_consensus_error(QUERY_OP, error))?;
+    .map_err(map_query_transport_error)?;
     match answer {
         DualWitnessAnswer::Applied(result) => finish_query(expected, result),
         DualWitnessAnswer::Rejected(rejection) => finish_rejection(expected, rejection),
@@ -294,15 +294,23 @@ fn finish_rejection(
     .into())
 }
 
+fn map_query_transport_error(error: TransportError) -> outbe_primitives::error::PrecompileError {
+    match error {
+        TransportError::EnclaveCause { .. } => FidelityError::QueryEnclaveRejected {
+            source: OpText(error),
+        }
+        .into(),
+        other => map_consensus_error(QUERY_OP, other).into(),
+    }
+}
+
 /// Map a witness or session transport error onto the historical fatal sentences.
 pub fn map_consensus_error(operation: &'static str, error: TransportError) -> FidelityFatalError {
     match error {
-        TransportError::EnclaveError(_) | TransportError::EnclaveCause { .. } => {
-            FidelityFatalError::EnclaveOpError {
-                context: operation,
-                message: OpText(error),
-            }
-        }
+        TransportError::EnclaveCause { .. } => FidelityFatalError::EnclaveOpError {
+            context: operation,
+            message: OpText(error),
+        },
         TransportError::AppAttestation { .. } => {
             FidelityFatalError::AttestationInvalid { source: error }
         }
@@ -655,15 +663,18 @@ pub mod test_enclave {
         static STATE_KEY: RefCell<Option<outbe_tee::resident::StateKeyHandle>> = const { RefCell::new(None) };
     }
 
+    use outbe_core_common::confidential_tee::{
+        fidelity_chain, FIDELITY_CHAIN_ID, FIDELITY_GROUP_SIG as GROUP_SIG,
+    };
+
     const DEV_EPOCH: u64 = 0;
-    const GROUP_SIG: &[u8] = b"outbe-dev-fidelity-group-signature-fixed-seed";
 
     /// Chain id the stand-in binds. Query auth is chain-scoped.
-    pub const DEV_CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
+    pub const DEV_CHAIN_ID: u64 = FIDELITY_CHAIN_ID;
 
     /// Resident chain id in the same encoding as `B256::from(U256::from(chain_id))`.
     pub fn dev_chain() -> B256 {
-        B256::from(alloy_primitives::U256::from(DEV_CHAIN_ID))
+        fidelity_chain()
     }
 
     fn fixture_key() -> outbe_tee::resident::StateKeyHandle {
@@ -718,7 +729,7 @@ pub mod test_enclave {
     pub(super) fn try_query(req: &FidelityQueryRequest) -> Option<Result<FidelityQueryResult>> {
         with_key(|key| {
             engine::query_index(key, dev_chain(), req)
-                .map_err(|source| FidelityError::EnclaveQueryError { source }.into())
+                .map_err(|source| FidelityError::QueryEngineRejected { source }.into())
         })
     }
 

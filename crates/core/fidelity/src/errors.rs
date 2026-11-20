@@ -76,6 +76,22 @@ pub enum FidelityError {
         source: EngineError,
     },
 
+    /// The in-process stand-in rejected the query; reverts with production `IFidelity::QueryFailed`.
+    #[error("{source}")]
+    QueryEngineRejected {
+        /// Engine failure. The revert reason matches production signed rejections.
+        #[source]
+        source: EngineError,
+    },
+
+    /// The enclave returned a transport-level query rejection; reverts with `IFidelity::QueryFailed`.
+    #[error("enclave QueryFidelityIndex error: {source}")]
+    QueryEnclaveRejected {
+        /// Underlying enclave transport rejection.
+        #[source]
+        source: OpText,
+    },
+
     /// A verified `FidelityQueryRejected` answer, or a host-local query failure.
     #[error("{reason}")]
     QueryFailed {
@@ -102,6 +118,12 @@ impl From<FidelityError> for PrecompileError {
             FidelityError::EnclaveQueryError { source } => revert_with(I::EnclaveQueryError {
                 reason: display_string(&source),
             }),
+            FidelityError::QueryEngineRejected { source } => revert_with(I::QueryFailed {
+                reason: display_string(&source),
+            }),
+            err @ FidelityError::QueryEnclaveRejected { .. } => revert_with(I::QueryFailed {
+                reason: display_string(&err),
+            }),
             FidelityError::QueryFailed { reason } => revert_with(I::QueryFailed { reason }),
         }
     }
@@ -111,11 +133,6 @@ impl From<FidelityError> for PrecompileError {
 pub(crate) fn surface_query_error(err: PrecompileError) -> PrecompileError {
     match err {
         PrecompileError::Revert(_) | PrecompileError::RevertBytes(_) => err,
-        PrecompileError::EnclaveUnavailable(msg)
-            if msg.starts_with("enclave QueryFidelityIndex error:") =>
-        {
-            FidelityError::QueryFailed { reason: msg }.into()
-        }
         err if err.is_node_local() => err,
         other => FidelityError::QueryFailed {
             reason: display_string(&other),
@@ -126,14 +143,13 @@ pub(crate) fn surface_query_error(err: PrecompileError) -> PrecompileError {
 
 /// Display of an enclave transport error that keeps the historical host sentence.
 ///
-/// `EnclaveError("boom")` prints `boom`. The transport error stays the source.
+/// `EnclaveCause { source }` prints `{source}`. The transport error stays the source.
 #[derive(Debug)]
 pub struct OpText(pub(crate) TransportError);
 
 impl fmt::Display for OpText {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
-            TransportError::EnclaveError(message) => formatter.write_str(message),
             TransportError::EnclaveCause { source } => write!(formatter, "{source}"),
             other => write!(formatter, "{other}"),
         }
@@ -199,5 +215,35 @@ mod tests {
             .abi_encode(),
         ));
         assert_eq!(display_string(&actual), display_string(&expected));
+
+        let query_enclave = FidelityError::QueryEnclaveRejected {
+            source: OpText(TransportError::enclave_error(std::io::Error::other(
+                "bad sig",
+            ))),
+        };
+        assert!(std::error::Error::source(&query_enclave).is_some());
+        let PrecompileError::RevertBytes(bytes) = PrecompileError::from(query_enclave) else {
+            panic!("expected RevertBytes");
+        };
+        assert_eq!(
+            IFidelity::QueryFailed::abi_decode(&bytes)
+                .expect("QueryFailed")
+                .reason,
+            "enclave QueryFidelityIndex error: bad sig"
+        );
+
+        let query_engine = FidelityError::QueryEngineRejected {
+            source: EngineError::Cohort(CohortError::QueryAuthExpired),
+        };
+        assert!(std::error::Error::source(&query_engine).is_some());
+        let PrecompileError::RevertBytes(engine_bytes) = PrecompileError::from(query_engine) else {
+            panic!("expected RevertBytes");
+        };
+        assert_eq!(
+            IFidelity::QueryFailed::abi_decode(&engine_bytes)
+                .expect("QueryFailed")
+                .reason,
+            "fidelity: query authorization expired"
+        );
     }
 }

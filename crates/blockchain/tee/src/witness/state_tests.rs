@@ -105,7 +105,9 @@ fn unsigned_user_candidate_is_not_a_block_fault_but_prefix_is() {
     let _scope = WitnessExecutionScope::enter(s.clone());
     assert!(consensus_call(
         "ReadPayloadAmount",
-        || Err(TransportError::EnclaveError("refused".into())),
+        || Err(TransportError::enclave_error(std::io::Error::other(
+            "refused"
+        ))),
         authenticate
     )
     .is_err());
@@ -120,7 +122,9 @@ fn unsigned_user_candidate_is_not_a_block_fault_but_prefix_is() {
     let _scope = WitnessExecutionScope::enter(prefix.clone());
     assert!(consensus_call(
         "ReadPayloadAmount",
-        || Err(TransportError::EnclaveError("refused".into())),
+        || Err(TransportError::enclave_error(std::io::Error::other(
+            "refused"
+        ))),
         authenticate
     )
     .is_err());
@@ -237,7 +241,9 @@ fn unsigned_system_body_and_local_transport_outage_are_sticky() {
     let _scope = WitnessExecutionScope::enter(s.clone());
     assert!(consensus_call(
         "ReadPayloadAmount",
-        || Err(TransportError::EnclaveError("refused".into())),
+        || Err(TransportError::enclave_error(std::io::Error::other(
+            "refused"
+        ))),
         authenticate
     )
     .is_err());
@@ -250,7 +256,9 @@ fn unsigned_system_body_and_local_transport_outage_are_sticky() {
     let _scope = WitnessExecutionScope::enter(s.clone());
     assert!(consensus_call(
         "ReadPayloadAmount",
-        || Err(TransportError::Unavailable("offline".into())),
+        || Err(TransportError::unavailable(std::io::Error::other(
+            "offline"
+        ))),
         authenticate
     )
     .is_err());
@@ -290,13 +298,17 @@ fn unsigned_system_body_and_local_transport_outage_are_sticky() {
 fn proposer_record_transport_panic_latches_local_unavailable_without_staging() {
     let s = state(WitnessExecutionMode::ProposerRecord);
     let _scope = WitnessExecutionScope::enter(s.clone());
+    let panicked = consensus_call(
+        "ReadPayloadAmount",
+        || panic!("enclave socket panicked"),
+        authenticate,
+    )
+    .unwrap_err();
+    assert!(matches!(panicked, TransportError::UnavailableCause { .. }));
     assert!(matches!(
-        consensus_call(
-            "ReadPayloadAmount",
-            || panic!("enclave socket panicked"),
-            authenticate
-        ),
-        Err(TransportError::Unavailable(message)) if message == "local enclave transport panicked"
+        std::error::Error::source(&panicked)
+            .and_then(|cause| cause.downcast_ref::<crate::errors::WitnessAvailabilityError>()),
+        Some(crate::errors::WitnessAvailabilityError::TransportPanicked)
     ));
     {
         let state = s.lock().unwrap();
@@ -336,13 +348,17 @@ fn verifier_with_enclave_transport_panic_latches_local_unavailable_without_consu
         .prefix
         .push(EnclaveWitnessEntryV1::try_from(response(7)).unwrap());
     let _scope = WitnessExecutionScope::enter(s.clone());
+    let panicked = consensus_call(
+        "ReadPayloadAmount",
+        || panic!("local enclave crashed"),
+        authenticate,
+    )
+    .unwrap_err();
+    assert!(matches!(panicked, TransportError::UnavailableCause { .. }));
     assert!(matches!(
-        consensus_call(
-            "ReadPayloadAmount",
-            || panic!("local enclave crashed"),
-            authenticate
-        ),
-        Err(TransportError::Unavailable(message)) if message == "local enclave transport panicked"
+        std::error::Error::source(&panicked)
+            .and_then(|cause| cause.downcast_ref::<crate::errors::WitnessAvailabilityError>()),
+        Some(crate::errors::WitnessAvailabilityError::TransportPanicked)
     ));
     let state = s.lock().unwrap();
     assert_eq!(
@@ -350,6 +366,48 @@ fn verifier_with_enclave_transport_panic_latches_local_unavailable_without_consu
         Some(BlockWitnessFault::LocalUnavailable)
     );
     assert_eq!(state.prefix_cursor, 0);
+}
+
+#[test]
+fn local_answer_classifies_enclave_cause_as_unsigned_failure_never_local_unavailable() {
+    let candidate = state(WitnessExecutionMode::ProposerRecord);
+    candidate.lock().unwrap().tx_index = Some(5);
+    candidate.lock().unwrap().is_user_candidate = true;
+    let _scope = WitnessExecutionScope::enter(candidate.clone());
+    let err = consensus_call(
+        "ReadPayloadAmount",
+        || {
+            Err(TransportError::enclave_error(std::io::Error::other(
+                "denied",
+            )))
+        },
+        authenticate,
+    )
+    .unwrap_err();
+    assert!(matches!(err, TransportError::EnclaveCause { .. }));
+    assert!(!err.is_node_local());
+    assert_eq!(
+        candidate.lock().unwrap().candidate_rejection,
+        Some(CandidateRejection::UnsignedEnclaveError)
+    );
+    assert_eq!(candidate.lock().unwrap().first_witness_fault, None);
+    drop(_scope);
+
+    let system_tx = state(WitnessExecutionMode::ProposerRecord);
+    system_tx.lock().unwrap().tx_index = Some(0);
+    let _scope = WitnessExecutionScope::enter(system_tx.clone());
+    assert!(consensus_call(
+        "ReadPayloadAmount",
+        || Err(TransportError::enclave_error(std::io::Error::other(
+            "denied"
+        ))),
+        authenticate,
+    )
+    .is_err());
+    assert_eq!(
+        system_tx.lock().unwrap().first_witness_fault,
+        Some(BlockWitnessFault::TapeInvalid)
+    );
 }
 
 #[test]
@@ -363,7 +421,9 @@ fn repeat_after_candidate_rejection_keeps_legacy_enclave_error_and_typed_cause()
         authenticate,
     )
     .unwrap_err();
-    assert!(matches!(legacy_error, TransportError::EnclaveError(_)));
+    assert!(matches!(legacy_error, TransportError::EnclaveCause { .. }));
+    assert!(std::error::Error::source(&legacy_error)
+        .is_some_and(|cause| cause.is::<crate::errors::WitnessCandidateRejected>()));
     assert_eq!(
         legacy_error.to_string(),
         "enclave returned error: witness candidate already rejected"

@@ -63,7 +63,7 @@ pub enum TributeError {
     DayCountOverflowOrUnderflow,
 
     #[error("Tribute private amount read failed: {0}")]
-    PrivateAmountReadFailed(String),
+    PrivateAmountReadFailed(#[source] outbe_tee::TransportError),
 
     #[error("Tribute canonical identity mismatch: expected {expected}, found {found}")]
     CanonicalIdentityMismatch {
@@ -118,12 +118,7 @@ pub(crate) fn date_step_error(err: outbe_system_common::time::TimeError) -> Prec
 impl TributeError {
     /// Converts a private amount read failure into a precompile error.
     pub(crate) fn private_amount_read_failed(error: outbe_tee::TransportError) -> PrecompileError {
-        let reason = error.to_string();
-        if error.is_node_local() {
-            PrecompileError::EnclaveUnavailable(Self::PrivateAmountReadFailed(reason).to_string())
-        } else {
-            Self::PrivateAmountReadFailed(reason).into()
-        }
+        Self::PrivateAmountReadFailed(error).into()
     }
 }
 
@@ -160,8 +155,14 @@ impl From<TributeError> for PrecompileError {
             TributeError::WorldwideDayNotCompletedAndEmpty => {
                 revert_with(I::WorldwideDayNotCompletedAndEmpty {})
             }
-            TributeError::PrivateAmountReadFailed(value) => {
-                revert_with(I::PrivateAmountReadFailed { value })
+            TributeError::PrivateAmountReadFailed(error) => {
+                if error.is_node_local() {
+                    PrecompileError::EnclaveUnavailable(message)
+                } else {
+                    revert_with(I::PrivateAmountReadFailed {
+                        value: error.to_string(),
+                    })
+                }
             }
             TributeError::CanonicalIdentityMismatch { expected, found } => {
                 revert_with(I::CanonicalIdentityMismatch {

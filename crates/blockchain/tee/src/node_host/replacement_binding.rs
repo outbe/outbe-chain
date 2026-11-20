@@ -2,6 +2,7 @@
 //! The caller has already verified durable candidate evidence under the lock.
 
 use super::codec_error;
+use super::journal_records::node_host_codec_error;
 use super::FinalizedReplacementBindingV1;
 use crate::TransportError;
 use alloy_primitives::B256;
@@ -24,8 +25,8 @@ pub(super) fn validate_finalized_replacement_binding(
             && finalized_binding_intent_matches(intent, finalized, intent_hash)
             && finalized_binding_keys_match(intent, finalized);
     if !finalized_binding_is_accepted(view_is_well_formed, binding_is_well_formed, exact_match) {
-        return Err(TransportError::Codec(
-            "finalized Registry binding does not match the durable replacement intent".into(),
+        return Err(node_host_codec_error(
+            "finalized Registry binding does not match the durable replacement intent",
         ));
     }
     Ok(())

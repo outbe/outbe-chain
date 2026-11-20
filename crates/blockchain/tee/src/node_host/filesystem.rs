@@ -103,8 +103,8 @@ impl NodeHostStateLock {
             .open(path)?;
         let metadata = file.metadata()?;
         if !is_owner_only_regular_file(&metadata) {
-            return Err(TransportError::Codec(
-                "NodeHost state lock must be an owner-only regular file".into(),
+            return Err(super::journal_records::node_host_codec_error(
+                "NodeHost state lock must be an owner-only regular file",
             ));
         }
         rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
@@ -223,8 +223,8 @@ pub(super) fn ensure_private_directory(path: &Path) -> Result<(), TransportError
                 || metadata.permissions().mode() & 0o777 != 0o700
                 || metadata.uid() != rustix::process::geteuid().as_raw()
             {
-                return Err(TransportError::Codec(
-                    "NodeHost state path must be a current-user directory with mode 0700".into(),
+                return Err(super::journal_records::node_host_codec_error(
+                    "NodeHost state path must be a current-user directory with mode 0700",
                 ));
             }
         }
@@ -254,8 +254,6 @@ pub(super) struct NodeHostPaths {
     pub(super) replacement_submission: PathBuf,
     pub(super) replacement_relay: PathBuf,
     pub(super) replacement_promotion: PathBuf,
-    #[cfg(test)]
-    pub(super) committed_join_submission: PathBuf,
     pub(super) next_manifest: PathBuf,
     pub(super) replacement_candidate_next: PathBuf,
     pub(super) replacement_submission_next: PathBuf,
@@ -277,8 +275,6 @@ impl NodeHostPaths {
             replacement_submission: root.join(NODE_HOST_REPLACEMENT_SUBMISSION_V1),
             replacement_relay: root.join(NODE_HOST_REPLACEMENT_RELAY_V1),
             replacement_promotion: root.join(NODE_HOST_REPLACEMENT_PROMOTION_V1),
-            #[cfg(test)]
-            committed_join_submission: root.join(NODE_HOST_COMMITTED_JOIN_SUBMISSION_V1),
             next_manifest: root.join(NODE_HOST_NEXT_MANIFEST_V1),
             replacement_candidate_next: root.join(NODE_HOST_REPLACEMENT_CANDIDATE_NEXT_V1),
             replacement_submission_next: root.join(NODE_HOST_REPLACEMENT_SUBMISSION_NEXT_V1),

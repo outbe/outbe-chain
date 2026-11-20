@@ -1,6 +1,7 @@
 //! Reconcile finality before any replay, nonce rebuild, or process-identity discard.
 use super::{rpc_port::*, tx_journal::*};
 use crate::{in_process::InProcessTeeContext, registry_view::NodeBindingSelectorV1};
+use alloy_primitives::Address;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ServiceTxReconciliationV1 {
@@ -13,6 +14,7 @@ pub enum ServiceTxReconciliationV1 {
     ReplayExact,
     ReplaceLostIdentity {
         nonce: u64,
+        proof: LostIdentityProof,
     },
     WaitForFinality {
         latest_nonce: u64,
@@ -35,6 +37,8 @@ pub enum ReconcileError<E: std::error::Error + 'static> {
     CheckpointMismatch,
     #[error("finalized transaction receipt disagrees with canonical service mutation")]
     FinalizedMutationConflict,
+    #[error("service transaction journal sender {actual} does not match expected {expected}")]
+    WrongSender { expected: Address, actual: Address },
 }
 
 /// Only observes the resident context. Nonce contention cannot clear RAM key ownership.
@@ -43,10 +47,17 @@ pub async fn reconcile_service_tx_v1<P: LifecycleChainPort>(
     port: &P,
     journal: &mut ServiceTxJournalV1,
     live: &InProcessTeeContext,
+    expected_sender: Address,
 ) -> Result<ServiceTxReconciliationV1, ReconcileError<P::Error>> {
     let Some(record) = journal.load()? else {
         return Ok(ServiceTxReconciliationV1::Empty);
     };
+    if record.sender != expected_sender {
+        return Err(ReconcileError::WrongSender {
+            expected: expected_sender,
+            actual: record.sender,
+        });
+    }
     let at = port.finalized_checkpoint().await?;
     validate_checkpoint(&record, at, live)?;
     let selector = NodeBindingSelectorV1::Validator(record.sender);
@@ -65,8 +76,14 @@ pub async fn reconcile_service_tx_v1<P: LifecycleChainPort>(
         return Err(ReconcileError::FinalizedMutationConflict);
     }
     let manifest = live.manifest();
-    let same_process =
-        record.process_identity()? == (manifest.enclave_id()?, manifest.recipient_x25519.into());
+    // UpgradeCancel is an operator + CAS transaction (sender, chain, nodeIdHash,
+    // expectedContextHash). Its target stays source_target for mutation_applied,
+    // while any same-sender process owns a live or applied cancel.
+    let operator_owned_cancel = record.kind == ServiceTxKindV1::UpgradeCancel
+        && (applied
+            || (view.candidate.is_some() && view.candidate == record.public_intent.candidate));
+    let same_process = operator_owned_cancel
+        || record.process_identity()? == (manifest.enclave_id()?, manifest.recipient_x25519.into());
     if let Some((outcome, state)) = terminal_outcome(&record, same_process, applied) {
         if !matches!(
             record.state,
@@ -145,6 +162,7 @@ async fn reconcile_nonce<P: LifecycleChainPort>(
     } else {
         ServiceTxReconciliationV1::ReplaceLostIdentity {
             nonce: record.nonce,
+            proof: LostIdentityProof::new(record),
         }
     })
 }

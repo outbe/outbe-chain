@@ -228,19 +228,36 @@ fn precompile_dispatch_query_auth_and_metadata() {
                 account,
                 timestamp: query_ts,
                 expiry,
-                signature: Bytes::from(forged),
+                signature: Bytes::from(forged.clone()),
             })
             .abi_encode();
-        // ...and surfaced as a RevertBytes carrying the reason (not an opaque Fatal,
-        // which eth_call drops as data-less "missing revert data").
+        // ...and surfaced as a RevertBytes carrying the production QueryFailed error
+        // (not an opaque Fatal, which eth_call drops as data-less "missing revert data").
         let err = dispatch(storage.clone(), &bad, Address::ZERO, U256::ZERO).unwrap_err();
         assert!(
             matches!(
                 &err,
                 outbe_primitives::error::PrecompileError::RevertBytes(bytes)
-                    if bytes.starts_with(&<IFidelity::EnclaveQueryError as alloy_sol_types::SolError>::SELECTOR)
+                    if bytes.starts_with(&<IFidelity::QueryFailed as alloy_sol_types::SolError>::SELECTOR)
             ),
-            "query failure must surface as EnclaveQueryError RevertBytes, got {err:?}"
+            "getFidelityIndexAt failure must surface as QueryFailed RevertBytes, got {err:?}"
+        );
+
+        let bad_now =
+            IFidelity::IFidelityCalls::getFidelityIndex(IFidelity::getFidelityIndexCall {
+                account,
+                expiry,
+                signature: Bytes::from(forged),
+            })
+            .abi_encode();
+        let err_now = dispatch(storage.clone(), &bad_now, Address::ZERO, U256::ZERO).unwrap_err();
+        assert!(
+            matches!(
+                &err_now,
+                outbe_primitives::error::PrecompileError::RevertBytes(bytes)
+                    if bytes.starts_with(&<IFidelity::QueryFailed as alloy_sol_types::SolError>::SELECTOR)
+            ),
+            "getFidelityIndex failure must surface as QueryFailed RevertBytes, got {err_now:?}"
         );
 
         // Plaintext metadata needs no authorization.

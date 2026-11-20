@@ -1,5 +1,6 @@
 //! The locked entry to NodeHost state that every state transition uses.
 
+use super::journal_records::node_host_codec_error;
 use super::{ensure_private_directory, path_exists, NodeHostPaths, NodeHostStateLock};
 use crate::TransportError;
 use std::path::Path;
@@ -23,7 +24,7 @@ pub(super) fn require_committed_node_host_state(
     missing_error: &'static str,
 ) -> Result<(), TransportError> {
     if !path_exists(&paths.manifest)? || !path_exists(&paths.identity_key)? {
-        return Err(TransportError::Codec(missing_error.into()));
+        return Err(node_host_codec_error(missing_error));
     }
     Ok(())
 }

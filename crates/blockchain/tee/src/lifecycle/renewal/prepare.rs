@@ -69,6 +69,8 @@ pub enum UpgradeProofCheckpointError {
     Witness(#[source] crate::finalized_admission::FinalizedAdmissionCodecError),
     #[error("upgrade proof header rejected")]
     Header(#[source] alloy_rlp::Error),
+    #[error("upgrade proof header is missing EIP-1559 base_fee_per_gas")]
+    MissingBaseFee,
 }
 
 pub(crate) type StepResult<T, P, S> =
@@ -460,7 +462,7 @@ async fn renewal_action<P: LifecycleChainPort, S: LifecycleSignerV1>(
     view: &LifecycleRegistryStateV1,
 ) -> StepResult<RenewalAction, P, S> {
     let pending = journal.load()?;
-    let reconciliation = reconcile_service_tx_v1(port, journal, live).await?;
+    let reconciliation = reconcile_service_tx_v1(port, journal, live, signer.address()).await?;
     match reconciliation {
         ServiceTxReconciliationV1::WaitForFinality { .. } => {
             Ok(RenewalAction::Stop(RenewalStep::AwaitingFinality))
@@ -470,7 +472,7 @@ async fn renewal_action<P: LifecycleChainPort, S: LifecycleSignerV1>(
             validate_pending::<P::Error, S::Error>(&record, view)?;
             Ok(RenewalAction::Replay(Box::new(record)))
         }
-        ServiceTxReconciliationV1::ReplaceLostIdentity { nonce }
+        ServiceTxReconciliationV1::ReplaceLostIdentity { nonce, .. }
         | ServiceTxReconciliationV1::RebuildAndResign { nonce } => Ok(RenewalAction::Build(nonce)),
         ServiceTxReconciliationV1::IngestOnboarding => {
             if !live.offer_key_ready()? {

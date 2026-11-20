@@ -276,7 +276,7 @@ async fn pending_then_finalized_registration_ingests_even_when_jailed() {
     let (_root, mut journal, live, record, mut chain) = fixture();
     journal.begin(record.clone()).unwrap();
     assert_eq!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+        reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
             .await
             .unwrap(),
         ServiceTxReconciliationV1::ReplayExact
@@ -284,7 +284,7 @@ async fn pending_then_finalized_registration_ingests_even_when_jailed() {
     chain.binding = Some(applied(&record));
     chain.nonces = [5; 3];
     assert_eq!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+        reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
             .await
             .unwrap(),
         ServiceTxReconciliationV1::IngestOnboarding
@@ -353,7 +353,7 @@ async fn terminal_journals_reconcile_registry_without_reading_receipts() {
         let fresh = context(10);
         let live = if lost_identity { &fresh } else { &live };
         assert_eq!(
-            reconcile_service_tx_v1(&chain, &mut journal, live)
+            reconcile_service_tx_v1(&chain, &mut journal, live, record.sender)
                 .await
                 .unwrap(),
             expected
@@ -375,7 +375,7 @@ async fn external_nonce_waits_for_finality_then_rebuilds_without_replacing_live_
     journal.begin(record.clone()).unwrap();
     chain.nonces = [4, 5, 6];
     assert_eq!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+        reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
             .await
             .unwrap(),
         ServiceTxReconciliationV1::WaitForFinality {
@@ -385,7 +385,7 @@ async fn external_nonce_waits_for_finality_then_rebuilds_without_replacing_live_
     );
     chain.nonces = [5, 5, 6];
     assert_eq!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+        reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
             .await
             .unwrap(),
         ServiceTxReconciliationV1::RebuildAndResign { nonce: 6 }
@@ -411,7 +411,7 @@ async fn expired_renew_rebuild_waits_for_an_inflight_operator_nonce() {
     chain.at.timestamp = 200;
     chain.nonces = [record.nonce; 3];
     assert_eq!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+        reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
             .await
             .unwrap(),
         ServiceTxReconciliationV1::RebuildAndResign {
@@ -430,7 +430,7 @@ async fn expired_renew_rebuild_waits_for_an_inflight_operator_nonce() {
     ] {
         chain.nonces = nonces;
         assert_eq!(
-            reconcile_service_tx_v1(&chain, &mut journal, &live)
+            reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
                 .await
                 .unwrap(),
             ServiceTxReconciliationV1::WaitForFinality {
@@ -443,7 +443,7 @@ async fn expired_renew_rebuild_waits_for_an_inflight_operator_nonce() {
     chain.nonces = [record.nonce; 3];
     chain.binding.as_mut().unwrap().valid_until = 9_000;
     assert!(matches!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+        reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
             .await
             .unwrap_err(),
         ReconcileError::CheckpointMismatch
@@ -461,21 +461,24 @@ async fn restarted_process_discards_old_recipient_only_after_chain_reconciliatio
         let before = std::fs::read(&path).unwrap();
         for nonces in [[3, 4, 4], [4, 4, 4], [4, 4, 5], [4, 5, 5]] {
             chain.nonces = nonces;
-            assert_eq!(
-                reconcile_service_tx_v1(&chain, &mut journal, &fresh)
-                    .await
-                    .unwrap(),
-                if nonces[1] <= record.nonce && nonces[2] <= record.nonce {
-                    ServiceTxReconciliationV1::ReplaceLostIdentity {
-                        nonce: record.nonce,
-                    }
-                } else {
+            let actual = reconcile_service_tx_v1(&chain, &mut journal, &fresh, record.sender)
+                .await
+                .unwrap();
+            if nonces[1] <= record.nonce && nonces[2] <= record.nonce {
+                assert!(matches!(
+                    actual,
+                    ServiceTxReconciliationV1::ReplaceLostIdentity { nonce, proof }
+                        if nonce == record.nonce && proof.nonce() == record.nonce && proof.tx_hash() == record.tx_hash
+                ));
+            } else {
+                assert_eq!(
+                    actual,
                     ServiceTxReconciliationV1::WaitForFinality {
                         latest_nonce: nonces[1],
                         pending_nonce: nonces[2],
                     }
-                }
-            );
+                );
+            }
             assert_eq!(journal.load().unwrap().unwrap(), record);
             assert_eq!(std::fs::read(&path).unwrap(), before);
         }
@@ -484,7 +487,7 @@ async fn restarted_process_discards_old_recipient_only_after_chain_reconciliatio
             chain.binding = Some(applied(&record));
         }
         assert_eq!(
-            reconcile_service_tx_v1(&chain, &mut journal, &fresh)
+            reconcile_service_tx_v1(&chain, &mut journal, &fresh, record.sender)
                 .await
                 .unwrap(),
             ServiceTxReconciliationV1::DiscardLostIdentity {
@@ -499,7 +502,7 @@ async fn restarted_process_discards_old_recipient_only_after_chain_reconciliatio
         chain.at.height += 1;
         chain.at.hash = B256::repeat_byte(20);
         assert_eq!(
-            reconcile_service_tx_v1(&chain, &mut journal, &fresh)
+            reconcile_service_tx_v1(&chain, &mut journal, &fresh, record.sender)
                 .await
                 .unwrap(),
             ServiceTxReconciliationV1::DiscardLostIdentity {

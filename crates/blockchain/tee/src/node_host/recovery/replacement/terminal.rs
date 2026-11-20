@@ -1,4 +1,5 @@
 use super::super::super::filesystem::remove_file_and_sync_directory;
+use super::super::super::journal_records::node_host_codec_error;
 use super::super::super::{
     codec_error, read_owned_bounded_file, read_replacement_promotion, read_replacement_submission,
     remove_file_if_exists, validate_durable_replacement_submission,
@@ -18,8 +19,8 @@ pub(super) fn reconcile_without_replacement_candidate(
     presence: &mut ReplacementPresence,
 ) -> Result<(), TransportError> {
     if presence.next_exists || presence.relay_exists {
-        return Err(TransportError::Codec(
-            "replacement journal is missing its candidate record".into(),
+        return Err(node_host_codec_error(
+            "replacement journal is missing its candidate record",
         ));
     }
     let durable_promotion = if presence.promotion_exists {
@@ -37,13 +38,13 @@ pub(super) fn reconcile_without_replacement_candidate(
         )?;
     }
     if presence.submission_exists {
-        return Err(TransportError::Codec(
-            "replacement submission residue could not be reconciled".into(),
+        return Err(node_host_codec_error(
+            "replacement submission residue could not be reconciled",
         ));
     }
     if durable_promotion.is_some_and(|promotion| promotion.candidate_manifest_hash != active_hash) {
-        return Err(TransportError::Codec(
-            "replacement promotion receipt does not target the active manifest".into(),
+        return Err(node_host_codec_error(
+            "replacement promotion receipt does not target the active manifest",
         ));
     }
     Ok(())
@@ -57,17 +58,15 @@ fn reconcile_committed_submission_residue(
     durable_promotion: Option<FinalizedReplacementAuthorizationV1>,
 ) -> Result<(), TransportError> {
     let promotion = durable_promotion.ok_or_else(|| {
-        TransportError::Codec(
-            "replacement submission residue is missing its promotion receipt".into(),
-        )
+        node_host_codec_error("replacement submission residue is missing its promotion receipt")
     })?;
     let submission = read_replacement_submission(&paths.replacement_submission)?;
     let intent = validate_durable_replacement_submission(active, &submission)?;
     if promotion.candidate_manifest_hash != active_hash
         || intent.intent_hash().map_err(codec_error)? != promotion.intent_hash
     {
-        return Err(TransportError::Codec(
-            "replacement submission residue conflicts with committed promotion".into(),
+        return Err(node_host_codec_error(
+            "replacement submission residue conflicts with committed promotion",
         ));
     }
     remove_file_and_sync_directory(&paths.replacement_submission, &paths.root)?;
@@ -101,8 +100,8 @@ fn validate_staged_promotion_receipt(
         if (!prior_active_receipt || presence.next_exists)
             && authorization.submission != Some(promotion)
         {
-            return Err(TransportError::Codec(
-                "replacement promotion receipt conflicts with staged authorization".into(),
+            return Err(node_host_codec_error(
+                "replacement promotion receipt conflicts with staged authorization",
             ));
         }
     }
@@ -116,8 +115,8 @@ fn validate_staged_next_manifest(
     presence: &ReplacementPresence,
 ) -> Result<(), TransportError> {
     if !presence.submission_exists || authorization.promotion != authorization.submission {
-        return Err(TransportError::Codec(
-            "next replacement manifest exists without exact durable promotion state".into(),
+        return Err(node_host_codec_error(
+            "next replacement manifest exists without exact durable promotion state",
         ));
     }
     let expected = candidate.manifest.encode_canonical().map_err(codec_error)?;
@@ -127,8 +126,8 @@ fn validate_staged_next_manifest(
         "next replacement manifest",
     )? != expected
     {
-        return Err(TransportError::Codec(
-            "next replacement manifest conflicts with the staged candidate".into(),
+        return Err(node_host_codec_error(
+            "next replacement manifest conflicts with the staged candidate",
         ));
     }
     Ok(())
@@ -143,8 +142,8 @@ pub(super) fn reconcile_promoted_replacement(
     let authorization = &context.durable.authorization;
     let presence = context.presence;
     if active.node_host_noise_x25519 != node_host.public() {
-        return Err(TransportError::Codec(
-            "promoted manifest does not match the persistent NodeHost key".into(),
+        return Err(node_host_codec_error(
+            "promoted manifest does not match the persistent NodeHost key",
         ));
     }
     let promotion = authorization
@@ -155,8 +154,8 @@ pub(super) fn reconcile_promoted_replacement(
             .submission
             .is_some_and(|expected| expected != promotion)
     {
-        return Err(TransportError::Codec(
-            "promoted manifest authorization receipt is inconsistent".into(),
+        return Err(node_host_codec_error(
+            "promoted manifest authorization receipt is inconsistent",
         ));
     }
     if presence.next_exists {
@@ -167,8 +166,8 @@ pub(super) fn reconcile_promoted_replacement(
             "next replacement manifest",
         )? != expected
         {
-            return Err(TransportError::Codec(
-                "post-promotion next manifest conflicts with committed state".into(),
+            return Err(node_host_codec_error(
+                "post-promotion next manifest conflicts with committed state",
             ));
         }
         remove_file_if_exists(&paths.next_manifest)?;

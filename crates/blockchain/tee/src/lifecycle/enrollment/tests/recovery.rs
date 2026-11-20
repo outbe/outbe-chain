@@ -212,7 +212,7 @@ async fn expired_renew_rebuild_rejoins_with_a_fresh_register_and_pending_renew_b
     h.chain.at.timestamp = renew_until;
     h.config.valid_until = renew_until + h.chain.policy.maximum_lease;
     assert_eq!(
-        reconcile_service_tx_v1(&h.chain, &mut h.journal, &h.live)
+        reconcile_service_tx_v1(&h.chain, &mut h.journal, &h.live, Signer::address())
             .await
             .unwrap(),
         ServiceTxReconciliationV1::RebuildAndResign { nonce: renew.nonce }
@@ -255,7 +255,7 @@ async fn rebuild_required_upgrade_cancel_rejoins_and_pending_cancel_blocks_regis
 
     h.chain.nonces = [pending.nonce + 1; 3];
     assert_eq!(
-        reconcile_service_tx_v1(&h.chain, &mut h.journal, &h.live)
+        reconcile_service_tx_v1(&h.chain, &mut h.journal, &h.live, Signer::address())
             .await
             .unwrap(),
         ServiceTxReconciliationV1::RebuildAndResign {
@@ -414,4 +414,189 @@ async fn unfunded_dcap_initial_and_expired_join_do_not_request_hardware_evidence
         assert!(h.journal.load().unwrap().is_none());
         assert!(h.chain.sent.lock().unwrap().is_empty());
     }
+}
+
+#[tokio::test]
+async fn lost_process_inflight_renew_waits_for_finality_then_discards_and_registers() {
+    let mut h = Harness::new();
+    let renew_until = h.chain.at.timestamp + h.chain.policy.maximum_lease / 2;
+    bind_resident(&mut h, renew_until);
+    outbe_tee::lifecycle::renewal::renew_once_v1(
+        &h.chain,
+        &Signer,
+        &h.live,
+        &mut h.journal,
+        outbe_tee::lifecycle::renewal::RenewalUpgradePhaseV1::Idle,
+    )
+    .await
+    .unwrap();
+    let renew = h.journal.load().unwrap().unwrap();
+    assert_eq!(renew.kind, ServiceTxKindV1::Renew);
+    assert_eq!(renew.state, ServiceTxStateV1::Pending);
+    let journal_path = h.dir.path().join("tee-service-tx-v1/journal.json");
+    let before = std::fs::read(&journal_path).unwrap();
+    let sent_before = h.chain.sent.lock().unwrap().len();
+
+    // Restart with a fresh process identity while Renew@N is still in mempool (pending > N).
+    h.live = context(21, AttestationMode::NoAttestationDev);
+    h.chain.nonces = [renew.nonce, renew.nonce, renew.nonce + 1];
+    assert_eq!(h.step().await.unwrap(), EnrollmentOutcome::WaitForFinality);
+    assert_eq!(h.chain.sent.lock().unwrap().len(), sent_before);
+    assert_eq!(std::fs::read(&journal_path).unwrap(), before);
+
+    // Renew@N finalizes on chain -> DiscardLostIdentity -> fresh Register@(N+1) on NoAttestationDev.
+    h.chain.nonces = [renew.nonce + 1; 3];
+    h.chain.binding.as_mut().unwrap().renewal_nonce += 1;
+    assert!(matches!(
+        h.step().await.unwrap(),
+        EnrollmentOutcome::Submitted { .. }
+    ));
+    let registered = h.journal.load().unwrap().unwrap();
+    assert_eq!(registered.kind, ServiceTxKindV1::Register);
+    assert_eq!(registered.nonce, renew.nonce + 1);
+    assert_eq!(call_name(&registered), "register");
+    assert_eq!(h.chain.sent.lock().unwrap().len(), sent_before + 1);
+}
+
+#[tokio::test]
+async fn lost_process_unbroadcast_cross_kind_pending_is_replaced_with_register_at_same_nonce() {
+    for kind in [
+        ServiceTxKindV1::Renew,
+        ServiceTxKindV1::UpgradePrepare,
+        ServiceTxKindV1::UpgradeTransition,
+        ServiceTxKindV1::UpgradeCancel,
+    ] {
+        let mut h = Harness::new();
+        let mut record = signed_cancel(&h);
+        record.kind = kind;
+        if matches!(
+            kind,
+            ServiceTxKindV1::Renew | ServiceTxKindV1::UpgradeTransition
+        ) {
+            record.public_intent.candidate = None;
+        }
+        if kind == ServiceTxKindV1::UpgradePrepare {
+            use alloy_consensus::SignableTransaction as _;
+            use alloy_sol_types::SolCall as _;
+            let manifest = h.live.manifest();
+            let intent = RegistrationIntentV1 {
+                chain_id: manifest.chain_id,
+                genesis_hash: manifest.genesis_hash,
+                operation: AttestationOperationV1::PrepareEnclaveUpgrade,
+                attestation_mode: manifest.attestation_mode,
+                policy_hash: h.chain.policy.policy_hash().unwrap(),
+                node_id: manifest.node_id.clone(),
+                enclave_id: manifest.enclave_id().unwrap(),
+                binding_id: B256::repeat_byte(0x71),
+                binding_version: 2,
+                registration_version: 2,
+                renewal_nonce: 0,
+                transition_nonce: 1,
+                requested_valid_until: h.config.valid_until,
+                recipient_x25519: manifest.recipient_x25519,
+                attestation_ed25519: manifest.attestation_ed25519,
+                noise_responder_x25519: manifest.noise_responder_x25519,
+                node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+            };
+            let signature = h.live.sign_registration_intent_dev_v1(&intent).unwrap();
+            let evidence = AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
+                intent,
+                dev_attestation_public: manifest.attestation_ed25519,
+                dev_signature: signature,
+                transition_key_ready_proof: None,
+            })
+            .encode_canonical()
+            .unwrap();
+            let calldata = ITeeRegistryV1::prepareEnclaveUpgradeCall {
+                evidence: evidence.into(),
+                nodeSignature: vec![0; 65].into(),
+                enclaveSignature: signature.to_vec().into(),
+            }
+            .abi_encode();
+            let tx = alloy_consensus::TxEip1559 {
+                chain_id: h.chain.at.chain_id,
+                nonce: record.nonce,
+                gas_limit: 500_000,
+                max_fee_per_gas: h.config.max_fee_per_gas,
+                max_priority_fee_per_gas: 0,
+                to: alloy_primitives::TxKind::Call(
+                    outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+                ),
+                input: calldata.into(),
+                ..Default::default()
+            };
+            let sig = EnrollmentSignerV1::sign_operator_hash(&Signer, tx.signature_hash()).unwrap();
+            let mut raw = vec![2];
+            tx.into_signed(sig).rlp_encode(&mut raw);
+            record.tx_hash = alloy_primitives::keccak256(&raw);
+            record.raw_signed_tx = raw.into();
+        }
+        record.validate().unwrap();
+        h.journal.begin(record.clone()).unwrap();
+
+        // Restart as fresh process identity with free nonce slot -> ReplaceLostIdentity -> Register@N.
+        h.live = context(22, AttestationMode::NoAttestationDev);
+        h.chain.nonces = [record.nonce; 3];
+        assert!(
+            matches!(h.step().await.unwrap(), EnrollmentOutcome::Submitted { .. }),
+            "kind={kind:?}"
+        );
+        let replaced = h.journal.load().unwrap().unwrap();
+        assert_eq!(replaced.kind, ServiceTxKindV1::Register);
+        assert_eq!(replaced.nonce, record.nonce);
+        assert_ne!(replaced.tx_hash, record.tx_hash);
+        assert_eq!(call_name(&replaced), "register");
+    }
+}
+
+#[tokio::test]
+async fn t1_1_race_stale_peer_renew_finalizing_triggers_rebuild_without_competing_live_binding() {
+    let mut h = Harness::new();
+    let renew_until = h.chain.at.timestamp + h.chain.policy.maximum_lease / 2;
+    bind_resident(&mut h, renew_until);
+    outbe_tee::lifecycle::renewal::renew_once_v1(
+        &h.chain,
+        &Signer,
+        &h.live,
+        &mut h.journal,
+        outbe_tee::lifecycle::renewal::RenewalUpgradePhaseV1::Idle,
+    )
+    .await
+    .unwrap();
+    let renew = h.journal.load().unwrap().unwrap();
+
+    // Fresh process replaces unbroadcast Renew@N with Register@N.
+    h.live = context(23, AttestationMode::NoAttestationDev);
+    h.chain.nonces = [renew.nonce; 3];
+    assert!(matches!(
+        h.step().await.unwrap(),
+        EnrollmentOutcome::Submitted { .. }
+    ));
+    let reg_at_n = h.journal.load().unwrap().unwrap();
+    assert_eq!(reg_at_n.kind, ServiceTxKindV1::Register);
+    assert_eq!(reg_at_n.nonce, renew.nonce);
+
+    // ReplayExact on a conflicting predecessor (renewal_nonce bumped while nonce N still free)
+    // must STILL fail with CompetingLiveBinding.
+    h.chain.binding.as_mut().unwrap().renewal_nonce += 1;
+    assert!(matches!(
+        h.step().await,
+        Err(EnrollmentError::CompetingLiveBinding)
+    ));
+
+    // Stale peer Renew@N finalizes (finalized nonce advances to N+1) -> RebuildAndResign { N+1 }
+    // -> fresh Register@(N+1) succeeds from current view without CompetingLiveBinding.
+    h.chain.nonces = [renew.nonce + 1; 3];
+    assert!(matches!(
+        h.step().await.unwrap(),
+        EnrollmentOutcome::Submitted { .. }
+    ));
+    let reg_at_next = h.journal.load().unwrap().unwrap();
+    assert_eq!(reg_at_next.kind, ServiceTxKindV1::Register);
+    assert_eq!(reg_at_next.nonce, renew.nonce + 1);
+    assert_ne!(reg_at_next.tx_hash, reg_at_n.tx_hash);
+    assert_eq!(
+        reg_at_next.public_intent.target.renewal_nonce,
+        h.chain.binding.as_ref().unwrap().renewal_nonce
+    );
 }

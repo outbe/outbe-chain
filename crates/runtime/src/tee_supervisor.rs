@@ -328,31 +328,13 @@ fn renewal_proof_window_moved(
         signer::SigningError,
     >,
 ) -> bool {
-    match error {
-        outbe_tee::lifecycle::renewal::RenewalError::Port(error) => port_proof_window_moved(error),
-        outbe_tee::lifecycle::renewal::RenewalError::Reconcile(
-            outbe_tee::lifecycle::ReconcileError::Port(error),
-        ) => port_proof_window_moved(error),
-        _ => false,
-    }
+    retry::renewal_port(error).is_some_and(port_proof_window_moved)
 }
 
 fn observation_proof_window_moved(
     error: &engine::SupervisorError<rpc::RpcLifecycleError, signer::SigningError>,
 ) -> bool {
-    match error {
-        engine::SupervisorError::Port(error) => port_proof_window_moved(error),
-        engine::SupervisorError::Enrollment(
-            outbe_tee::lifecycle::enrollment::EnrollmentError::Port(error),
-        ) => port_proof_window_moved(error),
-        engine::SupervisorError::Enrollment(
-            outbe_tee::lifecycle::enrollment::EnrollmentError::Reconcile(
-                outbe_tee::lifecycle::ReconcileError::Port(error),
-            ),
-        ) => port_proof_window_moved(error),
-        engine::SupervisorError::Renewal(error) => renewal_proof_window_moved(error),
-        _ => false,
-    }
+    retry::observation_port(error).is_some_and(port_proof_window_moved)
 }
 
 fn successor_proof_window_moved(

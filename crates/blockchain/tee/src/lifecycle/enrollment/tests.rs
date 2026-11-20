@@ -266,17 +266,77 @@ fn context(seed: u8, mode: AttestationMode) -> InProcessTeeContext {
 }
 
 #[tokio::test]
-async fn dcap_live_rejoin_is_terminal_but_expired_lease_reaches_hardware_source() {
+async fn dcap_live_rejoin_waits_for_lease_expiry_then_reaches_hardware_source() {
     let mut h = Harness::new();
     h.live = context(11, AttestationMode::DcapRequired);
     h.chain.policy.attestation_mode = AttestationMode::DcapRequired;
     h.predecessor(2000);
-    assert!(matches!(
-        h.step().await,
-        Err(EnrollmentError::LiveRejoinForbiddenInMode {
-            mode: AttestationMode::DcapRequired
-        })
-    ));
+    // Empty journal + cold live DCAP binding -> WaitForLeaseExpiry (0 sends)
+    assert_eq!(
+        h.step().await.unwrap(),
+        EnrollmentOutcome::WaitForLeaseExpiry
+    );
+    assert!(h.journal.load().unwrap().is_none());
+    assert!(h.chain.sent.lock().unwrap().is_empty());
+
+    // After in-flight Renew/Pending WaitForFinality settles -> WaitForLeaseExpiry until valid_until
+    let b = h.chain.binding.as_ref().unwrap().clone();
+    let tx = alloy_consensus::TxEip1559 {
+        chain_id: h.chain.at.chain_id,
+        nonce: 0,
+        gas_limit: 500_000,
+        max_fee_per_gas: h.config.max_fee_per_gas,
+        max_priority_fee_per_gas: 0,
+        to: alloy_primitives::TxKind::Call(outbe_primitives::addresses::TEE_REGISTRY_ADDRESS),
+        input: Default::default(),
+        ..Default::default()
+    };
+    let sig = EnrollmentSignerV1::sign_operator_hash(&Signer, {
+        use alloy_consensus::SignableTransaction as _;
+        tx.signature_hash()
+    })
+    .unwrap();
+    let mut raw = vec![2];
+    alloy_consensus::transaction::RlpEcdsaEncodableTx::rlp_encode_signed(&tx, &sig, &mut raw);
+    let lost_renew = ServiceTxRecordV1 {
+        tx_hash: alloy_primitives::keccak256(&raw),
+        raw_signed_tx: raw.into(),
+        sender: Signer::address(),
+        nonce: 0,
+        kind: ServiceTxKindV1::Renew,
+        public_intent: ServiceTxIntentV1 {
+            target: ServiceBindingTargetV1 {
+                node_id_hash: b.node_id_hash,
+                enclave_id: b.enclave_id,
+                binding_id: b.binding_id,
+                binding_version: b.binding_version,
+                registration_version: b.registration_version,
+                renewal_nonce: b.renewal_nonce + 1,
+                transition_nonce: b.transition_nonce,
+                valid_until: b.valid_until + 500,
+                policy_hash: b.policy_hash,
+                recipient_x25519: b.recipient_x25519,
+            },
+            candidate: None,
+        },
+        finalized_checkpoint: h.chain.at,
+        state: ServiceTxStateV1::Pending,
+        reconciled_checkpoint: None,
+    };
+    h.journal.begin(lost_renew).unwrap();
+    h.chain.nonces = [0, 0, 1];
+    assert_eq!(h.step().await.unwrap(), EnrollmentOutcome::WaitForFinality);
+    assert!(h.chain.sent.lock().unwrap().is_empty());
+
+    // Renew finalizes -> DiscardLostIdentity -> WaitForLeaseExpiry (still live DCAP lease)
+    h.chain.nonces = [1, 1, 1];
+    assert_eq!(
+        h.step().await.unwrap(),
+        EnrollmentOutcome::WaitForLeaseExpiry
+    );
+    assert!(h.chain.sent.lock().unwrap().is_empty());
+
+    // Once timestamp >= valid_until -> ExpiredRejoin reaches hardware quote source
     h.chain.binding.as_mut().unwrap().valid_until = 1000;
     assert!(matches!(
         h.step().await,
@@ -284,7 +344,10 @@ async fn dcap_live_rejoin_is_terminal_but_expired_lease_reaches_hardware_source(
             outbe_tee::in_process::InProcessError::HardwareProofUnavailable
         ))
     ));
-    assert!(h.journal.load().unwrap().is_none());
+    assert_eq!(
+        h.journal.load().unwrap().unwrap().state,
+        ServiceTxStateV1::DiscardedLostIdentity
+    );
     assert!(h.chain.sent.lock().unwrap().is_empty());
 }
 

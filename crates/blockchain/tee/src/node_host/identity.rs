@@ -1,3 +1,4 @@
+use super::journal_records::node_host_codec_error;
 #[cfg(test)]
 use super::{locked_state::lock_node_host_state, path_exists};
 use super::{
@@ -38,8 +39,8 @@ pub(super) fn load_committed_enclave_manifest_v1(
         || !path_exists(&paths.identity_key)?
         || path_exists(&paths.pending_manifest)?
     {
-        return Err(TransportError::Codec(
-            "one committed production NodeHost manifest is required".into(),
+        return Err(node_host_codec_error(
+            "one committed production NodeHost manifest is required",
         ));
     }
     let (manifest, _) = read_committed_identity(&paths)?;
@@ -53,8 +54,8 @@ pub(super) fn read_committed_identity(
     reconcile_replacement_state(paths, &node_host)?;
     let manifest = read_manifest(&paths.manifest)?;
     if manifest.node_host_noise_x25519 != node_host.public() {
-        return Err(TransportError::Codec(
-            "committed manifest does not match the persistent NodeHost key".into(),
+        return Err(node_host_codec_error(
+            "committed manifest does not match the persistent NodeHost key",
         ));
     }
     Ok((manifest, node_host))

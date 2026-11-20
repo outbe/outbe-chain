@@ -83,6 +83,34 @@ impl LiveTeeRuntimeV1 {
         Ok(())
     }
 
+    /// Retires the authority publisher and closes the `armed` watch under its lock.
+    pub(crate) fn retire_publisher(&self) {
+        self.authority.retire_publisher(false);
+        let armed = self
+            .armed
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(armed) = armed.as_ref() {
+            if *armed.borrow() {
+                armed.send_replace(false);
+            }
+        }
+    }
+
+    fn sync_armed_for_generation(&self, generation: u64) -> Result<(), LiveTeeError> {
+        let armed = self.armed.lock().map_err(|_| LiveTeeError::LockPoisoned)?;
+        if self.authority.accept_sampled_refresh(generation).is_none() {
+            return Ok(());
+        }
+        if let Some(armed) = armed.as_ref() {
+            let open = self.authority.snapshot().is_authority_open();
+            if *armed.borrow() != open {
+                armed.send_replace(open);
+            }
+        }
+        Ok(())
+    }
+
     pub(crate) fn stage_candidate(
         &self,
         candidate: Arc<InProcessTeeContext>,
@@ -182,7 +210,7 @@ impl LiveTeeRuntimeV1 {
         self.refresh_pinned(provider, protocol, chain, generation)
     }
 
-    fn refresh_pinned<P>(
+    pub(super) fn refresh_pinned<P>(
         &self,
         provider: &P,
         protocol: &dyn outbe_consensus::protocol_state::EngineProtocolState,
@@ -196,6 +224,7 @@ impl LiveTeeRuntimeV1 {
     {
         let mut active = self.active.lock().map_err(|_| {
             super::publish_failure(&self.authority, generation, false);
+            let _ = self.sync_armed_for_generation(generation);
             LiveTeeError::LockPoisoned
         })?;
         let resident = active
@@ -231,19 +260,9 @@ impl LiveTeeRuntimeV1 {
                 state
             }
         });
-        if let Some(armed) = self
-            .armed
-            .lock()
-            .map_err(|_| {
-                super::publish_failure(&self.authority, generation, has_resident);
-                LiveTeeError::LockPoisoned
-            })?
-            .as_ref()
-        {
-            let open = self.authority.snapshot().is_authority_open();
-            if *armed.borrow() != open {
-                armed.send_replace(open);
-            }
+        if self.sync_armed_for_generation(generation).is_err() {
+            super::publish_failure(&self.authority, generation, has_resident);
+            return Err(LiveTeeError::LockPoisoned.into());
         }
         result
     }

@@ -64,50 +64,13 @@ async fn prepare_successor_inner_v1<P: LifecycleChainPort, S: LifecycleSignerV1>
         .registry_state(at, &selector)
         .await
         .map_err(RenewalError::from)?;
-    validate_view::<P::Error, S::Error>(&view, at, candidate)?;
-    let source = view
-        .binding
-        .as_ref()
-        .ok_or(SuccessorError::CandidateMismatch)?;
-    if let Some(source_context) = source_context {
-        validate_view::<P::Error, S::Error>(&view, at, source_context)?;
-        validate_source::<P, S>(source_context, source)?;
-    }
-    let policy = successor_policy::<P, S>(&view)?;
-    validate_candidate::<P, S>(candidate, source, binding_id)?;
-    let policy_hash = policy.policy_hash().map_err(RenewalError::from)?;
-    let strict_late = at.height >= policy.activation_height
-        && view
-            .active_upgrade
-            .is_some_and(|u| u.successor_policy_hash == policy_hash);
-    if source_context.is_none() {
-        let strict = view.active_upgrade.is_some_and(|upgrade| {
-            at.height >= upgrade.activation_height
-                && upgrade.predecessor_policy_hash == source.policy_hash
-                && policy.predecessor_policy_hash == source.policy_hash
-                && source.policy_hash != policy_hash
-        });
-        if !strict_late || !strict {
-            return Err(SuccessorError::PolicyMismatch);
-        }
-        if journal
-            .load()
-            .map_err(RenewalError::from)?
-            .is_some_and(|record| record.sender != signer.address())
-        {
-            return Err(SuccessorError::PendingOperation);
-        }
-    }
-    if at.timestamp >= source.valid_until && !strict_late {
-        return Err(SuccessorError::SourceLeaseExpiredNeedsRejoin);
-    }
-    if let Some(current) = view.candidate.filter(|c| !c.context_hash.is_zero()) {
-        return Err(if current.valid_until > at.timestamp {
-            SuccessorError::PendingOperation
-        } else {
-            SuccessorError::CandidateChanged
-        });
-    }
+    let (source, policy) = validate_prepare_preconditions::<P, S>(
+        &view,
+        contexts,
+        binding_id,
+        journal,
+        signer.address(),
+    )?;
     let previous = port
         .pending_upgrade_nonce(at, &selector)
         .await
@@ -159,14 +122,19 @@ async fn prepare_successor_inner_v1<P: LifecycleChainPort, S: LifecycleSignerV1>
             | ServiceTxKindV1::UpgradeCancel,
         ) => source_context.unwrap_or(candidate),
     };
-    let nonce = fresh_nonce::<P, S>(
+    let (nonce, lost_proof) = match fresh_nonce::<P, S>(
         port,
         signer,
         journal,
         recovery_context,
         ServiceTxKindV1::UpgradePrepare,
     )
-    .await?;
+    .await?
+    {
+        FreshNonceV1::AwaitingFinality => return Err(SuccessorError::PendingOperation),
+        FreshNonceV1::Fresh(nonce) => (nonce, None),
+        FreshNonceV1::Replacing { nonce, proof } => (nonce, Some(proof)),
+    };
     let record = signed_record::<P, S>(
         signer,
         at,
@@ -181,7 +149,7 @@ async fn prepare_successor_inner_v1<P: LifecycleChainPort, S: LifecycleSignerV1>
             },
         },
     )?;
-    journal.begin(record.clone()).map_err(RenewalError::from)?;
+    persist_record::<P, S>(journal, record.clone(), lost_proof)?;
     let outcome = send::<P, S>(port, &record, false).await?;
     Ok((
         SuccessorAttemptV1 {
@@ -191,6 +159,77 @@ async fn prepare_successor_inner_v1<P: LifecycleChainPort, S: LifecycleSignerV1>
         },
         outcome,
     ))
+}
+
+fn validate_prepare_preconditions<'a, P: LifecycleChainPort, S: LifecycleSignerV1>(
+    view: &'a LifecycleRegistryStateV1,
+    contexts: (Option<&InProcessTeeContext>, &InProcessTeeContext),
+    binding_id: B256,
+    journal: &ServiceTxJournalV1,
+    sender: alloy_primitives::Address,
+) -> SuccessorResult<(&'a RenewalBindingV1, &'a TeePolicyV1), P, S> {
+    let (source_context, candidate) = contexts;
+    let at = view.checkpoint;
+    validate_view::<P::Error, S::Error>(view, at, candidate)?;
+    let source = view
+        .binding
+        .as_ref()
+        .ok_or(SuccessorError::CandidateMismatch)?;
+    if let Some(source_context) = source_context {
+        validate_view::<P::Error, S::Error>(view, at, source_context)?;
+        validate_source::<P, S>(source_context, source)?;
+    }
+    let policy = successor_policy::<P, S>(view)?;
+    validate_candidate::<P, S>(candidate, source, binding_id)?;
+    let policy_hash = policy.policy_hash().map_err(RenewalError::from)?;
+    let strict_late = at.height >= policy.activation_height
+        && view
+            .active_upgrade
+            .is_some_and(|u| u.successor_policy_hash == policy_hash);
+    if source_context.is_none() {
+        let strict = view.active_upgrade.is_some_and(|upgrade| {
+            at.height >= upgrade.activation_height
+                && upgrade.predecessor_policy_hash == source.policy_hash
+                && policy.predecessor_policy_hash == source.policy_hash
+                && source.policy_hash != policy_hash
+        });
+        if !strict_late || !strict {
+            return Err(SuccessorError::PolicyMismatch);
+        }
+        if journal
+            .load()
+            .map_err(RenewalError::from)?
+            .is_some_and(|record| record.sender != sender)
+        {
+            return Err(SuccessorError::PendingOperation);
+        }
+    }
+    if at.timestamp >= source.valid_until && !strict_late {
+        return Err(SuccessorError::SourceLeaseExpiredNeedsRejoin);
+    }
+    if let Some(current) = view.candidate.filter(|c| !c.context_hash.is_zero()) {
+        return Err(if current.valid_until > at.timestamp {
+            SuccessorError::PendingOperation
+        } else {
+            SuccessorError::CandidateChanged
+        });
+    }
+    Ok((source, policy))
+}
+
+pub(crate) fn persist_record<P: LifecycleChainPort, S: LifecycleSignerV1>(
+    journal: &mut ServiceTxJournalV1,
+    record: ServiceTxRecordV1,
+    lost_proof: Option<LostIdentityProof>,
+) -> SuccessorResult<(), P, S> {
+    if let Some(proof) = lost_proof {
+        journal
+            .begin_replacing(record, proof)
+            .map_err(RenewalError::from)?;
+    } else {
+        journal.begin(record).map_err(RenewalError::from)?;
+    }
+    Ok(())
 }
 
 pub(crate) fn successor_policy<P: LifecycleChainPort, S: LifecycleSignerV1>(
@@ -338,42 +377,55 @@ pub(crate) fn registry_gas<P: LifecycleChainPort, S: LifecycleSignerV1>(
         .map_err(Into::into)
 }
 
+pub(crate) enum FreshNonceV1 {
+    AwaitingFinality,
+    Fresh(u64),
+    Replacing {
+        nonce: u64,
+        proof: LostIdentityProof,
+    },
+}
+
 pub(crate) async fn fresh_nonce<P: LifecycleChainPort, S: LifecycleSignerV1>(
     port: &P,
     signer: &S,
     journal: &mut ServiceTxJournalV1,
     live: &InProcessTeeContext,
     expected_kind: ServiceTxKindV1,
-) -> SuccessorResult<u64, P, S> {
+) -> SuccessorResult<FreshNonceV1, P, S> {
     let previous = journal.load().map_err(RenewalError::from)?;
-    match reconcile_service_tx_v1(port, journal, live)
+    match reconcile_service_tx_v1(port, journal, live, signer.address())
         .await
         .map_err(RenewalError::from)?
     {
-        ServiceTxReconciliationV1::WaitForFinality { .. }
-        | ServiceTxReconciliationV1::ReplayExact => Err(SuccessorError::PendingOperation),
+        ServiceTxReconciliationV1::WaitForFinality { .. } => Ok(FreshNonceV1::AwaitingFinality),
+        ServiceTxReconciliationV1::ReplayExact => Err(SuccessorError::PendingOperation),
         ServiceTxReconciliationV1::IngestOnboarding => {
             if !live.offer_key_ready().map_err(RenewalError::from)? {
                 return Err(SuccessorError::PendingOperation);
             }
             port.account_nonce(signer.address(), LifecycleNonceTagV1::Pending)
                 .await
+                .map(FreshNonceV1::Fresh)
                 .map_err(RenewalError::from)
                 .map_err(Into::into)
         }
-        ServiceTxReconciliationV1::ReplaceLostIdentity { nonce } => {
-            if previous.is_some_and(|r| r.kind != expected_kind) {
+        ServiceTxReconciliationV1::ReplaceLostIdentity { nonce, proof } => {
+            if expected_kind == ServiceTxKindV1::UpgradePrepare
+                && previous.is_some_and(|r| r.kind == ServiceTxKindV1::Register)
+            {
                 Err(SuccessorError::PendingOperation)
             } else {
-                Ok(nonce)
+                Ok(FreshNonceV1::Replacing { nonce, proof })
             }
         }
-        ServiceTxReconciliationV1::RebuildAndResign { nonce } => Ok(nonce),
+        ServiceTxReconciliationV1::RebuildAndResign { nonce } => Ok(FreshNonceV1::Fresh(nonce)),
         ServiceTxReconciliationV1::Empty
         | ServiceTxReconciliationV1::Completed
         | ServiceTxReconciliationV1::DiscardLostIdentity { .. } => port
             .account_nonce(signer.address(), LifecycleNonceTagV1::Pending)
             .await
+            .map(FreshNonceV1::Fresh)
             .map_err(RenewalError::from)
             .map_err(Into::into),
     }

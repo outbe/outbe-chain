@@ -166,32 +166,6 @@ fn execute_request(
     }
 }
 
-/// Dispatch `request` on one captured runtime. A later global swap is ignored.
-fn dispatch_resident_request(
-    runtime: &Runtime,
-    request: &EnclaveRequest,
-) -> Result<([u8; 32], EnclaveResponse), TransportError> {
-    let response = execute_request(runtime, request)?;
-    Ok((runtime.context.attestation_public(), response))
-}
-
-/// One session snapshot: duration and the response share the captured `runtime`.
-pub(crate) fn dispatch_session_snapshot(
-    meta: CallMeta,
-    request: &EnclaveRequest,
-) -> Option<Result<([u8; 32], EnclaveResponse), TransportError>> {
-    let runtime = runtime()?;
-    let _in_flight = crate::metrics::ExecutionInFlightGuard::new();
-    crate::metrics::record_tee_execution_lock_wait_ms(std::time::Duration::ZERO);
-    let started = std::time::Instant::now();
-    let result = dispatch_resident_request(&runtime, request);
-    crate::metrics::record_request_duration(meta.label, started.elapsed());
-    if let Err(error) = &result {
-        crate::metrics::record_request_error(meta.label, error.metric_class());
-    }
-    Some(result)
-}
-
 fn request_on(
     runtime: &Runtime,
     meta: CallMeta,
@@ -340,7 +314,7 @@ mod tests {
     }
 
     #[test]
-    fn tee_session_call_uses_one_runtime_snapshot_across_a_global_swap() {
+    fn tee_session_typed_call_uses_one_runtime_snapshot_across_a_global_swap() {
         let binding = NetworkBindingV1 {
             chain_id: U256::from(676).to_be_bytes(),
             genesis_hash: B256::repeat_byte(2),

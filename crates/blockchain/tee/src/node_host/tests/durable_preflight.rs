@@ -4,34 +4,17 @@ use super::*;
 fn durable_submission_policies_keep_operation_and_possession_errors_distinct() {
     let register = replacement_fixture_for_operation(AttestationOperationV1::RegisterEnclave);
     let source = read_replacement_submission(&register.paths.replacement_submission).unwrap();
-    let committed = CommittedJoinSubmissionV1::new(
-        Address::repeat_byte(0x42),
-        source.evidence().to_vec(),
-        *source.node_signature(),
-        *source.enclave_signature(),
-    );
+    let registered = validate_durable_replacement_submission(&register.candidate, &source).unwrap();
     assert_eq!(
-        validate_durable_committed_join_submission(&register.candidate, &committed).unwrap(),
-        validate_durable_replacement_submission(&register.candidate, &source).unwrap()
+        registered.operation,
+        AttestationOperationV1::RegisterEnclave
     );
 
     let bad_node = [0; 65];
-    let committed_bad_node = CommittedJoinSubmissionV1::new(
-        Address::repeat_byte(0x42),
-        source.evidence().to_vec(),
-        bad_node,
-        *source.enclave_signature(),
-    );
     let replacement_bad_node = ReplacementCandidateSubmissionV1::new(
         source.evidence().to_vec(),
         bad_node,
         *source.enclave_signature(),
-    );
-    assert_eq!(
-        validate_durable_committed_join_submission(&register.candidate, &committed_bad_node)
-            .unwrap_err()
-            .to_string(),
-        "codec error: committed join submission proof of possession is invalid"
     );
     assert_eq!(
         validate_durable_replacement_submission(&register.candidate, &replacement_bad_node)
@@ -41,19 +24,35 @@ fn durable_submission_policies_keep_operation_and_possession_errors_distinct() {
     );
 
     let replace = replacement_fixture();
-    let source = read_replacement_submission(&replace.paths.replacement_submission).unwrap();
-    let committed_wrong_operation = CommittedJoinSubmissionV1::new(
-        Address::repeat_byte(0x42),
-        source.evidence().to_vec(),
-        bad_node,
-        *source.enclave_signature(),
-    );
+    let replace_source =
+        read_replacement_submission(&replace.paths.replacement_submission).unwrap();
+    let replaced =
+        validate_durable_replacement_submission(&replace.candidate, &replace_source).unwrap();
     assert_eq!(
-        validate_durable_committed_join_submission(&replace.candidate, &committed_wrong_operation)
-            .unwrap_err()
-            .to_string(),
-        "codec error: committed join submission is not RegisterEnclave evidence"
+        replaced.operation,
+        AttestationOperationV1::ReplaceEnclaveBinding
     );
+
+    for disallowed in [
+        AttestationOperationV1::RenewEnclave,
+        AttestationOperationV1::PrepareEnclaveUpgrade,
+    ] {
+        let disallowed_evidence = with_operation(
+            AttestationEvidenceV1::decode_canonical(source.evidence()).unwrap(),
+            disallowed,
+        );
+        let disallowed_bad_sig = ReplacementCandidateSubmissionV1::new(
+            disallowed_evidence.encode_canonical().unwrap(),
+            bad_node,
+            [0; 64],
+        );
+        assert_eq!(
+            validate_durable_replacement_submission(&register.candidate, &disallowed_bad_sig)
+                .unwrap_err()
+                .to_string(),
+            "codec error: durable submission is not an allowed registration or successor operation"
+        );
+    }
 }
 
 #[test]
@@ -86,7 +85,6 @@ fn missing_committed_state_precedes_bad_key_and_does_not_change_checkpoints() {
         std::fs::read(&fixture.paths.replacement_submission).unwrap(),
         durable_bytes
     );
-    assert!(!fixture.paths.committed_join_submission.exists());
 }
 
 fn with_operation(

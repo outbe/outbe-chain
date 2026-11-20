@@ -35,14 +35,6 @@ pub enum TransportError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
-    /// Message serialization or canonical decoding failed.
-    #[error("codec error: {0}")]
-    Codec(String),
-
-    /// Quote or intent attestation check failed.
-    #[error("attestation verification failed: {0}")]
-    Attestation(String),
-
     /// Application-layer payload attestation signature check failed.
     #[error("{}: {source}", descriptor.context)]
     AppAttestation {
@@ -77,10 +69,6 @@ pub enum TransportError {
     #[error("unexpected response from enclave")]
     UnexpectedResponse,
 
-    /// Enclave rejected the request with an explicit error message.
-    #[error("enclave returned error: {0}")]
-    EnclaveError(String),
-
     /// Enclave rejected the request. The typed cause stays attached.
     #[error("enclave returned error: {source}")]
     EnclaveCause {
@@ -98,10 +86,6 @@ pub enum TransportError {
         #[source]
         source: Box<dyn std::error::Error + Send + Sync>,
     },
-
-    /// Resident execution or its context is unavailable.
-    #[error("enclave unavailable: {0}")]
-    Unavailable(String),
 
     /// Message serialization failed. The typed cause stays attached.
     #[error("codec error: {source}")]
@@ -187,7 +171,7 @@ impl TransportError {
         Self::unavailable(super::CallContextError::SnapshotLockPoisoned)
     }
 
-    /// Construct a [`Self::Codec`] error when a NodeHost file length overflows.
+    /// Construct a [`Self::NodeHostRecord`] error when a NodeHost file length overflows.
     pub fn node_host_length_overflow<T>(label: &'static str) -> impl FnOnce(T) -> Self {
         move |_| super::NodeHostRecordError::LengthOverflow { label }.into()
     }
@@ -201,7 +185,6 @@ impl TransportError {
                     | crate::InProcessDispatchError::ContextNotInstalled
                     | crate::InProcessDispatchError::OfferKeyNotReady(_)
             ) | Self::Io(_)
-                | Self::Unavailable(_)
                 | Self::UnavailableCause { .. }
         )
     }
@@ -216,21 +199,19 @@ impl TransportError {
             Self::InProcess(_) => "in_process",
             Self::Io(_) => "io",
 
-            Self::Codec(_) | Self::CodecCause { .. } => "codec",
+            Self::CodecCause { .. } => "codec",
 
-            Self::Attestation(_) | Self::AttestationCause { .. } => "attestation",
+            Self::AttestationCause { .. } => "attestation",
             Self::AppAttestation { descriptor, .. } => descriptor.metric_class,
             Self::Verification(_) => "dcap_verification",
             Self::NodeHostRecord(_) => "codec",
             Self::NodeHostAttestation(_) => "attestation",
             Self::AttestationPreimageSerialization(_) => "attestation_preimage_serialization",
             Self::UnexpectedResponse => "unexpected_response",
-            Self::EnclaveError(_) | Self::EnclaveCause { .. } | Self::UpgradeProof(_) => {
-                "enclave_error"
-            }
+            Self::EnclaveCause { .. } | Self::UpgradeProof(_) => "enclave_error",
             Self::AppRejected { descriptor, .. } => descriptor.metric_class,
 
-            Self::Unavailable(_) | Self::UnavailableCause { .. } => "unavailable",
+            Self::UnavailableCause { .. } => "unavailable",
         }
     }
 }

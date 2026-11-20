@@ -17,9 +17,13 @@ impl ActivationCause {
     }
 }
 
+/// Uses pointer-identity equality (`Arc::ptr_eq`) so cloned
+/// `TeeAttestationChainSpecStateV1` values compare equal while distinct cause
+/// allocations compare unequal; outer error variants and fields still compare
+/// structurally.
 impl PartialEq for ActivationCause {
     fn eq(&self, other: &Self) -> bool {
-        format!("{}", self.source) == format!("{}", other.source)
+        Arc::ptr_eq(&self.source, &other.source)
     }
 }
 
@@ -173,12 +177,6 @@ pub enum TeeAttestationActivationError {
 }
 
 impl TeeAttestationActivationError {
-    /// Checks whether the rendered error message contains the given text.
-    #[must_use]
-    pub fn contains(&self, pattern: &str) -> bool {
-        format!("{self}").contains(pattern)
-    }
-
     pub(crate) fn parse_seeded_chain_spec(
         error: impl std::error::Error + Send + Sync + 'static,
     ) -> Self {

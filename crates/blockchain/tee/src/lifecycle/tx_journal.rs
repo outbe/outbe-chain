@@ -91,6 +91,58 @@ pub struct ServiceTxRecordV1 {
     pub reconciled_checkpoint: Option<LifecycleCheckpointV1>,
 }
 
+/// Typed proof issued only by `reconcile_service_tx_v1` when an unfinalized
+/// `Pending` record belongs to a lost process identity and its nonce slot is free.
+/// Authorizes cross-kind replacement via [`ServiceTxJournalV1::begin_replacing`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LostIdentityProof {
+    tx_hash: B256,
+    sender: Address,
+    nonce: u64,
+    chain_id: u64,
+    genesis_hash: B256,
+}
+
+impl LostIdentityProof {
+    pub(super) const fn new(record: &ServiceTxRecordV1) -> Self {
+        Self {
+            tx_hash: record.tx_hash,
+            sender: record.sender,
+            nonce: record.nonce,
+            chain_id: record.finalized_checkpoint.chain_id,
+            genesis_hash: record.finalized_checkpoint.genesis_hash,
+        }
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(super) const fn nonce(&self) -> u64 {
+        self.nonce
+    }
+
+    #[cfg(test)]
+    #[must_use]
+    pub(super) const fn tx_hash(&self) -> B256 {
+        self.tx_hash
+    }
+
+    fn matches_pending(&self, old: &ServiceTxRecordV1) -> bool {
+        (
+            self.tx_hash,
+            self.sender,
+            self.nonce,
+            self.chain_id,
+            self.genesis_hash,
+        ) == (
+            old.tx_hash,
+            old.sender,
+            old.nonce,
+            old.finalized_checkpoint.chain_id,
+            old.finalized_checkpoint.genesis_hash,
+        )
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceTxJournalError {
     #[error("service journal I/O failed")]
@@ -298,6 +350,46 @@ impl ServiceTxJournalV1 {
             }
             if old.state == ServiceTxStateV1::Pending && !record.replaces_lost_identity(&old) {
                 return Err(ServiceTxJournalError::UnresolvedTransaction);
+            }
+        }
+        self.persist(record)
+    }
+
+    /// Persist a replacement transaction authorized by a [`LostIdentityProof`] from
+    /// `reconcile_service_tx_v1`. Permits cross-kind replacement on the exact same
+    /// `(sender, nonce, chain_id, genesis_hash)` slot when the prior `Pending` record
+    /// belonged to a lost process identity.
+    pub fn begin_replacing(
+        &mut self,
+        record: ServiceTxRecordV1,
+        proof: LostIdentityProof,
+    ) -> Result<(), ServiceTxJournalError> {
+        if self.poisoned {
+            return Err(ServiceTxJournalError::DurabilityUncertain);
+        }
+        record.validate()?;
+        if record.state != ServiceTxStateV1::Pending {
+            return Err(ServiceTxJournalError::InvalidIntent);
+        }
+        if let Some(old) = self.load()? {
+            if old == record {
+                return Ok(());
+            }
+            if old.state == ServiceTxStateV1::Pending {
+                let same_slot = (
+                    record.sender,
+                    record.nonce,
+                    record.finalized_checkpoint.chain_id,
+                    record.finalized_checkpoint.genesis_hash,
+                ) == (
+                    old.sender,
+                    old.nonce,
+                    old.finalized_checkpoint.chain_id,
+                    old.finalized_checkpoint.genesis_hash,
+                );
+                if !proof.matches_pending(&old) || !same_slot || record.tx_hash == old.tx_hash {
+                    return Err(ServiceTxJournalError::UnresolvedTransaction);
+                }
             }
         }
         self.persist(record)

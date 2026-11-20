@@ -3,6 +3,7 @@
 //! binding and proof-of-possession tail run once after that selection.
 
 use super::codec_error;
+use super::journal_records::node_host_codec_error;
 use super::replacement::{
     is_candidate_promotion_operation, validate_candidate_key_ready_proof,
     validate_direct_dev_transition_proof,
@@ -15,8 +16,6 @@ use outbe_primitives::tee_attestation_v1::{
 
 #[derive(Clone, Copy)]
 pub(super) enum DurableSubmissionKind {
-    #[cfg(test)]
-    CommittedJoin,
     Replacement,
 }
 
@@ -34,10 +33,6 @@ pub(super) fn verify_durable_submission(
     let evidence =
         AttestationEvidenceV1::decode_canonical(submission.evidence).map_err(codec_error)?;
     let intent = match submission.kind {
-        #[cfg(test)]
-        DurableSubmissionKind::CommittedJoin => {
-            committed_join_intent(evidence, submission.enclave_signature)?
-        }
         DurableSubmissionKind::Replacement => candidate_promotion_intent(
             manifest,
             &evidence,
@@ -47,10 +42,6 @@ pub(super) fn verify_durable_submission(
         .clone(),
     };
     let possession_error = match submission.kind {
-        #[cfg(test)]
-        DurableSubmissionKind::CommittedJoin => {
-            "committed join submission proof of possession is invalid"
-        }
         DurableSubmissionKind::Replacement => {
             "durable replacement submission proof of possession is invalid"
         }
@@ -88,37 +79,12 @@ pub(super) fn verify_bound_possession(
         .validate_intent_binding(intent)
         .map_err(codec_error)?;
     if !intent.verify_node_signature(node_signature) {
-        return Err(TransportError::Codec(errors.node_signature.into()));
+        return Err(node_host_codec_error(errors.node_signature));
     }
     if !intent.verify_enclave_signature(enclave_signature) {
-        return Err(TransportError::Codec(errors.enclave_signature.into()));
+        return Err(node_host_codec_error(errors.enclave_signature));
     }
     Ok(())
-}
-
-#[cfg(test)]
-fn committed_join_intent(
-    evidence: AttestationEvidenceV1,
-    enclave_signature: &[u8; 64],
-) -> Result<RegistrationIntentV1, TransportError> {
-    match evidence {
-        AttestationEvidenceV1::Dcap(value)
-            if value.intent.operation == AttestationOperationV1::RegisterEnclave =>
-        {
-            Ok(value.intent)
-        }
-        AttestationEvidenceV1::NoAttestationDev(value)
-            if value.intent.operation == AttestationOperationV1::RegisterEnclave
-                && value.dev_signature == *enclave_signature =>
-        {
-            Ok(value.intent)
-        }
-        AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::NoAttestationDev(_) => {
-            Err(TransportError::Codec(
-                "committed join submission is not RegisterEnclave evidence".into(),
-            ))
-        }
-    }
 }
 
 /// Select the candidate promotion intent of `evidence`. The operation must be
@@ -149,37 +115,8 @@ pub(super) fn candidate_promotion_intent<'a>(
             Ok(&value.intent)
         }
         AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::NoAttestationDev(_) => {
-            Err(TransportError::Codec(disallowed_operation.into()))
+            Err(node_host_codec_error(disallowed_operation))
         }
-    }
-}
-
-impl super::CommittedJoinSubmissionV1 {
-    /// Inspect old public material only after chain reconciliation; never reuse a lost recipient.
-    #[cfg(test)]
-    pub(crate) fn intent_for_live_manifest_v1(
-        &self,
-        live: &EnclaveInitializationManifestV1,
-    ) -> crate::in_process::Result<RegistrationIntentV1> {
-        use crate::in_process::InProcessError;
-        let evidence = AttestationEvidenceV1::decode_canonical(self.evidence())?;
-        let intent = match evidence {
-            AttestationEvidenceV1::Dcap(value) => value.intent,
-            AttestationEvidenceV1::NoAttestationDev(value) => {
-                if value.dev_signature != *self.enclave_signature() {
-                    return Err(InProcessError::IdentityMismatch);
-                }
-                value.intent
-            }
-        };
-        live.validate_intent_binding(&intent)?;
-        if intent.operation != AttestationOperationV1::RegisterEnclave
-            || !intent.verify_node_signature(self.node_signature())
-            || !intent.verify_enclave_signature(self.enclave_signature())
-        {
-            return Err(InProcessError::IdentityMismatch);
-        }
-        Ok(intent)
     }
 }
 
@@ -225,15 +162,16 @@ mod live_submission_tests {
             dev_signature: enclave_signature,
             transition_key_ready_proof: None,
         });
-        let submission = super::super::CommittedJoinSubmissionV1::new(
-            alloy_primitives::Address::repeat_byte(0x42),
+        let submission = super::super::ReplacementCandidateSubmissionV1::new(
             evidence.encode_canonical().unwrap(),
             node_signature,
             enclave_signature,
         );
         let before = submission.encode_canonical().unwrap();
-        submission.intent_for_live_manifest_v1(&active).unwrap();
-        assert!(submission.intent_for_live_manifest_v1(&fresh).is_err());
+        super::super::validate_durable_replacement_submission(&active, &submission).unwrap();
+        assert!(
+            super::super::validate_durable_replacement_submission(&fresh, &submission).is_err()
+        );
         assert_eq!(submission.encode_canonical().unwrap(), before);
     }
 }

@@ -1,7 +1,6 @@
 use crate::node_host::NodeHostIdentityKey;
 
 use alloy_primitives::keccak256;
-use alloy_primitives::Address;
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::AttestationEvidenceV1;
 use outbe_primitives::tee_attestation_v1::AttestationOperationV1;

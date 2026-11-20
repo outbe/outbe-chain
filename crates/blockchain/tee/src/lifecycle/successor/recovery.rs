@@ -15,24 +15,25 @@ pub async fn reconcile_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1>
     let Some(record) = record else {
         return Ok(SuccessorStep::Prepared);
     };
-    if record.sender != signer.address()
-        || !matches!(
-            record.kind,
-            ServiceTxKindV1::UpgradePrepare
-                | ServiceTxKindV1::UpgradeTransition
-                | ServiceTxKindV1::UpgradeCancel
-        )
-    {
+    if record.sender != signer.address() {
         return Err(SuccessorError::PendingOperation);
     }
     if let Some(step) = historical_cancel::<P, S>(port, signer, live, journal, &record).await? {
         return Ok(step);
     }
-    let result = reconcile_service_tx_v1(port, journal, live)
+    let result = reconcile_service_tx_v1(port, journal, live, signer.address())
         .await
         .map_err(RenewalError::from)?;
     match result {
         ServiceTxReconciliationV1::ReplayExact => {
+            if !matches!(
+                record.kind,
+                ServiceTxKindV1::UpgradePrepare
+                    | ServiceTxKindV1::UpgradeTransition
+                    | ServiceTxKindV1::UpgradeCancel
+            ) {
+                return Err(SuccessorError::PendingOperation);
+            }
             let at = port
                 .finalized_checkpoint()
                 .await
@@ -56,7 +57,7 @@ pub async fn reconcile_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1>
             send::<P, S>(port, &record, true).await
         }
         ServiceTxReconciliationV1::WaitForFinality { .. } => Ok(SuccessorStep::AwaitingFinality),
-        ServiceTxReconciliationV1::ReplaceLostIdentity { nonce }
+        ServiceTxReconciliationV1::ReplaceLostIdentity { nonce, .. }
         | ServiceTxReconciliationV1::RebuildAndResign { nonce } => {
             Ok(SuccessorStep::RebuildRequired { nonce })
         }
