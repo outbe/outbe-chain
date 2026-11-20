@@ -115,7 +115,6 @@ where
         info!(
             target: "outbe::protocol",
             formingPeriodSeconds = outbe_chain_constants::get_metadosis_forming_period_seconds(),
-            lookbackDelaySeconds = outbe_chain_constants::get_metadosis_lookback_delay_seconds(),
             offeringPeriodSeconds = outbe_chain_constants::get_metadosis_offering_period_seconds(),
             "effective genesis protocol parameters"
         );

@@ -44,8 +44,8 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
         let expected_forming_start = wwd.start_timestamp().unwrap();
         let expected_forming_end =
             expected_forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
-        let expected_offerings_start =
-            expected_forming_end + outbe_chain_constants::get_metadosis_lookback_delay_seconds();
+        let expected_offerings_start = expected_forming_start
+            + outbe_chain_constants::OFFERING_START_AFTER_FORMING_START_SECONDS;
         let expected_offering_end = expected_offerings_start
             + outbe_chain_constants::get_metadosis_offering_period_seconds();
         let day = query_tribute_factory(
@@ -93,7 +93,7 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
     let forming_start = wwd.start_timestamp().unwrap();
     let forming_end = forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
     let offerings_start =
-        forming_end + outbe_chain_constants::get_metadosis_lookback_delay_seconds();
+        forming_start + outbe_chain_constants::OFFERING_START_AFTER_FORMING_START_SECONDS;
     let offering_end =
         offerings_start + outbe_chain_constants::get_metadosis_offering_period_seconds();
     let binding = outbe_system_common::metadosis_bindings::metadosis_process_ready_binding(

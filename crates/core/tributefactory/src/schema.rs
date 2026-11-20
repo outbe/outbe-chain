@@ -6,8 +6,8 @@ use outbe_system_common::time::WorldwideDay;
 
 /// Number of recent SU hashes retained in the replay-guard ring.
 ///
-/// An SU id is valid across the WorldwideDay pipeline horizon
-/// (`E = D + 4` across forming 50h + lookback 22h + offering 50h). At about
+/// An SU id is valid across the WorldwideDay pipeline horizon, from the forming
+/// start at 10:00 D-1 to the offering end at 12:00 D+2 (74h). At about
 /// 50,000 SU hashes per day, `1 << 20` (`1_048_576`) entries cover about 21
 /// days of volume before eviction. A change to this value is a hard fork.
 pub const SU_HASH_RETAIN: u64 = 1 << 20;

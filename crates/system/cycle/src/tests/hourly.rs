@@ -19,7 +19,10 @@ fn hourly_process_emission_day_executes_due_emission_day_at_metadosis_start() {
             .unwrap();
         assert_eq!(ed.wwd, wwd);
         assert_eq!(ed.state, outbe_emission::schema::metadosis_state::PENDING);
-        (ed, ed.metadosis_start)
+        (
+            ed,
+            ed.metadosis_start + crate::tasks::PROCESS_EMISSION_DAY_START_OFFSET_SECONDS,
+        )
     });
 
     storage.enter(|handle| {

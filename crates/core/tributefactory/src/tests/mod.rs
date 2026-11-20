@@ -496,7 +496,7 @@ fn assert_real_zk_offer_with_key_source(
     use x25519_dalek::{PublicKey, StaticSecret};
 
     const CALLER: Address = Address::repeat_byte(0x77);
-    const REWARD_DAY: u32 = 20_260_805;
+    const REWARD_DAY: u32 = 20_260_803;
     const PRIVATE_KEY: [u8; 32] = [0x33; 32];
     let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
     outbe_zk_backend::barretenberg::BarretenbergHandler::init().unwrap();
@@ -752,7 +752,7 @@ fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
 
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_timestamp(U256::from(
-        date_key_to_utc_timestamp(20_260_805).unwrap() + 43_200,
+        date_key_to_utc_timestamp(20_260_803).unwrap() + 43_200,
     ));
     provider.enable_scoped_mutation_frame(MutationPurposeTag::CycleLifecycle);
     StorageHandle::enter(&mut provider, |storage| {
@@ -815,7 +815,7 @@ fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
             .has_used_su_hash(B256::repeat_byte(0x22))
             .unwrap());
         let rewards = AgentRewardContract::new(storage);
-        let reward_day = WorldwideDay::new(20_260_805);
+        let reward_day = WorldwideDay::new(20_260_803);
         assert!(rewards.get_all_waa_counts(reward_day).unwrap().is_empty());
         assert!(rewards.get_all_sra_counts(reward_day).unwrap().is_empty());
     });
@@ -830,7 +830,7 @@ mod wwd_storage;
 fn an_offer_after_the_offering_window_fails_on_an_unsealed_day() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_timestamp(U256::from(
-        date_key_to_utc_timestamp(20_260_805).unwrap() + 43_200,
+        date_key_to_utc_timestamp(20_260_803).unwrap() + 43_200,
     ));
     provider.enable_scoped_mutation_frame(MutationPurposeTag::CycleLifecycle);
 
@@ -849,5 +849,66 @@ fn an_offer_after_the_offering_window_fails_on_an_unsealed_day() {
             .is_day_sealed(TARGET_WWD_A)
             .unwrap());
         assert!(!crate::worldwide_day::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
+    });
+}
+
+#[test]
+fn offering_is_the_next_wwd() {
+    let wwd = WorldwideDay::new(20_260_802);
+    let (schedule, metadosis_start) = crate::worldwide_day::compute_wwd_schedule(wwd).unwrap();
+    let next_wwd_start = WorldwideDay::new(20_260_803).start_timestamp().unwrap();
+    assert_eq!(schedule.offerings_start, next_wwd_start);
+    assert_eq!(schedule.offering_end, next_wwd_start + 50 * 60 * 60);
+    assert_eq!(schedule.forming_end, schedule.offering_end - 24 * 60 * 60);
+    assert_eq!(schedule.day, 20_260_803);
+    assert_eq!(metadosis_start, schedule.offering_end);
+
+    // From 10:00 to 12:00 UTC three offering windows are open.
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    provider.set_timestamp(U256::from(
+        date_key_to_utc_timestamp(20_260_804).unwrap() + 11 * 60 * 60,
+    ));
+    provider.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 8);
+    StorageHandle::enter(&mut provider, |storage| {
+        seed_offer_world(storage.clone(), wwd);
+        let block_number = storage.block_number().unwrap();
+        let timestamp = u64::try_from(storage.timestamp().unwrap()).unwrap();
+        let context = BlockRuntimeContext::new(
+            BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
+                block_number,
+                timestamp,
+                chain_id: CHAIN_ID,
+                genesis_hash: B256::ZERO,
+                genesis_timestamp: timestamp,
+                proposer: Address::ZERO,
+                validators: Vec::new(),
+            },
+            storage.clone(),
+        );
+        for key in [20_260_803, 20_260_804] {
+            let next = WorldwideDay::new(key);
+            let binding = outbe_system_common::metadosis_bindings::metadosis_process_ready_binding(
+                CHAIN_ID,
+                block_number,
+                storage.now_secs().unwrap(),
+            );
+            storage
+                .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
+                    crate::worldwide_day::open_worldwide_day_for_date(&context, next)
+                })
+                .unwrap();
+        }
+        let mut offering = crate::worldwide_day::offering_worldwide_days(storage).unwrap();
+        offering.sort();
+        assert_eq!(
+            offering,
+            vec![
+                wwd,
+                WorldwideDay::new(20_260_803),
+                WorldwideDay::new(20_260_804)
+            ]
+        );
     });
 }

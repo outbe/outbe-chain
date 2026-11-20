@@ -193,11 +193,6 @@
   },
   {
     "type": "error",
-    "name": "LookbackWindowOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "OfferingWindowOverflow",
     "inputs": []
   },

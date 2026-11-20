@@ -32,7 +32,7 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
         let forming_end =
             forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
         let offerings_start =
-            forming_end + outbe_chain_constants::get_metadosis_lookback_delay_seconds();
+            forming_start + outbe_chain_constants::OFFERING_START_AFTER_FORMING_START_SECONDS;
         let offering_end =
             offerings_start + outbe_chain_constants::get_metadosis_offering_period_seconds();
         let binding = outbe_system_common::metadosis_bindings::metadosis_process_ready_binding(
@@ -449,6 +449,23 @@ fn block_at(storage: StorageHandle<'_>, timestamp: u64) -> BlockRuntimeContext<'
         },
         storage,
     )
+}
+
+#[test]
+fn failed_metadosis_rolls_the_max_fidelity_of_its_wwd() {
+    let mut provider = fixture_with_amounts(LIMIT, &[NOMINAL + 1]);
+    StorageHandle::enter(&mut provider, |storage| {
+        let peak = U256::from(u128::MAX);
+        let later = WorldwideDay::new(20261001);
+        outbe_fidelity::api::league_from_rcfi_for_wwd(storage.clone(), WWD, peak).unwrap();
+        assert!(outbe_fidelity::api::max_fidelity_for_wwd(storage.clone(), later).unwrap() < peak);
+
+        crate::commands::fail_metadosis(&block_at(storage.clone(), CLOCK), DAY).unwrap();
+        assert_eq!(
+            outbe_fidelity::api::max_fidelity_for_wwd(storage.clone(), later).unwrap(),
+            peak
+        );
+    });
 }
 
 #[test]

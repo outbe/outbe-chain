@@ -11,9 +11,6 @@ pub enum WwdCallerError {
     #[error("Metadosis forming window overflow")]
     FormingWindowOverflow,
 
-    #[error("Metadosis lookback window overflow")]
-    LookbackWindowOverflow,
-
     #[error("Metadosis offering window overflow")]
     OfferingWindowOverflow,
 
@@ -43,7 +40,6 @@ impl From<WwdCallerError> for PrecompileError {
         use ITributeFactory as I;
         match value {
             WwdCallerError::FormingWindowOverflow => revert_with(I::FormingWindowOverflow {}),
-            WwdCallerError::LookbackWindowOverflow => revert_with(I::LookbackWindowOverflow {}),
             WwdCallerError::OfferingWindowOverflow => revert_with(I::OfferingWindowOverflow {}),
             WwdCallerError::UtcPlus14TimestampOverflow => {
                 revert_with(I::UtcPlus14TimestampOverflow {})

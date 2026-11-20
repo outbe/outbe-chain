@@ -42,7 +42,6 @@ interface ITributeFactory {
     error CalculationView(string value);
     error AttestationPreimageEncode(string value);
     error FormingWindowOverflow();
-    error LookbackWindowOverflow();
     error OfferingWindowOverflow();
     error UtcPlus14TimestampOverflow();
     error DurationOverflow(string label);

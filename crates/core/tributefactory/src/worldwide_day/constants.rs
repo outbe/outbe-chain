@@ -1,20 +1,13 @@
 pub use outbe_chain_constants::MAX_PIPELINE_WWDS;
 use outbe_chain_constants::{
-    DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS, DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS,
-    DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS,
+    DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS, DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS,
 };
 
 /// Compatibility aliases for capacity proofs and canonical-default tests.
 pub const FORMING_PERIOD_HOURS: u64 = DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS / SECONDS_PER_HOUR;
 
-/// Lookback delay: 22 hours.
-pub const LOOKBACK_DELAY_HOURS: u64 = DEFAULT_METADOSIS_LOOKBACK_DELAY_SECONDS / SECONDS_PER_HOUR;
-
 /// Offering period: 50 hours.
 pub const OFFERING_PERIOD_HOURS: u64 = DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS / SECONDS_PER_HOUR;
-
-/// Default delay from `offering_end` (12:00 UTC) to `metadosis_start` (00:00:01 UTC): 12 hours.
-pub const METADOSIS_DELAY_AFTER_OFFERING_HOURS: u64 = 12;
 
 /// Fresh-devnet production creates at most one WorldwideDay per UTC day.
 pub const WWD_CREATION_CADENCE_HOURS: u64 = 24;

@@ -203,7 +203,9 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
                     overflow_schedule,
                 )
                 .unwrap_err();
-                assert!(cap_err.to_string().contains("7"));
+                assert!(cap_err
+                    .to_string()
+                    .contains(&crate::worldwide_day::constants::MAX_PIPELINE_WWDS.to_string()));
                 Ok(())
             })
             .unwrap();
