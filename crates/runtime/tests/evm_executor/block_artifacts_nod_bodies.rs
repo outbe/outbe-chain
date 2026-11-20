@@ -440,3 +440,280 @@ fn seed_nod_daily_task(storage: StorageHandle<'_>, _fixture: &NodBodyFixture) ->
 
     Ok(())
 }
+
+struct WitnessedForfeitBlock {
+    extra_data: Bytes,
+    end_txs: Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>>,
+    receipts: Vec<Receipt>,
+    root: B256,
+}
+
+fn group_load_enclave_hook(
+    key: ed25519_dalek::SigningKey,
+) -> outbe_enclave::tribute_client::TestLocalEnclaveHook {
+    use ed25519_dalek::Signer;
+    let public = key.verifying_key().to_bytes();
+    std::sync::Arc::new(move |request| match request {
+        outbe_enclave::protocol::EnclaveRequest::ReadNodGroupLoadV1 { record } => {
+            let amount = outbe_enclave::nod_encryption::read_nod_group_load(
+                &outbe_nod::test_support::NETWORK_SECRET,
+                record,
+            )
+            .map_err(|error| outbe_tee::TransportError::Codec(error.to_string()))?;
+            let inputs_canonical_hash = outbe_enclave::nod_mine::nod_group_load_read_hash(record)
+                .map_err(outbe_tee::TransportError::codec)?;
+            let preimage = outbe_enclave::nod_mine::nod_group_load_read_preimage(
+                inputs_canonical_hash,
+                amount,
+            );
+            Ok((
+                public,
+                outbe_enclave::protocol::EnclaveResponse::NodGroupLoadReadV1 {
+                    amount,
+                    inputs_canonical_hash,
+                    attestation_tag: key.sign(&preimage).to_bytes().to_vec(),
+                },
+            ))
+        }
+        _ => Err(outbe_tee::TransportError::UnexpectedResponse),
+    })
+}
+
+struct ForfeitBlockSetup {
+    state: State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    config: OutbeEvmConfig,
+    begin: Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>>,
+    parent_metadata: CertifiedParentAccountingMetadata,
+}
+
+const FORFEIT_SEED_HASH: B256 = B256::repeat_byte(0x41);
+
+fn forfeit_block_setup(fixture: &NodBodyFixture, leader_public: [u8; 32]) -> ForfeitBlockSetup {
+    outbe_chain_constants::initialize(None).unwrap();
+    let proposer = fixture.proposer;
+    let state = {
+        let _enclave = outbe_nod::test_support::scope();
+        let mut seeded = Ok(());
+        let state = state_with_active_validators_seeded_at_block(
+            &[(proposer, dummy_pubkey(0xA2))],
+            1,
+            |storage| {
+                super::seed_valid_tee_nodes(storage.clone(), &[proposer]);
+                let registry = outbe_teeregistry::TeeRegistry::new(storage.clone());
+                let node_hash = registry.validator_v1_node_hash.read(&proposer).unwrap();
+                registry
+                    .v1_node_attestation_ed25519
+                    .write(&node_hash, B256::from(leader_public))
+                    .unwrap();
+                seeded = seed_called_nod(storage, fixture);
+            },
+        );
+        seeded.expect("seed the lapsed called group");
+        state
+    };
+    outbe_nod::test_support::uninstall();
+    let config = OutbeEvmConfig::new(
+        test_chain_spec(),
+        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+    )
+    .with_evm_signer(test_evm_signer());
+    let mut parent_metadata = metadata_with(vec![proposer], vec![1], Vec::new());
+    parent_metadata.finalized_block_number = 1;
+    parent_metadata.finalized_block_hash = FORFEIT_SEED_HASH;
+    let begin = begin_system_txs_for_test(
+        &config,
+        BeginBlockFixture {
+            block_number: 2,
+            parent_hash: FORFEIT_SEED_HASH,
+            extra_data: &Bytes::new(),
+            parent_consensus_metadata: Some(parent_metadata.clone()),
+            proposer,
+            bootstrap: BootstrapFixture::StandardForBlock,
+        },
+    );
+    ForfeitBlockSetup {
+        state,
+        config,
+        begin,
+        parent_metadata,
+    }
+}
+
+fn forfeit_execution_context(
+    setup: &ForfeitBlockSetup,
+    proposer: Address,
+    proposed: Option<&WitnessedForfeitBlock>,
+) -> OutbeBlockExecutionCtx<'static> {
+    let mut execution = nod_execution_context(
+        proposer,
+        FORFEIT_SEED_HASH,
+        setup.parent_metadata.clone(),
+        match proposed {
+            Some(_) => setup.begin.clone(),
+            None => Vec::new(),
+        },
+    );
+    if let Some(proposed) = proposed {
+        execution.inner.extra_data = proposed.extra_data.clone();
+        execution.inner.tx_count_hint = Some(setup.begin.len() + proposed.end_txs.len());
+        execution.block_hash = Some(B256::repeat_byte(0x9A));
+    }
+    execution
+}
+
+/// Executes the forfeit block as its proposer, or as a verifier of `proposed` from its body.
+fn execute_witnessed_forfeit_block(
+    fixture: &NodBodyFixture,
+    leader_public: [u8; 32],
+    proposed: Option<&WitnessedForfeitBlock>,
+) -> WitnessedForfeitBlock {
+    let mut setup = forfeit_block_setup(fixture, leader_public);
+    let execution = forfeit_execution_context(&setup, fixture.proposer, proposed);
+    let evm = setup
+        .config
+        .evm_with_env(&mut setup.state, test_evm_env(2, REWARDS_ADDRESS));
+    let mut executor = setup.config.create_executor(evm, execution);
+    super::with_phase1_verify_disabled(|| executor.apply_pre_execution_changes().unwrap());
+    for tx in setup.begin.clone() {
+        executor.execute_transaction(tx).unwrap();
+    }
+    let end_txs = match proposed {
+        None => {
+            executor.apply_end_block_phase().unwrap();
+            let end_txs = executor.take_staged_end_block_txs();
+            executor.prepare_final_header_artifacts(0).unwrap();
+            end_txs
+        }
+        Some(proposed) => {
+            for tx in proposed.end_txs.clone() {
+                executor.execute_transaction(tx).unwrap();
+            }
+            proposed.end_txs.clone()
+        }
+    };
+    let extra_data = executor.final_extra_data.clone();
+    let (evm, result) = executor.finish().unwrap();
+    drop(evm);
+    let mut state = setup.state;
+    state.merge_transitions(revm::database::states::bundle_state::BundleRetention::Reverts);
+    WitnessedForfeitBlock {
+        extra_data,
+        end_txs,
+        receipts: result.receipts,
+        root: post_state_root(&state.bundle_state),
+    }
+}
+
+/// Traces every body transaction of `proposed` the way a node answers `debug_traceBlock`.
+fn trace_witnessed_forfeit_block(
+    fixture: &NodBodyFixture,
+    leader_public: [u8; 32],
+    proposed: &WitnessedForfeitBlock,
+) {
+    let mut setup = forfeit_block_setup(fixture, leader_public);
+    {
+        let execution = forfeit_execution_context(&setup, fixture.proposer, Some(proposed));
+        let evm = setup
+            .config
+            .evm_with_env(&mut setup.state, test_evm_env(2, REWARDS_ADDRESS));
+        let mut executor = setup.config.create_executor(evm, execution);
+        super::with_phase1_verify_disabled(|| executor.apply_pre_execution_changes().unwrap());
+    }
+    let evm = setup
+        .config
+        .evm_with_env(&mut setup.state, test_evm_env(2, REWARDS_ADDRESS));
+    let mut tracer = alloy_evm::tracing::TxTracer::new(evm);
+    for tx in setup.begin.iter().chain(&proposed.end_txs) {
+        let traced = tracer
+            .trace(setup.config.tx_env(tx))
+            .expect("the traced transaction replays its witness");
+        assert!(traced.result.is_success());
+    }
+    outbe_evm::executor::witness::clear_detached_trace_witness();
+}
+
+/// The forfeit's private read rides the end-block witness: the proposer records it at the
+/// NodFactory step, an enclave validator checks it, and a keyless follower replays and traces it.
+#[test]
+fn the_forfeit_read_rides_the_end_block_witness_in_every_mode() {
+    let proposer = test_evm_signer().address();
+    let worldwide_day = WorldwideDay::new(20_241_220);
+    let entry_price_minor = U256::from(450_000_000u64);
+    let issued_at = issued_at_on_protocol_floor(1);
+    let group_key = outbe_nod::test_support::group_key_at(
+        &outbe_nod::config::NodParams::DEV,
+        issued_at,
+        entry_price_minor,
+        840,
+    );
+    let fixture = NodBodyFixture {
+        proposer,
+        group_key,
+        item: outbe_nod::test_support::item(
+            outbe_nod::test_support::NodItemFixture {
+                is_settled: false,
+                nod_id: outbe_nod::test_support::nod_id_of(
+                    proposer,
+                    worldwide_day.value(),
+                    840,
+                    840,
+                ),
+                owner: proposer,
+                gratis_load_minor: U256::from(1_000_000u64),
+                emission_day: worldwide_day.value(),
+                league_id: 1,
+                group_key,
+                issuance_currency: 840,
+                reference_currency: 840,
+                issued_at,
+            },
+            entry_price_minor,
+        ),
+    };
+    let mut leader_seed = b"outbe/test/gramine-direct/attestation".to_vec();
+    leader_seed.extend_from_slice(&[1u8; 32]);
+    leader_seed.extend_from_slice(&0u64.to_be_bytes());
+    let leader = ed25519_dalek::SigningKey::from_bytes(&keccak256(leader_seed).0);
+    let leader_public = leader.verifying_key().to_bytes();
+
+    outbe_tee::witness::set_witness_policy_for_test(Some(
+        outbe_tee::witness::WitnessPolicy::EnclaveBacked,
+    ));
+    outbe_enclave::tribute_client::set_test_local_enclave_hook(Some(group_load_enclave_hook(
+        leader,
+    )));
+    let proposed = execute_witnessed_forfeit_block(&fixture, leader_public, None);
+    assert_group_mutation_receipts(&proposed.receipts, proposed.receipts.len());
+    let witness = decode_outbe_block_artifacts(proposed.extra_data.as_ref())
+        .unwrap()
+        .enclave_witness
+        .expect("the forfeit read is on the tape");
+    let tape = decode_witness_payload_v1(&witness).unwrap();
+    let nod_factory_index = (proposed.receipts.len() - proposed.end_txs.len()) as u32;
+    assert!(tape
+        .txs
+        .iter()
+        .any(|tx| tx.tx_index == nod_factory_index && !tx.entries.is_empty()));
+
+    outbe_enclave::tribute_client::set_test_local_enclave_hook(Some(group_load_enclave_hook(
+        ed25519_dalek::SigningKey::from_bytes(&[0x82; 32]),
+    )));
+    let checked = execute_witnessed_forfeit_block(&fixture, leader_public, Some(&proposed));
+    assert_eq!(
+        (&checked.receipts, checked.root),
+        (&proposed.receipts, proposed.root)
+    );
+
+    outbe_tee::witness::set_witness_policy_for_test(Some(
+        outbe_tee::witness::WitnessPolicy::ReplayOnly,
+    ));
+    outbe_enclave::tribute_client::set_test_local_enclave_hook(None);
+    let replayed = execute_witnessed_forfeit_block(&fixture, leader_public, Some(&proposed));
+    assert_eq!(
+        (&replayed.receipts, replayed.root),
+        (&proposed.receipts, proposed.root)
+    );
+    trace_witnessed_forfeit_block(&fixture, leader_public, &proposed);
+
+    outbe_tee::witness::set_witness_policy_for_test(None);
+}
