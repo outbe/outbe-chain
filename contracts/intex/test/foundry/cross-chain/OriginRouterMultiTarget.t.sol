@@ -13,7 +13,7 @@ import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
-import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
+import {IDesis} from "@precompiles/IDesis.sol";
 
 /// @dev A target peer whose delivery tries to flush another parked leg of the same router.
 contract ReenteringPeer {

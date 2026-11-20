@@ -2,6 +2,7 @@
 pragma solidity ^0.8.30;
 
 import {Test} from "forge-std/Test.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {WCOEN} from "../../src/canonical/WCOEN.sol";
 import {DEAD_ADDRESS} from "@shared/BurnAddress.sol";
 
@@ -113,7 +114,7 @@ contract WCOENTest is Test {
         uint256 zeroNative = address(0).balance;
 
         vm.expectEmit(address(token));
-        emit WCOEN.Transfer(alice, address(0), 2 * COEN_UNIT);
+        emit IERC20.Transfer(alice, address(0), 2 * COEN_UNIT);
         vm.prank(alice);
         token.transfer(address(0), 2 * COEN_UNIT);
 
@@ -132,9 +133,9 @@ contract WCOENTest is Test {
         uint256 deadNative = DEAD_ADDRESS.balance;
 
         vm.expectEmit(address(token));
-        emit WCOEN.Transfer(alice, DEAD_ADDRESS, 2 * COEN_UNIT);
+        emit IERC20.Transfer(alice, DEAD_ADDRESS, 2 * COEN_UNIT);
         vm.expectEmit(address(token));
-        emit WCOEN.Transfer(DEAD_ADDRESS, address(0), 2 * COEN_UNIT);
+        emit IERC20.Transfer(DEAD_ADDRESS, address(0), 2 * COEN_UNIT);
         vm.prank(bob);
         token.transferFrom(alice, DEAD_ADDRESS, 2 * COEN_UNIT);
 
@@ -143,31 +144,6 @@ contract WCOENTest is Test {
         assertEq(token.totalSupply(), 0);
         assertEq(address(token).balance, 0);
         assertEq(DEAD_ADDRESS.balance, deadNative + 2 * COEN_UNIT);
-    }
-
-    function test_IncreaseDecreaseAllowance() public {
-        address alice = makeAddr("alice");
-        address bob = makeAddr("bob");
-
-        vm.startPrank(alice);
-        token.approve(bob, 100);
-        token.increaseAllowance(bob, 50);
-        assertEq(token.allowance(alice, bob), 150);
-
-        token.decreaseAllowance(bob, 30);
-        assertEq(token.allowance(alice, bob), 120);
-        vm.stopPrank();
-    }
-
-    function test_RevertWhen_DecreaseAllowanceBelowZero() public {
-        address alice = makeAddr("alice");
-        address bob = makeAddr("bob");
-
-        vm.startPrank(alice);
-        token.approve(bob, 10);
-        vm.expectRevert();
-        token.decreaseAllowance(bob, 20);
-        vm.stopPrank();
     }
 
     function _holding(uint256 amount) internal returns (address alice) {

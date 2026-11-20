@@ -130,12 +130,15 @@ impl ParentProofSelector {
 
         // Use the effective genesis timing supplied by the engine.
         let wait = clamped_phase1_finalization_wait(requested_wait, self.leader_timeout);
+        // The rest of the view builds, sends and verifies the block.
+        let arrival_wait =
+            clamped_phase1_finalization_wait(self.leader_timeout, self.leader_timeout);
+        let selection = self
+            .await_parent_proof(clock, key, parent_block_number, arrival_wait)
+            .await?;
         let observed_cn_at = Instant::now();
 
-        match self
-            .parent_cert_store
-            .get_best_for_parent(key, parent_block_number)?
-        {
+        match selection {
             ParentProofSelection::Finalization(record) => {
                 self.validate_parent_record(key, parent_block_number, record)
             }
@@ -178,6 +181,37 @@ impl ParentProofSelector {
                 crate::metrics::record_phase1_used_cn_fallback(key.epoch, key.view);
 
                 self.validate_parent_record(key, parent_block_number, record)
+            }
+        }
+    }
+
+    /// The reporter only queues the parent's certificate, so it can land after Simplex asks for the next proposal.
+    async fn await_parent_proof(
+        &self,
+        clock: &impl commonware_runtime::Clock,
+        key: CertifiedParentProofKey,
+        parent_block_number: u64,
+        wait: Duration,
+    ) -> Option<ParentProofSelection> {
+        let mut revisions = self.parent_cert_store.subscribe_revisions();
+        let timeout = clock.sleep(wait);
+        let mut timeout = std::pin::pin!(timeout);
+        loop {
+            if let Some(selection) = self
+                .parent_cert_store
+                .get_best_for_parent(key, parent_block_number)
+            {
+                return Some(selection);
+            }
+            commonware_macros::select! {
+                changed = revisions.changed() => {
+                    if changed.is_err() {
+                        return None;
+                    }
+                },
+                _ = &mut timeout => {
+                    return None;
+                },
             }
         }
     }
@@ -505,6 +539,78 @@ mod tests {
 
                 assert_eq!(r.proof_kind(), ParentParticipationProof::Finalization);
                 assert_eq!(r.finalized_block_number(), Some(9));
+            },
+        );
+    }
+
+    #[test]
+    fn bounded_wait_takes_a_certificate_queued_after_the_proposal_asked() {
+        use commonware_runtime::{Clock as _, Runner as _, Spawner as _, Supervisor as _};
+        commonware_runtime::deterministic::Runner::timed(Duration::from_secs(5)).start(
+            |context| async move {
+                let store = FinalizedParentCertStore::new();
+                let hash = B256::with_last_byte(0xCC);
+                let key = CertifiedParentProofKey::new(0, 0, hash);
+                let writer = store.clone();
+                context.child("writer").spawn(move |ctx| async move {
+                    ctx.sleep(Duration::from_secs(1)).await;
+                    writer
+                        .put_certified_notarization(record(
+                            hash,
+                            0,
+                            ParentParticipationProof::CertifiedNotarization,
+                        ))
+                        .unwrap();
+                });
+
+                let selector =
+                    ParentProofSelector::new(store, crate::config::DEFAULT_PROPOSAL_TIMEOUT);
+                let r = selector
+                    .select_direct_parent_proof_by_key_with_wait(
+                        &context,
+                        key,
+                        9,
+                        PHASE1_FINALIZATION_WAIT_DEFAULT,
+                    )
+                    .await
+                    .expect("the queued certificate lands within the wait");
+
+                assert_eq!(
+                    r.proof_kind(),
+                    ParentParticipationProof::CertifiedNotarization
+                );
+                assert_eq!(r.proof_key(), key);
+            },
+        );
+    }
+
+    #[test]
+    fn bounded_wait_gives_up_when_no_parent_proof_arrives() {
+        use commonware_runtime::{Clock as _, Runner as _};
+        commonware_runtime::deterministic::Runner::timed(Duration::from_secs(5)).start(
+            |context| async move {
+                let selector = ParentProofSelector::new(
+                    FinalizedParentCertStore::new(),
+                    crate::config::DEFAULT_PROPOSAL_TIMEOUT,
+                );
+                let key = CertifiedParentProofKey::new(0, 0, B256::with_last_byte(0xDD));
+                let before = context.current();
+                let r = selector
+                    .select_direct_parent_proof_by_key_with_wait(
+                        &context,
+                        key,
+                        9,
+                        PHASE1_FINALIZATION_WAIT_DEFAULT,
+                    )
+                    .await;
+                let elapsed = context
+                    .current()
+                    .duration_since(before)
+                    .expect("deterministic clock must not go backwards");
+
+                assert!(r.is_none());
+                assert!(elapsed >= crate::config::DEFAULT_PROPOSAL_TIMEOUT / 2);
+                assert!(elapsed < crate::config::DEFAULT_PROPOSAL_TIMEOUT);
             },
         );
     }

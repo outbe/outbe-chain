@@ -36,8 +36,10 @@ impl ApplicationShared {
         // Direct-parent proof selection
         // (finalization first -> certified-notarization -> marshal-archive
         // recovery -> forfeit). The request budget does not gate this lookup.
-        // The lookup can wait. When the store holds only a certified-notarization
-        // record, the selector waits a bounded time for a finalization record.
+        // The lookup can wait. When the store holds no record yet, the selector
+        // waits a bounded time for one: the reporter only queues the certificate.
+        // When it holds only a certified-notarization record, the selector waits
+        // a bounded time for a finalization record.
         // The wait starts at `PHASE1_FINALIZATION_WAIT_DEFAULT`, and the default
         // leader timeout caps it. On a selection-store miss, the None branch
         // recovers the parent's finalization from marshal's durable archive
