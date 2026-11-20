@@ -14,7 +14,7 @@ use outbe_primitives::reshare_artifact::{
     decode_outbe_block_artifacts, encode_outbe_block_artifacts, ConsensusHeaderArtifact,
     ExecutionSummaryArtifact, OutbeBlockArtifacts,
 };
-use outbe_primitives::tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID;
+use outbe_primitives::tee_genesis_v1::NO_ATTESTATION_DEV_CHAIN_ID;
 use outbe_primitives::OutbeHeader;
 use reth_ethereum::{
     evm::revm::db::State,
@@ -120,7 +120,7 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
     let phase1 = config
         .build_signed_phase1_tx(
             2,
-            GRAMINE_DIRECT_DEV_CHAIN_ID,
+            NO_ATTESTATION_DEV_CHAIN_ID,
             parent.hash(),
             attrs.parent_consensus_metadata.clone(),
             attrs.proposer_evm_address,
@@ -138,7 +138,7 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
     let begin = config
         .build_begin_system_txs(
             2,
-            GRAMINE_DIRECT_DEV_CHAIN_ID,
+            NO_ATTESTATION_DEV_CHAIN_ID,
             evm_env.block_env.gas_limit,
             parent.hash(),
             &ctx.inner.extra_data,
@@ -180,7 +180,7 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
     let end_len = end_inputs.len();
     for input in end_inputs {
         let tx = config
-            .build_end_system_tx(2, GRAMINE_DIRECT_DEV_CHAIN_ID, GENESIS_OWNER, input)
+            .build_end_system_tx(2, NO_ATTESTATION_DEV_CHAIN_ID, GENESIS_OWNER, input)
             .expect("end-block system tx must build");
         builder
             .execute_transaction(tx)
@@ -240,7 +240,7 @@ fn builder_finish_rejects_block_2_without_end_block_phase() {
     let begin = config
         .build_begin_system_txs(
             2,
-            GRAMINE_DIRECT_DEV_CHAIN_ID,
+            NO_ATTESTATION_DEV_CHAIN_ID,
             evm_env.block_env.gas_limit,
             parent.hash(),
             &ctx.inner.extra_data,
@@ -301,7 +301,7 @@ fn assert_height2_finalization_parity(include_user: bool) {
     let config = test_config(bridge);
     let provider = DeterministicEmptyStateProvider;
     let user: reth_ethereum::TransactionSigned = TxEip1559 {
-        chain_id: GRAMINE_DIRECT_DEV_CHAIN_ID,
+        chain_id: NO_ATTESTATION_DEV_CHAIN_ID,
         gas_limit: 100_000,
         max_fee_per_gas: 2_000_000_000,
         to: TxKind::Call(Address::repeat_byte(0xDD)),
@@ -350,7 +350,7 @@ fn assert_height2_finalization_parity(include_user: bool) {
             let begin_system_txs = config
                 .build_begin_system_txs(
                     2,
-                    GRAMINE_DIRECT_DEV_CHAIN_ID,
+                    NO_ATTESTATION_DEV_CHAIN_ID,
                     30_000_000,
                     parent.hash(),
                     &attrs.inner.extra_data,

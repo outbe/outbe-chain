@@ -33,7 +33,7 @@
   },
   {
     "type": "function",
-    "name": "getDayTotals",
+    "name": "dayTotals",
     "inputs": [
       {
         "name": "emissionDay",

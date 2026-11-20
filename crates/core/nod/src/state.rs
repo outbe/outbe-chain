@@ -4,6 +4,7 @@ use outbe_core_common::series_id::SeriesId;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_system_common::call_bins;
 
+use crate::nod_encryption::{NodGroupLoadOpRequestV1, NodGroupLoadOperationV1};
 use crate::{
     errors::NodError,
     schema::{CallTerms, NodContract},
@@ -284,7 +285,7 @@ impl NodContract<'_> {
             .map_err(|_| NodError::EncryptedTermsMismatch)?;
         self.apply_group_open_load(
             group_key,
-            outbe_enclave::nod_mine::NodGroupLoadOperationV1::AddSeriesLoad {
+            NodGroupLoadOperationV1::AddSeriesLoad {
                 series_load: Box::new(unclaimed_tribute_load),
             },
         )?;
@@ -443,25 +444,17 @@ impl NodContract<'_> {
         group_key: B256,
         scope: B256,
         previous: Option<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1>,
-        operation: outbe_enclave::nod_mine::NodGroupLoadOperationV1,
+        operation: NodGroupLoadOperationV1,
     ) -> Result<Vec<u8>> {
         let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(&self.storage)?;
-        let request = outbe_enclave::nod_mine::NodGroupLoadOpRequestV1 {
+        let request = NodGroupLoadOpRequestV1 {
             chain_id: self.storage.chain_id()?,
             scope,
             previous,
             operation,
         };
-        let record = crate::enclave_client::apply_group_load_operation(request).map_err(|err| {
-            let text = err.to_string();
-            if text.contains("underflow") {
-                NodError::GroupUnpaidLoadUnderflow { group_key }
-            } else if text.contains("overflow") {
-                NodError::GroupUnpaidLoadOverflow { group_key }
-            } else {
-                NodError::AmountReadFailed(err)
-            }
-        })?;
+        let record = crate::enclave_client::apply_group_load_operation(request)
+            .map_err(|err| open_load_error(group_key, err))?;
         if record.scope != scope {
             return Err(NodError::EncryptedTermsMismatch.into());
         }
@@ -471,7 +464,7 @@ impl NodContract<'_> {
     pub(crate) fn apply_group_open_load(
         &mut self,
         group_key: B256,
-        operation: outbe_enclave::nod_mine::NodGroupLoadOperationV1,
+        operation: NodGroupLoadOperationV1,
     ) -> Result<()> {
         let previous = self.group_open_load_record(group_key)?;
         let bytes = self.apply_scoped_open_load(group_key, group_key, previous, operation)?;
@@ -482,7 +475,7 @@ impl NodContract<'_> {
         &mut self,
         group_key: B256,
         series_id: SeriesId,
-        operation: outbe_enclave::nod_mine::NodGroupLoadOperationV1,
+        operation: NodGroupLoadOperationV1,
     ) -> Result<()> {
         let scope = B256::right_padding_from(series_id.as_bytes());
         let previous = self.series_open_load_record(group_key, series_id)?;
@@ -498,7 +491,7 @@ impl NodContract<'_> {
     ) -> Result<()> {
         self.apply_group_open_load(
             group_key,
-            outbe_enclave::nod_mine::NodGroupLoadOperationV1::AddNod {
+            NodGroupLoadOperationV1::AddNod {
                 nod: Box::new(nod.clone()),
             },
         )
@@ -513,7 +506,7 @@ impl NodContract<'_> {
         self.apply_series_open_load(
             group_key,
             series_id,
-            outbe_enclave::nod_mine::NodGroupLoadOperationV1::AddNod {
+            NodGroupLoadOperationV1::AddNod {
                 nod: Box::new(nod.clone()),
             },
         )
@@ -526,7 +519,7 @@ impl NodContract<'_> {
     ) -> Result<()> {
         self.apply_group_open_load(
             group_key,
-            outbe_enclave::nod_mine::NodGroupLoadOperationV1::SubNod {
+            NodGroupLoadOperationV1::SubNod {
                 nod: Box::new(nod.clone()),
             },
         )
@@ -541,7 +534,7 @@ impl NodContract<'_> {
         self.apply_series_open_load(
             group_key,
             series_id,
-            outbe_enclave::nod_mine::NodGroupLoadOperationV1::SubNod {
+            NodGroupLoadOperationV1::SubNod {
                 nod: Box::new(nod.clone()),
             },
         )
@@ -550,7 +543,7 @@ impl NodContract<'_> {
     pub(crate) fn take_unpaid_load(&mut self, group_key: B256, load: U256) -> Result<()> {
         self.apply_group_open_load(
             group_key,
-            outbe_enclave::nod_mine::NodGroupLoadOperationV1::AdjustTransient {
+            NodGroupLoadOperationV1::AdjustTransient {
                 load_minor: load,
                 add: false,
             },
@@ -566,7 +559,7 @@ impl NodContract<'_> {
         self.apply_series_open_load(
             group_key,
             series_id,
-            outbe_enclave::nod_mine::NodGroupLoadOperationV1::AdjustTransient {
+            NodGroupLoadOperationV1::AdjustTransient {
                 load_minor: load,
                 add: false,
             },
@@ -584,6 +577,25 @@ impl NodContract<'_> {
     #[cfg(any(test, feature = "test-utils"))]
     pub fn first_cleanup_day(&self) -> Result<Option<u32>> {
         deadline_queue::first_day(&CleanupQueue(self))
+    }
+}
+
+fn open_load_error(group_key: B256, err: outbe_tee::TransportError) -> NodError {
+    use crate::nod_encryption::{encryption_cause, NodEncryptionError};
+    let overflow = matches!(
+        encryption_cause(&err),
+        Some(NodEncryptionError::GroupLoadOverflow)
+    );
+    let underflow = matches!(
+        encryption_cause(&err),
+        Some(NodEncryptionError::GroupLoadUnderflow)
+    );
+    if overflow {
+        NodError::GroupUnpaidLoadOverflow { group_key }
+    } else if underflow {
+        NodError::GroupUnpaidLoadUnderflow { group_key }
+    } else {
+        NodError::AmountReadFailed(err)
     }
 }
 

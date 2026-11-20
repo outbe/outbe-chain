@@ -1,4 +1,5 @@
 use super::*;
+use crate::errors::NodeHostRecordError;
 
 struct RecordFixture {
     directory: tempfile::TempDir,
@@ -42,16 +43,20 @@ fn owned_record_rejects_public_permissions_and_oversized_contents(
         b"abc"
     );
     fs::set_permissions(&record.path, fs::Permissions::from_mode(0o644))?;
-    assert!(
-        matches!(read_owned_bounded_file(&record.path, 16, "fixture"),
-        Err(TransportError::Codec(message)) if message == "NodeHost fixture must be an owner-only bounded regular file")
-    );
+    assert!(matches!(
+        read_owned_bounded_file(&record.path, 16, "fixture"),
+        Err(TransportError::NodeHostRecord(
+            NodeHostRecordError::NotOwnerOnlyBoundedRegularFile { label: "fixture" }
+        ))
+    ));
     fs::set_permissions(&record.path, fs::Permissions::from_mode(0o600))?;
     fs::write(&record.path, [0_u8; 17])?;
-    assert!(
-        matches!(read_owned_bounded_file(&record.path, 16, "fixture"),
-        Err(TransportError::Codec(message)) if message == "NodeHost fixture must be an owner-only bounded regular file")
-    );
+    assert!(matches!(
+        read_owned_bounded_file(&record.path, 16, "fixture"),
+        Err(TransportError::NodeHostRecord(
+            NodeHostRecordError::NotOwnerOnlyBoundedRegularFile { label: "fixture" }
+        ))
+    ));
     Ok(())
 }
 
@@ -59,10 +64,12 @@ fn owned_record_rejects_public_permissions_and_oversized_contents(
 fn read_limit_overflow_is_reported_before_reading() -> Result<(), Box<dyn std::error::Error>> {
     let record = RecordFixture::new()?;
     record.write(b"abc")?;
-    assert!(
-        matches!(read_owned_bounded_file(&record.path, u64::MAX, "fixture"),
-        Err(TransportError::Codec(message)) if message == "NodeHost fixture read limit overflow")
-    );
+    assert!(matches!(
+        read_owned_bounded_file(&record.path, u64::MAX, "fixture"),
+        Err(TransportError::NodeHostRecord(
+            NodeHostRecordError::ReadLimitOverflow { label: "fixture" }
+        ))
+    ));
     Ok(())
 }
 
@@ -84,10 +91,12 @@ fn conflicting_record_keeps_existing_record_and_scratch() -> Result<(), Box<dyn 
     let record = RecordFixture::new()?;
     record.write(b"first")?;
     fs::write(&record.scratch, b"sentinel")?;
-    assert!(
-        matches!(record.write(b"second"), Err(TransportError::Codec(message))
-        if message == "durable NodeHost fixture conflicts with the requested value")
-    );
+    assert!(matches!(
+        record.write(b"second"),
+        Err(TransportError::NodeHostRecord(
+            NodeHostRecordError::DurableRecordConflict { label: "fixture" }
+        ))
+    ));
     assert_eq!(fs::read(&record.path)?, b"first");
     assert_eq!(fs::read(&record.scratch)?, b"sentinel");
     Ok(())

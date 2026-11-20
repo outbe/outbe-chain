@@ -3,7 +3,7 @@ use super::*;
 use outbe_promislimit::{BurnSource, PromisLimitContract};
 
 /// Burns the proceeds into the Promis Limit; COEN below one minor stays as the rest of code 43.
-pub fn distribute(
+pub fn burn_intex_auction_proceeds(
     storage: &StorageHandle<'_>,
     caller: Address,
     emission_day: EmissionDate,

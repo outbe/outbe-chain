@@ -1,21 +1,8 @@
-//! Periodic TEE-enclave canary: a caller-supplied decrypt probe plus the
-//! `Health` telemetry probe, published to [`TeeEnclaveHealthChannel`] and
-//! Prometheus.
+//! Periodic resident TEE decrypt probes published through health snapshots.
 //!
-//! Signal only. A failing canary never gates consensus participation. It
-//! surfaces through `outbe_consensusStatus.enclave`, `outbe-cli monitor
-//! readiness` and the `outbe_tee_canary_*` / `outbe_tee_enclave_*` metric series.
-//! Counters end in `_total`, latency histograms in `_ms`, and gauges never in
-//! `_total` or `_count`; see `crates/runtime/src/metrics_recorder.rs`.
-//!
-//! The probe uses a separate connection to the same pinned enclave identity.
-//! It never holds the execution session's mutex. The blocking round-trip runs
-//! on `spawn_blocking`. An `in_flight`
-//! latch guarantees at most one outstanding probe, so a wedged enclave wedges
-//! one canary task, never a growing pile of mutex waiters.
-//! Shutdown stops observing the read-only probe without waiting for enclave I/O.
-//! An already running socket operation retains its transport deadline. It cannot
-//! start another request after cancellation or publish a late health result.
+//! Signal only: canary failure never gates consensus participation. The
+//! in-flight latch limits a stalled probe to one blocking task. Cancellation
+//! prevents subsequent requests and late status publication.
 
 mod probe;
 
@@ -26,7 +13,7 @@ use std::time::{Duration, SystemTime};
 use metrics::{counter, gauge, histogram};
 use outbe_tee::canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthSnapshot, TeeEnclaveHealthState};
 use outbe_tee::errors::TransportError;
-use outbe_tee::protocol::{EnclaveHealthStatusV1, EnclaveRequest, EnclaveResponse};
+use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
 use outbe_tee::CallMeta;
 use tokio_util::sync::CancellationToken;
 
@@ -46,8 +33,7 @@ pub struct TeeCanaryConfig {
 /// against a scripted fake instead of the global.
 pub trait EnclaveRequester: Send + Sync + 'static {
     fn request(&self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError>;
-    /// Send a canary request with explicit [`CallMeta`] so opaque `Payload` probes preserve
-    /// their exact domain `op` metric label.
+    /// Send a canary request with explicit [`CallMeta`] so the metric label stays the caller's.
     fn request_with_meta(
         &self,
         meta: CallMeta,
@@ -79,27 +65,6 @@ impl<R, P> TeeCanaryTarget<R, P> {
     #[must_use]
     pub const fn new(requester: R, probe: P) -> Self {
         Self { requester, probe }
-    }
-}
-
-/// The production requester uses the dedicated canary connection.
-pub struct GlobalEnclaveRequester;
-
-impl EnclaveRequester for GlobalEnclaveRequester {
-    fn request(&self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
-        outbe_tee::client_global::canary_request(req)
-    }
-
-    fn request_with_meta(
-        &self,
-        meta: CallMeta,
-        req: &EnclaveRequest,
-    ) -> Result<EnclaveResponse, TransportError> {
-        outbe_tee::client_global::canary_request_with_meta(meta, req)
-    }
-
-    fn attestation_pub(&self) -> Option<[u8; 32]> {
-        outbe_tee::client_global::canary_attestation_pub()
     }
 }
 
@@ -148,8 +113,8 @@ pub enum CanaryTickOutcome {
     /// The enclave answers but the permanent offer key is not resident yet
     /// (pre-DKG) - not a failure.
     OfferKeyNotReady,
-    /// The probe failed. `unreachable` = transport-level (connect/socket/session
-    /// revoked) as opposed to a bad answer. One stage-dependent exception: an
+    /// The probe failed. `unreachable` denotes a node-local failure, rather than
+    /// a bad answer. One stage-dependent exception: an
     /// `EnclaveError` or `Unavailable` answer to the `GetPublicKeys` stage also counts as
     /// `unreachable`. In the canary decrypt stage it does not.
     Failure { unreachable: bool, reason: String },
@@ -160,8 +125,11 @@ impl CanaryTickOutcome {
     #[must_use]
     pub fn decrypt_transport_failure(error: &TransportError) -> Self {
         Self::Failure {
-            unreachable: error.is_connection_fault()
-                || matches!(error, TransportError::SessionRevoked(_)),
+            unreachable: error.is_node_local()
+                && !matches!(
+                    error,
+                    TransportError::Unavailable(_) | TransportError::UnavailableCause { .. }
+                ),
             reason: format!("canary decrypt failed: {}", error.metric_class()),
         }
     }
@@ -197,18 +165,12 @@ pub fn canary_state(
     }
 }
 
-/// One blocking probe pass: Health (feature-detected), offer-key state, canary
-/// decrypt. Pure with respect to the requester and probe - unit-testable with fakes.
+/// Run one resident offer-key and decrypt probe.
 pub fn run_canary_probe(
     requester: &dyn EnclaveRequester,
     probe: &dyn TeeCanaryProbe,
-    health_supported: Option<bool>,
-) -> (
-    CanaryTickOutcome,
-    Option<bool>,
-    Option<EnclaveHealthStatusV1>,
-) {
-    probe::run(requester, probe, health_supported)
+) -> CanaryTickOutcome {
+    probe::run(requester, probe)
 }
 
 /// Fold one tick outcome into the published snapshot + metrics.
@@ -247,14 +209,6 @@ fn apply_tick(
     gauge!("outbe_tee_canary_consecutive_failures").set(snapshot.consecutive_failures as f64);
 }
 
-fn publish_health_gauges(status: &EnclaveHealthStatusV1) {
-    gauge!("outbe_tee_enclave_heap_bytes", "kind" => "current")
-        .set(status.heap.current_bytes as f64);
-    gauge!("outbe_tee_enclave_heap_bytes", "kind" => "peak").set(status.heap.peak_bytes as f64);
-    gauge!("outbe_tee_enclave_uptime_seconds").set(status.uptime_s as f64);
-    gauge!("outbe_tee_enclave_errored_requests").set(status.requests.errored as f64);
-}
-
 fn unix_now_ms() -> Option<u64> {
     SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -287,23 +241,12 @@ impl CanaryWorkerState<'_> {
     }
     fn apply_result(
         &mut self,
-        result: Result<
-            (
-                CanaryTickOutcome,
-                Option<bool>,
-                Option<EnclaveHealthStatusV1>,
-            ),
-            tokio::task::JoinError,
-        >,
+        result: Result<CanaryTickOutcome, tokio::task::JoinError>,
         failure_threshold: u64,
     ) {
         match result {
-            Ok((outcome, health_supported, health_payload)) => {
-                self.snapshot.health_probe_supported = health_supported;
-                if let Some(payload) = health_payload {
-                    publish_health_gauges(&payload);
-                    self.snapshot.enclave = Some(payload);
-                }
+            Ok(outcome) => {
+                self.snapshot.health_probe_supported = Some(false);
                 apply_tick(self.snapshot, outcome, failure_threshold);
                 self.status.publish(self.snapshot.clone());
             }
@@ -366,13 +309,8 @@ pub async fn run_tee_canary_worker<R, P>(
         let probe_for_tick = Arc::clone(&decrypt_probe);
         let in_flight_guard = Arc::clone(&in_flight);
         in_flight.store(true, Ordering::Release);
-        let health_supported = worker_state.snapshot.health_probe_supported;
         let mut probe_task = tokio::task::spawn_blocking(move || {
-            let result = run_canary_probe(
-                requester_for_probe.as_ref(),
-                probe_for_tick.as_ref(),
-                health_supported,
-            );
+            let result = run_canary_probe(requester_for_probe.as_ref(), probe_for_tick.as_ref());
             in_flight_guard.store(false, Ordering::Release);
             result
         });
@@ -417,7 +355,12 @@ mod tests {
             requester: &dyn EnclaveRequester,
             _: &[u8; 32],
         ) -> CanaryTickOutcome {
-            match requester.request(&EnclaveRequest::Health) {
+            match requester.request_with_meta(
+                CallMeta::session_only("canary_decrypt_test"),
+                &EnclaveRequest::DkgStartDealer {
+                    ceremony_id: alloy_primitives::B256::ZERO,
+                },
+            ) {
                 Ok(_) => CanaryTickOutcome::Success { latency_ms: 1 },
                 Err(error) => CanaryTickOutcome::decrypt_transport_failure(&error),
             }
@@ -455,17 +398,9 @@ mod tests {
     }
 
     #[test]
-    fn tee_canary_metrics_use_canonical_names_types_and_heap_labels() {
+    fn tee_canary_metrics_use_canonical_names_and_types() {
         let recorder = CanaryMetricRecorder::default();
         let mut snapshot = TeeEnclaveHealthSnapshot::default();
-        let health: EnclaveHealthStatusV1 = serde_json::from_value(serde_json::json!({
-            "uptime_s": 30, "offer_key_ready": true,
-            "heap": { "current_bytes": 1024, "peak_bytes": 2048 },
-            "requests": { "total": 10, "errored": 2, "denied": 0 },
-            "classes": { "initialized": 10, "founding_keyless": 0, "keyless_onboarding": 0,
-                "ready": 0, "dev_source_seal": 0, "dev_recipient_ingest": 0 }
-        }))
-        .expect("enclave health fixture");
         metrics::with_local_recorder(&recorder, || {
             apply_tick(
                 &mut snapshot,
@@ -480,7 +415,6 @@ mod tests {
                 },
                 2,
             );
-            publish_health_gauges(&health);
         });
         assert_eq!(
             *recorder.gauges.borrow(),
@@ -488,10 +422,6 @@ mod tests {
                 Key::from_name("outbe_tee_canary_last_ok_timestamp_seconds"),
                 Key::from_name("outbe_tee_canary_consecutive_failures"),
                 Key::from_name("outbe_tee_canary_consecutive_failures"),
-                Key::from_parts("outbe_tee_enclave_heap_bytes", &[("kind", "current")]),
-                Key::from_parts("outbe_tee_enclave_heap_bytes", &[("kind", "peak")]),
-                Key::from_name("outbe_tee_enclave_uptime_seconds"),
-                Key::from_name("outbe_tee_enclave_errored_requests"),
             ]
         );
         assert_eq!(recorder.failures.get(), 1);
@@ -526,9 +456,7 @@ mod tests {
                         .recv()
                         .expect("release request");
                 }
-                Err(TransportError::Io(std::io::Error::other(
-                    "enclave unavailable",
-                )))
+                Ok(public_keys_response(true))
             }
 
             fn attestation_pub(&self) -> Option<[u8; 32]> {
@@ -550,7 +478,7 @@ mod tests {
                     finished: Some(finished_tx),
                     calls: Arc::clone(&calls),
                 },
-                NeverDecryptProbe,
+                TransportDecryptProbe,
             ),
             TeeCanaryConfig {
                 interval: Duration::from_secs(60),
@@ -686,10 +614,6 @@ mod tests {
         }
     }
 
-    fn codec_error() -> TransportError {
-        TransportError::Codec("unknown variant".into())
-    }
-
     #[test]
     fn canary_state_decision_table() {
         use TeeEnclaveHealthState as S;
@@ -713,121 +637,67 @@ mod tests {
 
     #[test]
     fn probe_reports_offer_key_not_ready_as_starting_input() {
-        let fake = FakeRequester::new(vec![
-            ("health", Err(codec_error())),
-            ("get_public_keys", Ok(public_keys_response(false))),
-            ("get_public_keys", Ok(public_keys_response(false))),
-        ]);
-        let (outcome, supported, _) = run_canary_probe(&fake, &NeverDecryptProbe, None);
+        let fake = FakeRequester::new(vec![("get_public_keys", Ok(public_keys_response(false)))]);
+        let outcome = run_canary_probe(&fake, &NeverDecryptProbe);
         assert_eq!(outcome, CanaryTickOutcome::OfferKeyNotReady);
-        assert_eq!(
-            supported,
-            Some(false),
-            "enclave alive but Health unknown => unsupported"
-        );
-    }
-
-    #[test]
-    fn health_unsupported_detection_never_resends_health() {
-        let fake = FakeRequester::new(vec![
-            // No "health" entry: probing with Some(false) must skip it.
-            ("get_public_keys", Ok(public_keys_response(false))),
-        ]);
-        let (outcome, supported, _) = run_canary_probe(&fake, &NeverDecryptProbe, Some(false));
-        assert_eq!(outcome, CanaryTickOutcome::OfferKeyNotReady);
-        assert_eq!(supported, Some(false));
-        assert!(
-            !fake.seen().contains(&"health"),
-            "Health must not be re-sent once detected unsupported"
-        );
-    }
-
-    #[test]
-    fn health_down_enclave_keeps_feature_detection_open() {
-        let fake = FakeRequester::new(vec![
-            (
-                "health",
-                Err(TransportError::Io(std::io::Error::other("down"))),
-            ),
-            (
-                "get_public_keys",
-                Err(TransportError::Io(std::io::Error::other("down"))),
-            ),
-            (
-                "get_public_keys",
-                Err(TransportError::Io(std::io::Error::other("down"))),
-            ),
-        ]);
-        let (outcome, supported, _) = run_canary_probe(&fake, &NeverDecryptProbe, None);
-        assert!(matches!(
-            outcome,
-            CanaryTickOutcome::Failure {
-                unreachable: true,
-                ..
-            }
-        ));
-        assert_eq!(supported, None, "down enclave: keep detecting next tick");
-    }
-
-    #[test]
-    fn known_health_support_failure_does_not_add_a_detection_request() {
-        let fake = FakeRequester::new(vec![
-            ("health", Err(codec_error())),
-            ("get_public_keys", Ok(public_keys_response(false))),
-        ]);
-        let (outcome, supported, payload) = run_canary_probe(&fake, &NeverDecryptProbe, Some(true));
-        assert_eq!(outcome, CanaryTickOutcome::OfferKeyNotReady);
-        assert_eq!(supported, Some(true));
-        assert!(payload.is_none());
-        assert_eq!(fake.seen(), ["health", "get_public_keys"]);
-    }
-
-    #[test]
-    fn ambiguous_health_fallback_does_not_reuse_key_readiness() {
-        let fake = FakeRequester::new(vec![
-            ("health", Err(codec_error())),
-            ("get_public_keys", Ok(public_keys_response(true))),
-            ("get_public_keys", Ok(public_keys_response(false))),
-        ]);
-        let (outcome, supported, _) = run_canary_probe(&fake, &NeverDecryptProbe, None);
-        assert_eq!(outcome, CanaryTickOutcome::OfferKeyNotReady);
-        assert_eq!(supported, Some(false));
-        assert_eq!(
-            fake.seen(),
-            ["health", "get_public_keys", "get_public_keys"]
-        );
+        assert_eq!(fake.seen(), ["get_public_keys"]);
     }
 
     #[test]
     fn enclave_error_classification_depends_on_the_probe_stage() {
         let key_failure = FakeRequester::new(vec![(
             "get_public_keys",
-            Err(TransportError::EnclaveError("denied".into())),
+            Err(TransportError::enclave_error(std::io::Error::from(
+                std::io::ErrorKind::PermissionDenied,
+            ))),
         )]);
-        let (outcome, _, _) = run_canary_probe(&key_failure, &NeverDecryptProbe, Some(false));
+        let outcome = run_canary_probe(&key_failure, &NeverDecryptProbe);
         assert!(
             matches!(outcome, CanaryTickOutcome::Failure { unreachable: true, reason } if reason.starts_with("GetPublicKeys failed:"))
         );
         let decrypt_failure = FakeRequester::new(vec![
             ("get_public_keys", Ok(public_keys_response(true))),
-            ("health", Err(TransportError::EnclaveError("denied".into()))),
+            (
+                "dkg_start_dealer",
+                Err(TransportError::enclave_error(std::io::Error::from(
+                    std::io::ErrorKind::PermissionDenied,
+                ))),
+            ),
         ]);
-        let (outcome, _, _) =
-            run_canary_probe(&decrypt_failure, &TransportDecryptProbe, Some(false));
+        let outcome = run_canary_probe(&decrypt_failure, &TransportDecryptProbe);
         assert!(
             matches!(outcome, CanaryTickOutcome::Failure { unreachable: false, reason } if reason.starts_with("canary decrypt failed:"))
         );
     }
 
     #[test]
+    fn decrypt_unavailability_preserves_grace_but_missing_context_is_unreachable() {
+        for (error, expected) in [
+            (
+                TransportError::unavailable(outbe_tee::in_process::InProcessError::NotReady),
+                false,
+            ),
+            (
+                outbe_tee::InProcessDispatchError::ContextNotInstalled.into(),
+                true,
+            ),
+        ] {
+            assert!(matches!(
+                CanaryTickOutcome::decrypt_transport_failure(&error),
+                CanaryTickOutcome::Failure { unreachable, .. } if unreachable == expected
+            ));
+        }
+    }
+
+    #[test]
     fn a_not_ready_enclave_is_unreachable_at_the_key_stage() {
         let fake = FakeRequester::new(vec![(
             "get_public_keys",
-            Err(TransportError::Unavailable(
-                "enclave is not initialized".into(),
+            Err(TransportError::unavailable(
+                outbe_tee::in_process::InProcessError::NotReady,
             )),
         )]);
-        let (outcome, _, _) = run_canary_probe(&fake, &NeverDecryptProbe, Some(false));
+        let outcome = run_canary_probe(&fake, &NeverDecryptProbe);
         assert!(matches!(
             outcome,
             CanaryTickOutcome::Failure {
@@ -854,14 +724,7 @@ mod tests {
         };
 
         // 1. Initial success transitions to Ready and publishes health snapshot.
-        worker_state.apply_result(
-            Ok((
-                CanaryTickOutcome::Success { latency_ms: 5 },
-                Some(false),
-                None,
-            )),
-            2,
-        );
+        worker_state.apply_result(Ok(CanaryTickOutcome::Success { latency_ms: 5 }), 2);
         let snap = status.snapshot();
         assert_eq!(snap.state, TeeEnclaveHealthState::Ready);
         assert_eq!(snap.consecutive_failures, 0);
@@ -870,14 +733,10 @@ mod tests {
 
         // 2. First soft failure stays Ready (below threshold=2) and increments consecutive_failures.
         worker_state.apply_result(
-            Ok((
-                CanaryTickOutcome::Failure {
-                    unreachable: false,
-                    reason: "decrypt mismatch".into(),
-                },
-                Some(false),
-                None,
-            )),
+            Ok(CanaryTickOutcome::Failure {
+                unreachable: false,
+                reason: "decrypt mismatch".into(),
+            }),
             2,
         );
         let snap = status.snapshot();
@@ -887,14 +746,10 @@ mod tests {
 
         // 3. Second consecutive soft failure reaches threshold=2 -> Degraded.
         worker_state.apply_result(
-            Ok((
-                CanaryTickOutcome::Failure {
-                    unreachable: false,
-                    reason: "decrypt timeout".into(),
-                },
-                Some(false),
-                None,
-            )),
+            Ok(CanaryTickOutcome::Failure {
+                unreachable: false,
+                reason: "decrypt timeout".into(),
+            }),
             2,
         );
         let snap = status.snapshot();
@@ -903,14 +758,7 @@ mod tests {
         assert_eq!(snap.last_failure.as_deref(), Some("decrypt timeout"));
 
         // 4. Subsequent success resets consecutive_failures and restores Ready.
-        worker_state.apply_result(
-            Ok((
-                CanaryTickOutcome::Success { latency_ms: 4 },
-                Some(false),
-                None,
-            )),
-            2,
-        );
+        worker_state.apply_result(Ok(CanaryTickOutcome::Success { latency_ms: 4 }), 2);
         let snap = status.snapshot();
         assert_eq!(snap.state, TeeEnclaveHealthState::Ready);
         assert_eq!(snap.consecutive_failures, 0);

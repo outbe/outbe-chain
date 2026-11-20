@@ -6,13 +6,10 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 use sha2::{Digest as _, Sha256};
 use tempfile::tempdir;
-use xtask::release::toolchain;
+use xtask::release::{repository_root, toolchain};
 
 fn repo_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("xtask lives below the repository root")
-        .to_owned()
+    repository_root().expect("repository root")
 }
 
 fn sha256_bytes(bytes: &[u8]) -> String {
@@ -76,7 +73,7 @@ fn project_declares_one_version_pin_without_registry_delivery_and_consumers_foll
     assert_eq!(pin["target"].as_str(), Some("x86_64-unknown-linux-gnu"));
     assert_eq!(pin["platform"].as_str(), Some("linux/amd64"));
     assert_eq!(pin["rust"]["version"].as_str(), Some("1.96.0"));
-    assert_eq!(pin["gramine"]["version"].as_str(), Some("1.9"));
+    assert!(pin.get("gramine").is_none());
     assert_eq!(
         pin["host_only_packages"]["libsgx-dcap-default-qpl"].as_str(),
         Some("1.26.100.1-noble1")
@@ -103,7 +100,7 @@ fn consumer_version_drift_and_incomplete_package_pin_fail_closed() {
     let dir = tempdir().expect("tempdir");
     for relative in [
         "Dockerfile.project-toolchain",
-        "crates/blockchain/tee/build.rs",
+        "crates/blockchain/dcap/build.rs",
         "rust-toolchain.toml",
         "release/apt/ubuntu.sources",
         "release/dcap-native-qvl-v1.json",
@@ -114,6 +111,16 @@ fn consumer_version_drift_and_incomplete_package_pin_fail_closed() {
         fs::create_dir_all(dest.parent().unwrap()).unwrap();
         fs::copy(root.join(relative), dest).unwrap();
     }
+
+    let qvl_path = dir.path().join("release/dcap-native-qvl-v1.json");
+    let mut qvl: Value = serde_json::from_slice(&fs::read(&qvl_path).unwrap()).unwrap();
+    qvl["intel_dcap"]["runtime_package_version"] = json!("unapproved-version");
+    fs::write(&qvl_path, serde_json::to_vec(&qvl).unwrap()).unwrap();
+
+    let err = toolchain::verify_repository(dir.path()).unwrap_err();
+    assert!(err
+        .to_string()
+        .contains("QVL libsgx-dcap-quote-verify version mismatch"));
 
     let mut pin: Value = serde_json::from_str(
         &fs::read_to_string(root.join("release/project-toolchain-v1.json")).unwrap(),
@@ -146,6 +153,7 @@ fn toolchain_dockerfile_and_apt_inputs_contract() {
     assert!(!lowered.contains("apt upgrade"));
     assert!(!lowered.contains("qpl"));
     assert!(!lowered.contains("pccs"));
+    assert!(!lowered.contains("gramine"));
 
     let dir = tempdir().expect("tempdir");
     for source in pin["apt_provenance"]["source_files"].as_array().unwrap() {
@@ -222,7 +230,6 @@ fn synthetic_qvl_fixture(root: &Path, pin: &Value) -> (Value, Vec<Value>, Vec<Va
         "schema_version": 1,
         "status": "active",
         "target": "x86_64-unknown-linux-gnu",
-        "gramine_version": "1.9",
         "intel_dcap": toolchain::expected_dcap(pin),
         "build_inputs": build_inputs,
         "artifacts": artifacts,

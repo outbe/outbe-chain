@@ -24,26 +24,25 @@ contract RefundProceedsQuoteTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
         outbe = DeployProxy.originRouter(address(bridge), admin);
-        outbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, makeAddr("targetRouter")));
+        outbe.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, makeAddr("targetRouter")));
         outbe.addTarget(BNB_CHAIN_ID);
         vm.deal(address(outbe), 10 ether);
 
         desis = address(new MockDesis());
-        outbe.wire(desis, makeAddr("factory"));
+        outbe.setDependencies(desis, makeAddr("factory"));
 
         // Freeze the day's snapshot so an addressed refund send passes membership.
-        IOriginRouter.AuctionStageStartParams memory sp;
+        IOriginRouter.IntexAuctionStartParams memory sp;
         sp.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         sp.emissionDay = DAY;
-        sp.dayState = 1;
         vm.prank(desis);
-        outbe.sendAuctionStageStart(sp);
+        outbe.sendIntexAuctionStart(sp);
     }
 
-    function _send(uint16 chunkIndex, uint16 totalChunks, uint256 winners) internal {
+    function _send(uint16 pageIndex, uint16 totalPages, uint256 winners) internal {
         vm.prank(desis);
-        outbe.sendRefundInstructions(
-            BNB_CHAIN_ID, DAY, chunkIndex, totalChunks, 600_000, 1e6, new address[](winners), 0, 0
+        outbe.sendIntexAuctionWinners(
+            BNB_CHAIN_ID, DAY, pageIndex, totalPages, 600_000, 1e6, new address[](winners), 0, 0
         );
     }
 
@@ -55,7 +54,7 @@ contract RefundProceedsQuoteTest is CrossChainTest {
 
     function test_TheOnlyChunkOfADayCarriesTheRoutingLeg() public {
         _send(0, 1, 5);
-        _assertQuoted(IntexGas.refund(5, true));
+        _assertQuoted(IntexGas.assetReturn(5, true));
     }
 
     /// @dev The target routes on the chunk that completes the day, which is the last to land,
@@ -63,21 +62,23 @@ contract RefundProceedsQuoteTest is CrossChainTest {
     ///      proceeds.
     function test_EveryChunkOfARunCarriesIt() public {
         _send(0, 3, 64);
-        _assertQuoted(IntexGas.refund(64, true));
+        _assertQuoted(IntexGas.assetReturn(64, true));
         _send(2, 3, 8);
-        _assertQuoted(IntexGas.refund(8, true));
+        _assertQuoted(IntexGas.assetReturn(8, true));
     }
 
     /// @dev A chain whose bids all lost gets one chunk that closes its day and sends nothing home.
     function test_AChunkWithNoWinnersNeitherSettlesNorRoutes() public {
         _send(0, 1, 0);
-        _assertQuoted(IntexGas.REFUND_BASE);
+        _assertQuoted(IntexGas.RETURN_BASE);
     }
 
     /// @dev The quote grows with what the chunk does, in the order the work appears.
     function test_TheQuoteGrowsWithTheWorkTheChunkDoes() public pure {
-        assertLt(IntexGas.refund(0, false), IntexGas.refund(1, false), "settling winners costs more than closing");
-        assertLt(IntexGas.refund(1, false), IntexGas.refund(2, false), "each winner adds");
-        assertLt(IntexGas.refund(2, false), IntexGas.refund(2, true), "routing the proceeds adds");
+        assertLt(
+            IntexGas.assetReturn(0, false), IntexGas.assetReturn(1, false), "settling winners costs more than closing"
+        );
+        assertLt(IntexGas.assetReturn(1, false), IntexGas.assetReturn(2, false), "each winner adds");
+        assertLt(IntexGas.assetReturn(2, false), IntexGas.assetReturn(2, true), "routing the proceeds adds");
     }
 }

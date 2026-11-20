@@ -225,7 +225,7 @@ impl TeeRegistry<'_> {
             context.chain_id == policy.chain_id && context.genesis_hash == policy.genesis_hash;
         let mode_allowed = !legacy_direct_dev_source
             || policy.attestation_mode
-                == outbe_primitives::tee_attestation_v1::AttestationMode::GramineDirectDev;
+                == outbe_primitives::tee_attestation_v1::AttestationMode::NoAttestationDev;
         Ok(chain_matches && mode_allowed)
     }
 

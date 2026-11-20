@@ -8,7 +8,7 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 
-/// @dev `getClaimableRefund` must report exactly what `releaseRefund` then pays, from exactly when
+/// @dev `returnableAmount` must report exactly what `returnIntexAuctionAsset` then pays, from exactly when
 ///      it pays it.
 contract EscrowAdapterClaimableTest is Test {
     EscrowAdapter internal escrow;
@@ -35,7 +35,7 @@ contract EscrowAdapterClaimableTest is Test {
         compact.setResetPeriodSeconds(0);
 
         vm.startPrank(admin);
-        escrow.wire(auction, address(compact), address(token));
+        escrow.setDependencies(auction, address(compact), address(token));
         escrow.setProceedsRecipient(address(0xBEEF));
         vm.stopPrank();
 
@@ -45,7 +45,7 @@ contract EscrowAdapterClaimableTest is Test {
 
     function _refund(uint32 emissionDay, address bidder) internal {
         vm.prank(auction);
-        escrow.releaseRefund(emissionDay, bidder);
+        escrow.returnIntexAuctionAsset(emissionDay, bidder);
     }
 
     function _lock(address who) internal {
@@ -53,12 +53,12 @@ contract EscrowAdapterClaimableTest is Test {
         vm.prank(who);
         token.approve(address(escrow), type(uint256).max);
         vm.prank(auction);
-        escrow.lockFunds(DAY, who, LOCK_UNITS, 1_000_000, 1);
+        escrow.lockIntexAuctionAsset(DAY, who, LOCK_UNITS, 1_000_000, 1);
     }
 
     function _finalize(address[] memory winners, uint64 clearingRate, bool completesDay) internal {
         vm.prank(relayer);
-        escrow.finalizeAuction(DAY, bytes32(uint256(1)), winners, 0, 0, clearingRate, BASIS, completesDay);
+        escrow.chargeIntexAuctionAsset(DAY, winners, 0, 0, clearingRate, BASIS, completesDay);
     }
 
     function _only(address who) internal pure returns (address[] memory winners) {
@@ -69,14 +69,16 @@ contract EscrowAdapterClaimableTest is Test {
     /// @dev The claim pays the view's amount in full, not a wei earlier than its timestamp, and
     ///      leaves nothing after.
     function _assertClaimMatchesView(uint128 expectedAmount, uint32 expectedAt) internal {
-        (uint128 amount, uint32 claimableAt) = escrow.getClaimableRefund(DAY, bidder);
+        (uint128 amount, uint32 claimableAt) = escrow.returnableAmount(DAY, bidder);
         assertEq(amount, expectedAmount, "amount");
         assertEq(claimableAt, expectedAt, "claimable at");
 
         if (claimableAt != 0) {
             vm.warp(claimableAt - 1);
             vm.expectRevert(
-                abi.encodeWithSelector(IEscrowAdapter.RefundNotYetClaimable.selector, claimableAt, claimableAt - 1)
+                abi.encodeWithSelector(
+                    IEscrowAdapter.IntexAuctionAssetNotYetReturnable.selector, claimableAt, claimableAt - 1
+                )
             );
             _refund(DAY, bidder);
             vm.warp(claimableAt);
@@ -86,19 +88,19 @@ contract EscrowAdapterClaimableTest is Test {
         _refund(DAY, bidder);
         assertEq(token.balanceOf(bidder) - before, amount, "the claim pays what the view reported");
 
-        (amount, claimableAt) = escrow.getClaimableRefund(DAY, bidder);
+        (amount, claimableAt) = escrow.returnableAmount(DAY, bidder);
         assertEq(amount, 0, "nothing left");
         assertEq(claimableAt, 0, "no date either");
     }
 
     function test_NothingToClaimWithoutALock() public view {
-        (uint128 amount, uint32 claimableAt) = escrow.getClaimableRefund(DAY, address(0xDEAD));
+        (uint128 amount, uint32 claimableAt) = escrow.returnableAmount(DAY, address(0xDEAD));
         assertEq(amount, 0);
         assertEq(claimableAt, 0);
     }
 
     function test_ADayThatNeverFinalizedOwesThePrincipal() public {
-        _assertClaimMatchesView(LOCK, uint32(block.timestamp) + escrow.UNFINALIZED_REFUND_DELAY());
+        _assertClaimMatchesView(LOCK, uint32(block.timestamp) + escrow.UNFINALIZED_RETURN_DELAY());
     }
 
     function test_ABidderLeftOutOfAFinalizedDayOwesThePrincipalAtOnce() public {
@@ -118,16 +120,16 @@ contract EscrowAdapterClaimableTest is Test {
 
     function test_ASettledLockHasNothingToClaim() public {
         _finalize(_only(bidder), 1_000_000, true);
-        (uint128 amount, uint32 claimableAt) = escrow.getClaimableRefund(DAY, bidder);
+        (uint128 amount, uint32 claimableAt) = escrow.returnableAmount(DAY, bidder);
         assertEq(amount, 0);
         assertEq(claimableAt, 0);
     }
 
     function test_AClaimDeletesTheLock() public {
-        vm.warp(block.timestamp + escrow.UNFINALIZED_REFUND_DELAY());
+        vm.warp(block.timestamp + escrow.UNFINALIZED_RETURN_DELAY());
         _refund(DAY, bidder);
 
-        IEscrowAdapter.BidLock memory lock = escrow.getBidLock(DAY, bidder);
+        IEscrowAdapter.IntexAuctionBidLock memory lock = escrow.getIntexAuctionBidLock(DAY, bidder);
         assertEq(lock.lockedAmount, 0, "amount cleared");
         assertEq(lock.lockedAt, 0, "time cleared");
         assertEq(uint8(lock.status), uint8(IEscrowAdapter.LockStatus.None), "status cleared");

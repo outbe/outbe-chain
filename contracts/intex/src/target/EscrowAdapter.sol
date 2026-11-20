@@ -40,53 +40,60 @@ contract EscrowAdapter is
     /// @notice Role identifier for auction contract integration.
     bytes32 public constant AUCTION_ROLE = keccak256("AUCTION_ROLE");
 
-    /// @notice See `EscrowTimes.UNFINALIZED_REFUND_DELAY`.
-    uint32 public constant UNFINALIZED_REFUND_DELAY = EscrowTimes.UNFINALIZED_REFUND_DELAY;
+    /// @notice See `EscrowTimes.UNFINALIZED_RETURN_DELAY`.
+    uint32 public constant UNFINALIZED_RETURN_DELAY = EscrowTimes.UNFINALIZED_RETURN_DELAY;
 
-    /// @notice Escrow-local safety window on `claimAbandonedCommitBond`, anchored at the bond's
+    /// @notice Escrow-local safety window on `unlockAbandonedIntexAuctionBidBond`, anchored at the bond's
     ///         `lockedAt`. Deliberately time-only (never consults the auction) so a bond survives
     ///         an auction-contract rotation. MUST exceed the auction-side no-reveal gate
     ///         (`revealEnd + UNREVEALED_BOND_LOCK_PERIOD`), which holds while auction schedules
     ///         span less than 29 days (daily series span ~2).
-    uint32 public constant COMMIT_BOND_ABANDON_DELAY = 30 days;
+    uint32 public constant BID_BOND_ABANDON_DELAY = 30 days;
 
-    /// @notice Escrow-local safety window on `claimAbandonedRefund`, anchored at the lock's
+    /// @notice Escrow-local safety window on `returnAbandonedIntexAuctionAsset`, anchored at the lock's
     ///         `lockedAt`. Time-only, so the money survives an auction that no longer works.
-    ///         MUST exceed `UNFINALIZED_REFUND_DELAY`.
-    uint32 public constant REFUND_ABANDON_DELAY = 30 days;
+    ///         MUST exceed `UNFINALIZED_RETURN_DELAY`.
+    uint32 public constant RETURN_ABANDON_DELAY = 30 days;
+
+    /// @dev `reason` of `IntexAuctionAssetReturned`.
+    uint8 private constant ASSET_RETURN = 0;
+    uint8 private constant ASSET_RETURN_ABANDONED = 1;
+
+    /// @dev `reason` of `IntexAuctionBidBondUnlocked` for the safety path; the auction gives the other two.
+    uint8 private constant BOND_UNLOCK_ABANDONED = 2;
 
     /// @custom:storage-location erc7201:outbe.intex.EscrowAdapter
     struct EscrowAdapterStorage {
         /// @dev IntexAuction contract address.
-        address intexAuctionContract;
+        address intexAuction;
         /// @dev The Compact contract address.
         ITheCompact compact;
         /// @dev Active payment token used for bid escrow.
-        IERC20 paymentToken;
+        IERC20 asset;
         /// @dev The Compact resource lock ID for our deposits.
         uint256 lockId;
         /// @dev Allocator ID from __registerAllocator.
         uint96 allocatorId;
         /// @dev Lock tag (allocatorId + scope + reset period) for deposits.
         bytes12 lockTag;
-        /// @dev Bid locks: emissionDay => bidder => BidLock.
-        mapping(uint32 emissionDay => mapping(address bidder => BidLock)) bidLocks;
+        /// @dev Bid locks: emissionDay => bidder => IntexAuctionBidLock.
+        mapping(uint32 emissionDay => mapping(address bidder => IntexAuctionBidLock)) bidLocks;
         /// @dev Per-series escrow state.
         mapping(uint32 emissionDay => AuctionEscrowState) auctionEscrowState;
-        /// @dev Commit-entry bonds: emissionDay => bidder => CommitBond.
-        mapping(uint32 emissionDay => mapping(address bidder => CommitBond)) commitBonds;
+        /// @dev Commit-entry bonds: emissionDay => bidder => IntexAuctionBidBond.
+        mapping(uint32 emissionDay => mapping(address bidder => IntexAuctionBidBond)) bidBonds;
         /// @dev Recipient of finalized auction proceeds (the router routing them cross-chain).
         address proceedsRecipient;
         /// @dev Assets rotated away from, keyed by the version they were active under.
-        mapping(uint8 version => AssetVersion) assetVersions;
-        /// @dev Version of the active asset held in `compact`, `paymentToken` and `lockId`.
-        uint8 currentAssetVersion;
-        /// @dev Clearing terms each day's winners paid at, recorded by its first refund chunk.
+        mapping(uint8 version => IntexAuctionAssetVersion) assetVersions;
+        /// @dev Version of the active asset held in `compact`, `asset` and `lockId`.
+        uint8 currentIntexAuctionAssetVersion;
+        /// @dev Clearing terms each day's winners charged at, recorded by its first page with winners.
         mapping(uint32 emissionDay => DayClearing) dayClearing;
         /// @dev WinNotes the auction has not redeemed yet, across all days. One may hold no money.
         uint256 openWinNotes;
         /// @dev Payment-token units in one protocol unit for the active asset.
-        uint256 paymentScale;
+        uint256 assetScale;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.EscrowAdapter")) - 1)) & ~bytes32(uint256(0xff))
@@ -120,8 +127,8 @@ contract EscrowAdapter is
     // --- Storage getters ---
     /// @notice IntexAuction contract address.
     /// @return The wired auction contract.
-    function intexAuctionContract() external view returns (address) {
-        return _s().intexAuctionContract;
+    function intexAuction() external view returns (address) {
+        return _s().intexAuction;
     }
 
     /// @notice The Compact contract address.
@@ -132,12 +139,12 @@ contract EscrowAdapter is
 
     /// @notice Active payment token used for bid escrow.
     /// @return The wired payment token.
-    function paymentToken() external view override returns (IERC20) {
-        return _s().paymentToken;
+    function intexAuctionAsset() external view override returns (IERC20) {
+        return _s().asset;
     }
 
     /// @inheritdoc IEscrowAdapter
-    function dayPaymentToken(uint32 emissionDay) external view override returns (IERC20) {
+    function dayIntexAuctionAsset(uint32 emissionDay) external view override returns (IERC20) {
         return _tokenOf(_s().auctionEscrowState[emissionDay].assetVersion);
     }
 
@@ -150,7 +157,7 @@ contract EscrowAdapter is
     function setProceedsRecipient(address recipient) external override onlyRole(DEFAULT_ADMIN_ROLE) {
         if (recipient == address(0)) revert ZeroAddress("recipient");
         _s().proceedsRecipient = recipient;
-        emit ProceedsRecipientSet(recipient);
+        emit EscrowProceedsRecipientSet(recipient);
     }
 
     /// @notice The Compact resource lock ID for our deposits.
@@ -173,35 +180,32 @@ contract EscrowAdapter is
 
     // --- Admin ---
     /// @inheritdoc IEscrowAdapter
-    function wire(address _intexAuction, address _compact, address _paymentToken)
+    function setDependencies(address _intexAuction, address _compact, address _asset)
         external
         override
         onlyRole(DEFAULT_ADMIN_ROLE)
     {
         if (_intexAuction == address(0)) revert ZeroAddress("intexAuction");
         if (_compact == address(0)) revert ZeroAddress("compact");
-        if (_paymentToken == address(0)) revert ZeroAddress("paymentToken");
+        if (_asset == address(0)) revert ZeroAddress("asset");
 
-        uint8 tokenDecimals = IERC20Metadata(_paymentToken).decimals();
-        if (tokenDecimals < BridgeMsgCodec.PROTOCOL_DECIMALS) revert PaymentTokenDecimals(tokenDecimals);
+        uint8 tokenDecimals = IERC20Metadata(_asset).decimals();
+        if (tokenDecimals < BridgeMsgCodec.PROTOCOL_DECIMALS) revert IntexAuctionAssetDecimals(tokenDecimals);
 
         EscrowAdapterStorage storage $ = _s();
 
         // A rotation retires the active asset under its version. Locks and bonds taken under it
         // keep withdrawing from it. The first deposit under the new token/Compact bootstraps its
         // own lock.
-        bool rotatingPaymentToken = address($.paymentToken) != address(0) && _paymentToken != address($.paymentToken);
+        bool rotatingPaymentToken = address($.asset) != address(0) && _asset != address($.asset);
         bool rotatingCompact = address($.compact) != address(0) && _compact != address($.compact);
         if (rotatingPaymentToken || rotatingCompact) {
-            uint8 retired = $.currentAssetVersion;
-            $.assetVersions[retired] = AssetVersion({
-                compact: address($.compact),
-                paymentToken: $.paymentToken,
-                lockId: $.lockId,
-                paymentScale: $.paymentScale
+            uint8 retired = $.currentIntexAuctionAssetVersion;
+            $.assetVersions[retired] = IntexAuctionAssetVersion({
+                compact: address($.compact), asset: $.asset, lockId: $.lockId, assetScale: $.assetScale
             });
-            $.currentAssetVersion = retired + 1;
-            emit AssetRetired(retired, address($.compact), address($.paymentToken), $.lockId);
+            $.currentIntexAuctionAssetVersion = retired + 1;
+            emit IntexAuctionAssetVersionRetired(retired, address($.compact), address($.asset), $.lockId);
             $.lockId = 0;
             // A new Compact needs its own allocator registration. Drop the stale
             // allocatorId/lockTag.
@@ -212,34 +216,28 @@ contract EscrowAdapter is
         }
 
         // The bidders of a previous auction claim through it, so it stays until nothing is left.
-        if ($.intexAuctionContract != address(0) && _intexAuction != $.intexAuctionContract) {
+        if ($.intexAuction != address(0) && _intexAuction != $.intexAuction) {
             if (_hasOutstandingLocks()) revert LocksOutstanding();
-            _revokeRole(AUCTION_ROLE, $.intexAuctionContract);
+            _revokeRole(AUCTION_ROLE, $.intexAuction);
         }
 
-        // Capture the pre-rotation dependencies so `Wired` is log-reconstructible (old+new).
-        address intexAuctionOld = $.intexAuctionContract;
-        address compactOld = address($.compact);
-        address paymentTokenOld = address($.paymentToken);
-
-        $.intexAuctionContract = _intexAuction;
+        $.intexAuction = _intexAuction;
         $.compact = ITheCompact(_compact);
-        $.paymentToken = IERC20(_paymentToken);
-        $.paymentScale = 10 ** (tokenDecimals - BridgeMsgCodec.PROTOCOL_DECIMALS);
+        $.asset = IERC20(_asset);
+        $.assetScale = 10 ** (tokenDecimals - BridgeMsgCodec.PROTOCOL_DECIMALS);
 
         _grantRole(AUCTION_ROLE, _intexAuction);
-        $.paymentToken.forceApprove(_compact, 0);
-        $.paymentToken.forceApprove(_compact, type(uint256).max);
+        $.asset.forceApprove(_compact, 0);
+        $.asset.forceApprove(_compact, type(uint256).max);
 
         // CEI deviation: allocatorId / lockTag depend on __registerAllocator's return. Admin-only.
         // A re-entrant `compact` lacks DEFAULT_ADMIN_ROLE, so re-entry can't reach here.
         if ($.allocatorId == 0) {
-            // aderyn-fp-next-line(reentrancy-state-change)
             $.allocatorId = $.compact.__registerAllocator(address(this), "");
             $.lockTag = _buildLockTag($.allocatorId, Scope.ChainSpecific, ResetPeriod.OneMinute);
         }
 
-        emit Wired(intexAuctionOld, _intexAuction, compactOld, _compact, paymentTokenOld, _paymentToken);
+        emit EscrowDependenciesSet(_intexAuction, _compact, _asset, tokenDecimals);
     }
 
     // --- IAllocator Implementation ---
@@ -282,7 +280,7 @@ contract EscrowAdapter is
 
     // --- Auction Integration ---
     /// @inheritdoc IEscrowAdapter
-    function lockFunds(uint32 emissionDay, address bidder, uint128 basis, uint32 bidRate, uint16 quantity)
+    function lockIntexAuctionAsset(uint32 emissionDay, address bidder, uint128 basis, uint32 bidRate, uint16 quantity)
         external
         override
         onlyRole(AUCTION_ROLE)
@@ -290,16 +288,16 @@ contract EscrowAdapter is
     {
         if (bidRate == 0) revert ZeroValue("bidRate");
         if (quantity == 0) revert ZeroValue("quantity");
-        uint128 amount = _toPayment(_protocolAmount(quantity, basis, bidRate), _s().currentAssetVersion);
+        uint128 amount = _toAssetAmount(_protocolAmount(quantity, basis, bidRate), _s().currentIntexAuctionAssetVersion);
         _validateLockInputs(emissionDay, bidder, amount);
-        _executeLock(emissionDay, bidder, amount, bidRate, quantity);
+        _lockIntexAuctionAsset(emissionDay, bidder, amount, bidRate, quantity);
     }
 
     // --- Commit bonds ---
     /// @inheritdoc IEscrowAdapter
-    /// @dev Trust boundary: `bidder` is the original `msg.sender` of `IntexAuction.commitBid`,
-    ///      forwarded through the `AUCTION_ROLE`-gated entry point (mirrors `lockFunds`).
-    function lockCommitBond(uint32 emissionDay, address bidder, uint128 amount)
+    /// @dev Trust boundary: `bidder` is the original `msg.sender` of `IntexAuction.commitIntexAuctionBid`,
+    ///      forwarded through the `AUCTION_ROLE`-gated entry point (mirrors `lockIntexAuctionAsset`).
+    function lockIntexAuctionBidBond(uint32 emissionDay, address bidder, uint128 amount)
         external
         override
         onlyRole(AUCTION_ROLE)
@@ -309,61 +307,64 @@ contract EscrowAdapter is
         if (bidder == address(0)) revert ZeroAddress("bidder");
         if (amount == 0) revert ZeroValue("amount");
         EscrowAdapterStorage storage $ = _s();
-        if ($.commitBonds[emissionDay][bidder].amount != 0) revert CommitBondAlreadyLocked();
-        amount = _toPayment(amount, $.currentAssetVersion);
+        if ($.bidBonds[emissionDay][bidder].amount != 0) revert IntexAuctionBidBondAlreadyLocked();
+        amount = _toAssetAmount(amount, $.currentIntexAuctionAssetVersion);
 
-        // CEI deviation mirrors `_executeLock`: the one-time lockId bootstrap inside
+        // CEI deviation mirrors `_lockIntexAuctionAsset`: the one-time lockId bootstrap inside
         // `_depositToCompact` needs depositERC20's return. nonReentrant covers the deviation.
         // slither-disable-next-line arbitrary-send-erc20
-        $.paymentToken.safeTransferFrom(bidder, address(this), amount);
+        $.asset.safeTransferFrom(bidder, address(this), amount);
         _depositToCompact(amount);
 
-        $.commitBonds[emissionDay][bidder] =
-            CommitBond({amount: amount, lockedAt: uint32(block.timestamp), assetVersion: $.currentAssetVersion});
-        emit CommitBondLocked(emissionDay, bidder, amount);
+        $.bidBonds[emissionDay][bidder] = IntexAuctionBidBond({
+            amount: amount, lockedAt: uint32(block.timestamp), assetVersion: $.currentIntexAuctionAssetVersion
+        });
+        emit IntexAuctionBidBondLocked(emissionDay, bidder, address($.asset), amount);
     }
 
     /// @inheritdoc IEscrowAdapter
-    function releaseCommitBond(uint32 emissionDay, address bidder)
+    function unlockIntexAuctionBidBond(uint32 emissionDay, address bidder, uint8 reason)
         external
         override
         onlyRole(AUCTION_ROLE)
         nonReentrant
     {
-        _releaseCommitBond(emissionDay, bidder);
+        _unlockIntexAuctionBidBond(emissionDay, bidder, reason);
     }
 
     /// @inheritdoc IEscrowAdapter
-    function claimAbandonedCommitBond(uint32 emissionDay, address bidder) external override nonReentrant {
-        CommitBond storage bond = _s().commitBonds[emissionDay][bidder];
-        if (bond.amount == 0) revert CommitBondNotFound();
-        uint32 claimableAt = bond.lockedAt + COMMIT_BOND_ABANDON_DELAY;
-        if (block.timestamp < claimableAt) revert CommitBondNotYetAbandoned(claimableAt, uint32(block.timestamp));
-        _releaseCommitBond(emissionDay, bidder);
+    function unlockAbandonedIntexAuctionBidBond(uint32 emissionDay, address bidder) external override nonReentrant {
+        IntexAuctionBidBond storage bond = _s().bidBonds[emissionDay][bidder];
+        if (bond.amount == 0) revert IntexAuctionBidBondNotFound();
+        uint32 unlockableAt = bond.lockedAt + BID_BOND_ABANDON_DELAY;
+        if (block.timestamp < unlockableAt) {
+            revert IntexAuctionBidBondNotYetAbandoned(unlockableAt, uint32(block.timestamp));
+        }
+        _unlockIntexAuctionBidBond(emissionDay, bidder, BOND_UNLOCK_ABANDONED);
     }
 
     /// @dev Delete the bond record, withdraw from The Compact, and pay the stored bidder.
-    ///      CEI: the delete precedes both external calls. A re-claim reverts `CommitBondNotFound`.
-    function _releaseCommitBond(uint32 emissionDay, address bidder) internal {
+    ///      CEI: the delete precedes both external calls. A re-claim reverts `IntexAuctionBidBondNotFound`.
+    function _unlockIntexAuctionBidBond(uint32 emissionDay, address bidder, uint8 reason) internal {
         EscrowAdapterStorage storage $ = _s();
-        CommitBond memory bond = $.commitBonds[emissionDay][bidder];
-        if (bond.amount == 0) revert CommitBondNotFound();
+        IntexAuctionBidBond memory bond = $.bidBonds[emissionDay][bidder];
+        if (bond.amount == 0) revert IntexAuctionBidBondNotFound();
         uint128 amount = bond.amount;
 
         // Effects
-        delete $.commitBonds[emissionDay][bidder];
+        delete $.bidBonds[emissionDay][bidder];
 
         // Interactions
         _withdrawFromCompact(bond.assetVersion, amount);
-        _tokenOf(bond.assetVersion).safeTransfer(bidder, amount);
-        emit CommitBondReleased(emissionDay, bidder, amount);
+        IERC20 token = _tokenOf(bond.assetVersion);
+        token.safeTransfer(bidder, amount);
+        emit IntexAuctionBidBondUnlocked(emissionDay, bidder, address(token), amount, reason);
     }
 
     // --- Bridge Finalization ---
     /// @inheritdoc IEscrowAdapter
-    function finalizeAuction(
+    function chargeIntexAuctionAsset(
         uint32 emissionDay,
-        bytes32 receiveId,
         address[] calldata winners,
         uint16 partialIndex,
         uint16 partialWon,
@@ -379,24 +380,23 @@ contract EscrowAdapter is
             state.finalizedAt = uint32(block.timestamp);
         }
         if (partialWon != 0 && partialIndex >= winners.length) {
-            revert PartialFillOutsideChunk(partialIndex, winners.length);
+            revert PartialFillOutsidePage(partialIndex, winners.length);
         }
         if (winners.length != 0) _recordClearing(emissionDay, clearingRate, basis);
 
-        uint128 totalOwed = 0;
-        uint32 settled = 0;
         for (uint256 i = 0; i < winners.length; ++i) {
             address bidder = winners[i];
-            BidLock storage lock = $.bidLocks[emissionDay][bidder];
+            IntexAuctionBidLock storage lock = $.bidLocks[emissionDay][bidder];
             if (lock.status != LockStatus.Locked) {
-                emit BidderRefundFailed(receiveId, emissionDay, bidder, abi.encodeWithSelector(LockNotActive.selector));
+                emit IntexAuctionWinNoteCreateFailed(
+                    emissionDay, bidder, abi.encodeWithSelector(LockNotActive.selector)
+                );
                 continue;
             }
             uint16 quantity = lock.quantity;
             if (partialWon != 0 && i == partialIndex) {
                 if (partialWon >= quantity) {
-                    emit BidderRefundFailed(
-                        receiveId,
+                    emit IntexAuctionWinNoteCreateFailed(
                         emissionDay,
                         bidder,
                         abi.encodeWithSelector(PartialFillNotPartial.selector, partialWon, quantity)
@@ -406,28 +406,27 @@ contract EscrowAdapter is
                 quantity = partialWon;
             }
             uint128 locked = lock.lockedAmount;
-            uint256 paid = _protocolAmount(quantity, basis, clearingRate) * _scaleOf(state.assetVersion);
-            if (paid > locked) {
-                emit BidderRefundFailed(
-                    receiveId, emissionDay, bidder, abi.encodeWithSelector(PaymentExceedsLock.selector, locked, paid)
+            uint256 charged = _protocolAmount(quantity, basis, clearingRate) * _scaleOf(state.assetVersion);
+            if (charged > locked) {
+                emit IntexAuctionWinNoteCreateFailed(
+                    emissionDay, bidder, abi.encodeWithSelector(ChargeExceedsLock.selector, locked, charged)
                 );
                 continue;
             }
 
             // forge-lint: disable-next-line(unsafe-typecast) -- bounded by `locked` just above
-            uint128 change = locked - uint128(paid);
+            uint128 change = locked - uint128(charged);
             totalPaid += locked - change;
             lock.status = LockStatus.Won;
             lock.quantity = quantity;
             lock.lockedAmount = change;
-            totalOwed += change;
-            ++settled;
             ++$.openWinNotes;
+            address asset = address(_tokenOf(state.assetVersion));
+            emit IntexAuctionAssetCharged(emissionDay, bidder, asset, charged);
+            emit IntexAuctionWinNoteCreated(emissionDay, bidder, quantity);
         }
 
         if (totalPaid > 0) state.totalLocked -= totalPaid;
-        emit AuctionEscrowFinalized(receiveId, emissionDay, totalOwed, totalPaid, uint32(winners.length));
-        if (winners.length != 0 && settled == 0) emit FinalizationNoOp(emissionDay, uint32(winners.length));
 
         if (totalPaid > 0) {
             address recipient = $.proceedsRecipient;
@@ -452,7 +451,7 @@ contract EscrowAdapter is
     }
 
     /// @inheritdoc IEscrowAdapter
-    function releaseRefund(uint32 emissionDay, address bidder)
+    function returnIntexAuctionAsset(uint32 emissionDay, address bidder)
         external
         override
         onlyRole(AUCTION_ROLE)
@@ -462,7 +461,7 @@ contract EscrowAdapter is
         if (bidder == address(0)) revert ZeroAddress("bidder");
 
         EscrowAdapterStorage storage $ = _s();
-        BidLock storage lock = $.bidLocks[emissionDay][bidder];
+        IntexAuctionBidLock storage lock = $.bidLocks[emissionDay][bidder];
         AuctionEscrowState storage state = $.auctionEscrowState[emissionDay];
         finalized = state.finalized;
         LockStatus status = lock.status;
@@ -472,37 +471,42 @@ contract EscrowAdapter is
             return (true, true);
         }
 
-        (uint128 refund, uint32 claimableAt) = _claimable(state, lock);
-        if (block.timestamp < claimableAt) revert RefundNotYetClaimable(claimableAt, uint32(block.timestamp));
-        closed = _release(emissionDay, state, lock, bidder, refund);
+        (uint128 returnedAmount, uint32 returnableAt) = _returnable(state, lock);
+        if (block.timestamp < returnableAt) {
+            revert IntexAuctionAssetNotYetReturnable(returnableAt, uint32(block.timestamp));
+        }
+        closed = _release(emissionDay, state, lock, bidder, returnedAmount, ASSET_RETURN);
     }
 
     /// @inheritdoc IEscrowAdapter
-    function claimAbandonedRefund(uint32 emissionDay, address bidder) external override nonReentrant {
+    function returnAbandonedIntexAuctionAsset(uint32 emissionDay, address bidder) external override nonReentrant {
         EscrowAdapterStorage storage $ = _s();
-        BidLock storage lock = $.bidLocks[emissionDay][bidder];
+        IntexAuctionBidLock storage lock = $.bidLocks[emissionDay][bidder];
         if (lock.status == LockStatus.None) revert LockNotActive();
-        uint32 claimableAt = lock.lockedAt + REFUND_ABANDON_DELAY;
-        if (block.timestamp < claimableAt) revert RefundNotYetAbandoned(claimableAt, uint32(block.timestamp));
-        _release(emissionDay, $.auctionEscrowState[emissionDay], lock, bidder, lock.lockedAmount);
+        uint32 returnableAt = lock.lockedAt + RETURN_ABANDON_DELAY;
+        if (block.timestamp < returnableAt) revert ReturnNotYetAbandoned(returnableAt, uint32(block.timestamp));
+        _release(
+            emissionDay, $.auctionEscrowState[emissionDay], lock, bidder, lock.lockedAmount, ASSET_RETURN_ABANDONED
+        );
     }
 
-    /// @dev Pay `refund` out of the lock. A winner's lock keeps its units, any other lock is deleted.
+    /// @dev Pay `returnedAmount` out of the lock. A winner's lock keeps its units, any other lock is deleted.
     function _release(
         uint32 emissionDay,
         AuctionEscrowState storage state,
-        BidLock storage lock,
+        IntexAuctionBidLock storage lock,
         address bidder,
-        uint128 refund
+        uint128 returnedAmount,
+        uint8 reason
     ) private returns (bool closed) {
         if (lock.status == LockStatus.Won) {
-            if (refund == 0) revert NothingToRefund();
+            if (returnedAmount == 0) revert NothingToReturn();
             lock.lockedAmount = 0;
         } else {
             delete _s().bidLocks[emissionDay][bidder];
             closed = true;
         }
-        _payOut(emissionDay, state, bidder, refund);
+        _returnAsset(emissionDay, state, bidder, returnedAmount, reason);
     }
 
     /// @inheritdoc IEscrowAdapter
@@ -514,64 +518,81 @@ contract EscrowAdapter is
         returns (uint16 units)
     {
         EscrowAdapterStorage storage $ = _s();
-        BidLock storage lock = $.bidLocks[emissionDay][bidder];
+        IntexAuctionBidLock storage lock = $.bidLocks[emissionDay][bidder];
         if (lock.status != LockStatus.Won) revert LockNotActive();
         units = lock.quantity;
         uint128 change = lock.lockedAmount;
         delete $.bidLocks[emissionDay][bidder];
         --$.openWinNotes;
-        if (change > 0) _payOut(emissionDay, $.auctionEscrowState[emissionDay], bidder, change);
+        if (change > 0) _returnAsset(emissionDay, $.auctionEscrowState[emissionDay], bidder, change, ASSET_RETURN);
     }
 
     /// @dev Withdraw `amount` of the day's escrow from The Compact and pay it to `bidder`.
-    function _payOut(uint32 emissionDay, AuctionEscrowState storage state, address bidder, uint128 amount) private {
+    function _returnAsset(
+        uint32 emissionDay,
+        AuctionEscrowState storage state,
+        address bidder,
+        uint128 amount,
+        uint8 reason
+    ) private {
         // A winner's payment already left with the day's proceeds, so this is all the lock held.
         state.totalLocked -= amount;
         uint8 version = state.assetVersion;
         _withdrawFromCompact(version, amount);
-        _tokenOf(version).safeTransfer(bidder, amount);
-        emit FundsRefunded(bytes32(0), emissionDay, bidder, amount);
+        IERC20 token = _tokenOf(version);
+        token.safeTransfer(bidder, amount);
+        emit IntexAuctionAssetReturned(emissionDay, bidder, address(token), amount, reason);
     }
 
     /// @dev What a live lock is owed and from when. A winner is owed its change at once.
     ///      A bidder the finalized day never named lost and is owed its principal at once. A day
     ///      that never finalized owes the principal after the delay.
-    function _claimable(AuctionEscrowState storage state, BidLock storage lock)
+    function _returnable(AuctionEscrowState storage state, IntexAuctionBidLock storage lock)
         private
         view
-        returns (uint128 refund, uint32 claimableAt)
+        returns (uint128 returnedAmount, uint32 claimableAt)
     {
         if (lock.status == LockStatus.Won) return (lock.lockedAmount, 0);
-        if (!state.finalized) return (lock.lockedAmount, lock.lockedAt + UNFINALIZED_REFUND_DELAY);
+        if (!state.finalized) return (lock.lockedAmount, lock.lockedAt + UNFINALIZED_RETURN_DELAY);
         return (lock.lockedAmount, 0);
     }
 
     // --- Views ---
     /// @inheritdoc IEscrowAdapter
-    function getBidLock(uint32 emissionDay, address bidder) external view override returns (BidLock memory) {
+    function getIntexAuctionBidLock(uint32 emissionDay, address bidder)
+        external
+        view
+        override
+        returns (IntexAuctionBidLock memory)
+    {
         return _s().bidLocks[emissionDay][bidder];
     }
 
     /// @inheritdoc IEscrowAdapter
-    function getClaimableRefund(uint32 emissionDay, address bidder)
+    function returnableAmount(uint32 emissionDay, address bidder)
         external
         view
         override
         returns (uint128 amount, uint32 claimableAt)
     {
         EscrowAdapterStorage storage $ = _s();
-        BidLock storage lock = $.bidLocks[emissionDay][bidder];
+        IntexAuctionBidLock storage lock = $.bidLocks[emissionDay][bidder];
         if (lock.status != LockStatus.Locked && lock.status != LockStatus.Won) return (0, 0);
-        return _claimable($.auctionEscrowState[emissionDay], lock);
+        return _returnable($.auctionEscrowState[emissionDay], lock);
     }
 
     /// @inheritdoc IEscrowAdapter
-    function getCommitBond(uint32 emissionDay, address bidder) external view override returns (CommitBond memory) {
-        return _s().commitBonds[emissionDay][bidder];
+    function getIntexAuctionBidBond(uint32 emissionDay, address bidder)
+        external
+        view
+        override
+        returns (IntexAuctionBidBond memory)
+    {
+        return _s().bidBonds[emissionDay][bidder];
     }
 
     /// @inheritdoc IEscrowAdapter
-    function getAuctionStatus(uint32 emissionDay)
+    function auctionStatus(uint32 emissionDay)
         external
         view
         override
@@ -591,8 +612,8 @@ contract EscrowAdapter is
         EscrowAdapterStorage storage $ = _s();
         if ($.openWinNotes != 0) return true;
         if ($.lockId != 0 && IERC6909(address($.compact)).balanceOf(address(this), $.lockId) != 0) return true;
-        for (uint8 v = 0; v < $.currentAssetVersion; ++v) {
-            AssetVersion storage retired = $.assetVersions[v];
+        for (uint8 v = 0; v < $.currentIntexAuctionAssetVersion; ++v) {
+            IntexAuctionAssetVersion storage retired = $.assetVersions[v];
             if (retired.lockId != 0 && IERC6909(retired.compact).balanceOf(address(this), retired.lockId) != 0) {
                 return true;
             }
@@ -601,19 +622,21 @@ contract EscrowAdapter is
     }
 
     /// @inheritdoc IEscrowAdapter
-    function currentAssetVersion() external view override returns (uint8) {
-        return _s().currentAssetVersion;
+    function currentIntexAuctionAssetVersion() external view override returns (uint8) {
+        return _s().currentIntexAuctionAssetVersion;
     }
 
     /// @inheritdoc IEscrowAdapter
-    function getAssetVersion(uint8 version) external view override returns (AssetVersion memory) {
+    function getIntexAuctionAssetVersion(uint8 version)
+        external
+        view
+        override
+        returns (IntexAuctionAssetVersion memory)
+    {
         EscrowAdapterStorage storage $ = _s();
-        if (version == $.currentAssetVersion) {
-            return AssetVersion({
-                compact: address($.compact),
-                paymentToken: $.paymentToken,
-                lockId: $.lockId,
-                paymentScale: $.paymentScale
+        if (version == $.currentIntexAuctionAssetVersion) {
+            return IntexAuctionAssetVersion({
+                compact: address($.compact), asset: $.asset, lockId: $.lockId, assetScale: $.assetScale
             });
         }
         return $.assetVersions[version];
@@ -633,39 +656,39 @@ contract EscrowAdapter is
         if (bidder == address(0)) revert ZeroAddress("bidder");
         if (amount == 0) revert ZeroValue("amount");
         if (_s().bidLocks[emissionDay][bidder].status != LockStatus.None) {
-            revert BidAlreadyLocked();
+            revert IntexAuctionBidAlreadyLocked();
         }
     }
 
     /// @notice Execute the lock operation - transfer from the bidder and deposit to The Compact.
     /// @dev Bootstraps `lockId` and forced withdrawal on the first deposit, then records the
-    ///      `BidLock` and bumps the per-series escrow stats.
+    ///      `IntexAuctionBidLock` and bumps the per-series escrow stats.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder address.
     /// @param amount Amount to lock.
-    /// @dev Trust boundary: `bidder` is the original `msg.sender` of `IntexAuction.revealBid`,
-    ///      forwarded through the `AUCTION_ROLE`-gated `lockFunds` entry point. Safety relies
+    /// @dev Trust boundary: `bidder` is the original `msg.sender` of `IntexAuction.revealIntexAuctionBid`,
+    ///      forwarded through the `AUCTION_ROLE`-gated `lockIntexAuctionAsset` entry point. Safety relies
     ///      on `AUCTION_ROLE` only ever being granted to the wired `IntexAuction` contract.
-    function _executeLock(uint32 emissionDay, address bidder, uint128 amount, uint32 bidRate, uint16 quantity)
+    function _lockIntexAuctionAsset(uint32 emissionDay, address bidder, uint128 amount, uint32 bidRate, uint16 quantity)
         internal
     {
         EscrowAdapterStorage storage $ = _s();
         AuctionEscrowState storage state = $.auctionEscrowState[emissionDay];
         // A day's locks share one asset, so its proceeds leave in one withdrawal.
-        uint8 version = $.currentAssetVersion;
+        uint8 version = $.currentIntexAuctionAssetVersion;
         if (state.lockCount != 0 && state.assetVersion != version) {
-            revert DayAssetRetired(emissionDay, state.assetVersion);
+            revert DayIntexAuctionAssetRetired(emissionDay, state.assetVersion);
         }
 
         // CEI deviation: only the one-time lockId bootstrap needs depositERC20's return before
         // writing. Per-call bidLocks / auctionEscrowState writes follow for locality and could
         // move above. nonReentrant on every outer entrypoint covers the deviation regardless.
         // slither-disable-next-line arbitrary-send-erc20
-        $.paymentToken.safeTransferFrom(bidder, address(this), amount);
+        $.asset.safeTransferFrom(bidder, address(this), amount);
         _depositToCompact(amount);
 
         // Store lock data.
-        $.bidLocks[emissionDay][bidder] = BidLock({
+        $.bidLocks[emissionDay][bidder] = IntexAuctionBidLock({
             lockedAmount: amount,
             lockedAt: uint32(block.timestamp),
             status: LockStatus.Locked,
@@ -678,7 +701,7 @@ contract EscrowAdapter is
         ++state.lockCount;
         state.totalLocked += amount;
 
-        emit FundsLocked(emissionDay, bidder, amount);
+        emit IntexAuctionAssetLocked(emissionDay, bidder, address($.asset), amount);
     }
 
     /// @notice Deposit `amount` of the payment token into The Compact (we receive ERC6909 tokens).
@@ -688,7 +711,7 @@ contract EscrowAdapter is
     /// @param amount Amount to deposit.
     function _depositToCompact(uint128 amount) internal {
         EscrowAdapterStorage storage $ = _s();
-        uint256 returnedLockId = $.compact.depositERC20(address($.paymentToken), $.lockTag, amount, address(this));
+        uint256 returnedLockId = $.compact.depositERC20(address($.asset), $.lockTag, amount, address(this));
         if ($.lockId == 0) {
             $.lockId = returnedLockId;
             // slither-disable-next-line unused-return
@@ -704,7 +727,7 @@ contract EscrowAdapter is
     /// @param amount Amount to withdraw.
     function _withdrawFromCompact(uint8 version, uint128 amount) internal {
         EscrowAdapterStorage storage $ = _s();
-        (ITheCompact compactOf, uint256 idOf) = version == $.currentAssetVersion
+        (ITheCompact compactOf, uint256 idOf) = version == $.currentIntexAuctionAssetVersion
             ? ($.compact, $.lockId)
             : (ITheCompact($.assetVersions[version].compact), $.assetVersions[version].lockId);
         if (idOf == 0) revert NoDeposits();
@@ -715,13 +738,13 @@ contract EscrowAdapter is
     /// @dev Payment token of the asset `version` refers to.
     function _tokenOf(uint8 version) internal view returns (IERC20) {
         EscrowAdapterStorage storage $ = _s();
-        return version == $.currentAssetVersion ? $.paymentToken : $.assetVersions[version].paymentToken;
+        return version == $.currentIntexAuctionAssetVersion ? $.asset : $.assetVersions[version].asset;
     }
 
     /// @dev Payment-token units in one protocol unit for the asset `version` refers to.
     function _scaleOf(uint8 version) internal view returns (uint256) {
         EscrowAdapterStorage storage $ = _s();
-        return version == $.currentAssetVersion ? $.paymentScale : $.assetVersions[version].paymentScale;
+        return version == $.currentIntexAuctionAssetVersion ? $.assetScale : $.assetVersions[version].assetScale;
     }
 
     /// @dev `quantity` Intexes at `rate` of the protocol `basis`: the lock a bid takes and the
@@ -731,9 +754,9 @@ contract EscrowAdapter is
     }
 
     /// @dev A protocol `amount` in units of the asset `version` refers to.
-    function _toPayment(uint256 amount, uint8 version) internal view returns (uint128) {
+    function _toAssetAmount(uint256 amount, uint8 version) internal view returns (uint128) {
         uint256 scaled = amount * _scaleOf(version);
-        if (scaled > type(uint128).max) revert PaymentAmountOverflow(scaled);
+        if (scaled > type(uint128).max) revert IntexAuctionAssetAmountOverflow(scaled);
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded just above
         return uint128(scaled);
     }

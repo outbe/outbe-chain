@@ -5,7 +5,7 @@ use std::fs;
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
-use eyre::{bail, ensure, eyre, Result, WrapErr as _};
+use eyre::{ensure, eyre, Result, WrapErr as _};
 use serde_json::{json, Map, Value};
 use sha2::{Digest as _, Sha256};
 use time::OffsetDateTime;
@@ -17,17 +17,6 @@ pub const EXPECTED_ARTIFACTS: &[&str] = &[
     "outbe-keygen",
     "outbe-feeder",
     "outbe-radicle",
-    "outbe-tee-enclave",
-];
-
-pub const PRODUCTION_TEE_FORBIDDEN_MARKERS: &[&[u8]] = &[
-    b"outbe-tee-enclave-mock: MOCK ENCLAVE",
-    b"outbe-dcap-capture-enclave",
-    b"OUTBE_QVL_TEST_TRACE",
-    b"OUTBE_QVL_BEGIN",
-    b"OUTBE_QVL_END",
-    b"explicit development seed",
-    b"development offer-secret fallback",
 ];
 
 #[derive(Clone, Debug)]
@@ -102,7 +91,8 @@ pub fn verify_version_text(
             "missing exact Outbe target/profile line: {expected_profile}"
         ));
     }
-    let expected_features = "Build Features: no features enabled";
+    // Vergen lowercases the CARGO_FEATURE_NATIVE_DCAP environment variable name.
+    let expected_features = "Build Features: native_dcap";
     if lines.iter().filter(|&&l| l == expected_features).count() != 1 {
         differences.push(format!(
             "expected one exact Outbe feature line: {expected_features}"
@@ -193,67 +183,57 @@ pub fn validate_build_spec(build_spec: &Value) -> Result<()> {
         .get("artifacts")
         .and_then(Value::as_array)
         .ok_or_else(|| eyre!("release artifacts must have unique non-empty names"))?;
-    validate_artifacts(artifacts)
+    validate_artifacts(artifacts)?;
+    Ok(())
 }
 
-fn validate_artifacts(artifacts: &[Value]) -> Result<()> {
-    let names: Vec<&str> = artifacts
-        .iter()
-        .filter_map(|a| a.get("name").and_then(Value::as_str))
-        .filter(|s| !s.is_empty())
-        .collect();
-    let unique_names: BTreeSet<&str> = names.iter().copied().collect();
-    ensure!(
-        !names.is_empty() && names.len() == artifacts.len() && unique_names.len() == names.len(),
-        "release artifacts must have unique non-empty names"
-    );
+#[derive(Debug, thiserror::Error)]
+enum ArtifactSpecError {
+    #[error("release artifacts must have unique non-empty names")]
+    InvalidNames,
+    #[error("release artifacts must contain the outbe-chain node")]
+    MissingProductionNode,
+    #[error("outbe-chain must be the production node package and binary")]
+    InvalidNodeIdentity,
+    #[error("production node feature set must be exactly native-dcap")]
+    InvalidNodeFeatures,
+    #[error("non-node release artifacts must not enable application features")]
+    UnexpectedOtherFeatures,
+}
 
-    let production_enclaves: Vec<&Value> = artifacts
-        .iter()
-        .filter(|a| {
-            a.get("role").and_then(Value::as_str) == Some("tee-enclave")
-                && a.get("classification").and_then(Value::as_str) == Some("production")
-        })
-        .collect();
-    ensure!(
-        production_enclaves.len() == 1,
-        "release artifacts must contain exactly one production enclave"
-    );
-    let enclave = production_enclaves[0];
-    ensure!(
-        enclave.get("name").and_then(Value::as_str) == Some("outbe-tee-enclave")
-            && enclave.get("package").and_then(Value::as_str) == Some("outbe-tee-enclave"),
-        "production enclave package and binary must be outbe-tee-enclave"
-    );
-    let enclave_features = enclave.get("features").and_then(Value::as_array);
-    let is_exact_dcap = enclave_features
-        .is_some_and(|f| f.len() == 1 && f[0].as_str() == Some("production-dcap-release"));
-    if !is_exact_dcap {
-        let feature_list = match enclave_features {
-            Some(arr) if !arr.is_empty() => arr
-                .iter()
-                .map(|v| v.as_str().unwrap_or_default().to_owned())
-                .collect::<Vec<_>>()
-                .join(", "),
-            Some(_) => "empty".to_owned(),
-            None => "missing".to_owned(),
-        };
-        if feature_list == "mock" {
-            bail!("production enclave must not enable the mock feature");
-        }
-        bail!(
-            "production enclave feature set must be exactly production-dcap-release (got: {feature_list})"
-        );
-    }
-
+fn validate_artifacts(artifacts: &[Value]) -> Result<(), ArtifactSpecError> {
+    let mut names = BTreeSet::new();
     for artifact in artifacts {
-        if !std::ptr::eq(artifact, enclave) {
-            let features = artifact.get("features").and_then(Value::as_array);
-            ensure!(
-                features.is_some_and(Vec::is_empty),
-                "non-enclave release artifacts must not enable application features"
-            );
+        let name = artifact
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty() && names.insert(*name))
+            .ok_or(ArtifactSpecError::InvalidNames)?;
+        let features = artifact.get("features").and_then(Value::as_array);
+        if name == "outbe-chain" {
+            validate_production_node(artifact, features.map(Vec::as_slice))?;
+        } else if !features.is_some_and(Vec::is_empty) {
+            return Err(ArtifactSpecError::UnexpectedOtherFeatures);
         }
+    }
+    if !names.contains("outbe-chain") {
+        return Err(ArtifactSpecError::MissingProductionNode);
+    }
+    Ok(())
+}
+
+fn validate_production_node(
+    node: &Value,
+    features: Option<&[Value]>,
+) -> Result<(), ArtifactSpecError> {
+    if node.get("role").and_then(Value::as_str) != Some("node")
+        || node.get("package").and_then(Value::as_str) != Some("outbe-chain")
+        || node.get("classification").and_then(Value::as_str) != Some("production")
+    {
+        return Err(ArtifactSpecError::InvalidNodeIdentity);
+    }
+    if !features.is_some_and(|f| f.len() == 1 && f[0].as_str() == Some("native-dcap")) {
+        return Err(ArtifactSpecError::InvalidNodeFeatures);
     }
     Ok(())
 }
@@ -305,24 +285,6 @@ fn artifact_record(spec: &Value, artifact_dir: &Path, target: &str) -> Result<Va
         .unwrap_or_default();
     features.sort();
 
-    let is_prod_enclave = spec.get("role").and_then(Value::as_str) == Some("tee-enclave")
-        && spec.get("classification").and_then(Value::as_str) == Some("production");
-    if is_prod_enclave {
-        ensure!(
-            !features.iter().any(|f| f == "mock"),
-            "production enclave must not enable the mock feature"
-        );
-        let raw = fs::read(&path)?;
-        for &marker in PRODUCTION_TEE_FORBIDDEN_MARKERS {
-            if raw.windows(marker.len()).any(|w| w == marker) {
-                bail!(
-                    "production enclave contains forbidden test/dev marker: {}",
-                    std::str::from_utf8(marker).unwrap_or("<binary>")
-                );
-            }
-        }
-    }
-
     let mut install_profiles: Vec<String> = spec["install_profiles"]
         .as_array()
         .ok_or_else(|| eyre!("missing install_profiles"))?
@@ -354,12 +316,6 @@ fn artifact_record(spec: &Value, artifact_dir: &Path, target: &str) -> Result<Va
     );
     record.insert("role".to_owned(), spec["role"].clone());
     record.insert("size".to_owned(), json!(meta.len()));
-    if spec.get("role").and_then(Value::as_str) == Some("tee-enclave") {
-        record.insert(
-            "tee".to_owned(),
-            json!({"mock": false, "stage": "unsigned-bare-elf"}),
-        );
-    }
     Ok(Value::Object(record))
 }
 
@@ -519,6 +475,56 @@ fn is_lower_hex_n(s: &str, len: usize) -> bool {
     s.len() == len
         && s.bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+/// `release/release-manifest-v1.schema.json` `$defs.artifact.properties.kind.enum`.
+const ARTIFACT_KINDS: &[&str] = &[
+    "elf",
+    "archive",
+    "native-package",
+    "sbom",
+    "oci-manifest",
+    "compose-descriptor",
+];
+
+/// `release/release-manifest-v1.schema.json` `$defs.artifact.properties.role.enum`.
+const ARTIFACT_ROLES: &[&str] = &[
+    "node",
+    "operator-cli",
+    "key-generation",
+    "price-feed",
+    "operator-sidecar",
+    "installer",
+];
+
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+enum ArtifactRoleKindError {
+    #[error("missing artifact role")]
+    MissingRole,
+    #[error("invalid artifact role: {0}")]
+    InvalidRole(String),
+    #[error("missing artifact kind")]
+    MissingKind,
+    #[error("invalid artifact kind: {0}")]
+    InvalidKind(String),
+}
+
+fn validate_artifact_role_and_kind(art: &Value) -> std::result::Result<(), ArtifactRoleKindError> {
+    let role = art
+        .get("role")
+        .and_then(Value::as_str)
+        .ok_or(ArtifactRoleKindError::MissingRole)?;
+    if !ARTIFACT_ROLES.contains(&role) {
+        return Err(ArtifactRoleKindError::InvalidRole(role.into()));
+    }
+    let kind = art
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or(ArtifactRoleKindError::MissingKind)?;
+    if !ARTIFACT_KINDS.contains(&kind) {
+        return Err(ArtifactRoleKindError::InvalidKind(kind.into()));
+    }
+    Ok(())
 }
 
 fn validate_tee_schema(tee: &Map<String, Value>) -> Result<()> {
@@ -698,11 +704,8 @@ pub fn validate_release_manifest_v1(manifest: &Value) -> Result<()> {
     ensure!(!artifacts.is_empty(), "artifacts must not be empty");
     let mut has_signed_tee = false;
     for art in artifacts {
-        if art.get("role").and_then(Value::as_str) == Some("tee-enclave") {
-            let tee = art
-                .get("tee")
-                .and_then(Value::as_object)
-                .ok_or_else(|| eyre!("tee-enclave artifact requires tee object"))?;
+        validate_artifact_role_and_kind(art)?;
+        if let Some(tee) = art.get("tee").and_then(Value::as_object) {
             validate_tee_schema(tee)?;
             if tee.get("stage").and_then(Value::as_str) == Some("signed") {
                 has_signed_tee = true;
@@ -746,4 +749,80 @@ pub fn validate_release_manifest_v1(manifest: &Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn artifact_allowlists_match_release_manifest_schema() {
+        let schema: Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../release/release-manifest-v1.schema.json"
+        )))
+        .unwrap();
+        let properties = &schema["$defs"]["artifact"]["properties"];
+        for (field, allowed) in [("kind", ARTIFACT_KINDS), ("role", ARTIFACT_ROLES)] {
+            assert_eq!(properties[field]["enum"], json!(allowed), "{field} enum");
+        }
+    }
+
+    fn minimal_manifest(role: &str, kind: &str) -> Value {
+        json!({
+            "$schema": "https://outbe.io/schemas/release-manifest-v1.json",
+            "schema_version": "1.0.0",
+            "canonicalization": {},
+            "release": {"lifecycle": "build-candidate", "tag": "v0"},
+            "build": {
+                "provenance": {
+                    "entrypoint": "release/scripts/reproducible-build.sh",
+                    "mode": "local-container"
+                }
+            },
+            "inputs": [],
+            "artifacts": [{"role": role, "kind": kind}],
+            "verification_gates": []
+        })
+    }
+
+    fn assert_rejected(manifest: &Value, expected: ArtifactRoleKindError) {
+        let err = validate_release_manifest_v1(manifest)
+            .expect_err("invalid artifact role or kind must fail");
+        assert_eq!(err.downcast_ref::<ArtifactRoleKindError>(), Some(&expected));
+    }
+
+    #[test]
+    fn rejects_removed_and_unknown_artifact_role_and_kind() {
+        assert!(validate_release_manifest_v1(&minimal_manifest("node", "elf")).is_ok());
+
+        for role in [concat!("tee-", "enclave"), "not-a-role"] {
+            assert_rejected(
+                &minimal_manifest(role, "elf"),
+                ArtifactRoleKindError::InvalidRole(role.into()),
+            );
+        }
+        for kind in [
+            concat!("sgx-", "rendered-manifest"),
+            concat!("sgx-", "sigstruct"),
+            concat!("gramine-", "runtime-tree"),
+            "not-a-kind",
+        ] {
+            assert_rejected(
+                &minimal_manifest("node", kind),
+                ArtifactRoleKindError::InvalidKind(kind.into()),
+            );
+        }
+        for (field, expected) in [
+            ("role", ArtifactRoleKindError::MissingRole),
+            ("kind", ArtifactRoleKindError::MissingKind),
+        ] {
+            let mut manifest = minimal_manifest("node", "elf");
+            manifest["artifacts"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            assert_rejected(&manifest, expected);
+        }
+    }
 }

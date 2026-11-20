@@ -27,9 +27,9 @@ contract MarkCalledClockTest is CrossChainTest {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(admin, admin);
         router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
-        router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
-        intex.grantRole(intex.RELAYER_ROLE(), address(router));
+        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
+        intex.grantRole(intex.ROUTER_ROLE(), address(router));
         // A real notice period: with zero the window closes the instant the series
         // is called, and the reads below would report the series forfeited.
         intex.createSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 21 days));
@@ -40,7 +40,7 @@ contract MarkCalledClockTest is CrossChainTest {
             OUTBE_CHAIN_ID,
             originPeer,
             address(router),
-            BridgeMsgCodec.encodeMarkCalled(EMISSION_DAY, calledAt, MarkBatchLib.one(SERIES_ID))
+            BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, calledAt, MarkBatchLib.one(SERIES_ID))
         );
     }
 

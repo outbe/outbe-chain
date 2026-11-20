@@ -1,105 +1,28 @@
-//! Host-side TEE enclave client for tribute-offer decryption.
+//! Resident TEE tribute-offer decryption and authenticated public results.
 //!
-//! When the node starts with `--tee-enclave-socket`, [`init_enclave_client`] connects to
-//! the enclave sidecar and installs a process-global client. The connect step validates
-//! the quote/key bindings and pins the Noise-IK static key of the sidecar. After that,
-//! every offer decryption routes through the enclave via
-//! [`process_tribute_offer_batch_via_enclave`]. The offer key exists only inside the
-//! enclave, and there is no in-process key path. The enclave parses and validates the
-//! L1<->L2 linkage (`creator`, `tribute_draft_id`), but withholds it from the host
-//! (Enclave Return Rule). The enclave returns the public draft fields, and the host uses
-//! them to issue the tribute.
-//!
-//! Determinism: every node's enclave holds the same shared offer key, so the same
-//! ciphertext decrypts identically on all validators (re-execution agrees). The
-//! enclave call is a **blocking** TCP or Unix domain socket request from the precompile path.
-//! It never holds a `StorageHandle` across an await and never spawns a
-//! thread (the `StorageHandle` `!Send` constraint). A dead sidecar (after the
-//! session's one bounded reconnect + retry) surfaces as `PrecompileError::EnclaveUnavailable`
-//! (`tee_sidecar_unavailable`). This is a node-local fault, never a deterministic
-//! revert, and it matches the gratis/promis/fidelity enclave paths. Only per-offer
-//! rejections that the enclave reports inside the results are deterministic and
-//! revert.
+//! The shared offer key stays behind the in-process handle API. Missing
+//! resident context is a node-local fault, not a deterministic EVM revert.
 
-use std::path::Path;
-
+#[cfg(test)]
 use alloy_primitives::B256;
-use outbe_enclave::protocol::{
-    EnclaveRequest as DomainRequest, EnclaveResponse as DomainResponse, EncryptedTributeOffer,
-    TributeOfferResult, TributeOfferStatus,
-};
-use outbe_enclave::{try_with_domain_enclave, verify_tribute_offer_attestation};
 use outbe_primitives::error::PrecompileError;
-use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
-use outbe_tee::EnclaveClient;
+#[cfg(test)]
+use outbe_tribute::confidential::verify_tribute_offer_attestation;
+use outbe_tribute::confidential::{EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus};
 
-use crate::errors::{EnclaveInitError, TributeFactoryError};
-
-/// True once the process-global enclave client is installed.
-/// Offers always use the enclave. A missing client returns `PrecompileError::EnclaveUnavailable` with
-/// `tee_sidecar_unavailable`.
-/// This node-local fault rejects block execution.
-pub fn is_enclave_configured() -> bool {
-    outbe_tee::is_enclave_configured()
-}
-
-/// Connect to the enclave sidecar at `socket`, validate its structural key
-/// bindings, verify it answers an encrypted request, and install the global
-/// offer-decryption client. The authorized manifest and enclave-resident native QVL
-/// paths enforce production enclave identity and DCAP admission.
-pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
-    // A `host:port` endpoint connects over TCP (enclave under Gramine); a path
-    // connects over the Unix domain socket (native sidecar).
-    let endpoint = socket
-        .to_str()
-        .ok_or(EnclaveInitError::InvalidEndpointUtf8)?;
-    let mut client = EnclaveClient::connect_endpoint(endpoint).map_err(|source| {
-        EnclaveInitError::ConnectFailed {
-            socket: socket.display().to_string(),
-            source,
-        }
-    })?;
-    // Verify the encrypted channel works before installing the client.
-    match client.request(&EnclaveRequest::GetPublicKeys) {
-        Ok(EnclaveResponse::PublicKeys { .. }) => {}
-        Ok(other) => return Err(EnclaveInitError::UnexpectedHandshakeResponse(other).into()),
-        Err(e) => return Err(EnclaveInitError::GetPublicKeysFailed(e).into()),
-    }
-    // Report the enclave's declared attestation mode. This connect-time path does
-    // not verify DCAP. Native QVL + TeeRegistry enforce production admission.
-    let mode = client.attestation_label();
-    if client.is_hardware_attested() {
-        let (mrenclave, mrsigner, isv_svn) = client.measurements();
-        tracing::info!(
-            attestation = %mode, %mrenclave, %mrsigner, isv_svn,
-            "TEE enclave reports SGX/DCAP quote metadata; connect-time validation is structural only"
-        );
-    } else {
-        tracing::warn!(
-            attestation = %mode,
-            "TEE enclave is UNATTESTED: mode is `{mode}`; this development connection \
-             provides no SGX confidentiality or DCAP admission"
-        );
-    }
-    outbe_tee::install_enclave_client(client, endpoint.to_owned())
-        .map_err(EnclaveInitError::InstallFailed)?;
-    Ok(())
-}
+use crate::errors::TributeFactoryError;
 
 /// Process a batch of offers through the enclave. The enclave decrypts the offers
-/// (the offer key stays in SGX) and applies each offer's node-resolved price. It
+/// (the offer key stays resident) and applies each offer's node-resolved price. It
 /// computes economics + Poseidon `token_id` and returns the public `TributeOfferResult[]`.
 /// The host then issues the Tributes from those fields plus its own request inputs
 /// (no host recompute of the private economics).
 ///
-/// The host recomputes `inputs_canonical_hash` from the request it sent and
-/// compares it to the enclave's hash. A mismatch is enclave non-determinism
-/// (`tee_enclave_nondeterminism`). The host then verifies the per-offer
-/// `attestation_tag` (an Ed25519 signature over the inputs hash + results) against
-/// the attestation key pinned for the enclave session. This check binds the results
-/// to that peer (`tee_offer_attestation_invalid` on failure). The host then discards
-/// the tag and never writes it to chain state. Both checks live in
-/// [`validate_tribute_offer_batch_response`] so they are unit-testable without a sidecar.
+/// The resident host recomputes `inputs_canonical_hash` from the request it sent
+/// and verifies the attestation tag before this function returns. A mismatch is
+/// enclave non-determinism. A bad tag is `tee_offer_attestation_invalid`. The tag
+/// is discarded and never written to chain state. This function then checks that
+/// each created offer echoes the host price.
 ///
 /// Failure classification (aligned with `gratis::enclave_client::apply_gratis_op`):
 /// every failure of THIS function is a node-local fault (`PrecompileError::EnclaveUnavailable`):
@@ -115,45 +38,20 @@ pub fn init_enclave_client(socket: &Path) -> eyre::Result<()> {
 pub fn process_tribute_offer_batch_via_enclave(
     offers: &[EncryptedTributeOffer],
 ) -> Result<Vec<TributeOfferResult>, PrecompileError> {
-    // Route through the process-global enclave session (shared with the TEE registry
-    // seal). Pin the attestation key from the installed identity before the
-    // call. `None` means no client is configured -> typed `tee_sidecar_unavailable`.
-    let request = DomainRequest::ProcessTributeOfferBatch {
-        offers: offers.to_vec(),
-    };
-    let (attestation_pub, response) =
-        try_with_domain_enclave(&request).ok_or(TributeFactoryError::TeeSidecarUnavailable)?;
-    let response = response.map_err(|error| match error {
-        outbe_tee::TransportError::EnclaveError(message) => {
-            TributeFactoryError::EnclaveBatchError(message)
-        }
-        other => TributeFactoryError::sidecar_unavailable(other),
-    })?;
-
-    match response {
-        DomainResponse::TributeOfferBatch {
-            results,
-            inputs_canonical_hash,
-            attestation_tag,
-        } => validate_tribute_offer_batch_response(
-            offers,
-            results,
-            inputs_canonical_hash,
-            &attestation_pub,
-            &attestation_tag,
-        ),
-        other => Err(TributeFactoryError::UnexpectedEnclaveResponse(Box::new(other)).into()),
-    }
+    let results = outbe_tribute::confidential::host::process_offer_batch(offers.to_vec()).map_err(
+        |error| match error {
+            outbe_tee::TransportError::EnclaveError(message) => {
+                TributeFactoryError::EnclaveBatchError(message)
+            }
+            other => TributeFactoryError::sidecar_unavailable(other),
+        },
+    )?;
+    validate_effective_reference_prices(offers, &results)?;
+    Ok(results)
 }
 
-/// Validate the enclave's `TributeOfferBatch` response:
-/// 1. The canonical-inputs hash equals the host's recompute over the exact request it
-///    sent (non-determinism detector -> `tee_enclave_nondeterminism`).
-/// 2. The per-offer attestation tag verifies against the pinned attestation key
-///    (-> `tee_offer_attestation_invalid`).
-///
-/// Both failures are node-local (`EnclaveUnavailable`), never deterministic reverts.
-/// Returns the results on success. Pure (no transport) so it is unit-testable.
+/// Validate a scripted offer batch without a resident runtime.
+#[cfg(test)]
 fn validate_tribute_offer_batch_response(
     offers: &[EncryptedTributeOffer],
     results: Vec<TributeOfferResult>,
@@ -161,7 +59,7 @@ fn validate_tribute_offer_batch_response(
     attestation_pub: &[u8; 32],
     attestation_tag: &[u8],
 ) -> Result<Vec<TributeOfferResult>, PrecompileError> {
-    let expected = outbe_enclave::protocol::inputs_canonical_hash(offers);
+    let expected = outbe_tribute::confidential::inputs_canonical_hash(offers);
     if inputs_canonical_hash != expected {
         return Err(TributeFactoryError::InputsCanonicalHashMismatch.into());
     }
@@ -204,8 +102,8 @@ fn validate_effective_reference_prices(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::{Address, U256};
-    use outbe_enclave::protocol::{inputs_canonical_hash, WorldwideDay};
+    use alloy_primitives::{Address, B256, U256};
+    use outbe_tribute::confidential::{inputs_canonical_hash, WorldwideDay};
 
     const NEXT_DAY: WorldwideDay = WorldwideDay::new(20250116);
 

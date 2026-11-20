@@ -42,14 +42,14 @@ contract InboundFailureIsolationTest is CrossChainTest {
         nftBridgeBnb = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
         nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
-        nftBridgeBnb.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
-        nftBridgeOutbe.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(nftBridgeBnb)));
+        nftBridgeBnb.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
+        nftBridgeOutbe.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(nftBridgeBnb)));
 
         // Two series: one Issued (crosschainMint succeeds), one not (crosschainMint reverts on state check).
         intex.createSeries(CreateSeriesLib.params(SERIES_GOOD_DAY, 10_000, 0));
         // SERIES_BAD intentionally not created - `intex.crosschainMint` will revert on lookup.
 
-        intex.grantRole(intex.RELAYER_ROLE(), address(nftBridgeBnb));
+        intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridgeBnb));
     }
 
     /// @dev Deliver `message` from the OUTBE peer to the BNB adapter through the bridge.

@@ -2,49 +2,6 @@
 
 use std::{fmt, net::SocketAddr, path::PathBuf};
 
-use outbe_primitives::tee_attestation_v1::AttestationMode;
-
-/// Local authorization protocol used between one node and its enclave.
-///
-/// This is deliberately independent from [`AttestationMode`]: a development
-/// network may run a production NodeHost-authorized enclave inside real SGX
-/// while publishing only `GramineDirectDev` evidence.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, clap::ValueEnum)]
-pub enum TeeSessionMode {
-    /// Preserve the historical policy defaults: DCAP uses NodeHost. The
-    /// hardware-free development lane uses its separate development transport.
-    #[default]
-    PolicyDefault,
-    /// Require the authenticated, sealed production NodeHost session.
-    ProductionNodeHost,
-    /// Require the separate development/mock transport.
-    Development,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ResolvedTeeSession {
-    ProductionNodeHost,
-    Development,
-}
-
-impl TeeSessionMode {
-    pub fn resolve(
-        self,
-        policy: AttestationMode,
-    ) -> Result<ResolvedTeeSession, crate::errors::ArgsError> {
-        match (self, policy) {
-            (Self::PolicyDefault, AttestationMode::DcapRequired)
-            | (Self::ProductionNodeHost, _) => Ok(ResolvedTeeSession::ProductionNodeHost),
-            (Self::PolicyDefault | Self::Development, AttestationMode::GramineDirectDev) => {
-                Ok(ResolvedTeeSession::Development)
-            }
-            (Self::Development, AttestationMode::DcapRequired) => {
-                Err(crate::errors::ArgsError::DcapRequiredForbidsDevSession)
-            }
-        }
-    }
-}
-
 /// CLI arguments for the Outbe consensus layer.
 #[derive(Clone, clap::Args)]
 pub struct ConsensusArgs {
@@ -57,8 +14,9 @@ pub struct ConsensusArgs {
     #[arg(long = "consensus.signing-key", value_name = "PATH")]
     pub signing_key: Option<PathBuf>,
 
-    /// Path to the secp256k1 EVM key used to sign system transaction artifacts.
-    /// Defaults to sibling `evm-key.hex` next to `--consensus.signing-key`.
+    /// Path to the secp256k1 EVM key for validators or keyed full-node admission.
+    /// Only validators default to sibling `evm-key.hex` next to `--consensus.signing-key`.
+    /// Providing this key does not enable the validator role.
     #[arg(long = "validator.evm-key", value_name = "PATH")]
     pub validator_evm_key: Option<PathBuf>,
 
@@ -180,27 +138,6 @@ pub struct ConsensusArgs {
     )]
     pub reth_passphrase: Option<String>,
 
-    /// Path or `host:port` endpoint for the `outbe-tee-enclave` sidecar.
-    /// Every `teeAttestationV1` ChainSpec requires it. The local session selection
-    /// is independent from the genesis-fixed attestation policy.
-    /// `DcapRequired` always needs NodeHost. `GramineDirectDev` can use
-    /// either the development transport or an explicitly selected production
-    /// NodeHost session. Missing or rejected transport stops startup and never
-    /// selects an in-process stub or another attestation mode.
-    #[arg(long = "tee-enclave-socket", value_name = "PATH")]
-    pub tee_enclave_socket: Option<PathBuf>,
-
-    /// Local node-to-enclave authorization protocol. This never changes the
-    /// genesis-fixed attestation policy and never provides a fallback. Use
-    /// `production-node-host` with a GramineDirectDev chain to run the
-    /// production enclave under real SGX with remote attestation disabled.
-    #[arg(
-        long = "tee-session-mode",
-        value_enum,
-        default_value_t = TeeSessionMode::PolicyDefault
-    )]
-    pub tee_session_mode: TeeSessionMode,
-
     /// Local liveness deadline (seconds) for the one-time TEE DKG + bootstrap on a
     /// fresh chain (block 0). The whole ceremony must finish before block 1. If it
     /// times out (or fails), node startup fails fast. The node halts rather than
@@ -289,8 +226,6 @@ impl fmt::Debug for ConsensusArgs {
                 "reth_passphrase_configured",
                 &self.reth_passphrase.is_some(),
             )
-            .field("tee_enclave_configured", &self.tee_enclave_socket.is_some())
-            .field("tee_session_mode", &self.tee_session_mode)
             .field(
                 "radicle_control_socket_configured",
                 &self.radicle_control_socket.is_some(),
@@ -365,12 +300,6 @@ impl ConsensusArgs {
                  the signing key will be ignored. Add --validator to run as a validator."
             );
         }
-        if !self.is_validator && self.validator_evm_key.is_some() {
-            tracing::warn!(
-                "--validator.evm-key provided without --validator; \
-                 the EVM signer key will be ignored. Add --validator to run as a validator."
-            );
-        }
     }
 
     fn validate_key_material(&self) -> eyre::Result<()> {
@@ -391,15 +320,15 @@ impl ConsensusArgs {
 
     /// Effective validator EVM-key path.
     ///
-    /// Returns `None` for full-node mode. In validator mode, an explicit
-    /// `--validator.evm-key` wins. Otherwise the default is sibling
-    /// `evm-key.hex` next to `--consensus.signing-key`.
+    /// An explicit `--validator.evm-key` applies to validators and keyed full nodes.
+    /// Only validators infer sibling `evm-key.hex` from `--consensus.signing-key`.
+    /// Full nodes without an explicit EVM key remain keyless followers.
     pub fn effective_validator_evm_key(&self) -> eyre::Result<Option<PathBuf>> {
-        if !self.is_validator {
-            return Ok(None);
-        }
         if let Some(path) = &self.validator_evm_key {
             return Ok(Some(path.clone()));
+        }
+        if !self.is_validator {
+            return Ok(None);
         }
         let Some(signing_key) = &self.signing_key else {
             return Err(crate::errors::ArgsError::ValidatorEvmKeyRequiresSigningKey.into());
@@ -534,36 +463,14 @@ mod tests {
     }
 
     #[test]
-    fn local_tee_session_mode_is_independent_from_attestation_policy() {
-        use outbe_primitives::tee_attestation_v1::AttestationMode;
-
-        assert_eq!(
-            TeeSessionMode::PolicyDefault
-                .resolve(AttestationMode::DcapRequired)
-                .unwrap(),
-            ResolvedTeeSession::ProductionNodeHost
-        );
-        assert_eq!(
-            TeeSessionMode::PolicyDefault
-                .resolve(AttestationMode::GramineDirectDev)
-                .unwrap(),
-            ResolvedTeeSession::Development
-        );
-        assert_eq!(
-            TeeSessionMode::ProductionNodeHost
-                .resolve(AttestationMode::GramineDirectDev)
-                .unwrap(),
-            ResolvedTeeSession::ProductionNodeHost
-        );
-        assert_eq!(
-            TeeSessionMode::Development
-                .resolve(AttestationMode::GramineDirectDev)
-                .unwrap(),
-            ResolvedTeeSession::Development
-        );
-        assert!(TeeSessionMode::Development
-            .resolve(AttestationMode::DcapRequired)
-            .is_err());
+    fn removed_sidecar_flags_are_rejected() {
+        for (flag, value) in [
+            ("--tee-enclave-socket", "/tmp/tee.sock"),
+            ("--tee-session-mode", "policy-default"),
+        ] {
+            let error = TestConsensusCli::try_parse_from(["test", flag, value]).unwrap_err();
+            assert_eq!(error.kind(), clap::error::ErrorKind::UnknownArgument);
+        }
     }
 
     #[test]
@@ -743,40 +650,52 @@ mod tests {
     }
 
     #[test]
-    fn test_validator_evm_key_explicit_wins() {
-        let mut args = default_args();
-        args.is_validator = true;
-        args.signing_key = Some(PathBuf::from("/tmp/validator-1/signing-key.hex"));
-        args.validator_evm_key = Some(PathBuf::from("/secure/evm.hex"));
-        assert_eq!(
-            args.effective_validator_evm_key().unwrap(),
-            Some(PathBuf::from("/secure/evm.hex"))
-        );
-    }
-
-    #[test]
-    fn test_full_node_ignores_validator_evm_key() {
-        let mut args = default_args();
-        args.validator_evm_key = Some(PathBuf::from("/secure/evm.hex"));
-        assert!(args.validate().is_ok());
-        assert_eq!(args.effective_validator_evm_key().unwrap(), None);
-    }
-
-    #[test]
-    fn test_cli_parses_validator_evm_key() {
-        let cli = TestConsensusCli::try_parse_from([
-            "test",
+    fn cli_role_key_and_optional_socket_contract() {
+        let validator = [
             "--validator",
             "--consensus.signing-key",
-            "/tmp/signing-key.hex",
-            "--validator.evm-key",
-            "/tmp/evm-key.hex",
-        ])
-        .unwrap();
-        assert_eq!(
-            cli.consensus.validator_evm_key,
-            Some(PathBuf::from("/tmp/evm-key.hex"))
-        );
+            "/validator/signing-key.hex",
+            "--radicle.control-socket",
+            "/radicle/control.sock",
+            "--radicle.status-address",
+            "127.0.0.1:9000",
+        ];
+        for (flags, is_validator, expected) in [
+            (validator.to_vec(), true, Some("/validator/evm-key.hex")),
+            (
+                [
+                    validator.as_slice(),
+                    &["--validator.evm-key", "/explicit/evm.hex"],
+                ]
+                .concat(),
+                true,
+                Some("/explicit/evm.hex"),
+            ),
+            (
+                vec![
+                    "--validator.evm-key",
+                    "/explicit/evm.hex",
+                    "--upstream",
+                    "http://upstream:8545",
+                ],
+                false,
+                Some("/explicit/evm.hex"),
+            ),
+            (vec!["--upstream", "http://upstream:8545"], false, None),
+        ] {
+            let args = TestConsensusCli::try_parse_from([vec!["test"], flags].concat())
+                .unwrap()
+                .consensus;
+            assert!(args.validate().is_ok());
+            assert_eq!(args.is_validator, is_validator);
+            assert_eq!(
+                args.effective_validator_evm_key().unwrap(),
+                expected.map(PathBuf::from)
+            );
+        }
+        let mut keyless = default_args();
+        keyless.signing_key = Some(PathBuf::from("/ignored/signing-key.hex"));
+        assert_eq!(keyless.effective_validator_evm_key().unwrap(), None);
     }
 
     #[test]

@@ -15,6 +15,7 @@ mod journal_writer;
 pub mod math;
 pub mod metadosis_bindings;
 pub mod pass_budget;
+pub mod reference_currency;
 pub mod scheduled_update;
 pub mod slashing_journal;
 pub mod stablecoin;

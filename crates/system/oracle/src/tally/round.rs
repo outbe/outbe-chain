@@ -12,6 +12,7 @@ use super::ballot::{
 };
 use super::cross_rate::{from_cross_rate, to_cross_rate};
 use super::gas::tally_gas;
+use super::rates::tally_rates;
 use super::{Claim, VoteForTally};
 use crate::precompile::IOracle;
 use crate::schema::{OracleContract, PairIndex};
@@ -86,6 +87,10 @@ pub(super) fn run_tally_inner(
     // Each chain in `gas_chains` is one more vote target.
     let gas_targets = tally_gas(oracle, &mut round.claims, timestamp)?;
 
+    // Each currency in `policy_rate_currencies` closes one rate. A rate vote
+    // is no target of the outcome count.
+    tally_rates(oracle, &round.claims, timestamp)?;
+
     // Count miss/success/abstain per validator
     count_outcomes(oracle, &round.claims, total_targets + gas_targets)?;
 
@@ -107,7 +112,7 @@ pub(super) fn run_tally_inner(
 /// Reads the validators, vote targets and votes of the round.
 ///
 /// Returns `None` when the round has no active validator, no vote, or no
-/// vote target (no pair target and no gas chain). The caller then clears the votes. A round without votes
+/// vote target (no pair target, no gas chain and no rate currency). The caller then clears the votes. A round without votes
 /// first records an abstention for every active validator.
 fn open_round(oracle: &mut OracleContract) -> Result<Option<TallyRound>> {
     // Collect the active validator set at tally time.
@@ -131,8 +136,12 @@ fn open_round(oracle: &mut OracleContract) -> Result<Option<TallyRound>> {
     }
 
     let ballots = active_ballots(oracle)?;
-    // A round with gas chains but no pair targets still tallies the gas votes.
-    if ballots.is_empty() && oracle.gas_chains.is_empty()? {
+    // A round with gas chains or rate currencies but no pair targets still
+    // tallies the gas votes and the rate votes.
+    if ballots.is_empty()
+        && oracle.gas_chains.is_empty()?
+        && oracle.policy_rate_currencies.is_empty()?
+    {
         return Ok(None);
     }
 

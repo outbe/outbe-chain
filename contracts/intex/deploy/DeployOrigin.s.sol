@@ -54,7 +54,7 @@ contract DeployOrigin is BaseScript {
             uint32 cid = uint32(targetChainIds[i]);
             if (OriginRouter(payable(router)).isTarget(cid)) continue;
             OriginRouter(payable(router))
-                .setRemoteMessenger(cid, InteroperableAddress.formatEvmV1(cid, targetRouterPeer));
+                .registerRemoteMessenger(cid, InteroperableAddress.formatEvmV1(cid, targetRouterPeer));
             OriginRouter(payable(router)).addTarget(cid);
         }
 

@@ -112,19 +112,19 @@ fn ingest_evidence(
                 },
             ))
         }
-        AttestationEvidenceV1::GramineDirectDev(GramineDirectEvidenceV1 {
+        AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
             transition_key_ready_proof: None,
             intent,
             dev_attestation_public,
             dev_signature,
         }) => Ok((
             intent,
-            TeeBootstrapParticipantEvidenceV2::GramineDirectDev {
+            TeeBootstrapParticipantEvidenceV2::NoAttestationDev {
                 dev_attestation_public,
                 dev_signature,
             },
         )),
-        AttestationEvidenceV1::GramineDirectDev(_) => Err(CodecError::NonCanonical(
+        AttestationEvidenceV1::NoAttestationDev(_) => Err(CodecError::NonCanonical(
             "bootstrap cannot carry transition evidence",
         )),
     }

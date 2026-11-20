@@ -12,8 +12,8 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 /// @title ConfigureTarget
 /// @author Outbe
 /// @notice Wires the auction stack of one target chain: the auction to its escrow, the escrow to
-///         the auction, The Compact and wCOEN, and the router to all three, plus the relayer
-///         roles of the router and the NFT bridge. Run it after DeployTarget, before HandOver,
+///         the auction, The Compact and wCOEN, and the router to all three, plus the roles of
+///         the router and the NFT bridge. Run it after DeployTarget, before HandOver,
 ///         on every target, Outbe included. A step that already holds is skipped, so a re-run
 ///         sends nothing.
 /// @dev Env: DEPLOYER_PK, CREATE3_FACTORY_ADDRESS, CONTRACT_SALT (optional), COMPACT_ADDRESS,
@@ -57,36 +57,36 @@ contract ConfigureTarget is BaseScript {
         requireDeployed(t.router);
 
         IntexAuction auction = IntexAuction(t.auction);
-        if (address(auction.escrowContract()) != t.escrow) {
+        if (address(auction.escrow()) != t.escrow) {
             requireDeployerAdmin(t.auction, deployer);
-            auction.wire(t.escrow);
+            auction.setEscrow(t.escrow);
             console.log("IntexAuction wired");
         }
 
         EscrowAdapter escrow = EscrowAdapter(payable(t.escrow));
         if (
-            escrow.intexAuctionContract() != t.auction || address(escrow.compact()) != t.compact
-                || address(escrow.paymentToken()) != t.wcoen
+            escrow.intexAuction() != t.auction || address(escrow.compact()) != t.compact
+                || address(escrow.intexAuctionAsset()) != t.wcoen
         ) {
             requireDeployerAdmin(t.escrow, deployer);
-            escrow.wire(t.auction, t.compact, t.wcoen);
+            escrow.setDependencies(t.auction, t.compact, t.wcoen);
             console.log("EscrowAdapter wired");
         }
 
         TargetRouter router = TargetRouter(payable(t.router));
         if (
-            address(router.auction()) != t.auction || address(router.intex()) != t.nft
-                || address(router.escrowAdapter()) != t.escrow
+            address(router.intexAuction()) != t.auction || address(router.intexContract()) != t.nft
+                || address(router.escrow()) != t.escrow
         ) {
             requireDeployerAdmin(t.router, deployer);
-            router.wire(t.auction, t.nft, t.escrow);
+            router.setDependencies(t.auction, t.nft, t.escrow);
             console.log("TargetRouter wired");
         }
 
         grantRoleIfMissing(t.auction, auction.RELAYER_ROLE(), t.router, deployer);
         grantRoleIfMissing(t.escrow, escrow.RELAYER_ROLE(), t.router, deployer);
-        bytes32 relayer = IntexNFT1155(t.nft).RELAYER_ROLE();
-        grantRoleIfMissing(t.nft, relayer, t.router, deployer);
-        grantRoleIfMissing(t.nft, relayer, t.nftBridge, deployer);
+        IntexNFT1155 nft = IntexNFT1155(t.nft);
+        grantRoleIfMissing(t.nft, nft.ROUTER_ROLE(), t.router, deployer);
+        grantRoleIfMissing(t.nft, nft.BRIDGE_ROLE(), t.nftBridge, deployer);
     }
 }

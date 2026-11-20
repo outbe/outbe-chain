@@ -448,37 +448,6 @@ struct WitnessedForfeitBlock {
     root: B256,
 }
 
-fn group_load_enclave_hook(
-    key: ed25519_dalek::SigningKey,
-) -> outbe_enclave::tribute_client::TestLocalEnclaveHook {
-    use ed25519_dalek::Signer;
-    let public = key.verifying_key().to_bytes();
-    std::sync::Arc::new(move |request| match request {
-        outbe_enclave::protocol::EnclaveRequest::ReadNodGroupLoadV1 { record } => {
-            let amount = outbe_enclave::nod_encryption::read_nod_group_load(
-                &outbe_nod::test_support::NETWORK_SECRET,
-                record,
-            )
-            .map_err(|error| outbe_tee::TransportError::Codec(error.to_string()))?;
-            let inputs_canonical_hash = outbe_enclave::nod_mine::nod_group_load_read_hash(record)
-                .map_err(outbe_tee::TransportError::codec)?;
-            let preimage = outbe_enclave::nod_mine::nod_group_load_read_preimage(
-                inputs_canonical_hash,
-                amount,
-            );
-            Ok((
-                public,
-                outbe_enclave::protocol::EnclaveResponse::NodGroupLoadReadV1 {
-                    amount,
-                    inputs_canonical_hash,
-                    attestation_tag: key.sign(&preimage).to_bytes().to_vec(),
-                },
-            ))
-        }
-        _ => Err(outbe_tee::TransportError::UnexpectedResponse),
-    })
-}
-
 struct ForfeitBlockSetup {
     state: State<CacheDB<EmptyDBTyped<ProviderError>>>,
     config: OutbeEvmConfig,
@@ -488,11 +457,21 @@ struct ForfeitBlockSetup {
 
 const FORFEIT_SEED_HASH: B256 = B256::repeat_byte(0x41);
 
-fn forfeit_block_setup(fixture: &NodBodyFixture, leader_public: [u8; 32]) -> ForfeitBlockSetup {
+fn forfeit_block_setup(
+    fixture: &NodBodyFixture,
+    leader: &std::sync::Arc<outbe_tee::in_process::InProcessTeeContext>,
+) -> ForfeitBlockSetup {
     outbe_chain_constants::initialize(None).unwrap();
     let proposer = fixture.proposer;
+    let leader_public = leader.attestation_public();
     let state = {
-        let _enclave = outbe_nod::test_support::scope();
+        // Seeding seals the group load under the resident state key, outside any block policy.
+        let policy = outbe_tee::witness::witness_policy();
+        outbe_tee::witness::set_witness_policy_for_test(None);
+        outbe_nod::test_support::uninstall();
+        let _seed_runtime = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(
+            Some(std::sync::Arc::clone(leader)),
+        );
         let mut seeded = Ok(());
         let state = state_with_active_validators_seeded_at_block(
             &[(proposer, dummy_pubkey(0xA2))],
@@ -509,9 +488,10 @@ fn forfeit_block_setup(fixture: &NodBodyFixture, leader_public: [u8; 32]) -> For
             },
         );
         seeded.expect("seed the lapsed called group");
+        drop(_seed_runtime);
+        outbe_tee::witness::set_witness_policy_for_test(policy);
         state
     };
-    outbe_nod::test_support::uninstall();
     let config = OutbeEvmConfig::new(
         test_chain_spec(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
@@ -564,10 +544,10 @@ fn forfeit_execution_context(
 /// Executes the forfeit block as its proposer, or as a verifier of `proposed` from its body.
 fn execute_witnessed_forfeit_block(
     fixture: &NodBodyFixture,
-    leader_public: [u8; 32],
+    leader: &std::sync::Arc<outbe_tee::in_process::InProcessTeeContext>,
     proposed: Option<&WitnessedForfeitBlock>,
 ) -> WitnessedForfeitBlock {
-    let mut setup = forfeit_block_setup(fixture, leader_public);
+    let mut setup = forfeit_block_setup(fixture, leader);
     let execution = forfeit_execution_context(&setup, fixture.proposer, proposed);
     let evm = setup
         .config
@@ -607,10 +587,10 @@ fn execute_witnessed_forfeit_block(
 /// Traces every body transaction of `proposed` the way a node answers `debug_traceBlock`.
 fn trace_witnessed_forfeit_block(
     fixture: &NodBodyFixture,
-    leader_public: [u8; 32],
+    leader: &std::sync::Arc<outbe_tee::in_process::InProcessTeeContext>,
     proposed: &WitnessedForfeitBlock,
 ) {
-    let mut setup = forfeit_block_setup(fixture, leader_public);
+    let mut setup = forfeit_block_setup(fixture, leader);
     {
         let execution = forfeit_execution_context(&setup, fixture.proposer, Some(proposed));
         let evm = setup
@@ -636,6 +616,14 @@ fn trace_witnessed_forfeit_block(
 /// NodFactory step, an enclave validator checks it, and a keyless follower replays and traces it.
 #[test]
 fn the_forfeit_read_rides_the_end_block_witness_in_every_mode() {
+    let leader = super::witness_parity::resident_context(1);
+    let verifier = super::witness_parity::resident_context(2);
+    let nod_state_key = outbe_core_common::confidential_tee::derive_resident_state_key(
+        &leader,
+        &outbe_core_common::confidential_tee::NOD,
+        0,
+    )
+    .expect("nod state key");
     let proposer = test_evm_signer().address();
     let worldwide_day = WorldwideDay::new(20_241_220);
     let entry_price_minor = U256::from(450_000_000u64);
@@ -646,18 +634,13 @@ fn the_forfeit_read_rides_the_end_block_witness_in_every_mode() {
         entry_price_minor,
         840,
     );
-    let fixture = NodBodyFixture {
-        proposer,
-        group_key,
-        item: outbe_nod::test_support::item(
+    let nod_id = outbe_nod::test_support::nod_id_of(proposer, worldwide_day.value(), 840, 840);
+    let mut item = {
+        let _enclave = outbe_nod::test_support::scope();
+        outbe_nod::test_support::item(
             outbe_nod::test_support::NodItemFixture {
                 is_settled: false,
-                nod_id: outbe_nod::test_support::nod_id_of(
-                    proposer,
-                    worldwide_day.value(),
-                    840,
-                    840,
-                ),
+                nod_id,
                 owner: proposer,
                 gratis_load_minor: U256::from(1_000_000u64),
                 emission_day: worldwide_day.value(),
@@ -668,21 +651,37 @@ fn the_forfeit_read_rides_the_end_block_witness_in_every_mode() {
                 issued_at,
             },
             entry_price_minor,
-        ),
+        )
     };
-    let mut leader_seed = b"outbe/test/gramine-direct/attestation".to_vec();
-    leader_seed.extend_from_slice(&[1u8; 32]);
-    leader_seed.extend_from_slice(&0u64.to_be_bytes());
-    let leader = ed25519_dalek::SigningKey::from_bytes(&keccak256(leader_seed).0);
-    let leader_public = leader.verifying_key().to_bytes();
+    item.encrypted = outbe_nod::nod_encryption::encrypt_nod(
+        &nod_state_key,
+        outbe_core_common::nod_encryption::NodTermsV1 {
+            chain_id: CHAIN_ID,
+            nod_id,
+            owner: proposer,
+            emission_day: worldwide_day.value(),
+            league_id: 1,
+            entry_price_minor,
+            issuance_currency: 840,
+            reference_currency: 840,
+        },
+        U256::from(1_000_000u64),
+    )
+    .expect("seal the Nod under the resident state key");
+    outbe_nod::test_support::uninstall();
+    let fixture = NodBodyFixture {
+        proposer,
+        group_key,
+        item,
+    };
 
     outbe_tee::witness::set_witness_policy_for_test(Some(
         outbe_tee::witness::WitnessPolicy::EnclaveBacked,
     ));
-    outbe_enclave::tribute_client::set_test_local_enclave_hook(Some(group_load_enclave_hook(
-        leader,
-    )));
-    let proposed = execute_witnessed_forfeit_block(&fixture, leader_public, None);
+    let leader_runtime = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(
+        std::sync::Arc::clone(&leader),
+    ));
+    let proposed = execute_witnessed_forfeit_block(&fixture, &leader, None);
     assert_group_mutation_receipts(&proposed.receipts, proposed.receipts.len());
     let witness = decode_outbe_block_artifacts(proposed.extra_data.as_ref())
         .unwrap()
@@ -695,10 +694,10 @@ fn the_forfeit_read_rides_the_end_block_witness_in_every_mode() {
         .iter()
         .any(|tx| tx.tx_index == nod_factory_index && !tx.entries.is_empty()));
 
-    outbe_enclave::tribute_client::set_test_local_enclave_hook(Some(group_load_enclave_hook(
-        ed25519_dalek::SigningKey::from_bytes(&[0x82; 32]),
-    )));
-    let checked = execute_witnessed_forfeit_block(&fixture, leader_public, Some(&proposed));
+    drop(leader_runtime);
+    let verifier_runtime =
+        outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(verifier));
+    let checked = execute_witnessed_forfeit_block(&fixture, &leader, Some(&proposed));
     assert_eq!(
         (&checked.receipts, checked.root),
         (&proposed.receipts, proposed.root)
@@ -707,13 +706,14 @@ fn the_forfeit_read_rides_the_end_block_witness_in_every_mode() {
     outbe_tee::witness::set_witness_policy_for_test(Some(
         outbe_tee::witness::WitnessPolicy::ReplayOnly,
     ));
-    outbe_enclave::tribute_client::set_test_local_enclave_hook(None);
-    let replayed = execute_witnessed_forfeit_block(&fixture, leader_public, Some(&proposed));
+    drop(verifier_runtime);
+    let _absent = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(None);
+    let replayed = execute_witnessed_forfeit_block(&fixture, &leader, Some(&proposed));
     assert_eq!(
         (&replayed.receipts, replayed.root),
         (&proposed.receipts, proposed.root)
     );
-    trace_witnessed_forfeit_block(&fixture, leader_public, &proposed);
+    trace_witnessed_forfeit_block(&fixture, &leader, &proposed);
 
     outbe_tee::witness::set_witness_policy_for_test(None);
 }

@@ -1,128 +1,92 @@
 use super::fixtures::assert_revert_bytes;
 use super::*;
-use alloy_sol_types::SolError;
-use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
-use std::{
-    os::unix::net::UnixListener,
-    path::Path,
-    sync::{Arc, OnceLock},
-    thread::JoinHandle,
-};
-
 use crate::v1::NodeEnclaveBindingV1;
+use alloy_sol_types::SolError;
+use outbe_primitives::{
+    tee_attestation_v1::TrustedNetworkDescriptorV1, tee_registry_abi_v1::ITeeRegistryV1,
+};
 use outbe_tee::{
-    connect_or_initialize_node_host_enclave, load_replacement_candidate_submission,
-    persist_replacement_candidate_submission, prepare_node_host_enclave_replacement_candidate,
+    in_process::{HardwareProofSourceV1, InProcessTeeContext, ProofSourceV1},
+    load_replacement_candidate_submission, persist_replacement_candidate_submission,
+    resident::ResidentTeeKeys,
     NodeHostIdentityV1, ReplacementCandidateSubmissionV1,
 };
-use outbe_tee_enclave::{
-    initialization::{factory::production_with_synthetic_dcap_for_test, InitializationState},
-    keys::EnclaveKeys,
-    seal::EnclaveBootConfig,
-    test_utils::{serve_sequential_unix_connections, SequentialTestServerContext},
-    transport::{serve_connection_with_synthetic_dcap, SharedTributeOfferKey},
-};
+use std::{path::Path, sync::Arc};
 
-/// A synthetic-DCAP enclave server that accepts two connections on a Unix
-/// socket.
-struct SyntheticEnclave {
-    endpoint: String,
-    keys: Arc<EnclaveKeys>,
-    server: JoinHandle<()>,
+// Explicit test-only quote capability; registry verification still uses its existing verdict fixture.
+struct SyntheticProofSource;
+impl HardwareProofSourceV1 for SyntheticProofSource {
+    fn code_identity(&self) -> outbe_tee::in_process::Result<(B256, B256, u16, u16)> {
+        Ok((B256::ZERO, B256::ZERO, 0, 0))
+    }
+    fn quote(&self, report_data: [u8; 64]) -> outbe_tee::in_process::Result<Vec<u8>> {
+        let mut quote = vec![0; outbe_tee::quote::MIN_QUOTE_LEN];
+        let offset = quote.len() - report_data.len();
+        quote[offset..].copy_from_slice(&report_data);
+        Ok(quote)
+    }
 }
 
-/// Serves two connections from `listener` with the synthetic-DCAP enclave of
-/// `keys`, `boot` and `initialization`.
-fn serve_two_connections(
-    listener: UnixListener,
-    keys: Arc<EnclaveKeys>,
-    boot: Arc<EnclaveBootConfig>,
-    initialization: Arc<InitializationState>,
-) -> JoinHandle<()> {
-    std::thread::spawn(move || {
-        let offer_key: SharedTributeOfferKey = Arc::new(OnceLock::new());
-        serve_sequential_unix_connections(
-            listener,
-            SequentialTestServerContext {
-                keys: &keys,
-                offer_key: &offer_key,
-                boot: &boot,
-                initialization: &initialization,
-            },
-            2,
-            serve_connection_with_synthetic_dcap::<std::os::unix::net::UnixStream>,
-        );
-    })
-}
-
-/// Starts the active enclave (A) and the candidate enclave (B) in `root`.
-/// Each setup step runs for A and then for B, before the next step starts.
-fn start_active_and_candidate_enclaves(
-    root: &Path,
-    chain_id: [u8; 32],
-) -> (SyntheticEnclave, SyntheticEnclave) {
-    let socket_a = root.join("active-enclave.sock");
-    let socket_b = root.join("candidate-enclave.sock");
-    let endpoint_a = socket_a.to_str().unwrap().to_owned();
-    let endpoint_b = socket_b.to_str().unwrap().to_owned();
-    let boot_a = Arc::new(EnclaveBootConfig::new(
-        chain_id,
-        root.join("active-enclave-state"),
-        0,
-    ));
-    let boot_b = Arc::new(EnclaveBootConfig::new(
-        chain_id,
-        root.join("candidate-enclave-state"),
-        0,
-    ));
-    std::fs::create_dir(&boot_a.tee_dir).unwrap();
-    std::fs::create_dir(&boot_b.tee_dir).unwrap();
-    let keys_a = Arc::new(EnclaveKeys::new([0x76; 32], Some([0x76; 32])).unwrap());
-    let keys_b = Arc::new(EnclaveKeys::new([0x77; 32], Some([0x77; 32])).unwrap());
-    let initialization_a =
-        Arc::new(production_with_synthetic_dcap_for_test(boot_a.clone(), &keys_a).unwrap());
-    let initialization_b =
-        Arc::new(production_with_synthetic_dcap_for_test(boot_b.clone(), &keys_b).unwrap());
-
-    let listener_a = UnixListener::bind(&socket_a).unwrap();
-    let server_a = serve_two_connections(listener_a, keys_a.clone(), boot_a, initialization_a);
-    let listener_b = UnixListener::bind(&socket_b).unwrap();
-    let server_b = serve_two_connections(listener_b, keys_b.clone(), boot_b, initialization_b);
-    (
-        SyntheticEnclave {
-            endpoint: endpoint_a,
-            keys: keys_a,
-            server: server_a,
-        },
-        SyntheticEnclave {
-            endpoint: endpoint_b,
-            keys: keys_b,
-            server: server_b,
-        },
-    )
-}
-
-/// Initializes the NodeHost in `node_data_dir` with the enclave at `endpoint`.
-/// Returns the manifest that the NodeHost stores.
-fn initialize_node_host(
-    endpoint: &str,
-    node_data_dir: &Path,
+fn resident_enclave(
+    seed: u8,
     identity: NodeHostIdentityV1,
-    node_signer: &OutbeEvmSigner,
-) -> EnclaveInitializationManifestV1 {
-    let sign = |hash: B256| {
-        node_signer
-            .sign_hash(&hash)
-            .map_err(crate::errors::format_test_error)
+    node_host_noise_x25519: [u8; 32],
+) -> InProcessTeeContext {
+    let keys = ResidentTeeKeys::from_seed([seed; 32]).unwrap();
+    let binding = identity.network_binding;
+    let manifest = EnclaveInitializationManifestV1 {
+        chain_id: binding.chain_id,
+        genesis_hash: binding.genesis_hash,
+        attestation_mode: binding.attestation_mode,
+        node_id: NodeIdV1 {
+            reth_p2p_public: identity.reth_p2p_public,
+        },
+        initialization_challenge: [seed; 32],
+        node_host_noise_x25519,
+        recipient_x25519: keys.tribute_offer_public(),
+        attestation_ed25519: keys.attestation_pub(),
+        noise_responder_x25519: keys.noise_public(),
     };
-    drop(connect_or_initialize_node_host_enclave(endpoint, node_data_dir, identity, sign).unwrap());
-    let manifest_bytes = std::fs::read(
-        node_data_dir
-            .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
-            .join(outbe_tee::node_host::NODE_HOST_MANIFEST_V1),
+    InProcessTeeContext::new(
+        keys,
+        identity,
+        manifest,
+        TrustedNetworkDescriptorV1 {
+            network_binding: binding,
+            genesis_consensus_keys: Vec::new(),
+        },
+        ProofSourceV1::Hardware(Arc::new(SyntheticProofSource)),
     )
-    .unwrap();
-    EnclaveInitializationManifestV1::decode_canonical(&manifest_bytes).unwrap()
+    .unwrap()
+}
+
+/// Seed only public NodeHost records; resident identities never persist their TEE keys.
+fn stage_public_replacement_records(
+    root: &Path,
+    active: &EnclaveInitializationManifestV1,
+    candidate: &EnclaveInitializationManifestV1,
+) {
+    use outbe_tee::node_host::{NODE_HOST_MANIFEST_V1, NODE_HOST_REPLACEMENT_CANDIDATE_V1};
+    use std::{io::Write as _, os::unix::fs::OpenOptionsExt as _};
+    let manifest = candidate.encode_canonical().unwrap();
+    // The frozen candidate record is version || predecessor hash || u16 length || manifest.
+    let mut record = vec![1];
+    record.extend_from_slice(active.authorization_hash().unwrap().as_slice());
+    record.extend_from_slice(&u16::try_from(manifest.len()).unwrap().to_be_bytes());
+    record.extend_from_slice(&manifest);
+    for (name, bytes) in [
+        (NODE_HOST_MANIFEST_V1, active.encode_canonical().unwrap()),
+        (NODE_HOST_REPLACEMENT_CANDIDATE_V1, record),
+    ] {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(root.join(name))
+            .unwrap();
+        file.write_all(&bytes).unwrap();
+        file.sync_all().unwrap();
+    }
 }
 
 /// `initial` changed to replace its binding with the candidate enclave of
@@ -215,35 +179,32 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
         network_binding: active_policy.network_binding(),
         reth_p2p_public: reth_p2p_public_for_evm_signer(&node_signer),
     };
-    let sign = |hash: B256| {
-        node_signer
-            .sign_hash(&hash)
-            .map_err(crate::errors::format_test_error)
-    };
-
     let root = tempfile::tempdir().unwrap();
-    let (active, candidate_enclave) =
-        start_active_and_candidate_enclaves(root.path(), active_policy.chain_id);
     let node_data_dir = root.path().join("node-data");
     std::fs::create_dir(&node_data_dir).unwrap();
-    let active_manifest =
-        initialize_node_host(&active.endpoint, &node_data_dir, identity, &node_signer);
-    let initial = initial_intent_for_manifest(&active_policy, &active_manifest, 0x66);
+    use std::os::unix::fs::DirBuilderExt as _;
+    let host_dir = node_data_dir.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&host_dir)
+        .unwrap();
+    let node_host = outbe_tee::node_host::NodeHostIdentityKey::create_new(
+        &host_dir.join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1),
+    )
+    .unwrap();
+    let active = resident_enclave(0x76, identity, node_host.public());
+    let candidate = resident_enclave(0x77, identity, node_host.public());
+    stage_public_replacement_records(&host_dir, active.manifest(), candidate.manifest());
+    let active_manifest = active.manifest();
+    let initial = initial_intent_for_manifest(&active_policy, active_manifest, 0x66);
     active_manifest.validate_intent_binding(&initial).unwrap();
     let initial_hash = initial.intent_hash().unwrap();
     let signed_initial = SignedIntent {
         intent: &initial,
         node_signature: node_signer.sign_hash(&initial_hash).unwrap(),
-        enclave_signature: active.keys.sign_attestation(initial_hash.as_slice()),
+        enclave_signature: active.sign_domain_attestation(initial_hash.as_slice()),
     };
 
-    let mut candidate = prepare_node_host_enclave_replacement_candidate(
-        &candidate_enclave.endpoint,
-        &node_data_dir,
-        identity,
-        sign,
-    )
-    .unwrap();
     let candidate_manifest = candidate.manifest().clone();
     let replacement = replacement_intent_for_candidate(&initial, &candidate_manifest);
     candidate_manifest
@@ -288,10 +249,6 @@ fn candidate_generated_quote_intent_reaches_registry_replacement_exactly() {
         binding.registration_version,
         replacement.registration_version
     );
-
-    drop(candidate);
-    active.server.join().unwrap();
-    candidate_enclave.server.join().unwrap();
 }
 
 #[test]

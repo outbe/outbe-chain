@@ -5,34 +5,33 @@ use outbe_macros::{contract, storage_schema};
 use outbe_system_common::addresses::DESIS_ADDRESS;
 use outbe_system_common::time::EmissionDate;
 
-/// Auction lifecycle stage, in order: a day is `Briefed`, takes commits in `CommittingBids`,
-/// reveals in `RevealingBids` and gathers the chains' bids in `CollectingBids`. It ends
-/// `Completed`, `Cancelled` (it could not start) or `Failed` (it started and found no result).
+/// Auction lifecycle stage, in order: a scheduled day waits in `None`, takes commits in
+/// `CommittingBids`, reveals in `RevealingBids` and gathers the chains' bids in `CollectingBids`.
+/// It ends `Completed`, `Canceled` (canceled before its result) or `Failed` (it started and
+/// found no result).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum AuctionStage {
     #[default]
     None = 0,
-    Briefed = 1,
-    CommittingBids = 2,
-    RevealingBids = 3,
-    CollectingBids = 4,
-    Completed = 5,
-    Cancelled = 6,
-    Failed = 7,
+    CommittingBids = 1,
+    RevealingBids = 2,
+    CollectingBids = 3,
+    Completed = 4,
+    Canceled = 5,
+    Failed = 6,
 }
 
 impl AuctionStage {
     pub fn from_u8(value: u8) -> Result<Self, crate::DesisError> {
         match value {
             0 => Ok(Self::None),
-            1 => Ok(Self::Briefed),
-            2 => Ok(Self::CommittingBids),
-            3 => Ok(Self::RevealingBids),
-            4 => Ok(Self::CollectingBids),
-            5 => Ok(Self::Completed),
-            6 => Ok(Self::Cancelled),
-            7 => Ok(Self::Failed),
+            1 => Ok(Self::CommittingBids),
+            2 => Ok(Self::RevealingBids),
+            3 => Ok(Self::CollectingBids),
+            4 => Ok(Self::Completed),
+            5 => Ok(Self::Canceled),
+            6 => Ok(Self::Failed),
             _ => Err(crate::DesisError::InvalidStageTransition),
         }
     }
@@ -59,21 +58,21 @@ pub struct AuctionConfig {
     /// Call-trigger parameters fixed at auction start by IntexFactory `call_terms`.
     pub call_trigger: IntexCallTrigger,
     /// Minimum acceptable bid rate (1e6 fixed-point, % of the escrow basis). 0 -> no floor.
-    pub min_intex_bid_rate: u32,
+    pub min_bid_rate: u32,
     /// Minimum bid quantity in Intex units. The floor rescales 4% of the prior issued count
     /// by the prior PROMIS load divided by today's load.
-    pub min_intex_bid_quantity: u16,
+    pub min_bid_quantity: u16,
     /// Commit-entry bond in protocol units. A value of 0 disables the bond.
-    pub commit_bond_minor: u128,
+    pub bid_bond_minor: u128,
     /// One row per reference currency the oracle could price for this day.
     pub reference_prices: Vec<ReferenceCurrencyPrice>,
 }
 
 impl AuctionConfig {
     /// Build the demand-side config from the day's per-reference entry prices and
-    /// the load the ladder stepped to. `min_intex_bid_rate = 0` means no bid floor.
-    /// This function leaves `call_trigger`, `min_intex_bid_quantity` and
-    /// `commit_bond_minor` at their defaults. `start_auction` fixes them.
+    /// the load the ladder stepped to. `min_bid_rate = 0` means no bid floor.
+    /// This function leaves `call_trigger`, `min_bid_quantity` and
+    /// `bid_bond_minor` at their defaults. `start_auction` fixes them.
     pub fn from_reference_prices(
         reference_prices: Vec<ReferenceCurrencyPrice>,
         promis_load_minor: u128,
@@ -81,9 +80,9 @@ impl AuctionConfig {
         Self {
             promis_load_minor,
             call_trigger: IntexCallTrigger::default(),
-            min_intex_bid_rate: 0,
-            min_intex_bid_quantity: 0,
-            commit_bond_minor: 0,
+            min_bid_rate: 0,
+            min_bid_quantity: 0,
+            bid_bond_minor: 0,
             reference_prices,
         }
     }
@@ -95,7 +94,7 @@ impl AuctionConfig {
             .find(|row| row.iso_code == iso_code)
     }
 
-    /// Per-Intex escrow basis = `promis_load` COEN, which the day is briefed at. The escrow
+    /// Per-Intex escrow basis = `promis_load` COEN, which the day starts at. The escrow
     /// pays wCOEN, so the bid rate applies against this. entry_price feeds only the call price.
     pub fn escrow_basis_minor(&self) -> u128 {
         self.promis_load_minor
@@ -104,7 +103,7 @@ impl AuctionConfig {
 
 /// One bid relayed from a target chain.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct BidData {
+pub struct IntexAuctionBidData {
     pub bidder_address: Address,
     /// Bid rate (1e6 fixed-point, % of the escrow basis).
     pub intex_bid_rate: u32,
@@ -133,7 +132,7 @@ pub struct ClearingResult {
     /// Index into `winners` of the one bid filled in part, where the Desis Limit ran out.
     pub partial_winner: Option<usize>,
     pub all_bidders: Vec<Address>,
-    pub refunded_amounts: Vec<u128>,
+    pub returned_amounts: Vec<u128>,
     pub paid_amounts: Vec<u128>,
     /// Source chain of each bid (parallel to `all_bidders`).
     pub bidder_chains: Vec<u32>,
@@ -206,16 +205,16 @@ pub struct DesisContract {
 
     /// emission_day -> commit-entry bond (protocol units).
     #[attribute(order = 16)]
-    pub config_commit_bond_minor: outbe_primitives::storage::dsl::Map<EmissionDate, U256>,
+    pub config_bid_bond_minor: outbe_primitives::storage::dsl::Map<EmissionDate, U256>,
 
-    /// series/day -> scheduled auction timestamp, recorded at start (bounded until 2106).
+    /// emission_day -> auction start time, recorded when the day is scheduled (bounded until 2106).
     #[attribute(order = 17)]
     pub auction_at: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
 
     // --- Per-chain bid intake (keyed keccak256(emission_day_be32 ++ chain_be32)) ---
     /// totalBatches the chain's first batch declared; every later batch must carry the same.
     #[attribute(order = 19)]
-    pub chain_total_batches: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub chain_total_pages: outbe_primitives::storage::dsl::Map<B256, u32>,
     /// Bitmap of arrived batchIndices (bit i = batchIndex i seen).
     #[attribute(order = 20)]
     pub chain_arrived_mask: outbe_primitives::storage::dsl::Map<B256, U256>,
@@ -224,14 +223,14 @@ pub struct DesisContract {
     pub chain_bid_count: outbe_primitives::storage::dsl::Map<B256, u32>,
     /// 1 once the chain's intake is complete (marker + all batches + totals match).
     #[attribute(order = 22)]
-    pub chain_done: outbe_primitives::storage::dsl::Map<B256, u8>,
+    pub bids_completed: outbe_primitives::storage::dsl::Map<B256, u8>,
     /// totalBatches claimed by the chain's BIDS_DONE marker (0 = no marker yet).
     #[attribute(order = 23)]
-    pub chain_done_batches: outbe_primitives::storage::dsl::Map<B256, u32>,
+    pub completed_pages: outbe_primitives::storage::dsl::Map<B256, u32>,
     /// totalBids claimed by the chain's BIDS_DONE marker.
     #[attribute(order = 24)]
-    pub chain_done_bids: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// emission_day -> bids accepted across all chains (getBidsCount view).
+    pub completed_bids: outbe_primitives::storage::dsl::Map<B256, u32>,
+    /// emission_day -> bids accepted across all chains (intexAuctionBidsCount view).
     #[attribute(order = 25)]
     pub day_bid_count: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
 
@@ -251,13 +250,19 @@ pub struct DesisContract {
     #[attribute(order = 29)]
     pub gate_active_slot: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
 
-    // --- Auction brief ---
+    // --- Desis Limit ---
     /// emission_day -> Desis Limit awaiting the auction, in raw PROMIS minor units.
     #[attribute(order = 30)]
     pub pending_desis_limit_minor: outbe_primitives::storage::dsl::Map<EmissionDate, U256>,
     /// emission_day -> 1 when the day was briefed with a limit to sell.
     #[attribute(order = 31)]
-    pub brief_has_limit: outbe_primitives::storage::dsl::Map<EmissionDate, u8>,
+    pub has_desis_limit: outbe_primitives::storage::dsl::Map<EmissionDate, u8>,
+    /// emission_day -> 1 once the brief of the day arrived, with or without a limit.
+    #[attribute(order = 52)]
+    pub desis_limit_set: outbe_primitives::storage::dsl::Map<EmissionDate, u8>,
+    /// emission_day -> reason of a cancel that the next schedule step carries out (0 = none).
+    #[attribute(order = 53)]
+    pub cancel_reason: outbe_primitives::storage::dsl::Map<EmissionDate, u8>,
     /// Days with a scheduled auction (dense active set for the begin-block tick).
     #[attribute(order = 32)]
     pub sched_active_count: outbe_primitives::storage::dsl::Value<u32>,
@@ -284,7 +289,7 @@ pub struct DesisContract {
 
     // --- PROMIS load ladder ---
     /// Exponent `k` of the current load, `promis_load_minor = 10^k`. Zero until the
-    /// chain has briefed a day it could price.
+    /// chain has started a day it could price.
     #[attribute(order = 38)]
     pub promis_load_exponent: outbe_primitives::storage::dsl::Value<u32>,
     /// iso_code -> price the currency was captured at. Zero until captured.

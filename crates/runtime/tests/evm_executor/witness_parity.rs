@@ -1,22 +1,18 @@
 use super::*;
 use alloy_primitives::{B256, U256};
-use ed25519_dalek::{Signer, SigningKey};
-use outbe_enclave::protocol::EnclaveResponse;
 use std::sync::Arc;
 
-fn sign_nod_read(key: &SigningKey, inputs_hash: B256, amount: U256) -> EnclaveResponse {
-    let preimage = outbe_enclave::nod_mine::nod_read_preimage(inputs_hash, amount);
-    let sig = key.sign(&preimage);
-    EnclaveResponse::NodAmountReadV1 {
-        amount,
-        inputs_canonical_hash: inputs_hash,
-        attestation_tag: sig.to_bytes().to_vec(),
-    }
-}
-
-fn witness_entry_len(response: EnclaveResponse) -> usize {
-    let wire = response.into_wire_response().unwrap();
-    let entry = outbe_tee::witness::EnclaveWitnessEntryV1::try_from(wire).unwrap();
+/// The witness entry `consensus_witness_call` records for `value`: its tagged tag-free body
+/// beside the inputs hash and the signature.
+fn witness_entry_len<T: outbe_core_common::confidential_tee::WitnessSchema>(value: &T) -> usize {
+    use outbe_core_common::confidential_tee::{encode_tagged_payload, WitnessSchema};
+    let mut body = value.clone();
+    body.set_attestation_tag(Vec::new());
+    let entry = outbe_tee::witness::EnclaveWitnessEntryV1::Payload {
+        payload: encode_tagged_payload(T::TAG, &body).unwrap(),
+        inputs_canonical_hash: WitnessSchema::inputs_canonical_hash(value),
+        attestation_tag: WitnessSchema::attestation_tag(value).to_vec(),
+    };
     postcard::to_allocvec(&entry).unwrap().len()
 }
 
@@ -24,29 +20,27 @@ fn witness_entry_len(response: EnclaveResponse) -> usize {
 /// and the reserve itself fits the tape.
 #[test]
 fn the_end_block_reserve_holds_both_private_passes_at_their_full_budget() {
-    use outbe_enclave::protocol::{GratisOpResult, GratisOpStatus};
+    use outbe_gratis::{GratisOpResult, GratisOpStatus};
     use outbe_system_common::pass_budget::{SWEEP_WRITES_PER_BLOCK, WITNESS_BYTES_PER_WRITE};
     use outbe_tee::witness::{EnclaveWitnessEntryV1, EnclaveWitnessTapeV1, TxWitnessV1};
     // A `GRA2` balance or event envelope is 92 bytes.
     const GRATIS_BLOB_LEN: usize = 92;
 
-    let nod_read_len = witness_entry_len(EnclaveResponse::NodGroupLoadReadV1 {
+    let nod_read_len = witness_entry_len(&outbe_nod::nod_host::NodGroupLoadReadV1 {
         amount: U256::MAX,
         inputs_canonical_hash: B256::repeat_byte(0x01),
         attestation_tag: vec![0x02; 64],
     });
-    let pledge_burn_len = witness_entry_len(EnclaveResponse::GratisOpApplied {
-        result: Box::new(GratisOpResult {
-            status: GratisOpStatus::Applied,
-            new_balance: vec![0x03; GRATIS_BLOB_LEN],
-            new_pledged: vec![0x04; GRATIS_BLOB_LEN],
-            event_amount: U256::MAX,
-            next_op_nonce: u64::MAX,
-            fidelity: None,
-            inputs_canonical_hash: B256::repeat_byte(0x05),
-            attestation_tag: vec![0x06; 64],
-            encrypted_event_amount: vec![0x07; GRATIS_BLOB_LEN],
-        }),
+    let pledge_burn_len = witness_entry_len(&GratisOpResult {
+        status: GratisOpStatus::Applied,
+        new_balance: vec![0x03; GRATIS_BLOB_LEN],
+        new_pledged: vec![0x04; GRATIS_BLOB_LEN],
+        event_amount: U256::MAX,
+        next_op_nonce: u64::MAX,
+        fidelity: None,
+        inputs_canonical_hash: B256::repeat_byte(0x05),
+        attestation_tag: vec![0x06; 64],
+        encrypted_event_amount: vec![0x07; GRATIS_BLOB_LEN],
     });
     assert!(nod_read_len <= outbe_nod::constants::GROUP_LOAD_READ_WITNESS_BYTES as usize);
     assert!(pledge_burn_len <= outbe_gratis::enclave_client::COLLATERAL_OP_WITNESS_BYTES as usize);
@@ -95,7 +89,6 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     use outbe_evm::config::OutbeEvmConfig;
     use outbe_nodfactory::precompile::INodFactory;
     use outbe_system_common::addresses::{NOD_FACTORY_ADDRESS, REWARDS_ADDRESS};
-    use outbe_system_common::time::WorldwideDay;
     use reth_evm::ConfigureEvm;
     use reth_primitives_traits::SignedTransaction as _;
     use revm::database::states::bundle_state::BundleRetention;
@@ -103,52 +96,26 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     outbe_chain_constants::initialize(None).unwrap();
     let _ = outbe_consensus::proof::init_consensus_chain_id(CHAIN_ID);
 
-    let mut preimage = Vec::new();
-    preimage.extend_from_slice(b"outbe/test/gramine-direct/attestation");
-    preimage.extend_from_slice(&[1u8; 32]);
-    preimage.extend_from_slice(&0u64.to_be_bytes());
-    let leader_seed: [u8; 32] = alloy_primitives::keccak256(preimage).into();
-    let leader_sk = SigningKey::from_bytes(&leader_seed);
-    let leader_pk = leader_sk.verifying_key().to_bytes();
-    let validator_sk = SigningKey::from_bytes(&[0x82; 32]);
-    let validator_pk = validator_sk.verifying_key().to_bytes();
-    assert_ne!(leader_pk, validator_pk);
+    let leader = resident_context(1);
+    let verifier = resident_context(2);
+    let leader_pk = leader.attestation_public();
+    assert_ne!(leader_pk, verifier.attestation_public());
+    let nod_state_key = outbe_core_common::confidential_tee::derive_resident_state_key(
+        &leader,
+        &outbe_core_common::confidential_tee::NOD,
+        0,
+    )
+    .expect("nod state key");
 
     let signer = test_evm_signer();
     let proposer = signer.address();
-    let worldwide_day = WorldwideDay::new(20_241_220);
-    let entry_price_minor = U256::from(450_000_000u64);
-    let issued_at = outbe_system_common::time::date_key_to_utc_timestamp(20_200_101).unwrap() + 1;
-    let group_key = outbe_nod::test_support::group_key_at(
-        &outbe_nod::config::NodParams::DEV,
-        issued_at,
-        entry_price_minor,
-        840,
-    );
-    let settlement_asset = Address::repeat_byte(0x71);
-    let user_signer =
-        outbe_primitives::signer::OutbeEvmSigner::from_secret_bytes([2u8; 32]).unwrap();
-    let user_sender = user_signer.address();
-    let nod_id = outbe_nod::test_support::nod_id_of(user_sender, worldwide_day.value(), 840, 840);
-    let nod_item = {
-        let _enclave = outbe_nod::test_support::scope();
-        outbe_nod::test_support::item(
-            outbe_nod::test_support::NodItemFixture {
-                is_settled: false,
-                nod_id,
-                owner: user_sender,
-                gratis_load_minor: U256::from(1_000_000u64),
-                emission_day: worldwide_day.value(),
-                league_id: 1,
-                group_key,
-                issuance_currency: 840,
-                reference_currency: 840,
-                issued_at,
-            },
-            entry_price_minor,
-        )
-    };
-    outbe_nod::test_support::uninstall();
+    let super::witness_quote_nod::QuoteNodSeed {
+        nod_item,
+        nod_id,
+        user_signer,
+        user_sender,
+        settlement_asset,
+    } = super::witness_quote_nod::quote_nod_seed(&nod_state_key, CHAIN_ID);
 
     let user_tx = user_signer
         .sign_eip1559(TxEip1559 {
@@ -181,8 +148,18 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     let build_seeded_state = || {
         let mut state =
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
-                let _enclave = outbe_nod::test_support::scope();
+                // Seeding decrypts the resident ciphertext. A block policy with no
+                // witness scope refuses that read, and the stand-in key cannot open it.
+                let policy = outbe_tee::witness::witness_policy();
+                outbe_tee::witness::set_witness_policy_for_test(None);
+                outbe_nod::test_support::uninstall();
+                let _seed_runtime =
+                    outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(
+                        Arc::clone(&leader),
+                    ));
                 outbe_nod::test_support::add(&storage, &nod_item).unwrap();
+                drop(_seed_runtime);
+                outbe_tee::witness::set_witness_policy_for_test(policy);
                 outbe_vaultrouter::schema::VaultRouterContract::new(storage.clone())
                     .asset_vault_set(settlement_asset)
                     .insert(Address::repeat_byte(0x99))
@@ -213,48 +190,6 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
         );
         state
     };
-
-    let make_enclave_hook =
-        |sk: SigningKey| -> outbe_enclave::tribute_client::TestLocalEnclaveHook {
-            let pk = sk.verifying_key().to_bytes();
-            Arc::new(move |req| match req {
-                outbe_enclave::protocol::EnclaveRequest::ReadNodAmountV1 { nod } => {
-                    let hash = outbe_enclave::nod_mine::nod_read_hash(nod)
-                        .map_err(outbe_tee::TransportError::codec)?;
-                    let resp = sign_nod_read(&sk, hash, U256::from(1_000_000u64));
-                    Ok((pk, resp))
-                }
-                outbe_enclave::protocol::EnclaveRequest::EncryptNodQuoteV1 {
-                    nod,
-                    context,
-                    payment_minor,
-                } => {
-                    let inputs_canonical_hash = outbe_enclave::response_auth::hash(
-                        b"outbe/nod/quote-encrypt-inputs/v1",
-                        &(nod.as_ref(), context, *payment_minor),
-                    )
-                    .map_err(outbe_tee::TransportError::codec)?;
-                    let encrypted_payment =
-                        vec![0x42u8; outbe_core_common::nod_encryption::NOD_BLOB_LEN];
-                    let preimage = outbe_enclave::response_auth::attestation(
-                        b"outbe/nod/quote-encrypt-result/v1",
-                        inputs_canonical_hash,
-                        &encrypted_payment,
-                    )
-                    .map_err(outbe_tee::TransportError::codec)?;
-                    let sig = sk.sign(&preimage);
-                    Ok((
-                        pk,
-                        EnclaveResponse::NodQuoteEncryptedV1 {
-                            encrypted_payment,
-                            inputs_canonical_hash,
-                            attestation_tag: sig.to_bytes().to_vec(),
-                        },
-                    ))
-                }
-                _ => Err(outbe_tee::TransportError::UnexpectedResponse),
-            })
-        };
 
     let chain_spec = test_chain_spec();
     let config = OutbeEvmConfig::new(
@@ -313,9 +248,9 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     outbe_tee::witness::set_witness_policy_for_test(Some(
         outbe_tee::witness::WitnessPolicy::EnclaveBacked,
     ));
-    outbe_enclave::tribute_client::set_test_local_enclave_hook(Some(make_enclave_hook(
-        leader_sk.clone(),
-    )));
+    let _leader_runtime = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(
+        Some(Arc::clone(&leader)),
+    );
     let proposer_out = run_block_in_mode(false, Bytes::new());
     let decoded_artifacts = decode_outbe_block_artifacts(proposer_out.2.as_ref()).unwrap();
     let witness_bytes = decoded_artifacts
@@ -325,10 +260,10 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     assert_eq!(decoded_tape.txs.len(), 1);
     assert_eq!(decoded_tape.txs[0].tx_index, begin.len() as u32);
 
-    // 2. VerifierWithEnclave (validator with distinct enclave key validator_sk)
-    outbe_enclave::tribute_client::set_test_local_enclave_hook(Some(make_enclave_hook(
-        validator_sk,
-    )));
+    // 2. VerifierWithEnclave (distinct attestation key, same resident state key)
+    drop(_leader_runtime);
+    let _verifier_runtime =
+        outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(Some(verifier));
     let verifier_enclave_out = run_block_in_mode(true, proposer_out.2.clone());
     assert_eq!(proposer_out, verifier_enclave_out);
 
@@ -336,7 +271,8 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     outbe_tee::witness::set_witness_policy_for_test(Some(
         outbe_tee::witness::WitnessPolicy::ReplayOnly,
     ));
-    outbe_enclave::tribute_client::set_test_local_enclave_hook(None);
+    drop(_verifier_runtime);
+    let _absent = outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test(None);
     let verifier_replay_out = run_block_in_mode(true, proposer_out.2.clone());
     assert_eq!(proposer_out, verifier_replay_out);
 
@@ -391,6 +327,28 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     }
 
     outbe_evm::executor::witness::clear_detached_trace_witness();
-    outbe_enclave::tribute_client::set_test_local_enclave_hook(None);
     outbe_tee::witness::set_witness_policy_for_test(None);
+}
+
+pub(super) fn resident_context(seed: u8) -> Arc<outbe_tee::in_process::InProcessTeeContext> {
+    use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
+    use outbe_tee::resident::ResidentOfferMaterial;
+    let binding = NetworkBindingV1 {
+        chain_id: U256::from(super::fixtures::CHAIN_ID).to_be_bytes(),
+        genesis_hash: B256::repeat_byte(0x22),
+        attestation_mode: AttestationMode::NoAttestationDev,
+    };
+    let context = Arc::new(outbe_tee::test_utils::resident_context(seed, binding));
+    context
+        .activate_for_test(
+            ResidentOfferMaterial::for_test(
+                b"executor-nod-quote-group-signature-v1!".to_vec(),
+                B256::from(binding.chain_id),
+                0,
+                0,
+            )
+            .expect("offer material"),
+        )
+        .expect("activate offer");
+    context
 }

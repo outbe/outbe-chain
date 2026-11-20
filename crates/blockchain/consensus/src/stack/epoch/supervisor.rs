@@ -1,6 +1,11 @@
 //! Preserve select ordering while delegating domain events to epoch operations.
 use super::super::*;
 use super::runtime::*;
+use futures::FutureExt as _;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
@@ -35,6 +40,7 @@ where
         self.restore_pending(recovered_pending_boundary, recovery_anchor_height)
             .await?;
         self.publish_repository_material();
+        let mut authority = self.protocol.tee_authority_watch();
         let mut latest_consensus_tip = *self.consensus_tip_rx.borrow();
         let mut pending_provider_ready_height: Option<u64> = None;
         let mut watchdog_unhealthy_since: Option<SystemTime> = None;
@@ -63,8 +69,10 @@ where
             // genesis-bootstrap iteration where no prior DKG completion ran.
             let current_subchannels = self.acquire_epoch_subchannels().await?;
 
-            let (mut engine_handle_task, radicle_signer) =
-                self.start_engine(&ctx, current_subchannels).await?;
+            let accountable = Arc::new(AtomicBool::new(self.local_validator_accountable()));
+            let (mut engine_handle_task, signer_enabled) = self
+                .start_engine(&ctx, current_subchannels, accountable.clone())
+                .await?;
             // -- g. Engine event loop ----------------------------------------
             // Monitors engine, component exits, and block-height-driven reshare triggers.
 
@@ -72,6 +80,7 @@ where
             let mut stack_shutdown = ctx.stopped();
 
             loop {
+            let accountable_validator = accountable.load(Ordering::Acquire);
             let reshare_active = self.rotation.reshare_in_progress;
             let wait_for_execution_finalized_height = async {
                 if reshare_active {
@@ -91,17 +100,19 @@ where
                     return Ok(EpochLoopOutcome::StackExit);
                 },
 
-                desired_signer = wait_for_radicle_role_change(
+                desired_signer = super::signer::wait_for_authority_role_change(
                     &mut self.radicle_updates,
-                    radicle_signer,
+                    &mut authority,
+                    signer_enabled,
+                    accountable_validator,
                     self.state.signing_share.is_some(),
                 ) => {
                     let desired_signer = desired_signer?;
                     info!(
                         epoch = %self.state.current_epoch,
-                        previous_signer = radicle_signer,
+                        previous_signer = signer_enabled,
                         desired_signer,
-                        "canonical Radicle voting gate changed; replacing same-epoch Simplex role"
+                        "local TEE or canonical voting gate changed; replacing same-epoch Simplex role"
                     );
                     return Ok(EpochLoopOutcome::ReplaceSigner);
                 },
@@ -142,6 +153,15 @@ where
                     match consensus_tip_changed {
                         Ok(()) => {
                             latest_consensus_tip = *self.consensus_tip_rx.borrow_and_update();
+                            accountable.store(self.local_validator_accountable(), Ordering::Release);
+                            let desired_signer = super::signer::authority_signer_enabled(
+                                authority.as_ref(), accountable.load(Ordering::Acquire), self.state.signing_share.is_some(), self.radicle_status.snapshot().voting_gate,
+                            )?;
+                            if desired_signer != signer_enabled {
+                                info!(epoch = %self.state.current_epoch, previous_signer = signer_enabled, desired_signer,
+                                    "canonical tip changed validator eligibility; replacing same-epoch Simplex role");
+                                return Ok(EpochLoopOutcome::ReplaceSigner);
+                            }
                             if let Some(current_height) = pending_provider_ready_height {
                                 let _ = self.execution_finalized_height_tx.send(current_height);
                             }
@@ -197,6 +217,8 @@ where
                         }
                     }
 
+                    // A consensus tip can precede its execution state; refresh after provider catch-up too.
+                    accountable.store(self.local_validator_accountable(), Ordering::Release);
                     match self.activate_pending(&ctx, current_height, &mut engine_handle_task).await? {
                         EventAction::Outcome(outcome) => return Ok(outcome),
                         EventAction::Continue => continue,
@@ -263,27 +285,34 @@ where
             {
                 EpochLoopAction::RestartEpoch => continue 'epoch_loop,
                 EpochLoopAction::ReplaceSigner => {
-                    self.channels.replacement_epoch_subchannels = Some(
-                    crate::epoch_subchannels::reacquire_epoch_subchannels(
-                        self.state.current_epoch,
+                    let current_epoch = self.state.current_epoch;
+                    let Some(channels) = reacquire_replacement_channels(
                         &ctx,
-                        crate::epoch_subchannels::SubchannelRetryPolicy {
-                            timeout: Duration::from_secs(5),
-                            retry_interval: Duration::from_millis(10),
-                        },
-                        crate::epoch_subchannels::EpochMuxHandles {
-                            vote: &mut self.channels.vote_mux,
-                            cert: &mut self.channels.cert_mux,
-                            res: &mut self.channels.res_mux,
-                        },
+                        crate::epoch_subchannels::reacquire_epoch_subchannels(
+                            current_epoch,
+                            &ctx,
+                            crate::epoch_subchannels::SubchannelRetryPolicy {
+                                timeout: Duration::from_secs(5),
+                                retry_interval: Duration::from_millis(10),
+                            },
+                            crate::epoch_subchannels::EpochMuxHandles {
+                                vote: &mut self.channels.vote_mux,
+                                cert: &mut self.channels.cert_mux,
+                                res: &mut self.channels.res_mux,
+                            },
+                        ),
                     )
                     .await
                     .wrap_err_with(|| {
                         format!(
-                            "reacquire same-epoch channels while replacing Radicle role in epoch {current_epoch}"
-                        ,current_epoch = self.state.current_epoch)
-                    })?,
-                );
+                            "reacquire same-epoch channels while replacing signer role in epoch {current_epoch}"
+                        )
+                    })?
+                    else {
+                        info!(epoch = %current_epoch, "global stop received while replacing same-epoch Simplex role");
+                        break 'epoch_loop;
+                    };
+                    self.channels.replacement_epoch_subchannels = Some(channels);
                     continue 'epoch_loop;
                 }
                 EpochLoopAction::ExitStack => break 'epoch_loop,
@@ -397,10 +426,102 @@ pub fn future_epoch_hint_height(
     epocher.backup_vote_hint_height(current_epoch)
 }
 
+async fn reacquire_replacement_channels<T>(
+    ctx: &impl Spawner,
+    reacquire: impl Future<Output = Result<T>>,
+) -> Result<Option<T>> {
+    let mut stack_shutdown = ctx.stopped();
+    tokio::select! {
+        biased;
+        _ = &mut stack_shutdown => Ok(None),
+        result = reacquire => {
+            // Stop may become ready during the reacquire future's poll.
+            if (&mut stack_shutdown).now_or_never().is_some() {
+                return Ok(None);
+            }
+            result.map(Some)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::await_supervised_component_exit;
+    use super::{await_supervised_component_exit, reacquire_replacement_channels};
+    use commonware_p2p::utils::mux::Error as MuxError;
     use commonware_runtime::{deterministic, Runner as _, Spawner as _, Supervisor as _};
+    use futures::FutureExt as _;
+
+    #[test]
+    fn signer_replacement_propagates_closed_mux_while_stack_is_live() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let error = reacquire_replacement_channels(&ctx, async {
+                Err::<(), _>(MuxError::Closed.into())
+            })
+            .await
+            .unwrap_err();
+            assert!(matches!(
+                error.downcast_ref::<MuxError>(),
+                Some(MuxError::Closed)
+            ));
+        });
+    }
+
+    #[test]
+    fn signer_replacement_prefers_stack_stop_to_closed_mux() {
+        for stop_before_reacquire in [true, false] {
+            deterministic::Runner::default().start(move |ctx| async move {
+                let stop_ctx = ctx.child("replacement_stop");
+                if stop_before_reacquire {
+                    ctx.child("early_stop").stop(0, None).await.unwrap();
+                }
+                let channels = reacquire_replacement_channels(&ctx, async move {
+                    assert!(
+                        !stop_before_reacquire,
+                        "reacquire was polled after global stop"
+                    );
+                    // Signal the stop after select checked it but before returning the mux error.
+                    let _ = stop_ctx.stop(0, None).now_or_never();
+                    Err::<(), _>(MuxError::Closed.into())
+                })
+                .await
+                .expect("global stop must win over a closed mux");
+                assert_eq!(channels, None);
+            });
+        }
+    }
+
+    #[test]
+    fn signer_replacement_cancels_pending_reacquisition_on_stack_stop() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let stop_ctx = ctx.child("replacement_stop");
+            let channels = reacquire_replacement_channels(&ctx, async move {
+                let _ = stop_ctx.stop(0, None).now_or_never();
+                std::future::pending::<eyre::Result<()>>().await
+            })
+            .await
+            .unwrap();
+            assert_eq!(channels, None);
+        });
+    }
+
+    #[test]
+    fn signer_replacement_prefers_stack_stop_to_successful_reacquisition() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let live = reacquire_replacement_channels(&ctx, async { Ok(()) })
+                .await
+                .unwrap();
+            assert_eq!(live, Some(()));
+
+            let stop_ctx = ctx.child("replacement_stop");
+            let stopping = reacquire_replacement_channels(&ctx, async move {
+                let _ = stop_ctx.stop(0, None).now_or_never();
+                Ok(())
+            })
+            .await
+            .unwrap();
+            assert_eq!(stopping, None);
+        });
+    }
 
     async fn complete_only<E>(actor: &'static str, exiting: &'static str) -> Result<(), E> {
         if actor != exiting {

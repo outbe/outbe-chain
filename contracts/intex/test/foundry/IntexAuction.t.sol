@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {ReferenceCurrencyPriceLib} from "./helpers/ReferenceCurrencyPriceLib.sol";
 import {Test} from "forge-std/Test.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
@@ -56,7 +57,7 @@ contract AuctionTest is Test {
 
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.wire(address(escrow));
+        auction.setEscrow(address(escrow));
         vm.stopPrank();
     }
 
@@ -72,37 +73,35 @@ contract AuctionTest is Test {
     }
 
     /// @dev Build auction params with the given minimum bid rate and entry price.
-    function _paramsEntry(uint32 minIntexBidRate, uint64 entryPrice, uint16 minIntexBidQuantity)
+    function _paramsEntry(uint32 minBidRate, uint64 entryPrice, uint16 minBidQuantity)
         internal
         pure
         returns (IIntexAuction.AuctionParams memory)
     {
         return IIntexAuction.AuctionParams({
             promisLoadMinor: PROMIS_LOAD_MINOR,
-            minIntexBidRate: minIntexBidRate,
+            minBidRate: minBidRate,
             prices: ReferenceCurrencyPriceLib.onePriced(840, entryPrice, 200),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
-            minIntexBidQuantity: minIntexBidQuantity,
-            commitBondMinor: 0
+            minBidQuantity: minBidQuantity,
+            bidBondMinor: 0
         });
     }
 
     /// @dev Build auction params at the canonical entry price.
-    function _params(uint32 minIntexBidRate, uint16 minIntexBidQuantity)
+    function _params(uint32 minBidRate, uint16 minBidQuantity)
         internal
         pure
         returns (IIntexAuction.AuctionParams memory)
     {
-        return _paramsEntry(minIntexBidRate, ENTRY_PRICE, minIntexBidQuantity);
+        return _paramsEntry(minBidRate, ENTRY_PRICE, minBidQuantity);
     }
 
     /// @dev Create and start a live-day auction as the relayer. The schedule is anchored to
     ///      the current `block.timestamp` via `_schedule()`.
-    function _start(uint32 emissionDay, uint32 minIntexBidRate, uint16 minIntexBidQuantity) internal {
+    function _start(uint32 emissionDay, uint32 minBidRate, uint16 minBidQuantity) internal {
         vm.prank(bridger);
-        auction.auctionStart(
-            emissionDay, IIntexAuction.DayState.Live, _schedule(), _params(minIntexBidRate, minIntexBidQuantity)
-        );
+        auction.startAuction(emissionDay, _schedule(), _params(minBidRate, minBidQuantity));
     }
 
     /// @dev Warp past `commitEnd` so the timestamp-computed stage is `RevealingBids`.
@@ -138,13 +137,15 @@ contract AuctionTest is Test {
         bytes memory signature = _createSignature(emissionDay, bidder, qty, rate, privateKey);
         bytes32 commitHash = keccak256(signature);
         vm.prank(bidder);
-        auction.commitBid(emissionDay, commitHash);
+        auction.commitIntexAuctionBid(emissionDay, commitHash);
     }
 
     function _reveal(uint32 emissionDay, address bidder, uint16 qty, uint32 rate, uint256 privateKey) internal {
         bytes memory signature = _createSignature(emissionDay, bidder, qty, rate, privateKey);
         vm.prank(bidder);
-        auction.revealBid(emissionDay, qty, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), signature);
+        auction.revealIntexAuctionBid(
+            emissionDay, qty, rate, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), signature
+        );
     }
 
     /// @dev A day with no result fails at `commitEnd` plus the refund delay, when its first bid
@@ -153,13 +154,13 @@ contract AuctionTest is Test {
         uint256 startTs = block.timestamp;
         uint32 emissionDay = 20250116;
         _start(emissionDay, 50, 1);
-        uint256 failAt = startTs + COMMIT_OFFSET + EscrowTimes.UNFINALIZED_REFUND_DELAY;
+        uint256 failAt = startTs + COMMIT_OFFSET + EscrowTimes.UNFINALIZED_RETURN_DELAY;
 
         vm.warp(failAt - 1);
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
 
         vm.warp(failAt);
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Failed));
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Failed));
         vm.expectRevert(
             abi.encodeWithSelector(
                 IIntexAuction.StageRequired.selector,
@@ -168,7 +169,7 @@ contract AuctionTest is Test {
             )
         );
         vm.prank(bridger);
-        auction.executeAuctionClearing(emissionDay, 0, 0, 0);
+        auction.completeAuction(emissionDay, 0, 0, 0, 0, 0);
     }
 
     function test_Lifecycle_FullFlow() public {
@@ -178,20 +179,20 @@ contract AuctionTest is Test {
         uint16 bidMinimumQuantity = 1;
         _start(emissionDay, floor, bidMinimumQuantity);
 
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.CommittingBids));
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.CommittingBids));
 
         IIntexAuction.AuctionData memory info = auction.getAuctionInfo(emissionDay);
-        assertEq(info.params.minIntexBidRate, floor);
+        assertEq(info.params.minBidRate, floor);
         assertEq(info.params.promisLoadMinor, PROMIS_LOAD_MINOR);
 
         _commit(emissionDay, iba1, 30, 80, iba1PrivateKey);
         _commit(emissionDay, iba2, 40, 70, iba2PrivateKey);
 
-        assertTrue(auction.committedBidsByHash(emissionDay, iba1) != bytes32(0));
-        assertTrue(auction.committedBidsByHash(emissionDay, iba2) != bytes32(0));
+        assertTrue(auction.committedIntexAuctionBidsByHash(emissionDay, iba1) != bytes32(0));
+        assertTrue(auction.committedIntexAuctionBidsByHash(emissionDay, iba2) != bytes32(0));
 
         _enterRevealStage(emissionDay, startTs);
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.RevealingBids));
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.RevealingBids));
 
         _reveal(emissionDay, iba1, 30, 80, iba1PrivateKey);
         _reveal(emissionDay, iba2, 40, 70, iba2PrivateKey);
@@ -200,7 +201,7 @@ contract AuctionTest is Test {
         assertEq(uint256(escrow.lockedFunds(emissionDay, iba1)), PROMIS_LOAD_MINOR);
         assertEq(uint256(escrow.lockedFunds(emissionDay, iba2)), PROMIS_LOAD_MINOR);
 
-        (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(emissionDay);
+        (, IIntexAuction.SubmittedIntexAuctionBidData[] memory bids) = auction.getAuctionDetails(emissionDay);
         (, uint32 revealedBidsCount) = auction.auctionRunningCounts(emissionDay);
         assertEq(revealedBidsCount, 2);
         assertEq(bids.length, 2);
@@ -209,17 +210,17 @@ contract AuctionTest is Test {
         // only advances the stage.
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startAwaitingResult(emissionDay);
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
+        auction.startAuctionClearing(emissionDay);
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
 
         vm.expectEmit(true, false, false, true);
-        emit IIntexAuction.AuctionClearingExecuted(emissionDay, 75, 100);
+        emit IIntexAuction.IntexAuctionCompleted(emissionDay, 0, 2, 100, 75, 0);
         vm.prank(bridger);
-        auction.executeAuctionClearing(emissionDay, 100, 75, 2);
+        auction.completeAuction(emissionDay, 0, 2, 100, 75, 0);
 
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Completed));
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Completed));
         IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(emissionDay);
-        assertEq(fin.result.auctionClearingRate, 75);
+        assertEq(fin.result.clearingRate, 75);
         assertEq(fin.result.issuedUnits, 100);
         assertEq(fin.result.wonBidsCount, 2);
         assertEq(fin.params.promisLoadMinor, PROMIS_LOAD_MINOR);
@@ -233,15 +234,15 @@ contract AuctionTest is Test {
 
         // commit + cancel
         _commit(emissionDay, iba1, 5, 11, iba1PrivateKey);
-        assertTrue(auction.committedBidsByHash(emissionDay, iba1) != bytes32(0));
+        assertTrue(auction.committedIntexAuctionBidsByHash(emissionDay, iba1) != bytes32(0));
         vm.prank(iba1);
-        auction.cancelCommit(emissionDay);
-        assertEq(auction.committedBidsByHash(emissionDay, iba1), bytes32(0));
+        auction.cancelIntexAuctionBid(emissionDay);
+        assertEq(auction.committedIntexAuctionBidsByHash(emissionDay, iba1), bytes32(0));
 
         // cancel when no commit
-        vm.expectRevert(IIntexAuction.BidNotFound.selector);
+        vm.expectRevert(IIntexAuction.IntexAuctionBidNotFound.selector);
         vm.prank(iba1);
-        auction.cancelCommit(emissionDay);
+        auction.cancelIntexAuctionBid(emissionDay);
     }
 
     function test_CommitBid_RevertsZeroCommitHash() public {
@@ -251,7 +252,7 @@ contract AuctionTest is Test {
 
         vm.expectRevert(IIntexAuction.InvalidCommitHash.selector);
         vm.prank(iba1);
-        auction.commitBid(emissionDay, bytes32(0));
+        auction.commitIntexAuctionBid(emissionDay, bytes32(0));
     }
 
     function test_CommitBid_RevertsAtCommitEnd() public {
@@ -272,7 +273,7 @@ contract AuctionTest is Test {
             )
         );
         vm.prank(iba1);
-        auction.commitBid(emissionDay, commitHash);
+        auction.commitIntexAuctionBid(emissionDay, commitHash);
     }
 
     function test_CancelCommit_RevertsAtCommitEnd() public {
@@ -281,7 +282,7 @@ contract AuctionTest is Test {
         _start(emissionDay, 10, 1);
 
         _commit(emissionDay, iba1, 5, 11, iba1PrivateKey);
-        assertTrue(auction.committedBidsByHash(emissionDay, iba1) != bytes32(0));
+        assertTrue(auction.committedIntexAuctionBidsByHash(emissionDay, iba1) != bytes32(0));
 
         // Past commitEnd a sealed commit must not be withdrawable.
         vm.warp(startTs + COMMIT_OFFSET);
@@ -294,10 +295,10 @@ contract AuctionTest is Test {
             )
         );
         vm.prank(iba1);
-        auction.cancelCommit(emissionDay);
+        auction.cancelIntexAuctionBid(emissionDay);
 
         // The commit survives the rejected cancel.
-        assertTrue(auction.committedBidsByHash(emissionDay, iba1) != bytes32(0));
+        assertTrue(auction.committedIntexAuctionBidsByHash(emissionDay, iba1) != bytes32(0));
     }
 
     function test_CommitBid_AllowedAtLastSecondBeforeCommitEnd() public {
@@ -308,7 +309,7 @@ contract AuctionTest is Test {
         // commitEnd - 1 is the last valid second of the window.
         vm.warp(uint256(startTs + COMMIT_OFFSET) - 1);
         _commit(emissionDay, iba1, 5, 11, iba1PrivateKey);
-        assertTrue(auction.committedBidsByHash(emissionDay, iba1) != bytes32(0));
+        assertTrue(auction.committedIntexAuctionBidsByHash(emissionDay, iba1) != bytes32(0));
     }
 
     function test_Reveal_Reverts() public {
@@ -328,7 +329,7 @@ contract AuctionTest is Test {
         _reveal(emissionDay, iba1, 10, 120, iba1PrivateKey);
 
         // double reveal
-        vm.expectRevert(IIntexAuction.BidAlreadyRevealed.selector);
+        vm.expectRevert(IIntexAuction.IntexAuctionBidAlreadyRevealed.selector);
         _reveal(emissionDay, iba1, 10, 120, iba1PrivateKey);
     }
 
@@ -343,14 +344,14 @@ contract AuctionTest is Test {
         _enterRevealStage(emissionDay, startTs);
 
         // below floor - try to reveal the below-floor bid
-        vm.expectRevert(IIntexAuction.BidBelowMinIntexBidRate.selector);
+        vm.expectRevert(IIntexAuction.IntexAuctionBidBelowMinBidRate.selector);
         _reveal(emissionDay, iba1, 10, 90, iba1PrivateKey);
     }
 
     function test_Reveal_BelowMinQuantity() public {
         uint256 startTs = block.timestamp;
         uint32 emissionDay = 20250140;
-        // minIntexBidRate = 100, minIntexBidQuantity = 5
+        // minBidRate = 100, minBidQuantity = 5
         _start(emissionDay, 100, 5);
 
         // Commit a below-minimum-quantity bid (qty 4 < 5) at an above-floor rate.
@@ -359,7 +360,7 @@ contract AuctionTest is Test {
         _enterRevealStage(emissionDay, startTs);
 
         // Quantity below the published minimum is rejected at reveal.
-        vm.expectRevert(IIntexAuction.BidBelowMinIntexBidQuantity.selector);
+        vm.expectRevert(IIntexAuction.IntexAuctionBidBelowMinBidQuantity.selector);
         _reveal(emissionDay, iba1, 4, 120, iba1PrivateKey);
     }
 
@@ -373,7 +374,7 @@ contract AuctionTest is Test {
         _enterRevealStage(emissionDay, startTs);
         _reveal(emissionDay, iba1, 5, 120, iba1PrivateKey);
 
-        assertTrue(auction.revealedBidsByBidder(emissionDay, iba1));
+        assertTrue(auction.revealedIntexAuctionBidsByBidder(emissionDay, iba1));
     }
 
     function test_Reveal_AboveMaxRate() public {
@@ -385,7 +386,7 @@ contract AuctionTest is Test {
         _commit(emissionDay, iba1, 10, rate, iba1PrivateKey);
         _enterRevealStage(emissionDay, startTs);
 
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.BidRateAboveMax.selector, rate));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.IntexAuctionBidRateAboveMax.selector, rate));
         _reveal(emissionDay, iba1, 10, rate, iba1PrivateKey);
     }
 
@@ -400,7 +401,7 @@ contract AuctionTest is Test {
         _enterRevealStage(emissionDay, startTs);
         _reveal(emissionDay, iba1, qty, rate, iba1PrivateKey);
 
-        assertTrue(auction.revealedBidsByBidder(emissionDay, iba1));
+        assertTrue(auction.revealedIntexAuctionBidsByBidder(emissionDay, iba1));
         assertEq(uint256(escrow.lockedFunds(emissionDay, iba1)), PROMIS_LOAD_MINOR);
     }
 
@@ -415,7 +416,7 @@ contract AuctionTest is Test {
 
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.InvalidIssuanceCurrency.selector, uint16(975)));
         vm.prank(iba1);
-        auction.revealBid(emissionDay, 3, 120, 975, REFERENCE_CCY, uint64(block.chainid), signature);
+        auction.revealIntexAuctionBid(emissionDay, 3, 120, 975, REFERENCE_CCY, uint64(block.chainid), signature);
     }
 
     function test_Reveal_WithoutCommit() public {
@@ -426,28 +427,92 @@ contract AuctionTest is Test {
         _enterRevealStage(emissionDay, startTs);
 
         // reveal without commit
-        vm.expectRevert(IIntexAuction.BidNotFound.selector);
+        vm.expectRevert(IIntexAuction.IntexAuctionBidNotFound.selector);
         _reveal(emissionDay, iba2, 5, 120, iba2PrivateKey);
     }
 
-    function test_CancelledDay_AuctionBornCancelled() public {
+    function test_CancelAuction_UnknownDay_StaysCancelled() public {
         uint32 emissionDay = 20250120;
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Cancelled, _schedule(), _params(1, 1));
+        auction.cancelAuction(emissionDay, 1);
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Canceled));
 
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Cancelled));
+        vm.expectRevert(IIntexAuction.AuctionCanceled.selector);
+        vm.prank(bridger);
+        auction.startAuction(emissionDay, _schedule(), _params(1, 1));
+
+        vm.expectRevert(IIntexAuction.AuctionNotFound.selector);
+        vm.prank(iba1);
+        auction.commitIntexAuctionBid(emissionDay, keccak256("commit"));
+    }
+
+    function test_CancelAuction_CommitStage_ClosesCommits() public {
+        uint32 emissionDay = 20250140;
+        _start(emissionDay, 1, 1);
+        vm.prank(bridger);
+        auction.cancelAuction(emissionDay, 1);
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Canceled));
 
         bytes memory signature = _createSignature(emissionDay, iba1, 1, 1, iba1PrivateKey);
-        bytes32 commitHash = keccak256(signature);
         vm.expectRevert(
             abi.encodeWithSelector(
                 IIntexAuction.StageRequired.selector,
                 IIntexAuction.AuctionStage.CommittingBids,
-                IIntexAuction.AuctionStage.Cancelled
+                IIntexAuction.AuctionStage.Canceled
             )
         );
         vm.prank(iba1);
-        auction.commitBid(emissionDay, commitHash);
+        auction.commitIntexAuctionBid(emissionDay, keccak256(signature));
+    }
+
+    function test_CancelAuction_RevealStage_ClosesReveals() public {
+        uint256 startTs = block.timestamp;
+        uint32 emissionDay = 20250141;
+        _start(emissionDay, 1, 1);
+        _commit(emissionDay, iba1, 5, 20, iba1PrivateKey);
+        _enterRevealStage(emissionDay, startTs);
+        vm.prank(bridger);
+        auction.cancelAuction(emissionDay, 1);
+
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IIntexAuction.StageRequired.selector,
+                IIntexAuction.AuctionStage.RevealingBids,
+                IIntexAuction.AuctionStage.Canceled
+            )
+        );
+        _reveal(emissionDay, iba1, 5, 20, iba1PrivateKey);
+    }
+
+    function test_CancelAuction_RevertWhen_DayHasAResultOrIsCancelled() public {
+        uint256 startTs = block.timestamp;
+        uint32 emissionDay = 20250142;
+        _start(emissionDay, 1, 1);
+        _enterRevealStage(emissionDay, startTs);
+        vm.warp(startTs + REVEAL_OFFSET + 1);
+        vm.startPrank(bridger);
+        auction.startAuctionClearing(emissionDay);
+        auction.completeAuction(emissionDay, 0, 0, 0, 0, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IIntexAuction.StageRequired.selector,
+                IIntexAuction.AuctionStage.AwaitingResult,
+                IIntexAuction.AuctionStage.Completed
+            )
+        );
+        auction.cancelAuction(emissionDay, 1);
+
+        uint32 other = emissionDay + 1;
+        auction.cancelAuction(other, 1);
+        vm.expectRevert(IIntexAuction.AuctionCanceled.selector);
+        auction.cancelAuction(other, 1);
+        vm.stopPrank();
+    }
+
+    function test_CancelAuction_RevertWhen_NotRelayer() public {
+        vm.expectRevert();
+        vm.prank(iba1);
+        auction.cancelAuction(20250143, 1);
     }
 
     function test_Views_BySeriesId() public {
@@ -455,10 +520,10 @@ contract AuctionTest is Test {
         _start(emissionDay, 5, 1);
 
         IIntexAuction.AuctionData memory a = auction.getAuctionInfo(emissionDay);
-        assertEq(a.params.minIntexBidRate, 5);
+        assertEq(a.params.minBidRate, 5);
         assertEq(uint8(a.dayState), uint8(IIntexAuction.DayState.Live));
 
-        (IIntexAuction.AuctionData memory b, IIntexAuction.SubmittedBidData[] memory bids) =
+        (IIntexAuction.AuctionData memory b, IIntexAuction.SubmittedIntexAuctionBidData[] memory bids) =
             auction.getAuctionDetails(emissionDay);
         assertEq(b.params.promisLoadMinor, PROMIS_LOAD_MINOR);
         assertEq(bids.length, 0);
@@ -469,29 +534,29 @@ contract AuctionTest is Test {
         _start(emissionDay, 1, 1);
 
         IIntexAuction.AuctionData memory d = auction.getAuctionInfo(emissionDay);
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.CommittingBids));
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.CommittingBids));
 
         // No bridge message: the stage flips exactly at the stored schedule boundaries.
         vm.warp(d.schedule.commitEnd - 1);
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.CommittingBids));
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.CommittingBids));
         vm.warp(d.schedule.commitEnd);
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.RevealingBids));
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.RevealingBids));
 
         vm.warp(d.schedule.revealEnd - 1);
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.RevealingBids));
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.RevealingBids));
         vm.warp(d.schedule.revealEnd);
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
     }
 
     // --- Access Control Tests ---
     function test_AccessControl_Wire() public {
         vm.expectRevert();
         vm.prank(iba1);
-        auction.wire(address(0xBEEF));
+        auction.setEscrow(address(0xBEEF));
 
         vm.expectRevert();
         vm.prank(bridger);
-        auction.wire(address(0xBEEF));
+        auction.setEscrow(address(0xBEEF));
     }
 
     function test_SetIntexContract_AdminOnlyAndNonZero() public {
@@ -504,7 +569,7 @@ contract AuctionTest is Test {
         auction.setIntexContract(address(0));
 
         vm.expectEmit(true, true, true, true, address(auction));
-        emit IIntexAuction.IntexWired(address(auction.intexContract()), address(0xBEEF));
+        emit IIntexAuction.IntexContractSet(address(0xBEEF));
         auction.setIntexContract(address(0xBEEF));
         vm.stopPrank();
         assertEq(address(auction.intexContract()), address(0xBEEF));
@@ -524,11 +589,11 @@ contract AuctionTest is Test {
         MockAuctionEscrow escrow2 = new MockAuctionEscrow();
         vm.prank(admin);
         vm.expectRevert(IIntexAuction.EscrowHasLiveLocks.selector);
-        auction.wire(address(escrow2));
+        auction.setEscrow(address(escrow2));
 
         vm.prank(admin);
-        auction.wire(address(escrow));
-        assertEq(address(auction.escrowContract()), address(escrow), "the same escrow rewires");
+        auction.setEscrow(address(escrow));
+        assertEq(address(auction.escrow()), address(escrow), "the same escrow rewires");
     }
 
     function test_Wire_SucceedsAfterLocksCleared() public {
@@ -542,8 +607,8 @@ contract AuctionTest is Test {
         escrow.releaseAllLocks();
         MockAuctionEscrow escrow2 = new MockAuctionEscrow();
         vm.prank(admin);
-        auction.wire(address(escrow2));
-        assertEq(address(auction.escrowContract()), address(escrow2));
+        auction.setEscrow(address(escrow2));
+        assertEq(address(auction.escrow()), address(escrow2));
     }
 
     function test_RevealBid_FreesCommitSlot() public {
@@ -551,12 +616,12 @@ contract AuctionTest is Test {
         uint32 emissionDay = 20250230;
         _start(emissionDay, 50, 1);
         _commit(emissionDay, iba1, 30, 80, iba1PrivateKey);
-        assertTrue(auction.committedBidsByHash(emissionDay, iba1) != bytes32(0));
+        assertTrue(auction.committedIntexAuctionBidsByHash(emissionDay, iba1) != bytes32(0));
 
         _enterRevealStage(emissionDay, startTs);
         _reveal(emissionDay, iba1, 30, 80, iba1PrivateKey);
 
-        assertEq(auction.committedBidsByHash(emissionDay, iba1), bytes32(0));
+        assertEq(auction.committedIntexAuctionBidsByHash(emissionDay, iba1), bytes32(0));
     }
 
     function test_AccessControl_AuctionStart() public {
@@ -564,11 +629,11 @@ contract AuctionTest is Test {
 
         vm.expectRevert();
         vm.prank(admin);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, _schedule(), _params(10, 1));
+        auction.startAuction(emissionDay, _schedule(), _params(10, 1));
 
         vm.expectRevert();
         vm.prank(iba1);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, _schedule(), _params(10, 1));
+        auction.startAuction(emissionDay, _schedule(), _params(10, 1));
     }
 
     function test_AccessControl_StartAwaitingResult() public {
@@ -579,11 +644,11 @@ contract AuctionTest is Test {
 
         vm.expectRevert();
         vm.prank(admin);
-        auction.startAwaitingResult(emissionDay);
+        auction.startAuctionClearing(emissionDay);
 
         vm.expectRevert();
         vm.prank(iba1);
-        auction.startAwaitingResult(emissionDay);
+        auction.startAuctionClearing(emissionDay);
     }
 
     function test_AccessControl_ExecuteAuctionClearing() public {
@@ -592,15 +657,15 @@ contract AuctionTest is Test {
         _start(emissionDay, 10, 1);
         _enterRevealStage(emissionDay, startTs);
         vm.prank(bridger);
-        auction.startAwaitingResult(emissionDay);
+        auction.startAuctionClearing(emissionDay);
 
         vm.expectRevert();
         vm.prank(admin);
-        auction.executeAuctionClearing(emissionDay, 100, 75, 1);
+        auction.completeAuction(emissionDay, 0, 1, 100, 75, 0);
 
         vm.expectRevert();
         vm.prank(iba1);
-        auction.executeAuctionClearing(emissionDay, 100, 75, 1);
+        auction.completeAuction(emissionDay, 0, 1, 100, 75, 0);
     }
 
     // --- Clearing sanity-floor ---
@@ -617,12 +682,14 @@ contract AuctionTest is Test {
         _reveal(emissionDay, iba2, 40, 70, iba2PrivateKey);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startAwaitingResult(emissionDay);
+        auction.startAuctionClearing(emissionDay);
 
         // 2 bids revealed; a clearing claiming 3 winners is rejected.
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.WonBidsExceedRevealed.selector, uint32(3), uint32(2)));
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexAuction.WonIntexAuctionBidsExceedRevealed.selector, uint32(3), uint32(2))
+        );
         vm.prank(bridger);
-        auction.executeAuctionClearing(emissionDay, 100, 75, 3);
+        auction.completeAuction(emissionDay, 0, 3, 100, 75, 0);
     }
 
     function test_ExecuteAuctionClearing_RevertsPromisOverflow() public {
@@ -633,18 +700,18 @@ contract AuctionTest is Test {
         IIntexAuction.AuctionParams memory params = _params(floor, 1);
         params.promisLoadMinor = type(uint128).max; // ceiling so the clearing product overflows uint128
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, _schedule(), params);
+        auction.startAuction(emissionDay, _schedule(), params);
 
         _enterRevealStage(emissionDay, startTs);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startAwaitingResult(emissionDay);
+        auction.startAuctionClearing(emissionDay);
 
         vm.expectRevert(
             abi.encodeWithSelector(IIntexAuction.IssuedPromisOverflow.selector, type(uint32).max, type(uint128).max)
         );
         vm.prank(bridger);
-        auction.executeAuctionClearing(emissionDay, type(uint32).max, floor, 0);
+        auction.completeAuction(emissionDay, 0, 0, type(uint32).max, floor, 0);
     }
 
     function test_ExecuteAuctionClearing_RevertsClearingRateBelowMin() public {
@@ -657,17 +724,17 @@ contract AuctionTest is Test {
         _reveal(emissionDay, iba1, 30, 80, iba1PrivateKey);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startAwaitingResult(emissionDay);
+        auction.startAuctionClearing(emissionDay);
 
         // Clearing rate below the configured minimum is rejected.
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ClearingRateBelowMin.selector, uint64(floor - 1), floor));
         vm.prank(bridger);
-        auction.executeAuctionClearing(emissionDay, 100, floor - 1, 1);
+        auction.completeAuction(emissionDay, 0, 1, 100, floor - 1, 0);
     }
 
-    /// @dev No-sale auction: Desis floors the clearing rate at `minIntexBidRate`, so a clearing
+    /// @dev No-sale auction: Desis floors the clearing rate at `minBidRate`, so a clearing
     ///      with zero winners still carries a non-zero rate. The auction must accept this as a
-    ///      valid result. The real invariant is `clearingRate >= minIntexBidRate`, NOT the
+    ///      valid result. The real invariant is `clearingRate >= minBidRate`, NOT the
     ///      (incorrect) `clearingRate == 0 <=> winners == 0`. This test guards against
     ///      re-introducing that wrong rule.
     function test_ExecuteAuctionClearing_NoSale_ZeroWinnersAtFloor() public {
@@ -680,23 +747,23 @@ contract AuctionTest is Test {
         _reveal(emissionDay, iba1, 30, 80, iba1PrivateKey);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startAwaitingResult(emissionDay);
+        auction.startAuctionClearing(emissionDay);
 
         // Zero winners, zero issued, clearing rate at the floor (non-zero): a valid No-sale result.
         vm.expectEmit(true, false, false, true);
-        emit IIntexAuction.AuctionClearingExecuted(emissionDay, floor, 0);
+        emit IIntexAuction.IntexAuctionCompleted(emissionDay, 0, 0, 0, floor, 0);
         vm.prank(bridger);
-        auction.executeAuctionClearing(emissionDay, 0, floor, 0);
+        auction.completeAuction(emissionDay, 0, 0, 0, floor, 0);
 
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Completed));
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Completed));
         IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(emissionDay);
         assertEq(fin.result.wonBidsCount, 0);
         assertEq(fin.result.issuedUnits, 0);
-        assertEq(fin.result.auctionClearingRate, floor);
+        assertEq(fin.result.clearingRate, floor);
         assertEq(fin.result.issuedPromisLoadMinor, 0);
     }
 
-    /// @dev No-sale with no supply: even when `minIntexBidRate > 0`, the clearing rate can be 0
+    /// @dev No-sale with no supply: even when `minBidRate > 0`, the clearing rate can be 0
     ///      (nothing was allocated because supply was exhausted/zero). It must still complete and
     ///      NOT revert `ZeroValue`/`ClearingRateBelowMin`. The full refund uses
     ///      REFUND_INSTRUCTIONS, and nothing is issued. The `cleared` flag drives the Completed
@@ -704,24 +771,24 @@ contract AuctionTest is Test {
     function test_ExecuteAuctionClearing_NoSale_ZeroRate() public {
         uint256 startTs = block.timestamp;
         uint32 emissionDay = 20250145;
-        uint32 floor = 50; // minIntexBidRate > 0
+        uint32 floor = 50; // minBidRate > 0
         _start(emissionDay, floor, 1);
         _commit(emissionDay, iba1, 30, 80, iba1PrivateKey);
         _enterRevealStage(emissionDay, startTs);
         _reveal(emissionDay, iba1, 30, 80, iba1PrivateKey);
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startAwaitingResult(emissionDay);
+        auction.startAuctionClearing(emissionDay);
 
         // issued=0, clearingRate=0, won=0 - accepted despite floor=50 (no supply was available).
         vm.expectEmit(true, false, false, true);
-        emit IIntexAuction.AuctionClearingExecuted(emissionDay, 0, 0);
+        emit IIntexAuction.IntexAuctionCompleted(emissionDay, 0, 0, 0, 0, 0);
         vm.prank(bridger);
-        auction.executeAuctionClearing(emissionDay, 0, 0, 0);
+        auction.completeAuction(emissionDay, 0, 0, 0, 0, 0);
 
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Completed));
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Completed));
         IIntexAuction.AuctionData memory fin = auction.getAuctionInfo(emissionDay);
-        assertEq(fin.result.auctionClearingRate, 0);
+        assertEq(fin.result.clearingRate, 0);
         assertEq(fin.result.issuedUnits, 0);
         assertEq(fin.result.wonBidsCount, 0);
         assertEq(fin.result.issuedPromisLoadMinor, 0);
@@ -735,7 +802,7 @@ contract AuctionTest is Test {
             )
         );
         vm.prank(bridger);
-        auction.executeAuctionClearing(emissionDay, 0, 0, 0);
+        auction.completeAuction(emissionDay, 0, 0, 0, 0, 0);
     }
 
     // --- Validation Tests ---
@@ -750,7 +817,7 @@ contract AuctionTest is Test {
         });
         vm.expectRevert(IIntexAuction.InvalidSchedule.selector);
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, pastSchedule, _params(10, 1));
+        auction.startAuction(emissionDay, pastSchedule, _params(10, 1));
 
         // Schedule not strictly increasing (revealEnd <= commitEnd).
         IIntexAuction.AuctionSchedule memory nonIncreasing = IIntexAuction.AuctionSchedule({
@@ -760,35 +827,16 @@ contract AuctionTest is Test {
         });
         vm.expectRevert(IIntexAuction.InvalidSchedule.selector);
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, nonIncreasing, _params(10, 1));
+        auction.startAuction(emissionDay, nonIncreasing, _params(10, 1));
 
         // Valid start succeeds.
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, _schedule(), _params(10, 1));
+        auction.startAuction(emissionDay, _schedule(), _params(10, 1));
 
         // AuctionAlreadyExists
         vm.expectRevert(IIntexAuction.AuctionAlreadyExists.selector);
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, _schedule(), _params(10, 1));
-    }
-
-    function test_AuctionStart_RevertWhen_UnknownDayState() public {
-        vm.expectRevert(IIntexAuction.InvalidDayState.selector);
-        vm.prank(bridger);
-        auction.auctionStart(20250135, IIntexAuction.DayState.Unknown, _schedule(), _params(10, 1));
-    }
-
-    function test_AuctionStart_CancelledDay_AllowsPastCommitEnd() public {
-        uint32 emissionDay = 20250136;
-        IIntexAuction.AuctionSchedule memory pastSchedule = IIntexAuction.AuctionSchedule({
-            commitEnd: uint32(block.timestamp),
-            revealEnd: uint32(block.timestamp + 200),
-            issuanceEnd: uint32(block.timestamp + 300)
-        });
-        vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Cancelled, pastSchedule, _params(10, 1));
-
-        assertEq(uint8(auction.getAuctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Cancelled));
+        auction.startAuction(emissionDay, _schedule(), _params(10, 1));
     }
 
     function test_Wire_Validation() public {
@@ -797,8 +845,8 @@ contract AuctionTest is Test {
         newAuction.grantRole(newAuction.RELAYER_ROLE(), bridger);
 
         // Zero escrow address
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "escrowContract"));
-        newAuction.wire(address(0));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroAddress.selector, "escrow"));
+        newAuction.setEscrow(address(0));
 
         vm.stopPrank();
     }
@@ -811,12 +859,12 @@ contract AuctionTest is Test {
         // Reach the Issuance stage (time-derived: now >= revealEnd).
         vm.warp(startTs + REVEAL_OFFSET + 1);
         vm.prank(bridger);
-        auction.startAwaitingResult(emissionDay);
+        auction.startAuctionClearing(emissionDay);
 
-        // Zero auctionClearingRate
-        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "auctionClearingRate"));
+        // Zero clearingRate
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "clearingRate"));
         vm.prank(bridger);
-        auction.executeAuctionClearing(emissionDay, 100, 0, 1);
+        auction.completeAuction(emissionDay, 0, 1, 100, 0, 0);
     }
 
     function test_RevealBid_Validation() public {
@@ -830,20 +878,20 @@ contract AuctionTest is Test {
         bytes memory sig = _createSignature(emissionDay, iba1, 0, 20, iba1PrivateKey);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidRate"));
         vm.prank(iba1);
-        auction.revealBid(emissionDay, 0, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
+        auction.revealIntexAuctionBid(emissionDay, 0, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
         // Zero bidRate
         sig = _createSignature(emissionDay, iba1, 10, 0, iba1PrivateKey);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.ZeroValue.selector, "quantity/bidRate"));
         vm.prank(iba1);
-        auction.revealBid(emissionDay, 10, 0, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
+        auction.revealIntexAuctionBid(emissionDay, 10, 0, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
         // Wrong chainId - caller's chainId param does not match block.chainid -> WrongChain.
         uint64 wrongChainId = 999;
         sig = _createSignature(emissionDay, iba1, 10, 20, iba1PrivateKey);
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.WrongChain.selector, block.chainid, uint256(wrongChainId)));
         vm.prank(iba1);
-        auction.revealBid(emissionDay, 10, 20, ISSUANCE_CCY, REFERENCE_CCY, wrongChainId, sig);
+        auction.revealIntexAuctionBid(emissionDay, 10, 20, ISSUANCE_CCY, REFERENCE_CCY, wrongChainId, sig);
     }
 
     function test_StartAwaitingResult_AlreadyClearing() public {
@@ -852,15 +900,33 @@ contract AuctionTest is Test {
         _start(emissionDay, 10, 1);
         _enterRevealStage(emissionDay, startTs);
         vm.prank(bridger);
-        auction.startAwaitingResult(emissionDay);
+        auction.startAuctionClearing(emissionDay);
 
-        // Call again when already in the issuance stage: idempotent, re-emits the stage update.
-        vm.expectEmit(true, false, false, true);
-        emit IIntexAuction.AuctionStageUpdated(
-            emissionDay, IIntexAuction.AuctionStage.AwaitingResult, uint32(block.timestamp), ""
-        );
+        // A second clearing start is idempotent and emits no second clearing event.
+        vm.recordLogs();
         vm.prank(bridger);
-        auction.startAwaitingResult(emissionDay);
+        auction.startAuctionClearing(emissionDay);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(logs[i].topics[0] != IIntexAuction.IntexAuctionClearingStarted.selector, "one clearing event");
+        }
+    }
+
+    function test_clearing_start_after_the_reveal_end_emits_its_event_once() public {
+        uint32 emissionDay = 20250131;
+        _start(emissionDay, 10, 1);
+        vm.warp(auction.getAuctionInfo(emissionDay).schedule.revealEnd + 1);
+        assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.AwaitingResult));
+
+        vm.expectEmit(true, true, true, true, address(auction));
+        emit IIntexAuction.IntexAuctionClearingStarted(emissionDay);
+        vm.prank(bridger);
+        auction.startAuctionClearing(emissionDay);
+
+        vm.recordLogs();
+        vm.prank(bridger);
+        auction.startAuctionClearing(emissionDay);
+        assertEq(vm.getRecordedLogs().length, 0, "a repeated clearing start emits nothing");
     }
 
     function test_ViewFunctions_NotFound() public {
@@ -873,7 +939,7 @@ contract AuctionTest is Test {
         auction.getAuctionDetails(nonExistentSeries);
 
         vm.expectRevert(IIntexAuction.AuctionNotFound.selector);
-        auction.getAuctionStage(nonExistentSeries);
+        auction.auctionStage(nonExistentSeries);
     }
 
     function test_RevealBid_WrongSigner() public {
@@ -884,17 +950,17 @@ contract AuctionTest is Test {
         _enterRevealStage(emissionDay, startTs);
 
         // Try to reveal with signature from iba1 but call from iba2
-        // This will fail with BidNotFound because iba2 has no commit
+        // This will fail with IntexAuctionBidNotFound because iba2 has no commit
         bytes memory sig = _createSignature(emissionDay, iba1, 10, 20, iba1PrivateKey);
-        vm.expectRevert(IIntexAuction.BidNotFound.selector);
+        vm.expectRevert(IIntexAuction.IntexAuctionBidNotFound.selector);
         vm.prank(iba2);
-        auction.revealBid(emissionDay, 10, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
+        auction.revealIntexAuctionBid(emissionDay, 10, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
     }
 
-    /// @dev Reentrancy probe: arm the escrow mock to call back into `revealBid` during
-    ///      `lockFunds`. With `nonReentrant` in place the inner call reverts with
+    /// @dev Reentrancy probe: arm the escrow mock to call back into `revealIntexAuctionBid` during
+    ///      `lockIntexAuctionAsset`. With `nonReentrant` in place the inner call reverts with
     ///      `ReentrancyGuardReentrantCall`, which propagates and unwinds all state.
-    ///      Without `nonReentrant` on `revealBid`, this test fails (reentry succeeds, and the
+    ///      Without `nonReentrant` on `revealIntexAuctionBid`, this test fails (reentry succeeds, and the
     ///      attacker double-records the bid). It is a true red->green test of the guard.
     function test_RevealBid_reentrancyBlocked() public {
         uint256 startTs = block.timestamp;
@@ -905,18 +971,19 @@ contract AuctionTest is Test {
 
         bytes memory sig = _createSignature(emissionDay, iba1, 10, 20, iba1PrivateKey);
         bytes memory reentrantCall = abi.encodeCall(
-            IIntexAuction.revealBid, (emissionDay, 10, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig)
+            IIntexAuction.revealIntexAuctionBid,
+            (emissionDay, 10, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig)
         );
         escrow.armReentry(auction, reentrantCall);
 
         bytes4 reentrancyGuard = bytes4(keccak256("ReentrancyGuardReentrantCall()"));
         vm.expectRevert(reentrancyGuard);
         vm.prank(iba1);
-        auction.revealBid(emissionDay, 10, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
+        auction.revealIntexAuctionBid(emissionDay, 10, 20, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), sig);
 
         // Tx unwound: no reveal recorded, no bid pushed.
-        assertFalse(auction.revealedBidsByBidder(emissionDay, iba1));
-        (, IIntexAuction.SubmittedBidData[] memory bids) = auction.getAuctionDetails(emissionDay);
+        assertFalse(auction.revealedIntexAuctionBidsByBidder(emissionDay, iba1));
+        (, IIntexAuction.SubmittedIntexAuctionBidData[] memory bids) = auction.getAuctionDetails(emissionDay);
         assertEq(bids.length, 0);
         (, uint32 revealedBidsCount) = auction.auctionRunningCounts(emissionDay);
         assertEq(revealedBidsCount, 0);

@@ -1,7 +1,7 @@
 //! ABI encoding for Oracle vote submission.
 //!
 //! Takes U256 fixed-point prices from the aggregator and encodes them
-//! into `submitVote(ExchangeRateTuple[], GasTuple[])` calldata.
+//! into `submitVote(ExchangeRateTuple[], GasTuple[], RateTuple[])` calldata.
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
@@ -43,6 +43,11 @@ pub fn decode_vote_log(calldata: &[u8]) -> eyre::Result<String> {
             .iter()
             .map(|g| format!("gas {}:{}", g.chainId, g.gasPrice)),
     );
+    parts.extend(
+        call.rates
+            .iter()
+            .map(|r| format!("rate {}:{}@{}", r.currency, r.rate, r.publishedAt)),
+    );
     Ok(parts.join(" | "))
 }
 
@@ -71,7 +76,11 @@ pub fn only_vote_targets(
         .collect()
 }
 
-pub fn encode_vote(prices: &[AggregatedPrice], gas: &[(u32, U256)]) -> Vec<u8> {
+pub fn encode_vote(
+    prices: &[AggregatedPrice],
+    gas: &[(u32, U256)],
+    rates: &[crate::rates::RateVote],
+) -> Vec<u8> {
     let tuples: Vec<IOracle::ExchangeRateTuple> = prices
         .iter()
         .map(|p| IOracle::ExchangeRateTuple {
@@ -89,7 +98,15 @@ pub fn encode_vote(prices: &[AggregatedPrice], gas: &[(u32, U256)]) -> Vec<u8> {
             gasPrice: gas_price,
         })
         .collect();
-    let call = IOracle::submitVoteCall { tuples, gas };
+    let rates = rates
+        .iter()
+        .map(|&(currency, rate, published_at)| IOracle::RateTuple {
+            currency,
+            rate,
+            publishedAt: published_at,
+        })
+        .collect();
+    let call = IOracle::submitVoteCall { tuples, gas, rates };
     call.abi_encode()
 }
 
@@ -105,7 +122,7 @@ mod tests {
             price: U256::from(1_500_000u64),
             volume: U256::from(10_000_000_000u64),
         }];
-        let calldata = encode_vote(&prices, &[]);
+        let calldata = encode_vote(&prices, &[], &[]);
         // The submitVote selector is the first 4 bytes.
         assert!(calldata.len() > 4);
         let decoded = IOracle::submitVoteCall::abi_decode(&calldata).unwrap();
