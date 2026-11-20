@@ -397,7 +397,6 @@ contract TargetRouter is
         uint64 calledAt = $.failedIntexSeriesCallNoticeApplies[seriesId];
         if (calledAt == 0) revert NoFailedIntexSeriesCallNoticeApply(seriesId);
         delete $.failedIntexSeriesCallNoticeApplies[seriesId];
-        delete $.failedIntexSeriesCallNoticeApplySources[seriesId];
         $.intexContract.markCalled(seriesId, calledAt);
     }
 

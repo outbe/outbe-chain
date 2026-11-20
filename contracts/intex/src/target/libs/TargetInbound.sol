@@ -366,7 +366,7 @@ library TargetInbound {
                         })
                     })
                 );
-            _applySlottedIntexSeriesCallNotice($, payload.seriesId);
+            _applySlottedIntexSeriesCallNotice($, srcChainId, payload.seriesId);
         }
 
         emit ITargetRouter.IssuanceInstructionsReceived(srcChainId, payload.seriesId);
@@ -506,7 +506,6 @@ library TargetInbound {
             return;
         }
         delete $.failedIntexSeriesCallNoticeApplies[seriesId];
-        delete $.failedIntexSeriesCallNoticeApplySources[seriesId];
     }
 
     function _slotIntexSeriesCallNotice(
@@ -517,18 +516,17 @@ library TargetInbound {
         bytes memory errorData
     ) private {
         $.failedIntexSeriesCallNoticeApplies[seriesId] = calledAt;
-        $.failedIntexSeriesCallNoticeApplySources[seriesId] = srcChainId;
         emit ITargetRouter.IntexSeriesCallNoticeApplyFailed(seriesId, srcChainId, errorData);
     }
 
     /// @dev Apply the Called mark waiting for a series that has just been created. A failure re-announces
     ///      the slot.
-    function _applySlottedIntexSeriesCallNotice(TargetRouterStorage storage $, bytes14 seriesId) private {
+    function _applySlottedIntexSeriesCallNotice(TargetRouterStorage storage $, uint32 srcChainId, bytes14 seriesId)
+        private
+    {
         uint64 calledAt = $.failedIntexSeriesCallNoticeApplies[seriesId];
         if (calledAt == 0) return;
-        uint32 srcChainId = $.failedIntexSeriesCallNoticeApplySources[seriesId];
         delete $.failedIntexSeriesCallNoticeApplies[seriesId];
-        delete $.failedIntexSeriesCallNoticeApplySources[seriesId];
         try ITargetRouterShims(address(this)).applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
             seriesId, calledAt
         ) {}
