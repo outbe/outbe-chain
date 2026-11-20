@@ -10,7 +10,7 @@ use crate::{
         rpc::RpcClient,
         snapshot,
         wait::{wait_for_resident, wait_for_rpc_chain, wait_for_sync},
-        FULL_NODE, VALIDATOR_SERVICE, VALIDATOR_TARGET,
+        VALIDATOR_SERVICE, VALIDATOR_TARGET,
     },
 };
 
@@ -18,11 +18,6 @@ pub async fn run(snapshot_path: Option<&Path>) -> Result<()> {
     let _lock = process::LifecycleLock::acquire()?;
     let mut journal = Journal::load()?;
     let mut progress = Progress::new();
-    ensure!(
-        !process::systemctl_is_active(FULL_NODE),
-        "a legacy full node is active; stop it explicitly before initial validator sync"
-    );
-
     if let Some(path) = snapshot_path {
         let digest = bundle::digest_file(path)?;
         match journal.snapshot_sha256.as_deref() {
