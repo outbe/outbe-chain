@@ -9,7 +9,7 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, PrecompileError, Result},
 };
-use outbe_system_common::pass_budget::PassBudget;
+use outbe_system_common::pass_budget::{PassBudget, WITNESS_BYTES_PER_WRITE};
 
 pub(crate) fn cleanup_through(
     ctx: &BlockRuntimeContext,
@@ -25,6 +25,10 @@ pub(crate) fn cleanup_through(
         &mut CredisCleanup::new(ctx),
     )
 }
+
+/// The pledge burn of one Credis is one Gratis collateral op.
+pub const PLEDGE_BURN_COST: u32 =
+    outbe_gratis::enclave_client::COLLATERAL_OP_WITNESS_BYTES.div_ceil(WITNESS_BYTES_PER_WRITE);
 
 struct CredisCleanup<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,
@@ -61,6 +65,10 @@ impl DeadlineHandler<SeriesId> for CredisCleanup<'_, '_> {
 
     fn classify(&self, error: &PrecompileError) -> PassFailure {
         error.record_pass_failure()
+    }
+
+    fn member_cost(&self, _series: SeriesId, _credis_id: U256) -> u32 {
+        PLEDGE_BURN_COST
     }
 
     fn process_member(&mut self, _series: SeriesId, credis_id: U256) -> Result<()> {

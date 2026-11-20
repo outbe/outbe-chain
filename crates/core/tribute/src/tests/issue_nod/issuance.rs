@@ -570,6 +570,13 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
             .unwrap();
         let forfeit_ts = deadline + outbe_system_common::time::SECONDS_PER_DAY;
         storage.set_block_timestamp(U256::from(forfeit_ts)).unwrap();
+        // While the forfeit pass closes the group series by series, no Tribute of it issues.
+        nod.group_forfeiting.write(&group_key, true).unwrap();
+        let closing_err = tc.issue_nod(owner2, t2.tribute_id).unwrap_err();
+        let closing_forfeited: PrecompileError =
+            crate::errors::TributeError::TributeForfeited.into();
+        assert_eq!(closing_err.to_string(), closing_forfeited.to_string());
+        nod.group_forfeiting.clear(&group_key).unwrap();
         let promis_before = outbe_promislimit::PromisLimitContract::new(storage.clone())
             .promis_limit()
             .unwrap();

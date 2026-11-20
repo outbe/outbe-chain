@@ -279,7 +279,7 @@ fn resolve_series_and_price(
     )?;
     let group_key =
         outbe_nod::api::series_group(storage, series_id)?.ok_or(TributeError::TributeForfeited)?;
-    if outbe_nod::api::is_group_forfeited(storage, group_key)? {
+    if outbe_nod::api::is_group_forfeit_started(storage, group_key)? {
         return Err(TributeError::TributeForfeited.into());
     }
     let sealed_price = outbe_nod::api::series_entry_price_minor(storage, series_id)?;

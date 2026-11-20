@@ -8,6 +8,8 @@ use outbe_primitives::error::{PrecompileError, Result};
 pub const SWEEP_VISITS_PER_BLOCK: u32 = 256;
 /// EVM state changes: a call, a burned or expired member, a void, a sent notice.
 pub const SWEEP_WRITES_PER_BLOCK: u32 = 64;
+/// Enclave witness one write may record; a member that records more takes more writes.
+pub const WITNESS_BYTES_PER_WRITE: u32 = 168;
 
 /// What is left of one pass's work in this block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

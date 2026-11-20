@@ -8880,6 +8880,7 @@ dependencies = [
  "outbe-vote",
  "outbe-zerofee",
  "outbe-zk-backend",
+ "postcard",
  "proptest",
  "radicle",
  "radicle-signals",
