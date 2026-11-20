@@ -31,7 +31,7 @@ struct NetworkArgs {
 #[derive(Debug, Subcommand)]
 enum NetworkCommand {
     /// Write a documented network configuration template.
-    #[command(visible_alias = "init")]
+    #[command(alias = "init")]
     ConfigExample {
         #[arg(long, default_value = "network.yaml")]
         output: PathBuf,
@@ -95,7 +95,7 @@ enum ValidatorCommand {
         #[arg(long)]
         config: PathBuf,
     },
-    /// Restore an optional snapshot, start the resident validator, and reach tip.
+    /// Restore an optional snapshot, start the validator node, and reach tip.
     Sync {
         #[arg(long)]
         snapshot: Option<PathBuf>,
@@ -218,7 +218,7 @@ mod tests {
             "--config",
             "network.yaml",
             "--output",
-            "network-build",
+            "network-artifacts",
         ])
         .is_ok());
         assert!(Cli::try_parse_from([

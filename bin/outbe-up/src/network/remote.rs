@@ -11,17 +11,17 @@ use super::{
     config::{Founder, NetworkConfig},
 };
 
-pub(super) struct NetworkBuild {
+pub(super) struct NetworkArtifacts {
     pub(super) root: PathBuf,
     pub(super) config: NetworkConfig,
     pub(super) manifest: NetworkManifest,
 }
 
-impl NetworkBuild {
+impl NetworkArtifacts {
     pub(super) fn load(root: &Path) -> Result<Self> {
         ensure!(
             root.is_dir(),
-            "network build does not exist: {}",
+            "network artifacts directory does not exist: {}",
             root.display()
         );
         let config_path = root.join("network.yaml");

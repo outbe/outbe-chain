@@ -10,7 +10,7 @@ use crate::{
     validator::rpc::ConsensusStatus,
 };
 
-use super::remote::{NetworkBuild, SshOptions};
+use super::remote::{NetworkArtifacts, SshOptions};
 
 #[derive(Clone, Debug)]
 pub(super) struct FounderStatus {
@@ -44,7 +44,7 @@ struct RpcResponse {
 pub async fn show(artifacts: &Path, ssh_key: Option<&Path>, watch: bool) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("querying founding validator status");
-    let build = NetworkBuild::load(artifacts)?;
+    let build = NetworkArtifacts::load(artifacts)?;
     let ssh = SshOptions::new(ssh_key)?;
     let statuses = query_all(&build, &ssh).await?;
     if !watch {
@@ -74,7 +74,7 @@ pub async fn show(artifacts: &Path, ssh_key: Option<&Path>, watch: bool) -> Resu
 }
 
 pub(super) async fn query_all(
-    build: &NetworkBuild,
+    build: &NetworkArtifacts,
     ssh: &SshOptions,
 ) -> Result<Vec<FounderStatus>> {
     let mut tasks = JoinSet::new();
@@ -134,7 +134,7 @@ pub(super) fn ready_for_hyperlane_setup(
     .all(|ready| ready)
 }
 
-pub(super) fn render(build: &NetworkBuild, statuses: &[FounderStatus]) -> String {
+pub(super) fn render(build: &NetworkArtifacts, statuses: &[FounderStatus]) -> String {
     let required_peers = build.config.founders.len().saturating_sub(1);
     let healthy_count = statuses
         .iter()

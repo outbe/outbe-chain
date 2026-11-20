@@ -14,11 +14,11 @@ outbe-up network config-example --output network.yaml
 outbe-up network build \
   --software-bundle outbe-software-bundle-....tar.zst \
   --config network.yaml \
-  --output network-build
+  --output network-artifacts
 
-outbe-up network prepare --artifacts network-build [--ssh-key ~/.ssh/operator]
-outbe-up network start --artifacts network-build [--ssh-key ~/.ssh/operator]
-outbe-up network status --artifacts network-build [--ssh-key ~/.ssh/operator] [--watch]
+outbe-up network prepare --artifacts network-artifacts [--ssh-key ~/.ssh/operator]
+outbe-up network start --artifacts network-artifacts [--ssh-key ~/.ssh/operator]
+outbe-up network status --artifacts network-artifacts [--ssh-key ~/.ssh/operator] [--watch]
 ```
 
 `build` produces one fresh genesis, one founder identity per configured host, host-specific
@@ -28,8 +28,8 @@ founders and waits for RPC, execution peers, consensus signer state, threshold s
 TEE readiness, a healthy feeder, and a finalized block. It then delegates and funds each dedicated
 Hyperlane signer, registers it with the controller, and waits for every Hyperlane validator to
 become healthy.
-`network init` is an alias for `network config-example`. `prepare` refuses to reinstall over an
-active validator target; `start` can be repeated for the same artifacts.
+`prepare` refuses to reinstall over an active validator target; `start` can be repeated for the
+same artifacts.
 
 `network.yaml` keeps SSH endpoints separate from node advertise/RPC addresses, supports four or
 more founders, prefunded accounts and explicit genesis overrides. `genesis.base` may reference a

@@ -27,7 +27,7 @@ pub async fn run() -> Result<()> {
     let validator = validator_address(&keys.join("evm-key.hex"))?;
     let feeder = validator_address(&keys.join("feeder-key.hex"))?;
 
-    progress.stage("checking synchronized resident validator and validator state");
+    progress.stage("checking synchronized validator node and on-chain state");
     ensure!(
         process::systemctl_is_active(VALIDATOR_SERVICE),
         "run `outbe-up validator sync` before promotion"

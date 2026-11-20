@@ -58,16 +58,16 @@ pub async fn run(snapshot_path: Option<&Path>) -> Result<()> {
         }
     }
 
-    progress.stage("starting resident validator");
+    progress.stage("starting validator node");
     process::systemctl(&["enable", "--now", VALIDATOR_TARGET])?;
     let local = RpcClient::new(journal.config.network.local_rpc_url())?;
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
     wait_for_rpc_chain(&local, journal.config.network.chain_id, &mut progress).await?;
-    progress.stage("synchronizing resident validator");
+    progress.stage("synchronizing validator node");
     let (height, peers) = wait_for_sync(&local, &remote, &mut progress).await?;
     wait_for_resident(&local, &mut progress).await?;
     progress.done(&format!(
-        "resident validator synchronized at finalized height {height} with {peers} peers"
+        "validator node synchronized at finalized height {height} with {peers} peers"
     ));
     Ok(())
 }
