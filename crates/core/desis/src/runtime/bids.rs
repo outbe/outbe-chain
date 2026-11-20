@@ -146,10 +146,10 @@ pub fn complete_intex_auction_bids(
     }
 
     let chain_key = DesisContract::chain_key(emission_day, src_chain_id);
-    let recorded_batches = contract.completed_pages.read(&chain_key)?;
+    let recorded_pages = contract.completed_pages.read(&chain_key)?;
     contract.track_intake_chain(emission_day, src_chain_id)?;
-    if recorded_batches != 0 {
-        let same = recorded_batches == u32::from(total_pages)
+    if recorded_pages != 0 {
+        let same = recorded_pages == u32::from(total_pages)
             && contract.completed_bids.read(&chain_key)? == total_bids;
         if same {
             return Ok(());
@@ -205,14 +205,14 @@ fn try_complete_intex_auction_bids(
     if contract.bids_completed.read(&key)? != 0 {
         return Ok(());
     }
-    let claimed_batches = contract.completed_pages.read(&key)?;
-    if claimed_batches == 0 {
+    let collected_pages = contract.completed_pages.read(&key)?;
+    if collected_pages == 0 {
         return Ok(()); // no marker yet
     }
     let total = contract.chain_total_pages.read(&key)?;
     let mask = contract.chain_arrived_mask.read(&key)?;
     let bid_count = contract.chain_bid_count.read(&key)?;
-    if total != claimed_batches
+    if total != collected_pages
         || mask.count_ones() as u32 != total
         || bid_count != contract.completed_bids.read(&key)?
     {

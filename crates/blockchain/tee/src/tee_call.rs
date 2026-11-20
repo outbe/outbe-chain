@@ -85,31 +85,6 @@ pub enum TeeAttestationError {
     UnexpectedResponseVariant,
 }
 
-/// Execute a witness-recorded consensus enclave call, failing closed if `!meta.recordable`.
-pub fn tee_consensus_call(
-    meta: CallMeta,
-    request: &crate::protocol::EnclaveRequest,
-    missing_context_err: impl FnOnce() -> crate::TransportError,
-    authenticate: impl Fn(
-        &[u8; 32],
-        &crate::protocol::EnclaveResponse,
-    ) -> Result<(), crate::TransportError>,
-) -> Result<([u8; 32], crate::protocol::EnclaveResponse), crate::TransportError> {
-    if !meta.recordable {
-        return Err(crate::TransportError::Codec(
-            "non-recordable call routed to tee_consensus_call".into(),
-        ));
-    }
-    consensus_call(
-        meta.label,
-        || {
-            crate::in_process_dispatch::request_with_attestation(meta, request)
-                .ok_or_else(missing_context_err)?
-        },
-        authenticate,
-    )
-}
-
 /// Execute a witness-recorded typed consensus call, failing closed if `!meta.recordable`.
 ///
 /// Live execution invokes `execute` on the resident context with no request
@@ -162,32 +137,6 @@ pub fn tee_session_typed_call<T>(
         )));
     }
     crate::in_process_dispatch::try_session_typed(meta, execute)
-}
-
-/// Execute a non-consensus operation against the resident runtime
-/// and authenticate the response before returning it.
-///
-/// Returns `None` only when no resident runtime is installed.
-/// The request and its attestation key come from one runtime snapshot.
-/// Lane occupancy, duration, and the error counter are recorded once.
-pub fn tee_session_call(
-    meta: CallMeta,
-    request: &crate::protocol::EnclaveRequest,
-    authenticate: impl FnOnce(
-        &[u8; 32],
-        &crate::protocol::EnclaveResponse,
-    ) -> Result<(), crate::TransportError>,
-) -> Option<Result<([u8; 32], crate::protocol::EnclaveResponse), crate::TransportError>> {
-    if meta.recordable {
-        return Some(Err(crate::TransportError::Codec(
-            "recordable call routed to non-consensus tee_session_call".into(),
-        )));
-    }
-    let dispatched = crate::in_process_dispatch::dispatch_session_snapshot(meta, request)?;
-    Some(dispatched.and_then(|(key, response)| {
-        authenticate(&key, &response)?;
-        Ok((key, response))
-    }))
 }
 
 /// Compute `keccak256(domain || serde_json::to_vec(value))`.

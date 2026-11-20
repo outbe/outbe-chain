@@ -6,8 +6,8 @@ use outbe_primitives::error::Result;
 /// Deletes the unsettled gems of the forfeited groups.
 pub use crate::cleanup::cleanup;
 
-/// Deletes the positions of the expired hours.
-pub use crate::positions_expired::cleanup_positions;
+/// Deletes the positions of the expired days.
+pub use crate::position_expiry::delete_expired_positions;
 
 pub struct GemFactoryModule;
 
@@ -27,7 +27,7 @@ impl ProtocolModule for GemCleanupModule {
 
     fn end_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
         crate::cleanup::cleanup(ctx)?;
-        crate::positions_expired::cleanup_positions(ctx)?;
+        crate::position_expiry::delete_expired_positions(ctx)?;
         Ok(())
     }
 }

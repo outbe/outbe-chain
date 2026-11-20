@@ -5,23 +5,24 @@ use outbe_core_common::markup::marked_up;
 use outbe_gem::precompile::IGem::{GemIssued, GemSettled};
 use outbe_gem::{api as gem_api, CallTerms, GemAddParams, GemContract, GemParams, GemView};
 use outbe_intex::{IntexState, SeriesId};
-use outbe_oracle::api::get_utc_day_vwap_for_iso;
+use outbe_oracle::api::{current_vwap_24h_snapshot, get_utc_day_vwap_for_iso, vwap_24h};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::{AGENT_REWARD_ADDRESS, GEM_FACTORY_ADDRESS};
 use outbe_system_common::stablecoin::iso_4217_alpha;
-use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
 use outbe_core_common::pow;
 
-use crate::errors::{date_step_error, GemFactoryError};
-use crate::precompile::IGemFactory::{GemPositionCreated, GemSeriesOpened};
-use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
+use crate::errors::GemFactoryError;
+use crate::precompile::IGemFactory::{
+    GemFactoryPositionCreated, GemFactoryPositionGemIssued, GemSeriesOpened,
+};
+use crate::schema::{GemFactoryContract, GemFactoryPosition, GemIssueParams};
 use crate::sol_ext::IIntexNFT1155;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
 /// Issues one reward gem priced at `entry_price`, with its call price on
-/// `call_anchor_price_minor`. The caller resolves both for the gem's own day.
+/// `call_anchor_price_minor`. The caller resolves both at the hour of the issue.
 pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<U256> {
     let GemIssueParams {
         owner,
@@ -42,7 +43,6 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     }
     check_gem_currencies(issuance_currency, reference_currency)?;
 
-    // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.now_secs()?;
     let params = GemAddParams {
         issuer: AGENT_REWARD_ADDRESS,
@@ -53,7 +53,7 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
         reference_currency,
         issued_at,
         call_terms: None,
-        entry_at_series_vwap: true,
+        at_market_price: true,
     };
     let gem_id = add_gem_with_call_anchor(storage, params, call_anchor)?;
 
@@ -161,11 +161,11 @@ fn load_view(storage: &StorageHandle<'_>, gem_id: U256) -> Result<GemView> {
     gem_api::get_view(storage, gem_id)?.ok_or_else(|| GemFactoryError::GemNotFound.into())
 }
 
-/// Issue a GemPosition NFT from the merchant's selected `units` of Issued Intex.
+/// Create a GemFactory position from the merchant's selected `units` of Issued Intex.
 /// The merchant can transfer a partial holding. Its Promis capacity equals the source
 /// load times the burned units.
-/// Return the issued `position_id`.
-pub fn issue_gem_position(
+/// Return the issued `gem_factory_position_id`.
+pub fn create_gem_factory_position(
     storage: &StorageHandle<'_>,
     caller: Address,
     source_series_id: SeriesId,
@@ -199,13 +199,16 @@ pub fn issue_gem_position(
     )?;
     outbe_intex::api::release_if_spent(storage, source_series_id)?;
 
-    let position_id =
-        GemFactoryContract::generate_position_id(source_series_id, caller, storage.block_number()?);
+    let gem_factory_position_id = GemFactoryContract::generate_gem_factory_position_id(
+        source_series_id,
+        caller,
+        storage.block_number()?,
+    );
 
     let mut factory = GemFactoryContract::new(storage.clone());
-    let position = GemPosition {
-        position_id,
-        merchant: caller,
+    let position = GemFactoryPosition {
+        gem_factory_position_id,
+        owner: caller,
         source_series_id,
         remaining_capacity_minor: capacity,
         issued_at,
@@ -221,17 +224,17 @@ pub fn issue_gem_position(
 
     emit_event(
         storage,
-        GemPositionCreated {
-            positionId: position_id,
+        GemFactoryPositionCreated {
+            gemFactoryPositionId: gem_factory_position_id,
             owner: caller,
-            seriesId: source_series_id.into(),
+            sourceSeriesId: source_series_id.into(),
             issuanceCurrency: series.issuance_currency,
             referenceCurrency: series.reference_currency,
             payload: capacity.to_be_bytes::<32>().into(),
         },
     )?;
 
-    Ok(position_id)
+    Ok(gem_factory_position_id)
 }
 
 /// Burn `units` of the merchant's Issued Intex (BURNER_ROLE). Reverts on zero units
@@ -263,7 +266,7 @@ pub fn issue_merchant_gem(
 ) -> Result<U256> {
     let crate::schema::MerchantGemIssueParams {
         caller,
-        position_id,
+        gem_factory_position_id,
         owner,
         promis_load_minor: promis_load,
         issuance_currency,
@@ -280,15 +283,15 @@ pub fn issue_merchant_gem(
     let mut factory = GemFactoryContract::new(storage.clone());
     let mut record = factory
         .positions
-        .get(position_id)?
-        .ok_or(GemFactoryError::PositionNotFound)?;
-    if record.merchant != caller {
-        return Err(GemFactoryError::NotPositionOwner.into());
+        .get(gem_factory_position_id)?
+        .ok_or(GemFactoryError::GemFactoryPositionNotFound)?;
+    if record.owner != caller {
+        return Err(GemFactoryError::NotGemFactoryPositionOwner.into());
     }
 
     let now = storage.now_secs()?;
     if now >= record.expires_at {
-        return Err(GemFactoryError::PositionExpired.into());
+        return Err(GemFactoryError::ExpiredGemFactoryPosition.into());
     }
     let remaining = record
         .remaining_capacity_minor
@@ -296,7 +299,7 @@ pub fn issue_merchant_gem(
         .ok_or(GemFactoryError::InsufficientCapacity)?;
 
     // Never below the source Intex, valued on its emission day in the gem's currency.
-    let market_price = read_market_price(storage, reference_currency, now)?;
+    let market_price = read_market_price(storage, reference_currency)?;
     let source_price = read_day_price(storage, record.source_series_id.day(), reference_currency)?;
     let entry_price = market_price.max(source_price);
 
@@ -311,13 +314,13 @@ pub fn issue_merchant_gem(
             reference_currency,
             issued_at: now,
             call_terms: None,
-            entry_at_series_vwap: entry_price == market_price,
+            at_market_price: entry_price == market_price,
         },
     )?;
 
     record.remaining_capacity_minor = remaining;
     factory.positions.update(&record)?;
-    factory.take_hour_capacity(record.expiry_hour(), promis_load)?;
+    factory.take_expiry_day_capacity(record.expiry_day()?, promis_load)?;
 
     let prev_total = factory.total_gems_issued.read()?;
     let new_total = prev_total
@@ -326,6 +329,13 @@ pub fn issue_merchant_gem(
     factory.total_gems_issued.write(new_total)?;
 
     emit_gem_issued(storage, gem_id)?;
+    emit_event(
+        storage,
+        GemFactoryPositionGemIssued {
+            gemFactoryPositionId: gem_factory_position_id,
+            gemId: gem_id,
+        },
+    )?;
 
     Ok(gem_id)
 }
@@ -448,16 +458,16 @@ pub fn quote_settlement(
 /// The full terms of a Gem Factory position.
 pub fn position_data(
     storage: &StorageHandle<'_>,
-    position_id: U256,
-) -> Result<crate::precompile::IGemFactory::PositionData> {
+    gem_factory_position_id: U256,
+) -> Result<crate::precompile::IGemFactory::GemFactoryPositionData> {
     let factory = GemFactoryContract::new(storage.clone());
     let record = factory
         .positions
-        .get(position_id)?
-        .ok_or(GemFactoryError::PositionNotFound)?;
-    Ok(crate::precompile::IGemFactory::PositionData {
-        positionId: record.position_id,
-        merchant: record.merchant,
+        .get(gem_factory_position_id)?
+        .ok_or(GemFactoryError::GemFactoryPositionNotFound)?;
+    Ok(crate::precompile::IGemFactory::GemFactoryPositionData {
+        gemFactoryPositionId: record.gem_factory_position_id,
+        owner: record.owner,
         sourceIntexId: outbe_intex::intex_id(record.source_series_id),
         sourceSeriesId: record.source_series_id.into(),
         remainingCapacityMinor: factory.remaining_capacity(&record)?,
@@ -515,10 +525,11 @@ fn check_gem_currencies(issuance_currency: u16, reference_currency: u16) -> Resu
     outbe_oracle::api::check_reference_currency(reference_currency)
 }
 
-/// COEN price of `iso_code` from the last closed UTC day.
-fn read_market_price(storage: &StorageHandle<'_>, iso_code: u16, now: u64) -> Result<U256> {
-    let day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;
-    read_day_price(storage, day, iso_code)
+/// COEN price of `iso_code` at this hour: the 24-hour VWAP up to the last whole UTC hour.
+fn read_market_price(storage: &StorageHandle<'_>, iso_code: u16) -> Result<U256> {
+    let snapshot = current_vwap_24h_snapshot(storage.clone())?;
+    vwap_24h(storage.clone(), iso_code, snapshot)?
+        .ok_or_else(|| GemFactoryError::OracleUnavailable.into())
 }
 
 /// COEN price of `iso_code` on the closed UTC day `day`.

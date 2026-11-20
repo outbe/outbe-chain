@@ -136,13 +136,13 @@ contract EscrowAdapterBondTest is Test {
 
     function test_ClaimAbandonedCommitBond_RevertsBeforeWindow() public {
         _lockBond();
-        uint32 claimableAt = uint32(block.timestamp) + escrow.BID_BOND_ABANDON_DELAY();
+        uint32 unlockableAt = uint32(block.timestamp) + escrow.BID_BOND_ABANDON_DELAY();
 
-        vm.warp(claimableAt - 1);
+        vm.warp(unlockableAt - 1);
         vm.prank(outsider);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IEscrowAdapter.IntexAuctionBidBondNotYetAbandoned.selector, claimableAt, claimableAt - 1
+                IEscrowAdapter.IntexAuctionBidBondNotYetAbandoned.selector, unlockableAt, unlockableAt - 1
             )
         );
         escrow.unlockAbandonedIntexAuctionBidBond(emissionDay1, bidder1);

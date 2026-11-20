@@ -12,12 +12,12 @@ contract BridgeMsgCodecHardeningHarness {
     function encodeBidsPage(
         uint32 emissionDay,
         uint32 srcChainId,
-        uint16 batchIndex,
+        uint16 pageIndex,
         uint16 totalPages,
         address[] calldata bidders,
         uint256[] calldata packedBids
     ) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeBidsPage(emissionDay, srcChainId, batchIndex, totalPages, bidders, packedBids);
+        return BridgeMsgCodec.encodeBidsPage(emissionDay, srcChainId, pageIndex, totalPages, bidders, packedBids);
     }
 
     function encodeIntexSeries(BridgeMsgCodec.IntexSeriesPayload[] calldata series)

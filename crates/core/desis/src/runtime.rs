@@ -19,8 +19,8 @@ use crate::constants::{
     CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS, CLEARING_PAGE_GAS, COMMIT_WINDOW_SECONDS,
     IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, INTEX_ISSUANCE_WINDOW_SECONDS,
     MAX_BID_PAGES, MAX_INTEX_AUCTION_WINNERS_PAGES, MAX_PAYLOAD_ARRAY_LEN, MAX_TARGET_CHAINS,
-    MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS,
-    RESULT_DELIVERY_MARGIN_SECONDS, REVEAL_WINDOW_SECONDS,
+    MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, RESULT_DELIVERY_MARGIN_SECONDS,
+    REVEAL_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -389,7 +389,7 @@ fn send_intex_auction_start(
 }
 
 /// Broadcast AUCTION_CANCEL to every chain the day started on.
-fn send_auction_cancel(
+fn send_intex_auction_cancel(
     storage: &StorageHandle<'_>,
     emission_day: EmissionDate,
     reason: u8,

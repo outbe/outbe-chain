@@ -100,12 +100,16 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
     function test_EachChunkSendsItsOwnProceeds() public {
         vm.expectEmit(false, true, true, true, address(target));
         emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), DAY, 0, 40e6);
+        vm.expectEmit(false, true, true, true, address(target));
+        emit ITargetRouter.IntexAuctionWinnersReceived(bytes32(0), DAY, OUTBE_CHAIN_ID, 0, 2, 1);
         _deliverChunk(0, 2, 40e6);
         assertEq(tokenBridge.calls(), 1, "the first chunk routes at once");
         assertEq(tokenBridge.lastAmount(), 40e6);
 
         vm.expectEmit(false, true, true, true, address(target));
         emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), DAY, 1, 60e6);
+        vm.expectEmit(false, true, true, true, address(target));
+        emit ITargetRouter.IntexAuctionWinnersReceived(bytes32(0), DAY, OUTBE_CHAIN_ID, 1, 2, 1);
         _deliverChunk(1, 2, 60e6);
         assertEq(tokenBridge.calls(), 2, "the second chunk routes its own part");
         assertEq(tokenBridge.lastAmount(), 60e6);

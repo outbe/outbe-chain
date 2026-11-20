@@ -71,8 +71,8 @@ pub use in_process_dispatch::{
 pub use node_host::{
     construct_finalized_replacement_authorization_v1, load_replacement_candidate_relay,
     load_replacement_candidate_submission, persist_replacement_candidate_relay,
-    persist_replacement_candidate_submission, promote_replacement_candidate, CommittedJoinRelayV1,
-    CommittedJoinSubmissionV1, FinalizedJoinAdmissionAnchorV1, FinalizedReplacementAuthorizationV1,
+    persist_replacement_candidate_submission, promote_replacement_candidate,
+    FinalizedJoinAdmissionAnchorV1, FinalizedReplacementAuthorizationV1,
     FinalizedReplacementBindingV1, NodeHostIdentityV1, ReplacementCandidateRelayV1,
     ReplacementCandidateSubmissionV1,
 };
@@ -82,7 +82,7 @@ pub use remote_session::{
     RemoteSessionExpectationV1, RpcTrustedRemoteSessionV1,
 };
 pub use tee_call::{
-    tee_consensus_call, tee_consensus_typed_call, tee_session_call, tee_session_typed_call,
-    verify_signed_rejection, CallMeta, SignedRejectionRef, TeeAttestationError,
+    tee_consensus_typed_call, tee_session_typed_call, verify_signed_rejection, CallMeta,
+    SignedRejectionRef, TeeAttestationError,
 };
 pub use tee_dkg::{CeremonyCoordinator, CeremonyOutcome, EnclaveChannel};

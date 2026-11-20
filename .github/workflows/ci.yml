@@ -44,7 +44,7 @@ jobs:
     name: fmt
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     steps:
       - uses: actions/checkout@v6
       - uses: ./.github/actions/setup-mise
@@ -56,7 +56,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
       volumes:
         - outbe-rust-cache:/__w/_outbe_rust_cache
     # Keep concurrent runs of this job/ref from writing the same cache.
@@ -121,7 +121,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
       volumes:
         - outbe-rust-cache:/__w/_outbe_rust_cache
     # Coverage cleanup must not race another run using the same cache.
@@ -195,7 +195,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     timeout-minutes: 10
     env:
       # The image sets CARGO_HOME=/usr/local/cargo so the toolchain works
@@ -237,11 +237,6 @@ jobs:
             fi
           done
           for crate in outbe-fidelity outbe-gratis outbe-promis outbe-tribute outbe-nod; do
-            engine_features="$(cargo tree --locked --package outbe-chain -e=features,no-dev -i "${crate}" --depth 1)"
-            if ! grep -Eq "${crate} feature \"engine\"" <<<"${engine_features}"; then
-              echo "error: ${crate} is missing feature \"engine\" in outbe-chain" >&2
-              exit 1
-            fi
             crate_features="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev -i "${crate}" --depth 1)"
             if ! grep -Eq "${crate} feature \"production-enclave\"" <<<"${crate_features}"; then
               echo "error: ${crate} is missing feature \"production-enclave\" under outbe-chain/production-enclave" >&2
@@ -263,16 +258,15 @@ jobs:
             done
           done
           cli_tree="$(cargo tree --locked --package outbe-cli -e=features,no-dev)"
-          if grep -Eq 'feature "(test-enclave|e2e-test)"|outbe-(fidelity|gratis|promis|nod|tribute) feature "(engine|dev-keys|test-utils|test-enclave|production-enclave)"|outbe-core-common feature "(dev-keys|test-utils)"|outbe-tee feature "test-utils"|outbe-dcap feature "(sgx-noattest|test-utils)"' <<<"${cli_tree}"; then
-            echo "error: domain engine or test-only feature is enabled in outbe-cli production dependency graph" >&2
+          if grep -Eq 'feature "(test-enclave|e2e-test)"|outbe-(fidelity|gratis|promis|nod|tribute) feature "(dev-keys|test-utils|test-enclave|production-enclave)"|outbe-core-common feature "(dev-keys|test-utils)"|outbe-tee feature "test-utils"|outbe-dcap feature "(sgx-noattest|test-utils)"' <<<"${cli_tree}"; then
+            echo "error: test-only or forbidden feature is enabled in outbe-cli production dependency graph" >&2
             exit 1
           fi
-          for crate in outbe-fidelity outbe-gratis outbe-promis outbe-tribute outbe-nod; do
-            if grep -Eq "${crate} feature \"(engine|dev-keys|test-utils|test-enclave|production-enclave)\"" <<<"${cli_tree}"; then
-              echo "error: ${crate} enables a forbidden feature in outbe-cli" >&2
-              exit 1
-            fi
-          done
+          cli_normal_tree="$(cargo tree --locked --package outbe-cli -e normal --prefix none)"
+          if grep -Eq '^outbe-(fidelity|gratis|promis|nod|tribute) v' <<<"${cli_normal_tree}"; then
+            echo "error: confidential domain crate appears in outbe-cli normal dependency graph" >&2
+            exit 1
+          fi
           dcap_features="$(cargo tree --locked --package outbe-chain --features outbe-chain/native-dcap -e=features,no-dev -i outbe-dcap --depth 1)"
           if ! grep -Eq 'outbe-dcap feature "native-dcap"' <<<"${dcap_features}"; then
             echo 'error: native-dcap is missing in the release node graph' >&2
@@ -304,7 +298,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     timeout-minutes: 15
     continue-on-error: true
     env:
@@ -326,7 +320,7 @@ jobs:
     if: github.event_name == 'push' || !github.event.pull_request.draft
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     timeout-minutes: 10
     continue-on-error: true
     steps:
@@ -340,7 +334,7 @@ jobs:
     if: contains(github.event.head_commit.message, '[miri]')
     runs-on: testnet-release-sgx
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     timeout-minutes: 60
     continue-on-error: true
     env:
@@ -394,7 +388,7 @@ jobs:
     env:
       GITHUB_TOKEN: ${{ github.token }}
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -435,7 +429,7 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && !startsWith(github.event.head_commit.message, 'chore(version):')
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/outbe/project-toolchain-ci@sha256:e24bec577123c5ce7b1690db641e321a8811d82d87786422ab36dbff693a6268
+      image: ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6

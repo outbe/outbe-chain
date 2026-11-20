@@ -24,7 +24,8 @@ where
         + Sync
         + 'static,
 {
-    let _lifetime = AuthorityPublisherLifetime(owner.authority.clone());
+    owner.bind_armed(config.armed)?;
+    let _lifetime = AuthorityPublisherLifetime(Arc::clone(&owner));
     owner.bind_sync_refresh(provider.clone(), Arc::clone(&protocol), config.chain);
     let mut failed_state = None;
     let mut interval = tokio::time::interval(Duration::from_secs(1));
@@ -37,10 +38,9 @@ where
             _ = config.finalization_notify.notified() => {},
             _ = interval.tick() => {},
         }
-        let open = match owner.refresh(&provider, protocol.as_ref(), &config.chain) {
-            Ok(state) => {
+        match owner.refresh(&provider, protocol.as_ref(), &config.chain) {
+            Ok(_) => {
                 failed_state = None;
-                state.is_authority_open()
             }
             Err(error) => {
                 let next = owner.authority.snapshot();
@@ -48,11 +48,7 @@ where
                     tracing::warn!(%error, ?next, "TEE authority suspended; lease guard remains alive");
                 }
                 failed_state = Some(next);
-                false
             }
-        };
-        if *config.armed.borrow() != open {
-            config.armed.send_replace(open);
         }
     }
 }
@@ -224,10 +220,10 @@ impl outbe_primitives::storage::readonly::StorageReader for GenesisStateReader<'
 
 /// The shared owner may outlive its guard. A panic, abort or clean stop must
 /// therefore close authority even when other publisher clones remain alive.
-struct AuthorityPublisherLifetime(TeeAuthorityChannel);
+struct AuthorityPublisherLifetime(Arc<LiveTeeRuntimeV1>);
 impl Drop for AuthorityPublisherLifetime {
     fn drop(&mut self) {
-        self.0.retire_publisher(false);
+        self.0.retire_publisher();
     }
 }
 
@@ -244,6 +240,7 @@ mod sync_refresh_tests {
         owner: Arc<LiveTeeRuntimeV1>,
         provider: support::SharedProvider,
         channel: TeeAuthorityChannel,
+        armed_rx: tokio::sync::watch::Receiver<bool>,
         context: Arc<outbe_tee::in_process::InProcessTeeContext>,
         chain: outbe_execution::tee_remote_session::RegistryChainIdentity,
         protocol: Arc<dyn EngineProtocolState>,
@@ -254,6 +251,7 @@ mod sync_refresh_tests {
         let initial = support::provider(&context, 7, 1_800_000_000, 1_800_001_000, false);
         let provider = support::SharedProvider(Arc::new(Mutex::new(initial.0)));
         let channel = TeeAuthorityChannel::default();
+        let (armed_tx, armed_rx) = tokio::sync::watch::channel(false);
         let owner = Arc::new(
             LiveTeeRuntimeV1::new(
                 LiveTeeSnapshotV1 {
@@ -265,18 +263,22 @@ mod sync_refresh_tests {
             )
             .unwrap(),
         );
+        owner.bind_armed(armed_tx).unwrap();
         let protocol: Arc<dyn EngineProtocolState> = Arc::new(crate::OutbeRuntime::new());
         let chain = initial.1;
         let before_guard = owner.refresh(&provider, protocol.as_ref(), &chain).unwrap();
         assert!(before_guard.is_authority_open());
+        assert!(*armed_rx.borrow());
         owner.bind_sync_refresh(provider.clone(), Arc::clone(&protocol), chain);
         owner.refresh(&provider, protocol.as_ref(), &chain).unwrap();
         assert_eq!(channel.applied_finalized_height(), 7);
         assert!(channel.snapshot().is_authority_open());
+        assert!(*armed_rx.borrow());
         ArmedRuntime {
             owner,
             provider,
             channel,
+            armed_rx,
             context,
             chain,
             protocol,
@@ -378,5 +380,263 @@ mod sync_refresh_tests {
         assert!(closed.has_verified_resident_key());
         assert!(!armed.channel.snapshot().is_authority_open());
         assert_eq!(armed.context.network_encryption_public().unwrap(), resident);
+    }
+
+    #[tokio::test]
+    async fn provider_lag_keeps_armed_and_signer_open_while_ensure_current_fails_closed() {
+        use super::run_lease_guard;
+        use crate::admission::TeeLeaseGuardConfigV1;
+        use futures::FutureExt as _;
+
+        let armed = fresh_armed();
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let shutdown = tokio_util::sync::CancellationToken::new();
+        let (armed_tx, armed_rx) = tokio::sync::watch::channel(false);
+        let mut guard = Box::pin(run_lease_guard(
+            armed.provider.clone(),
+            Arc::clone(&armed.protocol),
+            TeeLeaseGuardConfigV1 {
+                chain: armed.chain,
+                finalization_notify: Arc::clone(&notify),
+                armed: armed_tx,
+            },
+            Arc::clone(&armed.owner),
+            shutdown.clone(),
+        ));
+        assert!(guard.as_mut().now_or_never().is_none());
+        notify.notify_one();
+        tokio::task::yield_now().await;
+        assert!(guard.as_mut().now_or_never().is_none());
+        assert!(*armed_rx.borrow());
+
+        // Provider remains at H1 = 7 while consensus observes H2 = 8.
+        armed.channel.note_observed_finalized_height(8);
+        notify.notify_one();
+        tokio::task::yield_now().await;
+        assert!(guard.as_mut().now_or_never().is_none());
+
+        let watch = armed.channel.subscribe();
+        assert_eq!(armed.channel.applied_finalized_height(), 7);
+        assert_eq!(armed.channel.observed_finalized_height(), 8);
+        assert!(*armed_rx.borrow());
+        assert!(watch.ensure_current_for_signer().is_authority_open());
+        let strict = watch.ensure_current();
+        assert_eq!(strict, TeeAuthorityState::SuspendedPolicyMismatch);
+        assert!(strict.has_verified_resident_key());
+        assert!(!strict.is_authority_open());
+        assert!(*armed_rx.borrow());
+
+        shutdown.cancel();
+        assert_eq!(guard.await.unwrap(), None);
+    }
+
+    #[test]
+    fn catch_up_to_jailed_expired_or_policy_mismatch_closes_snapshot_and_armed() {
+        use crate::launch_tests::admission_provider::{
+            build_tee_admission_mock_provider, SeededTeeState,
+        };
+
+        for (valid_until, jailed, binding_mismatch, expected) in [
+            (
+                1_800_001_000,
+                true,
+                false,
+                TeeAuthorityState::SuspendedJailed,
+            ),
+            (
+                1_800_000_000,
+                false,
+                false,
+                TeeAuthorityState::SuspendedLeaseExpired,
+            ),
+            (
+                1_800_001_000,
+                false,
+                true,
+                TeeAuthorityState::SuspendedPolicyMismatch,
+            ),
+        ] {
+            let armed = fresh_armed();
+            armed.channel.note_observed_finalized_height(8);
+            let _ = armed
+                .owner
+                .refresh(&armed.provider, armed.protocol.as_ref(), &armed.chain)
+                .unwrap();
+            assert!(*armed.armed_rx.borrow());
+
+            let (next_provider, _, _, _) = build_tee_admission_mock_provider(
+                &[(8, 1_800_000_000)],
+                SeededTeeState {
+                    valid_until,
+                    has_validator_binding: true,
+                    validator_binding_mismatch: binding_mismatch,
+                    validator_jailed: jailed,
+                    offer_key: alloy_primitives::B256::from(
+                        armed.context.network_encryption_public().unwrap(),
+                    ),
+                },
+            );
+            support::bind_context(&next_provider, &armed.context);
+            *armed.provider.0.lock().expect("provider lock") = next_provider;
+
+            let closed = armed.channel.subscribe().ensure_current();
+            assert_eq!(closed, expected);
+            assert_eq!(armed.channel.applied_finalized_height(), 8);
+            assert_eq!(armed.channel.snapshot(), expected);
+            assert!(!armed.channel.snapshot().is_authority_open());
+            assert!(!*armed.armed_rx.borrow());
+        }
+    }
+
+    #[test]
+    fn provider_error_suspends_authority_and_closes_armed() {
+        let armed = fresh_armed();
+        assert!(*armed.armed_rx.borrow());
+        armed
+            .provider
+            .0
+            .lock()
+            .expect("provider lock")
+            .fail_state_read = true;
+        assert!(armed
+            .owner
+            .refresh(&armed.provider, armed.protocol.as_ref(), &armed.chain)
+            .is_err());
+        assert_eq!(
+            armed.channel.snapshot(),
+            TeeAuthorityState::SuspendedPolicyMismatch
+        );
+        assert!(armed.channel.snapshot().has_verified_resident_key());
+        assert!(!armed.channel.snapshot().is_authority_open());
+        assert!(!*armed.armed_rx.borrow());
+    }
+
+    #[tokio::test]
+    async fn publisher_retirement_closes_armed_and_rejects_stale_generation_reopen() {
+        use super::run_lease_guard;
+        use crate::admission::TeeLeaseGuardConfigV1;
+        use futures::FutureExt as _;
+
+        let armed = fresh_armed();
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let (armed_tx, armed_rx) = tokio::sync::watch::channel(false);
+        let mut guard = Box::pin(run_lease_guard(
+            armed.provider.clone(),
+            Arc::clone(&armed.protocol),
+            TeeLeaseGuardConfigV1 {
+                chain: armed.chain,
+                finalization_notify: Arc::clone(&notify),
+                armed: armed_tx,
+            },
+            Arc::clone(&armed.owner),
+            tokio_util::sync::CancellationToken::new(),
+        ));
+        notify.notify_one();
+        assert!(guard.as_mut().now_or_never().is_none());
+        assert!(armed.channel.snapshot().is_authority_open());
+        assert!(*armed_rx.borrow());
+
+        let stale_generation = armed.channel.refresh_generation();
+        drop(guard);
+
+        assert!(!*armed_rx.borrow());
+        assert!(!armed.channel.snapshot().is_authority_open());
+        assert!(armed.channel.snapshot().has_verified_resident_key());
+        assert!(armed
+            .channel
+            .accept_sampled_refresh(stale_generation)
+            .is_none());
+
+        let after_refresh = armed
+            .owner
+            .refresh(&armed.provider, armed.protocol.as_ref(), &armed.chain)
+            .unwrap();
+        assert!(!after_refresh.is_authority_open());
+        assert!(!*armed_rx.borrow());
+
+        let after_stale_pinned = armed
+            .owner
+            .refresh_pinned(
+                &armed.provider,
+                armed.protocol.as_ref(),
+                &armed.chain,
+                stale_generation,
+            )
+            .unwrap();
+        assert!(!after_stale_pinned.is_authority_open());
+        assert!(!armed.channel.snapshot().is_authority_open());
+        assert!(!*armed_rx.borrow());
+    }
+
+    #[test]
+    fn sync_refresh_warning_is_deduplicated_per_failure_transition() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        struct CountingWarnSubscriber(Arc<AtomicUsize>);
+        impl tracing::Subscriber for CountingWarnSubscriber {
+            fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+                metadata.level() == &tracing::Level::WARN
+            }
+
+            fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+                tracing::span::Id::from_u64(1)
+            }
+
+            fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+            fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+            fn event(&self, event: &tracing::Event<'_>) {
+                if event.metadata().level() == &tracing::Level::WARN {
+                    self.0.fetch_add(1, Ordering::AcqRel);
+                }
+            }
+
+            fn enter(&self, _: &tracing::span::Id) {}
+
+            fn exit(&self, _: &tracing::span::Id) {}
+        }
+
+        let warns = Arc::new(AtomicUsize::new(0));
+        tracing::subscriber::with_default(CountingWarnSubscriber(Arc::clone(&warns)), || {
+            let armed = fresh_armed();
+            let watch = armed.channel.subscribe();
+
+            armed
+                .provider
+                .0
+                .lock()
+                .expect("provider lock")
+                .fail_state_read = true;
+            for _ in 0..3 {
+                let state = watch.ensure_current();
+                assert_eq!(state, TeeAuthorityState::SuspendedPolicyMismatch);
+                assert!(!*armed.armed_rx.borrow());
+            }
+            assert_eq!(warns.load(Ordering::Acquire), 1);
+
+            armed
+                .provider
+                .0
+                .lock()
+                .expect("provider lock")
+                .fail_state_read = false;
+            assert!(watch.ensure_current().is_authority_open());
+            assert!(*armed.armed_rx.borrow());
+            assert_eq!(warns.load(Ordering::Acquire), 1);
+
+            armed
+                .provider
+                .0
+                .lock()
+                .expect("provider lock")
+                .fail_state_read = true;
+            for _ in 0..2 {
+                let state = watch.ensure_current();
+                assert_eq!(state, TeeAuthorityState::SuspendedPolicyMismatch);
+                assert!(!*armed.armed_rx.borrow());
+            }
+            assert_eq!(warns.load(Ordering::Acquire), 2);
+        });
     }
 }

@@ -119,6 +119,27 @@ contract GasBudgetTest is CrossChainTest {
         assertLt(spent, IntexGas.intexSeriesCallNotice(batch.length), "a full parking batch must fit the quote");
     }
 
+    /// @dev Existing series whose apply the token refuses: each failure event carries the revert data.
+    function test_TheQuoteCoversAFullBatchWhoseApplyIsRefused() public {
+        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
+        _seed(batch);
+        intex.revokeRole(intex.ROUTER_ROLE(), address(router));
+        bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch);
+        bytes memory call = abi.encodeCall(
+            bridge.deliverAs,
+            (_interop(OUTBE_CHAIN_ID, originPeer), _interop(uint32(block.chainid), address(router)), packet)
+        );
+
+        uint256 before = gasleft();
+        (bool ok,) = address(bridge).call{gas: IntexGas.intexSeriesCallNotice(batch.length)}(call);
+        emit log_named_uint("refused_batch8", before - gasleft());
+
+        assertTrue(ok, "the message must land inside the gas its quote buys");
+        for (uint256 i = 0; i < batch.length; ++i) {
+            assertEq(router.failedIntexSeriesCallNoticeApply(batch[i]), uint32(block.timestamp), "every series waits");
+        }
+    }
+
     function test_TheQuoteCoversASingleSeriesMark() public {
         bytes14[] memory one = MarkBatchLib.one(SERIES_PREFIX);
         _seed(one);

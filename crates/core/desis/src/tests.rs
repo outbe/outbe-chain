@@ -294,7 +294,7 @@ fn open_clearing(s: &StorageHandle, units: u128) {
 }
 
 /// Send the chain's BIDS_DONE marker so its intake finalizes and the clearing gate opens.
-fn mark_done(s: &StorageHandle, chain: u32, total_batches: u16, total_bids: u32) {
+fn mark_done(s: &StorageHandle, chain: u32, total_pages: u16, total_bids: u32) {
     runtime::complete_intex_auction_bids(
         s.clone(),
         runtime::Inbound {
@@ -303,7 +303,7 @@ fn mark_done(s: &StorageHandle, chain: u32, total_batches: u16, total_bids: u32)
             emission_day: EMISSION_DAY,
             src_chain_id: chain,
         },
-        total_batches,
+        total_pages,
         total_bids,
     )
     .unwrap();
@@ -313,9 +313,9 @@ fn mark_done(s: &StorageHandle, chain: u32, total_batches: u16, total_bids: u32)
 /// the done marker. The intake refuses a single oversized batch.
 fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
     let cap = u8::try_from(crate::constants::MAX_PAYLOAD_ARRAY_LEN).unwrap();
-    let total_batches = u16::from(n.div_ceil(cap));
-    for batch_index in 0..total_batches {
-        let start = u8::try_from(batch_index).unwrap() * cap;
+    let total_pages = u16::from(n.div_ceil(cap));
+    for page_index in 0..total_pages {
+        let start = u8::try_from(page_index).unwrap() * cap;
         let end = start.saturating_add(cap).min(n);
         runtime::collect_intex_auction_bids(
             s.clone(),
@@ -325,8 +325,8 @@ fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
                 emission_day: EMISSION_DAY,
                 src_chain_id: chain,
             },
-            batch_index,
-            total_batches,
+            page_index,
+            total_pages,
             (start..end)
                 .map(|i| IntexAuctionBidData {
                     bidder_address: bidder(i),
@@ -340,7 +340,7 @@ fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
         )
         .unwrap();
     }
-    mark_done(s, chain, total_batches, u32::from(n));
+    mark_done(s, chain, total_pages, u32::from(n));
 }
 
 /// Run the begin-block gate clearing for the day (every snapshot chain finalized).
@@ -1811,7 +1811,7 @@ fn process_bids_accumulate_across_batches() {
     with_storage(|s| {
         open_revealing(&s);
 
-        // Two batches (total_batches=2) accumulate for the chain. Intake stays
+        // Two batches (total_pages=2) accumulate for the chain. Intake stays
         // Revealing. Nothing auto-transitions. The chain finalizes only on its BIDS_DONE marker.
         runtime::collect_intex_auction_bids(
             s.clone(),
@@ -2704,6 +2704,68 @@ fn force_clear_skips_missing_chain_after_deadline() {
         found,
         "expected IntexAuctionBidsExpired for the missing chain"
     );
+}
+
+/// A clearing start that fails is reported once and not sent again: the chain's bids expire.
+#[test]
+fn clearing_start_send_failure_is_final() {
+    use crate::precompile::IDesis;
+    use crate::sol_ext::IOriginRouter;
+    use alloy_sol_types::{SolCall, SolEvent};
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    // Every router call answers but the clearing start, left unanswered (NotAvailable), so its send fails.
+    storage.stub_sub_call_at_selector(
+        ORIGIN_ROUTER_ADDRESS,
+        IOriginRouter::targetsOfCall::SELECTOR,
+        targets_stub(&[SRC_CHAIN]),
+    );
+    for selector in [
+        IOriginRouter::sendIntexAuctionStartCall::SELECTOR,
+        IOriginRouter::sendIntexAuctionResultCall::SELECTOR,
+        IOriginRouter::sendIntexAuctionWinnersCall::SELECTOR,
+    ] {
+        storage.stub_sub_call_at_selector(ORIGIN_ROUTER_ADDRESS, selector, Bytes::new());
+    }
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+
+    let deadline = ANCHOR + 2 * SECONDS_PER_DAY + crate::constants::BIDS_FANIN_TIMEOUT_SECS;
+    StorageHandle::enter(&mut storage, |s| {
+        open_clearing(&s, 2);
+        runtime::schedule_tick(&s, deadline - 1).unwrap();
+        runtime::force_clear(s.clone(), EMISSION_DAY, deadline + 1)
+            .unwrap()
+            .expect("cleared without the chain");
+    });
+
+    let attempts = storage
+        .sub_call_inputs()
+        .iter()
+        .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
+        .filter(|input| {
+            IOriginRouter::sendIntexAuctionClearingStartCall::abi_decode(&input.calldata).is_ok()
+        })
+        .count();
+    assert_eq!(attempts, 1, "the refused clearing start is not sent again");
+
+    let events = storage.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
+    let failures: Vec<_> = events
+        .iter()
+        .filter_map(|log| IDesis::IntexAuctionClearingStartSendFailed::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].emissionDay, EMISSION_DAY.value());
+    assert_eq!(failures[0].dstChainId, SRC_CHAIN);
+    let expired = events
+        .iter()
+        .filter_map(|log| IDesis::IntexAuctionBidsExpired::decode_log_data(log).ok())
+        .filter(|event| event.srcChainId == SRC_CHAIN)
+        .count();
+    assert_eq!(expired, 1, "the chain's bids expire at the clearing");
 }
 
 #[test]

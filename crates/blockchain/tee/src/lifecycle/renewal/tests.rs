@@ -322,7 +322,7 @@ async fn expired_pending_renew_waits_without_replay_then_releases_same_identity_
     use super::prepare::{evidence_v1, signed_record, target_v1, ServiceCallV1};
     use alloy_primitives::B256;
     assert_eq!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+        reconcile_service_tx_v1(&chain, &mut journal, &live, signer.address())
             .await
             .unwrap(),
         ServiceTxReconciliationV1::RebuildAndResign {
@@ -330,7 +330,7 @@ async fn expired_pending_renew_waits_without_replay_then_releases_same_identity_
         }
     );
     assert_eq!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+        reconcile_service_tx_v1(&chain, &mut journal, &live, signer.address())
             .await
             .unwrap(),
         ServiceTxReconciliationV1::RebuildAndResign {

@@ -233,12 +233,12 @@ contract IntexAuctionBondTest is Test {
         _commit();
         _enterRevealStage();
 
-        uint32 claimableAt = uint32(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD();
-        vm.warp(claimableAt - 1);
+        uint32 unlockableAt = uint32(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD();
+        vm.warp(unlockableAt - 1);
         vm.prank(outsider);
         vm.expectRevert(
             abi.encodeWithSelector(
-                IIntexAuction.IntexAuctionBidBondNotYetUnlockable.selector, claimableAt, claimableAt - 1
+                IIntexAuction.IntexAuctionBidBondNotYetUnlockable.selector, unlockableAt, unlockableAt - 1
             )
         );
         auction.unlockIntexAuctionBidBond(emissionDay, iba1);

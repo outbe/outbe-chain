@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {Vm} from "forge-std/Vm.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
@@ -82,9 +83,25 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
 
     function test_AMarkForAnUnknownSeriesWaitsInItsSlot() public {
         vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.MarkParked(series);
+        emit ITargetRouter.IntexSeriesCallNoticeApplyFailed(series, uint32(block.chainid), "");
         _deliver(_called());
         assertEq(router.failedIntexSeriesCallNoticeApply(series), uint32(block.timestamp), "slotted with its call time");
+    }
+
+    function test_ACallNoticeTheTokenRefusesWaitsWithTheRefusal() public {
+        intex.createSeries(CreateSeriesLib.params(DAY, 10, 0));
+        intex.revokeRole(intex.ROUTER_ROLE(), address(router));
+
+        vm.expectEmit(true, true, true, true, address(router));
+        emit ITargetRouter.IntexSeriesCallNoticeApplyFailed(
+            series,
+            uint32(block.chainid),
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, address(router), intex.ROUTER_ROLE()
+            )
+        );
+        _deliver(_called());
+        assertEq(router.failedIntexSeriesCallNoticeApply(series), uint32(block.timestamp), "the notice waits");
     }
 
     /// @dev A mark moves no balances, so a waiting Called lands with the issuance that creates the series
@@ -92,11 +109,19 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     function test_IssuanceCreatingTheSeriesAppliesAWaitingCalled() public {
         _deliver(_called());
 
-        vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.ParkedMarkApplied(series);
+        vm.recordLogs();
         _deliver(_issuance());
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied with the issuance");
         assertEq(router.failedIntexSeriesCallNoticeApply(series), 0, "nothing waits any more");
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 called;
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(logs[i].topics[0] != ITargetRouter.IntexSeriesCallNoticeApplyFailed.selector, "no failure event");
+            if (logs[i].emitter == address(intex) && logs[i].topics[0] == IIntexNFT1155.IntexSeriesCalled.selector) {
+                ++called;
+            }
+        }
+        assertEq(called, 1, "the token reports the call once");
     }
 
     /// @dev A series that lands after its deadline is still created, so the chain holds its terms.
@@ -122,7 +147,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         router.retryIntexSeriesCallNoticeApply(series);
     }
 
-    function test_ApplyParkedMarkIsThePermissionlessValve() public {
+    function test_RetryIntexSeriesCallNoticeApplyIsPermissionless() public {
         _deliver(_called());
         intex.createSeries(CreateSeriesLib.params(DAY, 10, 0)); // the series appears by another path
 
@@ -134,7 +159,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         router.retryIntexSeriesCallNoticeApply(series);
     }
 
-    function test_ApplyParkedMarkRevertsAndKeepsTheSlotWhileTheSeriesIsMissing() public {
+    function test_RetryIntexSeriesCallNoticeApplyRevertsAndKeepsTheSlotWhileTheSeriesIsMissing() public {
         _deliver(_called());
         vm.expectRevert();
         router.retryIntexSeriesCallNoticeApply(series);
@@ -171,6 +196,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i; i < logs.length; ++i) {
             assertTrue(logs[i].topics[0] != ITargetRouter.MessageIgnored.selector, "no ignore event");
+            assertTrue(logs[i].topics[0] != ITargetRouter.IntexSeriesCallNoticeApplyFailed.selector, "no failure event");
         }
     }
 }

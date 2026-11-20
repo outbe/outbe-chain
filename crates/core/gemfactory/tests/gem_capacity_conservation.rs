@@ -67,7 +67,7 @@ fn world() -> (HashMapStorageProvider, Vec<(U256, U256)>) {
                         reference_currency: 840,
                         issued_at: ISSUED,
                         call_terms: Some(prod_terms(U256::from(1_000_000))),
-                        entry_at_series_vwap: true,
+                        at_market_price: true,
                     },
                 )
                 .unwrap();

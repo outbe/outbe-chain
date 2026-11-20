@@ -177,6 +177,19 @@ impl TeeAuthorityChannel {
     }
 
     /// Holds the door-refresh lock. A caller that already holds it must not call this again.
+    ///
+    /// The returned guard is `!Send` so it cannot be held across thread or `Send` future
+    /// boundaries:
+    ///
+    /// ```compile_fail
+    /// use outbe_tee::TeeAuthorityChannel;
+    ///
+    /// fn require_send<T: Send>(_: T) {}
+    ///
+    /// let channel = TeeAuthorityChannel::default();
+    /// let guard = channel.lock_refresh_gate();
+    /// require_send(guard);
+    /// ```
     pub fn lock_refresh_gate(&self) -> impl Drop + '_ {
         self.shared.lock_refresh_gate()
     }

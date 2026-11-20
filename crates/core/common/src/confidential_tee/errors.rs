@@ -87,7 +87,7 @@ pub fn map_consensus_transport_error<E>(
 ) -> E {
     match error {
         TransportError::UnexpectedResponse => mismatch,
-        TransportError::EnclaveError(_) | TransportError::EnclaveCause { .. } => rejected(error),
+        TransportError::EnclaveCause { .. } => rejected(error),
         TransportError::AppAttestation { .. } => invalid_attestation(error),
         other => unavailable(other),
     }
@@ -260,12 +260,6 @@ pub enum TributeSourceError {
 /// Typed host-client errors for domain enclave operations.
 #[derive(Debug, Error)]
 pub enum EnclaveClientError {
-    /// Enclave deterministically rejected an encrypted NOD mint operation.
-    #[error("encrypted NOD mint rejected: {reason}")]
-    NodMintRejected {
-        /// Enclave-signed rejection reason text.
-        reason: String,
-    },
     /// Tribute state source verification rejected the supplied opening.
     #[error("Tribute source rejected: {0}")]
     TributeSourceRejected(#[from] TributeSourceError),
@@ -277,76 +271,9 @@ pub enum EnclaveClientError {
         /// Actual predecessor version byte observed.
         actual: u8,
     },
-    /// Tribute offer or Tribute V2 attestation signature check failed.
-    #[error("offer attestation signature invalid: {0}")]
-    TributeOfferAttestation(#[source] TeeAttestationError),
-    /// Tribute day or league attestation signature check failed.
-    #[error("tribute-day attestation signature invalid: {0}")]
-    TributeDayAttestation(#[source] TeeAttestationError),
-    /// Gratis ledger operation attestation signature check failed.
-    #[error("gratis-op attestation signature invalid: {0}")]
-    GratisOpAttestation(#[source] TeeAttestationError),
-    /// Promis ledger operation attestation signature check failed.
-    #[error("promis-op attestation signature invalid: {0}")]
-    PromisOpAttestation(#[source] TeeAttestationError),
-    /// Fidelity operation attestation signature check failed.
-    #[error("fidelity attestation signature invalid: {0}")]
-    FidelityAttestation(#[source] TeeAttestationError),
-    /// NOD operation attestation signature check failed.
-    #[error("nod attestation signature invalid: {0}")]
-    NodAttestation(#[source] TeeAttestationError),
     /// Underlying enclave transport or codec error.
     #[error(transparent)]
     Transport(#[from] TransportError),
-}
-
-/// Errors returned by a confidential balance witness call.
-#[derive(Debug, Error)]
-pub enum BalanceClientError {
-    /// Request variant is not a Gratis or Promis balance operation.
-    #[error("request is not a confidential balance operation")]
-    NotConfidentialBalanceOperation,
-    /// The resident enclave failed with a node-local or enclave-state error.
-    #[error("tee_sidecar_unavailable: {0}")]
-    SidecarRequestUnavailable(#[source] TransportError),
-    /// Enclave request failed with a deterministic protocol error.
-    #[error("enclave request failed: {0}")]
-    RequestFailed(#[source] TransportError),
-    /// Gratis attestation signature check failed.
-    #[error("tee_gratis_attestation_invalid: {0}")]
-    GratisAttestationInvalid(#[source] TransportError),
-    /// Promis attestation signature check failed.
-    #[error("tee_promis_attestation_invalid: {0}")]
-    PromisAttestationInvalid(#[source] TransportError),
-    /// Enclave returned an explicit operation error string from the protocol.
-    #[error("enclave {operation} error: {message}")]
-    EnclaveOperationError {
-        /// Name of the balance operation.
-        operation: &'static str,
-        /// Protocol error text from the enclave response.
-        message: String,
-    },
-    /// Enclave returned a response variant that does not match the request.
-    #[error("unexpected enclave response tag {tag}")]
-    UnexpectedResponse {
-        /// Frozen V1 response tag byte, or `0xFF` when the payload had no tag.
-        tag: u8,
-    },
-    /// Enclave echoed a canonical input hash that differs from the request hash.
-    #[error("tee_enclave_nondeterminism")]
-    EnclaveNondeterminism,
-}
-
-impl BalanceClientError {
-    /// Classify a transport failure while preserving the structured cause.
-    #[must_use]
-    pub fn from_request_failure(error: TransportError) -> Self {
-        if error.is_node_local() || matches!(error, TransportError::EnclaveError(_)) {
-            Self::SidecarRequestUnavailable(error)
-        } else {
-            Self::RequestFailed(error)
-        }
-    }
 }
 
 /// Errors returned by local encryption and owner-local opening helpers.
@@ -511,35 +438,6 @@ mod tests {
     use std::error::Error as _;
 
     use super::*;
-
-    #[test]
-    fn balance_request_failure_keeps_the_transport_source() {
-        let cause = TransportError::UnexpectedResponse;
-        let error = BalanceClientError::from_request_failure(cause);
-        let BalanceClientError::RequestFailed(source) = error else {
-            panic!("deterministic transport failure is RequestFailed");
-        };
-        assert!(source.source().is_none());
-        assert!(matches!(source, TransportError::UnexpectedResponse));
-
-        let local = TransportError::Unavailable("down".into());
-        let error = BalanceClientError::from_request_failure(local);
-        let BalanceClientError::SidecarRequestUnavailable(source) = error else {
-            panic!("node-local failure stays sidecar-unavailable");
-        };
-        assert!(matches!(source, TransportError::Unavailable(_)));
-    }
-
-    #[test]
-    fn attestation_client_error_downcasts_to_the_signature_cause() {
-        let cause = TeeAttestationError::InvalidSignatureLength { actual: 3 };
-        let error = EnclaveClientError::GratisOpAttestation(cause);
-        let source = error.source().expect("attestation source");
-        assert!(matches!(
-            source.downcast_ref::<TeeAttestationError>(),
-            Some(TeeAttestationError::InvalidSignatureLength { actual: 3 })
-        ));
-    }
 
     #[test]
     fn compute_error_is_a_leaf() {

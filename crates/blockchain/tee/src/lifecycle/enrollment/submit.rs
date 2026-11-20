@@ -20,6 +20,15 @@ pub(super) struct SubmissionContext<'a> {
     pub view: &'a EnrollmentPreflightV1,
 }
 
+enum FreshNonce {
+    FromPending,
+    Explicit(u64),
+    Replacing {
+        nonce: u64,
+        proof: LostIdentityProof,
+    },
+}
+
 pub(super) async fn advance<P: LifecycleChainPort, S: EnrollmentSignerV1>(
     port: &P,
     signer: &S,
@@ -28,41 +37,40 @@ pub(super) async fn advance<P: LifecycleChainPort, S: EnrollmentSignerV1>(
     reconciliation: ServiceTxReconciliationV1,
 ) -> Result<EnrollmentOutcome, EnrollmentError<P::Error, S::Error>> {
     let SubmissionContext { live, config, view } = context;
-    if let Some(record) = journal.load()? {
-        if record.sender != config.sender || blocks_fresh_register(&record) {
-            return Err(EnrollmentError::WrongServiceTransaction);
-        }
-        // A terminal RebuildRequired Renew or UpgradeCancel is not a registration
-        // predecessor. submit_fresh replaces it. A live Pending non-Register does not.
-        if record.kind == ServiceTxKindV1::Register
-            && record.public_intent.target.enclave_id == live.manifest().enclave_id()?
-            && matches!(
-                record.state,
-                ServiceTxStateV1::Pending | ServiceTxStateV1::RebuildRequired
-            )
-        {
-            let intent = pending_intent(&record, live, config.sender)?;
-            check_predecessor(view, &intent)?;
-        }
-    }
-    let reconciled_nonce = match reconciliation {
+    let fresh_nonce = match reconciliation {
         ServiceTxReconciliationV1::WaitForFinality { .. } => {
-            return Ok(EnrollmentOutcome::WaitForFinality)
+            if let Some(record) = journal.load()? {
+                if record.kind == ServiceTxKindV1::Register
+                    && record.state == ServiceTxStateV1::Pending
+                    && record.public_intent.target.enclave_id == live.manifest().enclave_id()?
+                {
+                    let intent = pending_intent(&record, live, config.sender)?;
+                    check_predecessor(view, &intent)?;
+                }
+            }
+            return Ok(EnrollmentOutcome::WaitForFinality);
         }
         ServiceTxReconciliationV1::ReplayExact => {
             let record = journal
                 .load()?
                 .ok_or(EnrollmentError::WrongServiceTransaction)?;
+            if record.sender != config.sender || blocks_fresh_register(&record) {
+                return Err(EnrollmentError::WrongServiceTransaction);
+            }
+            let intent = pending_intent(&record, live, config.sender)?;
+            check_predecessor(view, &intent)?;
             if view.balance < record_budget(&record)? {
                 return Ok(EnrollmentOutcome::WaitForGasBalance);
             }
             return broadcast(port, journal, live, record).await;
         }
-        ServiceTxReconciliationV1::ReplaceLostIdentity { nonce }
-        | ServiceTxReconciliationV1::RebuildAndResign { nonce } => Some(nonce),
+        ServiceTxReconciliationV1::ReplaceLostIdentity { nonce, proof } => {
+            FreshNonce::Replacing { nonce, proof }
+        }
+        ServiceTxReconciliationV1::RebuildAndResign { nonce } => FreshNonce::Explicit(nonce),
         ServiceTxReconciliationV1::Empty
         | ServiceTxReconciliationV1::Completed
-        | ServiceTxReconciliationV1::DiscardLostIdentity { .. } => None,
+        | ServiceTxReconciliationV1::DiscardLostIdentity { .. } => FreshNonce::FromPending,
         ServiceTxReconciliationV1::IngestOnboarding => {
             let enclave_id = live.manifest().enclave_id()?;
             let own_expired = view.registry.binding.as_ref().is_some_and(|b| {
@@ -71,10 +79,10 @@ pub(super) async fn advance<P: LifecycleChainPort, S: EnrollmentSignerV1>(
             if !own_expired {
                 return Err(EnrollmentError::IdentityMismatch);
             }
-            None
+            FreshNonce::FromPending
         }
     };
-    submit_fresh(port, signer, journal, context, reconciled_nonce).await
+    submit_fresh(port, signer, journal, context, fresh_nonce).await
 }
 
 async fn submit_fresh<P: LifecycleChainPort, S: EnrollmentSignerV1>(
@@ -82,7 +90,7 @@ async fn submit_fresh<P: LifecycleChainPort, S: EnrollmentSignerV1>(
     signer: &S,
     journal: &mut ServiceTxJournalV1,
     context: SubmissionContext<'_>,
-    reconciled_nonce: Option<u64>,
+    fresh_nonce: FreshNonce,
 ) -> Result<EnrollmentOutcome, EnrollmentError<P::Error, S::Error>> {
     let SubmissionContext { live, config, view } = context;
     let intent = build_intent::<P::Error, S::Error>(live, config, view)?;
@@ -97,17 +105,24 @@ async fn submit_fresh<P: LifecycleChainPort, S: EnrollmentSignerV1>(
     if view.balance < U256::from(min_gas) * U256::from(config.max_fee_per_gas) {
         return Ok(EnrollmentOutcome::WaitForGasBalance);
     }
-    let nonce = if let Some(nonce) = reconciled_nonce {
-        nonce
-    } else {
-        port.account_nonce(config.sender, LifecycleNonceTagV1::Pending)
-            .await?
+    let (nonce, lost_proof) = match fresh_nonce {
+        FreshNonce::FromPending => (
+            port.account_nonce(config.sender, LifecycleNonceTagV1::Pending)
+                .await?,
+            None,
+        ),
+        FreshNonce::Explicit(nonce) => (nonce, None),
+        FreshNonce::Replacing { nonce, proof } => (nonce, Some(proof)),
     };
     let record = prepare(signer, &context, intent, nonce)?;
     if view.balance < record_budget(&record)? {
         return Ok(EnrollmentOutcome::WaitForGasBalance);
     }
-    journal.begin(record.clone())?;
+    if let Some(proof) = lost_proof {
+        journal.begin_replacing(record.clone(), proof)?;
+    } else {
+        journal.begin(record.clone())?;
+    }
     broadcast(port, journal, live, record).await
 }
 
@@ -133,7 +148,7 @@ async fn broadcast<P: LifecycleChainPort, S: std::error::Error + 'static>(
             | LifecyclePortError::TransactionDisplaced { .. },
         ) => {
             // Do not loop or rebuild against moving latest state; the next tick preflights again.
-            reconcile_service_tx_v1(port, journal, live).await?;
+            reconcile_service_tx_v1(port, journal, live, record.sender).await?;
             Ok(EnrollmentOutcome::WaitForFinality)
         }
         Err(error) => Err(error.into()),

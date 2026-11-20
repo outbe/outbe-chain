@@ -7,5 +7,5 @@ pub const REWARD_BALANCE_IDLE_SECONDS: u64 = 365 * outbe_primitives::time::SECON
 /// Each cleanup owner has a separate budget of this size; WAA/SRA share one owner.
 pub const ACCRUAL_RECIPIENTS_PER_BLOCK: u32 = 256;
 
-/// Percentage points off the previous-day VWAP that every agent reward Gem enters at.
+/// Percentage points off the 24-hour VWAP of the claim hour that every agent reward Gem enters at.
 pub const AGENT_DISCOUNT_PCT: u16 = 4;

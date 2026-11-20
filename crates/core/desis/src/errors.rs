@@ -29,13 +29,13 @@ pub enum DesisError {
     #[error("winning bid references an unpriced currency: {0}")]
     UnpricedReferenceCurrency(u16),
 
-    #[error("chain relayed {0} bidders, more than the refund fan-out can carry")]
+    #[error("chain relayed {0} bidders, more than the winners pages can carry")]
     ReturnFanOutTooLarge(usize),
 
     #[error("relayed bid names a currency no series id can spell: issuance {0}, reference {1}")]
     UnspellableIntexAuctionBidCurrency(u16, u16),
 
-    #[error("relayed bid batch carries {0} bids, over the {1} the codec may send")]
+    #[error("relayed bids page carries {0} bids, over the {1} the codec may send")]
     IntexAuctionBidsPageTooLarge(usize, usize),
 
     #[error("Desis Allocation {allocation} exceeds Desis Limit {limit} for emission day {day}")]

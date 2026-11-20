@@ -60,5 +60,10 @@ contract EscrowAdapterProceedsTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.ZeroAddress.selector, "recipient"));
         vm.prank(admin);
         escrow.setProceedsRecipient(address(0));
+
+        vm.expectEmit(true, true, true, true, address(escrow));
+        emit IEscrowAdapter.EscrowProceedsRecipientSet(outsider);
+        vm.prank(admin);
+        escrow.setProceedsRecipient(outsider);
     }
 }

@@ -40,8 +40,8 @@ pub fn process_tribute_offer_batch_via_enclave(
 ) -> Result<Vec<TributeOfferResult>, PrecompileError> {
     let results = outbe_tribute::confidential::host::process_offer_batch(offers.to_vec()).map_err(
         |error| match error {
-            outbe_tee::TransportError::EnclaveError(message) => {
-                TributeFactoryError::EnclaveBatchError(message)
+            outbe_tee::TransportError::EnclaveCause { source } => {
+                TributeFactoryError::EnclaveBatchError(source)
             }
             other => TributeFactoryError::sidecar_unavailable(other),
         },

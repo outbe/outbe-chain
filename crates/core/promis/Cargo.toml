@@ -24,6 +24,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+outbe-core-common = { workspace = true, features = ["dev-keys"] }
 outbe-tee = { workspace = true, features = ["test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
@@ -31,8 +32,6 @@ outbe-primitives = { workspace = true, features = ["test-utils"] }
 
 [features]
 default = []
-# Native engine marker. Protocol deps are direct so bmk.7 does not edit this file.
-engine = []
 # Deterministic development keys. Never in a release build.
 dev-keys = ["outbe-core-common/dev-keys"]
 test-utils = ["outbe-primitives/test-utils"]

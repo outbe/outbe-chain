@@ -316,7 +316,7 @@ fn token_uri_renders_the_gem_card() {
         let item = crate::api::get_item(storage, gem_id).unwrap().unwrap();
         assert_eq!(
             trait_value(&json, "Series").unwrap(),
-            format!("{}-0", item.series_id)
+            format!("{}-{}", item.series_id, T_NOW_HOUR)
         );
         assert!(trait_value(&json, "Call Deadline").is_none());
 
@@ -335,14 +335,17 @@ fn a_numbered_sub_series_reads_in_the_status_and_the_card() {
         let gem_id = add(
             storage,
             GemAddParams {
-                entry_at_series_vwap: false,
+                at_market_price: false,
                 ..sample_params(ALICE)
             },
         );
         let series = item(storage, gem_id).unwrap().series_id;
-        assert_eq!(status(storage, gem_id).subSeriesId, 1);
+        assert_eq!(status(storage, gem_id).subSeriesId, 24);
         let (json, _) = token_uri_parts(storage, gem_id);
-        assert_eq!(trait_value(&json, "Series").unwrap(), format!("{series}-1"));
+        assert_eq!(
+            trait_value(&json, "Series").unwrap(),
+            format!("{series}-24")
+        );
     });
 }
 
@@ -354,9 +357,9 @@ fn a_series_numbers_up_to_sub_series_65534() {
             .series_next_sub_series
             .write(&series, u16::MAX - 1)
             .unwrap();
-        let last = crate::api::sub_series_of(storage, series, U256::from(1u64), false).unwrap();
+        let last = crate::api::sub_series_of(storage, series, U256::from(1u64), None).unwrap();
         assert_eq!(last, u16::MAX - 1);
-        let err = crate::api::sub_series_of(storage, series, U256::from(2u64), false).unwrap_err();
+        let err = crate::api::sub_series_of(storage, series, U256::from(2u64), None).unwrap_err();
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(

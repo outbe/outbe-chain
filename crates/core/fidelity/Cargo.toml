@@ -23,6 +23,7 @@ thiserror.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+outbe-core-common = { workspace = true, features = ["dev-keys"] }
 outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 # Fidelity's own tests run the confidential path against the in-process engine.
@@ -31,8 +32,6 @@ k256.workspace = true
 
 [features]
 default = []
-# Native engine marker. Protocol deps are direct so bmk.5 does not edit this file.
-engine = []
 # Deterministic development keys. Never in a release build.
 dev-keys = ["outbe-core-common/dev-keys"]
 test-utils = ["outbe-primitives/test-utils"]

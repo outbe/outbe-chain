@@ -1,3 +1,4 @@
+use super::super::super::journal_records::node_host_codec_error;
 use super::super::super::{
     codec_error, path_exists, read_replacement_candidate, read_replacement_promotion,
     read_replacement_relay, read_replacement_submission, remove_file_if_exists,
@@ -25,8 +26,8 @@ fn validate_candidate_refresh_pair(
         || candidate_next.manifest.enclave_id().map_err(codec_error)?
             != candidate.manifest.enclave_id().map_err(codec_error)?
     {
-        return Err(TransportError::Codec(
-            "candidate refresh journal changes replacement identity".into(),
+        return Err(node_host_codec_error(
+            "candidate refresh journal changes replacement identity",
         ));
     }
     Ok(())
@@ -85,8 +86,8 @@ pub(super) fn reconcile_candidate_journal(
         let candidate_next = read_replacement_candidate(&paths.replacement_candidate_next)?;
         if presence.candidate_exists {
             if presence.has_submission_or_relay() {
-                return Err(TransportError::Codec(
-                    "candidate refresh journal exists after replacement submission".into(),
+                return Err(node_host_codec_error(
+                    "candidate refresh journal exists after replacement submission",
                 ));
             }
             let candidate = read_replacement_candidate(&paths.replacement_candidate)?;
@@ -94,8 +95,8 @@ pub(super) fn reconcile_candidate_journal(
             remove_file_if_exists(&paths.replacement_candidate_next)?;
         } else {
             if presence.has_submission_or_relay() || presence.next_exists {
-                return Err(TransportError::Codec(
-                    "initial candidate journal conflicts with later replacement state".into(),
+                return Err(node_host_codec_error(
+                    "initial candidate journal conflicts with later replacement state",
                 ));
             }
             validate_replacement_candidate_state(&candidate_next, active, node_host)?;
@@ -116,8 +117,8 @@ pub(super) fn reconcile_submission_journal(
 ) -> Result<(), TransportError> {
     if presence.submission_next_exists {
         if !presence.candidate_exists {
-            return Err(TransportError::Codec(
-                "replacement submission journal is missing its candidate".into(),
+            return Err(node_host_codec_error(
+                "replacement submission journal is missing its candidate",
             ));
         }
         let candidate = read_replacement_candidate(&paths.replacement_candidate)?;
@@ -125,8 +126,8 @@ pub(super) fn reconcile_submission_journal(
         validate_durable_replacement_submission(&candidate.manifest, &submission_next)?;
         if presence.submission_exists {
             if read_replacement_submission(&paths.replacement_submission)? != submission_next {
-                return Err(TransportError::Codec(
-                    "replacement submission journal conflicts with durable state".into(),
+                return Err(node_host_codec_error(
+                    "replacement submission journal conflicts with durable state",
                 ));
             }
             remove_file_if_exists(&paths.replacement_submission_next)?;
@@ -148,21 +149,21 @@ pub(super) fn reconcile_relay_journal(
 ) -> Result<(), TransportError> {
     if presence.relay_next_exists {
         if !presence.candidate_exists || !presence.submission_exists {
-            return Err(TransportError::Codec(
-                "replacement relay journal is missing candidate submission state".into(),
+            return Err(node_host_codec_error(
+                "replacement relay journal is missing candidate submission state",
             ));
         }
         let submission = read_replacement_submission(&paths.replacement_submission)?;
         let relay_next = read_replacement_relay(&paths.replacement_relay_next)?;
         if relay_next.submission_hash() != submission.submission_hash()? {
-            return Err(TransportError::Codec(
-                "replacement relay journal targets another submission".into(),
+            return Err(node_host_codec_error(
+                "replacement relay journal targets another submission",
             ));
         }
         if presence.relay_exists {
             if read_replacement_relay(&paths.replacement_relay)? != relay_next {
-                return Err(TransportError::Codec(
-                    "replacement relay journal conflicts with durable state".into(),
+                return Err(node_host_codec_error(
+                    "replacement relay journal conflicts with durable state",
                 ));
             }
             remove_file_if_exists(&paths.replacement_relay_next)?;
@@ -181,16 +182,16 @@ pub(super) fn reconcile_promotion_journal(
 ) -> Result<(), TransportError> {
     if presence.promotion_next_exists {
         if !presence.candidate_exists || !presence.submission_exists {
-            return Err(TransportError::Codec(
-                "replacement promotion journal is missing candidate submission state".into(),
+            return Err(node_host_codec_error(
+                "replacement promotion journal is missing candidate submission state",
             ));
         }
         let candidate = read_replacement_candidate(&paths.replacement_candidate)?;
         let submission = read_replacement_submission(&paths.replacement_submission)?;
         let expected = replacement_authorization(&candidate, &submission)?;
         if read_replacement_promotion(&paths.replacement_promotion_next)? != expected {
-            return Err(TransportError::Codec(
-                "replacement promotion journal targets another authorization".into(),
+            return Err(node_host_codec_error(
+                "replacement promotion journal targets another authorization",
             ));
         }
         fs::rename(

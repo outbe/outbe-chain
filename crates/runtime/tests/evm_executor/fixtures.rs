@@ -73,6 +73,24 @@ pub(crate) fn seed_previous_day_vwap(
         .unwrap();
 }
 
+/// Covers the 24-hour COEN/840 window of the hour of `block_ts` at `rate`.
+pub(crate) fn seed_hour_vwap(
+    storage: &outbe_primitives::storage::StorageHandle<'_>,
+    block_ts: u64,
+    rate: U256,
+) {
+    let seeded_at = storage.timestamp().unwrap();
+    storage.set_block_timestamp(U256::from(block_ts)).unwrap();
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        storage,
+        outbe_oracle::api::AddressPair::new_coen_to(840),
+        rate,
+        U256::from(1_000_000u64),
+    )
+    .unwrap();
+    storage.set_block_timestamp(seeded_at).unwrap();
+}
+
 pub(super) fn numbered_test_address(prefix: u8, n: u64) -> Address {
     let mut bytes = [0u8; 20];
     bytes[0] = prefix;

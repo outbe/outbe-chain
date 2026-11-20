@@ -212,7 +212,7 @@ fn transport_errors_keep_the_historical_host_sentences() {
     ] {
         let boom = PrecompileError::from(map_consensus_error(
             operation,
-            TransportError::EnclaveError(String::from("boom")),
+            TransportError::enclave_error(std::io::Error::other("boom")),
         ));
         assert_eq!(
             unavailable(boom),

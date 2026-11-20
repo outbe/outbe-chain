@@ -583,7 +583,7 @@ fn a_gem_id_is_its_raw_keccak_and_the_group_id_carries_the_day() {
             gem_id,
             GemContract::generate_gem_id(
                 GemContract::series_of(T_NOW, USD, USD).unwrap(),
-                0,
+                T_NOW_HOUR,
                 ISSUER,
                 ALICE,
                 storage.block_number().unwrap(),

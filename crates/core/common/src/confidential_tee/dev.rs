@@ -20,6 +20,10 @@ pub const FIDELITY_CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
 pub const GRATIS_GROUP_SIG: &[u8] = b"outbe-dev-gratis-group-signature-fixed-seed!!";
 /// Shared dev chain id for the gratis test-enclave key.
 pub const GRATIS_CHAIN: B256 = B256::repeat_byte(0xC1);
+/// Shared dev group signature for the promis test-enclave key.
+pub const PROMIS_GROUP_SIG: &[u8] = b"outbe-dev-promis-group-signature-fixed-seed!!";
+/// Shared dev chain id for the promis test-enclave key.
+pub const PROMIS_CHAIN: B256 = B256::repeat_byte(0xC1);
 /// Shared dev X25519 secret for encrypted amount envelopes in test-enclave mode.
 pub const OFFER_SECRET_KEY: [u8; 32] = [0x42; 32];
 

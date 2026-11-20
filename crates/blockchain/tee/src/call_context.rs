@@ -119,7 +119,7 @@ pub fn resolve() -> std::result::Result<EnclaveCallContextV1, crate::TransportEr
         return Ok(context);
     }
     match PROVIDER.get() {
-        Some(provider) => provider().map_err(crate::TransportError::Unavailable),
+        Some(provider) => provider().map_err(crate::TransportError::unavailable),
         None => Ok(SNAPSHOT
             .read()
             .map_err(crate::TransportError::snapshot_lock_poisoned)?

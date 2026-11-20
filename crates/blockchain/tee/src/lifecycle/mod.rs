@@ -13,6 +13,6 @@ mod test_finality;
 pub use nonce_reconcile::{reconcile_service_tx_v1, ReconcileError, ServiceTxReconciliationV1};
 pub use rpc_port::*;
 pub use tx_journal::{
-    ServiceBindingTargetV1, ServiceTxIntentV1, ServiceTxJournalError, ServiceTxJournalV1,
-    ServiceTxKindV1, ServiceTxRecordV1, ServiceTxStateV1,
+    LostIdentityProof, ServiceBindingTargetV1, ServiceTxIntentV1, ServiceTxJournalError,
+    ServiceTxJournalV1, ServiceTxKindV1, ServiceTxRecordV1, ServiceTxStateV1,
 };

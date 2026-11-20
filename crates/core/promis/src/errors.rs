@@ -63,7 +63,6 @@ pub struct OpText(pub(crate) TransportError);
 impl fmt::Display for OpText {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
-            TransportError::EnclaveError(message) => formatter.write_str(message),
             TransportError::EnclaveCause { source } => write!(formatter, "{source}"),
             other => write!(formatter, "{other}"),
         }
@@ -138,7 +137,7 @@ mod tests {
                 false,
             ),
             (
-                TransportError::EnclaveError("denied".into()),
+                TransportError::enclave_error(std::io::Error::other("denied")),
                 "enclave ApplyPromisOp error: denied",
                 true,
             ),

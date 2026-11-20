@@ -86,8 +86,14 @@ pub async fn cancel_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1>(
         &view.policy,
     )?;
     super::recovery::settle_historical_prepare::<P, S>(port, journal, &view).await?;
-    let nonce =
-        fresh_nonce::<P, S>(port, signer, journal, live, ServiceTxKindV1::UpgradeCancel).await?;
+    let (nonce, lost_proof) =
+        match fresh_nonce::<P, S>(port, signer, journal, live, ServiceTxKindV1::UpgradeCancel)
+            .await?
+        {
+            FreshNonceV1::AwaitingFinality => return Ok(SuccessorStep::AwaitingFinality),
+            FreshNonceV1::Fresh(nonce) => (nonce, None),
+            FreshNonceV1::Replacing { nonce, proof } => (nonce, Some(proof)),
+        };
     let record = signed_record::<P, S>(
         signer,
         at,
@@ -102,7 +108,7 @@ pub async fn cancel_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1>(
             },
         },
     )?;
-    journal.begin(record.clone()).map_err(RenewalError::from)?;
+    persist_record::<P, S>(journal, record.clone(), lost_proof)?;
     send::<P, S>(port, &record, false).await
 }
 
@@ -174,7 +180,10 @@ fn upgrade_proof_checkpoint<P: LifecycleChainPort, S: LifecycleSignerV1>(
     })?;
     let hash = header.hash_slow();
     let Some(base_fee) = header.base_fee_per_gas.map(U256::from) else {
-        return Err(RenewalError::<P::Error, S::Error>::BindingMismatch.into());
+        return Err(RenewalError::<P::Error, S::Error>::UpgradeProofCheckpoint(
+            UpgradeProofCheckpointError::MissingBaseFee,
+        )
+        .into());
     };
     let same_height = header.number == current.height;
     let head_matches = (hash, header.state_root, base_fee)
@@ -319,8 +328,24 @@ pub async fn transition_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1
     {
         return Ok(step);
     }
+    submit_fresh_transition::<P, S>(port, signer, candidate, journal, (at, policy, &mut intent))
+        .await
+}
+
+async fn submit_fresh_transition<P: LifecycleChainPort, S: LifecycleSignerV1>(
+    port: &P,
+    signer: &S,
+    candidate: &InProcessTeeContext,
+    journal: &mut ServiceTxJournalV1,
+    submission: (
+        LifecycleCheckpointV1,
+        &TeePolicyV1,
+        &mut RegistrationIntentV1,
+    ),
+) -> SuccessorResult<SuccessorStep, P, S> {
+    let (at, policy, intent) = submission;
     let (evidence, signature) =
-        transition_evidence::<P, S>(candidate, &mut intent, policy, at.timestamp)?;
+        transition_evidence::<P, S>(candidate, intent, policy, at.timestamp)?;
     let node = signer
         .sign_node_hash(intent.intent_hash().map_err(RenewalError::from)?)
         .map_err(RenewalError::Signing)?;
@@ -339,14 +364,19 @@ pub async fn transition_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1
         &evidence,
         policy,
     )?;
-    let nonce = fresh_nonce::<P, S>(
+    let (nonce, lost_proof) = match fresh_nonce::<P, S>(
         port,
         signer,
         journal,
         candidate,
         ServiceTxKindV1::UpgradeTransition,
     )
-    .await?;
+    .await?
+    {
+        FreshNonceV1::AwaitingFinality => return Ok(SuccessorStep::AwaitingFinality),
+        FreshNonceV1::Fresh(nonce) => (nonce, None),
+        FreshNonceV1::Replacing { nonce, proof } => (nonce, Some(proof)),
+    };
     let record = signed_record::<P, S>(
         signer,
         at,
@@ -356,12 +386,12 @@ pub async fn transition_successor_v1<P: LifecycleChainPort, S: LifecycleSignerV1
             calldata,
             kind: ServiceTxKindV1::UpgradeTransition,
             intent: ServiceTxIntentV1 {
-                target: target_v1(&intent).map_err(RenewalError::from)?,
+                target: target_v1(intent).map_err(RenewalError::from)?,
                 candidate: None,
             },
         },
     )?;
-    journal.begin(record.clone()).map_err(RenewalError::from)?;
+    persist_record::<P, S>(journal, record.clone(), lost_proof)?;
     send::<P, S>(port, &record, false).await
 }
 

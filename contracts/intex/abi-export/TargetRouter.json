@@ -968,6 +968,31 @@
   },
   {
     "type": "event",
+    "name": "IntexSeriesCallNoticeApplyFailed",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
+      },
+      {
+        "name": "srcChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "errorData",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "IssuanceCompleted",
     "inputs": [
       {
@@ -1006,38 +1031,6 @@
   },
   {
     "type": "event",
-    "name": "MarkCalledReceived",
-    "inputs": [
-      {
-        "name": "srcChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "MarkParked",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "MessageIgnored",
     "inputs": [
       {
@@ -1057,19 +1050,6 @@
         "type": "uint8",
         "indexed": false,
         "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ParkedMarkApplied",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
       }
     ],
     "anonymous": false

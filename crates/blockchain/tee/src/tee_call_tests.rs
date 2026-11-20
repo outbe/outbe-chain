@@ -58,24 +58,6 @@ fn signed_rejection_and_lazy_attestation_enforce_domain_hash_and_tag_len() {
     ));
 }
 
-#[test]
-fn tee_consensus_call_and_session_call_fail_closed_on_mismatched_recordable_flag() {
-    let req = crate::protocol::EnclaveRequest::GetPublicKeys;
-    let err = tee_consensus_call(
-        CallMeta::session_only("get_public_keys"),
-        &req,
-        || crate::TransportError::Unavailable("none".into()),
-        |_, _| Ok(()),
-    )
-    .unwrap_err();
-    assert!(matches!(err, crate::TransportError::Codec(_)));
-
-    let session_err = tee_session_call(CallMeta::recorded("recorded_op"), &req, |_, _| Ok(()))
-        .expect("returns fail-closed error even without installed runtime")
-        .unwrap_err();
-    assert!(matches!(session_err, crate::TransportError::Codec(_)));
-}
-
 fn binding() -> outbe_primitives::tee_attestation_v1::NetworkBindingV1 {
     use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
     NetworkBindingV1 {
@@ -553,14 +535,16 @@ fn tee_consensus_typed_call_repeat_after_candidate_rejection_keeps_typed_source(
             CallMeta::recorded("candidate_reject"),
             |_| {
                 executed.set(executed.get() + 1);
-                Err(crate::TransportError::EnclaveError("refused".into()))
+                Err(crate::TransportError::enclave_error(std::io::Error::other(
+                    "refused",
+                )))
             },
             |_: &()| panic!("rejected candidate encoded"),
             |_, _| panic!("rejected candidate decoded"),
         )
     };
     let first = call().unwrap_err();
-    assert!(matches!(first, crate::TransportError::EnclaveError(_)));
+    assert!(matches!(first, crate::TransportError::EnclaveCause { .. }));
     assert_eq!(executed.get(), 1);
     assert_eq!(
         state.lock().unwrap().candidate_rejection,
@@ -603,7 +587,9 @@ fn tee_session_typed_call_skips_serialization_and_witness_mutation() {
             .unwrap();
         assert_eq!(value, 7);
         let error = tee_session_typed_call(CallMeta::session_only("canary"), |_| {
-            Err::<(), _>(crate::TransportError::Unavailable("down".into()))
+            Err::<(), _>(crate::TransportError::unavailable(std::io::Error::other(
+                "down",
+            )))
         })
         .unwrap()
         .unwrap_err();

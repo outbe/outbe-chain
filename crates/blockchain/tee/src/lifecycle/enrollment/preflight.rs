@@ -104,22 +104,22 @@ pub(super) fn wait_or_reject<E: std::error::Error + 'static, S: std::error::Erro
             },
         ));
     }
-    classify::<E, S>(&view.registry)?;
+    if classify(&view.registry).is_none() {
+        return Ok(Some(EnrollmentOutcome::WaitForLeaseExpiry));
+    }
     Ok(None)
 }
 
-pub(super) fn classify<E: std::error::Error + 'static, S: std::error::Error + 'static>(
-    view: &LifecycleRegistryStateV1,
-) -> Result<EnrollmentMode, EnrollmentError<E, S>> {
+fn classify(view: &LifecycleRegistryStateV1) -> Option<EnrollmentMode> {
     match view.binding.as_ref() {
-        None => Ok(EnrollmentMode::InitialJoin),
-        Some(b) if view.checkpoint.timestamp >= b.valid_until => Ok(EnrollmentMode::ExpiredRejoin),
-        Some(_) if view.policy.attestation_mode == AttestationMode::NoAttestationDev => {
-            Ok(EnrollmentMode::ActiveRejoin)
+        None => Some(EnrollmentMode::InitialJoin),
+        Some(b) if view.checkpoint.timestamp >= b.valid_until => {
+            Some(EnrollmentMode::ExpiredRejoin)
         }
-        Some(_) => Err(EnrollmentError::LiveRejoinForbiddenInMode {
-            mode: view.policy.attestation_mode,
-        }),
+        Some(_) if view.policy.attestation_mode == AttestationMode::NoAttestationDev => {
+            Some(EnrollmentMode::ActiveRejoin)
+        }
+        Some(_) => None,
     }
 }
 

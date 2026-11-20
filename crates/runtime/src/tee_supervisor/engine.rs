@@ -87,7 +87,7 @@ where
         node_data_dir,
         phase,
     } = session;
-    reconcile_service_tx_v1(port, journal, live)
+    reconcile_service_tx_v1(port, journal, live, signer.address())
         .await
         .map_err(RenewalError::Reconcile)?;
     let Some(view) = network_view(port, signer.address()).await? else {
@@ -284,7 +284,7 @@ pub(crate) async fn source_renewal_settled<P: LifecycleChainPort, S: LifecycleSi
         return Ok(false);
     }
     Ok(matches!(
-        reconcile_service_tx_v1(port, journal, source).await?,
+        reconcile_service_tx_v1(port, journal, source, signer.address()).await?,
         ServiceTxReconciliationV1::Completed
     ))
 }

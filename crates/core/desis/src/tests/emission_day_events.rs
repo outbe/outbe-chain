@@ -110,6 +110,31 @@ fn assert_cancel_before_limit_events(storage: &HashMapStorageProvider) {
     assert!(canceled < allocated);
 }
 
+/// The day's one end event: the completion, the cancel or the failure, never two.
+fn end_event(storage: &HashMapStorageProvider) -> alloy_primitives::B256 {
+    let ends: Vec<_> = logs(storage)
+        .iter()
+        .filter_map(|log| log.topics().first().copied())
+        .filter(|topic| {
+            [
+                IDesis::DesisCompleted::SIGNATURE_HASH,
+                IDesis::DesisCanceled::SIGNATURE_HASH,
+                IDesis::DesisFailed::SIGNATURE_HASH,
+            ]
+            .contains(topic)
+        })
+        .collect();
+    assert_eq!(ends.len(), 1, "one end event");
+    ends[0]
+}
+
+fn completed(storage: &HashMapStorageProvider) -> IDesis::DesisCompleted {
+    logs(storage)
+        .iter()
+        .find_map(|log| IDesis::DesisCompleted::decode_log_data(log).ok())
+        .expect("DesisCompleted")
+}
+
 fn assert_repeat_tick_is_quiet(storage: &mut HashMapStorageProvider) {
     let before = logs(storage).len();
     StorageHandle::enter(storage, |s| {
@@ -140,6 +165,7 @@ fn a_partial_clear_balances_and_a_repeat_tick_is_quiet() {
         relay_bids(s, SRC_CHAIN, 1, 200);
         assert_eq!(clear(s).issued_units, 1);
     });
+    assert_eq!(end_event(&storage), IDesis::DesisCompleted::SIGNATURE_HASH);
     assert_limit_identity(&mut storage, U256::from(2 * LOAD_MINOR));
     assert_eq!(
         amount_of::<IDesis::DesisLimitAllocated>(&storage),
@@ -157,13 +183,10 @@ fn a_full_clear_returns_nothing_to_the_promis_limit() {
     });
     assert_limit_identity(&mut storage, U256::ZERO);
     assert!(super::desis_limit_returns(&storage).is_empty());
-    assert_eq!(
-        logs(&storage)
-            .iter()
-            .filter(|log| log.topics().first() == Some(&IDesis::DesisCompleted::SIGNATURE_HASH))
-            .count(),
-        1
-    );
+    assert_eq!(end_event(&storage), IDesis::DesisCompleted::SIGNATURE_HASH);
+    let sale = completed(&storage);
+    assert_eq!(sale.quantity, 2);
+    assert_ne!(sale.clearingRate, 0);
     let bids_completed = logs(&storage)
         .iter()
         .find_map(|log| IDesis::IntexAuctionBidsCompleted::decode_log_data(log).ok())
@@ -197,11 +220,12 @@ fn an_empty_clear_returns_the_whole_limit() {
         amount_of::<IDesis::DesisLimitAllocated>(&storage),
         vec![U256::ZERO]
     );
-    assert!(logs(&storage).iter().any(|log| {
-        IDesis::DesisCompleted::decode_log_data(log)
-            .map(|event| event.totalDemand == 0)
-            .unwrap_or(false)
-    }));
+    assert_eq!(end_event(&storage), IDesis::DesisCompleted::SIGNATURE_HASH);
+    let no_sale = completed(&storage);
+    assert_eq!(
+        (no_sale.quantity, no_sale.clearingRate, no_sale.totalDemand),
+        (0, 0, 0)
+    );
 }
 
 type CancelCase = (u8, fn(&StorageHandle<'_>), U256);
@@ -247,6 +271,7 @@ fn each_cancel_reason_balances_and_a_repeat_tick_is_quiet() {
     for (reason, drive, returned) in cases {
         let mut storage = world(drive);
         assert_eq!(cancel_reason(&storage), reason, "reason {reason}");
+        assert_eq!(end_event(&storage), IDesis::DesisCanceled::SIGNATURE_HASH);
         assert_limit_identity(&mut storage, returned);
         assert_cancel_before_limit_events(&storage);
         assert_repeat_tick_is_quiet(&mut storage);
@@ -336,6 +361,7 @@ fn a_failed_auction_reports_the_stage_before_the_zero_allocation() {
         .unwrap()
         .stage;
     assert_eq!(stage as u8, AuctionStage::CommittingBids as u8);
+    assert_eq!(end_event(&storage), IDesis::DesisFailed::SIGNATURE_HASH);
     assert_limit_identity(&mut storage, U256::from(10 * LOAD_MINOR));
     assert_eq!(
         amount_of::<IDesis::DesisLimitAllocated>(&storage),

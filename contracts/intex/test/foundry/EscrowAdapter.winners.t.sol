@@ -198,12 +198,12 @@ contract EscrowAdapterWinnersTest is Test {
         uint128 bobLock = _lock(bob, 500_000, 1);
         _apply(_one(alice), 0, 0, false);
 
-        (uint128 owed, uint32 claimableAt) = escrow.returnableAmount(DAY, bob);
+        (uint128 owed, uint32 returnableAt) = escrow.returnableAmount(DAY, bob);
         assertEq(owed, bobLock);
-        assertEq(claimableAt, uint32(block.timestamp) + escrow.UNFINALIZED_RETURN_DELAY());
+        assertEq(returnableAt, uint32(block.timestamp) + escrow.UNFINALIZED_RETURN_DELAY());
         vm.expectRevert(
             abi.encodeWithSelector(
-                IEscrowAdapter.IntexAuctionAssetNotYetReturnable.selector, claimableAt, uint32(block.timestamp)
+                IEscrowAdapter.IntexAuctionAssetNotYetReturnable.selector, returnableAt, uint32(block.timestamp)
             )
         );
         _refund(DAY, bob);
@@ -304,13 +304,13 @@ contract EscrowAdapterWinnersTest is Test {
         uint128 bobLock = _lock(bob, 500_000, 1);
         _apply(_one(alice), 0, 0, true);
 
-        uint32 claimableAt = uint32(block.timestamp) + escrow.RETURN_ABANDON_DELAY();
+        uint32 returnableAt = uint32(block.timestamp) + escrow.RETURN_ABANDON_DELAY();
         vm.expectRevert(
-            abi.encodeWithSelector(IEscrowAdapter.ReturnNotYetAbandoned.selector, claimableAt, uint32(block.timestamp))
+            abi.encodeWithSelector(IEscrowAdapter.ReturnNotYetAbandoned.selector, returnableAt, uint32(block.timestamp))
         );
         escrow.returnAbandonedIntexAuctionAsset(DAY, alice);
 
-        vm.warp(claimableAt);
+        vm.warp(returnableAt);
         escrow.returnAbandonedIntexAuctionAsset(DAY, alice);
         escrow.returnAbandonedIntexAuctionAsset(DAY, bob);
         assertEq(token.balanceOf(alice), aliceLock - _paid(3), "the winner's change");

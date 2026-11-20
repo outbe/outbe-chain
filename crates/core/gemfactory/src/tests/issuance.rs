@@ -202,8 +202,8 @@ fn static_gem_factory_command_is_denied_before_domain_validation() {
     let storage = StorageHandle::new(&mut provider);
     let result = crate::precompile::dispatch(
         storage,
-        &IGemFactory::issueGemPositionCall {
-            sourceIntexId: U256::from(99),
+        &IGemFactory::createGemFactoryPositionCall {
+            intexId: U256::from(99),
             units: U256::from(1),
         }
         .abi_encode(),

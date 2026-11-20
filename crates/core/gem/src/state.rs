@@ -6,7 +6,7 @@ use outbe_primitives::error::Result;
 use outbe_system_common::call_bins;
 
 use crate::{
-    constants::{TOKEN_NAME, TOKEN_SYMBOL},
+    constants::{FIRST_CALL_PRICE_SUB_SERIES, TOKEN_NAME, TOKEN_SYMBOL},
     errors::{GemError, GemFatalError},
     schema::{CallTerms, GemContract, GemItemState, GroupSubSeriesSummary},
 };
@@ -136,22 +136,26 @@ impl GemContract<'_> {
             .write(&gss_key, load)
     }
 
-    /// The sub-series of `call_price_minor` in `series_id`, numbering a new price on first use.
+    /// The sub-series of a gem in `series_id`: the issue hour at the market price, else the
+    /// number of `call_price_minor`, given from 24 on first use.
     pub(crate) fn sub_series_of(
         &mut self,
         series_id: SeriesId,
         call_price_minor: U256,
-        entry_at_series_vwap: bool,
+        market_hour: Option<u16>,
     ) -> Result<u16> {
-        if entry_at_series_vwap {
-            return Ok(0);
+        if let Some(hour) = market_hour {
+            return Ok(hour);
         }
         let key = Self::sub_series_key(series_id, call_price_minor);
         let numbered = self.sub_series_of_price.read(&key)?;
         if numbered != 0 {
             return Ok(numbered - 1);
         }
-        let number = self.series_next_sub_series.read(&series_id)?.max(1);
+        let number = self
+            .series_next_sub_series
+            .read(&series_id)?
+            .max(FIRST_CALL_PRICE_SUB_SERIES);
         let next = number.checked_add(1).ok_or(GemError::SubSeriesOverflow)?;
         self.sub_series_of_price.write(&key, next)?;
         self.series_next_sub_series.write(&series_id, next)?;

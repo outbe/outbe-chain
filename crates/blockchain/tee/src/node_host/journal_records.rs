@@ -6,6 +6,17 @@ use alloy_primitives::{keccak256, B256};
 use outbe_primitives::tee_attestation_v1::{AttestationEvidenceV1, MAX_ATTESTATION_EVIDENCE_BYTES};
 use std::path::Path;
 
+/// Static invariant violation in NodeHost journal and record validation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[error("{0}")]
+pub(super) struct NodeHostInvariantError(pub(super) &'static str);
+
+/// Wrap a static NodeHost invariant message in [`TransportError::CodecCause`],
+/// preserving the historical `"codec error: ..."` display sentence.
+pub(super) fn node_host_codec_error(reason: &'static str) -> TransportError {
+    TransportError::codec(NodeHostInvariantError(reason))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct JournalSubmissionPayload {
     pub evidence: Vec<u8>,
@@ -53,7 +64,7 @@ pub(super) fn validate_submission_frame(
         || u64::try_from(input.len()).unwrap_or(u64::MAX) > validation.max_bytes
         || input[0] != validation.version
     {
-        return Err(TransportError::Codec(validation.framing_error.into()));
+        return Err(node_host_codec_error(validation.framing_error));
     }
     Ok(())
 }
@@ -66,11 +77,9 @@ pub(super) fn validate_submission_evidence_length(
     let expected_len = validation
         .length_base
         .checked_add(evidence_len)
-        .ok_or_else(|| TransportError::Codec(validation.length_overflow_error.into()))?;
+        .ok_or_else(|| node_host_codec_error(validation.length_overflow_error))?;
     if evidence_len > MAX_ATTESTATION_EVIDENCE_BYTES || input_len != expected_len {
-        return Err(TransportError::Codec(
-            validation.noncanonical_length_error.into(),
-        ));
+        return Err(node_host_codec_error(validation.noncanonical_length_error));
     }
     Ok(())
 }
@@ -85,18 +94,18 @@ pub(super) fn encode_submission_fields(
     validation: &JournalSubmissionValidation,
 ) -> Result<Vec<u8>, TransportError> {
     let evidence_len = u32::try_from(payload.evidence.len())
-        .map_err(|_| TransportError::Codec(validation.encode_evidence_length_error.into()))?;
+        .map_err(|_| node_host_codec_error(validation.encode_evidence_length_error))?;
     let capacity = validation
         .length_base
         .checked_add(payload.evidence.len())
-        .ok_or_else(|| TransportError::Codec(validation.encode_allocation_error.into()))?;
+        .ok_or_else(|| node_host_codec_error(validation.encode_allocation_error))?;
     let mut out = Vec::with_capacity(capacity);
     out.push(validation.version);
     out.extend_from_slice(prefix);
     append_submission_payload(&mut out, evidence_len, payload);
     if let Some(cap_error) = validation.encode_cap_error {
         if u64::try_from(out.len()).unwrap_or(u64::MAX) > validation.max_bytes {
-            return Err(TransportError::Codec(cap_error.into()));
+            return Err(node_host_codec_error(cap_error));
         }
     }
     Ok(out)
@@ -124,10 +133,10 @@ pub(super) fn decode_submission_payload(
     AttestationEvidenceV1::decode_canonical(&evidence).map_err(codec_error)?;
     let node_signature = input[evidence_end..evidence_end + 65]
         .try_into()
-        .map_err(|_| TransportError::Codec(errors.node_signature.into()))?;
+        .map_err(|_| node_host_codec_error(errors.node_signature))?;
     let enclave_signature = input[evidence_end + 65..]
         .try_into()
-        .map_err(|_| TransportError::Codec(errors.enclave_signature.into()))?;
+        .map_err(|_| node_host_codec_error(errors.enclave_signature))?;
     Ok(JournalSubmissionPayload::new(
         evidence,
         node_signature,
@@ -179,7 +188,7 @@ pub(super) fn encode_relay_fields(
     validation: &JournalRelayValidation,
 ) -> Result<Vec<u8>, TransportError> {
     let raw_len = u32::try_from(payload.raw_transaction.len())
-        .map_err(|_| TransportError::Codec(validation.encode_length_overflow_error.into()))?;
+        .map_err(|_| node_host_codec_error(validation.encode_length_overflow_error))?;
     let mut out = Vec::with_capacity(validation.header_len + payload.raw_transaction.len());
     out.push(validation.version);
     out.extend_from_slice(payload.submission_hash.as_slice());
@@ -191,7 +200,7 @@ pub(super) fn encode_relay_fields(
     out.extend_from_slice(&raw_len.to_be_bytes());
     out.extend_from_slice(&payload.raw_transaction);
     if u64::try_from(out.len()).unwrap_or(u64::MAX) > validation.max_bytes {
-        return Err(TransportError::Codec(validation.encode_cap_error.into()));
+        return Err(node_host_codec_error(validation.encode_cap_error));
     }
     Ok(out)
 }
@@ -204,7 +213,7 @@ pub(super) fn decode_relay_fields(
     let raw_len = u32::from_be_bytes(
         input[validation.raw_len_offset..validation.header_len]
             .try_into()
-            .map_err(|_| TransportError::Codec(validation.raw_len_error.into()))?,
+            .map_err(|_| node_host_codec_error(validation.raw_len_error))?,
     ) as usize;
     validate_relay_raw_length(input.len(), raw_len, validation)?;
     let submission_hash = B256::from_slice(&input[1..33]);
@@ -214,7 +223,7 @@ pub(super) fn decode_relay_fields(
         let _from_block = u64::from_be_bytes(
             input[offset..validation.raw_len_offset]
                 .try_into()
-                .map_err(|_| TransportError::Codec(validation.from_block_error.into()))?,
+                .map_err(|_| node_host_codec_error(validation.from_block_error))?,
         );
     }
     let fields = JournalRelayFields {
@@ -237,7 +246,7 @@ fn validate_relay_frame(
         || u64::try_from(input.len()).unwrap_or(u64::MAX) > validation.max_bytes
         || input[0] != validation.version
     {
-        return Err(TransportError::Codec(validation.framing_error.into()));
+        return Err(node_host_codec_error(validation.framing_error));
     }
     Ok(())
 }
@@ -248,7 +257,7 @@ fn validate_relay_raw_length(
     validation: &JournalRelayValidation,
 ) -> Result<(), TransportError> {
     if input_len != validation.header_len + raw_len || raw_len == 0 {
-        return Err(TransportError::Codec(validation.raw_length_error.into()));
+        return Err(node_host_codec_error(validation.raw_length_error));
     }
     Ok(())
 }
@@ -261,7 +270,7 @@ fn validate_relay_commitments(
         || payload.calldata_hash.is_zero()
         || payload.transaction_hash != keccak256(&payload.raw_transaction)
     {
-        return Err(TransportError::Codec(validation.commitments_error.into()));
+        return Err(node_host_codec_error(validation.commitments_error));
     }
     Ok(())
 }
@@ -285,7 +294,7 @@ pub(super) fn persist_exact_checkpoint<T: Eq>(
         if durable == requested {
             return Ok(durable);
         }
-        return Err(TransportError::Codec(checkpoint.conflict_error.into()));
+        return Err(node_host_codec_error(checkpoint.conflict_error));
     }
     replace_bytes_atomically(
         checkpoint.path,
@@ -315,7 +324,7 @@ impl<'a> CheckedRelayInput<'a> {
         incomplete_error: &'static str,
     ) -> Result<Self, TransportError> {
         if calldata_hash.is_zero() || raw_transaction.is_empty() {
-            return Err(TransportError::Codec(incomplete_error.into()));
+            return Err(node_host_codec_error(incomplete_error));
         }
         Ok(Self {
             calldata_hash,

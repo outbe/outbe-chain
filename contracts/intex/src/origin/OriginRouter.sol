@@ -538,18 +538,16 @@ contract OriginRouter is
         (
             uint32 emissionDay,
             uint32 bodySrcChainId,
-            uint16 batchIndex,
+            uint16 pageIndex,
             uint16 totalPages,
-            address[] memory bidderAddresses,
+            address[] memory bidders,
             uint256[] memory packedBids
         ) = BridgeMsgCodec.decodeBidsPage(payload);
 
         if (!_acceptBids(receiveId, srcChainId, bodySrcChainId, emissionDay)) return;
 
         IDesis(_os().desis)
-            .collectIntexAuctionBids(
-                receiveId, emissionDay, srcChainId, batchIndex, totalPages, bidderAddresses, packedBids
-            );
+            .collectIntexAuctionBids(receiveId, emissionDay, srcChainId, pageIndex, totalPages, bidders, packedBids);
     }
 
     /// @dev Decode a BIDS_TOTALS marker and forward it to Desis. The body `srcChainId` is

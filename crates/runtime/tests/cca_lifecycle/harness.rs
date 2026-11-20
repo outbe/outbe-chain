@@ -23,7 +23,6 @@ pub(crate) use outbe_system_common::addresses::{
     PROMIS_LIMIT_ADDRESS,
 };
 pub(crate) use outbe_system_common::time::SECONDS_PER_DAY;
-pub(crate) use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 pub(crate) use reth_ethereum::evm::primitives::EvmEnv;
 pub(crate) use revm::{
     context::{result::ExecutionResult, BlockEnv, CfgEnv, TxEnv},
@@ -181,8 +180,8 @@ alloy_sol_types::sol!("../../contracts/precompiles/src/IPromisLimit.sol");
 pub(super) const PRICE: U256 = U256::from_limbs([2_000_000, 0, 0, 0]);
 pub(super) const REWARD: U256 = U256::from_limbs([250, 0, 0, 0]);
 
-/// CCA can claim Gems: marker code on the touched precompiles and a previous-day
-/// COEN/USD VWAP of [`PRICE`].
+/// CCA can claim Gems: marker code on the touched precompiles and a 24-hour
+/// COEN/USD VWAP of [`PRICE`] at [`NOW`].
 pub(super) fn reward_world() -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(CCA, AccountInfo::default());
@@ -206,11 +205,7 @@ pub(super) fn reward_world() -> CacheDB<EmptyDB> {
     }
     with_storage(&mut db, |storage| {
         seed_oracle(&storage);
-        seed_vwap(
-            &storage,
-            previous_date_key(timestamp_to_date_key(NOW)).expect("date step"),
-            PRICE,
-        );
+        seed_hour_vwap(&storage, PRICE);
     });
     db
 }
@@ -365,13 +360,15 @@ pub(super) fn seed_oracle(storage: &StorageHandle<'_>) {
         .unwrap();
 }
 
-pub(super) fn seed_vwap(storage: &StorageHandle<'_>, day: u32, price: U256) {
-    let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), 840)
-        .unwrap()
-        .unwrap();
-    outbe_oracle::schema::OracleContract::new(storage.clone())
-        .record_utc_day_vwap(day, index, price)
-        .unwrap();
+/// Covers the 24-hour COEN/USD window of the storage's hour at `price`.
+pub(super) fn seed_hour_vwap(storage: &StorageHandle<'_>, price: U256) {
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        storage,
+        outbe_oracle::api::AddressPair::new_coen_to(840),
+        price,
+        U256::from(1_000_000u64),
+    )
+    .unwrap();
 }
 
 // Snapshot all mutated contract storage, including Gem owner indexes and factory counters.

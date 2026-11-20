@@ -4,7 +4,7 @@ use super::*;
 async fn empty_and_completed_renewal_are_terminal_without_sending() {
     let (_root, mut journal, live, mut record, mut chain) = fixture();
     assert_eq!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+        reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
             .await
             .unwrap(),
         ServiceTxReconciliationV1::Empty
@@ -19,7 +19,7 @@ async fn empty_and_completed_renewal_are_terminal_without_sending() {
         success: true,
     });
     assert_eq!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+        reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
             .await
             .unwrap(),
         ServiceTxReconciliationV1::Completed
@@ -31,7 +31,7 @@ async fn empty_and_completed_renewal_are_terminal_without_sending() {
     chain.at.height += 1;
     chain.at.hash = B256::repeat_byte(20);
     assert_eq!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+        reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
             .await
             .unwrap(),
         ServiceTxReconciliationV1::Completed
@@ -68,7 +68,7 @@ async fn every_canonical_binding_field_is_checked_before_nonce_rebuild() {
         chain.binding = Some(binding);
         chain.nonces = [5; 3];
         assert_eq!(
-            reconcile_service_tx_v1(&chain, &mut journal, &live)
+            reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
                 .await
                 .unwrap(),
             ServiceTxReconciliationV1::RebuildAndResign { nonce: 5 }
@@ -102,9 +102,11 @@ async fn receipt_or_chain_failures_preserve_the_exact_pending_journal() {
             _ => {} // Successful receipt without matching canonical mutation fails closed.
         }
         chain.receipt = Some(receipt);
-        assert!(reconcile_service_tx_v1(&chain, &mut journal, &live)
-            .await
-            .is_err());
+        assert!(
+            reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
+                .await
+                .is_err()
+        );
         assert_eq!(std::fs::read(&path).unwrap(), before);
     }
 }
@@ -121,14 +123,14 @@ async fn reverted_receipt_rebuilds_only_once_the_nonce_is_finalized() {
     });
     chain.nonces = [5; 3];
     assert_eq!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+        reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
             .await
             .unwrap(),
         ServiceTxReconciliationV1::RebuildAndResign { nonce: 5 }
     );
     chain.binding = Some(applied(&record));
     assert_eq!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+        reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
             .await
             .unwrap(),
         ServiceTxReconciliationV1::IngestOnboarding
@@ -215,6 +217,7 @@ async fn candidate_prepare_cancel_and_transition_reconcile_distinct_mutations() 
             ServiceTxKindV1::UpgradeCancel => chain.candidate = None,
             _ => chain.binding = Some(applied(&record)),
         }
+        let sender = record.sender;
         journal.begin(record).unwrap();
         let expected = if kind == ServiceTxKindV1::UpgradeTransition {
             ServiceTxReconciliationV1::IngestOnboarding
@@ -222,12 +225,66 @@ async fn candidate_prepare_cancel_and_transition_reconcile_distinct_mutations() 
             ServiceTxReconciliationV1::Completed
         };
         assert_eq!(
-            reconcile_service_tx_v1(&chain, &mut journal, &live)
+            reconcile_service_tx_v1(&chain, &mut journal, &live, sender)
                 .await
                 .unwrap(),
             expected
         );
     }
+}
+
+#[tokio::test]
+async fn pool_eviction_transitions_wait_for_finality_to_replace_lost_identity() {
+    let (root, mut journal, _old, mut record, mut chain) = fixture();
+    record.kind = ServiceTxKindV1::Renew;
+    journal.begin(record.clone()).unwrap();
+    let fresh = context(10);
+    let path = root.path().join("tee-service-tx-v1/journal.json");
+    let before = std::fs::read(&path).unwrap();
+
+    // In-flight in mempool (pending > N) -> WaitForFinality
+    chain.nonces = [record.nonce, record.nonce, record.nonce + 1];
+    assert_eq!(
+        reconcile_service_tx_v1(&chain, &mut journal, &fresh, record.sender)
+            .await
+            .unwrap(),
+        ServiceTxReconciliationV1::WaitForFinality {
+            latest_nonce: record.nonce,
+            pending_nonce: record.nonce + 1,
+        }
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+
+    // Evicted from mempool (pending == N) -> ReplaceLostIdentity { N, proof }
+    chain.nonces = [record.nonce; 3];
+    assert!(matches!(
+        reconcile_service_tx_v1(&chain, &mut journal, &fresh, record.sender)
+            .await
+            .unwrap(),
+        ServiceTxReconciliationV1::ReplaceLostIdentity { nonce, proof }
+            if nonce == record.nonce && proof.tx_hash() == record.tx_hash
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+}
+
+#[tokio::test]
+async fn wrong_sender_fails_before_any_journal_mutation() {
+    let (root, mut journal, live, record, mut chain) = fixture();
+    journal.begin(record.clone()).unwrap();
+    chain.binding = Some(applied(&record));
+    chain.nonces = [record.nonce + 1; 3];
+    let path = root.path().join("tee-service-tx-v1/journal.json");
+    let before = std::fs::read(&path).unwrap();
+    let wrong = Address::repeat_byte(0xee);
+    assert!(matches!(
+        reconcile_service_tx_v1(&chain, &mut journal, &live, wrong)
+            .await
+            .unwrap_err(),
+        ReconcileError::WrongSender { expected, actual }
+            if expected == wrong && actual == record.sender
+    ));
+    assert_eq!(std::fs::read(&path).unwrap(), before);
+    assert_eq!(chain.reads.load(Ordering::SeqCst), 0);
 }
 
 #[test]

@@ -14,6 +14,8 @@ use crate::schema::{CallTerms, GemAddParams, GemContract, GemItemState, GemView}
 mod views;
 
 pub(crate) const T_NOW: u64 = 1_700_000_000;
+/// The UTC hour of `T_NOW` (22:13).
+pub(crate) const T_NOW_HOUR: u16 = 22;
 pub(crate) const ALICE: Address = address!("0x1111111111111111111111111111111111111111");
 pub(crate) const BOB: Address = address!("0x2222222222222222222222222222222222222222");
 pub(crate) const ISSUER: Address = address!("0x3333333333333333333333333333333333333333");
@@ -41,7 +43,7 @@ pub(crate) fn sample_params(owner: Address) -> GemAddParams {
         reference_currency: USD,
         issued_at: T_NOW,
         call_terms: None,
-        entry_at_series_vwap: true,
+        at_market_price: true,
     }
 }
 

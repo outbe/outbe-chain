@@ -6,7 +6,7 @@ use outbe_gemfactory::GemFactoryContract;
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
-use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
+use outbe_system_common::time::EmissionDate;
 use outbe_system_common::units::{SCALE_1E6_U128, SCALE_1E6_U64};
 
 use super::support::{capture_execution, elapsed_ns};
@@ -57,7 +57,7 @@ enum PreparedGemPath {
     Direct,
     Position,
     Merchant {
-        position_id: U256,
+        gem_factory_position_id: U256,
         initial_capacity: U256,
     },
 }
@@ -90,16 +90,15 @@ fn seed_oracle(storage: StorageHandle<'_>) -> Result<(), String> {
         },
     )
     .map_err(|error| error.to_string())?;
-    let oracle = OracleContract::new(storage);
-    oracle
-        .record_utc_day_vwap(
-            previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step"),
-            index,
-            rate,
-        )
-        .map_err(|error| error.to_string())?;
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        &storage,
+        outbe_oracle::api::DAY_TYPE_PAIR,
+        rate,
+        six_decimal_unit(),
+    )
+    .map_err(|error| error.to_string())?;
     // A merchant gem is floored at the source's emission-day price.
-    oracle
+    OracleContract::new(storage)
         .record_utc_day_vwap(source_series_id().day(), index, six_decimal_unit())
         .map_err(|error| error.to_string())
 }
@@ -148,7 +147,7 @@ impl BenchmarkScenario for GemScenario {
             ),
             GemPath::Position => (
                 "gem_position/create/marginal/single".to_owned(),
-                "GemPosition creation (marginal child call)".to_owned(),
+                "GemFactoryPosition creation (marginal child call)".to_owned(),
             ),
             GemPath::Merchant => (
                 "gem/create/merchant/single".to_owned(),
@@ -184,9 +183,9 @@ impl BenchmarkScenario for GemScenario {
             }
             GemPath::Merchant => {
                 let mut provider = new_provider(true)?;
-                let position_id = StorageHandle::enter(&mut provider, |storage| {
+                let gem_factory_position_id = StorageHandle::enter(&mut provider, |storage| {
                     seed_series(&storage)?;
-                    outbe_gemfactory::api::issue_gem_position(
+                    outbe_gemfactory::api::create_gem_factory_position(
                         &storage,
                         ALICE,
                         source_series_id(),
@@ -198,7 +197,7 @@ impl BenchmarkScenario for GemScenario {
                     provider,
 
                     path: PreparedGemPath::Merchant {
-                        position_id,
+                        gem_factory_position_id,
                         initial_capacity: U256::from(SCALE_1E6_U64) * U256::from(PARK_UNITS),
                     },
                 })
@@ -233,18 +232,21 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
             },
         )
         .map_err(|error| error.to_string()),
-        PreparedGemPath::Position => outbe_gemfactory::api::issue_gem_position(
+        PreparedGemPath::Position => outbe_gemfactory::api::create_gem_factory_position(
             &storage,
             ALICE,
             source_series_id(),
             U256::from(PARK_UNITS),
         )
         .map_err(|error| error.to_string()),
-        PreparedGemPath::Merchant { position_id, .. } => outbe_gemfactory::api::issue_merchant_gem(
+        PreparedGemPath::Merchant {
+            gem_factory_position_id,
+            ..
+        } => outbe_gemfactory::api::issue_merchant_gem(
             &storage,
             outbe_gemfactory::schema::MerchantGemIssueParams {
                 caller: ALICE,
-                position_id,
+                gem_factory_position_id,
                 owner: BOB,
                 promis_load_minor: U256::from(10) * six_decimal_unit(),
                 issuance_currency: 840,
@@ -287,17 +289,17 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
                     .get(output)
                     .map_err(|error| error.to_string())
             })?
-            .ok_or_else(|| "created GemPosition is not canonically readable".to_owned())?;
+            .ok_or_else(|| "created GemFactoryPosition is not canonically readable".to_owned())?;
             observation = observation
                 .with_latency("chain.gem_position.mint_marginal", latency_ns)
                 .with_postcondition("gem_position.created", "true")
                 .with_postcondition(
                     "gem_position.owner_matches",
-                    (record.merchant == ALICE).to_string(),
+                    (record.owner == ALICE).to_string(),
                 );
         }
         PreparedGemPath::Merchant {
-            position_id,
+            gem_factory_position_id,
             initial_capacity,
         } => {
             let (gem, remaining) = StorageHandle::enter(&mut provider, |storage| {
@@ -305,13 +307,14 @@ fn measure(prepared: &PreparedGem) -> Result<Observation, String> {
                     .map_err(|error| error.to_string())?;
                 let remaining = GemFactoryContract::new(storage)
                     .positions
-                    .get(position_id)
+                    .get(gem_factory_position_id)
                     .map_err(|error| error.to_string())?
                     .map(|position| position.remaining_capacity_minor);
                 Ok::<_, String>((gem, remaining))
             })?;
             gem.ok_or_else(|| "created Merchant Gem is not readable".to_owned())?;
-            let remaining = remaining.ok_or_else(|| "source GemPosition disappeared".to_owned())?;
+            let remaining =
+                remaining.ok_or_else(|| "source GemFactoryPosition disappeared".to_owned())?;
             let capacity_drained =
                 remaining == initial_capacity.saturating_sub(U256::from(10) * six_decimal_unit());
             if !capacity_drained {

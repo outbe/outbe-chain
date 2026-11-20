@@ -21,7 +21,9 @@ runs:
         MISE_GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
-        mise install
+        # Cargo tools are immutable inputs baked into the pinned CI image.
+        # Only circuit compilers may need restoring after a cache miss.
+        mise install nargo bb
         # Only circuit tools need global defaults outside the checkout. The image
         # already pins Cargo tools; re-selecting them requires mise-managed Rust,
         # which is deliberately disabled because rustup owns the toolchain.

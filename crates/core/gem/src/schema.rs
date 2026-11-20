@@ -3,9 +3,7 @@ use outbe_core_common::series_id::SeriesId;
 use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_macros::{contract, storage_record, storage_schema};
 use outbe_system_common::addresses::GEM_ADDRESS;
-use outbe_system_common::time::{
-    first_full_day, previous_date_key, timestamp_to_date_key, TimeError, WorldwideDay,
-};
+use outbe_system_common::time::{first_full_day, timestamp_to_date_key, TimeError, WorldwideDay};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,8 +31,8 @@ pub struct GemAddParams {
     /// The terms the gem's group seals if this gem opens it. `None` leaves the group
     /// out of the call index.
     pub call_terms: Option<CallTerms>,
-    /// The entry price is the VWAP of the series date: sub-series 0.
-    pub entry_at_series_vwap: bool,
+    /// The entry price is the market price of the issue hour: the sub-series of that hour.
+    pub at_market_price: bool,
 }
 
 /// One gem record. The call terms are its group's, read through [`GemView`].
@@ -68,10 +66,11 @@ pub struct GemItemState {
     pub settled_at: u64,
     #[attribute(order = 9)]
     pub entry_price_minor: U256,
-    /// The UTC day before the issue, in the gem's currencies.
+    /// The UTC day of the issue, in the gem's currencies.
     #[attribute(order = 10)]
     pub series_id: SeriesId,
-    /// The call price of the gem inside its series: 0 for the series-date VWAP.
+    /// The UTC hour of the issue (0-23) for a gem at the market price, else the number
+    /// of its higher call price from 24.
     #[attribute(order = 11)]
     pub sub_series_id: u16,
     #[attribute(order = 12)]
@@ -357,7 +356,7 @@ pub struct GemContract {
     #[attribute(order = 56)]
     pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// The number the next new call price of a series gets. 0 = none yet, so it starts at 1;
+    /// The number the next new call price of a series gets. 0 = none yet, so it starts at 24;
     /// the last one a series gives is 65534.
     #[attribute(order = 57)]
     pub series_next_sub_series: outbe_primitives::storage::dsl::Map<SeriesId, u16>,
@@ -416,16 +415,18 @@ impl GemContract<'_> {
         ])
     }
 
-    /// The series of a gem issued at `issued_at`: the UTC day before it, in its currencies.
+    /// The series of a gem issued at `issued_at`: its UTC day, in its currencies.
     pub fn series_of(
         issued_at: u64,
         issuance_currency: u16,
         reference_currency: u16,
     ) -> outbe_primitives::error::Result<SeriesId> {
-        let day = previous_date_key(timestamp_to_date_key(issued_at))
-            .map_err(crate::errors::date_step_error)?;
-        SeriesId::for_pair(day, issuance_currency, reference_currency)
-            .map_err(|error| crate::errors::GemError::from(error).into())
+        SeriesId::for_pair(
+            timestamp_to_date_key(issued_at),
+            issuance_currency,
+            reference_currency,
+        )
+        .map_err(|error| crate::errors::GemError::from(error).into())
     }
 }
 

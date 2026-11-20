@@ -192,19 +192,14 @@ pub mod test_enclave {
         static STATE_KEY: RefCell<Option<outbe_tee::resident::StateKeyHandle>> = const { RefCell::new(None) };
     }
 
+    use outbe_core_common::confidential_tee::{
+        fidelity_chain, FIDELITY_GROUP_SIG, GRATIS_CHAIN, GRATIS_GROUP_SIG,
+    };
+
     const DEV_EPOCH: u64 = 0;
-    const GRATIS_GROUP_SIG: &[u8] = b"outbe-dev-gratis-group-signature-fixed-seed!!";
-    const GRATIS_CHAIN: B256 = B256::repeat_byte(0xC1);
-    const FIDELITY_GROUP_SIG: &[u8] = b"outbe-dev-fidelity-group-signature-fixed-seed";
 
     fn gratis_chain() -> B256 {
         GRATIS_CHAIN
-    }
-
-    fn fidelity_chain() -> B256 {
-        B256::from(alloy_primitives::U256::from(
-            outbe_primitives::chain::DEVNET_CHAIN_ID,
-        ))
     }
 
     fn offer(
