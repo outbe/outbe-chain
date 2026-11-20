@@ -236,7 +236,14 @@ struct RefreshHead {
     valid_until: u64,
 }
 
-fn vote_sender_blocks_on_first_send(head: RefreshHead, expected: State) {
+fn vote_sender_blocks_on_first_send(head: RefreshHead, expected: State, lag_before_fcu: bool) {
+    use futures::FutureExt as _;
+    use outbe_tee::authority::{
+        install_tee_authority_watch, note_execution_finalized_authority_revision,
+        note_finalized_authority_revision, tee_authority_test_guard,
+    };
+
+    let _authority_port = lag_before_fcu.then(tee_authority_test_guard);
     let facts = Arc::new(std::sync::Mutex::new(RefreshHead {
         height: 7,
         jailed: false,
@@ -247,8 +254,14 @@ fn vote_sender_blocks_on_first_send(head: RefreshHead, expected: State) {
     let watch = channel.subscribe();
     let published = Arc::clone(&facts);
     let publisher = channel.clone();
+    let probes = Arc::new(AtomicUsize::new(0));
+    let hook_probes = Arc::clone(&probes);
     channel.install_sync_refresh(move |generation| {
+        hook_probes.fetch_add(1, Ordering::Relaxed);
         let seen = *published.lock().expect("provider head");
+        if seen.height < publisher.observed_finalized_height() {
+            return;
+        }
         let verdict = if seen.jailed {
             State::SuspendedJailed
         } else if seen.timestamp >= seen.valid_until {
@@ -264,10 +277,7 @@ fn vote_sender_blocks_on_first_send(head: RefreshHead, expected: State) {
     });
     channel.note_observed_finalized_height(7);
     assert!(watch.ensure_current().is_authority_open());
-    *facts.lock().expect("provider head") = head;
-    channel.note_observed_finalized_height(head.height);
-    // The shift does not publish. The first send is the refresh that reads it.
-    assert!(channel.snapshot().is_authority_open());
+    let mut changes = channel.subscribe();
     let count = Arc::new(AtomicUsize::new(0));
     let permission: Permission = Arc::new(move || {
         authority_signer_enabled(Some(&watch), true, true, RadicleVotingGate::SignerAllowed)
@@ -280,12 +290,34 @@ fn vote_sender_blocks_on_first_send(head: RefreshHead, expected: State) {
         },
         permission,
     );
+    if lag_before_fcu {
+        install_tee_authority_watch(channel.subscribe()).unwrap();
+        note_finalized_authority_revision(head.height);
+        let before = probes.load(Ordering::Relaxed);
+        for _ in 0..3 {
+            assert_eq!(sender.send(Recipients::All, vec![1], true).len(), 1);
+        }
+        assert_eq!(probes.load(Ordering::Relaxed), before + 1);
+        assert!(changes.changed().now_or_never().is_none());
+    }
+    *facts.lock().expect("provider head") = head;
+    if lag_before_fcu {
+        note_execution_finalized_authority_revision(head.height);
+    } else {
+        channel.note_observed_finalized_height(head.height);
+    }
+    // The observation does not publish. The first send probes the new provider state.
+    assert!(channel.snapshot().is_authority_open());
     assert!(sender.send(Recipients::All, vec![1], true).is_empty());
-    assert_eq!(count.load(Ordering::SeqCst), 0);
+    assert_eq!(
+        count.load(Ordering::SeqCst),
+        if lag_before_fcu { 3 } else { 0 }
+    );
     let closed = channel.snapshot();
     assert_eq!(closed, expected);
     assert!(closed.has_verified_resident_key());
     assert!(!closed.is_authority_open());
+    assert!(changes.changed().now_or_never().unwrap().is_ok());
 }
 
 #[test]
@@ -298,6 +330,7 @@ fn vote_sender_first_send_blocks_on_jailed_and_on_lease_expiry() {
             valid_until: 1_800_001_000,
         },
         State::SuspendedJailed,
+        false,
     );
     vote_sender_blocks_on_first_send(
         RefreshHead {
@@ -307,5 +340,20 @@ fn vote_sender_first_send_blocks_on_jailed_and_on_lease_expiry() {
             valid_until: 1_800_000_000,
         },
         State::SuspendedLeaseExpired,
+        false,
+    );
+}
+
+#[test]
+fn vote_sender_reuses_confirmed_authority_until_same_height_post_fcu() {
+    vote_sender_blocks_on_first_send(
+        RefreshHead {
+            height: 8,
+            jailed: true,
+            timestamp: 1_800_000_000,
+            valid_until: 1_800_001_000,
+        },
+        State::SuspendedJailed,
+        true,
     );
 }

@@ -219,17 +219,18 @@ impl LiveTeeRuntimeV1 {
             || resident,
         );
         self.bootstrap_allowed.store(bootstrap, Ordering::Relaxed);
-        let result = if self.authority.applied_finalized_height()
-            < self.authority.observed_finalized_height()
-        {
+        if result.is_err() {
             super::publish_failure(&self.authority, generation, has_resident);
-            Ok(self.authority.snapshot())
-        } else if result.is_err() {
-            super::publish_failure(&self.authority, generation, has_resident);
-            result
-        } else {
-            result
-        };
+        }
+        let result = result.map(|state| {
+            if self.authority.applied_finalized_height()
+                < self.authority.observed_finalized_height()
+            {
+                self.authority.snapshot().closed_for_lag()
+            } else {
+                state
+            }
+        });
         if let Some(armed) = self
             .armed
             .lock()

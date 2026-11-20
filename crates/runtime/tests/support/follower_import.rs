@@ -56,7 +56,6 @@ pub(super) async fn launch_profile(
     seed: impl FnOnce(&FollowerProvider) -> eyre::Result<()> + Send + 'static,
 ) -> eyre::Result<OutbeFullNode> {
     let config = NodeConfig::new(spec)
-        .with_unused_ports()
         .with_datadir_args(DatadirArgs {
             datadir: datadir.to_path_buf().into(),
             ..Default::default()
@@ -67,7 +66,8 @@ pub(super) async fn launch_profile(
                 ..Default::default()
             },
             ..Default::default()
-        });
+        })
+        .with_unused_ports();
     let db = init_db(config.datadir().db(), DatabaseArguments::test())?;
     let bridge = ConsensusExecutionBridge::new();
     bridge.set_operating_mode(mode);

@@ -100,11 +100,14 @@ where
         } else {
             state
         };
-    if !authority.publish_if_generation(generation, state) {
-        return Ok(authority.snapshot());
-    }
-    if let Some(height) = finalized_height {
-        authority.note_applied_finalized_height(height);
+    // The last applied verdict is still canonical until this provider catches up.
+    if finalized_height.unwrap_or_default() >= authority.observed_finalized_height() {
+        if !authority.publish_if_generation(generation, state) {
+            return Ok(authority.snapshot());
+        }
+        if let Some(height) = finalized_height {
+            authority.note_applied_finalized_height(height);
+        }
     }
     if state == TeeAuthorityState::SuspendedPolicyMismatch
         && matches!(
@@ -283,8 +286,8 @@ mod sync_refresh_tests {
     #[test]
     fn same_height_post_fcu_signal_rearms_the_lagging_guard() {
         use outbe_tee::authority::{
-            install_tee_authority_watch, note_finalized_authority_revision,
-            tee_authority_test_guard,
+            install_tee_authority_watch, note_execution_finalized_authority_revision,
+            note_finalized_authority_revision, tee_authority_test_guard,
         };
         use std::future::Future;
         use std::task::{Context, Poll, Waker};
@@ -313,11 +316,12 @@ mod sync_refresh_tests {
         );
         assert_eq!(armed.channel.observed_finalized_height(), 8);
         assert_eq!(armed.channel.applied_finalized_height(), 7);
+        assert!(armed.channel.snapshot().has_finalized_lease());
 
         *armed.provider.0.lock().expect("provider lock") =
             support::provider(&armed.context, 8, 1_800_000_000, 1_800_001_000, false).0;
         assert!(poll_wakeup().is_pending());
-        note_finalized_authority_revision(8);
+        note_execution_finalized_authority_revision(8);
         assert!(refresh_on_signal().has_finalized_lease());
         assert_eq!(armed.channel.observed_finalized_height(), 8);
         assert_eq!(armed.channel.applied_finalized_height(), 8);
@@ -332,6 +336,7 @@ mod sync_refresh_tests {
         let lagging = armed.channel.subscribe().ensure_current();
         assert!(!lagging.is_authority_open());
         assert!(lagging.has_verified_resident_key());
+        assert!(armed.channel.snapshot().has_finalized_lease());
         *armed.provider.0.lock().expect("provider lock") =
             support::provider(&armed.context, 8, 1_800_000_000, 1_800_001_000, true).0;
         let jailed = armed.channel.subscribe().ensure_current();

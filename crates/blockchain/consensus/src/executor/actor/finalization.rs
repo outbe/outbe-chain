@@ -380,7 +380,7 @@ where
     }
 
     pub(super) fn notify_execution_finalized(&self, height: Height) {
-        outbe_tee::authority::note_finalized_authority_revision(height.get());
+        outbe_tee::authority::note_execution_finalized_authority_revision(height.get());
         if let Some(readiness) = &self.ancestry_readiness {
             let was_ready = readiness.is_ready();
             readiness.note_ready_height(height.get());

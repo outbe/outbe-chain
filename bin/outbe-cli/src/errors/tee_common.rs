@@ -101,9 +101,9 @@ fn discovery_secret_error(error: eyre::Report) -> DiscoverySecretError {
 pub(crate) enum TeeStatusError {
     #[error("critical renewal margin cannot exceed warning margin")]
     CriticalMarginExceedsWarning,
-    #[error("read discovery-secret: {0}")]
+    #[error("read discovery-secret")]
     ReadDiscoverySecret(#[source] DiscoverySecretError),
-    #[error("discovery-secret is not a canonical Reth P2P private key: {0}")]
+    #[error("discovery-secret is not a canonical Reth P2P private key")]
     InvalidDiscoverySecret(#[source] DiscoverySecretError),
     #[error("encrypted reth key backend requires --reth-passphrase")]
     MissingRethPassphrase,

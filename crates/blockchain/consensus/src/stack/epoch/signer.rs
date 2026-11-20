@@ -287,7 +287,7 @@ pub fn authority_signer_enabled(
     let ordinary = radicle_signer_enabled(gate, has_share)?;
     Ok(ordinary
         && accountable_validator
-        && authority.is_some_and(|watch| watch.ensure_current().is_authority_open()))
+        && authority.is_some_and(|watch| watch.ensure_current_for_signer().is_authority_open()))
 }
 
 impl<E, N: StackNodeAccess> super::runtime::EpochSupervisor<E, N>

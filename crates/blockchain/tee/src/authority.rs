@@ -1,7 +1,7 @@
 //! Reversible process-local authority, independent of resident execution keys.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, RwLock, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, RwLock};
 use std::thread::{self, ThreadId};
 
 use alloy_primitives::B256;
@@ -40,6 +40,15 @@ impl TeeAuthorityState {
     pub const fn has_finalized_lease(&self) -> bool {
         matches!(self, Self::Armed { .. })
     }
+
+    /// Denies authority to the current caller without discarding a verified execution key.
+    pub const fn closed_for_lag(self) -> Self {
+        if self.has_verified_resident_key() {
+            Self::SuspendedPolicyMismatch
+        } else {
+            Self::UnkeyedAwaitingAdmission
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -51,6 +60,11 @@ struct InstalledRefresh {
 struct AuthorityShared {
     observed_finalized_height: AtomicU64,
     applied_finalized_height: AtomicU64,
+    execution_revision_seq: AtomicU64,
+    // Only the refresh-gate owner records these, after the hook has run.
+    probed_observed_height: AtomicU64,
+    probed_execution_seq: AtomicU64,
+    probed_generation: AtomicU64,
     /// Bumped on install and on guard stop. In-flight refresh publishes only its own generation.
     refresh_generation: AtomicU64,
     /// Set when the guard stops. Cleared only by the next [`TeeAuthorityChannel::install_sync_refresh`].
@@ -63,7 +77,6 @@ struct AuthorityShared {
     publish_gate: Mutex<()>,
     /// `notify_one` permit for the lease guard. Independent of the shared lifecycle notifier.
     guard_wakeup: tokio::sync::Notify,
-    sender: Weak<watch::Sender<TeeAuthorityState>>,
 }
 
 impl AuthorityShared {
@@ -103,6 +116,10 @@ impl TeeAuthorityChannel {
         let shared = Arc::new(AuthorityShared {
             observed_finalized_height: AtomicU64::new(0),
             applied_finalized_height: AtomicU64::new(0),
+            execution_revision_seq: AtomicU64::new(0),
+            probed_observed_height: AtomicU64::new(0),
+            probed_execution_seq: AtomicU64::new(0),
+            probed_generation: AtomicU64::new(u64::MAX),
             refresh_generation: AtomicU64::new(0),
             retired: AtomicBool::new(false),
             refresh: Mutex::new(None),
@@ -110,7 +127,6 @@ impl TeeAuthorityChannel {
             refresh_owner_thread: Mutex::new(None),
             publish_gate: Mutex::new(()),
             guard_wakeup: tokio::sync::Notify::new(),
-            sender: Arc::downgrade(&sender),
         });
         Self { sender, shared }
     }
@@ -291,7 +307,7 @@ impl TeeAuthorityWatch {
     pub fn snapshot(&self) -> TeeAuthorityState {
         let state = *self.receiver.borrow();
         if self.receiver.has_changed().is_err() {
-            closed_without_publisher(state)
+            state.closed_for_lag()
         } else {
             state
         }
@@ -299,37 +315,71 @@ impl TeeAuthorityWatch {
 
     /// Reads the provider whenever a refresh hook is installed.
     ///
-    /// A second caller waits on the refresh lock and then reads again. A lagging
-    /// provider, or a newer observed height that arrived during the read, does
-    /// not return the previous `Armed` verdict. A missing hook closes authority
-    /// when the observed height is ahead and keeps a resident execution key.
+    /// A strict caller fails closed on provider lag, without overriding the
+    /// last confirmed verdict seen by signers.
     pub fn ensure_current(&self) -> TeeAuthorityState {
-        if *lock_mutex(&self.shared.refresh_owner_thread) == Some(thread::current().id()) {
+        if self.owns_refresh_gate() {
+            return self.snapshot_or_close_lag();
+        }
+        let _gate = self.shared.lock_refresh_gate();
+        for _ in 0..2 {
+            let Some(generation) = self.refresh_sync(self.observed_revision()) else {
+                break;
+            };
+            if self.applied_finalized_height() >= self.observed_finalized_height()
+                || self.refresh_generation() != generation
+            {
+                break;
+            }
+        }
+        self.snapshot_or_close_lag()
+    }
+
+    /// Refreshes signing authority once per observation or execution revision.
+    /// A successful probe of a lagging provider leaves the last confirmed verdict in force.
+    pub fn ensure_current_for_signer(&self) -> TeeAuthorityState {
+        if self.probe_matches(self.observed_revision()) || self.owns_refresh_gate() {
             return self.snapshot();
         }
         let _gate = self.shared.lock_refresh_gate();
-        self.converge()
-    }
-
-    fn converge(&self) -> TeeAuthorityState {
-        for pass in 0..2 {
-            let installed = lock_mutex(&self.shared.refresh).clone();
-            let Some(installed) = installed else {
-                return self.snapshot_or_close_lag();
-            };
-            let generation = installed.generation;
-            (installed.hook)(generation);
-            if self.applied_finalized_height() >= self.observed_finalized_height() {
-                return self.snapshot();
-            }
-            if self.refresh_generation() != generation {
-                return self.snapshot();
-            }
-            if pass == 1 {
-                self.close_lagging_authority(Some(generation));
-            }
+        let revision = self.observed_revision();
+        if !self.probe_matches(revision) && self.refresh_sync(revision).is_none() {
+            return self.snapshot_or_close_lag();
         }
         self.snapshot()
+    }
+
+    fn owns_refresh_gate(&self) -> bool {
+        *lock_mutex(&self.shared.refresh_owner_thread) == Some(thread::current().id())
+    }
+
+    fn observed_revision(&self) -> (u64, u64) {
+        // Seeing a post-FCU sequence also makes its preceding height observation visible.
+        let execution_seq = self.shared.execution_revision_seq.load(Ordering::Acquire);
+        (self.observed_finalized_height(), execution_seq)
+    }
+
+    fn probe_matches(&self, (observed, execution_seq): (u64, u64)) -> bool {
+        self.shared.probed_generation.load(Ordering::Acquire) == self.refresh_generation()
+            && self.shared.probed_observed_height.load(Ordering::Acquire) == observed
+            && self.shared.probed_execution_seq.load(Ordering::Acquire) == execution_seq
+    }
+
+    /// Records only the revision sampled before reading the provider.
+    fn refresh_sync(&self, (observed, execution_seq): (u64, u64)) -> Option<u64> {
+        let installed = lock_mutex(&self.shared.refresh).clone()?;
+        let generation = installed.generation;
+        (installed.hook)(generation);
+        self.shared
+            .probed_observed_height
+            .store(observed, Ordering::Release);
+        self.shared
+            .probed_execution_seq
+            .store(execution_seq, Ordering::Release);
+        self.shared
+            .probed_generation
+            .store(generation, Ordering::Release);
+        Some(generation)
     }
 
     fn refresh_generation(&self) -> u64 {
@@ -337,10 +387,12 @@ impl TeeAuthorityWatch {
     }
 
     fn snapshot_or_close_lag(&self) -> TeeAuthorityState {
-        if self.observed_finalized_height() > self.applied_finalized_height() {
-            self.close_lagging_authority(None);
+        let state = self.snapshot();
+        if self.applied_finalized_height() < self.observed_finalized_height() {
+            state.closed_for_lag()
+        } else {
+            state
         }
-        self.snapshot()
     }
 
     /// Records a finalized height the admission owner has not applied yet.
@@ -363,27 +415,6 @@ impl TeeAuthorityWatch {
     /// Waits for a publication; publisher shutdown retains the typed watch error.
     pub async fn changed(&mut self) -> Result<(), watch::error::RecvError> {
         self.receiver.changed().await
-    }
-
-    fn close_lagging_authority(&self, generation: Option<u64>) {
-        let current = self.snapshot();
-        if !current.is_authority_open() {
-            return;
-        }
-        let Some(sender) = self.shared.sender.upgrade() else {
-            return;
-        };
-        let closed = closed_without_publisher(current);
-        if let Some(generation) = generation {
-            TeeAuthorityChannel {
-                sender,
-                shared: Arc::clone(&self.shared),
-            }
-            .publish_if_generation(generation, closed);
-        } else {
-            // No hook owns this fallback verdict.
-            sender.send_replace(closed);
-        }
     }
 
     fn wake_guard(&self) {
@@ -410,18 +441,10 @@ fn note_monotonic(slot: &AtomicU64, height: u64) {
 }
 
 fn failure_state(current: TeeAuthorityState, has_resident: bool) -> TeeAuthorityState {
-    if has_resident || current.has_verified_resident_key() {
+    if has_resident {
         TeeAuthorityState::SuspendedPolicyMismatch
     } else {
-        TeeAuthorityState::UnkeyedAwaitingAdmission
-    }
-}
-
-fn closed_without_publisher(state: TeeAuthorityState) -> TeeAuthorityState {
-    if state.has_verified_resident_key() {
-        TeeAuthorityState::SuspendedPolicyMismatch
-    } else {
-        TeeAuthorityState::UnkeyedAwaitingAdmission
+        current.closed_for_lag()
     }
 }
 
@@ -467,6 +490,18 @@ pub fn tee_authority_watch() -> Option<TeeAuthorityWatch> {
 pub fn note_finalized_authority_revision(height: u64) {
     if let Some(watch) = tee_authority_watch() {
         watch.note_observed_finalized_height(height);
+        watch.wake_guard();
+    }
+}
+
+/// Notes execution finality and invalidates signer probes even at the same observed height.
+pub fn note_execution_finalized_authority_revision(height: u64) {
+    if let Some(watch) = tee_authority_watch() {
+        watch.note_observed_finalized_height(height);
+        watch
+            .shared
+            .execution_revision_seq
+            .fetch_add(1, Ordering::Release);
         watch.wake_guard();
     }
 }
@@ -675,6 +710,7 @@ mod tests {
             assert!(closed.has_verified_resident_key());
             assert!(!closed.is_authority_open());
             assert_eq!(lagging.applied_finalized_height(), 1);
+            assert_eq!(lagging.snapshot(), ARMED);
         }
     }
 
