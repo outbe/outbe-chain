@@ -5,16 +5,16 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use outbe_agentreward::AgentRewardContract;
 use outbe_core_common::wwd_entity_id::derive_poseidon_digest;
 use outbe_core_common::wwd_entity_id::WwdEntityId;
-#[cfg(any(test, feature = "bench-utils"))]
-use outbe_enclave::protocol::TributeOfferResult;
-use outbe_enclave::protocol::{
-    EncryptedTributeOffer, TributeOfferStatus, TributePublicInputs, TributeZkContext,
-    TributeZkExpectedHashes,
-};
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_system_common::stablecoin::validate_currency_code;
 use outbe_system_common::time::timestamp_to_date_key;
 use outbe_system_common::time::WorldwideDay;
+#[cfg(any(test, feature = "bench-utils"))]
+use outbe_tribute::confidential::TributeOfferResult;
+use outbe_tribute::confidential::{
+    EncryptedTributeOffer, TributeOfferStatus, TributePublicInputs, TributeZkContext,
+    TributeZkExpectedHashes,
+};
 use outbe_tribute::TributeContract;
 use outbe_zk::wire::{decode_public_words, read_u64_be_padded};
 use outbe_zk_backend::barretenberg::{Barretenberg, RawVerifier};

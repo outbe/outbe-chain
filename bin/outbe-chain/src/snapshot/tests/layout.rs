@@ -48,7 +48,7 @@ pub(super) fn native_arguments(root: &Path) -> Vec<OsString> {
         "--output".into(),
         genesis.to_str().unwrap().into(),
         "--mode".into(),
-        "gramine-direct-dev".into(),
+        "no-attestation-dev".into(),
     ])
     .unwrap();
     fs::create_dir(root.join("configuration")).unwrap();
@@ -153,7 +153,7 @@ fn inline_genesis_is_configuration_data_not_a_protected_file_path() {
 fn node_host_identity_is_protected_from_execution_root_overrides() {
     use super::super::inventory::enumerate_native_files;
     use outbe_snapshot::layout::{validate_layout, ResolvedDomain};
-    use outbe_tee::node_host::{NODE_HOST_DIRECTORY_V1, NODE_HOST_NOISE_KEY_V1};
+    use outbe_tee::node_host::{NODE_HOST_DIRECTORY_V1, NODE_HOST_IDENTITY_KEY_V1};
 
     for variant in ["root", "descendant", "parent_alias"] {
         let root = tempfile::tempdir().unwrap();
@@ -162,7 +162,7 @@ fn node_host_identity_is_protected_from_execution_root_overrides() {
         let host = chain.join(NODE_HOST_DIRECTORY_V1);
         let nested = host.join("authorization");
         fs::create_dir_all(&nested).unwrap();
-        let sentinel = host.join(NODE_HOST_NOISE_KEY_V1);
+        let sentinel = host.join(NODE_HOST_IDENTITY_KEY_V1);
         fs::write(&sentinel, b"dummy private identity fixture").unwrap();
         fs::write(nested.join("record"), b"dummy authorization fixture").unwrap();
         let selected = match variant {

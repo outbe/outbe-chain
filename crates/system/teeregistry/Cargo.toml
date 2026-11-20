@@ -23,7 +23,6 @@ outbe-system-common.workspace = true
 outbe-tee = { workspace = true, features = ["test-utils"] }
 ed25519-dalek.workspace = true
 k256.workspace = true
-outbe-tee-enclave = { workspace = true, features = ["mock"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 proptest.workspace = true
 tempfile.workspace = true

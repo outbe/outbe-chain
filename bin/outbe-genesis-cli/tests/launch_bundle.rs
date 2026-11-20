@@ -8,7 +8,8 @@ use std::process::Command;
 use alloy_primitives::B256;
 use flate2::read::GzDecoder;
 use outbe_genesis_cli::launch_bundle::{
-    feeder_config, feeder_pairs, radicle_script, render, DEFAULT_MAX_VALIDATORS,
+    feeder_config, feeder_pairs, radicle_script, render, write_systemd_units,
+    DEFAULT_MAX_VALIDATORS,
 };
 use outbe_genesis_cli::network::profiles_dir;
 use outbe_genesis_cli::stages::build_seed;
@@ -28,7 +29,7 @@ fn minimal_config(keys_dir: &str) -> Value {
         "validators": ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"],
         "keys_dir": keys_dir,
         "crs_path": crs_path,
-        "tee": {"mode": "gramine-direct-dev"},
+        "tee": {"mode": "no-attestation-dev"},
     })
 }
 
@@ -67,7 +68,7 @@ fn render_fixture(root: &Path, overrides: Option<Value>) -> (PathBuf, PathBuf) {
     }
     let genesis = output_dir.join("genesis.json");
     let tee_policy = initial_tee_policy_v1(
-        InitialTeeProfileV1::GramineDirectDev,
+        InitialTeeProfileV1::NoAttestationDev,
         424242,
         B256::repeat_byte(0x42),
     )
@@ -118,10 +119,23 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
     assert!(output_dir.join("DEPLOY.md").is_file());
     assert!(output_dir.join(".bb-crs/bn254_g1.dat").is_file());
 
+    let removed_unit = format!("systemd/{}-{}.service", "outbe", "enclave");
+    let removed_service = format!("{}-{}", "outbe", "enclave.service");
     for index in 0..4 {
         let directory = output_dir.join(format!("validator-{index}"));
-        for name in [
+        for removed in [
             "run-enclave.sh",
+            "run-tee-renew.sh",
+            removed_unit.as_str(),
+            "systemd/outbe-tee-renew.service",
+            "systemd/outbe-tee-renew.timer",
+        ] {
+            assert!(
+                !directory.join(removed).exists(),
+                "{removed} must not be generated"
+            );
+        }
+        for name in [
             "run-radicle.sh",
             "run-node.sh",
             "run-feeder.sh",
@@ -137,6 +151,29 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
                 .status()
                 .expect("bash -n");
             assert!(status.success(), "bash -n failed for {name}");
+        }
+        for entry in walkdir::WalkDir::new(&directory) {
+            let entry = entry.expect("bundle entry");
+            if entry.file_type().is_file() {
+                let content = fs::read_to_string(entry.path()).expect("bundle text");
+                for removed in [
+                    "--tee-enclave-socket",
+                    "--tee-session-mode",
+                    "aesmd.service",
+                    "/dev/sgx_enclave",
+                    "outbe-tee-enclave",
+                    removed_service.as_str(),
+                    "outbe-tee-renew",
+                    "/var/lib/outbe/tee",
+                    "/opt/outbe/sgx",
+                ] {
+                    assert!(
+                        !content.contains(removed),
+                        "{}: {removed}",
+                        entry.path().display()
+                    );
+                }
+            }
         }
         assert!(directory.join("feeder.toml").is_file());
         let feeder = fs::read_to_string(directory.join("feeder.toml")).expect("feeder config");
@@ -226,9 +263,10 @@ fn feeder_pairs_and_config_templates() {
 }
 
 #[test]
-fn distribution_archives_are_self_contained() {
+fn distribution_archives_exclude_removed_sidecar() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let (_, output_dir) = render_fixture(tmp.path(), None);
+    assert!(!output_dir.join("sgx").exists());
 
     let dist = output_dir.join("dist");
     assert!(dist.join("SHA256SUMS").is_file());
@@ -273,6 +311,18 @@ fn distribution_archives_are_self_contained() {
             );
         }
         assert!(joined.contains(&format!("keys/validator-{index}")));
+        let removed_service = format!("{}-{}", "outbe", "enclave.service");
+        for removed in [
+            "sgx/",
+            "outbe-tee-enclave",
+            "run-enclave.sh",
+            "run-tee-renew.sh",
+            removed_service.as_str(),
+            "outbe-tee-renew.service",
+            "outbe-tee-renew.timer",
+        ] {
+            assert!(!joined.contains(removed), "{removed} must not be packaged");
+        }
         assert!(joined.contains(".bb-crs/bn254_g1.dat"));
         for other in 0..4 {
             if other != index {
@@ -292,7 +342,7 @@ fn distribution_archives_are_self_contained() {
 }
 
 #[test]
-fn caddy_systemd_units_and_confidential_vm_runtime() {
+fn caddy_systemd_units_and_resident_tee() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let (_, output_dir) = render_fixture(tmp.path(), None);
 
@@ -305,13 +355,8 @@ fn caddy_systemd_units_and_confidential_vm_runtime() {
 
     let unit_dir = output_dir.join("validator-2/systemd");
     for (role, script, dep) in [
-        ("enclave", "run-enclave.sh", None),
-        ("radicle", "run-radicle.sh", Some("outbe-enclave.service")),
-        (
-            "validator",
-            "run-node.sh",
-            Some("outbe-enclave.service outbe-radicle.service"),
-        ),
+        ("radicle", "run-radicle.sh", None),
+        ("validator", "run-node.sh", Some("outbe-radicle.service")),
         ("feeder", "run-feeder.sh", Some("outbe-validator.service")),
     ] {
         let unit =
@@ -322,30 +367,21 @@ fn caddy_systemd_units_and_confidential_vm_runtime() {
         assert!(unit.contains(script));
         assert!(unit.contains("ProtectSystem=strict"));
         assert!(!unit.contains("%i"));
+        assert!(unit.contains("User=outbe"));
+        assert!(unit.contains("Group=outbe"));
         if let Some(d) = dep {
             assert!(unit.contains(&format!("Wants=network-online.target {d}")));
-            assert!(unit.contains("User=outbe"));
-            assert!(unit.contains("Group=outbe"));
         } else {
             assert!(unit.contains("Wants=network-online.target"));
-            assert!(unit.contains("User=root"));
-            assert!(!unit.contains("/sgx"));
-            assert!(!unit.contains("aesmd.service"));
-            assert!(unit.contains("/tee:/var/lib/outbe/tee"));
         }
     }
 
-    assert!(!unit_dir.join("outbe-tee-renew.timer").exists());
-    assert!(!unit_dir.join("outbe-tee-renew.service").exists());
     let install_systemd = fs::read_to_string(output_dir.join("validator-2/install-systemd.sh"))
         .expect("install-systemd");
     assert!(install_systemd.contains("if [ \"$(id -u)\" -eq 0 ]"));
     assert!(install_systemd.contains("as_root systemctl"));
     assert!(!install_systemd.contains("\nsudo "));
-    assert!(install_systemd.contains("disable --now outbe-tee-renew.timer"));
-    assert!(install_systemd.contains("enable --now outbe-validator.target"));
-    assert!(install_systemd.contains("disable --now outbe-validator.target"));
-    assert!(!install_systemd.contains("founding validator services:"));
+    assert!(!install_systemd.contains("outbe-tee-renew"));
 
     let install_caddy =
         fs::read_to_string(output_dir.join("validator-2/install-caddy.sh")).expect("install-caddy");
@@ -382,15 +418,73 @@ fn caddy_systemd_units_and_confidential_vm_runtime() {
         .expect("rpc caddy")
         .contains("reverse_proxy 10.0.0.3:8545"));
 
-    let enclave0 = fs::read_to_string(output_dir.join("validator-0").join("run-enclave.sh"))
-        .expect("enclave0");
-    assert!(enclave0.contains("outbe-tee-enclave-confidential-vm"));
-    assert!(enclave0.contains("--dev-network-binding"));
-    assert!(enclave0.contains("--dev-reth-p2p-public"));
-    assert!(enclave0.contains("--dkg-seed"));
-    assert!(!enclave0.contains("docker run"));
-    let preflight =
-        fs::read_to_string(output_dir.join("validator-0/preflight.sh")).expect("preflight");
-    assert!(preflight.contains("confidential VM signer"));
-    assert!(!preflight.contains("MISSING manifest or signature"));
+    // Production DCAP mode
+    let tmp_dcap = tempfile::tempdir().expect("tmp_dcap");
+    let (_, out_dcap) = render_fixture(
+        tmp_dcap.path(),
+        Some(json!({
+            "chain_id": 54322345,
+            "remote_base_dir": "/opt/outbe",
+            "remote_keys_dir": "/opt/outbe/keys",
+            "tee": {
+                "mode": "dcap-required",
+                "mrenclave": "ab".repeat(32),
+                "mrsigner": "cd".repeat(32),
+                "isv_prod_id": 0,
+                "minimum_isv_svn": 3,
+                "minimum_tcb_evaluation_data_number": 17,
+            }
+        })),
+    );
+    let node_dcap =
+        fs::read_to_string(out_dcap.join("validator-1").join("run-node.sh")).expect("node_dcap");
+    assert!(node_dcap.contains("/opt/outbe/genesis.json"));
+    assert!(node_dcap.contains("/opt/outbe/keys/validator-1"));
+    assert!(node_dcap.contains("--consensus.listen-addr 0.0.0.0:30400"));
+    assert!(!node_dcap.contains("--tee-session-mode"));
+    assert!(!out_dcap.join("validator-0/run-enclave.sh").exists());
+}
+
+#[test]
+fn founding_installer_prepares_without_starting_services() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_systemd_units(root, "/opt/outbe", 0).expect("generate systemd installer");
+    let stub = root.join("stub.bash");
+    fs::write(
+        &stub,
+        r#"dirname() { printf '%s\n' "${2%/*}"; }
+getent() { return 0; }
+id() { printf '0\n'; }
+chown() { return 0; }
+install() { return 0; }
+systemctl() { printf '%s\n' "$*" >> "$SYSTEMCTL_LOG"; }
+"#,
+    )
+    .expect("write shell command stubs");
+    let log = root.join("systemctl.log");
+    for (args, expected) in [
+        (
+            &["--prepare-only"][..],
+            "disable --now outbe-validator.target",
+        ),
+        (&[][..], "enable --now outbe-validator.target"),
+    ] {
+        fs::write(&log, "").expect("clear systemctl log");
+        let output = Command::new("/bin/bash")
+            .arg(root.join("install-systemd.sh"))
+            .args(args)
+            .env_clear()
+            .env("PATH", root)
+            .env("BASH_ENV", &stub)
+            .env("SYSTEMCTL_LOG", &log)
+            .output()
+            .expect("run generated installer");
+        assert!(output.status.success(), "{output:?}");
+        let calls = fs::read_to_string(&log).expect("systemctl log");
+        assert_eq!(
+            calls.lines().collect::<Vec<_>>(),
+            ["daemon-reload", expected]
+        );
+    }
 }

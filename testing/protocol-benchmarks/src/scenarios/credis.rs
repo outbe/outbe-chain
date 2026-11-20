@@ -4,10 +4,10 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall};
 use outbe_credis::CredisContract;
 use outbe_credisfactory::precompile::ICredisFactory;
-use outbe_enclave::gratis::{decrypt_pledged, derive_modify_key, derive_view_key, modify_mac};
-use outbe_enclave::protocol::{GratisOp, ModifyAuth};
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
 use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
+use outbe_gratis::{decrypt_pledged, derive_account_keys, derive_view_key, modify_mac};
+use outbe_gratis::{GratisOp, ModifyAuth};
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::{
     gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, StorageHandle,
@@ -78,12 +78,12 @@ fn chain_identity() -> B256 {
 }
 
 fn auth(op: GratisOp, amount: U256, nonce: u64) -> ModifyAuth {
-    let modify_key = derive_modify_key(&gratis_enclave::state_key(), ALICE)
+    let modify_key = derive_account_keys(&gratis_enclave::state_key(), ALICE)
         .expect("benchmark Gratis modify key derives");
     ModifyAuth {
         mac: modify_mac(
             &modify_key,
-            &outbe_enclave::gratis::ModifyOperation {
+            &outbe_gratis::ModifyOperation {
                 account: ALICE,
                 op,
                 amount,

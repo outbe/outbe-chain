@@ -7,6 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use alloy_primitives::U256;
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
+use outbe_genesis_cli::attestation::run_tee_stage;
 use outbe_genesis_cli::inputs::SeedInputs;
 use outbe_genesis_cli::keys::{
     discover_validators, evm_address_from_key_file, radicle_node_id_from_public_key,
@@ -43,7 +44,7 @@ fn minimal_config(keys_dir: &str) -> Value {
         "chain_id": 424242,
         "validators": ["10.0.0.1", "10.0.0.2", "10.0.0.3", "10.0.0.4"],
         "keys_dir": keys_dir,
-        "tee": {"mode": "gramine-direct-dev"},
+        "tee": {"mode": "no-attestation-dev"},
     })
 }
 
@@ -157,12 +158,46 @@ fn yaml_parser_scalars_lists_and_nesting() {
 }
 
 #[test]
+fn legacy_attestation_mode_is_rejected_without_an_alias() {
+    for (network, chain_id) in [
+        ("devnet", 424242_u64),
+        ("testnet", 54322345),
+        ("mainnet", 676),
+    ] {
+        let cfg = merge_obj(
+            minimal_config("./keys"),
+            json!({
+                "network": network,
+                "chain_id": chain_id,
+                "tee": {"mode": "gramine-direct-dev"},
+            }),
+        );
+        let error = validate_config(&cfg).expect_err("legacy attestation mode must be rejected");
+        assert!(
+            error.to_string().contains("tee.mode")
+                || error.to_string().contains("Mainnet requires")
+        );
+    }
+}
+
+#[test]
 fn config_validation_matrix_and_rejections() {
     validate_config(&minimal_config("./keys")).expect("minimal config");
 
-    let err = validate_config(&merge_obj(minimal_config("./keys"), json!({"bogus": 1})))
-        .expect_err("bogus key");
-    assert!(err.to_string().contains("bogus"));
+    for key in [
+        "bogus",
+        "enclave_dir",
+        "enclave_image",
+        "enclave_runner",
+        "enclave_sgx",
+        "signed_enclave_dir",
+        "tee_enclave_port",
+    ] {
+        let mut config = minimal_config("./keys");
+        config[key] = json!("unsupported");
+        let error = validate_config(&config).expect_err("unknown config key");
+        assert!(error.to_string().contains(key));
+    }
 
     let err = validate_config(&merge_obj(
         minimal_config("./keys"),
@@ -202,32 +237,40 @@ fn config_validation_matrix_and_rejections() {
     let mut bad_tee = minimal_config("./keys");
     bad_tee["tee"]["mode"] = json!("trust-me");
     let err = validate_config(&bad_tee).expect_err("bad tee mode");
-    assert!(err.to_string().contains("confidential-vm"));
+    assert!(err.to_string().contains("tee.mode"));
 
     for (network, chain_id) in [("devnet", 424242_u64), ("testnet", 54322345_u64)] {
-        let cfg = merge_obj(
-            minimal_config("./keys"),
-            json!({
-                "network": network,
-                "chain_id": chain_id,
-            }),
-        );
-        validate_config(&cfg).expect("confidential VM network");
+        for tee_mode in ["dcap-required", "no-attestation-dev"] {
+            let cfg = merge_obj(
+                minimal_config("./keys"),
+                json!({
+                    "network": network,
+                    "chain_id": chain_id,
+                    "tee": {"mode": tee_mode},
+                }),
+            );
+            validate_config(&cfg).expect("canonical attestation matrix");
+        }
     }
 
-    let mainnet = merge_obj(
+    let mut mainnet = merge_obj(
         minimal_config("./keys"),
         json!({
             "network": "mainnet",
             "chain_id": 676,
+            "tee": {"mode": "dcap-required"},
             "price_feed_rest": "https://prices.outbe.net",
         }),
     );
-    validate_config(&mainnet).expect("mainnet confidential VM policy");
+    validate_config(&mainnet).expect("attestation-required mainnet");
     assert_eq!(
         network_identity(&mainnet).expect("identity"),
         ("mainnet".to_owned(), 676, "outbe-mainnet-1".to_owned())
     );
+
+    mainnet["tee"] = json!({"mode": "no-attestation-dev"});
+    let err = validate_config(&mainnet).expect_err("mainnet rejects direct dev");
+    assert!(err.to_string().contains("Mainnet requires"));
 
     let port_collision = merge_obj(minimal_config("./keys"), json!({"rpc_port": 9101}));
     let err = validate_config(&port_collision).expect_err("port collision");
@@ -248,6 +291,19 @@ fn config_validation_matrix_and_rejections() {
     ))
     .expect_err("unspecified RPC bind");
     assert!(err.to_string().contains("loopback or private"));
+
+    let dcap_no_measurements = merge_obj(
+        minimal_config("./keys"),
+        json!({"tee": {"mode": "dcap-required"}}),
+    );
+    let err = run_tee_stage(
+        "/nonexistent",
+        Path::new("/nonexistent"),
+        Path::new("/nonexistent"),
+        &dcap_no_measurements,
+    )
+    .expect_err("dcap without measurements");
+    assert!(err.to_string().contains("mrenclave"));
 }
 
 #[test]
@@ -533,6 +589,7 @@ fn seed_stage_end_to_end_and_reproducibility() {
         json!({
             "network": "mainnet",
             "chain_id": 676,
+            "tee": {"mode": "dcap-required"},
             "price_feed_rest": "https://prices.outbe.net",
         }),
     );

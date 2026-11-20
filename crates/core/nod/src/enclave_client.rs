@@ -3,16 +3,17 @@ use alloy_primitives::{B256, U256};
 use outbe_core_common::nod_encryption::{
     EncryptedNodGroupLoadV1, EncryptedNodV1, NodQuoteContextV1,
 };
-use outbe_enclave::nod_mine::NodGroupLoadOpRequestV1;
 use outbe_tee::TransportError;
+
+use crate::nod_encryption::NodGroupLoadOpRequestV1;
 
 pub(crate) fn read_amount(record: &EncryptedNodV1) -> Result<U256, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if test_enclave::enabled() {
-        return outbe_enclave::nod_encryption::decrypt_nod(&test_enclave::NETWORK_SECRET, record)
-            .map_err(crate::errors::enclave_transport_error);
+        return crate::nod_encryption::decrypt_nod(&test_enclave::state_key(), record)
+            .map_err(TransportError::enclave_error);
     }
-    outbe_enclave::nod_mine::read_nod_amount(record).map_err(TransportError::from)
+    crate::nod_host::read_nod_amount(record)
 }
 
 pub(crate) fn apply_group_load_operation(
@@ -20,25 +21,22 @@ pub(crate) fn apply_group_load_operation(
 ) -> Result<EncryptedNodGroupLoadV1, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if test_enclave::enabled() {
-        return outbe_enclave::nod_encryption::apply_nod_group_load_operation(
-            &test_enclave::NETWORK_SECRET,
+        return crate::nod_encryption::apply_nod_group_load_operation(
+            &test_enclave::state_key(),
             &request,
         )
-        .map_err(crate::errors::enclave_transport_error);
+        .map_err(TransportError::enclave_error);
     }
-    outbe_enclave::nod_mine::apply_nod_group_load_operation(request).map_err(TransportError::from)
+    crate::nod_host::apply_nod_group_load_operation(request)
 }
 
 pub(crate) fn read_group_load(record: &EncryptedNodGroupLoadV1) -> Result<U256, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if test_enclave::enabled() {
-        return outbe_enclave::nod_encryption::read_nod_group_load(
-            &test_enclave::NETWORK_SECRET,
-            record,
-        )
-        .map_err(crate::errors::enclave_transport_error);
+        return crate::nod_encryption::read_nod_group_load(&test_enclave::state_key(), record)
+            .map_err(TransportError::enclave_error);
     }
-    outbe_enclave::nod_mine::read_nod_group_load(record).map_err(TransportError::from)
+    crate::nod_host::read_nod_group_load(record)
 }
 
 pub(crate) fn seal_group_load(
@@ -50,16 +48,15 @@ pub(crate) fn seal_group_load(
 ) -> Result<EncryptedNodGroupLoadV1, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if test_enclave::enabled() {
-        return outbe_enclave::nod_encryption::seal_group_load(
-            &test_enclave::NETWORK_SECRET,
+        return crate::nod_encryption::seal_group_load(
+            &test_enclave::state_key(),
             (chain_id, scope),
             (sequence, inputs_hash),
             load_minor,
         )
-        .map_err(crate::errors::enclave_transport_error);
+        .map_err(TransportError::enclave_error);
     }
-    let _ = (chain_id, scope, sequence, inputs_hash, load_minor);
-    Err(TransportError::UnexpectedResponse)
+    crate::nod_host::seal_group_load((chain_id, scope), (sequence, inputs_hash), load_minor)
 }
 
 pub(crate) fn encrypt_nod_quote(
@@ -69,16 +66,15 @@ pub(crate) fn encrypt_nod_quote(
 ) -> Result<Vec<u8>, TransportError> {
     #[cfg(any(test, feature = "test-enclave"))]
     if test_enclave::enabled() {
-        return outbe_enclave::nod_encryption::encrypt_nod_quote(
-            &test_enclave::NETWORK_SECRET,
+        return crate::nod_encryption::encrypt_nod_quote(
+            &test_enclave::state_key(),
             nod,
             &context,
             payment_minor,
         )
-        .map_err(crate::errors::enclave_transport_error);
+        .map_err(TransportError::enclave_error);
     }
-    outbe_enclave::nod_mine::encrypt_nod_quote(nod, context, payment_minor)
-        .map_err(TransportError::from)
+    crate::nod_host::encrypt_nod_quote(nod, context, payment_minor)
 }
 
 /// In-process enclave stand-in for tests (this crate's tests and any downstream
@@ -90,7 +86,10 @@ pub(crate) fn encrypt_nod_quote(
 pub mod test_enclave {
     use std::cell::Cell;
     thread_local! { static INSTALLED: Cell<bool> = const { Cell::new(false) }; }
-    pub const NETWORK_SECRET: [u8; 32] = [0x5a; 32];
+    /// Opaque fixture capability; construction requires `outbe-tee/test-utils`.
+    pub fn state_key() -> outbe_tee::resident::StateKeyHandle {
+        outbe_tee::resident::StateKeyHandle::for_test([0x5a; 32])
+    }
     pub struct Guard {
         previous: bool,
         _thread: std::marker::PhantomData<std::rc::Rc<()>>,

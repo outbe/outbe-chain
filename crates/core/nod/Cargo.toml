@@ -8,30 +8,39 @@ publish.workspace = true
 [dependencies]
 outbe-system-common.workspace = true
 outbe-core-common.workspace = true
-outbe-enclave.workspace = true
 outbe-tee.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types.workspace = true
+hex.workspace = true
 postcard.workspace = true
+ring.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 outbe-nod = { path = ".", features = ["test-enclave"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 base64.workspace = true
-serde_json.workspace = true
 tempfile.workspace = true
 
 [features]
 default = []
+# Native engine marker. Protocol deps are direct so bmk.8 does not edit this file.
+engine = []
+# Deterministic development keys. Never in a release build.
+dev-keys = ["outbe-core-common/dev-keys"]
 test-utils = ["outbe-primitives/test-utils"]
 # Enabled by the node binary in release builds. Asserts, at compile time, that
 # the attestation-skipping in-process stand-in is not in this build.
 production-enclave = []
-test-enclave = ["outbe-enclave/engine"]
+test-enclave = [
+    "outbe-tee/test-utils",
+    "outbe-core-common/dev-keys",
+]
 # Shortens the DEV call notice to a real e2e wait. Never enabled in a release build.
 e2e-test = []
 

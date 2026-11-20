@@ -4,14 +4,14 @@ use super::*;
 #[repr(u8)]
 pub enum AttestationMode {
     DcapRequired = 0x01,
-    GramineDirectDev = 0x02,
+    NoAttestationDev = 0x02,
 }
 
 impl AttestationMode {
     pub(crate) fn decode(value: u8) -> Result<Self, CodecError> {
         match value {
             0x01 => Ok(Self::DcapRequired),
-            0x02 => Ok(Self::GramineDirectDev),
+            0x02 => Ok(Self::NoAttestationDev),
             value => Err(CodecError::UnknownDiscriminant {
                 field: "attestation mode",
                 value,
@@ -73,20 +73,18 @@ impl NetworkBindingV1 {
     }
 }
 
-/// Release-measured authority for one SGX network.
+/// Chain-bound authority for one TEE network.
 ///
-/// The ordinary [`NetworkBindingV1`] is carried through node/enclave protocol
-/// messages. A modified NodeHost can choose those bytes, so they are not by
-/// themselves a trust root. SGX release bundles additionally measure this
-/// descriptor as a Gramine trusted file. The enclave accepts an initialization
-/// manifest only when its network binding equals this descriptor exactly.
+/// [`NetworkBindingV1`] travels in node protocol messages. A modified NodeHost
+/// can choose those bytes, so they are not by themselves a trust root. The
+/// resident process accepts an initialization manifest only when its network
+/// binding equals this descriptor exactly.
 ///
-/// `genesis_consensus_keys` are derived from that same final ChainSpec. The
-/// sorted MinPk keys are the epoch-0 finality trust root. Every later committee
-/// must be authenticated by a certificate from its predecessor. The active TEE
-/// policy is deliberately not measured here: it contains `MRENCLAVE`, while a
-/// Gramine trusted file contributes to `MRENCLAVE`. Instead, onboarding proves
-/// the active policy hash from finalized TeeRegistry state.
+/// `genesis_consensus_keys` come from that same final ChainSpec. The sorted
+/// MinPk keys are the epoch-0 finality trust root. Every later committee must
+/// be authenticated by a certificate from its predecessor. The active TEE
+/// policy is not part of this descriptor. Onboarding proves the active policy
+/// hash from finalized TeeRegistry state.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TrustedNetworkDescriptorV1 {
     pub network_binding: NetworkBindingV1,
@@ -144,7 +142,7 @@ impl TrustedNetworkDescriptorV1 {
 
     pub(super) fn validate(&self) -> Result<(), CodecError> {
         self.network_binding.validate()?;
-        if self.network_binding.attestation_mode == AttestationMode::GramineDirectDev {
+        if self.network_binding.attestation_mode == AttestationMode::NoAttestationDev {
             let chain_id = u64::try_from(alloy_primitives::U256::from_be_bytes(
                 self.network_binding.chain_id,
             ))

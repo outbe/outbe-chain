@@ -116,6 +116,20 @@ fn test_plaintext_backend_roundtrip() {
     assert!(validate_share(&legacy_loaded, &result.polynomial).unwrap());
 }
 
+#[test]
+fn plaintext_load_raw_trims_nbsp_edges() {
+    let file = NamedTempFile::new().unwrap();
+    let payload = b"abcd";
+    let mut contents = String::from("\u{00A0}");
+    contents.push_str(&hex::encode(payload));
+    contents.push('\u{00A0}');
+    std::fs::write(file.path(), contents).unwrap();
+    assert_eq!(
+        load_raw(file.path(), &KeyBackend::Plaintext).unwrap(),
+        payload
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn test_plaintext_backend_writes_owner_only_permissions() {

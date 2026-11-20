@@ -49,19 +49,20 @@ where
         self.check_upgrade_candidate(&context, legacy_direct_dev_source)?;
         let result = tokio::task::spawn_blocking(move || {
             let _permit = permit;
+            require_enclave_session()?;
             outbe_tee::upgrade_transfer::export_from_network_source(
                 context,
                 &proof,
                 legacy_direct_dev_source,
             )
+            .map_err(internal_err)
         })
         .await
         .map_err(|e| {
             internal_err(crate::errors::RpcInternalError::upgrade_export_task_failed(
                 e,
             ))
-        })?
-        .map_err(internal_err)?;
+        })??;
         Ok(result.into())
     }
     fn check_upgrade_candidate(
@@ -258,31 +259,24 @@ impl RenewalEpoch {
     }
 }
 
-/// No installed enclave session. Keyless RPC cannot derive keys or export an
+/// Closed authority or no finalized lease. A donor cannot export an
 /// upgrade artifact. Display text is the stable error name.
 #[derive(Debug, thiserror::Error)]
 #[error("PrivateExecutionUnavailable")]
 pub(super) struct PrivateExecutionUnavailable;
 
 pub(super) fn require_enclave_session() -> RpcResult<()> {
-    if !outbe_tee::is_enclave_configured() {
+    let state = outbe_tee::authority::tee_authority_watch()
+        .map_or_else(outbe_tee::authority::TeeAuthorityState::default, |watch| {
+            watch.ensure_current()
+        });
+    if !(state.is_authority_open()
+        && state.has_verified_resident_key()
+        && state.has_finalized_lease())
+    {
         Err(super::internal_err(PrivateExecutionUnavailable))
     } else {
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod private_execution_tests {
-    use super::*;
-
-    #[test]
-    fn missing_session_is_private_execution_unavailable() {
-        if outbe_tee::is_enclave_configured() {
-            return;
-        }
-        let error = require_enclave_session().expect_err("no session");
-        assert_eq!(error.message(), "PrivateExecutionUnavailable");
     }
 }
 

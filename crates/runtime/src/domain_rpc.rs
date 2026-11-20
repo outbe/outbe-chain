@@ -6,7 +6,6 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use outbe_core_common::wwd_entity_id::WwdEntityId;
-use outbe_enclave::tribute_source::{TributeSourceSubject, TributeStateSource};
 use outbe_primitives::{
     header::OutbeHeader,
     storage::{
@@ -16,6 +15,7 @@ use outbe_primitives::{
     },
 };
 use outbe_system_common::addresses::TRIBUTE_ADDRESS;
+use outbe_tribute::confidential::{TributeSourceSubject, TributeStateSource};
 use reth_ethereum::primitives::AlloyBlockHeader as _;
 use reth_ethereum::storage::{
     HeaderProvider, StateProvider as _, StateProviderBox, StateProviderFactory,
@@ -57,7 +57,7 @@ pub trait OutbeDomainApi {
     #[method(name = "deriveKeys")]
     async fn derive_keys(
         &self,
-        ledger: outbe_enclave::protocol::Ledger,
+        ledger: outbe_core_common::confidential_tee::Ledger,
         account: Address,
         ephemeral_pubkey: B256,
         signature: Bytes,
@@ -78,9 +78,7 @@ enum DomainRpcInternalError {
     #[error("PrivateExecutionUnavailable")]
     PrivateExecutionUnavailable,
     #[error("enclave DeriveAccountKeys failed: {0}")]
-    EnclaveDeriveAccountKeysFailed(String),
-    #[error("unexpected enclave response: {0}")]
-    UnexpectedEnclaveResponse(String),
+    EnclaveDeriveAccountKeysFailed(#[source] outbe_tee::TransportError),
     #[error("state read failed: {0}")]
     StateReadFailed(String),
     #[error("Tribute source worker failed: {0}")]
@@ -151,10 +149,14 @@ pub(crate) fn register_outbe_rpc_if_configured(
     )
 }
 
-type AccountQueryFn =
-    fn(
-        &outbe_enclave::protocol::EnclaveRequest,
-    ) -> Option<Result<outbe_enclave::protocol::EnclaveResponse, outbe_tee::TransportError>>;
+type AccountQueryFn = fn(
+    outbe_core_common::confidential_tee::Ledger,
+    Address,
+    [u8; 32],
+    [u8; 65],
+) -> Option<
+    Result<outbe_tee::resident::SealedAccountKeysExport, outbe_tee::TransportError>,
+>;
 
 /// Runtime handler serving domain RPC methods in the `outbe_*` namespace.
 #[derive(Clone)]
@@ -162,6 +164,7 @@ pub(crate) struct OutbeDomainRpcHandler<P> {
     provider: Arc<P>,
     chain_identity: Option<(u64, B256)>,
     account_query: AccountQueryFn,
+    authority_watch: Option<outbe_tee::authority::TeeAuthorityWatch>,
 }
 
 impl<P> OutbeDomainRpcHandler<P> {
@@ -170,7 +173,8 @@ impl<P> OutbeDomainRpcHandler<P> {
         Self {
             provider,
             chain_identity: Some(chain_identity),
-            account_query: outbe_enclave::try_domain_account_query,
+            account_query: outbe_core_common::confidential_tee::try_derive_sealed_account_keys,
+            authority_watch: None,
         }
     }
 
@@ -181,22 +185,30 @@ impl<P> OutbeDomainRpcHandler<P> {
         self
     }
 
+    pub(crate) fn with_authority_watch(
+        mut self,
+        watch: outbe_tee::authority::TeeAuthorityWatch,
+    ) -> Self {
+        self.authority_watch = Some(watch);
+        self
+    }
+
     pub(crate) async fn derive_keys_checked(
         &self,
-        ledger: outbe_enclave::protocol::Ledger,
+        ledger: outbe_core_common::confidential_tee::Ledger,
         account: Address,
         ephemeral_pubkey: B256,
         signature: Bytes,
     ) -> RpcResult<GratisKeysSealed> {
-        use outbe_enclave::protocol::{EnclaveRequest, EnclaveResponse};
+        require_private_authority(self.authority_watch.as_ref())?;
 
         let sig65: [u8; 65] = signature.as_ref().try_into().map_err(|_| {
             invalid_params_err(DomainRpcInvalidParamsError::InvalidSignatureLength(
                 signature.len(),
             ))
         })?;
-        let prehash = outbe_enclave::protocol::eip191_hash(
-            &outbe_enclave::protocol::derive_account_keys_message(
+        let prehash = outbe_core_common::confidential_tee::eip191_hash(
+            &outbe_core_common::confidential_tee::derive_account_keys_message(
                 ledger,
                 account,
                 ephemeral_pubkey,
@@ -214,34 +226,19 @@ impl<P> OutbeDomainRpcHandler<P> {
             ));
         }
 
-        let response = (self.account_query)(&EnclaveRequest::DeriveAccountKeys {
-            ledger,
-            account,
-            requester_ephemeral_pubkey: ephemeral_pubkey.0,
-            owner_sig: sig65.to_vec(),
+        require_private_authority(self.authority_watch.as_ref())?;
+        let sealed = (self.account_query)(ledger, account, ephemeral_pubkey.0, sig65)
+            .ok_or_else(|| internal_err(DomainRpcInternalError::PrivateExecutionUnavailable))?
+            .map_err(|error| {
+                internal_err(DomainRpcInternalError::EnclaveDeriveAccountKeysFailed(
+                    error,
+                ))
+            })?;
+        Ok(GratisKeysSealed {
+            sealed: sealed.sealed.into(),
+            nonce: sealed.nonce.to_vec().into(),
+            enclave_ephemeral_pubkey: B256::from(sealed.enclave_ephemeral_pubkey),
         })
-        .ok_or_else(|| internal_err(DomainRpcInternalError::PrivateExecutionUnavailable))?
-        .map_err(|error| {
-            internal_err(DomainRpcInternalError::EnclaveDeriveAccountKeysFailed(
-                error.to_string(),
-            ))
-        })?;
-
-        match response {
-            EnclaveResponse::AccountKeysSealed {
-                sealed,
-                nonce,
-                enclave_ephemeral_pubkey,
-                ..
-            } => Ok(GratisKeysSealed {
-                sealed: sealed.into(),
-                nonce: nonce.to_vec().into(),
-                enclave_ephemeral_pubkey: B256::from(enclave_ephemeral_pubkey),
-            }),
-            other => Err(internal_err(
-                DomainRpcInternalError::UnexpectedEnclaveResponse(format!("{other:?}")),
-            )),
-        }
     }
 
     pub(crate) async fn derive_gratis_keys_checked(
@@ -251,7 +248,7 @@ impl<P> OutbeDomainRpcHandler<P> {
         signature: Bytes,
     ) -> RpcResult<GratisKeysSealed> {
         self.derive_keys_checked(
-            outbe_enclave::protocol::Ledger::Gratis,
+            outbe_core_common::confidential_tee::Ledger::Gratis,
             account,
             ephemeral_pubkey,
             signature,
@@ -275,9 +272,15 @@ where
         subject: TributeSourceSubject,
         tribute_id: WwdEntityId,
     ) -> RpcResult<TributeStateSource> {
+        require_private_authority(self.authority_watch.as_ref())?;
+        let watch = self
+            .authority_watch
+            .clone()
+            .or_else(outbe_tee::authority::tee_authority_watch);
         let provider = Arc::clone(&self.provider);
         let chain_identity = self.chain_identity;
         tokio::task::spawn_blocking(move || {
+            require_private_authority(watch.as_ref())?;
             serve_tribute_state_source(&*provider, chain_identity, subject, tribute_id)
         })
         .await
@@ -290,7 +293,7 @@ where
 
     async fn derive_keys(
         &self,
-        ledger: outbe_enclave::protocol::Ledger,
+        ledger: outbe_core_common::confidential_tee::Ledger,
         account: Address,
         ephemeral_pubkey: B256,
         signature: Bytes,
@@ -307,6 +310,42 @@ where
     ) -> RpcResult<GratisKeysSealed> {
         self.derive_gratis_keys_checked(account, ephemeral_pubkey, signature)
             .await
+    }
+}
+
+#[cfg(feature = "test-hooks")]
+pub async fn account_query_through_authority_gate(
+    watch: Option<outbe_tee::authority::TeeAuthorityWatch>,
+    ledger: outbe_core_common::confidential_tee::Ledger,
+    account: Address,
+    ephemeral_pubkey: B256,
+    signature: Bytes,
+) -> RpcResult<GratisKeysSealed> {
+    let mut handler = OutbeDomainRpcHandler::new(Arc::new(()), (1, B256::ZERO));
+    if let Some(watch) = watch {
+        handler = handler.with_authority_watch(watch);
+    }
+    handler
+        .derive_keys_checked(ledger, account, ephemeral_pubkey, signature)
+        .await
+}
+
+fn require_private_authority(
+    watch: Option<&outbe_tee::authority::TeeAuthorityWatch>,
+) -> RpcResult<()> {
+    let state = match watch {
+        Some(watch) => watch.ensure_current(),
+        None => outbe_tee::authority::tee_authority_watch().map_or_else(
+            outbe_tee::authority::TeeAuthorityState::default,
+            |installed| installed.ensure_current(),
+        ),
+    };
+    if state.is_authority_open() && state.has_verified_resident_key() {
+        Ok(())
+    } else {
+        Err(internal_err(
+            DomainRpcInternalError::PrivateExecutionUnavailable,
+        ))
     }
 }
 
@@ -349,7 +388,7 @@ where
         .verify(
             &subject,
             source.binding().map_err(internal_err)?,
-            outbe_enclave::tribute_source::proof_limits(),
+            outbe_tribute::confidential::proof_limits(),
         )
         .map_err(internal_err)?;
     Ok(source)
@@ -415,7 +454,7 @@ fn invalid_params_err(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObj
 #[cfg(test)]
 mod tests {
     use super::*;
-    use outbe_enclave::protocol::{derive_account_keys_message, eip191_hash, Ledger};
+    use outbe_core_common::confidential_tee::{derive_account_keys_message, eip191_hash, Ledger};
     use outbe_primitives::signer::OutbeEvmSigner;
     use outbe_rpc::OutbeApiServer as _;
     use reth_provider::test_utils::NoopProvider;
@@ -437,7 +476,14 @@ mod tests {
 
     #[tokio::test]
     async fn derive_keys_and_gratis_alias_reject_invalid_and_mismatched_signatures() {
-        let handler = OutbeDomainRpcHandler::new(Arc::new(()), (1, B256::repeat_byte(0x11)));
+        let authority = outbe_tee::authority::TeeAuthorityChannel::new(
+            outbe_tee::authority::TeeAuthorityState::Armed {
+                enclave_id: B256::repeat_byte(7),
+                valid_until: 123,
+            },
+        );
+        let handler = OutbeDomainRpcHandler::new(Arc::new(()), (1, B256::repeat_byte(0x11)))
+            .with_authority_watch(authority.subscribe());
         let account = Address::repeat_byte(0x11);
         let ephemeral_pubkey = B256::repeat_byte(0x22);
 
@@ -525,8 +571,15 @@ mod tests {
 
     #[tokio::test]
     async fn derive_keys_rejects_cross_domain_signature_replay() {
+        let authority = outbe_tee::authority::TeeAuthorityChannel::new(
+            outbe_tee::authority::TeeAuthorityState::Armed {
+                enclave_id: B256::repeat_byte(7),
+                valid_until: 123,
+            },
+        );
         let handler = OutbeDomainRpcHandler::new(Arc::new(()), (1, B256::repeat_byte(0x11)))
-            .with_account_query(|_| None);
+            .with_authority_watch(authority.subscribe())
+            .with_account_query(|_, _, _, _| None);
         let signer = OutbeEvmSigner::from_secret_bytes([0x42; 32]).expect("signer");
         let owner = signer.address();
         let ephemeral_pubkey = B256::repeat_byte(0x22);
@@ -667,72 +720,7 @@ mod tests {
             .next()
             .is_none());
     }
-
-    #[tokio::test]
-    async fn derive_keys_and_gratis_alias_route_over_account_query_lane_end_to_end() {
-        use outbe_enclave::protocol::{EnclaveRequest as DomReq, EnclaveResponse as DomResp};
-        use outbe_tee::protocol::{EnclaveRequest as WireReq, EnclaveResponse as WireResp};
-
-        let lanes = Arc::new(std::sync::Mutex::new(Vec::new()));
-        let lanes_loop = Arc::clone(&lanes);
-        let server = outbe_tee::test_utils::MockDevEnclaveServer::spawn([0xAA; 32], move |req| {
-            let WireReq::Payload { lane, payload } = req else {
-                return WireResp::Ack;
-            };
-            lanes_loop.lock().unwrap().push(lane);
-            let DomReq::DeriveAccountKeys { account, .. } =
-                DomReq::decode_wire_canonical(&payload).unwrap()
-            else {
-                panic!("unexpected domain request on account query");
-            };
-            DomResp::AccountKeysSealed {
-                account,
-                sealed: vec![0x5A; 80],
-                nonce: [0x6B; 12],
-                enclave_ephemeral_pubkey: [0x7C; 32],
-            }
-            .into_wire_response()
-            .unwrap()
-        });
-
-        let client = outbe_tee::EnclaveClient::connect_endpoint(&server.endpoint).unwrap();
-        outbe_tee::install_enclave_client(client, server.endpoint.clone()).expect("install once");
-
-        let provider: Arc<
-            NoopProvider<reth_chainspec::ChainSpec<OutbeHeader>, outbe_primitives::OutbePrimitives>,
-        > = Arc::new(NoopProvider::new(Arc::new(
-            reth_chainspec::ChainSpec::default(),
-        )));
-        let domain = OutbeDomainRpcHandler::new(provider, (1, B256::repeat_byte(0xAA))).into_rpc();
-
-        let signer = OutbeEvmSigner::from_secret_bytes([0x55; 32]).unwrap();
-        let owner = signer.address();
-        let eph = B256::repeat_byte(0x33);
-
-        let nod_hash = eip191_hash(&derive_account_keys_message(Ledger::Nod, owner, eph));
-        let nod_sig = Bytes::copy_from_slice(&signer.sign_hash(&nod_hash).unwrap());
-        let nod_sealed: GratisKeysSealed = domain
-            .call("outbe_deriveKeys", (Ledger::Nod, owner, eph, nod_sig))
-            .await
-            .expect("outbe_deriveKeys over AccountQuery");
-        assert_eq!(nod_sealed.sealed, Bytes::from(vec![0x5A; 80]));
-        assert_eq!(nod_sealed.nonce, Bytes::from(vec![0x6B; 12]));
-        assert_eq!(nod_sealed.enclave_ephemeral_pubkey, B256::repeat_byte(0x7C));
-
-        let gratis_hash = eip191_hash(&derive_account_keys_message(Ledger::Gratis, owner, eph));
-        let gratis_sig = Bytes::copy_from_slice(&signer.sign_hash(&gratis_hash).unwrap());
-        let gratis_sealed: GratisKeysSealed = domain
-            .call("outbe_deriveGratisKeys", (owner, eph, gratis_sig))
-            .await
-            .expect("outbe_deriveGratisKeys over AccountQuery");
-        assert_eq!(gratis_sealed.sealed, Bytes::from(vec![0x5A; 80]));
-
-        assert_eq!(
-            *lanes.lock().unwrap(),
-            vec![
-                outbe_tee::protocol::PayloadLane::AccountQuery,
-                outbe_tee::protocol::PayloadLane::AccountQuery,
-            ]
-        );
-    }
 }
+
+#[cfg(test)]
+mod authority_tests;

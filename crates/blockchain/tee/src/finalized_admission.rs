@@ -44,12 +44,6 @@ pub struct FinalizedAdmissionBeginInputV1<'a> {
     pub expected_network_encryption_epoch: u64,
 }
 
-pub struct FinalizedAdmissionIngestInputV1<'a> {
-    pub begin: FinalizedAdmissionBeginInputV1<'a>,
-    pub committee_transitions: &'a [Vec<u8>],
-    pub finalized_admission_witness: &'a [u8],
-}
-
 /// Commits the immutable start of one streaming target-enclave ingest. The
 /// current committee independently authenticates every later committee
 /// transition, so the transcript does not need to be buffered or pre-hashed.

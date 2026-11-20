@@ -7,24 +7,47 @@ publish.workspace = true
 
 [dependencies]
 outbe-system-common.workspace = true
+outbe-tee = { workspace = true, default-features = false }
 alloy-primitives = { workspace = true, features = ["serde"] }
 ark-bn254.workspace = true
 ark-ff.workspace = true
 base64.workspace = true
 outbe-poseidon.workspace = true
 outbe-primitives.workspace = true
-ring.workspace = true
+ring = { workspace = true, features = ["std"] }
 serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 tracing.workspace = true
+x25519-dalek.workspace = true
+ed25519-dalek.workspace = true
+zeroize.workspace = true
+hex.workspace = true
+postcard.workspace = true
+rand_core = { workspace = true, optional = true }
 
 [dev-dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-tee = { workspace = true, features = ["test-utils"] }
+alloy-primitives = { workspace = true, features = ["serde", "k256"] }
+k256.workspace = true
 serde_json.workspace = true
 
 [features]
 # Retarget the Intex CREATE3 addresses at the throwaway e2e set. Never in a release build.
 e2e-test = []
+# Deterministic development keys and resident fixtures. Never in a release build.
+dev-keys = ["dep:rand_core", "outbe-tee/test-utils"]
+# Resident test helpers from outbe-tee. Never in a release build.
+test-utils = ["outbe-tee/test-utils"]
+
+[[test]]
+name = "account_key_export"
+required-features = ["dev-keys"]
+
+[[test]]
+name = "domain_common_golden_vectors_v1"
+required-features = ["dev-keys"]
 
 [lints]
 workspace = true

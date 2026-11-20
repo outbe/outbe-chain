@@ -103,6 +103,20 @@ pub async fn wait_for_sync(
     }
 }
 
+pub async fn wait_for_resident(local: &RpcClient, progress: &mut Progress) -> Result<()> {
+    loop {
+        let status = local.consensus_status().await?;
+        if status.resident_ready() {
+            return Ok(());
+        }
+        progress.update(&format!(
+            "waiting for resident TEE: mode={} state={}",
+            status.mode, status.enclave.state
+        ));
+        tokio::time::sleep(Duration::from_secs(5)).await;
+    }
+}
+
 pub async fn wait_for_verifier(
     local: &RpcClient,
     remote: &RpcClient,
@@ -117,7 +131,7 @@ pub async fn wait_for_verifier(
             status.connected_peers,
             yes_no(status.has_threshold_shares)
         ));
-        if status.is_validator && matches!(status.mode.as_str(), "verifier" | "signer") {
+        if status.resident_ready() && matches!(status.mode.as_str(), "verifier" | "signer") {
             return Ok(());
         }
         tokio::time::sleep(Duration::from_secs(5)).await;
