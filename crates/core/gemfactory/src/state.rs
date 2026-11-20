@@ -1,9 +1,7 @@
-//! GemFactory position bookkeeping: issue (create record, owner and expiry-hour lists),
-//! expiry and deletion, and the ERC-721-style read views. Positions are single-owner
-//! and non-transferable, mirroring the `gem` crate's NFT ledger.
+//! GemFactory position bookkeeping: creation (record and expiry-hour list), expiry and
+//! deletion. A position is a record with an owner, not a token.
 
-use alloy_primitives::{Address, U256};
-use base64::Engine;
+use alloy_primitives::U256;
 use outbe_core_common::deadline_queue;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::indexed_list::IndexedList;
@@ -24,13 +22,6 @@ pub(crate) fn position_queue_hour(entry: u64) -> Result<u64> {
 }
 
 impl<'s> GemFactoryContract<'s> {
-    fn owner_index(&self, owner: Address) -> IndexedList<'s, U256> {
-        IndexedList::new(
-            self.owner_position_ids.list(&owner),
-            self.owner_position_index.clone(),
-        )
-    }
-
     fn hour_index(&self, hour: u64) -> IndexedList<'s, U256> {
         IndexedList::new(
             self.hour_positions.list(&hour),
@@ -38,16 +29,13 @@ impl<'s> GemFactoryContract<'s> {
         )
     }
 
-    /// Issue a position NFT: create the record, list it under its merchant and its
-    /// expiry hour, and queue the hour on its first position. Rejects a duplicate
-    /// `gem_factory_position_id`.
+    /// Creates the position record, lists it under its expiry hour, and queues the hour
+    /// on its first position. Rejects a duplicate `gem_factory_position_id`.
     pub(crate) fn add_position(&mut self, pos: &GemFactoryPosition) -> Result<()> {
         if self.positions.exists(pos.gem_factory_position_id)? {
             return Err(GemFactoryError::GemFactoryPositionAlreadyExists.into());
         }
         self.positions.create(pos)?;
-        self.owner_index(pos.owner)
-            .insert(pos.gem_factory_position_id)?;
         let hour = pos.expiry_hour();
         if self.hour_position_count(hour)? == 0 {
             deadline_queue::push(
@@ -98,8 +86,6 @@ impl<'s> GemFactoryContract<'s> {
     /// Deletes an expired position, and forgets its hour with the last one.
     pub(crate) fn delete_position(&mut self, record: &GemFactoryPosition) -> Result<()> {
         let hour = record.expiry_hour();
-        self.owner_index(record.owner)
-            .remove(record.gem_factory_position_id)?;
         self.hour_index(hour)
             .remove(record.gem_factory_position_id)?;
         self.positions.delete(record.gem_factory_position_id)?;
@@ -112,8 +98,6 @@ impl<'s> GemFactoryContract<'s> {
         Ok(())
     }
 
-    // --- Position NFT views (ERC-721-style, non-transferable) ---
-
     /// What the position can still issue: nothing once it expired, whether or not the
     /// cleanup has deleted it yet.
     pub(crate) fn remaining_capacity(&self, pos: &GemFactoryPosition) -> Result<U256> {
@@ -122,40 +106,6 @@ impl<'s> GemFactoryContract<'s> {
             true => U256::ZERO,
             false => pos.remaining_capacity_minor,
         })
-    }
-
-    pub fn balance_of(&self, owner: Address) -> Result<u32> {
-        self.owner_position_ids.list(&owner).len()
-    }
-
-    pub fn owner_of(&self, gem_factory_position_id: U256) -> Result<Address> {
-        let pos = self
-            .positions
-            .get(gem_factory_position_id)?
-            .ok_or(GemFactoryError::GemFactoryPositionNotFound)?;
-        Ok(pos.owner)
-    }
-
-    pub fn tokens_by_owner(&self, owner: Address) -> Result<Vec<U256>> {
-        self.owner_position_ids.list(&owner).read_all()
-    }
-
-    pub fn token_uri(&self, gem_factory_position_id: U256) -> Result<String> {
-        let pos = self
-            .positions
-            .get(gem_factory_position_id)?
-            .ok_or(GemFactoryError::GemFactoryPositionNotFound)?;
-        // TODO: replace hand-rolled JSON with type-safe serialization (serde struct).
-        let json = format!(
-            "{{\"name\":\"GemFactoryPosition #{}\",\"attributes\":[{{\"trait_type\":\"merchant\",\"value\":\"{}\"}},{{\"trait_type\":\"source_series_id\",\"value\":\"{}\"}},{{\"trait_type\":\"remaining_capacity\",\"value\":\"{}\"}},{{\"trait_type\":\"issued_at\",\"value\":{}}}]}}",
-            gem_factory_position_id,
-            pos.owner,
-            pos.source_series_id,
-            self.remaining_capacity(&pos)?,
-            pos.issued_at,
-        );
-        let encoded = base64::engine::general_purpose::STANDARD.encode(json.as_bytes());
-        Ok(format!("data:application/json;base64,{}", encoded))
     }
 }
 

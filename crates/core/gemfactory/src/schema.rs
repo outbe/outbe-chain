@@ -85,13 +85,6 @@ pub struct GemFactoryContract {
     #[attribute(order = 2)]
     pub positions: outbe_primitives::storage::dsl::Map<U256, GemFactoryPosition>,
 
-    /// Each merchant's positions.
-    #[attribute(order = 3)]
-    pub owner_position_ids:
-        outbe_primitives::storage::dsl::Map<Address, outbe_primitives::storage::dsl::List<U256>>,
-    #[attribute(order = 4)]
-    pub owner_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
-
     /// The positions of each expiry hour, and the capacity they have left to issue.
     #[attribute(order = 5)]
     pub hour_positions:

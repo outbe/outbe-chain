@@ -49,7 +49,7 @@ fn an_issued_series_is_sent_once_without_a_promis_limit_credit() {
 }
 
 #[test]
-fn issue_gem_position_burns_sends_and_issues_nft() {
+fn create_gem_factory_position_burns_the_units_and_records_its_owner() {
     with_storage(None, |storage| {
         let id = seed_and_send(storage, six_decimal_unit(), six_decimal_u128());
         let capacity = sent_capacity(six_decimal_u128());
@@ -60,11 +60,7 @@ fn issue_gem_position_burns_sends_and_issues_nft() {
         assert_eq!(rec.source_series_id, source_series_id());
         assert_eq!(rec.remaining_capacity_minor, capacity);
         assert_eq!(factory.total_capacity_minor.read().unwrap(), capacity);
-
-        // Position NFT issued to the merchant.
-        assert_eq!(factory.owner_of(id).unwrap(), ALICE);
-        assert_eq!(factory.balance_of(ALICE).unwrap(), 1);
-        assert_eq!(factory.tokens_by_owner(ALICE).unwrap(), vec![id]);
+        assert_eq!(runtime::position_data(storage, id).unwrap().owner, ALICE);
     });
 }
 
@@ -102,7 +98,6 @@ fn an_expired_position_returns_its_remainder() {
 
         let factory = GemFactoryContract::new(storage.clone());
         assert!(factory.positions.get(id).unwrap().is_none());
-        assert_eq!(factory.balance_of(ALICE).unwrap(), 0);
         assert!(runtime::position_data(storage, id).is_err());
     });
 }

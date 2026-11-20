@@ -86,15 +86,9 @@ interface IGemFactory {
         view
         returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
 
-    // --- GemFactory position (ERC-721-style, non-transferable; owner = merchant) ---
-    // An expired position stays readable until the cleanup deletes it.
-    /// @notice Number of GemPositions owned by `owner`.
-    function balanceOf(address owner) external view returns (uint256);
-    /// @notice Merchant that owns the position `gemFactoryPositionId`.
-    function ownerOf(uint256 gemFactoryPositionId) external view returns (address);
-    /// @notice Metadata URI for the position `gemFactoryPositionId`.
-    function tokenURI(uint256 gemFactoryPositionId) external view returns (string memory);
-    function tokensByOwner(address owner) external view returns (uint256[] memory tokenIds);
+    // --- GemFactory position: a record with an owner, not a token ---
+    // An expired position stays readable until the cleanup deletes it. The positions of an
+    // owner are found from `GemFactoryPositionCreated`.
     /// @notice Full terms of the position `gemFactoryPositionId`.
     function getGemFactoryPosition(uint256 gemFactoryPositionId) external view returns (GemFactoryPositionData memory);
 

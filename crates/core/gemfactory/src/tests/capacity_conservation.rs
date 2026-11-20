@@ -233,12 +233,8 @@ fn conserved(p: &mut HashMapStorageProvider, terminal: bool) {
         if terminal {
             assert_eq!(returned, U256::from(REMAINDER));
             assert!(factory.positions.get(U256::from(1)).unwrap().is_none());
-            assert_eq!(factory.balance_of(Address::repeat_byte(1)).unwrap(), 0);
-        } else if factory.positions.exists(U256::from(1)).unwrap() {
-            assert_eq!(
-                factory.owner_of(U256::from(1)).unwrap(),
-                Address::repeat_byte(1)
-            );
+        } else if let Some(position) = factory.positions.get(U256::from(1)).unwrap() {
+            assert_eq!(position.owner, Address::repeat_byte(1));
         }
     });
     let events = p

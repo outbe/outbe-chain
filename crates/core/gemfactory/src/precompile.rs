@@ -102,21 +102,6 @@ pub fn dispatch(
             getCallProgress(c) => view(c, |c| {
                 crate::call_progress::call_progress(&storage, c.gemId)
             }),
-
-            balanceOf(c) => view(c, |c| {
-                GemFactoryContract::new(storage.clone())
-                    .balance_of(c.owner)
-                    .map(U256::from)
-            }),
-            ownerOf(c) => view(c, |c| {
-                GemFactoryContract::new(storage.clone()).owner_of(c.gemFactoryPositionId)
-            }),
-            tokenURI(c) => view(c, |c| {
-                GemFactoryContract::new(storage.clone()).token_uri(c.gemFactoryPositionId)
-            }),
-            tokensByOwner(c) => view(c, |c| {
-                GemFactoryContract::new(storage.clone()).tokens_by_owner(c.owner)
-            }),
         }
     })
 }

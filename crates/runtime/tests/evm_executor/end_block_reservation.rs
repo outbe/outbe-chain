@@ -444,12 +444,6 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
                 expires_at,
             };
             gf.positions.create(&pos).unwrap();
-            outbe_primitives::storage::indexed_list::IndexedList::new(
-                gf.owner_position_ids.list(&OWNER),
-                gf.owner_position_index.clone(),
-            )
-            .insert(pos.gem_factory_position_id)
-            .unwrap();
             outbe_core_common::deadline_queue::push(
                 &TestExpiryQueue(&gf),
                 expired_hour + 1,
