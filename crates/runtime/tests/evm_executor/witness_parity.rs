@@ -14,6 +14,65 @@ fn sign_nod_read(key: &SigningKey, inputs_hash: B256, amount: U256) -> EnclaveRe
     }
 }
 
+fn witness_entry_len(response: EnclaveResponse) -> usize {
+    let wire = response.into_wire_response().unwrap();
+    let entry = outbe_tee::witness::EnclaveWitnessEntryV1::try_from(wire).unwrap();
+    postcard::to_allocvec(&entry).unwrap().len()
+}
+
+/// The end-block reserve holds the Nod forfeit and the Credis cleanup at their full block budget,
+/// and the reserve itself fits the tape.
+#[test]
+fn the_end_block_reserve_holds_both_private_passes_at_their_full_budget() {
+    use outbe_enclave::protocol::{GratisOpResult, GratisOpStatus};
+    use outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK;
+    use outbe_tee::witness::{EnclaveWitnessEntryV1, EnclaveWitnessTapeV1, TxWitnessV1};
+    // A `GRA2` balance or event envelope is 92 bytes.
+    const GRATIS_BLOB_LEN: usize = 92;
+
+    let nod_read = EnclaveResponse::NodGroupLoadReadV1 {
+        amount: U256::MAX,
+        inputs_canonical_hash: B256::repeat_byte(0x01),
+        attestation_tag: vec![0x02; 64],
+    };
+    let nod_read_len = witness_entry_len(nod_read.clone());
+    let pledge_burn_len = witness_entry_len(EnclaveResponse::GratisOpApplied {
+        result: Box::new(GratisOpResult {
+            status: GratisOpStatus::Applied,
+            new_balance: vec![0x03; GRATIS_BLOB_LEN],
+            new_pledged: vec![0x04; GRATIS_BLOB_LEN],
+            event_amount: U256::MAX,
+            next_op_nonce: u64::MAX,
+            fidelity: None,
+            inputs_canonical_hash: B256::repeat_byte(0x05),
+            attestation_tag: vec![0x06; 64],
+            encrypted_event_amount: vec![0x07; GRATIS_BLOB_LEN],
+        }),
+    });
+    assert!(pledge_burn_len <= outbe_credisfactory::PLEDGE_BURN_COST as usize * nod_read_len);
+
+    let entry = EnclaveWitnessEntryV1::try_from(nod_read.into_wire_response().unwrap()).unwrap();
+    let suffix = EnclaveWitnessTapeV1 {
+        prefix: Vec::new(),
+        txs: (0..2)
+            .map(|tx_index| TxWitnessV1 {
+                tx_index,
+                entries: vec![entry.clone(); SWEEP_WRITES_PER_BLOCK as usize],
+            })
+            .collect(),
+    };
+    assert!(
+        postcard::to_allocvec(&suffix).unwrap().len()
+            <= outbe_evm::executor::witness::END_BLOCK_WITNESS_RESERVE_BYTES
+    );
+    assert!(
+        outbe_tee::witness::compressed_witness_bound(
+            outbe_evm::executor::witness::END_BLOCK_WITNESS_RESERVE_BYTES
+        ) + 3
+            <= outbe_primitives::reshare_artifact::ENCLAVE_WITNESS_RESERVED_BYTES
+    );
+}
+
 #[test]
 fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     use super::fixtures::{
