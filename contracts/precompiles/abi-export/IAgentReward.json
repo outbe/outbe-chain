@@ -298,6 +298,17 @@
   },
   {
     "type": "error",
+    "name": "ClaimPriceUnavailable",
+    "inputs": [
+      {
+        "name": "isoCode",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "ClaimableRewardsOverflow",
     "inputs": []
   },
@@ -305,22 +316,6 @@
     "type": "error",
     "name": "ClaimableTotalOverflow",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "DateStep",
-    "inputs": [
-      {
-        "name": "kind",
-        "type": "uint8",
-        "internalType": "uint8"
-      },
-      {
-        "name": "dateKey",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
   },
   {
     "type": "error",
@@ -341,17 +336,6 @@
     "type": "error",
     "name": "InsufficientClaimableBalance",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "MissingPreviousDayPrice",
-    "inputs": [
-      {
-        "name": "value",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ]
   },
   {
     "type": "error",
