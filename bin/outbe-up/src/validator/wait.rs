@@ -65,7 +65,12 @@ pub async fn wait_for_sync(
         })
         .await;
         let (remote_block, local_block, peers) = match poll {
-            Ok(result) => result?,
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => {
+                progress.update(&format!("waiting for finalized blocks: {error}"));
+                tokio::time::sleep(Duration::from_secs(2)).await;
+                continue;
+            }
             Err(_) => {
                 let detail = last.map_or_else(String::new, |(local, remote)| {
                     format!("; last h={local}/{remote}")
