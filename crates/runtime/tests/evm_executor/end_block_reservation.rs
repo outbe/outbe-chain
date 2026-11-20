@@ -451,12 +451,12 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             )
             .unwrap();
             outbe_primitives::storage::indexed_list::IndexedList::new(
-                gf.day_positions.list(&expired_day),
-                gf.day_position_index.clone(),
+                gf.expiry_day_positions.list(&expired_day),
+                gf.expiry_day_position_index.clone(),
             )
             .insert(pos.gem_factory_position_id)
             .unwrap();
-            gf.day_capacity_minor
+            gf.expiry_day_capacity_minor
                 .write(&expired_day, expired_capacity)
                 .unwrap();
         });
@@ -492,7 +492,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
         StorageHandle::enter(&mut provider, |storage| {
             let gf = GemFactoryContract::new(storage.clone());
             assert_eq!(
-                gf.day_capacity_minor.read(&expired_day).unwrap(),
+                gf.expiry_day_capacity_minor.read(&expired_day).unwrap(),
                 expired_capacity,
                 "after OSND alone, GemFactory expired day must not yet be swept"
             );
@@ -517,7 +517,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
         StorageHandle::enter(&mut provider, |storage| {
             let gf = GemFactoryContract::new(storage.clone());
             assert_eq!(
-                gf.day_capacity_minor.read(&expired_day).unwrap(),
+                gf.expiry_day_capacity_minor.read(&expired_day).unwrap(),
                 U256::ZERO,
                 "immediately after OSGM (before OSIX and OSCR), GemFactory phase 2 expire_through must release expired day capacity"
             );

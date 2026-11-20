@@ -22,7 +22,7 @@ use crate::sol_ext::IIntexNFT1155;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
 /// Issues one reward gem priced at `entry_price`, with its call price on
-/// `call_anchor_price_minor`. The caller resolves both for the gem's own day.
+/// `call_anchor_price_minor`. The caller resolves both at the hour of the issue.
 pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<U256> {
     let GemIssueParams {
         owner,
@@ -43,7 +43,6 @@ pub fn issue_gem(storage: &StorageHandle<'_>, params: GemIssueParams) -> Result<
     }
     check_gem_currencies(issuance_currency, reference_currency)?;
 
-    // The caller resolves the price: it knows which day the gem belongs to.
     let issued_at = storage.now_secs()?;
     let params = GemAddParams {
         issuer: AGENT_REWARD_ADDRESS,
@@ -200,8 +199,11 @@ pub fn create_gem_factory_position(
     )?;
     outbe_intex::api::release_if_spent(storage, source_series_id)?;
 
-    let gem_factory_position_id =
-        GemFactoryContract::generate_position_id(source_series_id, caller, storage.block_number()?);
+    let gem_factory_position_id = GemFactoryContract::generate_gem_factory_position_id(
+        source_series_id,
+        caller,
+        storage.block_number()?,
+    );
 
     let mut factory = GemFactoryContract::new(storage.clone());
     let position = GemFactoryPosition {
@@ -318,7 +320,7 @@ pub fn issue_merchant_gem(
 
     record.remaining_capacity_minor = remaining;
     factory.positions.update(&record)?;
-    factory.take_day_capacity(record.expiry_day()?, promis_load)?;
+    factory.take_expiry_day_capacity(record.expiry_day()?, promis_load)?;
 
     let prev_total = factory.total_gems_issued.read()?;
     let new_total = prev_total

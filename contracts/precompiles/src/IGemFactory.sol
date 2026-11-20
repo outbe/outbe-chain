@@ -87,7 +87,7 @@ interface IGemFactory {
         returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
 
     // --- GemFactory position: a record with an owner, not a token ---
-    // An expired position stays readable until the cleanup deletes it. The positions of an
+    // An expired position stays readable until its deletion. The positions of an
     // owner are found from `GemFactoryPositionCreated`.
     /// @notice Full terms of the position `gemFactoryPositionId`.
     function getGemFactoryPosition(uint256 gemFactoryPositionId) external view returns (GemFactoryPositionData memory);

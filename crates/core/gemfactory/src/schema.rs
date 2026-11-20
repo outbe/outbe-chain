@@ -83,12 +83,12 @@ pub struct GemFactoryContract {
 
     /// The positions of each expiry day, and the capacity they have left to issue.
     #[attribute(order = 5)]
-    pub day_positions:
+    pub expiry_day_positions:
         outbe_primitives::storage::dsl::Map<u32, outbe_primitives::storage::dsl::List<U256>>,
     #[attribute(order = 6)]
-    pub day_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+    pub expiry_day_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
     #[attribute(order = 7)]
-    pub day_capacity_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub expiry_day_capacity_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
 
     // The queue stores expiry days as `day + 1` and schedules them by that day.
     #[attribute(order = 8)]
@@ -114,33 +114,33 @@ pub struct GemFactoryContract {
 
     // This queue stores the encoded expired days whose positions await deletion.
     #[attribute(order = 18)]
-    pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub deletion_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 19)]
-    pub cleanup_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub deletion_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 20)]
-    pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub deletion_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 21)]
-    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub deletion_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 22)]
-    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub deletion_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 23)]
-    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub deletion_day_at: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 24)]
-    pub cleanup_entry_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
+    pub deletion_entry_slot: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 25)]
-    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
+    pub deletion_deadline: outbe_primitives::storage::dsl::Map<u64, u64>,
     #[attribute(order = 26)]
-    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub deletion_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 27)]
-    pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub deletion_cursor: outbe_primitives::storage::dsl::Value<u64>,
     #[attribute(order = 28)]
-    pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
+    pub deletion_budget: outbe_primitives::storage::dsl::Value<U256>,
 }
 
 impl GemFactoryContract<'_> {
     /// `keccak256(source_series_id || owner || block_number_be)`. A series is held by many
     /// owners and any may send units, so the owner tells two positions of one block apart.
-    pub fn generate_position_id(
+    pub fn generate_gem_factory_position_id(
         source_series_id: SeriesId,
         owner: Address,
         block_number: u64,

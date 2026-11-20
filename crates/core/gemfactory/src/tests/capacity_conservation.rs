@@ -21,13 +21,13 @@ const REMAINDER: u64 = 3_000_007;
 
 #[test]
 fn position_queue_encoding_keeps_day_zero_and_the_last_supported_day() {
-    use crate::state::{position_queue_day, position_queue_entry};
+    use crate::state::{position_queue_entry, position_queue_expiry_day};
     for day in [0, 1, outbe_system_common::math::constants::MAX_BIN_ID] {
         let entry = position_queue_entry(day);
         assert_ne!(entry, 0);
-        assert_eq!(position_queue_day(entry).unwrap(), day);
+        assert_eq!(position_queue_expiry_day(entry).unwrap(), day);
     }
-    assert!(position_queue_day(0).is_err());
+    assert!(position_queue_expiry_day(0).is_err());
 }
 
 #[test]
@@ -164,7 +164,7 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
         assert_eq!(gem.call_sweep_day.read().unwrap(), 0);
         assert_eq!(
             GemFactoryContract::new(s.clone())
-                .day_capacity_minor
+                .expiry_day_capacity_minor
                 .read(&expiry_day())
                 .unwrap(),
             U256::ZERO
@@ -225,7 +225,10 @@ fn expiry_day() -> u32 {
 fn conserved(p: &mut HashMapStorageProvider, terminal: bool) {
     StorageHandle::enter(p, |s| {
         let factory = GemFactoryContract::new(s.clone());
-        let left = factory.day_capacity_minor.read(&expiry_day()).unwrap();
+        let left = factory
+            .expiry_day_capacity_minor
+            .read(&expiry_day())
+            .unwrap();
         let returned = PromisLimitContract::new(s).promis_limit().unwrap();
         assert_eq!(left + returned, U256::from(REMAINDER));
         if terminal {

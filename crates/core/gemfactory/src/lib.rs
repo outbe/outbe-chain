@@ -1,5 +1,5 @@
 //! GemFactory: Gem issuance, settlement and mining, the Gem call and forfeit sweeps, and
-//! the factory's own position NFT. Gem data lives in the Gem crate.
+//! the GemFactory positions. Gem data lives in the Gem crate.
 
 pub mod api;
 pub(crate) mod call_progress;

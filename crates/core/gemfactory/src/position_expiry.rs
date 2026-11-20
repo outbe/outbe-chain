@@ -13,7 +13,9 @@ use crate::errors::GemFactoryError;
 use crate::precompile::IGemFactory::GemFactoryPositionExpired;
 use crate::runtime::emit_event;
 use crate::schema::GemFactoryContract;
-use crate::state::{position_queue_day, PositionCleanupQueue, PositionExpiryQueue};
+use crate::state::{
+    position_queue_expiry_day, GemFactoryPositionDeletionQueue, GemFactoryPositionExpiryQueue,
+};
 use alloy_primitives::U256;
 
 pub(crate) fn expire_through(
@@ -23,7 +25,7 @@ pub(crate) fn expire_through(
 ) -> Result<deadline_queue::Progress> {
     let queue = GemFactoryContract::new(ctx.storage.clone());
     deadline_queue::process_day(
-        &PositionExpiryQueue(&queue),
+        &GemFactoryPositionExpiryQueue(&queue),
         ctx,
         through_day,
         budget,
@@ -40,9 +42,9 @@ pub fn delete_expired_positions(ctx: &BlockRuntimeContext) -> Result<u32> {
         deleted: 0,
     };
     deadline_queue::process_cleanup(
-        &PositionCleanupQueue(&queue),
+        &GemFactoryPositionDeletionQueue(&queue),
         ctx,
-        &queue.cleanup_budget,
+        &queue.deletion_budget,
         &mut deletion,
     )?;
     Ok(deletion.deleted)
@@ -70,7 +72,7 @@ impl DeadlineHandler<u64> for GemFactoryPositionExpiry<'_, '_> {
         Ok(
             match self
                 .factory
-                .day_position_count(position_queue_day(entry)?)?
+                .expiry_day_position_count(position_queue_expiry_day(entry)?)?
             {
                 0 => Due::Drop,
                 _ => Due::Process,
@@ -88,18 +90,18 @@ impl DeadlineHandler<u64> for GemFactoryPositionExpiry<'_, '_> {
 
     /// Nobody issued the capacity, so it goes back to the Promis reserve.
     fn process_member(&mut self, entry: u64, _member: u64) -> Result<()> {
-        let day = position_queue_day(entry)?;
-        let returned = self.factory.day_capacity_minor.read(&day)?;
+        let day = position_queue_expiry_day(entry)?;
+        let returned = self.factory.expiry_day_capacity_minor.read(&day)?;
         if !returned.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
                 .add(outbe_promislimit::LimitSource::GemFactoryPosition, returned)?;
         }
-        self.factory.day_capacity_minor.clear(&day)?;
-        self.factory.hand_day_to_deletion(day)
+        self.factory.expiry_day_capacity_minor.clear(&day)?;
+        self.factory.hand_expiry_day_to_deletion(day)
     }
 
     fn deferred(&mut self, entry: u64, retry_at: u64) -> Result<()> {
-        let day = position_queue_day(entry)?;
+        let day = position_queue_expiry_day(entry)?;
         tracing::warn!(target: "outbe::gemfactory", day, retry_at, "position expiry: day deferred");
         Ok(())
     }
@@ -119,7 +121,7 @@ impl DeadlineHandler<u64> for GemFactoryPositionDeletion<'_, '_> {
         Ok(
             match self
                 .factory
-                .day_position_count(position_queue_day(entry)?)?
+                .expiry_day_position_count(position_queue_expiry_day(entry)?)?
             {
                 0 => Due::Drop,
                 _ => Due::Process,
@@ -128,11 +130,13 @@ impl DeadlineHandler<u64> for GemFactoryPositionDeletion<'_, '_> {
     }
 
     fn member_count(&self, entry: u64) -> Result<u32> {
-        self.factory.day_position_count(position_queue_day(entry)?)
+        self.factory
+            .expiry_day_position_count(position_queue_expiry_day(entry)?)
     }
 
     fn member_at(&self, entry: u64, index: u32) -> Result<U256> {
-        self.factory.day_position(position_queue_day(entry)?, index)
+        self.factory
+            .expiry_day_position(position_queue_expiry_day(entry)?, index)
     }
 
     fn classify(&self, error: &PrecompileError) -> PassFailure {
@@ -158,7 +162,7 @@ impl DeadlineHandler<u64> for GemFactoryPositionDeletion<'_, '_> {
     }
 
     fn deferred(&mut self, entry: u64, retry_at: u64) -> Result<()> {
-        let day = position_queue_day(entry)?;
+        let day = position_queue_expiry_day(entry)?;
         tracing::warn!(target: "outbe::gemfactory", day, retry_at, "position deletion: day deferred");
         Ok(())
     }

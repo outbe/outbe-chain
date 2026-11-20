@@ -215,7 +215,7 @@ fn a_storage_fault_in_the_position_sweep_fails_the_block() {
         let record = factory.positions.get(id).unwrap().unwrap();
         assert_ne!(
             factory
-                .day_capacity_minor
+                .expiry_day_capacity_minor
                 .read(&record.expiry_day().unwrap())
                 .unwrap(),
             U256::ZERO
