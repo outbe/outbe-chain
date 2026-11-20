@@ -109,6 +109,7 @@ tracing.workspace = true
 x25519-dalek.workspace = true
 
 [dev-dependencies]
+postcard.workspace = true
 outbe-execution = { workspace = true, features = ["test-utils"] }
 metrics-util = "0.20"
 metrics-process.workspace = true

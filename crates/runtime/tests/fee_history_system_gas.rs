@@ -300,6 +300,7 @@ async fn rpc_fee_history_uses_visible_system_gas() -> eyre::Result<()> {
         evm_signer: Some(signer),
         runtime_host: Some(Arc::new(outbe_runtime::OutbeRuntime::new())),
         pool_policy: Arc::new(outbe_runtime::OutbeRuntime::new()),
+        rpc_protection: Default::default(),
     };
     let NodeHandle {
         node,

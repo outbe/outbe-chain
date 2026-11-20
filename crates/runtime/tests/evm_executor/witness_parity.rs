@@ -2,6 +2,78 @@ use super::*;
 use alloy_primitives::{B256, U256};
 use std::sync::Arc;
 
+/// The witness entry `consensus_witness_call` records for `value`: its tagged tag-free body
+/// beside the inputs hash and the signature.
+fn witness_entry_len<T: outbe_core_common::confidential_tee::WitnessSchema>(value: &T) -> usize {
+    use outbe_core_common::confidential_tee::{encode_tagged_payload, WitnessSchema};
+    let mut body = value.clone();
+    body.set_attestation_tag(Vec::new());
+    let entry = outbe_tee::witness::EnclaveWitnessEntryV1::Payload {
+        payload: encode_tagged_payload(T::TAG, &body).unwrap(),
+        inputs_canonical_hash: WitnessSchema::inputs_canonical_hash(value),
+        attestation_tag: WitnessSchema::attestation_tag(value).to_vec(),
+    };
+    postcard::to_allocvec(&entry).unwrap().len()
+}
+
+/// The end-block reserve holds the Nod forfeit and the Credis cleanup at their full block budget,
+/// and the reserve itself fits the tape.
+#[test]
+fn the_end_block_reserve_holds_both_private_passes_at_their_full_budget() {
+    use outbe_gratis::{GratisOpResult, GratisOpStatus};
+    use outbe_system_common::pass_budget::{SWEEP_WRITES_PER_BLOCK, WITNESS_BYTES_PER_WRITE};
+    use outbe_tee::witness::{EnclaveWitnessEntryV1, EnclaveWitnessTapeV1, TxWitnessV1};
+    // A `GRA2` balance or event envelope is 92 bytes.
+    const GRATIS_BLOB_LEN: usize = 92;
+
+    let nod_read_len = witness_entry_len(&outbe_nod::nod_host::NodGroupLoadReadV1 {
+        amount: U256::MAX,
+        inputs_canonical_hash: B256::repeat_byte(0x01),
+        attestation_tag: vec![0x02; 64],
+    });
+    let pledge_burn_len = witness_entry_len(&GratisOpResult {
+        status: GratisOpStatus::Applied,
+        new_balance: vec![0x03; GRATIS_BLOB_LEN],
+        new_pledged: vec![0x04; GRATIS_BLOB_LEN],
+        event_amount: U256::MAX,
+        next_op_nonce: u64::MAX,
+        fidelity: None,
+        inputs_canonical_hash: B256::repeat_byte(0x05),
+        attestation_tag: vec![0x06; 64],
+        encrypted_event_amount: vec![0x07; GRATIS_BLOB_LEN],
+    });
+    assert!(nod_read_len <= outbe_nod::constants::GROUP_LOAD_READ_WITNESS_BYTES as usize);
+    assert!(pledge_burn_len <= outbe_gratis::enclave_client::COLLATERAL_OP_WITNESS_BYTES as usize);
+
+    // A write records at most this one entry's worth of witness.
+    let unit = WITNESS_BYTES_PER_WRITE as usize;
+    let entry = EnclaveWitnessEntryV1::Payload {
+        payload: vec![0x08; unit - 100],
+        inputs_canonical_hash: B256::repeat_byte(0x09),
+        attestation_tag: vec![0x0A; 64],
+    };
+    assert_eq!(postcard::to_allocvec(&entry).unwrap().len(), unit);
+    let suffix = EnclaveWitnessTapeV1 {
+        prefix: Vec::new(),
+        txs: (0..2)
+            .map(|tx_index| TxWitnessV1 {
+                tx_index,
+                entries: vec![entry.clone(); SWEEP_WRITES_PER_BLOCK as usize],
+            })
+            .collect(),
+    };
+    assert!(
+        postcard::to_allocvec(&suffix).unwrap().len()
+            <= outbe_evm::executor::witness::END_BLOCK_WITNESS_RESERVE_BYTES
+    );
+    assert!(
+        outbe_tee::witness::compressed_witness_bound(
+            outbe_evm::executor::witness::END_BLOCK_WITNESS_RESERVE_BYTES
+        ) + 3
+            <= outbe_primitives::reshare_artifact::ENCLAVE_WITNESS_RESERVED_BYTES
+    );
+}
+
 #[test]
 fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     use super::fixtures::{
@@ -258,7 +330,7 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     outbe_tee::witness::set_witness_policy_for_test(None);
 }
 
-fn resident_context(seed: u8) -> Arc<outbe_tee::in_process::InProcessTeeContext> {
+pub(super) fn resident_context(seed: u8) -> Arc<outbe_tee::in_process::InProcessTeeContext> {
     use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
     use outbe_tee::resident::ResidentOfferMaterial;
     let binding = NetworkBindingV1 {

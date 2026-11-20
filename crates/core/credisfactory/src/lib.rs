@@ -24,6 +24,7 @@ pub mod rules;
 pub mod runtime;
 mod sol_ext;
 
+pub use cleanup::PLEDGE_BURN_COST;
 pub use hooks::CredisFactoryModule;
 
 #[cfg(test)]

@@ -8,6 +8,7 @@ pub mod engine;
 pub mod errors;
 pub mod node;
 pub mod payload_builder;
+pub mod rpc_middleware;
 pub mod shutdown;
 pub mod state_persistence;
 pub mod state_proof;
@@ -24,6 +25,7 @@ pub use node::OutbeNode;
 pub use outbe_evm::{OutbeEvmFactory, OutbeExecutorBuilder};
 pub use outbe_txpool::OutbePoolBuilder;
 pub use payload_builder::OutbePayloadBuilder;
+pub use rpc_middleware::{OutbeRpcMiddleware, OutbeRpcMiddlewareLayer, OutbeRpcProtectionConfig};
 
 use reth_db::DatabaseEnv;
 use reth_ethereum::node::node::EthereumEthApiBuilder;
@@ -44,5 +46,6 @@ pub type OutbeFullNode = FullNode<
         OutbeEngineValidatorBuilder,
         NoopEngineApiBuilder,
         BasicEngineValidatorBuilder<OutbeEngineValidatorBuilder>,
+        OutbeRpcMiddlewareLayer,
     >,
 >;

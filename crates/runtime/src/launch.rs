@@ -150,11 +150,17 @@ where
         bridge.set_operating_mode(consensus_operating_mode(args.is_validator));
         let proof_chain_id = builder.config().chain.chain().id();
         let genesis_hash = builder.config().chain.genesis_hash();
+        let rpc_max_response_size_bytes =
+            reth_ethereum::rpc::builder::config::RethRpcServerConfig::rpc_max_response_size_bytes(
+                &builder.config().rpc,
+            );
         let outbe_execution = build_outbe_execution(
             bridge.clone(),
             evm_signer.clone(),
             shutdown.clone(),
             Arc::clone(&runtime_for_launcher),
+            outbe_execution::OutbeRpcProtectionConfig::default()
+                .with_max_response_size_bytes(rpc_max_response_size_bytes),
         );
         let radicle_status_for_rpc = radicle_status.clone();
         // Canary-fed enclave health. The tee-canary worker (spawned after node launch)
@@ -392,6 +398,7 @@ fn build_outbe_execution(
     evm_signer: Option<Arc<OutbeEvmSigner>>,
     shutdown: outbe_execution::shutdown::NodeShutdown,
     runtime: Arc<OutbeRuntime>,
+    rpc_protection: outbe_execution::OutbeRpcProtectionConfig,
 ) -> OutbeNode {
     let pool_policy = Arc::clone(&runtime) as Arc<dyn TxPoolZeroFeePolicy>;
     let outbe_execution = match evm_signer {
@@ -401,6 +408,7 @@ fn build_outbe_execution(
     outbe_execution
         .with_shutdown(shutdown)
         .with_runtime_host(runtime as Arc<dyn EvmRuntimeHost>)
+        .with_rpc_protection(rpc_protection)
 }
 
 fn create_outbe_rpc_handler<P>(

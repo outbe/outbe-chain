@@ -42,3 +42,6 @@ pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECONDS_PER_DAY_U32;
 /// period elapses, the CycleTick forfeit sweep forfeits the group's unpaid Nods and
 /// the cleanup deletes them.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
+
+/// Enclave witness one open load read of a group or a series records at most.
+pub const GROUP_LOAD_READ_WITNESS_BYTES: u32 = 168;
