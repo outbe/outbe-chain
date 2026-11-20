@@ -25,7 +25,7 @@ pub struct TributeFactoryContract {
 
     // slot 1: WorldwideDay records (wwd -> 1-slot packed WorldwideDay)
     #[attribute(order = 1)]
-    pub worldwide_days: Map<WorldwideDay, crate::worldwideday::schema::WorldwideDay>,
+    pub worldwide_days: Map<WorldwideDay, crate::worldwide_day::schema::WorldwideDay>,
 
     // slots 2..3: unsealed pipeline WorldwideDays
     #[attribute(order = 2)]

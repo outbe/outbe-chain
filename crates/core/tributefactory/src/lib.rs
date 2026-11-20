@@ -6,7 +6,7 @@ pub mod precompile;
 pub mod runtime;
 pub mod schema;
 pub mod state;
-pub mod worldwideday;
+pub mod worldwide_day;
 
 #[cfg(any(test, feature = "test-utils"))]
 pub mod test_support;
@@ -16,7 +16,7 @@ pub mod test_support;
 pub mod bench_support;
 
 pub use schema::TributeFactoryContract;
-pub use worldwideday::{NewWwdSchedule, WwdProjection};
+pub use worldwide_day::{NewWwdSchedule, WwdProjection};
 
 #[cfg(test)]
 mod tests;

@@ -48,7 +48,7 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
         tc.issue_with_league(&t1, Some(100)).unwrap();
         tc.issue_with_league(&t2, Some(100)).unwrap();
         tc.issue_with_league(&t_unquoted, Some(100)).unwrap();
-        in_process_ready(&storage, || tc.seal_day(day));
+        in_process_ready(&storage, || tc.seal_worldwide_day(day));
 
         tc.day_emission_day
             .write(&day, EmissionDate::new(emission_day_key))
@@ -226,7 +226,7 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
         seed_entry_price(&storage, 840, price_day, U256::from(2_000_000u64));
         tc.issue_with_league(&t_tiny, Some(100)).unwrap();
         tc.issue_with_league(&t_normal, Some(4000)).unwrap();
-        in_process_ready(&storage, || tc.seal_day(day_zero_load));
+        in_process_ready(&storage, || tc.seal_worldwide_day(day_zero_load));
         let binding = metadosis_process_ready_binding(1, 0, base_ts);
         let (_fracs, allocated) = storage
             .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
@@ -254,7 +254,7 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
         set_owner(&mut t_aborted, owner1);
         set_day(&mut t_aborted, day_aborted);
         tc.issue_with_league(&t_aborted, Some(200)).unwrap();
-        in_process_ready(&storage, || tc.seal_day(day_aborted));
+        in_process_ready(&storage, || tc.seal_worldwide_day(day_aborted));
         let aborted_emission_day = 20250112u32;
         tc.day_emission_day
             .write(&day_aborted, EmissionDate::new(aborted_emission_day))
@@ -278,7 +278,7 @@ fn clean_handles_settled_nod_aborted_emission_day_retired_fi_groups_and_zero_loa
         set_owner(&mut t_retired, owner1);
         set_day(&mut t_retired, day_retired);
         tc.issue_with_league(&t_retired, Some(300)).unwrap();
-        in_process_ready(&storage, || tc.seal_day(day_retired));
+        in_process_ready(&storage, || tc.seal_worldwide_day(day_retired));
         tc.retired_days.write(&day_retired, true).unwrap();
         assert_eq!(tc.tribute_leagues.read(&t_retired.tribute_id).unwrap(), 300);
         let clean_retired = crate::precompile::ITribute::cleanCall {
@@ -332,7 +332,7 @@ fn a_zero_load_tribute_stays_out_of_its_series_and_cleans_at_once() {
         seed_entry_price(&storage, 840, price_day, U256::from(2_000_000u64));
         tc.issue_with_league(&t_tiny, Some(100)).unwrap();
         tc.issue_with_league(&t_normal, Some(4000)).unwrap();
-        in_process_ready(&storage, || tc.seal_day(day));
+        in_process_ready(&storage, || tc.seal_worldwide_day(day));
         let binding = metadosis_process_ready_binding(1, 0, base_ts);
         storage
             .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {

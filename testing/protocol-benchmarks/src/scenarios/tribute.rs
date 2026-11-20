@@ -319,7 +319,7 @@ fn calldata(fixture: &Fixture) -> Vec<u8> {
 }
 
 fn seed_offer_world(storage: StorageHandle<'_>) {
-    outbe_metadosis::bench_support::create_worldwide_day(
+    outbe_metadosis::bench_support::open_worldwide_day(
         storage.clone(),
         storage.block_number().unwrap(),
         storage.now_secs().unwrap(),

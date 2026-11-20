@@ -42,7 +42,7 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
             tc.issue_with_league(&t1, Some(100)).unwrap();
             tc.issue_with_league(&t2, Some(200)).unwrap();
             tc.issue_with_league(&t3, Some(200)).unwrap();
-            in_process_ready(&storage, || tc.seal_day(day));
+            in_process_ready(&storage, || tc.seal_worldwide_day(day));
 
             let binding = metadosis_process_ready_binding(1, 0, base_ts);
             storage
@@ -52,11 +52,11 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
                 .unwrap();
 
             outbe_emission::api::link_wwd(storage.clone(), price_day, day).unwrap();
-            let totals_call = crate::precompile::ITribute::getDayTotalsCall {
+            let totals_call = crate::precompile::ITribute::dayTotalsCall {
                 emissionDay: price_day,
             }
             .abi_encode();
-            let totals_before = crate::precompile::ITribute::getDayTotalsCall::abi_decode_returns(
+            let totals_before = crate::precompile::ITribute::dayTotalsCall::abi_decode_returns(
                 &crate::precompile::dispatch(storage.clone(), &totals_call, owner1, U256::ZERO)
                     .unwrap(),
             )
@@ -86,7 +86,7 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
             // `group_open_load_ct` and `tributeNominalTotalMinor` must be completely unchanged after `issueNod`.
             let open_load_ct_after = nod_contract.encrypted_group_open_load(group_key).unwrap();
             assert_eq!(open_load_ct_after, open_load_ct_before);
-            let totals_after = crate::precompile::ITribute::getDayTotalsCall::abi_decode_returns(
+            let totals_after = crate::precompile::ITribute::dayTotalsCall::abi_decode_returns(
                 &crate::precompile::dispatch(storage.clone(), &totals_call, owner1, U256::ZERO)
                     .unwrap(),
             )
