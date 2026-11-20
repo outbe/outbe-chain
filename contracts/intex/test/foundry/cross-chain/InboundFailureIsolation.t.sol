@@ -14,7 +14,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 /// @notice Behavioural coverage Pattern B on `IntexNFT1155Bridge`: a per-item
 ///         `token.crosschainMint` revert no longer reverts the whole batch. Instead:
 ///         - the bridge records the failure as a `FailedCrosschainMint` snapshot,
-///         - the bridge emits `CrosschainMintFailed`,
+///         - the bridge emits `IntexCrosschainReceiveFailed`,
 ///         - `retryCrosschainMint` re-attempts the crosschainMint after the upstream issue is
 ///           fixed.
 ///         This is the Critical funds-lock fix from the contract review (R-04).

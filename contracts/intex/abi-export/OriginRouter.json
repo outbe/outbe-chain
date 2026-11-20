@@ -897,7 +897,25 @@
         "internalType": "bytes14[]"
       }
     ],
-    "outputs": [],
+    "outputs": [
+      {
+        "name": "failedLegs",
+        "type": "tuple[]",
+        "internalType": "struct IOriginRouter.FailedCallNoticeLeg[]",
+        "components": [
+          {
+            "name": "dstChainId",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "idx",
+            "type": "uint256",
+            "internalType": "uint256"
+          }
+        ]
+      }
+    ],
     "stateMutability": "payable"
   },
   {
@@ -1273,6 +1291,31 @@
   },
   {
     "type": "event",
+    "name": "IntexSeriesCallNoticeSent",
+    "inputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "IssuanceInstructionsSent",
     "inputs": [
       {
@@ -1292,25 +1335,6 @@
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "MarkCalledSent",
-    "inputs": [
-      {
-        "name": "sendId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
       }
     ],
     "anonymous": false

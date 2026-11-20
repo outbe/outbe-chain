@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
-use outbe_intex::{SeriesId, SERIES_ID_LEN};
+use outbe_intex::SeriesId;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::INTEX_FACTORY_ADDRESS;
@@ -219,16 +219,28 @@ pub(crate) fn owner_balances(
     })
 }
 
+/// Units of one series that one owner holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OwnerUnits {
+    pub series_id: SeriesId,
+    pub owner: Address,
+    pub units: U256,
+}
+
 /// Settle paying the cost from `payer` in `asset` by ERC20 transfer. The settled
 /// units stay with `owner`. An issuance-currency payment must name the VWAP
-/// snapshot required at this block.
+/// snapshot required at this block, and the cost must fit the payer's cap.
 pub fn settle_intex(
     storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    owner: Address,
-    units: U256,
+    held: OwnerUnits,
     payment: SettlementPayment,
+    amount_cap_minor: U256,
 ) -> Result<()> {
+    let OwnerUnits {
+        series_id,
+        owner,
+        units,
+    } = held;
     let SettlementPayment {
         payer,
         asset,
@@ -259,6 +271,8 @@ pub fn settle_intex(
         &pricing::settlement_cost(&series, units),
     )?;
     quote.require_snapshot(snapshot_id)?;
+    settlement::require_funds(storage, payer, asset, amount_cap_minor)?;
+    quote.require_within_cap(amount_cap_minor)?;
     storage.clone().with_checkpoint(|| {
         // The units move before payment so a token callback cannot settle them
         // twice. A failed payment rolls the move back.
@@ -280,18 +294,15 @@ pub fn settle_intex(
 
         settlement::collect(storage, payer, asset, quote.payment_minor)?;
 
-        emit_event(
-            storage,
-            crate::precompile::IIntexFactory::IntexSettled {
-                intexId: outbe_intex::intex_id(series_id),
-                owner,
-                asset,
-                issuanceCurrency: series.issuance_currency,
-                referenceCurrency: series.reference_currency,
-                amountMinor: quote.payment_minor,
-                units: settled_units,
-            },
-        )
+        IntexContract::new(storage.clone()).emit(outbe_intex::precompile::IIntex::IntexSettled {
+            intexId: outbe_intex::intex_id(series_id),
+            owner,
+            issuanceCurrency: series.issuance_currency,
+            referenceCurrency: series.reference_currency,
+            asset,
+            amountMinor: quote.payment_minor,
+            units: settled_units,
+        })
     })
 }
 
@@ -322,8 +333,6 @@ mod mining;
 mod pricing;
 mod proceeds;
 
-#[cfg(test)]
-pub(crate) use mining::compute_pow_hash;
 pub(crate) use mining::validate_pow;
 pub use mining::{mine_promis, MiningProof};
 pub use pricing::quote_settlement;

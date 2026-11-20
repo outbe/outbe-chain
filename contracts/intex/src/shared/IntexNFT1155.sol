@@ -282,6 +282,25 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
     }
 
     /// @inheritdoc IIntexNFT1155
+    function burnForfeited(address owner, bytes14 seriesId) external {
+        uint256 tokenId = _issuedTokenId(seriesId);
+        IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
+        if (data.issuedAt == 0) revert NonexistentToken(tokenId);
+        IIntexNFT1155.IntexState state = _effectiveState(data);
+        if (state != IIntexNFT1155.IntexState.Forfeited) {
+            revert InvalidState(uint8(IIntexNFT1155.IntexState.Forfeited), uint8(state));
+        }
+        uint256 units = balanceOf(owner, tokenId);
+        if (units == 0) revert ZeroUnits();
+
+        // forge-lint: disable-next-line(unsafe-typecast) -- units <= totalSupply (uint32)
+        uint32 burned = uint32(units);
+        data.totalSupply -= burned;
+        _burn(owner, tokenId, units);
+        emit IntexForfeited(tokenId, owner, data.issuanceCurrency, data.referenceCurrency, burned);
+    }
+
+    /// @inheritdoc IIntexNFT1155
     function seriesExists(bytes14 seriesId) external view returns (bool) {
         return _s().seriesData[_issuedTokenId(seriesId)].issuedAt != 0;
     }

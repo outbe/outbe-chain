@@ -50,18 +50,21 @@ pub fn dispatch(
                 settleIntex(c) => mutate_void(&storage, c, caller, |sender, c| {
                     runtime::settle_intex(
                         &storage,
-                        series_of(&storage, c.intexId)?,
-                        c.owner,
-                        c.units,
+                        runtime::OwnerUnits {
+                            series_id: series_of(&storage, c.intexId)?,
+                            owner: c.owner,
+                            units: c.units,
+                        },
                         SettlementPayment {
                             payer: sender,
                             asset: c.asset,
                             snapshot_id: c.snapshotId,
                         },
+                        c.amountCapMinor,
                     )
                 }),
                 quoteSettlement(c) => metadata::<IIntexFactory::quoteSettlementCall>(|| {
-                    let (settlement_currency, payment_minor, snapshot_id) =
+                    let (settlement_currency, amount_minor, snapshot_id) =
                         runtime::quote_settlement(
                             &storage,
                             series_of(&storage, c.intexId)?,
@@ -70,14 +73,14 @@ pub fn dispatch(
                         )?;
                     Ok(IIntexFactory::quoteSettlementReturn {
                         settlementCurrency: settlement_currency,
-                        paymentMinor: payment_minor,
+                        amountMinor: amount_minor,
                         snapshotId: snapshot_id,
                     })
                 }),
                 // Off-chain the owner brute-forces `nonce` so the work hash
-                // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8), over the
-                // series id `intexId` names, has the protocol's leading zero bytes. `seq` is the on-chain
-                // per-(series, owner) counter.
+                // SHA256(tag ++ intexId_be32 ++ owner ++ seq_be8 ++ nonce_be8 ++ promisAmount_be32)
+                // has the protocol's leading zero bytes. `seq` is the on-chain per-(series, owner)
+                // counter.
                 minePromis(c) => mutate(&storage, c, caller, |_sender, c| {
                     let auth = outbe_promisfactory::api::ModifyAuth {
                         mac: c.mac.0,

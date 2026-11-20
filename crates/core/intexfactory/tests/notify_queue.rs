@@ -13,9 +13,10 @@ use alloy_sol_types::SolEvent;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::constants::{MAX_REFUSED_RUNS_PER_BLOCK, NOTICE_RETRY_SECONDS};
 use outbe_intexfactory::notify::{
-    call_notice_attempts, notice_retry_at, pack_call_notice, send_called_notices, with_retry_at,
+    call_notice_attempts, notice_retry_at, pack_call_notice, send_call_notices, with_retry_at,
+    KeptLeg,
 };
-use outbe_intexfactory::precompile::IIntexFactory::IntexSeriesCallNoticeFailed;
+use outbe_intexfactory::precompile::IIntexFactory::IntexSeriesCallNoticeSendFailed;
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -110,7 +111,7 @@ fn drain_at(handle: &StorageHandle<'_>, now: u64) {
         },
         handle.clone(),
     );
-    send_called_notices(&ctx).expect("a refused notice never fails the send");
+    send_call_notices(&ctx).expect("a refused notice never fails the send");
 }
 
 fn queue_bounds(handle: &StorageHandle<'_>) -> (u32, u32) {
@@ -245,11 +246,11 @@ fn queued(handle: &StorageHandle<'_>, index: u32) -> U256 {
         .unwrap()
 }
 
-fn failed_notices(storage: &HashMapStorageProvider) -> Vec<IntexSeriesCallNoticeFailed> {
+fn failed_notices(storage: &HashMapStorageProvider) -> Vec<IntexSeriesCallNoticeSendFailed> {
     storage
         .get_events(INTEX_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| IntexSeriesCallNoticeFailed::decode_log_data(log).ok())
+        .filter_map(|log| IntexSeriesCallNoticeSendFailed::decode_log_data(log).ok())
         .collect()
 }
 
@@ -318,7 +319,10 @@ fn a_notice_refused_at_the_cap_is_dropped_with_an_event() {
     let dropped = failed_notices(&storage);
     assert_eq!(dropped.len(), 1);
     assert_eq!(SeriesId::from(dropped[0].seriesId), series(0));
-    assert_eq!(dropped[0].calledAt, CALLED_AT);
+    assert_eq!(
+        dropped[0].dstChainId, 0,
+        "no router names the chains of the day"
+    );
 }
 
 #[test]
@@ -494,4 +498,237 @@ fn a_router_refusing_every_run_ends_the_block_early() {
             "an entry the block never reached keeps its count"
         );
     });
+}
+
+mod router {
+    alloy_sol_types::sol!("../../../contracts/intex/src/origin/interfaces/IOriginRouter.sol");
+}
+use alloy_sol_types::{SolCall, SolError, SolValue};
+use router::IOriginRouter;
+
+const KEPT_CHAIN: u32 = 97;
+const KEPT_IDX: u64 = 5;
+const ROUTER: alloy_primitives::Address = outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS;
+
+/// A router that sends a notice to every chain but [`KEPT_CHAIN`], keeps that leg at
+/// [`KEPT_IDX`] and answers its reads. `retryMessageSend` gets no answer, so every retry fails.
+fn keep_one_leg(series_ids: &[SeriesId]) -> HashMapStorageProvider {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    stub_kept_leg(&mut storage, series_ids);
+    storage
+}
+
+fn stub_kept_leg(storage: &mut HashMapStorageProvider, series_ids: &[SeriesId]) {
+    storage.stub_sub_call_at_selector(
+        ROUTER,
+        IOriginRouter::sendIntexSeriesCallNoticeCall::SELECTOR,
+        IOriginRouter::sendIntexSeriesCallNoticeCall::abi_encode_returns(&vec![
+            IOriginRouter::FailedCallNoticeLeg {
+                dstChainId: KEPT_CHAIN,
+                idx: U256::from(KEPT_IDX),
+            },
+        ])
+        .into(),
+    );
+    let ids: Vec<alloy_primitives::FixedBytes<14>> =
+        series_ids.iter().map(|id| (*id).into()).collect();
+    let mut payload = vec![1u8, 0u8];
+    payload.extend((20_260_101u32, CALLED_AT, ids).abi_encode_params());
+    storage.stub_sub_call_at_selector(
+        ROUTER,
+        IOriginRouter::getFailedMessageSendCall::SELECTOR,
+        IOriginRouter::getFailedMessageSendCall::abi_encode_returns(
+            &IOriginRouter::FailedMessageSend {
+                dstChainId: KEPT_CHAIN,
+                gasLimit: 0,
+                sent: false,
+                payload: payload.into(),
+            },
+        )
+        .into(),
+    );
+}
+
+fn accept_retries(storage: &mut HashMapStorageProvider) {
+    storage.stub_sub_call_at_selector(
+        ROUTER,
+        IOriginRouter::retryMessageSendCall::SELECTOR,
+        alloy_primitives::Bytes::new(),
+    );
+}
+
+fn router_calls(storage: &HashMapStorageProvider, selector: [u8; 4]) -> usize {
+    storage
+        .sub_call_inputs()
+        .iter()
+        .filter(|input| input.target == ROUTER && input.calldata.starts_with(&selector))
+        .count()
+}
+
+fn retries(storage: &HashMapStorageProvider) -> usize {
+    router_calls(storage, IOriginRouter::retryMessageSendCall::SELECTOR)
+}
+
+fn kept_legs(handle: &StorageHandle<'_>) -> Vec<KeptLeg> {
+    let factory = IntexFactoryContract::new(handle.clone());
+    let (head, tail) = (
+        factory.leg_head.read().unwrap(),
+        factory.leg_tail.read().unwrap(),
+    );
+    (head..tail)
+        .map(|index| KeptLeg::unpack(factory.leg_at.read(&index).unwrap()))
+        .collect()
+}
+
+/// Seeds one notice, sends it, and fails `tries - 1` retries 300 seconds apart.
+fn fail_tries(storage: &mut HashMapStorageProvider, tries: u64) {
+    StorageHandle::enter(storage, |handle| {
+        seed(&handle, 1);
+        for attempt in 0..tries {
+            drain_at(&handle, NOW + attempt * NOTICE_RETRY_SECONDS);
+        }
+    });
+}
+
+#[test]
+fn call_notice_is_sent_again_for_each_failed_chain() {
+    let mut storage = keep_one_leg(&[series(0)]);
+    StorageHandle::enter(&mut storage, |handle| {
+        seed(&handle, 1);
+        drain(&handle);
+        assert_eq!(
+            queue_bounds(&handle),
+            (0, 0),
+            "the other chains took the notice"
+        );
+        assert_eq!(
+            kept_legs(&handle),
+            vec![KeptLeg {
+                idx: KEPT_IDX,
+                dst_chain_id: KEPT_CHAIN,
+                attempts: 1,
+                retry_at: NOW + NOTICE_RETRY_SECONDS,
+            }]
+        );
+        drain_at(&handle, NOW + NOTICE_RETRY_SECONDS - 1);
+    });
+    assert_eq!(retries(&storage), 0, "the leg waits out its pause");
+
+    StorageHandle::enter(&mut storage, |handle| {
+        drain_at(&handle, NOW + NOTICE_RETRY_SECONDS)
+    });
+    let retried: Vec<_> = storage
+        .sub_call_inputs()
+        .iter()
+        .filter(|input| {
+            input
+                .calldata
+                .starts_with(&IOriginRouter::retryMessageSendCall::SELECTOR)
+        })
+        .map(|input| {
+            IOriginRouter::retryMessageSendCall::abi_decode(&input.calldata)
+                .unwrap()
+                .idx
+        })
+        .collect();
+    assert_eq!(
+        retried,
+        vec![U256::from(KEPT_IDX)],
+        "only the kept leg goes again"
+    );
+    assert_eq!(
+        router_calls(
+            &storage,
+            IOriginRouter::sendIntexSeriesCallNoticeCall::SELECTOR
+        ),
+        1,
+        "the chains that took the notice get no second send"
+    );
+    StorageHandle::enter(&mut storage, |handle| {
+        assert_eq!(kept_legs(&handle)[0].attempts, 2);
+    });
+    assert!(failed_notices(&storage).is_empty());
+}
+
+#[test]
+fn a_leg_that_lands_at_the_eighth_try_emits_no_failure() {
+    let mut storage = keep_one_leg(&[series(0)]);
+    fail_tries(&mut storage, 7);
+    accept_retries(&mut storage);
+    StorageHandle::enter(&mut storage, |handle| {
+        drain_at(&handle, NOW + 7 * NOTICE_RETRY_SECONDS);
+        assert!(kept_legs(&handle).is_empty());
+    });
+    assert_eq!(retries(&storage), 7);
+    assert!(failed_notices(&storage).is_empty());
+}
+
+#[test]
+fn a_leg_failed_eight_times_emits_one_failure_and_stays_kept() {
+    let mut storage = keep_one_leg(&[series(0)]);
+    fail_tries(&mut storage, 8);
+    StorageHandle::enter(&mut storage, |handle| {
+        assert!(
+            kept_legs(&handle).is_empty(),
+            "the factory sends it no more"
+        );
+        drain_at(&handle, NOW + 20 * NOTICE_RETRY_SECONDS);
+    });
+    assert_eq!(retries(&storage), 7, "the first send is try 1");
+    let failed = failed_notices(&storage);
+    assert_eq!(failed.len(), 1);
+    assert_eq!(SeriesId::from(failed[0].seriesId), series(0));
+    assert_eq!(failed[0].dstChainId, KEPT_CHAIN);
+}
+
+#[test]
+fn a_leg_another_account_sent_counts_as_delivered() {
+    let mut storage = keep_one_leg(&[series(0)]);
+    fail_tries(&mut storage, 1);
+    storage.stub_sub_call_revert_at(
+        ROUTER,
+        IOriginRouter::NoFailedMessageSend {
+            idx: U256::from(KEPT_IDX),
+        }
+        .abi_encode()
+        .into(),
+    );
+    StorageHandle::enter(&mut storage, |handle| {
+        drain_at(&handle, NOW + NOTICE_RETRY_SECONDS);
+        assert!(kept_legs(&handle).is_empty());
+    });
+    assert_eq!(retries(&storage), 1);
+    assert!(failed_notices(&storage).is_empty());
+}
+
+#[test]
+fn a_day_with_no_target_chain_drops_its_notice() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_revert_at(ROUTER, IOriginRouter::NoTargets {}.abi_encode().into());
+    StorageHandle::enter(&mut storage, |handle| {
+        seed(&handle, 1);
+        drain(&handle);
+        assert_eq!(queue_bounds(&handle), (0, 0), "nobody to tell, so no retry");
+        assert!(kept_legs(&handle).is_empty());
+    });
+    assert!(failed_notices(&storage).is_empty());
+}
+
+/// Seven whole refusals and a kept leg at the eighth send are eight tries of that chain.
+#[test]
+fn a_leg_kept_at_the_last_try_fails_at_once() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    fail_tries(&mut storage, 7);
+    stub_kept_leg(&mut storage, &[series(0)]);
+    StorageHandle::enter(&mut storage, |handle| {
+        drain_at(&handle, NOW + 7 * NOTICE_RETRY_SECONDS);
+        assert_eq!(queue_bounds(&handle), (0, 0));
+        assert!(kept_legs(&handle).is_empty(), "no ninth try");
+        drain_at(&handle, NOW + 8 * NOTICE_RETRY_SECONDS);
+    });
+    assert_eq!(retries(&storage), 0);
+    let failed = failed_notices(&storage);
+    assert_eq!(failed.len(), 1);
+    assert_eq!(SeriesId::from(failed[0].seriesId), series(0));
+    assert_eq!(failed[0].dstChainId, KEPT_CHAIN);
 }

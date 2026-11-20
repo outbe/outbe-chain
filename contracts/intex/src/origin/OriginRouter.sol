@@ -238,7 +238,7 @@ contract OriginRouter is
         _emitSent(sendId, p.dstChainId, payload);
     }
 
-    /// @dev The Sent event of an auction message that left. Series and call notice sends emit their
+    /// @dev The Sent event of an auction or call notice message that left. Series sends emit their
     ///      own events at the call site.
     function _emitSent(bytes32 sendId, uint32 dstChainId, bytes memory payload) private {
         uint8 msgType = uint8(payload[1]);
@@ -251,6 +251,8 @@ contract OriginRouter is
             emit IntexAuctionCancelSent(sendId, emissionDay, dstChainId);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_RESULT) {
             emit IntexAuctionResultSent(sendId, emissionDay, dstChainId, _word32(payload, 6), _word32(payload, 10));
+        } else if (msgType == BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE) {
+            _emitCallNoticeSent(sendId, dstChainId, payload);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS) {
             uint256 winnersCount = _wordAt(payload, BridgeMsgCodec.HEADER_LEN + _bodyWord(payload, 5));
             emit IntexAuctionWinnersSent(
@@ -262,6 +264,14 @@ contract OriginRouter is
                 // forge-lint: disable-next-line(unsafe-typecast) -- the codec caps a page at MAX_PAYLOAD_ARRAY_LEN
                 uint32(winnersCount)
             );
+        }
+    }
+
+    /// @dev Body `abi.encode(emissionDay, calledAt, seriesIds)`: word 3 is the length of the ids.
+    function _emitCallNoticeSent(bytes32 sendId, uint32 dstChainId, bytes memory payload) private {
+        uint256 count = _bodyWord(payload, 3);
+        for (uint256 s = 0; s < count; ++s) {
+            emit IntexSeriesCallNoticeSent(sendId, bytes14(bytes32(_bodyWord(payload, 4 + s))), dstChainId);
         }
     }
 
@@ -468,16 +478,25 @@ contract OriginRouter is
         external
         payable
         onlyRole(INTEX_FACTORY_ROLE)
+        returns (FailedCallNoticeLeg[] memory failedLegs)
     {
         uint32[] memory snapshot = _os().seriesTargets[emissionDay];
         if (snapshot.length == 0) revert NoTargets();
         bytes memory payload = BridgeMsgCodec.encodeIntexSeriesCallNotice(emissionDay, calledAt, seriesIds);
         uint256 gasLimit = IntexGas.intexSeriesCallNotice(seriesIds.length);
+        FailedCallNoticeLeg[] memory kept = new FailedCallNoticeLeg[](snapshot.length);
+        uint256 keptCount;
         for (uint256 i = 0; i < snapshot.length; ++i) {
-            bytes32 sendId = _sendOrKeepFailed(snapshot[i], payload, gasLimit);
-            for (uint256 s = 0; s < seriesIds.length; ++s) {
-                emit MarkCalledSent(sendId, seriesIds[s]);
+            // A kept leg takes the next index, whatever id the gateway gives a sent one.
+            uint256 idx = _os().nextFailedMessageSendIdx;
+            _sendOrKeepFailed(snapshot[i], payload, gasLimit);
+            if (_os().nextFailedMessageSendIdx != idx) {
+                kept[keptCount++] = FailedCallNoticeLeg({dstChainId: snapshot[i], idx: idx});
             }
+        }
+        failedLegs = new FailedCallNoticeLeg[](keptCount);
+        for (uint256 i = 0; i < keptCount; ++i) {
+            failedLegs[i] = kept[i];
         }
     }
 

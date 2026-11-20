@@ -117,6 +117,12 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint64 settlementDeadline
     );
 
+    /// @notice Emitted when an owner's units of a forfeited series are burned on this chain. The
+    ///         value of these units was already returned at the close of the series on Outbe.
+    event IntexForfeited(
+        uint256 indexed intexId, address indexed owner, uint16 issuanceCurrency, uint16 referenceCurrency, uint32 units
+    );
+
     /// @notice Emitted when token metadata is updated (ERC-4906). Per the EIP, `tokenId` is
     ///         non-indexed.
     /// @param tokenId Token id whose metadata changed.
@@ -201,6 +207,12 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @param units Issued units to burn.
     function burnIntex(address owner, bytes14 seriesId, uint256 units) external;
+
+    /// @notice Burn all of `owner`'s units of a series that reads Forfeited on this chain. Any
+    ///         account may call it. Reverts before the transit close or for an empty balance.
+    /// @param owner Owner whose forfeited units are burned.
+    /// @param seriesId Series identifier.
+    function burnForfeited(address owner, bytes14 seriesId) external;
 
     // --- Reads ---
 

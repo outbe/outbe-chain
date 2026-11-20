@@ -80,18 +80,19 @@ impl Rail for Intex {
         );
         Quote {
             currency: quote.settlementCurrency,
-            cost: quote.paymentMinor,
+            cost: quote.amountMinor,
             snapshot_id: quote.snapshotId,
         }
     }
 
-    fn settle_call(self, _id: U256, snapshot_id: U256, _cost: U256) -> Bytes {
+    fn settle_call(self, _id: U256, snapshot_id: U256, cost: U256) -> Bytes {
         IIntexFactory::settleIntexCall {
             intexId: outbe_intex::intex_id(SeriesId::from(FixedBytes(SERIES))),
             owner: OWNER,
             units: U256::from(UNITS),
             asset: ASSET,
             snapshotId: snapshot_id,
+            amountCapMinor: cost,
         }
         .abi_encode()
         .into()
@@ -102,7 +103,8 @@ impl Rail for Intex {
             .evm
             .logs()
             .iter()
-            .filter_map(|log| IIntexFactory::IntexSettled::decode_log_data(&log.data).ok())
+            .filter(|log| log.address == INTEX_ADDRESS)
+            .filter_map(|log| IIntex::IntexSettled::decode_log_data(&log.data).ok())
             .collect();
         assert_eq!(settled.len(), 1);
         assert_eq!(

@@ -45,20 +45,30 @@ interface IIntexFactory {
     ///        the trailing VWAP snapshot required at this block.
     /// @param snapshotId The snapshot `quoteSettlement` returned. An issuance-currency
     ///        payment naming any other snapshot reverts. Ignored on the reference rail.
-    function settleIntex(uint256 intexId, address owner, uint256 units, address asset, uint256 snapshotId) external;
+    /// @param amountCapMinor The most the payer accepts to pay, in `asset`'s minor units. The
+    ///        payer's allowance and balance must cover it, and a cost above it reverts. Only the
+    ///        cost is taken.
+    function settleIntex(
+        uint256 intexId,
+        address owner,
+        uint256 units,
+        address asset,
+        uint256 snapshotId,
+        uint256 amountCapMinor
+    ) external;
 
     /// @notice What settling `units` of `intexId` with `asset` costs,
     ///         and which of the series' two currencies that asset settles on. Priced
     ///         exactly as `settleIntex` charges it. Reverts for an asset the series does
     ///         not accept.
     /// @return settlementCurrency ISO 4217 code the payment is denominated in.
-    /// @return paymentMinor Amount to pay, in `asset`'s own minor units.
+    /// @return amountMinor Amount to pay, in `asset`'s own minor units.
     /// @return snapshotId Trailing VWAP snapshot the amount converts at. Zero on the
     ///         reference rail. It goes stale at the next update cutoff.
     function quoteSettlement(uint256 intexId, address asset, uint256 units)
         external
         view
-        returns (uint16 settlementCurrency, uint256 paymentMinor, uint256 snapshotId);
+        returns (uint16 settlementCurrency, uint256 amountMinor, uint256 snapshotId);
 
     /// @notice Burn settled Intexes and mint confidential Promis, gated by
     ///         off-chain proof of work. Any caller may submit. The units burn from
@@ -120,6 +130,15 @@ interface IIntexFactory {
     ///         `SeriesNotIssued` once the series is Called or Forfeited.
     function getCallProgress(uint256 intexId) external view returns (CallProgress memory);
 
+    /// @notice The series was force-called. It settles until `settlementDeadline`, inclusive.
+    event IntexSeriesCalled(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint64 calledAt,
+        uint64 settlementDeadline
+    );
+
     /// @notice A new series was created from a cleared auction.
     event IntexSeriesOpened(
         bytes14 indexed seriesId,
@@ -134,20 +153,11 @@ interface IIntexFactory {
         uint256 unitPromisLoadMinor
     );
 
-    /// @notice `units` Issued Intexes of `intexId` were settled.
-    event IntexSettled(
-        uint256 indexed intexId,
-        address indexed owner,
-        address asset,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        uint256 amountMinor,
-        uint32 units
-    );
-
-    /// @notice All 8 sends of the series' call notice failed, so the chain sends it no more
-    ///         and the targets were not told of the call.
-    event IntexSeriesCallNoticeFailed(bytes14 indexed seriesId, uint64 calledAt);
+    /// @notice All 8 tries of the series' call notice to `dstChainId` failed, so the factory sends
+    ///         it to that chain no more. A kept message stays in the origin router for anyone to
+    ///         resend. `errorData` is the revert data of the last try. `dstChainId` is 0 when
+    ///         the router refused the whole message and could not name the chains of the day.
+    event IntexSeriesCallNoticeSendFailed(bytes14 indexed seriesId, uint32 indexed dstChainId, bytes errorData);
 
     /// @notice `amountMinor` native COEN (18 decimals) of `emissionDay`'s auction proceeds from
     ///         `srcChainId` was burned.

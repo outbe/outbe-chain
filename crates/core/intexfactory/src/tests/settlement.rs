@@ -200,6 +200,7 @@ fn with_payment_token<R>(
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT));
+    fund_payer(&mut storage, settlement_asset());
     storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
     storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
@@ -296,7 +297,7 @@ fn settlement_quote_dispatch() {
         .unwrap();
         let ret = IIntexFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
         assert_eq!(ret.settlementCurrency, 840);
-        assert_eq!(ret.paymentMinor, U256::from(2_000_000_000_000_000_000u64));
+        assert_eq!(ret.amountMinor, U256::from(2_000_000_000_000_000_000u64));
     });
 }
 
@@ -308,6 +309,7 @@ fn erc20_series() -> HashMapStorageProvider {
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT));
+    fund_payer(&mut storage, settlement_asset());
     storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
         crate::constants::INTEX_NFT1155_ADDRESS,
@@ -351,14 +353,17 @@ fn erc20_settle_asks_the_router_to_take_the_cost_from_the_caller() {
             runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::from(2)).unwrap();
         let err = runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::from(2),
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::from(2),
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         )
         .unwrap_err();
         assert_eq!(
@@ -390,14 +395,17 @@ fn erc20_settle_rejects_an_unaccepted_asset_before_any_transfer() {
         let foreign = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
         assert!(runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::from(1),
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::from(1)
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: foreign,
                 snapshot_id: U256::ZERO
-            }
+            },
+            amount_cap()
         )
         .is_err());
         assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
@@ -413,14 +421,17 @@ fn settle_rejects_zero_amount() {
     with_factory(|s| {
         assert!(runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::ZERO,
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::ZERO
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO
-            }
+            },
+            amount_cap()
         )
         .is_err());
     });
@@ -431,14 +442,17 @@ fn settle_rejects_missing_series() {
     with_factory(|s| {
         assert!(runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::from(1),
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::from(1)
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO
-            }
+            },
+            amount_cap()
         )
         .is_err());
     });
@@ -465,14 +479,17 @@ fn settle_rejects_expired_deadline() {
         outbe_intex::api::call_group_of(&s, sid(7), ISSUED_AT).unwrap();
         let err = runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::from(1),
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::from(1),
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         )
         .unwrap_err();
         assert_eq!(
@@ -498,14 +515,17 @@ fn settle_stays_open_through_the_transit_margin() {
     StorageHandle::enter(&mut storage, |s| {
         let err = runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::from(1),
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::from(1),
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         )
         .unwrap_err();
         assert_eq!(
@@ -531,14 +551,17 @@ fn a_series_called_past_its_deadline_stays_closed() {
     StorageHandle::enter(&mut storage, |s| {
         let err = runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::from(1),
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::from(1),
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         )
         .unwrap_err();
         assert_eq!(
@@ -552,24 +575,27 @@ fn a_series_called_past_its_deadline_stays_closed() {
 }
 
 #[test]
-fn compute_pow_hash_matches_manual_sha256() {
-    // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8)
+fn validate_pow_hashes_the_common_preimage_with_the_amount() {
+    // SHA256(tag ++ intexId_be32 ++ owner ++ seq_be8 ++ nonce_be8 ++ promisAmount_be32)
     let promis_amount = U256::from(1_000u64);
-    let (series_id, seq, nonce) = (sid(7), 3u32, 42u64);
-    let got = runtime::compute_pow_hash(owner(), promis_amount, series_id, seq, nonce);
+    let (intex_id, seq) = (outbe_intex::intex_id(sid(7)), 3u64);
+    let nonce = (0u64..)
+        .find(|n| runtime::validate_pow(owner(), intex_id, seq, promis_amount, *n).is_ok())
+        .unwrap();
 
-    let mut data = owner().as_slice().to_vec();
-    data.extend_from_slice(&promis_amount.to_be_bytes::<32>());
-    data.extend_from_slice(series_id.as_bytes());
+    let mut data = b"OUTBE_ITX_MINING_V1".to_vec();
+    data.extend_from_slice(&intex_id.to_be_bytes::<32>());
+    data.extend_from_slice(owner().as_slice());
     data.extend_from_slice(&seq.to_be_bytes());
     data.extend_from_slice(&nonce.to_be_bytes());
-    let expected = ring::digest::digest(&ring::digest::SHA256, &data);
-    assert_eq!(got.as_slice(), expected.as_ref());
+    data.extend_from_slice(&promis_amount.to_be_bytes::<32>());
+    let digest = ring::digest::digest(&ring::digest::SHA256, &data);
+    assert_eq!(&digest.as_ref()[..2], &[0, 0]);
 }
 
-/// Check the historical MCP miner vectors preserved from commit 6c6cb705.
+/// The vectors a client miner must reproduce byte for byte.
 #[test]
-fn compute_pow_hash_matches_the_shared_client_vectors() {
+fn validate_pow_matches_the_shared_client_vectors() {
     let fixture: serde_json::Value =
         serde_json::from_str(include_str!("fixtures/pow.vectors.json")).unwrap();
     assert_eq!(
@@ -581,22 +607,19 @@ fn compute_pow_hash_matches_the_shared_client_vectors() {
     for vector in vectors {
         let field = |name: &str| vector[name].as_str().unwrap();
         let owner: Address = field("owner").parse().unwrap();
+        let intex_id: U256 = field("intex_id").parse().unwrap();
+        let seq: u64 = field("mining_sequence").parse().unwrap();
         let promis_amount: U256 = field("promis_amount").parse().unwrap();
-        let series_id = SeriesId::from(
-            field("series_id")
-                .parse::<alloy_primitives::FixedBytes<14>>()
-                .unwrap(),
-        );
-        let seq = u32::try_from(vector["seq"].as_u64().unwrap()).unwrap();
         let hash = |nonce: u64| {
-            B256::from(runtime::compute_pow_hash(
+            B256::from(outbe_core_common::pow::compute_intex_mining_pow_hash(
+                intex_id,
                 owner,
-                promis_amount,
-                series_id,
                 seq,
                 nonce,
+                promis_amount,
             ))
         };
+        let validate = |nonce| runtime::validate_pow(owner, intex_id, seq, promis_amount, nonce);
 
         let nonce: u64 = field("nonce").parse().unwrap();
         assert_eq!(hash(nonce), field("hash").parse::<B256>().unwrap());
@@ -606,27 +629,20 @@ fn compute_pow_hash_matches_the_shared_client_vectors() {
             hash(first_valid),
             field("first_valid_hash").parse::<B256>().unwrap()
         );
-        assert!(runtime::validate_pow(owner, promis_amount, series_id, seq, first_valid).is_ok());
-        assert!((0..first_valid).all(|nonce| runtime::validate_pow(
-            owner,
-            promis_amount,
-            series_id,
-            seq,
-            nonce
-        )
-        .is_err()));
+        assert!(validate(first_valid).is_ok());
+        assert!((0..first_valid).all(|nonce| validate(nonce).is_err()));
     }
 }
 
 #[test]
 fn validate_pow_accepts_valid_and_rejects_invalid_nonce() {
     let pa = U256::from(1_000u64);
-    let (series_id, seq) = (sid(7), 0u32);
+    let (intex_id, seq) = (outbe_intex::intex_id(sid(7)), 0u64);
     // Difficulty 2: ~1/65536 of nonces pass. Brute-force a valid and an invalid one.
     let mut good = None;
     let mut bad = None;
     for n in 0u64..1_000_000 {
-        let ok = runtime::validate_pow(owner(), pa, series_id, seq, n).is_ok();
+        let ok = runtime::validate_pow(owner(), intex_id, seq, pa, n).is_ok();
         if ok && good.is_none() {
             good = Some(n);
         }
@@ -638,10 +654,10 @@ fn validate_pow_accepts_valid_and_rejects_invalid_nonce() {
         }
     }
     assert!(
-        runtime::validate_pow(owner(), pa, series_id, seq, good.expect("a valid nonce")).is_ok()
+        runtime::validate_pow(owner(), intex_id, seq, pa, good.expect("a valid nonce")).is_ok()
     );
     assert!(
-        runtime::validate_pow(owner(), pa, series_id, seq, bad.expect("an invalid nonce")).is_err()
+        runtime::validate_pow(owner(), intex_id, seq, pa, bad.expect("an invalid nonce")).is_err()
     );
 }
 
@@ -711,7 +727,14 @@ fn a_mining_that_fails_after_any_write_changes_nothing() {
                 .promis_load_minor;
             (0u64..)
                 .find(|nonce| {
-                    runtime::validate_pow(owner(), promis_amount, sid(7), 0, *nonce).is_ok()
+                    runtime::validate_pow(
+                        owner(),
+                        outbe_intex::intex_id(sid(7)),
+                        0,
+                        promis_amount,
+                        *nonce,
+                    )
+                    .is_ok()
                 })
                 .unwrap()
         });
@@ -836,4 +859,79 @@ fn the_owner_balances_view_reports_live_units_and_owner_history() {
         assert_eq!((forfeited.minedUnits, forfeited.gemFactoryUnits), (15, 10));
         assert_eq!(forfeited.ownerUnits, 25);
     });
+}
+
+/// A payer who is not the owner of the units.
+fn other() -> Address {
+    address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB")
+}
+
+fn settle_capped(s: &StorageHandle<'_>, cap: U256) -> String {
+    runtime::settle_intex(
+        s,
+        runtime::OwnerUnits {
+            series_id: sid(7),
+            owner: owner(),
+            units: U256::from(2),
+        },
+        SettlementPayment {
+            payer: other(),
+            asset: settlement_asset(),
+            snapshot_id: U256::ZERO,
+        },
+        cap,
+    )
+    .unwrap_err()
+    .to_string()
+}
+
+fn settlement_error(error: outbe_vaultrouter::settlement::SettlementError) -> String {
+    outbe_primitives::error::PrecompileError::from(error).to_string()
+}
+
+#[test]
+fn settle_intex_checks_funds_before_the_cost() {
+    use crate::sol_ext::IERC20;
+
+    for short in [
+        IERC20::balanceOfCall::SELECTOR,
+        IERC20::allowanceCall::SELECTOR,
+    ] {
+        let mut storage = erc20_series();
+        storage.stub_sub_call_at_selector(settlement_asset(), short, word(1));
+        StorageHandle::enter(&mut storage, |s| {
+            let (_, cost, _) =
+                runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::from(2)).unwrap();
+            for cap in [U256::from(2u64), cost + U256::ONE] {
+                assert_eq!(
+                    settle_capped(&s, cap),
+                    settlement_error(
+                        outbe_vaultrouter::settlement::SettlementError::InsufficientFunds
+                    )
+                );
+            }
+            assert_eq!(outbe_intex::api::settled_units(&s, sid(7)).unwrap(), 0);
+        });
+    }
+}
+
+#[test]
+fn settle_intex_takes_only_the_cost_within_the_cap() {
+    let mut storage = erc20_series();
+    let cost = StorageHandle::enter(&mut storage, |s| {
+        let (_, cost, _) =
+            runtime::quote_settlement(&s, sid(7), settlement_asset(), U256::from(2)).unwrap();
+        assert_eq!(
+            settle_capped(&s, cost - U256::ONE),
+            settlement_error(outbe_vaultrouter::settlement::SettlementError::CostAboveCap)
+        );
+        // The router does not run, so an admitted payment stops at its `depositFrom`.
+        assert_eq!(
+            settle_capped(&s, cost + U256::ONE),
+            outbe_vaultrouter::test_support::unanswered_deposit_from().to_string()
+        );
+        cost
+    });
+    let deposit = outbe_vaultrouter::test_support::last_deposit_from(&storage).unwrap();
+    assert_eq!((deposit.payer, deposit.assetsMinor), (other(), cost));
 }

@@ -32,14 +32,17 @@ fn a_direct_settlement_in_a_currency_the_window_never_priced_is_refused_without_
     let error = StorageHandle::enter(&mut storage, |s| {
         runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::ONE,
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::ONE,
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: required,
             },
+            amount_cap(),
         )
         .unwrap_err()
     });

@@ -72,10 +72,10 @@ fn a_called_series_reports_its_settlement_deadline() {
     });
 
     let events: Vec<_> = storage
-        .get_events(outbe_system_common::addresses::INTEX_ADDRESS)
+        .get_events(outbe_system_common::addresses::INTEX_FACTORY_ADDRESS)
         .iter()
         .filter_map(|log| {
-            outbe_intex::precompile::IIntex::IntexSeriesCalled::decode_log_data(log).ok()
+            crate::precompile::IIntexFactory::IntexSeriesCalled::decode_log_data(log).ok()
         })
         .collect();
     assert_eq!(events.len(), 1);
