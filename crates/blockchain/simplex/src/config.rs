@@ -72,8 +72,7 @@ pub const MAX_P2P_MESSAGE_SIZE: u32 = 2 * 1024 * 1024;
 pub const ENGINE_MAILBOX_SIZE: usize = 256;
 
 /// Default epoch length in blocks. The node uses it when genesis.json does not
-/// specify `config.epochLengthBlocks`. At
-/// [`crate::timing::DEFAULT_MIN_BLOCK_TIME_MS`] (2000 ms) this is 40 minutes.
+/// specify `config.epochLengthBlocks`.
 /// It is the cadence for DKG reshare, active-set rotation, and the per-epoch
 /// slash-counter reset. A felony threshold must stay below this (see
 /// `outbe_slashindicator`). The DKG prepare/grace windows below are
@@ -84,8 +83,7 @@ pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u32 = 1_200;
 /// Activity timeout in views (track this many behind finalized tip).
 pub const ACTIVITY_TIMEOUT: u32 = 1000;
 
-/// Default DKG prepare window before planned activation.
-/// 600 blocks at [`crate::timing::DEFAULT_MIN_BLOCK_TIME_MS`] (2000 ms) is 20 minutes.
+/// Default DKG prepare window before planned activation, in blocks.
 pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 600;
 /// Default late activation grace window after planned activation.
 pub const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 600;

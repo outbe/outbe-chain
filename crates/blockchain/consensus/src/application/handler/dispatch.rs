@@ -1,4 +1,3 @@
-use super::timing::ProposalPacing;
 use super::*;
 use crate::application::handler::verification::VerifyTask;
 use crate::metrics::propose::{record_proposal_outcome, ProposalOutcomeLabel};
@@ -90,14 +89,7 @@ impl ApplicationShared {
         clock: &impl commonware_runtime::Clock,
         reply: ProposalReply,
     ) {
-        if let Err(error) = complete_proposal(
-            clock,
-            reply,
-            self.min_block_time,
-            &self.self_proposed_digests,
-        )
-        .await
-        {
+        if let Err(error) = complete_proposal(clock, reply, &self.self_proposed_digests).await {
             self.report_proposal_failure(error);
         }
     }
@@ -133,7 +125,6 @@ impl ApplicationShared {
 async fn complete_proposal(
     clock: &impl commonware_runtime::Clock,
     reply: ProposalReply,
-    min_block_time: std::time::Duration,
     self_proposed: &crate::reporter::SelfProposedDigests,
 ) -> eyre::Result<()> {
     let ProposalReply {
@@ -146,30 +137,21 @@ async fn complete_proposal(
             digest,
             resolve_pad,
         }) => {
-            // Proposer-side liveness pacing only. Hold the already-sealed
-            // digest until the min-block-time floor elapses. Then give it
-            // to Simplex, or abort if the view is cancelled first. This
-            // never touches block bytes/hash/validation.
+            let elapsed = clock
+                .current()
+                .duration_since(propose_start)
+                .unwrap_or_default();
+            crate::metrics::record_block_build_time(elapsed.saturating_sub(resolve_pad));
             // Register before sending so an immediate finalization can consume it.
             self_proposed.record(digest);
-            let delivered = pace_and_send(
-                clock,
-                response,
-                digest,
-                ProposalPacing {
-                    min_block_time,
-                    propose_start,
-                    resolve_pad,
-                },
-            )
-            .await;
+            let delivered = response.send(digest).is_ok();
             if !delivered {
                 self_proposed.take(&digest);
             }
             record_proposal_outcome(if delivered {
                 ProposalOutcomeLabel::Proposed
             } else {
-                ProposalOutcomeLabel::PaceCancelled
+                ProposalOutcomeLabel::Cancelled
             });
         }
         Ok(outcome) => {
@@ -231,7 +213,7 @@ mod tests {
                     resolve_pad: Duration::ZERO,
                 }),
                 true,
-                "pace_cancelled",
+                "cancelled",
             ),
             (Ok(ProposeOutcome::EpochStale), false, "epoch_stale"),
             (Err(eyre::eyre!("proposal failed")), false, "failed"),
@@ -256,7 +238,6 @@ mod tests {
                                 propose_start: start,
                                 outcome,
                             },
-                            Duration::from_millis(100),
                             &self_proposed,
                         )
                         .await;
@@ -267,7 +248,7 @@ mod tests {
                                 assert_eq!(receiver.await.unwrap(), Digest::ZERO);
                                 assert_eq!(
                                     clock.current().duration_since(start).unwrap(),
-                                    Duration::from_millis(100)
+                                    Duration::ZERO
                                 );
                             } else {
                                 assert!(receiver.await.is_err());

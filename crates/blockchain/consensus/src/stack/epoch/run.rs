@@ -724,7 +724,6 @@ where
             bt.leader_timeout,
         ),
         payload_resolve_time: std::time::Duration::from_millis(args.payload_resolve_time_ms),
-        min_block_time: bt.min_block_time,
         proposer_evm_address,
         trust_el_head: args.trust_el_head,
         late_sig_store: late_sig_store.clone(),

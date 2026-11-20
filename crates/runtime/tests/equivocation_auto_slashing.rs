@@ -11,7 +11,7 @@ use outbe_primitives::{
     equivocation_evidence::{EquivocationEvidenceKind as Kind, EquivocationEvidenceMailbox},
     signer::OutbeEvmSigner,
 };
-use outbe_runtime::equivocation_slasher::spawn;
+use outbe_runtime::equivocation_slasher::{spawn, spawn_with_retry_step_for_test};
 use reth_transaction_pool::TransactionPool as _;
 use support::{evidence, launch, seed, ACCUSED, STAKE};
 use tokio_util::sync::CancellationToken;
@@ -37,7 +37,6 @@ async fn every_vote_conflict_reaches_the_real_pool_from_a_zero_balance_sender() 
             node.clone(),
             signer.clone(),
             mailbox.clone(),
-            INTERVAL,
             cancel.clone(),
         );
         let transaction = tokio::time::timeout(Duration::from_secs(10), async {
@@ -79,7 +78,6 @@ async fn cancellation_interrupts_an_idle_mailbox_wait() -> eyre::Result<()> {
         node,
         signer,
         EquivocationEvidenceMailbox::new(),
-        INTERVAL,
         cancel.clone(),
     );
     tokio::task::yield_now().await;
@@ -113,7 +111,7 @@ async fn reporter_ranking_excludes_the_accused_before_assigning_the_first_slot()
     let mailbox = EquivocationEvidenceMailbox::new();
     mailbox.push(evidence(Kind::ConflictingFinalize));
     let cancel = CancellationToken::new();
-    let worker = spawn(
+    let worker = spawn_with_retry_step_for_test(
         node.clone(),
         signer.clone(),
         mailbox,

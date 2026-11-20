@@ -101,7 +101,6 @@ fn emit_consensus() {
     for outcome in [
         propose::ProposalOutcomeLabel::Proposed,
         propose::ProposalOutcomeLabel::Cancelled,
-        propose::ProposalOutcomeLabel::PaceCancelled,
         propose::ProposalOutcomeLabel::ParentProofUnavailable,
         propose::ProposalOutcomeLabel::EpochStale,
         propose::ProposalOutcomeLabel::BoundaryUnavailable,
@@ -489,7 +488,6 @@ pub fn assert_stage2(rendered: &str, types: &HashMap<&str, &str>) {
         &[
             "proposed",
             "cancelled",
-            "pace_cancelled",
             "parent_proof_unavailable",
             "epoch_stale",
             "boundary_unavailable",

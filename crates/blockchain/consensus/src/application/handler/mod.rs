@@ -129,12 +129,6 @@ pub(crate) struct ApplicationShared {
     /// Time to give the payload builder to execute transactions before resolving.
     payload_resolve_time: std::time::Duration,
 
-    /// Proposer-side minimum block-time floor. It is for liveness pacing only
-    /// and never affects block contents or validation. The `Message::Propose`
-    /// closure reads it via `shared.min_block_time`. Always > 0 (validated at
-    /// startup).
-    min_block_time: std::time::Duration,
-
     /// Proposer EVM identity used to sign system transaction artifacts.
     proposer_evm_address: Option<Address>,
 
@@ -206,7 +200,6 @@ pub struct ApplicationDeps {
     pub block_cache: BlockCache,
     pub finalization_selector: crate::finalization::selection::ParentProofSelector,
     pub payload_resolve_time: std::time::Duration,
-    pub min_block_time: std::time::Duration,
     pub proposer_evm_address: Option<Address>,
     pub trust_el_head: bool,
     pub late_sig_store: crate::finalization::late_sig_store::SharedLateFinalizeStore,
@@ -249,7 +242,6 @@ impl ApplicationHandler {
             block_cache,
             finalization_selector,
             payload_resolve_time,
-            min_block_time,
             proposer_evm_address,
             trust_el_head,
             late_sig_store,
@@ -278,7 +270,6 @@ impl ApplicationHandler {
                 epoch_fence,
                 ancestry_readiness,
                 payload_resolve_time,
-                min_block_time,
                 proposer_evm_address,
                 proposal_failure_log_limiter: Arc::new(
                     crate::util::rate_limit::LogRateLimiter::new(PROPOSAL_FAILURE_LOG_WINDOW),
@@ -417,7 +408,7 @@ mod test_support;
 use test_support::validate_header_consensus_artifacts;
 
 mod timing;
-use timing::{pace_and_send, proposal_timestamp_millis};
+use timing::proposal_timestamp_millis;
 pub use timing::{OffsetUnixTimeSource, SystemUnixTimeSource, UnixTimeSource};
 pub(crate) use timing::{
     GENESIS_ANCHOR_POLL_INTERVAL, GENESIS_ANCHOR_WAIT_TIMEOUT, PROPOSAL_FAILURE_LOG_WINDOW,
@@ -425,7 +416,7 @@ pub(crate) use timing::{
 };
 
 #[cfg(test)]
-use timing::{apply_unix_time_offset_millis, clamp_proposed_timestamp_millis, floor_remaining};
+use timing::{apply_unix_time_offset_millis, clamp_proposed_timestamp_millis};
 
 mod parent_proof;
 pub(crate) use parent_proof::parent_round;

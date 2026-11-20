@@ -248,6 +248,13 @@ impl ApplicationShared {
         let outcome = self
             .verify_block_execution(request, &resolved, execution_read_budget)
             .await?;
+        if matches!(outcome, VerificationOutcome::Valid)
+            && ValidatorRole::from_proposer_evm_address(self.proposer_evm_address)
+                == ValidatorRole::Signer
+        {
+            self.wait_until_candidate_timestamp(clock, candidate_ts_ms)
+                .await?;
+        }
         Ok(
             if self
                 .epoch_fence
@@ -260,6 +267,22 @@ impl ApplicationShared {
                 VerificationOutcome::Unavailable
             },
         )
+    }
+
+    async fn wait_until_candidate_timestamp(
+        &self,
+        clock: &impl commonware_runtime::Clock,
+        candidate_ts_ms: u64,
+    ) -> eyre::Result<()> {
+        loop {
+            let now_ms = self.unix_time_source.now_millis()?;
+            if now_ms >= candidate_ts_ms {
+                return Ok(());
+            }
+            clock
+                .sleep(std::time::Duration::from_millis(candidate_ts_ms - now_ms))
+                .await;
+        }
     }
 }
 
@@ -334,7 +357,6 @@ mod tests {
             repository_publication: Default::default(),
             repository_publication_enabled: false,
             payload_resolve_time: Duration::from_millis(1),
-            min_block_time: Duration::from_millis(1),
             trust_el_head: false,
             late_sig_store: crate::finalization::late_sig_store::shared(
                 outbe_primitives::consensus::LATE_FINALIZE_WINDOW_K,
@@ -714,6 +736,299 @@ mod tests {
                 }
             })
             .await;
+        });
+    }
+
+    struct DeterministicUnixTimeSource {
+        clock: deterministic::Context,
+        start: std::time::SystemTime,
+        base_ms: u64,
+    }
+
+    impl UnixTimeSource for DeterministicUnixTimeSource {
+        fn now_millis(&self) -> eyre::Result<u64> {
+            use commonware_runtime::Clock as _;
+            let elapsed_ms = u64::try_from(
+                self.clock
+                    .current()
+                    .duration_since(self.start)
+                    .unwrap_or_default()
+                    .as_millis(),
+            )
+            .unwrap_or(u64::MAX);
+            Ok(self.base_ms.saturating_add(elapsed_ms))
+        }
+    }
+
+    fn permissive_test_leader_policy() -> outbe_primitives::system_tx::binding::SystemTxLeaderPolicy
+    {
+        fn allow_empty_layout<'a>(
+            body: &'a outbe_primitives::OutbeBlockBody,
+            header: &outbe_primitives::OutbeHeader,
+        ) -> Result<
+            (
+                outbe_primitives::system_tx::SystemTxLayout<'a>,
+                outbe_primitives::reshare_artifact::OutbeBlockArtifacts,
+            ),
+            outbe_primitives::system_tx::binding::LayoutBindingError,
+        > {
+            use alloy_consensus::BlockHeader as _;
+            let artifacts = outbe_primitives::reshare_artifact::decode_outbe_block_artifacts(
+                header.extra_data(),
+            )
+            .map_err(outbe_primitives::system_tx::binding::LayoutBindingError::Artifacts)?;
+            let layout = outbe_primitives::system_tx::split_system_layout(&body.transactions)
+                .map_err(outbe_primitives::system_tx::binding::LayoutBindingError::Layout)?;
+            Ok((layout, artifacts))
+        }
+
+        outbe_primitives::system_tx::binding::SystemTxLeaderPolicy {
+            validate_layout: allow_empty_layout,
+            step_name_or_stage: outbe_primitives::system_tx::SystemTx::stage_name,
+        }
+    }
+
+    fn signer_candidate() -> ConsensusBlock {
+        let mut block = crate::test_fixtures::block_with_number(1)
+            .into_inner()
+            .into_block();
+        block.header.inner.timestamp = 3;
+        block.header.inner.beneficiary = outbe_primitives::addresses::REWARDS_ADDRESS;
+        block.header.inner.gas_limit = outbe_primitives::system_tx::protocol_block_gas_limit(1);
+        ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
+    }
+
+    #[test]
+    fn signer_waits_until_candidate_timestamp_before_voting_valid() {
+        use commonware_runtime::Clock as _;
+        deterministic::Runner::default().start(|context| async {
+            with_application(context, async |mut shared, mut executor, clock| {
+                let start = clock.current();
+                shared.proposer_evm_address = Some(Address::repeat_byte(0x11));
+                shared.leader_policy = permissive_test_leader_policy();
+                shared.unix_time_source = Arc::new(DeterministicUnixTimeSource {
+                    clock: clock.child("time_source"),
+                    start,
+                    base_ms: 2500,
+                });
+                let block = signer_candidate();
+                let request = request(&block);
+                shared.block_cache.insert_bounded(block.digest(), block);
+                let (response, receiver) = oneshot::channel();
+                let verify = shared.handle_verify(
+                    &clock,
+                    VerifyTask {
+                        context: request.context,
+                        payload_digest: request.payload_digest,
+                        response,
+                        execution_read_budget: ExecutionReadBudget::new(),
+                    },
+                );
+                let execute = async {
+                    assert!(matches!(
+                        executor.next().await,
+                        Some(Message::PendingParent(_))
+                    ));
+                    let Some(Message::VerifyBlock(execution)) = executor.next().await else {
+                        panic!("missing execution request");
+                    };
+                    execution.response.send(VerificationOutcome::Valid).unwrap();
+                };
+                let ((), ()) = futures::join!(verify, execute);
+                assert!(receiver.await.unwrap());
+                assert_eq!(
+                    clock.current().duration_since(start).unwrap(),
+                    Duration::from_millis(500)
+                );
+            })
+            .await;
+        });
+    }
+
+    #[test]
+    fn signer_rejects_invalid_future_candidate_without_sleeping() {
+        use commonware_runtime::Clock as _;
+        deterministic::Runner::default().start(|context| async {
+            with_application(context, async |mut shared, mut executor, clock| {
+                let start = clock.current();
+                shared.proposer_evm_address = Some(Address::repeat_byte(0x11));
+                shared.leader_policy = permissive_test_leader_policy();
+                shared.unix_time_source = Arc::new(DeterministicUnixTimeSource {
+                    clock: clock.child("time_source"),
+                    start,
+                    base_ms: 2500,
+                });
+                let block = signer_candidate();
+                let request = request(&block);
+                shared.block_cache.insert_bounded(block.digest(), block);
+                let (response, receiver) = oneshot::channel();
+                let mut verify = Box::pin(shared.handle_verify(
+                    &clock,
+                    VerifyTask {
+                        context: request.context,
+                        payload_digest: request.payload_digest,
+                        response,
+                        execution_read_budget: ExecutionReadBudget::new(),
+                    },
+                ));
+                assert!(futures::poll!(verify.as_mut()).is_pending());
+                assert!(matches!(
+                    executor.next().await,
+                    Some(Message::PendingParent(_))
+                ));
+                let Some(Message::VerifyBlock(execution)) = executor.next().await else {
+                    panic!("missing execution request");
+                };
+                let after_exec = clock.current();
+                execution
+                    .response
+                    .send(VerificationOutcome::Invalid)
+                    .unwrap();
+                verify.await;
+                assert!(!receiver.await.unwrap());
+                assert_eq!(
+                    clock.current().duration_since(after_exec).unwrap(),
+                    Duration::ZERO
+                );
+            })
+            .await;
+        });
+    }
+
+    #[test]
+    fn signer_waiting_on_future_candidate_timestamp_cancels_on_dropped_receiver() {
+        use commonware_runtime::Clock as _;
+        let recorder = DebuggingRecorder::new();
+        metrics::with_local_recorder(&recorder, || {
+            deterministic::Runner::default().start(|context| async {
+                with_application(context, async |mut shared, mut executor, clock| {
+                    let start = clock.current();
+                    shared.proposer_evm_address = Some(Address::repeat_byte(0x11));
+                    shared.leader_policy = permissive_test_leader_policy();
+                    shared.unix_time_source = Arc::new(DeterministicUnixTimeSource {
+                        clock: clock.child("time_source"),
+                        start,
+                        base_ms: 2000,
+                    });
+                    let block = signer_candidate();
+                    let request = request(&block);
+                    shared.block_cache.insert_bounded(block.digest(), block);
+                    let (response, receiver) = oneshot::channel();
+                    let mut verify = Box::pin(shared.handle_verify(
+                        &clock,
+                        VerifyTask {
+                            context: request.context,
+                            payload_digest: request.payload_digest,
+                            response,
+                            execution_read_budget: ExecutionReadBudget::new(),
+                        },
+                    ));
+                    assert!(futures::poll!(verify.as_mut()).is_pending());
+                    assert!(matches!(
+                        executor.next().await,
+                        Some(Message::PendingParent(_))
+                    ));
+                    let Some(Message::VerifyBlock(execution)) = executor.next().await else {
+                        panic!("missing execution request");
+                    };
+                    let after_exec = clock.current();
+                    execution.response.send(VerificationOutcome::Valid).unwrap();
+                    assert!(futures::poll!(verify.as_mut()).is_pending());
+                    drop(receiver);
+                    verify.await;
+                    assert_eq!(
+                        clock.current().duration_since(after_exec).unwrap(),
+                        Duration::ZERO
+                    );
+                    assert_withheld(&recorder, VoteWithheldReason::ViewCancelled, 1, 0.0);
+                })
+                .await;
+            });
+        });
+    }
+
+    #[test]
+    fn verifier_only_does_not_sleep_and_signer_with_broken_clock_withholds_verify_error() {
+        use commonware_runtime::Clock as _;
+        deterministic::Runner::default().start(|context| async {
+            with_application(context, async |mut shared, mut executor, clock| {
+                let start = clock.current();
+                shared.proposer_evm_address = None;
+                shared.unix_time_source = Arc::new(DeterministicUnixTimeSource {
+                    clock: clock.child("time_source"),
+                    start,
+                    base_ms: 2500,
+                });
+                let block = candidate();
+                let request = request(&block);
+                shared.block_cache.insert_bounded(block.digest(), block);
+                let (response, receiver) = oneshot::channel();
+                let mut verify = Box::pin(shared.handle_verify(
+                    &clock,
+                    VerifyTask {
+                        context: request.context,
+                        payload_digest: request.payload_digest,
+                        response,
+                        execution_read_budget: ExecutionReadBudget::new(),
+                    },
+                ));
+                assert!(futures::poll!(verify.as_mut()).is_pending());
+                assert!(matches!(
+                    executor.next().await,
+                    Some(Message::PendingParent(_))
+                ));
+                let Some(Message::VerifyBlock(execution)) = executor.next().await else {
+                    panic!("missing execution request");
+                };
+                let after_exec = clock.current();
+                execution.response.send(VerificationOutcome::Valid).unwrap();
+                verify.await;
+                assert!(receiver.await.unwrap());
+                assert_eq!(
+                    clock.current().duration_since(after_exec).unwrap(),
+                    Duration::ZERO
+                );
+            })
+            .await;
+        });
+
+        let recorder = DebuggingRecorder::new();
+        metrics::with_local_recorder(&recorder, || {
+            deterministic::Runner::default().start(|context| async {
+                with_application(context, async |mut shared, mut executor, clock| {
+                    shared.proposer_evm_address = Some(Address::repeat_byte(0x11));
+                    shared.leader_policy = permissive_test_leader_policy();
+                    shared.unix_time_source = Arc::new(TestClock(None));
+                    let block = signer_candidate();
+                    let request = request(&block);
+                    shared.block_cache.insert_bounded(block.digest(), block);
+                    let (response, receiver) = oneshot::channel();
+                    let mut verify = Box::pin(shared.handle_verify(
+                        &clock,
+                        VerifyTask {
+                            context: request.context,
+                            payload_digest: request.payload_digest,
+                            response,
+                            execution_read_budget: ExecutionReadBudget::new(),
+                        },
+                    ));
+                    assert!(futures::poll!(verify.as_mut()).is_pending());
+                    assert!(matches!(
+                        executor.next().await,
+                        Some(Message::PendingParent(_))
+                    ));
+                    let Some(Message::VerifyBlock(execution)) = executor.next().await else {
+                        panic!("missing execution request");
+                    };
+                    execution.response.send(VerificationOutcome::Valid).unwrap();
+                    assert!(futures::poll!(verify.as_mut()).is_pending());
+                    assert_withheld(&recorder, VoteWithheldReason::VerifyError, 1, 1.0);
+                    drop(receiver);
+                    verify.await;
+                    assert_withheld(&recorder, VoteWithheldReason::VerifyError, 0, -1.0);
+                })
+                .await;
+            });
         });
     }
 }

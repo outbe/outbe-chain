@@ -52,7 +52,7 @@ async fn own_basefee_replacement_retries_underpriced_and_ignores_queued_siblings
     let mailbox = EquivocationEvidenceMailbox::new();
     mailbox.push(evidence(Kind::ConflictingNotarize));
     let cancel = CancellationToken::new();
-    let worker = spawn(
+    let worker = spawn_with_retry_step_for_test(
         node.clone(),
         signer.clone(),
         mailbox,
@@ -143,7 +143,7 @@ async fn a_shared_key_foreign_transaction_defers_evidence_until_the_committed_no
     let mailbox = EquivocationEvidenceMailbox::new();
     mailbox.push(evidence(Kind::ConflictingFinalize));
     let cancel = CancellationToken::new();
-    let worker = spawn(
+    let worker = spawn_with_retry_step_for_test(
         node.clone(),
         signer.clone(),
         mailbox,

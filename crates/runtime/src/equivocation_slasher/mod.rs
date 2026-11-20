@@ -57,12 +57,40 @@ impl StorageReader for StateReader<'_> {
     }
 }
 
+const EQUIVOCATION_RETRY_STEP: Duration = Duration::from_millis(500);
+
 /// Starts the validator's execution-side evidence consumer until cancellation.
 pub fn spawn(
     node: crate::OutbeFullNode,
     signer: Arc<OutbeEvmSigner>,
     mailbox: EquivocationEvidenceMailbox,
-    min_block_time: Duration,
+    shutdown_token: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    spawn_inner(
+        node,
+        signer,
+        mailbox,
+        EQUIVOCATION_RETRY_STEP,
+        shutdown_token,
+    )
+}
+
+#[cfg(feature = "test-hooks")]
+pub fn spawn_with_retry_step_for_test(
+    node: crate::OutbeFullNode,
+    signer: Arc<OutbeEvmSigner>,
+    mailbox: EquivocationEvidenceMailbox,
+    retry_step: Duration,
+    shutdown_token: CancellationToken,
+) -> tokio::task::JoinHandle<()> {
+    spawn_inner(node, signer, mailbox, retry_step, shutdown_token)
+}
+
+fn spawn_inner(
+    node: crate::OutbeFullNode,
+    signer: Arc<OutbeEvmSigner>,
+    mailbox: EquivocationEvidenceMailbox,
+    retry_step: Duration,
     shutdown_token: CancellationToken,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
@@ -72,7 +100,7 @@ pub fn spawn(
             if shutdown_token.is_cancelled() {
                 break;
             }
-            drain_when_due(&mut drain_retry_at, min_block_time, || {
+            drain_when_due(&mut drain_retry_at, retry_step, || {
                 drain_mailbox(&node, &mailbox, &mut pending)
             });
             let now = Instant::now();
@@ -87,7 +115,7 @@ pub fn spawn(
                 };
                 let retry = tokio::select! {
                     _ = shutdown_token.cancelled() => return,
-                    retry = attempt(&node, &signer, &mut task, min_block_time) => retry,
+                    retry = attempt(&node, &signer, &mut task, retry_step) => retry,
                 };
                 if retry {
                     pending.insert(key, task);
@@ -103,7 +131,7 @@ pub fn spawn(
                 .values()
                 .map(|task| task.next_attempt_at)
                 .chain(drain_retry_at)
-                .chain((!mailbox.is_empty()).then(|| Instant::now() + min_block_time))
+                .chain((!mailbox.is_empty()).then(|| Instant::now() + retry_step))
                 .min();
             tokio::select! {
                 _ = shutdown_token.cancelled() => break,
@@ -116,7 +144,7 @@ pub fn spawn(
 
 fn drain_when_due(
     retry_at: &mut Option<Instant>,
-    min_block_time: Duration,
+    retry_step: Duration,
     drain: impl FnOnce() -> eyre::Result<()>,
 ) {
     if retry_at.is_some_and(|deadline| deadline > Instant::now()) {
@@ -126,7 +154,7 @@ fn drain_when_due(
         Ok(()) => None,
         Err(error) => {
             failed("state_read", &error);
-            Some(Instant::now() + min_block_time)
+            Some(Instant::now() + retry_step)
         }
     };
 }
@@ -211,7 +239,7 @@ fn read_tick(
     node: &crate::OutbeFullNode,
     signer: Address,
     task: &PendingSlash,
-    min_block_time: Duration,
+    retry_step: Duration,
 ) -> eyre::Result<Tick> {
     let head = node.provider.best_block_number()?;
     let header = node.provider.sealed_header(head)?.ok_or(MissingHead)?;
@@ -255,7 +283,7 @@ fn read_tick(
         Ok(Tick::Ready(Ready {
             nonce,
             base_fee: header.base_fee_per_gas().unwrap_or_default(),
-            delay: rank_delay(ev.epoch, target.accused, signer, active, min_block_time),
+            delay: rank_delay(ev.epoch, target.accused, signer, active, retry_step),
         }))
     })
 }
@@ -280,10 +308,10 @@ async fn attempt(
     node: &crate::OutbeFullNode,
     signer: &OutbeEvmSigner,
     task: &mut PendingSlash,
-    min_block_time: Duration,
+    retry_step: Duration,
 ) -> bool {
-    task.next_attempt_at = Instant::now() + min_block_time;
-    let ready = match read_tick(node, signer.address(), task, min_block_time) {
+    task.next_attempt_at = Instant::now() + retry_step;
+    let ready = match read_tick(node, signer.address(), task, retry_step) {
         Ok(Tick::Skip { reason, terminal }) => {
             record_equivocation_skipped(reason);
             return !terminal;

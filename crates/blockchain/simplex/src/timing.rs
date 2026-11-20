@@ -1,13 +1,13 @@
 //! Consensus block-timing defaults and the gas <-> consensus-timeout contract.
 //!
-//! This module is the single source of *default* values for the three
+//! This module is the single source of *default* values for the two
 //! consensus-sync timing knobs. The live values come from `genesis.json`
-//! (`config.minBlockTimeMs` / `config.leaderTimeoutMs` /
-//! `config.certificationTimeoutMs`). Each value falls back to the default here when
-//! absent. There is **no CLI flag** for any of the three: the only two sources of
-//! truth are these Rust defaults and `genesis.json`. A third (per-node CLI)
-//! source would let operators desync their timings and fork the network. For this
-//! reason, it is deliberately not offered.
+//! (`config.leaderTimeoutMs` / `config.certificationTimeoutMs`). Each value
+//! falls back to the default here when absent. There is **no CLI flag** for
+//! either of the two: the only two sources of truth are these Rust defaults and
+//! `genesis.json`. A third (per-node CLI) source would let operators desync
+//! their timings and fork the network. For this reason, it is deliberately not
+//! offered.
 //!
 //! # The model (execute-then-agree)
 //!
@@ -54,27 +54,10 @@
 //! `gasLimit` is the *only* knob. Turn it, then re-derive `leader`/`cert` to fit.
 //! ZeroFee admission means resizing `gasLimit` has no fee-market side effect.
 //!
-//! # Why the default floor is 2000 ms (L2 rationale)
-//!
-//! [`DEFAULT_MIN_BLOCK_TIME_MS`] is set to 2 s **deliberately for L2
-//! settlement/sync cadence**, not as an arbitrary number. The floor is
-//! proposer-side liveness pacing only. The elected leader holds an already-sealed
-//! block until the floor elapses, and then hands its digest to Simplex. It never
-//! enters block bytes and is never a validation rule. Recording the rationale
-//! here lets future maintainers and auditors reason about the protocol's pacing
-//! intent rather than treating 2 s as a magic constant.
-//!
 //! # Startup invariants
 //!
 //! The genesis reader enforces these at node start (structured error, no panic):
-//! `0 < minBlockTimeMs < leaderTimeoutMs <= certificationTimeoutMs`. The genesis
-//! reader rejects a `minBlockTimeMs` of `0` (the floor cannot be disabled).
-
-/// Default minimum block time (proposer-side liveness floor), in milliseconds.
-///
-/// 2 s is the L2 settlement/sync cadence (see module docs). `0` is rejected at
-/// startup. An absent genesis key falls back to this value.
-pub const DEFAULT_MIN_BLOCK_TIME_MS: u64 = 2000;
+//! `0 < leaderTimeoutMs <= certificationTimeoutMs`.
 
 /// Default Simplex leader (proposal) timeout, in milliseconds.
 ///
@@ -91,6 +74,6 @@ pub const DEFAULT_CERTIFICATION_TIMEOUT_MS: u64 = 8000;
 
 /// Default payload warm-up before the first `resolve_kind`, in milliseconds.
 ///
-/// Mirrors the existing payload-resolve preparation window. The minimum-block-time
-/// feature does not change it. It stays here so all timing defaults live together.
+/// Mirrors the existing payload-resolve preparation window. It stays here so
+/// all timing defaults live together.
 pub const DEFAULT_PAYLOAD_WARMUP_MS: u64 = 200;

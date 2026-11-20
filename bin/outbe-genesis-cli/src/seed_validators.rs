@@ -266,11 +266,7 @@ pub fn seed_founders(
     }
     let epoch_length_blocks = epoch_length_signed as u64;
 
-    for timing_key in [
-        "minBlockTimeMs",
-        "leaderTimeoutMs",
-        "certificationTimeoutMs",
-    ] {
+    for timing_key in ["leaderTimeoutMs", "certificationTimeoutMs"] {
         if let Some(val) = config.get(timing_key) {
             if parse_i128(val)? <= 0 {
                 return Err(GenesisError::validation(format!(

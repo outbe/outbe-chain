@@ -78,8 +78,8 @@ pub struct ConsensusArgs {
     #[arg(long = "consensus.payload-resolve-time-ms", default_value_t = 200)]
     pub payload_resolve_time_ms: u64,
 
-    /// No effect. The node parses this value but does not read it. The genesis
-    /// `minBlockTimeMs` value sets the minimum block time.
+    /// Deprecated no-op retained for CLI compatibility. The node parses this
+    /// value but does not read it.
     #[arg(long = "consensus.payload-return-time-ms", default_value_t = 450)]
     pub payload_return_time_ms: u64,
 

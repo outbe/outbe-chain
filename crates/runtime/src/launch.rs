@@ -273,10 +273,6 @@ where
         // Pending staleness eviction. This is node-local pool policy, so it runs in
         // every mode. Full nodes are the public RPC ingress. They shed stuck
         // transactions that would otherwise be re-gossiped to validators.
-        let min_block_time = outbe_consensus::stack::block_timing_from_genesis(
-            &RethExecutionBackend::new(node.clone()),
-        )?
-        .min_block_time;
         let txpool_maintenance_handle = tokio::spawn(shutdown.track_task(
             "txpool maintenance task",
             outbe_txpool::maintain::maintain_outbe_pool(
@@ -284,7 +280,7 @@ where
             node.pool.clone(),
             outbe_txpool::maintain::OutbePoolMaintainConfig {
                 staleness_interval_secs: args.txpool_pending_staleness_secs,
-                min_block_time,
+                min_block_time: std::time::Duration::from_millis(args.payload_resolve_time_ms),
                 queued_lifetime: crate::configuration::OUTBE_TXPOOL_QUEUED_LIFETIME,
             },
         )));
@@ -294,7 +290,6 @@ where
                 node.clone(),
                 signer,
                 bridge.equivocation_evidence_mailbox().clone(),
-                min_block_time,
                 worker_shutdown_token.clone(),
             ))
         } else {

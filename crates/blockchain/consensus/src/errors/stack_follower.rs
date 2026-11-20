@@ -279,23 +279,12 @@ pub enum StackStartupError {
         /// Underlying error text.
         error: String,
     },
-    /// Indicates that genesis config minBlockTimeMs is zero.
-    #[error("genesis config minBlockTimeMs must be > 0 (the floor cannot be disabled)")]
-    MinBlockTimeMsZero,
     /// Indicates that genesis config leaderTimeoutMs is zero.
     #[error("genesis config leaderTimeoutMs must be > 0")]
     LeaderTimeoutMsZero,
     /// Indicates that genesis config certificationTimeoutMs is zero.
     #[error("genesis config certificationTimeoutMs must be > 0")]
     CertificationTimeoutMsZero,
-    /// Indicates that minBlockTimeMs is not less than leaderTimeoutMs.
-    #[error("genesis config minBlockTimeMs ({min_ms}) must be < leaderTimeoutMs ({leader_ms})")]
-    MinBlockTimeExceedsLeaderTimeout {
-        /// Minimum block time in milliseconds.
-        min_ms: u64,
-        /// Leader timeout in milliseconds.
-        leader_ms: u64,
-    },
     /// Indicates that leaderTimeoutMs exceeds certificationTimeoutMs.
     #[error(
         "genesis config leaderTimeoutMs ({leader_ms}) must be <= certificationTimeoutMs ({cert_ms})"

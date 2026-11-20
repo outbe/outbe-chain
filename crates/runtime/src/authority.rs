@@ -44,13 +44,9 @@ pub(crate) fn validate_startup_authority_and_pruning(
             details: crate::errors::display_error(error),
         })?
         .unwrap_or(outbe_consensus::config::DEFAULT_DKG_PREPARE_WINDOW_BLOCKS);
-    let minimum_block_time_millis = extra
-        .get_deserialized::<u64>("minBlockTimeMs")
-        .transpose()
-        .map_err(|error| LaunchError::InvalidMinBlockTimeMs {
-            details: crate::errors::display_error(error),
-        })?
-        .unwrap_or(outbe_consensus::timing::DEFAULT_MIN_BLOCK_TIME_MS);
+    // Fixed nominal block cadence for TeeRenewalScheduleV1 (preserves its > 0
+    // validation contract and JSON-RPC schema).
+    let minimum_block_time_millis = outbe_consensus::timing::DEFAULT_PAYLOAD_WARMUP_MS;
     info!(
         attestation_mode = ?initial_tee_policy.attestation_mode,
         activation_height = tee_activation.manifest.activation_height,
