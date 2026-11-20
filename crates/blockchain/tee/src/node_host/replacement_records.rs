@@ -250,8 +250,8 @@ impl ReplacementCandidateRecordV1 {
         out.extend_from_slice(&manifest_len.to_be_bytes());
         out.extend_from_slice(&manifest);
         if u64::try_from(out.len()).unwrap_or(u64::MAX) > MAX_REPLACEMENT_CANDIDATE_BYTES {
-            return Err(TransportError::Codec(
-                "replacement candidate record exceeds its fixed cap".into(),
+            return Err(super::journal_records::node_host_codec_error(
+                "replacement candidate record exceeds its fixed cap",
             ));
         }
         Ok(out)
@@ -261,13 +261,13 @@ impl ReplacementCandidateRecordV1 {
         if input.len() < 35
             || u64::try_from(input.len()).unwrap_or(u64::MAX) > MAX_REPLACEMENT_CANDIDATE_BYTES
         {
-            return Err(TransportError::Codec(
-                "replacement candidate record length is invalid".into(),
+            return Err(super::journal_records::node_host_codec_error(
+                "replacement candidate record length is invalid",
             ));
         }
         if input[0] != REPLACEMENT_CANDIDATE_VERSION_V1 {
-            return Err(TransportError::Codec(
-                "replacement candidate record version is unsupported".into(),
+            return Err(super::journal_records::node_host_codec_error(
+                "replacement candidate record version is unsupported",
             ));
         }
         let predecessor_manifest_hash = B256::from_slice(&input[1..33]);
@@ -275,8 +275,8 @@ impl ReplacementCandidateRecordV1 {
         if manifest_len > usize::try_from(MAX_INITIALIZATION_MANIFEST_BYTES).unwrap_or(usize::MAX)
             || input.len() != 35 + manifest_len
         {
-            return Err(TransportError::Codec(
-                "replacement candidate manifest length is non-canonical".into(),
+            return Err(super::journal_records::node_host_codec_error(
+                "replacement candidate manifest length is non-canonical",
             ));
         }
         let manifest =
@@ -341,8 +341,8 @@ impl FinalizedReplacementAuthorizationV1 {
         if input.len() != REPLACEMENT_PROMOTION_BYTES as usize
             || input[0] != REPLACEMENT_PROMOTION_VERSION_V1
         {
-            return Err(TransportError::Codec(
-                "replacement promotion receipt framing is invalid".into(),
+            return Err(super::journal_records::node_host_codec_error(
+                "replacement promotion receipt framing is invalid",
             ));
         }
         Ok(Self {

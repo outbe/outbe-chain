@@ -10,7 +10,7 @@ mod verification;
 
 pub use call_context::{CallContextError, CallContextProviderError};
 pub(crate) use call_context::{
-    TypedCallRouteError, WitnessAvailabilityError, WitnessCandidateRejected,
+    EnclaveResponseError, TypedCallRouteError, WitnessAvailabilityError, WitnessCandidateRejected,
 };
 pub use outbe_dcap::errors::HostCollateralError;
 pub use outbe_dcap::errors::QuoteParseError;
@@ -51,10 +51,10 @@ mod tests {
     #[test]
     fn an_enclave_answer_or_a_bad_result_is_not_node_local() {
         for error in [
-            TransportError::EnclaveError("x".into()),
+            TransportError::enclave_error(std::io::Error::other("x")),
             TransportError::UnexpectedResponse,
-            TransportError::Codec("x".into()),
-            TransportError::Attestation("x".into()),
+            TransportError::codec(std::io::Error::other("x")),
+            TransportError::attestation(std::io::Error::other("x")),
             TransportError::app_attestation(
                 TEST_ATTESTATION_DESCRIPTOR,
                 TeeAttestationError::InvalidSignatureLength { actual: 1 },

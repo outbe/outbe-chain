@@ -3,8 +3,23 @@
 use outbe_primitives::error::PrecompileError;
 use thiserror::Error;
 
-/// Error message type returned by an installed call-context provider callback.
-pub type CallContextProviderError = String;
+/// Typed error returned by an installed call-context provider callback.
+#[derive(Debug, Error)]
+#[error("{source}")]
+pub struct CallContextProviderError {
+    /// Structured error returned by the call-context provider.
+    #[source]
+    source: Box<dyn std::error::Error + Send + Sync>,
+}
+
+impl CallContextProviderError {
+    /// Wrap a typed provider failure while preserving its `#[source]` chain.
+    pub fn new(error: impl std::error::Error + Send + Sync + 'static) -> Self {
+        Self {
+            source: Box::new(error),
+        }
+    }
+}
 
 /// Errors returned by [`crate::call_context`] operations.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
@@ -128,3 +143,8 @@ pub(crate) enum WitnessAvailabilityError {
 #[derive(Debug, Error)]
 #[error("witness candidate already rejected")]
 pub(crate) struct WitnessCandidateRejected;
+
+/// Enclave returned an explicit error response message.
+#[derive(Debug, Error)]
+#[error("{0}")]
+pub(crate) struct EnclaveResponseError(pub(crate) String);

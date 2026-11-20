@@ -103,8 +103,8 @@ impl NodeHostStateLock {
             .open(path)?;
         let metadata = file.metadata()?;
         if !is_owner_only_regular_file(&metadata) {
-            return Err(TransportError::Codec(
-                "NodeHost state lock must be an owner-only regular file".into(),
+            return Err(super::journal_records::node_host_codec_error(
+                "NodeHost state lock must be an owner-only regular file",
             ));
         }
         rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
@@ -223,8 +223,8 @@ pub(super) fn ensure_private_directory(path: &Path) -> Result<(), TransportError
                 || metadata.permissions().mode() & 0o777 != 0o700
                 || metadata.uid() != rustix::process::geteuid().as_raw()
             {
-                return Err(TransportError::Codec(
-                    "NodeHost state path must be a current-user directory with mode 0700".into(),
+                return Err(super::journal_records::node_host_codec_error(
+                    "NodeHost state path must be a current-user directory with mode 0700",
                 ));
             }
         }

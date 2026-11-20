@@ -202,11 +202,12 @@ where
                     let provider = Arc::new(ctx.provider().clone());
                     let context_provider = Arc::clone(&provider);
                     outbe_tee::call_context::install_provider(Arc::new(move || {
-                        outbe_execution::tee_call_context::read(
+                        outbe_execution::tee_call_context::read_typed(
                             context_provider.as_ref(),
                             proof_chain_id,
                             genesis_hash,
                         )
+                        .map_err(outbe_tee::CallContextProviderError::new)
                     }))?;
                     let outbe_api = create_outbe_rpc_handler(
                         Arc::clone(&provider),

@@ -9,6 +9,7 @@ use self::terminal::{
     reconcile_promoted_replacement, reconcile_staged_replacement,
     reconcile_without_replacement_candidate,
 };
+use super::super::journal_records::node_host_codec_error;
 use super::super::replacement::read_bound_replacement_relay;
 use super::super::{
     codec_error, read_manifest, read_replacement_candidate, read_replacement_promotion,
@@ -75,8 +76,8 @@ fn read_durable_replacement_state(
     };
     if presence.relay_exists {
         if !presence.submission_exists {
-            return Err(TransportError::Codec(
-                "replacement relay is missing its durable submission".into(),
+            return Err(node_host_codec_error(
+                "replacement relay is missing its durable submission",
             ));
         }
         read_bound_replacement_relay(paths)?;
@@ -128,7 +129,7 @@ pub(in super::super) fn reconcile_replacement_state(
     if active_hash == durable.candidate_hash && active == durable.candidate.manifest {
         return reconcile_promoted_replacement(&terminal);
     }
-    Err(TransportError::Codec(
-        "replacement journal does not descend from or equal committed state".into(),
+    Err(node_host_codec_error(
+        "replacement journal does not descend from or equal committed state",
     ))
 }

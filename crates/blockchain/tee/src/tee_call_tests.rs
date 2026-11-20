@@ -535,14 +535,16 @@ fn tee_consensus_typed_call_repeat_after_candidate_rejection_keeps_typed_source(
             CallMeta::recorded("candidate_reject"),
             |_| {
                 executed.set(executed.get() + 1);
-                Err(crate::TransportError::EnclaveError("refused".into()))
+                Err(crate::TransportError::enclave_error(std::io::Error::other(
+                    "refused",
+                )))
             },
             |_: &()| panic!("rejected candidate encoded"),
             |_, _| panic!("rejected candidate decoded"),
         )
     };
     let first = call().unwrap_err();
-    assert!(matches!(first, crate::TransportError::EnclaveError(_)));
+    assert!(matches!(first, crate::TransportError::EnclaveCause { .. }));
     assert_eq!(executed.get(), 1);
     assert_eq!(
         state.lock().unwrap().candidate_rejection,
@@ -585,7 +587,9 @@ fn tee_session_typed_call_skips_serialization_and_witness_mutation() {
             .unwrap();
         assert_eq!(value, 7);
         let error = tee_session_typed_call(CallMeta::session_only("canary"), |_| {
-            Err::<(), _>(crate::TransportError::Unavailable("down".into()))
+            Err::<(), _>(crate::TransportError::unavailable(std::io::Error::other(
+                "down",
+            )))
         })
         .unwrap()
         .unwrap_err();

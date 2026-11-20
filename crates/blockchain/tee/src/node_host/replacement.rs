@@ -5,7 +5,9 @@ use super::durable_submission::{
 };
 use super::filesystem::remove_file_and_sync_directory;
 use super::identity::read_committed_identity;
-use super::journal_records::{persist_exact_checkpoint, CheckedRelayInput, ExactCheckpoint};
+use super::journal_records::{
+    node_host_codec_error, persist_exact_checkpoint, CheckedRelayInput, ExactCheckpoint,
+};
 use super::locked_state::{lock_node_host_state, require_committed_node_host_state};
 use super::path_exists;
 use super::read_manifest;
@@ -107,8 +109,8 @@ pub fn persist_replacement_candidate_submission(
     let paths = &state.paths;
     let node_host = &state.node_host;
     if !path_exists(&paths.replacement_candidate)? {
-        return Err(TransportError::Codec(
-            "replacement submission requires a durable candidate".into(),
+        return Err(node_host_codec_error(
+            "replacement submission requires a durable candidate",
         ));
     }
     let active = read_manifest(&paths.manifest)?;
@@ -203,8 +205,8 @@ pub fn clear_expired_transition_submission_v1(
         || intent.intent_hash().map_err(codec_error)? != expected_intent
         || intent.requested_valid_until > finalized_timestamp
     {
-        return Err(TransportError::Codec(
-            "transition is not the exact expired submission".into(),
+        return Err(node_host_codec_error(
+            "transition is not the exact expired submission",
         ));
     }
     remove_file_and_sync_directory(&paths.replacement_relay, &paths.root)?;
@@ -222,8 +224,8 @@ pub fn persist_replacement_candidate_relay(
     let state = locked_replacement_state(node_data_dir, ReplacementRequirement::ExistingState)?;
     let paths = &state.paths;
     if !path_exists(&paths.replacement_candidate)? || !path_exists(&paths.replacement_submission)? {
-        return Err(TransportError::Codec(
-            "replacement relay requires durable candidate submission state".into(),
+        return Err(node_host_codec_error(
+            "replacement relay requires durable candidate submission state",
         ));
     }
     let candidate = read_replacement_candidate(&paths.replacement_candidate)?;
@@ -270,8 +272,8 @@ pub(super) fn read_bound_replacement_relay(
     let submission = read_replacement_submission(&paths.replacement_submission)?;
     let relay = read_replacement_relay(&paths.replacement_relay)?;
     if relay.submission_hash() != submission.submission_hash()? {
-        return Err(TransportError::Codec(
-            "replacement relay targets another durable submission".into(),
+        return Err(node_host_codec_error(
+            "replacement relay targets another durable submission",
         ));
     }
     Ok(relay)
@@ -294,8 +296,8 @@ pub fn construct_finalized_replacement_authorization_v1(
     let paths = &state.paths;
     let node_host = &state.node_host;
     if !path_exists(&paths.replacement_candidate)? || !path_exists(&paths.replacement_submission)? {
-        return Err(TransportError::Codec(
-            "replacement authorization requires a complete durable candidate and submission".into(),
+        return Err(node_host_codec_error(
+            "replacement authorization requires a complete durable candidate and submission",
         ));
     }
 
@@ -327,8 +329,8 @@ pub fn promote_replacement_candidate(
         return resolve_completed_promotion(&paths, active, authorization);
     }
     if candidate_exists != submission_exists {
-        return Err(TransportError::Codec(
-            "replacement candidate and submission durability state is incomplete".into(),
+        return Err(node_host_codec_error(
+            "replacement candidate and submission durability state is incomplete",
         ));
     }
 
@@ -349,12 +351,12 @@ fn resolve_completed_promotion(
         return Ok(active);
     }
     if active_hash == authorization.candidate_manifest_hash {
-        return Err(TransportError::Codec(
-            "completed promotion authorization does not match its durable receipt".into(),
+        return Err(node_host_codec_error(
+            "completed promotion authorization does not match its durable receipt",
         ));
     }
-    Err(TransportError::Codec(
-        "no replacement candidate is staged for this finalized authorization".into(),
+    Err(node_host_codec_error(
+        "no replacement candidate is staged for this finalized authorization",
     ))
 }
 
@@ -371,15 +373,15 @@ fn validate_staged_promotion(
         .authorization_hash()
         .map_err(codec_error)?;
     if candidate_manifest_hash != authorization.candidate_manifest_hash {
-        return Err(TransportError::Codec(
-            "finalized authorization targets another candidate manifest".into(),
+        return Err(node_host_codec_error(
+            "finalized authorization targets another candidate manifest",
         ));
     }
     let submission = read_replacement_submission(&paths.replacement_submission)?;
     let intent = validate_durable_replacement_submission(&candidate.manifest, &submission)?;
     if intent.intent_hash().map_err(codec_error)? != authorization.intent_hash {
-        return Err(TransportError::Codec(
-            "finalized authorization targets another replacement intent".into(),
+        return Err(node_host_codec_error(
+            "finalized authorization targets another replacement intent",
         ));
     }
     Ok(candidate)
@@ -424,20 +426,20 @@ pub(super) fn validate_replacement_candidate_state(
     if replacement_node_host_key_changed(record, active, node_host)
         || replacement_chain_identity_changed(record, active)
     {
-        return Err(TransportError::Codec(
-            "replacement candidate does not preserve committed NodeHost identity".into(),
+        return Err(node_host_codec_error(
+            "replacement candidate does not preserve committed NodeHost identity",
         ));
     }
     if record.predecessor_manifest_hash != active.authorization_hash().map_err(codec_error)? {
-        return Err(TransportError::Codec(
-            "replacement candidate predecessor is not the committed manifest".into(),
+        return Err(node_host_codec_error(
+            "replacement candidate predecessor is not the committed manifest",
         ));
     }
     if record.manifest.enclave_id().map_err(codec_error)?
         == active.enclave_id().map_err(codec_error)?
     {
-        return Err(TransportError::Codec(
-            "replacement candidate must have a fresh enclave identity".into(),
+        return Err(node_host_codec_error(
+            "replacement candidate must have a fresh enclave identity",
         ));
     }
     if record
@@ -446,8 +448,8 @@ pub(super) fn validate_replacement_candidate_state(
         .map_err(codec_error)?
         != active.node_host_authorization_hash().map_err(codec_error)?
     {
-        return Err(TransportError::Codec(
-            "replacement candidate changed the persistent NodeHost authority".into(),
+        return Err(node_host_codec_error(
+            "replacement candidate changed the persistent NodeHost authority",
         ));
     }
     Ok(())
@@ -499,8 +501,8 @@ pub(super) fn validate_candidate_key_ready_proof(
         .ok_or(crate::errors::NodeHostRecordError::TransitionEvidenceMissingKeyReadyProof)?;
     let expected_manifest_hash = manifest.authorization_hash().map_err(codec_error)?;
     if proof.candidate_manifest_hash != expected_manifest_hash {
-        return Err(TransportError::Codec(
-            "transition key-ready proof targets another durable candidate manifest".into(),
+        return Err(node_host_codec_error(
+            "transition key-ready proof targets another durable candidate manifest",
         ));
     }
     Ok(())
@@ -518,8 +520,8 @@ pub(super) fn validate_direct_dev_transition_proof(
         .verify_for_transition(&evidence.intent, proof.resident_offer_public)
         .map_err(codec_error)?;
     if proof.candidate_manifest_hash != manifest.authorization_hash().map_err(codec_error)? {
-        return Err(TransportError::Codec(
-            "transition proof targets another candidate".into(),
+        return Err(node_host_codec_error(
+            "transition proof targets another candidate",
         ));
     }
     Ok(())

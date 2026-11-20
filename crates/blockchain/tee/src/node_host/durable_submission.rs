@@ -3,6 +3,7 @@
 //! binding and proof-of-possession tail run once after that selection.
 
 use super::codec_error;
+use super::journal_records::node_host_codec_error;
 use super::replacement::{
     is_candidate_promotion_operation, validate_candidate_key_ready_proof,
     validate_direct_dev_transition_proof,
@@ -78,10 +79,10 @@ pub(super) fn verify_bound_possession(
         .validate_intent_binding(intent)
         .map_err(codec_error)?;
     if !intent.verify_node_signature(node_signature) {
-        return Err(TransportError::Codec(errors.node_signature.into()));
+        return Err(node_host_codec_error(errors.node_signature));
     }
     if !intent.verify_enclave_signature(enclave_signature) {
-        return Err(TransportError::Codec(errors.enclave_signature.into()));
+        return Err(node_host_codec_error(errors.enclave_signature));
     }
     Ok(())
 }
@@ -114,7 +115,7 @@ pub(super) fn candidate_promotion_intent<'a>(
             Ok(&value.intent)
         }
         AttestationEvidenceV1::Dcap(_) | AttestationEvidenceV1::NoAttestationDev(_) => {
-            Err(TransportError::Codec(disallowed_operation.into()))
+            Err(node_host_codec_error(disallowed_operation))
         }
     }
 }

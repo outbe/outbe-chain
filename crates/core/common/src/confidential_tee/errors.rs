@@ -87,7 +87,7 @@ pub fn map_consensus_transport_error<E>(
 ) -> E {
     match error {
         TransportError::UnexpectedResponse => mismatch,
-        TransportError::EnclaveError(_) | TransportError::EnclaveCause { .. } => rejected(error),
+        TransportError::EnclaveCause { .. } => rejected(error),
         TransportError::AppAttestation { .. } => invalid_attestation(error),
         other => unavailable(other),
     }

@@ -157,20 +157,22 @@ fn local_answer(
         Ok(outcome) => outcome,
         Err(_panic_payload) => {
             locked(state)?.latch(BlockWitnessFault::LocalUnavailable);
-            return Err(TransportError::Unavailable(
-                "local enclave transport panicked".into(),
+            return Err(TransportError::unavailable(
+                WitnessAvailabilityError::TransportPanicked,
             ));
         }
     };
     match outcome {
         Ok((_, EnclaveResponse::Error { message })) => {
             unsigned_failure(state)?;
-            Err(TransportError::EnclaveError(message))
+            Err(TransportError::enclave_error(
+                crate::errors::EnclaveResponseError(message),
+            ))
         }
         Err(error) => {
             if matches!(
                 error,
-                TransportError::EnclaveError(_)
+                TransportError::EnclaveCause { .. }
                     | TransportError::InProcess(crate::InProcessDispatchError::Domain(_))
             ) {
                 unsigned_failure(state)?;
@@ -193,11 +195,6 @@ enum PreparedCall {
     RpcDirect,
     Proposer { leader_key: [u8; 32] },
     Verifier(Box<VerifierCallContext>),
-}
-
-/// Legacy repeat. Callers of `consensus_call` still match [`TransportError::EnclaveError`].
-fn legacy_candidate_rejection() -> TransportError {
-    TransportError::EnclaveError("witness candidate already rejected".into())
 }
 
 /// Typed repeat. [`WitnessCandidateRejected`] stays available through [`std::error::Error::source`].
@@ -312,8 +309,7 @@ fn note_typed_transport_error(
 ) -> Result<(), TransportError> {
     if matches!(
         error,
-        TransportError::EnclaveError(_)
-            | TransportError::EnclaveCause { .. }
+        TransportError::EnclaveCause { .. }
             | TransportError::InProcess(crate::InProcessDispatchError::Domain(_))
     ) {
         unsigned_failure(handle)
@@ -391,18 +387,18 @@ pub fn consensus_call(
 ) -> Result<([u8; 32], EnclaveResponse), TransportError> {
     let Some(handle) = current_witness_state() else {
         if witness_policy().is_some() {
-            return Err(TransportError::Unavailable(
-                "private execution requires an explicit witness scope".into(),
+            return Err(TransportError::unavailable(
+                WitnessAvailabilityError::MissingWitnessScope,
             ));
         }
         // Standalone CLI and existing in-process test clients have no block policy.
         return transport();
     };
-    match prepare_consensus_call(&handle, legacy_candidate_rejection)? {
+    match prepare_consensus_call(&handle, typed_candidate_rejection)? {
         PreparedCall::RpcDirect => {
             if witness_policy() == Some(WitnessPolicy::ReplayOnly) {
-                return Err(TransportError::Unavailable(
-                    "PrivateExecutionUnavailable".into(),
+                return Err(TransportError::unavailable(
+                    WitnessAvailabilityError::PrivateExecutionUnavailable,
                 ));
             }
             transport()
