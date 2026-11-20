@@ -73,6 +73,29 @@ fn sending_every_unit_deletes_the_spent_source_series() {
     });
 }
 
+#[test]
+fn a_second_position_of_one_owner_and_series_in_a_block_is_refused() {
+    with_storage(None, |storage| {
+        seed_source_series(
+            storage,
+            six_decimal_unit(),
+            six_decimal_u128(),
+            outbe_intex::IntexCallTrigger::default(),
+        );
+        let half = U256::from(SENT_UNITS / 2);
+        runtime::create_gem_factory_position(storage, ALICE, source_series_id(), half).unwrap();
+        assert_eq!(
+            runtime::create_gem_factory_position(storage, ALICE, source_series_id(), half)
+                .unwrap_err()
+                .to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::GemFactoryError::GemFactoryPositionAlreadyExists
+            )
+            .to_string()
+        );
+    });
+}
+
 /// An expired position reads empty at once, returns its remainder with its day and is
 /// then deleted.
 #[test]
