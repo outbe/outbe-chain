@@ -33,14 +33,12 @@ mod journal_records;
 mod locked_state;
 
 mod join_records;
-pub use join_records::{
-    CommittedJoinRelayV1, CommittedJoinSubmissionV1, FinalizedJoinAdmissionAnchorV1,
-};
+pub use join_records::FinalizedJoinAdmissionAnchorV1;
 
 mod replacement_records;
 use replacement_records::{
     read_replacement_candidate, read_replacement_promotion, read_replacement_relay,
-    read_replacement_submission, ReplacementCandidateRecordV1, MAX_REPLACEMENT_SUBMISSION_BYTES,
+    read_replacement_submission, ReplacementCandidateRecordV1,
 };
 pub use replacement_records::{
     FinalizedReplacementAuthorizationV1, FinalizedReplacementBindingV1,
@@ -52,11 +50,6 @@ mod identity_key;
 pub use identity::NodeHostIdentityV1;
 use identity::{read_manifest, MAX_INITIALIZATION_MANIFEST_BYTES};
 pub use identity_key::NodeHostIdentityKey;
-
-#[cfg(test)]
-mod committed_join;
-#[cfg(test)]
-use committed_join::validate_durable_committed_join_submission;
 
 mod replacement;
 mod replacement_binding;

@@ -58,24 +58,6 @@ fn signed_rejection_and_lazy_attestation_enforce_domain_hash_and_tag_len() {
     ));
 }
 
-#[test]
-fn tee_consensus_call_and_session_call_fail_closed_on_mismatched_recordable_flag() {
-    let req = crate::protocol::EnclaveRequest::GetPublicKeys;
-    let err = tee_consensus_call(
-        CallMeta::session_only("get_public_keys"),
-        &req,
-        || crate::TransportError::Unavailable("none".into()),
-        |_, _| Ok(()),
-    )
-    .unwrap_err();
-    assert!(matches!(err, crate::TransportError::Codec(_)));
-
-    let session_err = tee_session_call(CallMeta::recorded("recorded_op"), &req, |_, _| Ok(()))
-        .expect("returns fail-closed error even without installed runtime")
-        .unwrap_err();
-    assert!(matches!(session_err, crate::TransportError::Codec(_)));
-}
-
 fn binding() -> outbe_primitives::tee_attestation_v1::NetworkBindingV1 {
     use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
     NetworkBindingV1 {

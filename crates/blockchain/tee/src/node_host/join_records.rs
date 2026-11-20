@@ -1,33 +1,4 @@
-use super::journal_records::{
-    encode_submission_fields, JournalRelayPayload, JournalSubmissionPayload,
-    JournalSubmissionValidation,
-};
-use super::MAX_REPLACEMENT_SUBMISSION_BYTES;
-
-use crate::TransportError;
-use alloy_primitives::keccak256;
-use alloy_primitives::Address;
 use alloy_primitives::B256;
-
-use std::fmt;
-
-const COMMITTED_JOIN_SUBMISSION_VERSION_V1: u8 = 1;
-
-const MAX_COMMITTED_JOIN_SUBMISSION_BYTES: u64 = MAX_REPLACEMENT_SUBMISSION_BYTES + 20;
-
-const COMMITTED_JOIN_SUBMISSION_VALIDATION: JournalSubmissionValidation =
-    JournalSubmissionValidation {
-        min_len: 154,
-        max_bytes: MAX_COMMITTED_JOIN_SUBMISSION_BYTES,
-        version: COMMITTED_JOIN_SUBMISSION_VERSION_V1,
-        framing_error: "committed join submission framing is invalid",
-        length_base: 154,
-        length_overflow_error: "committed join submission length overflow",
-        noncanonical_length_error: "committed join evidence length is non-canonical",
-        encode_evidence_length_error: "committed join evidence length overflow",
-        encode_allocation_error: "committed join submission allocation length overflow",
-        encode_cap_error: Some("committed join submission exceeds its fixed cap"),
-    };
 
 /// Exact finalized checkpoint that allows a restarted validator to catch up
 /// without trusting its stale local Registry state. This is owner-only local
@@ -45,114 +16,48 @@ pub struct FinalizedJoinAdmissionAnchorV1 {
     pub finalized_consensus_timestamp: u64,
 }
 
-/// Exact registration material durably bound to the already committed
-/// NodeHost enclave before its first registration transaction is constructed.
-#[derive(Clone, PartialEq, Eq)]
-pub struct CommittedJoinSubmissionV1 {
-    registration_caller: Address,
-    payload: JournalSubmissionPayload,
-}
-
-/// Exact signed committed-join transaction persisted before its first relay.
-#[derive(Clone, PartialEq, Eq)]
-pub struct CommittedJoinRelayV1 {
-    payload: JournalRelayPayload,
-    from_block: u64,
-}
-
-impl fmt::Debug for CommittedJoinSubmissionV1 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CommittedJoinSubmissionV1")
-            .field("registration_caller", &self.registration_caller)
-            .field("evidence", &self.payload.evidence)
-            .field("node_signature", &self.payload.node_signature)
-            .field("enclave_signature", &self.payload.enclave_signature)
-            .finish()
-    }
-}
-
-impl fmt::Debug for CommittedJoinRelayV1 {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("CommittedJoinRelayV1")
-            .field("submission_hash", &self.payload.submission_hash)
-            .field("calldata_hash", &self.payload.calldata_hash)
-            .field("transaction_hash", &self.payload.transaction_hash)
-            .field("from_block", &self.from_block)
-            .field("raw_transaction", &self.payload.raw_transaction)
-            .finish()
-    }
-}
-
-impl CommittedJoinSubmissionV1 {
-    #[cfg(test)]
-    pub(super) fn new(
-        registration_caller: Address,
-        evidence: Vec<u8>,
-        node_signature: [u8; 65],
-        enclave_signature: [u8; 64],
-    ) -> Self {
-        Self {
-            registration_caller,
-            payload: JournalSubmissionPayload::new(evidence, node_signature, enclave_signature),
+#[cfg(test)]
+impl FinalizedJoinAdmissionAnchorV1 {
+    /// A disk checkpoint is not key possession. Validate it against this live process.
+    /// The caller must still verify resident material before opening authority.
+    pub(crate) fn validate_live_manifest_v1(
+        &self,
+        live: &outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1,
+    ) -> crate::in_process::Result<()> {
+        if self.chain_id != live.chain_id
+            || self.genesis_hash != live.genesis_hash
+            || self.node_id_hash != live.node_id.node_id_hash()?
+            || self.enclave_id != live.enclave_id()?
+        {
+            return Err(crate::in_process::InProcessError::IdentityMismatch);
         }
-    }
-
-    #[must_use]
-    pub const fn registration_caller(&self) -> Address {
-        self.registration_caller
-    }
-
-    #[must_use]
-    pub fn evidence(&self) -> &[u8] {
-        &self.payload.evidence
-    }
-
-    #[must_use]
-    pub const fn node_signature(&self) -> &[u8; 65] {
-        &self.payload.node_signature
-    }
-
-    #[must_use]
-    pub const fn enclave_signature(&self) -> &[u8; 64] {
-        &self.payload.enclave_signature
-    }
-
-    pub fn submission_hash(&self) -> Result<B256, TransportError> {
-        Ok(keccak256(self.encode_canonical()?))
-    }
-
-    pub(super) fn encode_canonical(&self) -> Result<Vec<u8>, TransportError> {
-        if self.registration_caller.is_zero() {
-            return Err(TransportError::Codec(
-                "committed join registration caller is zero".into(),
-            ));
-        }
-        encode_submission_fields(
-            self.registration_caller.as_slice(),
-            &self.payload,
-            &COMMITTED_JOIN_SUBMISSION_VALIDATION,
-        )
+        Ok(())
     }
 }
 
-impl CommittedJoinRelayV1 {
-    #[must_use]
-    pub const fn calldata_hash(&self) -> B256 {
-        self.payload.calldata_hash
-    }
+#[cfg(test)]
+mod live_anchor_tests {
+    use super::*;
 
-    #[must_use]
-    pub const fn transaction_hash(&self) -> B256 {
-        self.payload.transaction_hash
-    }
-
-    #[must_use]
-    pub const fn from_block(&self) -> u64 {
-        self.from_block
-    }
-
-    #[must_use]
-    pub fn raw_transaction(&self) -> &[u8] {
-        &self.payload.raw_transaction
+    #[test]
+    fn prior_process_anchor_never_attests_a_fresh_enclave() {
+        let active = super::super::identity::process_identity_tests::manifest(9, [4; 32]);
+        let fresh = super::super::identity::process_identity_tests::manifest(10, [4; 32]);
+        let anchor = FinalizedJoinAdmissionAnchorV1 {
+            chain_id: active.chain_id,
+            genesis_hash: active.genesis_hash,
+            node_id_hash: active.node_id.node_id_hash().unwrap(),
+            enclave_id: active.enclave_id().unwrap(),
+            intent_hash: B256::repeat_byte(1),
+            finalized_height: 91,
+            finalized_hash: B256::repeat_byte(2),
+            finalized_state_root: B256::repeat_byte(3),
+            finalized_consensus_timestamp: 19000,
+        };
+        anchor.validate_live_manifest_v1(&active).unwrap();
+        assert!(matches!(
+            anchor.validate_live_manifest_v1(&fresh),
+            Err(crate::in_process::InProcessError::IdentityMismatch)
+        ));
     }
 }
