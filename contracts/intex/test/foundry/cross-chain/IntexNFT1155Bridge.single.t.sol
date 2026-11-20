@@ -48,9 +48,9 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         adapterA = DeployProxy.intexNFT1155Bridge(address(tokenA), address(bridge), admin);
         adapterB = DeployProxy.intexNFT1155Bridge(address(tokenB), address(bridge), admin);
 
-        // Grant RELAYER_ROLE to adapters
-        tokenA.grantRole(tokenA.RELAYER_ROLE(), address(adapterA));
-        tokenB.grantRole(tokenB.RELAYER_ROLE(), address(adapterB));
+        // Grant BRIDGE_ROLE to adapters
+        tokenA.grantRole(tokenA.BRIDGE_ROLE(), address(adapterA));
+        tokenB.grantRole(tokenB.BRIDGE_ROLE(), address(adapterB));
 
         // Wire adapters (register each as the other's remote messenger)
         adapterA.registerRemoteMessenger(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapterB)));

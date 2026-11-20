@@ -210,7 +210,7 @@ contract LocalLoopbackTest is Test {
         auction.setIntexContract(address(intex));
         intex.grantRole(intex.AUCTION_ROLE(), address(auction));
         auction.grantRole(auction.RELAYER_ROLE(), address(target));
-        intex.grantRole(intex.RELAYER_ROLE(), address(target));
+        intex.grantRole(intex.ROUTER_ROLE(), address(target));
         escrow.grantRole(escrow.RELAYER_ROLE(), address(target));
 
         wcoen.mint(iba1, INITIAL_WCOEN_BALANCE);

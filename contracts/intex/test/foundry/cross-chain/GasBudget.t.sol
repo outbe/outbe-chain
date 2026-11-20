@@ -50,7 +50,7 @@ contract GasBudgetTest is CrossChainTest {
         router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
         router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
-        intex.grantRole(intex.RELAYER_ROLE(), address(router));
+        intex.grantRole(intex.ROUTER_ROLE(), address(router));
     }
 
     function _measure(bytes14[] memory batch) internal returns (uint256 spent) {
@@ -171,8 +171,8 @@ contract GasBudgetTest is CrossChainTest {
         IntexNFT1155Bridge dst = DeployProxy.intexNFT1155Bridge(address(dstToken), address(bridge), admin);
         src.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
         dst.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
-        intex.grantRole(intex.RELAYER_ROLE(), address(src));
-        dstToken.grantRole(dstToken.RELAYER_ROLE(), address(dst));
+        intex.grantRole(intex.BRIDGE_ROLE(), address(src));
+        dstToken.grantRole(dstToken.BRIDGE_ROLE(), address(dst));
 
         bytes14[] memory one = MarkBatchLib.one(SERIES_PREFIX);
         _seed(one);
@@ -217,8 +217,8 @@ contract GasBudgetTest is CrossChainTest {
         IntexNFT1155Bridge dst = DeployProxy.intexNFT1155Bridge(address(dstToken), address(bridge), admin);
         src.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
         dst.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
-        intex.grantRole(intex.RELAYER_ROLE(), address(src));
-        dstToken.grantRole(dstToken.RELAYER_ROLE(), address(dst));
+        intex.grantRole(intex.BRIDGE_ROLE(), address(src));
+        dstToken.grantRole(dstToken.BRIDGE_ROLE(), address(dst));
 
         _seed(MarkBatchLib.one(SERIES_PREFIX));
         dstToken.createSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
@@ -354,7 +354,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
         router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
         router.setDependencies(address(auction), address(intex), address(escrow));
         auction.grantRole(auction.RELAYER_ROLE(), address(router));
-        intex.grantRole(intex.RELAYER_ROLE(), address(router));
+        intex.grantRole(intex.ROUTER_ROLE(), address(router));
         escrow.grantRole(escrow.RELAYER_ROLE(), address(router));
 
         // The relay leaves from the router's own float.
@@ -709,7 +709,7 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
         router = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
         router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
         router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
-        intex.grantRole(intex.RELAYER_ROLE(), address(router));
+        intex.grantRole(intex.ROUTER_ROLE(), address(router));
 
         vm.warp(ISSUED_AT);
         _deliver(OUTBE_CHAIN_ID, originPeer, address(router), _chunk(0));

@@ -29,7 +29,7 @@ contract MarkCalledClockTest is CrossChainTest {
         router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
         router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
-        intex.grantRole(intex.RELAYER_ROLE(), address(router));
+        intex.grantRole(intex.ROUTER_ROLE(), address(router));
         // A real notice period: with zero the window closes the instant the series
         // is called, and the reads below would report the series forfeited.
         intex.createSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 21 days));

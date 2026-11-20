@@ -11,7 +11,7 @@ import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {Vm} from "forge-std/Vm.sol";
 
 /// @dev Deploys implementation + ERC1967 proxy pairs for the UUPS contracts under test.
-///      Returned handles point at the proxy; `bridger` receives RELAYER_ROLE.
+///      Returned handles point at the proxy; `bridger` receives the roles each contract gates its operator on.
 library DeployProxy {
     Vm private constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
 
@@ -19,10 +19,12 @@ library DeployProxy {
         IntexNFT1155 impl = new IntexNFT1155();
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155.initialize, (defaultAdmin)));
         IntexNFT1155 nft = IntexNFT1155(address(proxy));
-        bytes32 relayer = nft.RELAYER_ROLE();
+        bytes32 router = nft.ROUTER_ROLE();
+        bytes32 bridge = nft.BRIDGE_ROLE();
         bytes32 auction = nft.AUCTION_ROLE();
         vm.startPrank(defaultAdmin);
-        nft.grantRole(relayer, bridger);
+        nft.grantRole(router, bridger);
+        nft.grantRole(bridge, bridger);
         nft.grantRole(auction, bridger);
         vm.stopPrank();
         return nft;

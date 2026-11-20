@@ -76,10 +76,10 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         bnbRouter.setDependencies(address(auction), address(intex), address(escrow));
 
         // The router drives auction lifecycle (RELAYER_ROLE), creates IntexNFT1155 series
-        // (RELAYER_ROLE), and finalizes escrow (RELAYER_ROLE). Each downstream contract gates
-        // mutations on its own RELAYER_ROLE which only the wired router should hold.
+        // (ROUTER_ROLE), and finalizes escrow (RELAYER_ROLE). Each downstream contract gates
+        // mutations on its own role which only the wired router should hold.
         auction.grantRole(auction.RELAYER_ROLE(), address(bnbRouter));
-        intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
+        intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
         escrow.grantRole(escrow.RELAYER_ROLE(), address(bnbRouter));
 
         // Bidder funds + approve so EscrowAdapter.lockIntexAuctionAsset works in the REFUND_INSTRUCTIONS test.
@@ -148,7 +148,7 @@ contract TargetRouterInboundHandlersTest is CrossChainTest {
         address localOrigin = makeAddr("localOrigin");
         localRouter.registerRemoteMessenger(local, _interop(local, localOrigin));
         localRouter.setDependencies(address(auction), address(intex), address(escrow));
-        intex.grantRole(intex.RELAYER_ROLE(), address(localRouter));
+        intex.grantRole(intex.ROUTER_ROLE(), address(localRouter));
 
         _deliver(local, localOrigin, address(localRouter), _issuancePacket());
         intex.grantRole(intex.AUCTION_ROLE(), admin);
