@@ -132,9 +132,14 @@ impl NodForfeit<'_, '_> {
     /// Returns the Gratis load of the group's unpaid Nods and unclaimed Tributes in one credit.
     /// Lysis drew it out of the day limit and only mining converts it, so unmined it goes back.
     fn close_group(&mut self, group: B256) -> Result<()> {
-        // A series left open by a failed earlier slot closes here, so no load is lost.
+        // A series a failed slot left open closes on the retry, one read per slot.
         for series_id in self.nod.group_series.list(&group).read_all()? {
-            self.close_series(group, series_id)?;
+            let gs_key = group_series_key(group, series_id);
+            if !self.nod.group_series_forfeited.read(&gs_key)? {
+                return Err(PrecompileError::Revert(
+                    "forfeit pass: a series of the group is still open".into(),
+                ));
+            }
         }
         let load = self.nod.group_forfeit_load_minor.read(&group)?;
         if !load.is_zero() {

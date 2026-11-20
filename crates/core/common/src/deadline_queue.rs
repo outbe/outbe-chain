@@ -99,7 +99,7 @@ pub const fn unpack_slot(packed: u64) -> (u32, u32) {
 }
 
 /// This function encodes the slot and member index where an interrupted pass resumes.
-/// Members at or above that index already failed in this pass. Zero starts from the highest member index.
+/// Members at or above that index were attempted in this pass. Zero starts from the highest member index.
 pub const fn pack_cursor(slot: u32, member: u32) -> u64 {
     ((slot as u64) << 32) | member as u64
 }
@@ -243,7 +243,7 @@ pub trait DeadlineHandler<E> {
     fn due(&mut self, entry: E) -> Result<Due>;
     fn member_count(&self, entry: E) -> Result<u32>;
     fn member_at(&self, entry: E, index: u32) -> Result<Self::Member>;
-    /// Budget writes `member` takes; a member that records a larger enclave witness costs more.
+    /// Budget writes `member` takes, at least one; a member that records a larger enclave witness costs more.
     fn member_cost(&self, _entry: E, _member: Self::Member) -> u32 {
         1
     }
