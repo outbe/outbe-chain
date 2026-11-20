@@ -9,7 +9,7 @@ use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, PrecompileError, Result},
 };
-use outbe_system_common::pass_budget::PassBudget;
+use outbe_system_common::pass_budget::{PassBudget, WITNESS_BYTES_PER_WRITE};
 
 pub(crate) fn cleanup_through(
     ctx: &BlockRuntimeContext,
@@ -26,8 +26,9 @@ pub(crate) fn cleanup_through(
     )
 }
 
-/// The pledge burn records about three Nod load reads of enclave witness, so it takes three writes.
-pub const PLEDGE_BURN_COST: u32 = 3;
+/// The pledge burn of one Credis is one Gratis collateral op.
+pub const PLEDGE_BURN_COST: u32 =
+    outbe_gratis::enclave_client::COLLATERAL_OP_WITNESS_BYTES.div_ceil(WITNESS_BYTES_PER_WRITE);
 
 struct CredisCleanup<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,

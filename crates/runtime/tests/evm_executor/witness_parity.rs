@@ -25,17 +25,16 @@ fn witness_entry_len(response: EnclaveResponse) -> usize {
 #[test]
 fn the_end_block_reserve_holds_both_private_passes_at_their_full_budget() {
     use outbe_enclave::protocol::{GratisOpResult, GratisOpStatus};
-    use outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK;
+    use outbe_system_common::pass_budget::{SWEEP_WRITES_PER_BLOCK, WITNESS_BYTES_PER_WRITE};
     use outbe_tee::witness::{EnclaveWitnessEntryV1, EnclaveWitnessTapeV1, TxWitnessV1};
     // A `GRA2` balance or event envelope is 92 bytes.
     const GRATIS_BLOB_LEN: usize = 92;
 
-    let nod_read = EnclaveResponse::NodGroupLoadReadV1 {
+    let nod_read_len = witness_entry_len(EnclaveResponse::NodGroupLoadReadV1 {
         amount: U256::MAX,
         inputs_canonical_hash: B256::repeat_byte(0x01),
         attestation_tag: vec![0x02; 64],
-    };
-    let nod_read_len = witness_entry_len(nod_read.clone());
+    });
     let pledge_burn_len = witness_entry_len(EnclaveResponse::GratisOpApplied {
         result: Box::new(GratisOpResult {
             status: GratisOpStatus::Applied,
@@ -49,9 +48,17 @@ fn the_end_block_reserve_holds_both_private_passes_at_their_full_budget() {
             encrypted_event_amount: vec![0x07; GRATIS_BLOB_LEN],
         }),
     });
-    assert!(pledge_burn_len <= outbe_credisfactory::PLEDGE_BURN_COST as usize * nod_read_len);
+    assert!(nod_read_len <= outbe_nod::api::GROUP_LOAD_READ_WITNESS_BYTES as usize);
+    assert!(pledge_burn_len <= outbe_gratis::enclave_client::COLLATERAL_OP_WITNESS_BYTES as usize);
 
-    let entry = EnclaveWitnessEntryV1::try_from(nod_read.into_wire_response().unwrap()).unwrap();
+    // A write records at most this one entry's worth of witness.
+    let unit = WITNESS_BYTES_PER_WRITE as usize;
+    let entry = EnclaveWitnessEntryV1::Payload {
+        payload: vec![0x08; unit - 100],
+        inputs_canonical_hash: B256::repeat_byte(0x09),
+        attestation_tag: vec![0x0A; 64],
+    };
+    assert_eq!(postcard::to_allocvec(&entry).unwrap().len(), unit);
     let suffix = EnclaveWitnessTapeV1 {
         prefix: Vec::new(),
         txs: (0..2)

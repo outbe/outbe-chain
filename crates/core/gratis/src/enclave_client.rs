@@ -17,6 +17,9 @@ use outbe_primitives::error::Result;
 
 use crate::errors::{map_nod_client_error, GratisFatalError};
 
+/// Enclave witness one collateral op (pledge, release, pledge burn) records at most; it carries no fidelity section.
+pub const COLLATERAL_OP_WITNESS_BYTES: u32 = 460;
+
 /// Run one Gratis op inside the enclave and validate the response.
 ///
 /// Determinism: recompute the canonical inputs hash and reject a mismatch

@@ -10,7 +10,7 @@ use outbe_primitives::{
     storage::StorageHandle,
 };
 
-use outbe_system_common::pass_budget::PassBudget;
+use outbe_system_common::pass_budget::{PassBudget, WITNESS_BYTES_PER_WRITE};
 
 use outbe_nod::errors::NodError;
 use outbe_nod::index_keys::group_series_key;
@@ -46,6 +46,9 @@ impl<'a, 's> NodForfeit<'a, 's> {
     }
 }
 
+const GROUP_LOAD_READ_COST: u32 =
+    outbe_nod::api::GROUP_LOAD_READ_WITNESS_BYTES.div_ceil(WITNESS_BYTES_PER_WRITE);
+
 /// One series of a called group, in list order; the last one closes the group.
 #[derive(Clone, Copy)]
 struct SeriesSlot {
@@ -79,6 +82,10 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
 
     fn classify(&self, error: &PrecompileError) -> PassFailure {
         error.record_pass_failure()
+    }
+
+    fn member_cost(&self, _group: B256, _slot: SeriesSlot) -> u32 {
+        GROUP_LOAD_READ_COST
     }
 
     fn process_member(&mut self, group: B256, slot: SeriesSlot) -> Result<()> {

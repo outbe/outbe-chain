@@ -119,6 +119,9 @@ pub fn seal_lysis_series(storage: &StorageHandle<'_>, seal: LysisSeriesSeal) -> 
     storage.with_checkpoint(|| NodContract::new(storage.clone()).seal_lysis_series_state(seal))
 }
 
+/// Enclave witness one open load read of a group or a series records at most.
+pub const GROUP_LOAD_READ_WITNESS_BYTES: u32 = 168;
+
 /// Returns whether `group_key` has been forfeited after its call notice period lapsed.
 pub fn is_group_forfeited(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
     NodContract::new(storage.clone())

@@ -6,7 +6,7 @@ use super::{
 use outbe_tee::witness::{compressed_witness_bound, EnclaveWitnessTapeV1};
 
 /// Raw tape bytes user transactions leave for the end-block suffix, which runs after them and
-/// cannot be deferred: two passes of `SWEEP_WRITES_PER_BLOCK` Nod load reads of 168 bytes each.
+/// cannot be deferred: two private passes of `SWEEP_WRITES_PER_BLOCK` writes of `WITNESS_BYTES_PER_WRITE`.
 pub const END_BLOCK_WITNESS_RESERVE_BYTES: usize = 22 * 1024;
 
 /// A user candidate must leave the reserve. Compression does not add up, so only the
