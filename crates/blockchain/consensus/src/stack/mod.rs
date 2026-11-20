@@ -170,9 +170,10 @@ use services::EngineHandle;
 use shutdown::{supervise_epoch_loop_result, EpochLoopAction, EpochLoopOutcome};
 
 pub use startup::{
-    block_timing_from_genesis, build_peer_map, epoch_length_blocks_from_genesis,
-    genesis_consensus_block, genesis_hash, map_marshal_init_height, nonzero_u16, nonzero_u64,
-    nonzero_usize, parse_consensus_peers, require_genesis_hash, validate_testnet_only_flags,
+    block_timing_from_chain_spec, block_timing_from_genesis, build_peer_map,
+    epoch_length_blocks_from_genesis, genesis_consensus_block, genesis_hash,
+    map_marshal_init_height, nonzero_u16, nonzero_u64, nonzero_usize, parse_consensus_peers,
+    require_genesis_hash, validate_testnet_only_flags,
 };
 
 use crate::executor::actor::RecoveredForkchoiceAttempt;

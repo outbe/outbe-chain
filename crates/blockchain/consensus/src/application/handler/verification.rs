@@ -221,9 +221,12 @@ impl ApplicationShared {
             return Ok(VerificationOutcome::Invalid);
         };
         let candidate_ts_ms = resolved.block.timestamp_millis();
-        if let Ok(local_now_ms) = self.unix_time_source.now_millis() {
-            if candidate_ts_ms > local_now_ms {
-                record_candidate_timestamp_ahead_ms(candidate_ts_ms - local_now_ms);
+        let role = ValidatorRole::from_proposer_evm_address(self.proposer_evm_address);
+        if role == ValidatorRole::Signer {
+            if let Ok(local_now_ms) = self.unix_time_source.now_millis() {
+                if candidate_ts_ms > local_now_ms {
+                    record_candidate_timestamp_ahead_ms(candidate_ts_ms - local_now_ms);
+                }
             }
         }
         let parent = resolved
@@ -248,10 +251,7 @@ impl ApplicationShared {
         let outcome = self
             .verify_block_execution(request, &resolved, execution_read_budget)
             .await?;
-        if matches!(outcome, VerificationOutcome::Valid)
-            && ValidatorRole::from_proposer_evm_address(self.proposer_evm_address)
-                == ValidatorRole::Signer
-        {
+        if matches!(outcome, VerificationOutcome::Valid) && role == ValidatorRole::Signer {
             self.wait_until_candidate_timestamp(clock, candidate_ts_ms)
                 .await?;
         }
@@ -480,23 +480,26 @@ mod tests {
     }
 
     #[test]
-    fn clock_telemetry_never_changes_a_valid_vote() {
-        for (local_time, ahead) in [
-            (Some(2999), true),
-            (Some(3000), false),
-            (Some(3001), false),
-            (None, false),
-        ] {
+    fn signer_clock_telemetry_records_ahead_ms_when_candidate_leads_local_clock() {
+        use commonware_runtime::Clock as _;
+        for (base_ms, ahead) in [(2999, true), (3000, false), (3001, false)] {
             let recorder = DebuggingRecorder::new();
             metrics::with_local_recorder(&recorder, || {
                 deterministic::Runner::default().start(|context| async {
                     with_application(context, async |mut shared, mut executor, clock| {
-                        shared.unix_time_source = Arc::new(TestClock(local_time));
-                        let block = candidate();
+                        let start = clock.current();
+                        shared.proposer_evm_address = Some(Address::repeat_byte(0x11));
+                        shared.leader_policy = permissive_test_leader_policy();
+                        shared.unix_time_source = Arc::new(DeterministicUnixTimeSource {
+                            clock: clock.child("time_source"),
+                            start,
+                            base_ms,
+                        });
+                        let block = signer_candidate();
                         let request = request(&block);
                         shared.block_cache.insert_bounded(block.digest(), block);
                         let (response, receiver) = oneshot::channel();
-                        let verify = shared.handle_verify(
+                        let mut verify = Box::pin(shared.handle_verify(
                             &clock,
                             VerifyTask {
                                 context: request.context,
@@ -504,20 +507,23 @@ mod tests {
                                 response,
                                 execution_read_budget: ExecutionReadBudget::new(),
                             },
-                        );
-                        let execute = async {
-                            assert!(matches!(
-                                executor.next().await,
-                                Some(Message::PendingParent(_))
-                            ));
-                            let Some(Message::VerifyBlock(execution)) = executor.next().await
-                            else {
-                                panic!("missing execution request");
-                            };
-                            execution.response.send(VerificationOutcome::Valid).unwrap();
+                        ));
+                        assert!(futures::poll!(verify.as_mut()).is_pending());
+                        assert!(matches!(
+                            executor.next().await,
+                            Some(Message::PendingParent(_))
+                        ));
+                        let Some(Message::VerifyBlock(execution)) = executor.next().await else {
+                            panic!("missing execution request");
                         };
-                        let ((), ()) = futures::join!(verify, execute);
+                        let after_exec = clock.current();
+                        execution.response.send(VerificationOutcome::Valid).unwrap();
+                        verify.await;
                         assert!(receiver.await.unwrap());
+                        assert_eq!(
+                            clock.current().duration_since(after_exec).unwrap(),
+                            Duration::from_millis(u64::from(ahead))
+                        );
                     })
                     .await;
                 });
@@ -947,50 +953,60 @@ mod tests {
         });
     }
 
+    struct PanickingUnixTimeSource;
+
+    impl UnixTimeSource for PanickingUnixTimeSource {
+        fn now_millis(&self) -> eyre::Result<u64> {
+            panic!("VerifierOnly must not read local clock");
+        }
+    }
+
     #[test]
     fn verifier_only_does_not_sleep_and_signer_with_broken_clock_withholds_verify_error() {
         use commonware_runtime::Clock as _;
-        deterministic::Runner::default().start(|context| async {
-            with_application(context, async |mut shared, mut executor, clock| {
-                let start = clock.current();
-                shared.proposer_evm_address = None;
-                shared.unix_time_source = Arc::new(DeterministicUnixTimeSource {
-                    clock: clock.child("time_source"),
-                    start,
-                    base_ms: 2500,
-                });
-                let block = candidate();
-                let request = request(&block);
-                shared.block_cache.insert_bounded(block.digest(), block);
-                let (response, receiver) = oneshot::channel();
-                let mut verify = Box::pin(shared.handle_verify(
-                    &clock,
-                    VerifyTask {
-                        context: request.context,
-                        payload_digest: request.payload_digest,
-                        response,
-                        execution_read_budget: ExecutionReadBudget::new(),
-                    },
-                ));
-                assert!(futures::poll!(verify.as_mut()).is_pending());
-                assert!(matches!(
-                    executor.next().await,
-                    Some(Message::PendingParent(_))
-                ));
-                let Some(Message::VerifyBlock(execution)) = executor.next().await else {
-                    panic!("missing execution request");
-                };
-                let after_exec = clock.current();
-                execution.response.send(VerificationOutcome::Valid).unwrap();
-                verify.await;
-                assert!(receiver.await.unwrap());
-                assert_eq!(
-                    clock.current().duration_since(after_exec).unwrap(),
-                    Duration::ZERO
-                );
-            })
-            .await;
+        let verifier_recorder = DebuggingRecorder::new();
+        metrics::with_local_recorder(&verifier_recorder, || {
+            deterministic::Runner::default().start(|context| async {
+                with_application(context, async |mut shared, mut executor, clock| {
+                    shared.proposer_evm_address = None;
+                    shared.unix_time_source = Arc::new(PanickingUnixTimeSource);
+                    let block = candidate();
+                    let request = request(&block);
+                    shared.block_cache.insert_bounded(block.digest(), block);
+                    let (response, receiver) = oneshot::channel();
+                    let mut verify = Box::pin(shared.handle_verify(
+                        &clock,
+                        VerifyTask {
+                            context: request.context,
+                            payload_digest: request.payload_digest,
+                            response,
+                            execution_read_budget: ExecutionReadBudget::new(),
+                        },
+                    ));
+                    assert!(futures::poll!(verify.as_mut()).is_pending());
+                    assert!(matches!(
+                        executor.next().await,
+                        Some(Message::PendingParent(_))
+                    ));
+                    let Some(Message::VerifyBlock(execution)) = executor.next().await else {
+                        panic!("missing execution request");
+                    };
+                    let after_exec = clock.current();
+                    execution.response.send(VerificationOutcome::Valid).unwrap();
+                    verify.await;
+                    assert!(receiver.await.unwrap());
+                    assert_eq!(
+                        clock.current().duration_since(after_exec).unwrap(),
+                        Duration::ZERO
+                    );
+                })
+                .await;
+            });
         });
+        assert_eq!(
+            snapshot(&verifier_recorder).get("outbe_consensus_candidate_timestamp_ahead_ms"),
+            None
+        );
 
         let recorder = DebuggingRecorder::new();
         metrics::with_local_recorder(&recorder, || {

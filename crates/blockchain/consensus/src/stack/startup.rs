@@ -103,11 +103,13 @@ pub struct BlockTiming {
     pub certification_timeout: std::time::Duration,
 }
 
-/// Read the timing pair from genesis `config` (`leaderTimeoutMs` /
-/// `certificationTimeoutMs`), each falling back to its `timing.rs` default,
-/// then validate the startup invariants.
-pub fn block_timing_from_genesis(node: &impl StackNodeAccess) -> Result<BlockTiming> {
-    let extra = &node.chain_spec().genesis.config.extra_fields;
+/// Read the timing pair from a [`reth_chainspec::ChainSpec`] genesis `config`
+/// (`leaderTimeoutMs` / `certificationTimeoutMs`), each falling back to its
+/// `timing.rs` default, then validate the startup invariants.
+pub fn block_timing_from_chain_spec(
+    spec: &reth_chainspec::ChainSpec<OutbeHeader>,
+) -> Result<BlockTiming> {
+    let extra = &spec.genesis.config.extra_fields;
     let leader_ms = read_ms(
         extra.get_deserialized::<u64>("leaderTimeoutMs"),
         "leaderTimeoutMs",
@@ -123,6 +125,13 @@ pub fn block_timing_from_genesis(node: &impl StackNodeAccess) -> Result<BlockTim
         leader_timeout: std::time::Duration::from_millis(leader_ms),
         certification_timeout: std::time::Duration::from_millis(cert_ms),
     })
+}
+
+/// Read the timing pair from genesis `config` (`leaderTimeoutMs` /
+/// `certificationTimeoutMs`), each falling back to its `timing.rs` default,
+/// then validate the startup invariants.
+pub fn block_timing_from_genesis(node: &impl StackNodeAccess) -> Result<BlockTiming> {
+    block_timing_from_chain_spec(&node.chain_spec())
 }
 
 pub fn genesis_hash(node: &impl StackNodeAccess) -> Result<B256> {

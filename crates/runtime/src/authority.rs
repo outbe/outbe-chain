@@ -22,7 +22,8 @@ pub(crate) struct StartupChainAuthority {
 pub(crate) fn validate_startup_authority_and_pruning(
     config: &LaunchConfig,
 ) -> eyre::Result<StartupChainAuthority> {
-    // Validator and follower both enter this function before `launch()`.
+    // All node roles (validator, follower, upstream-bootstrap, and full node)
+    // enter this function before `launch()`.
     validate_slash_indicator_genesis(config)?;
     validate_no_genesis_day_state(config)?;
     let tee_attestation_v1 =
@@ -44,6 +45,7 @@ pub(crate) fn validate_startup_authority_and_pruning(
             details: crate::errors::display_error(error),
         })?
         .unwrap_or(outbe_consensus::config::DEFAULT_DKG_PREPARE_WINDOW_BLOCKS);
+    outbe_consensus::stack::block_timing_from_chain_spec(config.chain.as_ref())?;
     // Fixed nominal block cadence for TeeRenewalScheduleV1 (preserves its > 0
     // validation contract and JSON-RPC schema).
     let minimum_block_time_millis = outbe_consensus::timing::DEFAULT_PAYLOAD_WARMUP_MS;
@@ -264,6 +266,122 @@ mod tests {
                 genesis_day_state_owner(|address| alloc.get(address)),
                 Some(address)
             );
+        }
+    }
+
+    fn devnet_launch_config(extra_timing: serde_json::Value) -> LaunchConfig {
+        let _ = crate::outbe_default_txpool_values().try_init();
+        let mut spec = ChainSpec::<OutbeHeader> {
+            chain: reth_chainspec::Chain::from_id(outbe_primitives::chain::DEVNET_CHAIN_ID),
+            ..Default::default()
+        };
+        spec.genesis.config.chain_id = outbe_primitives::chain::DEVNET_CHAIN_ID;
+        let policy = outbe_primitives::tee_genesis_v1::initial_tee_policy_v1(
+            outbe_primitives::tee_genesis_v1::InitialTeeProfileV1::NoAttestationDev,
+            outbe_primitives::chain::DEVNET_CHAIN_ID,
+            spec.genesis_hash(),
+        )
+        .unwrap();
+        let mut config_obj = serde_json::json!({
+            "chainId": outbe_primitives::chain::DEVNET_CHAIN_ID,
+            outbe_tee::tee_attestation_activation::TEE_ATTESTATION_V1_CONFIG_FIELD:
+                outbe_primitives::tee_genesis_v1::tee_attestation_v1_genesis_field(&policy).unwrap(),
+        });
+        if let Some(map) = extra_timing.as_object() {
+            for (k, v) in map {
+                config_obj[k] = v.clone();
+            }
+        }
+        spec.genesis.config = serde_json::from_value(config_obj).unwrap();
+        let mut config = reth_node_builder::NodeConfig::new(Arc::new(spec));
+        config.engine.persistence_threshold = 0;
+        config.engine.memory_block_buffer_target = Some(0);
+        config
+    }
+
+    #[test]
+    fn startup_authority_validates_genesis_timing_pair_across_all_roles() {
+        use outbe_consensus::errors::StackStartupError;
+
+        enum Expected {
+            Ok,
+            LeaderZero,
+            CertZero,
+            LeaderExceedsCert { leader_ms: u64, cert_ms: u64 },
+            InvalidKey(&'static str),
+        }
+
+        let cases = [
+            (serde_json::json!({}), Expected::Ok),
+            (
+                serde_json::json!({"leaderTimeoutMs": 2000, "certificationTimeoutMs": 2000}),
+                Expected::Ok,
+            ),
+            (
+                serde_json::json!({"leaderTimeoutMs": 2000, "certificationTimeoutMs": 5000}),
+                Expected::Ok,
+            ),
+            (
+                serde_json::json!({"leaderTimeoutMs": 0}),
+                Expected::LeaderZero,
+            ),
+            (
+                serde_json::json!({"certificationTimeoutMs": 0}),
+                Expected::CertZero,
+            ),
+            (
+                serde_json::json!({"leaderTimeoutMs": 5000, "certificationTimeoutMs": 2000}),
+                Expected::LeaderExceedsCert {
+                    leader_ms: 5000,
+                    cert_ms: 2000,
+                },
+            ),
+            (
+                serde_json::json!({"leaderTimeoutMs": "bad"}),
+                Expected::InvalidKey("leaderTimeoutMs"),
+            ),
+        ];
+
+        for (extra_timing, expected) in cases {
+            let config = devnet_launch_config(extra_timing);
+            let result = validate_startup_authority_and_pruning(&config);
+            match expected {
+                Expected::Ok => {
+                    result.expect("valid timing config should pass startup authority");
+                }
+                Expected::LeaderZero => {
+                    let err = result.err().expect("leaderTimeoutMs=0 must fail");
+                    assert!(matches!(
+                        err.downcast_ref::<StackStartupError>(),
+                        Some(StackStartupError::LeaderTimeoutMsZero)
+                    ));
+                }
+                Expected::CertZero => {
+                    let err = result.err().expect("certificationTimeoutMs=0 must fail");
+                    assert!(matches!(
+                        err.downcast_ref::<StackStartupError>(),
+                        Some(StackStartupError::CertificationTimeoutMsZero)
+                    ));
+                }
+                Expected::LeaderExceedsCert { leader_ms, cert_ms } => {
+                    let err = result.err().expect("leader > cert must fail");
+                    assert!(matches!(
+                        err.downcast_ref::<StackStartupError>(),
+                        Some(StackStartupError::LeaderTimeoutExceedsCertificationTimeout {
+                            leader_ms: got_leader,
+                            cert_ms: got_cert,
+                        }) if *got_leader == leader_ms && *got_cert == cert_ms
+                    ));
+                }
+                Expected::InvalidKey(expected_key) => {
+                    let err = result.err().expect("malformed timing config must fail");
+                    assert!(matches!(
+                        err.downcast_ref::<StackStartupError>(),
+                        Some(StackStartupError::InvalidGenesisTimingConfig { key, .. })
+                            if key == expected_key
+                    ));
+                }
+            }
         }
     }
 }
