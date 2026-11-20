@@ -714,3 +714,473 @@ async fn engine_step_wrong_sender_fails_before_journal_finish_preserving_bytes()
     assert!(!retry::observation(&err));
     assert_eq!(std::fs::read(&journal_path).unwrap(), before);
 }
+
+fn fresh_process_context(seed: u8) -> Arc<InProcessTeeContext> {
+    let genesis = finality::FinalityCommitteeFixture::new(10);
+    let descriptor = proof::descriptor(&genesis);
+    Arc::new(proof::context(seed, &descriptor))
+}
+
+#[tokio::test]
+async fn seam_c1_enrollment_restart_over_in_pool_renew_admits_across_h1_h2_h3() {
+    let mut h = Harness::new();
+    let mut tracker = authority::Tracker::new(true);
+    h.admit().await;
+    assert!(tracker.observe(&h).is_authority_open());
+
+    // H1: advance into renewal window so Renew/Pending@N is persisted and sent.
+    let lease_until = h.chain.binding.as_ref().unwrap().valid_until;
+    h.chain.at.height += 1;
+    h.chain.at.hash = B256::repeat_byte(0x21);
+    h.chain.at.timestamp = lease_until - h.chain.policy.maximum_lease / 2;
+    assert!(matches!(
+        h.step().await,
+        engine::Step::Renewal(RenewalStep::Submitted {
+            replayed: false,
+            ..
+        })
+    ));
+    let renew = h.journal.load().unwrap().unwrap();
+    assert_eq!(renew.kind, ServiceTxKindV1::Renew);
+    assert_eq!(renew.state, ServiceTxStateV1::Pending);
+    let journal_path = h.dir.join("tee-service-tx-v1/journal.json");
+    let before = std::fs::read(&journal_path).unwrap();
+    let sent_before = h.sent();
+
+    // Restart with fresh InProcessTeeContext (!same_process) while Renew@N is still in pool.
+    h.live = fresh_process_context(21);
+    h.chain.nonces = [renew.nonce, renew.nonce, renew.nonce + 1];
+    assert!(matches!(
+        h.step().await,
+        engine::Step::Enrollment(EnrollmentOutcome::WaitForFinality)
+    ));
+    assert_eq!(h.sent(), sent_before);
+    assert_eq!(std::fs::read(&journal_path).unwrap(), before);
+
+    // H2: Renew@N finalizes -> DiscardLostIdentity -> submits Register@(N+1).
+    h.chain.at.height += 1;
+    h.chain.at.hash = B256::repeat_byte(0x22);
+    h.chain.at.timestamp += 2;
+    h.chain.nonces = [renew.nonce + 1; 3];
+    h.chain.binding.as_mut().unwrap().renewal_nonce += 1;
+    assert!(matches!(
+        h.step().await,
+        engine::Step::Enrollment(EnrollmentOutcome::Submitted { .. })
+    ));
+    let reg = h.journal.load().unwrap().unwrap();
+    assert_eq!(reg.kind, ServiceTxKindV1::Register);
+    assert_eq!(reg.nonce, renew.nonce + 1);
+    assert_eq!(h.sent(), sent_before + 1);
+
+    // H3: Register@(N+1) finalizes -> admitted and authority opens.
+    h.finalize();
+    assert!(matches!(
+        h.step().await,
+        engine::Step::Enrollment(EnrollmentOutcome::Admitted { .. })
+    ));
+    assert!(h.live.offer_key_ready().unwrap());
+    let mut next_tracker = authority::Tracker::new(true);
+    assert!(next_tracker.observe(&h).is_authority_open());
+}
+
+#[tokio::test]
+async fn seam_c1_replace_lost_identity_and_stale_renew_race_admits_across_h1_h2_h3() {
+    let mut h = Harness::new();
+    h.admit().await;
+
+    // H1: write Renew/Pending@N.
+    let lease_until = h.chain.binding.as_ref().unwrap().valid_until;
+    h.chain.at.height += 1;
+    h.chain.at.hash = B256::repeat_byte(0x31);
+    h.chain.at.timestamp = lease_until - h.chain.policy.maximum_lease / 2;
+    assert!(matches!(
+        h.step().await,
+        engine::Step::Renewal(RenewalStep::Submitted { .. })
+    ));
+    let renew = h.journal.load().unwrap().unwrap();
+    assert_eq!(renew.kind, ServiceTxKindV1::Renew);
+
+    // Restart with fresh InProcessTeeContext over unbroadcast/free slot -> ReplaceLostIdentity -> Register@N.
+    h.live = fresh_process_context(22);
+    h.chain.nonces = [renew.nonce; 3];
+    assert!(matches!(
+        h.step().await,
+        engine::Step::Enrollment(EnrollmentOutcome::Submitted { .. })
+    ));
+    let reg_at_n = h.journal.load().unwrap().unwrap();
+    assert_eq!(reg_at_n.kind, ServiceTxKindV1::Register);
+    assert_eq!(reg_at_n.nonce, renew.nonce);
+    assert_ne!(reg_at_n.tx_hash, renew.tx_hash);
+
+    // H2 race: stale peer Renew@N wins on-chain (renewal_nonce + 1, nonce advances to N+1).
+    h.chain.at.height += 1;
+    h.chain.at.hash = B256::repeat_byte(0x32);
+    h.chain.at.timestamp += 2;
+    h.chain.binding.as_mut().unwrap().renewal_nonce += 1;
+    h.chain.nonces = [renew.nonce + 1; 3];
+
+    // Next tick transitions Register@N -> RebuildRequired and submits Register@(N+1) without CompetingLiveBinding.
+    assert!(matches!(
+        h.step().await,
+        engine::Step::Enrollment(EnrollmentOutcome::Submitted { .. })
+    ));
+    let reg_at_next = h.journal.load().unwrap().unwrap();
+    assert_eq!(reg_at_next.kind, ServiceTxKindV1::Register);
+    assert_eq!(reg_at_next.nonce, renew.nonce + 1);
+    assert_ne!(reg_at_next.tx_hash, reg_at_n.tx_hash);
+    assert_eq!(
+        reg_at_next.public_intent.target.renewal_nonce,
+        h.chain.binding.as_ref().unwrap().renewal_nonce
+    );
+
+    // H3: Register@(N+1) finalizes -> admitted and authority opens.
+    h.finalize();
+    assert!(matches!(
+        h.step().await,
+        engine::Step::Enrollment(EnrollmentOutcome::Admitted { .. })
+    ));
+    assert!(h.live.offer_key_ready().unwrap());
+    let mut tracker = authority::Tracker::new(true);
+    assert!(tracker.observe(&h).is_authority_open());
+}
+
+struct ColdSuccessorSeamPort<'a> {
+    chain: &'a Chain,
+    policy: TeePolicyV1,
+    active_upgrade: outbe_primitives::enclave_upgrade::EnclaveUpgradeV1,
+    successor: outbe_tee::registry_view::FinalizedStagedSuccessorPolicyV1,
+    candidate: Option<LifecycleUpgradeCandidateV1>,
+}
+
+impl LifecycleChainPort for ColdSuccessorSeamPort<'_> {
+    type Error = std::io::Error;
+    async fn finalized_checkpoint(&self) -> chain::PortResult<LifecycleCheckpointV1> {
+        self.chain.finalized_checkpoint().await
+    }
+    async fn registry_state(
+        &self,
+        at: LifecycleCheckpointV1,
+        selector: &outbe_tee::registry_view::NodeBindingSelectorV1,
+    ) -> chain::PortResult<LifecycleRegistryStateV1> {
+        let mut view = self.chain.registry_state(at, selector).await?;
+        view.policy = self.policy.clone();
+        view.active_upgrade = Some(self.active_upgrade);
+        view.successor_policy = Some(self.successor.clone());
+        view.candidate = self.candidate;
+        Ok(view)
+    }
+    async fn pending_upgrade_nonce(
+        &self,
+        _: LifecycleCheckpointV1,
+        _: &outbe_tee::registry_view::NodeBindingSelectorV1,
+    ) -> chain::PortResult<u64> {
+        Ok(1)
+    }
+    async fn validator_record(
+        &self,
+        at: LifecycleCheckpointV1,
+        account: Address,
+    ) -> chain::PortResult<Option<outbe_primitives::validator_dto::ValidatorRecord>> {
+        self.chain.validator_record(at, account).await
+    }
+    async fn balance(
+        &self,
+        at: LifecycleCheckpointV1,
+        account: Address,
+    ) -> chain::PortResult<U256> {
+        self.chain.balance(at, account).await
+    }
+    async fn account_nonce(
+        &self,
+        account: Address,
+        tag: LifecycleNonceTagV1,
+    ) -> chain::PortResult<u64> {
+        self.chain.account_nonce(account, tag).await
+    }
+    async fn send_raw_transaction(&self, raw: &[u8]) -> chain::PortResult<B256> {
+        self.chain.send_raw_transaction(raw).await
+    }
+    async fn finalized_receipt(
+        &self,
+        at: LifecycleCheckpointV1,
+        hash: B256,
+    ) -> chain::PortResult<Option<LifecycleReceiptV1>> {
+        self.chain.finalized_receipt(at, hash).await
+    }
+    async fn onboarding_proof(
+        &self,
+        at: LifecycleCheckpointV1,
+        hash: B256,
+    ) -> chain::PortResult<LifecycleOnboardingProofV1> {
+        self.chain.onboarding_proof(at, hash).await
+    }
+    async fn upgrade_key(
+        &self,
+        _: LifecycleCheckpointV1,
+        _: &outbe_tee::dcap_protocol::DcapOnboardingContextV1,
+        _: &outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
+    ) -> chain::PortResult<LifecycleOnboardingProofV1> {
+        Err(LifecyclePortError::Source(std::io::Error::other(
+            "not used in cancel/prepare seam",
+        )))
+    }
+}
+
+#[tokio::test]
+async fn seam_r3_1_cold_successor_cancels_lost_renew_replays_exact_then_prepares_across_h1_h2() {
+    use outbe_tee::lifecycle::successor::{
+        cancel_successor_v1, prepare_cold_successor_v1, reconcile_candidate_v1,
+        reconcile_successor_v1, SuccessorLeaseV1, SuccessorStep,
+    };
+
+    let mut h = Harness::new();
+    h.admit().await;
+
+    // H1: write Renew/Pending@N.
+    let lease_until = h.chain.binding.as_ref().unwrap().valid_until;
+    h.chain.at.height += 1;
+    h.chain.at.hash = B256::repeat_byte(0x41);
+    h.chain.at.timestamp = lease_until - h.chain.policy.maximum_lease / 2;
+    assert!(matches!(
+        h.step().await,
+        engine::Step::Renewal(RenewalStep::Submitted { .. })
+    ));
+    let lost_renew = h.journal.load().unwrap().unwrap();
+    assert_eq!(lost_renew.kind, ServiceTxKindV1::Renew);
+
+    // Stage strict successor policy + live on-chain candidate at H1.
+    let predecessor = h.chain.policy.policy_hash().unwrap();
+    let mut successor_policy = h.chain.policy.clone();
+    successor_policy.policy_version += 1;
+    successor_policy.predecessor_policy_hash = predecessor;
+    successor_policy.activation_height = 1;
+    let successor_hash = successor_policy.policy_hash().unwrap();
+    let active_upgrade = outbe_primitives::enclave_upgrade::EnclaveUpgradeV1 {
+        proposal_id: U256::from(1),
+        activation_height: 1,
+        mrenclave: B256::repeat_byte(88),
+        successor_policy_hash: successor_hash,
+        predecessor_policy_hash: predecessor,
+    };
+    let live_candidate = LifecycleUpgradeCandidateV1 {
+        context_hash: B256::repeat_byte(0x77),
+        valid_until: h.chain.at.timestamp + 3600,
+        source_binding_id: h.chain.binding.as_ref().unwrap().binding_id,
+        target_hash: B256::repeat_byte(0x78),
+        nonce: 1,
+    };
+
+    // Restart with cold process (!same_process) over free slot [N; 3].
+    let cold_live = fresh_process_context(23);
+    h.chain.nonces = [lost_renew.nonce; 3];
+    let port_h1 = ColdSuccessorSeamPort {
+        chain: &h.chain,
+        policy: successor_policy.clone(),
+        active_upgrade,
+        successor: outbe_tee::registry_view::FinalizedStagedSuccessorPolicyV1 {
+            finalized_height: h.chain.at.height,
+            finalized_hash: h.chain.at.hash,
+            proposal_id: U256::from(1),
+            policy: successor_policy.clone(),
+        },
+        candidate: Some(live_candidate),
+    };
+
+    // engine::step recognizes needs_successor == true -> Step::SuccessorRequired.
+    assert!(matches!(
+        engine::step(
+            &port_h1,
+            &Signer,
+            engine::ResidentSession {
+                live: &cold_live,
+                journal: &mut h.journal,
+                node_data_dir: &h.dir,
+                phase: RenewalUpgradePhaseV1::Idle,
+            },
+        )
+        .await
+        .unwrap(),
+        engine::Step::SuccessorRequired
+    ));
+    let view_h1 = port_h1
+        .registry_state(
+            h.chain.at,
+            &outbe_tee::registry_view::NodeBindingSelectorV1::Validator(Signer::address()),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        reconcile_candidate_v1(&view_h1, None, None),
+        SuccessorStep::CancelRequired {
+            context_hash: live_candidate.context_hash,
+        }
+    );
+
+    // Replace lost Renew@N with operator-owned UpgradeCancel@N.
+    let cancel_step = cancel_successor_v1(
+        &port_h1,
+        &Signer,
+        &cold_live,
+        &mut h.journal,
+        live_candidate.context_hash,
+    )
+    .await
+    .unwrap();
+    let cancel = h.journal.load().unwrap().unwrap();
+    assert_eq!(cancel.kind, ServiceTxKindV1::UpgradeCancel);
+    assert_eq!(cancel.nonce, lost_renew.nonce);
+    assert_ne!(cancel.tx_hash, lost_renew.tx_hash);
+    assert!(matches!(
+        cancel_step,
+        SuccessorStep::Submitted {
+            transaction_hash,
+            replayed: false
+        } if transaction_hash == cancel.tx_hash
+    ));
+
+    // Next tick before finality replays exact UpgradeCancel@N bytes (ReplayExact).
+    let replay_step = reconcile_successor_v1(&port_h1, &Signer, &cold_live, &mut h.journal)
+        .await
+        .unwrap();
+    assert_eq!(
+        replay_step,
+        SuccessorStep::Submitted {
+            transaction_hash: cancel.tx_hash,
+            replayed: true,
+        }
+    );
+    assert_eq!(h.journal.load().unwrap().unwrap(), cancel);
+
+    // H2: candidate clears on-chain -> Finalized -> submits UpgradePrepare@(N+1).
+    h.chain.at.height += 1;
+    h.chain.at.hash = B256::repeat_byte(0x42);
+    h.chain.at.timestamp += 2;
+    h.chain.nonces = [cancel.nonce + 1; 3];
+    let port_h2 = ColdSuccessorSeamPort {
+        chain: &h.chain,
+        policy: successor_policy.clone(),
+        active_upgrade,
+        successor: outbe_tee::registry_view::FinalizedStagedSuccessorPolicyV1 {
+            finalized_height: h.chain.at.height,
+            finalized_hash: h.chain.at.hash,
+            proposal_id: U256::from(1),
+            policy: successor_policy,
+        },
+        candidate: None,
+    };
+    assert_eq!(
+        reconcile_successor_v1(&port_h2, &Signer, &cold_live, &mut h.journal)
+            .await
+            .unwrap(),
+        SuccessorStep::Finalized
+    );
+    let fresh_candidate = fresh_process_context(24);
+    let (_, prepared) = prepare_cold_successor_v1(
+        &port_h2,
+        &Signer,
+        &fresh_candidate,
+        &mut h.journal,
+        SuccessorLeaseV1 {
+            binding_id: B256::repeat_byte(0x89),
+            valid_until: h.chain.at.timestamp + 7200,
+        },
+    )
+    .await
+    .unwrap();
+    let prep = h.journal.load().unwrap().unwrap();
+    assert_eq!(prep.kind, ServiceTxKindV1::UpgradePrepare);
+    assert_eq!(prep.nonce, cancel.nonce + 1);
+    assert!(matches!(
+        prepared,
+        SuccessorStep::Submitted {
+            transaction_hash,
+            replayed: false
+        } if transaction_hash == prep.tx_hash
+    ));
+}
+
+#[tokio::test]
+async fn seam_authority_h1_to_h2_lag_keeps_signer_open_and_retirement_closes_both() {
+    let mut h = Harness::new();
+    h.admit().await;
+    let h1 = h.chain.at.height;
+    let binding = h.chain.binding.as_ref().unwrap();
+    let (provider, chain, mut identity, hashes) =
+        authority_provider::build_tee_admission_mock_provider(
+            &[(h1, h.chain.at.timestamp)],
+            authority_provider::SeededTeeState {
+                valid_until: binding.valid_until,
+                has_validator_binding: true,
+                validator_binding_mismatch: false,
+                validator_jailed: false,
+                offer_key: h.chain.public,
+            },
+        );
+    identity.validator = Some(Signer::address());
+    identity.reth_p2p_public = h.live.manifest().node_id.reth_p2p_public;
+    identity.expected_enclave_id = Some(h.live.manifest().enclave_id().unwrap());
+    let node_hash = h.live.manifest().node_id.node_id_hash().unwrap();
+    let mut storage = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(676);
+    storage.set_block_number(h1);
+    outbe_primitives::storage::StorageHandle::enter(&mut storage, |s| {
+        let registry = outbe_teeregistry::TeeRegistry::new(s);
+        registry
+            .v1_node_enclave_id
+            .write(&node_hash, identity.expected_enclave_id.unwrap())
+            .unwrap();
+        registry
+            .v1_node_binding_id
+            .write(&node_hash, binding.binding_id)
+            .unwrap();
+        registry
+            .v1_node_intent_hash
+            .write(&node_hash, binding.intent_hash)
+            .unwrap();
+        registry
+            .v1_node_valid_until
+            .write(&node_hash, binding.valid_until)
+            .unwrap();
+        registry
+            .validator_v1_node_hash
+            .write(&Signer::address(), node_hash)
+            .unwrap();
+    });
+    let mut accounts = provider.inner.accounts.lock();
+    for ((address, slot), value) in &storage.storage {
+        let account = accounts
+            .get(address)
+            .unwrap()
+            .clone()
+            .extend_storage([(B256::from(slot.to_be_bytes()), *value)]);
+        accounts.insert(*address, account);
+    }
+    drop(accounts);
+
+    let channel = outbe_tee::TeeAuthorityChannel::default();
+    let probe = outbe_runtime::LifecycleAuthorityProbe::new(
+        h.live.clone(),
+        identity,
+        *hashes.last().unwrap(),
+        channel.clone(),
+    )
+    .unwrap();
+    let protocol = Arc::new(outbe_runtime::OutbeRuntime::new());
+    probe.bind_sync_refresh(provider.clone(), Arc::clone(&protocol), chain);
+    let state_h1 = probe.refresh(&provider, &protocol, &chain).unwrap();
+    assert!(state_h1.is_authority_open());
+    assert_eq!(channel.applied_finalized_height(), h1);
+
+    // FinalizationActor observes H2 while Reth provider still only has applied H1.
+    let watch = channel.subscribe();
+    let h2 = h1 + 1;
+    channel.note_observed_finalized_height(h2);
+    assert!(watch.ensure_current_for_signer().is_authority_open());
+    assert!(channel.snapshot().is_authority_open());
+    assert!(!watch.ensure_current().is_authority_open());
+
+    // Retirement closes authority for both strict and signer checks.
+    channel.retire_publisher(true);
+    assert!(!channel.snapshot().is_authority_open());
+    assert!(!watch.ensure_current_for_signer().is_authority_open());
+    assert!(!watch.ensure_current().is_authority_open());
+}

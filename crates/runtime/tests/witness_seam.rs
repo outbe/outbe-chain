@@ -681,6 +681,43 @@ fn metric_classes_and_local_crypto_error_messages_remain_exact() {
     );
 }
 
+#[test]
+fn witness_consensus_call_enclave_cause_does_not_latch_local_unavailable() {
+    let context = Arc::new(outbe_tee::test_utils::resident_context(4, binding()));
+    let leader = context.attestation_public();
+    let _runtime = set_in_process_tee_context_for_test(Some(context));
+    let state = Arc::new(Mutex::new(WitnessState::new(
+        WitnessExecutionMode::ProposerRecord,
+        Some(leader),
+        EnclaveWitnessTapeV1::default(),
+    )));
+    {
+        let mut guard = state.lock().expect("witness lock");
+        guard.tx_index = Some(0);
+        guard.is_user_candidate = true;
+    }
+    let _scope = WitnessExecutionScope::enter(Arc::clone(&state));
+    let error = outbe_tee::consensus_call(
+        "enclave_cause_seam",
+        || {
+            Err(TransportError::EnclaveCause {
+                source: Box::new(Reason("deterministic refusal")),
+            })
+        },
+        |_, _| Ok(()),
+    )
+    .unwrap_err();
+    assert!(matches!(error, TransportError::EnclaveCause { .. }));
+    assert!(!error.is_node_local());
+    assert_eq!(error.metric_class(), "enclave_error");
+    let guard = state.lock().expect("witness lock");
+    assert_eq!(guard.first_witness_fault, None);
+    assert_eq!(
+        guard.candidate_rejection,
+        Some(CandidateRejection::UnsignedEnclaveError)
+    );
+}
+
 fn assert_local_crypto_sentences() {
     use outbe_tee::TeeCryptoError as T;
     use LocalCryptoError as E;
