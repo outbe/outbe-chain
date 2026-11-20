@@ -20,15 +20,16 @@ contract BridgeMsgCodecMarkBatchTest is Test {
         pure
         returns (uint32 emissionDay, uint64 calledAt, bytes14[] memory seriesIds)
     {
-        return BridgeMsgCodec.decodeMarkCalled(p);
+        return BridgeMsgCodec.decodeIntexSeriesCallNotice(p);
     }
 
     function exposedEncodeMarkCalled(uint32 day, bytes14[] calldata ids) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeMarkCalled(day, CALLED_AT, ids);
+        return BridgeMsgCodec.encodeIntexSeriesCallNotice(day, CALLED_AT, ids);
     }
 
     function test_markCalledRoundTripsTheWholeBatch() public view {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(EMISSION_DAY, CALLED_AT, MarkBatchLib.two(FIRST, SECOND));
+        bytes memory packet =
+            BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, CALLED_AT, MarkBatchLib.two(FIRST, SECOND));
 
         (uint32 day,, bytes14[] memory ids) = this.exposedDecodeMarkCalled(packet);
 
@@ -39,11 +40,11 @@ contract BridgeMsgCodecMarkBatchTest is Test {
     }
 
     function test_aFullBatchRoundTrips() public view {
-        uint256 max = BridgeMsgCodec.MAX_SERIES_PER_MARK;
+        uint256 max = BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE;
         bytes14[] memory batch = MarkBatchLib.sized(FIRST, max);
 
         (,, bytes14[] memory ids) =
-            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeMarkCalled(EMISSION_DAY, CALLED_AT, batch));
+            this.exposedDecodeMarkCalled(BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, CALLED_AT, batch));
 
         assertEq(ids.length, max, "the cap round-trips");
         for (uint256 i = 0; i < max; ++i) {
@@ -54,16 +55,17 @@ contract BridgeMsgCodecMarkBatchTest is Test {
     }
 
     function test_theHeaderNamesTheMessageType() public view {
-        bytes memory called = BridgeMsgCodec.encodeMarkCalled(EMISSION_DAY, CALLED_AT, MarkBatchLib.one(FIRST));
+        bytes memory called =
+            BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, CALLED_AT, MarkBatchLib.one(FIRST));
 
         assertEq(uint8(called[0]), BridgeMsgCodec.BODY_VERSION_V1, "called version");
-        assertEq(uint8(called[1]), BridgeMsgCodec.MSG_MARK_CALLED, "called type");
+        assertEq(uint8(called[1]), BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE, "called type");
     }
 
     function test_anEmptyBatchIsRefusedOnBothSides() public {
         bytes14[] memory empty = new bytes14[](0);
 
-        vm.expectRevert(BridgeMsgCodec.EmptyMarkBatch.selector);
+        vm.expectRevert(BridgeMsgCodec.EmptyCallNoticePage.selector);
         this.exposedEncodeMarkCalled(EMISSION_DAY, empty);
 
         // Inbound too, though the length floor gets there first: an empty batch encodes
@@ -72,19 +74,19 @@ contract BridgeMsgCodecMarkBatchTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_MARK_CALLED,
+                BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE,
                 forged.length,
-                BridgeMsgCodec.MIN_LEN_MARK_CALLED
+                BridgeMsgCodec.MIN_LEN_INTEX_SERIES_CALL_NOTICE
             )
         );
         this.exposedDecodeMarkCalled(forged);
     }
 
     function test_anOverSizedBatchIsRefusedOnBothSides() public {
-        uint256 tooMany = BridgeMsgCodec.MAX_SERIES_PER_MARK + 1;
+        uint256 tooMany = BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE + 1;
         bytes14[] memory batch = MarkBatchLib.sized(FIRST, tooMany);
         bytes memory expected = abi.encodeWithSelector(
-            BridgeMsgCodec.MarkBatchTooLarge.selector, tooMany, BridgeMsgCodec.MAX_SERIES_PER_MARK
+            BridgeMsgCodec.CallNoticePageTooLarge.selector, tooMany, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE
         );
 
         vm.expectRevert(expected);
@@ -100,9 +102,9 @@ contract BridgeMsgCodecMarkBatchTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_MARK_CALLED,
+                BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE,
                 tooShort.length,
-                BridgeMsgCodec.MIN_LEN_MARK_CALLED
+                BridgeMsgCodec.MIN_LEN_INTEX_SERIES_CALL_NOTICE
             )
         );
         this.exposedDecodeMarkCalled(tooShort);

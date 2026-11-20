@@ -12,24 +12,29 @@ impl Rpc {
     pub fn new(port: u16) -> Self {
         Self {
             client: reqwest::Client::builder()
+                .no_proxy()
                 .timeout(Duration::from_secs(5))
                 .build()
                 .unwrap(),
             url: format!("http://127.0.0.1:{port}"),
         }
     }
-    pub async fn request(&self, method: &str, params: Value) -> Option<Value> {
-        let value: Value = self
-            .client
-            .post(&self.url)
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub async fn raw(&self, method: &str, params: Value) -> Result<Value, reqwest::Error> {
+        self.client
+            .post(self.url())
             .json(&json!({"jsonrpc":"2.0", "id":1, "method":method,"params":params}))
             .send()
-            .await
-            .ok()?
+            .await?
             .json()
             .await
-            .ok()?;
-        value.get("result").cloned()
+    }
+
+    pub async fn request(&self, method: &str, params: Value) -> Option<Value> {
+        self.raw(method, params).await.ok()?.get("result").cloned()
     }
     pub async fn finalized(&self) -> Option<u64> {
         let block = self
@@ -45,7 +50,11 @@ impl Rpc {
         U256::from_str_radix(result.as_str().unwrap().trim_start_matches("0x"), 16).unwrap()
     }
     pub async fn call<C: SolCall>(&self, address: Address, call: C) -> C::Return {
-        let result = self.request("eth_call", json!([{"to":address, "data":format!("0x{}", hex::encode(call.abi_encode()))}, "latest"]))
+        self.call_at(address, call, json!("latest")).await
+    }
+
+    pub async fn call_at<C: SolCall>(&self, address: Address, call: C, block: Value) -> C::Return {
+        let result = self.request("eth_call", json!([{"to":address, "data":format!("0x{}", hex::encode(call.abi_encode()))}, block]))
             .await.unwrap();
         C::abi_decode_returns(
             &hex::decode(result.as_str().unwrap().trim_start_matches("0x")).unwrap(),

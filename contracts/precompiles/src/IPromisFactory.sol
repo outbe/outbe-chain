@@ -16,21 +16,6 @@ interface IPromisFactory {
     ///         `outbe_deriveKeys` + `IPromis.opNonceOf`).
     function mineCoen(uint256 promisMinor, bytes32 mac, uint64 opNonce) external returns (uint256 coenMinor);
 
-    /// @notice Convert confidential Promis (`encryptedPromisMinor`, encrypted to the TEE
-    ///         public key) to confidential Gratis at 1:1 (burns the caller's confidential
-    ///         Promis, mints Gratis). Both tokens are enclave-confidential and independently
-    ///         keyed, so the caller supplies TWO modify authorizations, each binding the
-    ///         decrypted `promisMinor` to that ledger's own current op-nonce. Fetch each via
-    ///         `outbe_deriveKeys(<ledger>, ...)` + `opNonceOf`. The Gratis mint records a
-    ///         fresh Fidelity acquisition cohort, exactly as any other Gratis acquisition does.
-    function mineGratis(
-        bytes calldata encryptedPromisMinor,
-        bytes32 promisMac,
-        uint64 promisOpNonce,
-        bytes32 gratisMac,
-        uint64 gratisOpNonce
-    ) external returns (bytes memory encryptedGratisMinor);
-
     /// @notice ERC-165 conformance check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

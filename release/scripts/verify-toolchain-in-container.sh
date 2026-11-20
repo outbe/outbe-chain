@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Container-only verification helper for APT closure and Intel DCAP native-QVL
-# inside Dockerfile.project-toolchain and build-sgx-bundle-in-container.sh.
+# in the pinned builder used by outbe-chain's native verifier.
 set -euo pipefail
 
 export LC_ALL=C

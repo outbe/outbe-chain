@@ -239,8 +239,8 @@ mod tests {
                 issuance_amount_minor: U256::from(123_000_000),
                 nominal_amount_minor: U256::from(100_000_000),
             };
-            let body = outbe_enclave::tribute_encryption::encrypt_tribute(
-                &crate::enclave_client::test_enclave::NETWORK_SECRET,
+            let body = crate::confidential::encrypt_tribute(
+                &crate::enclave_client::test_enclave::state_key(),
                 TributeContextV2 {
                     chain_id: 1,
                     tribute_id: id,

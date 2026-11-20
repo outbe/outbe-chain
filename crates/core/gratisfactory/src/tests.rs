@@ -7,9 +7,9 @@ use alloy_primitives::{address, Address, Bytes, FixedBytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolInterface};
 
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
-use outbe_enclave::gratis::{decrypt_balance, decrypt_pledged, derive_view_key};
-use outbe_enclave::protocol::{GratisOp, ModifyAuth};
 use outbe_gratis::enclave_client::test_enclave;
+use outbe_gratis::{decrypt_balance, decrypt_pledged, derive_view_key};
+use outbe_gratis::{GratisOp, ModifyAuth};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::{GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS};
@@ -35,7 +35,7 @@ fn chain_b256() -> B256 {
 /// Build the modify authorization a client holding `owner`'s modify key sends for
 /// `op` on `amount` at `op_nonce`.
 fn auth(op: GratisOp, owner: Address, amount: U256, op_nonce: u64) -> ModifyAuth {
-    test_enclave::modify_auth(outbe_enclave::gratis::ModifyOperation {
+    test_enclave::modify_auth(outbe_gratis::ModifyOperation {
         account: owner,
         op,
         amount,
@@ -686,8 +686,8 @@ fn encrypted_nod(amount: U256) -> outbe_core_common::nod_encryption::EncryptedNo
     use outbe_core_common::nod_encryption::NodTermsV1;
     use outbe_system_common::time::WorldwideDay;
     let day = WorldwideDay::new(20250115);
-    outbe_enclave::nod_encryption::encrypt_nod(
-        &[0x5a; 32],
+    outbe_nod::nod_encryption::encrypt_nod(
+        &outbe_tee::resident::StateKeyHandle::for_test([0x5a; 32]),
         NodTermsV1 {
             chain_id: CHAIN_ID,
             nod_id: U256::from_be_bytes([7; 32]),
@@ -820,8 +820,7 @@ fn open_account(storage: &StorageHandle<'_>, account: Address) -> (U256, U256) {
     let vk = derive_view_key(&test_enclave::state_key(), account).unwrap();
     let balance = outbe_gratis::api::balance_ct(storage.clone(), account).unwrap();
     let pledged = outbe_gratis::api::pledged_ct(storage.clone(), account).unwrap();
-    let balance =
-        outbe_enclave::gratis_decrypt::decrypt_gratis_balance(&vk, account, &balance).unwrap();
+    let balance = outbe_gratis::decrypt_balance(&vk, account, &balance).unwrap();
     // The pledged blob is bound to the pledged field, so the balance opener cannot read it.
     let pledged = if pledged.is_empty() {
         U256::ZERO
@@ -848,8 +847,7 @@ fn token_deltas(logs: &[alloy_primitives::LogData], account: Address) -> Vec<(bo
             None
         };
         if let Some((mint, blob)) = opened {
-            let amount =
-                outbe_enclave::gratis_decrypt::decrypt_gratis_balance(&vk, account, &blob).unwrap();
+            let amount = outbe_gratis::decrypt_balance(&vk, account, &blob).unwrap();
             deltas.push((mint, amount));
         }
     }

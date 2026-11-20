@@ -11,7 +11,7 @@ use alloy_rpc_types_engine::PayloadId;
 use outbe_evm::OutbeEvmSigner;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS, consensus::ConsensusExecutionBridge,
-    runtime_audit_v1::OTHER_PAYLOAD_EXECUTION_FAILURE, tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID,
+    runtime_audit_v1::OTHER_PAYLOAD_EXECUTION_FAILURE, tee_genesis_v1::NO_ATTESTATION_DEV_CHAIN_ID,
     OutbePrimitives,
 };
 use reth_chainspec::{ChainSpecBuilder, EthereumHardfork, ForkCondition};
@@ -43,8 +43,8 @@ fn narrow_user_stage_fixture() -> (OutbeEvmConfig, TestProvider) {
     let mut chain_spec = ChainSpecBuilder::mainnet()
         .with_fork(EthereumHardfork::Paris, ForkCondition::Block(0))
         .build();
-    chain_spec.chain = GRAMINE_DIRECT_DEV_CHAIN_ID.into();
-    chain_spec.genesis.config.chain_id = GRAMINE_DIRECT_DEV_CHAIN_ID;
+    chain_spec.chain = NO_ATTESTATION_DEV_CHAIN_ID.into();
+    chain_spec.genesis.config.chain_id = NO_ATTESTATION_DEV_CHAIN_ID;
     let chain_spec: Arc<ChainSpec<OutbeHeader>> = chain_spec.map_header(OutbeHeader::new).into();
     let signer =
         Arc::new(OutbeEvmSigner::from_secret_bytes([1u8; 32]).expect("test proposer key is valid"));

@@ -2,13 +2,13 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_credisfactory::precompile::ICredisFactory;
-use outbe_enclave::gratis::{
-    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
-};
-use outbe_enclave::protocol::{GratisOp, ModifyAuth};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_gratis::enclave_client::test_enclave;
 use outbe_gratis::precompile::IGratis;
+use outbe_gratis::{
+    decrypt_balance, decrypt_pledged, derive_account_keys, derive_view_key, modify_mac,
+};
+use outbe_gratis::{GratisOp, ModifyAuth};
 use outbe_gratisfactory::precompile::IGratisFactory;
 use outbe_oracle::{
     schema::OracleContract,
@@ -77,7 +77,7 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
     // Preserve the original success, payout/authorization/metadata failure and expiry cases.
     for failure in [0, 1, 2, 4, 5, 6, 7, 8] {
         test_enclave::install();
-        let key = derive_modify_key(&test_enclave::state_key(), OWNER).unwrap();
+        let key = derive_account_keys(&test_enclave::state_key(), OWNER).unwrap();
         let (mut db, stake) = issuance_database().expect("issuance database fixture succeeds");
         seed_storage(&mut db, NOW, OWNER, |storage| {
             seed_issuance_liquidity(storage.clone())
@@ -196,11 +196,15 @@ fn seed_issuance_oracle(storage: StorageHandle<'_>) -> eyre::Result<()> {
 
 const GRATIS: u64 = 1_000_000;
 
-fn source_auth(key: &[u8; 32], op: GratisOp, op_nonce: u64) -> ModifyAuth {
+fn source_auth(
+    key: &outbe_tee::resident::AccountKeysHandle,
+    op: GratisOp,
+    op_nonce: u64,
+) -> ModifyAuth {
     ModifyAuth {
         mac: modify_mac(
             key,
-            &outbe_enclave::gratis::ModifyOperation {
+            &outbe_gratis::ModifyOperation {
                 account: OWNER,
                 op,
                 amount: U256::from(GRATIS),
@@ -212,7 +216,10 @@ fn source_auth(key: &[u8; 32], op: GratisOp, op_nonce: u64) -> ModifyAuth {
     }
 }
 
-fn mint_source_gratis(storage: StorageHandle<'_>, key: &[u8; 32]) -> eyre::Result<()> {
+fn mint_source_gratis(
+    storage: StorageHandle<'_>,
+    key: &outbe_tee::resident::AccountKeysHandle,
+) -> eyre::Result<()> {
     outbe_gratis::api::mint(
         storage,
         OWNER,
@@ -223,7 +230,10 @@ fn mint_source_gratis(storage: StorageHandle<'_>, key: &[u8; 32]) -> eyre::Resul
     Ok(())
 }
 
-fn pledge_reservation(evm: &mut EvmWorld, key: &[u8; 32]) -> eyre::Result<()> {
+fn pledge_reservation(
+    evm: &mut EvmWorld,
+    key: &outbe_tee::resident::AccountKeysHandle,
+) -> eyre::Result<()> {
     let auth = source_auth(key, GratisOp::Pledge, 1);
     let pledge = IGratisFactory::pledgeGratisCall {
         reservationId: U256::ONE,
@@ -412,7 +422,7 @@ fn retry_issuance_and_cancel_expired(
     failure: u64,
     stake: U256,
     issue: ICredisFactory::issueCredisCall,
-    key: &[u8; 32],
+    key: &outbe_tee::resident::AccountKeysHandle,
 ) -> eyre::Result<()> {
     // Reset counterparties and retry with the same pledge and exact contribution.
     for target in [ASSET, VAULT] {

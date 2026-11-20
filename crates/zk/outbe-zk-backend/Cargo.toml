@@ -22,10 +22,12 @@ bn254_blackbox_solver = { git = "https://github.com/noir-lang/noir.git", tag = "
 barretenberg-rs = { version = "=5.0.0-nightly.20260522", default-features = false, features = ["ffi"] }
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"], optional = true }
 quinn-udp = { workspace = true, optional = true }
+libz-sys = { workspace = true, optional = true }
 
 [package.metadata.cargo-machete]
 # Transitive security floor for RUSTSEC-2026-0538 (reqwest 0.13 -> quinn -> quinn-udp >= 0.5.16).
-ignored = ["quinn-udp"]
+# Transitive security floor for RUSTSEC-2026-0544 (libgit2-sys / librocksdb-sys -> libz-sys >= 1.1.33).
+ignored = ["quinn-udp", "libz-sys"]
 
 [features]
 default = ["with-network-srs"]

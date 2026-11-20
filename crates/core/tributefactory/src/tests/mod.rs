@@ -490,8 +490,8 @@ fn assert_real_zk_offer_with_key_source(
         ops::{self, sign_message},
         variant::MinSig,
     };
-    use outbe_enclave::process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
     use outbe_l2registry::L2RegistryContract;
+    use outbe_tribute::confidential::{process_tribute_offer_batch, TributeOfferKeyMaterial};
     use outbe_zk::wire::decode_public_words;
     use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -513,10 +513,11 @@ fn assert_real_zk_offer_with_key_source(
     .unwrap();
     let offer_public_key = PublicKey::from(&StaticSecret::from(PRIVATE_KEY)).to_bytes();
     let (cipher, nonce, ephemeral) =
-        outbe_enclave::offer_encrypt::encrypt_tribute_offer(&offer_public_key, &payload).unwrap();
+        outbe_core_common::confidential_tee::encrypt_tribute_offer(&offer_public_key, &payload)
+            .unwrap();
     let key = TributeOfferKeyMaterial {
-        tribute_offer_private_key: &PRIVATE_KEY,
-        salt: &outbe_enclave::OFFER_HKDF_SALT,
+        tribute_offer_private_key: &outbe_tee::resident::OfferKeyHandle::for_test(PRIVATE_KEY),
+        salt: &outbe_core_common::confidential_tee::OFFER_HKDF_SALT,
     };
     let mut rng =
         <rand_commonware::rngs::StdRng as rand_commonware::SeedableRng>::from_seed([0x5a; 32]);
@@ -724,8 +725,8 @@ fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
         ops::{self, sign_message},
         variant::MinSig,
     };
-    use outbe_enclave::protocol::{TributeOfferResult, TributeOfferStatus};
     use outbe_l2registry::L2RegistryContract;
+    use outbe_tribute::confidential::{TributeOfferResult, TributeOfferStatus};
     use outbe_zk::demo_tribute::COMBINED_LEN as DEMO_TRIBUTE_COMBINED_LEN;
 
     const CALLER: Address = Address::repeat_byte(0x77);

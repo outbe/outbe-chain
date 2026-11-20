@@ -48,25 +48,24 @@ contract MarkBatchWireTest is CrossChainTest {
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         outbeRouter = DeployProxy.originRouter(address(bridge), admin);
 
-        bnbRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
-        outbeRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
+        bnbRouter.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
+        outbeRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
 
-        bnbRouter.wire(address(auction), address(intex), admin);
+        bnbRouter.setDependencies(address(auction), address(intex), admin);
         intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
 
-        outbeRouter.wire(address(desis), intexFactory);
+        outbeRouter.setDependencies(address(desis), intexFactory);
         outbeRouter.addTarget(BNB_CHAIN_ID);
         _freezeSnapshot();
     }
 
     /// @dev Freeze the day's target snapshot, which every mark broadcast goes out over.
     function _freezeSnapshot() internal {
-        IOriginRouter.AuctionStageStartParams memory p;
+        IOriginRouter.IntexAuctionStartParams memory p;
         p.prices = ReferenceCurrencyPriceLib.one(840, 1, 3);
         p.emissionDay = EMISSION_DAY;
-        p.dayState = 1;
         vm.prank(address(desis));
-        outbeRouter.sendAuctionStageStart(p);
+        outbeRouter.sendIntexAuctionStart(p);
     }
 
     function _createBoth() internal {
@@ -87,7 +86,7 @@ contract MarkBatchWireTest is CrossChainTest {
         uint256 fee = bridge.fee();
         vm.deal(intexFactory, fee);
         vm.prank(intexFactory);
-        outbeRouter.sendMarkCalled{value: fee}(EMISSION_DAY, uint32(block.timestamp), batch);
+        outbeRouter.sendIntexSeriesCallNotice{value: fee}(EMISSION_DAY, uint32(block.timestamp), batch);
 
         _deliver(OUTBE_CHAIN_ID, address(outbeRouter), address(bnbRouter), bridge.lastPayload());
 
@@ -103,25 +102,31 @@ contract MarkBatchWireTest is CrossChainTest {
             OUTBE_CHAIN_ID,
             address(outbeRouter),
             address(bnbRouter),
-            BridgeMsgCodec.encodeMarkCalled(
+            BridgeMsgCodec.encodeIntexSeriesCallNotice(
                 EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.two(USD_SERIES, EUR_SERIES)
             )
         );
 
         assertEq(_state(USD_SERIES), uint8(IIntexNFT1155.IntexState.Called), "the known series applied");
-        assertEq(bnbRouter.parkedMark(EUR_SERIES), uint32(block.timestamp), "only the missing one waits");
-        assertEq(bnbRouter.parkedMark(USD_SERIES), 0, "the applied one has no slot");
+        assertEq(
+            bnbRouter.failedIntexSeriesCallNoticeApply(EUR_SERIES),
+            uint32(block.timestamp),
+            "only the missing one waits"
+        );
+        assertEq(bnbRouter.failedIntexSeriesCallNoticeApply(USD_SERIES), 0, "the applied one has no slot");
     }
 
     /// @dev The destination gas the router buys has to follow the batch it is sending, not the
     ///      message type. A batch relayed on a single series' budget runs out on arrival.
     function test_theSendBuysDestinationGasForTheWholeBatch() public {
         vm.startPrank(intexFactory);
-        outbeRouter.sendMarkCalled(EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.one(USD_SERIES));
-        _assertLastGas(IntexGas.markCalled(1));
+        outbeRouter.sendIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.one(USD_SERIES));
+        _assertLastGas(IntexGas.intexSeriesCallNotice(1));
 
-        outbeRouter.sendMarkCalled(EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.two(USD_SERIES, EUR_SERIES));
-        _assertLastGas(IntexGas.markCalled(2));
+        outbeRouter.sendIntexSeriesCallNotice(
+            EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.two(USD_SERIES, EUR_SERIES)
+        );
+        _assertLastGas(IntexGas.intexSeriesCallNotice(2));
         vm.stopPrank();
     }
 
@@ -133,16 +138,16 @@ contract MarkBatchWireTest is CrossChainTest {
     }
 
     function test_anOverSizedBatchIsRefusedAtTheSend() public {
-        bytes14[] memory batch = MarkBatchLib.sized(USD_SERIES, BridgeMsgCodec.MAX_SERIES_PER_MARK + 1);
+        bytes14[] memory batch = MarkBatchLib.sized(USD_SERIES, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE + 1);
         vm.prank(intexFactory);
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.MarkBatchTooLarge.selector,
-                BridgeMsgCodec.MAX_SERIES_PER_MARK + 1,
-                BridgeMsgCodec.MAX_SERIES_PER_MARK
+                BridgeMsgCodec.CallNoticePageTooLarge.selector,
+                BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE + 1,
+                BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE
             )
         );
-        outbeRouter.sendMarkCalled(EMISSION_DAY, uint32(block.timestamp), batch);
+        outbeRouter.sendIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch);
     }
 
     function test_onlyTheFactoryMaySendAMarkBatch() public {
@@ -154,6 +159,6 @@ contract MarkBatchWireTest is CrossChainTest {
                 outbeRouter.INTEX_FACTORY_ROLE()
             )
         );
-        outbeRouter.sendMarkCalled(EMISSION_DAY, uint32(block.timestamp), batch);
+        outbeRouter.sendIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch);
     }
 }

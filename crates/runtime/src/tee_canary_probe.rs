@@ -1,14 +1,16 @@
 //! Domain Tribute decrypt probe plugged into [`outbe_execution::tee_canary`].
 
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_enclave::protocol::{
-    inputs_canonical_hash, EnclaveRequest as DomainRequest, EnclaveResponse as DomainResponse,
-    EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus, WorldwideDay,
-};
 use outbe_execution::tee_canary::{CanaryTickOutcome, EnclaveRequester, TeeCanaryProbe};
-use outbe_tee::protocol::PayloadLane;
+use outbe_tee::in_process::InProcessTeeContext;
+use outbe_tee::TransportError;
+use outbe_tribute::confidential::host::TributeOfferBatch;
+use outbe_tribute::confidential::{
+    inputs_canonical_hash, EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus,
+    WorldwideDay,
+};
 
 /// Fixed canary identity: a marker owner address and a fixed worldwide day so
 /// the payload (and its Poseidon `token_id`) is identical on every tick and
@@ -25,6 +27,34 @@ const CANARY_CURRENCY: u16 = 999;
 /// Known-plaintext Tribute offer batch probe executed on the canary lane.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct TributeCanaryProbe;
+
+#[cfg(feature = "test-hooks")]
+impl TributeCanaryProbe {
+    /// Production `BoundCanary` readiness probe (`decrypt_canary_on`).
+    ///
+    /// The probe checks that an activated resident key can open the canary.
+    /// It does not read `TeeAuthorityState` and it does not check a lease.
+    #[must_use]
+    pub fn bound_canary_decrypt(
+        context: &InProcessTeeContext,
+        offer_pub: &[u8; 32],
+    ) -> CanaryTickOutcome {
+        struct Pinned([u8; 32]);
+        impl EnclaveRequester for Pinned {
+            fn request(
+                &self,
+                _: &outbe_tee::protocol::EnclaveRequest,
+            ) -> Result<outbe_tee::protocol::EnclaveResponse, TransportError> {
+                Err(TransportError::UnexpectedResponse)
+            }
+
+            fn attestation_pub(&self) -> Option<[u8; 32]> {
+                Some(self.0)
+            }
+        }
+        decrypt_canary_on(&Pinned(context.attestation_public()), context, offer_pub)
+    }
+}
 
 impl TeeCanaryProbe for TributeCanaryProbe {
     fn probe_decrypt(
@@ -50,14 +80,7 @@ pub(crate) enum CanaryBatchValidationError {
     #[error("no pinned attestation key")]
     NoPinnedAttestationKey,
     #[error("canary attestation tag invalid: {0}")]
-    InvalidAttestationTag(String),
-}
-
-impl CanaryBatchValidationError {
-    #[must_use]
-    fn invalid_attestation_tag(error: impl core::fmt::Display) -> Self {
-        Self::InvalidAttestationTag(error.to_string())
-    }
+    InvalidAttestationTag(#[source] TransportError),
 }
 
 struct CanaryBatch<'a> {
@@ -70,8 +93,8 @@ struct CanaryBatch<'a> {
 fn encrypted_canary_offers(
     offer_pub: &[u8; 32],
 ) -> Result<Vec<EncryptedTributeOffer>, CanaryTickOutcome> {
-    let plaintext = outbe_enclave::offer_encrypt::canary_offer_json(CANARY_DAY);
-    let cipher_text = match outbe_enclave::offer_encrypt::encrypt_tribute_offer_with(
+    let plaintext = outbe_core_common::confidential_tee::canary_offer_json(CANARY_DAY);
+    let cipher_text = match outbe_core_common::confidential_tee::encrypt_tribute_offer_with(
         offer_pub,
         CANARY_EPH_SK,
         CANARY_NONCE,
@@ -103,44 +126,63 @@ fn encrypted_canary_offers(
 }
 
 fn decrypt_canary(requester: &dyn EnclaveRequester, offer_pub: &[u8; 32]) -> CanaryTickOutcome {
+    let Some(context) = outbe_tee::in_process_tee_context() else {
+        let started = Instant::now();
+        let error = TransportError::from(outbe_tee::InProcessDispatchError::ContextNotInstalled);
+        note_offer_batch(started, Some(&error));
+        return CanaryTickOutcome::decrypt_transport_failure(&error);
+    };
+    decrypt_canary_on(requester, &context, offer_pub)
+}
+
+fn note_offer_batch(started: Instant, error: Option<&outbe_tee::TransportError>) {
+    outbe_tee::metrics::record_request_duration("process_tribute_offer_batch", started.elapsed());
+    if let Some(error) = error {
+        outbe_tee::metrics::record_request_error(
+            "process_tribute_offer_batch",
+            error.metric_class(),
+        );
+    }
+}
+
+pub(crate) fn decrypt_canary_on(
+    requester: &dyn EnclaveRequester,
+    context: &InProcessTeeContext,
+    offer_pub: &[u8; 32],
+) -> CanaryTickOutcome {
     let offers = match encrypted_canary_offers(offer_pub) {
         Ok(offers) => offers,
         Err(outcome) => return outcome,
     };
-    let domain_req = DomainRequest::ProcessTributeOfferBatch {
-        offers: offers.clone(),
-    };
-    let wire_req = match domain_req.encode_wire(PayloadLane::Canary) {
-        Ok(wire_req) => wire_req,
-        Err(error) => return CanaryTickOutcome::decrypt_transport_failure(&error),
-    };
     let started = SystemTime::now();
-    let response = requester
-        .request_with_meta(domain_req.call_meta(), &wire_req)
-        .and_then(|wire_resp| DomainResponse::from_wire_response(&wire_resp));
+    let call_started = Instant::now();
+    let response =
+        outbe_tribute::confidential::host::process_offer_batch_with(context, offers.clone());
+    note_offer_batch(call_started, response.as_ref().err());
     let latency_ms = SystemTime::now()
         .duration_since(started)
         .map(|d| d.as_millis().min(u128::from(u64::MAX)) as u64)
         .unwrap_or(0);
+    finish_canary_batch(requester, &offers, response, latency_ms)
+}
+
+fn finish_canary_batch(
+    requester: &dyn EnclaveRequester,
+    offers: &[EncryptedTributeOffer],
+    response: Result<TributeOfferBatch, TransportError>,
+    latency_ms: u64,
+) -> CanaryTickOutcome {
     match response {
-        Ok(DomainResponse::TributeOfferBatch {
-            results,
-            inputs_canonical_hash: reported_hash,
-            attestation_tag,
-        }) => validate_canary_batch(
+        Ok(answer) => validate_canary_batch(
             requester,
             CanaryBatch {
-                offers: &offers,
-                results: &results,
-                reported_hash,
-                attestation_tag: &attestation_tag,
+                offers,
+                results: &answer.results,
+                reported_hash: answer.inputs_canonical_hash,
+                attestation_tag: &answer.attestation_tag,
             },
             latency_ms,
         ),
-        Ok(other) => CanaryTickOutcome::Failure {
-            unreachable: false,
-            reason: format!("unexpected canary response: {other:?}"),
-        },
         Err(error) => CanaryTickOutcome::decrypt_transport_failure(&error),
     }
 }
@@ -193,13 +235,13 @@ fn validate_batch_proof(
     let Some(attestation_pub) = requester.attestation_pub() else {
         return Err(CanaryBatchValidationError::NoPinnedAttestationKey);
     };
-    outbe_enclave::verify_tribute_offer_attestation(
+    outbe_tribute::confidential::verify_tribute_offer_attestation(
         &attestation_pub,
         reported_hash,
         results,
         attestation_tag,
     )
-    .map_err(CanaryBatchValidationError::invalid_attestation_tag)?;
+    .map_err(CanaryBatchValidationError::InvalidAttestationTag)?;
     Ok(())
 }
 
@@ -207,11 +249,8 @@ fn validate_batch_proof(
 mod tests {
     use super::*;
     use ed25519_dalek::{Signer as _, SigningKey};
-    use outbe_execution::tee_canary::run_canary_probe;
-    use outbe_tee::errors::TransportError;
     use outbe_tee::protocol::{EnclaveRequest, EnclaveResponse};
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Mutex;
 
     struct AttestationOnly {
         key: Option<[u8; 32]>,
@@ -228,42 +267,6 @@ mod tests {
         }
     }
 
-    struct ScriptedRequester {
-        script: Mutex<Vec<(&'static str, Result<EnclaveResponse, TransportError>)>>,
-    }
-
-    impl ScriptedRequester {
-        fn new(script: Vec<(&'static str, Result<EnclaveResponse, TransportError>)>) -> Self {
-            Self {
-                script: Mutex::new(script),
-            }
-        }
-    }
-
-    impl EnclaveRequester for ScriptedRequester {
-        fn request(&self, req: &EnclaveRequest) -> Result<EnclaveResponse, TransportError> {
-            let mut script = self.script.lock().expect("script lock");
-            let (expected, response) = script.remove(0);
-            assert_eq!(expected, req.label(), "unexpected request order");
-            response
-        }
-
-        fn request_with_meta(
-            &self,
-            meta: outbe_tee::CallMeta,
-            _: &EnclaveRequest,
-        ) -> Result<EnclaveResponse, TransportError> {
-            let mut script = self.script.lock().expect("script lock");
-            let (expected, response) = script.remove(0);
-            assert_eq!(expected, meta.label, "unexpected request meta label");
-            response
-        }
-
-        fn attestation_pub(&self) -> Option<[u8; 32]> {
-            Some([0xAA; 32])
-        }
-    }
-
     fn created_result() -> TributeOfferResult {
         TributeOfferResult {
             token_id: B256::repeat_byte(1),
@@ -276,18 +279,6 @@ mod tests {
             sra_addresses: Vec::new(),
             zk_expected_hashes: None,
             status: TributeOfferStatus::Created,
-        }
-    }
-
-    fn public_keys_ready() -> EnclaveResponse {
-        EnclaveResponse::PublicKeys {
-            offer_key_ready: true,
-            recipient_x25519_pub: [0x0B; 32],
-            attestation_pub: [0xAA; 32],
-            noise_static_pub: [0x0C; 32],
-            tee_bls_pub: Vec::new(),
-            dkg_enc_pub: [0x0D; 32],
-            dkg_enc_sig: Vec::new(),
         }
     }
 
@@ -380,7 +371,7 @@ mod tests {
         let hash = inputs_canonical_hash(&[]);
         let signature = signer
             .sign(
-                &outbe_enclave::protocol::tribute_offer_attestation_preimage(hash, &results)
+                &outbe_tribute::confidential::tribute_offer_attestation_preimage(hash, &results)
                     .expect("tribute preimage"),
             )
             .to_bytes();
@@ -408,18 +399,18 @@ mod tests {
 
     #[test]
     fn wrong_canonical_hash_is_a_failure() {
-        let bad_batch = DomainResponse::TributeOfferBatch {
-            results: vec![created_result()],
-            inputs_canonical_hash: B256::repeat_byte(0xFF),
-            attestation_tag: Vec::new(),
-        }
-        .into_wire_response()
-        .expect("encode bad batch");
-        let fake = ScriptedRequester::new(vec![
-            ("get_public_keys", Ok(public_keys_ready())),
-            ("process_tribute_offer_batch", Ok(bad_batch)),
-        ]);
-        let (outcome, _, _) = run_canary_probe(&fake, &TributeCanaryProbe, Some(false));
+        let requester = requester(Some([0xAA; 32]));
+        let offers = Vec::new();
+        let outcome = finish_canary_batch(
+            &requester,
+            &offers,
+            Ok(TributeOfferBatch {
+                results: vec![created_result()],
+                inputs_canonical_hash: B256::repeat_byte(0xFF),
+                attestation_tag: Vec::new(),
+            }),
+            7,
+        );
         match outcome {
             CanaryTickOutcome::Failure {
                 unreachable,
@@ -435,3 +426,7 @@ mod tests {
         }
     }
 }
+
+mod in_process;
+#[cfg(test)]
+pub(crate) mod test_support;

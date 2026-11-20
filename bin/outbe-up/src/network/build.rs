@@ -1,6 +1,6 @@
 use std::{fs, net::Ipv4Addr, os::unix::fs::PermissionsExt, path::Path};
 
-use eyre::{ensure, Result};
+use eyre::{ensure, Context, Result};
 use outbe_genesis_cli::{
     attestation::run_tee_stage, create_genesis::create_seeded_genesis, launch_bundle,
 };
@@ -153,7 +153,7 @@ pub fn run(
             .ok_or_else(|| eyre::eyre!("software path is not UTF-8"))?,
         &seeded,
     )
-    .map_err(eyre::Report::msg)?;
+    .wrap_err("failed to create seeded genesis")?;
 
     let final_genesis = staging.path().join("genesis.json");
     run_tee_stage(
@@ -166,9 +166,9 @@ pub fn run(
         &final_genesis,
         &genesis_config,
     )
-    .map_err(eyre::Report::msg)?;
+    .wrap_err("failed to finalize the genesis TEE policy")?;
     launch_bundle::render(&genesis_config, &validators, &final_genesis, &keys)
-        .map_err(eyre::Report::msg)?;
+        .wrap_err("failed to render founder launch bundles")?;
 
     progress.stage("assembling founder and joining artifacts");
     let founders = founder_artifacts(staging.path(), &config, &validators)?;
@@ -283,10 +283,10 @@ pub(super) fn genesis_identity(path: &Path) -> Result<(String, NetworkBindingV1)
     let schedule = TeePolicyScheduleV1::decode_canonical(&hex::decode(
         encoded.strip_prefix("0x").unwrap_or(encoded),
     )?)
-    .map_err(|error| eyre::eyre!("invalid final TEE policy schedule: {error}"))?;
+    .wrap_err("invalid final TEE policy schedule")?;
     let policy = schedule
         .active_policy(1)
-        .map_err(|error| eyre::eyre!("invalid final TEE policy: {error}"))?;
+        .wrap_err("invalid final TEE policy")?;
     let binding = NetworkBindingV1 {
         chain_id: schedule.chain_id,
         genesis_hash: schedule.genesis_hash,
@@ -372,11 +372,7 @@ pub(super) fn genesis_cli_config(
             json!(config.topology.use_local_defaults),
         ),
         ("rpc_bind_ip", json!(rpc_bind(config)?)),
-        ("tee", json!({"mode": "gramine-direct-dev"})),
-        (
-            "enclave_runner",
-            json!("/opt/outbe-chain/outbe-tee-enclave-confidential-vm"),
-        ),
+        ("tee", json!({"mode": "no-attestation-dev"})),
     ] {
         root.insert(key.to_owned(), value);
     }
@@ -597,9 +593,7 @@ mod tests {
         let value =
             genesis_cli_config(&config, temp.path(), &temp.path().join("keys"), None).unwrap();
         assert_eq!(value["network"], "testnet");
-        assert_eq!(value["tee"]["mode"], "gramine-direct-dev");
-        assert!(value.get("enclave_sgx").is_none());
-        assert!(value.get("enclave_runtime").is_none());
+        assert_eq!(value["tee"]["mode"], "no-attestation-dev");
         outbe_genesis_cli::network::validate_config(&value).unwrap();
         assert_eq!(
             value["balance"]["0x1111111111111111111111111111111111111111"],
@@ -608,10 +602,28 @@ mod tests {
     }
 
     #[test]
+    fn mainnet_rejects_generated_unattested_policy() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config: NetworkConfig =
+            serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
+        config.network = super::super::config::Network::Mainnet;
+        config.chain_id = config.network.chain_id();
+        config.genesis.overrides.insert(
+            "price_feed_rest".into(),
+            serde_yaml_ng::Value::String("https://prices.example.invalid".into()),
+        );
+        config.validate().unwrap();
+        let value =
+            genesis_cli_config(&config, temp.path(), &temp.path().join("keys"), None).unwrap();
+        let error = outbe_genesis_cli::network::validate_config(&value).unwrap_err();
+        assert!(error.to_string().contains("dcap-required"), "{error}");
+    }
+
+    #[test]
     fn reads_genesis_block_hash_and_network_binding() {
         let hash = B256::repeat_byte(0x42);
         let policy =
-            initial_tee_policy_v1(InitialTeeProfileV1::GramineDirectDev, 424_242, hash).unwrap();
+            initial_tee_policy_v1(InitialTeeProfileV1::NoAttestationDev, 424_242, hash).unwrap();
         let genesis = json!({
             "config": {
                 "teeAttestationV1": tee_attestation_v1_genesis_field(&policy).unwrap()

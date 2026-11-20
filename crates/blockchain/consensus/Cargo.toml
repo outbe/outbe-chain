@@ -73,6 +73,7 @@ thiserror.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+outbe-tee = { workspace = true, features = ["test-utils"] }
 reth-provider = { workspace = true, features = ["test-utils"] }
 reth-primitives-traits.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }

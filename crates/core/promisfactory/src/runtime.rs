@@ -4,10 +4,9 @@
 //! (`outbe_promis::api`). Writes are authorized by the caller's Promis modify key
 //! (`mac` + `opNonce`). `mint` wraps `outbe_promis::api::mint`. `mine_coen` is the
 //! symmetric sale path: it wraps `outbe_promis::api::burn`, mints native COEN 1:1,
-//! and emits `CoenMined`. `mine_gratis` is the conversion path: it burns promis and
-//! mints the matching Gratis through `outbe_gratisfactory::api::mint`.
+//! and emits `CoenMined`.
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, U256};
 
 use crate::errors::PromisFactoryError;
 use crate::precompile::IPromisFactory;
@@ -70,42 +69,4 @@ pub fn mine_coen(
     )?;
 
     Ok(native_amount)
-}
-
-/// Burn confidential promis (encrypted to the TEE public key) from `account` and
-/// mint the matching Gratis 1:1. Both tokens are enclave-confidential and
-/// independently keyed: the promis burn takes the account owner's **Promis** modify
-/// key (`promis_auth`) and the gratis mint takes their **Gratis** modify key
-/// (`gratis_auth`). Each `auth` binds the decrypted amount to that ledger's own
-/// current op-nonce, so the caller supplies two `mac`/`opNonce` pairs.
-pub fn mine_gratis(
-    storage: StorageHandle<'_>,
-    account: Address,
-    encrypted_promis_minor: Vec<u8>,
-    promis_auth: ModifyAuth,
-    gratis_auth: ModifyAuth,
-) -> Result<Bytes> {
-    storage.with_checkpoint(|| {
-        let gratis_op_nonce = gratis_auth.op_nonce;
-        let (current_gratis_balance, fidelity) =
-            outbe_gratisfactory::api::prepare_mine_from_promis(&storage, account, gratis_op_nonce)?;
-        let result = promis::execute_mine_gratis(
-            &storage,
-            promis::MineGratisInput {
-                caller: account,
-                encrypted_promis_minor,
-                promis_auth,
-                current_gratis_balance,
-                gratis_auth,
-                fidelity,
-            },
-        )?;
-        outbe_gratisfactory::api::commit_mine_from_promis(
-            &storage,
-            account,
-            gratis_op_nonce,
-            &result,
-        )?;
-        Ok(Bytes::from(result.encrypted_gratis_event_amount))
-    })
 }

@@ -3,7 +3,7 @@ use crate::{precompile::ICredisFactory, runtime, tests::*};
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolCall;
 use outbe_credis::{CredisContract, CredisState};
-use outbe_enclave::protocol::GratisOp;
+use outbe_gratis::GratisOp;
 use outbe_gratisfactory::runtime::cancel_pledge;
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;

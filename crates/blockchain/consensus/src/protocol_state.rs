@@ -11,6 +11,7 @@ use outbe_primitives::protocol_version::{format_protocol_version, ProtocolVersio
 use outbe_primitives::storage::StorageHandle;
 use outbe_primitives::tee_registry_abi_v1::NodeEnclaveBindingV1;
 use outbe_primitives::validator_dto::ValidatorRecord;
+use outbe_tee::{TeeAuthorityState, TeeAuthorityWatch};
 use thiserror::Error;
 
 /// ABI status byte for a jailed validator.
@@ -72,10 +73,40 @@ pub enum EngineProtocolError {
     /// No engine protocol state is installed.
     #[error("engine protocol state is not installed")]
     NotInstalled,
+    /// Synchronous resident activation publication failed.
+    #[error("refresh TEE authority after resident activation")]
+    TeeRefresh(#[source] eyre::Report),
+    /// The runtime activation callback must be bound only once.
+    #[error("TEE activation callback already installed")]
+    TeeRefreshAlreadyInstalled,
+    /// Binding the shared infrastructure authority port failed.
+    #[error("install TEE authority watch: {0}")]
+    TeeAuthority(#[from] outbe_tee::TeeAuthorityInstallError),
+}
+
+/// Delegates installation to the authority port shared with RPC and runtime.
+pub fn install_tee_authority_watch(watch: TeeAuthorityWatch) -> Result<(), EngineProtocolError> {
+    outbe_tee::install_tee_authority_watch(watch).map_err(EngineProtocolError::from)
 }
 
 /// Object-safe chain reads used by the engine.
 pub trait EngineProtocolState: Send + Sync + 'static {
+    /// Publish resident activation synchronously before constructing a consensus signer.
+    fn refresh_tee_authority(&self) -> Result<(), EngineProtocolError> {
+        Err(EngineProtocolError::NotInstalled)
+    }
+
+    /// Process-local authority updates, absent until runtime installs the publisher.
+    fn tee_authority_watch(&self) -> Option<TeeAuthorityWatch> {
+        outbe_tee::tee_authority_watch()
+    }
+
+    /// Missing installation fails closed without requiring existing implementors to change.
+    fn tee_authority_state(&self) -> TeeAuthorityState {
+        self.tee_authority_watch()
+            .map_or_else(TeeAuthorityState::default, |watch| watch.snapshot())
+    }
+
     /// Runtime-defined system-transaction layout and step-name policy for leader validation.
     fn system_tx_leader_policy(&self)
         -> outbe_primitives::system_tx::binding::SystemTxLeaderPolicy;
@@ -146,4 +177,29 @@ pub trait EngineProtocolState: Send + Sync + 'static {
         &self,
         storage: StorageHandle<'_>,
     ) -> std::result::Result<(), EngineProtocolError>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn authority_install_failure_preserves_its_infrastructure_source() {
+        use std::error::Error;
+        let refresh =
+            EngineProtocolError::TeeRefresh(outbe_tee::in_process::InProcessError::NotReady.into());
+        assert!(refresh
+            .source()
+            .unwrap()
+            .is::<outbe_tee::in_process::InProcessError>());
+        let error =
+            EngineProtocolError::from(outbe_tee::TeeAuthorityInstallError::AlreadyInstalled);
+        assert_eq!(
+            error
+                .source()
+                .unwrap()
+                .downcast_ref::<outbe_tee::TeeAuthorityInstallError>(),
+            Some(&outbe_tee::TeeAuthorityInstallError::AlreadyInstalled),
+        );
+    }
 }

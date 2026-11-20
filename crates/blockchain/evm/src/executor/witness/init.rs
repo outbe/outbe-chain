@@ -138,7 +138,7 @@ where
             if witness_policy().is_some() || self.is_verifier_witness_mode() {
                 return None;
             }
-            outbe_tee::client_global::canary_attestation_pub()
+            outbe_tee::canary_attestation_pub()
         }
         #[cfg(not(test))]
         {

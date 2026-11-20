@@ -1,7 +1,6 @@
 //! Typed error definitions for node launch, admission, and shutdown.
 
 use alloy_primitives::{Address, B256};
-use outbe_primitives::tee_attestation_v1::AttestationMode;
 use outbe_slashindicator::errors::PercentAdmissionError;
 
 /// Represents errors during node launch, TEE admission, and shutdown.
@@ -28,46 +27,6 @@ pub(crate) enum LaunchError {
         /// Rejection reason.
         reason: String,
     },
-    /// Indicates that a validator without `--upstream` has an unarmed TEE lease guard.
-    #[error(
-        "validator recovery requires UpstreamBootstrap before authority startup: the local TEE lease guard has no validated admission anchor in the local finalized state (pending anchor height {height}, hash {hash}) in {datadir}. Restart the same validator command with this same datadir and add --upstream <healthy-certified-rpc>. Do not use --upstream.nocertify. The node then syncs through the upstream and starts the validator stack in the same process after the local TEE lease guard is armed. Submit readiness only after the validator is caught up. Signing authority returns only after a fresh DKG installs current private material"
-    )]
-    ValidatorRecoveryCatchUpRequired {
-        /// Pending anchor height, or zero without an anchor.
-        height: u64,
-        /// Pending anchor block hash, or zero without an anchor.
-        hash: B256,
-        /// Node data directory display string.
-        datadir: String,
-    },
-    /// Indicates that the durable TEE join anchor is above the upstream anchor.
-    #[error(
-        "durable TEE join anchor at height {durable} is above the upstream finalized admission anchor at height {upstream}. UpstreamBootstrap stops"
-    )]
-    TeeJoinAnchorAboveUpstreamAnchor {
-        /// Durable join anchor height.
-        durable: u64,
-        /// Upstream admission anchor height.
-        upstream: u64,
-    },
-    /// Indicates that deriving the local NodeHost identity failed.
-    #[error("derive local NodeHost identity: {details}")]
-    DeriveLocalNodeHostIdentity {
-        /// Failure details.
-        details: String,
-    },
-    /// Indicates a chain ID mismatch in the finalized join admission anchor.
-    #[error("finalized join admission anchor chain id mismatch")]
-    JoinAdmissionAnchorChainIdMismatch,
-    /// Indicates a genesis hash mismatch in the finalized join admission anchor.
-    #[error("finalized join admission anchor genesis mismatch")]
-    JoinAdmissionAnchorGenesisMismatch,
-    /// Indicates a NodeHost identity mismatch in the finalized join admission anchor.
-    #[error("finalized join admission anchor NodeHost identity mismatch")]
-    JoinAdmissionAnchorNodeHostMismatch,
-    /// Indicates an enclave identity mismatch in the finalized join admission anchor.
-    #[error("finalized join admission anchor enclave identity mismatch")]
-    JoinAdmissionAnchorEnclaveMismatch,
     /// Indicates that the exact TEE lease admission header is unavailable.
     #[error("exact TEE lease admission header is unavailable")]
     TeeAdmissionHeaderUnavailable,
@@ -79,24 +38,6 @@ pub(crate) enum LaunchError {
         /// Header block hash.
         header: B256,
     },
-    /// Indicates that the finalized Registry has no binding for this FullNode.
-    #[error("finalized Registry has no binding for this FullNode; run tee join first")]
-    FullNodeMissingBinding,
-    /// Indicates that the finalized FullNode binding does not match the local enclave.
-    #[error("finalized FullNode binding does not match the committed local enclave; run tee join")]
-    FullNodeBindingEnclaveMismatch,
-    /// Indicates that the finalized FullNode TEE lease expired.
-    #[error("finalized FullNode TEE lease expired at {valid_until}; run tee join before startup")]
-    FullNodeTeeLeaseExpired {
-        /// Lease expiration timestamp.
-        valid_until: u64,
-    },
-    /// Indicates that the TEE client was unavailable during remote session retirement.
-    #[error("TEE client unavailable during remote session retirement")]
-    TeeClientUnavailableDuringRetirement,
-    /// Indicates that the enclave did not acknowledge remote session retirement.
-    #[error("enclave did not acknowledge remote session retirement")]
-    EnclaveDidNotAckSessionRetirement,
     /// Indicates that the TEE lease guard stopped without returning a verdict.
     #[error("TEE lease guard stopped without a verdict")]
     TeeLeaseGuardStoppedWithoutVerdict,
@@ -179,38 +120,11 @@ pub(crate) enum LaunchError {
     /// Indicates that validator mode requires an EVM signer key.
     #[error("validator mode requires an EVM signer key")]
     MissingValidatorEvmSignerKey,
-    /// Indicates that `--tee-enclave-socket` is required before node startup.
-    #[error("mandatory {mode:?} ChainSpec requires --tee-enclave-socket before node startup")]
-    MissingTeeEnclaveSocket {
-        /// Active attestation mode.
-        mode: AttestationMode,
-    },
-    /// Indicates that the TEE enclave endpoint path is not valid UTF-8.
-    #[error("TEE enclave endpoint is not valid UTF-8")]
-    TeeEnclaveEndpointNotUtf8,
-    /// Indicates that deriving the committed enclave identity failed.
-    #[error("derive committed enclave identity: {details}")]
-    DeriveCommittedEnclaveIdentity {
-        /// Derivation error details.
-        details: String,
-    },
-    /// Indicates that full-node startup requires `--upstream` to authenticate the chain offer key.
-    #[error("full-node startup requires --upstream to authenticate the chain offer key")]
-    FullNodeRequiresUpstreamForOfferKey,
-    /// Indicates that the selected upstream has no mandatory OST3 offer key.
-    #[error("selected upstream has no mandatory OST3 offer key; refusing full-node startup")]
-    UpstreamMissingOst3OfferKey,
     /// Indicates that the local enclave does not hold the chain's exact offer key.
     #[error(
         "local enclave does not hold the selected chain's exact offer key; refusing execution startup (no recovery or fallback)"
     )]
     LocalEnclaveOfferKeyMismatch,
-    /// Indicates that the local node was rejected by finalized TEE lease state.
-    #[error("local node rejected by finalized TEE lease state: {reason}")]
-    LocalNodeRejectedByTeeLease {
-        /// Rejection reason.
-        reason: String,
-    },
     /// Indicates that follower drain also failed during consensus stack shutdown.
     #[error("follower drain also failed: {details}")]
     FollowerDrainAlsoFailed {
@@ -256,4 +170,21 @@ impl LaunchError {
 /// Formats any displayable error as a string.
 pub(crate) fn display_error<E: std::fmt::Display>(error: E) -> String {
     error.to_string()
+}
+
+/// Admission failures retained as typed causes for the runtime authority lifecycle.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum TeeAuthorityError {
+    /// Finalized admission cannot authorize a key absent from canonical chain state.
+    #[error("canonical finalized offer key is unavailable")]
+    CanonicalOfferKeyUnavailable,
+    /// The resident key is not the finalized chain's canonical offer key.
+    #[error("resident offer key {resident} differs from finalized chain key {canonical}")]
+    ResidentOfferKeyMismatch { resident: B256, canonical: B256 },
+    /// Resident context inspection failed without erasing its typed cause.
+    #[error("inspect resident TEE authority: {0}")]
+    Resident(#[from] outbe_tee::in_process::InProcessError),
+    /// Reading finalized admission facts failed without erasing its typed cause.
+    #[error("read finalized TEE authority: {0}")]
+    FinalizedState(#[from] outbe_primitives::error::PrecompileError),
 }

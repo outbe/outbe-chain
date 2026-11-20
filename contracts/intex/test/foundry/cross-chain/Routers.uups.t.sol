@@ -76,8 +76,8 @@ contract RoutersUupsTest is CrossChainTest {
         // Wire the origin side and register a remote messenger so post-upgrade state has something to prove.
         MockDesis desisMock = new MockDesis();
         address factory = makeAddr("factory");
-        origin.wire(address(desisMock), factory);
-        origin.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(target)));
+        origin.setDependencies(address(desisMock), factory);
+        origin.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(target)));
         origin.addTarget(BNB_CHAIN_ID);
 
         OriginRouter newImpl = new OriginRouter(address(bridge));
