@@ -174,23 +174,16 @@ mod tests {
     fn loads_a_matching_pre_tee_base_genesis() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("genesis.json");
-        fs::write(
-            &path,
-            serde_json::to_vec(&json!({
-                "config": {"chainId": 54_322_345},
-                "alloc": {},
-                "timestamp": "0x1"
-            }))
-            .unwrap(),
-        )
-        .unwrap();
+        let base = json!({
+            "config": {"chainId": 54_322_345},
+            "alloc": {},
+            "timestamp": "0x1"
+        });
+        fs::write(&path, serde_json::to_vec(&base).unwrap()).unwrap();
         let config = json!({
             "chain_id": 54_322_345,
             "base_genesis": path
         });
-        assert_eq!(
-            build_base_genesis(&config).unwrap()["config"]["chainId"],
-            54_322_345
-        );
+        assert_eq!(build_base_genesis(&config).unwrap(), base);
     }
 }

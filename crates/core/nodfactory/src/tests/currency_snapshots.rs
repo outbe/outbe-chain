@@ -387,12 +387,12 @@ fn quote_settlement_dispatch() {
         .unwrap();
     let ret = INodFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
     assert_eq!(ret.settlementCurrency, 978);
-    let view_key = outbe_enclave::nod_encryption::derive_view_key(
-        &outbe_nod::test_support::NETWORK_SECRET,
+    let view_key = outbe_nod::nod_encryption::derive_view_key(
+        &outbe_nod::test_support::state_key(),
         input.owner,
     )
     .unwrap();
-    let decrypted = outbe_enclave::nod_decrypt::decrypt_nod_quote_for_owner(
+    let decrypted = outbe_nod::test_support::decrypt_quote(
         &view_key,
         &outbe_core_common::nod_encryption::NodQuoteContextV1 {
             chain_id: 1,

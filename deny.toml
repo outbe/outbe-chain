@@ -10,6 +10,8 @@ ignore = [
     "RUSTSEC-2024-0436", # paste unmaintained
     "RUSTSEC-2025-0141", # bincode unmaintained
     "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained
+    "RUSTSEC-2026-0543", # chrono unmaintained (via reth, radicle-log, rolling-file)
+    "RUSTSEC-2026-0542", # humantime unmaintained (via reth, humantime-serde)
     # The latest wasmtimer release still requires pin-utils. Revisit when
     # Alloy's wasmtimer dependency removes it; no maintained upgrade exists.
     { id = "RUSTSEC-2026-0441", reason = "pin-utils is a transitive dependency via Alloy -> wasmtimer 0.4.3; the advisory reports unmaintained status, not a vulnerability" },
@@ -30,9 +32,6 @@ ignore = [
     { id = "RUSTSEC-2026-0391", reason = "zstd 0.13 is pinned upstream; no dependency calls the affected with_context constructors" },
     { id = "RUSTSEC-2026-0398", reason = "zstd-safe 7 is pinned upstream; no dependency uses the seekable API" },
     { id = "RUSTSEC-2026-0403", reason = "zstd-safe 7 is pinned upstream; the fix needs zstd-safe 8.2" },
-    # libz-sys <= 1.1.30 only leaks build environment variables when compiled
-    # with cc >= 1.6.0; the workspace resolves cc 1.4.5.
-    { id = "RUSTSEC-2026-0418", reason = "libz-sys 1.1.28 is only affected when built with cc >= 1.6.0; the workspace resolves cc 1.4.5" },
 ]
 
 [licenses]

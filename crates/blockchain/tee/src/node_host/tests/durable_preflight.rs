@@ -63,26 +63,8 @@ fn missing_committed_state_precedes_bad_key_and_does_not_change_checkpoints() {
     let evidence = AttestationEvidenceV1::decode_canonical(source.evidence()).unwrap();
     let durable_bytes = std::fs::read(&fixture.paths.replacement_submission).unwrap();
     std::fs::remove_file(&fixture.paths.manifest).unwrap();
-    std::fs::write(&fixture.paths.noise_key, b"invalid key").unwrap();
+    std::fs::write(&fixture.paths.identity_key, b"invalid key").unwrap();
 
-    assert_eq!(
-        persist_committed_join_submission(
-            &fixture.node_data_dir,
-            Address::repeat_byte(0x42),
-            &evidence,
-            source.node_signature(),
-            source.enclave_signature(),
-        )
-        .unwrap_err()
-        .to_string(),
-        "codec error: committed join submission requires committed NodeHost state"
-    );
-    assert_eq!(
-        load_committed_join_submission(&fixture.node_data_dir)
-            .unwrap_err()
-            .to_string(),
-        "codec error: committed join submission reload requires committed NodeHost state"
-    );
     assert_eq!(
         persist_replacement_candidate_submission(
             &fixture.node_data_dir,
@@ -113,7 +95,7 @@ fn with_operation(
 ) -> AttestationEvidenceV1 {
     match &mut evidence {
         AttestationEvidenceV1::Dcap(value) => value.intent.operation = operation,
-        AttestationEvidenceV1::GramineDirectDev(value) => value.intent.operation = operation,
+        AttestationEvidenceV1::NoAttestationDev(value) => value.intent.operation = operation,
     }
     evidence
 }
@@ -178,7 +160,7 @@ fn replacement_write_path_keeps_its_operation_and_signature_errors() {
 fn direct_dev_enclave_signature_mismatch_fails_operation_selection_first() {
     let fixture = replacement_fixture_for_mode(
         AttestationOperationV1::RegisterEnclave,
-        AttestationMode::GramineDirectDev,
+        AttestationMode::NoAttestationDev,
     );
     let source = read_replacement_submission(&fixture.paths.replacement_submission).unwrap();
     let evidence = AttestationEvidenceV1::decode_canonical(source.evidence()).unwrap();
@@ -200,7 +182,7 @@ fn direct_dev_enclave_signature_mismatch_fails_operation_selection_first() {
 fn promotion_requires_committed_state_before_it_reads_the_key() {
     let fixture = replacement_fixture();
     std::fs::remove_file(&fixture.paths.manifest).unwrap();
-    std::fs::write(&fixture.paths.noise_key, b"invalid key").unwrap();
+    std::fs::write(&fixture.paths.identity_key, b"invalid key").unwrap();
 
     assert_eq!(
         promote_replacement_candidate(&fixture.node_data_dir, &fixture.authorization)

@@ -1,4 +1,4 @@
-//! Prometheus series for the node-side enclave channel, emitted through the
+//! Prometheus series for resident enclave dispatch, emitted through the
 //! global `metrics` recorder (exposed by reth's `--metrics` exporter - same
 //! pattern as `outbe-consensus`'s metrics module).
 //!
@@ -10,12 +10,12 @@ use std::time::Duration;
 
 use metrics::{counter, gauge, histogram};
 
-/// Time spent acquiring the execution session, excluding the enclave request.
+/// Execution lock wait, always zero for direct resident dispatch.
 pub fn record_tee_execution_lock_wait_ms(duration: Duration) {
     histogram!("outbe_tee_client_execution_lock_wait_ms").record(duration.as_secs_f64() * 1000.0);
 }
 
-/// Execution requests currently waiting for or holding the session lock.
+/// Execution requests currently in flight.
 pub struct ExecutionInFlightGuard {
     gauge: metrics::Gauge,
 }
@@ -40,31 +40,18 @@ impl Drop for ExecutionInFlightGuard {
     }
 }
 
-/// One attempt's round-trip duration, labelled by the request's stable
-/// [`crate::protocol::EnclaveRequest::label`]. A retried request records two
-/// samples - one per attempt.
+/// One dispatch duration, labelled by the request's stable
+/// [`crate::protocol::EnclaveRequest::label`].
 pub fn record_request_duration(request: &'static str, duration: Duration) {
     histogram!("outbe_tee_client_request_duration_ms", "request" => request)
         .record(duration.as_secs_f64() * 1000.0);
 }
 
-/// One failed attempt, labelled by request and
+/// One failed dispatch, labelled by request and
 /// [`crate::errors::TransportError::metric_class`].
 pub fn record_request_error(request: &'static str, class: &'static str) {
     counter!("outbe_tee_client_request_errors_total", "request" => request, "class" => class)
         .increment(1);
-}
-
-/// One reconnect attempt outcome: `ok` | `connect_failed` | `identity_mismatch`.
-pub fn record_reconnect(result: &'static str) {
-    counter!("outbe_tee_client_reconnects_total", "result" => result).increment(1);
-}
-
-/// The session generation (bumped on every successful reconnect). A step here
-/// with no node restart marks an enclave-side restart or connection loss.
-pub fn record_session_generation(generation: u64) {
-    // u64 -> f64 is lossless for any realistic reconnect count (< 2^53).
-    gauge!("outbe_tee_client_session_generation").set(generation as f64);
 }
 
 #[cfg(test)]
@@ -105,8 +92,6 @@ mod tests {
         metrics::with_local_recorder(&recorder, || {
             record_request_duration("health", Duration::from_millis(5));
             record_request_error("health", "io_timeout");
-            record_reconnect("ok");
-            record_session_generation(2);
             let _in_flight = ExecutionInFlightGuard::new();
             record_tee_execution_lock_wait_ms(Duration::from_millis(5));
         });
@@ -126,14 +111,6 @@ mod tests {
                         "outbe_tee_client_request_errors_total",
                         &[("request", "health"), ("class", "io_timeout")]
                     )
-                ),
-                (
-                    "counter",
-                    Key::from_parts("outbe_tee_client_reconnects_total", &[("result", "ok")])
-                ),
-                (
-                    "gauge",
-                    Key::from_name("outbe_tee_client_session_generation")
                 ),
                 (
                     "gauge",

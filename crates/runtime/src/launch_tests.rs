@@ -14,7 +14,7 @@ use fixtures::{full_node_admission_anchor, ExecutionTeardownSentinel, ThreadDrop
 mod admission_gate;
 
 #[path = "admission_provider.rs"]
-mod admission_provider;
+pub(crate) mod admission_provider;
 
 #[path = "admission_binding_tests.rs"]
 mod admission_binding;

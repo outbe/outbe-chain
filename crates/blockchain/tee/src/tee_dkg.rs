@@ -3,10 +3,8 @@
 //! This is the TEE-native equivalent of the consensus DKG actor
 //! (`crates/blockchain/consensus/src/dkg_actor`). The public protocol (P2P
 //! gossip, ceremony bookkeeping, message shaping) runs on the host. The host
-//! sends every secret-touching operation to the enclave over the Noise-IK
-//! channel (the [`EnclaveChannel`] / `EnclaveClient` protocol). Unlike a literal
-//! clone of the consensus actor, no `Dealer`/`Player` ever runs on the host, so
-//! shares and the assembled key never appear in host memory.
+//! delegates secret-touching operations to the resident context. The
+//! coordinator receives only encrypted shares and signed public messages.
 //!
 //! The coordinator exposes the ceremony as explicit phase methods. Each method
 //! (a) calls the enclave seam and (b) shapes the resulting host wire messages. A
@@ -16,12 +14,6 @@
 //! messages carry only opaque bytes (the host never decodes Commonware types -
 //! the enclave does).
 //!
-//! Production note: the threshold/timeout/retry event loop that drives these
-//! phases over real commonware P2P gossip is the remaining host-integration piece
-//! (validated on the localnet). This module is the seam-routing + message-shaping
-//! core that loop builds on. `bin/outbe-tee-enclave/tests/dkg_e2e.rs` validates
-//! this module end-to-end over the real Noise-IK transport.
-
 use alloy_primitives::B256;
 
 use crate::errors::TransportError;
@@ -31,41 +23,12 @@ mod ceremony;
 
 pub use ceremony::{run_tee_dkg_ceremony, FoundingCeremonyParameters};
 
-/// The host's channel to its enclave: a request/response transport.
-/// [`crate::EnclaveClient`] implements it over Noise-IK. The trait hides the
-/// transport, so the coordinator is testable and transport-agnostic.
+/// Request/response seam for the resident DKG coordinator.
 pub trait EnclaveChannel {
     fn request(
         &mut self,
         req: &EnclaveRequest,
     ) -> core::result::Result<EnclaveResponse, TransportError>;
-}
-
-impl EnclaveChannel for crate::EnclaveClient {
-    fn request(
-        &mut self,
-        req: &EnclaveRequest,
-    ) -> core::result::Result<EnclaveResponse, TransportError> {
-        crate::EnclaveClient::request(self, req)
-    }
-}
-
-impl EnclaveChannel for crate::AuthorizedEnclaveClient {
-    fn request(
-        &mut self,
-        req: &EnclaveRequest,
-    ) -> core::result::Result<EnclaveResponse, TransportError> {
-        crate::AuthorizedEnclaveClient::request(self, req)
-    }
-}
-
-impl EnclaveChannel for crate::RuntimeEnclaveClient {
-    fn request(
-        &mut self,
-        req: &EnclaveRequest,
-    ) -> core::result::Result<EnclaveResponse, TransportError> {
-        crate::RuntimeEnclaveClient::request(self, req)
-    }
 }
 
 /// A dealer's sealed dealing to one recipient (dealer -> player).

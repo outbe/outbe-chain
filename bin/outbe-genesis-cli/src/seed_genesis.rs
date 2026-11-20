@@ -118,7 +118,7 @@ fn validate_seed_keys(seed: &Value) -> Result<(), GenesisError> {
         if seed_obj.contains_key(unsupported_key) {
             return Err(GenesisError::validation(format!(
                 "{unsupported_key} is no longer supported at genesis: issue the Gem at \
-                 runtime and mine Gem -> Promis -> Gratis"
+                 runtime and mine Gem -> Promis; Gratis comes from mining NODs"
             )));
         }
     }

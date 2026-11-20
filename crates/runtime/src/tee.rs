@@ -1,20 +1,49 @@
 use super::*;
-use crate::errors::{display_error, LaunchError};
+mod in_process;
+use crate::errors::LaunchError;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(test)]
+pub(crate) static PREPARE_ENTRIES: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+pub(crate) static REGISTER_ENCLAVE_SENDS: AtomicUsize = AtomicUsize::new(0);
+
+pub(crate) fn note_register_enclave_payload(raw: &[u8]) {
+    #[cfg(test)]
+    {
+        use alloy_sol_types::SolCall;
+        let selector =
+            outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::registerEnclaveCall::SELECTOR;
+        if raw.windows(selector.len()).any(|window| window == selector) {
+            REGISTER_ENCLAVE_SENDS.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+    #[cfg(not(test))]
+    {
+        let _ = raw;
+    }
+}
 
 pub(crate) async fn prepare(
     config: &LaunchConfig,
     args: &ConsensusArgs,
     node_data_dir: PathBuf,
     initial_tee_policy: &outbe_primitives::tee_attestation_v1::TeePolicyV1,
+    cancellation: &tokio_util::sync::CancellationToken,
 ) -> eyre::Result<(
     Option<Arc<OutbeEvmSigner>>,
     outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
     Option<crate::admission::LocalTeeAdmissionAnchorV1>,
+    Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
 )> {
-    let evm_signer = if args.is_validator {
-        let evm_key_path = args
-            .effective_validator_evm_key()?
-            .ok_or(LaunchError::MissingValidatorEvmSignerKey)?;
+    #[cfg(test)]
+    PREPARE_ENTRIES.fetch_add(1, Ordering::SeqCst);
+    let evm_key = args.effective_validator_evm_key()?;
+    if args.is_validator && evm_key.is_none() {
+        return Err(LaunchError::MissingValidatorEvmSignerKey.into());
+    }
+    let evm_signer = if let Some(evm_key_path) = evm_key {
         let backend = args.evm_key_backend()?;
         let signer = Arc::new(
             outbe_consensus::bls::load_validator_evm_signer(&evm_key_path, &backend)
@@ -34,9 +63,7 @@ pub(crate) async fn prepare(
     } else {
         None
     };
-    let validator_evm_address = evm_signer.as_ref().map(|signer| signer.address());
-    // Chain id and genesis are process context. A keyless follower still
-    // records them. It does not open a socket to do so.
+    // Keyless replay also needs the process network binding.
     outbe_tee::call_context::set_snapshot(outbe_tee::call_context::EnclaveCallContextV1 {
         chain_id: config.chain.chain().id(),
         genesis_hash: config.chain.genesis_hash(),
@@ -46,309 +73,48 @@ pub(crate) async fn prepare(
         install_keyless_replay_policy()?;
         let (_node_host_signing, reth_p2p_public) =
             load_reth_p2p_node_host_signer(&config.network, config.datadir().p2p_secret())?;
-        info!("keyless follower: enclave socket not configured; admission and offer-key checks skipped");
+        info!("keyless follower: resident admission and offer-key checks skipped");
         return Ok((
             evm_signer,
             outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
                 reth_p2p_public,
                 expected_enclave_id: None,
-                validator: validator_evm_address,
+                validator: None,
             },
+            None,
             None,
         ));
     }
-    // Every network declares exactly one attestation policy in genesis. The
-    // local session protocol is an independent, explicit operator choice:
-    // GramineDirectDev may use either the development transport or a real
-    // SGX, production NodeHost session. There is no connection fallback.
-    // A validator with no socket still fails here. A socket, validator or
-    // TEE fullnode, keeps the checks below.
-    let socket = args
-        .tee_enclave_socket
-        .clone()
-        .ok_or(LaunchError::MissingTeeEnclaveSocket {
-            mode: initial_tee_policy.attestation_mode,
-        })?;
     install_enclave_backed_policy()?;
-    let endpoint = socket
-        .to_str()
-        .ok_or(LaunchError::TeeEnclaveEndpointNotUtf8)?;
-    let tee_session = args
-        .tee_session_mode
-        .resolve(initial_tee_policy.attestation_mode)?;
-    let (node_host_signing, reth_p2p_public) =
-        load_reth_p2p_node_host_signer(&config.network, config.datadir().p2p_secret())?;
-    let expected_enclave_id = match tee_session {
-        outbe_consensus::args::ResolvedTeeSession::ProductionNodeHost => {
-            use k256::ecdsa::signature::hazmat::PrehashSigner as _;
-
-            let client = outbe_tee::connect_or_initialize_node_host_enclave(
-                endpoint,
-                &node_data_dir,
-                outbe_tee::NodeHostIdentityV1 {
-                    network_binding: initial_tee_policy.network_binding(),
-                    reth_p2p_public,
-                },
-                |hash| -> Result<[u8; 65], k256::ecdsa::Error> {
-                    let (signature, recovery): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) =
-                        node_host_signing.sign_prehash(hash.as_slice())?;
-                    let mut bytes = [0_u8; 65];
-                    bytes[..64].copy_from_slice(signature.to_bytes().as_slice());
-                    bytes[64] = recovery.to_byte();
-                    Ok(bytes)
-                },
-            )
-            .wrap_err("NodeHost enclave initialization failed")?;
-            // Session material for reconnect-with-identity-revalidation:
-            // loaded once here (takes the NodeHost file lock), never in the
-            // request hot path.
-            let (manifest, node_host) =
-                outbe_tee::node_host::committed_node_host_session_material(&node_data_dir)
-                    .wrap_err("committed NodeHost session material load failed")?;
-            let enclave_id = manifest.enclave_id().map_err(|error| {
-                LaunchError::DeriveCommittedEnclaveIdentity {
-                    details: display_error(error),
-                }
-            })?;
-            outbe_tee::install_authorized_enclave_client(
-                client,
-                endpoint.to_owned(),
-                node_data_dir.clone(),
-                manifest,
-                node_host,
-            )
-            .wrap_err("enclave session install failed")?;
-            Some(enclave_id)
-        }
-        outbe_consensus::args::ResolvedTeeSession::Development => {
-            let client = outbe_tee::EnclaveClient::connect_endpoint(endpoint)
-                .wrap_err("development enclave connection failed")?;
-            outbe_tee::install_enclave_client(client, endpoint.to_owned())
-                .wrap_err("enclave session install failed")?;
-            None
-        }
-    };
-    let local_tee_identity = outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
-        reth_p2p_public,
-        expected_enclave_id,
-        validator: validator_evm_address,
-    };
-    info!(
-        socket = %socket.display(),
-        node_host_identity = "reth-p2p-secp256k1",
-        attestation_mode = ?initial_tee_policy.attestation_mode,
-        session_mode = ?tee_session,
-        "mandatory TEE enclave sidecar connected before execution launch",
-    );
-
-    let tee_admission_anchor = if args.is_validator {
-        if expected_enclave_id.is_some() {
-            outbe_tee::load_finalized_join_admission_anchor(&node_data_dir)
-                .wrap_err("load durable validator join admission anchor")?
-                .map(|durable| {
-                    validator_admission_anchor_from_durable_v1(
-                        durable,
-                        config.chain.chain().id(),
-                        config.chain.genesis_hash(),
-                        local_tee_identity,
-                    )
-                })
-                .transpose()?
-        } else {
-            None
-        }
-    } else {
-        // A follower re-executes every protected transaction and therefore must
-        // already hold the exact permanent offer key committed by the running
-        // chain. Prove that invariant before Reth opens networking, RPC, sync or
-        // execution. Losing the key is terminal for this node identity: startup
-        // never invokes recovery, replacement or another bootstrap path.
-        let upstream = args
-            .upstream
-            .as_deref()
-            .ok_or(LaunchError::FullNodeRequiresUpstreamForOfferKey)?;
-        let admission_anchor =
-            require_upstream_fullnode_tee_admission(upstream, local_tee_identity).await?;
-        require_upstream_offer_key_v1(upstream).await?;
-        Some(admission_anchor)
-    };
-
-    Ok((evm_signer, local_tee_identity, tee_admission_anchor))
-}
-
-/// Require that the local enclave holds the exact offer key of the selected
-/// upstream. Losing the key is terminal for this node identity.
-async fn require_upstream_offer_key_v1(upstream: &str) -> eyre::Result<()> {
-    let expected_offer = outbe_consensus::read_upstream_network_encryption_public_key(upstream)
-        .await
-        .wrap_err("failed to read mandatory offer key from the selected upstream")?;
-    if expected_offer.is_zero() {
-        return Err(LaunchError::UpstreamMissingOst3OfferKey.into());
-    }
-    let resident_offer = outbe_tee::resident_network_encryption_public_key_v1()
-        .wrap_err("failed to read the local enclave resident offer key")?;
-    if resident_offer != expected_offer {
-        return Err(LaunchError::LocalEnclaveOfferKeyMismatch.into());
-    }
-    info!(
-        offer_public_key = %resident_offer,
-        %upstream,
-        "resident offer key matched upstream before execution launch"
-    );
-    Ok(())
-}
-
-/// Canonical block hash at `height` on the selected upstream.
-async fn upstream_block_hash_v1(
-    upstream: &str,
-    height: u64,
-) -> eyre::Result<Option<alloy_primitives::B256>> {
-    outbe_consensus::follow_transport::UpstreamRpcClient::new(upstream)?
-        .block_hash_by_number(height)
-        .await
-        .wrap_err("read upstream block at the durable TEE join anchor")
-}
-
-/// `Ready` local admission at the latest finalized block, with a resident
-/// offer key equal to the on-chain key. Returns the admission for the
-/// rejection report.
-fn local_tee_admission_ready_v1(
-    protocol: &dyn outbe_consensus::protocol_state::EngineProtocolState,
-    node: &OutbeFullNode,
-    (chain_id, genesis_hash): (u64, alloy_primitives::B256),
-    identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
-) -> eyre::Result<(
-    bool,
-    Option<outbe_consensus::validators::LocalTeeRuntimeAdmissionV1>,
-)> {
-    let admission = crate::admission::read_finalized_local_tee_admission(
-        protocol,
-        &node.provider,
-        chain_id,
-        genesis_hash,
-        identity,
-    )?;
-    if !matches!(
-        admission,
-        Some(outbe_consensus::validators::LocalTeeRuntimeAdmissionV1::Ready { .. })
-    ) {
-        return Ok((false, admission));
-    }
-    let on_chain_offer = outbe_consensus::validators::read_network_encryption_public_at_latest(
-        protocol,
-        &node.provider,
+    let identity = in_process::initialize(config, &node_data_dir, initial_tee_policy)?;
+    let (anchor, supervisor) = in_process::prepare_supervisor(
+        (config, args),
+        (&node_data_dir, initial_tee_policy),
+        evm_signer.as_ref(),
+        cancellation,
     )
-    .wrap_err("read the canonical offer key for the TEE lease guard")?;
-    let resident_offer = outbe_tee::resident_network_encryption_public_key_state_v1()
-        .wrap_err("read the resident offer key for the TEE lease guard")?;
-    Ok((
-        !on_chain_offer.is_zero() && resident_offer == Some(on_chain_offer),
-        admission,
-    ))
+    .await?;
+    let mut identity = identity;
+    if let Some(context) = outbe_tee::in_process_tee_context() {
+        identity.expected_enclave_id = Some(context.manifest().enclave_id()?);
+    }
+    let identity = local_tee_launch_identity(args, evm_signer.as_deref(), identity);
+    Ok((evm_signer, identity, anchor, supervisor))
 }
 
-/// Initial `TeeLeaseGuardGateV1` for this process.
-///
-/// A FullNode uses the upstream anchor that `prepare` verified. A validator
-/// first tries local facts. When they cannot arm the gate and `--upstream` is
-/// set, it verifies the upstream NodeHost admission and offer key, checks the
-/// durable join anchor against the upstream chain, and waits at the higher
-/// anchor. Every check fails closed.
-async fn initial_tee_lease_gate_v1(
-    (protocol, node, args): (
-        &dyn outbe_consensus::protocol_state::EngineProtocolState,
-        &OutbeFullNode,
-        &ConsensusArgs,
-    ),
-    chain: (u64, alloy_primitives::B256),
+pub(crate) fn local_tee_launch_identity(
+    args: &ConsensusArgs,
+    signer: Option<&OutbeEvmSigner>,
     identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
-    prepared_anchor: Option<crate::admission::LocalTeeAdmissionAnchorV1>,
-) -> eyre::Result<crate::admission::TeeLeaseGuardAnchorsV1> {
-    use crate::admission::{
-        local_validator_tee_gate_v1, select_validator_upstream_anchor_v1, TeeLeaseGuardAnchorsV1,
-    };
-
-    if !args.is_validator {
-        return Ok(TeeLeaseGuardAnchorsV1 {
-            gate: prepared_anchor.map_or(TeeLeaseGuardGateV1::Armed, TeeLeaseGuardGateV1::Pending),
-            durable: None,
-        });
+) -> outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
+    outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
+        validator: args
+            .is_validator
+            .then_some(signer)
+            .flatten()
+            .map(OutbeEvmSigner::address),
+        ..identity
     }
-    let durable = prepared_anchor;
-    let local_finalized_height = node
-        .provider
-        .finalized_block_num_hash()
-        .wrap_err("read local finalized height for the TEE lease guard")?
-        .map_or(0, |finalized| finalized.number);
-    let (local_ready_with_offer, local_admission) =
-        if durable.is_none() && local_finalized_height >= 1 {
-            local_tee_admission_ready_v1(protocol, node, chain, identity)?
-        } else {
-            (false, None)
-        };
-    let local_is_genesis_founder = if durable.is_none() && local_finalized_height == 0 {
-        let signing_key_path = args
-            .signing_key
-            .as_ref()
-            .ok_or(outbe_consensus::errors::StackEpochError::SigningKeyRequired)?;
-        let key_backend = args.key_backend().wrap_err("invalid BLS key backend")?;
-        let local_consensus_key =
-            outbe_consensus::validators::load_signing_public_key(signing_key_path, &key_backend)
-                .wrap_err("failed to load consensus signing public key for TEE lease guard")?;
-        let genesis_validators = outbe_consensus::validators::read_consensus_validators_at_block(
-            protocol,
-            &node.provider,
-            chain.1,
-        )
-        .wrap_err("failed to read genesis consensus validator set for TEE lease guard")?;
-        genesis_validators
-            .public_keys
-            .contains(&local_consensus_key)
-    } else {
-        false
-    };
-    let upstream = args.upstream.as_deref();
-    if let Some(gate) = local_validator_tee_gate_v1(
-        durable,
-        local_finalized_height,
-        local_ready_with_offer,
-        local_is_genesis_founder,
-        upstream.is_some(),
-    ) {
-        if gate == TeeLeaseGuardGateV1::AwaitingAnchor {
-            if let Some(reason) = local_admission.and_then(tee_lease_admission_rejection) {
-                return Err(LaunchError::LocalNodeRejectedByTeeLease { reason }.into());
-            }
-        }
-        return Ok(TeeLeaseGuardAnchorsV1 {
-            gate,
-            durable: None,
-        });
-    }
-    let Some(upstream) = upstream else {
-        // Without an upstream, the startup check reports the catch-up error.
-        return Ok(TeeLeaseGuardAnchorsV1 {
-            gate: durable.map_or(
-                TeeLeaseGuardGateV1::AwaitingAnchor,
-                TeeLeaseGuardGateV1::Pending,
-            ),
-            durable: None,
-        });
-    };
-    let upstream_anchor = require_upstream_fullnode_tee_admission(upstream, identity).await?;
-    require_upstream_offer_key_v1(upstream).await?;
-    let upstream_hash_at_durable = match durable {
-        Some(anchor) => upstream_block_hash_v1(upstream, anchor.finalized_height).await?,
-        None => None,
-    };
-    let anchors =
-        select_validator_upstream_anchor_v1(durable, upstream_anchor, upstream_hash_at_durable)?;
-    info!(
-        ?anchors,
-        local_finalized_height,
-        "validator TEE lease guard waits for UpstreamBootstrap to reach the admission anchor"
-    );
-    Ok(anchors)
 }
 
 pub(crate) struct TeeRuntimeWorkers {
@@ -357,18 +123,16 @@ pub(crate) struct TeeRuntimeWorkers {
     /// Keeps the keyless armed-watch open for the launcher lifetime. The
     /// enclave path moves its sender into the lease guard, so this is `None`.
     pub(crate) tee_lease_armed_tx: Option<tokio::sync::watch::Sender<bool>>,
-    pub(crate) tee_lease_exit_rx:
-        Option<tokio::sync::mpsc::UnboundedReceiver<eyre::Result<String>>>,
     pub(crate) tee_lease_guard_handle: Option<tokio::task::JoinHandle<()>>,
     pub(crate) tee_canary_handle: Option<tokio::task::JoinHandle<()>>,
-    pub(crate) upgrade_promotion: Arc<tokio::sync::Notify>,
-    pub(crate) upgrade_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
-/// Non-validator with no enclave socket. A validator without a socket is not
-/// keyless and still fails in `prepare` with `MissingTeeEnclaveSocket`.
+/// A replay follower is not a validator and has no explicit EVM identity.
 pub(crate) fn keyless_follower_launch(args: &ConsensusArgs) -> bool {
-    !args.is_validator && args.tee_enclave_socket.is_none()
+    !args.is_validator
+        && args
+            .effective_validator_evm_key()
+            .is_ok_and(|key| key.is_none())
 }
 
 /// `None` and `ReplayOnly` are accepted. `None` means the caller installs
@@ -429,190 +193,360 @@ fn keyless_runtime_workers() -> TeeRuntimeWorkers {
         finalization_notify: Arc::new(tokio::sync::Notify::new()),
         tee_lease_armed_rx,
         tee_lease_armed_tx: Some(tee_lease_armed_tx),
-        tee_lease_exit_rx: None,
         tee_lease_guard_handle: None,
         tee_canary_handle: None,
-        upgrade_promotion: Arc::new(tokio::sync::Notify::new()),
-        upgrade_handle: None,
     }
 }
 
-fn verify_initial_local_tee_admission_v1(
-    (protocol, node, args): (
-        &dyn outbe_consensus::protocol_state::EngineProtocolState,
-        &OutbeFullNode,
-        &ConsensusArgs,
-    ),
-    chain: outbe_execution::tee_remote_session::RegistryChainIdentity,
-    local_tee_identity: outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
-    anchors: &mut crate::admission::TeeLeaseGuardAnchorsV1,
-    node_data_dir: &Path,
-) -> eyre::Result<()> {
-    let validator_has_recovery_anchor =
-        args.is_validator && anchors.gate.pending_anchor().is_some();
-    if let Some(admission) = read_gated_finalized_local_tee_admission(
-        protocol,
-        &node.provider,
-        chain,
-        local_tee_identity,
-        anchors,
-    )? {
-        let rejection = if validator_has_recovery_anchor {
-            validator_recovery_startup_admission_rejection(admission)
-        } else {
-            tee_lease_admission_rejection(admission)
-        };
-        if let Some(reason) = rejection {
-            return Err(LaunchError::LocalNodeRejectedByTeeLease { reason }.into());
-        }
-        if args.is_validator && args.upstream.is_none() && !anchors.gate.is_armed() {
-            if let Some(reason) = crate::admission::read_finalized_local_tee_admission(
-                protocol,
-                &node.provider,
-                chain.chain_id,
-                chain.genesis_hash,
-                local_tee_identity,
-            )?
-            .and_then(validator_recovery_startup_admission_rejection)
-            {
-                return Err(LaunchError::LocalNodeRejectedByTeeLease { reason }.into());
-            }
-        }
-    }
-    require_validator_tee_recovery_complete_v1(
-        args.is_validator,
-        args.upstream.is_some(),
-        anchors.gate,
-        node_data_dir,
-    )
+#[derive(Clone, Copy)]
+pub(crate) struct FoundingSlotRequest<'a> {
+    pub rpc: &'a reth_node_core::args::RpcServerArgs,
+    pub upstream: Option<&'a str>,
+    pub evm_signer: Option<&'a Arc<OutbeEvmSigner>>,
+    pub is_validator: bool,
 }
 
-pub(crate) async fn start_runtime_workers(
-    (protocol, session): (
-        Arc<dyn outbe_consensus::protocol_state::EngineProtocolState>,
-        Arc<dyn outbe_execution::tee_remote_session::TeeSessionStateReader>,
+impl<'a> FoundingSlotRequest<'a> {
+    pub(crate) fn from_launch(
+        rpc: &'a reth_node_core::args::RpcServerArgs,
+        args: &'a ConsensusArgs,
+        evm_signer: Option<&'a Arc<OutbeEvmSigner>>,
+    ) -> Self {
+        Self {
+            rpc,
+            upstream: args.upstream.as_deref(),
+            evm_signer,
+            is_validator: args.is_validator,
+        }
+    }
+}
+
+/// Choose the founding supervisor from the launch slot.
+///
+/// Production calls this from [`start_runtime_workers`] with `node.config.rpc`
+/// (`rpc.http == false`), `args.upstream == None`, and `evm_signer == Some`.
+pub(crate) fn founding_supervisor_from_launch_slot<F>(
+    existing: Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
+    founding_slot: &std::sync::Mutex<Option<jsonrpsee::Methods>>,
+    request: FoundingSlotRequest<'_>,
+    build: F,
+) -> eyre::Result<Option<crate::tee_supervisor::TeeLifecycleSupervisor>>
+where
+    F: FnOnce(
+        jsonrpsee::Methods,
+        &Arc<OutbeEvmSigner>,
+    ) -> eyre::Result<crate::tee_supervisor::TeeLifecycleSupervisor>,
+{
+    if let Some(supervisor) = existing {
+        return Ok(Some(supervisor));
+    }
+    let methods = founding_slot
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+    let FoundingSlotRequest {
+        rpc,
+        upstream,
+        evm_signer,
+        is_validator,
+    } = request;
+    // Operator HTTP off, no upstream, and an EVM signer: the launch slot is the module.
+    if !rpc.http && upstream.is_none() {
+        if let (Some(methods), Some(signer)) = (methods, evm_signer) {
+            return Ok(Some(build(methods, signer)?));
+        }
+    } else if let (Some(methods), Some(signer)) = (methods, evm_signer) {
+        return Ok(Some(build(methods, signer)?));
+    }
+    if is_validator && upstream.is_none() && evm_signer.is_some() {
+        return Err(in_process::AutonomousStartupError::MissingLocalLifecycleRpc.into());
+    }
+    Ok(None)
+}
+
+pub(crate) fn start_runtime_workers(
+    (protocol, supervisor, founding_slot): (
+        Arc<crate::OutbeRuntime>,
+        Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
+        &std::sync::Mutex<Option<jsonrpsee::Methods>>,
     ),
-    (node, args): (&OutbeFullNode, &ConsensusArgs),
+    (node, args, evm_signer): (&OutbeFullNode, &ConsensusArgs, Option<&Arc<OutbeEvmSigner>>),
     (proof_chain_id, genesis_hash, node_data_dir): (u64, alloy_primitives::B256, &Path),
     (local_tee_identity, tee_admission_anchor, initial_tee_policy): (
         outbe_consensus::validators::LocalTeeRuntimeIdentityV1,
         Option<crate::admission::LocalTeeAdmissionAnchorV1>,
         &outbe_primitives::tee_attestation_v1::TeePolicyV1,
     ),
-    (tee_canary_status, shutdown_token, shutdown): (
+    (tee_canary_status, authority, shutdown_token, shutdown): (
         outbe_tee::TeeEnclaveHealthChannel,
+        outbe_tee::TeeAuthorityChannel,
         tokio_util::sync::CancellationToken,
         outbe_execution::shutdown::NodeShutdown,
     ),
 ) -> eyre::Result<TeeRuntimeWorkers> {
     if keyless_follower_launch(args) {
-        info!("keyless follower: skipping TEE lease guard, canary, and upgrade watcher");
+        info!("keyless follower: skipping the TEE lease guard, lifecycle supervisor, and canary");
         return Ok(keyless_runtime_workers());
     }
     let chain = outbe_execution::tee_remote_session::RegistryChainIdentity {
         chain_id: proof_chain_id,
         genesis_hash,
     };
-    let mut anchors = initial_tee_lease_gate_v1(
-        (protocol.as_ref(), node, args),
-        (proof_chain_id, genesis_hash),
-        local_tee_identity,
-        tee_admission_anchor,
-    )
-    .await?;
-    verify_initial_local_tee_admission_v1(
-        (protocol.as_ref(), node, args),
-        chain,
-        local_tee_identity,
-        &mut anchors,
-        node_data_dir,
-    )?;
+    let context = outbe_tee::in_process_tee_context()
+        .ok_or(in_process::AutonomousStartupError::MissingContext)?;
+    let request = FoundingSlotRequest::from_launch(&node.config.rpc, args, evm_signer);
+    let founding_resident =
+        prepare_direct_founding(founding_slot, request, supervisor.as_ref(), || {
+            in_process::founding_resident(&node.config, node_data_dir, initial_tee_policy)
+                .map_err(|error| eyre::Report::new(*error))
+        })?;
+    let supervisor = if founding_resident.is_some() {
+        None
+    } else {
+        founding_supervisor_from_launch_slot(
+            supervisor,
+            founding_slot,
+            request,
+            |methods, signer| {
+                in_process::new_local_supervisor(
+                    &node.config,
+                    node_data_dir,
+                    initial_tee_policy,
+                    signer,
+                    methods,
+                )
+                .map_err(|error| eyre::Report::new(*error))
+            },
+        )?
+    };
+    let gate = if args.upstream.is_none()
+        && args.is_validator
+        && node
+            .provider
+            .finalized_block_num_hash()?
+            .is_none_or(|head| head.number == 0)
+    {
+        in_process::founder_lease_gate(protocol.as_ref(), node, args, genesis_hash)?
+    } else {
+        tee_admission_anchor.map_or(
+            TeeLeaseGuardGateV1::AwaitingAnchor,
+            TeeLeaseGuardGateV1::Pending,
+        )
+    };
     let finalization_notify = Arc::new(tokio::sync::Notify::new());
-    let (tee_lease_armed_tx, tee_lease_armed_rx) =
-        tokio::sync::watch::channel(anchors.gate.is_armed());
-    let (tee_lease_exit_tx, tee_lease_exit_rx) = tokio::sync::mpsc::unbounded_channel();
-    let lease_check = run_tee_lease_guard_v1(
-        node.provider.clone(),
-        Arc::clone(&protocol),
-        Arc::clone(&session),
-        crate::admission::TeeLeaseGuardConfigV1 {
-            chain,
+    let (tee_lease_armed_tx, tee_lease_armed_rx) = tokio::sync::watch::channel(false);
+    let owner = Arc::new(crate::admission_authority::live::LiveTeeRuntimeV1::new(
+        crate::admission_authority::live::LiveTeeSnapshotV1 {
+            context: Arc::clone(&context),
             identity: local_tee_identity,
-            anchors,
-            finalization_notify: finalization_notify.clone(),
-            armed: tee_lease_armed_tx,
+            gate,
         },
+        authority,
+    )?);
+    let guard_config = crate::admission::TeeLeaseGuardConfigV1 {
+        chain,
+        finalization_notify: finalization_notify.clone(),
+        armed: tee_lease_armed_tx,
+    };
+    in_process::bind_activation_refresh(
+        &protocol,
+        node.provider.clone(),
+        guard_config.clone(),
+        owner.clone(),
+    )?;
+    outbe_consensus::protocol_state::EngineProtocolState::refresh_tee_authority(protocol.as_ref())?;
+    let supervisor_owner = owner.clone();
+    let lease_check = crate::admission_authority::guard::run_lease_guard(
+        node.provider.clone(),
+        Arc::clone(&protocol) as Arc<dyn outbe_consensus::protocol_state::EngineProtocolState>,
+        guard_config,
+        owner,
         shutdown_token.clone(),
     );
-    let lease_outcome = shutdown.clone();
-    let tee_lease_guard_handle = tokio::spawn(shutdown.track_task("TEE lease guard", async move {
-        let verdict = match lease_check.await {
-            Ok(None) => return,
-            Ok(Some(reason)) => Ok(reason),
-            Err(error) => Err(error),
-        };
-        // Publish an actual failure before notifying a launcher that may
-        // concurrently choose a different exit branch or be cancelled.
-        let reason = tee_lease_exit_reason(Some(verdict), &lease_outcome);
-        let _ = tee_lease_exit_tx.send(Ok(reason));
-    }));
+    let lifecycle = start_lifecycle_worker(
+        founding_slot,
+        request,
+        (founding_resident, supervisor),
+        FoundingRun {
+            owner: supervisor_owner,
+            provider: node.provider.clone(),
+            protocol: protocol.clone(),
+            shutdown: shutdown_token.clone(),
+            finalized: finalization_notify.clone(),
+        },
+        &shutdown,
+    )?;
+    let tee_lease_guard_handle = tokio::spawn(shutdown.track_task(
+        "TEE lease guard and lifecycle",
+        async move {
+            let lifecycle = async move {
+                if let Err(join_err) = lifecycle.await {
+                    if join_err.is_panic() {
+                        std::panic::resume_unwind(join_err.into_panic());
+                    }
+                    tracing::error!(%join_err, "TEE lifecycle task failed");
+                }
+            };
+            let (guard, ()) = tokio::join!(lease_check, lifecycle);
+            if let Err(error) = guard {
+                tracing::error!(%error, "TEE lease guard failed closed");
+            }
+        },
+    ));
 
-    // Periodic enclave canary (signal only): known-plaintext decrypt +
-    // Health telemetry through the process-global session. `0` disables.
+    // Periodic resident canary is diagnostic only. `0` disables it.
+    let canary_config = outbe_execution::tee_canary::TeeCanaryConfig {
+        interval: std::time::Duration::from_secs(args.tee_canary_interval_secs),
+        failure_threshold: args.tee_canary_failure_threshold,
+    };
     let tee_canary_handle = (args.tee_canary_interval_secs > 0).then(|| {
-        tokio::spawn(shutdown.track_task(
-            "TEE canary worker",
-            outbe_execution::tee_canary::run_tee_canary_worker(
-                outbe_execution::tee_canary::TeeCanaryTarget::new(
-                    outbe_execution::tee_canary::GlobalEnclaveRequester,
-                    crate::tee_canary_probe::TributeCanaryProbe,
-                ),
-                outbe_execution::tee_canary::TeeCanaryConfig {
-                    interval: std::time::Duration::from_secs(args.tee_canary_interval_secs),
-                    failure_threshold: args.tee_canary_failure_threshold,
-                },
+        tokio::spawn(shutdown.track_task("TEE canary worker", async move {
+            crate::tee_canary_probe::TributeCanaryProbe::run_in_process_worker(
+                context,
+                canary_config,
                 tee_canary_status,
                 shutdown_token,
-            ),
-        ))
+            )
+            .await;
+        }))
     });
-
-    let upgrade_promotion = Arc::new(tokio::sync::Notify::new());
-    let upgrade_handle = if initial_tee_policy.attestation_mode
-        == outbe_primitives::tee_attestation_v1::AttestationMode::DcapRequired
-    {
-        let provider = node.provider.clone();
-        let promoted = upgrade_promotion.clone();
-        Some(tokio::spawn(shutdown.track_task(
-            "enclave-upgrade watcher",
-            run_upgrade_promotion_worker_v1(
-                provider,
-                Arc::clone(&session),
-                UpgradePromotionWorkerConfigV1 {
-                    chain_id: proof_chain_id,
-                    genesis_hash,
-                    node_data_dir: node_data_dir.to_path_buf(),
-                    poll_secs: TEE_UPGRADE_POLL_SECS,
-                    warning_blocks: TEE_UPGRADE_WARNING_BLOCKS,
-                    critical_blocks: TEE_UPGRADE_CRITICAL_BLOCKS,
-                    promoted,
-                },
-            ),
-        )))
-    } else {
-        None
-    };
 
     Ok(TeeRuntimeWorkers {
         finalization_notify,
         tee_lease_armed_rx,
         tee_lease_armed_tx: None,
-        tee_lease_exit_rx: Some(tee_lease_exit_rx),
         tee_lease_guard_handle: Some(tee_lease_guard_handle),
         tee_canary_handle,
-        upgrade_promotion,
-        upgrade_handle,
     })
+}
+
+pub(crate) struct FoundingResident {
+    pub node_signing: k256::ecdsa::SigningKey,
+    pub live: Arc<outbe_tee::in_process::InProcessTeeContext>,
+    pub node_data_dir: PathBuf,
+    pub descriptor: outbe_primitives::tee_attestation_v1::TrustedNetworkDescriptorV1,
+}
+
+pub(crate) struct FoundingRun<P> {
+    pub owner: Arc<crate::admission_authority::live::LiveTeeRuntimeV1>,
+    pub provider: P,
+    pub protocol: Arc<crate::OutbeRuntime>,
+    pub shutdown: tokio_util::sync::CancellationToken,
+    pub finalized: Arc<tokio::sync::Notify>,
+}
+
+pub(crate) fn prepare_direct_founding(
+    slot: &std::sync::Mutex<Option<jsonrpsee::Methods>>,
+    request: FoundingSlotRequest<'_>,
+    supervisor: Option<&crate::tee_supervisor::TeeLifecycleSupervisor>,
+    build: impl FnOnce() -> eyre::Result<FoundingResident>,
+) -> eyre::Result<Option<FoundingResident>> {
+    let uses_launch_slot = supervisor.is_none() && !request.rpc.http && request.upstream.is_none();
+    let validator_signed = request.is_validator && request.evm_signer.is_some();
+    let is_direct_founding = uses_launch_slot && validator_signed;
+    let slot_ready = slot
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .is_some();
+    if is_direct_founding && !slot_ready {
+        return Err(in_process::AutonomousStartupError::MissingLocalLifecycleRpc.into());
+    }
+    is_direct_founding.then(build).transpose()
+}
+
+pub(crate) fn start_lifecycle_worker<P>(
+    slot: &std::sync::Mutex<Option<jsonrpsee::Methods>>,
+    request: FoundingSlotRequest<'_>,
+    (founding, supervisor): (
+        Option<FoundingResident>,
+        Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
+    ),
+    run: FoundingRun<P>,
+    shutdown: &outbe_execution::shutdown::NodeShutdown,
+) -> eyre::Result<tokio::task::JoinHandle<()>>
+where
+    P: BlockIdReader
+        + HeaderProvider<Header = OutbeHeader>
+        + StateProviderFactory
+        + Send
+        + Sync
+        + 'static,
+{
+    if let Some(resident) = founding {
+        return spawn_founding_validator_supervisor(slot, request, resident, run, shutdown);
+    }
+    Ok(spawn_supervisor_run(supervisor, run, shutdown))
+}
+
+/// Build the founding supervisor from the launch slot and spawn `supervisor.run`.
+///
+/// Production startup uses the same constructor and the same spawn. The slot is
+/// the in-process module when operator HTTP is off, upstream is absent, and the
+/// node is a validator.
+pub(crate) fn spawn_founding_validator_supervisor<P>(
+    founding_slot: &std::sync::Mutex<Option<jsonrpsee::Methods>>,
+    request: FoundingSlotRequest<'_>,
+    resident: FoundingResident,
+    run: FoundingRun<P>,
+    shutdown: &outbe_execution::shutdown::NodeShutdown,
+) -> eyre::Result<tokio::task::JoinHandle<()>>
+where
+    P: BlockIdReader
+        + HeaderProvider<Header = OutbeHeader>
+        + StateProviderFactory
+        + Send
+        + Sync
+        + 'static,
+{
+    let FoundingResident {
+        node_signing,
+        live,
+        node_data_dir,
+        descriptor,
+    } = resident;
+    let supervisor =
+        founding_supervisor_from_launch_slot(None, founding_slot, request, |methods, signer| {
+            in_process::construct_in_process_supervisor(
+                methods,
+                signer,
+                FoundingResident {
+                    node_signing,
+                    live,
+                    node_data_dir,
+                    descriptor,
+                },
+            )
+            .map_err(|error| eyre::Report::new(*error))
+        })?
+        .ok_or(in_process::AutonomousStartupError::MissingLocalLifecycleRpc)?;
+    Ok(spawn_supervisor_run(Some(supervisor), run, shutdown))
+}
+
+fn spawn_supervisor_run<P>(
+    supervisor: Option<crate::tee_supervisor::TeeLifecycleSupervisor>,
+    run: FoundingRun<P>,
+    shutdown: &outbe_execution::shutdown::NodeShutdown,
+) -> tokio::task::JoinHandle<()>
+where
+    P: BlockIdReader
+        + HeaderProvider<Header = OutbeHeader>
+        + StateProviderFactory
+        + Send
+        + Sync
+        + 'static,
+{
+    tokio::spawn(shutdown.track_task("TEE lifecycle supervisor", async move {
+        if let Some(supervisor) = supervisor {
+            supervisor
+                .run(
+                    run.owner,
+                    (run.provider, run.protocol),
+                    run.shutdown,
+                    run.finalized,
+                )
+                .await;
+        }
+    }))
 }
 
 #[cfg(test)]
@@ -635,15 +569,40 @@ mod tests {
     }
 
     #[test]
-    fn keyless_launch_is_only_a_non_validator_without_a_socket() {
+    fn keyless_launch_requires_no_validator_key() {
         assert!(keyless_follower_launch(&parsed_args(&[])));
         assert!(!keyless_follower_launch(&parsed_args(&[
-            "--tee-enclave-socket",
-            "/tmp/tee.sock",
+            "--validator.evm-key",
+            "/tmp/key.json"
         ])));
         let mut validator = parsed_args(&[]);
         validator.is_validator = true;
         assert!(!keyless_follower_launch(&validator));
+    }
+
+    #[test]
+    fn keyed_follower_signer_does_not_make_it_a_validator() {
+        let mut args = parsed_args(&[
+            "--upstream",
+            "127.0.0.1:8545",
+            "--validator.evm-key",
+            "/tmp/key.json",
+        ]);
+        let signer = OutbeEvmSigner::from_secret_bytes([7; 32]).unwrap();
+        let resident = outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
+            reth_p2p_public: [2; 33],
+            expected_enclave_id: Some(alloy_primitives::B256::repeat_byte(1)),
+            validator: Some(signer.address()),
+        };
+        let follower = local_tee_launch_identity(&args, Some(&signer), resident);
+        assert_eq!(follower.validator, None);
+        assert_eq!(follower.expected_enclave_id, resident.expected_enclave_id);
+        assert_eq!(follower.reth_p2p_public, resident.reth_p2p_public);
+        args.is_validator = true;
+        assert_eq!(
+            local_tee_launch_identity(&args, Some(&signer), follower),
+            resident
+        );
     }
 
     #[test]
@@ -667,12 +626,29 @@ mod tests {
     }
 
     #[test]
+    fn founding_validator_without_http_spawns_in_process_supervisor() {
+        let context = crate::admission_authority::test_support::context(4);
+        let descriptor = outbe_primitives::tee_attestation_v1::TrustedNetworkDescriptorV1 {
+            network_binding: context.manifest().network_binding(),
+            genesis_consensus_keys: vec![],
+        };
+        let root = tempfile::tempdir().unwrap();
+        crate::tee_supervisor::TeeLifecycleSupervisor::new_in_process(
+            jsonrpsee::Methods::new(),
+            (
+                Arc::new(outbe_evm::OutbeEvmSigner::from_secret_bytes([0x11; 32]).unwrap()),
+                k256::ecdsa::SigningKey::from_slice(&[0x21; 32]).unwrap(),
+            ),
+            (context, root.path().to_path_buf(), descriptor),
+        )
+        .expect("founding validator spawns TeeLifecycleSupervisor without a socket");
+    }
+
+    #[test]
     fn keyless_workers_have_no_lease_guard() {
         let workers = keyless_runtime_workers();
-        assert!(workers.tee_lease_exit_rx.is_none());
         assert!(workers.tee_lease_guard_handle.is_none());
         assert!(workers.tee_canary_handle.is_none());
-        assert!(workers.upgrade_handle.is_none());
         assert!(!*workers.tee_lease_armed_rx.borrow());
         assert!(workers.tee_lease_armed_tx.is_some());
     }

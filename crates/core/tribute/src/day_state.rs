@@ -1,10 +1,10 @@
 //! Storage boundary for encrypted daily amounts and transient calculation views.
 
+use crate::confidential::{TributeDayOpRequestV2, TributeDayOperationV2};
 use alloy_primitives::{keccak256, B256, U256};
 use outbe_core_common::tribute_day_encryption::{
     EncryptedTributeDayAmountV2, EncryptedTributeDayFractionsV1,
 };
-use outbe_enclave::tribute_day::{TributeDayOpRequestV2, TributeDayOperationV2};
 use outbe_primitives::error::Result;
 use outbe_system_common::{
     metadosis_bindings::MetadosisStorageExt,

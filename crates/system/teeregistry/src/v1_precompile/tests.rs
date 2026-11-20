@@ -328,15 +328,15 @@ fn register_precharges_exact_protocol_gas_before_evidence_decode() {
 }
 
 #[test]
-fn gramine_direct_dev_register_precharge_uses_active_policy_mode() {
+fn no_attestation_dev_register_precharge_uses_active_policy_mode() {
     let mut active_policy = policy();
-    active_policy.attestation_mode = AttestationMode::GramineDirectDev;
+    active_policy.attestation_mode = AttestationMode::NoAttestationDev;
     let mut provider = installed_provider(&active_policy, 1);
     meter_production_gas(&mut provider);
 
     // Canonical outer ABI with malformed development evidence reaches the
     // mode-selected precharge and then reverts during evidence decoding.
-    // The exact GramineDirectDev maximum must be sufficient; charging the
+    // The exact NoAttestationDev maximum must be sufficient; charging the
     // production DCAP schedule here makes the reachable dev transaction
     // consume its entire signed gas limit before validation.
     let input = call(vec![1, 1, 0, 0, 0, 0], 65, 64);
@@ -361,7 +361,7 @@ fn gramine_direct_dev_register_precharge_uses_active_policy_mode() {
         &mut provider,
         &input,
         0xA8,
-        "exact GramineDirectDev gas must reach canonical evidence rejection",
+        "exact NoAttestationDev gas must reach canonical evidence rejection",
     );
 }
 

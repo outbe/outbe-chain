@@ -8,7 +8,7 @@ use outbe_primitives::{
         encode_outbe_block_artifacts, ConsensusHeaderArtifact, ExecutionSummaryArtifact,
         LateFinalizeCreditsArtifact, OutbeBlockArtifacts, PerBlockCredit,
     },
-    tee_genesis_v1::GRAMINE_DIRECT_DEV_CHAIN_ID,
+    tee_genesis_v1::NO_ATTESTATION_DEV_CHAIN_ID,
     OutbeHeader,
 };
 use reth_ethereum::chainspec::ChainSpec;

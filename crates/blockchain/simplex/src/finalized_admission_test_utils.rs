@@ -53,6 +53,8 @@ pub struct CertifiedChildBlockInput {
     pub state_root: B256,
     pub extra_data: Vec<u8>,
     pub parent_hash: B256,
+    /// Sealed before the finality certificate. `None` leaves the header fee absent.
+    pub base_fee_per_gas: Option<u64>,
 }
 
 impl FinalityCommitteeFixture {
@@ -107,12 +109,13 @@ impl FinalityCommitteeFixture {
         extra_data: Vec<u8>,
     ) -> CertifiedBlockFixture {
         self.certify_child_block(CertifiedChildBlockInput {
+            parent_hash: B256::ZERO,
+            base_fee_per_gas: None,
             epoch,
             height,
             timestamp,
             state_root,
             extra_data,
-            parent_hash: B256::ZERO,
         })
     }
 
@@ -124,6 +127,7 @@ impl FinalityCommitteeFixture {
             state_root,
             extra_data,
             parent_hash,
+            base_fee_per_gas,
         } = input;
 
         let mut block = Block::<outbe_primitives::OutbeTxEnvelope>::default();
@@ -132,6 +136,7 @@ impl FinalityCommitteeFixture {
         block.header.timestamp = timestamp;
         block.header.state_root = state_root;
         block.header.extra_data = Bytes::from(extra_data);
+        block.header.base_fee_per_gas = base_fee_per_gas;
         let block =
             ConsensusBlock::from_sealed(SealedBlock::seal_slow(block.map_header(OutbeHeader::new)));
 

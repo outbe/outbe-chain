@@ -31,6 +31,7 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 use tracing::debug;
+use zeroize::Zeroizing;
 
 pub use outbe_primitives::validators::MAX_VALIDATORS;
 /// [`MAX_VALIDATORS`] as the committee bound the finalization decoders take.
@@ -101,13 +102,13 @@ const ENC_MAGIC: &[u8] = b"OUTBE_ENC\x01";
 const KEYCHAIN_MARKER: &str = "OUTBE_KEYCHAIN\n";
 
 /// Derive a 256-bit AES key from a passphrase using Argon2id.
-fn derive_key(passphrase: &str, salt: &[u8; 32]) -> Result<[u8; 32]> {
+fn derive_key(passphrase: &str, salt: &[u8; 32]) -> Result<Zeroizing<[u8; 32]>> {
     use argon2::Argon2;
-    let mut key = [0u8; 32];
+    let mut key = Zeroizing::new([0_u8; 32]);
     // Argon2id into a fixed 32-byte buffer cannot fail in practice. Return a
     // structured error instead of `expect` on the key-load/startup path.
     Argon2::default()
-        .hash_password_into(passphrase.as_bytes(), salt, &mut key)
+        .hash_password_into(passphrase.as_bytes(), salt, &mut key[..])
         .map_err(|e| BlsKeyError::Argon2Derive(format!("{e}")))?;
     Ok(key)
 }
@@ -123,13 +124,13 @@ fn save_encrypted(path: &Path, data: &[u8], passphrase: &str) -> Result<()> {
     rand::thread_rng().fill_bytes(&mut nonce_bytes);
 
     let key = derive_key(passphrase, &salt)?;
-    let unbound =
-        aead::UnboundKey::new(&aead::AES_256_GCM, &key).map_err(|_| BlsKeyError::CreateAesKey)?;
+    let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, &key[..])
+        .map_err(|_| BlsKeyError::CreateAesKey)?;
     let mut sealing_key = aead::SealingKey::new(unbound, OneNonce::new(nonce_bytes));
 
-    let mut in_out = data.to_vec();
+    let mut in_out = Zeroizing::new(data.to_vec());
     sealing_key
-        .seal_in_place_append_tag(aead::Aad::empty(), &mut in_out)
+        .seal_in_place_append_tag(aead::Aad::empty(), &mut *in_out)
         .map_err(|_| BlsKeyError::AesGcmEncrypt)?;
 
     let mut out = Vec::with_capacity(ENC_MAGIC.len() + 32 + 12 + in_out.len());
@@ -264,51 +265,86 @@ fn atomic_write_secret(path: &Path, data: &[u8], kind: &str) -> Result<()> {
 
 /// Load raw bytes, auto-detecting format (encrypted / keychain / plaintext hex).
 pub fn load_raw(path: &Path, backend: &KeyBackend) -> Result<Vec<u8>> {
-    let raw = std::fs::read(path)
+    let raw = read_secret_file(path)?;
+    let decoded = decode_custody_material(&raw, backend)?;
+    Ok(decoded.to_vec())
+}
+
+fn read_secret_file(path: &Path) -> Result<Zeroizing<Vec<u8>>> {
+    let bytes = std::fs::read(path)
         .wrap_err_with(|| format!("failed to read key file: {}", path.display()))?;
+    Ok(Zeroizing::new(bytes))
+}
 
+fn decode_custody_material(raw: &[u8], backend: &KeyBackend) -> Result<Zeroizing<Vec<u8>>> {
     if raw.starts_with(ENC_MAGIC) {
-        // AES-256-GCM encrypted
-        let passphrase = match backend {
-            KeyBackend::Encrypted(p) => p.as_str(),
-            _ => return Err(BlsKeyError::EncryptedFileRequiresPassphrase.into()),
-        };
-        let header_len = ENC_MAGIC.len();
-        if raw.len() < header_len + 32 + 12 {
-            return Err(BlsKeyError::EncryptedFileTooShort.into());
-        }
-        let salt: &[u8; 32] = raw[header_len..header_len + 32]
-            .try_into()
-            .map_err(|_| BlsKeyError::EncryptedFileSaltSlice)?;
-        let nonce_bytes = &raw[header_len + 32..header_len + 44];
-        let ciphertext = &raw[header_len + 44..];
-
-        use ring::aead::{self, BoundKey};
-
-        let key = derive_key(passphrase, salt)?;
-        let nonce: [u8; 12] = nonce_bytes
-            .try_into()
-            .map_err(|_| BlsKeyError::InvalidNonceLength)?;
-        let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, &key)
-            .map_err(|_| BlsKeyError::CreateAesKey)?;
-        let mut opening_key = aead::OpeningKey::new(unbound, OneNonce::new(nonce));
-
-        let mut in_out = ciphertext.to_vec();
-        let plaintext = opening_key
-            .open_in_place(aead::Aad::empty(), &mut in_out)
-            .map_err(|_| BlsKeyError::DecryptionFailed)?;
-        Ok(plaintext.to_vec())
-    } else if let Some((service, account)) = parse_keychain_marker(&raw)? {
-        let hex_str = keychain_get_password(&service, &account)?;
-        hex::decode(&hex_str).wrap_err("invalid hex in keychain entry")
-    } else {
-        // Legacy/plaintext hex
-        let hex_str = String::from_utf8(raw)
-            .wrap_err("key file not UTF-8")?
-            .trim()
-            .to_string();
-        hex::decode(&hex_str).wrap_err("invalid hex in key file")
+        return decrypt_custody(raw, backend);
     }
+    if let Some((service, account)) = parse_keychain_marker(raw)? {
+        let hex_str = Zeroizing::new(keychain_get_password(&service, &account)?);
+        return decode_hex_zeroizing(hex_str.as_bytes()).wrap_err("invalid hex in keychain entry");
+    }
+    // `raw` is borrowed from the `Zeroizing<Vec<u8>>` held by `load_raw`.
+    // `trim` covers NBSP and other Unicode whitespace without allocating a String.
+    let text = std::str::from_utf8(raw)?;
+    decode_hex_zeroizing(text.trim().as_bytes()).wrap_err("invalid hex in key file")
+}
+
+/// Decode hex into a buffer that is wiped if a later character is invalid.
+fn decode_hex_zeroizing(hex_bytes: &[u8]) -> Result<Zeroizing<Vec<u8>>, hex::FromHexError> {
+    if !hex_bytes.len().is_multiple_of(2) {
+        return Err(hex::FromHexError::OddLength);
+    }
+    let mut decoded = Zeroizing::new(vec![0_u8; hex_bytes.len() / 2]);
+    hex::decode_to_slice(hex_bytes, &mut decoded[..])?;
+    Ok(decoded)
+}
+
+fn decrypt_custody(raw: &[u8], backend: &KeyBackend) -> Result<Zeroizing<Vec<u8>>> {
+    let passphrase = match backend {
+        KeyBackend::Encrypted(passphrase) => passphrase.as_str(),
+        _ => return Err(BlsKeyError::EncryptedFileRequiresPassphrase.into()),
+    };
+    let header_len = ENC_MAGIC.len();
+    if raw.len() < header_len + 32 + 12 {
+        return Err(BlsKeyError::EncryptedFileTooShort.into());
+    }
+    let salt: &[u8; 32] = raw[header_len..header_len + 32]
+        .try_into()
+        .map_err(|_| BlsKeyError::EncryptedFileSaltSlice)?;
+    let nonce_bytes = &raw[header_len + 32..header_len + 44];
+    let ciphertext = &raw[header_len + 44..];
+
+    use ring::aead::{self, BoundKey};
+
+    let key = derive_key(passphrase, salt)?;
+    let nonce: [u8; 12] = nonce_bytes
+        .try_into()
+        .map_err(|_| BlsKeyError::InvalidNonceLength)?;
+    let unbound = aead::UnboundKey::new(&aead::AES_256_GCM, &key[..])
+        .map_err(|_| BlsKeyError::CreateAesKey)?;
+    let mut opening_key = aead::OpeningKey::new(unbound, OneNonce::new(nonce));
+
+    let mut in_out = Zeroizing::new(ciphertext.to_vec());
+    let plaintext = opening_key
+        .open_in_place(aead::Aad::empty(), &mut in_out[..])
+        .map_err(|_| BlsKeyError::DecryptionFailed)?;
+    Ok(Zeroizing::new(plaintext.to_vec()))
+}
+
+/// Decode one 32-byte secp256k1 secret from custody bytes already read by the caller.
+pub fn load_secp256k1_secret_from_bytes(
+    raw: &[u8],
+    backend: &KeyBackend,
+) -> Result<Zeroizing<[u8; 32]>> {
+    let bytes = decode_custody_material(raw, backend)?;
+    let len = bytes.len();
+    if len != 32 {
+        return Err(BlsKeyError::Secp256k1SecretLength { len }.into());
+    }
+    let mut secret = Zeroizing::new([0_u8; 32]);
+    secret.copy_from_slice(&bytes);
+    Ok(secret)
 }
 
 /// Report whether `bytes` is an encrypted envelope or a keychain marker.
@@ -339,11 +375,8 @@ fn reject_group_readable(path: &Path) -> Result<()> {
 pub fn load_secp256k1_secret(path: &Path, backend: &KeyBackend) -> Result<[u8; 32]> {
     #[cfg(unix)]
     reject_group_readable(path)?;
-    let bytes = load_raw(path, backend)?;
-    let len = bytes.len();
-    bytes
-        .try_into()
-        .map_err(|_| BlsKeyError::Secp256k1SecretLength { len }.into())
+    let raw = read_secret_file(path)?;
+    Ok(*load_secp256k1_secret_from_bytes(&raw, backend)?)
 }
 
 /// Save one 32-byte secp256k1 secret with the selected backend.
