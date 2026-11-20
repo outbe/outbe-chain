@@ -60,7 +60,6 @@ mod copied_native_dkg_prerequisites {
     };
 
     type Native = RethFullAdapter<DatabaseEnv, OutbeNode>;
-    type AddOns = <OutbeNode as Node<Native>>::AddOns;
     const FREEZE: u64 = 1;
     const CHANGE: u64 = 2;
     const OWNER: Address = Address::repeat_byte(0xa0);
@@ -194,12 +193,12 @@ mod copied_native_dkg_prerequisites {
                         toml_config: Default::default(),
                     },
                 );
-                let host = std::sync::Arc::new(outbe_runtime::OutbeRuntime::new());
+                let host = Arc::new(outbe_runtime::OutbeRuntime::new());
                 let evm = OutbeEvmConfig::new(
                     chain.clone(),
-                    std::sync::Arc::clone(&host) as std::sync::Arc<dyn EvmRuntimeHost>,
+                    Arc::clone(&host) as Arc<dyn EvmRuntimeHost>,
                 );
-                let pool = OutbePoolBuilder::new(host as std::sync::Arc<dyn TxPoolZeroFeePolicy>)
+                let pool = OutbePoolBuilder::new(Arc::clone(&host) as Arc<dyn TxPoolZeroFeePolicy>)
                     .build_pool(&ctx, evm.clone())
                     .await?;
                 let network_config = ctx.build_network_config(
@@ -233,20 +232,27 @@ mod copied_native_dkg_prerequisites {
                     provider: provider.clone(),
                 };
                 let (engine_tx, _engine_rx) = tokio::sync::mpsc::unbounded_channel();
-                let addons = AddOns::default()
-                    .launch_add_ons_with_opt_engine(
-                        AddOnsContext {
-                            node: adapter,
-                            config: &config,
-                            beacon_engine_handle: ConsensusEngineHandle::new(engine_tx),
-                            engine_events: Default::default(),
-                            jwt_secret: *AuthServerHandle::noop().jwt_secret(),
-                            sender_recovery_cache: None,
-                        },
-                        |_| Ok(()),
-                        true,
-                    )
-                    .await?;
+                let addons = <OutbeNode as Node<Native>>::add_ons(&OutbeNode {
+                    shutdown: Default::default(),
+                    bridge: None,
+                    evm_signer: None,
+                    runtime_host: Some(Arc::clone(&host) as Arc<dyn EvmRuntimeHost>),
+                    pool_policy: host as Arc<dyn TxPoolZeroFeePolicy>,
+                    rpc_protection: Default::default(),
+                })
+                .launch_add_ons_with_opt_engine(
+                    AddOnsContext {
+                        node: adapter,
+                        config: &config,
+                        beacon_engine_handle: ConsensusEngineHandle::new(engine_tx),
+                        engine_events: Default::default(),
+                        jwt_secret: *AuthServerHandle::noop().jwt_secret(),
+                        sender_recovery_cache: None,
+                    },
+                    |_| Ok(()),
+                    true,
+                )
+                .await?;
                 ensure!(addons.rpc_server_handles.rpc.http_local_addr().is_none());
                 ensure!(addons.rpc_server_handles.rpc.ws_local_addr().is_none());
                 ensure!(addons.rpc_server_handles.rpc.ipc_endpoint().is_none());
