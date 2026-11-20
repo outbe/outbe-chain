@@ -336,4 +336,13 @@ pub struct NodContract {
     #[attribute(order = 115)]
     pub group_series_open_load_ct:
         outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::Bytes>,
+    /// Set while the forfeit pass closes the group series by series, until the group is forfeited.
+    #[attribute(order = 116)]
+    pub group_forfeiting: outbe_primitives::storage::dsl::Map<B256, bool>,
+    /// The open loads of the group series the forfeit pass has closed so far.
+    #[attribute(order = 117)]
+    pub group_forfeit_load_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// Whether the forfeit pass has closed `group_series_key(group_key, series_id)`.
+    #[attribute(order = 118)]
+    pub group_series_forfeited: outbe_primitives::storage::dsl::Map<B256, bool>,
 }

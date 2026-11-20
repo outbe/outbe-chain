@@ -136,10 +136,11 @@ fn exact_capacity_commits_actual_gas_then_captures_end_phase_capacity() {
         let body_index = executor.body_tx_index;
         executor.apply_end_block_phase().unwrap();
         assert_eq!(executor.receipts().len(), receipts + 5);
+        assert_eq!(executor.body_tx_index, body_index + 5);
         assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
         executor.apply_end_block_phase().unwrap();
         assert_eq!(executor.receipts().len(), receipts + 5);
-        assert_eq!(executor.body_tx_index, body_index);
+        assert_eq!(executor.body_tx_index, body_index + 5);
     }
 }
 

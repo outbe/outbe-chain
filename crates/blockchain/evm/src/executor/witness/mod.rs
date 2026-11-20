@@ -14,6 +14,9 @@ use std::sync::{Arc, Mutex};
 
 mod evm_scope;
 mod init;
+mod reserve;
+
+pub use reserve::END_BLOCK_WITNESS_RESERVE_BYTES;
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub use evm_scope::install_detached_trace_witness;
@@ -49,7 +52,7 @@ fn proposer_commit_fits(
         tx_index: body_tx_index,
         entries: guard.staged.clone(),
     });
-    if tape_fits_budget(&candidate_tape, base_extra_data) {
+    if reserve::candidate_fits(&candidate_tape, base_extra_data, is_user_candidate) {
         return true;
     }
     if is_user_candidate {

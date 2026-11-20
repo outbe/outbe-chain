@@ -8024,6 +8024,7 @@ dependencies = [
  "eyre",
  "futures",
  "hex",
+ "jsonrpsee",
  "metrics",
  "metrics-util",
  "outbe-evm",
@@ -8031,6 +8032,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-tee",
  "outbe-txpool",
+ "reqwest 0.12.28",
  "reth-basic-payload-builder",
  "reth-chain-state",
  "reth-chainspec",
@@ -8062,6 +8064,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",
+ "tower",
  "tracing",
 ]
 
@@ -8877,6 +8880,7 @@ dependencies = [
  "outbe-vote",
  "outbe-zerofee",
  "outbe-zk-backend",
+ "postcard",
  "proptest",
  "radicle",
  "radicle-signals",

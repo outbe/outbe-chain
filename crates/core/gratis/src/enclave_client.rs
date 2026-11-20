@@ -61,6 +61,9 @@ enum DeriveKeysError {
     OwnerSignatureLength,
 }
 
+/// Enclave witness one collateral op (pledge, release, pledge burn) records at most; it carries no fidelity section.
+pub const COLLATERAL_OP_WITNESS_BYTES: u32 = 460;
+
 /// Run one Gratis op. A business rejection stays inside the returned result.
 pub fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
     #[cfg(any(test, feature = "test-enclave"))]

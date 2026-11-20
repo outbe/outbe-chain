@@ -11,6 +11,7 @@ outbe-core-common.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-ccaregistry.workspace = true
 outbe-credis.workspace = true
+outbe-gratis.workspace = true
 outbe-gratisfactory.workspace = true
 outbe-fidelity.workspace = true
 outbe-promislimit.workspace = true
