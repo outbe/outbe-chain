@@ -278,22 +278,7 @@ async fn clear_cold_marker_failure_keeps_switched_memory_and_marker_until_the_ne
     assert!(height > 1);
     let candidate = supervisor.successor.as_ref().unwrap().candidate.clone();
     rewind_prior_anchor(root.path(), [0xab; 32], height - 1, timestamp);
-    struct ResetMode<'a>(&'a std::path::Path);
-    impl Drop for ResetMode<'_> {
-        fn drop(&mut self) {
-            use std::os::unix::fs::PermissionsExt as _;
-            if let Ok(meta) = std::fs::metadata(self.0) {
-                let mut perms = meta.permissions();
-                perms.set_mode(0o700);
-                let _ = std::fs::set_permissions(self.0, perms);
-            }
-        }
-    }
-    let _reset = ResetMode(root.path());
-    use std::os::unix::fs::PermissionsExt as _;
-    let mut locked = std::fs::metadata(root.path()).unwrap().permissions();
-    locked.set_mode(0o555);
-    std::fs::set_permissions(root.path(), locked).unwrap();
+    let fail_clear = FailClearColdMarkerGuard::arm(root.path());
     let prepared = supervisor
         .prepare(&tokio_util::sync::CancellationToken::new())
         .await
@@ -326,9 +311,7 @@ async fn clear_cold_marker_failure_keeps_switched_memory_and_marker_until_the_ne
         candidate.manifest().enclave_id().unwrap()
     );
     assert_eq!(persisted.finalized_hash, hash);
-    let mut restored = std::fs::metadata(root.path()).unwrap().permissions();
-    restored.set_mode(0o700);
-    std::fs::set_permissions(root.path(), restored).unwrap();
+    drop(fail_clear);
     let _ = super::super::super::driver::LifecycleTask::tick(&mut supervisor).await;
     assert!(!cold_recovery_marked(root.path()));
 }
