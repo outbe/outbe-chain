@@ -78,6 +78,7 @@ pub(super) async fn launch_profile(
         evm_signer: signer,
         runtime_host: Some(runtime.clone()),
         pool_policy: runtime,
+        rpc_protection: Default::default(),
     };
     let handle = NodeBuilder::new(config)
         .with_database(db)
