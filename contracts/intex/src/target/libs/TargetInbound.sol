@@ -464,8 +464,8 @@ library TargetInbound {
         );
     }
 
-    /// @notice Decode MARK_CALLED and apply it to every series it carries, keeping the ones that
-    ///         will not take the mark yet.
+    /// @notice Decode a call notice and apply it to every series it carries, keeping the ones that
+    ///         will not take it yet.
     /// @dev The handler acknowledges a zero call time without effect. No series can take it, and a
     ///      slot reads zero as empty.
     function handleIntexSeriesCallNotice(

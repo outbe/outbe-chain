@@ -78,7 +78,8 @@ interface ITargetRouter {
     event TargetRouterDependenciesSet(address intexAuction, address intexContract, address escrow);
 
     /// @notice Emitted when a call notice cannot be applied to its series here, and the notice waits.
-    ///         `errorData` is empty while the series has not landed. The token reports the call once applied.
+    ///         `errorData` is empty when the call left no revert data, for example while the series has not
+    ///         landed. The token reports the call once applied.
     event IntexSeriesCallNoticeApplyFailed(bytes14 indexed seriesId, uint32 indexed srcChainId, bytes errorData);
 
     // --- Errors ---

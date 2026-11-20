@@ -212,7 +212,7 @@ pub struct DesisContract {
     pub auction_at: outbe_primitives::storage::dsl::Map<EmissionDate, u32>,
 
     // --- Per-chain bid intake (keyed keccak256(emission_day_be32 ++ chain_be32)) ---
-    /// totalBatches the chain's first batch declared; every later batch must carry the same.
+    /// totalPages the chain's first page declared; every later page must carry the same.
     #[attribute(order = 19)]
     pub chain_total_pages: outbe_primitives::storage::dsl::Map<B256, u32>,
     /// Bitmap of arrived pages (bit i = pageIndex i seen).

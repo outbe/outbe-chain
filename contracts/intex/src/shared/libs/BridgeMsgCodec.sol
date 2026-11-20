@@ -193,17 +193,17 @@ library BridgeMsgCodec {
         return abi.encodePacked(BODY_VERSION_V1, MSG_BIDS_TOTALS, _emissionDay, _srcChainId, _totalPages, _totalBids);
     }
 
-    /// @notice Encodes BIDS_BATCH message.
-    /// @dev A bid set larger than `MAX_PAYLOAD_ARRAY_LEN` is relayed as multiple batches. The
+    /// @notice Encodes a bids page message.
+    /// @dev A bid set larger than `MAX_PAYLOAD_ARRAY_LEN` is relayed as multiple pages. The
     ///      receiver collects all `_totalPages` (in any order) before finalizing. Reverts
     ///      `PayloadArrayTooLong` if `_bidders` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @param _emissionDay The emission day (yyyymmdd).
     /// @param _srcChainId The source chainId the bids originated from.
-    /// @param _pageIndex Index of this batch within the relay (0-based).
-    /// @param _totalPages Total number of batches in the relay (the receiver waits for all of them).
+    /// @param _pageIndex Index of this page within the relay (0-based).
+    /// @param _totalPages Total number of pages in the relay (the receiver waits for all of them).
     /// @param _bidders The bidder addresses (parallel with `_packedBids`).
     /// @param _packedBids One [`packBid`] word per bidder: quantity, rate, timestamp and the pair.
-    /// @return The wire-encoded BIDS_BATCH message.
+    /// @return The wire-encoded bids page message.
     function encodeBidsPage(
         uint32 _emissionDay,
         uint32 _srcChainId,
@@ -655,16 +655,16 @@ library BridgeMsgCodec {
         if (_msg.length < _minimum) revert InvalidPayloadLength(_msgType, _msg.length, _minimum);
     }
 
-    /// @notice Decodes BIDS_BATCH message.
+    /// @notice Decodes a bids page message.
     /// @dev Reverts:
     ///      - `UnsupportedBodyVersion` on a stale version byte.
     ///      - `IntexAuctionBidsArrayLengthMismatch` if the four parallel arrays differ in length.
-    ///      - `IntexAuctionBidsPageTooLarge` if the batch exceeds `MAX_BIDS_PAGE`.
-    /// @param _msg The wire-encoded BIDS_BATCH message.
+    ///      - `IntexAuctionBidsPageTooLarge` if the page exceeds `MAX_BIDS_PAGE`.
+    /// @param _msg The wire-encoded bids page message.
     /// @return emissionDay The emission day (yyyymmdd).
     /// @return srcChainId The source chainId the bids originated from.
-    /// @return pageIndex Index of this batch within the relay (0-based).
-    /// @return totalPages Total number of batches in the relay (the receiver waits for all of them).
+    /// @return pageIndex Index of this page within the relay (0-based).
+    /// @return totalPages Total number of pages in the relay (the receiver waits for all of them).
     /// @return bidders The bidder addresses (parallel with `packedBids`).
     /// @return packedBids One [`packBid`] word per bidder.
     function decodeBidsPage(bytes calldata _msg)

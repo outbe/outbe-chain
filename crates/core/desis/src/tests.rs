@@ -2706,7 +2706,7 @@ fn force_clear_skips_missing_chain_after_deadline() {
     );
 }
 
-/// A clearing start the router refuses is reported once and not sent again: the chain's bids expire.
+/// A clearing start that fails is reported once and not sent again: the chain's bids expire.
 #[test]
 fn clearing_start_send_failure_is_final() {
     use crate::precompile::IDesis;
@@ -2715,7 +2715,7 @@ fn clearing_start_send_failure_is_final() {
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    // Every router call answers but the clearing start, which the router refuses.
+    // Every router call answers but the clearing start, left unanswered (NotAvailable), so its send fails.
     storage.stub_sub_call_at_selector(
         ORIGIN_ROUTER_ADDRESS,
         IOriginRouter::targetsOfCall::SELECTOR,
