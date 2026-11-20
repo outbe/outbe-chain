@@ -401,12 +401,12 @@ async fn unbroadcast_lost_candidate_replaces_same_nonce_without_changing_source(
     .unwrap();
     let previous = journal.load().unwrap().unwrap();
     assert_eq!(previous.public_intent.candidate.unwrap().nonce, 8);
-    assert_eq!(
-        reconcile_service_tx_v1(&chain, &mut journal, &live)
+    assert!(matches!(
+        reconcile_service_tx_v1(&chain, &mut journal, &live, signer.address())
             .await
             .unwrap(),
-        ServiceTxReconciliationV1::ReplaceLostIdentity { nonce: 4 }
-    );
+        ServiceTxReconciliationV1::ReplaceLostIdentity { nonce: 4, .. }
+    ));
     let source_target = previous.public_intent.target.clone();
     prepare_successor_v1(
         &chain,
@@ -692,4 +692,373 @@ async fn finalized_onboarding_requires_source_readiness_before_successor_prepare
             );
         }
     }
+}
+
+#[tokio::test]
+async fn successor_inflight_wait_for_finality_returns_awaiting_finality_without_writes() {
+    for is_renew in [true, false] {
+        let root = tempfile::tempdir().unwrap();
+        let signer = Signer::default();
+        let source = support::context(8);
+        support::import_test_key(&source);
+        let candidate = support::context(9);
+        let mut chain = Chain::new(successor_view(&source), root.path());
+        let mut journal = ServiceTxJournalV1::open(root.path()).unwrap();
+
+        if is_renew {
+            let mut renew_view = chain.view.clone();
+            renew_view.successor_policy = None;
+            renew_view.binding.as_mut().unwrap().valid_until =
+                renew_view.checkpoint.timestamp + renew_view.policy.maximum_lease / 2;
+            let renew_chain = Chain::new(renew_view, root.path());
+            crate::lifecycle::renewal::renew_once_v1(
+                &renew_chain,
+                &signer,
+                &source,
+                &mut journal,
+                crate::lifecycle::renewal::RenewalUpgradePhaseV1::Idle,
+            )
+            .await
+            .unwrap();
+        } else {
+            prepare_successor_v1(
+                &chain,
+                &signer,
+                (&source, &candidate),
+                &mut journal,
+                SuccessorLeaseV1 {
+                    binding_id: B256::repeat_byte(44),
+                    valid_until: 10000,
+                },
+            )
+            .await
+            .unwrap();
+        }
+
+        let record = journal.load().unwrap().unwrap();
+        let before = std::fs::read(&chain.journal_path).unwrap();
+        let sent_before = chain.sent.lock().unwrap().len();
+        chain.nonces = [record.nonce, record.nonce, record.nonce + 1];
+
+        let live = if is_renew { &source } else { &candidate };
+        assert_eq!(
+            reconcile_successor_v1(&chain, &signer, live, &mut journal)
+                .await
+                .unwrap(),
+            SuccessorStep::AwaitingFinality
+        );
+        assert_eq!(chain.sent.lock().unwrap().len(), sent_before);
+        assert_eq!(std::fs::read(&chain.journal_path).unwrap(), before);
+    }
+}
+
+#[tokio::test]
+async fn cold_restart_over_lost_pending_cancels_replays_exact_then_prepares() {
+    for seed_renew in [true, false] {
+        let root = tempfile::tempdir().unwrap();
+        let signer = Signer::default();
+        let source = support::context(8);
+        support::import_test_key(&source);
+        let old_candidate = support::context(9);
+        let mut chain = Chain::new(successor_view(&source), root.path());
+        let mut journal = ServiceTxJournalV1::open(root.path()).unwrap();
+
+        let pending_candidate = LifecycleUpgradeCandidateV1 {
+            context_hash: B256::repeat_byte(0x55),
+            valid_until: 10_000,
+            source_binding_id: chain.view.binding.as_ref().unwrap().binding_id,
+            target_hash: B256::repeat_byte(0x66),
+            nonce: 1,
+        };
+
+        if seed_renew {
+            let mut renew_view = chain.view.clone();
+            renew_view.successor_policy = None;
+            renew_view.binding.as_mut().unwrap().valid_until =
+                renew_view.checkpoint.timestamp + renew_view.policy.maximum_lease / 2;
+            let renew_chain = Chain::new(renew_view, root.path());
+            crate::lifecycle::renewal::renew_once_v1(
+                &renew_chain,
+                &signer,
+                &source,
+                &mut journal,
+                crate::lifecycle::renewal::RenewalUpgradePhaseV1::Idle,
+            )
+            .await
+            .unwrap();
+        } else {
+            let manifest = old_candidate.manifest();
+            let b = chain.view.binding.as_ref().unwrap();
+            let target = ServiceBindingTargetV1 {
+                node_id_hash: b.node_id_hash,
+                enclave_id: manifest.enclave_id().unwrap(),
+                binding_id: B256::repeat_byte(0x99),
+                binding_version: b.binding_version + 1,
+                registration_version: b.registration_version + 1,
+                renewal_nonce: b.renewal_nonce,
+                transition_nonce: b.transition_nonce + 1,
+                valid_until: 10_000,
+                policy_hash: chain
+                    .view
+                    .successor_policy
+                    .as_ref()
+                    .unwrap()
+                    .policy
+                    .policy_hash()
+                    .unwrap(),
+                recipient_x25519: manifest.recipient_x25519.into(),
+            };
+            let record = crate::lifecycle::renewal::prepare::signed_record::<Chain, Signer>(
+                &signer,
+                chain.view.checkpoint,
+                4,
+                crate::lifecycle::renewal::prepare::ServiceCallV1 {
+                    gas_limit: 500_000,
+                    calldata: Vec::new(),
+                    kind: ServiceTxKindV1::UpgradeTransition,
+                    intent: ServiceTxIntentV1 {
+                        target,
+                        candidate: None,
+                    },
+                },
+            )
+            .unwrap();
+            journal.begin(record).unwrap();
+        }
+
+        let lost = journal.load().unwrap().unwrap();
+        chain.view.candidate = Some(pending_candidate);
+        chain.nonces = [lost.nonce; 3];
+
+        // Cold process restarts with fresh identity E_new != E_old.
+        let cold_live = support::context(15);
+        assert_eq!(
+            reconcile_candidate_v1(&chain.view, None, None),
+            SuccessorStep::CancelRequired {
+                context_hash: pending_candidate.context_hash,
+            }
+        );
+
+        // Cold process replaces lost Renew/UpgradeTransition@N with UpgradeCancel@N.
+        let cancel_step = cancel_successor_v1(
+            &chain,
+            &signer,
+            &cold_live,
+            &mut journal,
+            pending_candidate.context_hash,
+        )
+        .await
+        .unwrap();
+        let cancel = journal.load().unwrap().unwrap();
+        assert_eq!(cancel.kind, ServiceTxKindV1::UpgradeCancel);
+        assert_eq!(cancel.nonce, lost.nonce);
+        assert_ne!(cancel.tx_hash, lost.tx_hash);
+        assert!(matches!(
+            cancel_step,
+            SuccessorStep::Submitted {
+                transaction_hash,
+                replayed: false
+            } if transaction_hash == cancel.tx_hash
+        ));
+
+        // Next tick with free slot: operator-owned UpgradeCancel replays exact bytes (ReplayExact).
+        let replay_step = reconcile_successor_v1(&chain, &signer, &cold_live, &mut journal)
+            .await
+            .unwrap();
+        assert_eq!(
+            replay_step,
+            SuccessorStep::Submitted {
+                transaction_hash: cancel.tx_hash,
+                replayed: true,
+            }
+        );
+        assert_eq!(journal.load().unwrap().unwrap(), cancel);
+
+        // Cancel finalizes -> Completed -> ready for fresh UpgradePrepare.
+        chain.view.candidate = None;
+        chain.nonces = [cancel.nonce + 1; 3];
+        assert_eq!(
+            reconcile_successor_v1(&chain, &signer, &cold_live, &mut journal)
+                .await
+                .unwrap(),
+            SuccessorStep::Finalized
+        );
+        assert_eq!(
+            journal.load().unwrap().unwrap().state,
+            ServiceTxStateV1::Completed
+        );
+        let fresh_candidate = support::context(16);
+        let (_, prepared) = prepare_successor_v1(
+            &chain,
+            &signer,
+            (&source, &fresh_candidate),
+            &mut journal,
+            SuccessorLeaseV1 {
+                binding_id: B256::repeat_byte(47),
+                valid_until: 10_000,
+            },
+        )
+        .await
+        .unwrap();
+        assert!(matches!(
+            prepared,
+            SuccessorStep::Submitted {
+                replayed: false,
+                ..
+            }
+        ));
+    }
+}
+
+#[tokio::test]
+async fn cold_upgrade_cancel_displaced_by_stale_peer_rebuilds_at_next_nonce() {
+    let root = tempfile::tempdir().unwrap();
+    let signer = Signer::default();
+    let source = support::context(8);
+    support::import_test_key(&source);
+    let cold_live = support::context(15);
+    let mut chain = Chain::new(successor_view(&source), root.path());
+    let mut journal = ServiceTxJournalV1::open(root.path()).unwrap();
+
+    let pending_candidate = LifecycleUpgradeCandidateV1 {
+        context_hash: B256::repeat_byte(0x77),
+        valid_until: 10_000,
+        source_binding_id: chain.view.binding.as_ref().unwrap().binding_id,
+        target_hash: B256::repeat_byte(0x88),
+        nonce: 1,
+    };
+    chain.view.candidate = Some(pending_candidate);
+    chain.nonces = [4; 3];
+
+    // Cold process submits UpgradeCancel@4.
+    cancel_successor_v1(
+        &chain,
+        &signer,
+        &cold_live,
+        &mut journal,
+        pending_candidate.context_hash,
+    )
+    .await
+    .unwrap();
+    let first = journal.load().unwrap().unwrap();
+    assert_eq!(first.kind, ServiceTxKindV1::UpgradeCancel);
+    assert_eq!(first.nonce, 4);
+
+    // Stale peer tx finalizes at nonce 4 -> finalized advances to 5 while candidate still live.
+    chain.nonces = [5; 3];
+    assert_eq!(
+        reconcile_successor_v1(&chain, &signer, &cold_live, &mut journal)
+            .await
+            .unwrap(),
+        SuccessorStep::RebuildRequired { nonce: 5 }
+    );
+    assert_eq!(
+        journal.load().unwrap().unwrap().state,
+        ServiceTxStateV1::RebuildRequired
+    );
+
+    // Next tick rebuilds UpgradeCancel@5 without fatal error.
+    let rebuilt_step = cancel_successor_v1(
+        &chain,
+        &signer,
+        &cold_live,
+        &mut journal,
+        pending_candidate.context_hash,
+    )
+    .await
+    .unwrap();
+    let rebuilt = journal.load().unwrap().unwrap();
+    assert_eq!(rebuilt.kind, ServiceTxKindV1::UpgradeCancel);
+    assert_eq!(rebuilt.nonce, 5);
+    assert_ne!(rebuilt.tx_hash, first.tx_hash);
+    assert!(matches!(
+        rebuilt_step,
+        SuccessorStep::Submitted {
+            transaction_hash,
+            replayed: false
+        } if transaction_hash == rebuilt.tx_hash
+    ));
+}
+
+#[tokio::test]
+async fn provision_rejects_upgrade_proof_header_missing_base_fee() {
+    use crate::{resident::ResidentOfferMaterial, upgrade_transfer::UpgradeKeyProofV1};
+    outbe_simplex::config::init_consensus_chain_id(676).unwrap();
+    let genesis = finality::FinalityCommitteeFixture::new(10);
+    let descriptor = fixtures::AdmissionFixture::descriptor(&genesis);
+    let source = fixtures::context(8, &descriptor);
+    let candidate = fixtures::context(9, &descriptor);
+    let root = tempfile::tempdir().unwrap();
+    source
+        .activate_for_test(
+            ResidentOfferMaterial::for_test(
+                vec![42; 96],
+                B256::from(source.manifest().chain_id),
+                0,
+                0,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let public = source.network_encryption_public().unwrap();
+    let mut view = support::view(&source);
+    view.network_encryption_public_key = public.into();
+    let mut policy = view.policy.clone();
+    policy.predecessor_policy_hash = policy.policy_hash().unwrap();
+    policy.policy_version += 1;
+    policy.activation_height = 100;
+    view.successor_policy = Some(FinalizedStagedSuccessorPolicyV1 {
+        finalized_height: view.checkpoint.height,
+        finalized_hash: view.checkpoint.hash,
+        proposal_id: U256::from(1),
+        policy,
+    });
+    let mut chain = Chain::new(view, root.path());
+    let signer = Signer::default();
+    let mut journal = ServiceTxJournalV1::open(root.path()).unwrap();
+    let (attempt, _) = prepare_successor_v1(
+        &chain,
+        &signer,
+        (&source, &candidate),
+        &mut journal,
+        SuccessorLeaseV1 {
+            binding_id: B256::repeat_byte(49),
+            valid_until: 10000,
+        },
+    )
+    .await
+    .unwrap();
+    chain.view.candidate = journal.load().unwrap().unwrap().public_intent.candidate;
+    let admission = fixtures::AdmissionFixture::new(&genesis, &attempt.context, 42);
+    let mut witness = admission.proof.clone();
+    let mut header = {
+        use alloy_rlp::Decodable as _;
+        let mut rlp = witness.admission.header.as_slice();
+        alloy_consensus::Header::decode(&mut rlp).unwrap()
+    };
+    header.base_fee_per_gas = None;
+    let mut encoded_header = Vec::new();
+    alloy_rlp::Encodable::encode(&header, &mut encoded_header);
+    witness.admission.header = encoded_header;
+    let proof = UpgradeKeyProofV1 {
+        anchor_outcome: admission.anchor.clone().into(),
+        committee_transitions: admission
+            .transitions
+            .iter()
+            .cloned()
+            .map(Into::into)
+            .collect(),
+        admission: witness.encode_canonical().unwrap().into(),
+    };
+    *chain.upgrade_checkpoint.lock().unwrap() = None;
+    assert!(matches!(
+        provision_successor_v1(&chain, &signer, &candidate, &attempt, &proof).await,
+        Err(SuccessorError::Lifecycle(
+            RenewalError::UpgradeProofCheckpoint(
+                crate::lifecycle::renewal::UpgradeProofCheckpointError::MissingBaseFee
+            )
+        ))
+    ));
+    assert!(chain.upgrade_checkpoint.lock().unwrap().is_none());
+    assert!(!candidate.offer_key_ready().unwrap());
 }

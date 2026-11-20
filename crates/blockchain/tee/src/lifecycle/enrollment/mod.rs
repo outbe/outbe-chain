@@ -21,6 +21,7 @@ pub use submit::EnrollmentSignerV1;
 pub enum EnrollmentOutcome {
     WaitForUnjail,
     WaitForGasBalance,
+    WaitForLeaseExpiry,
     RequiresStrictUpgradeLateRecovery,
     WaitForFinality,
     Submitted {
@@ -66,8 +67,6 @@ pub enum EnrollmentError<E: std::error::Error + 'static, S: std::error::Error + 
     Signer(#[source] S),
     #[error("registration collateral or proof rejected")]
     Proof(#[from] crate::TransportError),
-    #[error("live rejoin forbidden in attestation mode {mode:?}")]
-    LiveRejoinForbiddenInMode { mode: AttestationMode },
     #[error("finalized registration belongs to a competing binding")]
     CompetingLiveBinding,
     #[error("finalized chain, policy or node identity mismatch")]
@@ -111,7 +110,22 @@ pub async fn enroll_step_v1<P: LifecycleChainPort, S: EnrollmentSignerV1>(
     {
         return Err(EnrollmentError::WrongServiceTransaction);
     }
-    let reconciliation = super::reconcile_service_tx_v1(port, journal, live).await?;
+    let reconciliation = super::reconcile_service_tx_v1(port, journal, live, config.sender).await?;
+    let same_process_pending_register = journal.load()?.is_some_and(|record| {
+        record.kind == super::ServiceTxKindV1::Register
+            && record.state == super::ServiceTxStateV1::Pending
+            && live
+                .manifest()
+                .enclave_id()
+                .is_ok_and(|id| record.public_intent.target.enclave_id == id)
+    });
+    if matches!(
+        reconciliation,
+        super::ServiceTxReconciliationV1::WaitForFinality { .. }
+    ) && !same_process_pending_register
+    {
+        return Ok(EnrollmentOutcome::WaitForFinality);
+    }
     let observation = preflight::observe(port, live, config.sender).await?;
     if let Some(intent) = preflight::registered_intent(&observation, live)? {
         return ingest::ingest(port, live, &observation, &intent, node_data_dir).await;

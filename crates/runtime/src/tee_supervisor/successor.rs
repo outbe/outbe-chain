@@ -125,6 +125,17 @@ impl TeeLifecycleSupervisor {
         view: &LifecycleRegistryStateV1,
     ) -> Result<(), SuccessorRuntimeError> {
         let at = view.checkpoint;
+        if self.journal.load()?.is_some() {
+            let status =
+                reconcile_successor_v1(&self.port, &self.signer, &self.live, &mut self.journal)
+                    .await?;
+            if matches!(
+                status,
+                SuccessorStep::AwaitingFinality | SuccessorStep::Submitted { .. }
+            ) {
+                return Ok(());
+            }
+        }
         if let SuccessorStep::CancelRequired { context_hash } =
             reconcile_candidate_v1(view, None, None)
         {
@@ -157,7 +168,7 @@ impl TeeLifecycleSupervisor {
                 .checked_add(policy.maximum_lease)
                 .ok_or(SuccessorRuntimeError::LeaseOverflow)?,
         };
-        let (attempt, _) = prepare_candidate(
+        let (attempt, step) = prepare_candidate(
             &self.port,
             &self.signer,
             (&self.live, &candidate),
@@ -165,6 +176,9 @@ impl TeeLifecycleSupervisor {
             (lease, cold),
         )
         .await?;
+        if step == SuccessorStep::AwaitingFinality {
+            return Ok(());
+        }
         self.successor = Some(ResidentSuccessor {
             candidate,
             attempt,
@@ -624,7 +638,22 @@ impl SuccessorRuntimeError {
         match self {
             Self::Port(_) | Self::Rpc(_) | Self::Provider(_) | Self::MovingFinality => true,
             Self::Successor(SuccessorError::Lifecycle(error)) => retry::renewal(error),
-            _ => false,
+            Self::Successor(_)
+            | Self::Journal(_)
+            | Self::Resident(_)
+            | Self::Crypto(_)
+            | Self::Codec(_)
+            | Self::Anchor(_)
+            | Self::Live(_)
+            | Self::LocalAdmission(_)
+            | Self::InvalidChainId
+            | Self::LeaseOverflow
+            | Self::MissingCandidate
+            | Self::MissingAdmission
+            | Self::ActivationCheckpointMismatch { .. }
+            | Self::Marker(_)
+            | Self::Dispatch(_)
+            | Self::Install(_) => false,
         }
     }
 }

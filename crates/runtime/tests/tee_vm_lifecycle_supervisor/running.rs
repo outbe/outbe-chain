@@ -610,10 +610,15 @@ fn retry_classification_preserves_fatal_enrollment_and_identity_errors() {
     for error in transient {
         assert!(retry::observation(&error), "{error:?}");
     }
-    let fatal: [Error; 7] = [
-        EnrollmentError::LiveRejoinForbiddenInMode {
-            mode: AttestationMode::DcapRequired,
-        }
+    let fatal: [Error; 8] = [
+        RenewalError::UpgradeProofCheckpoint(
+            outbe_tee::lifecycle::renewal::UpgradeProofCheckpointError::MissingBaseFee,
+        )
+        .into(),
+        RenewalError::Reconcile(ReconcileError::WrongSender {
+            expected: Address::repeat_byte(0x11),
+            actual: Address::repeat_byte(0x22),
+        })
         .into(),
         EnrollmentError::CompetingLiveBinding.into(),
         EnrollmentError::InvalidConfiguration.into(),
@@ -625,4 +630,87 @@ fn retry_classification_preserves_fatal_enrollment_and_identity_errors() {
     for error in fatal {
         assert!(!retry::observation(&error), "{error:?}");
     }
+}
+
+#[tokio::test]
+async fn engine_step_wrong_sender_fails_before_journal_finish_preserving_bytes() {
+    use alloy_consensus::SignableTransaction as _;
+    use alloy_primitives::{keccak256, TxKind};
+    use outbe_tee::lifecycle::{
+        ServiceBindingTargetV1, ServiceTxIntentV1, ServiceTxKindV1, ServiceTxRecordV1,
+        ServiceTxStateV1,
+    };
+
+    let mut h = Harness::new();
+    let other_key = k256::ecdsa::SigningKey::from_slice(&[0x55; 32]).unwrap();
+    let other_sender = alloy_primitives::Address::from_private_key(&other_key);
+    assert_ne!(other_sender, Signer::address());
+
+    let at = h.chain.at;
+    let manifest = h.live.manifest();
+    let tx = alloy_consensus::TxEip1559 {
+        chain_id: at.chain_id,
+        nonce: 0,
+        gas_limit: 500_000,
+        max_fee_per_gas: 2,
+        max_priority_fee_per_gas: 0,
+        to: TxKind::Call(outbe_primitives::addresses::TEE_REGISTRY_ADDRESS),
+        input: Default::default(),
+        ..Default::default()
+    };
+    let (sig, rec) = other_key
+        .sign_prehash_recoverable(tx.signature_hash().as_slice())
+        .unwrap();
+    let sig = alloy_primitives::Signature::from_signature_and_parity(sig, rec.is_y_odd());
+    let mut raw = vec![2];
+    alloy_consensus::transaction::RlpEcdsaEncodableTx::rlp_encode_signed(&tx, &sig, &mut raw);
+    let record = ServiceTxRecordV1 {
+        tx_hash: keccak256(&raw),
+        raw_signed_tx: raw.into(),
+        sender: other_sender,
+        nonce: 0,
+        kind: ServiceTxKindV1::Register,
+        public_intent: ServiceTxIntentV1 {
+            target: ServiceBindingTargetV1 {
+                node_id_hash: manifest.node_id.node_id_hash().unwrap(),
+                enclave_id: manifest.enclave_id().unwrap(),
+                binding_id: B256::repeat_byte(0x41),
+                binding_version: 1,
+                registration_version: 0,
+                renewal_nonce: 0,
+                transition_nonce: 0,
+                valid_until: at.timestamp + 1000,
+                policy_hash: h.chain.policy.policy_hash().unwrap(),
+                recipient_x25519: manifest.recipient_x25519.into(),
+            },
+            candidate: None,
+        },
+        finalized_checkpoint: at,
+        state: ServiceTxStateV1::Pending,
+        reconciled_checkpoint: None,
+    };
+    h.journal.begin(record).unwrap();
+    let journal_path = h.dir.join("tee-service-tx-v1/journal.json");
+    let before = std::fs::read(&journal_path).unwrap();
+
+    let err = engine::step(
+        &h.chain,
+        &Signer,
+        engine::ResidentSession {
+            live: &h.live,
+            journal: &mut h.journal,
+            node_data_dir: &h.dir,
+            phase: RenewalUpgradePhaseV1::Idle,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        err,
+        engine::SupervisorError::Renewal(RenewalError::Reconcile(
+            ReconcileError::WrongSender { expected, actual }
+        )) if expected == Signer::address() && actual == other_sender
+    ));
+    assert!(!retry::observation(&err));
+    assert_eq!(std::fs::read(&journal_path).unwrap(), before);
 }
