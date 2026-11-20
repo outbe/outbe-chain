@@ -260,7 +260,7 @@ fn a_drained_position_returns_nothing_and_is_deleted() {
 }
 
 #[test]
-fn issue_gem_position_unknown_source_rejects() {
+fn a_position_from_an_unknown_source_series_is_refused() {
     with_storage(None, |storage| {
         let r = runtime::create_gem_factory_position(
             storage,
