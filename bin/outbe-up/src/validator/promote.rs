@@ -3,7 +3,6 @@ use std::path::Path;
 use eyre::{ensure, Result};
 
 use crate::{
-    network::config::Network,
     support::{process, progress::Progress},
     validator::{
         hyperlane::{self, SetupRequest, SetupState},
@@ -12,7 +11,7 @@ use crate::{
         rpc::RpcClient,
         validator_address,
         wait::{wait_for_rpc_chain, wait_for_sync, wait_for_verifier, wait_transaction_finalized},
-        DEVNET_FEEDER_FUNDING_WEI, VALIDATOR_SERVICE,
+        FEEDER_FUNDING_WEI, VALIDATOR_SERVICE,
     },
 };
 
@@ -82,9 +81,7 @@ pub async fn run() -> Result<()> {
     }
 
     ensure_feeder_delegate(&mut journal, &remote, validator, feeder, &mut progress).await?;
-    if journal.config.network.chain_id == Network::Devnet.chain_id() {
-        ensure_feeder_funded(&mut journal, &remote, feeder, &mut progress).await?;
-    }
+    ensure_feeder_funded(&mut journal, &remote, feeder, &mut progress).await?;
     let rpc_url = journal.config.network.certified_rpc.clone();
     let funding = journal
         .config
@@ -147,7 +144,7 @@ async fn ensure_feeder_funded(
     if !remote.balance(feeder).await?.is_zero() {
         return Ok(());
     }
-    progress.stage("funding the devnet feeder signer");
+    progress.stage("funding the feeder signer");
     let hash = if let Some(hash) = journal.feeder_funding_transaction.clone() {
         hash
     } else {
@@ -155,7 +152,7 @@ async fn ensure_feeder_funded(
             "validator",
             "fund-operational-key",
             &format!("{feeder:#x}"),
-            &DEVNET_FEEDER_FUNDING_WEI.to_string(),
+            &FEEDER_FUNDING_WEI.to_string(),
         ])?;
         let hash = transaction_hash(&output)?;
         journal.feeder_funding_transaction = Some(hash.clone());
@@ -165,7 +162,7 @@ async fn ensure_feeder_funded(
     wait_transaction_finalized(remote, &hash, progress).await?;
     ensure!(
         !remote.balance(feeder).await?.is_zero(),
-        "devnet feeder signer funding is not visible after finality"
+        "feeder signer funding is not visible after finality"
     );
     Ok(())
 }
