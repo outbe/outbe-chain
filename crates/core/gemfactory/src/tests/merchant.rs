@@ -625,6 +625,17 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
             .to_be_bytes::<32>()
             .as_slice()
     );
+
+    // Only the merchant gem names its position, and no Gem token event does.
+    let linked: Vec<_> = events
+        .iter()
+        .filter(|log| log.address == outbe_system_common::addresses::GEM_FACTORY_ADDRESS)
+        .filter_map(|log| {
+            crate::precompile::IGemFactory::GemFactoryPositionGemIssued::decode_log(log).ok()
+        })
+        .map(|log| (log.data.gemFactoryPositionId, log.data.gemId))
+        .collect();
+    assert_eq!(linked, vec![(position, expected[0].item.gem_id)]);
 }
 
 fn set_source_price(storage: &StorageHandle<'_>, price: U256) {

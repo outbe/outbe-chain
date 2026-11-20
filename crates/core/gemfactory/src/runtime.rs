@@ -14,7 +14,9 @@ use outbe_system_common::stablecoin::iso_4217_alpha;
 use outbe_core_common::pow;
 
 use crate::errors::GemFactoryError;
-use crate::precompile::IGemFactory::{GemFactoryPositionCreated, GemSeriesOpened};
+use crate::precompile::IGemFactory::{
+    GemFactoryPositionCreated, GemFactoryPositionGemIssued, GemSeriesOpened,
+};
 use crate::schema::{GemFactoryContract, GemFactoryPosition, GemIssueParams};
 use crate::sol_ext::IIntexNFT1155;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
@@ -325,6 +327,13 @@ pub fn issue_merchant_gem(
     factory.total_gems_issued.write(new_total)?;
 
     emit_gem_issued(storage, gem_id)?;
+    emit_event(
+        storage,
+        GemFactoryPositionGemIssued {
+            gemFactoryPositionId: gem_factory_position_id,
+            gemId: gem_id,
+        },
+    )?;
 
     Ok(gem_id)
 }

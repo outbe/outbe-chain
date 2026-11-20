@@ -152,6 +152,8 @@ interface IGemFactory {
         uint16 referenceCurrency,
         bytes payload
     );
+    /// @notice The position `gemFactoryPositionId` issued the Merchant gem `gemId`.
+    event GemFactoryPositionGemIssued(uint256 indexed gemFactoryPositionId, uint256 indexed gemId);
     /// @notice The deletion removed an expired position. The capacity its day never issued
     ///         returned before, in one `PromisLimitAdded` of the Promis Limit.
     event GemFactoryPositionExpired(uint256 indexed gemFactoryPositionId, address indexed owner);
