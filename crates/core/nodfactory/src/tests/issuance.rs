@@ -550,6 +550,7 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
 
 struct LapsedGroup {
     group: alloy_primitives::B256,
+    usd: outbe_core_common::series_id::SeriesId,
     eur: outbe_core_common::series_id::SeriesId,
     deadline: u64,
 }
@@ -589,6 +590,7 @@ fn lapsed_two_series_group(storage: &StorageHandle<'_>) -> LapsedGroup {
         .unwrap();
     LapsedGroup {
         group,
+        usd,
         eur,
         deadline: nod_api::settlement_deadline_of(called_at, terms.call_notice_period_seconds),
     }
@@ -676,46 +678,92 @@ fn a_group_forfeits_one_series_per_write_and_credits_once() {
     );
 }
 
-/// A series that fails to close keeps the group open and in the queue; the retry closes it,
-/// credits the group once and emits each series close once.
+/// A series that fails to close keeps the group open and in the queue while healthy series
+/// commit their close once; the retry closes only the open series and credits the group once.
 #[test]
 fn a_series_left_open_defers_the_group_and_the_retry_credits_once() {
     let _enclave = outbe_nod::test_support::scope();
+    for (corrupt_first, expected_after_first, expected_final) in [
+        (
+            true,
+            vec![(978, U256::from(10))],
+            vec![(978, U256::from(10)), (840, U256::from(30))],
+        ),
+        (
+            false,
+            vec![(840, U256::from(30))],
+            vec![(840, U256::from(30)), (978, U256::from(10))],
+        ),
+    ] {
+        let mut world = World::new();
+        let (group, target_key, saved_load, deadline) = world.enter(|storage| {
+            let lapsed = lapsed_two_series_group(&storage);
+            let nod = outbe_nod::NodContract::new(storage.clone());
+            let target = if corrupt_first {
+                lapsed.usd
+            } else {
+                lapsed.eur
+            };
+            let target_key = outbe_nod::index_keys::group_series_key(lapsed.group, target);
+            let saved_load = nod
+                .group_series_open_load_ct
+                .bytes(&target_key)
+                .read()
+                .unwrap();
+            nod.group_series_open_load_ct
+                .bytes(&target_key)
+                .write(&[0xFF; 3])
+                .unwrap();
+            let at = lapsed.deadline + 86_400;
+
+            forfeit_at(&storage, &lapsed, 10, at, 64);
+            assert_eq!(promis_limit(&storage), U256::ZERO);
+            assert!(!nod_api::is_group_forfeited(&storage, lapsed.group).unwrap());
+            assert!(nod_api::is_group_forfeit_started(&storage, lapsed.group).unwrap());
+            assert!(!forfeit_queue_is_empty(&storage));
+            (lapsed.group, target_key, saved_load, lapsed.deadline)
+        });
+        assert_eq!(closed_series(&world), expected_after_first);
+
+        world.enter(|storage| {
+            let nod = outbe_nod::NodContract::new(storage.clone());
+            nod.group_series_open_load_ct
+                .bytes(&target_key)
+                .write(&saved_load)
+                .unwrap();
+            let lapsed = LapsedGroup {
+                group,
+                usd: outbe_core_common::series_id::SeriesId::for_pair(20_261_019, 840, 840)
+                    .unwrap(),
+                eur: outbe_core_common::series_id::SeriesId::for_pair(20_261_019, 978, 840)
+                    .unwrap(),
+                deadline,
+            };
+            forfeit_at(&storage, &lapsed, 11, deadline + 2 * 86_400, 64);
+            assert_eq!(promis_limit(&storage), U256::from(40));
+            assert!(nod_api::is_group_forfeited(&storage, group).unwrap());
+            assert!(forfeit_queue_is_empty(&storage));
+        });
+        assert_eq!(closed_series(&world), expected_final);
+    }
+
+    // Even when every series in the group fails on the first attempt, `group_forfeiting` latches.
     let mut world = World::new();
     world.enter(|storage| {
         let lapsed = lapsed_two_series_group(&storage);
         let nod = outbe_nod::NodContract::new(storage.clone());
-        let eur_key = outbe_nod::index_keys::group_series_key(lapsed.group, lapsed.eur);
-        let eur_load = nod
-            .group_series_open_load_ct
-            .bytes(&eur_key)
-            .read()
-            .unwrap();
-        nod.group_series_open_load_ct
-            .bytes(&eur_key)
-            .write(&[0xFF; 3])
-            .unwrap();
-        let at = lapsed.deadline + 86_400;
-
-        forfeit_at(&storage, &lapsed, 10, at, 64);
-        assert_eq!(promis_limit(&storage), U256::ZERO);
+        for series in [lapsed.usd, lapsed.eur] {
+            let key = outbe_nod::index_keys::group_series_key(lapsed.group, series);
+            nod.group_series_open_load_ct
+                .bytes(&key)
+                .write(&[0xFF; 3])
+                .unwrap();
+        }
+        forfeit_at(&storage, &lapsed, 10, lapsed.deadline + 86_400, 64);
         assert!(!nod_api::is_group_forfeited(&storage, lapsed.group).unwrap());
         assert!(nod_api::is_group_forfeit_started(&storage, lapsed.group).unwrap());
         assert!(!forfeit_queue_is_empty(&storage));
-
-        nod.group_series_open_load_ct
-            .bytes(&eur_key)
-            .write(&eur_load)
-            .unwrap();
-        forfeit_at(&storage, &lapsed, 11, at + 86_400, 64);
-        assert_eq!(promis_limit(&storage), U256::from(40));
-        assert!(nod_api::is_group_forfeited(&storage, lapsed.group).unwrap());
-        assert!(forfeit_queue_is_empty(&storage));
     });
-    assert_eq!(
-        closed_series(&world),
-        [(840, U256::from(30)), (978, U256::from(10))]
-    );
 }
 
 #[test]

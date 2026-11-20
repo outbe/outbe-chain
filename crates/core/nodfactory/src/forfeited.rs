@@ -35,6 +35,7 @@ pub(crate) fn forfeit_through(
 struct NodForfeit<'a, 's> {
     storage: &'a StorageHandle<'s>,
     nod: NodContract<'s>,
+    now: u64,
 }
 
 impl<'a, 's> NodForfeit<'a, 's> {
@@ -42,6 +43,7 @@ impl<'a, 's> NodForfeit<'a, 's> {
         Self {
             storage: &ctx.storage,
             nod: NodContract::new(ctx.storage.clone()),
+            now: ctx.block.timestamp,
         }
     }
 }
@@ -100,6 +102,9 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
     }
 
     fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
+        if self.now > self.nod.called_deadline.read(&group)? {
+            self.nod.group_forfeiting.write(&group, true)?;
+        }
         tracing::warn!(target: "outbe::nodfactory", %group, retry_at, "forfeit pass: group deferred");
         Ok(())
     }
@@ -139,13 +144,12 @@ impl NodForfeit<'_, '_> {
     /// Returns the Gratis load of the group's unpaid Nods and unclaimed Tributes in one credit.
     /// Lysis drew it out of the day limit and only mining converts it, so unmined it goes back.
     fn close_group(&mut self, group: B256) -> Result<()> {
-        // A series a failed slot left open closes on the retry, one read per slot.
+        // A series a failed slot left open keeps the group in the queue so healthy slots commit
+        // their close once and the retry reads only the open series.
         for series_id in self.nod.group_series.list(&group).read_all()? {
             let gs_key = group_series_key(group, series_id);
             if !self.nod.group_series_forfeited.read(&gs_key)? {
-                return Err(PrecompileError::Revert(
-                    "forfeit pass: a series of the group is still open".into(),
-                ));
+                return Ok(());
             }
         }
         let load = self.nod.group_forfeit_load_minor.read(&group)?;
