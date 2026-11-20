@@ -243,6 +243,10 @@ pub trait DeadlineHandler<E> {
     fn due(&mut self, entry: E) -> Result<Due>;
     fn member_count(&self, entry: E) -> Result<u32>;
     fn member_at(&self, entry: E, index: u32) -> Result<Self::Member>;
+    /// Budget writes `member` takes; a member that records a larger enclave witness costs more.
+    fn member_cost(&self, _entry: E, _member: Self::Member) -> u32 {
+        1
+    }
     /// Expires `member` and takes it out of the entry.
     fn process_member(&mut self, entry: E, member: Self::Member) -> Result<()>;
     fn classify(&self, error: &PrecompileError) -> PassFailure {

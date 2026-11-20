@@ -26,6 +26,9 @@ pub(crate) fn cleanup_through(
     )
 }
 
+/// The pledge burn records about three Nod load reads of enclave witness, so it takes three writes.
+pub const PLEDGE_BURN_COST: u32 = 3;
+
 struct CredisCleanup<'a, 'storage> {
     ctx: &'a BlockRuntimeContext<'storage>,
     credis: CredisContract<'storage>,
@@ -61,6 +64,10 @@ impl DeadlineHandler<SeriesId> for CredisCleanup<'_, '_> {
 
     fn classify(&self, error: &PrecompileError) -> PassFailure {
         error.record_pass_failure()
+    }
+
+    fn member_cost(&self, _series: SeriesId, _credis_id: U256) -> u32 {
+        PLEDGE_BURN_COST
     }
 
     fn process_member(&mut self, _series: SeriesId, credis_id: U256) -> Result<()> {

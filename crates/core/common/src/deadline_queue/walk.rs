@@ -141,11 +141,14 @@ where
         };
         let mut failed = count - index;
         while index > 0 {
-            if !self.budget.write() {
+            let member = self.handler.member_at(entry, index - 1)?;
+            if !self
+                .budget
+                .admit_writes(self.handler.member_cost(entry, member))
+            {
                 return Ok(Step::Hold(index));
             }
             index -= 1;
-            let member = self.handler.member_at(entry, index)?;
             let handler = &mut *self.handler;
             let outcome = self
                 .storage

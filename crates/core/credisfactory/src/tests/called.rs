@@ -1137,7 +1137,8 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
 fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
     let mut provider = env();
     let budget = outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK;
-    let total = budget + 1;
+    let first_block = (budget - 1) / crate::PLEDGE_BURN_COST;
+    let total = first_block + budget / crate::PLEDGE_BURN_COST;
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap_for(&storage, alice(), pledge_cost() * U256::from(total));
     });
@@ -1168,8 +1169,7 @@ fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
         assert_eq!(expire(&storage, lapsed), 1);
         let deleted = ids.iter().filter(|id| is_deleted(&storage, **id)).count();
         assert_eq!(
-            deleted,
-            budget as usize - 1,
+            deleted, first_block as usize,
             "one block deletes what its write budget leaves after the forfeit"
         );
         assert_eq!(reserve(), pledge_cost() * U256::from(deleted as u64));
@@ -1293,7 +1293,9 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
         let day = last_closed_day(at);
         crate::called::schedule_call_pass(&ctx).unwrap();
         let mut allowance = BlockAllowance::new(ctx.block.block_number, day);
-        assert!(allowance.budget.admit_writes(62));
+        assert!(allowance.budget.admit_writes(
+            outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK - 1 - crate::PLEDGE_BURN_COST
+        ));
         credis.daily_budget.write(allowance.pack()).unwrap();
         let reserve = || {
             outbe_promislimit::PromisLimitContract::new(storage.clone())
