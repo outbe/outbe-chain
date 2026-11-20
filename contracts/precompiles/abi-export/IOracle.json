@@ -1,24 +1,6 @@
 [
   {
     "type": "function",
-    "name": "activateVoteTarget",
-    "inputs": [
-      {
-        "name": "base",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "quote",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "currencyAlphaCode",
     "inputs": [
       {
@@ -64,24 +46,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "deactivateVoteTarget",
-    "inputs": [
-      {
-        "name": "base",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "quote",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -935,29 +899,6 @@
   },
   {
     "type": "function",
-    "name": "setExchangeRate",
-    "inputs": [
-      {
-        "name": "base",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "quote",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "rate",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "submitVote",
     "inputs": [
       {
@@ -1066,31 +1007,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "event",
-    "name": "ExchangeRateSet",
-    "inputs": [
-      {
-        "name": "base",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "quote",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "rate",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -1270,45 +1186,7 @@
   },
   {
     "type": "event",
-    "name": "VoteTargetActivated",
-    "inputs": [
-      {
-        "name": "base",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "quote",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "VoteTargetDeactivated",
-    "inputs": [
-      {
-        "name": "base",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "quote",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "Vwap24hSet",
+    "name": "VwapCalculated",
     "inputs": [
       {
         "name": "windowEnd",

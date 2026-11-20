@@ -88,10 +88,7 @@ pub fn dispatch(
             getVwapForTimeRange(c) => vwap_for_time_range(oracle, c),
             getUtcDayVwap(c) => utc_day_vwap(oracle, c),
             getScurveValue(c) => scurve_value(oracle, c),
-            setExchangeRate(c) => set_exchange_rate(oracle, c, caller, value),
             delegateFeederConsent(c) => delegate_feeder_consent(oracle, c, caller, value),
-            deactivateVoteTarget(c) => deactivate_vote_target(oracle, c, caller, value),
-            activateVoteTarget(c) => activate_vote_target(oracle, c, caller, value),
             getPriceSnapshotHistory(c) => price_snapshot_history(oracle, c),
             getAllPriceSnapshotHistory(c) => all_price_snapshot_history(oracle, c),
             getTwap(c) => twap(oracle, c),
@@ -196,32 +193,6 @@ fn gas_prices(oracle: &OracleContract) -> Result<Bytes> {
     })
 }
 
-fn set_exchange_rate(
-    oracle: &mut OracleContract,
-    c: IOracle::setExchangeRateCall,
-    caller: Address,
-    value: U256,
-) -> Result<Bytes> {
-    mutate_and_emit(oracle, c, caller, value, |oracle, sender, c| {
-        // Block number and timestamp are available on the storage handle.
-        // Bootstrap writes still store 0 for both.
-        // Tally overwrites them with real values.
-        // `fresh_rate_at_index` treats a zero timestamp as stale.
-        oracle.set_exchange_rate(
-            sender,
-            AddressPair::from_addresses(c.base, c.quote),
-            c.rate,
-            0,
-            0,
-        )?;
-        Ok(IOracle::ExchangeRateSet {
-            base: c.base,
-            quote: c.quote,
-            rate: c.rate,
-        })
-    })
-}
-
 // ---------------------------------------------------------------------------
 // Configuration and pair registry
 // ---------------------------------------------------------------------------
@@ -275,36 +246,6 @@ fn sources(storage: outbe_primitives::storage::StorageHandle) -> Result<Bytes> {
     metadata::<IOracle::getSourcesCall>(|| {
         let active = outbe_update::api::resolve_active_version(storage.clone())?;
         Ok(crate::sources::sources_for(storage.chain_id()?, active).to_owned())
-    })
-}
-
-fn deactivate_vote_target(
-    oracle: &mut OracleContract,
-    c: IOracle::deactivateVoteTargetCall,
-    caller: Address,
-    value: U256,
-) -> Result<Bytes> {
-    mutate_and_emit(oracle, c, caller, value, |oracle, sender, c| {
-        oracle.deactivate_vote_target(sender, c.base, c.quote)?;
-        Ok(IOracle::VoteTargetDeactivated {
-            base: c.base,
-            quote: c.quote,
-        })
-    })
-}
-
-fn activate_vote_target(
-    oracle: &mut OracleContract,
-    c: IOracle::activateVoteTargetCall,
-    caller: Address,
-    value: U256,
-) -> Result<Bytes> {
-    mutate_and_emit(oracle, c, caller, value, |oracle, sender, c| {
-        oracle.activate_vote_target(sender, c.base, c.quote)?;
-        Ok(IOracle::VoteTargetActivated {
-            base: c.base,
-            quote: c.quote,
-        })
     })
 }
 

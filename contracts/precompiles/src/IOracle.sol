@@ -67,9 +67,6 @@ interface IOracle {
     // Events - precompile dispatch (appear in transaction receipts)
     event VoteSubmitted(address indexed validator, uint32 tupleCount);
     event FeederDelegated(address indexed validator, address indexed feeder);
-    event VoteTargetDeactivated(address indexed base, address indexed quote);
-    event VoteTargetActivated(address indexed base, address indexed quote);
-    event ExchangeRateSet(address indexed base, address indexed quote, uint256 rate);
 
     // Events - block hooks (emitted during tally/slash/S-curve processing)
     event ExchangeRateUpdated(address indexed base, address indexed quote, uint256 rate, uint64 blockNumber);
@@ -231,10 +228,6 @@ interface IOracle {
         view
         returns (uint64 success, uint64 abstain, uint64 miss, uint64 slashWindow);
 
-    // todo delete?
-    /// @notice Bootstrap write: set exchange rate (system-only, Address::ZERO caller).
-    function setExchangeRate(address base, address quote, uint256 rate) external;
-
     /// @notice Delegate feeder consent from validator to feeder address.
     function delegateFeederConsent(address feeder) external;
 
@@ -244,12 +237,6 @@ interface IOracle {
     ///         currency must be a rate vote target, at most once.
     function submitVote(ExchangeRateTuple[] calldata tuples, GasTuple[] calldata gas, RateTuple[] calldata rates)
         external;
-
-    /// @notice Deactivate a pair's vote target status (system-only).
-    function deactivateVoteTarget(address base, address quote) external;
-
-    /// @notice Activate a pair's vote target status (system-only).
-    function activateVoteTarget(address base, address quote) external;
 
     // --- New query functions (ORC-AUD-027) ---
 
