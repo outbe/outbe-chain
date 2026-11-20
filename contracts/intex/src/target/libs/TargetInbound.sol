@@ -464,7 +464,7 @@ library TargetInbound {
         );
     }
 
-    /// @notice Decode MARK_CALLED and apply it to every series it carries, parking the ones that
+    /// @notice Decode MARK_CALLED and apply it to every series it carries, keeping the ones that
     ///         will not take the mark yet.
     /// @dev The handler acknowledges a zero call time without effect. No series can take it, and a
     ///      slot reads zero as empty.
@@ -493,7 +493,7 @@ library TargetInbound {
         uint64 calledAt
     ) private {
         if (!$.intexContract.seriesExists(seriesId)) {
-            _slotIntexSeriesCallNotice($, seriesId, calledAt);
+            _slotIntexSeriesCallNotice($, srcChainId, seriesId, calledAt, "");
             return;
         }
         try ITargetRouterShims(address(this)).applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
@@ -502,16 +502,23 @@ library TargetInbound {
         catch (bytes memory reason) {
             // Only a series that is already called refuses the mark by its state.
             if (_selectorOf(reason) == IIntexNFT1155.InvalidState.selector) return;
-            _slotIntexSeriesCallNotice($, seriesId, calledAt);
+            _slotIntexSeriesCallNotice($, srcChainId, seriesId, calledAt, reason);
             return;
         }
         delete $.failedIntexSeriesCallNoticeApplies[seriesId];
-        emit ITargetRouter.MarkCalledReceived(srcChainId, seriesId);
+        delete $.failedIntexSeriesCallNoticeApplySources[seriesId];
     }
 
-    function _slotIntexSeriesCallNotice(TargetRouterStorage storage $, bytes14 seriesId, uint64 calledAt) private {
+    function _slotIntexSeriesCallNotice(
+        TargetRouterStorage storage $,
+        uint32 srcChainId,
+        bytes14 seriesId,
+        uint64 calledAt,
+        bytes memory errorData
+    ) private {
         $.failedIntexSeriesCallNoticeApplies[seriesId] = calledAt;
-        emit ITargetRouter.MarkParked(seriesId);
+        $.failedIntexSeriesCallNoticeApplySources[seriesId] = srcChainId;
+        emit ITargetRouter.IntexSeriesCallNoticeApplyFailed(seriesId, srcChainId, errorData);
     }
 
     /// @dev Apply the Called mark waiting for a series that has just been created. A failure re-announces
@@ -519,14 +526,14 @@ library TargetInbound {
     function _applySlottedIntexSeriesCallNotice(TargetRouterStorage storage $, bytes14 seriesId) private {
         uint64 calledAt = $.failedIntexSeriesCallNoticeApplies[seriesId];
         if (calledAt == 0) return;
+        uint32 srcChainId = $.failedIntexSeriesCallNoticeApplySources[seriesId];
         delete $.failedIntexSeriesCallNoticeApplies[seriesId];
+        delete $.failedIntexSeriesCallNoticeApplySources[seriesId];
         try ITargetRouterShims(address(this)).applyIntexSeriesCallNotice{gas: IntexGas.CALL_NOTICE_APPLY_CAP}(
             seriesId, calledAt
-        ) {
-            emit ITargetRouter.ParkedMarkApplied(seriesId);
-        } catch {
-            $.failedIntexSeriesCallNoticeApplies[seriesId] = calledAt;
-            emit ITargetRouter.MarkParked(seriesId);
+        ) {}
+        catch (bytes memory reason) {
+            _slotIntexSeriesCallNotice($, srcChainId, seriesId, calledAt, reason);
         }
     }
 

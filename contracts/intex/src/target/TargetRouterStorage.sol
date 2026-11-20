@@ -64,6 +64,8 @@ struct TargetRouterStorage {
     uint256 nextFailedIntexAuctionProceedsSendIdx;
     /// @dev Hash of the result the day took, so a redelivered result tells a duplicate from a conflict.
     mapping(uint32 emissionDay => bytes32) intexAuctionResultHash;
+    /// @dev Source chain of the call notice waiting in `failedIntexSeriesCallNoticeApplies`.
+    mapping(bytes14 seriesId => uint32 srcChainId) failedIntexSeriesCallNoticeApplySources;
 }
 
 /// @notice A proceeds route parked because its outbound send reverted (e.g. relay float too low).

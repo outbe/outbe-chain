@@ -397,8 +397,8 @@ contract TargetRouter is
         uint64 calledAt = $.failedIntexSeriesCallNoticeApplies[seriesId];
         if (calledAt == 0) revert NoFailedIntexSeriesCallNoticeApply(seriesId);
         delete $.failedIntexSeriesCallNoticeApplies[seriesId];
+        delete $.failedIntexSeriesCallNoticeApplySources[seriesId];
         $.intexContract.markCalled(seriesId, calledAt);
-        emit ParkedMarkApplied(seriesId);
     }
 
     /// @notice Self-call shim around `_sendIntexAuctionProceeds`. Only callable by this contract itself.
