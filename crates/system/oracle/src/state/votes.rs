@@ -14,6 +14,7 @@ impl OracleContract<'_> {
     pub fn clear_votes(&mut self) -> Result<()> {
         let count = self.voter_list.len()?;
         let gas_chains = self.gas_chains.read_all()?;
+        let rate_currencies = self.policy_rate_currencies.read_all()?;
 
         for i in 0..count {
             let voter = self.voter_list.get(i)?.unwrap_or(Address::ZERO);
@@ -22,6 +23,13 @@ impl OracleContract<'_> {
             let gas_votes = self.vote_gas_price.get_nested(&voter);
             for chain_id in &gas_chains {
                 gas_votes.write(chain_id, U256::ZERO)?;
+            }
+
+            let rate_votes = self.vote_policy_rate.get_nested(&voter);
+            let rate_times = self.vote_policy_rate_published_at.get_nested(&voter);
+            for currency in &rate_currencies {
+                rate_votes.write(currency, U256::ZERO)?;
+                rate_times.write(currency, 0)?;
             }
 
             let tuple_count = self.vote_tuple_count.read(&voter)?;

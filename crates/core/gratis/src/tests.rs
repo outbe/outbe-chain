@@ -5,10 +5,13 @@
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolInterface};
-use outbe_enclave::gratis::{
-    decrypt_balance, decrypt_pledged, derive_modify_key, derive_view_key, modify_mac,
+use outbe_fidelity::{FidelityCohortOp, FidelityOpSection};
+
+use crate::engine::{
+    decrypt_balance, decrypt_pledged, derive_account_keys, derive_view_key, modify_mac,
+    ModifyOperation,
 };
-use outbe_enclave::protocol::{FidelityCohortOp, FidelityOpSection, GratisOp, ModifyAuth};
+use crate::protocol::{GratisOp, ModifyAuth};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
@@ -28,11 +31,11 @@ fn alice() -> Address {
 /// Build the modify authorization a client would send for `op`.
 fn auth(op: GratisOp, account: Address, amount: U256, nonce: u64) -> ModifyAuth {
     let sk = test_enclave::state_key();
-    let mk = derive_modify_key(&sk, account).unwrap();
+    let mk = derive_account_keys(&sk, account).unwrap();
     ModifyAuth {
         mac: modify_mac(
             &mk,
-            &outbe_enclave::gratis::ModifyOperation {
+            &ModifyOperation {
                 account,
                 op,
                 amount,
@@ -462,8 +465,8 @@ fn burning_pledged_collateral_reports_the_supply_drop() {
 
 #[test]
 fn an_owner_result_that_differs_from_the_request_is_refused() {
+    use crate::protocol::{GratisOpResult, GratisOpStatus};
     use crate::runtime::ensure_owner_result;
-    use outbe_enclave::protocol::{GratisOpResult, GratisOpStatus};
     let result = |event_amount: u64, next_op_nonce: u64| GratisOpResult {
         status: GratisOpStatus::Applied,
         new_balance: vec![1],
@@ -514,8 +517,8 @@ fn encrypted_nod(
 ) -> outbe_core_common::nod_encryption::EncryptedNodV1 {
     use outbe_core_common::nod_encryption::NodTermsV1;
     use outbe_system_common::time::WorldwideDay;
-    outbe_enclave::nod_encryption::encrypt_nod(
-        &[0x5a; 32],
+    outbe_nod::nod_encryption::encrypt_nod(
+        &outbe_tee::resident::StateKeyHandle::for_test([0x5a; 32]),
         NodTermsV1 {
             chain_id: CHAIN_ID,
             nod_id: U256::from_be_bytes([nod_id_byte; 32]),
@@ -590,31 +593,19 @@ fn nod_mint_event_amount_differs_from_balance_and_opens_to_the_delta() {
         first_balance.as_slice()
     );
     assert_eq!(
-        outbe_enclave::gratis_decrypt::decrypt_gratis_balance(
-            &vk,
-            alice(),
-            &mined[0].encryptedAmountMinor
-        )
-        .unwrap(),
+        decrypt_balance(&vk, alice(), &mined[0].encryptedAmountMinor).unwrap(),
         first_amount
     );
     assert_eq!(
-        outbe_enclave::gratis_decrypt::decrypt_gratis_balance(&vk, alice(), &first_balance)
-            .unwrap(),
+        decrypt_balance(&vk, alice(), &first_balance).unwrap(),
         first_amount
     );
 
-    let delta = outbe_enclave::gratis_decrypt::decrypt_gratis_balance(
-        &vk,
-        alice(),
-        &mined[1].encryptedAmountMinor,
-    )
-    .unwrap();
+    let delta = decrypt_balance(&vk, alice(), &mined[1].encryptedAmountMinor).unwrap();
     assert_eq!(delta, second_amount);
     assert_ne!(delta, first_amount + second_amount);
     assert_eq!(
-        outbe_enclave::gratis_decrypt::decrypt_gratis_balance(&vk, alice(), &second_balance)
-            .unwrap(),
+        decrypt_balance(&vk, alice(), &second_balance).unwrap(),
         first_amount + second_amount
     );
 }

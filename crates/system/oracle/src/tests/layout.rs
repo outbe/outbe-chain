@@ -42,48 +42,6 @@ fn pair_by_index_occupies_slot_43_as_a_two_word_value() {
     });
 }
 
-#[test]
-fn worldwide_day_partial_aggregates_occupy_slots_70_through_73() {
-    use outbe_primitives::storage::types::StorageKey;
-    use outbe_system_common::addresses::ORACLE_ADDRESS;
-
-    with_bare_oracle(|storage, oracle| {
-        let pair = AddressPair::new_coen_to(840);
-        let day = 1_780_012_800u64;
-        let markers = [11u64, 12, 13, 14];
-        oracle
-            .wwd_suffix_pv_sum
-            .get_nested(&pair)
-            .write(&day, U256::from(markers[0]))
-            .unwrap();
-        oracle
-            .wwd_suffix_vol_sum
-            .get_nested(&pair)
-            .write(&day, U256::from(markers[1]))
-            .unwrap();
-        oracle
-            .wwd_prefix_pv_sum
-            .get_nested(&pair)
-            .write(&day, U256::from(markers[2]))
-            .unwrap();
-        oracle
-            .wwd_prefix_vol_sum
-            .get_nested(&pair)
-            .write(&day, U256::from(markers[3]))
-            .unwrap();
-
-        for (base, marker) in (70u64..=73).zip(markers) {
-            let outer = pair.mapping_slot(U256::from(base));
-            let slot = day.mapping_slot(outer);
-            assert_eq!(
-                storage.sload(ORACLE_ADDRESS, slot).unwrap(),
-                U256::from(marker),
-                "WWD partial aggregate moved from slot {base}"
-            );
-        }
-    });
-}
-
 /// Every retired slot in the settlement range must stay empty. The frozen V1
 /// plan still opens slots 41/42, so a resurrected writer would change what
 /// that plan proves. Slots 40/45/46 must stay clear so the holes remain
@@ -158,13 +116,25 @@ fn slot_60_is_retired_and_policy_registry_occupies_slots_74_and_75() {
 }
 
 #[test]
-fn genesis_seeds_the_usd_policy_rate() {
+fn genesis_holds_no_policy_rate() {
     with_bare_oracle(|_storage, oracle| {
         crate::genesis::init_from_genesis(
             oracle,
             &crate::genesis::OracleGenesisConfig::default_config(),
         )
         .unwrap();
-        assert_eq!(oracle.get_policy_rate(840).unwrap(), U256::from(38_800u64));
+        // Each reference currency is a rate vote target, and none has a rate
+        // before the first tally.
+        assert_eq!(
+            oracle.policy_rate_currencies.read_all().unwrap(),
+            crate::constants::REFERENCE_CURRENCIES.to_vec()
+        );
+        for iso_code in crate::constants::REFERENCE_CURRENCIES {
+            let error = oracle.get_policy_rate(iso_code).unwrap_err();
+            assert_typed_revert(
+                &error,
+                crate::errors::OracleError::NoPolicyRate { iso_code },
+            );
+        }
     });
 }

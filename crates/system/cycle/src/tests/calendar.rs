@@ -429,8 +429,8 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         .all(|ev| ev.data.emissionDay != 20_240_101));
 
     // Now test Step 3 (`process_emission_day`) recoverable revert fallback (`MetadosisFailed(E, 1)`):
-    // Clear the WAA pending total so day 20240102 allocates cleanly, and pre-set Desis stage
-    // for 20240102 so `process_emission_day` reverts with `InvalidStageTransition`.
+    // Clear the WAA pending total so day 20240102 allocates cleanly, and corrupt the Desis stage
+    // of its scheduled auction so `process_emission_day` reverts with `InvalidStageTransition`.
     storage.set_block_number(3);
     storage.enter(|handle| {
         let ar = outbe_agentreward::AgentRewardContract::new(handle.clone());
@@ -440,13 +440,10 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
                 U256::ZERO,
             )
             .unwrap();
-        outbe_desis::schema::DesisContract::new(handle.clone())
-            .auction_stage
-            .write(
-                &outbe_system_common::time::EmissionDate::new(20_240_102),
-                outbe_desis::schema::AuctionStage::Briefed as u8,
-            )
-            .unwrap();
+        let desis = outbe_desis::schema::DesisContract::new(handle.clone());
+        let day2 = outbe_system_common::time::EmissionDate::new(20_240_102);
+        desis.sched_active_slot.write(&day2, 1).unwrap();
+        desis.auction_stage.write(&day2, u8::MAX).unwrap();
         let promis_before_day2 = outbe_promislimit::PromisLimitContract::new(handle.clone())
             .promis_limit()
             .unwrap();

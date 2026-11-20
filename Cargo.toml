@@ -17,6 +17,7 @@ members = [
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
     "crates/blockchain/tee",
+    "crates/blockchain/dcap",
     # system
     "crates/system/constants",
     "crates/system/common",
@@ -64,7 +65,6 @@ members = [
     "crates/core/stablecoin",
     "crates/core/stablecoinfactory",
     "crates/core/common",
-    "crates/core/enclave",
     # binaries
     "bin/outbe-up",
     "bin/outbe-chain",
@@ -74,7 +74,6 @@ members = [
     "bin/outbe-feeder",
     "bin/outbe-hyperlane-validator",
     "bin/outbe-radicle",
-    "bin/outbe-tee-enclave",
     # testing
     "testing/lysis-v1-reference",
     "testing/protocol-benchmarks",
@@ -105,6 +104,7 @@ default-members = [
     "crates/blockchain/radicle",
     "crates/blockchain/snapshot",
     "crates/blockchain/tee",
+    "crates/blockchain/dcap",
     # system
     "crates/system/constants",
     "crates/system/common",
@@ -152,7 +152,6 @@ default-members = [
     "crates/core/stablecoin",
     "crates/core/stablecoinfactory",
     "crates/core/common",
-    "crates/core/enclave",
     # binaries
     "bin/outbe-up",
     "bin/outbe-chain",
@@ -162,7 +161,6 @@ default-members = [
     "bin/outbe-feeder",
     "bin/outbe-hyperlane-validator",
     "bin/outbe-radicle",
-    "bin/outbe-tee-enclave",
     # zk
     "crates/zk/poseidon",
     "crates/zk/outbe-zk",
@@ -213,6 +211,7 @@ outbe-execution = { path = "crates/blockchain/execution" }
 outbe-radicle = { path = "crates/blockchain/radicle" }
 outbe-snapshot = { path = "crates/blockchain/snapshot" }
 outbe-tee = { path = "crates/blockchain/tee", default-features = false }
+outbe-dcap = { path = "crates/blockchain/dcap", default-features = false }
 # Internal - system
 outbe-chain-constants = { path = "crates/system/constants" }
 outbe-system-common = { path = "crates/system/common" }
@@ -239,7 +238,6 @@ radicle-log = { path = "vendor/heartwood/crates/radicle-log" }
 radicle-node = { path = "vendor/heartwood/crates/radicle-node", default-features = false, features = ["socket2"] }
 radicle-signals = { path = "vendor/heartwood/crates/radicle-signals" }
 # Core - outbe
-outbe-enclave = { path = "crates/core/enclave" }
 outbe-gratis = { path = "crates/core/gratis" }
 outbe-promis = { path = "crates/core/promis" }
 outbe-promisfactory = { path = "crates/core/promisfactory" }
@@ -269,7 +267,6 @@ outbe-stablecoinfactory = { path = "crates/core/stablecoinfactory" }
 outbe-core-common = { path = "crates/core/common" }
 # Internal - binaries
 outbe-genesis-cli = { path = "bin/outbe-genesis-cli" }
-outbe-tee-enclave = { path = "bin/outbe-tee-enclave" }
 
 # Alloy - core (alloy-rs/core): stays on 1.x
 alloy-primitives = { version = "=1.6.1", default-features = false }
@@ -356,6 +353,7 @@ blst = { version = "0.3.13", default-features = false }
 # Crypto
 argon2 = "0.5"
 k256 = { version = "0.13", features = ["ecdsa"] }
+secp256k1 = { version = "0.30.0", default-features = false }
 keyring = { version = "3", features = ["apple-native", "linux-native"] }
 ring = "0.17"
 zeroize = "1"
@@ -393,6 +391,8 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 reqwest = { version = "0.12", features = ["json"] }
 # Security floor for RUSTSEC-2026-0538 (via reqwest 0.13 -> quinn)
 quinn-udp = "0.5.16"
+# Security floor for RUSTSEC-2026-0544 (via libgit2-sys / librocksdb-sys)
+libz-sys = "1.1.33"
 
 # Runtime
 rand = "0.8"
@@ -404,8 +404,6 @@ metrics = "0.24"
 metrics-exporter-prometheus = { version = "0.18.3", default-features = false }
 metrics-process = "2.4.3"
 
-# TEE node <-> enclave transport (Noise-IK over UDS)
-snow = "0.9"
 
 # Config
 toml = "0.8"
@@ -452,8 +450,8 @@ debug = 0
 # `outbe-runtime` / `outbe-execution` shutdown paths rely on `catch_unwind`.
 # Cost: slower `--release` / `bench` link passes, and `strip = "symbols"` drops
 # `.symtab` function names from `RUST_BACKTRACE=1` and `perf` (switch to
-# `strip = "debuginfo"` if symbolicated backtraces are needed; `.dynsym` for
-# Gramine SGX and `.dep-v0` for `cargo auditable` stay intact).
+# `strip = "debuginfo"` if symbolicated backtraces are needed; `.dep-v0` for
+# `cargo auditable` stays intact).
 [profile.release]
 strip = "symbols"
 lto = "thin"

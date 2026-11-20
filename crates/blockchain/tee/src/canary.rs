@@ -54,10 +54,9 @@ pub struct TeeEnclaveHealthSnapshot {
     /// Class/short description of the last failure (never key material).
     pub last_failure: Option<String>,
     pub offer_key_ready: bool,
-    /// `None` until Health feature detection ran; `Some(false)` = the enclave
-    /// binary predates `EnclaveRequest::Health` (canary-decrypt-only mode).
+    /// `None` before a canary observation; resident mode reports `Some(false)`.
     pub health_probe_supported: Option<bool>,
-    /// The last `Health` payload (uptime/heap/request counters), when supported.
+    /// Optional external telemetry shape; resident mode leaves this unset.
     pub enclave: Option<EnclaveHealthStatusV1>,
 }
 

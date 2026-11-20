@@ -51,9 +51,9 @@ pub(crate) enum TeeGenesisError {
         /// Missing CLI argument name.
         name: String,
     },
-    /// Indicates that DCAP measurement arguments were passed in `GramineDirectDev` mode.
+    /// Indicates that DCAP measurement arguments were passed in `NoAttestationDev` mode.
     #[error(
-        "GramineDirectDev uses fixed non-hardware projections; DCAP measurement arguments are forbidden"
+        "NoAttestationDev uses fixed non-hardware projections; DCAP measurement arguments are forbidden"
     )]
     DcapArgsForbiddenInDevMode,
     /// Indicates that the input genesis `config` field is not a JSON object.

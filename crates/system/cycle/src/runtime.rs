@@ -97,7 +97,7 @@ pub fn handle_cycle_tick_with_tasks(
     #[cfg(feature = "test-utils")]
     let observation_before = ctx.storage.gas_used()?;
     if ctx.block.block_number == metadosis_genesis_activation_height {
-        outbe_tributefactory::worldwideday::bootstrap_genesis_worldwide_days_command(ctx)?;
+        outbe_tributefactory::worldwide_day::bootstrap_genesis_worldwide_days_command(ctx)?;
     }
     let handler_gas = run_due_tasks_inner(ctx, tasks)?;
     #[cfg(not(feature = "test-utils"))]
@@ -112,7 +112,7 @@ pub fn handle_cycle_tick_with_tasks(
         ctx,
         CycleWorkerId::DesisCleanup,
         crate::tasks::DESIS_CLEANUP_WORKER_BUDGET_GAS,
-        |ctx| outbe_desis::process_cleanup(ctx.storage.clone()),
+        |ctx| outbe_desis::run_cleanup(ctx.storage.clone()),
     )?;
     #[cfg(feature = "test-utils")]
     record_cycle_gas_sample(ctx, observation_before, handler_gas)?;

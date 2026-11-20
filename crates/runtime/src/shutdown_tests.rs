@@ -37,21 +37,29 @@ async fn radicle_drain_deadline_is_distinct_from_lost_observer() {
 fn dropped_launcher_joins_consensus_before_execution_teardown() {
     let consensus_stopped = Arc::new(AtomicBool::new(false));
     let execution = ExecutionTeardownSentinel(Arc::clone(&consensus_stopped));
-    let shutdown = tokio_util::sync::CancellationToken::new();
-    let worker_shutdown = shutdown.clone();
-    let worker_stopped = Arc::clone(&consensus_stopped);
-    let worker = std::thread::spawn(move || {
-        while !worker_shutdown.is_cancelled() {
-            std::thread::yield_now();
-        }
-        worker_stopped.store(true, Ordering::SeqCst);
-        Ok(())
-    });
+    let (shutdown, workers_shutdown) = crate::launch::launcher_shutdown_tokens();
+    let outcome = outbe_execution::shutdown::NodeShutdown::default();
+    {
+        let _cancel_workers_on_launcher_drop = workers_shutdown.clone().drop_guard();
+        let _cancel_on_launcher_drop = shutdown.clone().drop_guard();
+        let consensus_shutdown = shutdown.clone();
+        let launcher_workers = workers_shutdown.clone();
+        let stopped = Arc::clone(&consensus_stopped);
+        let thread = std::thread::spawn(move || {
+            futures::executor::block_on(consensus_shutdown.cancelled());
+            stopped.store(true, Ordering::SeqCst);
+            assert!(
+                !launcher_workers.is_cancelled(),
+                "workers cancelled before consensus joined"
+            );
+            Ok(())
+        });
+        let _consensus_lifecycle =
+            super::ConsensusThreadGuard::new(shutdown, thread).with_outcome(outcome.clone());
+    }
 
-    let lifecycle = super::ConsensusThreadGuard::new(shutdown, worker);
-    drop(lifecycle);
-
-    assert!(consensus_stopped.load(Ordering::SeqCst));
+    outcome.finish(Ok(())).unwrap();
+    assert!(workers_shutdown.is_cancelled());
     drop(execution);
 }
 
@@ -298,4 +306,66 @@ fn test_fullnode_drops_node_tx_consensus_thread_exits() {
         result.is_err(),
         "blocking_recv must return Err when sender is dropped"
     );
+}
+
+#[tokio::test]
+async fn launcher_ignores_lost_lease_publisher_until_engine_exit() {
+    use futures::FutureExt as _;
+    let shutdown = outbe_execution::shutdown::NodeShutdown::default();
+    let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+    drop(sender);
+    let waiting = crate::shutdown::wait_for_launcher_exit(&shutdown, None, Some(&mut receiver));
+    tokio::pin!(waiting);
+    assert!(
+        waiting.as_mut().now_or_never().is_none(),
+        "authority loss must not stop execution"
+    );
+}
+
+#[tokio::test]
+async fn lost_lease_guard_closes_authority_even_when_the_live_owner_survives() {
+    use crate::admission::{TeeLeaseGuardConfigV1, TeeLeaseGuardGateV1};
+    use crate::admission_authority::{guard::run_lease_guard, live::*, test_support as support};
+    use futures::FutureExt as _;
+    use outbe_tee::{TeeAuthorityChannel, TeeAuthorityState};
+    let context = support::context(9);
+    let (provider, chain, identity) =
+        support::provider(&context, 7, 1_800_000_000, 1_800_001_000, false);
+    let channel = TeeAuthorityChannel::default();
+    let gate = TeeLeaseGuardGateV1::Armed;
+    let owner = Arc::new(
+        LiveTeeRuntimeV1::new(
+            LiveTeeSnapshotV1 {
+                identity,
+                gate,
+                context: context.clone(),
+            },
+            channel.clone(),
+        )
+        .unwrap(),
+    );
+    owner
+        .refresh(&provider, &crate::OutbeRuntime::new(), &chain)
+        .unwrap();
+    let mut guard = Box::pin(run_lease_guard(
+        provider,
+        Arc::new(crate::OutbeRuntime::new()),
+        TeeLeaseGuardConfigV1 {
+            chain,
+            finalization_notify: Arc::new(tokio::sync::Notify::new()),
+            armed: tokio::sync::watch::channel(true).0,
+        },
+        owner.clone(),
+        tokio_util::sync::CancellationToken::new(),
+    ));
+    assert!(guard.as_mut().now_or_never().is_none());
+    assert!(channel.snapshot().is_authority_open());
+    drop(guard);
+    assert_eq!(
+        channel.snapshot(),
+        TeeAuthorityState::SuspendedPolicyMismatch
+    );
+    assert!(channel.snapshot().has_verified_resident_key());
+    assert!(Arc::ptr_eq(&owner.lock().unwrap().context, &context));
+    assert!(context.offer_key_ready().unwrap());
 }

@@ -5,7 +5,8 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
-pub use outbe_enclave::protocol::{FidelityOpOutcome, FidelityOpSection, ModifyAuth};
+pub use crate::protocol::ModifyAuth;
+pub use outbe_fidelity::{FidelityOpOutcome, FidelityOpSection};
 
 use crate::runtime;
 use crate::schema::Gratis;

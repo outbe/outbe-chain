@@ -97,8 +97,8 @@ contract IntexNFT1155Bridge is
     }
 
     /// @inheritdoc IIntexNFT1155Bridge
-    function setRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setRemoteMessenger(chainId, interop);
+    function registerRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _registerRemoteMessenger(chainId, interop);
     }
 
     // --- Single transfer ---

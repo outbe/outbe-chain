@@ -472,6 +472,7 @@ mod tests {
             dex_providers: vec![],
             onchain_providers: vec![],
             gas_providers: vec![],
+            rate_providers: vec![],
             rpc_endpoints: Default::default(),
             health: None,
         }

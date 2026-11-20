@@ -160,7 +160,7 @@ pub enum UpgradeError {
     #[error("upgrade submission has no relay transaction")]
     MissingRelayTransaction,
 
-    /// The candidate failed to generate `GramineDirectDev` evidence.
+    /// The candidate failed to generate `NoAttestationDev` evidence.
     #[error("generate DirectDev transition evidence: {0}")]
     GenerateDirectDevEvidence(#[source] TransportError),
 
@@ -263,14 +263,6 @@ pub enum UpgradeError {
     /// The upgrade selector disagrees with the candidate node identity.
     #[error("upgrade selector does not match the candidate node identity")]
     SelectorMismatch,
-
-    /// The hasher rejected the transition node identity.
-    #[error("hash transition node identity: {0}")]
-    HashTransitionNodeIdentity(#[source] CodecError),
-
-    /// The finalized binding matches neither the source nor the target.
-    #[error("finalized Registry binding matches neither transition source nor target")]
-    BindingNeitherSourceNorTarget,
 
     /// The submission has missing hashes or invalid variant counts.
     #[error("upgrade submission is incomplete or exceeds its variant cap")]
@@ -382,10 +374,6 @@ pub enum UpgradeError {
     /// The fresh Intel collateral cannot cover the minimum lease.
     #[error("fresh Intel collateral cannot satisfy the successor minimum lease")]
     CollateralBelowMinimumLease,
-
-    /// The hasher rejected the transition intent.
-    #[error("hash transition intent: {0}")]
-    HashTransitionIntent(#[source] CodecError),
 
     /// The writer failed to save the candidate submission.
     #[error("persist exact candidate submission: {0}")]

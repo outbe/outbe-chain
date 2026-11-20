@@ -66,7 +66,8 @@ impl TeeRegistry<'_> {
 
         let policy = self.active_policy_v1()?;
         Self::require_initial_binding_target_v1(intent, binding)?;
-        let caller_context = self.require_registration_caller_v1(caller, binding)?;
+        let caller_context =
+            self.require_registration_caller_v1(caller, binding, policy.attestation_mode)?;
         self.register_and_associate_v1(association, caller_context, |registry| {
             let registration = registry.apply_verified_mutation_v1(
                 AttestationOperationV1::RegisterEnclave,

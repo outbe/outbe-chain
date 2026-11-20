@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
+import {AuctionResultLib} from "../helpers/AuctionResultLib.sol";
+
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
@@ -46,13 +48,13 @@ contract GasBudgetTest is CrossChainTest {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(admin, admin);
         router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
-        router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
+        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.RELAYER_ROLE(), address(router));
     }
 
     function _measure(bytes14[] memory batch) internal returns (uint256 spent) {
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(EMISSION_DAY, uint32(block.timestamp), batch);
+        bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch);
         uint256 before = gasleft();
         _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
         spent = before - gasleft();
@@ -67,13 +69,13 @@ contract GasBudgetTest is CrossChainTest {
     }
 
     function test_TheQuoteCoversAFullBatchThatApplies() public {
-        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_MARK);
+        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
         _seed(batch);
 
         uint256 spent = _measure(batch);
 
         emit log_named_uint("apply_batch8", spent);
-        assertLt(spent, IntexGas.markCalled(batch.length), "a full applying batch must fit the quote");
+        assertLt(spent, IntexGas.intexSeriesCallNotice(batch.length), "a full applying batch must fit the quote");
     }
 
     /// @dev The cap bounds one series, not the batch: it buys the parking write room to run when a single
@@ -81,34 +83,40 @@ contract GasBudgetTest is CrossChainTest {
     function test_TheQuoteSurvivesOneRunawaySeriesInAFullBatch() public {
         GasBurningIntex poisoned = new GasBurningIntex(POISON);
         TargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        mocked.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
-        mocked.wire(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
+        mocked.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        mocked.setDependencies(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
 
-        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_MARK);
+        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
         batch[0] = POISON;
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(EMISSION_DAY, uint32(block.timestamp), batch);
+        bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch);
         bytes memory call = abi.encodeCall(
             bridge.deliverAs,
             (_interop(OUTBE_CHAIN_ID, originPeer), _interop(uint32(block.chainid), address(mocked)), packet)
         );
 
-        (bool ok,) = address(bridge).call{gas: IntexGas.markCalled(batch.length)}(call);
+        (bool ok,) = address(bridge).call{gas: IntexGas.intexSeriesCallNotice(batch.length)}(call);
 
         assertTrue(ok, "the message must land inside the gas its quote buys");
-        assertEq(mocked.parkedMark(POISON), uint32(block.timestamp), "the runaway waits in its slot");
+        assertEq(
+            mocked.failedIntexSeriesCallNoticeApply(POISON), uint32(block.timestamp), "the runaway waits in its slot"
+        );
     }
 
     function test_TheQuoteCoversAFullBatchThatParks() public {
         // No series exist, so every mark reverts and parks - the heavier of the two paths.
-        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_MARK);
+        bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
 
         uint256 spent = _measure(batch);
 
         for (uint256 i = 0; i < batch.length; ++i) {
-            assertEq(router.parkedMark(batch[i]), uint32(block.timestamp), "every series waits in its slot");
+            assertEq(
+                router.failedIntexSeriesCallNoticeApply(batch[i]),
+                uint32(block.timestamp),
+                "every series waits in its slot"
+            );
         }
         emit log_named_uint("park_batch8", spent);
-        assertLt(spent, IntexGas.markCalled(batch.length), "a full parking batch must fit the quote");
+        assertLt(spent, IntexGas.intexSeriesCallNotice(batch.length), "a full parking batch must fit the quote");
     }
 
     function test_TheQuoteCoversASingleSeriesMark() public {
@@ -119,17 +127,16 @@ contract GasBudgetTest is CrossChainTest {
         bytes14[] memory absent = MarkBatchLib.sized("20260501-EUR-U", 1);
         emit log_named_uint("park_batch1", _measure(absent));
 
-        assertLt(_measure(one), IntexGas.markCalled(1), "a single mark must fit the quote");
+        assertLt(_measure(one), IntexGas.intexSeriesCallNotice(1), "a single mark must fit the quote");
     }
 
     /// @dev The costliest chunk the batcher can emit: every series slot filled.
     function test_TheQuoteCoversTheWidestIssuanceChunk() public {
         uint256 seriesCount = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE;
 
-        BridgeMsgCodec.IssuanceInstructionsPayload[] memory batch =
-            new BridgeMsgCodec.IssuanceInstructionsPayload[](seriesCount);
+        BridgeMsgCodec.IntexSeriesPayload[] memory batch = new BridgeMsgCodec.IntexSeriesPayload[](seriesCount);
         for (uint256 s = 0; s < seriesCount; ++s) {
-            batch[s] = BridgeMsgCodec.IssuanceInstructionsPayload({
+            batch[s] = BridgeMsgCodec.IntexSeriesPayload({
                 seriesId: bytes14(uint112(uint112(SERIES_PREFIX) + s + 1)),
                 emissionDay: EMISSION_DAY,
                 issuedAt: uint32(block.timestamp),
@@ -147,7 +154,7 @@ contract GasBudgetTest is CrossChainTest {
             });
         }
 
-        bytes memory packet = BridgeMsgCodec.encodeIssuanceInstructions(EMISSION_DAY, 0, 1, batch);
+        bytes memory packet = BridgeMsgCodec.encodeIntexSeries(EMISSION_DAY, 0, 1, batch);
         uint256 before = gasleft();
         _deliver(OUTBE_CHAIN_ID, originPeer, address(router), packet);
         uint256 spent = before - gasleft();
@@ -162,8 +169,8 @@ contract GasBudgetTest is CrossChainTest {
         IntexNFT1155 dstToken = DeployProxy.intexNFT1155(admin, admin);
         IntexNFT1155Bridge src = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
         IntexNFT1155Bridge dst = DeployProxy.intexNFT1155Bridge(address(dstToken), address(bridge), admin);
-        src.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
-        dst.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
+        src.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
+        dst.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
         intex.grantRole(intex.RELAYER_ROLE(), address(src));
         dstToken.grantRole(dstToken.RELAYER_ROLE(), address(dst));
 
@@ -208,8 +215,8 @@ contract GasBudgetTest is CrossChainTest {
         IntexNFT1155 dstToken = DeployProxy.intexNFT1155(admin, admin);
         IntexNFT1155Bridge src = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
         IntexNFT1155Bridge dst = DeployProxy.intexNFT1155Bridge(address(dstToken), address(bridge), admin);
-        src.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
-        dst.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
+        src.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
+        dst.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
         intex.grantRole(intex.RELAYER_ROLE(), address(src));
         dstToken.grantRole(dstToken.RELAYER_ROLE(), address(dst));
 
@@ -250,21 +257,23 @@ contract GasBudgetTest is CrossChainTest {
     function test_ARunawaySeriesIsParkedAndTheBatchContinues() public {
         GasBurningIntex poisoned = new GasBurningIntex(POISON);
         TargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        mocked.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
-        mocked.wire(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
+        mocked.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        mocked.setDependencies(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
 
-        bytes memory packet = BridgeMsgCodec.encodeMarkCalled(
+        bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(
             EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.two(POISON, SERIES_PREFIX)
         );
         bytes memory call = abi.encodeCall(
             bridge.deliverAs,
             (_interop(OUTBE_CHAIN_ID, originPeer), _interop(uint32(block.chainid), address(mocked)), packet)
         );
-        (bool ok,) = address(bridge).call{gas: IntexGas.markCalled(2)}(call);
+        (bool ok,) = address(bridge).call{gas: IntexGas.intexSeriesCallNotice(2)}(call);
 
         assertTrue(ok, "the message must land, not bounce back into redelivery");
-        assertEq(mocked.parkedMark(POISON), uint32(block.timestamp), "the runaway waits in its slot");
-        assertEq(mocked.parkedMark(SERIES_PREFIX), 0, "its batch mate has no slot");
+        assertEq(
+            mocked.failedIntexSeriesCallNoticeApply(POISON), uint32(block.timestamp), "the runaway waits in its slot"
+        );
+        assertEq(mocked.failedIntexSeriesCallNoticeApply(SERIES_PREFIX), 0, "its batch mate has no slot");
         assertEq(poisoned.markedCount(), 1, "its batch mate still applied");
     }
 }
@@ -339,11 +348,11 @@ contract AuctionGasBudgetTest is CrossChainTest {
         escrow = DeployProxy.escrowAdapter(admin, admin);
         compact = new MockTheCompact();
         paymentToken = new MockWCOEN();
-        escrow.wire(admin, address(compact), address(paymentToken));
+        escrow.setDependencies(admin, address(compact), address(paymentToken));
         compact.setResetPeriodSeconds(0);
 
-        router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
-        router.wire(address(auction), address(intex), address(escrow));
+        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
+        router.setDependencies(address(auction), address(intex), address(escrow));
         auction.grantRole(auction.RELAYER_ROLE(), address(router));
         intex.grantRole(intex.RELAYER_ROLE(), address(router));
         escrow.grantRole(escrow.RELAYER_ROLE(), address(router));
@@ -366,7 +375,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
                 isoCode: uint16(840 + i), entryPriceMinor: ENTRY_PRICE, callPriceMinor: ENTRY_PRICE
             });
         }
-        return BridgeMsgCodec.encodeAuctionStageStart(
+        return BridgeMsgCodec.encodeIntexAuctionStart(
             EMISSION_DAY,
             uint32(block.timestamp + 1 days),
             uint32(block.timestamp + 2 days),
@@ -378,8 +387,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
             0,
             0,
             1,
-            0,
-            1
+            0
         );
     }
 
@@ -390,17 +398,17 @@ contract AuctionGasBudgetTest is CrossChainTest {
         uint256 spent = _deliver(_startPacket(rows));
 
         emit log_named_uint("auction_start_36prices", spent);
-        assertLt(spent, IntexGas.auctionStart(rows), "auction start must fit the quote");
+        assertLt(spent, IntexGas.intexAuctionStart(rows), "auction start must fit the quote");
     }
 
     function test_TheQuoteCoversAuctionStageCollectingBidsWithNoBids() public {
         _deliver(_startPacket(1));
         vm.warp(block.timestamp + 1 days);
 
-        uint256 spent = _deliver(BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY));
+        uint256 spent = _deliver(BridgeMsgCodec.encodeIntexAuctionClearingStart(EMISSION_DAY));
 
         emit log_named_uint("clearing_0bids", spent);
-        assertLt(spent, IntexGas.AUCTION_STAGE_COLLECTING_BIDS, "clearing must fit the quote");
+        assertLt(spent, IntexGas.INTEX_AUCTION_CLEARING_START, "clearing must fit the quote");
     }
 
     function test_TheQuoteCoversRefundsAtTheirWidest() public {
@@ -414,25 +422,36 @@ contract AuctionGasBudgetTest is CrossChainTest {
             paymentToken.mint(who[i], 1e18);
             vm.prank(who[i]);
             paymentToken.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(EMISSION_DAY, who[i], 1e6, 1_000_000, 1);
+            escrow.lockIntexAuctionAsset(EMISSION_DAY, who[i], 1e6, 1_000_000, 1);
         }
 
-        uint256 spent = _deliver(BridgeMsgCodec.encodeRefundInstructions(EMISSION_DAY, 0, 1, 600_000, 1e6, who, 0, 0));
+        uint256 spent = _deliver(BridgeMsgCodec.encodeIntexAuctionWinners(EMISSION_DAY, 0, 1, 600_000, 1e6, who, 0, 0));
 
         emit log_named_uint("refund_full_chunk", spent);
-        assertLt(spent, IntexGas.refund(winners, true), "the widest refund chunk must fit the quote");
+        assertLt(spent, IntexGas.assetReturn(winners, true), "the widest refund chunk must fit the quote");
     }
 
     function test_TheQuoteCoversAuctionResult() public {
         _deliver(_startPacket(1));
         vm.warp(block.timestamp + 1 days);
         vm.prank(address(router));
-        auction.startAwaitingResult(EMISSION_DAY);
+        auction.startAuctionClearing(EMISSION_DAY);
 
-        uint256 spent = _deliver(BridgeMsgCodec.encodeAuctionResult(EMISSION_DAY, ISSUED_UNITS, ENTRY_PRICE, 0));
+        uint256 spent = _deliver(
+            BridgeMsgCodec.encodeIntexAuctionResult(EMISSION_DAY, AuctionResultLib.day(ISSUED_UNITS, ENTRY_PRICE, 0))
+        );
 
         emit log_named_uint("auction_result", spent);
-        assertLt(spent, IntexGas.AUCTION_RESULT, "auction result must fit the quote");
+        assertLt(spent, IntexGas.INTEX_AUCTION_RESULT, "auction result must fit the quote");
+    }
+
+    function test_TheQuoteCoversAuctionCancel() public {
+        _deliver(_startPacket(1));
+
+        uint256 spent = _deliver(BridgeMsgCodec.encodeIntexAuctionCancel(EMISSION_DAY, 1));
+
+        emit log_named_uint("auction_cancel", spent);
+        assertLt(spent, IntexGas.INTEX_AUCTION_CANCEL, "auction cancel must fit the quote");
     }
 }
 
@@ -456,8 +475,8 @@ contract ClearingRelayGasTest is CrossChainTest {
         _setUpBridge();
         stub = new BidStub();
         router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
-        router.wire(address(stub), makeAddr("intex"), makeAddr("escrow"));
+        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        router.setDependencies(address(stub), makeAddr("intex"), makeAddr("escrow"));
         vm.deal(address(router), 100 ether);
     }
 
@@ -465,7 +484,7 @@ contract ClearingRelayGasTest is CrossChainTest {
     ///      would stop in production rather than running on the test frame's whole allowance.
     function _clearingWithin(uint256 bids, uint256 gasCap) internal returns (bool delivered) {
         stub.setBidCount(bids);
-        bytes memory packet = BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY);
+        bytes memory packet = BridgeMsgCodec.encodeIntexAuctionClearingStart(EMISSION_DAY);
         (delivered,) = address(bridge).call{gas: gasCap}(
             abi.encodeCall(
                 bridge.deliverAs,
@@ -478,7 +497,7 @@ contract ClearingRelayGasTest is CrossChainTest {
         stub.setBidCount(bids);
         uint256 before = gasleft();
         _deliver(
-            OUTBE_CHAIN_ID, originPeer, address(router), BridgeMsgCodec.encodeAuctionStageCollectingBids(EMISSION_DAY)
+            OUTBE_CHAIN_ID, originPeer, address(router), BridgeMsgCodec.encodeIntexAuctionClearingStart(EMISSION_DAY)
         );
         spent = before - gasleft();
     }
@@ -486,14 +505,14 @@ contract ClearingRelayGasTest is CrossChainTest {
     function test_OneChunkOfBidsRelaysInOneRound() public {
         emit log_named_uint("clearing_one_chunk", _clearingCost(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN));
 
-        (,, bool done) = router.bidsRelay(EMISSION_DAY);
+        (,, bool done) = router.getIntexAuctionBidsSendState(EMISSION_DAY);
         assertTrue(done, "the day relayed whole");
     }
 
     function test_FourChunksOfBidsRelayInOneRound() public {
         emit log_named_uint("clearing_four_chunks", _clearingCost(4 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN));
 
-        (,, bool done) = router.bidsRelay(EMISSION_DAY);
+        (,, bool done) = router.getIntexAuctionBidsSendState(EMISSION_DAY);
         assertTrue(done, "the day relayed whole");
     }
 
@@ -505,17 +524,17 @@ contract ClearingRelayGasTest is CrossChainTest {
         // `ClearingRelayMailboxGas.t.sol`.
         assertTrue(_clearingWithin(16 * BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN, 6_000_000), "the delivery must survive");
 
-        (uint16 nextBatch, uint16 totalBatches, bool done) = router.bidsRelay(EMISSION_DAY);
-        emit log_named_uint("clearing_1024bids_batches_sent", nextBatch);
+        (uint16 nextPage, uint16 totalPages, bool done) = router.getIntexAuctionBidsSendState(EMISSION_DAY);
+        emit log_named_uint("clearing_1024bids_batches_sent", nextPage);
         assertFalse(done, "the day is not finished");
-        assertEq(totalBatches, 16, "the span is frozen by the first round");
-        assertGt(nextBatch, 0, "the round sent what it could afford");
-        assertLt(nextBatch, totalBatches, "and left the rest");
+        assertEq(totalPages, 16, "the span is frozen by the first round");
+        assertGt(nextPage, 0, "the round sent what it could afford");
+        assertLt(nextPage, totalPages, "and left the rest");
 
         // The next round resumes the day where this one stopped.
-        router.relayBids(EMISSION_DAY);
-        (uint16 after_,, bool doneAfter) = router.bidsRelay(EMISSION_DAY);
-        assertTrue(after_ > nextBatch || doneAfter, "the second round carried on");
+        router.sendIntexAuctionBids(EMISSION_DAY);
+        (uint16 after_,, bool doneAfter) = router.getIntexAuctionBidsSendState(EMISSION_DAY);
+        assertTrue(after_ > nextPage || doneAfter, "the second round carried on");
     }
 }
 
@@ -527,17 +546,17 @@ contract BidStub {
         bidCount = n;
     }
 
-    function startAwaitingResult(uint32) external {}
+    function startAuctionClearing(uint32) external {}
 
     function getAuctionDetails(uint32)
         external
         view
-        returns (IIntexAuction.AuctionData memory data, IIntexAuction.SubmittedBidData[] memory bids)
+        returns (IIntexAuction.AuctionData memory data, IIntexAuction.SubmittedIntexAuctionBidData[] memory bids)
     {
-        bids = new IIntexAuction.SubmittedBidData[](bidCount);
+        bids = new IIntexAuction.SubmittedIntexAuctionBidData[](bidCount);
         for (uint256 i = 0; i < bidCount; ++i) {
-            bids[i] = IIntexAuction.SubmittedBidData({
-                bidderAddress: address(uint160(0xCAFE + i)),
+            bids[i] = IIntexAuction.SubmittedIntexAuctionBidData({
+                bidder: address(uint160(0xCAFE + i)),
                 intexQuantity: 1,
                 intexBidRate: 100e6,
                 timestamp: uint32(block.timestamp),
@@ -547,23 +566,23 @@ contract BidStub {
         }
     }
 
-    function revealedBidsCount(uint32) external view returns (uint256) {
+    function revealedIntexAuctionBidsCount(uint32) external view returns (uint256) {
         return bidCount;
     }
 
-    function revealedBidsSlice(uint32, uint256 offset, uint256 limit)
+    function revealedIntexAuctionBidsSlice(uint32, uint256 offset, uint256 limit)
         external
         view
-        returns (IIntexAuction.SubmittedBidData[] memory slice)
+        returns (IIntexAuction.SubmittedIntexAuctionBidData[] memory slice)
     {
         uint256 length = bidCount;
-        if (offset >= length) return new IIntexAuction.SubmittedBidData[](0);
+        if (offset >= length) return new IIntexAuction.SubmittedIntexAuctionBidData[](0);
         uint256 end = offset + limit;
         if (end > length) end = length;
-        slice = new IIntexAuction.SubmittedBidData[](end - offset);
+        slice = new IIntexAuction.SubmittedIntexAuctionBidData[](end - offset);
         for (uint256 i = 0; i < slice.length; ++i) {
-            slice[i] = IIntexAuction.SubmittedBidData({
-                bidderAddress: address(uint160(0xCAFE + offset + i)),
+            slice[i] = IIntexAuction.SubmittedIntexAuctionBidData({
+                bidder: address(uint160(0xCAFE + offset + i)),
                 intexQuantity: 1,
                 intexBidRate: 100e6,
                 timestamp: uint32(block.timestamp),
@@ -573,13 +592,13 @@ contract BidStub {
         }
     }
 
-    function getAuctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
+    function auctionStage(uint32) external pure returns (IIntexAuction.AuctionStage) {
         return IIntexAuction.AuctionStage.AwaitingResult;
     }
 }
 
 /// @dev The Outbe-side receives: a target relays its bids as BIDS_BATCH chunks and closes the relay
-///      with a BIDS_DONE. Both land on OriginRouter and forward to Desis.
+///      with a BIDS_TOTALS. Both land on OriginRouter and forward to Desis.
 contract OriginInboundGasTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant EMISSION_DAY = 20250101;
@@ -594,17 +613,16 @@ contract OriginInboundGasTest is CrossChainTest {
         _setUpBridge();
         desis = new DesisSink();
         originRouter = DeployProxy.originRouter(address(bridge), admin);
-        originRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, targetPeer));
-        originRouter.wire(address(desis), makeAddr("factory"));
+        originRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, targetPeer));
+        originRouter.setDependencies(address(desis), makeAddr("factory"));
         originRouter.addTarget(BNB_CHAIN_ID);
 
         // Freeze the day's snapshot so the target is allowed to feed bids into it.
-        IOriginRouter.AuctionStageStartParams memory p;
+        IOriginRouter.IntexAuctionStartParams memory p;
         p.emissionDay = EMISSION_DAY;
-        p.dayState = 1;
         p.prices = ReferenceCurrencyPriceLib.one(840, ENTRY_PRICE, ENTRY_PRICE);
         vm.prank(address(desis));
-        originRouter.sendAuctionStageStart(p);
+        originRouter.sendIntexAuctionStart(p);
     }
 
     function _deliver(bytes memory packet) internal returns (uint256 spent) {
@@ -627,29 +645,29 @@ contract OriginInboundGasTest is CrossChainTest {
         }
 
         uint256 spent = _deliver(
-            BridgeMsgCodec.encodeBidsBatch(
+            BridgeMsgCodec.encodeBidsPage(
                 EMISSION_DAY, BNB_CHAIN_ID, 0, 1, bidders, BidPackLib.pack(quantities, rates, timestamps)
             )
         );
 
         emit log_named_uint("bids_batch_full_chunk", spent);
-        assertLt(spent, IntexGas.bidsBatch(count), "the widest bids batch must fit the quote");
+        assertLt(spent, IntexGas.bidsPage(count), "the widest bids batch must fit the quote");
     }
 
     function test_TheQuoteCoversBidsDone() public {
-        uint256 spent = _deliver(BridgeMsgCodec.encodeBidsDone(EMISSION_DAY, BNB_CHAIN_ID, 1, 0));
+        uint256 spent = _deliver(BridgeMsgCodec.encodeBidsTotals(EMISSION_DAY, BNB_CHAIN_ID, 1, 0));
 
         emit log_named_uint("bids_done", spent);
-        assertLt(spent, IntexGas.BIDS_DONE, "bids done must fit the quote");
+        assertLt(spent, IntexGas.BIDS_TOTALS, "bids done must fit the quote");
     }
 
     /// @dev The dearest of the inbound bids messages: its handler answers with an outbound CLEARING, so the
     ///      budget has to cover a dispatch as well as the decode.
     function test_TheQuoteCoversBidsRemaining() public {
-        uint256 spent = _deliver(BridgeMsgCodec.encodeBidsRemaining(EMISSION_DAY, BNB_CHAIN_ID, 1, 3));
+        uint256 spent = _deliver(BridgeMsgCodec.encodeBidsPause(EMISSION_DAY, BNB_CHAIN_ID, 1, 3));
 
         emit log_named_uint("bids_remaining", spent);
-        assertLt(spent, IntexGas.BIDS_REMAINING, "the remainder report must fit the quote");
+        assertLt(spent, IntexGas.BIDS_PAUSE, "the remainder report must fit the quote");
     }
 }
 
@@ -660,15 +678,16 @@ contract DesisSink {
         return interfaceId == type(IDesis).interfaceId || interfaceId == type(IERC165).interfaceId;
     }
 
-    function processBidsBatch(uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata) external {}
+    function collectIntexAuctionBids(bytes32, uint32, uint32, uint16, uint16, address[] calldata, uint256[] calldata)
+        external {}
 
-    function processBidsDone(uint32, uint32, uint16, uint32) external {}
+    function completeIntexAuctionBids(bytes32, uint32, uint32, uint16, uint32) external {}
 
-    function getAuctionStage(uint32) external pure returns (uint8) {
+    function auctionStage(uint32) external pure returns (uint8) {
         return 0;
     }
 
-    function getBidsCount(uint32) external pure returns (uint256) {
+    function intexAuctionBidsCount(uint32) external pure returns (uint256) {
         return 0;
     }
 }
@@ -688,8 +707,8 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(address(this), address(this));
         router = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
-        router.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
-        router.wire(makeAddr("auction"), address(intex), makeAddr("escrow"));
+        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.RELAYER_ROLE(), address(router));
 
         vm.warp(ISSUED_AT);
@@ -699,10 +718,9 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
 
     function _chunk(uint16 index) internal view returns (bytes memory) {
         uint256 seriesCount = BridgeMsgCodec.MAX_SERIES_PER_ISSUANCE;
-        BridgeMsgCodec.IssuanceInstructionsPayload[] memory batch =
-            new BridgeMsgCodec.IssuanceInstructionsPayload[](seriesCount);
+        BridgeMsgCodec.IntexSeriesPayload[] memory batch = new BridgeMsgCodec.IntexSeriesPayload[](seriesCount);
         for (uint256 s = 0; s < seriesCount; ++s) {
-            batch[s] = BridgeMsgCodec.IssuanceInstructionsPayload({
+            batch[s] = BridgeMsgCodec.IntexSeriesPayload({
                 seriesId: bytes14(uint112(uint112(SERIES_PREFIX) + s + 1)),
                 emissionDay: EMISSION_DAY,
                 issuedAt: ISSUED_AT,
@@ -718,7 +736,7 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
                 transitMargin: 1 hours
             });
         }
-        return BridgeMsgCodec.encodeIssuanceInstructions(EMISSION_DAY, index, 2, batch);
+        return BridgeMsgCodec.encodeIntexSeries(EMISSION_DAY, index, 2, batch);
     }
 
     function test_TheQuoteCoversALateChunkOfKnownSeries() public {
@@ -729,7 +747,7 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
         uint256 spent = before - gasleft();
 
         emit log_named_uint("issuance_late_known_series", spent);
-        assertTrue(router.issuanceChunkApplied(EMISSION_DAY, 1), "the late chunk applies");
+        assertTrue(router.intexSeriesPageApplied(EMISSION_DAY, 1), "the late chunk applies");
         assertLt(spent, IntexGas.issuance(seriesCount), "a late chunk must fit the quote");
     }
 }

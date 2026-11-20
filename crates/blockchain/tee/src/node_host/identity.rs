@@ -1,25 +1,12 @@
-use super::locked_state::{lock_node_host_state, require_committed_node_host_state};
-use super::path_exists;
-use super::read_owned_bounded_file;
-use super::reconcile_replacement_state;
-use super::write_manifest_once;
-use super::NodeHostPaths;
-
-use crate::AuthorizedEnclaveClient;
-
-use crate::NodeHostNoiseKey;
+#[cfg(test)]
+use super::{locked_state::lock_node_host_state, path_exists};
+use super::{
+    read_owned_bounded_file, reconcile_replacement_state, NodeHostIdentityKey, NodeHostPaths,
+};
 use crate::TransportError;
-
-use alloy_primitives::B256;
-
-use outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1;
-use outbe_primitives::tee_attestation_v1::NetworkBindingV1;
-use outbe_primitives::tee_attestation_v1::NodeIdV1;
-
-use std::fs;
-
-use std::fs::File;
-
+use outbe_primitives::tee_attestation_v1::{
+    EnclaveInitializationManifestV1, NetworkBindingV1, NodeIdV1,
+};
 use std::path::Path;
 
 pub(super) const MAX_INITIALIZATION_MANIFEST_BYTES: u64 = 512;
@@ -38,92 +25,31 @@ impl NodeHostIdentityV1 {
     }
 }
 
-/// Connect to the one initialized NodeHost enclave, or perform its one-time
-/// initialization when no committed host manifest exists.
-///
-/// `node_data_dir` is the resolved chain-specific reth data directory. The
-/// function owns only its fixed `tee-node-host-v1` child. The function never
-/// replaces a committed manifest. Losing or replacing the enclave identity is
-/// an explicit operator decision, not an implicit startup recovery path.
-pub fn connect_or_initialize_node_host_enclave<F, E>(
-    endpoint: &str,
+/// Load the one committed production manifest after applying the same bounded,
+/// owner-only NodeHost state checks that startup uses. Missing, pending or
+/// inconsistent state is an error. This function never creates or recovers an
+/// enclave identity.
+#[cfg(test)]
+pub(super) fn load_committed_enclave_manifest_v1(
     node_data_dir: &Path,
-    identity: NodeHostIdentityV1,
-    sign_authorization: F,
-) -> Result<AuthorizedEnclaveClient, TransportError>
-where
-    F: Fn(B256) -> Result<[u8; 65], E>,
-    E: std::fmt::Display,
-{
-    connect_or_initialize_enclave(endpoint, node_data_dir, identity, sign_authorization)
-}
-
-/// Reconnect to the one already committed NodeHost identity. This path never
-/// creates state. Later startup stages use it after the node entrypoint
-/// resolved and committed the persistent Reth P2P identity.
-pub fn connect_committed_node_host_enclave(
-    endpoint: &str,
-    node_data_dir: &Path,
-) -> Result<AuthorizedEnclaveClient, TransportError> {
-    let (paths, _state_lock) = lock_node_host_state(node_data_dir)?;
-    require_committed_node_host_state(
-        &paths,
-        "one committed production NodeHost manifest is required",
-    )?;
-    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
-    reconcile_replacement_state(&paths, &node_host)?;
-    let manifest = read_manifest(&paths.manifest)?;
-    AuthorizedEnclaveClient::connect_endpoint(endpoint, &manifest, &node_host)
-}
-
-// Both read-only committed identity consumers use the same locked guard and
-// exact manifest/key reconciliation before their public return shapes diverge.
-fn load_committed_session_identity(
-    node_data_dir: &Path,
-) -> Result<(EnclaveInitializationManifestV1, NodeHostNoiseKey), TransportError> {
+) -> Result<EnclaveInitializationManifestV1, TransportError> {
     let (paths, _state_lock) = lock_node_host_state(node_data_dir)?;
     if !path_exists(&paths.manifest)?
-        || !path_exists(&paths.noise_key)?
+        || !path_exists(&paths.identity_key)?
         || path_exists(&paths.pending_manifest)?
     {
         return Err(TransportError::Codec(
             "one committed production NodeHost manifest is required".into(),
         ));
     }
-    read_committed_identity(&paths)
-}
-
-/// Load the one committed production manifest after applying the same bounded,
-/// owner-only NodeHost state checks that startup uses. Missing, pending or
-/// inconsistent state is an error. This function never creates or recovers an
-/// enclave identity.
-pub fn load_committed_enclave_manifest_v1(
-    node_data_dir: &Path,
-) -> Result<EnclaveInitializationManifestV1, TransportError> {
-    let (manifest, _) = load_committed_session_identity(node_data_dir)?;
+    let (manifest, _) = read_committed_identity(&paths)?;
     Ok(manifest)
-}
-
-/// Load the committed manifest AND the persistent NodeHost Noise key for the
-/// process-global enclave session. It applies the same bounded, owner-only
-/// state checks as [`load_committed_enclave_manifest_v1`].
-///
-/// It is called once at install time. The session can then reconnect without
-/// re-acquiring the NodeHost file lock in the hot path:
-/// - The committed manifest is write-once.
-/// - A legitimately replaced enclave fails the Noise-IK handshake against the
-///   cached responder static. This fails closed and requires the operator
-///   restart that replacement already demands.
-pub fn committed_node_host_session_material(
-    node_data_dir: &Path,
-) -> Result<(EnclaveInitializationManifestV1, NodeHostNoiseKey), TransportError> {
-    load_committed_session_identity(node_data_dir)
 }
 
 pub(super) fn read_committed_identity(
     paths: &NodeHostPaths,
-) -> Result<(EnclaveInitializationManifestV1, NodeHostNoiseKey), TransportError> {
-    let node_host = NodeHostNoiseKey::load(&paths.noise_key)?;
+) -> Result<(EnclaveInitializationManifestV1, NodeHostIdentityKey), TransportError> {
+    let node_host = NodeHostIdentityKey::load(&paths.identity_key)?;
     reconcile_replacement_state(paths, &node_host)?;
     let manifest = read_manifest(&paths.manifest)?;
     if manifest.node_host_noise_x25519 != node_host.public() {
@@ -134,237 +60,6 @@ pub(super) fn read_committed_identity(
     Ok((manifest, node_host))
 }
 
-#[derive(Clone, Copy)]
-enum StartupManifestState {
-    Uninitialized { key_exists: bool },
-    Pending,
-    Committed,
-}
-
-impl StartupManifestState {
-    fn has_noise_key(self) -> bool {
-        match self {
-            Self::Uninitialized { key_exists } => key_exists,
-            Self::Pending | Self::Committed => true,
-        }
-    }
-}
-
-fn read_startup_manifest_state(
-    paths: &NodeHostPaths,
-) -> Result<StartupManifestState, TransportError> {
-    let committed_exists = path_exists(&paths.manifest)?;
-    let pending_exists = path_exists(&paths.pending_manifest)?;
-    let key_exists = path_exists(&paths.noise_key)?;
-    if (committed_exists || pending_exists) && !key_exists {
-        return Err(TransportError::Codec(
-            "NodeHost manifest exists but its persistent Noise key is missing; refusing implicit recovery"
-                .into(),
-        ));
-    }
-    if committed_exists && pending_exists {
-        return Err(TransportError::Codec(
-            "both committed and pending NodeHost manifests exist; startup state is ambiguous"
-                .into(),
-        ));
-    }
-
-    Ok(if committed_exists {
-        StartupManifestState::Committed
-    } else if pending_exists {
-        StartupManifestState::Pending
-    } else {
-        StartupManifestState::Uninitialized { key_exists }
-    })
-}
-
-fn connect_or_initialize_enclave<F, E>(
-    endpoint: &str,
-    node_data_dir: &Path,
-    identity: NodeHostIdentityV1,
-    sign_authorization: F,
-) -> Result<AuthorizedEnclaveClient, TransportError>
-where
-    F: Fn(B256) -> Result<[u8; 65], E>,
-    E: std::fmt::Display,
-{
-    validate_identity(&identity)?;
-    let (paths, _state_lock) = lock_node_host_state(node_data_dir)?;
-
-    let startup = read_startup_manifest_state(&paths)?;
-
-    let node_host = if startup.has_noise_key() {
-        NodeHostNoiseKey::load(&paths.noise_key)?
-    } else {
-        NodeHostNoiseKey::create_new(&paths.noise_key)?
-    };
-    if matches!(startup, StartupManifestState::Committed) {
-        reconcile_replacement_state(&paths, &node_host)?;
-    }
-
-    let initialization = InitializingEnclave {
-        endpoint,
-        paths: &paths,
-        identity: &identity,
-        node_host: &node_host,
-        sign_authorization: &sign_authorization,
-    };
-    match startup {
-        StartupManifestState::Committed => initialization.connect_committed(),
-        StartupManifestState::Pending => initialization.resume_pending(),
-        StartupManifestState::Uninitialized { .. } => initialization.create_fresh(),
-    }
-}
-
-struct InitializingEnclave<'a, F> {
-    endpoint: &'a str,
-    paths: &'a NodeHostPaths,
-    identity: &'a NodeHostIdentityV1,
-    node_host: &'a NodeHostNoiseKey,
-    sign_authorization: &'a F,
-}
-
-impl<F, E> InitializingEnclave<'_, F>
-where
-    F: Fn(B256) -> Result<[u8; 65], E>,
-    E: std::fmt::Display,
-{
-    fn connect_committed(&self) -> Result<AuthorizedEnclaveClient, TransportError> {
-        let manifest = read_manifest(&self.paths.manifest)?;
-        validate_manifest_identity(&manifest, self.identity, self.node_host)?;
-        AuthorizedEnclaveClient::connect_endpoint(self.endpoint, &manifest, self.node_host)
-    }
-
-    fn resume_pending(&self) -> Result<AuthorizedEnclaveClient, TransportError> {
-        let manifest = read_manifest(&self.paths.pending_manifest)?;
-        validate_manifest_identity(&manifest, self.identity, self.node_host)?;
-        if let Ok(client) =
-            AuthorizedEnclaveClient::connect_endpoint(self.endpoint, &manifest, self.node_host)
-        {
-            promote_pending_manifest(self.paths)?;
-            return Ok(client);
-        }
-        let client = initialize_authorized_endpoint(
-            self.endpoint,
-            &manifest,
-            self.node_host,
-            self.sign_authorization,
-        )?;
-        promote_pending_manifest(self.paths)?;
-        Ok(client)
-    }
-
-    fn create_fresh(&self) -> Result<AuthorizedEnclaveClient, TransportError> {
-        let manifest =
-            discover_initialization_manifest(self.endpoint, self.identity, self.node_host)?;
-        write_manifest_once(&self.paths.pending_manifest, &manifest, &self.paths.root)?;
-        let client = initialize_authorized_endpoint(
-            self.endpoint,
-            &manifest,
-            self.node_host,
-            self.sign_authorization,
-        )?;
-        promote_pending_manifest(self.paths)?;
-        Ok(client)
-    }
-}
-
-/// The initialization manifest that binds the node identity and the persistent
-/// NodeHost key to one enclave initialization challenge.
-pub(super) fn manifest_for_challenge(
-    identity: &NodeHostIdentityV1,
-    node_host: &NodeHostNoiseKey,
-    challenge: &crate::client::EnclaveInitializationChallenge,
-) -> EnclaveInitializationManifestV1 {
-    EnclaveInitializationManifestV1 {
-        chain_id: identity.network_binding.chain_id,
-        genesis_hash: identity.network_binding.genesis_hash,
-        attestation_mode: identity.network_binding.attestation_mode,
-        node_id: identity.node_id(),
-        initialization_challenge: challenge.challenge,
-        node_host_noise_x25519: node_host.public(),
-        recipient_x25519: challenge.recipient_x25519,
-        attestation_ed25519: challenge.attestation_ed25519,
-        noise_responder_x25519: challenge.noise_responder_x25519,
-    }
-}
-
-/// Reads the endpoint challenge and validates the new initialization manifest.
-pub(super) fn discover_initialization_manifest(
-    endpoint: &str,
-    identity: &NodeHostIdentityV1,
-    node_host: &NodeHostNoiseKey,
-) -> Result<EnclaveInitializationManifestV1, TransportError> {
-    let challenge = AuthorizedEnclaveClient::discover_endpoint(endpoint)?;
-    let manifest = manifest_for_challenge(identity, node_host, &challenge);
-    validate_manifest_identity(&manifest, identity, node_host)?;
-    Ok(manifest)
-}
-
-/// Signs the manifest before it starts the authorized enclave session.
-pub(super) fn initialize_authorized_endpoint<F, E>(
-    endpoint: &str,
-    manifest: &EnclaveInitializationManifestV1,
-    node_host: &NodeHostNoiseKey,
-    sign_authorization: &F,
-) -> Result<AuthorizedEnclaveClient, TransportError>
-where
-    F: Fn(B256) -> Result<[u8; 65], E>,
-    E: std::fmt::Display,
-{
-    let signature = sign_manifest(manifest, sign_authorization)?;
-    AuthorizedEnclaveClient::initialize_endpoint(endpoint, manifest, &signature, node_host)
-}
-
-pub(super) fn validate_identity(identity: &NodeHostIdentityV1) -> Result<(), TransportError> {
-    identity
-        .network_binding
-        .encode_canonical()
-        .map_err(TransportError::codec)?;
-    identity
-        .node_id()
-        .node_id_hash()
-        .map_err(TransportError::codec)?;
-    Ok(())
-}
-
-pub(super) fn validate_manifest_identity(
-    manifest: &EnclaveInitializationManifestV1,
-    identity: &NodeHostIdentityV1,
-    node_host: &NodeHostNoiseKey,
-) -> Result<(), TransportError> {
-    manifest.encode_canonical().map_err(TransportError::codec)?;
-    if manifest.network_binding() != identity.network_binding
-        || manifest.node_id != identity.node_id()
-        || manifest.node_host_noise_x25519 != node_host.public()
-    {
-        return Err(TransportError::Codec(
-            "persisted NodeHost manifest does not match this node startup identity".into(),
-        ));
-    }
-    Ok(())
-}
-
-pub(super) fn sign_manifest<F, E>(
-    manifest: &EnclaveInitializationManifestV1,
-    sign_authorization: &F,
-) -> Result<[u8; 65], TransportError>
-where
-    F: Fn(B256) -> Result<[u8; 65], E>,
-    E: std::fmt::Display,
-{
-    let hash = manifest
-        .authorization_hash()
-        .map_err(TransportError::codec)?;
-    let signature = sign_authorization(hash).map_err(TransportError::codec)?;
-    if !manifest.verify_node_signature(&signature) {
-        return Err(TransportError::Codec(
-            "node signer produced an invalid NodeHost manifest signature".into(),
-        ));
-    }
-    Ok(signature)
-}
-
 pub(super) fn read_manifest(
     path: &Path,
 ) -> Result<EnclaveInitializationManifestV1, TransportError> {
@@ -372,13 +67,77 @@ pub(super) fn read_manifest(
     EnclaveInitializationManifestV1::decode_canonical(&bytes).map_err(TransportError::codec)
 }
 
-fn promote_pending_manifest(paths: &NodeHostPaths) -> Result<(), TransportError> {
-    if path_exists(&paths.manifest)? {
-        return Err(TransportError::Codec(
-            "refusing to replace a committed NodeHost manifest".into(),
-        ));
+impl NodeHostIdentityV1 {
+    /// Authorization uses only the persistent host keys, not the process enclave identity.
+    pub fn authorization_witness_v1(
+        &self,
+        node_host: &NodeHostIdentityKey,
+    ) -> crate::in_process::Result<
+        outbe_primitives::tee_attestation_v1::NodeHostAuthorizationWitnessV1,
+    > {
+        use outbe_primitives::tee_attestation_v1::NodeHostAuthorizationWitnessV1;
+        let witness = NodeHostAuthorizationWitnessV1 {
+            chain_id: self.network_binding.chain_id,
+            genesis_hash: self.network_binding.genesis_hash,
+            attestation_mode: self.network_binding.attestation_mode,
+            node_id: self.node_id(),
+            node_host_noise_x25519: node_host.public(),
+        };
+        witness.encode_canonical()?;
+        Ok(witness)
     }
-    fs::rename(&paths.pending_manifest, &paths.manifest)?;
-    File::open(&paths.root)?.sync_all()?;
-    Ok(())
+}
+
+#[cfg(test)]
+pub(super) mod process_identity_tests {
+    use super::*;
+    use alloy_primitives::B256;
+    use outbe_primitives::tee_attestation_v1::*;
+
+    pub(crate) fn manifest(seed: u8, host: [u8; 32]) -> EnclaveInitializationManifestV1 {
+        let node = k256::ecdsa::SigningKey::from_slice(&[3; 32]).unwrap();
+        EnclaveInitializationManifestV1 {
+            chain_id: alloy_primitives::U256::from(424242).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(2),
+            attestation_mode: AttestationMode::NoAttestationDev,
+            node_id: NodeIdV1 {
+                reth_p2p_public: node
+                    .verifying_key()
+                    .to_encoded_point(true)
+                    .as_bytes()
+                    .try_into()
+                    .unwrap(),
+            },
+            initialization_challenge: [seed; 32],
+            node_host_noise_x25519: host,
+            recipient_x25519: [seed; 32],
+            noise_responder_x25519: [seed; 32],
+            attestation_ed25519: ed25519_dalek::SigningKey::from_bytes(&[seed; 32])
+                .verifying_key()
+                .to_bytes(),
+        }
+    }
+
+    #[test]
+    fn host_authorization_is_stable_across_ephemeral_enclave_restarts() {
+        let root = tempfile::tempdir().unwrap();
+        let host = NodeHostIdentityKey::create_new(&root.path().join("host.key")).unwrap();
+        let active = manifest(9, host.public());
+        let identity = NodeHostIdentityV1 {
+            network_binding: active.network_binding(),
+            reth_p2p_public: active.node_id.reth_p2p_public,
+        };
+        let expected = identity.authorization_witness_v1(&host).unwrap();
+        for process in [active, manifest(10, host.public())] {
+            assert_eq!(
+                NodeHostAuthorizationWitnessV1::from_manifest(&process).unwrap(),
+                expected
+            );
+        }
+        let loaded = NodeHostIdentityKey::load(&root.path().join("host.key")).unwrap();
+        assert_eq!(
+            identity.authorization_witness_v1(&loaded).unwrap(),
+            expected
+        );
+    }
 }

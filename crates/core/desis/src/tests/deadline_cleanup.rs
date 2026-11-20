@@ -23,17 +23,17 @@ fn deadline_retirement_fits_budget_for_1088_and_64_accepted_bids() {
                         let index = u32::from(batch) * 64 + offset;
                         let mut address = [0u8; 20];
                         address[16..].copy_from_slice(&(index + 1).to_be_bytes());
-                        BidData {
+                        IntexAuctionBidData {
                             bidder_address: Address::from(address),
-                            intex_bid_rate: config.min_intex_bid_rate.max(200),
+                            intex_bid_rate: config.min_bid_rate.max(200),
                             timestamp: index,
-                            intex_quantity: config.min_intex_bid_quantity.max(1),
+                            intex_quantity: config.min_bid_quantity.max(1),
                             issuance_currency: REFERENCE_ISO,
                             reference_currency: REFERENCE_ISO,
                         }
                     })
                     .collect();
-                runtime::process_bids_batch(
+                runtime::collect_intex_auction_bids(
                     s.clone(),
                     origin(SRC_CHAIN),
                     batch,
@@ -47,7 +47,7 @@ fn deadline_retirement_fits_budget_for_1088_and_64_accepted_bids() {
             let contract = s.contract::<DesisContract>();
             assert_eq!(
                 contract
-                    .chain_done
+                    .bids_completed
                     .read(&DesisContract::chain_key(EMISSION_DAY, SRC_CHAIN))
                     .unwrap(),
                 1
@@ -125,7 +125,7 @@ fn deadline_retirement_fits_budget_for_1088_and_64_accepted_bids() {
         let logs = provider.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
         assert_eq!(
             logs.iter()
-                .filter(|log| IDesis::IntexAuctionFailed::decode_log_data(log).is_ok())
+                .filter(|log| IDesis::DesisFailed::decode_log_data(log).is_ok())
                 .count(),
             1
         );
@@ -188,7 +188,7 @@ fn schedule_terminal_stages_are_idempotent_even_if_still_scheduled() {
         for stage in [
             AuctionStage::Completed,
             AuctionStage::Failed,
-            AuctionStage::Cancelled,
+            AuctionStage::Canceled,
         ] {
             contract.write_stage(EMISSION_DAY, stage).unwrap();
             contract.push_sched_active(EMISSION_DAY).unwrap();

@@ -11,11 +11,11 @@
 //! Only `max_rcfi_at` stays on-chain, as a pure function of the plaintext
 //! `first_qualified_start` anchor.
 
-use alloy_primitives::{Address, B256, U256};
-use outbe_enclave::protocol::{
+use crate::protocol::{
     FidelityCohortOp, FidelityCohortRequest, FidelityOpOutcome, FidelityOpSection,
     FidelityQueryRequest, FidelityQueryResult, FidelitySnapshotEntry, FidelitySnapshotRequest,
 };
+use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -158,8 +158,10 @@ impl FidelityContract<'_> {
         if first == 0 || !wwd.is_valid() {
             return Ok(U256::ZERO);
         }
-        let ts = outbe_system_common::time::date_key_to_utc_timestamp(wwd.value())
-            .map_err(|err| outbe_primitives::error::PrecompileError::Fatal(err.to_string()))?;
+        let ts =
+            outbe_system_common::time::date_key_to_utc_timestamp(wwd.value()).map_err(|err| {
+                outbe_primitives::error::PrecompileError::Fatal(crate::errors::display_string(&err))
+            })?;
         let eval_day = outbe_system_common::time::utc_day_from_timestamp(ts);
         Ok(t_dec(eval_day.saturating_sub(first)))
     }

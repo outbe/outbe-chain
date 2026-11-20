@@ -1,12 +1,14 @@
 use std::time::Instant;
 
 use alloy_primitives::{Address, B256, U256};
-use outbe_enclave::confidential::ModifyOperation;
-use outbe_enclave::protocol::{FidelityCohortOp, GratisOp, ModifyAuth, PromisOp};
+use outbe_core_common::confidential_tee::ModifyOperation;
 use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
+use outbe_fidelity::FidelityCohortOp;
 use outbe_gratis::enclave_client::test_enclave as gratis_enclave;
+use outbe_gratis::{GratisOp, ModifyAuth};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_promis::enclave_client::test_enclave as promis_enclave;
+use outbe_promis::PromisOp;
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{
@@ -81,19 +83,19 @@ fn operation<Op>(op: Op) -> ModifyOperation<Op> {
 }
 
 fn gratis_auth() -> ModifyAuth {
-    let key = outbe_enclave::gratis::derive_modify_key(&gratis_enclave::state_key(), ACCOUNT)
+    let key = outbe_gratis::derive_account_keys(&gratis_enclave::state_key(), ACCOUNT)
         .expect("benchmark Gratis key derives");
     ModifyAuth {
-        mac: outbe_enclave::gratis::modify_mac(&key, &operation(GratisOp::Mint)),
+        mac: outbe_gratis::modify_mac(&key, &operation(GratisOp::Mint)),
         op_nonce: 0,
     }
 }
 
 fn promis_auth() -> ModifyAuth {
-    let key = outbe_enclave::promis::derive_modify_key(&promis_enclave::state_key(), ACCOUNT)
+    let key = outbe_promis::derive_account_keys(&promis_enclave::state_key(), ACCOUNT)
         .expect("benchmark Promis key derives");
     ModifyAuth {
-        mac: outbe_enclave::promis::modify_mac(&key, &operation(PromisOp::Mint)),
+        mac: outbe_promis::modify_mac(&key, &operation(PromisOp::Mint)),
         op_nonce: 0,
     }
 }
@@ -200,25 +202,19 @@ impl BenchmarkScenario for ConfidentialScenario {
             };
             let balance = match self.path {
                 ConfidentialPath::Promis => {
-                    let key = outbe_enclave::promis::derive_view_key(
-                        &promis_enclave::state_key(),
-                        ACCOUNT,
-                    )
-                    .map_err(|error| error.to_string())?;
+                    let key = outbe_promis::derive_view_key(&promis_enclave::state_key(), ACCOUNT)
+                        .map_err(|error| error.to_string())?;
                     let blob = outbe_promis::api::balance_ct(storage, ACCOUNT)
                         .map_err(|error| error.to_string())?;
-                    outbe_enclave::promis::decrypt_balance(&key, ACCOUNT, &blob)
+                    outbe_promis::decrypt_balance(&key, ACCOUNT, &blob)
                         .map_err(|error| error.to_string())?
                 }
                 _ => {
-                    let key = outbe_enclave::gratis::derive_view_key(
-                        &gratis_enclave::state_key(),
-                        ACCOUNT,
-                    )
-                    .map_err(|error| error.to_string())?;
+                    let key = outbe_gratis::derive_view_key(&gratis_enclave::state_key(), ACCOUNT)
+                        .map_err(|error| error.to_string())?;
                     let blob = outbe_gratis::api::balance_ct(storage, ACCOUNT)
                         .map_err(|error| error.to_string())?;
-                    outbe_enclave::gratis::decrypt_balance(&key, ACCOUNT, &blob)
+                    outbe_gratis::decrypt_balance(&key, ACCOUNT, &blob)
                         .map_err(|error| error.to_string())?
                 }
             };

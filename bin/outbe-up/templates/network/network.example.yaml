@@ -1,5 +1,5 @@
-# Minimal four-founder confidential-VM network. Add more `founders` entries for a larger founding
-# committee; at least four are required. VM attestation is not implemented yet.
+# Minimal four-founder test network. Add more `founders` entries for a larger founding committee.
+# This workflow uses in-process TEE without attestation and is limited to devnet and testnet.
 version: 1
 name: local-testnet
 network: testnet
@@ -41,7 +41,7 @@ topology:
 
 genesis:
   # Optional pre-TEE genesis JSON. Paths are resolved relative to this file.
-  # When set, timestamp, epoch length, and DKG windows come from that file.
+  # When set, remove the timestamp, epoch length, and DKG window settings below.
   # base: ./custom-genesis.json
   # Omit timestamp for a fresh launch time. Set it to reproduce one exact genesis.
   # timestamp: 1793795928

@@ -199,7 +199,9 @@ fn two_slashes_burn_whole_minors_and_keep_the_rest_on_staking() {
 #[test]
 fn each_burn_code_keeps_its_own_rest_on_its_own_account() {
     use outbe_primitives::addresses::REWARDS_ADDRESS;
-    use outbe_system_common::addresses::{INTEX_FACTORY_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS};
+    use outbe_system_common::addresses::{
+        GRATIS_FACTORY_ADDRESS, INTEX_FACTORY_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS,
+    };
 
     use crate::runtime::BurnSource;
 
@@ -208,6 +210,7 @@ fn each_burn_code_keeps_its_own_rest_on_its_own_account() {
         (BurnSource::IntexAuctionProceeds, INTEX_FACTORY_ADDRESS),
         (BurnSource::ValidatorStake, STAKING_ADDRESS),
         (BurnSource::ProposalBond, VOTE_ADDRESS),
+        (BurnSource::GratisMint, GRATIS_FACTORY_ADDRESS),
     ];
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     for (_, account) in sources {
@@ -230,7 +233,7 @@ fn each_burn_code_keeps_its_own_rest_on_its_own_account() {
             assert_eq!(c.burn_rest(source).unwrap(), U256::from(i));
             assert_eq!(handle.balance(account).unwrap(), U256::ZERO);
         }
-        assert_eq!(c.promis_limit().unwrap(), U256::from(4));
+        assert_eq!(c.promis_limit().unwrap(), U256::from(5));
     });
     assert_eq!(
         promis_limit_logs(&storage),
@@ -238,7 +241,8 @@ fn each_burn_code_keeps_its_own_rest_on_its_own_account() {
             (42, true, U256::ONE),
             (43, true, U256::ONE),
             (44, true, U256::ONE),
-            (45, true, U256::ONE)
+            (45, true, U256::ONE),
+            (47, true, U256::ONE)
         ]
     );
 }

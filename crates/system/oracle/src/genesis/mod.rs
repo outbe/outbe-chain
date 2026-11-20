@@ -7,11 +7,11 @@ mod export;
 mod import;
 mod validate;
 
-use crate::constants::{DAY_TYPE_ISO, DEFAULT_POLICY_RATES};
+use crate::constants::{DAY_TYPE_ISO, REFERENCE_CURRENCIES};
 use crate::types::AssetType;
 use alloy_primitives::{Address, U256};
 use outbe_system_common::asset_type::COEN_ASSET;
-use outbe_system_common::time::{WorldwideDay, SECONDS_PER_DAY};
+use outbe_system_common::time::SECONDS_PER_DAY;
 
 pub use export::export_genesis;
 pub use import::init_from_genesis;
@@ -32,8 +32,8 @@ pub struct GenesisScurveEntry {
     pub base: Address,
     /// Quote asset of the pair.
     pub quote: Address,
-    /// The WorldwideDay the curve starts at.
-    pub peak_day: WorldwideDay,
+    /// The whole UTC hour the curve starts at, in Unix seconds.
+    pub start_hour: u64,
     /// Peak price in the COEN/840 S-Curve's six-decimal scale.
     pub peak_price: U256,
 }
@@ -45,15 +45,6 @@ pub struct GenesisAggregateVote {
     pub validator: Address,
     /// Entries as `(base, quote, rate, volume)` in each pair's registered scale.
     pub entries: Vec<(Address, Address, U256, U256)>,
-}
-
-/// An independently registered annual policy rate for one ISO 4217 currency.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PolicyRate {
-    /// ISO 4217 numeric code (e.g., 840 = USD).
-    pub iso_code: u16,
-    /// Annualized rate at scale `1e6` (e.g., 0.043 -> 43_000).
-    pub annual_rate_1e6: U256,
 }
 
 /// Configurable genesis parameters for the Oracle contract.
@@ -83,8 +74,10 @@ pub struct OracleGenesisConfig {
     pub initial_rates: Vec<(Address, Address, U256)>,
     /// Feeder delegations as `(validator, feeder)`.
     pub feeder_delegations: Vec<(Address, Address)>,
-    /// Sorted unique annual policy rates, independent from references and pairs.
-    pub policy_rates: Vec<PolicyRate>,
+    /// Currencies that are policy rate vote targets, as ISO 4217 numeric
+    /// codes. Each reference currency must be in the list. Genesis gives no
+    /// rate: the first rate of a currency comes from the first tally.
+    pub policy_rate_currencies: Vec<u16>,
     /// Penalty counters as `(validator, success, abstain, miss)`.
     pub penalty_counters: Vec<(Address, u64, u64, u64)>,
     /// Pending aggregate votes that have not yet been tallied.
@@ -109,13 +102,7 @@ impl OracleGenesisConfig {
             pairs: vec![(COEN_ASSET, AssetType::IsoCurrency(DAY_TYPE_ISO).into())],
             initial_rates: vec![],
             feeder_delegations: vec![],
-            policy_rates: DEFAULT_POLICY_RATES
-                .iter()
-                .map(|&(iso_code, rate)| PolicyRate {
-                    iso_code,
-                    annual_rate_1e6: U256::from(rate),
-                })
-                .collect(),
+            policy_rate_currencies: REFERENCE_CURRENCIES.to_vec(),
             penalty_counters: vec![],
             aggregate_votes: vec![],
             snapshots: vec![],

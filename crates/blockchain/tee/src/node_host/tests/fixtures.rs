@@ -5,7 +5,6 @@ use outbe_primitives::tee_test_utils::{
 
 #[derive(Clone, Copy)]
 pub(super) enum DirectorySync {
-    Skip,
     Sync,
 }
 
@@ -39,28 +38,19 @@ pub(super) struct ReplacementFixture {
 pub(super) struct DirectDevRegistration {
     pub(super) fixture: ReplacementFixture,
     pub(super) evidence: AttestationEvidenceV1,
-    pub(super) node_signature: [u8; 65],
-    pub(super) enclave_signature: [u8; 64],
 }
 
 pub(super) fn direct_dev_registration() -> DirectDevRegistration {
     let fixture = replacement_fixture_for_mode(
         AttestationOperationV1::RegisterEnclave,
-        AttestationMode::GramineDirectDev,
+        AttestationMode::NoAttestationDev,
     );
     let candidate_submission = load_replacement_candidate_submission(&fixture.node_data_dir)
         .unwrap()
         .unwrap();
     let evidence =
         AttestationEvidenceV1::decode_canonical(candidate_submission.evidence()).unwrap();
-    let node_signature = *candidate_submission.node_signature();
-    let enclave_signature = *candidate_submission.enclave_signature();
-    DirectDevRegistration {
-        fixture,
-        evidence,
-        node_signature,
-        enclave_signature,
-    }
+    DirectDevRegistration { fixture, evidence }
 }
 
 pub(super) fn replacement_fixture() -> ReplacementFixture {
@@ -82,7 +72,7 @@ pub(super) fn replacement_fixture_for_mode(
     std::fs::create_dir(&node_data_dir).unwrap();
     let paths = NodeHostPaths::new(&node_data_dir);
     ensure_private_directory(&paths.root).unwrap();
-    let node_host = NodeHostNoiseKey::create_new(&paths.noise_key).unwrap();
+    let node_host = NodeHostIdentityKey::create_new(&paths.identity_key).unwrap();
     let node_host_public = node_host.public();
     let node_signer = k256::ecdsa::SigningKey::from_bytes((&[0x61; 32]).into()).unwrap();
     let reth_p2p_public = node_signer
@@ -164,8 +154,8 @@ pub(super) fn replacement_fixture_for_mode(
             components: crate::test_utils::canonical_dcap_collateral_fixture(),
             transition_key_ready_proof,
         }),
-        AttestationMode::GramineDirectDev => AttestationEvidenceV1::GramineDirectDev(
-            outbe_primitives::tee_attestation_v1::GramineDirectEvidenceV1 {
+        AttestationMode::NoAttestationDev => AttestationEvidenceV1::NoAttestationDev(
+            outbe_primitives::tee_attestation_v1::NoAttestationDevEvidenceV1 {
                 transition_key_ready_proof: None,
                 intent,
                 dev_attestation_public: enclave_signer.verifying_key().to_bytes(),
@@ -205,35 +195,30 @@ impl FinalizedReplacementAuthorizationV1 {
 
 #[derive(Clone, Copy)]
 pub(super) enum RelayRecordKind {
-    CommittedJoin,
     Replacement,
 }
 
 impl RelayRecordKind {
     fn path(self, paths: &NodeHostPaths) -> &std::path::Path {
         match self {
-            Self::CommittedJoin => &paths.committed_join_relay,
             Self::Replacement => &paths.replacement_relay,
         }
     }
 
     const fn length_offset(self) -> usize {
         match self {
-            Self::CommittedJoin => 105,
             Self::Replacement => 97,
         }
     }
 
     const fn record_name(self) -> &'static str {
         match self {
-            Self::CommittedJoin => "committed join relay",
             Self::Replacement => "replacement relay",
         }
     }
 
     fn read_error(self, path: &std::path::Path) -> String {
         match self {
-            Self::CommittedJoin => read_committed_join_relay(path).unwrap_err().to_string(),
             Self::Replacement => read_replacement_relay(path).unwrap_err().to_string(),
         }
     }
