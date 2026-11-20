@@ -31,7 +31,8 @@ struct NetworkArgs {
 #[derive(Debug, Subcommand)]
 enum NetworkCommand {
     /// Write a documented network configuration template.
-    Init {
+    #[command(visible_alias = "init")]
+    ConfigExample {
         #[arg(long, default_value = "network.yaml")]
         output: PathBuf,
     },
@@ -82,10 +83,10 @@ struct ValidatorArgs {
 
 #[derive(Debug, Subcommand)]
 enum ValidatorCommand {
-    /// Write a documented operator configuration template.
+    /// Print a documented operator configuration template, or write it to --output.
     ConfigExample {
-        #[arg(long, default_value = "operator-config.yaml")]
-        output: PathBuf,
+        #[arg(long)]
+        output: Option<PathBuf>,
     },
     /// Verify and install an operator bundle without starting services.
     Prepare {
@@ -94,12 +95,12 @@ enum ValidatorCommand {
         #[arg(long)]
         config: PathBuf,
     },
-    /// Restore an optional snapshot, start a keyless full node, and reach tip.
+    /// Restore an optional snapshot, start the resident validator, and reach tip.
     Sync {
         #[arg(long)]
         snapshot: Option<PathBuf>,
     },
-    /// Join the TEE registry and promote the synchronized node to a validator.
+    /// Stake and confirm readiness without restarting the synchronized node.
     Promote,
     /// Show the current lifecycle state.
     Status {
@@ -117,12 +118,10 @@ struct InternalArgs {
 
 #[derive(Debug, Subcommand)]
 enum InternalCommand {
-    Enclave,
     Feeder,
     Hyperlane,
     HyperlaneSetup,
     WaitRpc(WaitArgs),
-    WaitEnclave(WaitArgs),
     WaitValidatorDependencies(WaitArgs),
 }
 
@@ -136,7 +135,7 @@ impl Cli {
     pub async fn run(self) -> Result<()> {
         match self.command {
             Command::Network(args) => match args.command {
-                NetworkCommand::Init { output } => network::config::init(&output),
+                NetworkCommand::ConfigExample { output } => network::config::init(&output),
                 NetworkCommand::Build {
                     software_bundle,
                     config,
@@ -165,9 +164,13 @@ impl Cli {
                 } => network::status::show(&artifacts, ssh_key.as_deref(), watch).await,
             },
             Command::Validator(args) => match args.command {
-                ValidatorCommand::ConfigExample { output } => {
-                    validator::assets::write_config_example(&output)
-                }
+                ValidatorCommand::ConfigExample { output } => match output {
+                    Some(path) => validator::assets::write_config_example(&path),
+                    None => {
+                        print!("{}", validator::assets::OPERATOR_CONFIG_EXAMPLE);
+                        Ok(())
+                    }
+                },
                 ValidatorCommand::Prepare { bundle, config } => {
                     validator::prepare::run(&bundle, &config).await
                 }
@@ -178,14 +181,10 @@ impl Cli {
                 ValidatorCommand::Status { watch } => validator::status::show(watch).await,
             },
             Command::Internal(args) => match args.command {
-                InternalCommand::Enclave => validator::service::enclave(),
                 InternalCommand::Feeder => validator::service::feeder(),
                 InternalCommand::Hyperlane => validator::hyperlane::run_service().await,
                 InternalCommand::HyperlaneSetup => validator::hyperlane::setup_founder().await,
                 InternalCommand::WaitRpc(args) => validator::service::wait_rpc(args.timeout).await,
-                InternalCommand::WaitEnclave(args) => {
-                    validator::service::wait_enclave(args.timeout).await
-                }
                 InternalCommand::WaitValidatorDependencies(args) => {
                     validator::service::wait_validator_dependencies(args.timeout).await
                 }
@@ -201,10 +200,15 @@ mod tests {
 
     #[test]
     fn lifecycle_commands_parse() {
-        assert!(
-            Cli::try_parse_from(["outbe-up", "network", "init", "--output", "network.yaml",])
-                .is_ok()
-        );
+        for command in ["config-example", "init"] {
+            let parsed = Cli::try_parse_from(["outbe-up", "network", command]).unwrap();
+            assert!(matches!(
+                parsed.command,
+                Command::Network(NetworkArgs {
+                    command: NetworkCommand::ConfigExample { output }
+                }) if output.as_os_str() == "network.yaml"
+            ));
+        }
         assert!(Cli::try_parse_from([
             "outbe-up",
             "network",
@@ -249,14 +253,6 @@ mod tests {
         assert!(Cli::try_parse_from([
             "outbe-up",
             "validator",
-            "config-example",
-            "--output",
-            "operator-config.yaml",
-        ])
-        .is_ok());
-        assert!(Cli::try_parse_from([
-            "outbe-up",
-            "validator",
             "prepare",
             "--bundle",
             "bundle.tar.zst",
@@ -274,6 +270,29 @@ mod tests {
         .is_ok());
         assert!(Cli::try_parse_from(["outbe-up", "validator", "promote"]).is_ok());
         assert!(Cli::try_parse_from(["outbe-up", "validator", "status", "--watch"]).is_ok());
+    }
+
+    #[test]
+    fn validator_config_example_output_is_optional() {
+        for args in [
+            vec!["outbe-up", "validator", "config-example"],
+            vec![
+                "outbe-up",
+                "validator",
+                "config-example",
+                "--output",
+                "operator-config.yaml",
+            ],
+        ] {
+            let expected = args.get(4).map(PathBuf::from);
+            let parsed = Cli::try_parse_from(args).unwrap();
+            assert!(matches!(
+                parsed.command,
+                Command::Validator(ValidatorArgs {
+                    command: ValidatorCommand::ConfigExample { output }
+                }) if output == expected
+            ));
+        }
     }
 
     #[test]

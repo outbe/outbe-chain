@@ -70,11 +70,19 @@ contract ConfigureOriginTest is ConfigureTest {
         assertTrue(router.hasRole(router.INTEX_FACTORY_ROLE(), o.system));
         assertTrue(router.hasRole(router.INTEX_FACTORY_ROLE(), o.desis));
         IntexNFT1155 nft = IntexNFT1155(o.nft);
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), o.system));
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), o.desis));
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), o.intexFactory));
         assertTrue(nft.hasRole(nft.BURNER_ROLE(), o.intexFactory));
         assertTrue(nft.hasRole(nft.BURNER_ROLE(), o.gemFactory));
+    }
+
+    function test_Configure_GrantsNoRouterOrBridgeRoleOnOutbe() public {
+        script.configure(deployer, o);
+
+        IntexNFT1155 nft = IntexNFT1155(o.nft);
+        address[3] memory callers = [o.system, o.desis, o.intexFactory];
+        for (uint256 i = 0; i < callers.length; i++) {
+            assertFalse(nft.hasRole(nft.ROUTER_ROLE(), callers[i]));
+            assertFalse(nft.hasRole(nft.BRIDGE_ROLE(), callers[i]));
+        }
     }
 
     function test_Configure_SecondRunWritesNothing() public {
@@ -105,7 +113,7 @@ contract ConfigureOriginTest is ConfigureTest {
     function test_RevertWhen_HandedOverAndARoleIsMissing() public {
         script.configure(deployer, o);
         _handOver(o.nft, deployer);
-        o.system = makeAddr("newSystem");
+        o.gemFactory = makeAddr("newGemFactory");
 
         vm.expectRevert(abi.encodeWithSelector(BaseScript.HandedOverToGovernance.selector, o.nft));
         script.configure(deployer, o);
@@ -143,20 +151,28 @@ contract ConfigureTargetTest is ConfigureTest {
     function test_Configure_WiresTheStackAndGrantsTheRelayerRoles() public {
         script.configure(deployer, t);
 
-        assertEq(address(IntexAuction(t.auction).escrowContract()), t.escrow);
+        assertEq(address(IntexAuction(t.auction).escrow()), t.escrow);
         EscrowAdapter escrow = EscrowAdapter(payable(t.escrow));
-        assertEq(escrow.intexAuctionContract(), t.auction);
+        assertEq(escrow.intexAuction(), t.auction);
         assertEq(address(escrow.compact()), t.compact);
-        assertEq(address(escrow.paymentToken()), t.wcoen);
+        assertEq(address(escrow.intexAuctionAsset()), t.wcoen);
         TargetRouter router = TargetRouter(payable(t.router));
-        assertEq(address(router.auction()), t.auction);
-        assertEq(address(router.intex()), t.nft);
-        assertEq(address(router.escrowAdapter()), t.escrow);
+        assertEq(address(router.intexAuction()), t.auction);
+        assertEq(address(router.intexContract()), t.nft);
+        assertEq(address(router.escrow()), t.escrow);
         assertTrue(IntexAuction(t.auction).hasRole(IntexAuction(t.auction).RELAYER_ROLE(), t.router));
         assertTrue(escrow.hasRole(escrow.RELAYER_ROLE(), t.router));
         IntexNFT1155 nft = IntexNFT1155(t.nft);
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), t.router));
-        assertTrue(nft.hasRole(nft.RELAYER_ROLE(), t.nftBridge));
+        assertTrue(nft.hasRole(nft.ROUTER_ROLE(), t.router));
+        assertTrue(nft.hasRole(nft.BRIDGE_ROLE(), t.nftBridge));
+    }
+
+    function test_Configure_GivesEachTokenHolderOnlyItsRole() public {
+        script.configure(deployer, t);
+
+        IntexNFT1155 nft = IntexNFT1155(t.nft);
+        assertFalse(nft.hasRole(nft.BRIDGE_ROLE(), t.router));
+        assertFalse(nft.hasRole(nft.ROUTER_ROLE(), t.nftBridge));
     }
 
     function test_Configure_SecondRunWritesNothing() public {

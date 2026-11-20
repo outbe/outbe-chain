@@ -1,4 +1,4 @@
-use super::algorithm::{calculate_clearing, sort_bids};
+use super::algorithm::{compute_clearing, sort_bids};
 use super::*;
 
 /// Tick entry for the fan-in gate: clear once every snapshot chain has finalized,
@@ -70,7 +70,7 @@ fn poll_gate(ctx: &BlockRuntimeContext) -> Result<()> {
 
 /// Gas one COLLECTING_BIDS round asks of `chain_id`, from the busiest of its last
 /// [`CLEARING_HISTORY_DAYS`] days and never below [`CLEARING_MIN_BIDS`] bids' worth.
-pub(crate) fn clearing_round_gas(
+pub(crate) fn clearing_run_gas(
     storage: &StorageHandle<'_>,
     emission_day: EmissionDate,
     chain_id: u32,
@@ -89,7 +89,7 @@ pub(crate) fn clearing_round_gas(
         // collection. Cleanup progress must not change the next auction's quote.
         if matches!(
             contract.read_stage(history_day)?,
-            AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed
+            AuctionStage::Completed | AuctionStage::Canceled | AuctionStage::Failed
         ) {
             continue;
         }
@@ -98,7 +98,7 @@ pub(crate) fn clearing_round_gas(
     }
     let chunks = bids.div_ceil(MAX_PAYLOAD_ARRAY_LEN as u64).max(1);
     let cost = CLEARING_FIXED_GAS
-        .saturating_add(chunks.saturating_mul(CLEARING_CHUNK_GAS))
+        .saturating_add(chunks.saturating_mul(CLEARING_PAGE_GAS))
         .saturating_add(bids.saturating_mul(CLEARING_BID_GAS));
     Ok(cost.saturating_mul(3) / 2)
 }
@@ -131,7 +131,7 @@ fn partition_chains(
     let mut skipped = Vec::new();
     for &chain_id in snapshot {
         if contract
-            .chain_done
+            .bids_completed
             .read(&DesisContract::chain_key(emission_day, chain_id))?
             != 0
         {
@@ -166,7 +166,7 @@ fn clear_inner(
 
     let config = contract.read_auction_config(emission_day)?;
     let min_bid_qty = contract.config_min_bid_quantity.read(&emission_day)? as u16;
-    // Zero bids are valid here. `calculate_clearing` yields 0 issued, and the full limit returns
+    // Zero bids are valid here. `compute_clearing` yields 0 issued, and the full limit returns
     // to PromisLimit. A no-sale AuctionResult(0,0,0) is reported to every snapshot chain.
     let bids = contract.read_chains_bids(emission_day, included)?;
 
@@ -174,7 +174,7 @@ fn clear_inner(
     let mut sorted = bids;
     sort_bids(&mut sorted);
 
-    let result = calculate_clearing(&sorted, &config, desis_limit_units, min_bid_qty);
+    let result = compute_clearing(&sorted, &config, desis_limit_units, min_bid_qty);
 
     // Persist clearing outcome and transition.
     contract.write_stage(emission_day, AuctionStage::Completed)?;
@@ -195,25 +195,18 @@ fn clear_inner(
     contract.queue_intake_cleanup(emission_day)?;
 
     for &chain_id in skipped {
-        contract.emit(IDesis::BidsExpired {
+        contract.emit(IDesis::IntexAuctionBidsExpired {
             emissionDay: emission_day.into(),
             srcChainId: chain_id,
         })?;
     }
 
-    if result.issued_units == 0 {
-        contract.emit(IDesis::IntexAuctionCompletedEmpty {
-            emissionDay: emission_day.into(),
-            totalDemand: total_demand,
-        })?;
-    } else {
-        contract.emit(IDesis::IntexAuctionCompleted {
-            emissionDay: emission_day.into(),
-            units: result.issued_units,
-            clearingRate: u64::from(result.clearing_rate),
-            totalDemand: total_demand,
-        })?;
-    }
+    contract.emit(IDesis::DesisCompleted {
+        emissionDay: emission_day.into(),
+        quantity: result.issued_units,
+        clearingRate: u64::from(result.clearing_rate),
+        totalDemand: total_demand,
+    })?;
 
     // Return the Unused Desis Limit (unsold whole units + conversion dust) to PromisLimit.
     let desis_allocation_minor =
@@ -248,20 +241,18 @@ fn clear_inner(
     // Send AUCTION_RESULT to every snapshot chain; skipped/zero-winner chains get
     // wonBidsCount 0 so their local auction still completes.
     for &chain_id in snapshot {
-        let won_bids_count = result
-            .winner_chains
-            .iter()
-            .filter(|&&c| c == chain_id)
-            .count() as u32;
+        let (won_bids_count, won_quantity) = chain_winnings(&result, chain_id);
         storage.call(
             ORIGIN_ROUTER_ADDRESS,
             U256::ZERO,
-            IOriginRouter::sendAuctionResultCall {
+            IOriginRouter::sendIntexAuctionResultCall {
                 dstChainId: chain_id,
                 emissionDay: emission_day.into(),
-                issuedUnits: result.issued_units,
-                auctionClearingRate: u64::from(result.clearing_rate),
+                wonQuantity: won_quantity,
                 wonBidsCount: won_bids_count,
+                quantity: result.issued_units,
+                clearingRate: u64::from(result.clearing_rate),
+                totalDemand: total_demand,
             }
             .abi_encode()
             .into(),
@@ -273,17 +264,17 @@ fn clear_inner(
         if !result.bidder_chains.contains(&chain_id) {
             continue;
         }
-        let chunks = refund_chunks(&result, chain_id)?;
+        let chunks = intex_auction_winners_pages(&result, chain_id)?;
         let total_chunks = chunks.len() as u16;
         for (chunk_index, chunk) in chunks.into_iter().enumerate() {
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
-                IOriginRouter::sendRefundInstructionsCall {
+                IOriginRouter::sendIntexAuctionWinnersCall {
                     dstChainId: chain_id,
                     emissionDay: emission_day.into(),
-                    chunkIndex: chunk_index as u16,
-                    totalChunks: total_chunks,
+                    pageIndex: chunk_index as u16,
+                    totalPages: total_chunks,
                     clearingRate: u64::from(result.clearing_rate),
                     basis: config.escrow_basis_minor(),
                     winners: chunk.winners,
@@ -302,17 +293,17 @@ fn clear_inner(
 /// How many REFUND_INSTRUCTIONS messages one chain's winners take: at least one, which
 /// closes the day on a chain whose bids all lost. Bounded by the codec's arrival set,
 /// which is one 256-bit word wide.
-pub(crate) fn refund_chunk_count(winners: usize) -> Result<usize> {
+pub(crate) fn intex_auction_winners_page_count(winners: usize) -> Result<usize> {
     let chunks = winners.div_ceil(MAX_PAYLOAD_ARRAY_LEN).max(1);
-    if chunks > MAX_REFUND_CHUNKS {
-        return Err(DesisError::RefundFanOutTooLarge(winners).into());
+    if chunks > MAX_INTEX_AUCTION_WINNERS_PAGES {
+        return Err(DesisError::ReturnFanOutTooLarge(winners).into());
     }
     Ok(chunks)
 }
 
 /// One REFUND_INSTRUCTIONS message: a run of a chain's winners and the partial fill among them.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct RefundChunk {
+pub(crate) struct IntexAuctionWinnersPage {
     pub(crate) winners: Vec<Address>,
     pub(crate) partial_index: u16,
     /// Units the partially filled winner received; 0 when the chunk has none.
@@ -320,7 +311,10 @@ pub(crate) struct RefundChunk {
 }
 
 /// A chain's winners in ranking order, cut into REFUND_INSTRUCTIONS messages.
-pub(crate) fn refund_chunks(result: &ClearingResult, chain_id: u32) -> Result<Vec<RefundChunk>> {
+pub(crate) fn intex_auction_winners_pages(
+    result: &ClearingResult,
+    chain_id: u32,
+) -> Result<Vec<IntexAuctionWinnersPage>> {
     let mut winners = Vec::new();
     let mut partial = None;
     for (j, &winner_chain) in result.winner_chains.iter().enumerate() {
@@ -336,7 +330,7 @@ pub(crate) fn refund_chunks(result: &ClearingResult, chain_id: u32) -> Result<Ve
         winners.push(result.winners[j]);
     }
 
-    let total_chunks = refund_chunk_count(winners.len())?;
+    let total_chunks = intex_auction_winners_page_count(winners.len())?;
     Ok((0..total_chunks)
         .map(|chunk_index| {
             let start = chunk_index * MAX_PAYLOAD_ARRAY_LEN;
@@ -345,7 +339,7 @@ pub(crate) fn refund_chunks(result: &ClearingResult, chain_id: u32) -> Result<Ve
                 Some((at, won)) if (start..end).contains(&at) => ((at - start) as u16, won),
                 _ => (0, 0),
             };
-            RefundChunk {
+            IntexAuctionWinnersPage {
                 winners: winners[start..end].to_vec(),
                 partial_index,
                 partial_won,
@@ -413,4 +407,17 @@ fn require_stage(
         return Err(DesisError::InvalidStageTransition.into());
     }
     Ok(())
+}
+
+/// The winning bids of `chain_id` and the Intex quantity they won.
+fn chain_winnings(result: &ClearingResult, chain_id: u32) -> (u32, u32) {
+    result
+        .winner_chains
+        .iter()
+        .zip(&result.winner_quantities)
+        .filter(|(chain, _)| **chain == chain_id)
+        .fold((0u32, 0u32), |(bids, quantity), (_, won)| {
+            let won = u32::try_from(*won).unwrap_or(u32::MAX);
+            (bids.saturating_add(1), quantity.saturating_add(won))
+        })
 }

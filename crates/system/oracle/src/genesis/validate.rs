@@ -2,13 +2,13 @@
 
 use outbe_primitives::error::Result;
 
-use super::{OracleGenesisConfig, PolicyRate};
+use super::OracleGenesisConfig;
 use crate::constants::{MAX_SNAPSHOT_RETENTION_SECONDS, REFERENCE_CURRENCIES};
 use crate::errors::OracleError;
 use crate::schema::SCALE_1E18;
 
-/// Checks the config parameters, then the policy-rate registry, then that each
-/// reference currency has a policy rate.
+/// Checks the config parameters, then the rate vote targets, then that each
+/// reference currency is a rate vote target.
 pub(super) fn validate_genesis_config(config: &OracleGenesisConfig) -> Result<()> {
     if config.vote_period == 0 {
         return Err(OracleError::VotePeriodZero.into());
@@ -31,45 +31,25 @@ pub(super) fn validate_genesis_config(config: &OracleGenesisConfig) -> Result<()
             return Err(OracleError::RatioAboveOne { field, value }.into());
         }
     }
-    validate_policy_rates(&config.policy_rates)?;
+    validate_rate_currencies(&config.policy_rate_currencies)?;
     // A Credis reservation reads the policy rate of its asset's currency, so
-    // every reference currency needs one.
+    // every reference currency needs a rate source.
     for iso_code in REFERENCE_CURRENCIES {
-        if !config
-            .policy_rates
-            .iter()
-            .any(|policy| policy.iso_code == iso_code)
-        {
+        if !config.policy_rate_currencies.contains(&iso_code) {
             return Err(OracleError::MissingPolicyRate { iso_code }.into());
         }
     }
     Ok(())
 }
 
-fn validate_policy_rates(policy_rates: &[PolicyRate]) -> Result<()> {
-    let mut previous = None;
-    for policy in policy_rates {
-        if policy.iso_code == 0 {
+fn validate_rate_currencies(currencies: &[u16]) -> Result<()> {
+    for (index, &iso_code) in currencies.iter().enumerate() {
+        if iso_code == 0 {
             return Err(OracleError::PolicyIsoCodeZero.into());
         }
-        if policy.annual_rate_1e6.is_zero() {
-            return Err(OracleError::PolicyRateZero {
-                iso_code: policy.iso_code,
-            }
-            .into());
+        if currencies[..index].contains(&iso_code) {
+            return Err(OracleError::DuplicatePolicyIsoCode { iso_code }.into());
         }
-        if let Some(previous) = previous {
-            if policy.iso_code == previous {
-                return Err(OracleError::DuplicatePolicyIsoCode {
-                    iso_code: policy.iso_code,
-                }
-                .into());
-            }
-            if policy.iso_code < previous {
-                return Err(OracleError::PolicyRatesNotSorted.into());
-            }
-        }
-        previous = Some(policy.iso_code);
     }
     Ok(())
 }

@@ -12,10 +12,10 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
 import {IOriginRouter} from "./interfaces/IOriginRouter.sol";
-import {IDesis} from "./interfaces/IDesis.sol";
-import {IIntexFactory} from "./interfaces/IIntexFactory.sol";
-import {IWCOEN} from "./interfaces/IWCOEN.sol";
-import {IERC7786TokenReceiver} from "./interfaces/IERC7786TokenReceiver.sol";
+import {IDesis} from "@precompiles/IDesis.sol";
+import {IIntexFactory} from "@precompiles/IIntexFactory.sol";
+import {IWCOEN} from "@tokens/interfaces/IWCOEN.sol";
+import {IERC7786TokenReceiver} from "@tokens/interfaces/IERC7786TokenReceiver.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {InboundReason} from "../shared/libs/InboundReason.sol";
@@ -23,7 +23,7 @@ import {InboundReason} from "../shared/libs/InboundReason.sol";
 /// @title OriginRouter
 /// @author Outbe
 /// @notice Outbe-side router. It broadcasts auction/series messages to every registered target
-///         chain. It receives BIDS_BATCH / BIDS_DONE back from each over the protocol-agnostic
+///         chain. It receives BIDS_BATCH / BIDS_TOTALS back from each over the protocol-agnostic
 ///         ERC-7786 bridge (the `crosschain` hub). The active transport is selected on the bridge.
 /// @dev UUPS upgradeable behind an ERC1967 proxy. The bridge is an implementation immutable (from
 ///      {ERC7786MessengerBase}), so every upgrade must pass the same bridge to the constructor.
@@ -38,7 +38,7 @@ contract OriginRouter is
     ReentrancyGuardTransient,
     UUPSUpgradeable
 {
-    /// @notice Gates the demand-side sends: auction stages, AUCTION_RESULT, REFUND_INSTRUCTIONS.
+    /// @notice Gates the demand-side sends: auction stages, INTEX_AUCTION_RESULT, REFUND_INSTRUCTIONS.
     bytes32 public constant DESIS_ROLE = keccak256("DESIS_ROLE");
     /// @notice Gates the supply-side sends: ISSUANCE_INSTRUCTIONS, MARK_CALLED.
     bytes32 public constant INTEX_FACTORY_ROLE = keccak256("INTEX_FACTORY_ROLE");
@@ -57,9 +57,9 @@ contract OriginRouter is
         /// @dev WCOEN token unwrapped to native before distribution.
         address wcoen;
         /// @dev Parked distributions awaiting permissionless retry, by enqueue index.
-        mapping(uint256 idx => ParkedProceeds) parkedProceeds;
-        /// @dev Next index to assign in `parkedProceeds`.
-        uint256 nextParkedProceedsIdx;
+        mapping(uint256 idx => FailedIntexAuctionProceedsReceive) failedIntexAuctionProceedsReceive;
+        /// @dev Next index to assign in `failedIntexAuctionProceedsReceive`.
+        uint256 nextFailedIntexAuctionProceedsReceiveIdx;
         // --- Multi-target registry ---
         /// @dev Registered target chainIds. `targetIndexPlus1` records membership.
         uint32[] targetChainIds;
@@ -70,13 +70,15 @@ contract OriginRouter is
         ///      not over the live registry.
         mapping(uint32 emissionDay => uint32[] chainIds) seriesTargets;
         /// @dev Outbound legs that failed to dispatch, awaiting a permissionless flush.
-        mapping(uint256 idx => ParkedMessage) parkedMessages;
-        /// @dev Next index to assign in `parkedMessages`.
-        uint256 nextParkedMessageIdx;
+        mapping(uint256 idx => FailedMessageSend) failedMessageSends;
+        /// @dev Next index to assign in `failedMessageSends`.
+        uint256 nextFailedMessageSendIdx;
         /// @dev Gas a day's COLLECTING_BIDS round asks of each chain, as desis sized it from that
         ///      chain's recent bid counts. Later rounds of the same day reuse it, so a remainder
         ///      report needs no sizing.
         mapping(uint32 emissionDay => mapping(uint32 chainId => uint64 gasLimit)) clearingGas;
+        /// @dev Days whose cancel was sent, so a kept START of the day is never retried.
+        mapping(uint32 emissionDay => bool) intexAuctionCanceled;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.OriginRouter")) - 1)) & ~bytes32(uint256(0xff))
@@ -117,15 +119,12 @@ contract OriginRouter is
 
     // --- Admin ---
     /// @inheritdoc IOriginRouter
-    function wire(address _desis, address _intexFactory) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    function setDependencies(address _desis, address _intexFactory) external onlyRole(DEFAULT_ADMIN_ROLE) {
         if (_desis == address(0)) revert ZeroAddress("desis");
         if (_intexFactory == address(0)) revert ZeroAddress("intexFactory");
         _assertDesisInterface(_desis);
 
         OriginRouterStorage storage $ = _os();
-        address desisOld = $.desis;
-        address intexFactoryOld = $.intexFactory;
-
         if ($.desis != address(0)) _revokeRole(DESIS_ROLE, $.desis);
         if ($.intexFactory != address(0)) _revokeRole(INTEX_FACTORY_ROLE, $.intexFactory);
 
@@ -135,12 +134,12 @@ contract OriginRouter is
         _grantRole(DESIS_ROLE, _desis);
         _grantRole(INTEX_FACTORY_ROLE, _intexFactory);
 
-        emit DependenciesWired(desisOld, _desis, intexFactoryOld, _intexFactory);
+        emit OriginRouterDependenciesSet(_desis, _intexFactory);
     }
 
     /// @inheritdoc IOriginRouter
-    function setRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setRemoteMessenger(chainId, interop);
+    function registerRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _registerRemoteMessenger(chainId, interop);
     }
 
     // --- Targets registry ---
@@ -198,44 +197,132 @@ contract OriginRouter is
         return _send(dstChainId, payload, gasLimit);
     }
 
-    /// @dev Send one leg. On any failure, park it for a permissionless flush and continue.
-    ///      Returns 0 when parked.
-    function _sendOrPark(uint32 dstChainId, bytes memory payload, uint256 gasLimit) private returns (bytes32 sendId) {
+    /// @dev Send one leg and emit its Sent event. On any failure, keep it for a permissionless retry and
+    ///      continue. Returns 0 when kept.
+    function _sendOrKeepFailed(uint32 dstChainId, bytes memory payload, uint256 gasLimit)
+        private
+        returns (bytes32 sendId)
+    {
         try this.sendLeg(dstChainId, payload, gasLimit) returns (bytes32 id) {
             sendId = id;
-        } catch {
-            _park(dstChainId, payload, gasLimit);
+            _emitSent(sendId, dstChainId, payload);
+        } catch (bytes memory errorData) {
+            _keepFailedMessageSend(dstChainId, payload, gasLimit, errorData);
         }
     }
 
-    function _park(uint32 dstChainId, bytes memory payload, uint256 gasLimit) private {
+    function _keepFailedMessageSend(uint32 dstChainId, bytes memory payload, uint256 gasLimit, bytes memory errorData)
+        private
+    {
         OriginRouterStorage storage $ = _os();
-        uint256 idx = $.nextParkedMessageIdx++;
-        ParkedMessage storage p = $.parkedMessages[idx];
+        uint256 idx = $.nextFailedMessageSendIdx++;
+        FailedMessageSend storage p = $.failedMessageSends[idx];
         p.dstChainId = dstChainId;
         p.gasLimit = SafeCast.toUint64(gasLimit);
         p.payload = payload;
-        emit MessageParked(idx, dstChainId, uint8(payload[1])); // header layout: [version, msgType, ...]
+        // header layout: [version, msgType, ...]
+        emit MessageSendFailed(idx, dstChainId, uint8(payload[1]), _keyOf(payload), errorData);
     }
 
     /// @inheritdoc IOriginRouter
-    function resendParkedMessage(uint256 idx) external nonReentrant {
-        ParkedMessage storage p = _os().parkedMessages[idx];
-        if (p.payload.length == 0 || p.sent) revert NoParkedMessage(idx);
+    function retryMessageSend(uint256 idx) external nonReentrant {
+        FailedMessageSend storage p = _os().failedMessageSends[idx];
+        if (p.payload.length == 0 || p.sent) revert NoFailedMessageSend(idx);
+        bytes memory payload = p.payload;
+        if (uint8(payload[1]) == BridgeMsgCodec.MSG_INTEX_AUCTION_START) {
+            uint32 emissionDay = _dayOf(payload);
+            if (_os().intexAuctionCanceled[emissionDay]) revert IntexAuctionDayCanceled(emissionDay);
+        }
         p.sent = true; // CEI. A revert in `_send` rolls this back and keeps the entry retryable.
-        // aderyn-ignore-next-line(storage-array-memory-edit) -- the payload is only read
-        bytes32 sendId = _send(p.dstChainId, p.payload, p.gasLimit);
-        emit ParkedMessageResent(idx, p.dstChainId, sendId);
+        bytes32 sendId = _send(p.dstChainId, payload, p.gasLimit);
+        _emitSent(sendId, p.dstChainId, payload);
+    }
+
+    /// @dev The Sent event of an auction or call notice message that left. Series sends emit their
+    ///      own events at the call site.
+    function _emitSent(bytes32 sendId, uint32 dstChainId, bytes memory payload) private {
+        uint8 msgType = uint8(payload[1]);
+        uint32 emissionDay = _dayOf(payload);
+        if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_START) {
+            emit IntexAuctionStartSent(sendId, emissionDay, dstChainId);
+        } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_CLEARING_START) {
+            emit IntexAuctionClearingStartSent(sendId, emissionDay, dstChainId);
+        } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_CANCEL) {
+            emit IntexAuctionCancelSent(sendId, emissionDay, dstChainId);
+        } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_RESULT) {
+            emit IntexAuctionResultSent(sendId, emissionDay, dstChainId, _word32(payload, 6), _word32(payload, 10));
+        } else if (msgType == BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE) {
+            _emitCallNoticeSent(sendId, dstChainId, payload);
+        } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS) {
+            uint256 winnersCount = _wordAt(payload, BridgeMsgCodec.HEADER_LEN + _bodyWord(payload, 5));
+            emit IntexAuctionWinnersSent(
+                sendId,
+                emissionDay,
+                dstChainId,
+                uint16(_bodyWord(payload, 1)),
+                uint16(_bodyWord(payload, 2)),
+                // forge-lint: disable-next-line(unsafe-typecast) -- the codec caps a page at MAX_PAYLOAD_ARRAY_LEN
+                uint32(winnersCount)
+            );
+        }
+    }
+
+    /// @dev Body `abi.encode(emissionDay, calledAt, seriesIds)`: word 3 is the length of the ids.
+    function _emitCallNoticeSent(bytes32 sendId, uint32 dstChainId, bytes memory payload) private {
+        uint256 count = _bodyWord(payload, 3);
+        for (uint256 s = 0; s < count; ++s) {
+            emit IntexSeriesCallNoticeSent(sendId, bytes14(bytes32(_bodyWord(payload, 4 + s))), dstChainId);
+        }
+    }
+
+    /// @dev The key of a kept message: its day, and for a paged message also its page.
+    function _keyOf(bytes memory payload) private pure returns (bytes32) {
+        uint8 msgType = uint8(payload[1]);
+        uint256 day = _dayOf(payload);
+        if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS || msgType == BridgeMsgCodec.MSG_INTEX_SERIES) {
+            return bytes32((day << 16) | uint16(_bodyWord(payload, 1)));
+        }
+        return bytes32(day);
+    }
+
+    /// @dev The day of an outbound message: right after the header in a packed body, the first word of an
+    ///      ABI-encoded one.
+    function _dayOf(bytes memory payload) private pure returns (uint32) {
+        uint8 msgType = uint8(payload[1]);
+        if (
+            msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS || msgType == BridgeMsgCodec.MSG_INTEX_SERIES
+                || msgType == BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE
+        ) {
+            return uint32(_bodyWord(payload, 0));
+        }
+        return _word32(payload, 2);
+    }
+
+    /// @dev The big-endian `uint32` at byte `at` of `payload`.
+    function _word32(bytes memory payload, uint256 at) private pure returns (uint32) {
+        return uint32(_wordAt(payload, at) >> 224);
+    }
+
+    /// @dev Word `i` of the ABI-encoded body after the two-byte header.
+    function _bodyWord(bytes memory payload, uint256 i) private pure returns (uint256) {
+        return _wordAt(payload, BridgeMsgCodec.HEADER_LEN + 32 * i);
+    }
+
+    /// @dev The 32 bytes at byte `at` of `payload`.
+    function _wordAt(bytes memory payload, uint256 at) private pure returns (uint256 word) {
+        assembly ("memory-safe") {
+            word := mload(add(add(payload, 32), at))
+        }
     }
 
     /// @inheritdoc IOriginRouter
-    function parkedMessage(uint256 idx) external view returns (ParkedMessage memory) {
-        return _os().parkedMessages[idx];
+    function getFailedMessageSend(uint256 idx) external view returns (FailedMessageSend memory) {
+        return _os().failedMessageSends[idx];
     }
 
     /// @inheritdoc IOriginRouter
-    function parkedMessageCount() external view returns (uint256) {
-        return _os().nextParkedMessageIdx;
+    function failedMessageSendCount() external view returns (uint256) {
+        return _os().nextFailedMessageSendIdx;
     }
 
     /// @dev Whether `chainId` is in the series' STAGE_START snapshot (the frozen day-of target
@@ -270,20 +357,30 @@ contract OriginRouter is
 
     // --- Send ---
     /// @inheritdoc IOriginRouter
-    function sendAuctionStageStart(AuctionStageStartParams calldata params) external payable onlyRole(DESIS_ROLE) {
+    function sendIntexAuctionStart(IntexAuctionStartParams calldata params) external payable onlyRole(DESIS_ROLE) {
         OriginRouterStorage storage $ = _os();
         uint32[] memory snapshot = $.targetChainIds;
         if (snapshot.length == 0) revert NoTargets();
         $.seriesTargets[params.emissionDay] = snapshot; // freeze the fan-out set for the whole day
-        bytes memory payload = _encodeAuctionStageStart(params);
+        bytes memory payload = _encodeIntexAuctionStart(params);
         for (uint256 i = 0; i < snapshot.length; ++i) {
-            bytes32 sendId = _sendOrPark(snapshot[i], payload, IntexGas.auctionStart(params.prices.length));
-            emit AuctionStageSent(sendId, params.emissionDay, BridgeMsgCodec.MSG_AUCTION_STAGE_START);
+            _sendOrKeepFailed(snapshot[i], payload, IntexGas.intexAuctionStart(params.prices.length));
         }
     }
 
     /// @inheritdoc IOriginRouter
-    function sendAuctionStageCollectingBids(uint32 emissionDay, uint32 dstChainId, uint256 gasLimit)
+    function sendIntexAuctionCancel(uint32 emissionDay, uint8 reason) external payable onlyRole(DESIS_ROLE) {
+        uint32[] memory snapshot = _os().seriesTargets[emissionDay];
+        if (snapshot.length == 0) revert NoTargets();
+        _os().intexAuctionCanceled[emissionDay] = true;
+        bytes memory payload = BridgeMsgCodec.encodeIntexAuctionCancel(emissionDay, reason);
+        for (uint256 i = 0; i < snapshot.length; ++i) {
+            _sendOrKeepFailed(snapshot[i], payload, IntexGas.INTEX_AUCTION_CANCEL);
+        }
+    }
+
+    /// @inheritdoc IOriginRouter
+    function sendIntexAuctionClearingStart(uint32 emissionDay, uint32 dstChainId, uint256 gasLimit)
         external
         payable
         onlyRole(DESIS_ROLE)
@@ -293,63 +390,68 @@ contract OriginRouter is
         // Store the budget so the rounds that follow a remainder report ask for the same gas as the
         // first one.
         _os().clearingGas[emissionDay][dstChainId] = budget;
-        bytes32 sendId = _sendOrPark(dstChainId, BridgeMsgCodec.encodeAuctionStageCollectingBids(emissionDay), budget);
-        emit AuctionStageSent(sendId, emissionDay, BridgeMsgCodec.MSG_AUCTION_STAGE_COLLECTING_BIDS);
+        _sendOrKeepFailed(dstChainId, BridgeMsgCodec.encodeIntexAuctionClearingStart(emissionDay), budget);
     }
 
     /// @dev Keep the ask inside what a round is worth. Below the floor, a round could not even flip
     ///      the stage. Above the cap, no target chain would accept the delivery.
     function _clearingBudget(uint256 gasLimit) private pure returns (uint64) {
-        if (gasLimit < IntexGas.AUCTION_STAGE_COLLECTING_BIDS) return uint64(IntexGas.AUCTION_STAGE_COLLECTING_BIDS);
-        if (gasLimit > IntexGas.AUCTION_STAGE_COLLECTING_BIDS_MAX) {
-            return uint64(IntexGas.AUCTION_STAGE_COLLECTING_BIDS_MAX);
+        if (gasLimit < IntexGas.INTEX_AUCTION_CLEARING_START) return uint64(IntexGas.INTEX_AUCTION_CLEARING_START);
+        if (gasLimit > IntexGas.INTEX_AUCTION_CLEARING_START_MAX) {
+            return uint64(IntexGas.INTEX_AUCTION_CLEARING_START_MAX);
         }
         return uint64(gasLimit);
     }
 
     /// @inheritdoc IOriginRouter
-    function sendAuctionResult(
+    function sendIntexAuctionResult(
         uint32 dstChainId,
         uint32 emissionDay,
-        uint32 issuedUnits,
-        uint64 auctionClearingRate,
-        uint32 wonBidsCount
+        uint32 wonQuantity,
+        uint32 wonBidsCount,
+        uint32 quantity,
+        uint64 clearingRate,
+        uint64 totalDemand
     ) external payable onlyRole(DESIS_ROLE) returns (bytes32 sendId) {
         _requireSeriesTarget(emissionDay, dstChainId);
-        sendId = _sendOrPark(
-            dstChainId,
-            BridgeMsgCodec.encodeAuctionResult(emissionDay, issuedUnits, auctionClearingRate, wonBidsCount),
-            IntexGas.AUCTION_RESULT
+        BridgeMsgCodec.IntexAuctionChainResult memory result = BridgeMsgCodec.IntexAuctionChainResult({
+            wonQuantity: wonQuantity,
+            wonBidsCount: wonBidsCount,
+            quantity: quantity,
+            clearingRate: clearingRate,
+            totalDemand: totalDemand
+        });
+        sendId = _sendOrKeepFailed(
+            dstChainId, BridgeMsgCodec.encodeIntexAuctionResult(emissionDay, result), IntexGas.INTEX_AUCTION_RESULT
         );
-        emit AuctionResultSent(sendId, emissionDay, issuedUnits, auctionClearingRate);
     }
 
     /// @inheritdoc IOriginRouter
-    function sendIssuanceInstructions(
+    function sendIntexSeries(
         uint32 dstChainId,
         uint32 emissionDay,
-        uint16 chunkIndex,
-        uint16 totalChunks,
-        IssuanceInstructionsParams[] calldata series
+        uint16 pageIndex,
+        uint16 totalPages,
+        IntexSeriesParams[] calldata series
     ) external payable onlyRole(INTEX_FACTORY_ROLE) returns (bytes32 sendId) {
         // The day must be one this chain is a target of. The codec owns the wire format (chunk
         // header, per-series day and counts).
         if (series.length == 0) revert EmptyArray();
         _requireSeriesTarget(emissionDay, dstChainId);
-        sendId = _sendOrPark(
+        sendId = _sendOrKeepFailed(
             dstChainId,
-            BridgeMsgCodec.encodeIssuanceInstructions(emissionDay, chunkIndex, totalChunks, _toCodecPayloads(series)),
+            BridgeMsgCodec.encodeIntexSeries(emissionDay, pageIndex, totalPages, _toCodecPayloads(series)),
             IntexGas.issuance(series.length)
         );
         emit IssuanceInstructionsSent(sendId, series[0].seriesId, series.length);
     }
 
     /// @inheritdoc IOriginRouter
-    function sendRefundInstructions(
+    function sendIntexAuctionWinners(
         uint32 dstChainId,
         uint32 emissionDay,
-        uint16 chunkIndex,
-        uint16 totalChunks,
+        uint16 pageIndex,
+        uint16 totalPages,
         uint64 clearingRate,
         uint128 basis,
         address[] calldata winners,
@@ -357,14 +459,13 @@ contract OriginRouter is
         uint16 partialWon
     ) external payable onlyRole(DESIS_ROLE) returns (bytes32 sendId) {
         _requireSeriesTarget(emissionDay, dstChainId);
-        sendId = _sendOrPark(
+        sendId = _sendOrKeepFailed(
             dstChainId,
-            BridgeMsgCodec.encodeRefundInstructions(
-                emissionDay, chunkIndex, totalChunks, clearingRate, basis, winners, partialIndex, partialWon
+            BridgeMsgCodec.encodeIntexAuctionWinners(
+                emissionDay, pageIndex, totalPages, clearingRate, basis, winners, partialIndex, partialWon
             ),
-            IntexGas.refund(winners.length, _routesProceeds(winners.length))
+            IntexGas.assetReturn(winners.length, _routesProceeds(winners.length))
         );
-        emit RefundInstructionsSent(sendId, emissionDay, winners.length);
     }
 
     /// @dev Each chunk with winners routes its own proceeds, so it carries the leg.
@@ -373,20 +474,29 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function sendMarkCalled(uint32 emissionDay, uint64 calledAt, bytes14[] calldata seriesIds)
+    function sendIntexSeriesCallNotice(uint32 emissionDay, uint64 calledAt, bytes14[] calldata seriesIds)
         external
         payable
         onlyRole(INTEX_FACTORY_ROLE)
+        returns (FailedCallNoticeLeg[] memory failedLegs)
     {
         uint32[] memory snapshot = _os().seriesTargets[emissionDay];
         if (snapshot.length == 0) revert NoTargets();
-        bytes memory payload = BridgeMsgCodec.encodeMarkCalled(emissionDay, calledAt, seriesIds);
-        uint256 gasLimit = IntexGas.markCalled(seriesIds.length);
+        bytes memory payload = BridgeMsgCodec.encodeIntexSeriesCallNotice(emissionDay, calledAt, seriesIds);
+        uint256 gasLimit = IntexGas.intexSeriesCallNotice(seriesIds.length);
+        FailedCallNoticeLeg[] memory kept = new FailedCallNoticeLeg[](snapshot.length);
+        uint256 keptCount;
         for (uint256 i = 0; i < snapshot.length; ++i) {
-            bytes32 sendId = _sendOrPark(snapshot[i], payload, gasLimit);
-            for (uint256 s = 0; s < seriesIds.length; ++s) {
-                emit MarkCalledSent(sendId, seriesIds[s]);
+            // A kept leg takes the next index, whatever id the gateway gives a sent one.
+            uint256 idx = _os().nextFailedMessageSendIdx;
+            _sendOrKeepFailed(snapshot[i], payload, gasLimit);
+            if (_os().nextFailedMessageSendIdx != idx) {
+                kept[keptCount++] = FailedCallNoticeLeg({dstChainId: snapshot[i], idx: idx});
             }
+        }
+        failedLegs = new FailedCallNoticeLeg[](keptCount);
+        for (uint256 i = 0; i < keptCount; ++i) {
+            failedLegs[i] = kept[i];
         }
     }
 
@@ -404,26 +514,18 @@ contract OriginRouter is
     }
 
     /// @dev Decodes an authenticated inbound message and dispatches by msgType. BIDS_BATCH and
-    ///      BIDS_DONE are inbound here. A premature message reverts, and the transport redelivers
+    ///      BIDS_TOTALS are inbound here. A premature message reverts, and the transport redelivers
     ///      it once its prerequisite has landed.
-    function _dispatch(
-        uint32 srcChainId,
-        bytes32,
-        /*receiveId*/
-        bytes calldata payload
-    )
-        internal
-        override
-    {
+    function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata payload) internal override {
         uint8 msgType = BridgeMsgCodec.readHeader(payload);
         BridgeMsgCodec.assertMinLength(payload, msgType);
 
-        if (msgType == BridgeMsgCodec.MSG_BIDS_BATCH) {
-            _handleBidsBatch(srcChainId, payload);
-        } else if (msgType == BridgeMsgCodec.MSG_BIDS_DONE) {
-            _handleBidsDone(srcChainId, payload);
-        } else if (msgType == BridgeMsgCodec.MSG_BIDS_REMAINING) {
-            _handleBidsRemaining(srcChainId, payload);
+        if (msgType == BridgeMsgCodec.MSG_BIDS_PAGE) {
+            _handleBidsPage(srcChainId, receiveId, payload);
+        } else if (msgType == BridgeMsgCodec.MSG_BIDS_TOTALS) {
+            _handleBidsTotals(srcChainId, receiveId, payload);
+        } else if (msgType == BridgeMsgCodec.MSG_BIDS_PAUSE) {
+            _handleBidsPause(srcChainId, receiveId, payload);
         } else {
             revert BridgeMsgCodec.UnknownMsgType(msgType);
         }
@@ -432,64 +534,55 @@ contract OriginRouter is
     /// @dev Decode a BIDS_BATCH and forward it to Desis. The body `srcChainId` is cross-checked
     ///      against the authenticated source. Clearing does not fire here. The Desis begin-block
     ///      gate owns that.
-    function _handleBidsBatch(uint32 srcChainId, bytes calldata payload) internal {
+    function _handleBidsPage(uint32 srcChainId, bytes32 receiveId, bytes calldata payload) internal {
         (
             uint32 emissionDay,
             uint32 bodySrcChainId,
             uint16 batchIndex,
-            uint16 totalBatches,
+            uint16 totalPages,
             address[] memory bidderAddresses,
             uint256[] memory packedBids
-        ) = BridgeMsgCodec.decodeBidsBatch(payload);
+        ) = BridgeMsgCodec.decodeBidsPage(payload);
 
-        if (!_acceptBids(srcChainId, bodySrcChainId, emissionDay, BridgeMsgCodec.MSG_BIDS_BATCH)) return;
+        if (!_acceptBids(receiveId, srcChainId, bodySrcChainId, emissionDay)) return;
 
         IDesis(_os().desis)
-            .processBidsBatch(emissionDay, srcChainId, batchIndex, totalBatches, bidderAddresses, packedBids);
-
-        emit BidsBatchReceived(srcChainId, emissionDay, bidderAddresses.length);
+            .collectIntexAuctionBids(
+                receiveId, emissionDay, srcChainId, batchIndex, totalPages, bidderAddresses, packedBids
+            );
     }
 
-    /// @dev Decode a BIDS_DONE marker and forward it to Desis. The body `srcChainId` is
+    /// @dev Decode a BIDS_TOTALS marker and forward it to Desis. The body `srcChainId` is
     ///      cross-checked as in BIDS_BATCH.
-    function _handleBidsDone(uint32 srcChainId, bytes calldata payload) internal {
-        (uint32 emissionDay, uint32 bodySrcChainId, uint16 totalBatches, uint32 totalBids) =
-            BridgeMsgCodec.decodeBidsDone(payload);
+    function _handleBidsTotals(uint32 srcChainId, bytes32 receiveId, bytes calldata payload) internal {
+        (uint32 emissionDay, uint32 bodySrcChainId, uint16 totalPages, uint32 totalBids) =
+            BridgeMsgCodec.decodeBidsTotals(payload);
 
-        if (!_acceptBids(srcChainId, bodySrcChainId, emissionDay, BridgeMsgCodec.MSG_BIDS_DONE)) return;
+        if (!_acceptBids(receiveId, srcChainId, bodySrcChainId, emissionDay)) return;
 
-        IDesis(_os().desis).processBidsDone(emissionDay, srcChainId, totalBatches, totalBids);
-
-        emit BidsDoneReceived(srcChainId, emissionDay, totalBatches, totalBids);
+        IDesis(_os().desis).completeIntexAuctionBids(receiveId, emissionDay, srcChainId, totalPages, totalBids);
     }
 
     /// @dev A target whose relay stopped part way asks for another round. The router answers by
     ///      sending the day's CLEARING again. The target resumes from the chunk it left, so the
     ///      same message continues rather than starting over. The send is parked like any other
     ///      send when the relay float is empty.
-    function _handleBidsRemaining(uint32 srcChainId, bytes calldata payload) private {
-        (uint32 emissionDay, uint32 bodySrcChainId, uint16 nextBatch, uint16 totalBatches) =
-            BridgeMsgCodec.decodeBidsRemaining(payload);
-        if (!_acceptBids(srcChainId, bodySrcChainId, emissionDay, BridgeMsgCodec.MSG_BIDS_REMAINING)) return;
+    function _handleBidsPause(uint32 srcChainId, bytes32 receiveId, bytes calldata payload) private {
+        (uint32 emissionDay, uint32 bodySrcChainId,,) = BridgeMsgCodec.decodeBidsPause(payload);
+        if (!_acceptBids(receiveId, srcChainId, bodySrcChainId, emissionDay)) return;
 
-        // A day whose intake has closed (cleared on the fan-in timeout, or cancelled) would have
+        // A day whose intake has closed (cleared on the fan-in timeout, or canceled) would have
         // every chunk of the next round ignored on arrival. So the round is not worth paying for.
-        IDesis.AuctionStage stage = IDesis(_os().desis).getAuctionStage(emissionDay);
+        IDesis.AuctionStage stage = IDesis(_os().desis).auctionStage(emissionDay);
         if (stage != IDesis.AuctionStage.RevealingBids && stage != IDesis.AuctionStage.CollectingBids) {
-            emit InboundMessageIgnored(
-                srcChainId,
-                BridgeMsgCodec.MSG_BIDS_REMAINING,
-                bytes32((uint256(emissionDay) << 32) | srcChainId),
-                InboundReason.OBSOLETE
-            );
+            emit MessageIgnored(receiveId, srcChainId, InboundReason.OBSOLETE);
             return;
         }
 
         uint64 budget = _os().clearingGas[emissionDay][srcChainId];
-        uint256 gasLimit = budget == 0 ? IntexGas.AUCTION_STAGE_COLLECTING_BIDS : budget;
-        bytes memory round = BridgeMsgCodec.encodeAuctionStageCollectingBids(emissionDay);
-        bytes32 sendId = _sendOrPark(srcChainId, round, gasLimit);
-        emit BidsRelayRoundSent(sendId, emissionDay, srcChainId, nextBatch, totalBatches);
+        uint256 gasLimit = budget == 0 ? IntexGas.INTEX_AUCTION_CLEARING_START : budget;
+        bytes memory round = BridgeMsgCodec.encodeIntexAuctionClearingStart(emissionDay);
+        _sendOrKeepFailed(srcChainId, round, gasLimit);
     }
 
     /// @dev Whether a relayed bids message may reach Desis. A body that names another source than
@@ -497,17 +590,16 @@ contract OriginRouter is
     ///      day's frozen snapshot can never become acceptable either. The router acknowledges such
     ///      a message without effect. Otherwise a rogue or late-registered source would leave
     ///      storage residue that Desis never clears, because Desis resets only snapshot chains.
-    function _acceptBids(uint32 srcChainId, uint32 bodySrcChainId, uint32 emissionDay, uint8 msgType)
+    function _acceptBids(bytes32 receiveId, uint32 srcChainId, uint32 bodySrcChainId, uint32 emissionDay)
         private
         returns (bool)
     {
-        bytes32 key = bytes32((uint256(emissionDay) << 32) | srcChainId);
         if (bodySrcChainId != srcChainId) {
-            emit InboundMessageIgnored(srcChainId, msgType, key, InboundReason.CONFLICT);
+            emit MessageIgnored(receiveId, srcChainId, InboundReason.CONFLICT);
             return false;
         }
         if (!_isSeriesTarget(emissionDay, srcChainId)) {
-            emit InboundMessageIgnored(srcChainId, msgType, key, InboundReason.NOT_FOUND);
+            emit MessageIgnored(receiveId, srcChainId, InboundReason.NOT_FOUND);
             return false;
         }
         return true;
@@ -515,39 +607,38 @@ contract OriginRouter is
 
     // --- Internal helpers ---
     /// @dev Encode an AUCTION_STAGE_START message from the grouped params struct.
-    function _encodeAuctionStageStart(AuctionStageStartParams calldata p) private pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeAuctionStageStart(
+    function _encodeIntexAuctionStart(IntexAuctionStartParams calldata p) private pure returns (bytes memory) {
+        return BridgeMsgCodec.encodeIntexAuctionStart(
             p.emissionDay,
             p.commitEnd,
             p.revealEnd,
             p.issuanceEnd,
             p.promisLoadMinor,
-            p.minIntexBidRate,
+            p.minBidRate,
             p.prices,
             p.callNoticePeriod,
             p.callWindow,
             p.callThreshold,
-            p.minIntexBidQuantity,
-            p.commitBondMinor,
-            p.dayState
+            p.minBidQuantity,
+            p.bidBondMinor
         );
     }
 
-    function _toCodecPayloads(IssuanceInstructionsParams[] calldata series)
+    function _toCodecPayloads(IntexSeriesParams[] calldata series)
         private
         pure
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory payloads)
+        returns (BridgeMsgCodec.IntexSeriesPayload[] memory payloads)
     {
-        payloads = new BridgeMsgCodec.IssuanceInstructionsPayload[](series.length);
+        payloads = new BridgeMsgCodec.IntexSeriesPayload[](series.length);
         for (uint256 i = 0; i < series.length; i++) {
             payloads[i] = _toCodecPayload(series[i]);
         }
     }
 
-    function _toCodecPayload(IssuanceInstructionsParams calldata p)
+    function _toCodecPayload(IntexSeriesParams calldata p)
         private
         pure
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload memory payload)
+        returns (BridgeMsgCodec.IntexSeriesPayload memory payload)
     {
         // Member-wise assignment (rather than a struct literal) keeps the payload within the IR
         // stack bound.
@@ -579,7 +670,7 @@ contract OriginRouter is
         OriginRouterStorage storage $ = _os();
         $.tokenBridge = _tokenBridge;
         $.wcoen = _wcoen;
-        emit ProceedsRouteSet(_tokenBridge, _wcoen);
+        emit OriginRouterProceedsRouteSet(_tokenBridge, _wcoen);
     }
 
     /// @inheritdoc IOriginRouter
@@ -593,13 +684,17 @@ contract OriginRouter is
     }
 
     /// @inheritdoc IOriginRouter
-    function parkedProceeds(uint256 idx) external view returns (ParkedProceeds memory) {
-        return _os().parkedProceeds[idx];
+    function getFailedIntexAuctionProceedsReceive(uint256 idx)
+        external
+        view
+        returns (FailedIntexAuctionProceedsReceive memory)
+    {
+        return _os().failedIntexAuctionProceedsReceive[idx];
     }
 
     /// @inheritdoc IOriginRouter
-    function parkedProceedsCount() external view returns (uint256) {
-        return _os().nextParkedProceedsIdx;
+    function failedIntexAuctionProceedsReceiveCount() external view returns (uint256) {
+        return _os().nextFailedIntexAuctionProceedsReceiveIdx;
     }
 
     /// @inheritdoc IERC7786TokenReceiver
@@ -614,18 +709,18 @@ contract OriginRouter is
         bytes calldata extraData
     ) external nonReentrant returns (bytes4) {
         if (msg.sender != _os().tokenBridge) revert UnauthorizedProceedsCaller(msg.sender);
-        uint32 emissionDay = abi.decode(extraData, (uint32));
+        (uint32 emissionDay, uint32 pageIndex) = abi.decode(extraData, (uint32, uint32));
         _checkProceedsSource(emissionDay, sourceDomain, from);
-        _burnProceeds(emissionDay, sourceDomain, amount);
+        _burnProceeds(emissionDay, pageIndex, sourceDomain, amount);
         return IERC7786TokenReceiver.onCrosschainTokensReceived.selector;
     }
 
     /// @inheritdoc IOriginRouter
-    function receiveLocalProceeds(uint32 emissionDay, uint256 amount) external nonReentrant {
+    function receiveLocalProceeds(uint32 emissionDay, uint32 pageIndex, uint256 amount) external nonReentrant {
         uint32 local = uint32(block.chainid);
         _checkProceedsSource(emissionDay, local, InteroperableAddress.formatEvmV1(block.chainid, msg.sender));
         SafeERC20.safeTransferFrom(IERC20(_os().wcoen), msg.sender, address(this), amount);
-        _burnProceeds(emissionDay, local, amount);
+        _burnProceeds(emissionDay, pageIndex, local, amount);
     }
 
     /// @dev The source must be in the day's frozen snapshot, and the sender must be its registered
@@ -635,33 +730,37 @@ contract OriginRouter is
         if (keccak256(from) != keccak256(_remoteMessenger(sourceDomain))) revert UnauthorizedProceedsSender(from);
     }
 
-    function _burnProceeds(uint32 emissionDay, uint32 sourceDomain, uint256 amount) private {
+    function _burnProceeds(uint32 emissionDay, uint32 pageIndex, uint32 sourceDomain, uint256 amount) private {
         IWCOEN(_os().wcoen).withdraw(amount);
-        _distributeOrPark(emissionDay, sourceDomain, SafeCast.toUint128(amount));
+        _burnOrKeepFailedIntexAuctionProceeds(emissionDay, pageIndex, sourceDomain, SafeCast.toUint128(amount));
     }
 
     /// @inheritdoc IOriginRouter
-    function distributeParkedProceeds(uint256 idx) external nonReentrant {
-        ParkedProceeds storage p = _os().parkedProceeds[idx];
-        if (p.amount == 0 || p.settled) revert NoParkedProceeds(idx);
+    function retryIntexAuctionProceedsReceive(uint256 idx) external nonReentrant {
+        FailedIntexAuctionProceedsReceive storage p = _os().failedIntexAuctionProceedsReceive[idx];
+        if (p.amount == 0 || p.settled) revert NoFailedIntexAuctionProceedsReceive(idx);
         p.settled = true;
-        IIntexFactory(_os().intexFactory).distribute{value: p.amount}(p.emissionDay, p.srcChainId);
-        emit ParkedProceedsDistributed(idx, p.emissionDay, p.amount);
+        IIntexFactory(_os().intexFactory).burnIntexAuctionProceeds{value: p.amount}(p.emissionDay, p.srcChainId);
     }
 
-    /// @dev Hand native proceeds to the factory precompile. On failure, park them for retry.
-    function _distributeOrPark(uint32 emissionDay, uint32 srcChainId, uint128 amount) private {
+    /// @dev Hand native proceeds to the factory precompile. On failure, keep them for a retry.
+    function _burnOrKeepFailedIntexAuctionProceeds(
+        uint32 emissionDay,
+        uint32 pageIndex,
+        uint32 srcChainId,
+        uint128 amount
+    ) private {
         // Both entries (onCrosschainTokensReceived, receiveLocalProceeds) are nonReentrant, so the
-        // catch-branch park write is safe.
+        // catch-branch write is safe.
         // slither-disable-next-line reentrancy-eth
-        try IIntexFactory(_os().intexFactory).distribute{value: amount}(emissionDay, srcChainId) {
-            emit ProceedsDistributed(emissionDay, amount);
-        } catch {
+        try IIntexFactory(_os().intexFactory).burnIntexAuctionProceeds{value: amount}(emissionDay, srcChainId) {}
+        catch (bytes memory errorData) {
             OriginRouterStorage storage $ = _os();
-            uint256 idx = $.nextParkedProceedsIdx++;
-            $.parkedProceeds[idx] =
-                ParkedProceeds({emissionDay: emissionDay, srcChainId: srcChainId, amount: amount, settled: false});
-            emit ProceedsParked(idx, emissionDay, amount);
+            uint256 idx = $.nextFailedIntexAuctionProceedsReceiveIdx++;
+            $.failedIntexAuctionProceedsReceive[idx] = FailedIntexAuctionProceedsReceive({
+                emissionDay: emissionDay, srcChainId: srcChainId, amount: amount, settled: false
+            });
+            emit IntexAuctionProceedsReceiveFailed(idx, emissionDay, srcChainId, pageIndex, amount, errorData);
         }
     }
 }

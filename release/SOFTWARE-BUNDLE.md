@@ -10,21 +10,26 @@ deployment-specific configuration.
 Run the same command locally and in CI:
 
 ```bash
-cargo xtask release build --output /tmp/outbe-release
+cargo xtask release build --profile production --output /tmp/outbe-release
+cargo xtask release build --profile development --output /tmp/outbe-release-dev
 ```
 
-The build runs inside the pinned project-toolchain container and requires a clean Git checkout.
-It produces one bundle for confidential-VM deployments and downloads the canonical CRS prefix,
-verifying its pinned SHA-256.
+Both profiles run TEE logic inside `outbe-chain`; neither ships an enclave executable or a
+separate enclave service. `production` enables the pinned native DCAP verifier and fails the build
+if the required QVL is unavailable. A host running the production node must provide the
+pinned Intel QVL shared library listed in `release/dcap-native-qvl-v1.json`.
+`development` enables protocol overrides for hardware-free
+local networks. Both builds run inside the pinned project-toolchain container and require a clean
+Git checkout. The builder downloads the canonical CRS prefix and verifies its pinned SHA-256.
 
-The output name includes the full source commit. `software-manifest.json` is the first archive
-entry and records the release identity, target, mode, size, and SHA-256 of every file. The build
-verifies the completed archive before returning it.
+Production is the default. Output names include the full source commit; the development output
+has a `development-` prefix. The shared `software-manifest.json` is the first archive entry and
+records the release identity, target, mode, size, and SHA-256 of every file. The build verifies
+the completed archive with the same verifier that `outbe-up` uses.
 
 ## Contents
 
-- `bin/`: node, operator, feeder, Radicle, Hyperlane validator, and confidential-VM signer
-  binaries;
+- `bin/`: node, operator CLI and installer, key generator, feeder, Radicle, and Hyperlane validator;
 - `tools/outbe-genesis-cli`: the founding-network bundle generator;
 - `.bb-crs/bn254_g1.dat`: the verified CRS required by every node;
 - `systemd/`: canonical joining-validator services rendered by `outbe-operator-systemd`.
@@ -43,6 +48,9 @@ continues to use `/run`.
 
 ## CI
 
-`17. Software bundle — preflight` builds and uploads the verified bundle without publishing it.
-Standard version tags create `SHA256SUMS`, sign the checksum file with Sigstore, and publish those
-artifacts to the GitHub release.
+`17. Software bundle — preflight` builds either profile and uploads the verified bundle without
+publishing it. Version tags build the production profile, create `SHA256SUMS`, sign the
+checksum file with Sigstore, and publish those artifacts to the GitHub release.
+
+The separate ELF build remains available through `release/scripts/reproducible-build.sh`. The
+software release workflow does not publish ELF comparison evidence, enclave images, or a genesis.

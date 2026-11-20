@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 
-use outbe_intex::{SeriesId, SERIES_ID_LEN};
+use outbe_intex::SeriesId;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::INTEX_FACTORY_ADDRESS;
@@ -16,7 +16,7 @@ use crate::constants::{INTEX_NFT1155_ADDRESS, MAX_SERIES_PER_MESSAGE, ORIGIN_ROU
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::sol_ext::{IIntexNFT1155, IOriginRouter, IERC1155};
-use IOriginRouter::IssuanceInstructionsParams;
+use IOriginRouter::IntexSeriesParams;
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -70,7 +70,7 @@ pub fn issue_intex(
         .iter()
         .map(|&chain_id| IssuanceLeg {
             chain_id,
-            payload: IOriginRouter::IssuanceInstructionsParams {
+            payload: IOriginRouter::IntexSeriesParams {
                 seriesId: params.series_id.into(),
                 emissionDay: params.emission_day.into(),
                 issuedAt: issued_at,
@@ -112,14 +112,12 @@ pub fn issue_intex(
 #[derive(Clone)]
 pub struct IssuanceLeg {
     pub chain_id: u32,
-    pub payload: IOriginRouter::IssuanceInstructionsParams,
+    pub payload: IOriginRouter::IntexSeriesParams,
 }
 
 /// Pack a day's legs into per-chain messages of up to `MAX_SERIES_PER_MESSAGE` series each.
-pub fn pack_issuance_messages(
-    legs: Vec<IssuanceLeg>,
-) -> Vec<(u32, Vec<IssuanceInstructionsParams>)> {
-    let mut per_chain: Vec<(u32, Vec<IssuanceInstructionsParams>)> = Vec::new();
+pub fn pack_issuance_messages(legs: Vec<IssuanceLeg>) -> Vec<(u32, Vec<IntexSeriesParams>)> {
+    let mut per_chain: Vec<(u32, Vec<IntexSeriesParams>)> = Vec::new();
     for leg in legs {
         // Legs arrive series by series, so this chain's open message is not the last one
         // built. Matching on the tail alone would batch nothing.
@@ -149,11 +147,11 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
             storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
-                IOriginRouter::sendIssuanceInstructionsCall {
+                IOriginRouter::sendIntexSeriesCall {
                     dstChainId: chain_id,
                     emissionDay: emission_day,
-                    chunkIndex: chunk_index as u16,
-                    totalChunks: total_chunks,
+                    pageIndex: chunk_index as u16,
+                    totalPages: total_chunks,
                     series,
                 }
                 .abi_encode()
@@ -166,13 +164,13 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
 
 /// One (chain, emission day) run of issuance messages, in send order: what the chunk header
 /// numbers.
-pub(crate) type IssuanceRun = ((u32, u32), Vec<Vec<IssuanceInstructionsParams>>);
+pub(crate) type IssuanceRun = ((u32, u32), Vec<Vec<IntexSeriesParams>>);
 
 /// Group packed messages into the runs the chunk header numbers: one per (chain, day), the pair
 /// the receiver counts chunks against. Callers pass one day's legs (clearing does). This is also
 /// what keeps `pack_issuance_messages` from batching two days into one message.
 pub(crate) fn chunk_issuance_messages(
-    packed: Vec<(u32, Vec<IssuanceInstructionsParams>)>,
+    packed: Vec<(u32, Vec<IntexSeriesParams>)>,
 ) -> Vec<IssuanceRun> {
     let mut runs: Vec<IssuanceRun> = Vec::new();
     for (chain_id, message) in packed {
@@ -221,16 +219,28 @@ pub(crate) fn owner_balances(
     })
 }
 
+/// Units of one series that one owner holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OwnerUnits {
+    pub series_id: SeriesId,
+    pub owner: Address,
+    pub units: U256,
+}
+
 /// Settle paying the cost from `payer` in `asset` by ERC20 transfer. The settled
 /// units stay with `owner`. An issuance-currency payment must name the VWAP
-/// snapshot required at this block.
+/// snapshot required at this block, and the cost must fit the payer's cap.
 pub fn settle_intex(
     storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    owner: Address,
-    units: U256,
+    held: OwnerUnits,
     payment: SettlementPayment,
+    amount_cap_minor: U256,
 ) -> Result<()> {
+    let OwnerUnits {
+        series_id,
+        owner,
+        units,
+    } = held;
     let SettlementPayment {
         payer,
         asset,
@@ -261,6 +271,8 @@ pub fn settle_intex(
         &pricing::settlement_cost(&series, units),
     )?;
     quote.require_snapshot(snapshot_id)?;
+    settlement::require_funds(storage, payer, asset, amount_cap_minor)?;
+    quote.require_within_cap(amount_cap_minor)?;
     storage.clone().with_checkpoint(|| {
         // The units move before payment so a token callback cannot settle them
         // twice. A failed payment rolls the move back.
@@ -282,18 +294,15 @@ pub fn settle_intex(
 
         settlement::collect(storage, payer, asset, quote.payment_minor)?;
 
-        emit_event(
-            storage,
-            crate::precompile::IIntexFactory::IntexSettled {
-                intexId: outbe_intex::intex_id(series_id),
-                owner,
-                asset,
-                issuanceCurrency: series.issuance_currency,
-                referenceCurrency: series.reference_currency,
-                amountMinor: quote.payment_minor,
-                units: settled_units,
-            },
-        )
+        IntexContract::new(storage.clone()).emit(outbe_intex::precompile::IIntex::IntexSettled {
+            intexId: outbe_intex::intex_id(series_id),
+            owner,
+            issuanceCurrency: series.issuance_currency,
+            referenceCurrency: series.reference_currency,
+            asset,
+            amountMinor: quote.payment_minor,
+            units: settled_units,
+        })
     })
 }
 
@@ -324,11 +333,9 @@ mod mining;
 mod pricing;
 mod proceeds;
 
-#[cfg(test)]
-pub(crate) use mining::compute_pow_hash;
 pub(crate) use mining::validate_pow;
 pub use mining::{mine_promis, MiningProof};
 pub use pricing::quote_settlement;
 #[cfg(test)]
 pub(crate) use pricing::settlement_units;
-pub use proceeds::distribute;
+pub use proceeds::burn_intex_auction_proceeds;

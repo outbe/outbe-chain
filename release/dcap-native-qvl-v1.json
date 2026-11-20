@@ -2,7 +2,6 @@
   "schema_version": 1,
   "status": "active",
   "target": "x86_64-unknown-linux-gnu",
-  "gramine_version": "1.9",
   "intel_dcap": {
     "runtime_package": "libsgx-dcap-quote-verify",
     "runtime_package_version": "1.26.100.1-noble1",

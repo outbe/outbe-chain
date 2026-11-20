@@ -77,7 +77,7 @@ fn seed_production_nod_genesis(storage: &StorageHandle<'_>) {
     // These tests exercise the production call terms.
     NodContract::new(storage.clone())
         .config_profile
-        .write(outbe_nod::config::PROFILE_PROD)
+        .write(outbe_nod::config::PROFILE_MAINNET)
         .unwrap();
 }
 
@@ -461,7 +461,7 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
         nod.config_profile
             .write(outbe_nod::config::PROFILE_AUTO)
             .unwrap();
-        let dev = outbe_nod::config::NodParams::DEV;
+        let dev = outbe_nod::config::NodParams::TESTNET;
         let mut item = nod_item(Address::repeat_byte(0x11), ISO);
         item.group_key = outbe_nod::identity::group_key(
             item.issued_at,
@@ -2222,30 +2222,4 @@ fn token_uri_turns_forfeited_past_the_settlement_deadline() {
     assert!(json.contains(&format!(
         r#"{{"trait_type":"Settlement Deadline","value":{deadline},"display_type":"date"}}"#
     )));
-}
-
-#[cfg(feature = "e2e-test")]
-#[test]
-fn static_test_command_is_rejected_before_group_validation() {
-    use crate::precompile::dispatch;
-    use crate::test_arming_e2e::INodFactoryTestArming;
-    use alloy_sol_types::SolCall;
-    use outbe_primitives::error::PrecompileError;
-    let mut provider = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(1);
-    provider.set_static(true);
-
-    let result = dispatch(
-        outbe_primitives::storage::StorageHandle::new(&mut provider),
-        &INodFactoryTestArming::closeCallNoticeForTestCall {
-            groupKey: alloy_primitives::B256::repeat_byte(1),
-            deadline: 1,
-        }
-        .abi_encode(),
-        Address::ZERO,
-        U256::ZERO,
-    );
-    assert!(
-        matches!(result, Err(PrecompileError::WriteProtection)),
-        "{result:?}"
-    );
 }

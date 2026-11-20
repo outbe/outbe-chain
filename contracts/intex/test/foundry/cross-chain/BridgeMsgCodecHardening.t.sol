@@ -9,74 +9,74 @@ import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 /// @dev Thin external wrapper around the `internal pure` encoders, so that a test contract can
 ///      assert the per-encoder revert paths via `vm.expectRevert`.
 contract BridgeMsgCodecHardeningHarness {
-    function encodeBidsBatch(
+    function encodeBidsPage(
         uint32 emissionDay,
         uint32 srcChainId,
         uint16 batchIndex,
-        uint16 totalBatches,
+        uint16 totalPages,
         address[] calldata bidders,
         uint256[] calldata packedBids
     ) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeBidsBatch(emissionDay, srcChainId, batchIndex, totalBatches, bidders, packedBids);
+        return BridgeMsgCodec.encodeBidsPage(emissionDay, srcChainId, batchIndex, totalPages, bidders, packedBids);
     }
 
-    function encodeIssuanceInstructions(BridgeMsgCodec.IssuanceInstructionsPayload[] calldata series)
+    function encodeIntexSeries(BridgeMsgCodec.IntexSeriesPayload[] calldata series)
         external
         pure
         returns (bytes memory)
     {
-        return BridgeMsgCodec.encodeIssuanceInstructions(series[0].emissionDay, 0, 1, series);
+        return BridgeMsgCodec.encodeIntexSeries(series[0].emissionDay, 0, 1, series);
     }
 
     function encodeIssuanceInstructions2(
         uint32 emissionDay,
-        uint16 chunkIndex,
-        uint16 totalChunks,
-        BridgeMsgCodec.IssuanceInstructionsPayload[] calldata series
+        uint16 pageIndex,
+        uint16 totalPages,
+        BridgeMsgCodec.IntexSeriesPayload[] calldata series
     ) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeIssuanceInstructions(emissionDay, chunkIndex, totalChunks, series);
+        return BridgeMsgCodec.encodeIntexSeries(emissionDay, pageIndex, totalPages, series);
     }
 
-    function encodeRefundInstructions(
+    function encodeIntexAuctionWinners(
         uint32 emissionDay,
-        uint16 chunkIndex,
-        uint16 totalChunks,
+        uint16 pageIndex,
+        uint16 totalPages,
         address[] calldata winners,
         uint16 partialIndex,
         uint16 partialWon
     ) external pure returns (bytes memory) {
-        return BridgeMsgCodec.encodeRefundInstructions(
-            emissionDay, chunkIndex, totalChunks, 600_000, 1e6, winners, partialIndex, partialWon
+        return BridgeMsgCodec.encodeIntexAuctionWinners(
+            emissionDay, pageIndex, totalPages, 600_000, 1e6, winners, partialIndex, partialWon
         );
     }
 
-    function decodeRefundInstructions(bytes calldata m)
+    function decodeIntexAuctionWinners(bytes calldata m)
         external
         pure
         returns (uint32, uint16, uint16, uint64, uint128, address[] memory, uint16, uint16)
     {
-        return BridgeMsgCodec.decodeRefundInstructions(m);
+        return BridgeMsgCodec.decodeIntexAuctionWinners(m);
     }
 
-    function decodeBidsBatch(bytes calldata m)
+    function decodeBidsPage(bytes calldata m)
         external
         pure
         returns (uint32, uint32, uint16, uint16, address[] memory, uint256[] memory)
     {
-        return BridgeMsgCodec.decodeBidsBatch(m);
+        return BridgeMsgCodec.decodeBidsPage(m);
     }
 
-    function decodeIssuanceInstructions(bytes calldata m)
+    function decodeIntexSeries(bytes calldata m)
         external
         pure
-        returns (BridgeMsgCodec.IssuanceInstructionsPayload[] memory series)
+        returns (BridgeMsgCodec.IntexSeriesPayload[] memory series)
     {
-        (,,, series) = BridgeMsgCodec.decodeIssuanceInstructions(m);
+        (,,, series) = BridgeMsgCodec.decodeIntexSeries(m);
     }
 }
 
 /// @dev Defence-in-depth assertions on `BridgeMsgCodec`: encoder-side parallel-array equality
-///      checks, inbound `decodeRefundInstructions` cap, and typed `InvalidPayloadLength` on
+///      checks, inbound `decodeIntexAuctionWinners` cap, and typed `InvalidPayloadLength` on
 ///      empty-payload entry to the three variable-length decoders.
 contract BridgeMsgCodecHardeningTest is Test {
     BridgeMsgCodecHardeningHarness internal harness;
@@ -98,12 +98,14 @@ contract BridgeMsgCodecHardeningTest is Test {
         uint32[] memory rates = new uint32[](2);
         uint32[] memory timestamps = new uint32[](2);
 
-        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.BidsArrayLengthMismatch.selector, uint256(2), uint256(1)));
-        harness.encodeBidsBatch(1, 1, 0, 1, bidders, BidPackLib.pack(quantities, rates, timestamps));
+        vm.expectRevert(
+            abi.encodeWithSelector(BridgeMsgCodec.IntexAuctionBidsArrayLengthMismatch.selector, uint256(2), uint256(1))
+        );
+        harness.encodeBidsPage(1, 1, 0, 1, bidders, BidPackLib.pack(quantities, rates, timestamps));
     }
 
     function test_encodeIssuanceInstructions_dayMismatch_reverts() public {
-        BridgeMsgCodec.IssuanceInstructionsPayload memory payload;
+        BridgeMsgCodec.IntexSeriesPayload memory payload;
         payload.seriesId = "20260212-TRY-U";
         payload.emissionDay = 20_260_212;
         payload.issuedAt = uint32(block.timestamp);
@@ -120,16 +122,16 @@ contract BridgeMsgCodecHardeningTest is Test {
         winners[0] = address(0xB1);
         winners[1] = address(0xB2);
 
-        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidRefundPartial.selector, uint16(2), uint256(2)));
-        harness.encodeRefundInstructions(1, 0, 1, winners, 2, 1);
+        vm.expectRevert(abi.encodeWithSelector(BridgeMsgCodec.InvalidReturnPartial.selector, uint16(2), uint256(2)));
+        harness.encodeIntexAuctionWinners(1, 0, 1, winners, 2, 1);
     }
 
-    // --- decodeRefundInstructions over-cap symmetric with BIDS / ISSUANCE ---
+    // --- decodeIntexAuctionWinners over-cap symmetric with BIDS / ISSUANCE ---
 
     function test_decodeRefundInstructions_overCap_revertsRefundBatchTooLarge() public {
         // The outbound encoder caps at MAX_PAYLOAD_ARRAY_LEN. An over-cap inbound payload can only
         // reach the receiver via a peer compromise or a future encoder change. The decoder must
-        // reject with the typed RefundBatchTooLarge error so the drop-don't-block handler surfaces
+        // reject with the typed IntexAuctionWinnersPageTooLarge error so the drop-don't-block handler surfaces
         // a parameterized diagnostic.
         uint256 n = uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN) + 1;
         address[] memory winners = new address[](n);
@@ -138,16 +140,18 @@ contract BridgeMsgCodecHardeningTest is Test {
         }
         bytes memory packet = abi.encodePacked(
             BridgeMsgCodec.BODY_VERSION_V1,
-            BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
+            BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS,
             abi.encode(uint32(42), uint16(0), uint16(1), uint64(600_000), uint128(1e6), winners, uint16(0), uint16(0))
         );
 
         vm.expectRevert(
             abi.encodeWithSelector(
-                BridgeMsgCodec.RefundBatchTooLarge.selector, n, uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN)
+                BridgeMsgCodec.IntexAuctionWinnersPageTooLarge.selector,
+                n,
+                uint256(BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN)
             )
         );
-        harness.decodeRefundInstructions(packet);
+        harness.decodeIntexAuctionWinners(packet);
     }
 
     // --- Empty-payload typed revert on the three variable-length decoders ---
@@ -160,12 +164,12 @@ contract BridgeMsgCodecHardeningTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_BIDS_BATCH,
+                BridgeMsgCodec.MSG_BIDS_PAGE,
                 uint256(0),
                 uint256(BridgeMsgCodec.HEADER_LEN)
             )
         );
-        harness.decodeBidsBatch(empty);
+        harness.decodeBidsPage(empty);
     }
 
     function test_decodeIssuanceInstructions_emptyMsg_revertsInvalidPayloadLength() public {
@@ -173,12 +177,12 @@ contract BridgeMsgCodecHardeningTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_ISSUANCE_INSTRUCTIONS,
+                BridgeMsgCodec.MSG_INTEX_SERIES,
                 uint256(0),
                 uint256(BridgeMsgCodec.HEADER_LEN)
             )
         );
-        harness.decodeIssuanceInstructions(empty);
+        harness.decodeIntexSeries(empty);
     }
 
     function test_decodeRefundInstructions_emptyMsg_revertsInvalidPayloadLength() public {
@@ -186,11 +190,11 @@ contract BridgeMsgCodecHardeningTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(
                 BridgeMsgCodec.InvalidPayloadLength.selector,
-                BridgeMsgCodec.MSG_REFUND_INSTRUCTIONS,
+                BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS,
                 uint256(0),
                 uint256(BridgeMsgCodec.HEADER_LEN)
             )
         );
-        harness.decodeRefundInstructions(empty);
+        harness.decodeIntexAuctionWinners(empty);
     }
 }

@@ -17,8 +17,8 @@ use super::*;
 #[test]
 fn every_utc_day_is_an_emission_day() {
     // Genesis at 2026-10-01 00:01:00 UTC (date key 20261001).
-    // The first WWD is 20260930 (forming_end = 2026-10-01 12:00 UTC > genesis), whose E = D+4 is 20261004.
-    // Days 20261001, 20261002, 20261003 have wwd == 0; day 20261004 has wwd == 20260930 (with 0 Tributes).
+    // The first WWD is 20260930 (forming_end = 2026-10-01 12:00 UTC > genesis), whose E = D+1 is 20261001.
+    // Each day E from 20261001 has wwd == E-1, with 0 Tributes.
     let genesis_oct_1 = date_key_to_utc_timestamp(20_261_001).unwrap() + 60;
     let mut storage = cycle_storage();
     storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 8);
@@ -39,10 +39,10 @@ fn every_utc_day_is_an_emission_day() {
         run_cycle_tick(&ctx).unwrap();
     });
 
-    // Advance hour by hour across 4 full UTC days (20261001..=20261004) into 20261005 02:00 UTC
-    // with zero Tributes and zero oracle prices.
+    // Advance hour by hour across 4 full UTC days (20261001..=20261004) into 20261005 13:00 UTC,
+    // after the Metadosis of 20261004, with zero Tributes and zero oracle prices.
     let first_hour = (genesis_oct_1 / 3_600 + 1) * 3_600;
-    let end_ts = date_key_to_utc_timestamp(20_261_005).unwrap() + 2 * 3_600;
+    let end_ts = date_key_to_utc_timestamp(20_261_005).unwrap() + 13 * 3_600;
     let mut block_number = 2u64;
     let mut ts = first_hour;
     while ts <= end_ts {
@@ -71,10 +71,10 @@ fn every_utc_day_is_an_emission_day() {
 
     storage.enter(|handle| {
         let expected_days = [
-            (20_261_001u32, 0u32, WorldwideDay::new(0)),
-            (20_261_002u32, 1u32, WorldwideDay::new(0)),
-            (20_261_003u32, 2u32, WorldwideDay::new(0)),
-            (20_261_004u32, 3u32, WorldwideDay::new(20_260_930)),
+            (20_261_001u32, 0u32, WorldwideDay::new(20_260_930)),
+            (20_261_002u32, 1u32, WorldwideDay::new(20_261_001)),
+            (20_261_003u32, 2u32, WorldwideDay::new(20_261_002)),
+            (20_261_004u32, 3u32, WorldwideDay::new(20_261_003)),
         ];
         let mut expected_promis_total = U256::ZERO;
         for (day, day_index, expected_wwd) in expected_days {
@@ -222,6 +222,13 @@ fn wwd_step_runs_once_a_day() {
                 &[(AddressPair::new_coen_to(840), U256::from(100), U256::ONE)],
             )
             .unwrap();
+        let wwd_20240103_start = WorldwideDay::new(20_240_103).start_timestamp().unwrap();
+        oracle
+            .write_snapshot(
+                wwd_20240103_start + 3_600,
+                &[(AddressPair::new_coen_to(840), U256::from(100), U256::ONE)],
+            )
+            .unwrap();
 
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_tick(&anchor).unwrap();
@@ -255,10 +262,9 @@ fn wwd_step_runs_once_a_day() {
     });
 
     // Advance day by day to 2024-01-05:
-    // - On 2024-01-02 00:00 UTC (day_offset = 1), WWD 20240101 forming_end (2024-01-02 12:00 UTC) > cutoff_ts,
-    //   so forming_snapshot_finalized[20240101] is still false.
-    // - On 2024-01-03 00:00 UTC (day_offset = 2), A6 snapshots WWD 20240101's forming VWAP from Oracle.
-    // - On 2024-01-05 00:00 UTC (day_offset = 4), WWD 20231231 closes/seals, leaving 20240101..=20240106.
+    // - The daily step A6 stores no price.
+    // - WWD D closes/seals at 00:00 UTC of D+3, so on 2024-01-05 00:00 UTC (day_offset = 4) 20240103..=20240106
+    //   remain.
     let mut block_no = 3u64;
     for day_offset in 1..=4u64 {
         let midnight_ts = GENESIS_TS + day_offset * SECONDS_PER_DAY;
@@ -270,34 +276,11 @@ fn wwd_step_runs_once_a_day() {
             let expected_day = timestamp_to_date_key(midnight_ts);
             let factory = TributeFactoryContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), expected_day);
-            if day_offset == 1 {
-                assert!(!factory
-                    .forming_snapshot_finalized
-                    .read(&WorldwideDay::new(20_240_101))
-                    .unwrap());
-            }
-            if day_offset == 2 {
-                assert!(
-                    factory
-                        .forming_snapshot_finalized
-                        .read(&WorldwideDay::new(20_240_101))
-                        .unwrap(),
-                    "A6 at 2024-01-03 00:00 UTC must finalize forming snapshot of WWD 20240101"
-                );
-                assert!(
-                    outbe_oracle::api::has_worldwide_day_vwap_snapshot(
-                        ctx.storage.clone(),
-                        WorldwideDay::new(20_240_101)
-                    )
-                    .unwrap(),
-                    "A6 at 2024-01-03 00:00 UTC must store forming VWAP snapshot of WWD 20240101"
-                );
-            }
         });
         block_no += 1;
     }
 
-    // Verify exact offering window boundaries [2024-01-03 10:00 UTC, 2024-01-05 12:00 UTC) for WWD 20240101:
+    // Verify exact offering window boundaries [2024-01-03 10:00 UTC, 2024-01-05 12:00 UTC) for WWD 20240103:
     // - 2024-01-03 09:59:59 UTC -> false
     // - 2024-01-03 10:00:00 UTC -> true
     // - 2024-01-05 11:59:59 UTC -> true
@@ -313,9 +296,9 @@ fn wwd_step_runs_once_a_day() {
         ] {
             handle.set_block_timestamp(U256::from(ts)).unwrap();
             assert_eq!(
-                outbe_tributefactory::worldwideday::is_offering_day(
+                outbe_tributefactory::worldwide_day::is_offering_day(
                     handle.clone(),
-                    WorldwideDay::new(20_240_101)
+                    WorldwideDay::new(20_240_103)
                 )
                 .unwrap(),
                 expected,
@@ -326,10 +309,9 @@ fn wwd_step_runs_once_a_day() {
 
     // Run all intraday hourly ticks 01:00..=23:00 UTC on 2024-01-05:
     // - No new WorldwideDayCreated or WorldwideDayClosed events are emitted at any intraday hour.
-    // - At 13:00 UTC (after WWD 20240101 offering_end = 12:00 UTC and after WWD 20240104 forming_end = 12:00 UTC):
-    //   * `is_offering_day(20240101)` is false by block timestamp (`now >= offering_end`).
-    //   * `is_day_sealed(20240101)` is still false and 20240101 remains in `pipeline_wwd`.
-    //   * `forming_snapshot_finalized[20240104]` is still false (forming snapshot is taken at 00:00 UTC).
+    // - At 13:00 UTC (after WWD 20240103 offering_end = 12:00 UTC and after WWD 20240104 forming_end = 12:00 UTC):
+    //   * `is_offering_day(20240103)` is false by block timestamp (`now >= offering_end`).
+    //   * `is_day_sealed(20240103)` is still false and 20240103 remains in `pipeline_wwd`.
     let events_before_intraday = storage.get_events(TRIBUTE_FACTORY_ADDRESS).len();
     for hour in 1..=23u64 {
         let ts_hour = GENESIS_TS + 4 * SECONDS_PER_DAY + hour * 3_600;
@@ -341,31 +323,24 @@ fn wwd_step_runs_once_a_day() {
             let factory = TributeFactoryContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_105);
             if hour == 13 {
-                assert!(!outbe_tributefactory::worldwideday::is_offering_day(
+                assert!(!outbe_tributefactory::worldwide_day::is_offering_day(
                     ctx.storage.clone(),
-                    WorldwideDay::new(20_240_101)
+                    WorldwideDay::new(20_240_103)
                 )
                 .unwrap());
                 assert!(
                     !outbe_tribute::TributeContract::new(ctx.storage.clone())
-                        .is_day_sealed(WorldwideDay::new(20_240_101))
+                        .is_day_sealed(WorldwideDay::new(20_240_103))
                         .unwrap(),
-                    "WWD 20240101 must not be sealed at 13:00 UTC; A6 seals at 00:00 UTC"
+                    "WWD 20240103 must not be sealed at 13:00 UTC; A6 seals at 00:00 UTC"
                 );
                 assert!(
                     factory
                         .pipeline_wwd
                         .read_all()
                         .unwrap()
-                        .contains(&WorldwideDay::new(20_240_101)),
-                    "WWD 20240101 must remain in pipeline at 13:00 UTC; A6 runs at 00:00 UTC"
-                );
-                assert!(
-                    !factory
-                        .forming_snapshot_finalized
-                        .read(&WorldwideDay::new(20_240_104))
-                        .unwrap(),
-                    "WWD 20240104 forming snapshot must not be finalized at 13:00 UTC"
+                        .contains(&WorldwideDay::new(20_240_103)),
+                    "WWD 20240103 must remain in pipeline at 13:00 UTC; A6 runs at 00:00 UTC"
                 );
             }
         });
@@ -377,16 +352,17 @@ fn wwd_step_runs_once_a_day() {
         "intraday ticks 01:00..=23:00 UTC must not emit duplicate TributeFactory WWD events"
     );
 
-    // Force an A6 revert at 2024-01-06 00:00 UTC by pre-linking future EmissionDay 20240111
-    // (the E = D+4 target of WWD 20240107) to a conflicting WWD, so creating WWD 20240107 inside
+    // Force an A6 revert at 2024-01-06 00:00 UTC by pre-linking future EmissionDay 20240108
+    // (the E = D+1 target of WWD 20240107) to a conflicting WWD, so creating WWD 20240107 inside
     // `advance_worldwide_days` reverts with `RevertBytes`.
     // Verify:
-    // - Step A4 (`allocate_emission_limit(20240105)`) still commits (`state == PROCESSING`).
-    // - Step A6 rolls back its inner checkpoint (`last_wwd_advance_day` stays 20240105, WWD 20240101
+    // - Step A4 (`allocate_emission_limit(20240105)`) still commits (`state == PROCESSING`), and
+    //   the Metadosis of 20240105 waits for 12:00 UTC.
+    // - Step A6 rolls back its inner checkpoint (`last_wwd_advance_day` stays 20240105, WWD 20240103
     //   remains unsealed in `pipeline_wwd`) and emits no event.
-    // - Step A7 (`process_emission_day`) still runs the Metadosis of 20240105 on the unsealed WWD.
+    // - The Metadosis of 20240104 ran at 12:00 UTC on 2024-01-05, before the seal of its WWD.
     storage.enter(|handle| {
-        outbe_emission::api::link_wwd(handle, 20_240_111, WorldwideDay::new(20_240_120)).unwrap();
+        outbe_emission::api::link_wwd(handle, 20_240_108, WorldwideDay::new(20_240_120)).unwrap();
     });
     let ts_day6_00h = GENESIS_TS + 5 * SECONDS_PER_DAY;
     let factory_events_before_failed_a6 = storage.get_events(TRIBUTE_FACTORY_ADDRESS).len();
@@ -405,8 +381,8 @@ fn wwd_step_runs_once_a_day() {
                 .pipeline_wwd
                 .read_all()
                 .unwrap()
-                .contains(&WorldwideDay::new(20_240_101)),
-            "reverted A6 must roll back closing/sealing of WWD 20240101"
+                .contains(&WorldwideDay::new(20_240_103)),
+            "reverted A6 must roll back closing/sealing of WWD 20240103"
         );
         assert!(
             factory
@@ -427,8 +403,17 @@ fn wwd_step_runs_once_a_day() {
         );
         assert_eq!(
             ed_20240105.metadosis_state,
+            outbe_emission::schema::metadosis_state::PENDING,
+            "the Metadosis of 20240105 starts at 12:00 UTC"
+        );
+        let ed_20240104 =
+            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_104)
+                .unwrap()
+                .unwrap();
+        assert_eq!(
+            ed_20240104.metadosis_state,
             outbe_emission::schema::metadosis_state::COMPLETED,
-            "A7 must run the Metadosis of 20240105 although A6 reverted"
+            "the Metadosis of 20240104 runs before the seal of WWD 20240103"
         );
     });
     assert_eq!(
@@ -438,11 +423,11 @@ fn wwd_step_runs_once_a_day() {
     );
     block_no += 1;
 
-    // Clear the conflicting pre-link on 20240111 and advance to the next hourly tick (2024-01-06 01:00 UTC).
-    // Now A6 retries, closes WWD 20240101 without sealing the day Metadosis retired, finalizes the
+    // Clear the conflicting pre-link on 20240108 and advance to the next hourly tick (2024-01-06 01:00 UTC).
+    // Now A6 retries, closes and seals WWD 20240103 that Metadosis already retired, finalizes the
     // forming snapshot of WWD 20240104, creates WWD 20240107 and updates `last_wwd_advance_day = 20240106`.
     storage.enter(|handle| {
-        let mut clear = outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_111)
+        let mut clear = outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_108)
             .unwrap()
             .unwrap();
         clear.wwd = WorldwideDay::new(0);
@@ -464,28 +449,19 @@ fn wwd_step_runs_once_a_day() {
                 .pipeline_wwd
                 .read_all()
                 .unwrap()
-                .contains(&WorldwideDay::new(20_240_101)),
-            "A6 retry at 01:00 UTC must close WWD 20240101"
+                .contains(&WorldwideDay::new(20_240_103)),
+            "A6 retry at 01:00 UTC must close WWD 20240103"
         );
         let tribute = outbe_tribute::TributeContract::new(ctx.storage.clone());
         assert!(tribute
             .retired_days
-            .read(&WorldwideDay::new(20_240_101))
+            .read(&WorldwideDay::new(20_240_103))
             .unwrap());
         assert!(
             tribute
-                .day_totals
-                .get(WorldwideDay::new(20_240_101))
-                .unwrap()
-                .is_none(),
-            "A6 retry at 01:00 UTC must leave the retired WWD 20240101 alone"
-        );
-        assert!(
-            factory
-                .forming_snapshot_finalized
-                .read(&WorldwideDay::new(20_240_104))
+                .is_day_sealed(WorldwideDay::new(20_240_103))
                 .unwrap(),
-            "A6 retry at 01:00 UTC must finalize forming snapshot of WWD 20240104"
+            "A6 retry at 01:00 UTC must seal the retired WWD 20240103"
         );
         assert!(
             factory
@@ -495,14 +471,14 @@ fn wwd_step_runs_once_a_day() {
                 .is_some(),
             "A6 retry at 01:00 UTC must create WWD X+1 (20240107)"
         );
-        let ed_20240105 =
-            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_105)
+        let ed_20240104 =
+            outbe_emission::api::get_emission_day_record(ctx.storage.clone(), 20_240_104)
                 .unwrap()
                 .unwrap();
         assert_eq!(
-            ed_20240105.metadosis_state,
+            ed_20240104.metadosis_state,
             outbe_emission::schema::metadosis_state::COMPLETED,
-            "the Metadosis of 20240105 stays completed"
+            "the Metadosis of 20240104 stays completed"
         );
     });
 
@@ -539,5 +515,260 @@ fn wwd_step_runs_once_a_day() {
         storage.get_events(TRIBUTE_FACTORY_ADDRESS).len(),
         factory_events_before_text_revert,
         "a text revert of A6 must emit no TributeFactory event"
+    );
+}
+
+#[test]
+fn metadosis_starts_at_the_offering_end() {
+    use outbe_emission::schema::metadosis_state;
+    let metadosis_state_of = |handle: &StorageHandle<'_>, day: u32| {
+        outbe_emission::api::get_emission_day_record(handle.clone(), day)
+            .unwrap()
+            .unwrap()
+            .metadosis_state
+    };
+    let mut storage = cycle_storage();
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
+    storage.enter(|handle| {
+        let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
+        run_cycle_tick(&anchor).unwrap();
+        let wwd =
+            outbe_metadosis::api::worldwide_day(handle.clone(), WorldwideDay::new(20_231_231))
+                .unwrap()
+                .unwrap();
+        let day = outbe_metadosis::api::emission_day(handle, 20_240_101)
+            .unwrap()
+            .unwrap();
+        assert_eq!(wwd.day, 20_240_101);
+        assert_eq!(day.metadosis_start, wwd.offering_end);
+        assert_eq!(wwd.offering_end, GENESIS_TS + SECONDS_PER_DAY + 12 * 3_600);
+    });
+
+    // The allocation of 20240101 runs at 00:00 UTC on 2024-01-02, and its Metadosis waits for 12:00 UTC.
+    for (block_number, timestamp, expected) in [
+        (
+            2,
+            GENESIS_TS + SECONDS_PER_DAY + 1,
+            metadosis_state::PENDING,
+        ),
+        (
+            3,
+            GENESIS_TS + SECONDS_PER_DAY + 11 * 3_600 + 1,
+            metadosis_state::PENDING,
+        ),
+        (
+            4,
+            GENESIS_TS + SECONDS_PER_DAY + 12 * 3_600 + 1,
+            metadosis_state::COMPLETED,
+        ),
+    ] {
+        storage.set_block_number(block_number);
+        storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
+        storage.enter(|handle| {
+            let ctx = dispatch_at(handle.clone(), block_number, timestamp);
+            assert!(is_day_allocated(&ctx, 20_240_101));
+            assert_eq!(metadosis_state_of(&handle, 20_240_101), expected);
+        });
+    }
+
+    // 20240102 is allocated, then the chain stops until 2024-01-04 01:00 UTC, when the votes of
+    // 20240103 are still open: the due Metadosis of 20240102 runs, and 20240103 waits.
+    storage.set_block_number(5);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
+    storage.enter(|handle| {
+        let ctx = dispatch_at(handle.clone(), 5, GENESIS_TS + 2 * SECONDS_PER_DAY + 1);
+        assert!(is_day_allocated(&ctx, 20_240_102));
+        assert_eq!(
+            metadosis_state_of(&handle, 20_240_102),
+            metadosis_state::PENDING
+        );
+    });
+    storage.set_block_number(6);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
+    storage.enter(|handle| {
+        handle
+            .contract::<outbe_rewards::schema::Rewards>()
+            .day_votes_sealed_at_block
+            .write(&20_240_103, 6)
+            .unwrap();
+        let ctx = dispatch_at(
+            handle.clone(),
+            6,
+            GENESIS_TS + 3 * SECONDS_PER_DAY + 3_600 + 1,
+        );
+        assert_eq!(
+            metadosis_state_of(&handle, 20_240_102),
+            metadosis_state::COMPLETED
+        );
+        assert!(!is_day_allocated(&ctx, 20_240_103));
+    });
+}
+
+const NOT_ALLOCATED: Option<u8> = None;
+
+/// One second after `hour`:00 UTC on 2024-01-`day`.
+fn jan(day: u64, hour: u64) -> u64 {
+    GENESIS_TS + (day - 1) * SECONDS_PER_DAY + hour * 3_600 + 1
+}
+
+fn started_cycle() -> HashMapStorageProvider {
+    let mut storage = cycle_storage();
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
+    storage.enter(|handle| {
+        run_cycle_tick(&genesis_block(handle, GENESIS_TS + 60)).unwrap();
+    });
+    storage
+}
+
+/// A block number, its timestamp, and each checked day with its expected state.
+type CheckedBlock<'a> = (u64, u64, &'a [(u32, Option<u8>)]);
+
+/// Runs one block per entry, then checks each listed day: `None` when it is not allocated,
+/// else its Metadosis state.
+fn run_blocks(storage: &mut HashMapStorageProvider, blocks: &[CheckedBlock<'_>]) {
+    for &(block_number, timestamp, expected) in blocks {
+        storage.set_block_number(block_number);
+        storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
+        storage.enter(|handle| {
+            let ctx = dispatch_at(handle.clone(), block_number, timestamp);
+            for &(day, state) in expected {
+                let actual = is_day_allocated(&ctx, day).then(|| {
+                    outbe_emission::api::get_emission_day_record(handle.clone(), day)
+                        .unwrap()
+                        .unwrap()
+                        .metadosis_state
+                });
+                assert_eq!(actual, state, "day {day} after block {block_number}");
+            }
+        });
+    }
+}
+
+#[test]
+fn a_stop_of_three_days_gives_each_day_its_allocation_and_metadosis_in_one_block() {
+    use outbe_emission::schema::metadosis_state::COMPLETED;
+    let mut storage = started_cycle();
+    // The chain stops after the Metadosis of 20240101 and runs again at 13:00 UTC on 2024-01-05.
+    run_blocks(
+        &mut storage,
+        &[
+            (2, jan(2, 12), &[(20_240_101, Some(COMPLETED))]),
+            (
+                3,
+                jan(5, 13),
+                &[(20_240_102, Some(COMPLETED)), (20_240_103, NOT_ALLOCATED)],
+            ),
+            (
+                4,
+                jan(5, 14),
+                &[(20_240_103, Some(COMPLETED)), (20_240_104, NOT_ALLOCATED)],
+            ),
+            (
+                5,
+                jan(5, 15),
+                &[(20_240_104, Some(COMPLETED)), (20_240_105, NOT_ALLOCATED)],
+            ),
+            (6, jan(6, 12), &[(20_240_105, Some(COMPLETED))]),
+        ],
+    );
+}
+
+#[test]
+fn a_stop_between_the_allocation_and_its_metadosis_runs_each_metadosis_one_run_later() {
+    use outbe_emission::schema::metadosis_state::{COMPLETED, PENDING};
+    let mut storage = started_cycle();
+    // The chain stops after the allocation of 20240101 at 00:00 UTC on 2024-01-02, before its
+    // Metadosis, and runs again at 13:00 UTC on 2024-01-05.
+    run_blocks(
+        &mut storage,
+        &[
+            (2, jan(2, 0), &[(20_240_101, Some(PENDING))]),
+            (
+                3,
+                jan(5, 13),
+                &[(20_240_101, Some(COMPLETED)), (20_240_102, Some(PENDING))],
+            ),
+            (
+                4,
+                jan(5, 14),
+                &[(20_240_102, Some(COMPLETED)), (20_240_103, Some(PENDING))],
+            ),
+            (
+                5,
+                jan(5, 15),
+                &[(20_240_103, Some(COMPLETED)), (20_240_104, Some(PENDING))],
+            ),
+            (
+                6,
+                jan(5, 16),
+                &[(20_240_104, Some(COMPLETED)), (20_240_105, NOT_ALLOCATED)],
+            ),
+            (7, jan(6, 12), &[(20_240_105, Some(COMPLETED))]),
+        ],
+    );
+}
+
+#[test]
+fn the_auction_starts_live_at_00_00_and_takes_its_brief_at_12_00() {
+    use alloy_sol_types::SolEvent;
+    use outbe_desis::precompile::IDesis;
+    use outbe_desis::schema::{AuctionStage, DesisContract};
+    use outbe_system_common::addresses::DESIS_ADDRESS;
+    let day = outbe_system_common::time::EmissionDate::new(20_240_101);
+    let mut storage = started_cycle();
+    storage.enter(|handle| {
+        let (_, index) = outbe_oracle::api::require_coen_pair(handle.clone(), 840).unwrap();
+        let oracle = OracleContract::new(handle);
+        for priced in [20_231_231, 20_240_101] {
+            oracle
+                .record_utc_day_vwap(priced, index, U256::from(2_000_000u64))
+                .unwrap();
+        }
+    });
+    let desis_events = |storage: &HashMapStorageProvider| {
+        let logs = storage.get_events(DESIS_ADDRESS);
+        let limits: Vec<_> = logs
+            .iter()
+            .filter_map(|log| IDesis::DesisLimitSet::decode_log_data(log).ok())
+            .map(|ev| (ev.emissionDay, ev.amountMinor))
+            .collect();
+        let cancels: Vec<_> = logs
+            .iter()
+            .filter_map(|log| IDesis::DesisCanceled::decode_log_data(log).ok())
+            .map(|ev| (ev.emissionDay, ev.reason))
+            .collect();
+        (limits, cancels)
+    };
+
+    storage.set_block_number(2);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
+    storage.enter(|handle| {
+        dispatch_at(handle.clone(), 2, jan(2, 0));
+        let desis = DesisContract::new(handle);
+        assert_eq!(
+            desis.auction_stage.read(&day).unwrap(),
+            AuctionStage::CommittingBids as u8
+        );
+        assert_eq!(desis.desis_limit_set.read(&day).unwrap(), 0);
+    });
+    assert_eq!(desis_events(&storage), (vec![], vec![]));
+
+    // The day has no Tribute, so its brief at 12:00 carries a zero limit and cancels the started
+    // auction.
+    storage.set_block_number(3);
+    storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);
+    storage.enter(|handle| {
+        dispatch_at(handle.clone(), 3, jan(2, 12));
+        assert_eq!(
+            DesisContract::new(handle).auction_stage.read(&day).unwrap(),
+            AuctionStage::Canceled as u8
+        );
+    });
+    assert_eq!(
+        desis_events(&storage),
+        (
+            vec![(20_240_101, U256::ZERO)],
+            vec![(20_240_101, outbe_desis::constants::CANCELED_NO_LIMIT)]
+        )
     );
 }

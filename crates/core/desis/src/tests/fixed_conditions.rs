@@ -2,7 +2,6 @@
 //! issuance read them only from the stored day config, not from the Intex profile.
 
 use super::*;
-use crate::constants::{DAY_STATE_CANCELLED, DAY_STATE_LIVE};
 use crate::schema::{IntexCallTrigger, ReferenceCurrencyPrice};
 use outbe_intex::config::IntexParams;
 
@@ -16,20 +15,14 @@ fn read_config(s: &StorageHandle) -> AuctionConfig {
 }
 
 /// The AUCTION_STAGE_START payload the stored day config gives.
-fn announced(
-    config: &AuctionConfig,
-    day_state: u8,
-) -> crate::sol_ext::IOriginRouter::AuctionStageStartParams {
-    runtime::stage_start_params(
-        runtime::StageStart {
-            emission_day: EMISSION_DAY,
-            config,
-            commit_end: 1,
-            reveal_end: 2,
-            issuance_end: 3,
-        },
-        day_state,
-    )
+fn announced(config: &AuctionConfig) -> crate::sol_ext::IOriginRouter::IntexAuctionStartParams {
+    runtime::intex_auction_start_params(runtime::IntexAuctionStart {
+        emission_day: EMISSION_DAY,
+        config,
+        commit_end: 1,
+        reveal_end: 2,
+        issuance_end: 3,
+    })
     .unwrap()
 }
 
@@ -67,20 +60,17 @@ fn the_start_fixes_the_call_terms_of_each_currency_from_the_profile() {
                 ReferenceCurrencyPrice {
                     iso_code: REFERENCE_ISO,
                     entry_price_minor: U256::from(ENTRY_PRICE),
-                    call_price_minor: call_price(ENTRY_PRICE, IntexParams::PROD),
+                    call_price_minor: call_price(ENTRY_PRICE, IntexParams::MAINNET),
                 },
                 ReferenceCurrencyPrice {
                     iso_code: EUR_ISO,
                     entry_price_minor: U256::from(EUR_ENTRY_PRICE),
-                    call_price_minor: call_price(EUR_ENTRY_PRICE, IntexParams::PROD),
+                    call_price_minor: call_price(EUR_ENTRY_PRICE, IntexParams::MAINNET),
                 },
             ]
         );
-        assert_eq!(config.call_trigger, trigger_of(IntexParams::PROD));
-        assert_eq!(
-            config.commit_bond_minor,
-            IntexParams::PROD.commit_bond_minor
-        );
+        assert_eq!(config.call_trigger, trigger_of(IntexParams::MAINNET));
+        assert_eq!(config.bid_bond_minor, IntexParams::MAINNET.bid_bond_minor);
     });
 }
 
@@ -92,14 +82,14 @@ fn the_start_message_carries_only_the_stored_day_config() {
         runtime::schedule_tick(&s, NOW).unwrap();
         let config = read_config(&s);
         // A profile change after the start does not change what the day announces.
-        select_profile(&s, outbe_intex::config::PROFILE_DEV);
+        select_profile(&s, outbe_intex::config::PROFILE_TESTNET);
 
-        let message = announced(&config, DAY_STATE_LIVE);
+        let message = announced(&config);
         assert_eq!(message.emissionDay, EMISSION_DAY.value());
         assert_eq!(message.promisLoadMinor, config.promis_load_minor);
-        assert_eq!(message.minIntexBidRate, config.min_intex_bid_rate);
-        assert_eq!(message.minIntexBidQuantity, config.min_intex_bid_quantity);
-        assert_eq!(message.commitBondMinor, config.commit_bond_minor);
+        assert_eq!(message.minBidRate, config.min_bid_rate);
+        assert_eq!(message.minBidQuantity, config.min_bid_quantity);
+        assert_eq!(message.bidBondMinor, config.bid_bond_minor);
         assert_eq!(message.callWindow, config.call_trigger.call_window_seconds);
         assert_eq!(
             message.callThreshold,
@@ -115,12 +105,11 @@ fn the_start_message_carries_only_the_stored_day_config() {
             assert_eq!(U256::from(wire.entryPriceMinor), row.entry_price_minor);
             assert_eq!(U256::from(wire.callPriceMinor), row.call_price_minor);
         }
-        assert_eq!(message.dayState, DAY_STATE_LIVE);
     });
 }
 
 #[test]
-fn an_unpriced_day_still_fixes_and_announces_the_call_trigger() {
+fn an_unpriced_day_still_fixes_the_call_trigger() {
     with_storage(|s| {
         brief(&s, true);
         unprice_day(&s, NOW);
@@ -129,23 +118,12 @@ fn an_unpriced_day_still_fixes_and_announces_the_call_trigger() {
             s.contract::<DesisContract>()
                 .read_stage(EMISSION_DAY)
                 .unwrap(),
-            AuctionStage::Cancelled
+            AuctionStage::Canceled
         );
 
         let config = read_config(&s);
         assert!(config.reference_prices.is_empty());
-        assert_eq!(config.call_trigger, trigger_of(IntexParams::PROD));
-        let message = announced(&config, DAY_STATE_CANCELLED);
-        assert!(message.prices.is_empty());
-        assert_eq!(message.callWindow, IntexParams::PROD.call_window_seconds);
-        assert_eq!(
-            message.callThreshold,
-            IntexParams::PROD.call_threshold_seconds
-        );
-        assert_eq!(
-            message.callNoticePeriod,
-            IntexParams::PROD.call_notice_period_seconds
-        );
+        assert_eq!(config.call_trigger, trigger_of(IntexParams::MAINNET));
     });
 }
 
@@ -153,7 +131,6 @@ fn an_unpriced_day_still_fixes_and_announces_the_call_trigger() {
 /// gives the series the conditions the bidders saw, not the new profile's.
 /// The test walks the day-long production windows, so an e2e build does not run it.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
     use outbe_intexfactory::SeriesId;
 
@@ -161,16 +138,16 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
         brief_at(&s, EMISSION_DAY, 2 * LOAD_MINOR, true);
         runtime::schedule_tick(&s, NOW).unwrap();
         let config = read_config(&s);
-        let message = announced(&config, DAY_STATE_LIVE);
+        let message = announced(&config);
         let wire_row = &message.prices[0];
         assert_eq!(
             U256::from(wire_row.callPriceMinor),
-            call_price(ENTRY_PRICE, IntexParams::PROD)
+            call_price(ENTRY_PRICE, IntexParams::MAINNET)
         );
 
-        select_profile(&s, outbe_intex::config::PROFILE_DEV);
-        assert_ne!(IntexParams::DEV.call_rate, IntexParams::PROD.call_rate);
-        assert_ne!(trigger_of(IntexParams::DEV), trigger_of(IntexParams::PROD));
+        select_profile(&s, outbe_intex::config::PROFILE_TESTNET);
+        assert_ne!(IntexParams::TESTNET.call_rate, IntexParams::MAINNET.call_rate);
+        assert_ne!(trigger_of(IntexParams::TESTNET), trigger_of(IntexParams::MAINNET));
 
         runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         arm_clearing(&s);
@@ -182,7 +159,7 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
             call_window_seconds: message.callWindow,
             call_threshold_seconds: message.callThreshold,
             call_notice_period_seconds: message.callNoticePeriod,
-            transit_margin_seconds: IntexParams::DEV.transit_margin_seconds,
+            transit_margin_seconds: IntexParams::TESTNET.transit_margin_seconds,
         };
         let series_id =
             SeriesId::for_pair(EMISSION_DAY.value(), REFERENCE_ISO, REFERENCE_ISO).unwrap();
@@ -273,9 +250,9 @@ fn the_day_config_round_trips_with_its_call_prices() {
                 call_notice_period_seconds: 5,
                 transit_margin_seconds: 0,
             },
-            min_intex_bid_rate: 3,
-            min_intex_bid_quantity: 2,
-            commit_bond_minor: 9,
+            min_bid_rate: 3,
+            min_bid_quantity: 2,
+            bid_bond_minor: 9,
             reference_prices: vec![
                 ReferenceCurrencyPrice {
                     iso_code: REFERENCE_ISO,

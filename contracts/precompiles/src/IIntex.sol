@@ -114,13 +114,15 @@ interface IIntex {
     /// @notice Emitted when a settlement mints Settled units and when mining burns them.
     event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value);
 
-    /// @notice The series was force-called. It settles until `settlementDeadline`, inclusive.
-    event IntexSeriesCalled(
-        bytes14 indexed seriesId,
+    /// @notice `units` Issued Intexes of `intexId` were settled. They stay with `owner` as Settled.
+    event IntexSettled(
+        uint256 indexed intexId,
+        address indexed owner,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint64 calledAt,
-        uint64 settlementDeadline
+        address asset,
+        uint256 amountMinor,
+        uint32 units
     );
 
     /// @notice The series settlement window closed. Both are zero when every unit was realized in time.

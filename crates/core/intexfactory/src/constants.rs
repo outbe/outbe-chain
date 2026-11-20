@@ -3,15 +3,12 @@
 
 pub use outbe_core_common::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS};
 
-/// Router calls a call notice gets before it is dropped.
+/// Tries a call notice gets for each target chain. The first send is try 1.
 pub const MAX_CALL_NOTICE_ATTEMPTS: u8 = 8;
 
 /// Pause before a refused notice is sent again, so the 8 sends span about 35 minutes
 /// of a router outage.
-#[cfg(not(feature = "e2e-test"))]
 pub const NOTICE_RETRY_SECONDS: u64 = 300;
-#[cfg(feature = "e2e-test")]
-pub const NOTICE_RETRY_SECONDS: u64 = 30;
 
 /// Consecutive wholly refused runs that end a block's send: a router that refuses every
 /// send would otherwise spend the whole budget on calls that cannot land.

@@ -144,7 +144,7 @@ impl World {
         world
     }
 
-    /// Initialized in place: the admin grants the relayer and auction roles to the issuer
+    /// Initialized in place: the admin grants the router and auction roles to the issuer
     /// and the burner role to the factory precompile.
     fn install_nft(&mut self) {
         self.ok(
@@ -155,7 +155,7 @@ impl World {
             },
         );
         for (role, account) in [
-            ("RELAYER_ROLE", RELAYER),
+            ("ROUTER_ROLE", RELAYER),
             ("AUCTION_ROLE", RELAYER),
             ("BURNER_ROLE", INTEX_FACTORY_ADDRESS),
         ] {
@@ -229,7 +229,7 @@ impl World {
                 units: U256::from(units),
             },
         )
-        .paymentMinor
+        .amountMinor
     }
 
     /// Alice moves part of her issued holding to Bob with a plain ERC-1155 transfer.
@@ -249,12 +249,14 @@ impl World {
 
     /// The payer, a third party, settles `units` for `owner` through the factory precompile.
     fn settle_for(&mut self, owner: Address, units: u64) -> SubCallOutput {
+        let amount_cap_minor = self.quote(units);
         let calldata = IIntexFactory::settleIntexCall {
             intexId: issued_id(),
             owner,
             units: U256::from(units),
             asset: ASSET,
             snapshotId: U256::ZERO,
+            amountCapMinor: amount_cap_minor,
         }
         .abi_encode();
         self.call(PAYER, INTEX_FACTORY_ADDRESS, calldata.into(), false)
@@ -315,7 +317,8 @@ impl World {
         self.evm
             .logs()
             .iter()
-            .filter_map(|log| IIntexFactory::IntexSettled::decode_log_data(&log.data).ok())
+            .filter(|log| log.address == INTEX_ADDRESS)
+            .filter_map(|log| IIntex::IntexSettled::decode_log_data(&log.data).ok())
             .map(|event| (event.owner, u64::from(event.units)))
             .collect()
     }

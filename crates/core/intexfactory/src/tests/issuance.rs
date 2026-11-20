@@ -98,7 +98,7 @@ fn call_terms_mark_up_the_entry_with_the_live_profile() {
         assert_eq!(terms.call_trigger, prod_trigger());
 
         select_dev_profile(&s);
-        let dev = outbe_intex::config::IntexParams::DEV;
+        let dev = outbe_intex::config::IntexParams::TESTNET;
         let terms = crate::api::call_terms(&s).unwrap();
         assert_eq!(
             terms.call_price(U256::from(ENTRY_PRICE)).unwrap(),
@@ -119,7 +119,7 @@ fn call_terms_mark_up_the_entry_with_the_live_profile() {
 fn select_dev_profile(s: &StorageHandle<'_>) {
     outbe_intex::IntexContract::new(s.clone())
         .config_profile
-        .write(outbe_intex::config::PROFILE_DEV)
+        .write(outbe_intex::config::PROFILE_TESTNET)
         .unwrap();
 }
 
@@ -239,7 +239,7 @@ fn coen_iso_wire_price_preserves_the_six_decimal_integer() {
 }
 
 fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
-    let payload = crate::sol_ext::IOriginRouter::IssuanceInstructionsParams {
+    let payload = crate::sol_ext::IOriginRouter::IntexSeriesParams {
         seriesId: sid(series).into(),
         emissionDay: day,
         issuedAt: ISSUED_AT,
@@ -258,10 +258,7 @@ fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
 }
 
 fn shape(
-    messages: &[(
-        u32,
-        Vec<crate::sol_ext::IOriginRouter::IssuanceInstructionsParams>,
-    )],
+    messages: &[(u32, Vec<crate::sol_ext::IOriginRouter::IntexSeriesParams>)],
 ) -> Vec<(u32, usize)> {
     messages
         .iter()
@@ -355,6 +352,7 @@ pub(super) fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT));
+    super::fund_payer(&mut storage, settlement_asset());
     storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
         crate::constants::INTEX_NFT1155_ADDRESS,
@@ -535,14 +533,17 @@ fn settle_series_7(storage: &mut HashMapStorageProvider, snapshot: U256) -> Stri
     StorageHandle::enter(storage, |s| {
         runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::ONE,
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::ONE,
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: snapshot,
             },
+            amount_cap(),
         )
         .unwrap_err()
         .to_string()
@@ -590,19 +591,13 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         )
         .to_string()
     );
-    let other_policy = outbe_oracle::api::get_vwap_snapshot_id(
-        cutoff + 3_600,
-        &outbe_oracle::api::VwapPolicy {
-            policy_version: 2,
-            ..outbe_oracle::api::DEFAULT_VWAP_POLICY
-        },
-    )
-    .unwrap();
+    // The id of an older window.
+    let other_window = U256::from(cutoff - 3_600);
     assert_eq!(
-        settle_series_7(&mut storage, other_policy.to_u256()),
+        settle_series_7(&mut storage, other_window),
         outbe_primitives::error::PrecompileError::from(
             outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
-                authorized: other_policy.to_u256(),
+                authorized: other_window,
                 required,
             }
         )
@@ -676,14 +671,17 @@ fn a_reference_payment_ignores_the_snapshot_it_names() {
     StorageHandle::enter(&mut storage, |s| {
         let err = runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::ONE,
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::ONE,
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: U256::from(7u64),
             },
+            amount_cap(),
         )
         .unwrap_err();
         assert_eq!(

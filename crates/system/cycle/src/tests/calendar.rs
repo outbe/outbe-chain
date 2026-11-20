@@ -58,7 +58,6 @@ fn process_emission_day_catches_up_one_oldest_day_per_hourly_run_after_a_multi_d
 #[test]
 fn the_daily_step_adds_base_fees_and_burn_addresses_after_the_seal_and_before_metadosis() {
     use alloy_sol_types::SolEvent;
-    use outbe_desis::precompile::IDesis;
     use outbe_metadosis::precompile::IMetadosis;
     use outbe_promislimit::{precompile::IPromisLimit, PromisLimitContract, DEAD_ADDRESS};
     use outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS;
@@ -96,6 +95,10 @@ fn the_daily_step_adds_base_fees_and_burn_addresses_after_the_seal_and_before_me
         assert_eq!(handle.balance(Address::ZERO).unwrap(), U256::from(5));
         assert_eq!(handle.balance(DEAD_ADDRESS).unwrap(), U256::ZERO);
     });
+    storage.set_block_number(3);
+    storage.enter(|handle| {
+        dispatch_at(handle, 3, GENESIS_TS + SECONDS_PER_DAY + 12 * 3_600 + 1);
+    });
 
     let events = &storage.get_ordered_events()[events_before..];
     let position =
@@ -114,10 +117,11 @@ fn the_daily_step_adds_base_fees_and_burn_addresses_after_the_seal_and_before_me
     });
     let base_fees = position(&added(41, 2));
     let burn_addresses = position(&added(46, 4));
-    let desis_limit = position(&|log| {
-        IDesis::DesisLimitSet::decode_log(log).is_ok_and(|ev| ev.data.emissionDay == 20_240_101)
+    let metadosis = position(&|log| {
+        IMetadosis::MetadosisCompleted::decode_log(log)
+            .is_ok_and(|ev| ev.data.emissionDay == 20_240_101)
     });
-    assert!(allocated < base_fees && base_fees < burn_addresses && burn_addresses < desis_limit);
+    assert!(allocated < base_fees && base_fees < burn_addresses && burn_addresses < metadosis);
 }
 
 #[test]
@@ -205,11 +209,7 @@ fn catchup_horizon_bounds_backward_scan_to_max_reward_catchup_days() {
             expected_floor
         );
         assert!(is_day_allocated(&ctx, expected_floor));
-        assert!(
-            outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_101)
-                .unwrap()
-                .is_none()
-        );
+        assert!(!is_day_allocated(&ctx, 20_240_101));
         assert!(!handle
             .contract::<outbe_rewards::schema::Rewards>()
             .day_cleanup_scheduled
@@ -251,11 +251,7 @@ fn forward_seal_jump_waits_for_skipped_parent_late_votes() {
                     .with_checkpoint(|| outbe_rewards::block_fees::seal_block_votes(&ctx, 13, 3))
                     .unwrap();
             }
-            assert!(
-                outbe_emission::api::get_emission_day_record(handle, 20_240_101)
-                    .unwrap()
-                    .is_none()
-            );
+            assert!(!is_day_allocated(&ctx, 20_240_101));
         });
     }
     storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 4);
@@ -429,8 +425,8 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         .all(|ev| ev.data.emissionDay != 20_240_101));
 
     // Now test Step 3 (`process_emission_day`) recoverable revert fallback (`MetadosisFailed(E, 1)`):
-    // Clear the WAA pending total so day 20240102 allocates cleanly, and pre-set Desis stage
-    // for 20240102 so `process_emission_day` reverts with `InvalidStageTransition`.
+    // Clear the WAA pending total so day 20240102 allocates cleanly, and corrupt the Desis stage
+    // of its scheduled auction so `process_emission_day` reverts with `InvalidStageTransition`.
     storage.set_block_number(3);
     storage.enter(|handle| {
         let ar = outbe_agentreward::AgentRewardContract::new(handle.clone());
@@ -440,19 +436,22 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
                 U256::ZERO,
             )
             .unwrap();
-        outbe_desis::schema::DesisContract::new(handle.clone())
-            .auction_stage
-            .write(
-                &outbe_system_common::time::EmissionDate::new(20_240_102),
-                outbe_desis::schema::AuctionStage::Briefed as u8,
-            )
-            .unwrap();
+        let desis = outbe_desis::schema::DesisContract::new(handle.clone());
+        let day2 = outbe_system_common::time::EmissionDate::new(20_240_102);
+        desis.sched_active_slot.write(&day2, 1).unwrap();
+        desis.auction_stage.write(&day2, u8::MAX).unwrap();
         let promis_before_day2 = outbe_promislimit::PromisLimitContract::new(handle.clone())
             .promis_limit()
             .unwrap();
         let fire_ts = GENESIS_TS + 2 * SECONDS_PER_DAY + 3_600;
         let ctx = runtime_context(block_ctx(3, fire_ts), handle.clone());
         account_parent(&ctx, 3);
+        run_due_tasks(&ctx).unwrap();
+        assert!(is_day_allocated(&ctx, 20_240_102));
+
+        let metadosis_ts = GENESIS_TS + 2 * SECONDS_PER_DAY + 12 * 3_600 + 1;
+        let ctx = runtime_context(block_ctx(4, metadosis_ts), handle.clone());
+        account_parent(&ctx, 4);
         run_due_tasks(&ctx).unwrap();
 
         let rec = outbe_emission::api::get_emission_day_record(handle.clone(), 20_240_102)

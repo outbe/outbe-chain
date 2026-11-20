@@ -6,7 +6,6 @@ license.workspace = true
 publish.workspace = true
 
 [features]
-e2e-test = []
 test-utils = []
 
 [dependencies]

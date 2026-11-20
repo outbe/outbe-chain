@@ -5,7 +5,7 @@ use clap::{Args, Parser, Subcommand};
 use eyre::{bail, ensure, Result, WrapErr as _};
 use xtask::{
     layer_boundaries, protocol_bench,
-    release::{canonical_json, elf, software, toolchain},
+    release::{canonical_json, elf, repository_root, software, toolchain},
     stablecoin,
 };
 
@@ -102,6 +102,9 @@ enum ReleaseCommand {
 
 #[derive(Debug, Args)]
 struct SoftwareBuildArgs {
+    /// Safe production binaries, or an explicitly unsafe local-development build.
+    #[arg(long, value_enum, default_value = "production")]
+    profile: software::SoftwareProfile,
     /// Directory that receives the versioned `.tar.zst` bundle.
     #[arg(long)]
     output: PathBuf,
@@ -236,7 +239,7 @@ fn main() -> Result<()> {
             );
         }
         Command::ProtocolBench(arguments) => {
-            let repo_root = default_workspace_root();
+            let repo_root = repository_root()?;
             let (action, options) = match arguments.command {
                 ProtocolBenchCommand::Run(options) => (protocol_bench::Action::Run, options),
                 ProtocolBenchCommand::BaselineCheck(options) => {
@@ -262,11 +265,12 @@ fn main() -> Result<()> {
                 let repo_root = if arguments.inside_container {
                     std::env::current_dir()?
                 } else {
-                    default_workspace_root()
+                    repository_root()?
                 };
                 let output = software::build(&software::BuildOptions {
                     repo_root: &repo_root,
                     output_dir: &arguments.output,
+                    profile: arguments.profile,
                     release_tag: arguments.release_tag.as_deref(),
                     no_cache: arguments.no_cache,
                     inside_container: arguments.inside_container,
@@ -275,12 +279,12 @@ fn main() -> Result<()> {
             }
             ReleaseCommand::Elf(elf_args) => run_elf_command(elf_args.command)?,
             ReleaseCommand::Toolchain(toolchain_args) => {
-                let repo_root = default_workspace_root();
+                let repo_root = repository_root()?;
                 run_toolchain_command(&repo_root, toolchain_args.command)?;
             }
         },
         Command::Stablecoin(stablecoin_args) => {
-            let repo_root = default_workspace_root();
+            let repo_root = repository_root()?;
             match stablecoin_args.command {
                 StablecoinCommand::AbiCheck => {
                     let report = stablecoin::check_abi_exports(&repo_root)?;
@@ -384,7 +388,7 @@ fn run_elf_command(command: ElfCommand) -> Result<()> {
         } => {
             let repo_root = match repo_root {
                 Some(repo_root) => repo_root,
-                None => default_workspace_root(),
+                None => repository_root()?,
             };
             run_elf_compare(&first, &second, &repo_root, &output)
         }

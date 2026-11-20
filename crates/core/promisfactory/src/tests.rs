@@ -6,12 +6,11 @@ use alloy_primitives::{address, Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent, SolInterface};
 
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
-use outbe_enclave::promis::{decrypt_balance, derive_view_key};
-use outbe_enclave::protocol::PromisOp;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_promis::api::{self as promis_api, ModifyAuth};
 use outbe_promis::enclave_client::test_enclave;
+use outbe_promis::{decrypt_balance, derive_view_key, PromisOp};
 use outbe_system_common::addresses::{PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS};
 use outbe_system_common::units::{ONE_COEN, SCALE_1E6_U64};
 

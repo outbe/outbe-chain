@@ -37,19 +37,12 @@ where
     let policy_hash = authority.policy.policy_hash().map_err(|error| {
         crate::errors::TeeBootstrapError::InvalidStartupPolicy(format!("{error}"))
     })?;
-    let mut scope = Vec::with_capacity(OST3_SCOPE_DOMAIN.len() + 32 * 4 + 8);
-    scope.extend_from_slice(OST3_SCOPE_DOMAIN);
-    scope.extend_from_slice(&authority.policy.chain_id);
-    scope.extend_from_slice(authority.policy.genesis_hash.as_slice());
-    scope.extend_from_slice(policy_hash.as_slice());
-    scope.extend_from_slice(authority.committee_snapshot_hash.as_slice());
-    scope.extend_from_slice(&authority.committee_snapshot_block.to_be_bytes());
-    scope.extend_from_slice(authority.network_encryption_public_key.as_slice());
+    let scope = bootstrap_gossip_scope(&authority, policy_hash);
     let mut gossip = CommonwareBootstrapGossip {
         sender: transport.sender,
         receiver: transport.receiver,
         clock: transport.clock,
-        delivery: new_delivery_tracker(keccak256(scope), transport.allowed_remote_peers),
+        delivery: new_delivery_tracker(scope, transport.allowed_remote_peers),
     };
     coordinate_tee_bootstrap_v2(
         local_submission,
@@ -289,4 +282,19 @@ fn request_signed_announcement<E: outbe_tee::tee_dkg::EnclaveChannel>(
             }
         },
     )
+}
+
+pub(super) fn bootstrap_gossip_scope(
+    authority: &TeeBootstrapAuthorityV2,
+    policy_hash: B256,
+) -> B256 {
+    let mut scope = Vec::with_capacity(OST3_SCOPE_DOMAIN.len() + 32 * 4 + 8);
+    scope.extend_from_slice(OST3_SCOPE_DOMAIN);
+    scope.extend_from_slice(&authority.policy.chain_id);
+    scope.extend_from_slice(authority.policy.genesis_hash.as_slice());
+    scope.extend_from_slice(policy_hash.as_slice());
+    scope.extend_from_slice(authority.committee_snapshot_hash.as_slice());
+    scope.extend_from_slice(&authority.committee_snapshot_block.to_be_bytes());
+    scope.extend_from_slice(authority.network_encryption_public_key.as_slice());
+    keccak256(scope)
 }

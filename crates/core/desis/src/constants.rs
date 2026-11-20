@@ -3,13 +3,6 @@ pub use outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS;
 /// Minimum-bid-quantity floor: 4% of the prior series' issued count (basis points).
 pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 
-/// Fixed load bypassing the ladder. The harness seeds the day's mint cap at 500
-/// PROMIS, far under one laddered Intex, so a laddered e2e day would issue none.
-#[cfg(not(feature = "e2e-test"))]
-pub const PROMIS_LOAD_OVERRIDE: Option<u128> = None;
-#[cfg(feature = "e2e-test")]
-pub const PROMIS_LOAD_OVERRIDE: Option<u128> = Some(1);
-
 /// Bid fan-in deadline: clearing proceeds without chains that have not reported
 /// BIDS_DONE within this window after the collection stage starts. A repair window
 /// for parked legs. It must stay under 24h so the deadline clear lands on the
@@ -33,73 +26,52 @@ pub const ADVANCE_AUCTIONS_BUDGET_GAS: u64 =
     ADVANCE_START_GAS + ADVANCE_REVEAL_END_GAS + 5 * ADVANCE_DAY_BASE_GAS;
 
 /// Midnight-anchored schedule: the commit, reveal and Intex issuance windows each span one day.
-#[cfg(not(feature = "e2e-test"))]
 pub const COMMIT_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
-#[cfg(not(feature = "e2e-test"))]
 pub const REVEAL_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
-#[cfg(not(feature = "e2e-test"))]
 pub const INTEX_ISSUANCE_WINDOW_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
-
-/// An e2e run walks the same stages inside one day, so its windows have to fit
-/// there: a day-long window would carry the auction over a midnight the run
-/// never formed.
-#[cfg(feature = "e2e-test")]
-pub const COMMIT_WINDOW_SECONDS: u64 = 900;
-#[cfg(feature = "e2e-test")]
-pub const REVEAL_WINDOW_SECONDS: u64 = 1800;
-#[cfg(feature = "e2e-test")]
-pub const INTEX_ISSUANCE_WINDOW_SECONDS: u64 = 1800;
 
 /// Desis clears no later than this before the end of the Intex issuance window, so a result
 /// sent at the last moment still reaches every chain before the day ends there.
-#[cfg(not(feature = "e2e-test"))]
 pub const RESULT_DELIVERY_MARGIN_SECONDS: u64 = 8 * 3600;
-#[cfg(feature = "e2e-test")]
-pub const RESULT_DELIVERY_MARGIN_SECONDS: u64 = 600;
 
 /// Mirrors `EscrowTimes.UNFINALIZED_REFUND_DELAY`: the other chains read a day without a result
 /// as failed once this much has passed since its commit end.
-pub const TARGET_UNFINALIZED_REFUND_DELAY_SECONDS: u64 = 48 * 3600;
+pub const TARGET_UNFINALIZED_RETURN_DELAY_SECONDS: u64 = 48 * 3600;
 
 // A result sent at the last clearing time must still find the day awaiting it on the other chains.
 const _: () = assert!(
     REVEAL_WINDOW_SECONDS + INTEX_ISSUANCE_WINDOW_SECONDS
-        <= TARGET_UNFINALIZED_REFUND_DELAY_SECONDS
+        <= TARGET_UNFINALIZED_RETURN_DELAY_SECONDS
 );
 
-/// An auction that would start with less commit window than this is cancelled.
-#[cfg(not(feature = "e2e-test"))]
+/// An auction that would start with less commit window than this is canceled.
 pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 16 * 3600;
-#[cfg(feature = "e2e-test")]
-pub const MIN_COMMIT_WINDOW_SECONDS: u64 = 300;
 
-/// `dayState` wire values carried by AUCTION_STAGE_START.
-pub const DAY_STATE_LIVE: u8 = 1;
-pub const DAY_STATE_CANCELLED: u8 = 2;
-
-/// `IDesis.IntexAuctionCanceled` reason codes. Priority at start is this order.
+/// `IDesis.DesisCanceled` reason codes. At the start, a missing limit comes first, then a
+/// day with no price, a sub-unit limit and a late start. A cancel after the start whose brief
+/// never came, or whose Metadosis failed, is a missing limit too.
 pub const CANCELED_NO_LIMIT: u8 = 1;
 pub const CANCELED_UNPRICED: u8 = 2;
 pub const CANCELED_BELOW_ONE_UNIT: u8 = 3;
 pub const CANCELED_LATE_START: u8 = 4;
 pub const CANCELED_LIMIT_OVERFLOW: u8 = 5;
 
-/// Entries one cross-chain payload array carries: bids per PROCESS_BIDS_BATCH and winners per
-/// REFUND_INSTRUCTIONS; clearing sizes its gas in chunks of the same length. Mirrors
+/// Entries one cross-chain payload array carries: bids per MSG_BIDS_PAGE and winners per
+/// MSG_INTEX_AUCTION_WINNERS; clearing sizes its gas in chunks of the same length. Mirrors
 /// `BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN`.
 pub const MAX_PAYLOAD_ARRAY_LEN: usize = 64;
 
-/// Chunks one chain-day's refunds may span; mirrors the codec's `MAX_CHUNKS`.
-pub const MAX_REFUND_CHUNKS: usize = 256;
+/// Pages one chain-day's winners may span; mirrors the codec's `MAX_PAGES`.
+pub const MAX_INTEX_AUCTION_WINNERS_PAGES: usize = 256;
 
 /// Batches one chain-day may send: the arrival bitmap is one 256-bit word.
-pub const MAX_BID_BATCHES: u16 = 256;
+pub const MAX_BID_PAGES: u16 = 256;
 
 // Everything the intake admits from one chain must still fit its refund fan-out: a bid batch
 // and a refund chunk share one array cap, so the batch count bounds the chunk count.
-const _: () = assert!(MAX_BID_BATCHES as usize <= MAX_REFUND_CHUNKS);
+const _: () = assert!(MAX_BID_PAGES as usize <= MAX_INTEX_AUCTION_WINNERS_PAGES);
 
-/// `IDesis.BidsIgnored` reason codes; mirrors the routers' `InboundReason` library.
+/// `IDesis.IntexAuctionBidsIgnored` reason codes; mirrors the routers' `InboundReason` library.
 pub const IGNORED_OBSOLETE: u8 = 2;
 pub const IGNORED_CONFLICT: u8 = 3;
 pub const IGNORED_NOT_FOUND: u8 = 4;
@@ -107,7 +79,7 @@ pub const IGNORED_NOT_FOUND: u8 = 4;
 /// What a COLLECTING_BIDS round costs on a target chain - fixed part, one chunk, one bid - measured in
 /// `contracts/intex/test/foundry/cross-chain/ClearingRelayMailboxGas.t.sol`.
 pub const CLEARING_FIXED_GAS: u64 = 564_000;
-pub const CLEARING_CHUNK_GAS: u64 = 197_000;
+pub const CLEARING_PAGE_GAS: u64 = 197_000;
 pub const CLEARING_BID_GAS: u64 = 10_000;
 
 /// Days of a chain's own history a round is sized from, and the floor it is never sized below.

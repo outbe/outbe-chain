@@ -148,6 +148,10 @@ pub fn deploy_markdown(
             .get("chain_id")
             .ok_or_else(|| GenesisError::validation("chain_id is required"))?,
     )?;
+    let mode = config
+        .pointer("/tee/mode")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GenesisError::validation("tee.mode is required"))?;
     let first_p2p = validators
         .first()
         .and_then(|v| v.get("p2p_address"))
@@ -184,15 +188,13 @@ pub fn deploy_markdown(
         .map(|enode| format!("  - `{enode}`"))
         .collect::<Vec<_>>()
         .join("\n");
-    let runtime_summary = "confidential VM signer (VM attestation pending)";
-    let runtime_warning = "\n> The signer runs inside an operator-provided confidential VM. VM \
-attestation is not implemented yet, so the deployment trusts the operator and infrastructure.\n";
-    let runtime_prerequisites =
-        "- `outbe-tee-enclave-confidential-vm` is installed from the software bundle";
-    let runtime_process =
-        "`outbe-tee-enclave-confidential-vm` | one signer inside the confidential VM";
-    let runtime_install_note = "The services recover after clean or failed exits. `preflight.sh` \
-is read-only: run it first and compare the genesis digest it prints across all founding machines.";
+    let dev_warning = if mode == "dcap-required" {
+        ""
+    } else {
+        "\n> **`no-attestation-dev`**: the node runs TEE operations without \
+hardware attestation. Use this mode only on devnet or testnet. Mainnet requires \
+`tee.mode: dcap-required` and a compatible attestation source.\n"
+    };
 
     let reth_p2p_port = port_of(config, "reth_p2p_port")?;
     let reth_discv5_port = port_of(config, "reth_discv5_port")?;
@@ -201,7 +203,6 @@ is read-only: run it first and compare the genesis digest it prints across all f
     let authrpc_port = port_of(config, "authrpc_port")?;
     let metrics_port = port_of(config, "metrics_port")?;
     let radicle_status_port = port_of(config, "radicle_status_port")?;
-    let tee_enclave_port = port_of(config, "tee_enclave_port")?;
     let feeder_health_port = port_of(config, "feeder_health_port")?;
     let first_host = first_p2p
         .rsplit_once(':')
@@ -215,8 +216,8 @@ is read-only: run it first and compare the genesis digest it prints across all f
     Ok(format!(
         "# Deploying this network\n\
 \n\
-Chain id `{chain_id}`, {founder_count} founding validators, {runtime_summary}.\n\
-{runtime_warning}\n\
+Chain id `{chain_id}`, {founder_count} founding validators, TEE mode `{mode}`.\n\
+{dev_warning}\n\
 | Machine | Consensus p2p | Validator address | Hyperlane signer |\n\
 |---|---|---|---|\n\
 {rows_joined}\n\
@@ -228,7 +229,7 @@ every machine, because each founder runs on its own host.\n\
 \n\
 The generator writes one self-contained archive per machine under `dist/`. Each\n\
 archive contains the shared genesis and bootnodes, systemd units and installer,\n\
-launch scripts, the selected enclave runtime, and **only that validator's** keys.\n\
+launch scripts, and **only that validator's** keys.\n\
 \n\
 ```bash\n\
 # From the generated output directory, for machine N (0..{last_founder}):\n\
@@ -257,9 +258,8 @@ Between all founding machines:\n\
 RPC uses its explicit loopback/private bind `{rpc_bind}:{rpc_port}`. Everything\n\
 else stays on loopback and must not be exposed: authrpc `{authrpc_port}`,\n\
 metrics `{metrics_port}`, Radicle status\n\
-`{radicle_status_port}`, the enclave socket\n\
-`{tee_enclave_port}`, the feeder health endpoint `{feeder_health_port}` and the\n\
-Hyperlane health endpoint `9003`.\n\
+`{radicle_status_port}`, the feeder health endpoint\n\
+`{feeder_health_port}` and the Hyperlane health endpoint `9003`.\n\
 \n\
 ## 3. Prerequisites on every machine\n\
 \n\
@@ -268,18 +268,21 @@ Hyperlane health endpoint `9003`.\n\
   `outbe-hyperlane-validator` binaries on `PATH`\n\
   (or set the corresponding binary fields in the yaml to\n\
   absolute paths and regenerate)\n\
-{runtime_prerequisites}\n\
 \n\
 ## 4. Start each machine\n\
 \n\
 ```bash\n\
 cd {base_dir}/validator-N\n\
-./preflight.sh N        # verifies genesis/enclave/state before anything starts\n\
+./preflight.sh N        # verifies genesis/CRS/state before anything starts\n\
 ./install-systemd.sh\n\
 ```\n\
 \n\
 `install-systemd.sh` installs one non-templated unit per role and starts the\n\
-`outbe-validator.target`. {runtime_install_note}\n\
+`outbe-validator.target`. The node manages its resident TEE lifecycle and renewal.\n\
+Use `./install-systemd.sh --prepare-only` to install without starting it.\n\
+The services recover after clean or failed exits. `preflight.sh`\n\
+is read-only: run it first and compare the genesis digest it prints across all\n\
+founding machines.\n\
 \n\
 Inspect the stack with `systemctl status outbe-validator.target` and follow the\n\
 node with `journalctl -u outbe-validator -f`.\n\
@@ -313,7 +316,7 @@ number and `validator list` shows {founder_count} active validators.\n\
 | Component | Process | Notes |\n\
 |---|---|---|\n\
 | Execution + consensus | `outbe-chain node` | one binary, no Engine API split |\n\
-| TEE signer | {runtime_process} |\n\
+| TEE | resident inside `outbe-chain node` | autonomous lifecycle and renewal |\n\
 | Radicle | `outbe-radicle` | validator startup requires its control socket |\n\
 | Price feeder | `outbe-feeder` | submits oracle votes |\n\
 | Hyperlane validator | `outbe-hyperlane-validator` | signs and serves checkpoints |\n\

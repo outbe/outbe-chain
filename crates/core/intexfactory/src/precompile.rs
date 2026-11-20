@@ -2,7 +2,7 @@
 //!
 //! Routing only: decode -> runtime -> encode. The settle calls / `minePromis` name the
 //! owner they act for, so `caller = msg.sender` only binds the payment.
-//! None accept value, except `distribute`, which burns auction proceeds.
+//! None accept value, except `burnIntexAuctionProceeds`, which burns auction proceeds.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface};
@@ -21,7 +21,7 @@ use crate::runtime;
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
 /// without flipping the route fails the build.
-pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IIntexFactory::distributeCall::SELECTOR];
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IIntexFactory::burnIntexAuctionProceedsCall::SELECTOR];
 
 #[allow(clippy::too_many_arguments)]
 mod abi {
@@ -41,10 +41,6 @@ pub fn dispatch(
     // IntexFactory is a payable route, so the boundary credits value to this
     // address. Every selector the module has not published refuses it here.
     reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
-    #[cfg(feature = "e2e-test")]
-    if let Some(result) = crate::test_arming_e2e::dispatch(&storage, data) {
-        return result;
-    }
     dispatch_call(
         data,
         IIntexFactory::IIntexFactoryCalls::abi_decode,
@@ -54,18 +50,21 @@ pub fn dispatch(
                 settleIntex(c) => mutate_void(&storage, c, caller, |sender, c| {
                     runtime::settle_intex(
                         &storage,
-                        series_of(&storage, c.intexId)?,
-                        c.owner,
-                        c.units,
+                        runtime::OwnerUnits {
+                            series_id: series_of(&storage, c.intexId)?,
+                            owner: c.owner,
+                            units: c.units,
+                        },
                         SettlementPayment {
                             payer: sender,
                             asset: c.asset,
                             snapshot_id: c.snapshotId,
                         },
+                        c.amountCapMinor,
                     )
                 }),
                 quoteSettlement(c) => metadata::<IIntexFactory::quoteSettlementCall>(|| {
-                    let (settlement_currency, payment_minor, snapshot_id) =
+                    let (settlement_currency, amount_minor, snapshot_id) =
                         runtime::quote_settlement(
                             &storage,
                             series_of(&storage, c.intexId)?,
@@ -74,14 +73,14 @@ pub fn dispatch(
                         )?;
                     Ok(IIntexFactory::quoteSettlementReturn {
                         settlementCurrency: settlement_currency,
-                        paymentMinor: payment_minor,
+                        amountMinor: amount_minor,
                         snapshotId: snapshot_id,
                     })
                 }),
                 // Off-chain the owner brute-forces `nonce` so the work hash
-                // SHA256(owner ++ promisAmount_be32 ++ seriesId ++ seq_be4 ++ nonce_be8), over the
-                // series id `intexId` names, has the protocol's leading zero bytes. `seq` is the on-chain
-                // per-(series, owner) counter.
+                // SHA256(tag ++ intexId_be32 ++ owner ++ seq_be8 ++ nonce_be8 ++ promisAmount_be32)
+                // has the protocol's leading zero bytes. `seq` is the on-chain per-(series, owner)
+                // counter.
                 minePromis(c) => mutate(&storage, c, caller, |_sender, c| {
                     let auth = outbe_promisfactory::api::ModifyAuth {
                         mac: c.mac.0,
@@ -103,7 +102,7 @@ pub fn dispatch(
                 }),
                 // The only payable selector: burns auction proceeds (msg.value)
                 // into the Promis limit pool.
-                distribute(c) => mutate_void_payable(
+                burnIntexAuctionProceeds(c) => mutate_void_payable(
                     &storage,
                     c,
                     PayableCallContext {
@@ -112,7 +111,7 @@ pub fn dispatch(
                         value,
                     },
                     |sender, c, val| {
-                        runtime::distribute(
+                        runtime::burn_intex_auction_proceeds(
                             &storage,
                             sender,
                             c.emissionDay.into(),

@@ -29,10 +29,7 @@ fn collect_lysis_tributes(
     day: WorldwideDay,
     price_day: EmissionDate,
     priced: &PricedCurrencies,
-) -> Result<(
-    Vec<outbe_enclave::tribute_day::LysisTributeInputV1>,
-    SeriesMetaMap,
-)> {
+) -> Result<(Vec<crate::confidential::LysisTributeInputV1>, SeriesMetaMap)> {
     let mut tributes = Vec::new();
     let mut series_meta = SeriesMetaMap::new();
     let mut tribute_ids = contract.get_tribute_ids_by_day(day)?;
@@ -48,7 +45,7 @@ fn collect_lysis_tributes(
         let league = contract.tribute_leagues.read(&tribute_id)?.max(1);
         let series_scope =
             resolve_tribute_series_scope(&record, price_day, priced, &mut series_meta)?;
-        tributes.push(outbe_enclave::tribute_day::LysisTributeInputV1 {
+        tributes.push(crate::confidential::LysisTributeInputV1 {
             tribute: encrypted,
             league,
             series_scope,
@@ -110,7 +107,7 @@ pub(super) fn compute_and_record_metadosis_fractions(
     let (tributes, series_meta) =
         collect_lysis_tributes(contract, &storage, day, emission_day, priced)?;
     let result = crate::enclave_client::execute_lysis_fractions(
-        outbe_enclave::tribute_day::LysisFractionsRequestV1 {
+        crate::confidential::LysisFractionsRequestV1 {
             chain_id: storage.chain_id()?,
             worldwide_day: day,
             emission_day,
@@ -204,14 +201,14 @@ fn require_issuable_tribute(
 }
 
 fn unwrap_issued_nod(
-    outcome: outbe_enclave::nod_mine::IssueNodFromTributeOutcomeV1,
+    outcome: crate::confidential::IssueNodFromTributeOutcomeV1,
 ) -> Result<outbe_core_common::nod_encryption::EncryptedNodV1> {
     match outcome {
-        outbe_enclave::nod_mine::IssueNodFromTributeOutcomeV1::Issued(nod) => Ok(nod),
-        outbe_enclave::nod_mine::IssueNodFromTributeOutcomeV1::LysisArithmetic(msg) => {
+        crate::confidential::IssueNodFromTributeOutcomeV1::Issued(nod) => Ok(nod),
+        crate::confidential::IssueNodFromTributeOutcomeV1::LysisArithmetic(msg) => {
             Err(TributeError::LysisArithmetic(msg).into())
         }
-        outbe_enclave::nod_mine::IssueNodFromTributeOutcomeV1::ZeroSettlementCost => {
+        crate::confidential::IssueNodFromTributeOutcomeV1::ZeroSettlementCost => {
             Err(outbe_nodfactory::errors::NodFactoryError::EntryPriceOutOfBounds.into())
         }
     }
@@ -238,7 +235,7 @@ pub(super) fn issue_nod_from_tribute(
             .encrypted()
             .ok_or(TributeError::InvalidEncryptedEncoding)?;
         let outcome = crate::enclave_client::issue_nod_from_tribute(
-            outbe_enclave::nod_mine::IssueNodFromTributeRequestV1 {
+            crate::confidential::IssueNodFromTributeRequestV1 {
                 tribute: encrypted_tribute.clone(),
                 day_fractions,
                 terms: outbe_core_common::nod_encryption::NodTermsV1 {
@@ -282,7 +279,7 @@ fn resolve_series_and_price(
     )?;
     let group_key =
         outbe_nod::api::series_group(storage, series_id)?.ok_or(TributeError::TributeForfeited)?;
-    if outbe_nod::api::is_group_forfeited(storage, group_key)? {
+    if outbe_nod::api::is_group_forfeit_started(storage, group_key)? {
         return Err(TributeError::TributeForfeited.into());
     }
     let sealed_price = outbe_nod::api::series_entry_price_minor(storage, series_id)?;

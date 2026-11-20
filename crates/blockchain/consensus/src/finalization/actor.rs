@@ -557,6 +557,9 @@ impl FinalizationActor {
         view.last_finalized_number = block_number;
         view.last_timestamp_millis =
             std::cmp::max(view.last_timestamp_millis, block.timestamp_millis());
+        // Floor the admission revision before any reader can observe this head.
+        // Bridge status and the view lock are both still unpublished.
+        outbe_tee::authority::note_finalized_authority_revision(block_number);
 
         // Drop the write lock before bridge/dkg work so later `build_block`
         // readers can proceed after the durable parent-cert handoff is visible.
@@ -565,9 +568,7 @@ impl FinalizationActor {
         self.publish_consensus_status(&finalized, &consensus_data, block_number);
         self.note_finalized_dkg_artifact(&block, digest, block_number);
         self.observe_finalized_boundary(&block, block_number)?;
-        if let Some(notify) = &self.finalization_notify {
-            notify.notify_waiters();
-        }
+        notify_finalized_waiters(self.finalization_notify.as_deref());
         self.evict_finalized_block_cache();
 
         Ok(())
@@ -829,6 +830,27 @@ impl FinalizationActor {
     fn evict_finalized_block_cache(&self) {
         let finalized_num = self.deps.view.read().last_finalized_number;
         self.deps.block_cache.evict_at_or_below(finalized_num);
+    }
+}
+
+/// Wake lifecycle subscribers and store one lease-guard permit.
+///
+/// `notify_waiters` fans out to every task parked on the shared notifier and
+/// does not store a permit. The authority channel stores one `notify_one`
+/// permit, so a guard inside refresh still wakes on its next loop. The
+/// finalized height is the monotonic cursor those coalesced wakes apply.
+#[cfg(test)]
+pub(super) fn publish_finalized_wakeup(
+    notify: Option<&tokio::sync::Notify>,
+    finalized_height: u64,
+) {
+    outbe_tee::authority::note_finalized_authority_revision(finalized_height);
+    notify_finalized_waiters(notify);
+}
+
+fn notify_finalized_waiters(notify: Option<&tokio::sync::Notify>) {
+    if let Some(notify) = notify {
+        notify.notify_waiters();
     }
 }
 

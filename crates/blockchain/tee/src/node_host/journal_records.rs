@@ -152,7 +152,6 @@ pub(super) struct JournalRelayValidation {
 
 pub(super) struct JournalRelayFields {
     pub payload: JournalRelayPayload,
-    pub from_block: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -211,15 +210,13 @@ pub(super) fn decode_relay_fields(
     let submission_hash = B256::from_slice(&input[1..33]);
     let calldata_hash = B256::from_slice(&input[33..65]);
     let transaction_hash = B256::from_slice(&input[65..97]);
-    let from_block = if let Some(offset) = validation.from_block_offset {
-        u64::from_be_bytes(
+    if let Some(offset) = validation.from_block_offset {
+        let _from_block = u64::from_be_bytes(
             input[offset..validation.raw_len_offset]
                 .try_into()
                 .map_err(|_| TransportError::Codec(validation.from_block_error.into()))?,
-        )
-    } else {
-        0
-    };
+        );
+    }
     let fields = JournalRelayFields {
         payload: JournalRelayPayload {
             submission_hash,
@@ -227,7 +224,6 @@ pub(super) fn decode_relay_fields(
             transaction_hash,
             raw_transaction: input[validation.header_len..].to_vec(),
         },
-        from_block,
     };
     validate_relay_commitments(&fields.payload, validation)?;
     Ok(fields)

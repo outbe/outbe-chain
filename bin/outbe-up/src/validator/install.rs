@@ -21,8 +21,6 @@ const ENV_KEYS: &[&str] = &[
     "OUTBE_BOOTNODES",
     "OUTBE_CONSENSUS_PEERS",
     "OUTBE_CONSENSUS_EXTRA_ARGS",
-    "OUTBE_TEE_SESSION_MODE",
-    "OUTBE_DEV_NETWORK_BINDING",
     "OUTBE_CHAIN_ID",
 ];
 
@@ -37,8 +35,8 @@ pub fn run() -> Result<()> {
     validate_local_config(&hyperlane)?;
     let environment = read_environment(&env_path)?;
     validate_environment(&environment)?;
-    validate_runtime(root)?;
     validate_bundle(root)?;
+
     install_binary(&root.join("outbe-up"), Path::new("/usr/local/bin/outbe-up"))?;
     validate_genesis(root, &environment["OUTBE_CHAIN_ID"])?;
     ensure_outbe_account()?;
@@ -108,7 +106,7 @@ fn read_environment(path: &Path) -> Result<BTreeMap<String, String>> {
     for name in ENV_KEYS
         .iter()
         .copied()
-        .filter(|name| *name != "OUTBE_CONSENSUS_EXTRA_ARGS")
+        .filter(|name| !matches!(*name, "OUTBE_CONSENSUS_EXTRA_ARGS"))
     {
         ensure!(
             values.get(name).is_some_and(|value| !value.is_empty()),
@@ -163,24 +161,6 @@ fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
         !peers.is_empty() && peers.iter().all(|peer| valid_peer(peer)),
         "OUTBE_CONSENSUS_PEERS is invalid"
     );
-    ensure!(
-        values["OUTBE_DEV_NETWORK_BINDING"].len() == 132
-            && values["OUTBE_DEV_NETWORK_BINDING"]
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit()),
-        "OUTBE_DEV_NETWORK_BINDING must be a canonical 66-byte hex value"
-    );
-    ensure!(
-        values["OUTBE_TEE_SESSION_MODE"] == "development",
-        "OUTBE_TEE_SESSION_MODE must select the unattested confidential-VM transport"
-    );
-    Ok(())
-}
-
-fn validate_runtime(root: &Path) -> Result<()> {
-    required_executable(&root.join("outbe-tee-enclave-confidential-vm"))?;
-    canonical_key(&root.join("tee/dev-dkg-seed.hex"))?;
-    canonical_key(&root.join("tee/dev-offer-secret.hex"))?;
     Ok(())
 }
 
@@ -198,7 +178,6 @@ fn validate_bundle(root: &Path) -> Result<()> {
     ] {
         required_executable(&root.join(name))?;
     }
-    required_executable(&root.join("outbe-tee-enclave-confidential-vm"))?;
     Ok(())
 }
 
@@ -247,7 +226,6 @@ fn numeric_id(flag: &str) -> Result<u32> {
 fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     let keys = root.join("keys");
     let validator = root.join("validator-0");
-    let tee = root.join("tee");
     let state = root.join("state");
     let operator_state = state.join("operator");
     let feeder_state = state.join("feeder");
@@ -255,7 +233,6 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     for path in [
         &keys,
         &validator,
-        &tee,
         &state,
         &operator_state,
         &feeder_state,
@@ -285,7 +262,6 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     ] {
         create_owned_dir(&root.join(relative), 0o750, uid, gid)?;
     }
-    create_owned_dir(&tee, 0o700, 0, 0)?;
     create_owned_dir(&state, 0o750, 0, gid)?;
     create_owned_dir(&operator_state, 0o700, 0, 0)?;
     create_owned_dir(&feeder_state, 0o700, uid, gid)?;
@@ -334,13 +310,6 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
 }
 
 fn install_units(root: &Path) -> Result<()> {
-    let _ = process::command_succeeds("systemctl", &["disable", "--now", "outbe-tee-renew.timer"]);
-    for name in ["outbe-tee-renew.timer", "outbe-tee-renew.service"] {
-        let path = Path::new("/etc/systemd/system").join(name);
-        if fs::symlink_metadata(&path).is_ok() {
-            fs::remove_file(path)?;
-        }
-    }
     let unit_dir = root.join("systemd");
     if let Ok(metadata) = fs::symlink_metadata(&unit_dir) {
         ensure!(
@@ -466,7 +435,6 @@ mod tests {
             "outbe-feeder",
             "outbe-hyperlane-validator",
             "outbe-radicle",
-            "outbe-tee-enclave-confidential-vm",
         ] {
             let path = root.path().join(name);
             fs::write(&path, b"binary").unwrap();

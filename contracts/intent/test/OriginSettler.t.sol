@@ -6,6 +6,7 @@ import {TypeCasts} from "../src/libs/TypeCasts.sol";
 import {BaseTest} from "./BaseTest.sol";
 import {OriginSettler} from "../src/router/origin/OriginSettler.sol";
 import {IOriginSettler} from "../src/interfaces/IOriginSettler.sol";
+import {IDestinationSettler} from "../src/interfaces/IDestinationSettler.sol";
 import {OrderData, OrderEncoder} from "../src/libs/OrderEncoder.sol";
 import {OnchainCrossChainOrder, ResolvedCrossChainOrder} from "../src/interfaces/OrderTypes.sol";
 import {ITheCompact} from "the-compact/src/interfaces/ITheCompact.sol";
@@ -255,6 +256,8 @@ contract OriginSettlerTest is BaseTest {
 
         uint256[] memory balancesBefore = _balances(inputToken);
 
+        vm.warp(uint256(orderData.fillDeadline) + 1);
+
         vm.expectEmit(false, false, false, true);
         emit Refunded(orderId, kakaroto);
 
@@ -282,6 +285,8 @@ contract OriginSettlerTest is BaseTest {
 
         uint256[] memory balancesBefore = _balances();
 
+        vm.warp(uint256(orderData.fillDeadline) + 1);
+
         vm.expectEmit(false, false, false, true);
         emit Refunded(orderId, kakaroto);
 
@@ -294,6 +299,28 @@ contract OriginSettlerTest is BaseTest {
             balancesAfter[balanceId[address(originSettler)]], balancesBefore[balanceId[address(originSettler)]] - amount
         );
         assertEq(balancesAfter[balanceId[kakaroto]], balancesBefore[balanceId[kakaroto]] + amount);
+    }
+
+    /// @dev OIP-00399: the origin chain checks the deadline itself. A refund message that comes
+    ///      before the deadline reverts, so the transport delivers it again later.
+    function test_handleRefundOrder_RevertWhen_BeforeTheFillDeadline() public {
+        OrderData memory orderData = _prepareOrderData();
+        bytes32 orderId = bytes32("order1");
+
+        originSettler.setOrderOpened(orderId, orderData);
+
+        deal(address(inputToken), address(mockCompact), 1_000_000, true);
+        mockCompact.__setBalance(address(originSettler), uint160(address(inputToken)), amount);
+
+        vm.warp(uint256(orderData.fillDeadline));
+        vm.expectRevert(IDestinationSettler.OrderFillNotExpired.selector);
+        originSettler.handleRefundOrder(destination, counterpart.addressToBytes32(), orderId);
+        assertEq(originSettler.orderStatus(orderId), originSettler.OPENED());
+
+        // The same message after the deadline refunds the user.
+        vm.warp(uint256(orderData.fillDeadline) + 1);
+        originSettler.handleRefundOrder(destination, counterpart.addressToBytes32(), orderId);
+        assertEq(originSettler.orderStatus(orderId), originSettler.REFUNDED());
     }
 
     function test_handleRefundOrder_not_OPENED() public {

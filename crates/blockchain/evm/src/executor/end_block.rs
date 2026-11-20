@@ -240,6 +240,8 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         let ordinal = admitted.ordinal;
         let block_gas_limit = self.inner.evm.block().gas_limit();
         let user_gas_used = self.accounted_block_gas();
+        let tx_hash = *tx.tx_hash();
+        let witness_scope = self.prepare_tx_witness_scope(false)?;
         let transact_outcome = with_preloaded_system_tx_context(
             PreloadedSystemTxContext::for_end_block(proposer, block_gas_limit, user_gas_used),
             || {
@@ -250,6 +252,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
                 )
             },
         );
+        drop(witness_scope);
         match transact_outcome {
             Ok(result) if result.result.is_success() => {
                 let user_cumulative_tx_gas = self.inner.cumulative_tx_gas_used;
@@ -294,6 +297,8 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
                 return Err(BlockExecutionError::other(error));
             }
         }
+        // A reverted step is still in the body, and the verifier repeats its enclave calls.
+        self.finish_tx_witness(tx_hash, true)?;
         self.advance_system_tx_step(&input)?;
         Ok(Some(GasOutput::new(0)))
     }

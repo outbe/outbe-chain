@@ -23,41 +23,41 @@ contract EscrowAdapterDecimalsTest is Test {
     }
 
     function _scale() internal view returns (uint256) {
-        return escrow.getAssetVersion(escrow.currentAssetVersion()).paymentScale;
+        return escrow.getIntexAuctionAssetVersion(escrow.currentIntexAuctionAssetVersion()).assetScale;
     }
 
     function test_wire_scalesAnEighteenDecimalToken() public {
         MockWCOEN token = new MockWCOEN();
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(token));
-        assertEq(address(escrow.paymentToken()), address(token));
+        escrow.setDependencies(auction, address(compact), address(token));
+        assertEq(address(escrow.intexAuctionAsset()), address(token));
         assertEq(_scale(), 1e12);
     }
 
     function test_wire_scalesASixDecimalToken() public {
         MockERC20 token = new MockERC20("Token", "TKN", 6);
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(token));
+        escrow.setDependencies(auction, address(compact), address(token));
         assertEq(_scale(), 1);
     }
 
     function test_wire_rejectsFewerDecimalsThanTheProtocol() public {
         MockERC20 token = new MockERC20("Token", "TKN", 5);
         vm.prank(admin);
-        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.PaymentTokenDecimals.selector, uint8(5)));
-        escrow.wire(auction, address(compact), address(token));
+        vm.expectRevert(abi.encodeWithSelector(IEscrowAdapter.IntexAuctionAssetDecimals.selector, uint8(5)));
+        escrow.setDependencies(auction, address(compact), address(token));
     }
 
     function test_rotation_keepsTheRetiredScale() public {
         MockWCOEN token = new MockWCOEN();
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(token));
+        escrow.setDependencies(auction, address(compact), address(token));
 
         MockERC20 rotated = new MockERC20("Token", "TKN", 6);
         vm.prank(admin);
-        escrow.wire(auction, address(compact), address(rotated));
+        escrow.setDependencies(auction, address(compact), address(rotated));
 
-        assertEq(escrow.getAssetVersion(0).paymentScale, 1e12, "retired scale");
+        assertEq(escrow.getIntexAuctionAssetVersion(0).assetScale, 1e12, "retired scale");
         assertEq(_scale(), 1, "active scale");
     }
 }

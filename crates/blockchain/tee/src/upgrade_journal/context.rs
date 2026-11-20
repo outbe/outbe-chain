@@ -1,4 +1,5 @@
 use super::*;
+use outbe_primitives::tee_attestation_v1::AttestationOperationV1;
 
 impl UpgradeContextV1 {
     pub fn validate(&self) -> Result<(), UpgradeError> {

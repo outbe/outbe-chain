@@ -23,4 +23,3 @@ jobs:
     with:
       project: shared
       slither-check: true
-      aderyn-check: true

@@ -83,13 +83,14 @@ fn hook_cases() -> Vec<HookCase> {
             valid_input: IOracle::submitVoteCall {
                 tuples: vec![],
                 gas: vec![],
+                rates: vec![],
             }
             .abi_encode(),
             min_max_fee_per_gas: crate::oracle::MIN_ZERO_FEE_ORACLE_MAX_FEE_PER_GAS,
             max_calldata_bytes: crate::oracle::MAX_ZERO_FEE_ORACLE_CALLDATA_BYTES,
             max_gas_limit: crate::oracle::MAX_ZERO_FEE_ORACLE_GAS_LIMIT,
             malformed_reason: "zero-fee oracle vote calldata is malformed: \
-                submitVote(ExchangeRateTuple[],GasTuple[]) decode failed",
+                submitVote(ExchangeRateTuple[],GasTuple[],RateTuple[]) decode failed",
             delegate_role: ValidatorDelegateRole::Oracle,
         },
         HookCase {

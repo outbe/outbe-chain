@@ -37,7 +37,6 @@ fn parse_rust_toolchain_toml(text: &str) -> (String, Vec<String>) {
 
 fn check_elf_consumers(root: &Path, pin: &Value, diffs: &mut Vec<String>) -> Vec<String> {
     let rust_ver = pin["rust"]["version"].as_str().unwrap_or("");
-    let gramine_ver = pin["gramine"]["version"].as_str().unwrap_or("");
     let pkgs = pin["system_packages"].as_object().expect("validated");
 
     let rt_text = fs::read_to_string(root.join("rust-toolchain.toml")).unwrap_or_default();
@@ -82,9 +81,9 @@ fn check_elf_consumers(root: &Path, pin: &Value, diffs: &mut Vec<String>) -> Vec
     }
     if !base_images
         .iter()
-        .any(|img| img.contains(&format!("gramineproject/gramine:{gramine_ver}-")))
+        .any(|img| img.contains("ubuntu:24.04@sha256:"))
     {
-        diffs.push("ELF builder images do not use the pinned Gramine version".to_owned());
+        diffs.push("ELF builder images do not use the pinned Ubuntu base".to_owned());
     }
     let expected_sys_pkgs: Vec<Value> = pkgs
         .iter()
@@ -121,13 +120,9 @@ fn check_qvl_and_dockerfile(
     diffs: &mut Vec<String>,
 ) {
     let rust_ver = pin["rust"]["version"].as_str().unwrap_or("");
-    let gramine_ver = pin["gramine"]["version"].as_str().unwrap_or("");
     let pkgs = pin["system_packages"].as_object().expect("validated");
 
     let qvl = read_json_obj(&root.join("release/dcap-native-qvl-v1.json")).unwrap_or_default();
-    if qvl.get("gramine_version").and_then(Value::as_str) != Some(gramine_ver) {
-        diffs.push("QVL Gramine version mismatch".to_owned());
-    }
     for (pkg, ptr) in [
         (
             "libsgx-dcap-quote-verify",
@@ -158,10 +153,8 @@ fn check_qvl_and_dockerfile(
             diffs.push(format!("project toolchain recipe does not consume {img}"));
         }
     }
-    if !recipe.contains(&format!("rust:{rust_ver}-"))
-        || !recipe.contains(&format!("gramineproject/gramine:{gramine_ver}-"))
-    {
-        diffs.push("project toolchain recipe does not use pinned Rust/Gramine".to_owned());
+    if !recipe.contains(&format!("rust:{rust_ver}-")) || !recipe.contains("ubuntu:24.04@sha256:") {
+        diffs.push("project toolchain recipe does not use pinned Rust/Ubuntu".to_owned());
     }
 }
 
@@ -188,7 +181,7 @@ fn check_apt_sources_and_tee(root: &Path, pin: &Value, diffs: &mut Vec<String>) 
     }
 
     let tee_build =
-        fs::read_to_string(root.join("crates/blockchain/tee/build.rs")).unwrap_or_default();
+        fs::read_to_string(root.join("crates/blockchain/dcap/build.rs")).unwrap_or_default();
     for pin_inc in [
         "include_str!(\"../../../release/project-toolchain-v1.json\")",
         "include_str!(\"../../../release/dcap-native-qvl-v1.json\")",

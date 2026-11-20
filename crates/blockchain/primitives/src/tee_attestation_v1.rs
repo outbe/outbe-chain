@@ -239,7 +239,7 @@ mod transition;
 
 pub use evidence::{
     AttestationEvidenceV1, DcapCollateralComponentV1, DcapCollateralKind, DcapEvidenceV1,
-    GramineDirectEvidenceV1,
+    NoAttestationDevEvidenceV1,
 };
 pub use gas::{
     RegistryMutatorV1, ResourceScheduleV1, SystemGasScheduleV1, TeeBootstrapGasInputV1,

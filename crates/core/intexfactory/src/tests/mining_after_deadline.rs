@@ -3,17 +3,17 @@
 
 use super::*;
 use alloy_sol_types::SolEvent;
-use outbe_enclave::promis::{
-    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
+use outbe_promis::PromisOp;
+use outbe_promis::{
+    decrypt_balance, derive_account_keys, derive_view_key, modify_mac, ModifyOperation,
 };
-use outbe_enclave::protocol::PromisOp;
 use outbe_vaultrouter::settlement::SettlementPayment;
 
 const RELAYER: Address = Address::repeat_byte(0x5e);
 
 fn promis_auth(account: Address, amount: U256, nonce: u64) -> outbe_promisfactory::api::ModifyAuth {
     let sk = outbe_promis::enclave_client::test_enclave::state_key();
-    let mk = derive_modify_key(&sk, account).unwrap();
+    let mk = derive_account_keys(&sk, account).unwrap();
     outbe_promisfactory::api::ModifyAuth {
         mac: modify_mac(
             &mk,
@@ -52,7 +52,16 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
             .unwrap()
             .promis_load_minor;
         let nonce = (0u64..)
-            .find(|nonce| runtime::validate_pow(owner(), promis_minor, sid(7), 0, *nonce).is_ok())
+            .find(|nonce| {
+                runtime::validate_pow(
+                    owner(),
+                    outbe_intex::intex_id(sid(7)),
+                    0,
+                    promis_minor,
+                    *nonce,
+                )
+                .is_ok()
+            })
             .unwrap();
         (promis_minor, nonce)
     });
@@ -73,14 +82,17 @@ fn a_settled_unit_still_mines_after_the_call_deadline_while_unpaid_units_are_clo
         // The unpaid unit is closed.
         let closed = runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::ONE,
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::ONE,
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: U256::ZERO,
             },
+            amount_cap(),
         )
         .unwrap_err();
         assert_eq!(
@@ -223,7 +235,10 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
         assert_eq!(intex.first_cleanup_day().unwrap(), None);
 
         let nonce = (0u64..)
-            .find(|nonce| runtime::validate_pow(owner(), mined, sid(7), 0, *nonce).is_ok())
+            .find(|nonce| {
+                runtime::validate_pow(owner(), outbe_intex::intex_id(sid(7)), 0, mined, *nonce)
+                    .is_ok()
+            })
             .unwrap();
         let group = group_of(&s, sid(7));
         let minted = runtime::mine_promis(

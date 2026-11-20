@@ -185,7 +185,7 @@ fn subcall_reaches_nod_in_the_same_evm_state() {
     let day = WorldwideDay::new(20_260_715);
     let nod_id = outbe_nod::test_support::nod_id_of(owner, day.value(), 840, 978);
     let group_key = outbe_nod::test_support::group_key_at(
-        &outbe_nod::config::NodParams::DEV,
+        &outbe_nod::config::NodParams::TESTNET,
         1_700_000_000,
         U256::from(9),
         978,

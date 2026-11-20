@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{support::process::STATE_ROOT, validator::config::OperatorConfig};
 
-const JOURNAL_VERSION: u32 = 1;
+const JOURNAL_VERSION: u32 = 2;
 const JOURNAL_NAME: &str = "validator-state.json";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -22,12 +22,6 @@ pub struct Journal {
     pub config: OperatorConfig,
     #[serde(default)]
     pub installed: bool,
-    #[serde(default)]
-    pub binding_id: Option<String>,
-    #[serde(default)]
-    pub valid_until: Option<u64>,
-    #[serde(default)]
-    pub tee_join_complete: bool,
     #[serde(default)]
     pub stake_transaction: Option<String>,
     #[serde(default)]
@@ -56,9 +50,6 @@ impl Journal {
             config_sha256,
             config,
             installed: false,
-            binding_id: None,
-            valid_until: None,
-            tee_join_complete: false,
             stake_transaction: None,
             feeder_delegate_transaction: None,
             hyperlane_delegate_transaction: None,

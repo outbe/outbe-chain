@@ -23,12 +23,8 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
-use outbe_enclave::protocol::TributePublicInputs as DemoTributePublicInputs;
-use outbe_enclave::OFFER_HKDF_SALT;
-use outbe_enclave::{
-    crypto::ecdhe_tribute_offer_decrypt,
-    process::{process_tribute_offer_batch, TributeOfferKeyMaterial},
-};
+use outbe_core_common::confidential_tee::ecdhe_tribute_offer_decrypt;
+use outbe_core_common::confidential_tee::OFFER_HKDF_SALT;
 use outbe_l2registry::L2RegistryContract;
 use outbe_oracle::{
     genesis::{init_from_genesis, OracleGenesisConfig},
@@ -45,6 +41,8 @@ use outbe_system_common::addresses::{
 };
 use outbe_system_common::time::date_key_to_utc_timestamp;
 use outbe_system_common::time::WorldwideDay;
+use outbe_tribute::confidential::TributePublicInputs as DemoTributePublicInputs;
+use outbe_tribute::confidential::{process_tribute_offer_batch, TributeOfferKeyMaterial};
 use outbe_tribute::TributeContract;
 use outbe_tributefactory::bench_support::{execute_offer_with_processor, BenchOfferInput};
 use outbe_zk::claim::TributeDraftClaim;
@@ -177,7 +175,7 @@ fn build_fixture() -> Fixture {
     let ephemeral_secret = [0x44; 32];
     let ephemeral_pubkey = X25519PublicKey::from(&StaticSecret::from(ephemeral_secret)).to_bytes();
     let nonce = [0x55; 12];
-    let cipher_text = outbe_enclave::offer_encrypt::encrypt_tribute_offer_with(
+    let cipher_text = outbe_core_common::confidential_tee::encrypt_tribute_offer_with(
         &offer_public,
         ephemeral_secret,
         nonce,
@@ -321,7 +319,7 @@ fn calldata(fixture: &Fixture) -> Vec<u8> {
 }
 
 fn seed_offer_world(storage: StorageHandle<'_>) {
-    outbe_metadosis::bench_support::create_worldwide_day(
+    outbe_metadosis::bench_support::open_worldwide_day(
         storage.clone(),
         storage.block_number().unwrap(),
         storage.now_secs().unwrap(),
@@ -332,14 +330,14 @@ fn seed_offer_world(storage: StorageHandle<'_>) {
 
     let mut oracle = OracleContract::new(storage.clone());
     init_from_genesis(&mut oracle, &OracleGenesisConfig::default_config()).unwrap();
-    let start = TARGET_WWD.start_timestamp().unwrap();
-    let pair = AddressPair::new_coen_to(840);
-    oracle
-        .write_snapshot(start + 1, &[(pair, U256::from(100), U256::ONE)])
-        .unwrap();
-    oracle
-        .store_worldwide_day_vwap_snapshot(TARGET_WWD, start, start + 50 * 60 * 60)
-        .unwrap();
+    // The offer reads the 24-hour VWAP of its hour.
+    outbe_oracle::test_support::seed_covered_trailing_window(
+        &storage,
+        AddressPair::new_coen_to(840),
+        U256::from(100),
+        U256::ONE,
+    )
+    .unwrap();
 }
 
 fn seeded_world(fixture: &Fixture) -> HashMapStorageProvider {
@@ -442,7 +440,7 @@ fn measure_encrypt_ms(plaintext: &[u8]) -> f64 {
     let offer_public = X25519PublicKey::from(&StaticSecret::from(OFFER_PRIVATE_KEY)).to_bytes();
     let started = Instant::now();
     black_box(
-        outbe_enclave::offer_encrypt::encrypt_tribute_offer_with(
+        outbe_core_common::confidential_tee::encrypt_tribute_offer_with(
             &offer_public,
             [0x44; 32],
             [0x55; 12],
@@ -460,7 +458,7 @@ fn measure_enclave_decrypt_ms(fixture: &Fixture) -> f64 {
     for _ in 0..INNER_ITERATIONS {
         black_box(
             ecdhe_tribute_offer_decrypt(
-                &OFFER_PRIVATE_KEY,
+                &outbe_tee::resident::OfferKeyHandle::for_test(OFFER_PRIVATE_KEY),
                 &OFFER_HKDF_SALT,
                 black_box(&ephemeral_pubkey),
                 black_box(&fixture.nonce),
@@ -519,7 +517,9 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
 
     let input = bench_input(fixture);
     let key = TributeOfferKeyMaterial {
-        tribute_offer_private_key: &OFFER_PRIVATE_KEY,
+        tribute_offer_private_key: &outbe_tee::resident::OfferKeyHandle::for_test(
+            OFFER_PRIVATE_KEY,
+        ),
         salt: &OFFER_HKDF_SALT,
     };
     let mut enclave_ns = 0_u64;

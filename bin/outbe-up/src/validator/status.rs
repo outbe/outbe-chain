@@ -18,7 +18,6 @@ use crate::{
 
 const FULL_NODE: &str = "outbe-full-node.service";
 const VALIDATOR_SERVICE: &str = "outbe-validator.service";
-const ENCLAVE_SERVICE: &str = "outbe-enclave.service";
 const RADICLE_SERVICE: &str = "outbe-radicle.service";
 const FEEDER_SERVICE: &str = "outbe-feeder.service";
 const HYPERLANE_SERVICE: &str = "outbe-hyperlane-validator.service";
@@ -255,6 +254,12 @@ fn validator_consensus_status(
         status.connected_peers,
         yes_no(status.has_threshold_shares)
     );
+    value.push_str(&format!(
+        "\nTEE         {} | ready {} | resident key {}",
+        status.enclave.state,
+        yes_no(status.enclave.ready),
+        yes_no(status.enclave.offer_key_ready)
+    ));
     if status.mode != "signer" && status.next_planned_activation_height > 0 {
         let finalized = remote.map_or(status.last_finalized_block, |block| block.number);
         let remaining = status
@@ -271,7 +276,6 @@ fn validator_consensus_status(
 
 fn validator_services_status() -> String {
     [
-        ("enclave", ENCLAVE_SERVICE),
         ("radicle", RADICLE_SERVICE),
         ("feeder", FEEDER_SERVICE),
         ("hyperlane", HYPERLANE_SERVICE),

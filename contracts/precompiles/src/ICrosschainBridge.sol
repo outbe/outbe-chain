@@ -24,7 +24,6 @@ interface ICrosschainBridge {
     error NotInitialized();
     error InvalidAddress();
     error InvalidDomain();
-    error LocalDomainNotAllowed(uint32 domain);
     error EmptyCalls();
     error InvalidGasLimit();
     error ZeroFund();

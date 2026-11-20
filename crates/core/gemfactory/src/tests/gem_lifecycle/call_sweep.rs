@@ -275,7 +275,7 @@ fn the_issue_day_counts_only_for_a_gem_issued_at_midnight() {
         (midnight + 1, false),
     ] {
         with_storage(|storage| {
-            set_profile(storage, outbe_gem::config::PROFILE_PROD);
+            set_profile(storage, outbe_gem::config::PROFILE_MAINNET);
             let mut p = sample_params(ALICE);
             p.issued_at = issued_at;
             let gem_id = add(storage, p);
@@ -309,7 +309,7 @@ fn a_later_gem_of_a_midnight_gems_day_does_not_count_the_partial_day() {
     }
     let midnight = date_key_to_utc_timestamp(oldest_breach).unwrap();
     with_storage(|storage| {
-        set_profile(storage, outbe_gem::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_MAINNET);
         let mut prior = sample_params(ALICE);
         prior.issued_at = midnight - 1;
         let prior = add(storage, prior);
@@ -388,32 +388,32 @@ fn a_wider_window_than_the_live_profile_widens_the_span_the_scan_collects() {
         let gem = GemContract::new(storage.clone());
         let iso = sample_params(ALICE).reference_currency;
 
-        set_profile(storage, outbe_gem::config::PROFILE_DEV);
+        set_profile(storage, outbe_gem::config::PROFILE_TESTNET);
         add(storage, sample_params(ALICE));
         assert_eq!(
             gem.max_call_window_seconds.read(&iso).unwrap(),
-            GemParams::DEV.call_window_seconds
+            GemParams::TESTNET.call_window_seconds
         );
 
         // A new group is sealed on the wider profile.
-        set_profile(storage, outbe_gem::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_MAINNET);
         let mut other = sample_params(BOB);
         other.entry_price_minor = U256::from(600_000u64);
         add(storage, other);
         assert_eq!(
             gem.max_call_window_seconds.read(&iso).unwrap(),
-            GemParams::PROD.call_window_seconds,
+            GemParams::MAINNET.call_window_seconds,
             "a wider profile widens the span"
         );
 
-        set_profile(storage, outbe_gem::config::PROFILE_DEV);
+        set_profile(storage, outbe_gem::config::PROFILE_TESTNET);
         let mut third = sample_params(holder(0));
         third.entry_price_minor = U256::from(700_000u64);
         third.promis_load_minor = U256::from(2_000_000u64);
         add(storage, third);
         assert_eq!(
             gem.max_call_window_seconds.read(&iso).unwrap(),
-            GemParams::PROD.call_window_seconds,
+            GemParams::MAINNET.call_window_seconds,
             "going back to the narrow one does not shrink it"
         );
     });
@@ -465,7 +465,7 @@ fn an_unindexable_price_skips_its_currency_for_the_day() {
 fn a_call_slice_refreshes_all_metadata_once() {
     let mut provider = provider_at(T_NOW);
     StorageHandle::enter(&mut provider, |storage| {
-        set_profile(&storage, outbe_gem::config::PROFILE_PROD);
+        set_profile(&storage, outbe_gem::config::PROFILE_MAINNET);
         let pair = seed_currency(&storage, USD, Some(U256::from(600_000u64)));
         for nonce in 0..3 {
             callable_gem_of(
@@ -499,7 +499,7 @@ fn a_call_slice_refreshes_all_metadata_once() {
 fn a_trigger_during_a_running_call_sweep_queues_its_day() {
     with_storage(|storage| {
         let gem = GemContract::new(storage.clone());
-        set_profile(storage, outbe_gem::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_MAINNET);
         let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
         let issued_at = T_NOW - 100 * SECONDS_PER_DAY;
         // A bin whose calls spend the whole write budget, and one gem priced above it.
@@ -540,7 +540,7 @@ fn a_trigger_during_a_running_call_sweep_queues_its_day() {
 #[test]
 fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
     with_storage(|storage| {
-        set_profile(storage, outbe_gem::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_MAINNET);
         let pair = seed_currency(storage, USD, Some(U256::from(600_000u64)));
         for nonce in 0..=u64::from(SWEEP_VISITS_PER_BLOCK) {
             callable_gem_of(
@@ -592,7 +592,7 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
 fn a_call_sweep_over_several_currencies_always_ends() {
     with_storage(|storage| {
         let gem = GemContract::new(storage.clone());
-        set_profile(storage, outbe_gem::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_MAINNET);
         let day = previous_date_key(timestamp_to_date_key(T_NOW)).expect("date step");
         for iso in [USD, EUR] {
             let pair = seed_currency(storage, iso, Some(U256::from(600_000u64)));

@@ -11,7 +11,8 @@ import {
 import {OptionsBuilder} from "@layerzerolabs/oapp-evm/contracts/oapp/libs/OptionsBuilder.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {IERC7786GatewaySource, IERC7786Recipient, IGatewayQuote} from "../interfaces/IERC7786.sol";
+import {IERC7786GatewaySource, IERC7786Recipient} from "../interfaces/IERC7786.sol";
+import {IGatewayQuote} from "../interfaces/IGatewayQuote.sol";
 import {GasLimitAttribute} from "../libs/GasLimitAttribute.sol";
 
 /**
@@ -117,7 +118,7 @@ contract LayerZeroGatewayAdapter is OAppUpgradeable, UUPSUpgradeable, IERC7786Ga
 
     /// @inheritdoc IERC7786GatewaySource
     function supportsAttribute(bytes4 selector) public pure virtual returns (bool) {
-        return selector == GasLimitAttribute.SELECTOR;
+        return selector == GasLimitAttribute.SELECTOR || selector == GasLimitAttribute.REFUND_SELECTOR;
     }
 
     /// @inheritdoc IERC7786GatewaySource
@@ -135,10 +136,16 @@ contract LayerZeroGatewayAdapter is OAppUpgradeable, UUPSUpgradeable, IERC7786Ga
         bytes memory adapterPayload = abi.encode(sender, recipient, payload);
         bytes memory options = _options(GasLimitAttribute.resolve(attributes, defaultGasLimit()));
 
-        // msg.value funds the LayerZero native fee. Excess is refunded to the caller (the facade).
+        // msg.value funds the LayerZero native fee. The endpoint sends the extra fee to the
+        // refundAddress attribute, or to the caller (the hub) when the attribute is absent.
         // The LayerZero guid is returned as sendId, to follow the delivery in LayerZero Scan.
-        MessagingReceipt memory receipt =
-            _lzSend(dstEid, adapterPayload, options, MessagingFee(msg.value, 0), payable(msg.sender));
+        MessagingReceipt memory receipt = _lzSend(
+            dstEid,
+            adapterPayload,
+            options,
+            MessagingFee(msg.value, 0),
+            payable(GasLimitAttribute.refundAddress(attributes, msg.sender))
+        );
 
         emit MessageSent(receipt.guid, sender, recipient, payload, msg.value, attributes);
         return receipt.guid;

@@ -4,7 +4,7 @@ use thiserror::Error;
 
 /// Neutral error returned by [`crate::tee_encrypt`] and [`crate::tee_decrypt`].
 ///
-/// Domain adapters in `outbe-enclave` map these variants into ledger-specific
+/// Domain adapters map these variants into ledger-specific
 /// error codes without coupling `outbe-tee` to application ledgers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum TeeCryptoError {

@@ -359,27 +359,6 @@ fn add_realized_units(
     }
 }
 
-/// Backdate a series' issuance stamp. Test-only. The Called sweep counts breach
-/// days from `issued_at`. A scenario that cannot spend days to live through those
-/// days must be able to place issuance before the days it seeded.
-#[cfg(any(test, feature = "test-utils"))]
-pub fn set_issued_at(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    issued_at: u64,
-) -> Result<()> {
-    if issued_at == 0 {
-        return Err(IntexError::ZeroIssuedAt.into());
-    }
-    let mut registry = IntexContract::new(storage.clone());
-    let mut record = registry.load_series(series_id)?;
-    // The stamp picks the series' group, so the series moves to the backdated one.
-    registry.leave_call_group(record.group_key().map_err(date_step_error)?, series_id)?;
-    record.issued_at = issued_at;
-    registry.update_series_record(&record)?;
-    registry.join_call_group(&record)
-}
-
 /// Calls the group of `series_id` at `called_at`. Test-only: the call sweep calls groups
 /// from the price window.
 #[cfg(any(test, feature = "test-utils"))]

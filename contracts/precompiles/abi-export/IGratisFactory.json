@@ -67,6 +67,30 @@
   },
   {
     "type": "function",
+    "name": "mineGratis",
+    "inputs": [
+      {
+        "name": "mac",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "opNonce",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "gratisMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
     "name": "pledgeGratis",
     "inputs": [
       {
@@ -150,6 +174,25 @@
       },
       {
         "name": "amountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "GratisMinedFromCoen",
+    "inputs": [
+      {
+        "name": "account",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "gratisMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -289,6 +332,11 @@
   {
     "type": "error",
     "name": "FidelityNotEligible",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidCoenAmount",
     "inputs": []
   },
   {

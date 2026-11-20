@@ -108,6 +108,28 @@ contract LayerZeroGatewayAdapterTest is Test {
         assertTrue(seen, "recipient should have received the message");
     }
 
+    function test_ExtraFee_GoesToTheRefundAddress() public {
+        address user = makeAddr("user");
+        bytes[] memory attrs = new bytes[](1);
+        attrs[0] = GasLimitAttribute.encodeRefund(user);
+
+        vm.deal(app, 250);
+        vm.prank(app);
+        facadeA.sendMessage{value: 250}(_interop(address(recipient)), hex"01", attrs);
+
+        assertEq(user.balance, 150, "the user gets the fee above the quote");
+        assertEq(address(facadeA).balance, 0, "the hub keeps nothing");
+        assertEq(address(adapterA).balance, 0, "the adapter keeps nothing");
+    }
+
+    function test_RevertWhen_ExtraFeeWithoutRefundAddress() public {
+        // The refund goes to the hub, which cannot receive native value.
+        vm.deal(app, 250);
+        vm.prank(app);
+        vm.expectRevert();
+        facadeA.sendMessage{value: 250}(_interop(address(recipient)), hex"01", _noAttrs());
+    }
+
     function test_SendId_HubIdAndTransportId() public {
         vm.recordLogs();
         vm.deal(app, 100);

@@ -9,10 +9,6 @@ use std::{
 
 use alloy_primitives::Address;
 use eyre::{bail, ensure, Context, Result};
-use outbe_primitives::tee_attestation_v1::{
-    AttestationMode, NetworkBindingV1, TeePolicyScheduleV1,
-};
-use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -32,6 +28,7 @@ pub struct OperatorConfig {
 pub struct NetworkConfig {
     pub chain_id: u64,
     pub certified_rpc: String,
+    #[serde(alias = "external_ip")]
     pub advertise_ip: Ipv4Addr,
     #[serde(default = "default_rpc_bind_ip")]
     pub rpc_bind_ip: Ipv4Addr,
@@ -138,8 +135,6 @@ impl OperatorConfig {
         } else {
             ""
         };
-        write_development_secrets(root)?;
-        let development_binding = development_network_binding(root, self.network.chain_id)?;
         let env = format!(
             concat!(
                 "OUTBE_EXTERNAL_IP=\"{}\"\n",
@@ -149,8 +144,6 @@ impl OperatorConfig {
                 "OUTBE_BOOTNODES=\"{}\"\n",
                 "OUTBE_CONSENSUS_PEERS=\"{}\"\n",
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"{}\"\n",
-                "OUTBE_TEE_SESSION_MODE=\"{}\"\n",
-                "OUTBE_DEV_NETWORK_BINDING=\"{}\"\n",
                 "OUTBE_CHAIN_ID=\"{}\"\n"
             ),
             self.network.advertise_ip,
@@ -160,8 +153,6 @@ impl OperatorConfig {
             self.network.bootnodes.join(","),
             self.network.consensus_peers.join(","),
             extra,
-            "development",
-            development_binding,
             self.network.chain_id,
         );
         write_private(&root.join("validator.env"), env.as_bytes())?;
@@ -218,14 +209,6 @@ impl OperatorConfig {
         {
             bail!("network.consensus_peers contains an invalid peer");
         }
-        ensure!(
-            outbe_primitives::tee_genesis_v1::is_attestation_mode_allowed_for_chain_id(
-                self.network.chain_id,
-                AttestationMode::GramineDirectDev,
-            ),
-            "unattested confidential-vm runtime is forbidden for network.chain_id={}",
-            self.network.chain_id
-        );
         ensure!(
             !self.feeder.public_toml.trim().is_empty(),
             "feeder.public_toml is empty"
@@ -386,53 +369,6 @@ const fn is_false(value: &bool) -> bool {
     !*value
 }
 
-fn development_network_binding(root: &Path, chain_id: u64) -> Result<String> {
-    let genesis: serde_json::Value = serde_json::from_slice(&fs::read(root.join("genesis.json"))?)?;
-    let encoded = genesis
-        .pointer("/config/teeAttestationV1/policySchedule")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| eyre::eyre!("genesis.json has no TEE policy schedule"))?;
-    let schedule = TeePolicyScheduleV1::decode_canonical(&hex::decode(
-        encoded.strip_prefix("0x").unwrap_or(encoded),
-    )?)
-    .wrap_err("invalid genesis TEE policy schedule")?;
-    ensure!(
-        schedule.chain_id == alloy_primitives::U256::from(chain_id).to_be_bytes::<32>(),
-        "genesis TEE policy chain id does not match operator config"
-    );
-    let policy = schedule
-        .active_policy(1)
-        .wrap_err("genesis TEE policy has no active policy at height 1")?;
-    ensure!(
-        policy.attestation_mode == AttestationMode::GramineDirectDev,
-        "confidential-vm runtime requires a GramineDirectDev genesis TEE policy"
-    );
-    Ok(hex::encode(
-        NetworkBindingV1 {
-            chain_id: schedule.chain_id,
-            genesis_hash: schedule.genesis_hash,
-            attestation_mode: policy.attestation_mode,
-        }
-        .encode_canonical()
-        .wrap_err("failed to encode development network binding")?,
-    ))
-}
-
-fn write_development_secrets(root: &Path) -> Result<()> {
-    let tee = root.join("tee");
-    fs::create_dir(&tee)?;
-    fs::set_permissions(&tee, fs::Permissions::from_mode(0o700))?;
-    for name in ["dev-dkg-seed.hex", "dev-offer-secret.hex"] {
-        let mut secret = [0_u8; 32];
-        rand::rngs::OsRng.fill_bytes(&mut secret);
-        if secret.iter().all(|byte| *byte == 0) {
-            secret[31] = 1;
-        }
-        write_private(&tee.join(name), hex::encode(secret).as_bytes())?;
-    }
-    Ok(())
-}
-
 fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
@@ -464,7 +400,7 @@ mod tests {
 
     #[test]
     fn validates_minimal_config() {
-        let config: OperatorConfig = serde_yaml_ng::from_str(&format!(
+        let template = format!(
             r#"
 version: 1
 network:
@@ -486,79 +422,15 @@ hyperlane:
       reorg_period: 0
 "#,
             "c".repeat(96),
-        ))
-        .unwrap();
-        config.validate().unwrap();
-        assert_eq!(config.network.rpc_bind_ip, Ipv4Addr::LOCALHOST);
-    }
-
-    #[test]
-    fn unattested_runtime_accepts_devnet_and_testnet_only() {
-        let config = |chain_id| {
-            serde_yaml_ng::from_str::<OperatorConfig>(&format!(
-                r#"
-version: 1
-network:
-  chain_id: {chain_id}
-  certified_rpc: https://rpc.example
-  advertise_ip: 192.0.2.10
-  bootnodes: ["enode://abc@192.0.2.1:30303"]
-  consensus_peers: ["{}@192.0.2.1:30400"]
-feeder:
-  public_toml: |
-    [oracle]
-    sources = "local"
-hyperlane:
-  public_url: http://192.0.2.10:9000
-  origins:
-    - domain: {chain_id}
-      rpc_urls: [https://rpc.example]
-      reorg_period: 0
-"#,
-                "c".repeat(96),
-            ))
-            .unwrap()
-        };
-
-        config(424242).validate().unwrap();
-        config(54322345).validate().unwrap();
-        for chain_id in [676, 123] {
-            assert!(config(chain_id)
-                .validate()
-                .unwrap_err()
-                .to_string()
-                .contains("forbidden"));
+        );
+        for yaml in [
+            template.clone(),
+            template.replace("advertise_ip:", "external_ip:"),
+        ] {
+            let config: OperatorConfig = serde_yaml_ng::from_str(&yaml).unwrap();
+            config.validate().unwrap();
+            assert_eq!(config.network.advertise_ip, Ipv4Addr::new(192, 0, 2, 10));
+            assert_eq!(config.network.rpc_bind_ip, Ipv4Addr::LOCALHOST);
         }
-    }
-
-    #[test]
-    fn derives_direct_dev_binding_from_genesis_policy() {
-        let root = tempfile::tempdir().unwrap();
-        let mut genesis: serde_json::Value =
-            serde_json::from_slice(include_bytes!("../../../../release/testnet-genesis.json"))
-                .unwrap();
-        let encoded = genesis
-            .pointer("/config/teeAttestationV1/policySchedule")
-            .and_then(serde_json::Value::as_str)
-            .unwrap();
-        let mut schedule = TeePolicyScheduleV1::decode_canonical(
-            &hex::decode(encoded.trim_start_matches("0x")).unwrap(),
-        )
-        .unwrap();
-        schedule.entries[0].policy.attestation_mode = AttestationMode::GramineDirectDev;
-        *genesis
-            .pointer_mut("/config/teeAttestationV1/policySchedule")
-            .unwrap() = serde_json::Value::String(format!(
-            "0x{}",
-            hex::encode(schedule.encode_canonical().unwrap())
-        ));
-        fs::write(
-            root.path().join("genesis.json"),
-            serde_json::to_vec(&genesis).unwrap(),
-        )
-        .unwrap();
-
-        let binding = development_network_binding(root.path(), 54322345).unwrap();
-        assert_eq!(binding.len(), NetworkBindingV1::CANONICAL_LEN * 2);
     }
 }

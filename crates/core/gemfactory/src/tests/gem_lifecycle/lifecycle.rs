@@ -43,10 +43,10 @@ fn add_gem_mints_the_gem_and_its_group_and_bumps_counters() {
         let gem = view(storage, gem_id);
         assert_eq!(gem.item.entry_price_minor, U256::from(500_000u64));
         assert_eq!(gem.group.settled_gems, 0);
-        assert_eq!(gem.terms.call_rate, GemParams::DEV.call_rate);
+        assert_eq!(gem.terms.call_rate, GemParams::TESTNET.call_rate);
         assert_eq!(
             gem.terms.call_price_minor,
-            U256::from(500_000u64 * (100 + u64::from(GemParams::DEV.call_rate)) / 100)
+            U256::from(500_000u64 * (100 + u64::from(GemParams::TESTNET.call_rate)) / 100)
         );
     });
 }
@@ -307,7 +307,7 @@ fn a_group_holds_the_gems_of_one_first_full_day_call_price_and_currency() {
         assert_eq!(apart(&|p| p.issued_at += 1), group, "the same day");
         assert_ne!(apart(&|p| p.reference_currency = EUR), group);
         assert_ne!(apart(&|p| p.entry_price_minor += U256::from(1u64)), group);
-        set_profile(storage, outbe_gem::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_MAINNET);
         assert_ne!(
             apart(&|_| {}),
             group,
@@ -347,9 +347,9 @@ fn a_midnight_gem_and_a_later_one_that_day_share_one_group() {
 #[test]
 fn profile_change_after_open_does_not_reterm_the_group() {
     with_storage(|storage| {
-        set_profile(storage, outbe_gem::config::PROFILE_DEV);
+        set_profile(storage, outbe_gem::config::PROFILE_TESTNET);
         let first = add(storage, sample_params(ALICE));
-        set_profile(storage, outbe_gem::config::PROFILE_PROD);
+        set_profile(storage, outbe_gem::config::PROFILE_MAINNET);
         let mut p = sample_params(BOB);
         p.issued_at += 3_600;
         let second = add(storage, p);
@@ -358,12 +358,12 @@ fn profile_change_after_open_does_not_reterm_the_group() {
         let terms = view(storage, first).terms;
         assert_eq!(
             terms.call_window_seconds,
-            GemParams::DEV.call_window_seconds
+            GemParams::TESTNET.call_window_seconds
         );
-        assert_eq!(terms.call_rate, GemParams::DEV.call_rate);
+        assert_eq!(terms.call_rate, GemParams::TESTNET.call_rate);
         assert_eq!(
             view(storage, second).terms.call_rate,
-            GemParams::PROD.call_rate
+            GemParams::MAINNET.call_rate
         );
     });
 }
@@ -467,7 +467,7 @@ fn unsettled_removal_preserves_group_state_settled_removal_decrements() {
         begin_block_at(
             &storage,
             GemContract::day_end(GemContract::deadline_day(
-                T_NOW + u64::from(GemParams::DEV.call_notice_period_seconds),
+                T_NOW + u64::from(GemParams::TESTNET.call_notice_period_seconds),
             )),
         );
         assert!(item(&storage, gems[0]).is_none());
@@ -599,83 +599,6 @@ fn a_gem_id_is_its_raw_keccak_and_the_group_id_carries_the_day() {
             )
         );
         assert_eq!(stored.worldwide_day().value(), timestamp_to_date_key(T_NOW));
-    });
-}
-
-/// The e2e arming path re-issues the gem on another day: it leaves its group, which
-/// closes when it was the only member, and opens the group of the new day.
-#[cfg(feature = "e2e-test")]
-#[test]
-fn backdate_that_changes_the_day_moves_the_gem_and_opens_a_new_group() {
-    use crate::test_arming_e2e::IGemFactoryTestArming;
-    use alloy_sol_types::SolCall;
-
-    with_storage(|storage| {
-        let gem_id = add(storage, sample_params(ALICE));
-        let before = item(storage, gem_id).unwrap();
-        let issued_at = T_NOW - 3 * SECONDS_PER_DAY;
-
-        let data = IGemFactoryTestArming::backdateGemForTestCall {
-            gemId: gem_id,
-            issuedAt: issued_at,
-        }
-        .abi_encode();
-        crate::test_arming_e2e::dispatch(storage, &data)
-            .unwrap()
-            .unwrap();
-
-        let after = item(storage, gem_id).unwrap();
-        assert_eq!(after.issued_at, issued_at);
-        assert_ne!(after.group_key, before.group_key);
-        assert_eq!(
-            after.group_key,
-            outbe_system_common::call_breach::group_key(
-                after.full_day_after_issue().expect("date step").value(),
-                view(storage, gem_id).terms.call_price_minor,
-                USD
-            )
-        );
-        assert!(
-            api::get_group(storage, before.group_key).unwrap().is_none(),
-            "the only member left, so the old group body is gone"
-        );
-        let group = api::get_group(storage, after.group_key).unwrap().unwrap();
-        assert_eq!(
-            group.full_day_after_issue,
-            after.full_day_after_issue().expect("date step")
-        );
-        assert_eq!(api::balance_of(storage, ALICE).unwrap(), 1);
-        assert_eq!(owned(storage, ALICE), vec![gem_id]);
-    });
-}
-
-/// A throwaway build gets a paid gem out of thin air: the body reads Settled and the
-/// group counts it as paid, with no unpaid member left to sweep.
-#[cfg(feature = "e2e-test")]
-#[test]
-fn settled_for_test_issues_a_paid_gem_and_counts_it_in_the_group() {
-    use crate::test_arming_e2e::IGemFactoryTestArming::issueSettledGemForTestCall;
-    use alloy_sol_types::SolCall;
-
-    with_storage(|storage| {
-        let params = sample_params(ALICE);
-        let data = issueSettledGemForTestCall {
-            owner: params.owner,
-            promisLoadMinor: params.promis_load_minor,
-            currency: params.issuance_currency,
-        }
-        .abi_encode();
-        let out = crate::test_arming_e2e::dispatch(storage, &data)
-            .unwrap()
-            .unwrap();
-        let gem_id = issueSettledGemForTestCall::abi_decode_returns(&out).unwrap();
-        let gem = item(storage, gem_id).unwrap();
-        assert!(gem.is_settled());
-        let group = api::get_group(storage, gem.group_key).unwrap().unwrap();
-        assert_eq!(group.settled_gems, 1);
-        let contract = GemContract::new(storage.clone());
-        assert_eq!(contract.group_gem_count.read(&gem.group_key).unwrap(), 0);
-        assert_eq!(api::balance_of(storage, params.owner).unwrap(), 1);
     });
 }
 

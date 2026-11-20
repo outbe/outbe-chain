@@ -10,6 +10,5 @@ pub use self::inputs::{
 pub use self::manifest::{
     build_manifest, expected_timestamp, validate_build_spec, validate_release_manifest_v1,
     verify_version_text, ReleaseManifestOptions, EXPECTED_ARTIFACTS,
-    PRODUCTION_TEE_FORBIDDEN_MARKERS,
 };
 pub use self::verify::{verify_outputs, EXPECTED_CHECKSUM_PATHS};

@@ -11,8 +11,6 @@ pub mod hooks;
 pub(crate) mod positions_expired;
 pub mod precompile;
 pub mod schema;
-#[cfg(feature = "e2e-test")]
-mod test_arming_e2e;
 
 pub(crate) mod runtime;
 pub(crate) mod sol_ext;

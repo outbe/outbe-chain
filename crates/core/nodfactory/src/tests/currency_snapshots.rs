@@ -156,7 +156,7 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
 }
 
 #[test]
-fn a_snapshot_of_another_policy_is_rejected() {
+fn a_snapshot_of_another_window_is_rejected() {
     let mut world = World::new();
     let input = dual_currency_params(Address::repeat_byte(0xaa));
     let nod_id = world.issue(&input);
@@ -169,27 +169,21 @@ fn a_snapshot_of_another_policy_is_rejected() {
     let cutoff = outbe_oracle::api::VwapSnapshotId::from_u256(quoted)
         .unwrap()
         .cutoff();
-    let other_policy = outbe_oracle::api::get_vwap_snapshot_id(
-        cutoff,
-        &outbe_oracle::api::VwapPolicy {
-            policy_version: 2,
-            ..outbe_oracle::api::DEFAULT_VWAP_POLICY
-        },
-    )
-    .unwrap();
+    // The id of an older window.
+    let other_window = U256::from(cutoff - 3_600);
 
     let error = settle_erc20(
         &mut world,
         nod_id,
         input.owner,
         SETTLEMENT_ASSET_EUR,
-        other_policy.to_u256(),
+        other_window,
     )
     .unwrap_err();
     assert_eq!(
         error.to_string(),
         PrecompileError::from(SettlementError::SnapshotMismatch {
-            authorized: other_policy.to_u256(),
+            authorized: other_window,
             required: quoted,
         })
         .to_string()
@@ -387,12 +381,12 @@ fn quote_settlement_dispatch() {
         .unwrap();
     let ret = INodFactory::quoteSettlementCall::abi_decode_returns(&out).unwrap();
     assert_eq!(ret.settlementCurrency, 978);
-    let view_key = outbe_enclave::nod_encryption::derive_view_key(
-        &outbe_nod::test_support::NETWORK_SECRET,
+    let view_key = outbe_nod::nod_encryption::derive_view_key(
+        &outbe_nod::test_support::state_key(),
         input.owner,
     )
     .unwrap();
-    let decrypted = outbe_enclave::nod_decrypt::decrypt_nod_quote_for_owner(
+    let decrypted = outbe_nod::test_support::decrypt_quote(
         &view_key,
         &outbe_core_common::nod_encryption::NodQuoteContextV1 {
             chain_id: 1,
@@ -434,14 +428,15 @@ fn issuance_rail_rejects_a_window_whose_prices_fail_coverage() {
         ),
     ];
 
-    // Eight hours of 1,800 blocks at a vote period of eight: 225 rounds each.
+    // Twenty-four hours of 1,800 blocks at a vote period of eight: 225 rounds
+    // each.
     // One observation in the first hour.
     let hour = 3_600;
     let snapshot = world.enter(|storage| {
-        let snapshot = outbe_oracle::api::current_vwap_snapshot(storage.clone()).unwrap();
+        let snapshot = outbe_oracle::api::current_vwap_24h_snapshot(storage.clone()).unwrap();
         let mut oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         oracle.config_vote_period.write(8).unwrap();
-        for k in 0..=8 {
+        for k in 0..=24 {
             oracle
                 .record_hour_block(snapshot.start() + k * hour, 1_000 + k * 1_800)
                 .unwrap();

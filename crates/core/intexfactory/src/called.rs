@@ -4,14 +4,14 @@
 //! Oracle's finalized per-UTC-day VWAPs. The Cycle daily trigger schedules the closed
 //! day, and every CycleTick walks a slice of it.
 
-use alloy_primitives::U256;
-use alloy_sol_types::SolCall;
+use alloy_primitives::{Bytes, U256};
+use alloy_sol_types::{SolCall, SolError};
 use outbe_intex::SeriesId;
 use outbe_oracle::call_pass::{self, CallPass};
 use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PassFailure, Result},
+    error::{PassFailure, PrecompileError, Result},
     storage::{dsl::Value, StorageHandle},
 };
 use outbe_system_common::call_bins::{self, Visit};
@@ -172,24 +172,33 @@ fn call_currency(
     Ok((called, finished))
 }
 
+/// What the router did with the call notices of one run.
+#[derive(Default)]
+pub(crate) struct NoticeOutcome {
+    /// Series whose whole message the router refused, with the revert data.
+    pub refused: Vec<(SeriesId, Bytes)>,
+    /// Legs the router kept for one chain each.
+    pub kept: Vec<IOriginRouter::FailedCallNoticeLeg>,
+}
+
 /// One message per group, split only where the wire's cap forces it. `called_at`
-/// travels so every target derives the same deadline the origin did. Returns the
-/// series whose message the router refused. A node-local failure fails the block instead.
+/// travels so every target derives the same deadline the origin did. A node-local
+/// failure fails the block instead.
 pub(crate) fn notify_called(
     storage: &StorageHandle<'_>,
     emission_day: EmissionDate,
     called_at: u64,
     members: &[SeriesId],
-) -> Result<Vec<SeriesId>> {
-    let mut refused = Vec::new();
+) -> Result<NoticeOutcome> {
+    let mut outcome = NoticeOutcome::default();
     for chunk in members.chunks(MAX_SERIES_PER_MARK) {
         // The batch is the unit: a refusal returns every series in it.
         let sent = storage.with_checkpoint(|| {
             // Relay-float-funded: value 0, so the router self-quotes and pays the fee from its float.
-            storage.call(
+            let returned = storage.call(
                 ORIGIN_ROUTER_ADDRESS,
                 U256::ZERO,
-                IOriginRouter::sendMarkCalledCall {
+                IOriginRouter::sendIntexSeriesCallNoticeCall {
                     emissionDay: emission_day.value(),
                     calledAt: called_at,
                     seriesIds: chunk.iter().map(|id| (*id).into()).collect(),
@@ -197,25 +206,50 @@ pub(crate) fn notify_called(
                 .abi_encode()
                 .into(),
             )?;
-            Ok(())
+            IOriginRouter::sendIntexSeriesCallNoticeCall::abi_decode_returns(&returned)
+                .map_err(|_| PrecompileError::RevertBytes(returned))
         });
-        match sent {
-            Ok(()) => {}
-            Err(error) if error.pass_failure() == PassFailure::Propagate => return Err(error),
-            Err(error) => {
-                tracing::warn!(
-                    target: "outbe::intexfactory",
-                    emission_day = emission_day.value(),
-                    called_at,
-                    series = ?chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>(),
-                    error = ?error,
-                    "call notice: refused"
-                );
-                refused.extend_from_slice(chunk);
+        let error = match sent {
+            Ok(kept) => {
+                outcome.kept.extend(kept);
+                continue;
             }
+            Err(error) if error.pass_failure() == PassFailure::Propagate => return Err(error),
+            Err(error) => error,
+        };
+        let error_data = revert_data(error);
+        let series = chunk.iter().map(|id| id.to_string()).collect::<Vec<_>>();
+        if error_data.starts_with(&IOriginRouter::NoTargets::SELECTOR) {
+            // A day with no target chain has nobody to tell.
+            tracing::warn!(
+                target: "outbe::intexfactory",
+                emission_day = emission_day.value(),
+                series = ?series,
+                "call notice: the day has no target chain"
+            );
+            continue;
         }
+        tracing::warn!(
+            target: "outbe::intexfactory",
+            emission_day = emission_day.value(),
+            called_at,
+            series = ?series,
+            error = ?error_data,
+            "call notice: refused"
+        );
+        outcome
+            .refused
+            .extend(chunk.iter().map(|id| (*id, error_data.clone())));
     }
-    Ok(refused)
+    Ok(outcome)
+}
+
+/// The revert data of a refused router call, empty for any other failure.
+pub(crate) fn revert_data(error: PrecompileError) -> Bytes {
+    match error {
+        PrecompileError::RevertBytes(bytes) => bytes,
+        _ => Bytes::new(),
+    }
 }
 
 #[cfg(test)]

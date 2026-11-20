@@ -563,10 +563,10 @@ fn load_seeded_storage(provider: &mut HashMapStorageProvider, genesis: &Value, a
 #[test]
 fn seeded_profiles_and_gems_read_back_through_their_schemas() {
     const SEED: &str = r#"{
-      "intex_profile": { "profile": "dev" },
-      "gem_profile": { "profile": "prod" },
-      "nod_profile": { "profile": "prod" },
-      "credis_profile": { "profile": "dev" }
+      "intex_profile": { "profile": "testnet" },
+      "gem_profile": { "profile": "mainnet" },
+      "nod_profile": { "profile": "mainnet" },
+      "credis_profile": { "profile": "e2e" }
     }"#;
     let (_tmp, genesis, _raw) =
         run_seed_genesis(FIXTURE_GENESIS, SEED, FIXTURE_VALIDATORS_4_PUBLIC_ONLY);
@@ -590,26 +590,26 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
                 .config_profile
                 .read()
                 .unwrap(),
-            outbe_credis::config::PROFILE_DEV
+            outbe_credis::config::PROFILE_E2E
         );
         assert_eq!(
             IntexContract::new(storage.clone())
                 .config_profile
                 .read()
                 .unwrap(),
-            outbe_intex::config::PROFILE_DEV
+            outbe_intex::config::PROFILE_TESTNET
         );
         assert_eq!(
             outbe_nod::NodContract::new(storage.clone())
                 .config_profile
                 .read()
                 .unwrap(),
-            outbe_nod::config::PROFILE_PROD
+            outbe_nod::config::PROFILE_MAINNET
         );
         let gem = GemContract::new(storage.clone());
         assert_eq!(
             gem.config_profile.read().unwrap(),
-            outbe_gem::config::PROFILE_PROD
+            outbe_gem::config::PROFILE_MAINNET
         );
         assert_eq!(
             outbe_gemfactory::schema::GemFactoryContract::new(storage)
@@ -623,16 +623,15 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
 }
 
 /// A genesis S-curve seed reads back as the same curve that the Oracle starts at
-/// the same WWD with the same peak price.
+/// the same hour with the same peak price.
 #[test]
 fn seeded_scurve_matches_a_curve_that_the_oracle_starts() {
     use outbe_oracle::schema::OracleContract;
     use outbe_oracle::scurve::{scurve_value, store_scurve_entry};
     use outbe_system_common::address_pair::AddressPair;
     use outbe_system_common::addresses::ORACLE_ADDRESS;
-    use outbe_system_common::time::WorldwideDay;
 
-    use outbe_genesis_cli::seed_codec::{first_worldwide_day, parse_header_timestamp};
+    use outbe_genesis_cli::seed_codec::parse_header_timestamp;
 
     const SEED: &str = r#"{
       "oracle": {
@@ -649,24 +648,25 @@ fn seeded_scurve_matches_a_curve_that_the_oracle_starts() {
     let mut started = HashMapStorageProvider::new(512_215);
 
     let pair = AddressPair::new_coen_to(840);
+    // The seed starts the curve at 00:00 UTC of the first Worldwide Day of the genesis.
     let genesis_timestamp = parse_header_timestamp(&genesis).unwrap();
-    let peak = WorldwideDay::new(first_worldwide_day(genesis_timestamp));
+    let start_hour = genesis_timestamp.saturating_sub(12 * 60 * 60) / 86_400 * 86_400;
     StorageHandle::enter(&mut started, |storage| {
         outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
         let mut oracle = OracleContract::new(storage);
         let peak_price = alloy_primitives::U256::from(1_000_000u64);
-        assert!(store_scurve_entry(&mut oracle, pair, peak, peak_price).unwrap());
+        assert!(store_scurve_entry(&mut oracle, pair, start_hour, peak_price).unwrap());
     });
-    // The first WWD of the genesis, a day in the first period, and a day in the second period.
-    for days in [0, 1, 200] {
-        let wwd = WorldwideDay::new(first_worldwide_day(genesis_timestamp + days * 86_400));
+    // The start hour, a day in the first period, and a day in the second period.
+    for days in [0, 1, 163] {
+        let timestamp = start_hour + days * 86_400;
         let value = |provider: &mut HashMapStorageProvider| {
             StorageHandle::enter(provider, |storage| {
-                scurve_value(&OracleContract::new(storage), pair, wwd).unwrap()
+                scurve_value(&OracleContract::new(storage), pair, timestamp).unwrap()
             })
         };
         let seeded_value = value(&mut seeded);
-        assert!(!seeded_value.is_zero(), "{wwd}");
-        assert_eq!(seeded_value, value(&mut started), "{wwd}");
+        assert!(!seeded_value.is_zero(), "{days}");
+        assert_eq!(seeded_value, value(&mut started), "{days}");
     }
 }

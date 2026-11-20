@@ -126,6 +126,12 @@ pub fn is_group_forfeited(storage: &StorageHandle<'_>, group_key: B256) -> Resul
         .read(&group_key)
 }
 
+/// Whether the forfeit pass has started on `group_key` or finished it.
+pub fn is_group_forfeit_started(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
+    let nod = NodContract::new(storage.clone());
+    Ok(nod.group_forfeiting.read(&group_key)? || nod.group_is_forfeited.read(&group_key)?)
+}
+
 /// The call group Lysis sealed `series_id` into, while the series has unclaimed Tributes.
 pub fn series_group(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<Option<B256>> {
     NodContract::new(storage.clone()).sealed_series_group(series_id)

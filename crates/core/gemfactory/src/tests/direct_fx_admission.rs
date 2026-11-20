@@ -34,7 +34,7 @@ fn a_direct_settlement_through_a_leg_the_window_never_priced_is_refused_without_
             978,
         )
         .unwrap();
-        let required = outbe_oracle::api::current_vwap_snapshot(storage.clone())
+        let required = outbe_oracle::api::current_vwap_24h_snapshot(storage.clone())
             .unwrap()
             .to_u256();
         (gem_id, required)

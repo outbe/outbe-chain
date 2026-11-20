@@ -207,6 +207,24 @@ contract DestinationSettlerTest is BaseTest {
         assertEq(destinationSettler.dispatchedOrdersFillerData(1), abi.encode("some filler data2"));
     }
 
+    // ========== refund ==========
+
+    /// @dev OIP-00399: the destination chain alone must reject an early refund. The order id binds
+    ///      only `orderData`, so `refund` reads the deadline from there and not from the outer field.
+    function test_refund_usesTheDeadlineOfTheOrderData() public {
+        OrderData memory orderData = _prepareOrderData();
+        OnchainCrossChainOrder[] memory orders = new OnchainCrossChainOrder[](1);
+        orders[0] = _prepareOnchainOrder(OrderEncoder.encode(orderData), 0, OrderEncoder.orderDataType());
+
+        vm.warp(uint256(orderData.fillDeadline));
+        vm.expectRevert(IDestinationSettler.OrderFillNotExpired.selector);
+        destinationSettler.refund(orders);
+
+        vm.warp(uint256(orderData.fillDeadline) + 1);
+        destinationSettler.refund(orders);
+        assertEq(destinationSettler.dispatchedOrderIds(0), OrderEncoder.id(orderData));
+    }
+
     // ========== refundOrders ==========
 
     function test_refundOrders_onChain_works() public {

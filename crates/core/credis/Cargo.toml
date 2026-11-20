@@ -16,8 +16,6 @@ thiserror.workspace = true
 
 [features]
 default = []
-# Short notice period so an e2e run can watch a Credis lapse.
-e2e-test = []
 test-utils = []
 
 

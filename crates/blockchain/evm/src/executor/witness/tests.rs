@@ -21,10 +21,9 @@ fn sign_payload_read(key: &SigningKey, inputs_hash: B256, amount: U256) -> Encla
     )
     .unwrap();
     let sig = key.sign(&preimage);
-    EnclaveResponse::Payload {
-        recordable: true,
-        payload,
-        inputs_canonical_hash: inputs_hash,
+    EnclaveResponse::DcapVerificationFinishedV1 {
+        request_hash: inputs_hash,
+        outcome: payload,
         attestation_tag: sig.to_bytes().to_vec(),
     }
 }
@@ -34,10 +33,9 @@ fn verify_payload_read(
     expected_hash: B256,
     response: &EnclaveResponse,
 ) -> Result<(), TransportError> {
-    let EnclaveResponse::Payload {
-        recordable: true,
-        payload,
-        inputs_canonical_hash,
+    let EnclaveResponse::DcapVerificationFinishedV1 {
+        outcome: payload,
+        request_hash: inputs_canonical_hash,
         attestation_tag,
     } = response
     else {
@@ -126,6 +124,52 @@ fn block_one_and_mandatory_prefix_worst_case_fixture_fits_budget() {
     assert_eq!(decoded, tape);
 }
 
+/// User transactions stop at the end-block reserve, and the end-block suffix still records into it.
+#[test]
+fn a_user_candidate_leaves_the_end_block_reserve_to_the_suffix() {
+    let key = SigningKey::from_bytes(&[0x31; 32]);
+    let base_extra = encode_outbe_block_artifacts(&OutbeBlockArtifacts {
+        timestamp_millis_part: 500,
+        ..Default::default()
+    })
+    .unwrap();
+    let entry = |index: u32| {
+        EnclaveWitnessEntryV1::try_from(sign_payload_read(
+            &key,
+            keccak256(index.to_be_bytes()),
+            U256::from(index),
+        ))
+        .unwrap()
+    };
+    let mut state = WitnessState::new(
+        WitnessExecutionMode::ProposerRecord,
+        None,
+        EnclaveWitnessTapeV1::default(),
+    );
+    let mut index = 0;
+    loop {
+        state.staged = vec![entry(index)];
+        if !proposer_commit_fits(&mut state, index, &base_extra, true) {
+            break;
+        }
+        let entries = std::mem::take(&mut state.staged);
+        state.tape.txs.push(TxWitnessV1 {
+            tx_index: index,
+            entries,
+        });
+        index += 1;
+    }
+    assert!(index > 0);
+    assert_eq!(
+        state.candidate_rejection,
+        Some(CandidateRejection::BudgetDeferred)
+    );
+    state.candidate_rejection = None;
+    state.staged = (0..64).map(entry).collect();
+    assert!(proposer_commit_fits(&mut state, index, &base_extra, false));
+    assert_eq!(state.first_witness_fault, None);
+}
+
 #[test]
 fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
     let leader_sk = SigningKey::from_bytes(&[0x21; 32]);
@@ -159,8 +203,8 @@ fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
         .unwrap();
         assert!(matches!(
             resp,
-            EnclaveResponse::Payload { ref payload, .. }
-                if payload.as_slice() == U256::from(42).to_be_bytes::<32>()
+            EnclaveResponse::DcapVerificationFinishedV1 { ref outcome, .. }
+                if outcome.as_slice() == U256::from(42).to_be_bytes::<32>()
         ));
     }
     {
@@ -278,8 +322,8 @@ fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
         .unwrap();
         assert!(matches!(
             resp,
-            EnclaveResponse::Payload { ref payload, .. }
-                if payload.as_slice() == U256::from(99).to_be_bytes::<32>()
+            EnclaveResponse::DcapVerificationFinishedV1 { ref outcome, .. }
+                if outcome.as_slice() == U256::from(99).to_be_bytes::<32>()
         ));
     }
     assert!(OutbeBlockExecutor::<()>::check_witness_commit_allowed_with(
@@ -500,8 +544,8 @@ fn evm_transact_witness_scope_covers_rpc_direct_prewarm_and_detached_trace() {
         .unwrap();
         assert!(matches!(
             resp,
-            EnclaveResponse::Payload { ref payload, .. }
-                if payload.as_slice() == U256::from(11).to_be_bytes::<32>()
+            EnclaveResponse::DcapVerificationFinishedV1 { ref outcome, .. }
+                if outcome.as_slice() == U256::from(11).to_be_bytes::<32>()
         ));
     });
     // tx_index = 1 (no enclave calls)
@@ -535,8 +579,8 @@ fn evm_transact_witness_scope_covers_rpc_direct_prewarm_and_detached_trace() {
             .unwrap();
             assert!(matches!(
                 resp,
-                EnclaveResponse::Payload { ref payload, .. }
-                    if payload.as_slice() == U256::from(22).to_be_bytes::<32>()
+                EnclaveResponse::DcapVerificationFinishedV1 { ref outcome, .. }
+                    if outcome.as_slice() == U256::from(22).to_be_bytes::<32>()
             ));
         },
     );

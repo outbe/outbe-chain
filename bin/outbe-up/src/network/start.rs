@@ -119,23 +119,14 @@ fn fail_if_service_failed(
     let logs = ssh
         .capture(
             founder,
-            "journalctl --no-pager -n 30 -u outbe-enclave.service -u outbe-radicle.service -u outbe-feeder.service -u outbe-hyperlane-validator.service -u outbe-validator.service",
+            "journalctl --no-pager -n 30 -u outbe-radicle.service -u outbe-feeder.service -u outbe-hyperlane-validator.service -u outbe-validator.service",
         )
         .unwrap_or_else(|error| format!("could not read journal: {error}"));
     bail!("{} failed during network start:\n{logs}", failed.name);
 }
 
 fn service_failed(status: &FounderStatus, hyperlane_configured: bool) -> bool {
-    let core_failed = [
-        &status.target,
-        &status.validator,
-        &status.enclave,
-        &status.radicle,
-        &status.feeder,
-    ]
-    .into_iter()
-    .any(|service| service == "failed");
-    core_failed || hyperlane_configured && status.hyperlane == "failed"
+    status.services().contains(&"failed") || hyperlane_configured && status.hyperlane == "failed"
 }
 
 fn ready_count(

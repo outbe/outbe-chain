@@ -5,7 +5,7 @@
 //! API. The user-facing surface (settle / minePromis) lives in the precompile.
 
 use alloy_primitives::{Address, U256};
-use outbe_intex::{IntexCallTrigger, SeriesId};
+use outbe_intex::IntexCallTrigger;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -46,10 +46,10 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<runtime::IssuanceLeg
 /// The `minePromis` proof-of-work check, for off-chain miners.
 pub fn validate_pow(
     owner: Address,
+    intex_id: U256,
+    mining_sequence: u64,
     promis_amount: U256,
-    series_id: SeriesId,
-    seq: u32,
     nonce: u64,
 ) -> Result<()> {
-    runtime::validate_pow(owner, promis_amount, series_id, seq, nonce)
+    runtime::validate_pow(owner, intex_id, mining_sequence, promis_amount, nonce)
 }
