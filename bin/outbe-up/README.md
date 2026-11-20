@@ -25,8 +25,9 @@ outbe-up network status --artifacts network-build [--ssh-key ~/.ssh/operator] [-
 founding archives, and a joining-validator bundle/config from the same software and genesis.
 `prepare` verifies and installs every host over SSH without starting it. `start` starts all
 founders and waits for RPC, execution peers, consensus signer state, threshold shares, resident
-TEE readiness, and a finalized block. It then delegates and funds each dedicated Hyperlane signer,
-registers it with the controller, and waits for every Hyperlane validator to become healthy.
+TEE readiness, a healthy feeder, and a finalized block. It then delegates and funds each dedicated
+Hyperlane signer, registers it with the controller, and waits for every Hyperlane validator to
+become healthy.
 `network init` is an alias for `network config-example`. `prepare` refuses to reinstall over an
 active validator target; `start` can be repeated for the same artifacts.
 
@@ -38,7 +39,9 @@ then applies the fresh founder set and network policy. Private consensus topolog
 
 Each founder needs a public checkpoint URL in `hyperlane_public_url`; TCP port `9000` must be
 reachable by Hyperlane relayers. The private health endpoint stays on `127.0.0.1:9003`. Shared
-origin-chain RPC and reorg settings live in the top-level `hyperlane` section.
+origin-chain RPC and reorg settings live in the top-level `hyperlane` section. Devnet uses the
+self-contained deterministic feeder profile; testnet and mainnet keep the externally configured
+market profile.
 
 The built-in founding workflow uses `no-attestation-dev` on devnet and testnet only. It cannot
 bootstrap mainnet, which requires attestation. TEE keys remain in the node process; this
@@ -69,7 +72,7 @@ remains in memory throughout `sync -> promote`. The node owns TEE admission and 
 operator journal records only external economic/role transactions and snapshot progress, not key
 readiness. DKG activation continues in the background; once the validator becomes active, its
 service registers the signer and starts the Hyperlane daemon automatically. Both consensus and
-Hyperlane health are visible through `status`.
+feeder and Hyperlane health are visible through `status`.
 
 The editable configuration example lives at `templates/validator/operator-config.example.yaml`.
 Systemd policy comes from the shared `outbe-operator-systemd` crate used by both joining and

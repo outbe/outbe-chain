@@ -1,4 +1,9 @@
-use std::{fs, net::Ipv4Addr, os::unix::fs::PermissionsExt, path::Path};
+use std::{
+    fs,
+    net::Ipv4Addr,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+};
 
 use eyre::{ensure, Context, Result};
 use outbe_genesis_cli::{
@@ -19,7 +24,7 @@ use crate::{
     },
 };
 
-use super::config::NetworkConfig;
+use super::config::{Network, NetworkConfig};
 
 const MANIFEST_VERSION: u32 = 1;
 
@@ -362,10 +367,7 @@ pub(super) fn genesis_cli_config(
             "contracts_dir",
             json!(software.join("share/outbe-genesis/contracts/predeploys")),
         ),
-        (
-            "feeder_pairs",
-            json!(software.join("share/outbe-genesis/profiles/testnet/pairs.toml")),
-        ),
+        ("feeder_pairs", json!(feeder_pairs_path(config, software))),
         ("remote_base_dir", json!("/opt/outbe-chain")),
         ("remote_keys_dir", json!("/opt/outbe-chain/keys")),
         ("node_binary", json!("/opt/outbe-chain/outbe-chain")),
@@ -402,6 +404,9 @@ pub(super) fn genesis_cli_config(
         ("tee", json!({"mode": "no-attestation-dev"})),
     ] {
         root.insert(key.to_owned(), value);
+    }
+    if config.network == Network::Devnet {
+        root.insert("price_provider".into(), json!("mock"));
     }
     if let Some(path) = base_genesis {
         root.insert("base_genesis".into(), json!(path));
@@ -509,7 +514,8 @@ pub(super) fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<
             ))
         })
         .collect::<Result<Vec<_>>>()?;
-    let operator = joining_operator_config(artifacts.config, bootnodes, peers);
+    let operator =
+        joining_operator_config(artifacts.config, artifacts.software_root, bootnodes, peers)?;
     let config_path = joining.join("operator-config.example.yaml");
     fs::write(&config_path, serde_yaml_ng::to_string(&operator)?)?;
     Ok(JoiningArtifact {
@@ -521,10 +527,11 @@ pub(super) fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<
 
 fn joining_operator_config(
     config: &NetworkConfig,
+    software: &Path,
     bootnodes: Vec<String>,
     consensus_peers: Vec<String>,
-) -> OperatorConfig {
-    OperatorConfig {
+) -> Result<OperatorConfig> {
+    Ok(OperatorConfig {
         version: OPERATOR_CONFIG_VERSION,
         network: OperatorNetworkConfig {
             chain_id: config.chain_id,
@@ -536,13 +543,50 @@ fn joining_operator_config(
             use_local_defaults: config.topology.use_local_defaults,
         },
         feeder: OperatorFeederConfig {
-            public_toml:
-                "[oracle]\nsources = \"local\"\nvote_period = 60\npoll_interval_secs = 2\n".into(),
+            public_toml: joining_feeder_public_toml(config, software)?,
         },
         hyperlane: config
             .hyperlane
             .for_public_url("http://192.0.2.10:9000".into()),
+    })
+}
+
+fn feeder_pairs_path(config: &NetworkConfig, software: &Path) -> PathBuf {
+    let profile = match config.network {
+        Network::Devnet => "devnet",
+        Network::Testnet | Network::Mainnet => "testnet",
+    };
+    software
+        .join("share/outbe-genesis/profiles")
+        .join(profile)
+        .join("pairs.toml")
+}
+
+fn joining_feeder_public_toml(config: &NetworkConfig, software: &Path) -> Result<String> {
+    let pairs_path = feeder_pairs_path(config, software);
+    let pairs = fs::read_to_string(&pairs_path)
+        .wrap_err_with(|| format!("read feeder pairs: {}", pairs_path.display()))?;
+    let mut public =
+        String::from("[oracle]\nsources = \"local\"\nvote_period = 60\npoll_interval_secs = 2\n");
+    if config.network != Network::Devnet {
+        let rest = config
+            .genesis
+            .overrides
+            .get("price_feed_rest")
+            .and_then(serde_yaml_ng::Value::as_str)
+            .unwrap_or("https://prc.testnet.outbe.net");
+        let rest = serde_json::to_string(rest)?;
+        public.push_str(&format!(
+            "\n[[api_providers]]\nname = \"mock_http\"\nrest = {rest}\n"
+        ));
+        public.push_str(&outbe_genesis_cli::launch_bundle::feeder_pairs_settings(
+            &json!({"feeder_pairs": pairs_path}),
+        )?);
+        public.push('\n');
     }
+    public.push('\n');
+    public.push_str(&pairs);
+    Ok(public)
 }
 
 fn joining_bundle_files(artifacts: &BuildArtifacts<'_>) -> Result<Vec<BundleInput>> {
@@ -671,12 +715,24 @@ mod tests {
 
     #[test]
     fn joining_config_serializes_numeric_fields_as_yaml_numbers() {
+        let temp = tempfile::tempdir().unwrap();
+        let pairs = temp
+            .path()
+            .join("share/outbe-genesis/profiles/testnet/pairs.toml");
+        fs::create_dir_all(pairs.parent().unwrap()).unwrap();
+        fs::write(
+            &pairs,
+            "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"mock_http\" }]\n",
+        )
+        .unwrap();
         let config: NetworkConfig = serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
         let operator = joining_operator_config(
             &config,
+            temp.path(),
             vec!["enode://bootnode".into()],
             vec!["public-key@127.0.0.1:30400".into()],
-        );
+        )
+        .unwrap();
         let yaml = serde_yaml_ng::to_string(&operator).unwrap();
         assert!(yaml.contains("version: 1"));
         assert!(yaml.contains(&format!("chain_id: {}", config.chain_id)));
@@ -695,6 +751,40 @@ mod tests {
             .origins
             .iter()
             .all(|origin| origin.interval_secs == 15));
+    }
+
+    #[test]
+    fn devnet_uses_the_self_contained_mock_feeder_profile() {
+        let temp = tempfile::tempdir().unwrap();
+        let pairs = temp
+            .path()
+            .join("share/outbe-genesis/profiles/devnet/pairs.toml");
+        fs::create_dir_all(pairs.parent().unwrap()).unwrap();
+        fs::write(
+            &pairs,
+            "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"mock\" }]\n",
+        )
+        .unwrap();
+        let mut config: NetworkConfig =
+            serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
+        config.network = Network::Devnet;
+        config.chain_id = Network::Devnet.chain_id();
+
+        let genesis =
+            genesis_cli_config(&config, temp.path(), &temp.path().join("keys"), None).unwrap();
+        assert_eq!(genesis["price_provider"], "mock");
+        assert_eq!(genesis["feeder_pairs"], json!(pairs));
+
+        let operator = joining_operator_config(
+            &config,
+            temp.path(),
+            vec!["enode://bootnode".into()],
+            vec!["public-key@127.0.0.1:30400".into()],
+        )
+        .unwrap();
+        assert!(operator.feeder.public_toml.contains("provider = \"mock\""));
+        assert!(!operator.feeder.public_toml.contains("[[api_providers]]"));
+        assert!(!operator.feeder.public_toml.contains("REPLACE_WITH_RPC_URL"));
     }
 
     #[test]

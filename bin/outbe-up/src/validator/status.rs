@@ -29,6 +29,7 @@ struct StatusSnapshot<'a> {
     validator: Option<&'a ValidatorRecord>,
     sync_eta_seconds: Option<u64>,
     dkg_eta_seconds: Option<u64>,
+    feeder: Option<&'a serde_json::Value>,
     hyperlane: Option<&'a serde_json::Value>,
 }
 
@@ -99,12 +100,13 @@ async fn status_line(
     sync_eta: Option<&mut CatchupEta>,
     dkg_eta: Option<&mut CatchupEta>,
 ) -> String {
-    let (remote_block, local_block, consensus, record, hyperlane) = tokio::join!(
+    let (remote_block, local_block, consensus, record, feeder, hyperlane) = tokio::join!(
         remote.finalized_block(),
         local.finalized_block(),
         local.consensus_status(),
         remote.validator(validator),
-        hyperlane_status(),
+        sidecar_status("http://127.0.0.1:9002/status"),
+        sidecar_status("http://127.0.0.1:9003/status"),
     );
     let remote_block = remote_block.ok();
     let local_block = local_block.ok();
@@ -137,6 +139,7 @@ async fn status_line(
         validator: record.as_ref().ok(),
         sync_eta_seconds,
         dkg_eta_seconds,
+        feeder: feeder.as_ref().ok(),
         hyperlane: hyperlane.as_ref().ok(),
     })
 }
@@ -157,12 +160,13 @@ fn format_status(snapshot: StatusSnapshot<'_>) -> String {
         snapshot.dkg_eta_seconds,
     );
     let services = validator_services_status();
+    let feeder = health_status_line(snapshot.feeder);
     let hyperlane = hyperlane_status_line(snapshot.hyperlane);
     let bls = snapshot
         .validator
         .map_or("?", |record| yes_no(record.has_bls_share));
     format!(
-        "Mode        validator ({lifecycle})\nChain       {chain}\n{consensus}\nOn-chain    BLS share {bls}\nHyperlane   {hyperlane}\nServices    {services}"
+        "Mode        validator ({lifecycle})\nChain       {chain}\n{consensus}\nOn-chain    BLS share {bls}\nFeeder      {feeder}\nHyperlane   {hyperlane}\nServices    {services}"
     )
 }
 
@@ -239,16 +243,24 @@ fn validator_services_status() -> String {
     .join(" | ")
 }
 
-async fn hyperlane_status() -> Result<serde_json::Value> {
+async fn sidecar_status(url: &str) -> Result<serde_json::Value> {
     Ok(reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()?
-        .get("http://127.0.0.1:9003/status")
+        .get(url)
         .send()
         .await?
         .error_for_status()?
         .json()
         .await?)
+}
+
+fn health_status_line(status: Option<&serde_json::Value>) -> &'static str {
+    match status.and_then(|value| value.get("healthy")?.as_bool()) {
+        Some(true) => "healthy",
+        Some(false) => "unhealthy",
+        None => "unavailable",
+    }
 }
 
 fn hyperlane_status_line(status: Option<&serde_json::Value>) -> String {
