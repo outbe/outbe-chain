@@ -7,6 +7,7 @@ use crate::{
     consensus::OutbeConsensusBuilder,
     engine::OutbeEngineValidatorBuilder,
     payload_builder::OutbePayloadBuilder,
+    rpc_middleware::{OutbeRpcMiddlewareLayer, OutbeRpcProtectionConfig},
     shutdown::{NodeShutdown, OutbePayloadServiceBuilder},
 };
 use std::sync::Arc;
@@ -54,6 +55,8 @@ pub struct OutbeNode {
     pub runtime_host: Option<Arc<dyn EvmRuntimeHost>>,
     /// Pool policy installed before the pool is built.
     pub pool_policy: Arc<dyn TxPoolZeroFeePolicy>,
+    /// JSON-RPC batch size and heavy-method admission limits.
+    pub rpc_protection: OutbeRpcProtectionConfig,
 }
 
 impl std::fmt::Debug for OutbeNode {
@@ -66,6 +69,7 @@ impl std::fmt::Debug for OutbeNode {
             )
             .field("runtime_host", &self.runtime_host)
             .field("pool_policy", &self.pool_policy)
+            .field("rpc_protection", &self.rpc_protection)
             .finish()
     }
 }
@@ -82,6 +86,7 @@ impl OutbeNode {
             evm_signer: None,
             runtime_host: None,
             pool_policy,
+            rpc_protection: OutbeRpcProtectionConfig::default(),
         }
     }
 
@@ -96,6 +101,7 @@ impl OutbeNode {
             evm_signer: Some(evm_signer),
             runtime_host: None,
             pool_policy,
+            rpc_protection: OutbeRpcProtectionConfig::default(),
         }
     }
 
@@ -116,6 +122,13 @@ impl OutbeNode {
     #[must_use]
     pub fn with_pool_policy(mut self, policy: Arc<dyn TxPoolZeroFeePolicy>) -> Self {
         self.pool_policy = policy;
+        self
+    }
+
+    /// Configures JSON-RPC batch size and heavy-method admission limits.
+    #[must_use]
+    pub fn with_rpc_protection(mut self, config: OutbeRpcProtectionConfig) -> Self {
+        self.rpc_protection = config;
         self
     }
 }
@@ -146,6 +159,7 @@ where
         OutbeEngineValidatorBuilder,
         NoopEngineApiBuilder,
         BasicEngineValidatorBuilder<OutbeEngineValidatorBuilder>,
+        OutbeRpcMiddlewareLayer,
     >;
 
     fn components_builder(&self) -> Self::ComponentsBuilder {
@@ -177,15 +191,15 @@ where
     }
 
     fn add_ons(&self) -> Self::AddOns {
-        // reth 2.1 RpcAddOns::new takes 6 args: the two trailing Identity
-        // slots are rpc_middleware and auth_http_middleware (latter added in
-        // 2.1). Outbe uses the upstream defaults for both.
+        // reth 2.1 RpcAddOns::new takes 6 args: the two trailing slots are
+        // rpc_middleware and auth_http_middleware. Outbe installs its batch/heavy
+        // admission middleware on HTTP/WS and keeps the default auth middleware.
         RpcAddOns::new(
             EthereumEthApiBuilder::default(),
             OutbeEngineValidatorBuilder::default(),
             NoopEngineApiBuilder::default(),
             BasicEngineValidatorBuilder::new(OutbeEngineValidatorBuilder::default()),
-            Default::default(),
+            OutbeRpcMiddlewareLayer::new(self.rpc_protection.clone()),
             Default::default(),
         )
     }
