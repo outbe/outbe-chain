@@ -7,6 +7,15 @@ use outbe_txpool::TxPoolZeroFeePolicy;
 
 pub(crate) type LaunchConfig = reth_node_builder::NodeConfig<ChainSpec<OutbeHeader>>;
 
+pub(crate) fn launcher_shutdown_tokens() -> (
+    tokio_util::sync::CancellationToken,
+    tokio_util::sync::CancellationToken,
+) {
+    let shutdown_token = tokio_util::sync::CancellationToken::new();
+    let worker_shutdown_token = tokio_util::sync::CancellationToken::new();
+    (shutdown_token, worker_shutdown_token)
+}
+
 /// Run the main node (Reth execution + Commonware consensus).
 pub fn run_node<P, V>() -> eyre::Result<()>
 where
@@ -44,7 +53,7 @@ where
     // In other full-node mode, the launcher spawns no thread and these stay unused.
     let (node_tx, node_rx) = oneshot::channel::<consensus::ConsensusLaunch>();
     let (consensus_dead_tx, mut consensus_dead_rx) = oneshot::channel::<()>();
-    let shutdown_token = tokio_util::sync::CancellationToken::new();
+    let (shutdown_token, worker_shutdown_token) = launcher_shutdown_tokens();
     // A terminal protocol outcome must drain Radicle without racing the main
     // signal branch into aborting the stack before it returns its primary error.
     let radicle_shutdown_token = shutdown_token.child_token();
@@ -98,6 +107,8 @@ where
                 let shutdown = launcher_shutdown.clone();
                 let result: eyre::Result<()> = async move {
         let mut builder = builder;
+        // Drop the consensus guard and join its thread before retiring TEE authority.
+        let _cancel_workers_on_launcher_drop = worker_shutdown_token.clone().drop_guard();
         let _cancel_on_launcher_drop = shutdown_token.clone().drop_guard();
         args.validate()?;
         let (radicle_preflight, radicle_status) = radicle::preflight(&args).await?;
@@ -239,7 +250,7 @@ where
             (&node, &args, evm_signer.as_ref()),
             (proof_chain_id, genesis_hash, &node_data_dir),
             (local_tee_identity, tee_admission_anchor, &initial_tee_policy),
-            (tee_canary_status.clone(), tee_authority, shutdown_token.clone(), shutdown.clone()),
+            (tee_canary_status.clone(), tee_authority, worker_shutdown_token.clone(), shutdown.clone()),
         )?;
 
         let (radicle_consensus, radicle_observer, radicle_drained) = radicle::start(
@@ -279,7 +290,7 @@ where
                 signer,
                 bridge.equivocation_evidence_mailbox().clone(),
                 min_block_time,
-                shutdown_token.clone(),
+                worker_shutdown_token.clone(),
             ))
         } else {
             None
@@ -324,7 +335,7 @@ where
         }
 
         crate::shutdown::drain_launcher_tasks(
-            &shutdown_token,
+            &worker_shutdown_token,
             &shutdown,
             crate::shutdown::LauncherDrainTasks {
                 tee_lease_guard_handle,

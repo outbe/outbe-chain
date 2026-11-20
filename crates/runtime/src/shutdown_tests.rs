@@ -37,21 +37,29 @@ async fn radicle_drain_deadline_is_distinct_from_lost_observer() {
 fn dropped_launcher_joins_consensus_before_execution_teardown() {
     let consensus_stopped = Arc::new(AtomicBool::new(false));
     let execution = ExecutionTeardownSentinel(Arc::clone(&consensus_stopped));
-    let shutdown = tokio_util::sync::CancellationToken::new();
-    let worker_shutdown = shutdown.clone();
-    let worker_stopped = Arc::clone(&consensus_stopped);
-    let worker = std::thread::spawn(move || {
-        while !worker_shutdown.is_cancelled() {
-            std::thread::yield_now();
-        }
-        worker_stopped.store(true, Ordering::SeqCst);
-        Ok(())
-    });
+    let (shutdown, workers_shutdown) = crate::launch::launcher_shutdown_tokens();
+    let outcome = outbe_execution::shutdown::NodeShutdown::default();
+    {
+        let _cancel_workers_on_launcher_drop = workers_shutdown.clone().drop_guard();
+        let _cancel_on_launcher_drop = shutdown.clone().drop_guard();
+        let consensus_shutdown = shutdown.clone();
+        let launcher_workers = workers_shutdown.clone();
+        let stopped = Arc::clone(&consensus_stopped);
+        let thread = std::thread::spawn(move || {
+            futures::executor::block_on(consensus_shutdown.cancelled());
+            stopped.store(true, Ordering::SeqCst);
+            assert!(
+                !launcher_workers.is_cancelled(),
+                "workers cancelled before consensus joined"
+            );
+            Ok(())
+        });
+        let _consensus_lifecycle =
+            super::ConsensusThreadGuard::new(shutdown, thread).with_outcome(outcome.clone());
+    }
 
-    let lifecycle = super::ConsensusThreadGuard::new(shutdown, worker);
-    drop(lifecycle);
-
-    assert!(consensus_stopped.load(Ordering::SeqCst));
+    outcome.finish(Ok(())).unwrap();
+    assert!(workers_shutdown.is_cancelled());
     drop(execution);
 }
 

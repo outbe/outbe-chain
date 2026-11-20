@@ -1,6 +1,7 @@
 //! Preserve select ordering while delegating domain events to epoch operations.
 use super::super::*;
 use super::runtime::*;
+use futures::FutureExt as _;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -284,27 +285,34 @@ where
             {
                 EpochLoopAction::RestartEpoch => continue 'epoch_loop,
                 EpochLoopAction::ReplaceSigner => {
-                    self.channels.replacement_epoch_subchannels = Some(
-                    crate::epoch_subchannels::reacquire_epoch_subchannels(
-                        self.state.current_epoch,
+                    let current_epoch = self.state.current_epoch;
+                    let Some(channels) = reacquire_replacement_channels(
                         &ctx,
-                        crate::epoch_subchannels::SubchannelRetryPolicy {
-                            timeout: Duration::from_secs(5),
-                            retry_interval: Duration::from_millis(10),
-                        },
-                        crate::epoch_subchannels::EpochMuxHandles {
-                            vote: &mut self.channels.vote_mux,
-                            cert: &mut self.channels.cert_mux,
-                            res: &mut self.channels.res_mux,
-                        },
+                        crate::epoch_subchannels::reacquire_epoch_subchannels(
+                            current_epoch,
+                            &ctx,
+                            crate::epoch_subchannels::SubchannelRetryPolicy {
+                                timeout: Duration::from_secs(5),
+                                retry_interval: Duration::from_millis(10),
+                            },
+                            crate::epoch_subchannels::EpochMuxHandles {
+                                vote: &mut self.channels.vote_mux,
+                                cert: &mut self.channels.cert_mux,
+                                res: &mut self.channels.res_mux,
+                            },
+                        ),
                     )
                     .await
                     .wrap_err_with(|| {
                         format!(
                             "reacquire same-epoch channels while replacing signer role in epoch {current_epoch}"
-                        ,current_epoch = self.state.current_epoch)
-                    })?,
-                );
+                        )
+                    })?
+                    else {
+                        info!(epoch = %current_epoch, "global stop received while replacing same-epoch Simplex role");
+                        break 'epoch_loop;
+                    };
+                    self.channels.replacement_epoch_subchannels = Some(channels);
                     continue 'epoch_loop;
                 }
                 EpochLoopAction::ExitStack => break 'epoch_loop,
@@ -418,10 +426,102 @@ pub fn future_epoch_hint_height(
     epocher.backup_vote_hint_height(current_epoch)
 }
 
+async fn reacquire_replacement_channels<T>(
+    ctx: &impl Spawner,
+    reacquire: impl Future<Output = Result<T>>,
+) -> Result<Option<T>> {
+    let mut stack_shutdown = ctx.stopped();
+    tokio::select! {
+        biased;
+        _ = &mut stack_shutdown => Ok(None),
+        result = reacquire => {
+            // Stop may become ready during the reacquire future's poll.
+            if (&mut stack_shutdown).now_or_never().is_some() {
+                return Ok(None);
+            }
+            result.map(Some)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::await_supervised_component_exit;
+    use super::{await_supervised_component_exit, reacquire_replacement_channels};
+    use commonware_p2p::utils::mux::Error as MuxError;
     use commonware_runtime::{deterministic, Runner as _, Spawner as _, Supervisor as _};
+    use futures::FutureExt as _;
+
+    #[test]
+    fn signer_replacement_propagates_closed_mux_while_stack_is_live() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let error = reacquire_replacement_channels(&ctx, async {
+                Err::<(), _>(MuxError::Closed.into())
+            })
+            .await
+            .unwrap_err();
+            assert!(matches!(
+                error.downcast_ref::<MuxError>(),
+                Some(MuxError::Closed)
+            ));
+        });
+    }
+
+    #[test]
+    fn signer_replacement_prefers_stack_stop_to_closed_mux() {
+        for stop_before_reacquire in [true, false] {
+            deterministic::Runner::default().start(move |ctx| async move {
+                let stop_ctx = ctx.child("replacement_stop");
+                if stop_before_reacquire {
+                    ctx.child("early_stop").stop(0, None).await.unwrap();
+                }
+                let channels = reacquire_replacement_channels(&ctx, async move {
+                    assert!(
+                        !stop_before_reacquire,
+                        "reacquire was polled after global stop"
+                    );
+                    // Signal the stop after select checked it but before returning the mux error.
+                    let _ = stop_ctx.stop(0, None).now_or_never();
+                    Err::<(), _>(MuxError::Closed.into())
+                })
+                .await
+                .expect("global stop must win over a closed mux");
+                assert_eq!(channels, None);
+            });
+        }
+    }
+
+    #[test]
+    fn signer_replacement_cancels_pending_reacquisition_on_stack_stop() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let stop_ctx = ctx.child("replacement_stop");
+            let channels = reacquire_replacement_channels(&ctx, async move {
+                let _ = stop_ctx.stop(0, None).now_or_never();
+                std::future::pending::<eyre::Result<()>>().await
+            })
+            .await
+            .unwrap();
+            assert_eq!(channels, None);
+        });
+    }
+
+    #[test]
+    fn signer_replacement_prefers_stack_stop_to_successful_reacquisition() {
+        deterministic::Runner::default().start(|ctx| async move {
+            let live = reacquire_replacement_channels(&ctx, async { Ok(()) })
+                .await
+                .unwrap();
+            assert_eq!(live, Some(()));
+
+            let stop_ctx = ctx.child("replacement_stop");
+            let stopping = reacquire_replacement_channels(&ctx, async move {
+                let _ = stop_ctx.stop(0, None).now_or_never();
+                Ok(())
+            })
+            .await
+            .unwrap();
+            assert_eq!(stopping, None);
+        });
+    }
 
     async fn complete_only<E>(actor: &'static str, exiting: &'static str) -> Result<(), E> {
         if actor != exiting {

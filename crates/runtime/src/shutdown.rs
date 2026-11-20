@@ -281,12 +281,13 @@ async fn drain_radicle_observer(
     }
 }
 
+/// Cancels launcher workers after the consensus thread has joined, if present.
 pub(crate) async fn drain_launcher_tasks(
-    shutdown_token: &tokio_util::sync::CancellationToken,
+    worker_shutdown_token: &tokio_util::sync::CancellationToken,
     shutdown: &outbe_execution::shutdown::NodeShutdown,
     tasks: LauncherDrainTasks,
 ) {
-    shutdown_token.cancel();
+    worker_shutdown_token.cancel();
     if let Some(handle) = tasks.equivocation_slasher_handle {
         if let Err(error) = handle.await {
             shutdown.record_failure(
