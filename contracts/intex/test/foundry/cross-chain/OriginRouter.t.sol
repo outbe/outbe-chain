@@ -143,6 +143,20 @@ contract OriginRouterTest is CrossChainTest {
         assertTrue(originRouter.hasRole(originRouter.DESIS_ROLE(), desis));
     }
 
+    function test_setting_events_hold_only_new_values() public {
+        OriginRouter fresh = DeployProxy.originRouter(address(bridge), admin);
+        vm.expectEmit(true, true, true, true, address(fresh));
+        emit IOriginRouter.OriginRouterDependenciesSet(desis, intexFactory);
+        fresh.setDependencies(desis, intexFactory);
+
+        address wcoen = makeAddr("wcoen");
+        fresh.setProceedsRoute(makeAddr("tokenBridge"), wcoen);
+        address rotatedBridge = makeAddr("rotatedTokenBridge");
+        vm.expectEmit(true, true, true, true, address(fresh));
+        emit IOriginRouter.OriginRouterProceedsRouteSet(rotatedBridge, wcoen);
+        fresh.setProceedsRoute(rotatedBridge, wcoen);
+    }
+
     function test_wire_revert_zero_address() public {
         OriginRouter newRouter = DeployProxy.originRouter(address(bridge), admin);
 

@@ -94,6 +94,20 @@ contract TargetRouterTest is CrossChainTest {
         assertEq(address(targetRouter.intexContract()), address(intex));
     }
 
+    function test_setting_events_hold_only_new_values() public {
+        TargetRouter fresh = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        vm.expectEmit(true, true, true, true, address(fresh));
+        emit ITargetRouter.TargetRouterDependenciesSet(address(auction), address(intex), admin);
+        fresh.setDependencies(address(auction), address(intex), admin);
+
+        address originRecipient = makeAddr("originRouter");
+        fresh.setProceedsRoute(makeAddr("tokenBridge"), originRecipient);
+        address rotatedBridge = makeAddr("rotatedTokenBridge");
+        vm.expectEmit(true, true, true, true, address(fresh));
+        emit ITargetRouter.TargetRouterProceedsRouteSet(rotatedBridge, originRecipient);
+        fresh.setProceedsRoute(rotatedBridge, originRecipient);
+    }
+
     function test_wire_revert_zero_address() public {
         TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 

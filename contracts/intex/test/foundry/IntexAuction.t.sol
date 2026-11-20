@@ -172,11 +172,32 @@ contract AuctionTest is Test {
         auction.completeAuction(emissionDay, 0, 0, 0, 0, 0);
     }
 
+    /// @dev One event for each fact of the day: one start, and one end that is either the completion or the cancel.
+    function _assertDayEvents(Vm.Log[] memory logs, uint256 clearingStarts, uint256 completions, uint256 cancels)
+        internal
+        view
+    {
+        uint256[4] memory counts;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(auction)) continue;
+            bytes32 topic = logs[i].topics[0];
+            if (topic == IIntexAuction.IntexAuctionStarted.selector) ++counts[0];
+            if (topic == IIntexAuction.IntexAuctionClearingStarted.selector) ++counts[1];
+            if (topic == IIntexAuction.IntexAuctionCompleted.selector) ++counts[2];
+            if (topic == IIntexAuction.IntexAuctionCanceled.selector) ++counts[3];
+        }
+        assertEq(counts[0], 1, "one start");
+        assertEq(counts[1], clearingStarts, "clearing starts");
+        assertEq(counts[2], completions, "completions");
+        assertEq(counts[3], cancels, "cancels");
+    }
+
     function test_Lifecycle_FullFlow() public {
         uint256 startTs = block.timestamp;
         uint32 emissionDay = 20250115; // yyyymmdd format
         uint32 floor = 50;
         uint16 bidMinimumQuantity = 1;
+        vm.recordLogs();
         _start(emissionDay, floor, bidMinimumQuantity);
 
         assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.CommittingBids));
@@ -226,6 +247,7 @@ contract AuctionTest is Test {
         assertEq(fin.params.promisLoadMinor, PROMIS_LOAD_MINOR);
         // issuedPromisLoadMinor is derived on-chain as issuedUnits * promisLoadMinor.
         assertEq(fin.result.issuedPromisLoadMinor, uint128(100) * PROMIS_LOAD_MINOR);
+        _assertDayEvents(vm.getRecordedLogs(), 1, 1, 0);
     }
 
     function test_CommitCancel_And_Reverts() public {
@@ -448,10 +470,12 @@ contract AuctionTest is Test {
 
     function test_CancelAuction_CommitStage_ClosesCommits() public {
         uint32 emissionDay = 20250140;
+        vm.recordLogs();
         _start(emissionDay, 1, 1);
         vm.prank(bridger);
         auction.cancelAuction(emissionDay, 1);
         assertEq(uint8(auction.auctionStage(emissionDay)), uint8(IIntexAuction.AuctionStage.Canceled));
+        _assertDayEvents(vm.getRecordedLogs(), 0, 0, 1);
 
         bytes memory signature = _createSignature(emissionDay, iba1, 1, 1, iba1PrivateKey);
         vm.expectRevert(
@@ -772,6 +796,7 @@ contract AuctionTest is Test {
         uint256 startTs = block.timestamp;
         uint32 emissionDay = 20250145;
         uint32 floor = 50; // minBidRate > 0
+        vm.recordLogs();
         _start(emissionDay, floor, 1);
         _commit(emissionDay, iba1, 30, 80, iba1PrivateKey);
         _enterRevealStage(emissionDay, startTs);
@@ -792,6 +817,7 @@ contract AuctionTest is Test {
         assertEq(fin.result.issuedUnits, 0);
         assertEq(fin.result.wonBidsCount, 0);
         assertEq(fin.result.issuedPromisLoadMinor, 0);
+        _assertDayEvents(vm.getRecordedLogs(), 1, 1, 0);
 
         // Idempotent: re-clearing a completed auction is rejected on the stage gate.
         vm.expectRevert(

@@ -2706,6 +2706,68 @@ fn force_clear_skips_missing_chain_after_deadline() {
     );
 }
 
+/// A clearing start the router refuses is reported once and not sent again: the chain's bids expire.
+#[test]
+fn clearing_start_send_failure_is_final() {
+    use crate::precompile::IDesis;
+    use crate::sol_ext::IOriginRouter;
+    use alloy_sol_types::{SolCall, SolEvent};
+
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.set_timestamp(U256::from(NOW));
+    // Every router call answers but the clearing start, which the router refuses.
+    storage.stub_sub_call_at_selector(
+        ORIGIN_ROUTER_ADDRESS,
+        IOriginRouter::targetsOfCall::SELECTOR,
+        targets_stub(&[SRC_CHAIN]),
+    );
+    for selector in [
+        IOriginRouter::sendIntexAuctionStartCall::SELECTOR,
+        IOriginRouter::sendIntexAuctionResultCall::SELECTOR,
+        IOriginRouter::sendIntexAuctionWinnersCall::SELECTOR,
+    ] {
+        storage.stub_sub_call_at_selector(ORIGIN_ROUTER_ADDRESS, selector, Bytes::new());
+    }
+    storage.stub_sub_call_at(
+        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
+        Bytes::from(vec![0u8; 32]),
+    );
+
+    let deadline = ANCHOR + 2 * SECONDS_PER_DAY + crate::constants::BIDS_FANIN_TIMEOUT_SECS;
+    StorageHandle::enter(&mut storage, |s| {
+        open_clearing(&s, 2);
+        runtime::schedule_tick(&s, deadline - 1).unwrap();
+        runtime::force_clear(s.clone(), EMISSION_DAY, deadline + 1)
+            .unwrap()
+            .expect("cleared without the chain");
+    });
+
+    let attempts = storage
+        .sub_call_inputs()
+        .iter()
+        .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
+        .filter(|input| {
+            IOriginRouter::sendIntexAuctionClearingStartCall::abi_decode(&input.calldata).is_ok()
+        })
+        .count();
+    assert_eq!(attempts, 1, "the refused clearing start is not sent again");
+
+    let events = storage.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
+    let failures: Vec<_> = events
+        .iter()
+        .filter_map(|log| IDesis::IntexAuctionClearingStartSendFailed::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(failures.len(), 1);
+    assert_eq!(failures[0].emissionDay, EMISSION_DAY.value());
+    assert_eq!(failures[0].dstChainId, SRC_CHAIN);
+    let expired = events
+        .iter()
+        .filter_map(|log| IDesis::IntexAuctionBidsExpired::decode_log_data(log).ok())
+        .filter(|event| event.srcChainId == SRC_CHAIN)
+        .count();
+    assert_eq!(expired, 1, "the chain's bids expire at the clearing");
+}
+
 #[test]
 fn complete_auctions_without_active_days_is_noop() {
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};

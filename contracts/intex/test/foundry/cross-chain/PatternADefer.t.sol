@@ -225,6 +225,61 @@ contract PatternADeferTest is CrossChainTest {
         assertEq(bridge.lastPayload().length, 0, "nothing was sent, so nothing was reported");
     }
 
+    /// @dev Each way a run of the bids stops gives exactly one of the three stop events.
+    function test_each_stop_of_the_bids_has_one_event() public {
+        uint256 clean = vm.snapshotState();
+
+        _stopTightly(false);
+        _assertStopEvents(vm.getRecordedLogs(), 1, 0, 0);
+        vm.revertToState(clean);
+
+        _stopTightly(true);
+        _assertStopEvents(vm.getRecordedLogs(), 0, 1, 0);
+        vm.revertToState(clean);
+
+        // Zero float: no page can leave.
+        vm.recordLogs();
+        _deliverBridge(BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY));
+        _assertStopEvents(vm.getRecordedLogs(), 0, 0, 1);
+    }
+
+    /// @dev A run with gas for some pages, not the day. `pauseFails` makes the pause message revert.
+    function _stopTightly(bool pauseFails) internal {
+        stubAuction.setBidCount(130);
+        vm.deal(address(bnbRouter), 10 ether);
+        if (pauseFails) {
+            vm.mockCallRevert(
+                address(bnbRouter), abi.encodeCall(TargetRouter.sendIntexAuctionBidsPause, (SERIES_ID_DAY)), "pause"
+            );
+        }
+        bytes memory packet = BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY);
+        vm.recordLogs();
+        (bool delivered,) = address(bridge).call{gas: 4_500_000}(
+            abi.encodeCall(
+                bridge.deliverAs,
+                (_interop(OUTBE_CHAIN_ID, outbePeer), _interop(uint32(block.chainid), address(bnbRouter)), packet)
+            )
+        );
+        assertTrue(delivered, "the delivery itself must survive");
+    }
+
+    function _assertStopEvents(Vm.Log[] memory logs, uint256 pauseSent, uint256 pauseFailed, uint256 sendFailed)
+        internal
+        view
+    {
+        uint256[3] memory counts;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(bnbRouter)) continue;
+            bytes32 topic = logs[i].topics[0];
+            if (topic == ITargetRouter.IntexAuctionBidsPauseSent.selector) ++counts[0];
+            if (topic == ITargetRouter.IntexAuctionBidsPauseSendFailed.selector) ++counts[1];
+            if (topic == ITargetRouter.IntexAuctionBidsSendFailed.selector) ++counts[2];
+        }
+        assertEq(counts[0], pauseSent, "pause sent");
+        assertEq(counts[1], pauseFailed, "pause send failed");
+        assertEq(counts[2], sendFailed, "bids send failed");
+    }
+
     function test_TM_RelayBidsToOutbe_ExternalCallerRevertsNotSelf() public {
         vm.expectRevert(ITargetRouter.NotSelf.selector);
         bnbRouter.sendIntexAuctionBidsToOutbe(SERIES_ID_DAY);
