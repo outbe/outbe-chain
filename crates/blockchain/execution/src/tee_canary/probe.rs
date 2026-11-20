@@ -32,7 +32,7 @@ fn read_offer_key(requester: &dyn EnclaveRequester) -> Result<[u8; 32], CanaryTi
             unreachable: error.is_node_local()
                 || matches!(
                     error,
-                    TransportError::EnclaveError(_) | TransportError::Unavailable(_)
+                    TransportError::EnclaveError(_) | TransportError::EnclaveCause { .. }
                 ),
             reason: format!("GetPublicKeys failed: {}", error.metric_class()),
         }),

@@ -125,7 +125,11 @@ impl CanaryTickOutcome {
     #[must_use]
     pub fn decrypt_transport_failure(error: &TransportError) -> Self {
         Self::Failure {
-            unreachable: error.is_node_local() && !matches!(error, TransportError::Unavailable(_)),
+            unreachable: error.is_node_local()
+                && !matches!(
+                    error,
+                    TransportError::Unavailable(_) | TransportError::UnavailableCause { .. }
+                ),
             reason: format!("canary decrypt failed: {}", error.metric_class()),
         }
     }
@@ -643,7 +647,9 @@ mod tests {
     fn enclave_error_classification_depends_on_the_probe_stage() {
         let key_failure = FakeRequester::new(vec![(
             "get_public_keys",
-            Err(TransportError::EnclaveError("denied".into())),
+            Err(TransportError::enclave_error(std::io::Error::from(
+                std::io::ErrorKind::PermissionDenied,
+            ))),
         )]);
         let outcome = run_canary_probe(&key_failure, &NeverDecryptProbe);
         assert!(
@@ -653,7 +659,9 @@ mod tests {
             ("get_public_keys", Ok(public_keys_response(true))),
             (
                 "dkg_start_dealer",
-                Err(TransportError::EnclaveError("denied".into())),
+                Err(TransportError::enclave_error(std::io::Error::from(
+                    std::io::ErrorKind::PermissionDenied,
+                ))),
             ),
         ]);
         let outcome = run_canary_probe(&decrypt_failure, &TransportDecryptProbe);
@@ -665,7 +673,10 @@ mod tests {
     #[test]
     fn decrypt_unavailability_preserves_grace_but_missing_context_is_unreachable() {
         for (error, expected) in [
-            (TransportError::Unavailable("not ready".into()), false),
+            (
+                TransportError::unavailable(outbe_tee::in_process::InProcessError::NotReady),
+                false,
+            ),
             (
                 outbe_tee::InProcessDispatchError::ContextNotInstalled.into(),
                 true,
@@ -682,8 +693,8 @@ mod tests {
     fn a_not_ready_enclave_is_unreachable_at_the_key_stage() {
         let fake = FakeRequester::new(vec![(
             "get_public_keys",
-            Err(TransportError::Unavailable(
-                "enclave is not initialized".into(),
+            Err(TransportError::unavailable(
+                outbe_tee::in_process::InProcessError::NotReady,
             )),
         )]);
         let outcome = run_canary_probe(&fake, &NeverDecryptProbe);
