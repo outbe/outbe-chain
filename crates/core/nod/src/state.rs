@@ -158,9 +158,12 @@ impl NodContract<'_> {
         self.group_open_load_ct.bytes(&group_key).clear()?;
         self.group_unclaimed_tribute_count.clear(&group_key)?;
         self.group_is_forfeited.clear(&group_key)?;
+        self.group_forfeiting.clear(&group_key)?;
+        self.group_forfeit_load_minor.clear(&group_key)?;
         for series_id in self.group_series.list(&group_key).read_all()? {
             let gs_key = crate::index_keys::group_series_key(group_key, series_id);
             self.group_series_present.clear(&gs_key)?;
+            self.group_series_forfeited.clear(&gs_key)?;
             self.group_series_nod_count.clear(&gs_key)?;
             self.group_series_open_load_ct.bytes(&gs_key).clear()?;
             // The series stays bound after its last Tribute so call and close can still name it.

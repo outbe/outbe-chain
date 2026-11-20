@@ -548,6 +548,96 @@ fn lysis_series_of_one_day_and_reference_share_one_call_group() {
     );
 }
 
+/// A group wider than the block's write budget forfeits series by series over several blocks,
+/// with one Promis Limit credit when its last series closes.
+#[test]
+fn a_group_forfeits_one_series_per_write_and_credits_once() {
+    use outbe_core_common::series_id::SeriesId;
+    let _enclave = outbe_nod::test_support::scope();
+    let mut world = World::new();
+    let sealed_at =
+        outbe_system_common::time::date_key_to_utc_timestamp(20_261_020).unwrap() + 3_600;
+    world.enter(|storage| {
+        let usd = SeriesId::for_pair(20_261_019, 840, 840).unwrap();
+        let eur = SeriesId::for_pair(20_261_019, 978, 840).unwrap();
+        for (series_id, issuance_currency, load) in [(usd, 840, 30u64), (eur, 978, 10)] {
+            crate::api::seal_lysis_series(
+                &storage,
+                crate::api::LysisSeriesInput {
+                    series_id,
+                    sealed_at,
+                    issuance_currency,
+                    reference_currency: 840,
+                    entry_price_minor: U256::from(500_000),
+                    unclaimed_tribute_count: 1,
+                    unclaimed_tribute_load: outbe_nod::api::seal_series_load(
+                        &storage,
+                        series_id,
+                        U256::from(load),
+                    )
+                    .unwrap(),
+                },
+            )
+            .unwrap();
+        }
+        let group = nod_api::series_group(&storage, usd).unwrap().unwrap();
+        let mut nod = outbe_nod::NodContract::new(storage.clone());
+        let terms = nod.read_call_terms(group).unwrap();
+        let called_at = sealed_at + 86_400;
+        crate::called::mark_called(&mut nod, group, called_at, terms.call_notice_period_seconds)
+            .unwrap();
+        let deadline = nod_api::settlement_deadline_of(called_at, terms.call_notice_period_seconds);
+        let forfeit_ts = deadline + 86_400;
+        let through_day = outbe_core_common::deadline_queue::deadline_day(forfeit_ts).unwrap();
+        let forfeit_one_write = |block_number| {
+            let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+                outbe_primitives::block::BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
+                    block_number,
+                    timestamp: forfeit_ts,
+                    chain_id: CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: deadline - outbe_system_common::time::SECONDS_PER_DAY,
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
+                storage.clone(),
+            );
+            let mut budget = outbe_system_common::pass_budget::PassBudget::new(100, 1);
+            crate::forfeited::forfeit_through(&ctx, through_day, &mut budget).unwrap();
+        };
+        let promis_limit = || {
+            outbe_promislimit::PromisLimitContract::new(storage.clone())
+                .promis_limit()
+                .unwrap()
+        };
+
+        forfeit_one_write(10);
+        assert_eq!(promis_limit(), U256::ZERO);
+        assert!(!nod_api::is_group_forfeited(&storage, group).unwrap());
+        assert!(
+            nod_api::is_group_forfeit_started(&storage, group).unwrap(),
+            "no Tribute of the group can issue a Nod while its series close"
+        );
+
+        forfeit_one_write(11);
+        assert_eq!(promis_limit(), U256::from(40));
+        assert!(nod_api::is_group_forfeited(&storage, group).unwrap());
+
+        forfeit_one_write(12);
+        assert_eq!(promis_limit(), U256::from(40));
+    });
+    let closed: Vec<_> = world
+        .provider
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .filter_map(|log| INod::NodSeriesClosed::decode_log_data(log).ok())
+        .map(|event| (event.issuanceCurrency, event.forfeitedAmountMinor))
+        .collect();
+    assert_eq!(closed, [(840, U256::from(30)), (978, U256::from(10))]);
+}
+
 #[test]
 fn series_group_stays_after_the_last_tribute_and_clears_on_close_group() {
     use outbe_core_common::series_id::SeriesId;

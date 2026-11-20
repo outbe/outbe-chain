@@ -3,6 +3,7 @@
 
 use alloy_primitives::B256;
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
+use outbe_core_common::series_id::SeriesId;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, PrecompileError, Result},
@@ -11,6 +12,8 @@ use outbe_primitives::{
 
 use outbe_system_common::pass_budget::PassBudget;
 
+use outbe_nod::errors::NodError;
+use outbe_nod::index_keys::group_series_key;
 use outbe_nod::state::ForfeitQueue;
 use outbe_nod::{precompile::INod, schema::NodContract};
 
@@ -43,9 +46,16 @@ impl<'a, 's> NodForfeit<'a, 's> {
     }
 }
 
-/// A called group forfeits as one: it is its own and only member.
+/// One series of a called group, in list order; the last one closes the group.
+#[derive(Clone, Copy)]
+struct SeriesSlot {
+    position: u32,
+    last: bool,
+}
+
+/// A called group forfeits series by series, one enclave read each, so a large group spans blocks.
 impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
-    type Member = B256;
+    type Member = SeriesSlot;
 
     fn due(&mut self, group: B256) -> Result<Due> {
         let called = self.nod.group_called_at.read(&group)? != 0;
@@ -55,36 +65,89 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
         })
     }
 
-    fn member_count(&self, _group: B256) -> Result<u32> {
-        Ok(1)
+    fn member_count(&self, group: B256) -> Result<u32> {
+        Ok(self.nod.group_series.list(&group).len()?.max(1))
     }
 
-    fn member_at(&self, group: B256, _index: u32) -> Result<B256> {
-        Ok(group)
+    fn member_at(&self, group: B256, index: u32) -> Result<SeriesSlot> {
+        let count = self.member_count(group)?;
+        Ok(SeriesSlot {
+            position: count - 1 - index,
+            last: index == 0,
+        })
     }
 
     fn classify(&self, error: &PrecompileError) -> PassFailure {
         error.record_pass_failure()
     }
 
+    fn process_member(&mut self, group: B256, slot: SeriesSlot) -> Result<()> {
+        self.nod.group_forfeiting.write(&group, true)?;
+        if let Some(series_id) = self.nod.group_series.list(&group).get(slot.position)? {
+            self.close_series(group, series_id)?;
+        }
+        if slot.last {
+            self.close_group(group)?;
+        }
+        Ok(())
+    }
+
+    fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
+        tracing::warn!(target: "outbe::nodfactory", %group, retry_at, "forfeit pass: group deferred");
+        Ok(())
+    }
+}
+
+impl NodForfeit<'_, '_> {
+    /// Adds the series' open load to the group's credit and emits its close, once per series.
+    fn close_series(&mut self, group: B256, series_id: SeriesId) -> Result<()> {
+        let gs_key = group_series_key(group, series_id);
+        if self.nod.group_series_forfeited.read(&gs_key)? {
+            return Ok(());
+        }
+        let forfeited_count = self.nod.group_series_nod_count.read(&gs_key)?;
+        let forfeited_tribute_count =
+            u32::try_from(self.nod.series_unclaimed_tribute_count.read(&series_id)?)
+                .map_err(|_| NodError::GroupMemberIndexOverflow { group_key: group })?;
+        let forfeited_amount_minor = self.nod.read_series_open_load(group, series_id)?;
+        let total = self
+            .nod
+            .group_forfeit_load_minor
+            .read(&group)?
+            .checked_add(forfeited_amount_minor)
+            .ok_or(NodError::GroupUnpaidLoadOverflow { group_key: group })?;
+        self.nod.group_forfeit_load_minor.write(&group, total)?;
+        self.nod.group_series_open_load_ct.bytes(&gs_key).clear()?;
+        self.nod.group_series_forfeited.write(&gs_key, true)?;
+        self.nod.emit(INod::NodSeriesClosed {
+            seriesId: series_id.into(),
+            issuanceCurrency: self.nod.series_issuance_currency.read(&series_id)?,
+            referenceCurrency: self.nod.series_reference_currency.read(&series_id)?,
+            forfeitedCount: forfeited_count,
+            forfeitedTributeCount: forfeited_tribute_count,
+            forfeitedAmountMinor: forfeited_amount_minor,
+        })
+    }
+
     /// Returns the Gratis load of the group's unpaid Nods and unclaimed Tributes in one credit.
     /// Lysis drew it out of the day limit and only mining converts it, so unmined it goes back.
-    fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
-        let load = self.nod.read_group_open_load(group)?;
-        let closed_series = self.collect_closed_series(group)?;
+    fn close_group(&mut self, group: B256) -> Result<()> {
+        // A series left open by a failed earlier slot closes here, so no load is lost.
+        for series_id in self.nod.group_series.list(&group).read_all()? {
+            self.close_series(group, series_id)?;
+        }
+        let load = self.nod.group_forfeit_load_minor.read(&group)?;
         if !load.is_zero() {
             outbe_promislimit::PromisLimitContract::new(self.storage.clone())
                 .add(outbe_promislimit::LimitSource::Nod, load)?;
         }
+        self.nod.group_forfeit_load_minor.clear(&group)?;
+        self.nod.group_forfeiting.clear(&group)?;
         self.nod.group_open_load_ct.bytes(&group).clear()?;
-        for &(series_id, ..) in &closed_series {
-            let gs_key = outbe_nod::index_keys::group_series_key(group, series_id);
-            self.nod.group_series_open_load_ct.bytes(&gs_key).clear()?;
-        }
         let unpaid = self.nod.group_nod_count.read(&group)?;
         let unclaimed = self.nod.group_unclaimed_tribute_count.read(&group)?;
         if unpaid == 0 && unclaimed == 0 {
-            // Nothing left to burn. The close event still fires, then the group leaves
+            // Nothing left to burn. The close events have fired, so the group leaves
             // the forfeit queue without a cleanup entry.
             self.nod.remove_called(group)?;
             let settled = self
@@ -103,65 +166,6 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
             self.nod.group_is_forfeited.write(&group, true)?;
             self.nod.hand_to_cleanup(group)?;
         }
-        for (
-            series_id,
-            issuance_currency,
-            reference_currency,
-            forfeited_count,
-            forfeited_tribute_count,
-            forfeited_amount_minor,
-        ) in closed_series
-        {
-            self.nod.emit(INod::NodSeriesClosed {
-                seriesId: series_id.into(),
-                issuanceCurrency: issuance_currency,
-                referenceCurrency: reference_currency,
-                forfeitedCount: forfeited_count,
-                forfeitedTributeCount: forfeited_tribute_count,
-                forfeitedAmountMinor: forfeited_amount_minor,
-            })?;
-        }
         Ok(())
-    }
-
-    fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::nodfactory", %group, retry_at, "forfeit pass: group deferred");
-        Ok(())
-    }
-}
-
-type ClosedSeriesEntry = (
-    outbe_core_common::series_id::SeriesId,
-    u16,
-    u16,
-    u32,
-    u32,
-    alloy_primitives::U256,
-);
-
-impl NodForfeit<'_, '_> {
-    fn collect_closed_series(&self, group: B256) -> Result<Vec<ClosedSeriesEntry>> {
-        let series_list = self.nod.group_series.list(&group).read_all()?;
-        let mut closed_series = Vec::with_capacity(series_list.len());
-        for series_id in series_list {
-            let gs_key = outbe_nod::index_keys::group_series_key(group, series_id);
-            let forfeited_count = self.nod.group_series_nod_count.read(&gs_key)?;
-            let unclaimed_tributes = self.nod.series_unclaimed_tribute_count.read(&series_id)?;
-            let forfeited_tribute_count = u32::try_from(unclaimed_tributes).map_err(|_| {
-                outbe_nod::errors::NodError::GroupMemberIndexOverflow { group_key: group }
-            })?;
-            let forfeited_amount_minor = self.nod.read_series_open_load(group, series_id)?;
-            let issuance_currency = self.nod.series_issuance_currency.read(&series_id)?;
-            let reference_currency = self.nod.series_reference_currency.read(&series_id)?;
-            closed_series.push((
-                series_id,
-                issuance_currency,
-                reference_currency,
-                forfeited_count,
-                forfeited_tribute_count,
-                forfeited_amount_minor,
-            ));
-        }
-        Ok(closed_series)
     }
 }
