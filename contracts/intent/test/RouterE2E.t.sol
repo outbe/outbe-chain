@@ -241,6 +241,22 @@ contract RouterE2E is BaseTest {
         assertEq(destinationRouter.destinationOrderStatus(orderId), destinationRouter.CLAIMED(), "claimed by other");
     }
 
+    /// @dev The transport sends the extra fee to the refundAddress attribute, so it must be the caller.
+    function test_refund_namesTheCallerAsTheRefundAddress() public {
+        (, OnchainCrossChainOrder memory order) = _openOrder();
+        vm.warp(order.fillDeadline + 1);
+        OnchainCrossChainOrder[] memory orders = new OnchainCrossChainOrder[](1);
+        orders[0] = order;
+
+        vm.prank(kakaroto);
+        destinationRouter.refund(orders);
+
+        assertEq(
+            destBridge.lastFirstAttribute(),
+            abi.encodeWithSelector(bytes4(keccak256("refundAddress(address)")), kakaroto)
+        );
+    }
+
     function test_open_refund() public {
         (bytes32 orderId, OnchainCrossChainOrder memory order) = _openOrder();
 
