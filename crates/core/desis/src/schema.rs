@@ -215,7 +215,7 @@ pub struct DesisContract {
     /// totalBatches the chain's first batch declared; every later batch must carry the same.
     #[attribute(order = 19)]
     pub chain_total_pages: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// Bitmap of arrived batchIndices (bit i = batchIndex i seen).
+    /// Bitmap of arrived pages (bit i = pageIndex i seen).
     #[attribute(order = 20)]
     pub chain_arrived_mask: outbe_primitives::storage::dsl::Map<B256, U256>,
     /// Bids accepted from the chain.

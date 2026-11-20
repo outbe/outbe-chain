@@ -287,7 +287,7 @@ contract TargetRouter is
     /// @notice Relay the day's revealed bids in chunked BIDS_BATCH sends, resuming where the last
     ///         round stopped.
     /// @dev The first round freezes the span. Reveals are closed by then, so a bid's chunk never
-    ///      moves. Every chunk carries `batchIndex`/`totalPages` for the unordered bridge. The
+    ///      moves. Every chunk carries `pageIndex`/`totalPages` for the unordered bridge. The
     ///      marker goes with the last chunk. No bids -> one empty batch (0 of 1).
     function _sendIntexAuctionBids(uint32 emissionDay) internal {
         TargetRouterStorage storage $ = _ts();
@@ -332,27 +332,27 @@ contract TargetRouter is
     }
 
     /// @dev Read and send one chunk: pull from the auction only the bids it carries.
-    function _sendBidsPage(uint32 emissionDay, uint16 batchIndex, uint16 totalPages, uint256 bidsCount) private {
+    function _sendBidsPage(uint32 emissionDay, uint16 pageIndex, uint16 totalPages, uint256 bidsCount) private {
         uint256 maxChunk = BridgeMsgCodec.MAX_PAYLOAD_ARRAY_LEN;
-        uint256 offset = uint256(batchIndex) * maxChunk;
+        uint256 offset = uint256(pageIndex) * maxChunk;
         uint256 chunkLen = bidsCount > offset ? bidsCount - offset : 0;
         if (chunkLen > maxChunk) chunkLen = maxChunk;
 
-        address[] memory bidderAddresses = new address[](chunkLen);
+        address[] memory bidders = new address[](chunkLen);
         uint256[] memory packedBids = new uint256[](chunkLen);
         if (chunkLen != 0) {
             IIntexAuction.SubmittedIntexAuctionBidData[] memory bids =
                 _ts().intexAuction.revealedIntexAuctionBidsSlice(emissionDay, offset, chunkLen);
             for (uint256 i = 0; i < chunkLen; i++) {
                 IIntexAuction.SubmittedIntexAuctionBidData memory bid = bids[i];
-                bidderAddresses[i] = bid.bidder;
+                bidders[i] = bid.bidder;
                 packedBids[i] = BridgeMsgCodec.packBid(
                     bid.intexQuantity, bid.intexBidRate, bid.timestamp, bid.issuanceCurrency, bid.referenceCurrency
                 );
             }
         }
 
-        _sendOneIntexAuctionBidsPage(emissionDay, batchIndex, totalPages, bidderAddresses, packedBids);
+        _sendOneIntexAuctionBidsPage(emissionDay, pageIndex, totalPages, bidders, packedBids);
     }
 
     /// @dev Encode and `_send` the BIDS_TOTALS completeness marker for a day. Carries this chain's
@@ -369,16 +369,16 @@ contract TargetRouter is
     ///      relay float funds the send.
     function _sendOneIntexAuctionBidsPage(
         uint32 emissionDay,
-        uint16 batchIndex,
+        uint16 pageIndex,
         uint16 totalPages,
-        address[] memory bidderAddresses,
+        address[] memory bidders,
         uint256[] memory packedBids
     ) internal returns (bytes32 sendId) {
         bytes memory message = BridgeMsgCodec.encodeBidsPage(
-            emissionDay, uint32(block.chainid), batchIndex, totalPages, bidderAddresses, packedBids
+            emissionDay, uint32(block.chainid), pageIndex, totalPages, bidders, packedBids
         );
-        sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.bidsPage(bidderAddresses.length));
-        emit IntexAuctionBidsSent(sendId, emissionDay, batchIndex, totalPages, uint32(bidderAddresses.length));
+        sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.bidsPage(bidders.length));
+        emit IntexAuctionBidsSent(sendId, emissionDay, pageIndex, totalPages, uint32(bidders.length));
     }
 
     /// @notice Self-call shim around one Called mark. It isolates a series that will not take it.

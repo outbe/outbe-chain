@@ -389,7 +389,7 @@ fn send_intex_auction_start(
 }
 
 /// Broadcast AUCTION_CANCEL to every chain the day started on.
-fn send_auction_cancel(
+fn send_intex_auction_cancel(
     storage: &StorageHandle<'_>,
     emission_day: EmissionDate,
     reason: u8,

@@ -196,12 +196,12 @@ library BridgeMsgCodec {
     /// @notice Encodes BIDS_BATCH message.
     /// @dev A bid set larger than `MAX_PAYLOAD_ARRAY_LEN` is relayed as multiple batches. The
     ///      receiver collects all `_totalPages` (in any order) before finalizing. Reverts
-    ///      `PayloadArrayTooLong` if `_bidderAddresses` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
+    ///      `PayloadArrayTooLong` if `_bidders` exceeds `MAX_PAYLOAD_ARRAY_LEN`.
     /// @param _emissionDay The emission day (yyyymmdd).
     /// @param _srcChainId The source chainId the bids originated from.
     /// @param _pageIndex Index of this batch within the relay (0-based).
     /// @param _totalPages Total number of batches in the relay (the receiver waits for all of them).
-    /// @param _bidderAddresses The bidder addresses (parallel with `_packedBids`).
+    /// @param _bidders The bidder addresses (parallel with `_packedBids`).
     /// @param _packedBids One [`packBid`] word per bidder: quantity, rate, timestamp and the pair.
     /// @return The wire-encoded BIDS_BATCH message.
     function encodeBidsPage(
@@ -209,19 +209,19 @@ library BridgeMsgCodec {
         uint32 _srcChainId,
         uint16 _pageIndex,
         uint16 _totalPages,
-        address[] memory _bidderAddresses,
+        address[] memory _bidders,
         uint256[] memory _packedBids
     ) internal pure returns (bytes memory) {
         // The decoder rejects a parallel-array mismatch with IntexAuctionBidsArrayLengthMismatch. The encoder
         // fails fast at the source so a sender-side bug aborts before paying the bridge fee.
-        if (_bidderAddresses.length != _packedBids.length) {
-            revert IntexAuctionBidsArrayLengthMismatch(_bidderAddresses.length, _packedBids.length);
+        if (_bidders.length != _packedBids.length) {
+            revert IntexAuctionBidsArrayLengthMismatch(_bidders.length, _packedBids.length);
         }
-        requireMaxArrayLen(_bidderAddresses.length, MAX_PAYLOAD_ARRAY_LEN);
+        requireMaxArrayLen(_bidders.length, MAX_PAYLOAD_ARRAY_LEN);
         return abi.encodePacked(
             BODY_VERSION_V1,
             MSG_BIDS_PAGE,
-            abi.encode(_emissionDay, _srcChainId, _pageIndex, _totalPages, _bidderAddresses, _packedBids)
+            abi.encode(_emissionDay, _srcChainId, _pageIndex, _totalPages, _bidders, _packedBids)
         );
     }
 
@@ -663,9 +663,9 @@ library BridgeMsgCodec {
     /// @param _msg The wire-encoded BIDS_BATCH message.
     /// @return emissionDay The emission day (yyyymmdd).
     /// @return srcChainId The source chainId the bids originated from.
-    /// @return batchIndex Index of this batch within the relay (0-based).
+    /// @return pageIndex Index of this batch within the relay (0-based).
     /// @return totalPages Total number of batches in the relay (the receiver waits for all of them).
-    /// @return bidderAddresses The bidder addresses (parallel with `packedBids`).
+    /// @return bidders The bidder addresses (parallel with `packedBids`).
     /// @return packedBids One [`packBid`] word per bidder.
     function decodeBidsPage(bytes calldata _msg)
         internal
@@ -673,9 +673,9 @@ library BridgeMsgCodec {
         returns (
             uint32 emissionDay,
             uint32 srcChainId,
-            uint16 batchIndex,
+            uint16 pageIndex,
             uint16 totalPages,
-            address[] memory bidderAddresses,
+            address[] memory bidders,
             uint256[] memory packedBids
         )
     {
@@ -684,17 +684,17 @@ library BridgeMsgCodec {
         // than an out-of-bounds Panic(0x32) on `_msg[0]`.
         if (_msg.length < HEADER_LEN) revert InvalidPayloadLength(MSG_BIDS_PAGE, _msg.length, HEADER_LEN);
         _assertBodyVersion(_msg);
-        (emissionDay, srcChainId, batchIndex, totalPages, bidderAddresses, packedBids) =
+        (emissionDay, srcChainId, pageIndex, totalPages, bidders, packedBids) =
             abi.decode(_msg[2:], (uint32, uint32, uint16, uint16, address[], uint256[]));
         // The two arrays are indexed in lockstep downstream. Unequal lengths would index out of
         // bounds and panic inside the ordered lane. Reject with a typed error instead.
-        if (bidderAddresses.length != packedBids.length) {
-            revert IntexAuctionBidsArrayLengthMismatch(bidderAddresses.length, packedBids.length);
+        if (bidders.length != packedBids.length) {
+            revert IntexAuctionBidsArrayLengthMismatch(bidders.length, packedBids.length);
         }
         // Cap the batch so the receiver's crosschainMint/storage loop cannot exceed the inbound gas
         // limit.
-        if (bidderAddresses.length > MAX_BIDS_PAGE) {
-            revert IntexAuctionBidsPageTooLarge(bidderAddresses.length, MAX_BIDS_PAGE);
+        if (bidders.length > MAX_BIDS_PAGE) {
+            revert IntexAuctionBidsPageTooLarge(bidders.length, MAX_BIDS_PAGE);
         }
     }
 
