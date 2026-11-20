@@ -188,13 +188,9 @@ pub fn deploy_markdown(
         .map(|enode| format!("  - `{enode}`"))
         .collect::<Vec<_>>()
         .join("\n");
-    let dev_warning = if mode == "dcap-required" {
-        ""
-    } else {
-        "\n> **`no-attestation-dev`**: the node runs TEE operations without \
-hardware attestation. Use this mode only on devnet or testnet. Mainnet requires \
-`tee.mode: dcap-required` and a compatible attestation source.\n"
-    };
+    let dev_warning = "\n> **`no-attestation-dev`**: the node runs TEE operations without \
+hardware attestation. Use this mode only on devnet or testnet. Mainnet remains unavailable \
+until TDX/SNP attestation is implemented.\n";
 
     let reth_p2p_port = port_of(config, "reth_p2p_port")?;
     let reth_discv5_port = port_of(config, "reth_discv5_port")?;

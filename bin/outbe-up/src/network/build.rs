@@ -648,7 +648,7 @@ mod tests {
         let value =
             genesis_cli_config(&config, temp.path(), &temp.path().join("keys"), None).unwrap();
         let error = outbe_genesis_cli::network::validate_config(&value).unwrap_err();
-        assert!(error.to_string().contains("dcap-required"), "{error}");
+        assert!(error.to_string().contains("TDX/SNP attestation"), "{error}");
     }
 
     #[test]
