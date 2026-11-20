@@ -17,7 +17,7 @@ use outbe_vaultrouter::settlement::SettlementPayment;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 
 const POSITION_VALIDITY_SECONDS: u64 = outbe_gem::GemParams::MAINNET.position_validity;
-use crate::positions_expired;
+use crate::position_expiry;
 use crate::runtime;
 use crate::schema::{GemFactoryContract, GemFactoryPosition, GemIssueParams};
 use crate::sol_ext::{IReferenceCurrency, IERC20};

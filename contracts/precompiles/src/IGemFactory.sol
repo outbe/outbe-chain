@@ -147,12 +147,12 @@ interface IGemFactory {
     event GemFactoryPositionCreated(
         uint256 indexed gemFactoryPositionId,
         address indexed owner,
-        bytes14 indexed seriesId,
+        bytes14 indexed sourceSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         bytes payload
     );
-    /// @notice The `positions` positions whose validity ended in `expiryHour` (unix time
-    ///         / 3600) returned the capacity they never issued, and the cleanup deletes them.
-    event GemPositionGroupExpired(uint64 indexed expiryHour, uint32 positions, uint256 returnedCapacityMinor);
+    /// @notice The deletion removed an expired position. The capacity its day never issued
+    ///         returned before, in one `PromisLimitAdded` of the Promis Limit.
+    event GemFactoryPositionExpired(uint256 indexed gemFactoryPositionId, address indexed owner);
 }

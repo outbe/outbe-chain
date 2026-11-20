@@ -66,11 +66,14 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                         expires_at: block_ts + SECONDS_PER_DAY,
                     })
                     .unwrap();
-                // The capacity the position's expiry hour holds, as opening it records.
+                // The capacity the position's expiry day holds, as opening it records.
                 GemFactoryContract::new(storage.clone())
-                    .hour_capacity_minor
+                    .day_capacity_minor
                     .write(
-                        &((block_ts + SECONDS_PER_DAY) / 3_600),
+                        &outbe_core_common::deadline_queue::deadline_day(
+                            block_ts + SECONDS_PER_DAY,
+                        )
+                        .unwrap(),
                         U256::from(2_000_000),
                     )
                     .unwrap();

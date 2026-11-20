@@ -1,4 +1,4 @@
-//! Expiry owns the remaining load of an hour's positions and releases it exactly once.
+//! Expiry owns the remaining load of a day's positions and releases it exactly once.
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolEvent;
 use outbe_intex::SeriesId;
@@ -8,10 +8,11 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_promislimit::PromisLimitContract;
-use outbe_system_common::addresses::GEM_FACTORY_ADDRESS;
+use outbe_system_common::addresses::{GEM_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS};
 use outbe_system_common::time::SECONDS_PER_DAY;
 
-use crate::{positions_expired, schema::GemFactoryPosition, GemFactoryContract};
+use crate::precompile::IGemFactory::GemFactoryPositionExpired;
+use crate::{position_expiry, schema::GemFactoryPosition, GemFactoryContract};
 
 const EXPIRES: u64 = 1_704_153_600;
 /// `EXPIRES` is midnight, so its deadline day closes the following midnight.
@@ -19,28 +20,19 @@ const DAY_CLOSED: u64 = EXPIRES + SECONDS_PER_DAY;
 const REMAINDER: u64 = 3_000_007;
 
 #[test]
-fn position_queue_encoding_preserves_zero_and_maximum_supported_hours() {
-    use crate::state::{position_queue_entry, position_queue_hour};
-    let max_deadline = outbe_core_common::deadline_queue::day_end(
-        outbe_system_common::math::constants::MAX_BIN_ID,
-    ) - 1;
-    for hour in [
-        0,
-        1,
-        max_deadline / crate::schema::GemFactoryPosition::GROUP_HOUR_SECONDS,
-    ] {
-        let entry = position_queue_entry(hour).unwrap();
+fn position_queue_encoding_keeps_day_zero_and_the_last_supported_day() {
+    use crate::state::{position_queue_day, position_queue_entry};
+    for day in [0, 1, outbe_system_common::math::constants::MAX_BIN_ID] {
+        let entry = position_queue_entry(day);
         assert_ne!(entry, 0);
-        assert_eq!(position_queue_hour(entry).unwrap(), hour);
+        assert_eq!(position_queue_day(entry).unwrap(), day);
     }
-    assert!(position_queue_entry(u64::MAX).is_err());
-    assert!(position_queue_hour(0).is_err());
+    assert!(position_queue_day(0).is_err());
 }
 
 #[test]
-fn daily_position_expiry_preserves_hour_topics() {
+fn positions_of_one_day_return_their_capacity_in_one_credit() {
     let day = EXPIRES;
-    let first_hour = day / 3_600;
     let mut p = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut p, |s| {
         let mut factory = GemFactoryContract::new(s.clone());
@@ -75,18 +67,32 @@ fn daily_position_expiry_preserves_hour_topics() {
         }
         assert!(factory.positions.get(U256::from(4)).unwrap().is_some());
     });
-    let mut hours = p
-        .get_events(GEM_FACTORY_ADDRESS)
+    assert_eq!(position_credits(&p), vec![U256::from(3 * REMAINDER)]);
+    let mut expired = expired_positions(&p);
+    expired.sort_unstable();
+    assert_eq!(expired, vec![U256::from(1), U256::from(2), U256::from(3)]);
+    assert_eq!(sweep(&mut p, day + 2 * SECONDS_PER_DAY).unwrap(), 1);
+}
+
+/// The amounts of the `PromisLimitAdded` credits of the Gem Factory positions.
+fn position_credits(p: &HashMapStorageProvider) -> Vec<U256> {
+    p.get_events(PROMIS_LIMIT_ADDRESS)
         .iter()
         .filter_map(|log| {
-            crate::precompile::IGemFactory::GemPositionGroupExpired::decode_log_data(log)
-                .ok()
-                .map(|event| event.expiryHour)
+            outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded::decode_log_data(log).ok()
         })
-        .collect::<Vec<_>>();
-    hours.sort_unstable();
-    assert_eq!(hours, vec![first_hour, first_hour + 1, first_hour + 23]);
-    assert_eq!(sweep(&mut p, day + 2 * SECONDS_PER_DAY).unwrap(), 1);
+        .filter(|event| event.source == outbe_promislimit::LimitSource::GemFactoryPosition as u8)
+        .map(|event| event.amountMinor)
+        .collect()
+}
+
+/// The ids of the positions the deletion removed.
+fn expired_positions(p: &HashMapStorageProvider) -> Vec<U256> {
+    p.get_events(GEM_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| GemFactoryPositionExpired::decode_log_data(log).ok())
+        .map(|event| event.gemFactoryPositionId)
+        .collect()
 }
 
 #[test]
@@ -158,8 +164,8 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
         assert_eq!(gem.call_sweep_day.read().unwrap(), 0);
         assert_eq!(
             GemFactoryContract::new(s.clone())
-                .hour_capacity_minor
-                .read(&(EXPIRES / 3_600))
+                .day_capacity_minor
+                .read(&expiry_day())
                 .unwrap(),
             U256::ZERO
         );
@@ -190,18 +196,8 @@ fn world() -> HashMapStorageProvider {
     p
 }
 
-/// One block's daily pass, then its position cleanup. Returns the hours expired.
+/// One block's daily pass, then its position deletion. Returns the positions deleted.
 fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<u32> {
-    let expired_hours = |p: &HashMapStorageProvider| {
-        p.get_events(GEM_FACTORY_ADDRESS)
-            .iter()
-            .filter(|log| {
-                crate::precompile::IGemFactory::GemPositionGroupExpired::decode_log_data(log)
-                    .is_ok()
-            })
-            .count() as u32
-    };
-    let before = expired_hours(p);
     StorageHandle::enter(p, |s| {
         let ctx = BlockRuntimeContext::new(
             BlockContext {
@@ -218,16 +214,18 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<u32> {
             s,
         );
         let block = super::daily_pass(&ctx)?;
-        positions_expired::cleanup_positions(&block)
-    })?;
-    Ok(expired_hours(p) - before)
+        position_expiry::delete_expired_positions(&block)
+    })
+}
+
+fn expiry_day() -> u32 {
+    outbe_core_common::deadline_queue::deadline_day(EXPIRES).unwrap()
 }
 
 fn conserved(p: &mut HashMapStorageProvider, terminal: bool) {
-    let hour = EXPIRES / 3_600;
     StorageHandle::enter(p, |s| {
         let factory = GemFactoryContract::new(s.clone());
-        let left = factory.hour_capacity_minor.read(&hour).unwrap();
+        let left = factory.day_capacity_minor.read(&expiry_day()).unwrap();
         let returned = PromisLimitContract::new(s).promis_limit().unwrap();
         assert_eq!(left + returned, U256::from(REMAINDER));
         if terminal {
@@ -237,18 +235,9 @@ fn conserved(p: &mut HashMapStorageProvider, terminal: bool) {
             assert_eq!(position.owner, Address::repeat_byte(1));
         }
     });
-    let events = p
-        .get_events(GEM_FACTORY_ADDRESS)
-        .iter()
-        .filter_map(|e| {
-            crate::precompile::IGemFactory::GemPositionGroupExpired::decode_log_data(e).ok()
-        })
-        .collect::<Vec<_>>();
     if terminal {
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].expiryHour, hour);
-        assert_eq!(events[0].positions, 1);
-        assert_eq!(events[0].returnedCapacityMinor, U256::from(REMAINDER));
+        assert_eq!(position_credits(p), vec![U256::from(REMAINDER)]);
+        assert_eq!(expired_positions(p), vec![U256::from(1)]);
     }
 }
 
@@ -284,7 +273,7 @@ fn every_position_expiry_write_failure_preserves_remaining_load_then_retries_onc
             } else {
                 p.fail_mutation_at(point);
             }
-            // A failed expiry keeps the hour queued, a failed cleanup keeps its position.
+            // A failed expiry keeps the day queued, a failed deletion keeps its position.
             // Either way the economic checkpoint must hold.
             let _ = sweep(&mut p, DAY_CLOSED);
             let observed = p.clear_mutation_failure();

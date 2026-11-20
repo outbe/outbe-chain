@@ -1,4 +1,4 @@
-//! GemFactory position bookkeeping: creation (record and expiry-hour list), expiry and
+//! GemFactory position bookkeeping: creation (record and expiry-day list), expiry and
 //! deletion. A position is a record with an owner, not a token.
 
 use alloy_primitives::U256;
@@ -9,89 +9,88 @@ use outbe_primitives::storage::indexed_list::IndexedList;
 use crate::errors::GemFactoryError;
 use crate::schema::{GemFactoryContract, GemFactoryPosition};
 
-/// Zero denotes an empty queue slot. Hour zero is a valid position group.
-pub(crate) fn position_queue_entry(hour: u64) -> Result<u64> {
-    hour.checked_add(1)
-        .ok_or_else(|| GemFactoryError::Overflow.into())
+/// Zero denotes an empty queue slot, so an expiry day is queued as `day + 1`.
+pub(crate) fn position_queue_entry(day: u32) -> u64 {
+    u64::from(day) + 1
 }
 
-pub(crate) fn position_queue_hour(entry: u64) -> Result<u64> {
+pub(crate) fn position_queue_day(entry: u64) -> Result<u32> {
     entry
         .checked_sub(1)
+        .and_then(|day| u32::try_from(day).ok())
         .ok_or_else(|| GemFactoryError::IndexOutOfBounds.into())
 }
 
 impl<'s> GemFactoryContract<'s> {
-    fn hour_index(&self, hour: u64) -> IndexedList<'s, U256> {
+    fn day_index(&self, day: u32) -> IndexedList<'s, U256> {
         IndexedList::new(
-            self.hour_positions.list(&hour),
-            self.hour_position_index.clone(),
+            self.day_positions.list(&day),
+            self.day_position_index.clone(),
         )
     }
 
-    /// Creates the position record, lists it under its expiry hour, and queues the hour
+    /// Creates the position record, lists it under its expiry day, and queues the day
     /// on its first position. Rejects a duplicate `gem_factory_position_id`.
     pub(crate) fn add_position(&mut self, pos: &GemFactoryPosition) -> Result<()> {
         if self.positions.exists(pos.gem_factory_position_id)? {
             return Err(GemFactoryError::GemFactoryPositionAlreadyExists.into());
         }
         self.positions.create(pos)?;
-        let hour = pos.expiry_hour();
-        if self.hour_position_count(hour)? == 0 {
+        let day = pos.expiry_day()?;
+        if self.day_position_count(day)? == 0 {
             deadline_queue::push(
                 &PositionExpiryQueue(self),
-                position_queue_entry(hour)?,
+                position_queue_entry(day),
                 pos.expires_at,
             )?;
         }
-        self.hour_index(hour).insert(pos.gem_factory_position_id)?;
+        self.day_index(day).insert(pos.gem_factory_position_id)?;
         let capacity = self
-            .hour_capacity_minor
-            .read(&hour)?
+            .day_capacity_minor
+            .read(&day)?
             .checked_add(pos.remaining_capacity_minor)
             .ok_or(GemFactoryError::Overflow)?;
-        self.hour_capacity_minor.write(&hour, capacity)
+        self.day_capacity_minor.write(&day, capacity)
     }
 
-    /// Records a merchant issue drawing `load` from the position's hour.
-    pub(crate) fn take_hour_capacity(&mut self, hour: u64, load: U256) -> Result<()> {
+    /// Records a merchant issue drawing `load` from the position's expiry day.
+    pub(crate) fn take_day_capacity(&mut self, day: u32, load: U256) -> Result<()> {
         let capacity = self
-            .hour_capacity_minor
-            .read(&hour)?
+            .day_capacity_minor
+            .read(&day)?
             .checked_sub(load)
             .ok_or(GemFactoryError::InsufficientCapacity)?;
-        self.hour_capacity_minor.write(&hour, capacity)
+        self.day_capacity_minor.write(&day, capacity)
     }
 
-    pub(crate) fn hour_position_count(&self, hour: u64) -> Result<u32> {
-        self.hour_positions.list(&hour).len()
+    pub(crate) fn day_position_count(&self, day: u32) -> Result<u32> {
+        self.day_positions.list(&day).len()
     }
 
-    pub(crate) fn hour_position(&self, hour: u64, index: u32) -> Result<U256> {
-        self.hour_positions
-            .list(&hour)
+    pub(crate) fn day_position(&self, day: u32, index: u32) -> Result<U256> {
+        self.day_positions
+            .list(&day)
             .get(index)?
             .ok_or_else(|| GemFactoryError::IndexOutOfBounds.into())
     }
 
-    /// Moves an expired hour from the expiry queue to the cleanup, which deletes its
-    /// positions. Done with the hour's credit, so a retry never credits it twice.
-    pub(crate) fn hand_hour_to_cleanup(&mut self, hour: u64) -> Result<()> {
-        let entry = position_queue_entry(hour)?;
+    /// Moves an expired day from the expiry queue to the deletion, which deletes its
+    /// positions. Done with the day's credit, so a retry never credits it twice.
+    pub(crate) fn hand_day_to_deletion(&mut self, day: u32) -> Result<()> {
+        let entry = position_queue_entry(day);
         let deadline = self.expiry_deadline.read(&entry)?;
         deadline_queue::remove(&PositionExpiryQueue(self), entry)?;
         deadline_queue::push(&PositionCleanupQueue(self), entry, deadline)
     }
 
-    /// Deletes an expired position, and forgets its hour with the last one.
+    /// Deletes an expired position, and forgets its day with the last one.
     pub(crate) fn delete_position(&mut self, record: &GemFactoryPosition) -> Result<()> {
-        let hour = record.expiry_hour();
-        self.hour_index(hour)
-            .remove(record.gem_factory_position_id)?;
+        let day = record.expiry_day()?;
+        self.day_index(day).remove(record.gem_factory_position_id)?;
         self.positions.delete(record.gem_factory_position_id)?;
-        if self.hour_position_count(hour)? == 0 {
-            self.hour_capacity_minor.clear(&hour)?;
-            let entry = position_queue_entry(hour)?;
+        if self.day_position_count(day)? == 0 {
+            self.day_capacity_minor.clear(&day)?;
+            let entry = position_queue_entry(day);
             deadline_queue::remove(&PositionExpiryQueue(self), entry)?;
             deadline_queue::remove(&PositionCleanupQueue(self), entry)?;
         }
@@ -109,7 +108,7 @@ impl<'s> GemFactoryContract<'s> {
     }
 }
 
-/// Positions' expiry hours, each queued as one entry.
+/// Positions' expiry days, each queued as one entry.
 pub struct PositionExpiryQueue<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
 
 outbe_core_common::impl_deadline_queue!(PositionExpiryQueue<u64> {
@@ -125,7 +124,7 @@ outbe_core_common::impl_deadline_queue!(PositionExpiryQueue<u64> {
     cursor: expiry_cursor,
 });
 
-/// Expired hours whose positions wait to be deleted.
+/// Expired days whose positions wait to be deleted.
 pub struct PositionCleanupQueue<'a, 'storage>(pub &'a GemFactoryContract<'storage>);
 
 outbe_core_common::impl_deadline_queue!(PositionCleanupQueue<u64> {

@@ -73,7 +73,7 @@ fn sending_every_unit_deletes_the_spent_source_series() {
     });
 }
 
-/// An expired position reads empty at once, returns its remainder with its hour and is
+/// An expired position reads empty at once, returns its remainder with its day and is
 /// then deleted.
 #[test]
 fn an_expired_position_returns_its_remainder() {
@@ -94,7 +94,10 @@ fn an_expired_position_returns_its_remainder() {
 
         let block = daily_pass(&block_ctx(storage, day_closed(expires))).unwrap();
         assert_eq!(unallocated(storage), capacity);
-        assert_eq!(positions_expired::cleanup_positions(&block).unwrap(), 1);
+        assert_eq!(
+            position_expiry::delete_expired_positions(&block).unwrap(),
+            1
+        );
 
         let factory = GemFactoryContract::new(storage.clone());
         assert!(factory.positions.get(id).unwrap().is_none());
@@ -105,7 +108,9 @@ fn an_expired_position_returns_its_remainder() {
 #[test]
 fn position_of_15_units_issues_6_and_gives_back_9() {
     let unit = six_decimal_unit();
-    with_storage(Some(unit), |storage| {
+    let mut provider = test_storage(Some(unit));
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        let storage = &storage;
         seed_day_vwap(storage, 840, unit);
         let promis_load = 15 * six_decimal_u128() / u128::from(SENT_UNITS);
         let id = seed_and_send(storage, unit, promis_load);
@@ -126,7 +131,10 @@ fn position_of_15_units_issues_6_and_gives_back_9() {
         let closed = day_closed(T_NOW + POSITION_VALIDITY_SECONDS);
         let block = daily_pass(&block_ctx(storage, closed)).unwrap();
         assert_eq!(unallocated(storage), U256::from(9u64) * unit);
-        assert_eq!(positions_expired::cleanup_positions(&block).unwrap(), 1);
+        assert_eq!(
+            position_expiry::delete_expired_positions(&block).unwrap(),
+            1
+        );
         assert!(GemFactoryContract::new(storage.clone())
             .positions
             .get(id)
@@ -136,10 +144,36 @@ fn position_of_15_units_issues_6_and_gives_back_9() {
 
         daily_pass(&block_ctx(storage, closed + SECONDS_PER_DAY)).unwrap();
         assert_eq!(unallocated(storage), U256::from(9u64) * unit);
+        id
     });
+
+    let events = provider.get_ordered_events();
+    let credits: Vec<_> = events
+        .iter()
+        .filter(|log| log.address == outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS)
+        .filter_map(|log| {
+            outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded::decode_log(log)
+                .ok()
+                .map(|log| log.data)
+        })
+        .filter(|event| event.source == outbe_promislimit::LimitSource::GemFactoryPosition as u8)
+        .map(|event| event.amountMinor)
+        .collect();
+    assert_eq!(credits, vec![U256::from(9u64) * unit]);
+    let expired: Vec<_> = events
+        .iter()
+        .filter(|log| log.address == outbe_system_common::addresses::GEM_FACTORY_ADDRESS)
+        .filter_map(|log| {
+            crate::precompile::IGemFactory::GemFactoryPositionExpired::decode_log(log)
+                .ok()
+                .map(|log| log.data)
+        })
+        .map(|event| (event.gemFactoryPositionId, event.owner))
+        .collect();
+    assert_eq!(expired, vec![(id, ALICE)]);
 }
 
-/// A storage fault is this node's own: it fails the block instead of skipping the hour.
+/// A storage fault is this node's own: it fails the block instead of skipping the day.
 #[test]
 fn a_storage_fault_in_the_position_sweep_fails_the_block() {
     let mut provider = test_storage(None);
@@ -158,8 +192,8 @@ fn a_storage_fault_in_the_position_sweep_fails_the_block() {
         let record = factory.positions.get(id).unwrap().unwrap();
         assert_ne!(
             factory
-                .hour_capacity_minor
-                .read(&record.expiry_hour())
+                .day_capacity_minor
+                .read(&record.expiry_day().unwrap())
                 .unwrap(),
             U256::ZERO
         );
@@ -190,7 +224,10 @@ fn a_drained_position_returns_nothing_and_is_deleted() {
         ))
         .unwrap();
         assert_eq!(unallocated(storage), U256::ZERO);
-        assert_eq!(positions_expired::cleanup_positions(&block).unwrap(), 1);
+        assert_eq!(
+            position_expiry::delete_expired_positions(&block).unwrap(),
+            1
+        );
         assert!(GemFactoryContract::new(storage.clone())
             .positions
             .get(id)

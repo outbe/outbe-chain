@@ -57,19 +57,15 @@ pub struct GemFactoryPosition {
 
     /// Deadline snapshotted from the profile when the position opened, so a later profile
     /// change cannot retroactively expire positions already in the queue. Positions
-    /// expire in groups by its hour.
+    /// expire in groups of the UTC day of `expires_at`.
     #[attribute(order = 4)]
     pub expires_at: u64,
 }
 
 impl GemFactoryPosition {
-    /// Hourly position membership is independent of daily queue scheduling.
-    pub const GROUP_HOUR_SECONDS: u64 = 3_600;
-
-    /// The expiry group: the hour `expires_at` falls in.
-    #[must_use]
-    pub fn expiry_hour(&self) -> u64 {
-        self.expires_at / Self::GROUP_HOUR_SECONDS
+    /// The expiry group: the UTC day `expires_at` falls in.
+    pub fn expiry_day(&self) -> outbe_primitives::error::Result<u32> {
+        outbe_core_common::deadline_queue::deadline_day(self.expires_at)
     }
 }
 
@@ -85,16 +81,16 @@ pub struct GemFactoryContract {
     #[attribute(order = 2)]
     pub positions: outbe_primitives::storage::dsl::Map<U256, GemFactoryPosition>,
 
-    /// The positions of each expiry hour, and the capacity they have left to issue.
+    /// The positions of each expiry day, and the capacity they have left to issue.
     #[attribute(order = 5)]
-    pub hour_positions:
-        outbe_primitives::storage::dsl::Map<u64, outbe_primitives::storage::dsl::List<U256>>,
+    pub day_positions:
+        outbe_primitives::storage::dsl::Map<u32, outbe_primitives::storage::dsl::List<U256>>,
     #[attribute(order = 6)]
-    pub hour_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
+    pub day_position_index: outbe_primitives::storage::dsl::Map<U256, u32>,
     #[attribute(order = 7)]
-    pub hour_capacity_minor: outbe_primitives::storage::dsl::Map<u64, U256>,
+    pub day_capacity_minor: outbe_primitives::storage::dsl::Map<u32, U256>,
 
-    // The queue stores hour groups as `hour + 1` and schedules them by UTC deadline day.
+    // The queue stores expiry days as `day + 1` and schedules them by that day.
     #[attribute(order = 8)]
     pub expiry_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 9)]
@@ -116,7 +112,7 @@ pub struct GemFactoryContract {
     #[attribute(order = 17)]
     pub expiry_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
-    // This queue stores encoded expired hour groups whose positions await deletion.
+    // This queue stores the encoded expired days whose positions await deletion.
     #[attribute(order = 18)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 19)]

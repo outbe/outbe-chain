@@ -223,7 +223,7 @@ pub fn create_gem_factory_position(
         GemFactoryPositionCreated {
             gemFactoryPositionId: gem_factory_position_id,
             owner: caller,
-            seriesId: source_series_id.into(),
+            sourceSeriesId: source_series_id.into(),
             issuanceCurrency: series.issuance_currency,
             referenceCurrency: series.reference_currency,
             payload: capacity.to_be_bytes::<32>().into(),
@@ -316,7 +316,7 @@ pub fn issue_merchant_gem(
 
     record.remaining_capacity_minor = remaining;
     factory.positions.update(&record)?;
-    factory.take_hour_capacity(record.expiry_hour(), promis_load)?;
+    factory.take_day_capacity(record.expiry_day()?, promis_load)?;
 
     let prev_total = factory.total_gems_issued.read()?;
     let new_total = prev_total

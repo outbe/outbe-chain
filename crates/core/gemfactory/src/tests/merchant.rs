@@ -614,7 +614,7 @@ fn issuance_events_carry_the_call_terms_the_position_and_the_group() {
     assert_eq!(opened[0].gemFactoryPositionId, position);
     assert_eq!(opened[0].owner, ALICE);
     assert_eq!(
-        outbe_intex::SeriesId::from(opened[0].seriesId),
+        outbe_intex::SeriesId::from(opened[0].sourceSeriesId),
         source_series_id()
     );
     assert_eq!(opened[0].issuanceCurrency, 840);

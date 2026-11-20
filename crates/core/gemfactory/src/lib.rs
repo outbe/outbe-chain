@@ -8,7 +8,7 @@ pub(crate) mod cleanup;
 pub mod errors;
 pub mod forfeited;
 pub mod hooks;
-pub(crate) mod positions_expired;
+pub(crate) mod position_expiry;
 pub mod precompile;
 pub mod schema;
 
