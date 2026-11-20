@@ -79,8 +79,8 @@ RUN apt-get update && \
       libc++-dev=1:18.0-59~exp2 \
       libc++abi-dev=1:18.0-59~exp2 \
       libgcc-s1=14.2.0-4ubuntu2~24.04.1 \
-      libsgx-dcap-quote-verify=1.26.100.1-noble1 \
       libsgx-dcap-quote-verify-dev=1.26.100.1-noble1 \
+      libsgx-dcap-quote-verify=1.26.100.1-noble1 \
       libsgx-headers=2.29.100.1-noble1 \
       libssl-dev=3.0.13-0ubuntu3.12 \
       libstdc++6=14.2.0-4ubuntu2~24.04.1 \
@@ -108,6 +108,8 @@ RUN /opt/outbe/toolchain/verify-toolchain-in-container.sh \
 
 FROM apt-base AS toolchain
 
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
 COPY --from=rust /usr/local/cargo /usr/local/cargo
 COPY --from=rust /usr/local/rustup /usr/local/rustup
 
@@ -124,9 +126,8 @@ RUN test -f /opt/outbe/toolchain/apt-inputs-verified && \
     apt-get install -y --no-install-recommends --no-download --allow-downgrades \
       /var/cache/apt/archives/*.deb && \
     dpkg --audit && \
-    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
-
-RUN rustup component add rustfmt clippy rust-src \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* && \
+    rustup component add rustfmt clippy rust-src \
       --toolchain 1.96.0-x86_64-unknown-linux-gnu
 
 # outbe-zk compiles the in-tree Noir circuits from build.rs, so these tools are
@@ -144,7 +145,7 @@ RUN tar -xzf /tmp/nargo.tar.gz -C /usr/local/bin && \
     chmod 0755 /usr/local/bin/nargo /usr/local/bin/bb && \
     rm /tmp/nargo.tar.gz /tmp/barretenberg.tar.gz && \
     test "$(nargo --version | sed -n 's/^nargo version = //p')" = "1.0.0-beta.22" && \
-    test "$(bb --version | head -n 1)" = "5.0.0-nightly.20260522"
+    test "$(bb --version | sed -n '1p')" = "5.0.0-nightly.20260522"
 
 COPY release/dcap-native-qvl-v1.json /opt/outbe/toolchain/dcap-native-qvl-v1.json
 
@@ -169,6 +170,8 @@ ENTRYPOINT []
 # Never use this stage for a release build. `release/scripts/reproducible-build.sh`
 # targets `artifacts`, which descends from `toolchain` directly.
 FROM toolchain AS ci
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -201,14 +204,14 @@ ENV PATH=/usr/local/cargo/bin:/opt/mise/data/shims:${PATH}
 # snapshot installed above, not from a mutable mirror.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends --allow-downgrades \
-      ca-certificates \
-      curl \
-      jq \
-      mold \
-      python-is-python3 \
-      unzip \
-      xz-utils \
-      zstd && \
+      ca-certificates=20260601~24.04.1 \
+      curl=8.5.0-2ubuntu10.11 \
+      jq=1.7.1-3ubuntu0.24.04.2 \
+      mold=2.30.0+dfsg-1build1 \
+      python-is-python3=3.11.4-1 \
+      unzip=6.0-28ubuntu4.1 \
+      xz-utils=5.6.1+really5.4.5-1ubuntu0.3 \
+      zstd=1.5.5+dfsg2-2build1.1 && \
     rm -rf /var/lib/apt/lists/*
 
 # Exact release binary with a checksum, rather than piping the install script to
@@ -216,12 +219,10 @@ RUN apt-get update && \
 # what every job runs.
 ARG MISE_VERSION=v2026.9.0
 ARG MISE_SHA256=c9b089f2be1db4d4262eacaf367e480e7a328848adcc37d9d1612996902485d0
-RUN curl -fsSL --proto '=https' --tlsv1.2 \
-      "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-linux-x64" \
-      -o /usr/local/bin/mise && \
-    echo "${MISE_SHA256}  /usr/local/bin/mise" | sha256sum --check - && \
-    chmod 0755 /usr/local/bin/mise && \
-    test "$(mise --version | cut -d' ' -f1)" = "${MISE_VERSION#v}"
+ADD --checksum=sha256:${MISE_SHA256} --chmod=0755 \
+    "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-linux-x64" \
+    /usr/local/bin/mise
+RUN test "$(mise --version | cut -d' ' -f1)" = "${MISE_VERSION#v}"
 
 # mise.toml stays the single source of truth for the tool set. cargo-binstall is
 # installed first so the remaining `cargo:` tools are fetched as prebuilt
@@ -256,6 +257,9 @@ RUN --mount=type=secret,id=GITHUB_TOKEN,required=false \
       env -u GITHUB_TOKEN mise --cd /opt/outbe/ci-intex install uv; \
     fi
 
+# Invoke the installed tools from / to prove their shims resolve without
+# the workspace's mise config. This layer never mounts the release token.
+WORKDIR /
 RUN mise --cd /opt/outbe/ci install cargo:cargo-binstall && \
     mise --cd /opt/outbe/ci install \
       cargo:cargo-nextest cargo:cargo-deny cargo:cargo-auditable cargo:cargo-audit && \
@@ -268,24 +272,18 @@ RUN mise --cd /opt/outbe/ci install cargo:cargo-binstall && \
       CARGO_PROFILE_RELEASE_LTO=false \
       CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
       cargo install --locked --git https://github.com/Cyfrin/aderyn --tag aderyn-v0.6.8 aderyn && \
-    rm -rf "${MISE_CACHE_DIR}"
-
-# Fail the build here rather than leaving a job to discover a broken tool.
-#
-# Run from / on purpose. `command -v` only proves a shim file exists, and a shim
-# with no resolvable version passes that check while failing on execution - so
-# actually invoke each tool, from a directory no mise config covers.
-RUN set -eu; \
-    cd /; \
+    rm -rf "${MISE_CACHE_DIR}" && \
     for tool in forge cast anvil cargo-nextest cargo-deny cargo-audit \
                 cog uv uvx aderyn sccache jq mold zstd python nargo bb; do \
       "${tool}" --version >/dev/null 2>&1 \
         || { echo "ci stage tool does not run: ${tool}" >&2; exit 1; }; \
-    done; \
-    cargo auditable --version >/dev/null; \
-    cargo llvm-cov --version >/dev/null; \
-    test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.96.0"; \
+    done && \
+    cargo auditable --version >/dev/null && \
+    cargo llvm-cov --version >/dev/null && \
+    test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.96.0" && \
     test -f /usr/include/sgx_dcap_quoteverify.h
+
+WORKDIR /workspace
 
 FROM toolchain AS source-builder
 

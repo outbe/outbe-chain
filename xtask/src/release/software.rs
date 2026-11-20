@@ -582,9 +582,9 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let (artifacts, units) = fixture(temp.path());
         for name in [
-            "outbe-tee-enclave",
-            "outbe-tee-enclave-confidential-vm",
-            "outbe-tee-enclave-mock",
+            "outbe-unlisted-sidecar",
+            "outbe-unlisted-helper",
+            "outbe-unlisted-mock",
         ] {
             fs::write(artifacts.join("bin").join(name), b"stale sidecar").unwrap();
         }

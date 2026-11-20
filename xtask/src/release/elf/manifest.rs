@@ -497,23 +497,33 @@ const ARTIFACT_ROLES: &[&str] = &[
     "installer",
 ];
 
-fn validate_artifact_role_and_kind(art: &Value) -> Result<()> {
+#[derive(Debug, thiserror::Error, PartialEq, Eq)]
+enum ArtifactRoleKindError {
+    #[error("missing artifact role")]
+    MissingRole,
+    #[error("invalid artifact role: {0}")]
+    InvalidRole(String),
+    #[error("missing artifact kind")]
+    MissingKind,
+    #[error("invalid artifact kind: {0}")]
+    InvalidKind(String),
+}
+
+fn validate_artifact_role_and_kind(art: &Value) -> std::result::Result<(), ArtifactRoleKindError> {
     let role = art
         .get("role")
         .and_then(Value::as_str)
-        .ok_or_else(|| eyre!("missing artifact role"))?;
-    ensure!(
-        ARTIFACT_ROLES.contains(&role),
-        "invalid artifact role: {role}"
-    );
+        .ok_or(ArtifactRoleKindError::MissingRole)?;
+    if !ARTIFACT_ROLES.contains(&role) {
+        return Err(ArtifactRoleKindError::InvalidRole(role.into()));
+    }
     let kind = art
         .get("kind")
         .and_then(Value::as_str)
-        .ok_or_else(|| eyre!("missing artifact kind"))?;
-    ensure!(
-        ARTIFACT_KINDS.contains(&kind),
-        "invalid artifact kind: {kind}"
-    );
+        .ok_or(ArtifactRoleKindError::MissingKind)?;
+    if !ARTIFACT_KINDS.contains(&kind) {
+        return Err(ArtifactRoleKindError::InvalidKind(kind.into()));
+    }
     Ok(())
 }
 
@@ -763,26 +773,43 @@ mod tests {
         })
     }
 
-    fn assert_rejected(role: &str, kind: &str, needle: &str) {
-        let err = validate_release_manifest_v1(&minimal_manifest(role, kind))
+    fn assert_rejected(manifest: &Value, expected: ArtifactRoleKindError) {
+        let err = validate_release_manifest_v1(manifest)
             .expect_err("invalid artifact role or kind must fail");
-        let text = err.to_string();
-        assert!(text.contains(needle), "{text}");
+        assert_eq!(err.downcast_ref::<ArtifactRoleKindError>(), Some(&expected));
     }
 
     #[test]
     fn rejects_removed_and_unknown_artifact_role_and_kind() {
         assert!(validate_release_manifest_v1(&minimal_manifest("node", "elf")).is_ok());
 
-        assert_rejected(concat!("tee-", "enclave"), "elf", "invalid artifact role");
-        assert_rejected("not-a-role", "elf", "invalid artifact role");
+        for role in [concat!("tee-", "enclave"), "not-a-role"] {
+            assert_rejected(
+                &minimal_manifest(role, "elf"),
+                ArtifactRoleKindError::InvalidRole(role.into()),
+            );
+        }
         for kind in [
             concat!("sgx-", "rendered-manifest"),
             concat!("sgx-", "sigstruct"),
             concat!("gramine-", "runtime-tree"),
             "not-a-kind",
         ] {
-            assert_rejected("node", kind, "invalid artifact kind");
+            assert_rejected(
+                &minimal_manifest("node", kind),
+                ArtifactRoleKindError::InvalidKind(kind.into()),
+            );
+        }
+        for (field, expected) in [
+            ("role", ArtifactRoleKindError::MissingRole),
+            ("kind", ArtifactRoleKindError::MissingKind),
+        ] {
+            let mut manifest = minimal_manifest("node", "elf");
+            manifest["artifacts"][0]
+                .as_object_mut()
+                .unwrap()
+                .remove(field);
+            assert_rejected(&manifest, expected);
         }
     }
 }
