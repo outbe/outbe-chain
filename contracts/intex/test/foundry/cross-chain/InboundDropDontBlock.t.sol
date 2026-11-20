@@ -85,7 +85,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         // TM drives the local Intex on markCalled.
         bnbRouter.setDependencies(address(auction), address(intex), admin);
         auction.grantRole(auction.RELAYER_ROLE(), address(bnbRouter));
-        intex.grantRole(intex.RELAYER_ROLE(), address(bnbRouter));
+        intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
 
         outbeRouter.setDependencies(address(desis), intexFactory);
         outbeRouter.addTarget(BNB_CHAIN_ID);

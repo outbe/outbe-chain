@@ -16,7 +16,7 @@ use crate::rpc::Rpc;
 
 const TOKEN_URI_JSON_PREFIX: &str = "data:application/json;utf8,";
 
-type DayTotalsReturn = <ITribute::getDayTotalsCall as SolCall>::Return;
+type DayTotalsReturn = <ITribute::dayTotalsCall as SolCall>::Return;
 type TokenIdsReturn = <ITribute::tokensByOwnerCall as SolCall>::Return;
 
 fn canonical_amount_base(value: &str) -> std::result::Result<String, TributeError> {
@@ -150,11 +150,11 @@ async fn fetch_day_totals(
     client: &(impl Rpc + Sync),
     emission_day: u32,
 ) -> Result<DayTotalsReturn> {
-    let call = ITribute::getDayTotalsCall {
+    let call = ITribute::dayTotalsCall {
         emissionDay: emission_day,
     };
     let result = client.eth_call(TRIBUTE_ADDR, &call.abi_encode()).await?;
-    Ok(ITribute::getDayTotalsCall::abi_decode_returns(&result)?)
+    Ok(ITribute::dayTotalsCall::abi_decode_returns(&result)?)
 }
 
 async fn fetch_tributes_by_owner(
@@ -447,8 +447,8 @@ mod tests {
             ITribute::tokenURICall::abi_encode_returns(&token_uri),
         );
         map.insert(
-            (TRIBUTE_ADDR, ITribute::getDayTotalsCall::SELECTOR),
-            ITribute::getDayTotalsCall::abi_encode_returns(&day_totals),
+            (TRIBUTE_ADDR, ITribute::dayTotalsCall::SELECTOR),
+            ITribute::dayTotalsCall::abi_encode_returns(&day_totals),
         );
         map.insert(
             (TRIBUTE_ADDR, ITribute::tokensByOwnerCall::SELECTOR),

@@ -1,9 +1,10 @@
 //! Compiles the feeder sources files into the node.
 //!
 //! It emits one table entry per file `sources/<major>.<minor>.toml`: the protocol version from the file name, the
-//! file text, the `currency_pairs` and the `gas_providers` chain ids of the
-//! file. The node registers these pairs and chains, so it never parses TOML at
-//! runtime. A bad file fails the build.
+//! file text, the `currency_pairs`, the `gas_providers` chain ids and the
+//! `rate_providers` currencies of the file. The node registers these pairs,
+//! chains and currencies, so it never parses TOML at runtime. A bad file fails
+//! the build.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -17,9 +18,10 @@ fn main() {
     for (major, minor, path) in files {
         let pairs = pairs(&path);
         let gas_chains = gas_chains(&path);
+        let rate_currencies = rate_currencies(&path);
         writeln!(
             out,
-            "    Source {{ version: encode_protocol_version({major}, {minor}), toml: include_str!({:?}), pairs: &[{pairs}], gas_chains: &[{gas_chains}] }},",
+            "    Source {{ version: encode_protocol_version({major}, {minor}), toml: include_str!({:?}), pairs: &[{pairs}], gas_chains: &[{gas_chains}], rate_currencies: &[{rate_currencies}] }},",
             path.display().to_string()
         )
         .unwrap();
@@ -82,6 +84,65 @@ fn gas_chains(path: &Path) -> String {
     }
     seen.iter()
         .map(|chain_id| format!("{chain_id}, "))
+        .collect()
+}
+
+/// The `currency` of each `rate_providers` entry of a file, as a Rust list
+/// body. Each currency must have a COEN pair in the same file.
+fn rate_currencies(path: &Path) -> String {
+    let text = std::fs::read_to_string(path).unwrap();
+    let table: toml::Table =
+        toml::from_str(&text).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+    let Some(entries) = table
+        .get("rate_providers")
+        .and_then(|value| value.as_array())
+    else {
+        return String::new();
+    };
+    let priced: Vec<&str> = table
+        .get("currency_pairs")
+        .and_then(|value| value.as_array())
+        .into_iter()
+        .flatten()
+        .filter(|pair| {
+            pair.get("base")
+                .and_then(|value| value.as_str())
+                .is_some_and(|base| base.eq_ignore_ascii_case("COEN"))
+        })
+        .filter_map(|pair| pair.get("quote").and_then(|value| value.as_str()))
+        .collect();
+    let mut seen = Vec::new();
+    for entry in entries {
+        let text = entry
+            .get("currency")
+            .and_then(|value| value.as_str())
+            .unwrap_or_else(|| panic!("{}: rate_providers entry without currency", path.display()));
+        let currency = text
+            .parse::<u16>()
+            .ok()
+            .filter(|code| (1..=999).contains(code))
+            .unwrap_or_else(|| {
+                panic!(
+                    "{}: rate_providers currency {text:?} is not valid",
+                    path.display()
+                )
+            });
+        if seen.contains(&currency) {
+            panic!(
+                "{}: rate_providers currency {currency} twice",
+                path.display()
+            );
+        }
+        if !priced.contains(&text) {
+            panic!(
+                "{}: rate_providers currency {currency} has no COEN pair",
+                path.display()
+            );
+        }
+        seen.push(currency);
+    }
+    seen.iter()
+        .map(|currency| format!("{currency}, "))
         .collect()
 }
 

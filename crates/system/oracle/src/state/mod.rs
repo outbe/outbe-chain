@@ -15,6 +15,5 @@ mod snapshot_history;
 mod snapshots;
 mod utc_day_vwap;
 mod votes;
-mod wwd_vwap;
 
 pub(crate) use snapshots::hourly_vwap_cell;

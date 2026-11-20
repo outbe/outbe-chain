@@ -13,7 +13,7 @@ pub use outbe_primitives::zero_fee_types::{
     ZeroFeeAuthorization, ZeroFeeCandidate, ZeroFeeHookTag, ZeroFeePolicyError, ZeroFeeTransaction,
 };
 
-/// `Oracle.submitVote(ExchangeRateTuple[],GasTuple[])` zero-fee hook tag.
+/// `Oracle.submitVote(ExchangeRateTuple[],GasTuple[],RateTuple[])` zero-fee hook tag.
 pub const ORACLE_SUBMIT_VOTE_HOOK: ZeroFeeHookTag =
     ZeroFeeHookTag::new(0, "OracleSubmitVote", Some(1));
 

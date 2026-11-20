@@ -227,6 +227,7 @@ pub(super) fn test_oracle_submit_vote_tx_with_gas_limit(
             volume: U256::from(10_000_000_000u64),
         }],
         gas: Vec::new(),
+        rates: Vec::new(),
     }
     .abi_encode();
 

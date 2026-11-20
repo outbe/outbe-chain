@@ -118,6 +118,7 @@ fn add_feeder_pairs(seed: &mut Value, config: &Value) -> Result<(), GenesisError
 
     merge_feeder_currency_pairs(oracle_obj, &table);
     merge_feeder_gas_chains(oracle_obj, &table);
+    merge_feeder_rate_currencies(oracle_obj, &table);
     append_feeder_seed_arrays(oracle_obj, config)
 }
 
@@ -173,6 +174,31 @@ fn merge_feeder_gas_chains(oracle_obj: &mut Map<String, Value>, table: &Value) {
     {
         if !chains.contains(chain_id) {
             chains.push(chain_id.clone());
+        }
+    }
+}
+
+/// Adds the `currency` of each `rate_providers` entry to
+/// `oracle.policy_rate_currencies`, once. Without the key, the list starts
+/// from the reference currencies, as the seeder default does.
+fn merge_feeder_rate_currencies(oracle_obj: &mut Map<String, Value>, table: &Value) {
+    let Some(providers) = table.get("rate_providers").and_then(Value::as_array) else {
+        return;
+    };
+    let currencies_val = oracle_obj
+        .entry("policy_rate_currencies".to_owned())
+        .or_insert_with(|| json!(crate::seed_oracle::REFERENCE_CURRENCIES));
+    let Some(currencies) = currencies_val.as_array_mut() else {
+        return;
+    };
+    for code in providers
+        .iter()
+        .filter_map(|provider| provider.get("currency"))
+        .filter_map(|currency| currency.as_str()?.parse::<u32>().ok())
+    {
+        let code = json!(code);
+        if !currencies.contains(&code) {
+            currencies.push(code);
         }
     }
 }

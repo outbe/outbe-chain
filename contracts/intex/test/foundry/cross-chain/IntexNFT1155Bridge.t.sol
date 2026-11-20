@@ -63,8 +63,8 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
             dstToken.createSeries(CreateSeriesLib.params(day, 1_000_000, 0));
         }
 
-        srcToken.grantRole(srcToken.RELAYER_ROLE(), address(srcBatch));
-        dstToken.grantRole(dstToken.RELAYER_ROLE(), address(dstBatch));
+        srcToken.grantRole(srcToken.BRIDGE_ROLE(), address(srcBatch));
+        dstToken.grantRole(dstToken.BRIDGE_ROLE(), address(dstBatch));
 
         vm.deal(sender, 100 ether); // batchSend/multiSend are caller-funded
 

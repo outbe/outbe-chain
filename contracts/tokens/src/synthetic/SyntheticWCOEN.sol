@@ -20,11 +20,11 @@ contract SyntheticWCOEN is BridgeableERC20 {
     }
 
     /// @notice Burns the whole balance of 0x…dEaD and sends it to 0x…dEaD on Outbe. Anyone can call
-    ///         it; `msg.value` pays the message.
+    ///         it; `msg.value` pays the message, and the caller gets the part above the fee back.
     function burnDead() external payable returns (bytes32 sendId) {
         uint256 amount = balanceOf(DEAD_ADDRESS);
         if (amount == 0) revert NothingToBurn();
         _burn(DEAD_ADDRESS, amount);
-        sendId = ERC7786TokenBridge(tokenBridge).sendBurned{value: msg.value}(outbeDomain, amount);
+        sendId = ERC7786TokenBridge(tokenBridge).sendBurned{value: msg.value}(outbeDomain, amount, msg.sender);
     }
 }

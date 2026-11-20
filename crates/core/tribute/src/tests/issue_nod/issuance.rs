@@ -36,7 +36,7 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
         assert!(tc.issue_nod(owner1, t1.tribute_id).is_err());
 
         // Stage 3: Seal day and compute Metadosis fractions for WWD
-        in_process_ready(&storage, || tc.seal_day(day));
+        in_process_ready(&storage, || tc.seal_worldwide_day(day));
         seed_entry_price(
             &storage,
             840,
@@ -238,7 +238,7 @@ fn a_series_unpriced_at_lysis_gives_no_nod_and_cleans_at_once() {
         let _enclave = crate::enclave_client::test_enclave::scope();
         let mut tc = TributeContract::new(storage.clone());
         tc.issue_with_league(&tribute, Some(100)).unwrap();
-        in_process_ready(&storage, || tc.seal_day(day));
+        in_process_ready(&storage, || tc.seal_worldwide_day(day));
         let binding = metadosis_process_ready_binding(
             storage.chain_id().unwrap(),
             storage.block_number().unwrap(),
@@ -324,7 +324,7 @@ fn lysis_keys_its_result_by_the_emission_day_and_binds_the_nod_to_it() {
             storage.now_secs().unwrap(),
         );
         for sealed in [day, other_wwd] {
-            in_process_ready(&storage, || tc.seal_day(sealed));
+            in_process_ready(&storage, || tc.seal_worldwide_day(sealed));
             storage
                 .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
                     seal_lysis(
@@ -403,7 +403,7 @@ fn the_enclave_refuses_a_lysis_list_that_differs_from_the_frozen_day_nominal() {
         let mut tc = TributeContract::new(storage.clone());
         tc.issue_with_league(&first, Some(100)).unwrap();
         tc.issue_with_league(&second, Some(100)).unwrap();
-        in_process_ready(&storage, || tc.seal_day(day));
+        in_process_ready(&storage, || tc.seal_worldwide_day(day));
         in_process_ready(&storage, || tc.freeze_day_nominal(&tc.get_day_totals(day)?));
         let mut ids = [first.tribute_id, second.tribute_id];
         ids.sort();
@@ -482,7 +482,7 @@ fn series_sealing_zero_nod_forfeit_returns_unclaimed_load_and_enables_permission
         let mut tc = TributeContract::new(storage.clone());
         tc.issue_with_league(&t1, Some(100)).unwrap();
         tc.issue_with_league(&t2, Some(100)).unwrap();
-        in_process_ready(&storage, || tc.seal_day(day));
+        in_process_ready(&storage, || tc.seal_worldwide_day(day));
 
         tc.day_emission_day
             .write(&day, EmissionDate::new(emission_day_key))

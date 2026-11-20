@@ -19,6 +19,19 @@
   },
   {
     "type": "function",
+    "name": "BRIDGE_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "BURNER_ROLE",
     "inputs": [],
     "outputs": [
@@ -45,7 +58,7 @@
   },
   {
     "type": "function",
-    "name": "RELAYER_ROLE",
+    "name": "ROUTER_ROLE",
     "inputs": [],
     "outputs": [
       {

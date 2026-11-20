@@ -3,7 +3,8 @@ use alloy_sol_types::SolEvent;
 use outbe_primitives::addresses::REWARDS_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_system_common::addresses::{
-    INTEX_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS, VOTE_ADDRESS,
+    GRATIS_FACTORY_ADDRESS, INTEX_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS,
+    VOTE_ADDRESS,
 };
 use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
@@ -34,6 +35,7 @@ pub enum BurnSource {
     IntexAuctionProceeds = 43,
     ValidatorStake = 44,
     ProposalBond = 45,
+    GratisMint = 47,
 }
 
 impl BurnSource {
@@ -43,6 +45,7 @@ impl BurnSource {
             Self::IntexAuctionProceeds => INTEX_FACTORY_ADDRESS,
             Self::ValidatorStake => STAKING_ADDRESS,
             Self::ProposalBond => VOTE_ADDRESS,
+            Self::GratisMint => GRATIS_FACTORY_ADDRESS,
         }
     }
 }

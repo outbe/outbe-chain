@@ -49,7 +49,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         intex.createSeries(CreateSeriesLib.params(SERIES_GOOD_DAY, 10_000, 0));
         // SERIES_BAD intentionally not created - `intex.crosschainMint` will revert on lookup.
 
-        intex.grantRole(intex.RELAYER_ROLE(), address(nftBridgeBnb));
+        intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridgeBnb));
     }
 
     /// @dev Deliver `message` from the OUTBE peer to the BNB adapter through the bridge.

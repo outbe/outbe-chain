@@ -16,9 +16,9 @@ pub(crate) fn worldwide_day(
     Ok((
         day.emission_day,
         day.forming_start()
-            .map_err(crate::worldwideday::errors::date_step_error)?,
+            .map_err(crate::worldwide_day::errors::date_step_error)?,
         day.forming_end()
-            .map_err(crate::worldwideday::errors::date_step_error)?,
+            .map_err(crate::worldwide_day::errors::date_step_error)?,
         day.offering_start,
         day.offering_end,
     )

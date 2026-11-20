@@ -142,9 +142,15 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
         },
     )
     .map_err(|error| error.to_string())?;
-    OracleContract::new(storage.clone())
+    let oracle = OracleContract::new(storage.clone());
+    oracle
         .policy_rate
         .write(&ISSUANCE_ISO, U256::from(43_000))
+        .map_err(|error| error.to_string())?;
+    // A publication time marks the rate as closed.
+    oracle
+        .policy_rate_published_at
+        .write(&ISSUANCE_ISO, 1)
         .map_err(|error| error.to_string())?;
     // This scenario anchors to the issuance currency, a reference currency. The code
     // above already seeds the COEN pair of that currency. Issuance also requires that

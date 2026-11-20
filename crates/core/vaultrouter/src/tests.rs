@@ -2119,6 +2119,10 @@ fn with_reservable_vault_at_block<R>(
             .policy_rate
             .write(&USD_ISO_CODE, U256::from(43_000))
             .unwrap();
+        oracle
+            .policy_rate_published_at
+            .write(&USD_ISO_CODE, 1)
+            .unwrap();
         outbe_oracle::test_support::seed_covered_trailing_window(
             &storage,
             pair,
@@ -2237,7 +2241,11 @@ fn a_reservation_needs_every_call_term() {
             outbe_oracle::errors::OracleError::NotReferenceCurrency { iso_code: 999 }.into(),
         );
 
-        oracle.policy_rate.write(&USD_ISO_CODE, U256::ZERO).unwrap();
+        // A currency with no closed rate: its publication time is zero.
+        oracle
+            .policy_rate_published_at
+            .write(&USD_ISO_CODE, 0)
+            .unwrap();
         rejected(
             &storage,
             USD_ISO_CODE,
@@ -2247,8 +2255,8 @@ fn a_reservation_needs_every_call_term() {
             .into(),
         );
         oracle
-            .policy_rate
-            .write(&USD_ISO_CODE, U256::from(43_000))
+            .policy_rate_published_at
+            .write(&USD_ISO_CODE, 1)
             .unwrap();
 
         oracle.utc_day_vwap_last_finalized.write(day - 1).unwrap();
@@ -2294,6 +2302,10 @@ fn a_reservation_quotes_the_call_terms_in_its_reference_currency() {
         oracle
             .policy_rate
             .write(&EUR_ISO_CODE, U256::from(99_000))
+            .unwrap();
+        oracle
+            .policy_rate_published_at
+            .write(&EUR_ISO_CODE, 1)
             .unwrap();
         for (iso, vwap) in [(EUR_ISO_CODE, 2_500_000u64), (USD_ISO_CODE, 9_000_000)] {
             let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
@@ -2690,6 +2702,10 @@ fn same_utc_day_reservations_share_series_id_including_midnight_and_next_day_ope
         oracle
             .policy_rate
             .write(&USD_ISO_CODE, U256::from(43_000))
+            .unwrap();
+        oracle
+            .policy_rate_published_at
+            .write(&USD_ISO_CODE, 1)
             .unwrap();
         outbe_oracle::test_support::seed_covered_trailing_window(
             &storage,

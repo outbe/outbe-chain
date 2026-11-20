@@ -6,7 +6,7 @@ mod raw_snapshots;
 mod twap;
 mod vote;
 mod vwap;
-mod window_vwap;
+mod vwap_24h;
 
 use crate::errors::OracleError;
 use crate::schema::OracleContract;

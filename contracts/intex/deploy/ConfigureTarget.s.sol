@@ -12,8 +12,8 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 /// @title ConfigureTarget
 /// @author Outbe
 /// @notice Wires the auction stack of one target chain: the auction to its escrow, the escrow to
-///         the auction, The Compact and wCOEN, and the router to all three, plus the relayer
-///         roles of the router and the NFT bridge. Run it after DeployTarget, before HandOver,
+///         the auction, The Compact and wCOEN, and the router to all three, plus the roles of
+///         the router and the NFT bridge. Run it after DeployTarget, before HandOver,
 ///         on every target, Outbe included. A step that already holds is skipped, so a re-run
 ///         sends nothing.
 /// @dev Env: DEPLOYER_PK, CREATE3_FACTORY_ADDRESS, CONTRACT_SALT (optional), COMPACT_ADDRESS,
@@ -85,8 +85,8 @@ contract ConfigureTarget is BaseScript {
 
         grantRoleIfMissing(t.auction, auction.RELAYER_ROLE(), t.router, deployer);
         grantRoleIfMissing(t.escrow, escrow.RELAYER_ROLE(), t.router, deployer);
-        bytes32 relayer = IntexNFT1155(t.nft).RELAYER_ROLE();
-        grantRoleIfMissing(t.nft, relayer, t.router, deployer);
-        grantRoleIfMissing(t.nft, relayer, t.nftBridge, deployer);
+        IntexNFT1155 nft = IntexNFT1155(t.nft);
+        grantRoleIfMissing(t.nft, nft.ROUTER_ROLE(), t.router, deployer);
+        grantRoleIfMissing(t.nft, nft.BRIDGE_ROLE(), t.nftBridge, deployer);
     }
 }

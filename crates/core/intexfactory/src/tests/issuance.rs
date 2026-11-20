@@ -591,19 +591,13 @@ fn an_issuance_payment_must_name_the_snapshot_required_at_execution() {
         )
         .to_string()
     );
-    let other_policy = outbe_oracle::api::get_vwap_snapshot_id(
-        cutoff + 3_600,
-        &outbe_oracle::api::VwapPolicy {
-            policy_version: 2,
-            ..outbe_oracle::api::DEFAULT_VWAP_POLICY
-        },
-    )
-    .unwrap();
+    // The id of an older window.
+    let other_window = U256::from(cutoff - 3_600);
     assert_eq!(
-        settle_series_7(&mut storage, other_policy.to_u256()),
+        settle_series_7(&mut storage, other_window),
         outbe_primitives::error::PrecompileError::from(
             outbe_vaultrouter::settlement::SettlementError::SnapshotMismatch {
-                authorized: other_policy.to_u256(),
+                authorized: other_window,
                 required,
             }
         )
