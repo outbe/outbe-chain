@@ -1,8 +1,8 @@
 //! Stable, native-verifier-independent DCAP protocol values.
 //!
-//! These values cross the Gramine enclave seam. The node can decode and
-//! validate the canonical outcome without linking Intel QVL. Only the enclave
-//! compiles the native verifier implementation.
+//! The node verifies DCAP quotes in-process and links the native Intel QVL
+//! adapter in the same process. These values let the node decode and validate
+//! the canonical outcome without a host-supplied verdict.
 
 use alloy_primitives::{keccak256, B256};
 use outbe_primitives::tee_attestation_v1::{MAX_ATTESTATION_EVIDENCE_BYTES, MAX_TEE_POLICY_BYTES};

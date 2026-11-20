@@ -477,6 +477,46 @@ fn is_lower_hex_n(s: &str, len: usize) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
+/// `release/release-manifest-v1.schema.json` `$defs.artifact.properties.kind.enum`.
+const ARTIFACT_KINDS: &[&str] = &[
+    "elf",
+    "archive",
+    "native-package",
+    "sbom",
+    "oci-manifest",
+    "compose-descriptor",
+];
+
+/// `release/release-manifest-v1.schema.json` `$defs.artifact.properties.role.enum`.
+const ARTIFACT_ROLES: &[&str] = &[
+    "node",
+    "operator-cli",
+    "key-generation",
+    "price-feed",
+    "operator-sidecar",
+    "installer",
+];
+
+fn validate_artifact_role_and_kind(art: &Value) -> Result<()> {
+    let role = art
+        .get("role")
+        .and_then(Value::as_str)
+        .ok_or_else(|| eyre!("missing artifact role"))?;
+    ensure!(
+        ARTIFACT_ROLES.contains(&role),
+        "invalid artifact role: {role}"
+    );
+    let kind = art
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| eyre!("missing artifact kind"))?;
+    ensure!(
+        ARTIFACT_KINDS.contains(&kind),
+        "invalid artifact kind: {kind}"
+    );
+    Ok(())
+}
+
 fn validate_tee_schema(tee: &Map<String, Value>) -> Result<()> {
     ensure!(
         tee.get("mock").and_then(Value::as_bool) == Some(false),
@@ -654,11 +694,8 @@ pub fn validate_release_manifest_v1(manifest: &Value) -> Result<()> {
     ensure!(!artifacts.is_empty(), "artifacts must not be empty");
     let mut has_signed_tee = false;
     for art in artifacts {
-        if art.get("role").and_then(Value::as_str) == Some("tee-enclave") {
-            let tee = art
-                .get("tee")
-                .and_then(Value::as_object)
-                .ok_or_else(|| eyre!("tee-enclave artifact requires tee object"))?;
+        validate_artifact_role_and_kind(art)?;
+        if let Some(tee) = art.get("tee").and_then(Value::as_object) {
             validate_tee_schema(tee)?;
             if tee.get("stage").and_then(Value::as_str) == Some("signed") {
                 has_signed_tee = true;
@@ -702,4 +739,50 @@ pub fn validate_release_manifest_v1(manifest: &Value) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn minimal_manifest(role: &str, kind: &str) -> Value {
+        json!({
+            "$schema": "https://outbe.io/schemas/release-manifest-v1.json",
+            "schema_version": "1.0.0",
+            "canonicalization": {},
+            "release": {"lifecycle": "build-candidate", "tag": "v0"},
+            "build": {
+                "provenance": {
+                    "entrypoint": "release/scripts/reproducible-build.sh",
+                    "mode": "local-container"
+                }
+            },
+            "inputs": [],
+            "artifacts": [{"role": role, "kind": kind}],
+            "verification_gates": []
+        })
+    }
+
+    fn assert_rejected(role: &str, kind: &str, needle: &str) {
+        let err = validate_release_manifest_v1(&minimal_manifest(role, kind))
+            .expect_err("invalid artifact role or kind must fail");
+        let text = err.to_string();
+        assert!(text.contains(needle), "{text}");
+    }
+
+    #[test]
+    fn rejects_removed_and_unknown_artifact_role_and_kind() {
+        assert!(validate_release_manifest_v1(&minimal_manifest("node", "elf")).is_ok());
+
+        assert_rejected(concat!("tee-", "enclave"), "elf", "invalid artifact role");
+        assert_rejected("not-a-role", "elf", "invalid artifact role");
+        for kind in [
+            concat!("sgx-", "rendered-manifest"),
+            concat!("sgx-", "sigstruct"),
+            concat!("gramine-", "runtime-tree"),
+            "not-a-kind",
+        ] {
+            assert_rejected("node", kind, "invalid artifact kind");
+        }
+    }
 }

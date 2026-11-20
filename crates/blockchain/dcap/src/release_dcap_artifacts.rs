@@ -92,14 +92,6 @@ impl ReleaseDcapArtifactSetV1 {
     }
 
     #[must_use]
-    pub const fn bundle_manifest_path(self) -> &'static str {
-        match self {
-            Self::Testnet => "metadata/testnet-sgx-bundle.json",
-            Self::Mainnet => "metadata/mainnet-sgx-bundle.json",
-        }
-    }
-
-    #[must_use]
     pub fn paths(self) -> BTreeSet<&'static str> {
         COMMON_RELEASE_DCAP_ARTIFACT_PATHS
             .into_iter()

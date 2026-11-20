@@ -1,9 +1,9 @@
 //! Exact-pinned Intel native QVL adapter for the V1 consensus verifier.
 //!
-//! This module is compiled into the Outbe Gramine enclave. Its public boundary
-//! accepts only quote/collateral bytes plus an explicit consensus timestamp.
-//! It deliberately has no host-verdict input. Intel QvE/TVL are unnecessary
-//! because QVL and its output execute within the same attestation enclave.
+//! The node compiles this adapter in-process and uses it for native DCAP quote
+//! verification. Its public boundary accepts only quote and collateral bytes
+//! plus an explicit consensus timestamp. It has no host-verdict input. Intel
+//! QvE and TVL stay unused because QVL and its output run in the node process.
 
 use std::ffi::c_int;
 
