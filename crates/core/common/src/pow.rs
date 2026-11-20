@@ -5,15 +5,14 @@
 //!
 //! Nod and Gem hash
 //! `domain_tag || right_id_be32 || owner_20 || mining_sequence_be8 || nonce_be8` with
-//! [`SINGLE_MINING_SEQUENCE`]. Intex builds its own preimage (owner, amount,
-//! series, sequence, nonce) and only reuses the difficulty check.
+//! [`SINGLE_MINING_SEQUENCE`]. Intex hashes the same preimage with its own tag and appends
+//! the mined Promis amount (`amount_be32`).
 
 use alloy_primitives::{Address, U256};
 use ring::digest::{digest, SHA256};
 
 /// PoW difficulty: leading zero bytes required in the SHA-256 work hash.
-/// Identical across all entity factories; Intex builds its own preimage and
-/// reuses [`meets_difficulty`].
+/// Identical across all entity factories.
 ///
 /// Two zero bytes target an expected `2^16 = 65_536` SHA-256 candidate hashes
 /// per solution (assuming a uniform digest), acting as an anti-spam work gate
@@ -29,6 +28,11 @@ pub const SINGLE_MINING_SEQUENCE: u64 = 0;
 pub const MINING_DOMAIN_TAG_LEN: usize = 19;
 
 const MINING_PREIMAGE_LEN: usize = MINING_DOMAIN_TAG_LEN + 68;
+
+const INTEX_MINING_PREIMAGE_LEN: usize = MINING_PREIMAGE_LEN + 32;
+
+/// Domain tag of Intex mining. Intex has no [`MiningDomain`]: its preimage also binds the amount.
+pub const INTEX_MINING_DOMAIN_TAG: &[u8; MINING_DOMAIN_TAG_LEN] = b"OUTBE_ITX_MINING_V1";
 
 /// Right family a mining preimage belongs to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,14 +62,55 @@ pub fn compute_mining_pow_hash(
     mining_sequence: u64,
     nonce: u64,
 ) -> [u8; 32] {
+    sha256(&preimage(
+        domain.tag(),
+        right_id,
+        owner,
+        mining_sequence,
+        nonce,
+    ))
+}
+
+/// SHA256 over the common preimage with [`INTEX_MINING_DOMAIN_TAG`], then `amount_be32`.
+pub fn compute_intex_mining_pow_hash(
+    intex_id: U256,
+    owner: Address,
+    mining_sequence: u64,
+    nonce: u64,
+    amount: U256,
+) -> [u8; 32] {
+    let common = preimage(
+        INTEX_MINING_DOMAIN_TAG,
+        intex_id,
+        owner,
+        mining_sequence,
+        nonce,
+    );
+    let mut data = [0u8; INTEX_MINING_PREIMAGE_LEN];
+    data[..MINING_PREIMAGE_LEN].copy_from_slice(&common);
+    data[MINING_PREIMAGE_LEN..].copy_from_slice(&amount.to_be_bytes::<32>());
+    sha256(&data)
+}
+
+fn preimage(
+    tag: &[u8; MINING_DOMAIN_TAG_LEN],
+    right_id: U256,
+    owner: Address,
+    mining_sequence: u64,
+    nonce: u64,
+) -> [u8; MINING_PREIMAGE_LEN] {
     const TAG: usize = MINING_DOMAIN_TAG_LEN;
     let mut data = [0u8; MINING_PREIMAGE_LEN];
-    data[..TAG].copy_from_slice(domain.tag());
+    data[..TAG].copy_from_slice(tag);
     data[TAG..TAG + 32].copy_from_slice(&right_id.to_be_bytes::<32>());
     data[TAG + 32..TAG + 52].copy_from_slice(owner.as_slice());
     data[TAG + 52..TAG + 60].copy_from_slice(&mining_sequence.to_be_bytes());
     data[TAG + 60..].copy_from_slice(&nonce.to_be_bytes());
-    let digest = digest(&SHA256, &data);
+    data
+}
+
+fn sha256(data: &[u8]) -> [u8; 32] {
+    let digest = digest(&SHA256, data);
     let mut out = [0u8; 32];
     out.copy_from_slice(digest.as_ref());
     out
@@ -328,5 +373,54 @@ mod tests {
             }
         }
         panic!("no failing nonce found");
+    }
+
+    #[test]
+    fn intex_mining_hash_has_the_common_form() {
+        let intex_id = U256::from(0x5EEDu64);
+        let owner = Address::repeat_byte(0x66);
+        let amount = U256::from(1_000_000u64);
+        let hash = compute_intex_mining_pow_hash(intex_id, owner, 3, 42, amount);
+
+        let mut data = INTEX_MINING_DOMAIN_TAG.to_vec();
+        data.extend_from_slice(&intex_id.to_be_bytes::<32>());
+        data.extend_from_slice(owner.as_slice());
+        data.extend_from_slice(&3u64.to_be_bytes());
+        data.extend_from_slice(&42u64.to_be_bytes());
+        data.extend_from_slice(&amount.to_be_bytes::<32>());
+        assert_eq!(hash.as_ref(), digest(&SHA256, &data).as_ref());
+
+        for domain in [MiningDomain::Nod, MiningDomain::Gem] {
+            assert_ne!(
+                hash,
+                compute_mining_pow_hash(domain, intex_id, owner, 3, 42)
+            );
+        }
+        for changed in [
+            compute_intex_mining_pow_hash(intex_id + U256::ONE, owner, 3, 42, amount),
+            compute_intex_mining_pow_hash(intex_id, Address::repeat_byte(0x67), 3, 42, amount),
+            compute_intex_mining_pow_hash(intex_id, owner, 4, 42, amount),
+            compute_intex_mining_pow_hash(intex_id, owner, 3, 42, amount + U256::ONE),
+        ] {
+            assert_ne!(hash, changed);
+        }
+    }
+
+    #[test]
+    fn an_intex_nonce_does_not_carry_to_nod_or_gem() {
+        let intex_id = U256::from(0x5EEDu64);
+        let owner = Address::repeat_byte(0x66);
+        let amount = U256::from(1_000_000u64);
+        let nonce = (0u64..)
+            .find(|n| {
+                meets_difficulty(&compute_intex_mining_pow_hash(
+                    intex_id, owner, 0, *n, amount,
+                ))
+                .is_ok()
+            })
+            .unwrap();
+        for domain in [MiningDomain::Nod, MiningDomain::Gem] {
+            assert!(validate_mining_pow(domain, intex_id, owner, 0, nonce).is_err());
+        }
     }
 }

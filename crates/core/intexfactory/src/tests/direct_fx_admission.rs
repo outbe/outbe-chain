@@ -21,7 +21,7 @@ fn a_direct_settlement_in_a_currency_the_window_never_priced_is_refused_without_
             U256::from(2u64) * COEN_ISO_RATE_SCALE,
         );
         write_rate(&oracle, EUR_ISO, EUR_PAIR_ID, COEN_ISO_RATE_SCALE);
-        outbe_oracle::api::current_vwap_snapshot(s.clone())
+        outbe_oracle::api::current_vwap_24h_snapshot(s.clone())
             .unwrap()
             .to_u256()
     });
@@ -32,14 +32,17 @@ fn a_direct_settlement_in_a_currency_the_window_never_priced_is_refused_without_
     let error = StorageHandle::enter(&mut storage, |s| {
         runtime::settle_intex(
             &s,
-            sid(7),
-            owner(),
-            U256::ONE,
+            runtime::OwnerUnits {
+                series_id: sid(7),
+                owner: owner(),
+                units: U256::ONE,
+            },
             SettlementPayment {
                 payer: owner(),
                 asset: settlement_asset(),
                 snapshot_id: required,
             },
+            amount_cap(),
         )
         .unwrap_err()
     });

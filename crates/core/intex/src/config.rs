@@ -1,7 +1,7 @@
-//! Genesis-selectable parameter profile for Intex: `PROD` (real timings)
-//! and `DEV` (short timings) are fixed here. A chain picks one via the
-//! `config_profile` selector byte seeded from genesis. An unset byte resolves by
-//! network, so only mainnet runs PROD.
+//! Genesis-selectable parameter profile for Intex: `MAINNET` (real timings),
+//! `TESTNET` (short timings) and `E2E` (short notice and transit margin) are fixed
+//! here. A chain picks one via the `config_profile` selector byte seeded from genesis.
+//! An unset byte resolves by network, so only mainnet runs MAINNET.
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -15,7 +15,7 @@ use crate::constants::{
 use crate::errors::IntexError;
 use crate::schema::IntexContract;
 
-pub use outbe_core_common::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
+pub use outbe_core_common::profile::{PROFILE_AUTO, PROFILE_E2E, PROFILE_MAINNET, PROFILE_TESTNET};
 
 /// Resolved Intex protocol parameters. Periods are seconds. Rates are
 /// percentage points over [`outbe_core_common::markup::PRICE_RATE_DEN`].
@@ -27,45 +27,53 @@ pub struct IntexParams {
     pub transit_margin_seconds: u32,
     pub call_rate: u16,
     /// Commit-entry bond on the target-chain auction in protocol units.
-    pub commit_bond_minor: u128,
+    pub bid_bond_minor: u128,
     /// Launch rung of the Promis load ladder (`10^promis_load_launch_exponent` minor units).
     pub promis_load_launch_exponent: u32,
 }
 
 impl IntexParams {
     /// Real protocol timings. This is the default on mainnet.
-    pub const PROD: Self = Self {
+    pub const MAINNET: Self = Self {
         call_window_seconds: CALL_WINDOW,
         call_threshold_seconds: CALL_THRESHOLD,
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
         transit_margin_seconds: TRANSIT_MARGIN,
         call_rate: CALL_RATE_PCT,
-        commit_bond_minor: COMMIT_BOND_MINOR,
+        bid_bond_minor: COMMIT_BOND_MINOR,
         promis_load_launch_exponent: 12,
     };
 
     /// Short timings for dev/test. `called` is day-granular (daily VWAP scan),
     /// so window/threshold stay whole multiples of a day. The bond drops to
     /// 100 wCOEN so test bidders do not have to mint 100M per commit.
-    pub const DEV: Self = Self {
+    pub const TESTNET: Self = Self {
         call_window_seconds: 3 * SECONDS_PER_DAY_U32,
         call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
-        #[cfg(not(feature = "e2e-test"))]
         call_notice_period_seconds: 3 * SECONDS_PER_DAY_U32,
-        #[cfg(feature = "e2e-test")]
-        call_notice_period_seconds: 600,
-        #[cfg(not(feature = "e2e-test"))]
         transit_margin_seconds: TRANSIT_MARGIN,
-        #[cfg(feature = "e2e-test")]
-        transit_margin_seconds: 60,
         call_rate: 4,
-        commit_bond_minor: 100 * SCALE_1E6_U128,
+        bid_bond_minor: 100 * SCALE_1E6_U128,
         promis_load_launch_exponent: 12,
     };
 
+    /// TESTNET terms with a notice and a transit margin the end-to-end tests wait out
+    /// in real time.
+    pub const E2E: Self = Self {
+        call_notice_period_seconds: 1_800,
+        transit_margin_seconds: 60,
+        ..Self::TESTNET
+    };
+
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {
-        outbe_core_common::profile::select(selector, chain_id, Self::PROD, Self::DEV)
-            .ok_or_else(|| IntexError::UnknownProfileSelector(selector).into())
+        outbe_core_common::profile::select(
+            selector,
+            chain_id,
+            Self::MAINNET,
+            Self::TESTNET,
+            Self::E2E,
+        )
+        .ok_or_else(|| IntexError::UnknownProfileSelector(selector).into())
     }
 }
 

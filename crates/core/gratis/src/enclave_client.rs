@@ -1,152 +1,287 @@
-//! Host-side enclave client for the confidential Gratis write path.
+//! Host caller for confidential Gratis writes and account-key delivery.
 //!
-//! Every Gratis state transition goes through the enclave. [`crate::runtime`] does
-//! these steps:
-//!
-//! 1. It reads the current ciphertext from committed storage.
-//! 2. It sends the ciphertext and the op to the enclave through [`apply_gratis_op`].
-//! 3. It stores the returned ciphertext verbatim.
-//!
-//! This module mirrors `tributefactory::enclave_offer`. It gives the same determinism
-//! guarantee (canonical-hash recheck) and the same attestation guarantee
-//! (verify-then-discard). It also has the same `tee_sidecar_unavailable` failure mode
-//! when no enclave is configured.
+//! `ApplyGratisOp` and `MineEncryptedNodV1` are witness-recorded. The inputs
+//! hash is fixed before the call and checked again inside `execute` against
+//! the same context that signed. `outbe_deriveGratisKeys` is session-only.
 
-use outbe_enclave::protocol::{EnclaveRequest, EnclaveResponse, GratisOpRequest, GratisOpResult};
-use outbe_primitives::error::Result;
+use std::fmt::Write as _;
 
-use crate::errors::{map_nod_client_error, GratisFatalError};
+use alloy_primitives::{Address, B256};
+use outbe_core_common::confidential_tee::{
+    consensus_witness_call, seal_resident_account_keys, session_witness_call,
+    verify_bound_witness_attestation, FIDELITY, GRATIS,
+};
+use outbe_fidelity::apply_cohort_section;
+use outbe_primitives::error::{PrecompileError, Result};
+use outbe_tee::in_process::InProcessTeeContext;
+use outbe_tee::{CallMeta, TransportError};
+use thiserror::Error;
 
-/// Run one Gratis op inside the enclave and validate the response.
-///
-/// Determinism: recompute the canonical inputs hash and reject a mismatch
-/// (`tee_enclave_nondeterminism`). Attestation: verify the tag against the
-/// enclave key pinned from its quote (`tee_gratis_attestation_invalid`), then
-/// discard the tag. The tag is never written to state. A missing or not-ready
-/// enclave is `EnclaveUnavailable`. The other errors are `Fatal` (a node/consensus
-/// fault, not a user revert). `GratisOpResult::status` carries a *business*
-/// rejection, and the caller handles it.
-pub(crate) fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
+use crate::attest::verify_gratis_op_attestation;
+use crate::engine::{apply_op, rejected_result};
+use crate::errors::{map_consensus_error, GratisFatalError};
+use crate::nod_mine::{self, MineEncryptedNodRequestV1, MineEncryptedNodResultV1};
+use crate::protocol::{
+    gratis_op_attestation_preimage, gratis_op_canonical_hash, GratisOpRequest, GratisOpResult,
+    GratisOpStatus,
+};
+use crate::resident::resident_state_key;
+
+const APPLY_OP: &str = "ApplyGratisOp";
+const DERIVE_OP: &str = "outbe_deriveGratisKeys";
+const STATE_EPOCH: u64 = 0;
+
+/// Sealed Gratis view and modify keys for `outbe_deriveGratisKeys`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SealedGratisKeys {
+    /// Account the keys belong to.
+    pub account: Address,
+    /// Ciphertext sealed to the caller's ephemeral key.
+    pub sealed: Vec<u8>,
+    /// AEAD nonce.
+    pub nonce: [u8; 12],
+    /// Enclave X25519 ephemeral public key.
+    pub enclave_ephemeral_pubkey: [u8; 32],
+}
+
+/// Owner-authorized request for [`derive_gratis_keys`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DeriveGratisKeysRequest {
+    /// Account whose keys are sealed.
+    pub account: Address,
+    /// Caller X25519 public key.
+    pub requester_ephemeral_pubkey: [u8; 32],
+    /// 65-byte owner signature over the Gratis derive-keys message.
+    pub owner_sig: Vec<u8>,
+}
+
+#[derive(Debug, Error)]
+enum DeriveKeysError {
+    #[error("owner signature must be 65 bytes")]
+    OwnerSignatureLength,
+}
+
+/// Enclave witness one collateral op (pledge, release, pledge burn) records at most; it carries no fidelity section.
+pub const COLLATERAL_OP_WITNESS_BYTES: u32 = 460;
+
+/// Run one Gratis op. A business rejection stays inside the returned result.
+pub fn apply_gratis_op(req: GratisOpRequest) -> Result<GratisOpResult> {
     #[cfg(any(test, feature = "test-enclave"))]
     if let Some(result) = test_enclave::try_apply(&req) {
         return Ok(result);
     }
+    let expected = gratis_op_canonical_hash(&req);
+    let result = consensus_witness_call(
+        CallMeta::recorded(APPLY_OP),
+        |context| execute_apply(context, expected, &req),
+        |key, result| authenticate_apply(expected, key, result),
+    )
+    .map_err(|error| map_consensus_error(APPLY_OP, error))?;
+    finish_apply(expected, result)
+}
 
-    match outbe_enclave::balance_client::execute_confidential_balance_op(
-        EnclaveRequest::ApplyGratisOp {
-            request: Box::new(req),
-        },
-    )? {
-        EnclaveResponse::GratisOpApplied { result } => Ok(*result),
-        other => Err(GratisFatalError::UnexpectedEnclaveResponse(Box::new(other)).into()),
+/// Mine Gratis from an encrypted NOD. A signed refusal is [`crate::errors::GratisError::Rejected`].
+pub fn mine_encrypted_nod(request: MineEncryptedNodRequestV1) -> Result<MineEncryptedNodResultV1> {
+    #[cfg(any(test, feature = "test-enclave"))]
+    if let Some(result) = test_enclave::try_mine(&request) {
+        return result;
+    }
+    nod_mine::witnessed(request)
+}
+
+/// Seal the account's Gratis keys. This call is not written to the witness tape.
+pub fn derive_gratis_keys(request: DeriveGratisKeysRequest) -> Result<SealedGratisKeys> {
+    let sealed = session_witness_call(CallMeta::session_only(DERIVE_OP), |context| {
+        execute_derive(context, &request)
+    })
+    .ok_or(GratisFatalError::SidecarUnavailable { context: DERIVE_OP })?
+    .map_err(map_derive_error)?;
+    Ok(sealed)
+}
+
+/// An owner-proof rejection stays a request failure. A resident outage stays unavailable.
+fn map_derive_error(error: TransportError) -> PrecompileError {
+    if error.is_node_local() {
+        return map_consensus_error(DERIVE_OP, error).into();
+    }
+    PrecompileError::FatalWithCause(Box::new(map_consensus_error(DERIVE_OP, error)))
+}
+
+fn execute_apply(
+    context: &InProcessTeeContext,
+    expected: B256,
+    req: &GratisOpRequest,
+) -> std::result::Result<GratisOpResult, TransportError> {
+    let key = resident_state_key(context, &GRATIS, STATE_EPOCH)?;
+    let mut result = apply_op(&key, req);
+    if let (GratisOpStatus::Applied, Some(section)) = (&result.status, &req.fidelity) {
+        let fidelity_key = resident_state_key(context, &FIDELITY, STATE_EPOCH)?;
+        match apply_cohort_section(&fidelity_key, req.account, req.amount, section) {
+            Ok(outcome) => result.fidelity = Some(outcome),
+            Err(error) => result = rejected_result(fidelity_reason(&error), expected),
+        }
+    }
+    let preimage = gratis_op_attestation_preimage(result.inputs_canonical_hash, &result)
+        .map_err(TransportError::codec)?;
+    result.attestation_tag = context.sign_domain_attestation(&preimage).to_vec();
+    authenticate_apply(expected, &context.attestation_public(), &result)?;
+    Ok(result)
+}
+
+fn fidelity_reason(error: &impl std::fmt::Display) -> String {
+    let mut reason = String::from("fidelity section failed: ");
+    let _ = write!(&mut reason, "{error}");
+    reason
+}
+
+impl From<(Address, outbe_tee::resident::SealedAccountKeysExport)> for SealedGratisKeys {
+    fn from((account, s): (Address, outbe_tee::resident::SealedAccountKeysExport)) -> Self {
+        Self {
+            account,
+            sealed: s.sealed,
+            nonce: s.nonce,
+            enclave_ephemeral_pubkey: s.enclave_ephemeral_pubkey,
+        }
     }
 }
 
-/// In-process enclave stand-in for tests (this crate's tests and any downstream
-/// crate that enables the `test-enclave` feature). It runs the **real**
-/// `outbe_enclave::gratis::apply_op` engine against a fixed dev state key. Thus
-/// tests exercise the full confidential path without an SGX sidecar. This path does
-/// not check attestation. Only the mock-enclave e2e verifies it. The crate root
-/// rejects `all(feature = "test-enclave", feature = "production-enclave")` at
-/// compile time and CI's `no-test-deps` gate rejects `test-enclave` in the
-/// production dependency graph, so this stand-in cannot reach a production build.
+fn execute_derive(
+    context: &InProcessTeeContext,
+    req: &DeriveGratisKeysRequest,
+) -> std::result::Result<SealedGratisKeys, TransportError> {
+    let input = (
+        req.account,
+        req.owner_sig.as_slice(),
+        &req.requester_ephemeral_pubkey,
+    );
+    seal_resident_account_keys(
+        context,
+        (&GRATIS, STATE_EPOCH),
+        input,
+        || DeriveKeysError::OwnerSignatureLength,
+        |a, s| SealedGratisKeys::from((a, s)),
+    )
+}
+
+fn authenticate_apply(
+    expected: B256,
+    key: &[u8; 32],
+    result: &GratisOpResult,
+) -> std::result::Result<(), TransportError> {
+    verify_bound_witness_attestation(expected, key, result, verify_gratis_op_attestation)
+}
+
+fn finish_apply(expected: B256, result: GratisOpResult) -> Result<GratisOpResult> {
+    if result.inputs_canonical_hash != expected {
+        return Err(GratisFatalError::EnclaveNondeterminism.into());
+    }
+    Ok(result)
+}
+
+/// In-process stand-in. It runs the real engine and skips attestation.
 #[cfg(any(test, feature = "test-enclave"))]
 pub mod test_enclave {
     use super::*;
-    use crate::errors::map_test_enclave_error;
+    use crate::engine::{
+        derive_account_keys, derive_gratis_state_key, modify_mac, ModifyOperation,
+    };
+    use crate::protocol::ModifyAuth;
     use std::cell::RefCell;
 
     thread_local! {
-        static STATE_KEY: RefCell<Option<[u8; 32]>> = const { RefCell::new(None) };
+        static STATE_KEY: RefCell<Option<outbe_tee::resident::StateKeyHandle>> = const { RefCell::new(None) };
     }
 
-    /// Fixed dev group signature + chain/epoch, so the derived state key (and thus
-    /// every account's view/modify key) is deterministic across a test process.
     const DEV_EPOCH: u64 = 0;
+    const GRATIS_GROUP_SIG: &[u8] = b"outbe-dev-gratis-group-signature-fixed-seed!!";
+    const GRATIS_CHAIN: B256 = B256::repeat_byte(0xC1);
+    const FIDELITY_GROUP_SIG: &[u8] = b"outbe-dev-fidelity-group-signature-fixed-seed";
 
-    /// Install the in-process enclave for the current thread.
+    fn gratis_chain() -> B256 {
+        GRATIS_CHAIN
+    }
+
+    fn fidelity_chain() -> B256 {
+        B256::from(alloy_primitives::U256::from(
+            outbe_primitives::chain::DEVNET_CHAIN_ID,
+        ))
+    }
+
+    fn offer(
+        group: &[u8],
+        chain: B256,
+    ) -> std::result::Result<outbe_tee::resident::ResidentOfferMaterial, GratisFatalError> {
+        outbe_tee::resident::ResidentOfferMaterial::for_test(group.to_vec(), chain, DEV_EPOCH, 0)
+            .map_err(|error| GratisFatalError::TestEnclave {
+                source: Box::new(error),
+            })
+    }
+
+    fn fixture_key() -> outbe_tee::resident::StateKeyHandle {
+        let material = offer(GRATIS_GROUP_SIG, gratis_chain()).expect("dev gratis offer material");
+        derive_gratis_state_key(&material, gratis_chain(), DEV_EPOCH)
+            .expect("derive dev gratis state key")
+    }
+
+    /// Install the stand-in for this thread.
     pub fn install() {
-        let key = outbe_enclave::gratis::derive_gratis_state_key(
-            outbe_enclave::dev::GRATIS_GROUP_SIG,
-            outbe_enclave::dev::GRATIS_CHAIN,
-            DEV_EPOCH,
-        )
-        .expect("derive dev gratis state key");
-        STATE_KEY.with(|k| *k.borrow_mut() = Some(*key));
+        STATE_KEY.with(|key| *key.borrow_mut() = Some(fixture_key()));
     }
 
-    /// Remove the in-process enclave for the current thread.
+    /// Remove the stand-in for this thread.
     pub fn uninstall() {
-        STATE_KEY.with(|k| *k.borrow_mut() = None);
+        STATE_KEY.with(|key| *key.borrow_mut() = None);
     }
 
-    /// The dev state key, so tests can derive view/modify keys to build auth and
-    /// decrypt balances exactly as a client would.
-    pub fn state_key() -> [u8; 32] {
-        STATE_KEY
-            .with(|k| *k.borrow())
-            .expect("test enclave not installed")
+    /// Dev state handle, so a test can build a MAC and open a balance.
+    pub fn state_key() -> outbe_tee::resident::StateKeyHandle {
+        assert!(
+            STATE_KEY.with(|key| key.borrow().is_some()),
+            "test enclave not installed"
+        );
+        fixture_key()
     }
 
-    /// Builds an authorization with the installed fixture key and operation nonce.
-    pub fn modify_auth(
-        operation: outbe_enclave::gratis::ModifyOperation,
-    ) -> outbe_enclave::protocol::ModifyAuth {
-        let key =
-            outbe_enclave::gratis::derive_modify_key(&state_key(), operation.account).unwrap();
-        outbe_enclave::protocol::ModifyAuth {
-            mac: outbe_enclave::gratis::modify_mac(&key, &operation),
+    /// Authorization bound to the installed fixture key.
+    pub fn modify_auth(operation: ModifyOperation) -> ModifyAuth {
+        let key = derive_account_keys(&state_key(), operation.account).expect("account keys");
+        ModifyAuth {
+            mac: modify_mac(&key, &operation),
             op_nonce: operation.op_nonce,
         }
     }
 
     pub(crate) fn try_mine(
-        request: &outbe_enclave::nod_mine::MineEncryptedNodRequestV1,
-    ) -> Option<Result<outbe_enclave::nod_mine::MineEncryptedNodResultV1>> {
-        STATE_KEY.with(|key| {
-            key.borrow().map(|state_key| {
-                let fidelity_key = outbe_enclave::fidelity::derive_fidelity_state_key(
-                    outbe_enclave::dev::FIDELITY_GROUP_SIG,
-                    outbe_enclave::dev::fidelity_chain(),
-                    DEV_EPOCH,
+        request: &MineEncryptedNodRequestV1,
+    ) -> Option<Result<MineEncryptedNodResultV1>> {
+        STATE_KEY.with(|slot| {
+            slot.borrow().as_ref().map(|gratis| {
+                let fidelity = derive_fidelity_key()?;
+                let nod = outbe_tee::resident::StateKeyHandle::for_test([0x5a; 32]);
+                nod_mine::apply(
+                    nod_mine::MineKeys {
+                        nod: &nod,
+                        gratis,
+                        fidelity: &fidelity,
+                    },
+                    request,
                 )
-                .map_err(map_test_enclave_error)?;
-                outbe_enclave::nod_mine::apply(&[0x5a; 32], &state_key, &fidelity_key, request)
-                    .map_err(map_test_enclave_error)
+                .map_err(nod_mine::map_stand_in)
             })
         })
     }
 
     pub(crate) fn try_apply(req: &GratisOpRequest) -> Option<GratisOpResult> {
-        STATE_KEY.with(|k| {
-            k.borrow().map(|key| {
-                let mut result = outbe_enclave::gratis::apply_op(&key, req);
-                // Mirror the real transport's combined op. On success, apply the
-                // co-located fidelity cohort section under the INDEPENDENT
-                // fidelity key. That key is the shared dev fidelity identity, so a
-                // folded mint writes a blob that the fidelity stand-in can later read.
-                if let (outbe_enclave::protocol::GratisOpStatus::Applied, Some(section)) =
-                    (&result.status, &req.fidelity)
-                {
-                    let fidelity_key = outbe_enclave::fidelity::derive_fidelity_state_key(
-                        outbe_enclave::dev::FIDELITY_GROUP_SIG,
-                        outbe_enclave::dev::fidelity_chain(),
-                        DEV_EPOCH,
-                    )
-                    .expect("derive dev fidelity state key");
-                    // Mirror the real transport. A failing fidelity section
-                    // rejects the WHOLE op (rejected_result). The host then reverts
-                    // and writes NEITHER ledger. The failure is not a panic.
-                    match outbe_enclave::fidelity::apply_cohort_section(
-                        &fidelity_key,
-                        req.account,
-                        req.amount,
-                        section,
-                    ) {
+        STATE_KEY.with(|slot| {
+            slot.borrow().as_ref().map(|key| {
+                let mut result = apply_op(key, req);
+                if let (GratisOpStatus::Applied, Some(section)) = (&result.status, &req.fidelity) {
+                    let fidelity = derive_fidelity_key().expect("derive dev fidelity state key");
+                    match apply_cohort_section(&fidelity, req.account, req.amount, section) {
                         Ok(outcome) => result.fidelity = Some(outcome),
-                        Err(e) => {
-                            result = outbe_enclave::gratis::rejected_result(
-                                format!("fidelity section failed: {e}"),
+                        Err(error) => {
+                            result = rejected_result(
+                                fidelity_reason(&error),
                                 result.inputs_canonical_hash,
                             );
                         }
@@ -156,14 +291,124 @@ pub mod test_enclave {
             })
         })
     }
+
+    fn derive_fidelity_key() -> Result<outbe_tee::resident::StateKeyHandle> {
+        let material = offer(FIDELITY_GROUP_SIG, fidelity_chain())?;
+        outbe_fidelity::derive_fidelity_state_key(&material, fidelity_chain(), DEV_EPOCH).map_err(
+            |error| {
+                GratisFatalError::TestEnclave {
+                    source: Box::new(error),
+                }
+                .into()
+            },
+        )
+    }
 }
 
-pub(crate) fn mine_encrypted_nod(
-    request: outbe_enclave::nod_mine::MineEncryptedNodRequestV1,
-) -> Result<outbe_enclave::nod_mine::MineEncryptedNodResultV1> {
-    #[cfg(any(test, feature = "test-enclave"))]
-    if let Some(result) = test_enclave::try_mine(&request) {
-        return result;
+#[cfg(test)]
+mod executing_context {
+    use super::*;
+    use crate::engine::{derive_account_keys, modify_mac, ModifyOperation};
+    use crate::protocol::GratisOp;
+    use alloy_primitives::{Address, U256};
+    use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
+    use outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test;
+    use outbe_tee::resident::ResidentOfferMaterial;
+    use std::sync::Arc;
+
+    fn binding() -> NetworkBindingV1 {
+        NetworkBindingV1 {
+            chain_id: U256::from(1u64).to_be_bytes(),
+            genesis_hash: B256::repeat_byte(2),
+            attestation_mode: AttestationMode::NoAttestationDev,
+        }
     }
-    outbe_enclave::nod_mine::mine_encrypted_nod(request).map_err(map_nod_client_error)
+
+    fn chain() -> B256 {
+        B256::from(binding().chain_id)
+    }
+
+    fn context(seed: u8) -> Arc<InProcessTeeContext> {
+        let context = Arc::new(outbe_tee::test_utils::resident_context(seed, binding()));
+        let material = ResidentOfferMaterial::for_test(
+            b"gratis-witness-group-signature-v1!!!!!".to_vec(),
+            chain(),
+            0,
+            0,
+        )
+        .expect("offer material");
+        context.activate_for_test(material).expect("activate offer");
+        context
+    }
+
+    fn mint_request(ctx: &InProcessTeeContext) -> GratisOpRequest {
+        let account = Address::repeat_byte(0x11);
+        let amount = U256::from(7u64);
+        let state_key = resident_state_key(ctx, &GRATIS, STATE_EPOCH).expect("gratis key");
+        let keys = derive_account_keys(&state_key, account).expect("account keys");
+        let operation = ModifyOperation {
+            account,
+            op: GratisOp::Mint,
+            amount,
+            op_nonce: 0,
+            chain_id: chain(),
+        };
+        GratisOpRequest {
+            op: GratisOp::Mint,
+            chain_id: chain(),
+            account,
+            amount,
+            current_balance: Vec::new(),
+            current_pledged: Vec::new(),
+            modify_auth: crate::protocol::ModifyAuth {
+                mac: modify_mac(&keys, &operation),
+                op_nonce: 0,
+            },
+            fidelity: None,
+        }
+    }
+
+    #[test]
+    fn execute_rejects_a_foreign_hash_before_the_signature() {
+        let ctx = context(4);
+        let request = mint_request(&ctx);
+        let expected = gratis_op_canonical_hash(&request);
+        assert!(matches!(
+            execute_apply(&ctx, B256::ZERO, &request),
+            Err(TransportError::UnexpectedResponse)
+        ));
+        let signed = execute_apply(&ctx, expected, &request).expect("signed mint");
+        let mut corrupt = signed.clone();
+        corrupt.attestation_tag[0] ^= 0xff;
+        assert!(matches!(
+            authenticate_apply(expected, &ctx.attestation_public(), &corrupt),
+            Err(TransportError::AppAttestation { .. })
+        ));
+        corrupt.attestation_tag = signed.attestation_tag.clone();
+        corrupt.inputs_canonical_hash = B256::ZERO;
+        assert!(matches!(
+            authenticate_apply(expected, &ctx.attestation_public(), &corrupt),
+            Err(TransportError::UnexpectedResponse)
+        ));
+    }
+
+    #[test]
+    fn finish_keeps_the_first_signature_after_the_global_context_is_replaced() {
+        let first = context(4);
+        let second = context(9);
+        assert_ne!(first.attestation_public(), second.attestation_public());
+        let _guard = set_in_process_tee_context_for_test(Some(Arc::clone(&first)));
+        let request = mint_request(&first);
+        let expected = gratis_op_canonical_hash(&request);
+        let signed = execute_apply(&first, expected, &request).expect("signed mint");
+        let _successor = set_in_process_tee_context_for_test(Some(second.clone()));
+        assert_eq!(
+            outbe_tee::in_process_tee_context()
+                .expect("successor")
+                .attestation_public(),
+            second.attestation_public()
+        );
+        assert!(authenticate_apply(expected, &second.attestation_public(), &signed).is_err());
+        assert!(finish_apply(expected, signed).is_ok());
+    }
 }

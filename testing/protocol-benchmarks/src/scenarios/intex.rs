@@ -64,7 +64,7 @@ fn params(index: usize) -> IssuanceParams {
     let series_id = SeriesId::pack(TARGET_DAY.value(), SERIES_CODES[index], b'U')
         .expect("benchmark Intex id is canonical");
     // The PROD call terms, which the auction start fixes while the PROD profile is live.
-    let prod = outbe_intex::config::IntexParams::PROD;
+    let prod = outbe_intex::config::IntexParams::MAINNET;
     let entry_price_minor = U256::from(1_000_000);
     IssuanceParams {
         series_id,

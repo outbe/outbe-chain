@@ -74,7 +74,7 @@ impl TributeContract<'_> {
         })
     }
 
-    pub fn seal_day(&mut self, day: WorldwideDay) -> Result<()> {
+    pub fn seal_worldwide_day(&mut self, day: WorldwideDay) -> Result<()> {
         require_day_seal_lease(&self.storage_handle(), day)?;
         self.set_day_sealed(day, true)?;
         self.emit(ITribute::WorldwideDaySealed {
@@ -122,7 +122,7 @@ impl TributeContract<'_> {
 enum DayLease {
     InitGenesis,
     CycleAllocation(WorldwideDay),
-    ProcessReady,
+    MetadosisReady,
     AdvanceDue,
 }
 
@@ -133,7 +133,7 @@ fn require_day_lease(storage: &StorageHandle<'_>, lease: DayLease) -> Result<()>
             day.to_timestamp_utc()
                 .map_err(crate::errors::date_step_error)?,
         ),
-        DayLease::ProcessReady => storage.require_metadosis_process_ready(),
+        DayLease::MetadosisReady => storage.require_metadosis_process_ready(),
         DayLease::AdvanceDue => storage.require_metadosis_advance_due(),
     }
 }
@@ -160,7 +160,7 @@ fn lease_identity_mismatch(error: &PrecompileError) -> bool {
         || message == "scoped mutation frame identity mismatch"
 }
 
-/// Init-genesis, cycle allocation, advance-due, and process-ready create worldwide days.
+/// Init-genesis, cycle allocation, Metadosis-ready and advance-due create worldwide days.
 pub fn require_worldwide_day_creation_lease(
     storage: &StorageHandle<'_>,
     day: WorldwideDay,
@@ -170,7 +170,7 @@ pub fn require_worldwide_day_creation_lease(
         &[
             DayLease::InitGenesis,
             DayLease::CycleAllocation(day),
-            DayLease::ProcessReady,
+            DayLease::MetadosisReady,
             DayLease::AdvanceDue,
         ],
     )
@@ -183,7 +183,7 @@ pub(crate) fn require_day_seal_lease(storage: &StorageHandle<'_>, day: Worldwide
         &[
             DayLease::InitGenesis,
             DayLease::CycleAllocation(day),
-            DayLease::ProcessReady,
+            DayLease::MetadosisReady,
             DayLease::AdvanceDue,
         ],
     )

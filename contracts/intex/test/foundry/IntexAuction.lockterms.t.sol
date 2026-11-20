@@ -12,7 +12,7 @@ contract RecordingLockEscrow {
     uint32 public bidRate;
     uint16 public quantity;
 
-    function lockFunds(uint32, address, uint128 amount_, uint32 bidRate_, uint16 quantity_) external {
+    function lockIntexAuctionAsset(uint32, address, uint128 amount_, uint32 bidRate_, uint16 quantity_) external {
         amount = amount_;
         bidRate = bidRate_;
         quantity = quantity_;
@@ -46,7 +46,7 @@ contract IntexAuctionLockTermsTest is Test {
         escrow = new RecordingLockEscrow();
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), relayer);
-        auction.wire(address(escrow));
+        auction.setEscrow(address(escrow));
         vm.stopPrank();
     }
 
@@ -69,28 +69,27 @@ contract IntexAuctionLockTermsTest is Test {
     function test_TheRevealPassesTheBidTermsToTheEscrow() public {
         uint256 startTs = block.timestamp;
         vm.prank(relayer);
-        auction.auctionStart(
+        auction.startAuction(
             DAY,
-            IIntexAuction.DayState.Live,
             IIntexAuction.AuctionSchedule({
                 commitEnd: uint32(startTs + 100), revealEnd: uint32(startTs + 200), issuanceEnd: uint32(startTs + 300)
             }),
             IIntexAuction.AuctionParams({
                 promisLoadMinor: PROMIS_LOAD_MINOR,
-                minIntexBidRate: 50,
+                minBidRate: 50,
                 prices: ReferenceCurrencyPriceLib.onePriced(840, 1e6, 200),
                 callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
-                minIntexBidQuantity: 1,
-                commitBondMinor: 0
+                minBidQuantity: 1,
+                bidBondMinor: 0
             })
         );
 
         bytes memory signature = _signature();
         vm.prank(bidder);
-        auction.commitBid(DAY, keccak256(signature));
+        auction.commitIntexAuctionBid(DAY, keccak256(signature));
         vm.warp(startTs + 101);
         vm.prank(bidder);
-        auction.revealBid(DAY, QUANTITY, RATE, 840, 840, uint64(block.chainid), signature);
+        auction.revealIntexAuctionBid(DAY, QUANTITY, RATE, 840, 840, uint64(block.chainid), signature);
 
         assertEq(escrow.bidRate(), RATE, "bid rate");
         assertEq(escrow.quantity(), QUANTITY, "quantity");

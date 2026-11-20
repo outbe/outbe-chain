@@ -41,7 +41,7 @@ contract IntexNFT1155Bridge is
     /// @notice Snapshot of one batch item whose `token.crosschainMint` reverted. `exists`
     ///         distinguishes never-failed from failed-and-retried. The struct does not keep the
     ///         revert data: neither `retryCrosschainMint` nor `reclaimToSource` reads it.
-    ///         `CrosschainMintFailed` carries it for whoever diagnoses the failure. The field order
+    ///         `IntexCrosschainReceiveFailed` carries it for whoever diagnoses the failure. The field order
     ///         lets the address, chain and flag share a slot.
     struct FailedCrosschainMint {
         address to;
@@ -97,8 +97,8 @@ contract IntexNFT1155Bridge is
     }
 
     /// @inheritdoc IIntexNFT1155Bridge
-    function setRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _setRemoteMessenger(chainId, interop);
+    function registerRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _registerRemoteMessenger(chainId, interop);
     }
 
     // --- Single transfer ---
@@ -112,7 +112,9 @@ contract IntexNFT1155Bridge is
         bytes memory message = _buildSingleMsg(_sendParam);
         token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.tokenId, _sendParam.units);
         sendId = _sendPaidByCaller(_sendParam.dstChainId, message, IntexGas.nftMint(1));
-        emit Bridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenId, _sendParam.units);
+        emit IntexCrosschainSent(
+            sendId, _sendParam.dstChainId, msg.sender, _sendParam.to, _sendParam.tokenId, _units32(_sendParam.units)
+        );
     }
 
     /// @dev `assertAddress` has already rejected anything not address-shaped by the time this narrows one.
@@ -153,7 +155,9 @@ contract IntexNFT1155Bridge is
         }
 
         sendId = _sendPaidByCaller(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.tokenIds.length));
-        emit BatchBridged(sendId, _sendParam.dstChainId, msg.sender, _sendParam.tokenIds, _sendParam.units);
+        emit IntexCrosschainBatchSent(
+            sendId, _sendParam.dstChainId, msg.sender, _sendParam.to, _sendParam.tokenIds, _units32(_sendParam.units)
+        );
     }
 
     function _buildBatchMsg(BatchSendParam calldata _sendParam) internal pure returns (bytes memory) {
@@ -197,8 +201,13 @@ contract IntexNFT1155Bridge is
         }
 
         sendId = _sendPaidByCaller(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.recipients.length));
-        emit MultiBridged(
-            sendId, _sendParam.dstChainId, msg.sender, _sendParam.recipients, _sendParam.tokenIds, _sendParam.units
+        emit IntexCrosschainMultiSent(
+            sendId,
+            _sendParam.dstChainId,
+            msg.sender,
+            _sendParam.recipients,
+            _sendParam.tokenIds,
+            _units32(_sendParam.units)
         );
     }
 
@@ -254,20 +263,21 @@ contract IntexNFT1155Bridge is
             _tryCrosschainMintOne(srcChainId, receiveId, i, toAddress, p.tokenIds[i], p.units[i]);
         }
 
-        emit BatchReceived(receiveId, srcChainId, toAddress, p.tokenIds, p.units);
+        emit IntexCrosschainBatchReceived(receiveId, srcChainId, toAddress, p.tokenIds, _units32(p.units));
     }
 
     function _handleMultiReceive(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal {
         IntexNFT1155BridgeCodec.MultiPayload memory p = IntexNFT1155BridgeCodec.decodeMulti(message);
 
+        address[] memory recipients = new address[](p.recipients.length);
         for (uint256 i = 0; i < p.recipients.length; i++) {
             IntexNFT1155BridgeCodec.assertAddress(p.recipients[i]);
             if (p.recipients[i] == bytes32(0)) revert InvalidReceiver();
-            address toAddress = address(uint160(uint256(p.recipients[i])));
-            _tryCrosschainMintOne(srcChainId, receiveId, i, toAddress, p.tokenIds[i], p.units[i]);
+            recipients[i] = address(uint160(uint256(p.recipients[i])));
+            _tryCrosschainMintOne(srcChainId, receiveId, i, recipients[i], p.tokenIds[i], p.units[i]);
         }
 
-        emit MultiReceived(receiveId, srcChainId, p.recipients, p.tokenIds, p.units);
+        emit IntexCrosschainMultiReceived(receiveId, srcChainId, recipients, p.tokenIds, _units32(p.units));
     }
 
     /// @dev Isolate a per-item `token.crosschainMint` revert. Park a snapshot for
@@ -286,7 +296,7 @@ contract IntexNFT1155Bridge is
         catch (bytes memory reason) {
             _bs().failedCrosschainMints[receiveId][idx] =
                 FailedCrosschainMint({to: to, srcChainId: srcChainId, exists: true, tokenId: tokenId, units: units});
-            emit CrosschainMintFailed(srcChainId, receiveId, idx, to, tokenId, units, reason);
+            emit IntexCrosschainReceiveFailed(receiveId, srcChainId, idx, to, tokenId, _units32(units), reason);
         }
     }
 
@@ -304,7 +314,7 @@ contract IntexNFT1155Bridge is
         if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
         delete $.failedCrosschainMints[receiveId][idx];
         token.crosschainMint(f.to, f.tokenId, f.units);
-        emit CrosschainMintRetried(receiveId, idx);
+        emit IntexCrosschainReceived(receiveId, f.srcChainId, f.to, f.tokenId, _units32(f.units));
     }
 
     /// @notice Permissionless reclaim of a batch item that the destination gate rejects
@@ -320,7 +330,23 @@ contract IntexNFT1155Bridge is
         delete $.failedCrosschainMints[receiveId][idx];
 
         sendId = _sendPaidByCaller(f.srcChainId, _buildReclaimMsg(f), IntexGas.nftMint(1));
-        emit CrosschainMintReclaimed(receiveId, idx, f.srcChainId, f.to, f.tokenId, f.units);
+        emit IntexCrosschainSentBack(
+            sendId, f.srcChainId, receiveId, idx, bytes32(uint256(uint160(f.to))), f.tokenId, _units32(f.units)
+        );
+    }
+
+    /// @dev Units of one series fit `uint32`: the token caps its supply there. A wider count, which
+    ///      only a malformed message can carry, saturates, so a receive never reverts on its content.
+    function _units32(uint256 units) private pure returns (uint32) {
+        // forge-lint: disable-next-line(unsafe-typecast) -- at most type(uint32).max here
+        return units > type(uint32).max ? type(uint32).max : uint32(units);
+    }
+
+    function _units32(uint256[] memory units) private pure returns (uint32[] memory narrow) {
+        narrow = new uint32[](units.length);
+        for (uint256 i = 0; i < units.length; i++) {
+            narrow[i] = _units32(units[i]);
+        }
     }
 
     /// @notice Native fee that `reclaimToSource(receiveId, idx)` takes.

@@ -139,7 +139,7 @@ pub(crate) enum TributeError {
     TeeRegistryNotBootstrapped,
     /// Encrypting the tribute offer payload failed.
     #[error("offer encryption failed: {0}")]
-    OfferEncryptionFailed(outbe_enclave::LocalCryptoError),
+    OfferEncryptionFailed(outbe_core_common::confidential_tee::LocalCryptoError),
     /// The command-line flag value is not valid hexadecimal.
     #[error("{flag} is not valid hex: {source}")]
     InvalidHexFlag {

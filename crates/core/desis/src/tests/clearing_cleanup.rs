@@ -1,5 +1,3 @@
-#![cfg(not(feature = "e2e-test"))]
-
 use super::*;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 
@@ -9,12 +7,12 @@ fn cleanup_progress_does_not_change_the_next_auctions_gas_quote() {
         open_clearing(&s, 100);
         relay_bids(&s, SRC_CHAIN, 100, 200);
         clear(&s);
-        let before = runtime::clearing_round_gas(&s, NEXT_EMISSION_DAY, SRC_CHAIN).unwrap();
+        let before = runtime::clearing_run_gas(&s, NEXT_EMISSION_DAY, SRC_CHAIN).unwrap();
         assert!(holds_bids(&s, SRC_CHAIN, 100));
-        crate::process_cleanup(s.clone()).unwrap();
+        crate::run_cleanup(s.clone()).unwrap();
         assert!(!holds_bids(&s, SRC_CHAIN, 100));
         assert_eq!(
-            runtime::clearing_round_gas(&s, NEXT_EMISSION_DAY, SRC_CHAIN).unwrap(),
+            runtime::clearing_run_gas(&s, NEXT_EMISSION_DAY, SRC_CHAIN).unwrap(),
             before
         );
     });
@@ -67,7 +65,7 @@ fn a_waiting_gate_does_not_starve_another_ready_auction() {
             .write(&NEXT_EMISSION_DAY, NOW + 100)
             .unwrap();
         contract
-            .chain_done
+            .bids_completed
             .write(&DesisContract::chain_key(NEXT_EMISSION_DAY, SRC_CHAIN), 1)
             .unwrap();
         contract.push_gate_active(NEXT_EMISSION_DAY).unwrap();

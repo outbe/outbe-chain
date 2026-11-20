@@ -105,7 +105,7 @@ fn test_issue_accepts_unsealed_day_and_rejects_sealed_day() {
         tc.issue(&tribute).unwrap();
         assert_eq!(tc.balance_of(tribute.owner).unwrap(), 1);
 
-        tc.seal_day(tribute.worldwide_day).unwrap();
+        tc.seal_worldwide_day(tribute.worldwide_day).unwrap();
         let mut second = sample_tribute();
         set_owner(
             &mut second,
@@ -325,7 +325,7 @@ fn test_burn_nonexistent_fails() {
 }
 
 #[test]
-fn test_seal_day() {
+fn test_seal_worldwide_day() {
     with_tribute(|tc| {
         let day = 20241220u32.into();
         open_sample_day(tc);
@@ -334,7 +334,7 @@ fn test_seal_day() {
         tc.issue(&tribute).unwrap();
         let totals_before_seal = tc.get_day_totals(day).unwrap();
 
-        tc.seal_day(day).unwrap();
+        tc.seal_worldwide_day(day).unwrap();
         assert!(tc.is_day_sealed(day).unwrap());
 
         let mut second_tribute = sample_tribute();
@@ -573,7 +573,7 @@ fn sealed_day_rejects_burn_all_by_wwd_without_partial_mutation() {
         open_sample_day(tc);
         tc.issue(&t1).unwrap();
         tc.issue(&t2).unwrap();
-        tc.seal_day(day).unwrap();
+        tc.seal_worldwide_day(day).unwrap();
 
         assert!(tc.burn_all_by_wwd(day).is_err());
         assert!(tc.get_tribute(t1.tribute_id).unwrap().is_some());
@@ -704,7 +704,9 @@ fn failed_mutations_emit_no_events_and_sealing_emits_only_its_business_event() {
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();
             let mut contract = TributeContract::new(storage.clone());
-            in_process_ready(&storage, || contract.seal_day(tribute.worldwide_day));
+            in_process_ready(&storage, || {
+                contract.seal_worldwide_day(tribute.worldwide_day)
+            });
         });
         let events = provider.get_events(TRIBUTE_ADDRESS);
         assert_eq!(events.len(), 1);

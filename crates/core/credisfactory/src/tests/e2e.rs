@@ -2,7 +2,7 @@
 use crate::{runtime, tests::*};
 use alloy_primitives::{Address, U256};
 use outbe_credis::{CredisContract, CredisState};
-use outbe_enclave::protocol::GratisOp;
+use outbe_gratis::GratisOp;
 use outbe_gratisfactory::runtime::{cancel_pledge, pledge_of};
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
@@ -621,13 +621,13 @@ fn reservation_snapshots_call_profile_terms_and_called_settled_record_retains_ca
     let (id_called_settled, series_id, prod_terms) =
         StorageHandle::enter(&mut provider, |storage| {
             bootstrap(&storage, pledge_cost());
-            let prod_terms = outbe_credis::config::CredisParams::PROD;
+            let prod_terms = outbe_credis::config::CredisParams::MAINNET;
             let reservation_id = seed_reservation(&storage, alice(), alice(), pledge_stables());
             // Switch live config_profile to DEV after reservation is created; issue_credis must
             // copy the reservation's snapshotted PROD terms without re-reading config_profile.
             CredisContract::new(storage.clone())
                 .config_profile
-                .write(outbe_credis::config::PROFILE_DEV)
+                .write(outbe_credis::config::PROFILE_TESTNET)
                 .unwrap();
             pledge(&storage, alice(), reservation_id, 1);
             fund_stake(&storage, pledge_stake());

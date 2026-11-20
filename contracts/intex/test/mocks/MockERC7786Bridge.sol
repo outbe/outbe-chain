@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {IERC7786GatewaySource, IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
-import {IGatewayQuote} from "@contracts/shared/interfaces/IGatewayQuote.sol";
+import {IGatewayQuote} from "@crosschain/interfaces/IGatewayQuote.sol";
 
 /// @title MockERC7786Bridge
 /// @notice In-process loopback stand-in for the `crosschain` hub's ERC7786Bridge, for intex

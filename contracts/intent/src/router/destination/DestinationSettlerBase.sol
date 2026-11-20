@@ -3,6 +3,7 @@ pragma solidity 0.8.30;
 
 import {OnchainCrossChainOrder} from "../../interfaces/OrderTypes.sol";
 import {IDestinationSettler} from "../../interfaces/IDestinationSettler.sol";
+import {OrderEncoder} from "../../libs/OrderEncoder.sol";
 import {OrderStatusStorage} from "../common/OrderStatusStorage.sol";
 import {RouterAccessors} from "../common/RouterAccessors.sol";
 
@@ -105,7 +106,9 @@ abstract contract DestinationSettlerBase is OrderStatusStorage, RouterAccessors,
 
             bytes32 status = _statuses().destinationOrderStatus[orderId];
             if (!_isNotProcessed(status) && status != CLAIMED) revert InvalidOrderStatus();
-            if (block.timestamp <= _orders[i].fillDeadline) {
+            // The deadline comes from `orderData`, which the order id binds. The caller sets the
+            // outer `fillDeadline`, so it proves nothing.
+            if (block.timestamp <= OrderEncoder.decode(_orders[i].orderData).fillDeadline) {
                 revert OrderFillNotExpired();
             }
 

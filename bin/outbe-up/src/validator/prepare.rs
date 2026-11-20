@@ -48,11 +48,14 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
             journal.save()?;
         }
         let validator = validator_address(&root.join("keys/evm-key.hex"))?;
+        let hyperlane = validator_address(&root.join("keys/hyperlane-key.hex"))?;
         progress.done("host is already prepared with this exact bundle and config");
         print_summary(
             validator,
+            hyperlane,
             minimum_stake,
             &journal.config.network.certified_rpc,
+            journal.config.hyperlane.signer_funding_wei.parse()?,
         );
         return Ok(());
     }
@@ -73,6 +76,7 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
         ],
     )?;
     let validator = validator_address(&keys.join("evm-key.hex"))?;
+    let hyperlane = validator_address(&keys.join("hyperlane-key.hex"))?;
     config.write_runtime_config(staging, validator)?;
     fs::set_permissions(staging, fs::Permissions::from_mode(0o755))?;
 
@@ -91,8 +95,10 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
     ));
     print_summary(
         validator,
+        hyperlane,
         minimum_stake,
         &journal.config.network.certified_rpc,
+        journal.config.hyperlane.signer_funding_wei.parse()?,
     );
     Ok(())
 }
@@ -132,18 +138,26 @@ fn verify_bundle_network(root: &Path, config: &OperatorConfig) -> Result<()> {
     Ok(())
 }
 
-fn print_summary(validator: Address, minimum_stake: U256, certified_rpc: &str) {
-    let funding = minimum_stake + U256::from(1_000_000_000_000_000_000_u64);
+fn print_summary(
+    validator: Address,
+    hyperlane: Address,
+    minimum_stake: U256,
+    certified_rpc: &str,
+    hyperlane_funding: U256,
+) {
+    let funding = minimum_stake + hyperlane_funding + U256::from(1_000_000_000_000_000_000_u64);
     println!();
     println!("Validator files:");
     println!("  address:          {validator:#x}");
     println!("  BLS key:          /opt/outbe-chain/keys/signing-key.hex");
     println!("  EVM key:          /opt/outbe-chain/keys/evm-key.hex");
     println!("  Feeder key:       /opt/outbe-chain/keys/feeder-key.hex");
+    println!("  Hyperlane key:    /opt/outbe-chain/keys/hyperlane-key.hex");
+    println!("  Hyperlane signer: {hyperlane:#x}");
     println!("  Reth P2P key:     /opt/outbe-chain/keys/reth-p2p-secret.hex");
     println!("  Radicle identity: /opt/outbe-chain/keys/radicle");
     println!();
-    println!("Fund this address before `outbe-up validator promote`:");
+    println!("Fund this address before `outbe-up validator sync` (registration gas and stake):");
     println!("VALIDATOR_ADDR='{validator:#x}'");
     println!("CERTIFIED_RPC='{certified_rpc}'");
     println!("MINIMUM_STAKE_WEI='{minimum_stake}'");

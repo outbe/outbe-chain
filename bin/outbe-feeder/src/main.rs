@@ -13,6 +13,7 @@ mod health;
 mod journal;
 mod oracle_client;
 mod provider;
+mod rates;
 #[cfg(test)]
 mod recovery_tests;
 mod vote_builder;
@@ -232,6 +233,7 @@ async fn run_feeder(
         health::start_health_server(health_bind, health.clone()).await?;
     }
     let mut last_attempt = None;
+    let mut rate_cache = rates::RateCache::default();
     // A zero configured interval must not cause a busy loop.
     let interval = std::time::Duration::from_secs(config.oracle.poll_interval_secs.max(1));
     let mut shutdown = std::pin::pin!(shutdown_signal());
@@ -266,6 +268,7 @@ async fn run_feeder(
             journal: &mut journal,
             health: &health,
             last_attempt: &mut last_attempt,
+            rates: &mut rate_cache,
         };
         let result = tokio::select! {
             result=feeder_tick(&mut tick_ctx)=>result,
@@ -321,6 +324,7 @@ pub(crate) struct FeederTickContext<'a> {
     pub journal: &'a mut journal::Journal,
     pub health: &'a FeederHealth,
     pub last_attempt: &'a mut Option<u64>,
+    pub rates: &'a mut rates::RateCache,
 }
 
 enum PendingReconciliation {
@@ -464,6 +468,7 @@ impl FeederTickContext<'_> {
         // Gas prices come before the period check below, so a slow RPC cannot
         // carry the vote into the next period.
         let gas = self.gas_votes(period, &aggregated).await;
+        self.rates.refresh(&self.config.rate_providers).await;
         let fresh = self.client.head().await?;
         if fresh.period(self.config.oracle.vote_period) != period {
             self.health
@@ -487,7 +492,13 @@ impl FeederTickContext<'_> {
         if aggregated.is_empty() {
             return Err(FeederError::NoPriceDataAvailable.into());
         }
-        let calldata = vote_builder::encode_vote(&aggregated, &gas);
+        // The time of the head block: the vote goes into a later block, and
+        // the Oracle rejects a rate that is newer than its block.
+        let rates = self
+            .rates
+            .votes(&self.config.rate_providers, fresh.timestamp);
+        let rates = self.client.only_rate_targets(&fresh, rates).await?;
+        let calldata = vote_builder::encode_vote(&aggregated, &gas, &rates);
         if let Ok(decoded) = vote_builder::decode_vote_log(&calldata) {
             info!(vote=%decoded,"vote calldata");
         }

@@ -8,6 +8,7 @@ use zeroize::Zeroizing;
 pub mod assets;
 pub mod bundle;
 pub mod config;
+pub mod hyperlane;
 pub mod install;
 pub mod journal;
 pub mod prepare;
@@ -22,7 +23,6 @@ pub mod wait;
 pub const FULL_NODE: &str = "outbe-full-node.service";
 pub const VALIDATOR_TARGET: &str = "outbe-validator.target";
 pub const VALIDATOR_SERVICE: &str = "outbe-validator.service";
-pub const ENCLAVE_SERVICE: &str = "outbe-enclave.service";
 
 pub(crate) fn validator_address(path: &Path) -> Result<Address> {
     let encoded = Zeroizing::new(

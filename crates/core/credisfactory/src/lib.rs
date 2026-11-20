@@ -23,9 +23,8 @@ pub mod precompile;
 pub mod rules;
 pub mod runtime;
 mod sol_ext;
-#[cfg(feature = "e2e-test")]
-mod test_arming_e2e;
 
+pub use cleanup::PLEDGE_BURN_COST;
 pub use hooks::CredisFactoryModule;
 
 #[cfg(test)]

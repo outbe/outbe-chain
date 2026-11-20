@@ -19,7 +19,7 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
     StorageHandle::enter(&mut provider, |storage| {
         NodContract::new(storage.clone())
             .config_profile
-            .write(outbe_nod::config::PROFILE_PROD)
+            .write(outbe_nod::config::PROFILE_MAINNET)
             .unwrap();
         let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());
         let pair = outbe_oracle::api::AddressPair::new_coen_to(978);

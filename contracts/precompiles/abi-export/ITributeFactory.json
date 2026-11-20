@@ -1,7 +1,7 @@
 [
   {
     "type": "function",
-    "name": "getActiveWorldwideDays",
+    "name": "activeWorldwideDays",
     "inputs": [],
     "outputs": [
       {
@@ -401,11 +401,6 @@
         "internalType": "uint16"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "LookbackWindowOverflow",
-    "inputs": []
   },
   {
     "type": "error",

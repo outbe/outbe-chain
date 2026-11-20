@@ -17,7 +17,7 @@ use super::super::{
     ReplacementCandidateSubmissionV1,
 };
 use super::remove_torn_scratch;
-use crate::{NodeHostNoiseKey, TransportError};
+use crate::{node_host::NodeHostIdentityKey, TransportError};
 use alloy_primitives::B256;
 use outbe_primitives::tee_attestation_v1::EnclaveInitializationManifestV1;
 
@@ -50,7 +50,7 @@ struct DurableReplacementState {
 struct ReplacementTerminalContext<'a> {
     paths: &'a NodeHostPaths,
     active: &'a EnclaveInitializationManifestV1,
-    node_host: &'a NodeHostNoiseKey,
+    node_host: &'a NodeHostIdentityKey,
     presence: &'a ReplacementPresence,
     durable: &'a DurableReplacementState,
 }
@@ -99,7 +99,7 @@ fn read_durable_replacement_state(
 
 pub(in super::super) fn reconcile_replacement_state(
     paths: &NodeHostPaths,
-    node_host: &NodeHostNoiseKey,
+    node_host: &NodeHostIdentityKey,
 ) -> Result<(), TransportError> {
     remove_torn_scratch(paths, &paths.replacement_write_scratch)?;
     let active = read_manifest(&paths.manifest)?;

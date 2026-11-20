@@ -66,8 +66,8 @@ contract IntexAuctionBondTest is Test {
 
         vm.startPrank(admin);
         auction.grantRole(auction.RELAYER_ROLE(), bridger);
-        auction.wire(address(escrow));
-        escrow.wire(address(auction), address(compact), address(paymentToken));
+        auction.setEscrow(address(escrow));
+        escrow.setDependencies(address(auction), address(compact), address(paymentToken));
         vm.stopPrank();
         compact.setResetPeriodSeconds(0);
 
@@ -77,7 +77,7 @@ contract IntexAuctionBondTest is Test {
 
         startTs = block.timestamp;
         vm.prank(bridger);
-        auction.auctionStart(emissionDay, IIntexAuction.DayState.Live, _schedule(), _params(BOND_PROTOCOL));
+        auction.startAuction(emissionDay, _schedule(), _params(BOND_PROTOCOL));
     }
 
     // --- Helpers ---
@@ -93,11 +93,11 @@ contract IntexAuctionBondTest is Test {
     function _params(uint128 bond) internal pure returns (IIntexAuction.AuctionParams memory) {
         return IIntexAuction.AuctionParams({
             promisLoadMinor: PROMIS_LOAD_MINOR,
-            minIntexBidRate: 1,
+            minBidRate: 1,
             prices: ReferenceCurrencyPriceLib.onePriced(840, ENTRY_PRICE, 200),
             callTrigger: IIntexAuction.IntexCallTrigger({callWindow: 0, callThreshold: 0, callNoticePeriod: 0}),
-            minIntexBidQuantity: 1,
-            commitBondMinor: bond
+            minBidQuantity: 1,
+            bidBondMinor: bond
         });
     }
 
@@ -120,7 +120,7 @@ contract IntexAuctionBondTest is Test {
 
     function _commit() internal {
         vm.prank(iba1);
-        auction.commitBid(emissionDay, keccak256(_signature()));
+        auction.commitIntexAuctionBid(emissionDay, keccak256(_signature()));
     }
 
     function _enterRevealStage() internal {
@@ -131,14 +131,14 @@ contract IntexAuctionBondTest is Test {
         return IERC6909(address(compact)).balanceOf(address(escrow), escrow.lockId());
     }
 
-    // --- commitBid ---
+    // --- commitIntexAuctionBid ---
 
     function test_CommitBid_TakesBond() public {
         _commit();
 
         assertEq(paymentToken.balanceOf(iba1), 1000e18 - BOND, "bidder debited the bond");
         assertEq(_liveCompactBalance(), BOND, "bond custodied in The Compact");
-        IEscrowAdapter.CommitBond memory bond = escrow.getCommitBond(emissionDay, iba1);
+        IEscrowAdapter.IntexAuctionBidBond memory bond = escrow.getIntexAuctionBidBond(emissionDay, iba1);
         assertEq(bond.amount, BOND, "bond recorded");
     }
 
@@ -148,36 +148,36 @@ contract IntexAuctionBondTest is Test {
 
         vm.prank(iba1);
         vm.expectRevert();
-        auction.commitBid(emissionDay, keccak256(_signature()));
+        auction.commitIntexAuctionBid(emissionDay, keccak256(_signature()));
     }
 
     function test_CommitBid_ZeroBond_SkipsEscrow() public {
         uint32 freeSeries = emissionDay + 1;
         vm.prank(bridger);
-        auction.auctionStart(freeSeries, IIntexAuction.DayState.Live, _schedule(), _params(0));
+        auction.startAuction(freeSeries, _schedule(), _params(0));
 
         // No approval needed when the series carries no bond.
         address pauper = address(0xF00D);
         vm.prank(pauper);
-        auction.commitBid(freeSeries, keccak256("sealed"));
+        auction.commitIntexAuctionBid(freeSeries, keccak256("sealed"));
 
-        assertEq(escrow.getCommitBond(freeSeries, pauper).amount, 0, "no bond taken");
-        assertEq(auction.committedBidsByHash(freeSeries, pauper), keccak256("sealed"), "commit recorded");
+        assertEq(escrow.getIntexAuctionBidBond(freeSeries, pauper).amount, 0, "no bond taken");
+        assertEq(auction.committedIntexAuctionBidsByHash(freeSeries, pauper), keccak256("sealed"), "commit recorded");
     }
 
-    // --- cancelCommit / revealBid return paths ---
+    // --- cancelIntexAuctionBid / revealIntexAuctionBid return paths ---
 
     function test_CancelCommit_ReturnsBondAndAllowsRecommit() public {
         _commit();
         vm.prank(iba1);
-        auction.cancelCommit(emissionDay);
+        auction.cancelIntexAuctionBid(emissionDay);
 
         assertEq(paymentToken.balanceOf(iba1), 1000e18, "bond returned in full");
-        assertEq(escrow.getCommitBond(emissionDay, iba1).amount, 0, "bond deleted");
+        assertEq(escrow.getIntexAuctionBidBond(emissionDay, iba1).amount, 0, "bond deleted");
 
         // The freed slot re-locks a fresh bond on re-commit.
         _commit();
-        assertEq(escrow.getCommitBond(emissionDay, iba1).amount, BOND, "re-committed bond");
+        assertEq(escrow.getIntexAuctionBidBond(emissionDay, iba1).amount, BOND, "re-committed bond");
     }
 
     function test_RevealBid_ReturnsBondAndLocksEscrow() public {
@@ -185,13 +185,15 @@ contract IntexAuctionBondTest is Test {
         _enterRevealStage();
 
         vm.prank(iba1);
-        auction.revealBid(emissionDay, QTY, RATE, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), _signature());
+        auction.revealIntexAuctionBid(
+            emissionDay, QTY, RATE, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), _signature()
+        );
 
         // The escrow returned the bond and took the bid lock. The net position is only the bid
         // lock.
         assertEq(paymentToken.balanceOf(iba1), 1000e18 - LOCK_AMOUNT, "net = bid lock only");
-        assertEq(escrow.getCommitBond(emissionDay, iba1).amount, 0, "bond deleted");
-        assertEq(escrow.getBidLock(emissionDay, iba1).lockedAmount, LOCK_AMOUNT, "bid lock recorded");
+        assertEq(escrow.getIntexAuctionBidBond(emissionDay, iba1).amount, 0, "bond deleted");
+        assertEq(escrow.getIntexAuctionBidLock(emissionDay, iba1).lockedAmount, LOCK_AMOUNT, "bid lock recorded");
         assertEq(_liveCompactBalance(), LOCK_AMOUNT, "Compact holds only the bid lock");
     }
 
@@ -206,25 +208,25 @@ contract IntexAuctionBondTest is Test {
 
         _enterRevealStage();
         vm.prank(iba1);
-        auction.revealBid(emissionDay, QTY, RATE, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), _signature());
+        auction.revealIntexAuctionBid(
+            emissionDay, QTY, RATE, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), _signature()
+        );
 
         assertEq(paymentToken.balanceOf(iba1), BOND - LOCK_AMOUNT, "bond funded the bid");
-        assertEq(escrow.getBidLock(emissionDay, iba1).lockedAmount, LOCK_AMOUNT, "bid lock recorded");
+        assertEq(escrow.getIntexAuctionBidLock(emissionDay, iba1).lockedAmount, LOCK_AMOUNT, "bid lock recorded");
     }
 
-    // --- claimCommitBond ---
+    // --- unlockIntexAuctionBidBond ---
 
-    function test_ClaimCommitBond_CancelledDay_HasNoBond() public {
-        uint32 cancelledSeries = emissionDay + 7;
+    function test_ClaimCommitBond_CancelledDay_ReleasesAtOnce() public {
+        _commit();
         vm.prank(bridger);
-        auction.auctionStart(cancelledSeries, IIntexAuction.DayState.Cancelled, _schedule(), _params(BOND_PROTOCOL));
+        auction.cancelAuction(emissionDay, 1);
 
-        // A cancelled day is cancelled before anyone can commit, so its penalty window passes with no
-        // bond for the escrow to release.
-        vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
+        // A cancelled day has no reveal to miss, so its bond waits for no penalty window.
         vm.prank(outsider);
-        vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
-        auction.claimCommitBond(cancelledSeries, iba1);
+        auction.unlockIntexAuctionBidBond(emissionDay, iba1);
+        assertEq(paymentToken.balanceOf(iba1), 1000e18, "the whole bond is back");
     }
 
     function test_ClaimCommitBond_NoReveal_RevertsBeforeWindow() public {
@@ -235,9 +237,11 @@ contract IntexAuctionBondTest is Test {
         vm.warp(claimableAt - 1);
         vm.prank(outsider);
         vm.expectRevert(
-            abi.encodeWithSelector(IIntexAuction.CommitBondNotYetClaimable.selector, claimableAt, claimableAt - 1)
+            abi.encodeWithSelector(
+                IIntexAuction.IntexAuctionBidBondNotYetUnlockable.selector, claimableAt, claimableAt - 1
+            )
         );
-        auction.claimCommitBond(emissionDay, iba1);
+        auction.unlockIntexAuctionBidBond(emissionDay, iba1);
     }
 
     function test_ClaimCommitBond_NoReveal_ReleasesAfterWindow() public {
@@ -246,7 +250,7 @@ contract IntexAuctionBondTest is Test {
 
         vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);
-        auction.claimCommitBond(emissionDay, iba1);
+        auction.unlockIntexAuctionBidBond(emissionDay, iba1);
 
         assertEq(paymentToken.balanceOf(iba1), 1000e18, "bond returned after the penalty window");
         assertEq(paymentToken.balanceOf(outsider), 0, "caller gets nothing");
@@ -256,16 +260,18 @@ contract IntexAuctionBondTest is Test {
         _commit();
         _enterRevealStage();
         vm.prank(iba1);
-        auction.revealBid(emissionDay, QTY, RATE, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), _signature());
+        auction.revealIntexAuctionBid(
+            emissionDay, QTY, RATE, ISSUANCE_CCY, REFERENCE_CCY, uint64(block.chainid), _signature()
+        );
 
         vm.warp(uint256(startTs) + REVEAL_OFFSET + auction.UNREVEALED_BOND_LOCK_PERIOD());
         vm.prank(outsider);
-        vm.expectRevert(IEscrowAdapter.CommitBondNotFound.selector);
-        auction.claimCommitBond(emissionDay, iba1);
+        vm.expectRevert(IEscrowAdapter.IntexAuctionBidBondNotFound.selector);
+        auction.unlockIntexAuctionBidBond(emissionDay, iba1);
     }
 
     function test_ClaimCommitBond_RevertsOnUnknownSeries() public {
         vm.expectRevert(IIntexAuction.AuctionNotFound.selector);
-        auction.claimCommitBond(emissionDay + 42, iba1);
+        auction.unlockIntexAuctionBidBond(emissionDay + 42, iba1);
     }
 }

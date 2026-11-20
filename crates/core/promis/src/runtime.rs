@@ -11,11 +11,9 @@
 //! These methods are crate-private. Other crates reach them through [`crate::api`].
 //! The enclave is the sole party that sees plaintext balances (Enclave Return Rule).
 
+use crate::protocol::{ModifyAuth, PromisOp, PromisOpRequest, PromisOpResult, PromisOpStatus};
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_enclave::protocol::{
-    ModifyAuth, PromisOp, PromisOpRequest, PromisOpResult, PromisOpStatus,
-};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::PROMIS_ADDRESS;

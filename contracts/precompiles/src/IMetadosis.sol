@@ -9,7 +9,6 @@ interface IMetadosis {
     error UnknownWorldwideDayStatus();
     error FormedDayLimitImmutable();
     error FormingWindowOverflow();
-    error LookbackWindowOverflow();
     error OfferingWindowOverflow();
     error DurationOverflow(string label);
     error UtcPlus14TimestampOverflow();

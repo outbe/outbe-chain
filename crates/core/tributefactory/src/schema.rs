@@ -6,8 +6,8 @@ use outbe_system_common::time::WorldwideDay;
 
 /// Number of recent SU hashes retained in the replay-guard ring.
 ///
-/// An SU id is valid across the WorldwideDay pipeline horizon
-/// (`E = D + 4` across forming 50h + lookback 22h + offering 50h). At about
+/// An SU id is valid across the WorldwideDay pipeline horizon, from the forming
+/// start at 10:00 D-1 to the offering end at 12:00 D+2 (74h). At about
 /// 50,000 SU hashes per day, `1 << 20` (`1_048_576`) entries cover about 21
 /// days of volume before eviction. A change to this value is a hard fork.
 pub const SU_HASH_RETAIN: u64 = 1 << 20;
@@ -25,15 +25,16 @@ pub struct TributeFactoryContract {
 
     // slot 1: WorldwideDay records (wwd -> 1-slot packed WorldwideDay)
     #[attribute(order = 1)]
-    pub worldwide_days: Map<WorldwideDay, crate::worldwideday::schema::WorldwideDay>,
+    pub worldwide_days: Map<WorldwideDay, crate::worldwide_day::schema::WorldwideDay>,
 
     // slots 2..3: unsealed pipeline WorldwideDays
     #[attribute(order = 2)]
     pub pipeline_wwd: Set<WorldwideDay>,
 
-    // slot 4: one-shot forming VWAP snapshot finalized guard (wwd -> bool)
+    // slot 4: retired. It held the guard of the forming VWAP snapshot of a
+    // WorldwideDay. The field keeps the slot of `su_hash_ring`.
     #[attribute(order = 3)]
-    pub forming_snapshot_finalized: Map<WorldwideDay, bool>,
+    pub retired_forming_snapshot_finalized: Map<WorldwideDay, bool>,
 
     // slot 5: bounded prune ring of recent SU hashes (seq % SU_HASH_RETAIN -> suHash)
     #[attribute(order = 4)]

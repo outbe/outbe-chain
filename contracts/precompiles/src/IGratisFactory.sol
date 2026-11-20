@@ -13,6 +13,7 @@ interface IGratisFactory {
     error Exists();
     error NotFound();
     error Exceeded();
+    error InvalidCoenAmount();
 
     struct ModifyAuth {
         bytes32 mac;
@@ -24,6 +25,7 @@ interface IGratisFactory {
     event GratisPledgeReleased(uint256 indexed credisId, address indexed source, uint256 gratisMinor);
     event GratisPledgeBurned(uint256 indexed credisId, address indexed source, uint256 gratisMinor);
     event CoenMinedFromGratis(address indexed account, uint256 amountMinor);
+    event GratisMinedFromCoen(address indexed account, uint256 gratisMinor);
     /// Pledge the reservation's Gratis from the caller's liquid balance. The caller
     /// must be the reservation source. `auth` binds `Pledge` and the reserved amount.
     function pledgeGratis(uint256 reservationId, ModifyAuth calldata auth) external;
@@ -34,5 +36,10 @@ interface IGratisFactory {
     /// Gratis still backing Credis `credisId`. Zeros once it has been fully returned or burned.
     function collateralOf(uint256 credisId) external view returns (address source, uint256 remainingMinor);
     function mineCoen(uint256 gratisMinor, bytes32 mac, uint64 opNonce) external returns (uint256 coenMinor);
+    /// Mine Gratis from the native COEN sent with the call, 1 COEN to 1 Gratis. `msg.value`
+    /// must be a non-zero whole number of Gratis minors (1e12 units each). The COEN is burned
+    /// and credits the Promis Limit. WCOEN holders unwrap with `WCOEN.withdraw` first.
+    /// `mac` and `opNonce` are the caller's Gratis modify key over `Mint` and `gratisMinor`.
+    function mineGratis(bytes32 mac, uint64 opNonce) external payable returns (uint256 gratisMinor);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

@@ -10,7 +10,7 @@ use outbe_fidelity::api::FidelityCohortOp;
 use outbe_gratis::api::{self as gratis, ModifyAuth};
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_system_common::addresses::GRATIS_FACTORY_ADDRESS;
-use outbe_system_common::units::checked_protocol_to_native;
+use outbe_system_common::units::{checked_protocol_to_native, UNITS_PER_PROTOCOL_MINOR};
 
 /// Pledge exactly the reservation's Gratis from its source. Only the source may
 /// pledge, once per reservation, before the reservation expires.
@@ -225,7 +225,6 @@ fn live_pledge(storage: &StorageHandle<'_>, reservation_id: U256) -> Result<Pled
 
 /// Mint `amount` gratis to `account` (authorized by the account owner's modify
 /// key) and record the Fidelity acquisition cohort.
-#[cfg(any(test, feature = "test-utils"))]
 pub fn mint(
     storage: StorageHandle<'_>,
     account: Address,
@@ -271,4 +270,34 @@ pub fn mine_coen(
     )?;
 
     Ok(native_amount)
+}
+
+/// Burn the native COEN `value` sent to the factory into the Promis Limit and mint
+/// the same amount of Gratis, 1:1. `value` must be a non-zero whole number of
+/// Gratis minors, so no remainder is left behind.
+pub fn mine_gratis(
+    storage: StorageHandle<'_>,
+    account: Address,
+    value: U256,
+    auth: ModifyAuth,
+) -> Result<U256> {
+    if value.is_zero() || !(value % UNITS_PER_PROTOCOL_MINOR).is_zero() {
+        return Err(GratisFactoryError::InvalidCoenAmount.into());
+    }
+    let gratis_minor = value / UNITS_PER_PROTOCOL_MINOR;
+    storage.with_checkpoint(|| {
+        // The payable route has already credited `value` to this factory.
+        outbe_promislimit::PromisLimitContract::new(storage.clone())
+            .burn(outbe_promislimit::BurnSource::GratisMint, value)?;
+        mint(storage.clone(), account, gratis_minor, auth)?;
+        storage.emit_event(
+            GRATIS_FACTORY_ADDRESS,
+            IGratisFactory::GratisMinedFromCoen {
+                account,
+                gratisMinor: gratis_minor,
+            }
+            .encode_log_data(),
+        )
+    })?;
+    Ok(gratis_minor)
 }

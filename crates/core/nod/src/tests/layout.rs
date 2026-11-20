@@ -16,25 +16,29 @@ fn config_profile_slot_matches_seeder_layout() {
 
 #[test]
 fn the_profile_selector_resolves_like_gem_and_intex() {
-    use crate::config::{NodParams, PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
+    use crate::config::{NodParams, PROFILE_AUTO, PROFILE_E2E, PROFILE_MAINNET, PROFILE_TESTNET};
     use outbe_primitives::chain::MAINNET_CHAIN_ID;
     assert_eq!(
         NodParams::from_selector(PROFILE_AUTO, MAINNET_CHAIN_ID).unwrap(),
-        NodParams::PROD
+        NodParams::MAINNET
     );
     assert_eq!(
         NodParams::from_selector(PROFILE_AUTO, 1).unwrap(),
-        NodParams::DEV
+        NodParams::TESTNET
     );
     assert_eq!(
-        NodParams::from_selector(PROFILE_DEV, MAINNET_CHAIN_ID).unwrap(),
-        NodParams::DEV
+        NodParams::from_selector(PROFILE_TESTNET, MAINNET_CHAIN_ID).unwrap(),
+        NodParams::TESTNET
     );
     assert_eq!(
-        NodParams::from_selector(PROFILE_PROD, 1).unwrap(),
-        NodParams::PROD
+        NodParams::from_selector(PROFILE_MAINNET, 1).unwrap(),
+        NodParams::MAINNET
     );
-    assert!(NodParams::from_selector(3, 1).is_err());
+    assert_eq!(
+        NodParams::from_selector(PROFILE_E2E, 1).unwrap(),
+        NodParams::E2E
+    );
+    assert!(NodParams::from_selector(4, 1).is_err());
 }
 
 #[test]

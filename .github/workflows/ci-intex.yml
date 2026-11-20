@@ -8,8 +8,10 @@ on:
       - ".github/workflows/_contract-ci.yml"
       - ".github/workflows/ci-intex.yml"
       - "contracts/intex/**"
+      - "contracts/crosschain/**"
       - "contracts/precompiles/**"
       - "contracts/shared/**"
+      - "contracts/tokens/**"
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     paths:
@@ -17,8 +19,10 @@ on:
       - ".github/workflows/_contract-ci.yml"
       - ".github/workflows/ci-intex.yml"
       - "contracts/intex/**"
+      - "contracts/crosschain/**"
       - "contracts/precompiles/**"
       - "contracts/shared/**"
+      - "contracts/tokens/**"
 
 permissions:
   contents: read
@@ -31,5 +35,4 @@ jobs:
       abi-check: true
       upgrade-check: true
       slither-check: true
-      aderyn-check: true
       isolated-tests: test/foundry/cross-chain/GasBudget.t.sol

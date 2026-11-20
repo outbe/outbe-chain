@@ -32,12 +32,6 @@ pub enum IntexFactoryError {
     #[error("forfeited promis load overflow")]
     ForfeitedPromisLoadOverflow,
 
-    #[error("closeCallNoticeForTest: no called group")]
-    NoCalledGroupForTest,
-
-    #[error("issueForTest: a currency per series")]
-    IssueForTestCurrencyCountMismatch,
-
     #[error("issuance chunk count exceeds u16")]
     IssuanceChunkCountExceedsU16,
 
@@ -118,10 +112,6 @@ impl From<IntexFactoryError> for PrecompileError {
             IntexFactoryError::NotOriginRouter => revert_with(I::NotOriginRouter {}),
             IntexFactoryError::ForfeitedPromisLoadOverflow => {
                 revert_with(I::ForfeitedPromisLoadOverflow {})
-            }
-            IntexFactoryError::NoCalledGroupForTest => revert_with(I::NoCalledGroupForTest {}),
-            IntexFactoryError::IssueForTestCurrencyCountMismatch => {
-                revert_with(I::IssueForTestCurrencyCountMismatch {})
             }
             IntexFactoryError::IssuanceChunkCountExceedsU16 => {
                 revert_with(I::IssuanceChunkCountExceedsU16 {})

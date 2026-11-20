@@ -182,8 +182,6 @@ fn test_recovered_boundary_evm_signer_authorization_survives_latest_state_remova
         evm_passphrase: None,
         reth_key_backend: "plaintext".to_string(),
         reth_passphrase: None,
-        tee_enclave_socket: None,
-        tee_session_mode: outbe_consensus::args::TeeSessionMode::PolicyDefault,
         tee_bootstrap_timeout_secs: 60,
         tee_canary_interval_secs: 30,
         tee_canary_failure_threshold: 3,

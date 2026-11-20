@@ -41,15 +41,34 @@ use {
 };
 
 /// Composition root. One value implements every infrastructure seam.
-#[derive(Debug, Default)]
-pub struct OutbeRuntime;
+type TeeRefresh = dyn Fn() -> std::result::Result<(), EngineProtocolError> + Send + Sync;
+
+#[derive(Default)]
+pub struct OutbeRuntime {
+    tee_refresh: std::sync::OnceLock<Arc<TeeRefresh>>,
+}
+
+impl std::fmt::Debug for OutbeRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutbeRuntime").finish_non_exhaustive()
+    }
+}
 
 impl OutbeRuntime {
     /// Returns the runtime host handle.
     #[must_use]
     pub fn new() -> Self {
         debug_assert!(!crate::precompiles::outbe_exact_precompile_addresses().is_empty());
-        Self
+        Self::default()
+    }
+
+    pub(crate) fn install_tee_refresh(
+        &self,
+        refresh: Arc<TeeRefresh>,
+    ) -> std::result::Result<(), EngineProtocolError> {
+        self.tee_refresh
+            .set(refresh)
+            .map_err(|_| EngineProtocolError::TeeRefreshAlreadyInstalled)
     }
 
     /// Host handle for the EVM factory and the block executor.
@@ -534,6 +553,12 @@ impl OutbeRpcStateReader for OutbeRuntime {
 }
 
 impl EngineProtocolState for OutbeRuntime {
+    fn refresh_tee_authority(&self) -> std::result::Result<(), EngineProtocolError> {
+        self.tee_refresh
+            .get()
+            .ok_or(EngineProtocolError::NotInstalled)?()
+    }
+
     fn system_tx_leader_policy(
         &self,
     ) -> outbe_primitives::system_tx::binding::SystemTxLeaderPolicy {

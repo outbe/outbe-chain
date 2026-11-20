@@ -126,7 +126,6 @@ fn the_genesis_interval_leaves_the_clearing_poll_alone() {
             clearing.period_seconds(),
             find(TaskId::AdvanceAuctions).period_seconds()
         );
-        #[cfg(not(feature = "e2e-test"))]
         assert_eq!(clearing.period_seconds(), 3_600);
         assert_eq!(
             clearing.start_offset_seconds,

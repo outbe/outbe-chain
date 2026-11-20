@@ -669,7 +669,7 @@ pub fn is_iso_asset_address(address: &[u8; 20]) -> bool {
         .all(|shift| ((bcd >> shift) & 0xF) <= 9)
 }
 
-/// Seed a factory profile selector slot (`auto` = 0, `dev` = 1, `prod` = 2).
+/// Seed a factory profile selector slot (`auto` = 0, `mainnet` = 1, `testnet` = 2, `e2e` = 3).
 pub fn seed_profile_selector(
     storage: &mut StorageBuilder,
     config: &Value,
@@ -683,11 +683,12 @@ pub fn seed_profile_selector(
         .to_ascii_lowercase();
     let selector = match profile.as_str() {
         "auto" => 0u64,
-        "dev" => 1u64,
-        "prod" => 2u64,
+        "mainnet" => 1u64,
+        "testnet" => 2u64,
+        "e2e" => 3u64,
         _ => {
             return Err(GenesisError::validation(format!(
-                "{section}: unknown profile '{profile}'; expected one of ['auto', 'dev', 'prod']"
+                "{section}: unknown profile '{profile}'; expected one of ['auto', 'mainnet', 'testnet', 'e2e']"
             )));
         }
     };

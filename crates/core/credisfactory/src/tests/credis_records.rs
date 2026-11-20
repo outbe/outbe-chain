@@ -76,7 +76,7 @@ fn credis_provider() -> HashMapStorageProvider {
         // These tests exercise the production call terms.
         CredisContract::new(storage.clone())
             .config_profile
-            .write(outbe_credis::config::PROFILE_PROD)
+            .write(outbe_credis::config::PROFILE_MAINNET)
             .unwrap();
         storage
             .increase_balance(
@@ -101,7 +101,7 @@ fn prod_provider() -> HashMapStorageProvider {
     StorageHandle::enter(&mut provider, |storage| {
         CredisContract::new(storage)
             .config_profile
-            .write(outbe_credis::config::PROFILE_PROD)
+            .write(outbe_credis::config::PROFILE_MAINNET)
             .unwrap();
     });
     provider
@@ -216,12 +216,7 @@ fn forfeit_by_owner(
                 storage.clone(),
                 source,
                 amount,
-                super::auth(
-                    outbe_enclave::protocol::GratisOp::Mint,
-                    source,
-                    amount,
-                    nonce,
-                ),
+                super::auth(outbe_gratis::GratisOp::Mint, source, amount, nonce),
             )?;
             let now = storage.now_secs()?;
             outbe_fidelity::api::cohort_in(
@@ -240,12 +235,7 @@ fn forfeit_by_owner(
                 storage.clone(),
                 source,
                 amount,
-                super::auth(
-                    outbe_enclave::protocol::GratisOp::Pledge,
-                    source,
-                    amount,
-                    nonce + 1,
-                ),
+                super::auth(outbe_gratis::GratisOp::Pledge, source, amount, nonce + 1),
                 probe,
             )?;
             contract
@@ -2484,73 +2474,6 @@ fn metadata_update_marks_each_settlement() {
     assert_eq!(updates, vec![id]);
 }
 
-#[cfg(feature = "e2e-test")]
-#[test]
-fn static_test_arming_is_rejected() {
-    use crate::test_arming_e2e::ICredisFactoryTestArming;
-    use alloy_sol_types::SolCall;
-    use outbe_primitives::error::PrecompileError;
-    let mut provider = prod_provider();
-    provider.set_static(true);
-    let result = crate::precompile::dispatch(
-        StorageHandle::new(&mut provider),
-        &ICredisFactoryTestArming::closeCallNoticeForTestCall {
-            credisId: U256::ONE,
-            deadline: 1,
-        }
-        .abi_encode(),
-        alice(),
-        U256::ZERO,
-    );
-    assert!(
-        matches!(result, Err(PrecompileError::WriteProtection)),
-        "{result:?}"
-    );
-}
-
-#[cfg(feature = "e2e-test")]
-#[test]
-fn test_arming_backdates_and_requeues_only_a_called_credis() {
-    use crate::test_arming_e2e::ICredisFactoryTestArming;
-    with_credis(|storage| {
-        let mut credis = CredisContract::new(storage.clone());
-        let id = rules::issue(&mut credis, params(alice())).unwrap();
-        let arm = |data: Vec<u8>| {
-            crate::precompile::dispatch(storage.clone(), &data, alice(), U256::ZERO)
-        };
-        let requeue = ICredisFactoryTestArming::closeCallNoticeForTestCall {
-            credisId: id,
-            deadline: at(5),
-        }
-        .abi_encode();
-        let err = arm(requeue.clone()).unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                crate::errors::CredisFactoryError::NotCalled
-            )
-            .to_string()
-        );
-
-        arm(ICredisFactoryTestArming::backdateCredisForTestCall {
-            credisId: id,
-            issuedAt: at(0) - 30 * DAY,
-        }
-        .abi_encode())
-        .unwrap();
-        let record = credis.get_credis(id).unwrap();
-        assert_eq!(
-            (record.issued_at, record.last_settled_at),
-            (at(0) - 30 * DAY, at(0) - 30 * DAY)
-        );
-
-        assert!(call(&mut credis, id, at(10)).unwrap());
-        arm(requeue).unwrap();
-        let group = credis.get_credis(id).unwrap().series_id;
-        assert_eq!(credis.called_deadline.read(&group).unwrap(), at(5));
-    });
-}
-
 /// Off mainnet, an unset selector seals the short terms.
 #[test]
 fn issuance_off_mainnet_seals_the_dev_terms() {
@@ -2563,20 +2486,15 @@ fn issuance_off_mainnet_seals_the_dev_terms() {
             .unwrap();
         let id = open_pos(&mut credis);
         let record = credis.get_credis(id).unwrap();
-        let notice = if cfg!(feature = "e2e-test") {
-            600
-        } else {
-            3 * DAY
-        };
         assert_eq!(
             (
                 u64::from(record.call_window_seconds),
                 u64::from(record.call_threshold_seconds),
                 u64::from(record.call_notice_period_seconds)
             ),
-            (3 * DAY, 2 * DAY, notice)
+            (3 * DAY, 2 * DAY, 3 * DAY)
         );
-        // The DEV call rate is 2, so the anchor 1.00 gives the call price 1.02.
+        // The TESTNET call rate is 2, so the anchor 1.00 gives the call price 1.02.
         assert_eq!(record.call_rate, 2);
         assert_eq!(
             record.call_price_minor,

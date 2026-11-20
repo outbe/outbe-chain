@@ -17,16 +17,9 @@ pub struct FoundingConfig<'a> {
     pub validator_index: usize,
 }
 
-#[derive(Clone, Copy)]
-enum Account {
-    Root,
-    Outbe,
-}
-
 struct ServiceSpec {
     name: &'static str,
     description: &'static str,
-    account: Account,
     unit_directives: Vec<String>,
     service_directives: Vec<String>,
     sandbox_directives: Vec<String>,
@@ -49,30 +42,8 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
     let command = |source: &str| source.replace("@@OUTBE_UP@@", outbe_up);
     let mut units = vec![
         render_service(&ServiceSpec {
-            name: "outbe-enclave.service",
-            description: "Outbe TEE enclave",
-            account: Account::Root,
-            unit_directives: lines(&[
-                "After=network-online.target",
-                "Wants=network-online.target",
-                "PartOf=outbe-validator.target",
-            ]),
-            service_directives: lines(&[
-                "EnvironmentFile=/opt/outbe-chain/validator.env",
-                &command("ExecStart=@@OUTBE_UP@@ internal enclave"),
-                &command("ExecStartPost=@@OUTBE_UP@@ internal wait-enclave"),
-            ]),
-            sandbox_directives: lines(&[
-                "ReadWritePaths=/opt/outbe-chain/tee",
-                "BindPaths=/opt/outbe-chain/tee:/var/lib/outbe/tee",
-            ]),
-            limit_nofile: 65_535,
-            wanted_by: "outbe-validator.target",
-        }),
-        render_service(&ServiceSpec {
             name: "outbe-radicle.service",
             description: "Outbe validator Radicle sidecar",
-            account: Account::Outbe,
             unit_directives: lines(&[
                 "After=network-online.target",
                 "Wants=network-online.target",
@@ -99,7 +70,6 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
         render_service(&ServiceSpec {
             name: "outbe-feeder.service",
             description: "Outbe validator price feeder",
-            account: Account::Outbe,
             unit_directives: lines(&[
                 "After=outbe-validator.service",
                 "Wants=outbe-validator.service",
@@ -109,12 +79,32 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
                 "EnvironmentFile=/opt/outbe-chain/validator.env",
                 "RuntimeDirectory=outbe-feeder",
                 "RuntimeDirectoryMode=0700",
-                "StateDirectory=outbe-feeder",
-                "StateDirectoryMode=0700",
+                "Environment=STATE_DIRECTORY=/opt/outbe-chain/state/feeder",
                 &command("ExecStartPre=@@OUTBE_UP@@ internal wait-rpc"),
                 &command("ExecStart=@@OUTBE_UP@@ internal feeder"),
             ]),
-            sandbox_directives: Vec::new(),
+            sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/state/feeder"]),
+            limit_nofile: 65_535,
+            wanted_by: "outbe-validator.target",
+        }),
+        render_service(&ServiceSpec {
+            name: "outbe-hyperlane-validator.service",
+            description: "Outbe Hyperlane validator",
+            unit_directives: lines(&[
+                "After=outbe-validator.service",
+                "Wants=outbe-validator.service",
+                "PartOf=outbe-validator.target",
+            ]),
+            service_directives: lines(&[
+                "EnvironmentFile=/opt/outbe-chain/validator.env",
+                "RuntimeDirectory=outbe-hyperlane-validator",
+                "RuntimeDirectoryMode=0700",
+                "Environment=STATE_DIRECTORY=/opt/outbe-chain/state/hyperlane",
+                "Environment=OUTBE_HYPERLANE_WAIT_FOR_ACTIVE=1",
+                &command("ExecStartPre=@@OUTBE_UP@@ internal wait-rpc"),
+                &command("ExecStart=@@OUTBE_UP@@ internal hyperlane"),
+            ]),
+            sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/state/hyperlane"]),
             limit_nofile: 65_535,
             wanted_by: "outbe-validator.target",
         }),
@@ -128,26 +118,6 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
 pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
     let validator_dir = format!("{}/validator-{}", config.base_dir, config.validator_index);
     let mut units = vec![
-        render_service(&ServiceSpec {
-            name: "outbe-enclave.service",
-            description: "Outbe TEE enclave",
-            account: Account::Root,
-            unit_directives: lines(&[
-                "After=network-online.target",
-                "Wants=network-online.target",
-                "PartOf=outbe-validator.target",
-            ]),
-            service_directives: lines(&[
-                &format!("WorkingDirectory={validator_dir}"),
-                &format!("ExecStart={validator_dir}/run-enclave.sh"),
-            ]),
-            sandbox_directives: lines(&[
-                &format!("ReadWritePaths={}", config.base_dir),
-                &format!("BindPaths={validator_dir}/tee:/var/lib/outbe/tee"),
-            ]),
-            limit_nofile: 65_535,
-            wanted_by: "outbe-validator.target",
-        }),
         render_service(&founding_service(&FoundingService {
             name: "outbe-radicle.service",
             description: "Outbe validator Radicle sidecar",
@@ -155,8 +125,8 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             validator_dir: &validator_dir,
             base_dir: config.base_dir,
             unit_directives: lines(&[
-                "After=network-online.target outbe-enclave.service",
-                "Wants=network-online.target outbe-enclave.service",
+                "After=network-online.target",
+                "Wants=network-online.target",
                 "PartOf=outbe-validator.target",
             ]),
             limit_nofile: 65_535,
@@ -168,25 +138,54 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             validator_dir: &validator_dir,
             base_dir: config.base_dir,
             unit_directives: lines(&[
-                "After=network-online.target outbe-enclave.service outbe-radicle.service",
-                "Wants=network-online.target outbe-enclave.service outbe-radicle.service",
+                "After=network-online.target outbe-radicle.service",
+                "Wants=network-online.target outbe-radicle.service",
                 "PartOf=outbe-validator.target",
             ]),
             limit_nofile: 1_048_576,
         })),
-        render_service(&founding_service(&FoundingService {
+        render_service(&ServiceSpec {
             name: "outbe-feeder.service",
             description: "Outbe validator price feeder",
-            script: "run-feeder.sh",
-            validator_dir: &validator_dir,
-            base_dir: config.base_dir,
             unit_directives: lines(&[
                 "After=network-online.target outbe-validator.service",
                 "Wants=network-online.target outbe-validator.service",
                 "PartOf=outbe-validator.target",
             ]),
+            service_directives: lines(&[
+                &format!("WorkingDirectory={validator_dir}"),
+                &format!(
+                    "Environment=STATE_DIRECTORY={}/state/feeder",
+                    config.base_dir
+                ),
+                &format!("ExecStart={validator_dir}/run-feeder.sh"),
+            ]),
+            sandbox_directives: lines(&[&format!("ReadWritePaths={}", config.base_dir)]),
             limit_nofile: 65_535,
-        })),
+            wanted_by: "outbe-validator.target",
+        }),
+        render_service(&ServiceSpec {
+            name: "outbe-hyperlane-validator.service",
+            description: "Outbe Hyperlane validator",
+            unit_directives: lines(&[
+                "After=network-online.target outbe-validator.service",
+                "Wants=network-online.target outbe-validator.service",
+                "PartOf=outbe-validator.target",
+            ]),
+            service_directives: lines(&[
+                &format!("WorkingDirectory={validator_dir}"),
+                "RuntimeDirectory=outbe-hyperlane-validator",
+                "RuntimeDirectoryMode=0700",
+                &format!(
+                    "Environment=STATE_DIRECTORY={}/state/hyperlane",
+                    config.base_dir
+                ),
+                &format!("ExecStart={validator_dir}/run-hyperlane.sh"),
+            ]),
+            sandbox_directives: lines(&[&format!("ReadWritePaths={}", config.base_dir)]),
+            limit_nofile: 65_535,
+            wanted_by: "outbe-validator.target",
+        }),
         render_target("Outbe validator stack"),
     ];
     units.sort_by(|left, right| left.name.cmp(&right.name));
@@ -197,7 +196,6 @@ fn joining_full_node_spec(outbe_up: &str) -> ServiceSpec {
     ServiceSpec {
         name: "outbe-full-node.service",
         description: "Outbe certified full node",
-        account: Account::Outbe,
         unit_directives: lines(&[
             "After=network-online.target",
             "Wants=network-online.target",
@@ -243,10 +241,9 @@ fn joining_validator_spec(outbe_up: &str) -> ServiceSpec {
     ServiceSpec {
         name: "outbe-validator.service",
         description: "Outbe validator",
-        account: Account::Outbe,
         unit_directives: lines(&[
-            "After=network-online.target outbe-enclave.service outbe-radicle.service",
-            "Wants=network-online.target outbe-enclave.service outbe-radicle.service",
+            "After=network-online.target outbe-radicle.service",
+            "Wants=network-online.target outbe-radicle.service",
             "Conflicts=outbe-full-node.service",
             "PartOf=outbe-validator.target",
         ]),
@@ -255,13 +252,11 @@ fn joining_validator_spec(outbe_up: &str) -> ServiceSpec {
             "Environment=RUST_MIN_STACK=16777216",
             &format!("ExecStartPre={outbe_up} internal wait-validator-dependencies"),
             "ExecStart=/opt/outbe-chain/outbe-chain node \\",
-            "  --tee-session-mode ${OUTBE_TEE_SESSION_MODE} \\",
             "  --chain /opt/outbe-chain/genesis.json \\",
             "  --datadir /opt/outbe-chain/validator-0/data \\",
             "  --engine.persistence-threshold 0 \\",
             "  --engine.memory-block-buffer-target 0 \\",
             "  --consensus.storage-dir /opt/outbe-chain/validator-0/consensus \\",
-            "  --tee-enclave-socket 127.0.0.1:17000 \\",
             "  --http \\",
             "  --http.addr ${OUTBE_RPC_BIND_IP} \\",
             "  --http.port 8545 \\",
@@ -301,7 +296,6 @@ fn founding_service(spec: &FoundingService<'_>) -> ServiceSpec {
     ServiceSpec {
         name: spec.name,
         description: spec.description,
-        account: Account::Outbe,
         unit_directives: spec.unit_directives.clone(),
         service_directives: lines(&[
             &format!("WorkingDirectory={}", spec.validator_dir),
@@ -319,7 +313,7 @@ fn render_service(spec: &ServiceSpec) -> UnitFile {
         &[
             ("DESCRIPTION", spec.description.to_owned()),
             ("UNIT_DIRECTIVES", join(&spec.unit_directives)),
-            ("ACCOUNT", account(spec.account).to_owned()),
+            ("ACCOUNT", "User=outbe\nGroup=outbe".to_owned()),
             ("SERVICE_DIRECTIVES", join(&spec.service_directives)),
             ("LIMIT_NOFILE", spec.limit_nofile.to_string()),
             ("SANDBOX_DIRECTIVES", join(&spec.sandbox_directives)),
@@ -337,12 +331,13 @@ fn render_target(description: &str) -> UnitFile {
             (
                 "UNIT_DIRECTIVES",
                 join(&lines(&[
-                    "Wants=outbe-enclave.service",
                     "Wants=outbe-radicle.service",
                     "Wants=outbe-validator.service",
                     "Wants=outbe-feeder.service",
-                    "After=outbe-enclave.service outbe-radicle.service",
+                    "Wants=outbe-hyperlane-validator.service",
+                    "After=outbe-radicle.service",
                     "After=outbe-validator.service outbe-feeder.service",
+                    "After=outbe-hyperlane-validator.service",
                 ])),
             ),
         ],
@@ -367,13 +362,6 @@ fn lines(values: &[&str]) -> Vec<String> {
 
 fn join(values: &[String]) -> String {
     values.join("\n")
-}
-
-const fn account(account: Account) -> &'static str {
-    match account {
-        Account::Root => "User=root",
-        Account::Outbe => "User=outbe\nGroup=outbe",
-    }
 }
 
 #[cfg(test)]
@@ -405,10 +393,10 @@ mod tests {
             validator_index: 0,
         });
         for name in [
-            "outbe-enclave.service",
             "outbe-radicle.service",
             "outbe-validator.service",
             "outbe-feeder.service",
+            "outbe-hyperlane-validator.service",
         ] {
             let joining = unit(&joining, name);
             let founding = unit(&founding, name);
@@ -426,7 +414,22 @@ mod tests {
             base_dir: "/opt/outbe-chain",
             validator_index: 2,
         });
+        let removed_service = format!("{}-{}", "outbe", "enclave.service");
         for unit in joining.iter().chain(&founding) {
+            assert!(!unit.name.contains("enclave"));
+            assert!(!unit.name.contains("tee-renew"));
+            for removed in [
+                removed_service.as_str(),
+                "aesmd.service",
+                "/opt/outbe/sgx",
+                "/var/lib/outbe/tee",
+                "internal enclave",
+                "internal wait-enclave",
+                "--tee-enclave-socket",
+                "--tee-session-mode",
+            ] {
+                assert!(!unit.content.contains(removed), "{}: {removed}", unit.name);
+            }
             assert!(!unit.content.contains("@@"));
             assert!(!unit.content.contains("%i"));
             assert!(!unit.content.contains("@.service"));
@@ -438,12 +441,28 @@ mod tests {
         assert!(!full_node.contains("radicle.control-socket"));
 
         let validator = unit(&joining, "outbe-validator.service");
-        assert!(validator.contains("wait-validator-dependencies"));
-        assert!(validator.contains("--tee-session-mode"));
+        assert!(validator
+            .contains("ExecStartPre=/usr/local/bin/outbe-up internal wait-validator-dependencies"));
         assert!(validator.contains("--validator"));
         assert!(validator.contains("radicle.control-socket"));
         assert!(unit(&founding, "outbe-validator.service")
             .contains("/opt/outbe-chain/validator-2/run-node.sh"));
+
+        let joining_hyperlane = unit(&joining, "outbe-hyperlane-validator.service");
+        let founding_hyperlane = unit(&founding, "outbe-hyperlane-validator.service");
+        assert!(joining_hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE=1"));
+        assert!(!founding_hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE"));
+        for hyperlane in [joining_hyperlane, founding_hyperlane] {
+            assert!(hyperlane.contains("/opt/outbe-chain/state/hyperlane"));
+            assert!(!hyperlane.contains("StateDirectory="));
+        }
+        for feeder in [
+            unit(&joining, "outbe-feeder.service"),
+            unit(&founding, "outbe-feeder.service"),
+        ] {
+            assert!(feeder.contains("/opt/outbe-chain/state/feeder"));
+            assert!(!feeder.contains("StateDirectory="));
+        }
     }
 
     fn unit<'a>(units: &'a [UnitFile], name: &str) -> &'a str {

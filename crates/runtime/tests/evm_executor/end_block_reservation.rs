@@ -136,10 +136,11 @@ fn exact_capacity_commits_actual_gas_then_captures_end_phase_capacity() {
         let body_index = executor.body_tx_index;
         executor.apply_end_block_phase().unwrap();
         assert_eq!(executor.receipts().len(), receipts + 5);
+        assert_eq!(executor.body_tx_index, body_index + 5);
         assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
         executor.apply_end_block_phase().unwrap();
         assert_eq!(executor.receipts().len(), receipts + 5);
-        assert_eq!(executor.body_tx_index, body_index);
+        assert_eq!(executor.body_tx_index, body_index + 5);
     }
 }
 
@@ -410,7 +411,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
                 .utc_day_vwap_last_finalized
                 .write(expires_day)
                 .unwrap();
-            // Seed IntexFactory call notice queue for OSIX (send_called_notices).
+            // Seed IntexFactory call notice queue for OSIX (send_call_notices).
             let intex_factory = IntexFactoryContract::new(storage.clone());
             intex_factory.notify_head.write(0).unwrap();
             intex_factory.notify_tail.write(1).unwrap();
@@ -565,7 +566,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             assert_eq!(
                 intex_factory.notify_tail.read().unwrap(),
                 0,
-                "OSIX (IntexFactory) must run send_called_notices and drain queued notices"
+                "OSIX (IntexFactory) must run send_call_notices and drain queued notices"
             );
             let credis = CredisContract::new(storage.clone());
             assert_eq!(

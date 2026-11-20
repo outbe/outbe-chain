@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    os::unix::fs::{MetadataExt, PermissionsExt},
+    os::unix::fs::{symlink, MetadataExt, PermissionsExt},
     path::Path,
 };
 
@@ -21,8 +21,6 @@ const ENV_KEYS: &[&str] = &[
     "OUTBE_BOOTNODES",
     "OUTBE_CONSENSUS_PEERS",
     "OUTBE_CONSENSUS_EXTRA_ARGS",
-    "OUTBE_TEE_SESSION_MODE",
-    "OUTBE_DEV_NETWORK_BINDING",
     "OUTBE_CHAIN_ID",
 ];
 
@@ -31,12 +29,14 @@ pub fn run() -> Result<()> {
     let root = Path::new(process::ROOT);
     let env_path = root.join("validator.env");
     let feeder = root.join("feeder-public.toml");
+    let hyperlane = root.join("hyperlane-public.toml");
     validate_local_config(&env_path)?;
     validate_local_config(&feeder)?;
+    validate_local_config(&hyperlane)?;
     let environment = read_environment(&env_path)?;
     validate_environment(&environment)?;
-    validate_runtime(root)?;
     validate_bundle(root)?;
+
     install_binary(&root.join("outbe-up"), Path::new("/usr/local/bin/outbe-up"))?;
     validate_genesis(root, &environment["OUTBE_CHAIN_ID"])?;
     ensure_outbe_account()?;
@@ -46,9 +46,11 @@ pub fn run() -> Result<()> {
 
     process::chown(&env_path, 0, gid)?;
     process::chown(&feeder, 0, gid)?;
+    process::chown(&hyperlane, 0, gid)?;
     fs::set_permissions(&env_path, fs::Permissions::from_mode(0o640))?;
     fs::set_permissions(&feeder, fs::Permissions::from_mode(0o640))?;
-    install_units()?;
+    fs::set_permissions(&hyperlane, fs::Permissions::from_mode(0o640))?;
+    install_units(root)?;
     process::systemctl(&["daemon-reload"])?;
     Ok(())
 }
@@ -104,7 +106,7 @@ fn read_environment(path: &Path) -> Result<BTreeMap<String, String>> {
     for name in ENV_KEYS
         .iter()
         .copied()
-        .filter(|name| *name != "OUTBE_CONSENSUS_EXTRA_ARGS")
+        .filter(|name| !matches!(*name, "OUTBE_CONSENSUS_EXTRA_ARGS"))
     {
         ensure!(
             values.get(name).is_some_and(|value| !value.is_empty()),
@@ -159,24 +161,6 @@ fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
         !peers.is_empty() && peers.iter().all(|peer| valid_peer(peer)),
         "OUTBE_CONSENSUS_PEERS is invalid"
     );
-    ensure!(
-        values["OUTBE_DEV_NETWORK_BINDING"].len() == 132
-            && values["OUTBE_DEV_NETWORK_BINDING"]
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit()),
-        "OUTBE_DEV_NETWORK_BINDING must be a canonical 66-byte hex value"
-    );
-    ensure!(
-        values["OUTBE_TEE_SESSION_MODE"] == "development",
-        "OUTBE_TEE_SESSION_MODE must select the unattested confidential-VM transport"
-    );
-    Ok(())
-}
-
-fn validate_runtime(root: &Path) -> Result<()> {
-    required_executable(&root.join("outbe-tee-enclave-confidential-vm"))?;
-    canonical_key(&root.join("tee/dev-dkg-seed.hex"))?;
-    canonical_key(&root.join("tee/dev-offer-secret.hex"))?;
     Ok(())
 }
 
@@ -189,11 +173,11 @@ fn validate_bundle(root: &Path) -> Result<()> {
         "outbe-cli",
         "outbe-keygen",
         "outbe-feeder",
+        "outbe-hyperlane-validator",
         "outbe-radicle",
     ] {
         required_executable(&root.join(name))?;
     }
-    required_executable(&root.join("outbe-tee-enclave-confidential-vm"))?;
     Ok(())
 }
 
@@ -242,8 +226,18 @@ fn numeric_id(flag: &str) -> Result<u32> {
 fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     let keys = root.join("keys");
     let validator = root.join("validator-0");
-    let tee = root.join("tee");
-    for path in [&keys, &validator, &tee] {
+    let state = root.join("state");
+    let operator_state = state.join("operator");
+    let feeder_state = state.join("feeder");
+    let hyperlane_state = state.join("hyperlane");
+    for path in [
+        &keys,
+        &validator,
+        &state,
+        &operator_state,
+        &feeder_state,
+        &hyperlane_state,
+    ] {
         if let Ok(metadata) = fs::symlink_metadata(path) {
             ensure!(
                 !metadata.file_type().is_symlink(),
@@ -268,11 +262,15 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     ] {
         create_owned_dir(&root.join(relative), 0o750, uid, gid)?;
     }
-    create_owned_dir(&tee, 0o700, 0, 0)?;
+    create_owned_dir(&state, 0o750, 0, gid)?;
+    create_owned_dir(&operator_state, 0o700, 0, 0)?;
+    create_owned_dir(&feeder_state, 0o700, uid, gid)?;
+    create_owned_dir(&hyperlane_state, 0o700, uid, gid)?;
     let secrets = [
         "signing-key.hex",
         "evm-key.hex",
         "feeder-key.hex",
+        "hyperlane-key.hex",
         "reth-p2p-secret.hex",
         "radicle/keys/radicle",
     ];
@@ -302,6 +300,7 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     }
     canonical_key(&keys.join("evm-key.hex"))?;
     canonical_key(&keys.join("feeder-key.hex"))?;
+    canonical_key(&keys.join("hyperlane-key.hex"))?;
     canonical_key(&keys.join("reth-p2p-secret.hex"))?;
     process::capture(
         root.join("outbe-keygen"),
@@ -310,18 +309,31 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     Ok(())
 }
 
-fn install_units() -> Result<()> {
-    let _ = process::command_succeeds("systemctl", &["disable", "--now", "outbe-tee-renew.timer"]);
-    for name in ["outbe-tee-renew.timer", "outbe-tee-renew.service"] {
-        let path = Path::new("/etc/systemd/system").join(name);
-        if path.exists() {
-            fs::remove_file(path)?;
-        }
+fn install_units(root: &Path) -> Result<()> {
+    let unit_dir = root.join("systemd");
+    if let Ok(metadata) = fs::symlink_metadata(&unit_dir) {
+        ensure!(
+            metadata.is_dir() && !metadata.file_type().is_symlink(),
+            "refusing invalid systemd directory: {}",
+            unit_dir.display()
+        );
     }
+    create_owned_dir(&unit_dir, 0o755, 0, 0)?;
     for (name, content) in assets::systemd_units()? {
-        let path = Path::new("/etc/systemd/system").join(name);
-        process::write_file(&path, content.as_bytes(), 0o644)?;
-        process::chown(&path, 0, 0)?;
+        let canonical = unit_dir.join(&name);
+        process::write_file(&canonical, content.as_bytes(), 0o644)?;
+        process::chown(&canonical, 0, 0)?;
+
+        let systemd_link = Path::new("/etc/systemd/system").join(name);
+        if let Ok(metadata) = fs::symlink_metadata(&systemd_link) {
+            ensure!(
+                !metadata.is_dir(),
+                "refusing systemd unit directory: {}",
+                systemd_link.display()
+            );
+            fs::remove_file(&systemd_link)?;
+        }
+        symlink(&canonical, &systemd_link)?;
     }
     Ok(())
 }
@@ -421,8 +433,8 @@ mod tests {
             "outbe-cli",
             "outbe-keygen",
             "outbe-feeder",
+            "outbe-hyperlane-validator",
             "outbe-radicle",
-            "outbe-tee-enclave-confidential-vm",
         ] {
             let path = root.path().join(name);
             fs::write(&path, b"binary").unwrap();

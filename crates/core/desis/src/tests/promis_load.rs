@@ -28,7 +28,9 @@ struct Run {
 }
 
 fn is_launch_fix(event: &IDesis::IntexPromisLoadSet) -> bool {
-    event.referenceCurrency == 0 && event.rateMinor.is_zero() && event.referenceMinor.is_zero()
+    event.referenceCurrency == 0
+        && event.entryPriceMinor.is_zero()
+        && event.baseEntryPriceMinor.is_zero()
 }
 
 /// One auction start per day, rows in ascending ISO as the oracle hands them over.
@@ -56,7 +58,7 @@ fn run_from(stored_exponent: u32, days: &[Day<'_>]) -> Run {
                         call_price_minor: U256::ZERO,
                     })
                     .collect();
-                runtime::step_promis_load(&mut contract, EmissionDate::new(key), &rows)
+                runtime::set_intex_promis_load(&mut contract, EmissionDate::new(key), &rows)
                     .unwrap()
                     .ilog10()
             })
@@ -121,10 +123,10 @@ fn the_first_priced_day_captures_every_currency_without_a_step() {
     assert!(r.steps.is_empty());
     assert_eq!(r.launches.len(), 1);
     assert_eq!(r.launches[0].emissionDay, FIRST_DAY);
-    assert_eq!(r.launches[0].loadMinor, 10u128.pow(LAUNCH));
+    assert_eq!(r.launches[0].unitPromisLoadMinor, 10u128.pow(LAUNCH));
     assert_eq!(r.launches[0].referenceCurrency, 0);
-    assert!(r.launches[0].rateMinor.is_zero());
-    assert!(r.launches[0].referenceMinor.is_zero());
+    assert!(r.launches[0].entryPriceMinor.is_zero());
+    assert!(r.launches[0].baseEntryPriceMinor.is_zero());
     assert_eq!(
         r.references,
         [
@@ -139,14 +141,14 @@ fn a_tenfold_rise_steps_the_load_down_and_less_holds() {
     let r = run(&[&[(USD, 100)], &[(USD, 999)], &[(USD, 1_000)]]);
     assert_eq!(r.exponents, [LAUNCH, LAUNCH, LAUNCH - 1]);
     assert_eq!(r.launches.len(), 1);
-    assert_eq!(r.launches[0].loadMinor, 10u128.pow(LAUNCH));
+    assert_eq!(r.launches[0].unitPromisLoadMinor, 10u128.pow(LAUNCH));
     assert_eq!(r.steps.len(), 1);
     let step = &r.steps[0];
     assert_eq!(step.emissionDay, FIRST_DAY + 2);
-    assert_eq!(step.loadMinor, 10u128.pow(LAUNCH - 1));
+    assert_eq!(step.unitPromisLoadMinor, 10u128.pow(LAUNCH - 1));
     assert_eq!(step.referenceCurrency, USD);
-    assert_eq!(step.rateMinor, U256::from(1_000));
-    assert_eq!(step.referenceMinor, U256::from(100));
+    assert_eq!(step.entryPriceMinor, U256::from(1_000));
+    assert_eq!(step.baseEntryPriceMinor, U256::from(100));
 }
 
 #[test]
@@ -263,7 +265,7 @@ fn an_unpriced_day_does_not_store_a_rung_or_emit() {
     let mut provider = HashMapStorageProvider::new(1);
     let stored = StorageHandle::enter(&mut provider, |s| {
         let mut contract = s.contract::<DesisContract>();
-        let load = runtime::step_promis_load_with_launch(
+        let load = runtime::set_intex_promis_load_with_launch(
             &mut contract,
             EmissionDate::new(FIRST_DAY),
             &[],
@@ -283,7 +285,7 @@ fn a_nonstandard_launch_exponent_is_the_first_priced_rung() {
     let stored = StorageHandle::enter(&mut provider, |s| {
         let mut contract = s.contract::<DesisContract>();
         let rows = day(&[(USD, 100)]);
-        let load = runtime::step_promis_load_with_launch(
+        let load = runtime::set_intex_promis_load_with_launch(
             &mut contract,
             EmissionDate::new(FIRST_DAY),
             &rows,
@@ -300,10 +302,10 @@ fn a_nonstandard_launch_exponent_is_the_first_priced_rung() {
         .filter_map(|log| IDesis::IntexPromisLoadSet::decode_log_data(log).ok())
         .collect();
     assert_eq!(sets.len(), 1);
-    assert_eq!(sets[0].loadMinor, 10u128.pow(9));
+    assert_eq!(sets[0].unitPromisLoadMinor, 10u128.pow(9));
     assert_eq!(sets[0].referenceCurrency, 0);
-    assert!(sets[0].rateMinor.is_zero());
-    assert!(sets[0].referenceMinor.is_zero());
+    assert!(sets[0].entryPriceMinor.is_zero());
+    assert!(sets[0].baseEntryPriceMinor.is_zero());
 }
 
 /// A stored rung stays put when a later call names a different launch rung.
@@ -313,7 +315,7 @@ fn a_stored_rung_ignores_a_different_launch_exponent() {
     let stored = StorageHandle::enter(&mut provider, |s| {
         let mut contract = s.contract::<DesisContract>();
         let first = day(&[(USD, 100)]);
-        runtime::step_promis_load_with_launch(
+        runtime::set_intex_promis_load_with_launch(
             &mut contract,
             EmissionDate::new(FIRST_DAY),
             &first,
@@ -321,9 +323,10 @@ fn a_stored_rung_ignores_a_different_launch_exponent() {
         )
         .unwrap();
         let quiet = day(&[(USD, 100)]);
-        runtime::step_promis_load(&mut contract, EmissionDate::new(FIRST_DAY + 1), &quiet).unwrap();
+        runtime::set_intex_promis_load(&mut contract, EmissionDate::new(FIRST_DAY + 1), &quiet)
+            .unwrap();
         let stepped = day(&[(USD, 1_000)]);
-        runtime::step_promis_load_with_launch(
+        runtime::set_intex_promis_load_with_launch(
             &mut contract,
             EmissionDate::new(FIRST_DAY + 2),
             &stepped,
@@ -340,7 +343,7 @@ fn a_stored_rung_ignores_a_different_launch_exponent() {
         .collect();
     assert_eq!(sets.len(), 2);
     assert!(is_launch_fix(&sets[0]));
-    assert_eq!(sets[0].loadMinor, 10u128.pow(9));
-    assert_eq!(sets[1].loadMinor, 10u128.pow(8));
+    assert_eq!(sets[0].unitPromisLoadMinor, 10u128.pow(9));
+    assert_eq!(sets[1].unitPromisLoadMinor, 10u128.pow(8));
     assert_eq!(sets[1].referenceCurrency, USD);
 }

@@ -5,7 +5,7 @@ import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 
 /// @title MockAuctionEscrow
 /// @notice Minimal escrow stub for IntexAuction unit tests. Selector-matches
-///         `IEscrowAdapter.lockFunds` without implementing the full interface. Supports a
+///         `IEscrowAdapter.lockIntexAuctionAsset` without implementing the full interface. Supports a
 ///         `lockShouldRevert` toggle and an `armReentry` hook for reentrancy probes.
 /// @dev The canonical full-interface mock lives in `MockEscrowAdapter.sol`. Use that when a test
 ///      needs the entire IEscrowAdapter surface (finalization, etc.).
@@ -20,7 +20,7 @@ contract MockAuctionEscrow {
     bytes public reentryCalldata;
     bool public reentryArmed;
 
-    event FundsLocked(uint32 indexed seriesId, address indexed bidder, uint128 amount);
+    event IntexAuctionAssetLocked(uint32 indexed seriesId, address indexed bidder, uint128 amount);
 
     function setLockShouldRevert(bool v) external {
         lockShouldRevert = v;
@@ -32,7 +32,7 @@ contract MockAuctionEscrow {
         reentryArmed = true;
     }
 
-    function lockFunds(uint32 seriesId, address bidder, uint128 amount, uint32, uint16) external {
+    function lockIntexAuctionAsset(uint32 seriesId, address bidder, uint128 amount, uint32, uint16) external {
         if (lockShouldRevert) revert MockLockReverted();
         if (reentryArmed) {
             reentryArmed = false;
@@ -45,7 +45,7 @@ contract MockAuctionEscrow {
         }
         lockedFunds[seriesId][bidder] = amount;
         ++outstandingCount;
-        emit FundsLocked(seriesId, bidder, amount);
+        emit IntexAuctionAssetLocked(seriesId, bidder, amount);
     }
 
     /// @notice Selector-matches `IEscrowAdapter.hasOutstandingLocks`: true while any lock is live.

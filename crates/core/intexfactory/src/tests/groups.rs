@@ -45,7 +45,7 @@ mod group_scans {
     fn a_days_series_share_one_call_group() {
         use alloy_sol_types::SolEvent;
         use outbe_intex::precompile::IIntex;
-        use outbe_system_common::addresses::INTEX_ADDRESS;
+        use outbe_system_common::addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS};
 
         let mut storage = super::super::factory_provider();
         let ids: Vec<_> = ISSUANCES
@@ -102,9 +102,11 @@ mod group_scans {
         });
 
         let called: Vec<_> = storage
-            .get_events(INTEX_ADDRESS)
+            .get_events(INTEX_FACTORY_ADDRESS)
             .iter()
-            .filter_map(|log| IIntex::IntexSeriesCalled::decode_log_data(log).ok())
+            .filter_map(|log| {
+                crate::precompile::IIntexFactory::IntexSeriesCalled::decode_log_data(log).ok()
+            })
             .map(|e| (e.seriesId, e.issuanceCurrency, e.referenceCurrency))
             .collect();
         let closed: Vec<_> = storage

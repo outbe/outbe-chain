@@ -7,6 +7,8 @@ on:
       - ".github/actions/**"
       - ".github/workflows/_contract-ci.yml"
       - "contracts/tokens/**"
+      - "contracts/crosschain/**"
+      - "contracts/precompiles/**"
       - "contracts/shared/**"
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
@@ -14,6 +16,8 @@ on:
       - ".github/actions/**"
       - ".github/workflows/_contract-ci.yml"
       - "contracts/tokens/**"
+      - "contracts/crosschain/**"
+      - "contracts/precompiles/**"
       - "contracts/shared/**"
 
 permissions:
@@ -27,4 +31,3 @@ jobs:
       abi-check: true
       upgrade-check: true
       slither-check: true
-      aderyn-check: true

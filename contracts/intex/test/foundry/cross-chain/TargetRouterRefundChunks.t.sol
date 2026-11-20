@@ -20,11 +20,11 @@ contract SummingEscrowAdapter {
         paymentToken = token;
     }
 
-    function dayPaymentToken(uint32) external view returns (IERC20) {
+    function dayIntexAuctionAsset(uint32) external view returns (IERC20) {
         return paymentToken;
     }
 
-    function finalizeAuction(uint32, bytes32, address[] calldata winners, uint16, uint16, uint64, uint128 basis, bool)
+    function chargeIntexAuctionAsset(uint32, address[] calldata winners, uint16, uint16, uint64, uint128 basis, bool)
         external
         pure
         returns (uint128 totalPaid)
@@ -32,7 +32,7 @@ contract SummingEscrowAdapter {
         totalPaid = uint128(basis * winners.length);
     }
 
-    function getAuctionStatus(uint32) external pure returns (bool, bool, uint128) {
+    function auctionStatus(uint32) external pure returns (bool, bool, uint128) {
         return (false, false, 0);
     }
 
@@ -84,28 +84,28 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         SummingEscrowAdapter escrow = new SummingEscrowAdapter(IERC20(address(wcoen)));
         tokenBridge = new CountingTokenBridge(IERC20(address(wcoen)));
 
-        target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
-        target.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
+        target.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        target.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
         target.setProceedsRoute(address(tokenBridge), originRouter);
     }
 
-    function _deliverChunk(uint16 chunkIndex, uint16 totalChunks, uint128 paidAmount) internal {
+    function _deliverChunk(uint16 pageIndex, uint16 totalPages, uint128 paidAmount) internal {
         address[] memory winners = new address[](1);
-        winners[0] = address(uint160(uint256(0xB1D) + chunkIndex));
+        winners[0] = address(uint160(uint256(0xB1D) + pageIndex));
         bytes memory packet =
-            BridgeMsgCodec.encodeRefundInstructions(DAY, chunkIndex, totalChunks, 1_000_000, paidAmount, winners, 0, 0);
+            BridgeMsgCodec.encodeIntexAuctionWinners(DAY, pageIndex, totalPages, 1_000_000, paidAmount, winners, 0, 0);
         _deliver(OUTBE_CHAIN_ID, originSender, address(target), packet);
     }
 
     function test_EachChunkSendsItsOwnProceeds() public {
-        vm.expectEmit(true, false, false, true, address(target));
-        emit ITargetRouter.ProceedsRouted(DAY, 0, 40e6);
+        vm.expectEmit(false, true, true, true, address(target));
+        emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), DAY, 0, 40e6);
         _deliverChunk(0, 2, 40e6);
         assertEq(tokenBridge.calls(), 1, "the first chunk routes at once");
         assertEq(tokenBridge.lastAmount(), 40e6);
 
-        vm.expectEmit(true, false, false, true, address(target));
-        emit ITargetRouter.ProceedsRouted(DAY, 1, 60e6);
+        vm.expectEmit(false, true, true, true, address(target));
+        emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), DAY, 1, 60e6);
         _deliverChunk(1, 2, 60e6);
         assertEq(tokenBridge.calls(), 2, "the second chunk routes its own part");
         assertEq(tokenBridge.lastAmount(), 60e6);
@@ -115,7 +115,7 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         _deliverChunk(0, 2, 40e6);
         _deliverChunk(0, 2, 40e6); // the bridge may deliver the same chunk twice
         assertEq(tokenBridge.calls(), 1, "a repeat must not route again");
-        (uint16 seen,) = target.refundChunks(DAY);
+        (uint16 seen,) = target.getIntexAuctionReturnState(DAY);
         assertEq(seen, 1, "a repeat must not be counted");
     }
 
@@ -128,7 +128,7 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         _deliverChunk(1, 3, 60e6);
         assertEq(tokenBridge.calls(), 3, "the late chunk routes its own part");
         assertEq(tokenBridge.lastAmount(), 60e6);
-        (uint16 seen, uint16 total) = target.refundChunks(DAY);
+        (uint16 seen, uint16 total) = target.getIntexAuctionReturnState(DAY);
         assertEq(seen, total, "the day completes");
     }
 
@@ -156,38 +156,42 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         MockWCOEN token = new MockWCOEN();
         MockTheCompact compact = new MockTheCompact();
         EscrowAdapter escrow = DeployProxy.escrowAdapter(address(this), address(this));
-        escrow.wire(address(this), address(compact), address(token));
+        escrow.setDependencies(address(this), address(compact), address(token));
         compact.setResetPeriodSeconds(0);
         escrow.grantRole(escrow.RELAYER_ROLE(), address(target));
         escrow.grantRole(escrow.AUCTION_ROLE(), address(this));
         escrow.setProceedsRecipient(address(target));
-        target.wire(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        target.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
 
         address[2] memory bidders = [makeAddr("early"), makeAddr("late")];
         for (uint256 i = 0; i < bidders.length; i++) {
             token.mint(bidders[i], 1e18);
             vm.prank(bidders[i]);
             token.approve(address(escrow), type(uint256).max);
-            escrow.lockFunds(DAY, bidders[i], 1e6, 1_000_000, 1);
+            escrow.lockIntexAuctionAsset(DAY, bidders[i], 1e6, 1_000_000, 1);
         }
 
         _deliverChunkFor(bidders[0], 0, 2);
         _deliverChunkFor(bidders[1], 1, 2);
 
-        assertTrue(escrow.getBidLock(DAY, bidders[0]).status == IEscrowAdapter.LockStatus.Won, "first chunk settled");
         assertTrue(
-            escrow.getBidLock(DAY, bidders[1]).status == IEscrowAdapter.LockStatus.Won, "second chunk settled too"
+            escrow.getIntexAuctionBidLock(DAY, bidders[0]).status == IEscrowAdapter.LockStatus.Won,
+            "first chunk settled"
+        );
+        assertTrue(
+            escrow.getIntexAuctionBidLock(DAY, bidders[1]).status == IEscrowAdapter.LockStatus.Won,
+            "second chunk settled too"
         );
     }
 
-    function _deliverChunkFor(address winner, uint16 chunkIndex, uint16 totalChunks) internal {
+    function _deliverChunkFor(address winner, uint16 pageIndex, uint16 totalPages) internal {
         address[] memory winners = new address[](1);
         winners[0] = winner;
         _deliver(
             OUTBE_CHAIN_ID,
             originSender,
             address(target),
-            BridgeMsgCodec.encodeRefundInstructions(DAY, chunkIndex, totalChunks, 500_000, 1e6, winners, 0, 0)
+            BridgeMsgCodec.encodeIntexAuctionWinners(DAY, pageIndex, totalPages, 500_000, 1e6, winners, 0, 0)
         );
     }
 }

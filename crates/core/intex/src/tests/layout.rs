@@ -4,7 +4,7 @@ use super::*;
 
 #[test]
 fn promis_load_launch_exponent_stays_in_range() {
-    for params in [config::IntexParams::PROD, config::IntexParams::DEV] {
+    for params in [config::IntexParams::MAINNET, config::IntexParams::TESTNET] {
         assert!((1..=21).contains(&params.promis_load_launch_exponent));
     }
 }
@@ -14,10 +14,10 @@ fn config_unset_resolves_by_chain_id() {
     with_registry(|s| {
         let intex = IntexContract::new(s.clone());
         // An unset selector resolves by network, and CHAIN_ID is not mainnet.
-        assert_eq!(config::read(&s).unwrap(), config::IntexParams::DEV);
+        assert_eq!(config::read(&s).unwrap(), config::IntexParams::TESTNET);
         // An explicit selector still wins over the network default.
-        intex.config_profile.write(config::PROFILE_PROD).unwrap();
-        assert_eq!(config::read(&s).unwrap(), config::IntexParams::PROD);
+        intex.config_profile.write(config::PROFILE_MAINNET).unwrap();
+        assert_eq!(config::read(&s).unwrap(), config::IntexParams::MAINNET);
     });
 }
 
@@ -39,12 +39,12 @@ fn config_auto_profile_follows_the_network() {
 
     assert_eq!(
         config::IntexParams::from_selector(config::PROFILE_AUTO, MAINNET_CHAIN_ID).unwrap(),
-        config::IntexParams::PROD
+        config::IntexParams::MAINNET
     );
     for chain_id in [TESTNET_CHAIN_ID, DEVNET_CHAIN_ID, 31_337] {
         assert_eq!(
             config::IntexParams::from_selector(config::PROFILE_AUTO, chain_id).unwrap(),
-            config::IntexParams::DEV
+            config::IntexParams::TESTNET
         );
     }
 }

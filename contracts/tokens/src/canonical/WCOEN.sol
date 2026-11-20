@@ -2,18 +2,14 @@
 pragma solidity ^0.8.30;
 
 import {DEAD_ADDRESS} from "@shared/BurnAddress.sol";
+import {IWCOEN} from "@tokens/interfaces/IWCOEN.sol";
 
-contract WCOEN {
+contract WCOEN is IWCOEN {
     string public name = "Wrapped COEN";
     string public symbol = "WCOEN";
     uint8 public decimals = 18;
 
     error NativeTransferFailed(address to, uint256 amount);
-
-    event Approval(address indexed src, address indexed guy, uint256 wad);
-    event Transfer(address indexed src, address indexed dst, uint256 wad);
-    event Deposit(address indexed dst, uint256 wad);
-    event Withdrawal(address indexed src, uint256 wad);
 
     uint256 private _totalSupply;
 
@@ -49,22 +45,6 @@ contract WCOEN {
     function approve(address guy, uint256 wad) public returns (bool) {
         allowance[msg.sender][guy] = wad;
         emit Approval(msg.sender, guy, wad);
-        return true;
-    }
-
-    function increaseAllowance(address guy, uint256 wad) public returns (bool) {
-        allowance[msg.sender][guy] += wad;
-        emit Approval(msg.sender, guy, allowance[msg.sender][guy]);
-        return true;
-    }
-
-    function decreaseAllowance(address guy, uint256 wad) public returns (bool) {
-        uint256 currentAllowance = allowance[msg.sender][guy];
-        require(currentAllowance >= wad);
-        unchecked {
-            allowance[msg.sender][guy] = currentAllowance - wad;
-        }
-        emit Approval(msg.sender, guy, allowance[msg.sender][guy]);
         return true;
     }
 

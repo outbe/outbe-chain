@@ -1,0 +1,25 @@
+pub use outbe_chain_constants::MAX_PIPELINE_WWDS;
+use outbe_chain_constants::{
+    DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS, DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS,
+};
+
+/// Compatibility aliases for capacity proofs and canonical-default tests.
+pub const FORMING_PERIOD_HOURS: u64 = DEFAULT_METADOSIS_FORMING_PERIOD_SECONDS / SECONDS_PER_HOUR;
+
+/// Offering period: 50 hours.
+pub const OFFERING_PERIOD_HOURS: u64 = DEFAULT_METADOSIS_OFFERING_PERIOD_SECONDS / SECONDS_PER_HOUR;
+
+/// Fresh-devnet production creates at most one WorldwideDay per UTC day.
+pub const WWD_CREATION_CADENCE_HOURS: u64 = 24;
+
+/// Maximum WWD records kept in the canonical historical retention queue.
+pub const MAX_RECORDS_KEPT: usize = 365;
+
+/// READY work uses the population bounded by the canonical WWD retention policy.
+pub const MAX_RETAINED_WWDS: usize = MAX_RECORDS_KEPT;
+
+/// Exact bound for every scan of the active WorldwideDay aggregate.
+pub const MAX_ACTIVE_WWDS: usize = MAX_PIPELINE_WWDS + MAX_RETAINED_WWDS;
+
+/// Seconds per hour.
+pub const SECONDS_PER_HOUR: u64 = 3600;

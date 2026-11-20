@@ -32,7 +32,7 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
         let forming_end =
             forming_start + outbe_chain_constants::get_metadosis_forming_period_seconds();
         let offerings_start =
-            forming_end + outbe_chain_constants::get_metadosis_lookback_delay_seconds();
+            forming_start + outbe_chain_constants::OFFERING_START_AFTER_FORMING_START_SECONDS;
         let offering_end =
             offerings_start + outbe_chain_constants::get_metadosis_offering_period_seconds();
         let binding = outbe_system_common::metadosis_bindings::metadosis_process_ready_binding(
@@ -73,10 +73,10 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
                             tribute_price_minor: U256::from(2),
                         })?;
                     }
-                    outbe_tributefactory::worldwideday::create_worldwide_day(
+                    outbe_tributefactory::worldwide_day::open_worldwide_day(
                         &mut factory,
                         WWD,
-                        outbe_tributefactory::worldwideday::NewWwdSchedule {
+                        outbe_tributefactory::worldwide_day::NewWwdSchedule {
                             day: DAY,
                             forming_start,
                             forming_end,
@@ -85,7 +85,7 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
                         },
                     )?;
                     // A6 seals the WorldwideDay.
-                    tribute.seal_day(WWD)?;
+                    tribute.seal_worldwide_day(WWD)?;
                     Ok(())
                 },
             )
@@ -260,14 +260,18 @@ fn native_completion_credits_the_unused_lysis_limit_once() {
 
 #[test]
 fn native_completion_briefs_the_emission_day() {
+    let day = outbe_system_common::time::EmissionDate::new(DAY);
     let mut provider = fixture();
+    StorageHandle::enter(&mut provider, |storage| {
+        outbe_desis::api::schedule_auction(storage, day).unwrap();
+    });
     run(&mut provider).unwrap();
     StorageHandle::enter(&mut provider, |storage| {
         let desis = outbe_desis::schema::DesisContract::new(storage);
-        let day = outbe_system_common::time::EmissionDate::new(DAY);
+        assert_eq!(desis.desis_limit_set.read(&day).unwrap(), 1);
         assert_eq!(
             desis.auction_stage.read(&day).unwrap(),
-            outbe_desis::schema::AuctionStage::Briefed as u8
+            outbe_desis::schema::AuctionStage::None as u8
         );
     });
 }
@@ -428,4 +432,60 @@ fn one_rule_for_metadosis_limit() {
             );
         });
     }
+}
+
+fn block_at(storage: StorageHandle<'_>, timestamp: u64) -> BlockRuntimeContext<'_> {
+    BlockRuntimeContext::new(
+        BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
+            block_number: 10,
+            timestamp,
+            chain_id: CHAIN_ID,
+            genesis_hash: alloy_primitives::B256::ZERO,
+            genesis_timestamp: u64::max(CLOCK, 1),
+            proposer: alloy_primitives::Address::ZERO,
+            validators: Vec::new(),
+        },
+        storage,
+    )
+}
+
+#[test]
+fn failed_metadosis_rolls_the_max_fidelity_of_its_wwd() {
+    let mut provider = fixture_with_amounts(LIMIT, &[NOMINAL + 1]);
+    StorageHandle::enter(&mut provider, |storage| {
+        let peak = U256::from(u128::MAX);
+        let later = WorldwideDay::new(20261001);
+        outbe_fidelity::api::league_from_rcfi_for_wwd(storage.clone(), WWD, peak).unwrap();
+        assert!(outbe_fidelity::api::max_fidelity_for_wwd(storage.clone(), later).unwrap() < peak);
+
+        crate::commands::fail_metadosis(&block_at(storage.clone(), CLOCK), DAY).unwrap();
+        assert_eq!(
+            outbe_fidelity::api::max_fidelity_for_wwd(storage.clone(), later).unwrap(),
+            peak
+        );
+    });
+}
+
+#[test]
+fn failed_metadosis_cancels_the_auction_of_its_day() {
+    let day = outbe_system_common::time::EmissionDate::new(DAY);
+    let mut provider = fixture_with_amounts(LIMIT, &[NOMINAL + 1]);
+    StorageHandle::enter(&mut provider, |storage| {
+        outbe_desis::api::schedule_auction(storage.clone(), day).unwrap();
+        crate::commands::fail_metadosis(&block_at(storage.clone(), CLOCK), DAY).unwrap();
+        let desis = outbe_desis::schema::DesisContract::new(storage.clone());
+        assert_eq!(
+            desis.cancel_reason.read(&day).unwrap(),
+            outbe_desis::constants::CANCELED_NO_LIMIT
+        );
+
+        let anchor = u64::from(desis.auction_at.read(&day).unwrap());
+        outbe_desis::advance_auctions(&block_at(storage.clone(), anchor)).unwrap();
+        assert_eq!(
+            desis.auction_stage.read(&day).unwrap(),
+            outbe_desis::schema::AuctionStage::Canceled as u8
+        );
+    });
 }

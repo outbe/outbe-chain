@@ -5,27 +5,72 @@
 
 FROM rust:1.96.0-bookworm@sha256:64d9b7f60e3abb08d477cad983d0a3743acc53a19369ba4482510184c9c807e5 AS rust
 
-FROM gramineproject/gramine:1.9-noble@sha256:bdf2d0ef9bd09fa10684e14fbe822236df35708d58a852209c5f235842ecb6d7 AS toolchain
+# Hash the release/apt inputs against the pin before any apt-get. The Rust
+# image already has python3. apt-base's first apt-get update copies the stamp
+# this stage writes, so a mismatch stops the build before the archive is fetched.
+FROM rust AS apt-sources-verifier
+
+COPY release/project-toolchain-v1.json /opt/outbe/toolchain/project-toolchain-v1.json
+COPY release/apt/ubuntu.sources /src/etc/apt/sources.list.d/ubuntu.sources
+COPY release/apt/intel-sgx.list /src/etc/apt/sources.list.d/intel-sgx.list
+COPY release/apt/intel-sgx-deb.key /src/usr/share/keyrings/intel-sgx-deb.key
+RUN python3 - <<'PY'
+import hashlib, json, pathlib, sys
+pin = json.loads(pathlib.Path("/opt/outbe/toolchain/project-toolchain-v1.json").read_text())
+want = {
+    "/etc/apt/sources.list.d/intel-sgx.list",
+    "/etc/apt/sources.list.d/ubuntu.sources",
+    "/usr/share/keyrings/intel-sgx-deb.key",
+}
+seen = set()
+for src in pin["apt_provenance"]["source_files"]:
+    path = src["path"]
+    if path not in want:
+        continue
+    seen.add(path)
+    file = pathlib.Path("/src") / path.lstrip("/")
+    digest = hashlib.sha256(file.read_bytes()).hexdigest()
+    if digest != src["sha256"]:
+        sys.exit(f"APT source digest mismatch: {path}")
+if seen != want:
+    sys.exit("APT source pin is missing a release/apt input")
+pathlib.Path("/opt/outbe/toolchain/apt-sources-verified").write_bytes(b"ok\n")
+print("project APT source files: OK")
+PY
+
+FROM ubuntu:24.04@sha256:1e0a86e57d247923571b75e0aaf48a1449cf8c543d51fb3e07a4a7d7bfa79316 AS apt-base
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-COPY --from=rust /usr/local/cargo /usr/local/cargo
-COPY --from=rust /usr/local/rustup /usr/local/rustup
+COPY --from=apt-sources-verifier /opt/outbe/toolchain/apt-sources-verified /opt/outbe/toolchain/apt-sources-verified
 
-ENV CARGO_HOME=/usr/local/cargo \
-    PATH=/usr/local/cargo/bin:${PATH} \
-    RUSTUP_HOME=/usr/local/rustup
-
-COPY release/project-toolchain-v1.json /opt/outbe/toolchain/project-toolchain-v1.json
-COPY release/scripts/verify-toolchain-in-container.sh /opt/outbe/toolchain/verify-toolchain-in-container.sh
+# The snapshot and the Intel repository are HTTPS. The base image has an HTTP
+# archive and no CA bundle. Extract the bundle without installing the package:
+# installing it upgrades libssl past the snapshot and the closure stops resolving.
+# The stamp above is the gate: apt-get update does not run unless the three
+# release/apt files match the pin.
+RUN test -f /opt/outbe/toolchain/apt-sources-verified && \
+    apt-get update && \
+    mkdir -p /tmp/ca-bootstrap /etc/ssl/certs && \
+    apt-get download ca-certificates && \
+    dpkg-deb -x /ca-certificates_*.deb /tmp/ca-bootstrap/root && \
+    cat /tmp/ca-bootstrap/root/usr/share/ca-certificates/mozilla/*.crt > /etc/ssl/certs/ca-certificates.crt && \
+    rm -rf /ca-certificates_*.deb /tmp/ca-bootstrap /var/lib/apt/lists/* /var/cache/apt/archives/*.deb
 
 # Freeze the Ubuntu archive at one snapshot instant so the resolved package
 # closure is reproducible; the base image points at the live archive, where the
 # transitive packages that no version pin covers drift on every republish.
 COPY release/apt/ubuntu.sources /etc/apt/sources.list.d/ubuntu.sources
+COPY release/apt/intel-sgx-deb.key /usr/share/keyrings/intel-sgx-deb.key
+COPY release/apt/intel-sgx.list /etc/apt/sources.list.d/intel-sgx.list
 
+# Download the pinned closure and stop. python3 is part of that closure because
+# verify-qvl runs it after install. Nothing in this stage is installed: the
+# ledger check below has to be able to reject a bad digest before the first
+# apt-get install. The Rust image already has python3, so the check does not
+# install an interpreter into this root.
 RUN apt-get update && \
-    apt-get install --download-only --reinstall -y --no-install-recommends \
+    apt-get install --download-only --reinstall --allow-downgrades -y --no-install-recommends \
       build-essential=12.10ubuntu1 \
       clang=1:18.0-59~exp2 \
       cmake=3.28.3-1build7 \
@@ -34,23 +79,55 @@ RUN apt-get update && \
       libc++-dev=1:18.0-59~exp2 \
       libc++abi-dev=1:18.0-59~exp2 \
       libgcc-s1=14.2.0-4ubuntu2~24.04.1 \
-      libsgx-dcap-quote-verify=1.26.100.1-noble1 \
       libsgx-dcap-quote-verify-dev=1.26.100.1-noble1 \
+      libsgx-dcap-quote-verify=1.26.100.1-noble1 \
       libsgx-headers=2.29.100.1-noble1 \
       libssl-dev=3.0.13-0ubuntu3.12 \
       libstdc++6=14.2.0-4ubuntu2~24.04.1 \
-      pkg-config=1.8.1-2build1 && \
-    /opt/outbe/toolchain/verify-toolchain-in-container.sh \
+      pkg-config=1.8.1-2build1 \
+      python3=3.12.3-0ubuntu2.1 && \
+    mkdir -p /opt/outbe/apt-debs && \
+    cp /var/cache/apt/archives/*.deb /opt/outbe/apt-debs/ && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+FROM rust AS apt-verifier
+
+COPY --from=apt-base /etc/apt/sources.list.d/intel-sgx.list /apt-root/etc/apt/sources.list.d/intel-sgx.list
+COPY --from=apt-base /etc/apt/sources.list.d/ubuntu.sources /apt-root/etc/apt/sources.list.d/ubuntu.sources
+COPY --from=apt-base /usr/share/keyrings/intel-sgx-deb.key /apt-root/usr/share/keyrings/intel-sgx-deb.key
+COPY --from=apt-base /usr/share/keyrings/ubuntu-archive-keyring.gpg /apt-root/usr/share/keyrings/ubuntu-archive-keyring.gpg
+COPY --from=apt-base /opt/outbe/apt-debs /debs
+COPY release/project-toolchain-v1.json /opt/outbe/toolchain/project-toolchain-v1.json
+COPY release/scripts/verify-toolchain-in-container.sh /opt/outbe/toolchain/verify-toolchain-in-container.sh
+RUN /opt/outbe/toolchain/verify-toolchain-in-container.sh \
       verify-apt-inputs \
       --pin /opt/outbe/toolchain/project-toolchain-v1.json \
-      --apt-root / \
-      --deb-dir /var/cache/apt/archives && \
-    apt-get install -y --no-install-recommends --no-download \
+      --apt-root /apt-root \
+      --deb-dir /debs && \
+    touch /opt/outbe/toolchain/apt-inputs-verified
+
+FROM apt-base AS toolchain
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+
+COPY --from=rust /usr/local/cargo /usr/local/cargo
+COPY --from=rust /usr/local/rustup /usr/local/rustup
+
+ENV CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:${PATH} \
+    RUSTUP_HOME=/usr/local/rustup
+
+# The stamp exists only after verify-apt-inputs succeeds. This is the first
+# apt-get install in the image.
+COPY --from=apt-verifier /opt/outbe/toolchain /opt/outbe/toolchain
+RUN test -f /opt/outbe/toolchain/apt-inputs-verified && \
+    mkdir -p /var/cache/apt/archives && \
+    cp /opt/outbe/apt-debs/*.deb /var/cache/apt/archives/ && \
+    apt-get install -y --no-install-recommends --no-download --allow-downgrades \
       /var/cache/apt/archives/*.deb && \
     dpkg --audit && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN rustup component add rustfmt clippy rust-src \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* && \
+    rustup component add rustfmt clippy rust-src \
       --toolchain 1.96.0-x86_64-unknown-linux-gnu
 
 # outbe-zk compiles the in-tree Noir circuits from build.rs, so these tools are
@@ -68,12 +145,11 @@ RUN tar -xzf /tmp/nargo.tar.gz -C /usr/local/bin && \
     chmod 0755 /usr/local/bin/nargo /usr/local/bin/bb && \
     rm /tmp/nargo.tar.gz /tmp/barretenberg.tar.gz && \
     test "$(nargo --version | sed -n 's/^nargo version = //p')" = "1.0.0-beta.22" && \
-    test "$(bb --version | head -n 1)" = "5.0.0-nightly.20260522"
+    test "$(bb --version | sed -n '1p')" = "5.0.0-nightly.20260522"
 
 COPY release/dcap-native-qvl-v1.json /opt/outbe/toolchain/dcap-native-qvl-v1.json
 
 RUN test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.96.0" && \
-    test "$(dpkg-query -W -f='${Version}' gramine)" = "1.9" && \
     /opt/outbe/toolchain/verify-toolchain-in-container.sh \
       verify-qvl \
       --manifest /opt/outbe/toolchain/dcap-native-qvl-v1.json \
@@ -86,7 +162,7 @@ ENTRYPOINT []
 # GitHub Actions jobs invoke, so a job body is `checkout` + the command itself:
 # no `sudo apt-get`, no per-run toolchain download, and no shared host state.
 #
-# Building FROM toolchain is the point: the Rust, Gramine and Intel DCAP pins CI
+# Building FROM toolchain is the point: the Rust and Intel DCAP pins CI
 # compiles against cannot drift from the ones the release build uses, because
 # they are the same layers. Nothing here may modify that inherited surface -
 # this stage only adds.
@@ -94,6 +170,8 @@ ENTRYPOINT []
 # Never use this stage for a release build. `release/scripts/reproducible-build.sh`
 # targets `artifacts`, which descends from `toolchain` directly.
 FROM toolchain AS ci
+
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -125,15 +203,15 @@ ENV PATH=/usr/local/cargo/bin:/opt/mise/data/shims:${PATH}
 # part of the verified pin closure - but they still come from the frozen APT
 # snapshot installed above, not from a mutable mirror.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-      ca-certificates \
-      curl \
-      jq \
-      mold \
-      python-is-python3 \
-      unzip \
-      xz-utils \
-      zstd && \
+    apt-get install -y --no-install-recommends --allow-downgrades \
+      ca-certificates=20260601~24.04.1 \
+      curl=8.5.0-2ubuntu10.11 \
+      jq=1.7.1-3ubuntu0.24.04.2 \
+      mold=2.30.0+dfsg-1build1 \
+      python-is-python3=3.11.4-1 \
+      unzip=6.0-28ubuntu4.1 \
+      xz-utils=5.6.1+really5.4.5-1ubuntu0.3 \
+      zstd=1.5.5+dfsg2-2build1.1 && \
     rm -rf /var/lib/apt/lists/*
 
 # Exact release binary with a checksum, rather than piping the install script to
@@ -141,20 +219,17 @@ RUN apt-get update && \
 # what every job runs.
 ARG MISE_VERSION=v2026.9.0
 ARG MISE_SHA256=c9b089f2be1db4d4262eacaf367e480e7a328848adcc37d9d1612996902485d0
-RUN curl -fsSL --proto '=https' --tlsv1.2 \
-      "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-linux-x64" \
-      -o /usr/local/bin/mise && \
-    echo "${MISE_SHA256}  /usr/local/bin/mise" | sha256sum --check - && \
-    chmod 0755 /usr/local/bin/mise && \
-    test "$(mise --version | cut -d' ' -f1)" = "${MISE_VERSION#v}"
+ADD --checksum=sha256:${MISE_SHA256} --chmod=0755 \
+    "https://github.com/jdx/mise/releases/download/${MISE_VERSION}/mise-${MISE_VERSION}-linux-x64" \
+    /usr/local/bin/mise
+RUN test "$(mise --version | cut -d' ' -f1)" = "${MISE_VERSION#v}"
 
 # mise.toml stays the single source of truth for the tool set. cargo-binstall is
 # installed first so the remaining `cargo:` tools are fetched as prebuilt
 # binaries instead of being compiled from source.
 COPY mise.toml /opt/outbe/ci/mise.toml
-# contracts/intex pins its own tools (uv for the slither run, aderyn) in a
-# separate config; copied alone it has no parent to merge with, so this installs
-# exactly those two.
+# contracts/intex pins its own uv (for the slither run) in a separate config;
+# copied alone it has no parent to merge with, so this installs exactly that.
 COPY contracts/intex/mise.toml /opt/outbe/ci-intex/mise.toml
 #
 # Installing is not enough: a mise shim resolves its version from the config
@@ -162,34 +237,41 @@ COPY contracts/intex/mise.toml /opt/outbe/ci-intex/mise.toml
 # fails with "No version is set". Promoting the installed set to the global
 # config makes the image self-contained - a job gets working tools wherever it
 # runs, and a repository mise.toml still takes precedence where it applies.
-RUN cd /opt/outbe/ci && \
-    mise install cargo:cargo-binstall && \
-    mise install && \
-    cd /opt/outbe/ci-intex && \
-    mise install && \
+# Binary GitHub releases may use an optional token. This is the only RUN that
+# mounts it. cargo-binstall and the other cargo tools are a later RUN with no
+# secret mount, so they cannot see GITHUB_TOKEN.
+RUN --mount=type=secret,id=GITHUB_TOKEN,required=false \
+    token="$(cat /run/secrets/GITHUB_TOKEN 2>/dev/null || true)" && \
+    if [ -n "${token}" ]; then \
+      GITHUB_TOKEN="${token}" mise --cd /opt/outbe/ci install foundry cocogitto nargo bb && \
+      GITHUB_TOKEN="${token}" mise --cd /opt/outbe/ci-intex install uv; \
+    else \
+      env -u GITHUB_TOKEN mise --cd /opt/outbe/ci install foundry cocogitto nargo bb && \
+      env -u GITHUB_TOKEN mise --cd /opt/outbe/ci-intex install uv; \
+    fi
+
+# Invoke the installed tools from / to prove their shims resolve without
+# the workspace's mise config. This layer never mounts the release token.
+WORKDIR /
+RUN mise --cd /opt/outbe/ci install cargo:cargo-binstall && \
+    mise --cd /opt/outbe/ci install \
+      cargo:cargo-nextest cargo:cargo-deny cargo:cargo-auditable cargo:cargo-audit && \
     mise ls --installed | awk '{print $1"@"$2}' | xargs mise use -g && \
     mise reshim && \
-    cd / && \
     mise use -g "cargo:sccache@latest" "cargo:cargo-llvm-cov@latest" && \
     mise reshim && \
-    rm -rf "${MISE_CACHE_DIR}"
-
-# Fail the build here rather than leaving a job to discover a broken tool.
-#
-# Run from / on purpose. `command -v` only proves a shim file exists, and a shim
-# with no resolvable version passes that check while failing on execution - so
-# actually invoke each tool, from a directory no mise config covers.
-RUN set -eu; \
-    cd /; \
+    rm -rf "${MISE_CACHE_DIR}" && \
     for tool in forge cast anvil cargo-nextest cargo-deny cargo-audit \
-                cog duckdb uv uvx aderyn sccache jq mold zstd python nargo bb; do \
+                cog uv uvx sccache jq mold zstd python nargo bb; do \
       "${tool}" --version >/dev/null 2>&1 \
         || { echo "ci stage tool does not run: ${tool}" >&2; exit 1; }; \
-    done; \
-    cargo auditable --version >/dev/null; \
-    cargo llvm-cov --version >/dev/null; \
-    test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.96.0"; \
+    done && \
+    cargo auditable --version >/dev/null && \
+    cargo llvm-cov --version >/dev/null && \
+    test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.96.0" && \
     test -f /usr/include/sgx_dcap_quoteverify.h
+
+WORKDIR /workspace
 
 FROM toolchain AS source-builder
 
@@ -225,7 +307,10 @@ COPY --from=builder /out/ /
 
 FROM source-builder AS software-builder
 
+ARG SOFTWARE_PROFILE=production
+
 RUN cargo xtask release build \
+      --profile "${SOFTWARE_PROFILE}" \
       --output /out \
       --inside-container
 

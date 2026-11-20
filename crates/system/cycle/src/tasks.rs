@@ -177,20 +177,11 @@ impl TaskHandler {
 /// Each tick advances every scheduled day that has a due step. So the days due at the
 /// same midnight all move on the first tick after it. A brief only becomes a live auction
 /// on this tick: a slower cadence would spend the commit window on waiting for the start.
-///
-/// An e2e day is minutes long, so it advances faster still.
 /// `complete_auctions` uses the same cadence.
-#[cfg(not(feature = "e2e-test"))]
 const ADVANCE_AUCTIONS_PERIOD_SECONDS: u64 = 3_600;
-#[cfg(feature = "e2e-test")]
-const ADVANCE_AUCTIONS_PERIOD_SECONDS: u64 = 60;
 
-/// Every right's call sweep schedules a closed day, daily in production. An e2e run
-/// seeds the days it reads instead of living through them, so it recurs sooner.
-#[cfg(not(feature = "e2e-test"))]
+/// Every right's call sweep schedules a closed day, once a day.
 const CALL_SWEEP_PERIOD_SECONDS: u64 = outbe_primitives::time::SECONDS_PER_DAY;
-#[cfg(feature = "e2e-test")]
-const CALL_SWEEP_PERIOD_SECONDS: u64 = 60;
 
 /// Const `?` is unstable on this toolchain (rust-lang/rust#143874).
 /// The expansion returns the constructor error from the const function.
@@ -205,8 +196,8 @@ macro_rules! const_spec {
 
 /// Hourly cadence of `process_emission_day`.
 pub const PROCESS_EMISSION_DAY_PERIOD_SECONDS: u64 = 3_600;
-/// `process_emission_day` runs from one second into each hour, so Metadosis of E is no earlier
-/// than 00:00:01 of E+1. The auction tasks share the offset to land in the slot of the brief.
+/// `process_emission_day` runs from one second into each hour, so Metadosis of E runs in the
+/// slot at 12:00:01 of E+1. The auction tasks share the offset to land in the slot of the brief.
 pub const PROCESS_EMISSION_DAY_START_OFFSET_SECONDS: u64 = 1;
 
 /// Agent rewards: 16,505,700 measured storage gas for 256 accrual and 3x256 cleanup
@@ -228,7 +219,7 @@ pub const DESIS_CLEANUP_WORKER_BUDGET_GAS: u64 = 11_520_000;
 /// Budgets use measured successful gross maxima from
 /// `crates/blockchain/evm/src/executor/tests/receipts_and_gas/calibration.rs`, multiplied by four
 /// and rounded up to 1,000 gas. In stable-id order those maxima are
-/// [381500, 50300, 991492, 50300, 2583089, 50300, 50300].
+/// [401900, 50300, 991492, 50300, 2583089, 50300, 50300].
 /// The supported nested bridge profile performs calldata copy/hash, persistent
 /// reads/writes, logs, and a real relay call. It is not a universal contract bound.
 /// `advance_auctions` takes the step bounds of Desis, measured on the deployed bridge.
@@ -248,7 +239,7 @@ pub const fn active_tasks() -> core::result::Result<[TaskSpec; 7], CycleError> {
                     PROCESS_EMISSION_DAY_PERIOD_SECONDS,
                     PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
                 ),
-                1_526_000,
+                1_608_000,
                 TaskHandler::ProcessEmissionDay,
             ));
             spec.requires_accounting_window = true;
@@ -492,7 +483,7 @@ mod protocol_parameter_tests {
     #[test]
     fn calibrated_budgets_are_nonzero_and_follow_checked_headroom_rule() {
         let maxima = [
-            381_500u64, 50_300, 991_492, 50_300, 2_583_089, 50_300, 50_300,
+            401_900u64, 50_300, 991_492, 50_300, 2_583_089, 50_300, 50_300,
         ];
         let tasks = active_tasks().expect("calibrated task table");
         let mut total = 0u64;
@@ -511,6 +502,6 @@ mod protocol_parameter_tests {
                 .checked_add(spec.work_budget_gas())
                 .expect("combined allowances fit u64");
         }
-        assert_eq!(total, 22_093_000);
+        assert_eq!(total, 22_175_000);
     }
 }

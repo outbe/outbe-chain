@@ -235,6 +235,7 @@ pub(super) struct ReplacementCandidateRecordV1 {
 }
 
 impl ReplacementCandidateRecordV1 {
+    #[cfg(test)]
     pub(super) fn encode_canonical(&self) -> Result<Vec<u8>, TransportError> {
         let manifest = self
             .manifest

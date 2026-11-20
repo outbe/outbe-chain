@@ -28,7 +28,7 @@ bind_address = "0.0.0.0:9003"
 
 [storage]
 # Directory of the MDBX store. Never the node database.
-db_path = "/var/lib/outbe-hyperlane-validator/db"
+db_path = "/opt/outbe-chain/state/hyperlane/db"
 
 [server]
 # S3-compatible read endpoint for relayers. Open it to everyone: relayers are permissionless.

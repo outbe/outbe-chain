@@ -1,5 +1,4 @@
 use alloy_primitives::B256;
-use outbe_intex::precompile::IIntex;
 use outbe_intex::{IntexContract, SeriesRecord};
 
 use crate::errors::date_step_error;
@@ -8,6 +7,7 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_system_common::call_breach::BreachTerms;
 use outbe_system_common::time::first_full_day;
 
+use crate::precompile::IIntexFactory;
 use crate::schema::IntexFactoryContract;
 
 /// What one group's call reads and writes.
@@ -46,13 +46,16 @@ pub(crate) fn call_if_breached(
     for &series_id in &members {
         let member = outbe_intex::api::get_series(storage, series_id)?;
         crate::notify::enqueue_notice(factory, crate::notify::pack_call_notice(series_id, now_ts))?;
-        intex.emit(IIntex::IntexSeriesCalled {
-            seriesId: series_id.into(),
-            issuanceCurrency: member.issuance_currency,
-            referenceCurrency: member.reference_currency,
-            calledAt: now_ts,
-            settlementDeadline: stamp.deadline,
-        })?;
+        crate::runtime::emit_event(
+            storage,
+            IIntexFactory::IntexSeriesCalled {
+                seriesId: series_id.into(),
+                issuanceCurrency: member.issuance_currency,
+                referenceCurrency: member.reference_currency,
+                calledAt: now_ts,
+                settlementDeadline: stamp.deadline,
+            },
+        )?;
     }
     Ok(members.len() as u32)
 }

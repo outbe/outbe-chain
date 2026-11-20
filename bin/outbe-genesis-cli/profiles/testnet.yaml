@@ -30,17 +30,22 @@ validators:
 # in this yaml.
 keys_dir: ./keys
 
+# Devnet and Testnet explicitly select either `no-attestation-dev` or
+# `dcap-required`. Mainnet accepts only `dcap-required`; there is no fallback.
 tee:
-  # Internal protocol name for the unattested confidential-VM policy.
-  mode: gramine-direct-dev
+  mode: no-attestation-dev
+  # mrenclave: "<32-byte hex>"
+  # mrsigner: "<32-byte hex>"
+  # isv_prod_id: 0
+  # minimum_isv_svn: 0
+  # minimum_tcb_evaluation_data_number: 0
 
 # Where the bundle lands on the validator machines. Defaults to wherever this
 # script runs, which is what a single-host trial needs.
 # remote_base_dir: /opt/outbe
 # remote_keys_dir: /opt/outbe/keys
 
-# Optional absolute path to the confidential-VM signer.
-# enclave_runner: /opt/outbe/outbe-tee-enclave-confidential-vm
+# TEE lifecycle runs inside the node process; no sidecar is required.
 
 # Binaries on the validator machines; default to PATH lookups.
 # node_binary: outbe-chain
@@ -77,7 +82,6 @@ feeder_seeds: testnet/seeds.yaml
 # metrics_port: 9101
 # radicle_port: 8776
 # radicle_status_port: 8876
-# tee_enclave_port: 17000
 # feeder_health_port: 9002
 
 # --- Chain parameters ------------------------------------------------------
@@ -94,17 +98,6 @@ feeder_seeds: testnet/seeds.yaml
 # prefund_coen_units: "100000000000000000000000000" # 100000000 COEN per validator
 # min_stake: "10000000000000000000000000"           # 10000000 COEN minimum stake
 # contracts_dir: contracts/predeploys
-
-# Protocol timings, copied verbatim into config.outbeProtocol.
-# ONLY a `test-protocol-overrides` build accepts this field; a production
-# binary rejects the genesis outright. Use it for localnet and E2E networks,
-# never for a production one, which runs the built-in schedule. Omit the
-# section to run on the built-in defaults (50h forming, 22h lookback delay,
-# 50h offering). A short-window network must state them here.
-protocol_constants:
-  schemaVersion: 1
-  metadosis:
-    lookbackDelaySeconds: 79200
 
 # --- Protocol parameters ---------------------------------------------------
 # A network.yaml of your own may override any of these. Scalars replace, lists

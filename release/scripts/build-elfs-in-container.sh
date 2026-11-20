@@ -8,7 +8,7 @@ readonly TARGET=x86_64-unknown-linux-gnu
 readonly PROFILE=release
 readonly OUT=/out
 # The builder image ships the exact-pinned Intel DCAP stack; refuse to produce
-# release ELFs whose native QVL silently fell back to the fail-closed stub.
+# a node ELF whose in-process outbe-dcap verifier fell back to the fail-closed stub.
 export OUTBE_NATIVE_DCAP=require
 
 for required in SOURCE_COMMIT SOURCE_DATE_EPOCH SOURCE_DESCRIBE RELEASE_TAG; do

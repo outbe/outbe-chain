@@ -29,8 +29,8 @@ come from:
 | `local` | `feeder.toml`, or the file that `pairs` names | localnet, testnet, e2e |
 
 In `chain` mode `feeder.toml` must not set `currency_pairs`,
-`deviation_thresholds`, `dex_providers`, `onchain_providers` or
-`gas_providers`.
+`deviation_thresholds`, `dex_providers`, `onchain_providers`,
+`gas_providers` or `rate_providers`.
 
 The node files are in `crates/system/oracle/sources/<major>.<minor>.toml`.
 They are for mainnet only. Other networks register pairs in genesis. The node
@@ -184,6 +184,10 @@ contract = "0x5555555555555555555555555555555555555555"   # Chainlink JPY / USD,
 | `gas_providers[].price_feed` | with the entry | Source of the native token price in USD: `{ chainlink = "0x…" }`, a Chainlink feed on the same chain |
 | `gas_providers[].fee_history_blocks` | no | Blocks of `eth_feeHistory` in one gas price (default: 20) |
 | `gas_providers[].delay_secs` | no | The last block read is this many seconds older than the start of the vote period (default: 60). Keep it above the block time of the chain |
+| `rate_providers[].currency` | with the entry | ISO 4217 numeric code of the currency to vote a policy rate for. See [Policy rates](#policy-rates) |
+| `rate_providers[].kind` | with the entry | Form of the answer of the source: `nyfed`, `ecb`, `boe`, `boj`, `hkma`, `cfets` or `fixed` |
+| `rate_providers[].url` | not for `fixed` | Address of the source |
+| `rate_providers[].rate` | for `fixed` | The annual rate in percent, for example `"4.3"` |
 | `deviation_thresholds[].base` | no | Asset to apply threshold to |
 | `deviation_thresholds[].threshold` | no | Max sigma deviation as an exact decimal string (default: `"2.0"`) |
 
@@ -307,6 +311,41 @@ the longest documented heartbeat at either vendor is 24 hours, so a round
 older than that means the relayer stopped. Feeds report no volume, so the
 observation weighs one unit in the source mean. Neither vendor lists a COEN
 feed today; a COEN push feed, once deployed, is configured here like any other.
+
+### Policy rates
+
+Each `[[rate_providers]]` entry makes the feeder vote the policy rate of one
+currency: its overnight reference rate. A Credis keeps the rate of its
+reservation (OIP-00389).
+
+```toml
+[[rate_providers]]
+currency = "840"   # USD, SOFR
+kind = "nyfed"
+url = "https://markets.newyorkfed.org/api/rates/secured/sofr/last/1.json"
+```
+
+| `kind` | Source | Rate |
+| --- | --- | --- |
+| `nyfed` | Federal Reserve Bank of New York | SOFR (USD) |
+| `ecb` | European Central Bank | €STR (EUR) |
+| `boe` | Bank of England, CSV | SONIA (GBP) |
+| `boj` | Bank of Japan | TONA (JPY) |
+| `hkma` | Hong Kong Monetary Authority | HIBOR overnight (HKD) |
+| `cfets` | China Foreign Exchange Trade System | DR001 (CNY) |
+| `fixed` | The `rate` of the entry | For a local network |
+
+- A vote carries the annual rate at scale 1e6 and the publication time. The
+  publication time is the date that the source gives with the rate, at
+  00:00 UTC.
+- A rate below zero counts as zero.
+- The feeder asks a source again after 10 minutes. Between two reads it votes
+  the last value. When a source fails, the feeder also votes the last value.
+- A currency with no value gets no rate vote. The Oracle then keeps its last
+  rate.
+- The feeder votes only currencies that are rate vote targets on chain
+  (`IOracle.getPolicyRateCurrencies()`).
+- A rate vote gives no reward and no miss.
 
 ### Gas prices
 
@@ -502,7 +541,7 @@ PrivateKeySigner::parse()
   -> eth_sendRawTransaction
 ```
 
-`chain.chain_id` is set explicitly on each vote transaction. The journal is keyed by chain genesis, signer, and validator, and is stored in `STATE_DIRECTORY` when systemd supplies it. The validator service provisions `/var/lib/outbe-feeder` for this purpose. Without systemd, the journal is stored beside the canonical config path.
+`chain.chain_id` is set explicitly on each vote transaction. The journal is keyed by chain genesis, signer, and validator, and is stored in `STATE_DIRECTORY` when systemd supplies it. The validator service provisions `/opt/outbe-chain/state/feeder` for this purpose. Without systemd, the journal is stored beside the canonical config path.
 
 When `chain.gasless_oracle_votes = true`, the feeder still sends a normal signed EVM transaction to `Oracle.submitVote(...)`, but marks it with zero priority fee and a max fee cap high enough for Reth's public txpool protocol checks. The `outbe-txpool` crate and executor both call the system `zerofee` hook registry. The registered `OracleSubmitVoteHook` revalidates the signer, delegated feeder status, one-vote-per-period rule, zero native value, and policy size limits before waiving native fee debit. Authorized gasless `submitVote` transactions are ordered ahead of fee-paying transactions inside the Outbe txpool, so payload building considers validator votes before the normal tip market while still enforcing nonce, validity, and block gas limits. Paid `submitVote` transactions keep the normal EVM path.
 

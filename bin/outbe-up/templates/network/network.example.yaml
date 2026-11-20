@@ -1,5 +1,5 @@
-# Minimal four-founder confidential-VM network. Add more `founders` entries for a larger founding
-# committee; at least four are required. VM attestation is not implemented yet.
+# Minimal four-founder test network. Add more `founders` entries for a larger founding committee.
+# This workflow uses in-process TEE without attestation and is limited to devnet and testnet.
 version: 1
 name: local-testnet
 network: testnet
@@ -13,6 +13,7 @@ founders:
       port: 22
     advertise_ip: 10.0.0.10
     rpc_bind_ip: 10.0.0.10
+    hyperlane_public_url: "http://192.0.2.10:9000"
   - name: validator-1
     ssh:
       host: 192.0.2.11
@@ -20,6 +21,7 @@ founders:
       port: 22
     advertise_ip: 10.0.0.11
     rpc_bind_ip: 10.0.0.11
+    hyperlane_public_url: "http://192.0.2.11:9000"
   - name: validator-2
     ssh:
       host: 192.0.2.12
@@ -27,6 +29,7 @@ founders:
       port: 22
     advertise_ip: 10.0.0.12
     rpc_bind_ip: 10.0.0.12
+    hyperlane_public_url: "http://192.0.2.12:9000"
   - name: validator-3
     ssh:
       host: 192.0.2.13
@@ -34,6 +37,24 @@ founders:
       port: 22
     advertise_ip: 10.0.0.13
     rpc_bind_ip: 10.0.0.13
+    hyperlane_public_url: "http://192.0.2.13:9000"
+
+hyperlane:
+  gasless: true
+  origins:
+    - domain: 54322345
+      rpc_urls:
+        - "https://rpc.testnet.outbe.net"
+      reorg_period: 0
+    - domain: 97
+      rpc_urls:
+        - "https://data-seed-prebsc-1-s1.bnbchain.org:8545"
+        - "https://data-seed-prebsc-1-s2.bnbchain.org:8545"
+      reorg_period: 9
+    - domain: 11155111
+      rpc_urls:
+        - "https://ethereum-sepolia-rpc.publicnode.com"
+      reorg_period: 2
 
 topology:
   # Enable only when consensus peers use private/RFC1918 addresses.
@@ -41,7 +62,7 @@ topology:
 
 genesis:
   # Optional pre-TEE genesis JSON. Paths are resolved relative to this file.
-  # When set, timestamp, epoch length, and DKG windows come from that file.
+  # When set, remove the timestamp, epoch length, and DKG window settings below.
   # base: ./custom-genesis.json
   # Omit timestamp for a fresh launch time. Set it to reproduce one exact genesis.
   # timestamp: 1793795928

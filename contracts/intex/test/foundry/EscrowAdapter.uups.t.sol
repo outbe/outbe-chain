@@ -60,7 +60,7 @@ contract EscrowAdapterUupsTest is Test {
         address auction = makeAddr("auction");
 
         vm.prank(admin);
-        escrow.wire(auction, address(compactMock), address(token));
+        escrow.setDependencies(auction, address(compactMock), address(token));
 
         uint96 allocatorIdBefore = escrow.allocatorId();
         bytes12 lockTagBefore = escrow.lockTag();
@@ -72,9 +72,9 @@ contract EscrowAdapterUupsTest is Test {
 
         bytes32 implSlot = vm.load(address(escrow), ERC1967Utils.IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(implSlot))), address(newImpl));
-        assertEq(escrow.intexAuctionContract(), auction);
+        assertEq(escrow.intexAuction(), auction);
         assertEq(address(escrow.compact()), address(compactMock));
-        assertEq(address(escrow.paymentToken()), address(token));
+        assertEq(address(escrow.intexAuctionAsset()), address(token));
         assertEq(escrow.allocatorId(), allocatorIdBefore);
         assertEq(escrow.lockTag(), lockTagBefore);
         assertTrue(escrow.hasRole(escrow.AUCTION_ROLE(), auction));

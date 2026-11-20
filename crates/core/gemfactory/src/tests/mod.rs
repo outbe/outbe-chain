@@ -1,14 +1,14 @@
 use alloy_primitives::{address, Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_enclave::promis::{
-    decrypt_balance, derive_modify_key, derive_view_key, modify_mac, ModifyOperation,
-};
-use outbe_enclave::protocol::PromisOp;
 use outbe_gem::{api as gem_api, GemContract, GemItemState, GemState, GemView};
 use outbe_intex::SeriesId;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
+use outbe_promis::PromisOp;
+use outbe_promis::{
+    decrypt_balance, derive_account_keys, derive_view_key, modify_mac, ModifyOperation,
+};
 use outbe_promisfactory::api::ModifyAuth;
 use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, EmissionDate};
@@ -16,7 +16,7 @@ use outbe_vaultrouter::settlement::SettlementPayment;
 
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 
-const POSITION_VALIDITY_SECONDS: u64 = outbe_gem::GemParams::PROD.position_validity;
+const POSITION_VALIDITY_SECONDS: u64 = outbe_gem::GemParams::MAINNET.position_validity;
 use crate::positions_expired;
 use crate::runtime;
 use crate::schema::{GemFactoryContract, GemIssueParams, GemPosition};
@@ -49,7 +49,7 @@ fn no_auth() -> ModifyAuth {
 /// the in-process Promis enclave to be installed (chain id 1 matches the harness).
 fn promis_auth(account: Address, amount: U256, nonce: u64) -> ModifyAuth {
     let sk = outbe_promis::enclave_client::test_enclave::state_key();
-    let mk = derive_modify_key(&sk, account).unwrap();
+    let mk = derive_account_keys(&sk, account).unwrap();
     ModifyAuth {
         mac: modify_mac(
             &mk,
@@ -120,7 +120,7 @@ fn test_storage(rate: Option<U256>) -> HashMapStorageProvider {
         // by chain id, and the test chain is not mainnet.
         outbe_gem::schema::GemContract::new(handle.clone())
             .config_profile
-            .write(outbe_gem::config::PROFILE_PROD)
+            .write(outbe_gem::config::PROFILE_MAINNET)
             .unwrap();
         // Registry membership is independent of whether a price exists: 840 is a
         // reference currency in every fixture, priced or not.

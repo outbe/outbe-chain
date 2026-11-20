@@ -17,7 +17,7 @@ pub(crate) mod state;
 #[cfg(test)]
 mod tests;
 
-pub use cleanup::process_cleanup;
+pub use cleanup::run_cleanup;
 pub use errors::DesisError;
 pub use runtime::{advance_auctions, complete_auctions};
-pub use schema::{AuctionConfig, AuctionStage, BidData, ClearingResult, DesisContract};
+pub use schema::{AuctionConfig, AuctionStage, ClearingResult, DesisContract, IntexAuctionBidData};

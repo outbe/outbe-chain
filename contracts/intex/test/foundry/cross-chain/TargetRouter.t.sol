@@ -67,21 +67,21 @@ contract TargetRouterTest is CrossChainTest {
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
         // Wire adapters (register remote messengers)
-        targetRouter.setRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
-        originRouter.setRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(targetRouter)));
+        targetRouter.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(originRouter)));
+        originRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(targetRouter)));
 
         // Wire BNB adapter dependencies
-        targetRouter.wire(address(auction), address(intex), admin);
+        targetRouter.setDependencies(address(auction), address(intex), admin);
 
         // Wire Outbe adapter dependencies
-        originRouter.wire(desis, makeAddr("factory"));
+        originRouter.setDependencies(desis, makeAddr("factory"));
 
-        // Grant RELAYER_ROLE to adapter
+        // Grant ROUTER_ROLE to the router
         auction.grantRole(auction.RELAYER_ROLE(), address(targetRouter));
-        intex.grantRole(intex.RELAYER_ROLE(), address(targetRouter));
+        intex.grantRole(intex.ROUTER_ROLE(), address(targetRouter));
 
-        // Grant RELAYER_ROLE to batch adapter on intex (for crosschainBurn)
-        intex.grantRole(intex.RELAYER_ROLE(), address(nftBridge));
+        // Grant BRIDGE_ROLE to batch adapter on intex (for crosschainBurn)
+        intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridge));
     }
 
     // --- Constructor Tests ---
@@ -90,29 +90,29 @@ contract TargetRouterTest is CrossChainTest {
     }
 
     function test_wire() public view {
-        assertEq(address(targetRouter.auction()), address(auction));
-        assertEq(address(targetRouter.intex()), address(intex));
+        assertEq(address(targetRouter.intexAuction()), address(auction));
+        assertEq(address(targetRouter.intexContract()), address(intex));
     }
 
     function test_wire_revert_zero_address() public {
         TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "auction"));
-        newRouter.wire(address(0), address(intex), admin);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "intexAuction"));
+        newRouter.setDependencies(address(0), address(intex), admin);
     }
 
     function test_wire_revert_zero_intex() public {
         TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "intex"));
-        newRouter.wire(address(auction), address(0), admin);
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "intexContract"));
+        newRouter.setDependencies(address(auction), address(0), admin);
     }
 
     function test_wire_revert_zero_escrowAdapter() public {
         TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "escrowAdapter"));
-        newRouter.wire(address(auction), address(intex), address(0));
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "escrow"));
+        newRouter.setDependencies(address(auction), address(intex), address(0));
     }
 
     // --- ERC165 Tests ---

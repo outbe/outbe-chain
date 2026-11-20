@@ -136,7 +136,7 @@ fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
         assert_eq!(pipeline_base, alloy_primitives::U256::from(2));
         assert_eq!(pipeline_positions, alloy_primitives::U256::from(3));
         assert_eq!(
-            factory.forming_snapshot_finalized.base_slot(),
+            factory.retired_forming_snapshot_finalized.base_slot(),
             alloy_primitives::U256::from(4)
         );
         assert_eq!(
@@ -178,10 +178,10 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
             .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
                 let mut factory = TributeFactoryContract::new(storage.clone());
                 let mut day_key = 20261001u32;
-                for _ in 0..crate::worldwideday::constants::MAX_PIPELINE_WWDS {
+                for _ in 0..crate::worldwide_day::constants::MAX_PIPELINE_WWDS {
                     let cur_wwd = WorldwideDay::new(day_key);
-                    let (schedule, _) = crate::worldwideday::compute_wwd_schedule(cur_wwd)?;
-                    assert!(crate::worldwideday::create_worldwide_day(
+                    let (schedule, _) = crate::worldwide_day::compute_wwd_schedule(cur_wwd)?;
+                    assert!(crate::worldwide_day::open_worldwide_day(
                         &mut factory,
                         cur_wwd,
                         schedule
@@ -196,14 +196,16 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
                 }
                 let overflow_wwd = WorldwideDay::new(day_key);
                 let (overflow_schedule, _) =
-                    crate::worldwideday::compute_wwd_schedule(overflow_wwd)?;
-                let cap_err = crate::worldwideday::create_worldwide_day(
+                    crate::worldwide_day::compute_wwd_schedule(overflow_wwd)?;
+                let cap_err = crate::worldwide_day::open_worldwide_day(
                     &mut factory,
                     overflow_wwd,
                     overflow_schedule,
                 )
                 .unwrap_err();
-                assert!(cap_err.to_string().contains("7"));
+                assert!(cap_err
+                    .to_string()
+                    .contains(&crate::worldwide_day::constants::MAX_PIPELINE_WWDS.to_string()));
                 Ok(())
             })
             .unwrap();
@@ -213,7 +215,7 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
         // is the single seal.
         let filled = WorldwideDay::new(20261001);
         let hist_wwd = WorldwideDay::new(20260901);
-        let (hist_schedule, _) = crate::worldwideday::compute_wwd_schedule(hist_wwd).unwrap();
+        let (hist_schedule, _) = crate::worldwide_day::compute_wwd_schedule(hist_wwd).unwrap();
         storage
             .set_block_timestamp(U256::from(hist_schedule.offering_end))
             .unwrap();
@@ -225,11 +227,11 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
         storage
             .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding2, || {
                 let mut factory = TributeFactoryContract::new(storage.clone());
-                crate::worldwideday::close_worldwide_day(&mut factory, filled)?;
+                crate::worldwide_day::close_worldwide_day(&mut factory, filled)?;
                 assert!(!factory.pipeline_wwd.read_all()?.contains(&filled));
                 assert!(TributeContract::new(storage.clone()).is_day_sealed(filled)?);
 
-                assert!(crate::worldwideday::create_worldwide_day(
+                assert!(crate::worldwide_day::open_worldwide_day(
                     &mut factory,
                     hist_wwd,
                     hist_schedule
@@ -242,7 +244,7 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
                         .read(&hist_wwd)?,
                     outbe_system_common::time::EmissionDate::new(hist_schedule.day)
                 );
-                crate::worldwideday::close_worldwide_day(&mut factory, hist_wwd)?;
+                crate::worldwide_day::close_worldwide_day(&mut factory, hist_wwd)?;
                 assert!(!factory.pipeline_wwd.read_all()?.contains(&hist_wwd));
                 assert!(TributeContract::new(storage.clone()).is_day_sealed(hist_wwd)?);
                 Ok(())
@@ -253,14 +255,14 @@ fn currency_price_unavailable_encodes_selector_and_pipeline_cap_and_historical_c
         provider.get_events(outbe_system_common::addresses::TRIBUTE_FACTORY_ADDRESS);
     assert_eq!(
         factory_events.len(),
-        crate::worldwideday::constants::MAX_PIPELINE_WWDS + 1
+        crate::worldwide_day::constants::MAX_PIPELINE_WWDS + 1
     );
     let last_opened = crate::precompile::ITributeFactory::WorldwideDayOpened::decode_log_data(
         factory_events.last().unwrap(),
     )
     .unwrap();
     let (hist_schedule, _) =
-        crate::worldwideday::compute_wwd_schedule(WorldwideDay::new(20260901)).unwrap();
+        crate::worldwide_day::compute_wwd_schedule(WorldwideDay::new(20260901)).unwrap();
     assert_eq!(last_opened.worldwideDay, 20260901);
     assert_eq!(last_opened.formingStart, hist_schedule.forming_start);
     assert_eq!(last_opened.formingEnd, hist_schedule.forming_end);

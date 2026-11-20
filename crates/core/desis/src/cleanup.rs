@@ -9,7 +9,7 @@ use crate::{
 };
 
 /// Process one atomic cleanup page. Errors, including sticky budget errors, propagate.
-pub fn process_cleanup(storage: StorageHandle<'_>) -> Result<()> {
+pub fn run_cleanup(storage: StorageHandle<'_>) -> Result<()> {
     storage.with_checkpoint(|| cleanup_page(&storage))
 }
 
@@ -46,7 +46,7 @@ fn queued_day(contract: &DesisContract<'_>) -> Result<Option<EmissionDate>> {
     if contract.cleanup_pending.read(&day)? != 1
         || !matches!(
             contract.read_stage(day)?,
-            AuctionStage::Completed | AuctionStage::Cancelled | AuctionStage::Failed
+            AuctionStage::Completed | AuctionStage::Canceled | AuctionStage::Failed
         )
     {
         return Err(DesisError::InvalidCleanupState.into());
@@ -94,11 +94,11 @@ fn cleanup_chain(
     } else {
         // Nine metadata writes, covered by the conservative 80k header allowance.
         contract.chain_bid_count.clear(&key)?;
-        contract.chain_total_batches.clear(&key)?;
+        contract.chain_total_pages.clear(&key)?;
         contract.chain_arrived_mask.clear(&key)?;
-        contract.chain_done.clear(&key)?;
-        contract.chain_done_batches.clear(&key)?;
-        contract.chain_done_bids.clear(&key)?;
+        contract.bids_completed.clear(&key)?;
+        contract.completed_pages.clear(&key)?;
+        contract.completed_bids.clear(&key)?;
         contract.intake_chain_member.clear(&key)?;
         contract.intake_chain_at.clear(&row)?;
         contract.intake_chain_count.write(&day, chains - 1)?;
