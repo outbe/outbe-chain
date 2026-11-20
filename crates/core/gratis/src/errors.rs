@@ -71,7 +71,6 @@ pub struct OpText(pub(crate) TransportError);
 impl fmt::Display for OpText {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.0 {
-            TransportError::EnclaveError(message) => formatter.write_str(message),
             TransportError::EnclaveCause { source } => write!(formatter, "{source}"),
             other => write!(formatter, "{other}"),
         }
@@ -191,7 +190,7 @@ mod tests {
 
         let transport = PrecompileError::from(map_consensus_error(
             "MineEncryptedNodV1",
-            TransportError::Unavailable("sidecar offline".into()),
+            TransportError::unavailable(std::io::Error::other("sidecar offline")),
         ));
         assert!(matches!(
             transport,
@@ -212,7 +211,7 @@ mod tests {
 
         let denied = PrecompileError::from(map_consensus_error(
             "ApplyGratisOp",
-            TransportError::EnclaveError("denied".into()),
+            TransportError::enclave_error(std::io::Error::other("denied")),
         ));
         assert!(matches!(
             denied,

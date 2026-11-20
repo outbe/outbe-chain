@@ -111,10 +111,10 @@ pub enum TributeFactoryError {
     TeeSidecarUnavailable,
 
     #[error("tee_sidecar_unavailable: {0}")]
-    TeeSidecarUnavailableWithReason(String),
+    TeeSidecarUnavailableWithReason(#[source] outbe_tee::TransportError),
 
     #[error("enclave ProcessTributeOfferBatch error: {0}")]
-    EnclaveBatchError(String),
+    EnclaveBatchError(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     #[error("tee_enclave_nondeterminism: inputs_canonical_hash mismatch")]
     InputsCanonicalHashMismatch,
@@ -129,7 +129,7 @@ pub enum TributeFactoryError {
     EffectiveReferencePriceMismatch,
 
     #[error("encrypted Tribute offer enclave: {0}")]
-    EncryptedOfferEnclaveError(String),
+    EncryptedOfferEnclaveError(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     #[error("unexpected encrypted Tribute offer response")]
     UnexpectedEncryptedOfferResponse,
@@ -174,8 +174,8 @@ impl TributeFactoryError {
         Self::MalformedZkProof(err.to_string())
     }
 
-    pub fn sidecar_unavailable(err: impl Display) -> Self {
-        Self::TeeSidecarUnavailableWithReason(err.to_string())
+    pub fn sidecar_unavailable(err: outbe_tee::TransportError) -> Self {
+        Self::TeeSidecarUnavailableWithReason(err)
     }
 
     pub fn offer_attestation_invalid(err: impl Display) -> Self {
@@ -335,3 +335,47 @@ impl From<TributeFactoryError> for PrecompileError {
 }
 
 pub type TributeFactoryResult<T> = std::result::Result<T, TributeFactoryError>;
+
+#[cfg(test)]
+mod tests {
+    use std::error::Error as _;
+
+    use super::*;
+
+    #[test]
+    fn enclave_errors_preserve_source_and_classify_as_unavailable() {
+        let sidecar = TributeFactoryError::sidecar_unavailable(
+            outbe_tee::TransportError::unavailable(std::io::Error::other("offline")),
+        );
+        assert!(sidecar
+            .source()
+            .and_then(|err| err.downcast_ref::<outbe_tee::TransportError>())
+            .is_some());
+        assert!(matches!(
+            PrecompileError::from(sidecar),
+            PrecompileError::EnclaveUnavailable(msg) if msg.contains("tee_sidecar_unavailable") && msg.contains("offline")
+        ));
+
+        let batch = TributeFactoryError::EnclaveBatchError(Box::new(std::io::Error::other("boom")));
+        assert!(batch
+            .source()
+            .and_then(|err| err.downcast_ref::<std::io::Error>())
+            .is_some());
+        assert!(matches!(
+            PrecompileError::from(batch),
+            PrecompileError::EnclaveUnavailable(msg) if msg == "enclave ProcessTributeOfferBatch error: boom"
+        ));
+
+        let encrypted = TributeFactoryError::EncryptedOfferEnclaveError(Box::new(
+            std::io::Error::other("bad offer"),
+        ));
+        assert!(encrypted
+            .source()
+            .and_then(|err| err.downcast_ref::<std::io::Error>())
+            .is_some());
+        assert!(matches!(
+            PrecompileError::from(encrypted),
+            PrecompileError::EnclaveUnavailable(msg) if msg == "encrypted Tribute offer enclave: bad offer"
+        ));
+    }
+}

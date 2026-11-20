@@ -156,9 +156,9 @@ pub mod test_enclave {
         static STATE_KEY: RefCell<Option<outbe_tee::resident::StateKeyHandle>> = const { RefCell::new(None) };
     }
 
+    use outbe_core_common::confidential_tee::{PROMIS_CHAIN, PROMIS_GROUP_SIG};
+
     const DEV_EPOCH: u64 = 0;
-    const PROMIS_GROUP_SIG: &[u8] = b"outbe-dev-promis-group-signature-fixed-seed!!";
-    const PROMIS_CHAIN: B256 = B256::repeat_byte(0xC1);
     fn offer(group: &[u8], chain: B256) -> outbe_tee::resident::ResidentOfferMaterial {
         outbe_tee::resident::ResidentOfferMaterial::for_test(group.to_vec(), chain, DEV_EPOCH, 0)
             .expect("dev offer material")

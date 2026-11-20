@@ -126,10 +126,7 @@ impl CanaryTickOutcome {
     pub fn decrypt_transport_failure(error: &TransportError) -> Self {
         Self::Failure {
             unreachable: error.is_node_local()
-                && !matches!(
-                    error,
-                    TransportError::Unavailable(_) | TransportError::UnavailableCause { .. }
-                ),
+                && !matches!(error, TransportError::UnavailableCause { .. }),
             reason: format!("canary decrypt failed: {}", error.metric_class()),
         }
     }
@@ -590,7 +587,9 @@ mod tests {
                 Err(poisoned) => poisoned.into_inner(),
             };
             if script.is_empty() {
-                return Err(TransportError::EnclaveError("script exhausted".into()));
+                return Err(TransportError::enclave_error(std::io::Error::other(
+                    "script exhausted",
+                )));
             }
             let (expected, response) = script.remove(0);
             assert_eq!(expected, label, "unexpected request order");

@@ -42,7 +42,9 @@ fn verify_payload_read(
         return Err(TransportError::UnexpectedResponse);
     };
     if *inputs_canonical_hash != expected_hash {
-        return Err(TransportError::Attestation("hash mismatch".into()));
+        return Err(TransportError::attestation(std::io::Error::other(
+            "hash mismatch",
+        )));
     }
     let preimage = outbe_tee::tee_call::canonical_attestation_preimage(
         TEST_PAYLOAD_READ_TAG,

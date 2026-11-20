@@ -17,8 +17,8 @@ pub(crate) fn process_encrypted_offers(
         outbe_tribute::confidential::host::process_encrypted_offer_batch(chain_id, offers.to_vec())
             .map_err(|error| -> outbe_primitives::error::PrecompileError {
                 match error {
-                    TransportError::EnclaveError(message) => {
-                        TributeFactoryError::EncryptedOfferEnclaveError(message).into()
+                    TransportError::EnclaveCause { source } => {
+                        TributeFactoryError::EncryptedOfferEnclaveError(source).into()
                     }
                     other => TributeFactoryError::sidecar_unavailable(other).into(),
                 }
