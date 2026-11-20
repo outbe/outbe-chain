@@ -629,7 +629,7 @@ fn the_forfeit_read_rides_the_end_block_witness_in_every_mode() {
     let entry_price_minor = U256::from(450_000_000u64);
     let issued_at = issued_at_on_protocol_floor(1);
     let group_key = outbe_nod::test_support::group_key_at(
-        &outbe_nod::config::NodParams::DEV,
+        &outbe_nod::config::NodParams::TESTNET,
         issued_at,
         entry_price_minor,
         840,

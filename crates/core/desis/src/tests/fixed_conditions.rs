@@ -146,8 +146,14 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
         );
 
         select_profile(&s, outbe_intex::config::PROFILE_TESTNET);
-        assert_ne!(IntexParams::TESTNET.call_rate, IntexParams::MAINNET.call_rate);
-        assert_ne!(trigger_of(IntexParams::TESTNET), trigger_of(IntexParams::MAINNET));
+        assert_ne!(
+            IntexParams::TESTNET.call_rate,
+            IntexParams::MAINNET.call_rate
+        );
+        assert_ne!(
+            trigger_of(IntexParams::TESTNET),
+            trigger_of(IntexParams::MAINNET)
+        );
 
         runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         arm_clearing(&s);
