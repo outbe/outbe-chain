@@ -499,12 +499,12 @@ fn seed_stage_end_to_end_and_reproducibility() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let tmp_str = tmp.path().display().to_string();
     let seeded_feeder = seed_once(tmp.path(), &merge_obj(minimal_config(&tmp_str), feeder_cfg));
-    // One seeded curve for COEN/840 in its S-curve ring (`scurve_len`, slot 82).
-    let usd_curves = mapping_key(&address_pair("COEN", "840").expect("pair"), 82);
-    assert_eq!(
-        seeded_feeder["alloc"][ORACLE_ADDRESS]["storage"][usd_curves],
-        json!(hex32(1u64))
-    );
+    // The seeded curve of COEN/840 has a start hour (`scurve_start_hour`,
+    // slot 82). The seed step moves it to 00:00 UTC of the genesis day.
+    let usd_curve = mapping_key(&address_pair("COEN", "840").expect("pair"), 82);
+    let start_hour = &seeded_feeder["alloc"][ORACLE_ADDRESS]["storage"][usd_curve];
+    assert!(start_hour.is_string());
+    assert_ne!(start_hour, &json!(hex32(0u64)));
 
     let prefund_cfg = merge_obj(
         minimal_config(&tmp_str),

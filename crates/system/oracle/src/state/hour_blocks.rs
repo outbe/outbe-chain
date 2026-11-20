@@ -8,11 +8,13 @@ use crate::schema::OracleContract;
 impl OracleContract<'_> {
     /// Records the first block of the UTC hour that contains `timestamp`. This
     /// runs every block, so the window's block span is known even without votes.
-    pub fn record_hour_block(&mut self, timestamp: u64, block_number: u64) -> Result<()> {
+    /// Returns `true` when `block_number` is that first block.
+    pub fn record_hour_block(&mut self, timestamp: u64, block_number: u64) -> Result<bool> {
         let hour_start = timestamp - timestamp % VWAP_HOUR_SECONDS;
-        if self.hour_first_block.read(&hour_start)? == 0 {
+        let first = self.hour_first_block.read(&hour_start)? == 0;
+        if first {
             self.hour_first_block.write(&hour_start, block_number)?;
         }
-        Ok(())
+        Ok(first)
     }
 }

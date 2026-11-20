@@ -34,8 +34,8 @@ pub(super) fn prepare(
         worldwide_day: input.worldwide_day,
         tribute_currency: input.tribute_currency,
         reference_currency: input.reference_currency,
-        issuance_wwd_vwap_minor: pricing.issuance_wwd_vwap_minor,
-        reference_wwd_vwap_minor: pricing.reference_wwd_vwap_minor,
+        issuance_wwd_vwap_minor: pricing.issuance_vwap_minor,
+        reference_wwd_vwap_minor: pricing.reference_vwap_minor,
         reference_scurve_minor: pricing.reference_scurve_minor,
         zk_context,
     };
@@ -112,18 +112,17 @@ fn pricing(
 
     outbe_oracle::api::check_reference_currency(input.reference_currency)?;
 
-    // Price the tribute against its own day, not whichever day happens to be
-    // first in the OFFERING list.
+    // The offer uses the prices of its hour: the 24-hour VWAP of each currency
+    // and the S-curve of the reference currency.
     let pricing = outbe_oracle::api::tribute_pricing_inputs(
         storage.clone(),
         input.tribute_currency,
         input.reference_currency,
-        input.worldwide_day,
     )?
     .ok_or(TributeFactoryError::IssuanceCurrencyNotRegistered {
         issuance_currency: input.tribute_currency,
     })?;
-    if pricing.issuance_wwd_vwap_minor.is_zero() || pricing.reference_wwd_vwap_minor.is_zero() {
+    if pricing.issuance_vwap_minor.is_zero() || pricing.reference_vwap_minor.is_zero() {
         return Err(TributeFactoryError::CurrencyPriceUnavailable {
             worldwide_day: input.worldwide_day,
         }

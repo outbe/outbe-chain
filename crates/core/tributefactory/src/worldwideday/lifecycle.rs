@@ -2,7 +2,7 @@
 
 use outbe_primitives::{
     block::BlockRuntimeContext,
-    error::{PrecompileError, Result},
+    error::Result,
     storage::{CycleLifecyclePurpose, StorageHandle},
 };
 use outbe_system_common::{
@@ -16,10 +16,7 @@ use outbe_system_common::{
 use crate::schema::TributeFactoryContract;
 
 use super::{
-    aggregate::{
-        close_worldwide_day, create_worldwide_day, NewWwdSchedule, ValidatedWwdAggregate,
-        WwdProjection,
-    },
+    aggregate::{close_worldwide_day, create_worldwide_day, NewWwdSchedule, ValidatedWwdAggregate},
     constants::{MAX_PIPELINE_WWDS, SECONDS_PER_HOUR},
     errors::{WwdCallerError, WwdStorageCorruptionError},
 };
@@ -87,8 +84,9 @@ pub fn create_worldwide_day_for_date(
 /// 1. Seals every pipeline WWD whose `offering_end <= cutoff_ts`.
 /// 2. Creates every open WWD `D` up to `X + 1` (never earlier than `first_wwd_for_genesis`)
 ///    whose `offering_end > cutoff_ts`.
-/// 3. Stores the forming VWAP snapshot for every pipeline WWD whose `forming_end <= cutoff_ts`.
-/// 4. Records `last_wwd_advance_day = X` so subsequent hourly ticks on day `X` are no-ops.
+/// 3. Records `last_wwd_advance_day = X` so subsequent hourly ticks on day `X` are no-ops.
+///
+/// The step stores no price: an offer reads the 24-hour VWAP of its hour.
 pub fn advance_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     validate_wwd_timestamp(ctx.block.timestamp)?;
     let block_utc_day = timestamp_to_date_key(ctx.block.timestamp);
@@ -101,14 +99,10 @@ pub fn advance_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     let cutoff_ts =
         date_key_to_utc_timestamp(block_utc_day).map_err(super::errors::date_step_error)?;
 
-    // 1. Seal every pipeline WWD whose offering window ended at or before 00:00 UTC of day X,
-    //    ensuring its forming VWAP snapshot is finalized first if the chain skipped past both boundaries.
+    // 1. Seal every pipeline WWD whose offering window ended at or before 00:00 UTC of day X.
     let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
     for current in aggregate.active_records() {
         verify_emission_day_link(&ctx.storage, current.day, current.worldwide_day)?;
-        if current.forming_end <= cutoff_ts {
-            let _ = snapshot_forming_vwap(ctx, current)?;
-        }
         if current.offering_end <= cutoff_ts {
             let mut factory_mut = TributeFactoryContract::new(ctx.storage.clone());
             close_worldwide_day(&mut factory_mut, current.worldwide_day)?;
@@ -118,16 +112,7 @@ pub fn advance_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     // 2. Create open WWDs up to X + 1 (whose forming window starts at 10:00 UTC on day X).
     create_open_worldwide_days(ctx, block_utc_day, cutoff_ts, last_day == 0)?;
 
-    // 3. Snapshot forming VWAP for every open pipeline WWD whose forming window ended at or before 00:00 UTC of day X.
-    let aggregate = ValidatedWwdAggregate::load_and_validate(ctx.storage.clone())?;
-    for current in aggregate.active_records() {
-        verify_emission_day_link(&ctx.storage, current.day, current.worldwide_day)?;
-        if current.forming_end <= cutoff_ts {
-            let _ = snapshot_forming_vwap(ctx, current)?;
-        }
-    }
-
-    // 4. Record completion for UTC day X.
+    // 3. Record completion for UTC day X.
     factory.last_wwd_advance_day.write(block_utc_day)?;
     Ok(())
 }
@@ -238,52 +223,4 @@ fn verify_emission_day_link(
         }
     }
     Ok(())
-}
-
-pub fn snapshot_forming_vwap(
-    ctx: &BlockRuntimeContext<'_>,
-    current: &WwdProjection,
-) -> Result<bool> {
-    let wwd = current.worldwide_day;
-    let factory = TributeFactoryContract::new(ctx.storage.clone());
-    if factory.forming_snapshot_finalized.read(&wwd)? {
-        return outbe_oracle::api::has_worldwide_day_vwap_snapshot(ctx.storage.clone(), wwd);
-    }
-    match outbe_oracle::api::store_worldwide_day_vwap_snapshot(
-        ctx.storage.clone(),
-        wwd,
-        current.forming_start,
-        current.forming_end,
-    ) {
-        Ok(stored) => {
-            factory.forming_snapshot_finalized.write(&wwd, true)?;
-            Ok(stored)
-        }
-        Err(error)
-            if error.to_string().contains("VWAP must be non-zero") || is_vwap_overflow(&error) =>
-        {
-            factory.forming_snapshot_finalized.write(&wwd, true)?;
-            Ok(false)
-        }
-        Err(error) => Err(error),
-    }
-}
-
-alloy_sol_types::sol! {
-    error VwapOverflow(string accumulator);
-}
-
-fn is_vwap_overflow(error: &PrecompileError) -> bool {
-    use alloy_sol_types::SolError;
-    if matches!(
-        error,
-        PrecompileError::RevertBytes(bytes)
-            if bytes.len() >= 4 && bytes[..4] == VwapOverflow::SELECTOR
-    ) {
-        return true;
-    }
-    let text = error.to_string();
-    text.contains("overflow in WWD")
-        || text.contains("division by zero in WWD")
-        || text.contains("overflow in window")
 }

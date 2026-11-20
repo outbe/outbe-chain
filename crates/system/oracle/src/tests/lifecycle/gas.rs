@@ -17,6 +17,7 @@ fn vote_gas(oracle: &mut OracleContract, pair: AddressPair, voters: &[Address], 
                 *voter,
                 &[pair_vote(pair, coen_iso(2), COEN_ISO_SCALE)],
                 &[(BSC, U256::from(*gas))],
+                &[],
             )
             .unwrap();
     }
@@ -80,6 +81,7 @@ fn a_vote_for_a_chain_that_is_no_gas_vote_target_fails() {
             voter,
             &[pair_vote(pair, coen_iso(2), COEN_ISO_SCALE)],
             &[(BSC, U256::from(10))],
+            &[],
         );
 
         assert!(result.is_err());

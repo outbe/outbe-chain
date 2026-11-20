@@ -30,6 +30,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 outbe-rewards.workspace = true
+outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-tribute = { workspace = true, features = ["test-enclave", "test-utils"] }
 outbe-lysis.workspace = true
 ed25519-dalek.workspace = true

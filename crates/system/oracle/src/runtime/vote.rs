@@ -5,7 +5,7 @@ use outbe_primitives::error::Result;
 use outbe_system_common::address_pair::AddressPair;
 use std::collections::BTreeSet;
 
-use crate::constants::vote_caps;
+use crate::constants::{vote_caps, MAX_POLICY_RATE_VOTE};
 use crate::errors::OracleError;
 use crate::schema::OracleContract;
 
@@ -19,7 +19,9 @@ impl OracleContract<'_> {
     /// The caller must be the validator itself or a delegated feeder.
     /// Each tuple contains (base, quote, rate, volume) for one pair, quoted in
     /// the direction the pair was registered in. Each gas vote is
-    /// (chain id, COEN-wei per unit of gas) for a chain in `gas_chains`.
+    /// (chain id, COEN-wei per unit of gas) for a chain in `gas_chains`. Each
+    /// rate vote is (currency, annual rate at scale 1e6, publication time) for
+    /// a currency in `policy_rate_currencies`.
     ///
     /// Returns the validator the vote counts for and how many tuples were
     /// admitted.
@@ -28,10 +30,12 @@ impl OracleContract<'_> {
         caller: Address,
         tuples: &[(Address, Address, U256, U256)],
         gas: &[(u32, U256)],
+        rates: &[(u16, U256, u64)],
     ) -> Result<(Address, u32)> {
         let validator = self.resolve_validator_for_feeder(caller)?;
         let resolved = self.resolve_vote_pairs(tuples)?;
         self.check_gas_votes(gas)?;
+        self.check_rate_votes(rates)?;
 
         // Check if already voted this period
         let already_voted = self.vote_exists.read(&validator)?;
@@ -67,6 +71,7 @@ impl OracleContract<'_> {
 
         self.store_vote_tuples(validator, &kept_pairs, &kept_tuples)?;
         self.store_gas_votes(validator, gas)?;
+        self.store_rate_votes(validator, rates)?;
 
         // Add to voter list for tally iteration
         self.voter_list.push(validator)?;
@@ -166,6 +171,56 @@ impl OracleContract<'_> {
         let votes = self.vote_gas_price.get_nested(&validator);
         for (chain_id, price) in gas {
             votes.write(chain_id, *price)?;
+        }
+        Ok(())
+    }
+
+    /// Rejects a rate vote for a currency that is not in
+    /// `policy_rate_currencies`, a currency that comes twice, a rate above
+    /// the cap, and a publication time that is zero or after the block time.
+    /// Runs before the vote changes storage.
+    fn check_rate_votes(&self, rates: &[(u16, U256, u64)]) -> Result<()> {
+        if rates.is_empty() {
+            return Ok(());
+        }
+        let targets = self.policy_rate_currencies.read_all()?;
+        let now = self.storage.now_secs()?;
+        let max = U256::from(MAX_POLICY_RATE_VOTE);
+        let mut seen = BTreeSet::new();
+        for &(currency, rate, published_at) in rates {
+            if !targets.contains(&currency) {
+                return Err(OracleError::RateCurrencyNotVoteTarget { currency }.into());
+            }
+            if !seen.insert(currency) {
+                return Err(OracleError::DuplicateRateCurrencyInVote { currency }.into());
+            }
+            if rate > max {
+                return Err(OracleError::VoteRateExceedsCap {
+                    currency,
+                    rate,
+                    max,
+                }
+                .into());
+            }
+            if published_at == 0 || published_at > now {
+                return Err(OracleError::RatePublicationTimeInvalid {
+                    currency,
+                    published_at,
+                }
+                .into());
+            }
+        }
+        Ok(())
+    }
+
+    /// Stores each rate and its publication time as the rate vote of
+    /// `validator`. A rate of zero is a vote: the publication time marks it.
+    fn store_rate_votes(&self, validator: Address, rates: &[(u16, U256, u64)]) -> Result<()> {
+        let votes = self.vote_policy_rate.get_nested(&validator);
+        let times = self.vote_policy_rate_published_at.get_nested(&validator);
+        for (currency, rate, published_at) in rates {
+            votes.write(currency, *rate)?;
+            times.write(currency, *published_at)?;
         }
         Ok(())
     }
