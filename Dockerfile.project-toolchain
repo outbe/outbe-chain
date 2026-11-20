@@ -152,9 +152,8 @@ RUN curl -fsSL --proto '=https' --tlsv1.2 \
 # installed first so the remaining `cargo:` tools are fetched as prebuilt
 # binaries instead of being compiled from source.
 COPY mise.toml /opt/outbe/ci/mise.toml
-# contracts/intex pins its own tools (uv for the slither run, aderyn) in a
-# separate config; copied alone it has no parent to merge with, so this installs
-# exactly those two.
+# contracts/intex pins its own uv (for the slither run) in a separate config;
+# copied alone it has no parent to merge with, so this installs exactly that.
 COPY contracts/intex/mise.toml /opt/outbe/ci-intex/mise.toml
 #
 # Installing is not enough: a mise shim resolves its version from the config
@@ -182,7 +181,7 @@ RUN cd /opt/outbe/ci && \
 RUN set -eu; \
     cd /; \
     for tool in forge cast anvil cargo-nextest cargo-deny cargo-audit \
-                cog duckdb uv uvx aderyn sccache jq mold zstd python nargo bb; do \
+                cog duckdb uv uvx sccache jq mold zstd python nargo bb; do \
       "${tool}" --version >/dev/null 2>&1 \
         || { echo "ci stage tool does not run: ${tool}" >&2; exit 1; }; \
     done; \
