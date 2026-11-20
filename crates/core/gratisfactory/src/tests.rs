@@ -991,3 +991,131 @@ fn view_key_reconstructs_gratis_through_pledge_and_burn() {
         ["created", "canceled", "created", "sent", "released", "burned"]
     );
 }
+
+fn mine_gratis_call(gratis_minor: U256, op_nonce: u64) -> Bytes {
+    Bytes::from(
+        IGratisFactory::IGratisFactoryCalls::mineGratis(IGratisFactory::mineGratisCall {
+            mac: FixedBytes(auth(GratisOp::Mint, alice(), gratis_minor, op_nonce).mac),
+            opNonce: op_nonce,
+        })
+        .abi_encode(),
+    )
+}
+
+/// Dispatch `mineGratis` the way the payable route does: credit `value` to the
+/// factory first.
+fn mine_gratis(storage: &StorageHandle<'_>, call: &Bytes, value: U256) -> Result<U256, String> {
+    storage
+        .increase_balance(GRATIS_FACTORY_ADDRESS, value)
+        .unwrap();
+    dispatch(storage.clone(), call, alice(), value)
+        .map(|out| IGratisFactory::mineGratisCall::abi_decode_returns(&out).unwrap())
+        .map_err(|err| err.to_string())
+}
+
+fn promis_limit(storage: &StorageHandle<'_>) -> U256 {
+    outbe_promislimit::PromisLimitContract::new(storage.clone())
+        .promis_limit()
+        .unwrap()
+}
+
+/// 2 COEN in, 2 Gratis out. The COEN is burned into the Promis Limit and the
+/// mint records the acquisition cohort.
+#[test]
+fn mine_gratis_burns_coen_into_the_promis_limit_and_mints_gratis() {
+    const ONE_YEAR_SECS: u64 = 365 * SECONDS_PER_DAY;
+    let mut provider = test_storage();
+    let gratis_minor = U256::from(2_000_000u64);
+    let value = checked_protocol_to_native(gratis_minor).unwrap();
+    StorageHandle::enter(&mut provider, |storage| {
+        let minted = mine_gratis(&storage, &mine_gratis_call(gratis_minor, 0), value).unwrap();
+        assert_eq!(minted, gratis_minor);
+        assert_eq!(view_balance(&storage, alice()), gratis_minor);
+        assert_eq!(storage.balance(GRATIS_FACTORY_ADDRESS).unwrap(), U256::ZERO);
+        assert_eq!(promis_limit(&storage), gratis_minor);
+        let later = CREATED_AT + ONE_YEAR_SECS;
+        assert_eq!(
+            outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap(),
+            MAX_LEAGUE
+        );
+    });
+    let mined: Vec<_> = provider
+        .get_events(GRATIS_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| IGratisFactory::GratisMinedFromCoen::decode_log_data(log).ok())
+        .collect();
+    let added: Vec<_> = provider
+        .get_events(outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS)
+        .iter()
+        .filter_map(|log| {
+            outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded::decode_log_data(log).ok()
+        })
+        .collect();
+    let deltas = token_deltas(provider.get_events(GRATIS_ADDRESS), alice());
+    fidelity_enclave::uninstall();
+    test_enclave::uninstall();
+
+    assert_eq!(mined.len(), 1);
+    assert_eq!(mined[0].account, alice());
+    assert_eq!(mined[0].gratisMinor, gratis_minor);
+    assert_eq!(added.len(), 1);
+    assert_eq!(added[0].source, 47);
+    assert_eq!(added[0].amountMinor, gratis_minor);
+    assert_eq!(deltas, vec![(true, gratis_minor)]);
+}
+
+#[test]
+fn mine_gratis_rejects_zero_and_fractional_coen() {
+    with_env(|storage| {
+        let invalid = outbe_primitives::error::PrecompileError::from(
+            crate::errors::GratisFactoryError::InvalidCoenAmount,
+        )
+        .to_string();
+        let one = U256::ONE;
+        let fractional = checked_protocol_to_native(one).unwrap() + U256::ONE;
+        for value in [U256::ZERO, fractional] {
+            let err = mine_gratis(&storage, &mine_gratis_call(one, 0), value).unwrap_err();
+            assert_eq!(err, invalid);
+        }
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(promis_limit(&storage), U256::ZERO);
+    });
+}
+
+/// A MAC over a different amount fails the mint, and the burn reverts with it.
+#[test]
+fn mine_gratis_with_a_bad_mac_burns_nothing() {
+    with_env(|storage| {
+        let gratis_minor = U256::from(1_000u64);
+        let value = checked_protocol_to_native(gratis_minor).unwrap();
+        let call = mine_gratis_call(gratis_minor + U256::ONE, 0);
+        mine_gratis(&storage, &call, value).unwrap_err();
+
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(promis_limit(&storage), U256::ZERO);
+        assert_eq!(storage.balance(GRATIS_FACTORY_ADDRESS).unwrap(), value);
+    });
+}
+
+/// `mineGratis` then `mineCoen` of the same amount restores the native balance.
+#[test]
+fn mine_gratis_then_mine_coen_round_trips() {
+    with_env(|storage| {
+        let gratis_minor = U256::from(1_000u64);
+        let value = checked_protocol_to_native(gratis_minor).unwrap();
+        mine_gratis(&storage, &mine_gratis_call(gratis_minor, 0), value).unwrap();
+
+        let call = Bytes::from(
+            IGratisFactory::IGratisFactoryCalls::mineCoen(IGratisFactory::mineCoenCall {
+                gratisMinor: gratis_minor,
+                mac: FixedBytes(auth(GratisOp::Burn, alice(), gratis_minor, 1).mac),
+                opNonce: 1,
+            })
+            .abi_encode(),
+        );
+        dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap();
+
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(storage.balance(alice()).unwrap(), value);
+    });
+}

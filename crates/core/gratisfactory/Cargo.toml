@@ -13,6 +13,7 @@ outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-gratis.workspace = true
 outbe-fidelity.workspace = true
 outbe-vaultrouter.workspace = true
+outbe-promislimit.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true

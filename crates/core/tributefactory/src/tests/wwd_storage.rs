@@ -136,7 +136,7 @@ fn test_storage_dsl_layout_is_compatible_with_previous_slots() {
         assert_eq!(pipeline_base, alloy_primitives::U256::from(2));
         assert_eq!(pipeline_positions, alloy_primitives::U256::from(3));
         assert_eq!(
-            factory.forming_snapshot_finalized.base_slot(),
+            factory.retired_forming_snapshot_finalized.base_slot(),
             alloy_primitives::U256::from(4)
         );
         assert_eq!(

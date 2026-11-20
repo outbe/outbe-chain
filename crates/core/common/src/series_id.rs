@@ -7,6 +7,7 @@ use std::fmt;
 
 use outbe_primitives::storage::types::{Storable, StorableType, StorageKey};
 use outbe_system_common::iso_4217::iso_4217_alpha;
+use outbe_system_common::reference_currency::series_letter;
 
 pub const SERIES_ID_LEN: usize = 14;
 
@@ -99,12 +100,14 @@ impl SeriesId {
     }
 
     /// The id of the series a day issues for one `(issuance, reference)` pair.
+    /// When the two differ, `reference` must be a reference currency: the id
+    /// ends with its series letter.
     pub fn for_pair(day: u32, issuance: u16, reference: u16) -> Result<Self, InvalidSeriesId> {
         let code = Self::currency_code(issuance)?;
         if issuance == reference {
             return Self::pack_same(day, code);
         }
-        Self::pack(day, code, Self::currency_code(reference)?[0])
+        Self::pack(day, code, series_letter(reference).ok_or(InvalidSeriesId)?)
     }
 }
 
@@ -214,6 +217,22 @@ mod tests {
         assert!(SeriesId::for_pair(DAY, 975, 840).is_err());
         assert!(SeriesId::for_pair(DAY, 840, 975).is_err());
         assert!(SeriesId::for_pair(DAY, 1949, 840).is_err());
+    }
+
+    #[test]
+    fn series_id_uses_the_stored_letter() {
+        for (iso, letter) in outbe_system_common::reference_currency::REFERENCE_CURRENCY_LETTERS {
+            let id = SeriesId::for_pair(DAY, 32, iso).unwrap();
+            assert_eq!(id.as_bytes()[REFERENCE_AT], letter);
+            // Today each letter is the first letter of the alpha-3 code.
+            assert_eq!(letter, SeriesId::currency_code(iso).unwrap()[0]);
+        }
+        assert_eq!(
+            SeriesId::for_pair(DAY, 840, 978).unwrap().to_string(),
+            "20260212-USD-E"
+        );
+        // ARS has a letter code, but it is not a reference currency.
+        assert!(SeriesId::for_pair(DAY, 840, 32).is_err());
     }
 
     #[test]

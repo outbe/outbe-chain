@@ -1,13 +1,17 @@
-//! VWAP of a finalized snapshot window, judged by round coverage.
+//! The 24-hour VWAP of a closed snapshot window, judged by round coverage.
 
 use alloy_primitives::U256;
+use alloy_sol_types::SolEvent;
+use outbe_chain_constants::VWAP_24H_WINDOW_SECONDS;
 use outbe_primitives::error::Result;
 use outbe_system_common::address_pair::AddressPair;
+use outbe_system_common::addresses::ORACLE_ADDRESS;
 
 use super::VwapAccumulator;
-use crate::constants::{MIN_WINDOW_COVERAGE, VWAP_HOUR_SECONDS};
+use crate::constants::VWAP_HOUR_SECONDS;
 use crate::coverage::{hour_spans, CoverageTally};
 use crate::errors::OracleError;
+use crate::precompile::IOracle;
 use crate::schema::OracleContract;
 use crate::state::hourly_vwap_cell;
 use crate::window::VwapSnapshotId;
@@ -15,7 +19,8 @@ use crate::window::VwapSnapshotId;
 impl OracleContract<'_> {
     /// VWAP over the snapshot's window once its cutoff has passed.
     ///
-    /// Coverage is judged three times by the share in [`crate::constants::MIN_WINDOW_COVERAGE`]:
+    /// Coverage is judged three times by the coverage share of the UTC day VWAP
+    /// (`get_day_vwap_min_coverage`), so the two values are equal at 00:00:
     /// - An hour counts only when the pair has at least that share of the tally
     ///   rounds the hour's blocks allowed.
     /// - At least that share of the window's hours must count. An hour without
@@ -27,11 +32,7 @@ impl OracleContract<'_> {
     /// Hours that do not count contribute neither price nor volume. `None` when
     /// the window has no hour note, fails a test, holds no observation, or has
     /// no positive price.
-    pub fn finalized_window_vwap(
-        &self,
-        pair: AddressPair,
-        snapshot: VwapSnapshotId,
-    ) -> Result<Option<U256>> {
+    pub fn vwap_24h(&self, pair: AddressPair, snapshot: VwapSnapshotId) -> Result<Option<U256>> {
         if snapshot.cutoff() > self.storage.timestamp()?.saturating_to::<u64>() {
             return Err(OracleError::InvalidVwapSnapshot.into());
         }
@@ -39,13 +40,36 @@ impl OracleContract<'_> {
             pair,
             snapshot.start(),
             snapshot.cutoff(),
-            MIN_WINDOW_COVERAGE,
+            outbe_chain_constants::get_day_vwap_min_coverage(),
         )
     }
 
+    /// The step of the whole hour `window_end`. It emits `Vwap24hSet` for each
+    /// vote target that has a 24-hour VWAP in the window that ends at that
+    /// hour. Then it starts an S-curve for each reference currency whose VWAP
+    /// is above its curve.
+    pub(crate) fn close_vwap_24h_hour(&mut self, window_end: u64) -> Result<()> {
+        let Some(start) = window_end.checked_sub(VWAP_24H_WINDOW_SECONDS) else {
+            return Ok(());
+        };
+        let share = outbe_chain_constants::get_day_vwap_min_coverage();
+        let vwaps = self
+            .vote_target_values(|pair| self.judged_window_vwap(pair, start, window_end, share))?;
+        for &(pair, vwap) in &vwaps {
+            let event = IOracle::Vwap24hSet {
+                windowEnd: window_end,
+                base: pair.address1(),
+                quote: pair.address2(),
+                vwap,
+            };
+            self.storage
+                .emit_event(ORACLE_ADDRESS, event.encode_log_data())?;
+        }
+        crate::scurve::process_hourly_scurves(self, window_end, &vwaps)
+    }
+
     /// VWAP over the closed window `[start, cutoff)`, judged by round coverage
-    /// as in [`Self::finalized_window_vwap`] with `share` in place of
-    /// [`MIN_WINDOW_COVERAGE`].
+    /// as in [`Self::vwap_24h`] with `share` as the coverage share.
     pub(crate) fn judged_window_vwap(
         &self,
         pair: AddressPair,

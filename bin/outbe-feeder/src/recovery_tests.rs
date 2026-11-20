@@ -66,7 +66,7 @@ impl RpcState {
                     u64::from_str_radix(params[0].as_str().unwrap().trim_start_matches("0x"), 16)
                         .unwrap()
                 };
-                json!({"number":format!("{height:#x}"),"hash":block_hash(height)})
+                json!({"number":format!("{height:#x}"),"hash":block_hash(height),"timestamp":"0x0"})
             }
             "eth_chainId" => json!("0x1"),
             "eth_getTransactionCount" => json!(format!(
@@ -259,6 +259,7 @@ struct Fixture {
     identity: String,
     health: FeederHealth,
     last_attempt: Option<u64>,
+    rates: crate::rates::RateCache,
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
@@ -320,6 +321,7 @@ markets = [{{ provider = "mock", quote = "840" }}]
             identity,
             health,
             last_attempt: None,
+            rates: crate::rates::RateCache::default(),
         }
     }
     async fn tick(&mut self) -> Result<()> {
@@ -333,6 +335,7 @@ markets = [{{ provider = "mock", quote = "840" }}]
             journal: self.journal.as_mut().unwrap(),
             health: &self.health,
             last_attempt: &mut self.last_attempt,
+            rates: &mut self.rates,
         };
         feeder_tick(&mut ctx).await
     }

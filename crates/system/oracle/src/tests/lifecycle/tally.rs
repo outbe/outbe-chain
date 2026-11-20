@@ -41,13 +41,13 @@ fn run_tally_rewards_every_voter_inside_the_reward_band() {
         // With 2% reward band, all should be within band.
         let base = fixed18(1000);
         oracle
-            .submit_vote(v1, &[(COEN, USDT, base, SCALE_1E18)], &[])
+            .submit_vote(v1, &[(COEN, USDT, base, SCALE_1E18)], &[], &[])
             .unwrap();
         oracle
-            .submit_vote(v2, &[(COEN, USDT, base + SCALE_1E18, SCALE_1E18)], &[])
+            .submit_vote(v2, &[(COEN, USDT, base + SCALE_1E18, SCALE_1E18)], &[], &[])
             .unwrap();
         oracle
-            .submit_vote(v3, &[(COEN, USDT, base + fixed18(2), SCALE_1E18)], &[])
+            .submit_vote(v3, &[(COEN, USDT, base + fixed18(2), SCALE_1E18)], &[], &[])
             .unwrap();
 
         crate::tally::run_tally(oracle, 2, 24).unwrap();
@@ -80,6 +80,7 @@ fn run_tally_gives_every_validator_one_median_observation_regardless_of_stake() 
                     voter,
                     &[pair_vote(pair, coen_iso(rate), COEN_ISO_SCALE)],
                     &[],
+                    &[],
                 )
                 .unwrap();
         }
@@ -95,7 +96,12 @@ fn a_disabled_oracle_clears_votes_without_a_tally() {
     with_coen840_oracle(|storage, oracle, pair| {
         let [voter, ..] = register_four_voters(&storage);
         oracle
-            .submit_vote(voter, &[pair_vote(pair, coen_iso(2), COEN_ISO_SCALE)], &[])
+            .submit_vote(
+                voter,
+                &[pair_vote(pair, coen_iso(2), COEN_ISO_SCALE)],
+                &[],
+                &[],
+            )
             .unwrap();
         oracle.config_enabled.write(false).unwrap();
 
@@ -113,13 +119,13 @@ fn run_tally_penalizes_a_voter_outside_the_reward_band() {
 
         // v1 and v2 vote 50, v3 votes 500 (extreme outlier)
         oracle
-            .submit_vote(v1, &[(COEN, USDT, fixed18(50), SCALE_1E18)], &[])
+            .submit_vote(v1, &[(COEN, USDT, fixed18(50), SCALE_1E18)], &[], &[])
             .unwrap();
         oracle
-            .submit_vote(v2, &[(COEN, USDT, fixed18(50), SCALE_1E18)], &[])
+            .submit_vote(v2, &[(COEN, USDT, fixed18(50), SCALE_1E18)], &[], &[])
             .unwrap();
         oracle
-            .submit_vote(v3, &[(COEN, USDT, fixed18(500), SCALE_1E18)], &[])
+            .submit_vote(v3, &[(COEN, USDT, fixed18(500), SCALE_1E18)], &[], &[])
             .unwrap();
 
         crate::tally::run_tally(oracle, 2, 24).unwrap();
@@ -145,13 +151,13 @@ fn run_tally_counts_a_zero_rate_submission_as_a_miss_without_poisoning_price() {
     with_coen_usdt_oracle(|storage, oracle| {
         let [valid, valid2, invalid] = register_staked_voters(&storage, [100; 3]);
         oracle
-            .submit_vote(valid, &[(COEN, USDT, fixed18(50), SCALE_1E18)], &[])
+            .submit_vote(valid, &[(COEN, USDT, fixed18(50), SCALE_1E18)], &[], &[])
             .unwrap();
         oracle
-            .submit_vote(valid2, &[(COEN, USDT, fixed18(50), SCALE_1E18)], &[])
+            .submit_vote(valid2, &[(COEN, USDT, fixed18(50), SCALE_1E18)], &[], &[])
             .unwrap();
         oracle
-            .submit_vote(invalid, &[(COEN, USDT, U256::ZERO, SCALE_1E18)], &[])
+            .submit_vote(invalid, &[(COEN, USDT, U256::ZERO, SCALE_1E18)], &[], &[])
             .unwrap();
 
         crate::tally::run_tally(oracle, 2, 24).unwrap();
@@ -183,6 +189,7 @@ fn run_tally_breaks_equal_reference_observation_ties_by_registry_order() {
                     pair_vote(higher, fixed18(2_000), SCALE_1E18),
                 ],
                 &[],
+                &[],
             )
             .unwrap();
         oracle
@@ -192,6 +199,7 @@ fn run_tally_breaks_equal_reference_observation_ties_by_registry_order() {
                     pair_vote(lower, fixed18(50), SCALE_1E18),
                     pair_vote(higher, fixed18(2_000), SCALE_1E18),
                 ],
+                &[],
                 &[],
             )
             .unwrap();
@@ -215,7 +223,7 @@ fn later_pair_with_more_observations_becomes_the_reference_pair() {
                     let rate = [fixed18(2), fixed18(3), fixed18(7)][index];
                     votes.push(pair_vote(first, rate, SCALE_1E18));
                 }
-                oracle.submit_vote(voter, &votes, &[]).unwrap();
+                oracle.submit_vote(voter, &votes, &[], &[]).unwrap();
             }
 
             crate::tally::run_tally(oracle, 2, 24).unwrap();
@@ -233,7 +241,12 @@ fn pair_below_quorum_is_not_selected_as_reference() {
         |oracle, (first, _)| publish_prior_rate(oracle, first, fixed18(40)),
         |oracle, (first, later), voters| {
             oracle
-                .submit_vote(voters[0], &[pair_vote(first, fixed18(50), SCALE_1E18)], &[])
+                .submit_vote(
+                    voters[0],
+                    &[pair_vote(first, fixed18(50), SCALE_1E18)],
+                    &[],
+                    &[],
+                )
                 .unwrap();
             oracle
                 .submit_vote(
@@ -243,11 +256,17 @@ fn pair_below_quorum_is_not_selected_as_reference() {
                         pair_vote(later, fixed18(2), SCALE_1E18),
                     ],
                     &[],
+                    &[],
                 )
                 .unwrap();
             for voter in &voters[2..] {
                 oracle
-                    .submit_vote(*voter, &[pair_vote(later, fixed18(2), SCALE_1E18)], &[])
+                    .submit_vote(
+                        *voter,
+                        &[pair_vote(later, fixed18(2), SCALE_1E18)],
+                        &[],
+                        &[],
+                    )
                     .unwrap();
             }
 
@@ -271,7 +290,7 @@ fn two_votes_cannot_replace_the_third_vote_required_for_four_validator_quorum() 
 
         for voter in [v1, v2] {
             oracle
-                .submit_vote(voter, &[(COEN, USDT, fixed18(50), SCALE_1E18)], &[])
+                .submit_vote(voter, &[(COEN, USDT, fixed18(50), SCALE_1E18)], &[], &[])
                 .unwrap();
         }
 
@@ -300,7 +319,12 @@ fn a_validator_deactivated_after_submission_does_not_count_toward_tally_quorum()
 
         for voter in &voters[..2] {
             oracle
-                .submit_vote(*voter, &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)], &[])
+                .submit_vote(
+                    *voter,
+                    &[(COEN, usd(), coen_iso(50), COEN_ISO_SCALE)],
+                    &[],
+                    &[],
+                )
                 .unwrap();
         }
         outbe_validatorset::contract::ValidatorSet::new(storage)
@@ -333,7 +357,7 @@ fn partial_pair_votes_use_independent_quorum_and_no_cross_intersection_quorum() 
         let [v1, v2, v3, v4] = register_four_voters(&storage);
 
         oracle
-            .submit_vote(v1, &[(COEN, USDT, fixed18(50), fixed18(10))], &[])
+            .submit_vote(v1, &[(COEN, USDT, fixed18(50), fixed18(10))], &[], &[])
             .unwrap();
         oracle
             .submit_vote(
@@ -342,6 +366,7 @@ fn partial_pair_votes_use_independent_quorum_and_no_cross_intersection_quorum() 
                     (COEN, USDT, fixed18(50), fixed18(10)),
                     pair_vote(target, fixed18(2_000), fixed18(20)),
                 ],
+                &[],
                 &[],
             )
             .unwrap();
@@ -353,10 +378,16 @@ fn partial_pair_votes_use_independent_quorum_and_no_cross_intersection_quorum() 
                     pair_vote(target, fixed18(2_000), fixed18(30)),
                 ],
                 &[],
+                &[],
             )
             .unwrap();
         oracle
-            .submit_vote(v4, &[pair_vote(target, fixed18(2_000), fixed18(40))], &[])
+            .submit_vote(
+                v4,
+                &[pair_vote(target, fixed18(2_000), fixed18(40))],
+                &[],
+                &[],
+            )
             .unwrap();
 
         crate::tally::run_tally(oracle, 2, 24).unwrap();

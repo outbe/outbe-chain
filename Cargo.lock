@@ -8225,6 +8225,7 @@ dependencies = [
  "outbe-macros",
  "outbe-nod",
  "outbe-primitives",
+ "outbe-promislimit",
  "outbe-system-common",
  "outbe-tee",
  "outbe-vaultrouter",

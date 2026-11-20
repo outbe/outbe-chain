@@ -13,6 +13,6 @@ pub use api::{is_offering_day, offering_worldwide_days, worldwide_day, worldwide
 pub use lifecycle::{
     advance_worldwide_days, advance_worldwide_days_command,
     bootstrap_genesis_worldwide_days_command, compute_wwd_schedule, first_wwd_for_genesis,
-    open_worldwide_day_for_date, snapshot_forming_vwap, validate_wwd_timestamp,
+    open_worldwide_day_for_date, validate_wwd_timestamp,
 };
 pub use schema::{WorldwideDay as WorldwideDayRecord, WorldwideDayEntryExt};

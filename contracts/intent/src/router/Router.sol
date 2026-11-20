@@ -9,6 +9,7 @@ import {BaseRouter} from "./BaseRouter.sol";
 import {RouterMessage} from "../libs/RouterMessage.sol";
 import {TypeCasts} from "../libs/TypeCasts.sol";
 import {IGatewayQuote} from "../interfaces/IGatewayQuote.sol";
+import {REFUND_ADDRESS_ATTR} from "@shared/GatewayAttributes.sol";
 
 /**
  * @title Router
@@ -157,7 +158,10 @@ contract Router is BaseRouter, UUPSUpgradeable, IERC7786Recipient {
     // ============ Internal ============
 
     function _send(uint32 _domain, bytes memory _payload) internal {
-        bridge.sendMessage{value: msg.value}(_remoteRouter(_domain), _payload, new bytes[](0));
+        // The refundAddress attribute of the hub: the transport sends the extra fee back to the caller.
+        bytes[] memory attributes = new bytes[](1);
+        attributes[0] = abi.encodeWithSelector(REFUND_ADDRESS_ATTR, msg.sender);
+        bridge.sendMessage{value: msg.value}(_remoteRouter(_domain), _payload, attributes);
     }
 
     /// @dev ERC-7930 address of the matching Router on `_domain`. Reverts if it was never registered.
