@@ -307,10 +307,7 @@ COPY --from=builder /out/ /
 
 FROM source-builder AS software-builder
 
-ARG SOFTWARE_PROFILE=production
-
 RUN cargo xtask release build \
-      --profile "${SOFTWARE_PROFILE}" \
       --output /out \
       --inside-container
 

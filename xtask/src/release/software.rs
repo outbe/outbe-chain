@@ -7,7 +7,6 @@ use std::{
     process::Command,
 };
 
-use clap::ValueEnum;
 use eyre::{ensure, Context, Result};
 use outbe_operator_systemd::joining_units;
 use sha2::{Digest, Sha256};
@@ -36,21 +35,6 @@ const CRS_URL: &str = "https://crs.aztec.network/g1.dat";
 const CRS_SIZE: usize = 4_194_368;
 const CRS_SHA256: &str = "9fd9fad54cfdc61ec309e818fe7bbddad1ca7dde72cc9b1afd126b744f887078";
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
-pub enum SoftwareProfile {
-    Production,
-    Development,
-}
-
-impl SoftwareProfile {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Production => "production",
-            Self::Development => "development",
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 struct BundleInput {
     archive_path: String,
@@ -69,13 +53,12 @@ pub struct PackageOptions<'a> {
 pub struct BuildOptions<'a> {
     pub repo_root: &'a Path,
     pub output_dir: &'a Path,
-    pub profile: SoftwareProfile,
     pub release_tag: Option<&'a str>,
     pub no_cache: bool,
     pub inside_container: bool,
 }
 
-/// Build and package one software profile using the pinned Linux toolchain.
+/// Build and package the confidential-VM software bundle using the pinned Linux toolchain.
 pub fn build(options: &BuildOptions<'_>) -> Result<PathBuf> {
     if options.inside_container {
         build_inside_container(options)
@@ -150,8 +133,6 @@ fn build_with_docker(options: &BuildOptions<'_>) -> Result<PathBuf> {
         &format!("REPRODUCIBLE_CFLAGS={}", values[1]),
         "--build-arg",
         &format!("REPRODUCIBLE_CXXFLAGS={}", values[2]),
-        "--build-arg",
-        &format!("SOFTWARE_PROFILE={}", options.profile.as_str()),
         "--output",
         &format!("type=local,dest={}", output_dir.display()),
     ]);
@@ -163,7 +144,7 @@ fn build_with_docker(options: &BuildOptions<'_>) -> Result<PathBuf> {
         .status()
         .wrap_err("run pinned Docker build")?;
     ensure!(status.success(), "pinned software build failed");
-    let bundle = output_dir.join(bundle_name(options.profile, &identity.source_commit)?);
+    let bundle = output_dir.join(outbe_software_bundle::bundle_name(&identity.source_commit)?);
     ensure!(
         bundle.is_file(),
         "software build did not produce {}",
@@ -176,7 +157,7 @@ fn build_with_docker(options: &BuildOptions<'_>) -> Result<PathBuf> {
 fn build_inside_container(options: &BuildOptions<'_>) -> Result<PathBuf> {
     let identity = identity_from_environment(options.release_tag)?;
     let target = "x86_64-unknown-linux-gnu";
-    let status = cargo_build_command(options.repo_root, options.profile, target)
+    let status = cargo_build_command(options.repo_root, target)
         .status()
         .wrap_err("build software binaries")?;
     ensure!(status.success(), "software binary build failed");
@@ -201,7 +182,7 @@ fn build_inside_container(options: &BuildOptions<'_>) -> Result<PathBuf> {
     fs::create_dir_all(options.output_dir)?;
     let output = options
         .output_dir
-        .join(bundle_name(options.profile, &identity.source_commit)?);
+        .join(outbe_software_bundle::bundle_name(&identity.source_commit)?);
     package(&PackageOptions {
         artifacts: staging.path(),
         systemd_units: &staging_systemd,
@@ -276,15 +257,7 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn bundle_name(profile: SoftwareProfile, commit: &str) -> Result<String> {
-    let name = outbe_software_bundle::bundle_name(commit)?;
-    Ok(match profile {
-        SoftwareProfile::Production => name,
-        SoftwareProfile::Development => format!("development-{name}"),
-    })
-}
-
-fn cargo_build_command(repo_root: &Path, profile: SoftwareProfile, target: &str) -> Command {
+fn cargo_build_command(repo_root: &Path, target: &str) -> Command {
     let mut command = Command::new("cargo");
     command.current_dir(repo_root).args([
         "build",
@@ -297,14 +270,7 @@ fn cargo_build_command(repo_root: &Path, profile: SoftwareProfile, target: &str)
     for (package, binary) in binary_targets() {
         command.args(["--package", package, "--bin", binary]);
     }
-    let features = match profile {
-        SoftwareProfile::Production => "outbe-chain/native-dcap",
-        SoftwareProfile::Development => "outbe-chain/test-protocol-overrides",
-    };
-    command.args(["--features", features]);
-    if profile == SoftwareProfile::Production {
-        command.env("OUTBE_NATIVE_DCAP", "require");
-    }
+    command.args(["--features", "outbe-chain/test-protocol-overrides"]);
     command
 }
 
@@ -630,34 +596,21 @@ mod tests {
     }
 
     #[test]
-    fn software_profiles_enable_only_their_resident_node_feature() {
-        for (profile, feature, qvl) in [
-            (
-                SoftwareProfile::Production,
-                "outbe-chain/native-dcap",
-                Some("require"),
-            ),
-            (
-                SoftwareProfile::Development,
-                "outbe-chain/test-protocol-overrides",
-                None,
-            ),
-        ] {
-            let command = cargo_build_command(Path::new("."), profile, "x86_64-unknown-linux-gnu");
-            let args: Vec<_> = command.get_args().collect();
-            let features: Vec<_> = args
-                .windows(2)
-                .filter_map(|pair| (pair[0] == "--features").then_some(pair[1]))
-                .collect();
-            assert_eq!(features, [std::ffi::OsStr::new(feature)]);
-            assert!(args.contains(&std::ffi::OsStr::new("--no-default-features")));
-            let require_qvl = command
-                .get_envs()
-                .find(|(key, _)| *key == "OUTBE_NATIVE_DCAP")
-                .and_then(|(_, value)| value)
-                .and_then(std::ffi::OsStr::to_str);
-            assert_eq!(require_qvl, qvl);
-        }
+    fn software_build_uses_the_unattested_node_feature_only() {
+        let command = cargo_build_command(Path::new("."), "x86_64-unknown-linux-gnu");
+        let args: Vec<_> = command.get_args().collect();
+        let features: Vec<_> = args
+            .windows(2)
+            .filter_map(|pair| (pair[0] == "--features").then_some(pair[1]))
+            .collect();
+        assert_eq!(
+            features,
+            [std::ffi::OsStr::new("outbe-chain/test-protocol-overrides")]
+        );
+        assert!(args.contains(&std::ffi::OsStr::new("--no-default-features")));
+        assert!(command
+            .get_envs()
+            .all(|(key, _)| key != "OUTBE_NATIVE_DCAP"));
     }
 
     #[test]
