@@ -14,7 +14,8 @@ foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI
 # Core tools needed by build/test/audit tasks. The heavier audit toolchain
 # (machete, udeps, bloat, llvm-lines, llvm-cov) is installed on
 # demand by `mise run audit-tools-install` to mirror the old Makefile.
-"cargo:cargo-binstall"  = "latest"
+# 1.25.0+ requires rustc 1.96.1. This image's rustc is 1.96.0.
+"cargo:cargo-binstall"  = "1.24.0"
 "cargo:cargo-nextest"   = "latest"
 "cargo:cargo-deny"      = "latest"
 "cargo:cargo-auditable" = "latest"
@@ -22,7 +23,6 @@ foundry = "latest"                 # forge, cast, anvil (Solidity + Ethereum CLI
 
 # -- Release / versioning ---------------------------------------------- #
 cocogitto = "7"                    # `cog` - conventional-commit check + auto-version bump
-duckdb = "latest"
 
 # outbe-zk's build.rs compiles L2 circuits. Versions must match the pins in
 # crates/zk/outbe-zk/build.rs. Install with `mise install`; CI caches these tools
