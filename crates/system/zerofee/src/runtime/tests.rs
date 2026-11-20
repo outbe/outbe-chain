@@ -4,7 +4,7 @@ use alloy_eips::eip7702::Authorization;
 use alloy_primitives::{address, Address, Signature, U256};
 use alloy_sol_types::SolCall;
 use outbe_primitives::{
-    consensus::{MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS, MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS},
+    consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS,
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     transaction_call::TransactionCallFields,
 };
@@ -593,13 +593,10 @@ fn quota_resets_once_at_proposer_advanced_boundary() {
     let parent_ts = BLOCK_TS - 1;
     let previous_day = timestamp_to_date_key(parent_ts);
     let advanced_ts = parent_ts + max_drift_secs;
-    let further_ts = advanced_ts + MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS / 1_000;
+    let further_ts = advanced_ts + 1;
     assert!(advanced_ts >= BLOCK_TS, "the advance must cross midnight");
     assert_eq!(timestamp_to_date_key(advanced_ts), BLOCK_DAY);
-    assert!(
-        (MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS..=MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS)
-            .contains(&((advanced_ts - parent_ts) * 1_000))
-    );
+    assert!((1..=MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS).contains(&((advanced_ts - parent_ts) * 1_000)));
     assert_eq!(timestamp_to_date_key(further_ts), BLOCK_DAY);
 
     with_storage(|storage| {

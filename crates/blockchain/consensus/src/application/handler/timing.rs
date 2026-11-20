@@ -77,23 +77,19 @@ pub(super) fn apply_unix_time_offset_millis(now: u64, offset_secs: i64) -> eyre:
 }
 
 /// Clamp a proposer's block timestamp (ms) into the deterministic drift band
-/// `[parent + min_advance, parent + band]`, with the genesis-child exception.
+/// `[parent + 1, parent + band]`, with the absent-parent guard.
 ///
 /// When `parent_timestamp_millis == 0`, the proposer did not resolve a parent
-/// block. [`proposal_timestamp_millis`] passes zero for that absent parent. It
-/// does not pass the genesis header timestamp, and it is not the validator
-/// exemption for parent block number 0. A zero parent timestamp, a parent
-/// number of 0, and an absent parent are different inputs. Capping at `0 + band`
-/// would clamp the real wall-clock time far below the genesis timestamp. Reth
-/// would then reject the payload as a past timestamp, stalling at block 0. For
-/// a zero parent timestamp the function enforces only monotonicity (`max(now, parent + 1)`).
-/// For every later parent timestamp the full two-sided band applies, using the
-/// same bound arithmetic as the validator:
-/// - lower bound `parent + min_advance`: if the proposer's clock has not
-///   advanced `min_advance` past the parent, the function clamps the timestamp
-///   *up*. The block then still satisfies the validator minimum-advance rule and
-///   is never rejected. This denies a colluding leader majority the
-///   `parent + 1 ms` timestamp freeze.
+/// block. [`proposal_timestamp_millis`] passes zero for that absent parent.
+/// Capping at `0 + band` would clamp the real wall-clock time far below the
+/// genesis timestamp. Reth would then reject the payload as a past timestamp,
+/// stalling at block 0. For a zero parent timestamp the function enforces only
+/// monotonicity (`max(now, 1)`).
+/// For every resolved parent timestamp (`parent_timestamp_millis > 0`), the
+/// band `[parent + 1, parent + band]` applies, using the same bound arithmetic
+/// as the validator:
+/// - lower bound `parent + 1`: guarantees strict `+1 ms` monotonicity even
+///   under local clock lag.
 /// - upper bound `parent + band` (C-01): an honest proposer never emits an
 ///   over-drifted block, and a long stall self-heals by ratcheting forward at
 ///   most one band per block.
@@ -101,16 +97,14 @@ pub(super) fn clamp_proposed_timestamp_millis(
     parent_timestamp_millis: u64,
     now_millis: u64,
     band_millis: u64,
-    min_advance_millis: u64,
 ) -> u64 {
     if parent_timestamp_millis == 0 {
-        return std::cmp::max(now_millis, parent_timestamp_millis.saturating_add(1));
+        return std::cmp::max(now_millis, 1);
     }
     outbe_primitives::consensus::clamp_timestamp_into_band(
         parent_timestamp_millis,
         now_millis,
         band_millis,
-        min_advance_millis,
     )
 }
 
@@ -123,15 +117,9 @@ pub(super) fn proposal_timestamp_millis(
     parent_block: Option<&ConsensusBlock>,
     now_millis: u64,
     band_millis: u64,
-    min_advance_millis: u64,
 ) -> u64 {
     let parent_timestamp_millis = parent_block.map_or(0, ConsensusBlock::timestamp_millis);
-    clamp_proposed_timestamp_millis(
-        parent_timestamp_millis,
-        now_millis,
-        band_millis,
-        min_advance_millis,
-    )
+    clamp_proposed_timestamp_millis(parent_timestamp_millis, now_millis, band_millis)
 }
 
 /// Whether the exact parent is ahead of the local proposer clock.
@@ -380,17 +368,18 @@ mod tests {
                 reth_ethereum::primitives::SealedBlock::seal_slow(block),
             );
             assert_eq!(parent.timestamp_millis(), 3000);
-            for (now, ahead) in [
-                (2999, true),
-                (3000, false),
-                (3001, false),
-                (3999, false),
-                (4000, false),
+            for (now, ahead, expected_clamped) in [
+                (2999, true, 3001),
+                (3000, false, 3001),
+                (3001, false, 3001),
+                (3999, false, 3999),
+                (4000, false, 4000),
+                (63_001, false, 63_000),
             ] {
                 assert_eq!(parent_ahead_of_local_clock(Some(&parent), now), ahead);
                 assert_eq!(
-                    clamp_proposed_timestamp_millis(3000, now, 60_000, 1000),
-                    4000
+                    clamp_proposed_timestamp_millis(3000, now, 60_000),
+                    expected_clamped
                 );
             }
             assert!(!parent_ahead_of_local_clock(None, 0));

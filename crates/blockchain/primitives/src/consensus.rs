@@ -90,69 +90,23 @@ pub const OUTBE_MAX_BLOCK_SIZE: usize = 2 * 1024 * 1024 - 128 * 1024;
 /// hard-fork-governed protocol constant. Both paths read it from here.
 pub const MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS: u64 = 60 * 60 * 1_000;
 
-/// Minimum advance, in milliseconds, that a block's `timestamp_millis` must add
-/// over its parent's. This is the lower bound of the two-sided drift band.
-///
-/// Stock monotonicity requires only `+1 ms`. Thus a colluding leader majority
-/// can keep `timestamp = parent + 1 ms` while real time advances. This freezes
-/// every time-driven settlement that depends on the block timestamp:
-/// - The day-indexed emission schedule never crosses a UTC boundary, so
-///   emission stalls.
-/// - Unbonding maturity (`complete_time`) is never reached, so stake never
-///   unlocks.
-///
-/// This bound forces each block to advance chain time by at least `this`, and
-/// so neutralizes the freeze. The only way to slow chain time below
-/// `this`-per-block is to withhold blocks. The view-timeout / leader rotation
-/// machinery already bounds that case.
-///
-/// Like the maximum bound, the rule is deterministic and chain-state-only
-/// (header + parent, no wall clock). Thus the proposer and every validator
-/// agree. The proposer clamps its assigned timestamp *up* to `parent + this`
-/// when its clock has not advanced that far (see the consensus handler build
-/// path). Thus validators never reject an honest block. The clamp has an
-/// effect only under clock lag. [`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`] bounds any
-/// resulting forward inflation, and the inflation self-corrects once real time
-/// reaches chain time. The validator skips only this minimum when the parent
-/// block number is 0. The proposer skips both bands only when the parent
-/// timestamp is 0. A parent timestamp of 0, a parent block number of 0, and a
-/// missing parent block are not the same input.
-///
-/// 1 s is half the 2 s default block-time floor (`DEFAULT_MIN_BLOCK_TIME_MS`).
-/// Honest pacing leaves real intervals `>=` the floor between consecutive block
-/// timestamps. Thus honest pacing never trips the clamp at the default cadence,
-/// while a sub-second freeze is impossible. Operators who configure a
-/// block-time floor below `this` accept proportionally more bounded forward
-/// inflation. This is a hard-fork-governed protocol constant. Both paths read
-/// it from here.
-pub const MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS: u64 = 1_000;
-
 /// Numeric relation of a child timestamp to its parent timestamp.
-///
-/// This comparison does not know the parent block number or whether a parent
-/// block was resolved. Callers keep those exemptions.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimestampAdvance {
     /// `timestamp` is not strictly after `parent`.
     NotAfterParent,
-    /// Positive drift is below `min_advance`.
-    BelowMinAdvance { drift: u64 },
     /// Positive drift is above `max_drift`.
     ExceedsMaxDrift { drift: u64 },
-    /// Positive drift is inside both bounds.
+    /// Positive drift is within `1..=max_drift`.
     Inside { drift: u64 },
 }
 
 /// Classify `timestamp_millis` against `parent_timestamp_millis`.
-///
-/// A drift above `max_drift_millis` is reported before a drift below
-/// `min_advance_millis`. The live constants keep the minimum below the maximum.
 #[must_use]
 pub fn classify_timestamp_advance(
     parent_timestamp_millis: u64,
     timestamp_millis: u64,
     max_drift_millis: u64,
-    min_advance_millis: u64,
 ) -> TimestampAdvance {
     let Some(drift) = timestamp_millis.checked_sub(parent_timestamp_millis) else {
         return TimestampAdvance::NotAfterParent;
@@ -163,25 +117,20 @@ pub fn classify_timestamp_advance(
     if drift > max_drift_millis {
         return TimestampAdvance::ExceedsMaxDrift { drift };
     }
-    if drift < min_advance_millis {
-        return TimestampAdvance::BelowMinAdvance { drift };
-    }
     TimestampAdvance::Inside { drift }
 }
 
-/// Clamp `now_millis` into `[parent + min_advance, parent + max_drift]`.
+/// Clamp `now_millis` into `[parent + 1, parent + max_drift]`.
 ///
-/// Addition saturates at `u64::MAX`. A parent with no room for `min_advance`
-/// has no in-range successor. This function does not apply the absent-parent
-/// exception.
+/// Addition saturates at `u64::MAX`. A parent at `u64::MAX` has no in-range
+/// successor. This function does not apply the absent-parent exception.
 #[must_use]
 pub fn clamp_timestamp_into_band(
     parent_timestamp_millis: u64,
     now_millis: u64,
     max_drift_millis: u64,
-    min_advance_millis: u64,
 ) -> u64 {
-    let min_timestamp_millis = parent_timestamp_millis.saturating_add(min_advance_millis);
+    let min_timestamp_millis = parent_timestamp_millis.saturating_add(1);
     let max_timestamp_millis = parent_timestamp_millis.saturating_add(max_drift_millis);
     now_millis
         .max(min_timestamp_millis)

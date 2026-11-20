@@ -231,19 +231,17 @@ pub fn precheck_sponsorship(signer: Address) -> Result<(), ZeroFeePolicyError> {
 /// The quota epoch is the UTC day key of `block_timestamp_secs`. The block
 /// proposer supplies this header timestamp. The protocol bounds it to a
 /// deterministic band relative to the parent timestamp:
-/// - The lower bound is
-///   [`MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS`](outbe_primitives::consensus::MIN_BLOCK_TIMESTAMP_ADVANCE_MILLIS)
-///   (1 s).
+/// - The lower bound is strict `+1 ms` monotonicity over the parent timestamp.
 /// - The upper bound is
 ///   [`MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS`](outbe_primitives::consensus::MAX_BLOCK_TIMESTAMP_DRIFT_MILLIS)
 ///   (1 h).
 ///
 /// Validators enforce this inclusive band with
 /// `validate_against_parent_timestamp_millis` in
-/// `crates/blockchain/execution/src/consensus/policy.rs` (`outbe-execution`). A parent at
-/// height zero skips only the minimum advance. Strict monotonicity and the
-/// maximum still apply. This function does not validate the timestamp. It
-/// relies on the surrounding block-validation flow.
+/// `crates/blockchain/execution/src/consensus/policy.rs` (`outbe-execution`).
+/// Both strict monotonicity and the maximum drift apply uniformly at all
+/// heights. This function does not validate the timestamp. It relies on the
+/// surrounding block-validation flow.
 ///
 /// The maximum is parent-relative, not a wall-clock or cumulative bound. A
 /// proposer can cross an upcoming UTC midnight within one permitted advance.
