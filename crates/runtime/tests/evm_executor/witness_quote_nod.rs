@@ -20,7 +20,7 @@ pub(crate) fn quote_nod_seed(nod_state_key: &StateKeyHandle, chain_id: u64) -> Q
     let entry_price_minor = U256::from(450_000_000u64);
     let issued_at = outbe_system_common::time::date_key_to_utc_timestamp(20_200_101).unwrap() + 1;
     let group_key = outbe_nod::test_support::group_key_at(
-        &outbe_nod::config::NodParams::DEV,
+        &outbe_nod::config::NodParams::TESTNET,
         issued_at,
         entry_price_minor,
         840,

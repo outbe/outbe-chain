@@ -298,7 +298,7 @@ fn trait_value(json: &serde_json::Value, name: &str) -> Option<serde_json::Value
 #[test]
 fn token_uri_renders_the_gem_card() {
     with_storage(|storage| {
-        set_profile(storage, crate::config::PROFILE_PROD);
+        set_profile(storage, crate::config::PROFILE_MAINNET);
         let gem_id = add(storage, sample_params(ALICE));
         let (json, svg) = token_uri_parts(storage, gem_id);
 
@@ -439,10 +439,10 @@ fn a_settled_gem_keeps_its_call_stamp_in_the_view() {
 fn config_unset_resolves_by_chain_id() {
     with_storage(|storage| {
         // No genesis profile selected -> resolved by network. The test chain is not mainnet.
-        assert_eq!(crate::config::read(storage).unwrap(), GemParams::DEV);
+        assert_eq!(crate::config::read(storage).unwrap(), GemParams::TESTNET);
         // An explicit selector still wins over the network default.
-        set_profile(storage, crate::config::PROFILE_PROD);
-        assert_eq!(crate::config::read(storage).unwrap(), GemParams::PROD);
+        set_profile(storage, crate::config::PROFILE_MAINNET);
+        assert_eq!(crate::config::read(storage).unwrap(), GemParams::MAINNET);
     });
 }
 
@@ -453,12 +453,12 @@ fn config_auto_profile_follows_the_network() {
 
     assert_eq!(
         GemParams::from_selector(crate::config::PROFILE_AUTO, MAINNET_CHAIN_ID).unwrap(),
-        GemParams::PROD
+        GemParams::MAINNET
     );
     for chain_id in [TESTNET_CHAIN_ID, DEVNET_CHAIN_ID, 31_337] {
         assert_eq!(
             GemParams::from_selector(crate::config::PROFILE_AUTO, chain_id).unwrap(),
-            GemParams::DEV
+            GemParams::TESTNET
         );
     }
 }

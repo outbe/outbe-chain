@@ -8,7 +8,7 @@ use outbe_system_common::addresses::NOD_ADDRESS;
 fn seed_production_profile(storage: &StorageHandle<'_>) {
     outbe_nod::NodContract::new(storage.clone())
         .config_profile
-        .write(outbe_nod::config::PROFILE_PROD)
+        .write(outbe_nod::config::PROFILE_MAINNET)
         .unwrap();
 }
 

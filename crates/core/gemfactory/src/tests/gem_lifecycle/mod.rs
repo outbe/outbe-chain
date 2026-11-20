@@ -241,7 +241,7 @@ pub(crate) fn begin_block_at(storage: &StorageHandle, ts: u64) {
 /// A mature gem on the PROD call terms, issued well before the window so no day is
 /// skipped as pre-issuance.
 pub(crate) fn mature_gem(storage: &StorageHandle) -> U256 {
-    set_profile(storage, outbe_gem::config::PROFILE_PROD);
+    set_profile(storage, outbe_gem::config::PROFILE_MAINNET);
     let mut p = sample_params(ALICE);
     p.issued_at = T_NOW - 100 * SECONDS_PER_DAY;
     add(storage, p)

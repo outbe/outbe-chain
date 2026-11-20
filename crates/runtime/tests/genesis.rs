@@ -563,10 +563,10 @@ fn load_seeded_storage(provider: &mut HashMapStorageProvider, genesis: &Value, a
 #[test]
 fn seeded_profiles_and_gems_read_back_through_their_schemas() {
     const SEED: &str = r#"{
-      "intex_profile": { "profile": "dev" },
-      "gem_profile": { "profile": "prod" },
-      "nod_profile": { "profile": "prod" },
-      "credis_profile": { "profile": "dev" }
+      "intex_profile": { "profile": "testnet" },
+      "gem_profile": { "profile": "mainnet" },
+      "nod_profile": { "profile": "mainnet" },
+      "credis_profile": { "profile": "e2e" }
     }"#;
     let (_tmp, genesis, _raw) =
         run_seed_genesis(FIXTURE_GENESIS, SEED, FIXTURE_VALIDATORS_4_PUBLIC_ONLY);
@@ -590,26 +590,26 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
                 .config_profile
                 .read()
                 .unwrap(),
-            outbe_credis::config::PROFILE_DEV
+            outbe_credis::config::PROFILE_E2E
         );
         assert_eq!(
             IntexContract::new(storage.clone())
                 .config_profile
                 .read()
                 .unwrap(),
-            outbe_intex::config::PROFILE_DEV
+            outbe_intex::config::PROFILE_TESTNET
         );
         assert_eq!(
             outbe_nod::NodContract::new(storage.clone())
                 .config_profile
                 .read()
                 .unwrap(),
-            outbe_nod::config::PROFILE_PROD
+            outbe_nod::config::PROFILE_MAINNET
         );
         let gem = GemContract::new(storage.clone());
         assert_eq!(
             gem.config_profile.read().unwrap(),
-            outbe_gem::config::PROFILE_PROD
+            outbe_gem::config::PROFILE_MAINNET
         );
         assert_eq!(
             outbe_gemfactory::schema::GemFactoryContract::new(storage)

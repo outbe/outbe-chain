@@ -24,7 +24,7 @@ fn provider_at_cleanup() -> HashMapStorageProvider {
 fn issue(storage: &StorageHandle<'_>, owner: Address) -> U256 {
     NodContract::new(storage.clone())
         .config_profile
-        .write(outbe_nod::config::PROFILE_PROD)
+        .write(outbe_nod::config::PROFILE_MAINNET)
         .unwrap();
     let item = outbe_nod::test_support::sample_item(owner, EMISSION_DAY);
     assert_eq!(item.issued_at, ISSUED_AT);

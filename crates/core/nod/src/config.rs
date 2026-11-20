@@ -1,6 +1,6 @@
-//! Genesis-selectable profile for the call terms a Nod group seals: `PROD` (real
-//! timings) and `DEV` (short timings). An unset `config_profile` byte resolves by
-//! network, so only mainnet runs PROD.
+//! Genesis-selectable profile for the call terms a Nod group seals: `MAINNET` (real
+//! timings), `TESTNET` (short timings) and `E2E` (a short notice). An unset
+//! `config_profile` byte resolves by network, so only mainnet runs MAINNET.
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -9,7 +9,7 @@ use outbe_system_common::time::SECONDS_PER_DAY_U32;
 use crate::constants::{CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW};
 use crate::schema::NodContract;
 
-pub use outbe_core_common::profile::{PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
+pub use outbe_core_common::profile::{PROFILE_AUTO, PROFILE_E2E, PROFILE_MAINNET, PROFILE_TESTNET};
 
 /// Resolved Nod call terms. All periods are in seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +23,7 @@ pub struct NodParams {
 
 impl NodParams {
     /// Real protocol terms. The default on mainnet.
-    pub const PROD: Self = Self {
+    pub const MAINNET: Self = Self {
         call_rate: CALL_RATE_PCT,
         call_window_seconds: CALL_WINDOW,
         call_threshold_seconds: CALL_THRESHOLD,
@@ -33,19 +33,28 @@ impl NodParams {
     /// Short terms for dev/test. Only the timings are the same as Gem and Intex use.
     /// The scan is day-granular, so window and threshold stay whole days. The notice
     /// is a real wait.
-    pub const DEV: Self = Self {
+    pub const TESTNET: Self = Self {
         call_rate: 8,
         call_window_seconds: 3 * SECONDS_PER_DAY_U32,
         call_threshold_seconds: 2 * SECONDS_PER_DAY_U32,
-        #[cfg(not(feature = "e2e-test"))]
         call_notice_period_seconds: 3 * SECONDS_PER_DAY_U32,
-        #[cfg(feature = "e2e-test")]
-        call_notice_period_seconds: 600,
+    };
+
+    /// TESTNET terms with a notice the end-to-end tests wait out in real time.
+    pub const E2E: Self = Self {
+        call_notice_period_seconds: 1_800,
+        ..Self::TESTNET
     };
 
     pub fn from_selector(selector: u8, chain_id: u64) -> Result<Self> {
-        outbe_core_common::profile::select(selector, chain_id, Self::PROD, Self::DEV)
-            .ok_or_else(|| crate::errors::NodError::UnknownProfileSelector { selector }.into())
+        outbe_core_common::profile::select(
+            selector,
+            chain_id,
+            Self::MAINNET,
+            Self::TESTNET,
+            Self::E2E,
+        )
+        .ok_or_else(|| crate::errors::NodError::UnknownProfileSelector { selector }.into())
     }
 }
 

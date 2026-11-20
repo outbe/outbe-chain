@@ -47,7 +47,7 @@ fn world_selling(units: u16) -> HashMapStorageProvider {
     StorageHandle::enter(&mut p, |s| {
         outbe_intex::IntexContract::new(s.clone())
             .config_profile
-            .write(outbe_intex::config::PROFILE_PROD)
+            .write(outbe_intex::config::PROFILE_MAINNET)
             .unwrap();
         let pair = api::register_pair(s.clone(), AddressPair::new_coen_to(840)).unwrap();
         let oracle = OracleContract::new(s.clone());

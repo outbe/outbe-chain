@@ -41,8 +41,6 @@ test-enclave = [
     "outbe-tee/test-utils",
     "outbe-core-common/dev-keys",
 ]
-# Shortens the DEV call notice to a real e2e wait. Never enabled in a release build.
-e2e-test = []
 
 [lints]
 workspace = true

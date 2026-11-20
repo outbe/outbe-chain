@@ -67,7 +67,7 @@ fn seed_production_nod_genesis(storage: &StorageHandle<'_>) {
     // These tests exercise the production call terms.
     NodContract::new(storage.clone())
         .config_profile
-        .write(outbe_nod::config::PROFILE_PROD)
+        .write(outbe_nod::config::PROFILE_MAINNET)
         .unwrap();
 }
 

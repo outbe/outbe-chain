@@ -38,7 +38,7 @@ fn series_zero_minted_nods_automatic_breach_call_forfeit_and_clean() {
         let nod_contract = outbe_nod::NodContract::new(storage.clone());
         nod_contract
             .config_profile
-            .write(outbe_nod::config::PROFILE_PROD)
+            .write(outbe_nod::config::PROFILE_MAINNET)
             .unwrap();
 
         // Seed entry price only for 840 (2.0 USD), leaving 978 unquoted

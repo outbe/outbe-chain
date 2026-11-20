@@ -456,11 +456,6 @@
   },
   {
     "type": "error",
-    "name": "IssueForTestCurrencyCountMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "MarkedUpPriceOverflow",
     "inputs": []
   },
@@ -482,11 +477,6 @@
   {
     "type": "error",
     "name": "NftBalanceOfUndecodable",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "NoCalledGroupForTest",
     "inputs": []
   },
   {

@@ -29,10 +29,6 @@ pub fn dispatch(
     value: U256,
 ) -> Result<Bytes> {
     outbe_primitives::dispatch::reject_value(&value)?;
-    #[cfg(feature = "e2e-test")]
-    if let Some(answer) = crate::test_arming_e2e::dispatch(&storage, data) {
-        return answer;
-    }
     dispatch_call(data, INodFactory::INodFactoryCalls::abi_decode, |call| {
         use INodFactory::INodFactoryCalls::*;
         match call {

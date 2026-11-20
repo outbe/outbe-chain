@@ -61,9 +61,6 @@ pub enum NodFactoryError {
     #[error("Nod group {group_key} has no record to call")]
     MissingGroupForCall { group_key: B256 },
 
-    #[error("closeCallNoticeForTest: group not queued")]
-    GroupNotQueuedForTest,
-
     #[error("Nod call price overflow")]
     CallPriceOverflow,
 
@@ -127,7 +124,6 @@ impl From<NodFactoryError> for PrecompileError {
                     groupKey: group_key,
                 })
             }
-            NodFactoryError::GroupNotQueuedForTest => revert_with(I::GroupNotQueuedForTest {}),
             NodFactoryError::CallPriceOverflow => revert_with(I::CallPriceOverflow {}),
             NodFactoryError::DateStep { kind, date_key } => revert_with(I::DateStep {
                 kind,

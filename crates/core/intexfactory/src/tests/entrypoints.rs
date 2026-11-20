@@ -55,11 +55,11 @@ fn config_dev_profile_drives_issuance() {
         let f = outbe_intex::IntexContract::new(s.clone());
         // Select the dev profile through the single selector byte.
         f.config_profile
-            .write(outbe_intex::config::PROFILE_DEV)
+            .write(outbe_intex::config::PROFILE_TESTNET)
             .unwrap();
         assert_eq!(
             outbe_intex::config::read(&s).unwrap(),
-            outbe_intex::config::IntexParams::DEV
+            outbe_intex::config::IntexParams::TESTNET
         );
 
         // The auction start fixes the call terms from the live profile. Issuance seals them.
@@ -72,7 +72,7 @@ fn config_dev_profile_drives_issuance() {
         runtime::issue_intex(&s, params).unwrap();
 
         // Issuance captures the dev call-trigger and dev-derived prices.
-        let dev = outbe_intex::config::IntexParams::DEV;
+        let dev = outbe_intex::config::IntexParams::TESTNET;
         let r = outbe_intex::api::get_series(&s, sid(7)).unwrap();
         assert_eq!(r.call_notice_period_seconds, dev.call_notice_period_seconds);
         assert_eq!(

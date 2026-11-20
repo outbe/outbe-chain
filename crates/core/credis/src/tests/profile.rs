@@ -2,7 +2,7 @@ use alloy_primitives::U256;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 
-use crate::config::{CredisParams, PROFILE_AUTO, PROFILE_DEV, PROFILE_PROD};
+use crate::config::{CredisParams, PROFILE_AUTO, PROFILE_E2E, PROFILE_MAINNET, PROFILE_TESTNET};
 use crate::schema::CredisContract;
 
 const CHAIN_ID: u64 = 1;
@@ -12,21 +12,25 @@ fn the_profile_selector_resolves_by_network_and_rejects_unknown_values() {
     let mainnet = outbe_primitives::chain::MAINNET_CHAIN_ID;
     assert_eq!(
         CredisParams::from_selector(PROFILE_AUTO, CHAIN_ID).unwrap(),
-        CredisParams::DEV
+        CredisParams::TESTNET
     );
     assert_eq!(
         CredisParams::from_selector(PROFILE_AUTO, mainnet).unwrap(),
-        CredisParams::PROD
+        CredisParams::MAINNET
     );
     assert_eq!(
-        CredisParams::from_selector(PROFILE_DEV, mainnet).unwrap(),
-        CredisParams::DEV
+        CredisParams::from_selector(PROFILE_TESTNET, mainnet).unwrap(),
+        CredisParams::TESTNET
     );
     assert_eq!(
-        CredisParams::from_selector(PROFILE_PROD, CHAIN_ID).unwrap(),
-        CredisParams::PROD
+        CredisParams::from_selector(PROFILE_MAINNET, CHAIN_ID).unwrap(),
+        CredisParams::MAINNET
     );
-    assert!(CredisParams::from_selector(3, CHAIN_ID).is_err());
+    assert_eq!(
+        CredisParams::from_selector(PROFILE_E2E, CHAIN_ID).unwrap(),
+        CredisParams::E2E
+    );
+    assert!(CredisParams::from_selector(4, CHAIN_ID).is_err());
 }
 
 /// Pin the selector slot index: the genesis seeder writes a raw slot.

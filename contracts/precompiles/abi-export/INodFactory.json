@@ -342,11 +342,6 @@
   },
   {
     "type": "error",
-    "name": "GroupNotQueuedForTest",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "IneligibleGroupMember",
     "inputs": [
       {

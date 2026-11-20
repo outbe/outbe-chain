@@ -510,8 +510,8 @@ fn seed_stage_end_to_end_and_reproducibility() {
         minimal_config(&tmp_str),
         json!({
             "prefund_coen_units": 5_000_000,
-            "nod_profile": {"profile": "dev"},
-            "credis_profile": {"profile": "dev"},
+            "nod_profile": {"profile": "testnet"},
+            "credis_profile": {"profile": "e2e"},
         }),
     );
     let seeded = seed_once(tmp.path(), &prefund_cfg);
@@ -528,11 +528,11 @@ fn seed_stage_end_to_end_and_reproducibility() {
     );
     assert_eq!(
         alloc[NOD_ADDRESS]["storage"][hex32(NOD_PROFILE_SLOT)],
-        json!(hex32(1u64))
+        json!(hex32(2u64))
     );
     assert_eq!(
         alloc[CREDIS_ADDRESS]["storage"][hex32(CREDIS_PROFILE_SLOT)],
-        json!(hex32(1u64))
+        json!(hex32(3u64))
     );
 
     // VaultRouter routes check

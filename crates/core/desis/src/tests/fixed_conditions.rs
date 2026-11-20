@@ -60,17 +60,17 @@ fn the_start_fixes_the_call_terms_of_each_currency_from_the_profile() {
                 ReferenceCurrencyPrice {
                     iso_code: REFERENCE_ISO,
                     entry_price_minor: U256::from(ENTRY_PRICE),
-                    call_price_minor: call_price(ENTRY_PRICE, IntexParams::PROD),
+                    call_price_minor: call_price(ENTRY_PRICE, IntexParams::MAINNET),
                 },
                 ReferenceCurrencyPrice {
                     iso_code: EUR_ISO,
                     entry_price_minor: U256::from(EUR_ENTRY_PRICE),
-                    call_price_minor: call_price(EUR_ENTRY_PRICE, IntexParams::PROD),
+                    call_price_minor: call_price(EUR_ENTRY_PRICE, IntexParams::MAINNET),
                 },
             ]
         );
-        assert_eq!(config.call_trigger, trigger_of(IntexParams::PROD));
-        assert_eq!(config.bid_bond_minor, IntexParams::PROD.bid_bond_minor);
+        assert_eq!(config.call_trigger, trigger_of(IntexParams::MAINNET));
+        assert_eq!(config.bid_bond_minor, IntexParams::MAINNET.bid_bond_minor);
     });
 }
 
@@ -82,7 +82,7 @@ fn the_start_message_carries_only_the_stored_day_config() {
         runtime::schedule_tick(&s, NOW).unwrap();
         let config = read_config(&s);
         // A profile change after the start does not change what the day announces.
-        select_profile(&s, outbe_intex::config::PROFILE_DEV);
+        select_profile(&s, outbe_intex::config::PROFILE_TESTNET);
 
         let message = announced(&config);
         assert_eq!(message.emissionDay, EMISSION_DAY.value());
@@ -123,7 +123,7 @@ fn an_unpriced_day_still_fixes_the_call_trigger() {
 
         let config = read_config(&s);
         assert!(config.reference_prices.is_empty());
-        assert_eq!(config.call_trigger, trigger_of(IntexParams::PROD));
+        assert_eq!(config.call_trigger, trigger_of(IntexParams::MAINNET));
     });
 }
 
@@ -131,7 +131,6 @@ fn an_unpriced_day_still_fixes_the_call_trigger() {
 /// gives the series the conditions the bidders saw, not the new profile's.
 /// The test walks the day-long production windows, so an e2e build does not run it.
 #[test]
-#[cfg(not(feature = "e2e-test"))]
 fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
     use outbe_intexfactory::SeriesId;
 
@@ -143,12 +142,12 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
         let wire_row = &message.prices[0];
         assert_eq!(
             U256::from(wire_row.callPriceMinor),
-            call_price(ENTRY_PRICE, IntexParams::PROD)
+            call_price(ENTRY_PRICE, IntexParams::MAINNET)
         );
 
-        select_profile(&s, outbe_intex::config::PROFILE_DEV);
-        assert_ne!(IntexParams::DEV.call_rate, IntexParams::PROD.call_rate);
-        assert_ne!(trigger_of(IntexParams::DEV), trigger_of(IntexParams::PROD));
+        select_profile(&s, outbe_intex::config::PROFILE_TESTNET);
+        assert_ne!(IntexParams::TESTNET.call_rate, IntexParams::MAINNET.call_rate);
+        assert_ne!(trigger_of(IntexParams::TESTNET), trigger_of(IntexParams::MAINNET));
 
         runtime::schedule_tick(&s, ANCHOR + SECONDS_PER_DAY).unwrap();
         arm_clearing(&s);
@@ -160,7 +159,7 @@ fn a_profile_change_after_the_start_leaves_the_series_conditions_fixed() {
             call_window_seconds: message.callWindow,
             call_threshold_seconds: message.callThreshold,
             call_notice_period_seconds: message.callNoticePeriod,
-            transit_margin_seconds: IntexParams::DEV.transit_margin_seconds,
+            transit_margin_seconds: IntexParams::TESTNET.transit_margin_seconds,
         };
         let series_id =
             SeriesId::for_pair(EMISSION_DAY.value(), REFERENCE_ISO, REFERENCE_ISO).unwrap();

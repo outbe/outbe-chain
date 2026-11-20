@@ -14,15 +14,7 @@ production-enclave = [
     "outbe-tribute/production-enclave",
     "outbe-nod/production-enclave",
 ]
-e2e-test = [
-    "outbe-core-common/e2e-test",
-    "outbe-desis/e2e-test",
-    "outbe-intexfactory/e2e-test",
-    "outbe-cycle/e2e-test",
-    "outbe-gemfactory/e2e-test",
-    "outbe-nodfactory/e2e-test",
-    "outbe-credisfactory/e2e-test",
-]
+e2e-test = ["outbe-core-common/e2e-test", "outbe-tee/e2e-test"]
 snapshot-integration = ["outbe-engine/snapshot-integration"]
 test-hooks = ["outbe-evm/test-hooks"]
 

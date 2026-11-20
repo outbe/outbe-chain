@@ -155,7 +155,7 @@ fn factory_provider() -> HashMapStorageProvider {
 fn select_prod_profile(storage: &StorageHandle<'_>) {
     outbe_intex::IntexContract::new(storage.clone())
         .config_profile
-        .write(outbe_intex::config::PROFILE_PROD)
+        .write(outbe_intex::config::PROFILE_MAINNET)
         .unwrap();
 }
 
