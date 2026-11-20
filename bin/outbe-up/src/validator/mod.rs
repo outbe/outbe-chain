@@ -22,7 +22,7 @@ pub mod wait;
 
 pub const VALIDATOR_TARGET: &str = "outbe-validator.target";
 pub const VALIDATOR_SERVICE: &str = "outbe-validator.service";
-pub const DEVNET_FEEDER_FUNDING_WEI: u64 = 1_000_000_000_000_000_000;
+pub const FEEDER_FUNDING_WEI: u64 = 1_000_000_000_000_000_000;
 
 pub(crate) fn validator_address(path: &Path) -> Result<Address> {
     let encoded = Zeroizing::new(

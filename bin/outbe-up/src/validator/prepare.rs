@@ -4,7 +4,6 @@ use alloy_primitives::{Address, U256};
 use eyre::{ensure, Context, Result};
 
 use crate::{
-    network::config::Network,
     support::{process, progress::Progress},
     validator::{
         bundle::{self, OperatorManifest},
@@ -13,7 +12,7 @@ use crate::{
         journal::{self, Journal},
         path_text,
         rpc::RpcClient,
-        validator_address, DEVNET_FEEDER_FUNDING_WEI,
+        validator_address, FEEDER_FUNDING_WEI,
     },
 };
 
@@ -55,7 +54,6 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
             validator,
             hyperlane,
             minimum_stake,
-            journal.config.network.chain_id,
             &journal.config.network.certified_rpc,
             journal.config.hyperlane.signer_funding_wei.parse()?,
         );
@@ -99,7 +97,6 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
         validator,
         hyperlane,
         minimum_stake,
-        journal.config.network.chain_id,
         &journal.config.network.certified_rpc,
         journal.config.hyperlane.signer_funding_wei.parse()?,
     );
@@ -145,18 +142,12 @@ fn print_summary(
     validator: Address,
     hyperlane: Address,
     minimum_stake: U256,
-    chain_id: u64,
     certified_rpc: &str,
     hyperlane_funding: U256,
 ) {
-    let feeder_funding = if chain_id == Network::Devnet.chain_id() {
-        U256::from(DEVNET_FEEDER_FUNDING_WEI)
-    } else {
-        U256::ZERO
-    };
     let funding = minimum_stake
         + hyperlane_funding
-        + feeder_funding
+        + U256::from(FEEDER_FUNDING_WEI)
         + U256::from(1_000_000_000_000_000_000_u64);
     println!();
     println!("Validator files:");

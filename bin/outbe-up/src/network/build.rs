@@ -22,7 +22,7 @@ use crate::{
         FeederConfig as OperatorFeederConfig, NetworkConfig as OperatorNetworkConfig,
         OperatorConfig, CONFIG_VERSION as OPERATOR_CONFIG_VERSION,
     },
-    validator::{validator_address, DEVNET_FEEDER_FUNDING_WEI},
+    validator::{validator_address, FEEDER_FUNDING_WEI},
 };
 
 use super::config::{Network, NetworkConfig};
@@ -428,35 +428,27 @@ pub(super) fn genesis_cli_config(
             root.insert(key.into(), json!(value));
         }
     }
-    if !config.genesis.prefunded_accounts.is_empty() || config.network == Network::Devnet {
-        let balance = root
-            .entry("balance")
-            .or_insert_with(|| Value::Object(Map::new()));
-        let balance = balance
-            .as_object_mut()
-            .ok_or_else(|| eyre::eyre!("genesis.overrides.balance must be a mapping"))?;
-        for (address, amount) in &config.genesis.prefunded_accounts {
-            ensure!(
-                balance.insert(address.clone(), json!(amount)).is_none(),
-                "prefunded account is also present in genesis.overrides.balance: {address}"
-            );
-        }
-        if config.network == Network::Devnet {
-            for index in 0..config.founders.len() {
-                let feeder =
-                    validator_address(&keys.join(format!("validator-{index}/feeder-key.hex")))?;
-                let address = format!("{feeder:#x}");
-                ensure!(
-                    balance
-                        .insert(
-                            address.clone(),
-                            json!(DEVNET_FEEDER_FUNDING_WEI.to_string())
-                        )
-                        .is_none(),
-                    "devnet feeder signer is already present in genesis balance: {address}"
-                );
-            }
-        }
+    let balance = root
+        .entry("balance")
+        .or_insert_with(|| Value::Object(Map::new()));
+    let balance = balance
+        .as_object_mut()
+        .ok_or_else(|| eyre::eyre!("genesis.overrides.balance must be a mapping"))?;
+    for (address, amount) in &config.genesis.prefunded_accounts {
+        ensure!(
+            balance.insert(address.clone(), json!(amount)).is_none(),
+            "prefunded account is also present in genesis.overrides.balance: {address}"
+        );
+    }
+    for index in 0..config.founders.len() {
+        let feeder = validator_address(&keys.join(format!("validator-{index}/feeder-key.hex")))?;
+        let address = format!("{feeder:#x}");
+        ensure!(
+            balance
+                .insert(address.clone(), json!(FEEDER_FUNDING_WEI.to_string()))
+                .is_none(),
+            "feeder signer is already present in genesis balance: {address}"
+        );
     }
     Ok(Value::Object(root))
 }
@@ -673,6 +665,18 @@ mod tests {
         initial_tee_policy_v1, tee_attestation_v1_genesis_field, InitialTeeProfileV1,
     };
 
+    fn feeder_keys(root: &Path, count: usize) -> (PathBuf, Vec<String>) {
+        let keys = root.join("keys");
+        let mut addresses = Vec::new();
+        for index in 0..count {
+            let key = keys.join(format!("validator-{index}/feeder-key.hex"));
+            fs::create_dir_all(key.parent().unwrap()).unwrap();
+            fs::write(&key, format!("{:064x}", index + 1)).unwrap();
+            addresses.push(format!("{:#x}", validator_address(&key).unwrap()));
+        }
+        (keys, addresses)
+    }
+
     #[test]
     fn resolves_per_founder_rpc_binding_without_public_wildcards() {
         let config: NetworkConfig = serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
@@ -683,8 +687,8 @@ mod tests {
     fn genesis_cli_config_carries_prefunds_and_runtime_axes() {
         let temp = tempfile::tempdir().unwrap();
         let config: NetworkConfig = serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
-        let value =
-            genesis_cli_config(&config, temp.path(), &temp.path().join("keys"), None).unwrap();
+        let (keys, feeder_addresses) = feeder_keys(temp.path(), config.founders.len());
+        let value = genesis_cli_config(&config, temp.path(), &keys, None).unwrap();
         assert_eq!(value["network"], "testnet");
         assert_eq!(value["tee"]["mode"], "no-attestation-dev");
         outbe_genesis_cli::network::validate_config(&value).unwrap();
@@ -692,6 +696,9 @@ mod tests {
             value["balance"]["0x1111111111111111111111111111111111111111"],
             "1000000000000000000000"
         );
+        for address in feeder_addresses {
+            assert_eq!(value["balance"][address], FEEDER_FUNDING_WEI.to_string());
+        }
     }
 
     #[test]
@@ -706,8 +713,8 @@ mod tests {
             serde_yaml_ng::Value::String("https://prices.example.invalid".into()),
         );
         config.validate().unwrap();
-        let value =
-            genesis_cli_config(&config, temp.path(), &temp.path().join("keys"), None).unwrap();
+        let (keys, _) = feeder_keys(temp.path(), config.founders.len());
+        let value = genesis_cli_config(&config, temp.path(), &keys, None).unwrap();
         let error = outbe_genesis_cli::network::validate_config(&value).unwrap_err();
         assert!(error.to_string().contains("TDX/SNP attestation"), "{error}");
     }
@@ -786,23 +793,13 @@ mod tests {
             serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
         config.network = Network::Devnet;
         config.chain_id = Network::Devnet.chain_id();
-        let keys = temp.path().join("keys");
-        let mut feeder_addresses = Vec::new();
-        for index in 0..config.founders.len() {
-            let key = keys.join(format!("validator-{index}/feeder-key.hex"));
-            fs::create_dir_all(key.parent().unwrap()).unwrap();
-            fs::write(&key, format!("{:064x}", index + 1)).unwrap();
-            feeder_addresses.push(format!("{:#x}", validator_address(&key).unwrap()));
-        }
+        let (keys, feeder_addresses) = feeder_keys(temp.path(), config.founders.len());
 
         let genesis = genesis_cli_config(&config, temp.path(), &keys, None).unwrap();
         assert_eq!(genesis["price_provider"], "mock");
         assert_eq!(genesis["feeder_pairs"], json!(pairs));
         for address in feeder_addresses {
-            assert_eq!(
-                genesis["balance"][address],
-                DEVNET_FEEDER_FUNDING_WEI.to_string()
-            );
+            assert_eq!(genesis["balance"][address], FEEDER_FUNDING_WEI.to_string());
         }
 
         let operator = joining_operator_config(
