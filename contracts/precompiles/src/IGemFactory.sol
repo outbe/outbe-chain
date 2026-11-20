@@ -137,7 +137,8 @@ interface IGemFactory {
     }
 
     // --- Events (emitted by the GemFactory precompile) ---
-    /// @notice A Gem sub-series was opened with a new call price.
+    /// @notice A Gem sub-series was opened by its first Gem: an issue hour at the market price, or a
+    ///         higher call price from 24.
     event GemSeriesOpened(
         bytes14 indexed seriesId,
         uint16 indexed subSeriesId,
