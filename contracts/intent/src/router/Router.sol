@@ -8,7 +8,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {BaseRouter} from "./BaseRouter.sol";
 import {RouterMessage} from "../libs/RouterMessage.sol";
 import {TypeCasts} from "../libs/TypeCasts.sol";
-import {IGatewayQuote} from "../interfaces/IGatewayQuote.sol";
+import {IGatewayQuote} from "@crosschain/interfaces/IGatewayQuote.sol";
 import {REFUND_ADDRESS_ATTR} from "@shared/GatewayAttributes.sol";
 
 /**

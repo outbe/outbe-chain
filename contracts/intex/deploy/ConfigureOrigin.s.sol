@@ -5,7 +5,7 @@ import {console} from "forge-std/console.sol";
 import {IERC165} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {BaseScript} from "./BaseScript.s.sol";
-import {IDesis} from "@contracts/origin/interfaces/IDesis.sol";
+import {IDesis} from "@precompiles/IDesis.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 
