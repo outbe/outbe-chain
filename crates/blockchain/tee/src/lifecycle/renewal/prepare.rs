@@ -194,7 +194,7 @@ pub(crate) fn validate_view<E: std::error::Error + 'static, S: std::error::Error
     Ok(())
 }
 
-fn validate_binding<E: std::error::Error + 'static, S: std::error::Error + 'static>(
+pub fn validate_binding<E: std::error::Error + 'static, S: std::error::Error + 'static>(
     binding: &RenewalBindingV1,
     live: &InProcessTeeContext,
     policy: &TeePolicyV1,

@@ -202,7 +202,11 @@ impl LifecycleSupervisorProbe {
         &mut self,
     ) -> eyre::Result<Option<outbe_tee::lifecycle::renewal::RenewalStep>> {
         Ok(match self.0.observe_tick().await? {
-            engine::Step::Renewal(outcome) => Some(outcome),
+            engine::Step::Renewal(outcome)
+            | engine::Step::Resident {
+                renewal: Some(outcome),
+                ..
+            } => Some(outcome),
             _ => None,
         })
     }

@@ -22,6 +22,7 @@ struct Founding {
     base_fee: U256,
     chain_id: u64,
     policy: Vec<u8>,
+    offer_public: U256,
     binding: NodeEnclaveBindingV1View,
     schedule: TeeRenewalScheduleV1,
     sent: Mutex<Vec<Vec<u8>>>,
@@ -143,7 +144,7 @@ impl Founding {
             (TEE_REGISTRY_ADDRESS, s)
                 if s == ITeeRegistryV1::tributeOfferPublicKeyCall::SELECTOR =>
             {
-                ITeeRegistryV1::tributeOfferPublicKeyCall::abi_encode_returns(&U256::from(7))
+                ITeeRegistryV1::tributeOfferPublicKeyCall::abi_encode_returns(&self.offer_public)
             }
             (TEE_REGISTRY_ADDRESS, s) if s == ITeeRegistryV1::enclaveUpgradeV1Call::SELECTOR => {
                 ITeeRegistryV1::enclaveUpgradeV1Call::abi_encode_returns(
@@ -308,6 +309,7 @@ fn founding_chain(
         base_fee: U256::from(1),
         chain_id: harness.chain.at.chain_id,
         policy: policy.encode_canonical().unwrap(),
+        offer_public: U256::from_be_bytes(harness.live.network_encryption_public().unwrap()),
         binding: (&binding).into(),
         schedule: TeeRenewalScheduleV1 {
             finalized_height: harness.chain.at.height,
