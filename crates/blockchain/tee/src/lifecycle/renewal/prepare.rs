@@ -59,6 +59,8 @@ pub enum RenewalError<E: std::error::Error + 'static, S: std::error::Error + 'st
     SubmittedHashMismatch,
     #[error("pending transaction is no longer safe to replay")]
     StalePending,
+    #[error("pending renewal intent diverged from the finalized binding")]
+    PendingRenewDiverged,
     #[error("pending renewal calldata ABI rejected")]
     PendingCalldata(#[source] alloy_sol_types::Error),
 }
@@ -407,6 +409,7 @@ pub(crate) fn signed_record<P: LifecycleChainPort, S: LifecycleSignerV1>(
 
 fn validate_pending<E: std::error::Error + 'static, S: std::error::Error + 'static>(
     record: &ServiceTxRecordV1,
+    live: &InProcessTeeContext,
     view: &LifecycleRegistryStateV1,
 ) -> Result<(), RenewalError<E, S>> {
     let mut bytes = &record.raw_signed_tx[1..];
@@ -415,10 +418,19 @@ fn validate_pending<E: std::error::Error + 'static, S: std::error::Error + 'stat
     let call = ITeeRegistryV1::renewEnclaveCall::abi_decode(&signed.tx().input)
         .map_err(RenewalError::PendingCalldata)?;
     let evidence = AttestationEvidenceV1::decode_canonical(&call.evidence)?;
-    if evidence.intent().operation != AttestationOperationV1::RenewEnclave
-        || view.checkpoint.timestamp >= evidence.intent().requested_valid_until
+    let intent = evidence.intent();
+    if intent.operation != AttestationOperationV1::RenewEnclave
+        || view.checkpoint.timestamp >= intent.requested_valid_until
     {
         return Err(RenewalError::StalePending);
+    }
+    let binding = view
+        .binding
+        .as_ref()
+        .ok_or(RenewalError::PendingRenewDiverged)?;
+    let expected = renewal_intent_v1::<E, S>(live, binding, &view.policy)?;
+    if *intent != expected {
+        return Err(RenewalError::PendingRenewDiverged);
     }
     if let AttestationEvidenceV1::Dcap(dcap) = evidence {
         let window = crate::dcap_collateral_validity_window_v1(&dcap, &view.policy)
@@ -469,7 +481,7 @@ async fn renewal_action<P: LifecycleChainPort, S: LifecycleSignerV1>(
         }
         ServiceTxReconciliationV1::ReplayExact => {
             let record = pending.ok_or(RenewalError::StalePending)?;
-            validate_pending::<P::Error, S::Error>(&record, view)?;
+            validate_pending::<P::Error, S::Error>(&record, live, view)?;
             Ok(RenewalAction::Replay(Box::new(record)))
         }
         ServiceTxReconciliationV1::ReplaceLostIdentity { nonce, .. }

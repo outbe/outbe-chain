@@ -657,7 +657,7 @@ fn retry_classification_preserves_fatal_enrollment_and_identity_errors() {
     for error in transient {
         assert!(retry::observation(&error), "{error:?}");
     }
-    let fatal: [Error; 8] = [
+    let fatal: [Error; 9] = [
         RenewalError::UpgradeProofCheckpoint(
             outbe_tee::lifecycle::renewal::UpgradeProofCheckpointError::MissingBaseFee,
         )
@@ -672,6 +672,7 @@ fn retry_classification_preserves_fatal_enrollment_and_identity_errors() {
         EnrollmentError::IdentityMismatch.into(),
         EnrollmentError::WrongServiceTransaction.into(),
         RenewalError::BindingMismatch.into(),
+        RenewalError::PendingRenewDiverged.into(),
         RenewalError::Reconcile(ReconcileError::FinalizedMutationConflict).into(),
     ];
     for error in fatal {
