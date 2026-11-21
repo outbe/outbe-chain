@@ -1251,10 +1251,10 @@ fn file_backed_context(
     use std::os::unix::fs::PermissionsExt as _;
     let host = dir.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
     std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let chain_id = B256::from(descriptor.network_binding.chain_id);
-    let (store, loaded) =
-        outbe_tee::node_host::ResidentStateStore::load_or_create(dir, chain_id).unwrap();
     let template = proof::context(11, descriptor);
+    let authorization = template.authorization_witness().unwrap();
+    let (store, loaded) =
+        outbe_tee::node_host::ResidentStateStore::load_or_create(dir, &authorization).unwrap();
     let mut manifest = template.manifest().clone();
     manifest.recipient_x25519 = loaded.keys.tribute_offer_public();
     manifest.attestation_ed25519 = loaded.keys.attestation_pub();
@@ -1269,7 +1269,7 @@ fn file_backed_context(
             outbe_tee::in_process::ProofSourceV1::NoHardware,
         )
         .unwrap()
-        .with_restored_state(store, loaded.material),
+        .with_restored_state(store, loaded.material, loaded.anchor),
     )
 }
 
@@ -1349,7 +1349,7 @@ async fn restored_founder_and_enrolled_resident_exit_presync_for_not_due_submitt
         h.chain.public = h.live.network_encryption_public().unwrap().into();
         h.chain.binding = Some(binding_for_resident(&h.live, &h.chain.policy, valid_until));
 
-        // Simulate restart restoring from resident-state.v1 (RAM admission_anchor is None).
+        // Simulate restart restoring founder from resident-state.v1 (OBRESID2 tag 1 has anchor None).
         h.live = file_backed_context(&h.dir, &descriptor);
         assert!(h.live.offer_key_ready().unwrap());
         assert!(h.live.admission_anchor().unwrap().is_none());
@@ -1374,10 +1374,10 @@ async fn restored_founder_and_enrolled_resident_exit_presync_for_not_due_submitt
         h.admit().await;
         let sent_before = h.sent();
 
-        // Simulate restart restoring from resident-state.v1 (RAM admission_anchor is None).
+        // Simulate restart restoring from resident-state.v1 (OBRESID2 tag 2 restores anchor).
         h.live = file_backed_context(&h.dir, &descriptor);
         assert!(h.live.offer_key_ready().unwrap());
-        assert!(h.live.admission_anchor().unwrap().is_none());
+        assert!(h.live.admission_anchor().unwrap().is_some());
 
         h.chain.jailed = jailed;
         if in_renewal_window {
@@ -1550,10 +1550,10 @@ async fn restored_resident_with_missing_anchor_for_current_register_reingests() 
     assert!(anchor_path.exists());
     std::fs::remove_file(&anchor_path).unwrap();
 
-    // Restart restoring from resident-state.v1 (RAM admission_anchor is None).
+    // Restart restoring from resident-state.v1 (OBRESID2 tag 2 restores anchor).
     h.live = file_backed_context(&h.dir, &descriptor);
     assert!(h.live.offer_key_ready().unwrap());
-    assert!(h.live.admission_anchor().unwrap().is_none());
+    assert!(h.live.admission_anchor().unwrap().is_some());
 
     let step = h.step().await;
     assert!(

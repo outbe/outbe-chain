@@ -83,17 +83,18 @@ impl InProcessTeeContext {
             resident_state_store: None,
         })
     }
-    /// Attach the local state file and restore material that it contains.
+    /// Attach the local state file and restore material and anchor that it contains.
     pub fn with_restored_state(
         mut self,
         store: ResidentStateStore,
         material: Option<ResidentOfferMaterial>,
+        anchor: Option<VerifiedAdmissionAnchorV1>,
     ) -> Self {
         self.resident_state_store = Some(store);
         if let Some(material) = material {
             self.active = RwLock::new(Some(ActiveMaterial {
                 material: Arc::new(material),
-                anchor: None,
+                anchor,
             }));
         }
         self
@@ -102,11 +103,15 @@ impl InProcessTeeContext {
     /// Save a finalized successor before the runtime switches to it.
     pub fn persist_for_promotion(&self, node_data_dir: &Path) -> Result<()> {
         let material = self.material()?;
+        let anchor = self.admission_anchor()?;
+        let manifest_authorization_hash = self.manifest.authorization_hash()?;
         ResidentStateStore::replace_promoted(
             node_data_dir,
             &self.keys,
             self.manifest.initialization_challenge,
+            manifest_authorization_hash,
             &material,
+            anchor,
         )?;
         Ok(())
     }
@@ -213,10 +218,13 @@ impl InProcessTeeContext {
             }
         }
         if let Some(store) = &self.resident_state_store {
+            let manifest_authorization_hash = self.manifest.authorization_hash()?;
             store.persist_active(
                 &self.keys,
                 self.manifest.initialization_challenge,
+                manifest_authorization_hash,
                 &material,
+                anchor,
             )?;
         }
         *active = Some(ActiveMaterial {
@@ -399,10 +407,11 @@ mod tests {
     #[test]
     fn active_material_is_not_published_when_resident_file_cannot_be_written() {
         let directory = tempfile::tempdir().unwrap();
-        let (store, loaded) =
-            ResidentStateStore::load_or_create(directory.path(), B256::from([1; 32])).unwrap();
         let fixture =
             test_support::context(AttestationMode::NoAttestationDev, ProofSourceV1::NoHardware);
+        let authorization = fixture.authorization_witness().unwrap();
+        let (store, loaded) =
+            ResidentStateStore::load_or_create(directory.path(), &authorization).unwrap();
         let mut manifest = fixture.manifest.clone();
         manifest.recipient_x25519 = loaded.keys.tribute_offer_public();
         manifest.attestation_ed25519 = loaded.keys.attestation_pub();
@@ -416,7 +425,7 @@ mod tests {
             ProofSourceV1::NoHardware,
         )
         .unwrap()
-        .with_restored_state(store, None);
+        .with_restored_state(store, None, None);
         let path = directory
             .path()
             .join("tee-node-host-v1")
@@ -425,8 +434,59 @@ mod tests {
 
         assert!(matches!(
             context.activate(test_support::material(&context, 5), None),
-            Err(InProcessError::ResidentState(_))
+            Err(InProcessError::ResidentState(
+                crate::node_host::ResidentStateError::UnsafePath
+            ))
         ));
         assert!(!context.offer_key_ready().unwrap());
+    }
+
+    #[test]
+    fn context_persists_and_restores_tag1_and_tag2_anchor_atomically() {
+        let directory = tempfile::tempdir().unwrap();
+        let fixture =
+            test_support::context(AttestationMode::NoAttestationDev, ProofSourceV1::NoHardware);
+        let authorization = fixture.authorization_witness().unwrap();
+        let (store, loaded) =
+            ResidentStateStore::load_or_create(directory.path(), &authorization).unwrap();
+        let mut manifest = fixture.manifest.clone();
+        manifest.recipient_x25519 = loaded.keys.tribute_offer_public();
+        manifest.attestation_ed25519 = loaded.keys.attestation_pub();
+        manifest.noise_responder_x25519 = loaded.keys.noise_public();
+        manifest.initialization_challenge = loaded.initialization_challenge;
+        let context = InProcessTeeContext::new(
+            loaded.keys,
+            fixture.identity,
+            manifest.clone(),
+            fixture.descriptor.clone(),
+            ProofSourceV1::NoHardware,
+        )
+        .unwrap()
+        .with_restored_state(store, loaded.material, loaded.anchor);
+
+        let anchor = VerifiedAdmissionAnchorV1 {
+            block_number: 15,
+            block_hash: B256::repeat_byte(0x15),
+            state_root: B256::repeat_byte(0x25),
+            consensus_timestamp: 1_700_000_015,
+        };
+        let material = test_support::material(&context, 5);
+        let public = material.public();
+        context.activate(material, Some(anchor)).unwrap();
+
+        let (store_reloaded, reloaded) =
+            ResidentStateStore::load_or_create(directory.path(), &authorization).unwrap();
+        let restored = InProcessTeeContext::new(
+            reloaded.keys,
+            fixture.identity,
+            manifest,
+            fixture.descriptor,
+            ProofSourceV1::NoHardware,
+        )
+        .unwrap()
+        .with_restored_state(store_reloaded, reloaded.material, reloaded.anchor);
+        assert!(restored.offer_key_ready().unwrap());
+        assert_eq!(restored.network_encryption_public().unwrap(), public);
+        assert_eq!(restored.admission_anchor().unwrap(), Some(anchor));
     }
 }
