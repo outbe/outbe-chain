@@ -1,8 +1,8 @@
 //! Blockchain-layer TEE infrastructure and resident cryptographic operations.
 //!
-//! Process secrets and derived slot keys live only in RAM inside `outbe-tee`,
-//! behind opaque handles. Resident state is never persisted to disk. Domain
-//! adapters supply byte labels and contexts; this crate has no dependencies on
+//! Derived slot keys live in RAM inside `outbe-tee`, behind opaque handles.
+//! The in-process runtime stores its resident seed and network offer material.
+//! Domain adapters supply byte labels and contexts; this crate has no dependencies on
 //! `core/` or `system/` and contains no application protocol rules.
 //!
 pub mod authority;

@@ -319,14 +319,14 @@ pub(crate) fn start_runtime_workers(
             },
         )?
     };
-    let gate = if args.upstream.is_none()
-        && args.is_validator
-        && node
-            .provider
-            .finalized_block_num_hash()?
-            .is_none_or(|head| head.number == 0)
-    {
+    let at_genesis = node
+        .provider
+        .finalized_block_num_hash()?
+        .is_none_or(|head| head.number == 0);
+    let gate = if args.upstream.is_none() && at_genesis && args.is_validator {
         in_process::founder_lease_gate(protocol.as_ref(), node, args, genesis_hash)?
+    } else if args.upstream.is_none() && !at_genesis && context.offer_key_ready()? {
+        TeeLeaseGuardGateV1::Armed
     } else {
         tee_admission_anchor.map_or(
             TeeLeaseGuardGateV1::AwaitingAnchor,

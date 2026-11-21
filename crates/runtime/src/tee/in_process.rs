@@ -1,11 +1,13 @@
-//! Fresh RAM identity with the stable, owner-only NodeHost key kept on disk.
+//! Restore the local resident identity with the owner-only NodeHost key.
 use super::*;
 use outbe_primitives::tee_attestation_v1::{
     EnclaveInitializationManifestV1, NodeIdV1, TrustedNetworkDescriptorV1,
 };
+#[cfg(test)]
+use outbe_tee::resident::ResidentTeeKeys;
 use outbe_tee::{
     in_process::{InProcessTeeContext, ProofSourceV1},
-    resident::ResidentTeeKeys,
+    node_host::ResidentStateStore,
 };
 
 pub(super) fn initialize(
@@ -28,28 +30,35 @@ pub(super) fn initialize(
         reth_p2p_public,
     };
     let authorization = identity.authorization_witness_v1(&node_host)?;
-    let keys = ResidentTeeKeys::generate()?;
+    let (store, restored) = ResidentStateStore::load_or_create(
+        node_data_dir,
+        alloy_primitives::B256::from(policy.chain_id),
+    )?;
+    let keys = restored.keys;
     let manifest = EnclaveInitializationManifestV1 {
         chain_id: policy.chain_id,
         genesis_hash: policy.genesis_hash,
         attestation_mode: policy.attestation_mode,
         node_id: NodeIdV1 { reth_p2p_public },
-        initialization_challenge: alloy_primitives::B256::random().0,
+        initialization_challenge: restored.initialization_challenge,
         node_host_noise_x25519: authorization.node_host_noise_x25519,
         recipient_x25519: keys.tribute_offer_public(),
         attestation_ed25519: keys.attestation_pub(),
         noise_responder_x25519: keys.noise_public(),
     };
-    let context = Arc::new(InProcessTeeContext::new(
-        keys,
-        identity,
-        manifest,
-        TrustedNetworkDescriptorV1 {
-            network_binding: policy.network_binding(),
-            genesis_consensus_keys: binding.genesis_consensus_keys,
-        },
-        proof,
-    )?);
+    let context = Arc::new(
+        InProcessTeeContext::new(
+            keys,
+            identity,
+            manifest,
+            TrustedNetworkDescriptorV1 {
+                network_binding: policy.network_binding(),
+                genesis_consensus_keys: binding.genesis_consensus_keys,
+            },
+            proof,
+        )?
+        .with_restored_state(store, restored.material),
+    );
     let expected_enclave_id = Some(context.manifest().enclave_id()?);
     outbe_tee::install_in_process_tee_context(context)?;
     Ok(outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {

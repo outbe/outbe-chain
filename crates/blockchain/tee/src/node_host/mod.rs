@@ -51,6 +51,9 @@ pub use identity::NodeHostIdentityV1;
 use identity::{read_manifest, MAX_INITIALIZATION_MANIFEST_BYTES};
 pub use identity_key::NodeHostIdentityKey;
 
+mod resident_state;
+pub use resident_state::{LoadedResidentState, ResidentStateError, ResidentStateStore};
+
 mod replacement;
 mod replacement_binding;
 pub use replacement::{

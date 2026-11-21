@@ -5,6 +5,7 @@ use super::{
     InProcessError, ProofSourceV1, Result,
 };
 use crate::{
+    node_host::ResidentStateStore,
     resident::{
         derive_account_keys_handle, AccountKeysHandle, OfferKeyHandle, ResidentOfferMaterial,
         ResidentTeeKeys, StateKeyHandle,
@@ -18,6 +19,7 @@ use outbe_primitives::tee_attestation_v1::{
 };
 use std::{
     collections::BTreeMap,
+    path::Path,
     sync::{Arc, Mutex, RwLock},
     time::Instant,
 };
@@ -36,6 +38,7 @@ pub struct InProcessTeeContext {
     pub(super) manifest: EnclaveInitializationManifestV1,
     pub(super) descriptor: TrustedNetworkDescriptorV1,
     pub(super) proof_source: ProofSourceV1,
+    resident_state_store: Option<ResidentStateStore>,
 }
 impl std::fmt::Debug for InProcessTeeContext {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -77,7 +80,35 @@ impl InProcessTeeContext {
             manifest,
             descriptor,
             proof_source,
+            resident_state_store: None,
         })
+    }
+    /// Attach the local state file and restore material that it contains.
+    pub fn with_restored_state(
+        mut self,
+        store: ResidentStateStore,
+        material: Option<ResidentOfferMaterial>,
+    ) -> Self {
+        self.resident_state_store = Some(store);
+        if let Some(material) = material {
+            self.active = RwLock::new(Some(ActiveMaterial {
+                material: Arc::new(material),
+                anchor: None,
+            }));
+        }
+        self
+    }
+
+    /// Save a finalized successor before the runtime switches to it.
+    pub fn persist_for_promotion(&self, node_data_dir: &Path) -> Result<()> {
+        let material = self.material()?;
+        ResidentStateStore::replace_promoted(
+            node_data_dir,
+            &self.keys,
+            self.manifest.initialization_challenge,
+            &material,
+        )?;
+        Ok(())
     }
     /// Return the immutable NodeHost identity bound at construction.
     pub fn identity(&self) -> &NodeHostIdentityV1 {
@@ -180,6 +211,13 @@ impl InProcessTeeContext {
             {
                 return Err(InProcessError::ActivationConflict);
             }
+        }
+        if let Some(store) = &self.resident_state_store {
+            store.persist_active(
+                &self.keys,
+                self.manifest.initialization_challenge,
+                &material,
+            )?;
         }
         *active = Some(ActiveMaterial {
             material: Arc::new(material),
@@ -317,6 +355,7 @@ mod tests {
     use super::*;
     use crate::in_process::test_support;
     use outbe_primitives::tee_attestation_v1::AttestationMode;
+    use std::{fs, os::unix::fs::PermissionsExt as _};
     #[test]
     fn in_process_activation_rejection_preserves_active_material_and_anchor() {
         let context =
@@ -355,5 +394,39 @@ mod tests {
             assert_eq!(context.network_encryption_public().unwrap(), public);
             assert_eq!(context.admission_anchor().unwrap(), Some(anchor));
         }
+    }
+
+    #[test]
+    fn active_material_is_not_published_when_resident_file_cannot_be_written() {
+        let directory = tempfile::tempdir().unwrap();
+        let (store, loaded) =
+            ResidentStateStore::load_or_create(directory.path(), B256::from([1; 32])).unwrap();
+        let fixture =
+            test_support::context(AttestationMode::NoAttestationDev, ProofSourceV1::NoHardware);
+        let mut manifest = fixture.manifest.clone();
+        manifest.recipient_x25519 = loaded.keys.tribute_offer_public();
+        manifest.attestation_ed25519 = loaded.keys.attestation_pub();
+        manifest.noise_responder_x25519 = loaded.keys.noise_public();
+        manifest.initialization_challenge = loaded.initialization_challenge;
+        let context = InProcessTeeContext::new(
+            loaded.keys,
+            fixture.identity,
+            manifest,
+            fixture.descriptor,
+            ProofSourceV1::NoHardware,
+        )
+        .unwrap()
+        .with_restored_state(store, None);
+        let path = directory
+            .path()
+            .join("tee-node-host-v1")
+            .join("resident-state.v1");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(matches!(
+            context.activate(test_support::material(&context, 5), None),
+            Err(InProcessError::ResidentState(_))
+        ));
+        assert!(!context.offer_key_ready().unwrap());
     }
 }

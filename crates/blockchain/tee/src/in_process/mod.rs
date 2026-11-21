@@ -1,4 +1,4 @@
-//! RAM-only TEE ceremonies and genesis-anchored key admission.
+//! Resident TEE ceremonies and genesis-anchored key admission.
 pub mod admission;
 mod ceremony;
 pub use ceremony::GeneratedDcapQuoteV1;
@@ -44,6 +44,8 @@ pub enum InProcessError {
     Attestation(#[from] serde_json::Error),
     #[error("resident key already active or admission anchor regressed")]
     ActivationConflict,
+    #[error("resident state persistence failed")]
+    ResidentState(#[from] crate::node_host::ResidentStateError),
 }
 /// Result of a resident operation, preserving typed rejection causes.
 pub type Result<T> = std::result::Result<T, InProcessError>;

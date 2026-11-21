@@ -13,16 +13,16 @@ pub(crate) struct LocalTeeAdmissionAnchorV1 {
 }
 
 /// Local TEE lease guard state. `is_armed()` is true only after an admission
-/// anchor validated against the local canonical chain, or for a genesis
-/// founder at height zero. A non-founding validator can never satisfy
-/// `ValidatorBootstrapReady` before that validation.
+/// anchor validated against the local canonical chain, for a genesis founder
+/// at height zero, or for restored resident material. The authority refresh
+/// checks local admission before a restored validator can sign.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TeeLeaseGuardGateV1 {
     /// Node is waiting for an admission anchor to be established/loaded.
     AwaitingAnchor,
     /// Node has a target admission anchor and must validate it at `local_finalized_height >= anchor.finalized_height`.
     Pending(LocalTeeAdmissionAnchorV1),
-    /// Anchor has been validated against the local canonical Reth DB (or node is a genesis founder at H == 0).
+    /// Local admission may be read for a validated anchor, founder, or restored resident.
     Armed,
 }
 
