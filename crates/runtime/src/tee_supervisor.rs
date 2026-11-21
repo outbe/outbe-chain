@@ -261,7 +261,9 @@ where
         error.is_retryable()
     }
     async fn tick(&mut self) -> Result<engine::Step, Self::Error> {
-        let step = self.supervisor.observe_tick().await?;
+        let observed = self.supervisor.observe_tick().await;
+        self.owner.publish_admitted_anchor()?;
+        let step = observed?;
         if self.supervisor.cold_finalized() {
             self.supervisor
                 .complete_cold_recovery(Some(self.owner.as_ref()))?;
@@ -288,6 +290,8 @@ pub(crate) enum RuntimeSupervisorError {
     Observation(Box<engine::SupervisorError<rpc::RpcLifecycleError, signer::SigningError>>),
     #[error(transparent)]
     Successor(#[from] successor::SuccessorRuntimeError),
+    #[error(transparent)]
+    Live(#[from] crate::admission_authority::live::LiveTeeError),
     #[error("chain id exceeds supported width")]
     InvalidChainId,
 }
@@ -368,7 +372,7 @@ impl RuntimeSupervisorError {
             }
             Self::Observation(error) => observation_proof_window_moved(error),
             Self::Renewal(error) => renewal_proof_window_moved(error),
-            Self::Successor(_) | Self::Journal(_) | Self::InvalidChainId => false,
+            Self::Successor(_) | Self::Journal(_) | Self::Live(_) | Self::InvalidChainId => false,
         }
     }
 
@@ -378,7 +382,7 @@ impl RuntimeSupervisorError {
             Self::Observation(error) => retry::observation(error),
             Self::Renewal(error) => retry::renewal(error),
             Self::Successor(error) => error.is_retryable(),
-            Self::Journal(_) | Self::InvalidChainId => false,
+            Self::Journal(_) | Self::Live(_) | Self::InvalidChainId => false,
         }
     }
 }
