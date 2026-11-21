@@ -25,12 +25,13 @@ impl LifecycleAuthorityProbe {
                     crate::admission_authority::live::LiveTeeSnapshotV1 {
                         context,
                         identity,
-                        gate: crate::admission::TeeLeaseGuardGateV1::Pending(
-                            LocalTeeAdmissionAnchorV1 {
+                        gate: crate::admission::TeeLeaseGuardGateV1::Pending {
+                            target: LocalTeeAdmissionAnchorV1 {
                                 finalized_height: anchor.0,
                                 finalized_hash: anchor.1,
                             },
-                        ),
+                            floor: None,
+                        },
                     },
                     authority,
                 )

@@ -331,7 +331,10 @@ impl LiveTeeRuntimeV1 {
                         expected_enclave_id: Some(enclave_id),
                         ..active.identity
                     },
-                    gate: TeeLeaseGuardGateV1::Pending(anchor),
+                    gate: TeeLeaseGuardGateV1::Pending {
+                        target: anchor,
+                        floor: None,
+                    },
                     context: candidate,
                 };
                 *staged = None;

@@ -13,16 +13,19 @@ pub(crate) struct LocalTeeAdmissionAnchorV1 {
 }
 
 /// Local TEE lease guard state. `is_armed()` is true only after an admission
-/// anchor validated against the local canonical chain, for a genesis founder
-/// at height zero, or for restored resident material. The authority refresh
-/// checks local admission before a restored validator can sign.
+/// anchor validated against the local canonical chain, or for a genesis founder
+/// without a durable join/promotion floor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum TeeLeaseGuardGateV1 {
     /// Node is waiting for an admission anchor to be established/loaded.
     AwaitingAnchor,
-    /// Node has a target admission anchor and must validate it at `local_finalized_height >= anchor.finalized_height`.
-    Pending(LocalTeeAdmissionAnchorV1),
-    /// Local admission may be read for a validated anchor, founder, or restored resident.
+    /// Node has a target admission anchor (and optional durable floor below target)
+    /// and must validate them at `local_finalized_height >= target.finalized_height`.
+    Pending {
+        target: LocalTeeAdmissionAnchorV1,
+        floor: Option<LocalTeeAdmissionAnchorV1>,
+    },
+    /// Local admission may be read for a validated anchor or genesis founder.
     Armed,
 }
 
@@ -33,7 +36,7 @@ impl TeeLeaseGuardGateV1 {
 
     pub(crate) const fn pending_anchor(self) -> Option<LocalTeeAdmissionAnchorV1> {
         match self {
-            Self::Pending(anchor) => Some(anchor),
+            Self::Pending { target, .. } => Some(target),
             Self::AwaitingAnchor | Self::Armed => None,
         }
     }
@@ -43,9 +46,22 @@ impl TeeLeaseGuardGateV1 {
         local_finalized_height: u64,
     ) -> Option<LocalTeeAdmissionAnchorV1> {
         match self {
-            Self::Pending(anchor) if local_finalized_height >= anchor.finalized_height => {
-                Some(anchor)
+            Self::Pending { target, .. } if local_finalized_height >= target.finalized_height => {
+                Some(target)
             }
+            _ => None,
+        }
+    }
+
+    pub(crate) const fn floor_to_validate(
+        self,
+        local_finalized_height: u64,
+    ) -> Option<LocalTeeAdmissionAnchorV1> {
+        match self {
+            Self::Pending {
+                target,
+                floor: Some(floor),
+            } if local_finalized_height >= target.finalized_height => Some(floor),
             _ => None,
         }
     }
@@ -83,10 +99,10 @@ impl TeeLeaseGuardGateV1 {
         observed_hash: alloy_primitives::B256,
         admission: outbe_consensus::validators::LocalTeeRuntimeAdmissionV1,
     ) -> eyre::Result<()> {
-        let Self::Pending(anchor) = *self else {
+        let Self::Pending { target, .. } = *self else {
             return Ok(());
         };
-        Self::validate_anchor(anchor, observed_hash, admission)?;
+        Self::validate_anchor(target, observed_hash, admission)?;
         *self = Self::Armed;
         Ok(())
     }
@@ -151,6 +167,36 @@ where
         ),
     )
     .map(|admission| (block_hash, admission))
+}
+
+pub(crate) fn verify_local_anchor_hash<P>(
+    provider: &P,
+    anchor: LocalTeeAdmissionAnchorV1,
+) -> eyre::Result<()>
+where
+    P: HeaderProvider<Header = OutbeHeader>,
+{
+    let mut observed = provider
+        .sealed_header(anchor.finalized_height)
+        .wrap_err("read exact header for durable TEE admission floor")?
+        .ok_or(LaunchError::TeeAdmissionHeaderUnavailable)?
+        .hash();
+    if observed != anchor.finalized_hash {
+        observed = provider
+            .sealed_header(anchor.finalized_height)
+            .wrap_err("read exact header for durable TEE admission floor")?
+            .ok_or(LaunchError::TeeAdmissionHeaderUnavailable)?
+            .hash();
+    }
+    if observed != anchor.finalized_hash {
+        return Err(LaunchError::TeeAdmissionAnchorHashMismatch {
+            height: anchor.finalized_height,
+            expected: anchor.finalized_hash,
+            local: observed,
+        }
+        .into());
+    }
+    Ok(())
 }
 
 fn validate_local_anchor_at_height<P>(
@@ -277,6 +323,9 @@ where
             .then(|| read_local_tee_admission_at_block(protocol, provider, chain, identity, head))
             .transpose();
     };
+    if let Some(floor) = gate.floor_to_validate(finalized.number) {
+        verify_local_anchor_hash(provider, floor)?;
+    }
 
     let fullnode_identity = outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
         validator: None,

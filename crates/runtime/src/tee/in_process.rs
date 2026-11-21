@@ -527,7 +527,10 @@ mod tests {
             LiveTeeSnapshotV1 {
                 identity,
                 context: fresh.clone(),
-                gate: TeeLeaseGuardGateV1::Pending(anchor),
+                gate: TeeLeaseGuardGateV1::Pending {
+                    target: anchor,
+                    floor: None,
+                },
             },
             outbe_tee::TeeAuthorityChannel::default(),
         )

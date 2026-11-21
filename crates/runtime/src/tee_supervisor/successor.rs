@@ -262,7 +262,10 @@ impl TeeLifecycleSupervisor {
                     .note_observed_finalized_height(anchor.finalized_height);
                 snapshot.identity.expected_enclave_id = Some(enclave_id);
                 snapshot.context = candidate.clone();
-                snapshot.gate = TeeLeaseGuardGateV1::Pending(anchor);
+                snapshot.gate = TeeLeaseGuardGateV1::Pending {
+                    target: anchor,
+                    floor: None,
+                };
             }
             Ok::<(), SuccessorRuntimeError>(())
         })?;
