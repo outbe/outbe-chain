@@ -274,7 +274,7 @@ impl ApplicationShared {
                 round: None,
                 timeout: LATE_CREDIT_ANCESTOR_LOOKUP_TIMEOUT,
             },
-            clock.child("late-credit-ancestry"),
+            clock.child("late_credit_ancestry"),
         );
         collect_branch_targets(
             &ancestry,
