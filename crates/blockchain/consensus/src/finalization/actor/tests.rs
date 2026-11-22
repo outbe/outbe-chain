@@ -154,12 +154,13 @@ fn rekey_via_finalization_actor() {
             .expect("process_finalization should rekey without error");
     });
 
-    // The fb_hash-keyed buffer was rekeyed to the finalized block number.
+    // The fb_hash-keyed buffer was resolved to the finalized block number,
+    // while retaining the bound pending vote for branch-specific late credits.
     let s = store.lock().expect("store");
     assert_eq!(
         s.pending_vote_count(fb_hash),
-        0,
-        "pending buffer must be drained after rekey"
+        1,
+        "pending buffer must retain bound votes for branch-specific late-credit selection"
     );
     assert_eq!(s.resolved_len(), 1, "exactly one target resolved by number");
 }

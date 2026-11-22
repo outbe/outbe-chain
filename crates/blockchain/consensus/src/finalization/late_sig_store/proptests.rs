@@ -3,7 +3,7 @@
 //! Signatures come from four `PrivateKey::from_seed` keys. A `OnceLock`
 //! cache stores each `(signer, binding)` signature so cases stay fast and
 //! reproducible. Proposer height 0 is outside `prop_window_membership`: a
-//! genesis block has no predecessor, and production calls `build_artifact`
+//! genesis block has no predecessor, and production calls `build_artifact_for_branch`
 //! with `proposed_height >= 1`.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,7 +21,8 @@ use crate::proof::constants::finalize_namespace;
 use crate::proof::verify_late_finalize_proof;
 
 use super::{
-    FinalizeVoteTarget, LateFinalizeCommittee, LateFinalizeSigStore, MinPkSig, MAX_PENDING_TARGETS,
+    FinalizeVoteTarget, LateCreditBranchTarget, LateFinalizeCommittee, LateFinalizeSigStore,
+    MinPkSig, MAX_PENDING_TARGETS,
 };
 
 fn proptest_config() -> ProptestConfig {
@@ -157,37 +158,41 @@ fn record(
     canonical
 }
 
-/// Signers credited by the store's first-writer and canonical-binding rules.
-///
-/// A signer is credited when their first pre-resolution vote is canonical, or
-/// when that pending vote did not credit them and a later post-resolution vote
-/// is canonical. A non-canonical post-resolution vote does not occupy the slot.
+/// Signers credited by the branch-selected binding. A vote for another valid
+/// view of the same hash does not occupy this binding's signer slot.
 fn oracle(pre: &[(u32, u8)], post: &[(u32, u8)]) -> Vec<usize> {
-    let mut first_pre: BTreeMap<u32, bool> = BTreeMap::new();
-    for &(signer, choice) in pre {
-        let canonical = choice % 4 == 0;
-        first_pre.entry(signer).or_insert(canonical);
-    }
-    let mut credited: BTreeSet<u32> = first_pre
+    let credited: BTreeSet<u32> = pre
         .iter()
-        .filter(|(_, canonical)| **canonical)
-        .map(|(&signer, _)| signer)
+        .chain(post)
+        .filter(|(_, choice)| choice % 4 == 0)
+        .map(|(signer, _)| *signer)
         .collect();
-    for &(signer, choice) in post {
-        if credited.contains(&signer) {
-            continue;
-        }
-        if choice % 4 == 0 {
-            credited.insert(signer);
-        }
-    }
     credited.into_iter().map(|signer| signer as usize).collect()
+}
+
+fn branch_target(
+    fb_number: u64,
+    fb_hash: B256,
+    canon: (u64, u64, u64),
+    committee_set_hash: B256,
+) -> LateCreditBranchTarget {
+    LateCreditBranchTarget {
+        fb_number,
+        binding: FinalizeVoteTarget {
+            epoch: canon.0,
+            view: canon.1,
+            parent_view: canon.2,
+            fb_hash,
+        },
+        committee_set_hash,
+        committee_size: fixture().snapshot.committee.len(),
+    }
 }
 
 proptest! {
     #![proptest_config(proptest_config())]
 
-    /// `fb_number` is in `build_artifact(proposer_block)` iff it sits in
+    /// `fb_number` is in `build_artifact_for_branch(proposer_block)` iff it sits in
     /// `[proposer_block - window_k, proposer_block)`.
     #[test]
     fn prop_window_membership(
@@ -213,7 +218,7 @@ proptest! {
             },
         );
         let included = store
-            .build_artifact(proposer_block)
+            .build_artifact_for_branch(proposer_block, &[branch_target(fb_number, fb_hash, canon, B256::ZERO)])
             .batches
             .iter()
             .any(|batch| batch.fb_number == fb_number);
@@ -253,7 +258,10 @@ proptest! {
         for &(signer, choice) in &post {
             record(&mut store, signer, choice, canon, fb_hash);
         }
-        let artifact = store.build_artifact(11);
+        let artifact = store.build_artifact_for_branch(
+            11,
+            &[branch_target(10, fb_hash, canon, committee_set_hash_v2(epoch, &fixture().snapshot))],
+        );
         if expected.is_empty() {
             prop_assert!(artifact.batches.is_empty());
         } else {
@@ -287,7 +295,10 @@ proptest! {
             if !post {
                 store.resolve_finalized_target(target, 10, committee);
             }
-            let artifact = store.build_artifact(11);
+            let artifact = store.build_artifact_for_branch(
+                11,
+                &[branch_target(10, fb_hash, canon, committee.set_hash)],
+            );
             prop_assert_eq!(artifact.batches.len(), 1);
             let bits: u32 = artifact.batches[0]
                 .signer_bitmap
@@ -304,12 +315,13 @@ proptest! {
 }
 
 #[test]
-fn pending_cap_evicts_lowest_fb_hash() {
-    let sig = fixture().sign(0, 1, 1, 0, hash_at(0));
+fn pending_cap_preserves_new_low_hash_and_evicts_oldest_observation() {
     let mut store = LateFinalizeSigStore::new(3);
     let mut hashes = Vec::with_capacity(MAX_PENDING_TARGETS + 1);
     for i in 0..(MAX_PENDING_TARGETS as u32 + 1) {
-        let fb_hash = hash_at(i);
+        // Newest hash is lexicographically smallest. A hash-order cap would
+        // discard it immediately after the store fills.
+        let fb_hash = hash_at(MAX_PENDING_TARGETS as u32 - i);
         hashes.push(fb_hash);
         store.record_bound_vote(
             FinalizeVoteTarget {
@@ -319,15 +331,41 @@ fn pending_cap_evicts_lowest_fb_hash() {
                 fb_hash,
             },
             0,
-            sig,
+            fixture().sign(0, 1, 1, 0, fb_hash),
         );
+        if i == MAX_PENDING_TARGETS as u32 - 1 {
+            let oldest_hash = hashes[0];
+            store.record_bound_vote(
+                FinalizeVoteTarget {
+                    epoch: 1,
+                    view: 1,
+                    parent_view: 0,
+                    fb_hash: oldest_hash,
+                },
+                0,
+                fixture().sign(0, 1, 1, 0, oldest_hash),
+            );
+        }
     }
     assert_eq!(store.pending_by_fb_hash.len(), MAX_PENDING_TARGETS);
     assert!(
         !store.pending_by_fb_hash.contains_key(&hashes[0]),
-        "lowest fb_hash is evicted"
+        "oldest observed hash is evicted"
     );
     assert!(store
         .pending_by_fb_hash
         .contains_key(&hashes[hashes.len() - 1]));
+    let latest = hashes[hashes.len() - 1];
+    let target = branch_target(
+        10,
+        latest,
+        (1, 1, 0),
+        committee_set_hash_v2(1, &fixture().snapshot),
+    );
+    let artifact = store.build_artifact_for_branch(11, &[target]);
+    assert_eq!(artifact.batches.len(), 1);
+    assert_eq!(
+        verify_late_finalize_proof(&fixture().snapshot, &artifact.batches[0]).unwrap(),
+        vec![0],
+    );
 }

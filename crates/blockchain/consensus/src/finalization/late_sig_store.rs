@@ -4,19 +4,17 @@
 //! After a block finalizes on the eager 2f+1 quorum, additional (slow-but-honest)
 //! validators keep gossiping their finalize votes. The
 //! [`OutbeReporter`](crate::reporter) observes those individual votes. The
-//! `FinalizeVerifyActor` verifies them and buffers them here, keyed by the
-//! finalized proposal hash (`fb_hash`). When the matching block finalizes and
-//! its number is known, the store rekeys the buffer to `(fb_number, fb_hash)`.
-//! (`FinalizationActor` has the height. The reporter sets
-//! `finalized_block_number: 0`.) When this node is the
-//! proposer of `N+1..N+K`, it aggregates the votes it locally holds for each
-//! in-window target into a [`LateFinalizeCreditsArtifact`].
+//! `FinalizeVerifyActor` verifies them and buffers them by proposal hash and
+//! signed `(epoch, view, parent_view, signer)` binding. A proposer selects the
+//! escrow binding from its own branch and aggregates matching votes for the
+//! in-window targets into a [`LateFinalizeCreditsArtifact`]. No direct local
+//! finalization of the target is required for this best-effort credit.
 //!
-//! This is **best-effort, process-local** state. It is *not* consensus state. It
-//! never affects the block hash. Validators re-verify (via
+//! This is **best-effort, process-local** state, not consensus state. The chosen
+//! artifact is in the block and therefore affects its hash. Validators re-verify (via
 //! [`crate::proof::verify_late_finalize_proof`]) whatever a proposer chooses to
 //! include. An empty store simply credits nobody (degrading to today's
-//! behavior). Durable rebroadcast / hard anti-censorship.
+//! behavior).
 
 use alloy_primitives::B256;
 use commonware_codec::Encode;
@@ -50,15 +48,12 @@ pub fn shared(window_k: u64) -> SharedLateFinalizeStore {
     Arc::new(Mutex::new(LateFinalizeSigStore::new(window_k)))
 }
 
-/// Cap on per-target buffers awaiting block-number resolution. It bounds memory if
-/// finalizations stall (targets never resolve). The store drops the lowest-`fb_hash`
-/// targets first. This order is arbitrary, NOT by age (the store tracks no
-/// insertion order or view). Eviction only fires under a stalled-finalization flood,
-/// where any bounded drop suffices. If true age-based eviction is ever needed, add
-/// a per-target view/height field and evict on that instead.
+/// Maximum number of distinct proposal hashes with locally observed votes.
+/// The oldest observation is evicted when full; hash byte order must never
+/// determine retention on a long-running network.
 const MAX_PENDING_TARGETS: usize = 512;
 
-/// Exact signed proposal domain for a finalize vote and its canonical resolution.
+/// Exact signed proposal domain for a finalize vote.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct FinalizeVoteTarget {
     pub epoch: u64,
@@ -91,14 +86,21 @@ pub struct LateFinalizeCommittee {
     pub size: usize,
 }
 
+/// The target and escrow binding selected by the candidate proposal branch.
+/// The target need not have a direct local finalization certificate.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LateCreditBranchTarget {
+    pub fb_number: u64,
+    pub binding: FinalizeVoteTarget,
+    pub committee_set_hash: B256,
+    pub committee_size: usize,
+}
+
 /// One buffered finalize vote with the proposal binding that the signer actually
 /// signed. A finalize signature is valid only over `Proposal{Round(epoch, view),
-/// parent_view, payload = fb_hash}.encode()`. A vote can be signed at a non-canonical
-/// `(epoch, view, parent_view)` for the same `fb_hash` (equivocation / a buggy or
-/// Byzantine validator gossiping across views). The store MUST NOT merge such a vote
-/// into the canonical aggregate. Such a vote would fail `verify_same_message` and poison the
-/// whole per-block credit. We keep the per-vote binding so `resolve_finalized_target`
-/// can drop any vote whose binding != the finalized certificate's.
+/// parent_view, payload = fb_hash}.encode()`. Several views may validly sign
+/// the same hash. They remain separate so the proposer can select the view
+/// escrowed on its own branch without poisoning the aggregate.
 #[derive(Clone)]
 struct BoundVote {
     epoch: u64,
@@ -107,16 +109,15 @@ struct BoundVote {
     sig: MinPkSig,
 }
 
-/// Individual finalize votes for one finalized proposal (keyed by its `fb_hash`),
-/// awaiting block-number resolution. Keying by `fb_hash` (not `view`) keeps
+/// Individual finalize votes for one proposal (keyed by its `fb_hash`).
+/// Keying by `fb_hash` (not `view`) keeps
 /// votes for distinct proposals at the same view (equivocations / forks) in
 /// separate buffers. So the store never aggregates them together.
 struct PendingTarget {
-    /// Signer committee index -> that signer's bound individual MinPk finalize
-    /// vote. The binding travels with each vote. So at `resolve_finalized_target`
-    /// time, the store removes cross-view votes for the same `fb_hash` against
-    /// the canonical certificate.
-    votes: BTreeMap<u32, BoundVote>,
+    /// One signed vote per full proposal binding and signer. Distinct valid
+    /// views of one digest remain available for branch-local escrow selection.
+    votes: BTreeMap<(u64, u64, u64, u32), BoundVote>,
+    last_observed_seq: u128,
 }
 
 /// Finalize votes for a target block, resolved to its number (window-scoped).
@@ -133,7 +134,8 @@ struct ResolvedTarget {
 /// See module docs.
 pub struct LateFinalizeSigStore {
     window_k: u64,
-    /// Votes observed before the proposal finalized, keyed by `fb_hash`.
+    observation_seq: u128,
+    /// Votes observed before or after local finalization, keyed by `fb_hash`.
     pending_by_fb_hash: BTreeMap<B256, PendingTarget>,
     /// Votes for finalized proposals, keyed by block number (window-scoped).
     resolved_by_number: BTreeMap<u64, ResolvedTarget>,
@@ -148,24 +150,96 @@ impl LateFinalizeSigStore {
     pub fn new(window_k: u64) -> Self {
         Self {
             window_k,
+            observation_seq: 0,
             pending_by_fb_hash: BTreeMap::new(),
             resolved_by_number: BTreeMap::new(),
             resolved_fb_hash_to_number: BTreeMap::new(),
         }
     }
 
+    pub fn window_k(&self) -> u64 {
+        self.window_k
+    }
+
+    /// Aggregate only votes matching the escrow binding chosen by this branch.
+    /// Local direct-F resolution is deliberately irrelevant: an ancestor may be
+    /// finalized implicitly, or another branch may use a later F for one digest.
+    pub fn build_artifact_for_branch(
+        &self,
+        proposer_block_number: u64,
+        targets: &[LateCreditBranchTarget],
+    ) -> LateFinalizeCreditsArtifact {
+        let lo = proposer_block_number.saturating_sub(self.window_k);
+        let mut ordered = targets.to_vec();
+        ordered.sort_by_key(|target| target.fb_number);
+        let mut batches = Vec::new();
+        let mut last_seen_number = None;
+
+        for target in ordered {
+            if last_seen_number == Some(target.fb_number) {
+                // Each height has one escrow binding on a proposal branch.
+                // A duplicate input is ambiguous, so never merge it.
+                continue;
+            }
+            last_seen_number = Some(target.fb_number);
+            if target.fb_number < lo || target.fb_number >= proposer_block_number {
+                continue;
+            }
+            let Some(pending) = self.pending_by_fb_hash.get(&target.binding.fb_hash) else {
+                continue;
+            };
+            let signatures: Vec<_> = pending
+                .votes
+                .iter()
+                .filter(|((epoch, view, parent_view, signer), _)| {
+                    *epoch == target.binding.epoch
+                        && *view == target.binding.view
+                        && *parent_view == target.binding.parent_view
+                        && (*signer as usize) < target.committee_size
+                })
+                .map(|((_, _, _, signer), bound)| (*signer, &bound.sig))
+                .collect();
+            let Some(nonempty) =
+                commonware_utils::iter::NonEmpty::try_new(signatures.iter().map(|(_, sig)| *sig))
+            else {
+                continue;
+            };
+            let aggregate = aggregate::combine_signatures::<MinPk, _>(nonempty);
+            let encoded = aggregate.encode();
+            let Ok(aggregate_signature): Result<[u8; 96], _> = encoded.as_ref().try_into() else {
+                tracing::warn!(
+                    fb_number = target.fb_number,
+                    "unexpected late-credit aggregate length"
+                );
+                continue;
+            };
+            let mut signer_bitmap = vec![0u8; target.committee_size.div_ceil(8)];
+            for (signer, _) in signatures {
+                let idx = signer as usize;
+                signer_bitmap[idx / 8] |= 1u8 << (idx % 8);
+            }
+            batches.push(PerBlockCredit {
+                fb_number: target.fb_number,
+                fb_hash: target.binding.fb_hash,
+                epoch: target.binding.epoch,
+                view: target.binding.view,
+                parent_view: target.binding.parent_view,
+                committee_set_hash: target.committee_set_hash,
+                signer_bitmap,
+                aggregate_signature,
+            });
+        }
+        LateFinalizeCreditsArtifact { batches }
+    }
+
     /// Buffer one observed (already signature-verified) individual finalize vote,
-    /// keyed by the proposal's `fb_hash`. First writer wins per `(fb_hash, signer)`.
-    /// `(epoch, view, parent_view)` is the binding that the signer signed.
-    ///
-    /// If the proposal already finalized (its `fb_hash` is in
-    /// `resolved_fb_hash_to_number`), this function appends the vote **directly** to
-    /// the resolved target. This is the slow-validator path, where the vote arrives
-    /// after the eager quorum finalized the block. The append happens ONLY if the
-    /// vote's binding matches the canonical certificate's. The function drops a
-    /// cross-view vote for the same `fb_hash`, so it cannot poison the canonical
-    /// aggregate.
+    /// keyed by the proposal's hash and full signed binding. First writer wins
+    /// per `(fb_hash, epoch, view, parent_view, signer)`. Votes arriving after a
+    /// local finalization remain available to a child that selects another
+    /// valid finalization view for the same digest.
     pub fn record_bound_vote(&mut self, target: FinalizeVoteTarget, signer: u32, sig: MinPkSig) {
+        self.observation_seq = self.observation_seq.saturating_add(1);
+        let observation_seq = self.observation_seq;
         let binding = target;
         let FinalizeVoteTarget {
             epoch,
@@ -173,14 +247,13 @@ impl LateFinalizeSigStore {
             parent_view,
             fb_hash,
         } = target;
-        // Late arrival: the target already resolved -> append to it directly, but
-        // only if the vote's binding equals the canonical one (else drop).
+        // A locally resolved round is only one possible child-escrow binding.
+        // Keep every verified binding for branch-specific proposal selection.
         if let Some(&fb_number) = self.resolved_fb_hash_to_number.get(&fb_hash) {
             if let Some(target) = self.resolved_by_number.get_mut(&fb_number) {
                 if binding.matches_binding(target.epoch, target.view, target.parent_view) {
                     target.votes.entry(signer).or_insert(sig);
                 }
-                return;
             }
         }
 
@@ -189,21 +262,31 @@ impl LateFinalizeSigStore {
             .entry(fb_hash)
             .or_insert_with(|| PendingTarget {
                 votes: BTreeMap::new(),
+                last_observed_seq: observation_seq,
             });
-        entry.votes.entry(signer).or_insert(BoundVote {
-            epoch,
-            view,
-            parent_view,
-            sig,
-        });
+        if let std::collections::btree_map::Entry::Vacant(vacant) =
+            entry.votes.entry((epoch, view, parent_view, signer))
+        {
+            vacant.insert(BoundVote {
+                epoch,
+                view,
+                parent_view,
+                sig,
+            });
+            entry.last_observed_seq = observation_seq;
+        }
 
-        // Bound memory: drop the lowest-`fb_hash` entries beyond the cap
-        // (arbitrary order, not by age - see `MAX_PENDING_TARGETS`).
+        // Keep recent proposals regardless of digest ordering. A byte-order
+        // eviction would eventually discard almost every new target.
         while self.pending_by_fb_hash.len() > MAX_PENDING_TARGETS {
-            let Some((&lowest_fb_hash, _)) = self.pending_by_fb_hash.iter().next() else {
+            let Some((&oldest_fb_hash, _)) = self
+                .pending_by_fb_hash
+                .iter()
+                .min_by_key(|(hash, target)| (target.last_observed_seq, *hash))
+            else {
                 break;
             };
-            self.pending_by_fb_hash.remove(&lowest_fb_hash);
+            self.pending_by_fb_hash.remove(&oldest_fb_hash);
         }
     }
 
@@ -263,14 +346,14 @@ impl LateFinalizeSigStore {
                 committee_size,
                 votes: BTreeMap::new(),
             });
-        if let Some(pending) = self.pending_by_fb_hash.remove(&fb_hash) {
+        if let Some(pending) = self.pending_by_fb_hash.get(&fb_hash) {
             // Merge (first writer wins per signer) in case votes arrive split.
             // Merge ONLY votes whose binding matches the canonical certificate. A
             // cross-view vote for the same `fb_hash` signed a different message. It
             // would make the aggregate fail `verify_same_message`, so the loop drops it.
-            for (signer, bound) in pending.votes {
+            for ((_, _, _, signer), bound) in &pending.votes {
                 if binding.matches_binding(bound.epoch, bound.view, bound.parent_view) {
-                    target.votes.entry(signer).or_insert(bound.sig);
+                    target.votes.entry(*signer).or_insert(bound.sig);
                 }
             }
         }
