@@ -7,6 +7,7 @@ use std::sync::atomic::AtomicUsize;
 #[derive(Default)]
 pub(crate) struct StoreFaultInjection {
     fail_put_finalization: AtomicUsize,
+    fail_put_certified_notarization: AtomicUsize,
     fail_prune_height: AtomicUsize,
     fail_prune_cn: AtomicUsize,
 }
@@ -42,6 +43,10 @@ impl StoreFaultInjection {
         self.check(&self.fail_put_finalization)
     }
 
+    pub(super) fn check_put_certified_notarization(&self) -> Result<(), ParentProofStoreError> {
+        self.check(&self.fail_put_certified_notarization)
+    }
+
     pub(super) fn check_prune_height(&self) -> Result<(), ParentProofStoreError> {
         self.check(&self.fail_prune_height)
     }
@@ -56,6 +61,12 @@ impl FinalizedParentCertStore {
     pub(crate) fn fail_next_put_finalization(&self, count: usize) {
         self.faults
             .fail_put_finalization
+            .store(count, Ordering::Relaxed);
+    }
+
+    pub(crate) fn fail_next_put_certified_notarization(&self, count: usize) {
+        self.faults
+            .fail_put_certified_notarization
             .store(count, Ordering::Relaxed);
     }
 
@@ -89,6 +100,8 @@ impl CertifiedParentProofStore for FinalizedParentCertStore {
         &self,
         record: CertifiedParentProofRecord,
     ) -> Result<(), ParentProofStoreError> {
+        #[cfg(test)]
+        self.faults.check_put_certified_notarization()?;
         debug_assert_eq!(
             record.proof_kind(),
             ParentParticipationProof::CertifiedNotarization,
