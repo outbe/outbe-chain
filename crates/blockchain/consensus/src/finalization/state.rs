@@ -61,21 +61,12 @@ impl FinalizationView {
         recovered_finalized_number: u64,
         recovered_finalized_round: Option<Round>,
     ) -> Self {
-        let forkchoice = if recovered_finalized_number > 0 {
-            ForkchoiceState {
+        Self {
+            forkchoice: ForkchoiceState {
                 head_block_hash: recovered_finalized_hash,
                 safe_block_hash: recovered_finalized_hash,
                 finalized_block_hash: recovered_finalized_hash,
-            }
-        } else {
-            ForkchoiceState {
-                head_block_hash: B256::ZERO,
-                safe_block_hash: B256::ZERO,
-                finalized_block_hash: B256::ZERO,
-            }
-        };
-        Self {
-            forkchoice,
+            },
             last_finalized_number: recovered_finalized_number,
             last_finalized_round: recovered_finalized_round,
             prev_randao: B256::ZERO,
@@ -167,11 +158,12 @@ mod tests {
     use commonware_consensus::types::{Epoch, View};
 
     #[test]
-    fn from_recovered_zero_block_number_yields_zero_forkchoice() {
-        let view = FinalizationView::from_recovered(B256::with_last_byte(0xAB), 0, None);
-        assert_eq!(view.forkchoice.head_block_hash, B256::ZERO);
-        assert_eq!(view.forkchoice.safe_block_hash, B256::ZERO);
-        assert_eq!(view.forkchoice.finalized_block_hash, B256::ZERO);
+    fn from_recovered_zero_block_number_seeds_forkchoice_with_genesis_hash() {
+        let genesis_hash = B256::with_last_byte(0xAB);
+        let view = FinalizationView::from_recovered(genesis_hash, 0, None);
+        assert_eq!(view.forkchoice.head_block_hash, genesis_hash);
+        assert_eq!(view.forkchoice.safe_block_hash, genesis_hash);
+        assert_eq!(view.forkchoice.finalized_block_hash, genesis_hash);
         assert_eq!(view.last_finalized_number, 0);
         assert_eq!(view.last_finalized_round, None);
         assert_eq!(view.prev_randao, B256::ZERO);

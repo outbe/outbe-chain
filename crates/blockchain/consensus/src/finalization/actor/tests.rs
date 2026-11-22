@@ -8,8 +8,13 @@ use reth_ethereum::{primitives::SealedBlock, Block};
 /// stored in `extra_data` so distinct salts produce distinct sealed
 /// hashes (and therefore distinct `Digest`s).
 fn make_block(number: u64, salt: u64) -> ConsensusBlock {
+    make_block_with_parent(number, salt, B256::ZERO)
+}
+
+fn make_block_with_parent(number: u64, salt: u64, parent_hash: B256) -> ConsensusBlock {
     let mut block = Block::default();
     block.header.number = number;
+    block.header.parent_hash = parent_hash;
     block.header.extra_data = salt.to_le_bytes().to_vec().into();
     let block = block.map_header(OutbeHeader::new);
     ConsensusBlock::from_sealed(SealedBlock::seal_slow(block))
@@ -514,7 +519,11 @@ struct ActorHarness {
 }
 
 fn harness(provider: SchemeProvider) -> ActorHarness {
-    let view = new_finalization_view(B256::ZERO, 0, None);
+    harness_with_genesis(provider, B256::ZERO)
+}
+
+fn harness_with_genesis(provider: SchemeProvider, genesis_hash: B256) -> ActorHarness {
+    let view = new_finalization_view(genesis_hash, 0, None);
     let store = FinalizedParentCertStore::new();
     let late = late_sig_store::shared(3);
     let cache = crate::finalization::block_cache::BlockCache::new();
@@ -538,6 +547,50 @@ fn harness(provider: SchemeProvider) -> ActorHarness {
         late,
         cache,
     }
+}
+
+#[test]
+fn first_live_finalization_extends_nonzero_genesis_hash() {
+    deterministic::Runner::timed(Duration::from_secs(5)).start(|ctx| async move {
+        let genesis_hash = B256::repeat_byte(0xE5);
+        let accepted = harness_with_genesis(SchemeProvider::default(), genesis_hash);
+        let block = make_block_with_parent(1, 1, genesis_hash);
+        let digest = block.digest();
+        let round = Round::new(Epoch::new(0), View::new(1));
+        accepted.cache.insert_bounded(digest, block.clone());
+        accepted
+            .actor
+            .handle_finalized(&ctx, finalized_event(&block, 0, 1, 0, addresses(1)))
+            .await
+            .expect("block 1 must extend the canonical genesis hash");
+        {
+            let view = accepted.view.read();
+            assert_eq!(view.last_finalized_number, 1);
+            assert_eq!(view.forkchoice.finalized_block_hash, digest.0);
+            assert_eq!(view.last_finalized_round, Some(round));
+        }
+
+        let rejected = harness_with_genesis(SchemeProvider::default(), genesis_hash);
+        let wrong_parent = make_block_with_parent(1, 2, B256::ZERO);
+        let wrong_digest = wrong_parent.digest();
+        rejected
+            .cache
+            .insert_bounded(wrong_digest, wrong_parent.clone());
+        let error = rejected
+            .actor
+            .handle_finalized(&ctx, finalized_event(&wrong_parent, 0, 1, 0, addresses(1)))
+            .await
+            .expect_err("block 1 with a wrong parent must fail closed");
+        assert!(matches!(
+            finalization_error(error),
+            crate::errors::FinalizationError::ArchiveReconciliation { height: 1, .. }
+        ));
+        let view = rejected.view.read();
+        assert_eq!(view.last_finalized_number, 0);
+        assert_eq!(view.forkchoice.finalized_block_hash, genesis_hash);
+        assert!(view.last_finalized_round.is_none());
+        assert_eq!(rejected.store.len(), 0);
+    });
 }
 
 fn buffer_vote(
