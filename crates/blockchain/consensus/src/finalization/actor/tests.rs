@@ -138,6 +138,7 @@ fn rekey_via_finalization_actor() {
         vrf_safety: VrfSafetyGate::new(0, 0, 1_000, 100),
         parent_cert_store: FinalizedParentCertStore::new(),
         certificate_scheme_provider: HybridSchemeProvider::default(),
+        committee_provider: crate::committee_provider::CommitteeProvider::new(),
         late_sig_store: store.clone(),
     };
     let (actor, _mailbox) = FinalizationActor::new(deps);
@@ -324,6 +325,7 @@ fn resolution_divergence_alarm() {
                 vrf_safety: VrfSafetyGate::new(0, 0, 1_000, 100),
                 parent_cert_store: parent_store.clone(),
                 certificate_scheme_provider: HybridSchemeProvider::default(),
+                committee_provider: crate::committee_provider::CommitteeProvider::new(),
                 late_sig_store: crate::finalization::late_sig_store::shared(3),
             };
             let (actor, ingress) = FinalizationActor::new(deps);
@@ -525,6 +527,7 @@ fn harness(provider: SchemeProvider) -> ActorHarness {
         vrf_safety: VrfSafetyGate::new(0, 0, 1_000, 100),
         parent_cert_store: store.clone(),
         certificate_scheme_provider: provider,
+        committee_provider: crate::committee_provider::CommitteeProvider::new(),
         late_sig_store: late.clone(),
     };
     let (actor, _mailbox) = FinalizationActor::new(deps);
@@ -807,6 +810,7 @@ fn same_height_and_same_round_inconsistency_remain_fatal() {
         let round_case = harness(SchemeProvider::default());
         let first = make_block(40, 1);
         let second = make_block(41, 2);
+        round_case.view.write().last_finalized_number = 39;
         let first_finalized = finalized_event(&first, 2, 8, 7, addresses(1));
         let round = first_finalized.round;
         round_case

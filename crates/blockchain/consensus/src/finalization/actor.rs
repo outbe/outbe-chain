@@ -37,13 +37,19 @@ use crate::finalization::parent_cert_store::{
 };
 use crate::finalization::state::FinalizationViewHandle;
 use crate::finalization::util::{
-    classify_finalization, extract_header_artifact_from_block, retry_with_backoff,
-    ReplayClassification,
+    build_signer_bitmap_guarded, classify_finalization, extract_header_artifact_from_block,
+    retry_with_backoff, ReplayClassification,
 };
+use crate::hybrid::bls_batch_verification_rng;
+use crate::marshal_update_reporter::ConsensusTip;
+use commonware_codec::Encode as _;
 use commonware_consensus::{
     marshal::core::DigestFallback,
     types::{Epoch, Height, Round},
 };
+use commonware_cryptography::{Hasher as _, Sha256};
+use commonware_parallel::Sequential;
+use outbe_primitives::consensus::FinalizedParentCertificateData;
 use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact;
 use std::sync::Arc;
 
@@ -91,6 +97,7 @@ pub struct FinalizationActorDeps {
     pub certificate_scheme_provider: crate::hybrid::HybridSchemeProvider<
         commonware_cryptography::bls12381::primitives::variant::MinSig,
     >,
+    pub committee_provider: crate::committee_provider::CommitteeProvider,
     /// Shared late-finalize signature store. On each finalization
     /// the actor rekeys the buffered (`fb_hash`-keyed) votes to the now-known
     /// block number and prunes targets that have left the inclusion window.
@@ -147,6 +154,14 @@ pub struct FinalizationActor {
     deps: FinalizationActorDeps,
     epocher: Option<crate::follow::FollowerEpocher>,
     finalization_notify: Option<Arc<tokio::sync::Notify>>,
+    view_advanced: Option<tokio::sync::mpsc::UnboundedSender<u64>>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ArchiveCatchUp {
+    Complete,
+    AwaitingArchive,
+    AwaitingFutureEpochVerifier,
 }
 
 impl FinalizationActor {
@@ -162,6 +177,7 @@ impl FinalizationActor {
                 deps,
                 epocher: None,
                 finalization_notify: None,
+                view_advanced: None,
             },
             mailbox,
         )
@@ -178,6 +194,12 @@ impl FinalizationActor {
     #[must_use]
     pub fn with_finalization_notify(mut self, notify: Arc<tokio::sync::Notify>) -> Self {
         self.finalization_notify = Some(notify);
+        self
+    }
+
+    #[must_use]
+    pub fn with_view_advanced(mut self, tx: tokio::sync::mpsc::UnboundedSender<u64>) -> Self {
+        self.view_advanced = Some(tx);
         self
     }
 
@@ -202,6 +224,12 @@ impl FinalizationActor {
                             %error,
                             "fatal finalization error; FinalizationActor shutting down"
                         );
+                        return Err(crate::errors::FinalizationError::ActorFatal(error).into());
+                    }
+                }
+                Message::ReconcileMarshalTip(tip) => {
+                    if let Err(error) = self.reconcile_marshal_tip(tip).await {
+                        tracing::error!(target: "outbe::finalization", %error, "fatal marshal finality reconciliation error");
                         return Err(crate::errors::FinalizationError::ActorFatal(error).into());
                     }
                 }
@@ -320,6 +348,177 @@ impl FinalizationActor {
         Ok(false)
     }
 
+    async fn reconcile_marshal_tip(&self, tip: ConsensusTip) -> eyre::Result<()> {
+        let (current_height, current_hash) = {
+            let view = self.deps.view.read();
+            (
+                view.last_finalized_number,
+                view.forkchoice.finalized_block_hash,
+            )
+        };
+        if tip.height.get() == current_height && tip.digest.0 != current_hash {
+            return Err(crate::errors::FinalizationError::SameHeightInconsistency {
+                block_number: current_height,
+                digest: tip.digest,
+                finalized_hash: current_hash,
+            }
+            .into());
+        }
+        if tip.height.get() <= current_height {
+            return Ok(());
+        }
+        let _ = self
+            .reconcile_archive_through(tip.height.get(), Some(tip))
+            .await?;
+        Ok(())
+    }
+
+    async fn reconcile_archive_through(
+        &self,
+        target_height: u64,
+        terminal_tip: Option<ConsensusTip>,
+    ) -> eyre::Result<ArchiveCatchUp> {
+        let start_height = self
+            .deps
+            .view
+            .read()
+            .last_finalized_number
+            .saturating_add(1);
+        if start_height > target_height {
+            return Ok(ArchiveCatchUp::Complete);
+        }
+        let marshal = self.deps.marshal_mailbox.as_ref().ok_or_else(|| {
+            crate::errors::FinalizationError::MarshalMailboxRequired(
+                terminal_tip.map_or(Digest(alloy_primitives::B256::ZERO), |tip| tip.digest),
+            )
+        })?;
+
+        for height in start_height..=target_height {
+            let Some(finalization) = marshal.get_finalization(Height::new(height)).await else {
+                if terminal_tip.is_none() {
+                    return Ok(ArchiveCatchUp::AwaitingArchive);
+                }
+                return Err(archive_error(height, "finalization absent after marshal tip").into());
+            };
+            let digest = finalization.proposal.payload;
+            let round = finalization.proposal.round;
+            let Some(block) = marshal.get_block(&digest).await else {
+                if terminal_tip.is_none() {
+                    return Ok(ArchiveCatchUp::AwaitingArchive);
+                }
+                return Err(archive_error(
+                    height,
+                    format!("finalized block {digest} absent from archive"),
+                )
+                .into());
+            };
+            if block.number() != height || block.digest() != digest {
+                return Err(archive_error(
+                    height,
+                    format!(
+                        "archive block identity mismatch: number={}, digest={}, certificate digest={digest}",
+                        block.number(),
+                        block.digest()
+                    ),
+                )
+                .into());
+            }
+            let (parent_height, parent_hash, previous_epoch) = {
+                let view = self.deps.view.read();
+                (
+                    view.last_finalized_number,
+                    view.forkchoice.finalized_block_hash,
+                    view.last_finalized_round.map(|round| round.epoch()),
+                )
+            };
+            if height != parent_height.saturating_add(1) || block.parent_hash() != parent_hash {
+                return Err(archive_error(
+                    height,
+                    format!(
+                        "block does not extend finalized parent: parent_height={parent_height}, parent_hash={parent_hash}, block_parent={}",
+                        block.parent_hash()
+                    ),
+                )
+                .into());
+            }
+            if let Some(tip) = terminal_tip.filter(|tip| tip.height.get() == height) {
+                if tip.round != round || tip.digest != digest {
+                    return Err(archive_error(
+                        height,
+                        "marshal tip differs from archived finalization",
+                    )
+                    .into());
+                }
+            }
+
+            let epoch = round.epoch();
+            let scheme = self.deps.certificate_scheme_provider.scoped(epoch);
+            let committee = self.deps.committee_provider.ordered_committee(epoch);
+            let (Some(scheme), Some(committee)) = (scheme, committee) else {
+                if previous_epoch.is_some_and(|previous| epoch > previous) {
+                    info!(height, epoch = epoch.get(), "waiting for canonical future-epoch verifier before marshal finality replay");
+                    return Ok(ArchiveCatchUp::AwaitingFutureEpochVerifier);
+                }
+                return Err(archive_error(
+                    height,
+                    format!(
+                        "missing verifier or ordered committee for epoch {}",
+                        epoch.get()
+                    ),
+                )
+                .into());
+            };
+            let mut verification_rng = bls_batch_verification_rng();
+            if !finalization.verify(&mut verification_rng, scheme.as_ref(), &Sequential) {
+                return Err(
+                    archive_error(height, "finalization certificate verification failed").into(),
+                );
+            }
+            let bitmap = build_signer_bitmap_guarded(&finalization.certificate, committee.len());
+            if bitmap.len() != committee.len() {
+                return Err(archive_error(
+                    height,
+                    "certificate signer width differs from registered committee",
+                )
+                .into());
+            }
+            let mut vrf_rng = bls_batch_verification_rng();
+            let vrf_seed = scheme
+                .verified_vrf_seed_for_round(
+                    &mut vrf_rng,
+                    round,
+                    &finalization.certificate,
+                    &Sequential,
+                )
+                .as_ref()
+                .map(|seed_bytes| {
+                    alloy_primitives::B256::from_slice(Sha256::hash(&[seed_bytes]).as_ref())
+                });
+            let finalized_certificate = FinalizedParentCertificateData {
+                epoch: epoch.get(),
+                view: round.view().get(),
+                parent_view: finalization.proposal.parent.get(),
+                ordered_committee: committee.as_ref().clone(),
+                signer_bitmap: bitmap,
+                encoded_certificate: finalization.encode().into(),
+            };
+            let finalized = Finalized {
+                round,
+                digest,
+                vrf_seed,
+                consensus_data: ConsensusData {
+                    finalized_block_number: 0,
+                    finalized_block_hash: digest.0,
+                    finalized_certificate,
+                    vrf_seed,
+                    missed_proposers: Vec::new(),
+                },
+            };
+            self.process_finalization(finalized, block).await?;
+        }
+        Ok(ArchiveCatchUp::Complete)
+    }
+
     /// Handle a production finalization notification by resolving the finalized
     /// block through marshal and then applying all finalization side effects in
     /// actor order.
@@ -337,7 +536,7 @@ impl FinalizationActor {
 
         // Fast path: proposer's own block in the shared cache.
         if let Some(block) = self.deps.block_cache.get_and_remove(&digest) {
-            return self.process_finalization(finalized, block).await;
+            return self.apply_live_finalization(finalized, block).await;
         }
 
         // Resolve via marshal with bounded retries and a per-attempt timeout.
@@ -388,7 +587,9 @@ impl FinalizationActor {
             .await
             {
                 Ok(block) => {
-                    let result = self.process_finalization(finalized, (*block).clone()).await;
+                    let result = self
+                        .apply_live_finalization(finalized, (*block).clone())
+                        .await;
                     if result.is_ok() {
                         crate::metrics::record_finalization_divergence_cleared();
                     }
@@ -434,6 +635,50 @@ impl FinalizationActor {
                 }
             }
         }
+    }
+
+    async fn apply_live_finalization(
+        &self,
+        finalized: Finalized,
+        block: ConsensusBlock,
+    ) -> eyre::Result<()> {
+        if block.digest() != finalized.digest {
+            return Err(archive_error(
+                block.number(),
+                "live finalization digest differs from resolved block",
+            )
+            .into());
+        }
+        let current_height = self.deps.view.read().last_finalized_number;
+        if block.number() > current_height.saturating_add(1) {
+            match self
+                .reconcile_archive_through(block.number() - 1, None)
+                .await?
+            {
+                ArchiveCatchUp::Complete => {}
+                ArchiveCatchUp::AwaitingArchive | ArchiveCatchUp::AwaitingFutureEpochVerifier => {
+                    return Ok(())
+                }
+            }
+        }
+        let (parent_height, parent_hash) = {
+            let view = self.deps.view.read();
+            (
+                view.last_finalized_number,
+                view.forkchoice.finalized_block_hash,
+            )
+        };
+        if block.number() == parent_height.saturating_add(1) && block.parent_hash() != parent_hash {
+            return Err(archive_error(
+                block.number(),
+                format!(
+                    "live finalization does not extend finalized parent: expected={parent_hash}, actual={}",
+                    block.parent_hash()
+                ),
+            )
+            .into());
+        }
+        self.process_finalization(finalized, block).await
     }
 
     /// Process a finalization for which we have the full block. This is the
@@ -569,6 +814,9 @@ impl FinalizationActor {
         self.note_finalized_dkg_artifact(&block, digest, block_number);
         self.observe_finalized_boundary(&block, block_number)?;
         notify_finalized_waiters(self.finalization_notify.as_deref());
+        if let Some(tx) = &self.view_advanced {
+            let _ = tx.send(block_number);
+        }
         self.evict_finalized_block_cache();
 
         Ok(())
@@ -830,6 +1078,13 @@ impl FinalizationActor {
     fn evict_finalized_block_cache(&self) {
         let finalized_num = self.deps.view.read().last_finalized_number;
         self.deps.block_cache.evict_at_or_below(finalized_num);
+    }
+}
+
+fn archive_error(height: u64, reason: impl Into<String>) -> crate::errors::FinalizationError {
+    crate::errors::FinalizationError::ArchiveReconciliation {
+        height,
+        reason: reason.into(),
     }
 }
 

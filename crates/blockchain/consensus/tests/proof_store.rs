@@ -221,6 +221,9 @@ async fn proof_store_persists_full_notarization_blob_before_simplex_journal_prun
                 store.put_certified_notarization(record.record).unwrap();
             }
             FinalizationMessage::Finalized(_) => panic!("expected CertifiedNotarization"),
+            FinalizationMessage::ReconcileMarshalTip(_) => {
+                panic!("expected CertifiedNotarization")
+            }
         }
         // Capture pre-drop state for byte-equal comparison post-reopen.
         // `store` is dropped at end of scope after this expression.

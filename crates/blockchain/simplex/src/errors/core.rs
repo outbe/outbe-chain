@@ -533,6 +533,8 @@ pub enum FinalizationError {
         digest: Digest,
         finalized_hash: B256,
     },
+    #[error("marshal finalization reconciliation failed at height {height}: {reason}")]
+    ArchiveReconciliation { height: u64, reason: String },
     #[error("finalization committee snapshot build failed at epoch {finalized_epoch}: {reason}")]
     CommitteeSnapshotBuildFailed {
         finalized_epoch: u64,

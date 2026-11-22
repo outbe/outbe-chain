@@ -41,7 +41,7 @@ where
             .await?;
         self.publish_repository_material();
         let mut authority = self.protocol.tee_authority_watch();
-        let mut latest_consensus_tip = *self.consensus_tip_rx.borrow();
+        let mut latest_consensus_tip;
         let mut pending_provider_ready_height: Option<u64> = None;
         let mut watchdog_unhealthy_since: Option<SystemTime> = None;
         let watchdog_started_at = ctx.current();
@@ -72,6 +72,10 @@ where
             let (mut engine_handle_task, signer_enabled) = self
                 .start_engine(&ctx, current_subchannels, accountable.clone())
                 .await?;
+            latest_consensus_tip = *self.consensus_tip_rx.borrow_and_update();
+            if let Some(tip) = latest_consensus_tip {
+                self.finalization_mailbox.reconcile_marshal_tip(tip)?;
+            }
             // -- g. Engine event loop ----------------------------------------
             // Monitors engine, component exits, and block-height-driven reshare triggers.
 
@@ -152,6 +156,9 @@ where
                     match consensus_tip_changed {
                         Ok(()) => {
                             latest_consensus_tip = *self.consensus_tip_rx.borrow_and_update();
+                            if let Some(tip) = latest_consensus_tip {
+                                self.finalization_mailbox.reconcile_marshal_tip(tip)?;
+                            }
                             accountable.store(self.local_validator_accountable(), Ordering::Release);
                             let desired_signer = super::signer::authority_signer_enabled(
                                 authority.as_ref(), accountable.load(Ordering::Acquire), self.state.signing_share.is_some(), self.radicle_status.snapshot().voting_gate,
@@ -177,6 +184,10 @@ where
                     }
                 },
 
+                Some(view_height) = self.finalization_view_advanced_rx.recv() => {
+                    let _ = self.execution_finalized_height_tx.send(view_height);
+                },
+
                 _ = &mut provider_ready_retry_timer => {
                     provider_ready_retry_timer = Box::pin(std::future::pending());
                     if let Some(current_height) = pending_provider_ready_height {
@@ -184,9 +195,8 @@ where
                     }
                 },
 
-                // Block-height based DKG/VRF rotation. Execution-finalized height
-                // notifications after successful new_payload + FCU drive it. Wall-clock
-                // polling and raw consensus finalization do not drive it.
+                // Block-height based DKG/VRF rotation. Execution and canonical
+                // finalization-view notifications both recheck the provider/tip gate.
                 Some(current_height) = wait_for_execution_finalized_height => {
                     match latest_consensus_tip {
                         Some(tip) => {

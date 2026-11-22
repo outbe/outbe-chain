@@ -8,6 +8,7 @@
 
 use crate::digest::Digest;
 use crate::finalization::parent_cert_store::CertifiedParentProofRecord;
+use crate::marshal_update_reporter::ConsensusTip;
 use alloy_primitives::B256;
 use commonware_consensus::types::Round;
 use futures::channel::mpsc;
@@ -44,6 +45,7 @@ impl std::error::Error for FinalizationMailboxClosed {}
 /// the certificate or modify its protocol binding.
 pub enum Message {
     Finalized(Finalized),
+    ReconcileMarshalTip(ConsensusTip),
     CertifiedNotarization(PendingCertification),
 }
 
@@ -115,6 +117,15 @@ impl Mailbox {
             .map_err(|_| FinalizationMailboxClosed)
     }
 
+    pub fn reconcile_marshal_tip(
+        &self,
+        tip: ConsensusTip,
+    ) -> Result<(), FinalizationMailboxClosed> {
+        self.inner
+            .unbounded_send(Message::ReconcileMarshalTip(tip))
+            .map_err(|_| FinalizationMailboxClosed)
+    }
+
     /// Enqueue a pre-built certified-parent witness record for off-thread
     /// durable persistence. Capacity is reserved without waiting, then the
     /// message is sent. `Full` drops this best-effort fallback write; `Closed`
@@ -170,6 +181,7 @@ mod tests {
             Message::Finalized(f) => {
                 assert_eq!(f.digest.0, B256::with_last_byte(0xAA));
             }
+            Message::ReconcileMarshalTip(_) => panic!("expected Finalized"),
             Message::CertifiedNotarization(_) => panic!("expected Finalized"),
         }
     }
