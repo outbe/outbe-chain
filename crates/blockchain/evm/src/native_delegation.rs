@@ -69,8 +69,12 @@ pub(crate) fn normalize_delegated_native_call(
 /// `DELEGATECALL`, `STATICCALL`) targeting an EIP-7702 EOA delegated to a registered
 /// native precompile carrying the `[0xef]` system marker.
 ///
-/// Completes immediately with `InstrStop::Stop` at 0 gas without mutating any account
-/// code in state; all other executions of `0xef` fall through to `instr::invalid`.
+/// Invariant: registered Outbe native precompile accounts carry either empty code or the
+/// single-byte `[0xef]` EIP-161 persistence marker (never arbitrary user contract bytecode).
+/// Checking `pc_offset == 0` ensures only entry-byte execution of that marker completes
+/// immediately with `InstrStop::Stop` at 0 gas without mutating state; all other executions
+/// of `0xef` (including user bytecode containing `0xef` at any offset) fall through to
+/// `instr::invalid`.
 pub(crate) struct GuardedNativeMarkerOpcode;
 
 impl Instruction<OutbeEvmTypes> for GuardedNativeMarkerOpcode {

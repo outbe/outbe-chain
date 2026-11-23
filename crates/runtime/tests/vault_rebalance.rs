@@ -156,6 +156,125 @@ fn rebalance_moves_stablecoins_between_two_vaults_through_real_frames() {
     assert_eq!(amount_to, U256::from(AMOUNT));
 }
 
+/// Wave 5 N2 seam invariant: end-to-end EVM transaction where a Solidity-style caller
+/// contract stores sentinel words in EVM memory, invokes `IVaultRouter.rebalance` (which
+/// executes four nested EVM `sub_call`s that write into child memory), and reads back its
+/// own memory after return — proving `evm2` precompile `sub_call` never clobbers caller memory.
+#[test]
+fn caller_memory_is_preserved_across_outbe_precompile_subcall() {
+    use alloy_consensus::TxLegacy;
+    use alloy_primitives::TxKind;
+    use evm2::{env::BlockEnvExt, ethereum::TxEnvelope, SpecId};
+    use outbe_evm::OutbeEvmFactory;
+    use reth_ethereum::evm::EthEvmEnv;
+    use reth_primitives_traits::Recovered;
+
+    const EOA: Address = Address::new([0x99; 20]);
+    let sentinels: [[u8; 32]; 4] = [[0x11; 32], [0x22; 32], [0x33; 32], [0x44; 32]];
+
+    // Build caller contract bytecode deployed at bonded `CCA`:
+    // 1. MSTORE four 32-byte sentinels at 0x00, 0x20, 0x40, 0x60.
+    // 2. CALLDATACOPY(0x100, 0x00, CALLDATASIZE).
+    // 3. CALL(GAS, VAULT_ROUTER_ADDRESS, 0, 0x100, CALLDATASIZE, 0x200, 0x20).
+    // 4. MSTORE(0x80, call_status); MSTORE(0xa0, MLOAD(0x200)).
+    // 5. RETURN(0x00, 0xc0).
+    let mut caller_code = Vec::new();
+    for (idx, word) in sentinels.iter().enumerate() {
+        caller_code.push(0x7f); // PUSH32
+        caller_code.extend_from_slice(word);
+        caller_code.extend_from_slice(&[0x60, (idx as u8) * 0x20, 0x52]); // PUSH1 offset; MSTORE
+    }
+    caller_code.extend_from_slice(&[
+        0x36, // CALLDATASIZE
+        0x60, 0x00, // PUSH1 0x00 (calldata offset)
+        0x61, 0x01, 0x00, // PUSH2 0x0100 (dest memory offset)
+        0x37, // CALLDATACOPY
+        0x60, 0x20, // retSize = 0x20
+        0x61, 0x02, 0x00, // retOffset = 0x0200
+        0x36, // argsSize = CALLDATASIZE
+        0x61, 0x01, 0x00, // argsOffset = 0x0100
+        0x60, 0x00, // value = 0
+        0x73, // PUSH20 VAULT_ROUTER_ADDRESS
+    ]);
+    caller_code.extend_from_slice(VAULT_ROUTER_ADDRESS.as_slice());
+    caller_code.extend_from_slice(&[
+        0x5a, // GAS
+        0xf1, // CALL
+        0x60, 0x80, // PUSH1 0x80
+        0x52, // MSTORE call_status
+        0x61, 0x02, 0x00, // PUSH2 0x0200
+        0x51, // MLOAD amount_to
+        0x60, 0xa0, // PUSH1 0xa0
+        0x52, // MSTORE amount_to
+        0x60, 0xc0, // PUSH1 0xc0 (192 bytes)
+        0x60, 0x00, // PUSH1 0x00
+        0xf3, // RETURN
+    ]);
+
+    let mut db = seeded_db(true, true, false);
+    db.insert_account_info(&CCA, code_account(&caller_code));
+    db.insert_account_info(
+        &EOA,
+        AccountInfo {
+            balance: U256::from(10_000_000_000_000u64),
+            ..Default::default()
+        },
+    );
+
+    let env = EthEvmEnv::new(
+        SpecId::PRAGUE,
+        BlockEnvExt {
+            number: U256::from(1u64),
+            timestamp: U256::from(1u64),
+            gas_limit: U256::from(30_000_000u64),
+            ..Default::default()
+        },
+        outbe_primitives::chain::CHAIN_ID,
+    );
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(outbe_primitives::chain::CHAIN_ID),
+            nonce: 0,
+            gas_price: 0,
+            gas_limit: 5_000_000,
+            to: TxKind::Call(CCA),
+            value: U256::ZERO,
+            input: rebalance_calldata(U256::from(AMOUNT), U256::MAX),
+        }),
+        EOA,
+    );
+
+    let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
+        .create_evm(&mut db, env);
+    let result = evm
+        .transact(&tx)
+        .expect("top-level transaction calling VaultRouter must execute")
+        .commit();
+    assert!(result.is_success(), "expected success, got {result:?}");
+    assert_eq!(result.output.len(), 0xc0, "caller must return 6 ABI words");
+
+    for (idx, expected) in sentinels.iter().enumerate() {
+        let start = idx * 32;
+        assert_eq!(
+            &result.output[start..start + 32],
+            expected,
+            "caller memory word {idx} at offset {start:#x} was corrupted by Outbe precompile sub-call"
+        );
+    }
+    let call_status = U256::from_be_slice(&result.output[0x80..0xa0]);
+    let amount_to = U256::from_be_slice(&result.output[0xa0..0xc0]);
+    assert_eq!(
+        call_status,
+        U256::from(1u64),
+        "inner VaultRouter CALL must succeed"
+    );
+    assert_eq!(
+        amount_to,
+        U256::from(AMOUNT),
+        "nested sub-calls must return rebalanced amount"
+    );
+}
+
 #[test]
 fn rebalance_reverts_atomically_when_the_caller_has_not_approved() {
     let result = rebalance(&mut EvmWorld::new(

@@ -995,3 +995,221 @@ mod copied_store_controls {
             .is_none());
     }
 }
+
+#[test]
+fn marshal_restart_recovers_processed_blocks_and_rounds_across_h1_to_h2() {
+    use commonware_consensus::{
+        marshal::{self, core::Processed, resolver::handler},
+        types::{Epoch, Height, Round, View, ViewDelta},
+    };
+    use commonware_parallel::Sequential;
+    use commonware_runtime::{buffer::paged::CacheRef, deterministic, Clock as _, Runner as _};
+    use commonware_utils::Acknowledgement as _;
+    use futures::StreamExt as _;
+    use std::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
+
+    deterministic::Runner::default().start(|context| async move {
+        let keys: Vec<bls12381::PrivateKey> =
+            (1u64..=3).map(bls12381::PrivateKey::from_seed).collect();
+        let participants: commonware_utils::ordered::Set<bls12381::PublicKey> =
+            keys.iter().map(|k| k.public_key()).try_collect().unwrap();
+        let dkg = outbe_consensus::bls::bootstrap_dkg(3).unwrap();
+        let signers = bootstrap_fixture_signers(&keys, &participants, &dkg);
+        let verifier = HybridScheme::<MinSig>::verifier(
+            &config::outbe_app_namespace(),
+            participants,
+            dkg.polynomial.clone(),
+        )
+        .unwrap();
+
+        let genesis = recovery_block(0);
+        let mut raw_h1 = Block::default();
+        raw_h1.header.number = 1;
+        raw_h1.header.parent_hash = genesis.block_hash();
+        let h1 = ConsensusBlock::from_sealed(SealedBlock::seal_slow(
+            raw_h1.map_header(OutbeHeader::new),
+        ));
+        let mut raw_h2 = Block::default();
+        raw_h2.header.number = 2;
+        raw_h2.header.parent_hash = h1.block_hash();
+        let h2 = ConsensusBlock::from_sealed(SealedBlock::seal_slow(
+            raw_h2.map_header(OutbeHeader::new),
+        ));
+
+        let r1 = Round::new(Epoch::new(0), View::new(1));
+        let r2 = Round::new(Epoch::new(0), View::new(2));
+        let f1 = certify_fixture_proposal(
+            &verifier,
+            &signers,
+            Proposal::new(r1, View::zero(), h1.digest()),
+        );
+        let f2 = certify_fixture_proposal(
+            &verifier,
+            &signers,
+            Proposal::new(r2, View::new(1), h2.digest()),
+        );
+
+        let open_marshal = |sub_ctx: deterministic::Context,
+                            verifier: HybridScheme<MinSig>,
+                            genesis: ConsensusBlock| async move {
+            let provider = HybridSchemeProvider::new();
+            let _ = provider.register(Epoch::new(0), verifier);
+            let cache = CacheRef::new(
+                NonZeroU16::new(1024).unwrap(),
+                NonZeroUsize::new(10).unwrap(),
+            );
+            let items = NonZeroU64::new(10).unwrap();
+            let buffer = NonZeroUsize::new(1024).unwrap();
+            fn archive_cfg<C>(
+                suffix: &str,
+                cache: &CacheRef,
+                items: NonZeroU64,
+                buffer: NonZeroUsize,
+                codec_config: C,
+            ) -> commonware_storage::archive::immutable::Config<C> {
+                commonware_storage::archive::immutable::Config {
+                    metadata_partition: format!("restart-h1-h2-{suffix}-metadata"),
+                    freezer_table_partition: format!("restart-h1-h2-{suffix}-freezer-table"),
+                    freezer_table_initial_size: 64,
+                    freezer_table_resize_frequency: 10,
+                    freezer_table_resize_chunk_size: 10,
+                    freezer_key_partition: format!("restart-h1-h2-{suffix}-freezer-key"),
+                    freezer_key_page_cache: cache.clone(),
+                    freezer_value_partition: format!("restart-h1-h2-{suffix}-freezer-value"),
+                    freezer_value_target_size: 1024,
+                    freezer_value_compression: None,
+                    ordinal_partition: format!("restart-h1-h2-{suffix}-ordinal"),
+                    items_per_section: items,
+                    codec_config,
+                    replay_buffer: buffer,
+                    freezer_key_write_buffer: buffer,
+                    freezer_value_write_buffer: buffer,
+                    ordinal_write_buffer: buffer,
+                }
+            }
+            let certificates = commonware_storage::archive::immutable::Archive::init(
+                sub_ctx.child("marshal_finalizations"),
+                archive_cfg(
+                    "finalizations",
+                    &cache,
+                    items,
+                    buffer,
+                    HybridScheme::<MinSig>::certificate_codec_config_unbounded(),
+                ),
+            )
+            .await
+            .unwrap();
+            let blocks = commonware_storage::archive::immutable::Archive::init(
+                sub_ctx.child("marshal_blocks"),
+                archive_cfg("blocks", &cache, items, buffer, ()),
+            )
+            .await
+            .unwrap();
+            let (actor, mailbox, _) = marshal::core::Actor::init(
+                sub_ctx.child("marshal"),
+                certificates,
+                blocks,
+                marshal::Config {
+                    provider,
+                    epocher: outbe_consensus::follow::FollowerEpocher::new(100, 10),
+                    start: marshal::Start::Genesis(commonware_cryptography::Digested::precomputed(
+                        genesis.clone(),
+                        genesis.digest(),
+                    )),
+                    partition_prefix: "restart-h1-h2".into(),
+                    mailbox_size: NonZeroUsize::new(32).unwrap(),
+                    view_retention: ViewDelta::new(100),
+                    prunable_items_per_section: items,
+                    page_cache: cache,
+                    replay_buffer: buffer,
+                    key_write_buffer: buffer,
+                    value_write_buffer: buffer,
+                    block_codec_config: (),
+                    max_repair: NonZeroUsize::new(10).unwrap(),
+                    max_pending_acks: NonZeroUsize::new(1).unwrap(),
+                    strategy: Sequential,
+                },
+            )
+            .await;
+            let (receiver, _handler) =
+                handler::init(sub_ctx.child("handler"), NonZeroUsize::new(32).unwrap());
+            let (tx, rx) = futures::channel::mpsc::unbounded();
+            let reporter = outbe_consensus::executor::Mailbox::from_sender(tx);
+            let handle = actor.start_unbuffered(
+                reporter,
+                (receiver, outbe_consensus::test_harness::NoopMarshalResolver),
+            );
+            (mailbox, rx, _handler, handle)
+        };
+
+        // Phase 1 (pre-restart): finalize and acknowledge H1 -> H2.
+        {
+            let (mut mailbox, mut deliveries, _keepalive, handle) =
+                open_marshal(context.child("boot1"), verifier.clone(), genesis.clone()).await;
+            assert!(
+                mailbox
+                    .verified(
+                        r1,
+                        commonware_cryptography::Digested::precomputed(h1.clone(), h1.digest()),
+                    )
+                    .await
+            );
+            assert!(
+                mailbox
+                    .verified(
+                        r2,
+                        commonware_cryptography::Digested::precomputed(h2.clone(), h2.digest()),
+                    )
+                    .await
+            );
+            let _ = mailbox.report(Activity::Finalization(f1));
+            let _ = mailbox.report(Activity::Finalization(f2));
+
+            let mut acked = Vec::new();
+            while acked.last().copied() != Some(2) {
+                let msg = deliveries.next().await.expect("marshal delivery");
+                if let outbe_consensus::executor::ingress::Message::MarshalUpdate(update) = msg {
+                    if let Update::Block(delivered, ack) = *update {
+                        acked.push(delivered.inner().number());
+                        ack.acknowledge();
+                    }
+                }
+            }
+            assert_eq!(acked, vec![0, 1, 2]);
+            while mailbox.get_processed().await != Some(Processed::Block(Height::new(2))) {
+                context.sleep(Duration::from_millis(1)).await;
+            }
+            handle.abort();
+            let _ = handle.await;
+        }
+
+        // Phase 2 (post-restart on the same persistent archive): recover H1 -> H2 state.
+        {
+            let (mailbox, _deliveries, _keepalive, handle) =
+                open_marshal(context.child("boot2"), verifier, genesis).await;
+            assert_eq!(
+                mailbox.get_processed().await,
+                Some(Processed::Block(Height::new(2))),
+                "restarted Marshal must recover Processed::Block(2) from persisted archive"
+            );
+            let rec_h1 =
+                recover_application_finalized_round(context.child("rec_h1"), mailbox.clone(), 1)
+                    .await
+                    .unwrap()
+                    .expect("H1 round must survive restart");
+            let rec_h2 =
+                recover_application_finalized_round(context.child("rec_h2"), mailbox.clone(), 2)
+                    .await
+                    .unwrap()
+                    .expect("H2 round must survive restart");
+            assert_eq!(rec_h1.round, r1);
+            assert_eq!(rec_h1.digest, h1.digest());
+            assert_eq!(rec_h2.round, r2);
+            assert_eq!(rec_h2.digest, h2.digest());
+            assert!(mailbox.get_finalization(Height::new(1)).await.is_some());
+            assert!(mailbox.get_finalization(Height::new(2)).await.is_some());
+            handle.abort();
+            let _ = handle.await;
+        }
+    });
+}

@@ -451,3 +451,215 @@ async fn verify_finality_observer_quiesced(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod processed_absent_tests {
+    use super::*;
+    use commonware_consensus::{
+        marshal::{self, core::Processed, resolver::handler},
+        simplex::types::{Finalization, Finalize, Proposal},
+        types::{Epoch, Round, View, ViewDelta},
+    };
+    use commonware_cryptography::bls12381::{self, primitives::variant::MinSig};
+    use commonware_parallel::Sequential;
+    use commonware_runtime::{
+        buffer::paged::CacheRef, deterministic, Runner as _, Supervisor as _,
+    };
+    use commonware_utils::{
+        ordered::{Quorum as _, Set},
+        Acknowledgement as _,
+    };
+    use reth_ethereum::{primitives::SealedBlock, Block};
+    use std::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    #[derive(Clone)]
+    struct HoldingReporter {
+        held: Arc<Mutex<Vec<(u64, commonware_utils::acknowledgement::Exact)>>>,
+    }
+
+    impl commonware_consensus::Reporter for HoldingReporter {
+        type Activity = crate::marshal_types::MarshalUpdate;
+        fn report(&mut self, activity: Self::Activity) -> commonware_actor::Feedback {
+            if let marshal::Update::Block(block, ack) = activity {
+                if block.inner().number() == 0 {
+                    ack.acknowledge();
+                } else {
+                    self.held
+                        .lock()
+                        .unwrap()
+                        .push((block.inner().number(), ack));
+                }
+            }
+            commonware_actor::Feedback::Ok
+        }
+    }
+
+    #[test]
+    fn finality_observer_quiesce_enforces_processed_absent_floor_then_accepts_block() {
+        deterministic::Runner::default().start(|context| async move {
+            let keys: Vec<bls12381::PrivateKey> =
+                (1u64..=3).map(bls12381::PrivateKey::from_seed).collect();
+            let participants: Set<bls12381::PublicKey> =
+                keys.iter().map(|k| k.public_key()).try_collect().unwrap();
+            let dkg = crate::bls::bootstrap_dkg(3).unwrap();
+            let signers: Vec<crate::hybrid::HybridScheme<MinSig>> = keys
+                .iter()
+                .map(|key| {
+                    let idx = participants.index(&key.public_key()).unwrap();
+                    crate::hybrid::HybridScheme::signer(
+                        &crate::config::outbe_app_namespace(),
+                        participants.clone(),
+                        key.clone(),
+                        dkg.polynomial.clone(),
+                        dkg.shares[idx.get() as usize].clone(),
+                    )
+                    .unwrap()
+                })
+                .collect();
+            let verifier = crate::hybrid::HybridScheme::<MinSig>::verifier(
+                &crate::config::outbe_app_namespace(),
+                participants,
+                dkg.polynomial.clone(),
+            )
+            .unwrap();
+            let provider = HybridSchemeProvider::new();
+            assert!(provider.register(Epoch::new(0), verifier.clone()));
+
+            let mut raw = Block::default();
+            raw.header.number = 5;
+            raw.header.extra_data = alloy_primitives::Bytes::from_static(&[5]);
+            let floor_block = crate::block::ConsensusBlock::from_sealed(SealedBlock::seal_slow(
+                raw.map_header(outbe_primitives::OutbeHeader::new),
+            ));
+            let round = Round::new(Epoch::new(0), View::new(5));
+            let proposal = Proposal::new(round, View::new(4), floor_block.digest());
+            let votes: Vec<_> = signers
+                .iter()
+                .map(|s| Finalize::sign(s, proposal.clone()).unwrap())
+                .collect();
+            let finalization = Finalization::from_finalizes(
+                &verifier,
+                commonware_utils::iter::NonEmpty::try_new(votes.iter()).unwrap(),
+                &Sequential,
+            )
+            .unwrap();
+
+            let cache = CacheRef::new(
+                NonZeroU16::new(1024).unwrap(),
+                NonZeroUsize::new(10).unwrap(),
+            );
+            let items = NonZeroU64::new(10).unwrap();
+            let buffer = NonZeroUsize::new(1024).unwrap();
+            let (certificates, blocks) = crate::test_fixtures::marshal::MarshalArchiveFixture {
+                partition_prefix: "quiesce-absent",
+                page_cache: &cache,
+                items_per_section: items,
+                replay_buffer: buffer,
+                write_buffer: buffer,
+            }
+            .open(&context)
+            .await
+            .unwrap();
+            let genesis = Block::default().map_header(outbe_primitives::OutbeHeader::new);
+            let (actor, mailbox, _) = marshal::core::Actor::init(
+                context.child("marshal"),
+                certificates,
+                blocks,
+                marshal::Config {
+                    provider,
+                    epocher: crate::follow::FollowerEpocher::new(100, 10),
+                    start: marshal::Start::Genesis(crate::test_fixtures::digested_block(
+                        crate::block::ConsensusBlock::from_sealed(SealedBlock::seal_slow(genesis)),
+                    )),
+                    partition_prefix: "quiesce-absent".into(),
+                    mailbox_size: NonZeroUsize::new(32).unwrap(),
+                    view_retention: ViewDelta::new(100),
+                    prunable_items_per_section: items,
+                    page_cache: cache,
+                    replay_buffer: buffer,
+                    key_write_buffer: buffer,
+                    value_write_buffer: buffer,
+                    block_codec_config: (),
+                    max_repair: NonZeroUsize::new(10).unwrap(),
+                    max_pending_acks: NonZeroUsize::new(1).unwrap(),
+                    strategy: Sequential,
+                },
+            )
+            .await;
+            let held = Arc::new(Mutex::new(Vec::new()));
+            let (receiver, _handler) =
+                handler::init(context.child("handler"), NonZeroUsize::new(32).unwrap());
+            let resolver = crate::test_harness::NoopMarshalResolver;
+            let _marshal_handle = actor.start_unbuffered(
+                HoldingReporter {
+                    held: Arc::clone(&held),
+                },
+                (receiver, resolver),
+            );
+            while mailbox.get_processed().await != Some(Processed::Block(Height::zero())) {
+                context.sleep(Duration::from_millis(1)).await;
+            }
+            assert!(
+                mailbox
+                    .verified(
+                        round,
+                        commonware_cryptography::Digested::precomputed(
+                            floor_block.clone(),
+                            floor_block.digest(),
+                        ),
+                    )
+                    .await
+            );
+            mailbox.set_floor(finalization);
+            while mailbox.get_processed().await != Some(Processed::Absent(Height::new(4))) {
+                context.sleep(Duration::from_millis(1)).await;
+            }
+
+            let (_control, drain) = crate::follower_shutdown::follower_drain_pair();
+            let (tx, _rx) = futures::channel::mpsc::unbounded();
+            let reporter = drain
+                .install(crate::executor::Mailbox::from_sender(tx))
+                .unwrap()
+                .unwrap();
+            reporter.initiate_promotion(5).unwrap();
+
+            // At Processed::Absent(4): persisted == 4 is acknowledged, persisted == 5 fails closed.
+            verify_finality_observer_quiesced(&reporter, &mailbox, Some(4))
+                .await
+                .expect("persisted == Absent(4) floor must quiesce cleanly");
+            let err = verify_finality_observer_quiesced(&reporter, &mailbox, Some(5))
+                .await
+                .expect_err("persisted > Absent(4) must fail quiesce");
+            let typed = err
+                .downcast_ref::<crate::errors::FollowerStackError>()
+                .expect("typed FollowerStackError");
+            assert!(
+                matches!(
+                    typed,
+                    crate::errors::FollowerStackError::MarshalHasNotAcknowledgedProofDrain {
+                        processed,
+                        persisted: 5,
+                    } if *processed == Height::new(4)
+                ),
+                "unexpected error: {typed:?}"
+            );
+
+            // Acknowledging block 5 advances Processed::Absent(4) -> Processed::Block(5),
+            // allowing persisted == 5 to quiesce cleanly.
+            while held.lock().unwrap().is_empty() {
+                context.sleep(Duration::from_millis(1)).await;
+            }
+            for (_, ack) in held.lock().unwrap().drain(..) {
+                ack.acknowledge();
+            }
+            while mailbox.get_processed().await != Some(Processed::Block(Height::new(5))) {
+                context.sleep(Duration::from_millis(1)).await;
+            }
+            verify_finality_observer_quiesced(&reporter, &mailbox, Some(5))
+                .await
+                .expect("persisted == Block(5) must quiesce cleanly");
+        });
+    }
+}

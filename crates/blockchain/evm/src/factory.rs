@@ -441,6 +441,10 @@ pub fn outbe_tx_registry(spec_id: SpecId) -> TxRegistry<OutbeEvmTypes, TxResult<
     registry
 }
 
+/// Pinned to `evm2` rev `66687c18b34d3bdbb899f5eb7605070615c03475` (`66687c1`):
+/// relies on `prepare_with_hooks::<OutbeEvmTypes, CapturePreparedHooks>` capturing
+/// intrinsic, floor, and initial state gas via `adjust_intrinsic_gas` before executing
+/// the initial frame with Outbe's EIP-7702 native-delegation normalization.
 fn execute_standard_prepared<Tx: alloy_consensus::Transaction>(
     req: TxRequest<'_, '_, OutbeEvmTypes, Tx>,
     gas: CapturedPreparedGas,
@@ -533,6 +537,9 @@ fn apply_eip7702_auth_phase(
     }
 }
 
+/// Pinned to `evm2` rev `66687c18b34d3bdbb899f5eb7605070615c03475` (`66687c1`):
+/// mirrors `evm2::ethereum::eip7702::execute_prepared` while applying Outbe's
+/// `normalize_delegated_native_call` between `prepare_initial_frame` and `execute_initial_frame`.
 fn execute_eip7702_prepared(
     req: TxRequest<'_, '_, OutbeEvmTypes, LazyTxEip7702>,
     gas: CapturedPreparedGas,
@@ -615,6 +622,12 @@ fn execute_eip7702_prepared(
     )
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "evm2 prepare_with_hooks completed without capturing prepared gas via adjust_intrinsic_gas"
+)]
+struct MissingCapturedPreparedGasError;
+
 struct OutbeTxHandler<V, P, E> {
     validate_prepare: V,
     prepare: P,
@@ -650,7 +663,11 @@ impl<V, P, E> OutbeTxHandler<V, P, E> {
             .ext_mut()
             .captured_prepared_gas
             .take()
-            .unwrap_or_default();
+            .ok_or_else(|| {
+                evm2::registry::HandlerError::Fatal(evm2::AnyError::new(
+                    MissingCapturedPreparedGasError,
+                ))
+            })?;
         gas.sender_nonce = sender_nonce;
 
         let create_guard = TopLevelCreateGuard::arm(req.host, create_dest)?;

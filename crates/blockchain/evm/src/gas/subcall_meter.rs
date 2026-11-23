@@ -89,6 +89,7 @@ impl SubcallGasMeter {
     /// frame's settlement).
     #[inline]
     pub fn set_state_gas_spent(&mut self, val: i64) {
+        // Converges in at most 3 saturating steps for every (cur, val) in i64 x i64.
         while self.inner.state_gas_spent() != val {
             let delta = val.saturating_sub(self.inner.state_gas_spent());
             self.inner.add_state_gas_spent(delta);
