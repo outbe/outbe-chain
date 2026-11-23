@@ -121,6 +121,43 @@ contract OriginRouterMultiTargetTest is CrossChainTest {
         assertTrue(origin.getFailedMessageSend(1).sent, "the cancel leaves");
     }
 
+    // --- Series pages ---
+    function _page() internal view returns (IOriginRouter.IntexSeriesParams[] memory page) {
+        page = new IOriginRouter.IntexSeriesParams[](2);
+        for (uint256 s; s < 2; ++s) {
+            page[s] = IOriginRouter.IntexSeriesParams({
+                seriesId: s == 0 ? bytes14("20260716-USD-U") : bytes14("20260716-EUR-E"),
+                emissionDay: DAY,
+                issuedAt: uint32(block.timestamp),
+                issuedUnits: 10,
+                promisLoadMinor: 1,
+                entryPriceMinor: 1,
+                callNoticePeriod: 0,
+                issuanceCurrency: 840,
+                referenceCurrency: 840,
+                callWindow: 30,
+                callThreshold: 5,
+                callPriceMinor: 2,
+                transitMargin: 1 hours
+            });
+        }
+    }
+
+    function test_a_kept_series_page_is_reported_sent_only_when_it_leaves() public {
+        _fireStart(DAY);
+        origin.registerRemoteMessenger(TARGET_B, "");
+
+        vm.recordLogs();
+        vm.prank(factory);
+        origin.sendIntexSeries(TARGET_B, DAY, 1, 3, _page());
+        assertEq(_countTopic(IOriginRouter.IntexSeriesSent.selector), 0, "a kept page did not leave");
+
+        origin.registerRemoteMessenger(TARGET_B, _interop(TARGET_B, peerB));
+        vm.expectEmit(false, true, true, true, address(origin));
+        emit IOriginRouter.IntexSeriesSent(bytes32(0), DAY, TARGET_B, 1, 3, 2);
+        origin.retryMessageSend(0);
+    }
+
     // --- Call notice ---
     function _countCallNoticeSent(Vm.Log[] memory logs, uint32 chain, bytes14[] memory ids)
         internal

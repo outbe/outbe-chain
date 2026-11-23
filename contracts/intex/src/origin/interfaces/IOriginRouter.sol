@@ -83,7 +83,8 @@ interface IOriginRouter {
         uint32 wonBidsCount
     );
 
-    /// @notice Emitted for each page of a day's Intex series sent to one target chain.
+    /// @notice Emitted for each page of a day's Intex series that leaves for one target chain, also when a
+    ///         kept page leaves through {retryMessageSend}.
     /// @param seriesCount Number of series the page carries.
     event IntexSeriesSent(
         bytes32 indexed sendId,
