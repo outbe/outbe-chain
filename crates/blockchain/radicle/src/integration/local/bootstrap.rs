@@ -298,8 +298,9 @@ pub(super) fn decode_partial(
         .committee
         .get(partial.participant_index() as usize)
         .ok_or(Error::Protocol)?;
-    let sender =
-        commonware_cryptography::bls12381::PublicKey::decode(member.consensus_pubkey.as_slice())
-            .map_err(|_| Error::Protocol)?;
+    let sender = commonware_cryptography::bls12381::PublicKey::decode(commonware_codec::Copying(
+        member.consensus_pubkey.as_slice(),
+    ))
+    .map_err(|_| Error::Protocol)?;
     Ok((partial, sender))
 }

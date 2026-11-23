@@ -131,6 +131,10 @@ impl Receiver for MockReceiver {
         let _ = self.delivered.send(());
         Ok(item)
     }
+
+    fn capacity(&self) -> std::num::NonZeroUsize {
+        std::num::NonZeroUsize::new(1).expect("non-zero capacity")
+    }
 }
 
 fn local_identity() -> LocalEndpointIdentityHandle {

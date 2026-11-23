@@ -91,8 +91,10 @@ impl RepositoryGossipMessage {
                     .committee
                     .get(attestation.participant_index as usize)
                     .ok_or(signing::Error::Participant)?;
-                let key = bls12381::PublicKey::decode(member.consensus_pubkey.as_slice())
-                    .map_err(|_| signing::Error::Participant)?;
+                let key = bls12381::PublicKey::decode(commonware_codec::Copying(
+                    member.consensus_pubkey.as_slice(),
+                ))
+                .map_err(|_| signing::Error::Participant)?;
                 if &key != sender {
                     return Err(signing::Error::Participant);
                 }
@@ -199,8 +201,9 @@ impl EndpointNetworkState {
             .committee
             .iter()
             .filter(|member| {
-                let Ok(key) = bls12381::PublicKey::decode(member.consensus_pubkey.as_slice())
-                else {
+                let Ok(key) = bls12381::PublicKey::decode(commonware_codec::Copying(
+                    member.consensus_pubkey.as_slice(),
+                )) else {
                     return false;
                 };
                 let peer = PeerId::from_public_key(&key);

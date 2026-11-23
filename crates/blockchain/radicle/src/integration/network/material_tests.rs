@@ -3,7 +3,7 @@ use super::*;
 use crate::manager::FinalizedPatchSigningState;
 use crate::{integration::RadicleStatusChannel, manager::FinalizedRepositoryAuthority};
 use alloy_primitives::B256;
-use commonware_codec::{DecodeExt as _, Encode as _};
+use commonware_codec::{Copying, DecodeExt as _, Encode as _};
 use commonware_cryptography::bls12381::{
     dkg::feldman_desmedt::Output, primitives::variant::MinSig,
 };
@@ -85,7 +85,8 @@ pub(crate) async fn attestations(
         }
         let attestation = result.unwrap();
         assert_eq!(attestation.participant_index, index as u32);
-        let signature = bls12381::Signature::decode(attestation.signature.as_slice()).unwrap();
+        let signature =
+            bls12381::Signature::decode(Copying(attestation.signature.as_slice())).unwrap();
         assert!(key.public_key().verify(
             PUBLICATION_NAMESPACE,
             &publication.body().to_bytes(),
@@ -715,7 +716,8 @@ pub(crate) async fn bootstrap_attestations(
         } else {
             let attestation = result.unwrap();
             assert_eq!(attestation.participant_index, index as u32);
-            let signature = bls12381::Signature::decode(attestation.signature.as_slice()).unwrap();
+            let signature =
+                bls12381::Signature::decode(Copying(attestation.signature.as_slice())).unwrap();
             assert!(key.public_key().verify(
                 PUBLICATION_NAMESPACE,
                 &publication.body().to_bytes(),

@@ -26,8 +26,8 @@
 //! verification failure mitigate this window. This is Commonware's intentional design
 //! choice to optimize throughput.
 
-use bytes::{Buf, BufMut};
-use commonware_codec::{Encode, Error, FixedSize, Read, ReadExt, Write};
+use bytes::BufMut;
+use commonware_codec::{Buf, Encode, Error, FixedSize, Read, ReadExt, Write};
 use commonware_consensus::{
     simplex::{scheme::Namespace, types::Subject},
     types::{Epoch, Round},
@@ -700,6 +700,13 @@ impl<V: Variant> certificate::Verifier for HybridScheme<V> {
         false
     }
 
+    fn max_certificate_size(participants: u32) -> usize {
+        commonware_utils::bitmap::BitMap::<1>::max_encode_size(u64::from(participants))
+            + aggregate::Signature::<MinPk>::SIZE
+            + 8
+            + V::Signature::SIZE
+    }
+
     fn certificate_codec_config(&self) -> <Self::Certificate as Read>::Cfg {
         self.participants_ref().len()
     }
@@ -712,9 +719,9 @@ impl<V: Variant> certificate::Verifier for HybridScheme<V> {
 impl<V: Variant> certificate::Scheme for HybridScheme<V> {
     type Signature = HybridSignature<V>;
 
-    fn me(&self) -> Option<Participant> {
+    fn me(&self) -> Option<certificate::Membership> {
         match &self.role {
-            Role::Signer { index, .. } => Some(*index),
+            Role::Signer { index, .. } => Some(certificate::Membership::Signer(*index)),
             Role::Verifier { .. } => None,
         }
     }
@@ -841,6 +848,27 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
         }
 
         Verification::new(verified, invalid)
+    }
+
+    fn optimistic_assemble<'a, R, D, I, J>(
+        &self,
+        rng: &mut R,
+        subject: Self::Subject<'_, D>,
+        pending: I,
+        verified: J,
+        strategy: &impl Strategy,
+    ) -> Result<Self::Certificate, Verification<Self>>
+    where
+        R: CryptoRng,
+        D: Digest,
+        I: IntoIterator<Item = Attestation<Self>>,
+        I::IntoIter: ExactSizeIterator + Send,
+        J: IntoIterator<Item = &'a Attestation<Self>>,
+        J::IntoIter: Send,
+    {
+        certificate::optimistic_assemble::<Self, _, D, _, _>(
+            self, rng, subject, pending, verified, strategy,
+        )
     }
 
     fn assemble<I>(
@@ -1747,7 +1775,9 @@ mod tests {
         let sig = attestation.signature.get().cloned().unwrap();
         let encoded = sig.encode();
         assert_eq!(encoded.len(), HybridSignature::<MinSig>::SIZE);
-        let decoded = HybridSignature::<MinSig>::read(&mut encoded.as_ref()).unwrap();
+        let decoded =
+            HybridSignature::<MinSig>::read(&mut commonware_codec::Copying(encoded.as_ref()))
+                .unwrap();
         assert_eq!(sig, decoded);
         assert_eq!(
             sig.seed_partial_identity_sig,
@@ -1977,7 +2007,7 @@ mod tests {
         // Encode and decode
         let encoded = commonware_codec::Encode::encode(&certificate);
         let decoded = HybridCertificate::<MinSig>::read_cfg(
-            &mut encoded.as_ref(),
+            &mut commonware_codec::Copying(encoded.as_ref()),
             &verifier.certificate_codec_config(),
         )
         .unwrap();
@@ -2201,5 +2231,144 @@ mod tests {
         // The seed message is exactly the round's canonical bytes. No path can make
         // the round and its seed message diverge now that one derives from the other.
         assert_eq!(hybrid_seed_message, round_from_subject(&subject).encode());
+    }
+
+    #[test]
+    fn test_me_membership_and_max_certificate_size() {
+        let (schemes, verifier) = signers_and_verifier(4);
+        for scheme in &schemes {
+            let expected = match &scheme.role {
+                Role::Signer { index, .. } => Some(certificate::Membership::Signer(*index)),
+                Role::Verifier { .. } => None,
+            };
+            assert_eq!(scheme.me(), expected);
+        }
+        assert!(verifier.me().is_none());
+
+        let proposal = sample_proposal(Epoch::new(1), View::new(5), 19);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let attestations: Vec<_> = schemes
+            .iter()
+            .map(|s| s.sign::<Sha256Digest>(subject).unwrap())
+            .collect();
+        let certificate = verifier
+            .assemble(
+                NonEmpty::try_new(attestations.into_iter()).unwrap(),
+                &Sequential,
+            )
+            .unwrap();
+        assert_eq!(
+            certificate.encode().len(),
+            TestScheme::max_certificate_size(4)
+        );
+    }
+
+    #[test]
+    fn optimistic_assemble_accepts_valid_quorum() {
+        let (schemes, verifier) = signers_and_verifier(4);
+        let round = Round::new(Epoch::new(1), View::new(9));
+        let proposal = sample_proposal(round.epoch(), round.view(), 77);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let votes: Vec<_> = schemes[..3]
+            .iter()
+            .map(|s| s.sign::<Sha256Digest>(subject).unwrap())
+            .collect();
+        let mut rng = bls_batch_verification_rng();
+
+        for pending_len in [1usize, 3] {
+            let prior = &votes[..3 - pending_len];
+            let pending = votes[3 - pending_len..].to_vec();
+            let cert = verifier
+                .optimistic_assemble::<_, Sha256Digest, _, _>(
+                    &mut rng,
+                    subject,
+                    pending,
+                    prior.iter(),
+                    &Sequential,
+                )
+                .ok()
+                .expect("valid quorum must assemble optimistically");
+            assert!(verifier.verify_certificate::<_, Sha256Digest>(
+                &mut rng,
+                subject,
+                &cert,
+                &Sequential,
+            ));
+            assert!(verifier
+                .verified_vrf_seed_for_round(&mut rng, round, &cert, &Sequential)
+                .is_some());
+        }
+    }
+
+    #[test]
+    fn optimistic_assemble_rejects_tampered_bls_or_vrf_components() {
+        let (schemes, verifier) = signers_and_verifier(4);
+        let round = Round::new(Epoch::new(1), View::new(9));
+        let proposal = sample_proposal(round.epoch(), round.view(), 77);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let votes: Vec<_> = schemes[..3]
+            .iter()
+            .map(|s| s.sign::<Sha256Digest>(subject).unwrap())
+            .collect();
+        let mut rng = bls_batch_verification_rng();
+
+        let foreign = foreign_round_attestation(&schemes[2]);
+        let wrong_vote = foreign.signature.get().unwrap().bls_individual_vote.clone();
+
+        for pending_len in [1usize, 3] {
+            let prior = &votes[..3 - pending_len];
+            let last = pending_len - 1;
+
+            let mut bad_bls = votes[3 - pending_len..].to_vec();
+            let tampered_signer = bad_bls[last].signer;
+            bad_bls[last] = tamper_signature(&bad_bls[last], |s| {
+                s.bls_individual_vote = wrong_vote.clone();
+            });
+            let bls_err = verifier
+                .optimistic_assemble::<_, Sha256Digest, _, _>(
+                    &mut rng,
+                    subject,
+                    bad_bls,
+                    prior.iter(),
+                    &Sequential,
+                )
+                .expect_err("tampered BLS vote must fail optimistic_assemble");
+            assert_eq!(bls_err.invalid, vec![tampered_signer]);
+            assert_eq!(bls_err.verified.len(), pending_len - 1);
+
+            let mut bad_partial = votes[3 - pending_len..].to_vec();
+            corrupt_seed_partial(&mut bad_partial[last], &foreign);
+            let partial_err = verifier
+                .optimistic_assemble::<_, Sha256Digest, _, _>(
+                    &mut rng,
+                    subject,
+                    bad_partial,
+                    prior.iter(),
+                    &Sequential,
+                )
+                .expect_err("tampered VRF partial must fail optimistic_assemble");
+            assert!(partial_err.invalid.is_empty());
+            assert_eq!(partial_err.verified.len(), pending_len - 1);
+
+            let mut stale = votes[3 - pending_len..].to_vec();
+            stale[last] = tamper_signature(&stale[last], |s| s.vrf_material_version = 99);
+            let stale_err = verifier
+                .optimistic_assemble::<_, Sha256Digest, _, _>(
+                    &mut rng,
+                    subject,
+                    stale,
+                    prior.iter(),
+                    &Sequential,
+                )
+                .expect_err("stale VRF material version must fail optimistic_assemble");
+            assert!(stale_err.invalid.is_empty());
+            assert_eq!(stale_err.verified.len(), pending_len - 1);
+        }
     }
 }

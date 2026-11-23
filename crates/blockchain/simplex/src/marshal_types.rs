@@ -51,8 +51,8 @@ pub type MarshalActor<E> = marshal::core::Actor<
 pub type FollowMarshalActor<E> = MarshalActor<E>;
 
 /// Broadcast engine for block dissemination.
-pub type BroadcastEngine<E, D> =
-    commonware_broadcast::buffered::Engine<E, bls12381::PublicKey, ConsensusBlock, D>;
+pub type BroadcastEngine<E, D, B, T = Sequential> =
+    commonware_broadcast::buffered::Engine<E, bls12381::PublicKey, ConsensusBlock, D, B, T>;
 
 /// Broadcast mailbox for block dissemination.
 pub type BroadcastMailbox =

@@ -4,7 +4,7 @@ pub mod accepted;
 pub mod witness;
 
 use alloy_primitives::Address;
-use commonware_codec::{DecodeExt as _, Encode as _, Read as _};
+use commonware_codec::{Copying, DecodeExt as _, Encode as _, Read as _};
 use commonware_cryptography::{
     bls12381::{
         self,
@@ -379,9 +379,9 @@ impl RepositorySigningMaterial {
             .committee
             .get(attestation.participant_index as usize)
             .ok_or(Error::Participant)?;
-        let key = bls12381::PublicKey::decode(member.consensus_pubkey.as_slice())
+        let key = bls12381::PublicKey::decode(Copying(member.consensus_pubkey.as_slice()))
             .map_err(|_| Error::Participant)?;
-        let signature = bls12381::Signature::decode(attestation.signature.as_slice())
+        let signature = bls12381::Signature::decode(Copying(attestation.signature.as_slice()))
             .map_err(|_| Error::Partial)?;
         if !key.verify(PUBLICATION_NAMESPACE, &body.to_bytes(), &signature) {
             return Err(Error::Partial);
@@ -878,11 +878,12 @@ impl RepositoryPartial {
                     index: Participant::new(u32::from_be_bytes(
                         bytes[120..124].try_into().map_err(|_| Error::Partial)?,
                     )),
-                    value: <MinSig as Variant>::Signature::decode(&bytes[124..172])
+                    value: <MinSig as Variant>::Signature::decode(Copying(&bytes[124..172]))
                         .map_err(|_| Error::Partial)?,
                 },
             },
-            signature: bls12381::Signature::decode(&bytes[172..]).map_err(|_| Error::Partial)?,
+            signature: bls12381::Signature::decode(Copying(&bytes[172..]))
+                .map_err(|_| Error::Partial)?,
         })
     }
 }
@@ -1037,14 +1038,14 @@ fn decode_output(bytes: &[u8]) -> Result<Output<MinSig, bls12381::PublicKey>, Er
     if bytes.len() > MAX_PUBLIC_OUTPUT_BYTES {
         return Err(Error::Material);
     }
-    let mut reader = bytes;
+    let mut reader = Copying(bytes);
     let cfg = (
         std::num::NonZeroU32::new(outbe_simplex::bls::MAX_VALIDATORS).ok_or(Error::Material)?,
         ModeVersion::v0(),
     );
     let output = Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut reader, &cfg)
         .map_err(|_| Error::Material)?;
-    if !reader.is_empty() || output.encode().as_ref() != bytes {
+    if bytes::Buf::has_remaining(&reader) || output.encode().as_ref() != bytes {
         return Err(Error::Material);
     }
     Ok(output)
