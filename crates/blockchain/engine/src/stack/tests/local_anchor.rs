@@ -102,14 +102,13 @@ type LocalCertificates = immutable::Archive<
     Digest,
     outbe_consensus::marshal_types::Finalization,
 >;
-type LocalBlocks = immutable::Archive<commonware_tokio::Context, Digest, ConsensusBlock>;
+type LocalBlocks = immutable::Archive<commonware_tokio::Context, Digest, Arc<ConsensusBlock>>;
 
 async fn write_local_anchor_archives(
     ctx: commonware_tokio::Context,
     fixture: &LocalAnchorRecords,
 ) -> (LocalCertificates, LocalBlocks) {
-    let page_cache = CacheRef::from_pooler(
-        &ctx,
+    let page_cache = CacheRef::new(
         nonzero_u16(4096, "page").unwrap(),
         nonzero_usize(64, "capacity").unwrap(),
     );
@@ -142,11 +141,13 @@ async fn write_local_anchor_archives(
             certificates,
             Height::new(block.number()),
             block.digest(),
-            certificate.clone(),
+            certificate,
         )
         .await
         .unwrap();
-        blocks = Blocks::put(blocks, block.clone()).await.unwrap();
+        blocks = Blocks::put(blocks, block.digest(), &Arc::new(block.clone()))
+            .await
+            .unwrap();
     }
     certificates = Certificates::sync(certificates).await.unwrap();
     blocks = Blocks::sync(blocks).await.unwrap();

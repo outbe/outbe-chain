@@ -63,7 +63,15 @@ fn marshal_returns_ok_for_certification_and_forwards_only_notarization_and_final
         let notarization = activities.notarization;
         let finalize = activities.finalize;
 
-        assert!(mailbox.verified(round, block).await);
+        let digest = block.digest();
+        assert!(
+            mailbox
+                .verified(
+                    round,
+                    commonware_cryptography::Digested::precomputed(block, digest),
+                )
+                .await
+        );
         assert_eq!(
             mailbox.report(Activity::Certification(notarization.clone())),
             Feedback::Ok
@@ -96,7 +104,10 @@ fn marshal_returns_ok_for_certification_and_forwards_only_notarization_and_final
     });
 
     assert_eq!(observed.0, Some(Round::new(Epoch::new(0), View::new(1175))));
-    assert_eq!(observed.1, Feedback::Ok);
+    // Commonware v2026.11.0 forwards `Activity::Certification` into Marshal via
+    // `Message::Certification`, so reporting after actor shutdown returns `Closed`,
+    // while raw vote `Activity::Finalize` remains ignored (`Ok`).
+    assert_eq!(observed.1, Feedback::Closed);
     assert_eq!(observed.2, Feedback::Ok);
     assert_eq!(observed.3, Feedback::Closed);
     assert_eq!(observed.4, Feedback::Closed);

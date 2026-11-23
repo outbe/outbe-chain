@@ -20,7 +20,6 @@ struct ShutdownVoterSettings {
 }
 
 fn shutdown_voter_config(
-    context: &impl commonware_runtime::BufferPooler,
     scheme: HybridScheme<MinSig>,
     public_key: commonware_cryptography::bls12381::PublicKey,
     settings: ShutdownVoterSettings,
@@ -44,11 +43,12 @@ fn shutdown_voter_config(
         view_retention: ViewDelta::new(16),
         skip: commonware_consensus::simplex::SkipPolicy::Disabled,
         track_historical_votes: true,
-        fetch_timeout: Duration::from_millis(20),
+        fetch_timeout: commonware_utils::NonZeroDuration::new_panic(Duration::from_millis(20)),
+        fetch_retry_delay: Duration::from_millis(10),
 
         replay_buffer: NZUsize!(64 * 1024),
         write_buffer: NZUsize!(4 * 1024),
-        page_cache: CacheRef::from_pooler(context, NonZeroU16::new(1024).unwrap(), NZUsize!(10)),
+        page_cache: CacheRef::new(NonZeroU16::new(1024).unwrap(), NZUsize!(10)),
     }
 }
 
@@ -150,11 +150,14 @@ fn application_drain_retains_transport_on_terminal_startup_and_panic_paths() {
                                 .finish(async move {
                                     let signer = PrivateKey::from_seed(11);
                                     let cfg = lookup::Config::local(
-                                        signer.clone(),
+                                        outbe_consensus::stack::sake_cups_v1_upgrader(
+                                            signer.clone(),
+                                        ),
                                         b"radicle-shutdown-test",
                                         "127.0.0.1:0".parse().unwrap(),
                                         NZUsize!(32),
                                         1024 * 1024,
+                                        outbe_consensus::stack::P2P_MAILBOX_SIZE,
                                     );
                                     let (mut network, _oracle) =
                                         lookup::Network::new(ctx.child("network"), cfg);
@@ -309,6 +312,10 @@ where
     type Error = Infallible;
     type PublicKey = P;
 
+    fn capacity(&self) -> std::num::NonZeroUsize {
+        NZUsize!(64)
+    }
+
     async fn recv(&mut self) -> Result<Message<Self::PublicKey>, Self::Error> {
         std::future::pending().await
     }
@@ -375,7 +382,7 @@ fn global_stop_completes_with_a_stopping_sibling_and_real_voter() {
             ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
         );
 
-        let engine_config = shutdown_voter_config(&context, scheme, public_key, ShutdownVoterSettings {epoch, partition: "stack_shutdown_voter_journal", leader_timeout: Duration::from_millis(10),
+        let engine_config = shutdown_voter_config(scheme, public_key, ShutdownVoterSettings {epoch, partition: "stack_shutdown_voter_journal", leader_timeout: Duration::from_millis(10),
                 certification_timeout: Duration::from_millis(20),
                 timeout_retry: Duration::from_millis(40)});
         let engine = SimplexEngine::new(context.child("engine"), engine_config);
@@ -490,7 +497,6 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
         );
 
         let engine_config = shutdown_voter_config(
-            &context,
             first_scheme,
             first_public_key,
             ShutdownVoterSettings {
@@ -589,7 +595,6 @@ fn fatal_stack_exit_preserves_error_and_voter_journal_can_resume() {
             ShutdownNullReceiver::<commonware_cryptography::bls12381::PublicKey>(PhantomData),
         );
         let engine_config = shutdown_voter_config(
-            &context,
             scheme,
             public_key,
             ShutdownVoterSettings {
