@@ -679,6 +679,17 @@
   },
   {
     "type": "error",
+    "name": "NotSystemTransaction",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
     "name": "RemoteRouterMismatch",
     "inputs": [
       {

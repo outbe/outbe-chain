@@ -6,10 +6,12 @@
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolInterface};
+use outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS;
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
+use crate::errors::HyperlaneControllerError;
 use crate::schema::{validator_domain_key, HyperlaneControllerContract};
 use crate::{ControllerBootstrap, SignedCheckpoint};
 
@@ -47,7 +49,16 @@ pub fn dispatch(
                         },
                     )
                 }),
-                sync(c) => mutate(&storage, c, caller, |_, _| controller.sync()),
+                sync(c) => mutate(&storage, c, caller, |sender, _| {
+                    // Only the epoch boundary step: one rotation per epoch.
+                    if sender != OUTBE_SYSTEM_TX_ADDRESS {
+                        return Err(HyperlaneControllerError::NotSystemTransaction {
+                            caller: sender,
+                        }
+                        .into());
+                    }
+                    controller.sync()
+                }),
                 setHyperlaneSigner(c) => mutate_void(&storage, c, caller, |sender, c| {
                     controller.set_hyperlane_signer(sender, c.signer)
                 }),
