@@ -180,6 +180,74 @@ fn fixture() -> Fixture {
     fixture_with_identity_and_nonce(9, 4)
 }
 
+fn renew_fixture() -> Fixture {
+    use alloy_sol_types::SolCall as _;
+    use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
+
+    let (root, journal, live, mut record, chain) = fixture();
+    let m = live.manifest();
+    let target = &record.public_intent.target;
+    let intent = RegistrationIntentV1 {
+        chain_id: m.chain_id,
+        genesis_hash: m.genesis_hash,
+        operation: AttestationOperationV1::RenewEnclave,
+        attestation_mode: AttestationMode::NoAttestationDev,
+        policy_hash: target.policy_hash,
+        node_id: m.node_id.clone(),
+        enclave_id: m.enclave_id().unwrap(),
+        binding_id: target.binding_id,
+        binding_version: target.binding_version,
+        registration_version: target.registration_version,
+        renewal_nonce: target.renewal_nonce,
+        transition_nonce: target.transition_nonce,
+        requested_valid_until: target.valid_until,
+        recipient_x25519: m.recipient_x25519,
+        attestation_ed25519: m.attestation_ed25519,
+        noise_responder_x25519: m.noise_responder_x25519,
+        node_host_authorization_hash: m.node_host_authorization_hash().unwrap(),
+    };
+    let enclave_sig = live.sign_registration_intent_dev_v1(&intent).unwrap();
+    let node_key = k256::ecdsa::SigningKey::from_slice(&[3; 32]).unwrap();
+    let node_sig = outbe_primitives::tee_test_utils::sign_node_host_hash_for_test(
+        &node_key,
+        intent.intent_hash().unwrap(),
+    );
+    let evidence = AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
+        intent,
+        dev_attestation_public: m.attestation_ed25519,
+        dev_signature: enclave_sig,
+        transition_key_ready_proof: None,
+    })
+    .encode_canonical()
+    .unwrap();
+    let calldata = ITeeRegistryV1::renewEnclaveCall {
+        evidence: evidence.into(),
+        nodeSignature: node_sig.to_vec().into(),
+        enclaveSignature: enclave_sig.to_vec().into(),
+    }
+    .abi_encode();
+    let tx = TxEip1559 {
+        chain_id: record.finalized_checkpoint.chain_id,
+        nonce: record.nonce,
+        gas_limit: 500000,
+        input: calldata.into(),
+        to: alloy_primitives::TxKind::Call(outbe_primitives::addresses::TEE_REGISTRY_ADDRESS),
+        ..Default::default()
+    };
+    let signer = k256::ecdsa::SigningKey::from_slice(&[3; 32]).unwrap();
+    let (signature, recovery) = signer
+        .sign_prehash_recoverable(tx.signature_hash().as_slice())
+        .unwrap();
+    let signature =
+        alloy_primitives::Signature::from_signature_and_parity(signature, recovery.is_y_odd());
+    let mut raw = vec![2];
+    tx.rlp_encode_signed(&signature, &mut raw);
+    record.tx_hash = keccak256(&raw);
+    record.raw_signed_tx = raw.into();
+    record.kind = ServiceTxKindV1::Renew;
+    (root, journal, live, record, chain)
+}
+
 fn fixture_with_identity_and_nonce(seed: u8, nonce: u64) -> Fixture {
     fixture_for_account(seed, nonce, 3)
 }
@@ -402,8 +470,7 @@ async fn external_nonce_waits_for_finality_then_rebuilds_without_replacing_live_
 
 #[tokio::test]
 async fn expired_renew_rebuild_waits_for_an_inflight_operator_nonce() {
-    let (root, mut journal, live, mut record, mut chain) = fixture();
-    record.kind = ServiceTxKindV1::Renew;
+    let (root, mut journal, live, record, mut chain) = renew_fixture();
     journal.begin(record.clone()).unwrap();
     let mut binding = applied(&record);
     binding.valid_until = 150;

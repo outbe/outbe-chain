@@ -1,4 +1,4 @@
-//! Process identity and network offer material; no persistence or serialization.
+//! Resident identity and network offer material.
 use alloy_primitives::B256;
 use commonware_codec::Encode as _;
 use commonware_cryptography::{
@@ -23,6 +23,7 @@ pub const TEE_OFFER_MESSAGE: &[u8] = b"outbe/tee/offer/v1";
 /// feature clears its seed; Commonware PrivateKey owns Secret bytes and Scalar
 /// (both zeroize on drop). No raw secret is exposed outside this crate.
 pub struct ResidentTeeKeys {
+    pub(crate) identity_seed: Zeroizing<[u8; 32]>,
     pub(crate) noise_private: Zeroizing<[u8; 32]>,
     pub(crate) tribute_offer_secret: Zeroizing<[u8; 32]>,
     pub(crate) dkg_enc_secret: Zeroizing<[u8; 32]>,
@@ -63,6 +64,7 @@ impl ResidentTeeKeys {
             }
         }
         Ok(Self {
+            identity_seed: seed,
             noise_private,
             tribute_offer_secret,
             dkg_enc_secret,

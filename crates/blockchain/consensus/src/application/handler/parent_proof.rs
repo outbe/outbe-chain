@@ -4,16 +4,14 @@ use crate::block::ConsensusBlock;
 
 use crate::digest::Digest;
 
-use crate::errors::ParentProofError;
 use crate::finalization::parent_cert_store::CertifiedParentProofKey;
 use crate::finalization::parent_cert_store::CertifiedParentProofRecord;
-
-use alloy_consensus::Transaction as _;
 
 use commonware_consensus::types::Height;
 use commonware_consensus::types::Round;
 use commonware_consensus::types::View;
 
+use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::reshare_artifact::FinalizedParentAttestation;
 
 use tracing::info;
@@ -22,36 +20,9 @@ use tracing::warn;
 pub(super) fn finalized_parent_attestation_from_phase1_system_tx(
     block: &ConsensusBlock,
 ) -> eyre::Result<Option<FinalizedParentAttestation>> {
-    if block.number() < 2 {
+    let Some(metadata) = certified_parent_metadata_from_phase1_system_tx(block)? else {
         return Ok(None);
-    }
-
-    let raw_block = block.clone().into_inner().into_block();
-    let layout = outbe_primitives::system_tx::split_system_layout(&raw_block.body.transactions)
-        .map_err(ParentProofError::InvalidSystemTxLayout)?;
-    let phase1 = *layout
-        .begin
-        .first()
-        .ok_or_else(|| ParentProofError::MissingPhase1SystemTx(block.number()))?;
-    let input = outbe_primitives::system_tx::SystemTx::decode(phase1.input().as_ref())
-        .map_err(ParentProofError::DecodePhase1Input)?;
-    let outbe_primitives::system_tx::SystemTx::Consensus {
-        step_index: outbe_primitives::system_tx::CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
-        payload,
-    } = input
-    else {
-        return Err(ParentProofError::UnexpectedBeginOrdinal0.into());
     };
-
-    let metadata = outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata::decode(
-        payload.as_ref(),
-    )?;
-    let reencoded = metadata.encode()?;
-    if reencoded.as_ref() != payload.as_ref() {
-        return Err(
-            outbe_primitives::system_tx::binding::ParentAccountingBindingError::NonCanonical.into(),
-        );
-    }
 
     Ok(Some(FinalizedParentAttestation {
         finalized_block_number: metadata.finalized_block_number,
@@ -71,6 +42,14 @@ pub(super) fn finalized_parent_attestation_from_phase1_system_tx(
             .map(|ev| ev.validator)
             .collect(),
     }))
+}
+
+/// Decode the exact parent accounting carried by this branch's Phase 1.
+/// Preserve the committee hash for late-credit escrow matching.
+pub(super) fn certified_parent_metadata_from_phase1_system_tx(
+    block: &ConsensusBlock,
+) -> eyre::Result<Option<CertifiedParentAccountingMetadata>> {
+    crate::finalization::evidence::certified_parent_metadata_from_phase1_system_tx(block)
 }
 
 // Like `BuildBlockOutcome` in the `proposal` module, this is an internal

@@ -609,7 +609,13 @@ fn complete_cold_recovery_updates_global_context_identity_and_anchor() {
         snapshot.identity.expected_enclave_id,
         Some(candidate.manifest().enclave_id().unwrap())
     );
-    assert_eq!(snapshot.gate, TeeLeaseGuardGateV1::Pending(anchor));
+    assert_eq!(
+        snapshot.gate,
+        TeeLeaseGuardGateV1::Pending {
+            target: anchor,
+            floor: None,
+        }
+    );
     assert!(Arc::ptr_eq(
         &outbe_tee::in_process_tee_context().unwrap(),
         &candidate

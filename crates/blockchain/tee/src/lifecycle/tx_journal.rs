@@ -224,6 +224,63 @@ impl ServiceTxRecordV1 {
         {
             return Err(ServiceTxJournalError::InvalidIntent);
         }
+        if self.kind == ServiceTxKindV1::Renew {
+            self.validate_renew_calldata(&tx.input)?;
+        }
+        Ok(())
+    }
+
+    fn validate_renew_calldata(&self, input: &[u8]) -> Result<(), ServiceTxJournalError> {
+        use alloy_primitives::U256;
+        use alloy_sol_types::SolCall as _;
+        use outbe_primitives::{
+            tee_attestation_v1::{AttestationEvidenceV1, AttestationOperationV1},
+            tee_registry_abi_v1::ITeeRegistryV1,
+        };
+
+        let call = ITeeRegistryV1::renewEnclaveCall::abi_decode(input)?;
+        if call.abi_encode() != input {
+            return Err(ServiceTxJournalError::InvalidTransaction);
+        }
+        let evidence = AttestationEvidenceV1::decode_canonical(&call.evidence)?;
+        if call.evidence.as_ref() != evidence.encode_canonical()?.as_slice() {
+            return Err(ServiceTxJournalError::InvalidTransaction);
+        }
+        let intent = evidence.intent();
+        if intent.operation != AttestationOperationV1::RenewEnclave
+            || intent.derived_enclave_id()? != intent.enclave_id
+            || U256::from_be_bytes(intent.chain_id)
+                != U256::from(self.finalized_checkpoint.chain_id)
+            || intent.genesis_hash != self.finalized_checkpoint.genesis_hash
+        {
+            return Err(ServiceTxJournalError::InvalidIntent);
+        }
+        let node_signature: [u8; 65] = call
+            .nodeSignature
+            .as_ref()
+            .try_into()
+            .map_err(|_| ServiceTxJournalError::InvalidIntent)?;
+        let enclave_signature: [u8; 64] = call
+            .enclaveSignature
+            .as_ref()
+            .try_into()
+            .map_err(|_| ServiceTxJournalError::InvalidIntent)?;
+        if !intent.verify_node_signature(&node_signature)
+            || !intent.verify_enclave_signature(&enclave_signature)
+        {
+            return Err(ServiceTxJournalError::InvalidIntent);
+        }
+        if let AttestationEvidenceV1::NoAttestationDev(dev) = &evidence {
+            if dev.dev_attestation_public != intent.attestation_ed25519
+                || dev.dev_signature != enclave_signature
+                || !intent.verify_enclave_signature(&dev.dev_signature)
+            {
+                return Err(ServiceTxJournalError::InvalidIntent);
+            }
+        }
+        if super::renewal::prepare::target_v1(intent)? != self.public_intent.target {
+            return Err(ServiceTxJournalError::InvalidIntent);
+        }
         Ok(())
     }
 

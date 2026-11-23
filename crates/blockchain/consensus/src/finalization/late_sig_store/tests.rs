@@ -393,8 +393,8 @@ fn vote_arrives_after_resolution_is_included() {
             },
         ),
     );
-    // Nothing left pending; both votes are in the resolved target.
-    assert_eq!(store.pending_vote_count(fb), 0);
+    // Both votes remain available for the proposal branch's escrow binding.
+    assert_eq!(store.pending_vote_count(fb), 2);
 
     let artifact = store.build_artifact(11);
     assert_eq!(artifact.batches.len(), 1);
@@ -458,6 +458,162 @@ fn equivocation_distinct_fb_hash_not_merged() {
     // Separate buffers - neither aggregate is poisoned by the other proposal.
     assert_eq!(store.pending_vote_count(fb1), 1);
     assert_eq!(store.pending_vote_count(fb2), 1);
+}
+
+/// A terminal block can receive valid finalizations in two views. Both signed
+/// bindings must remain available until the proposal branch selects one.
+#[test]
+fn same_block_votes_from_two_views_are_retained() {
+    let keys = keys(4);
+    let fb_hash = B256::repeat_byte(0x67);
+    let mut store = LateFinalizeSigStore::new(3);
+
+    for view in [9, 10] {
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch: 3,
+                view,
+                parent_view: 8,
+                fb_hash,
+            },
+            0,
+            finalize_sig(
+                &keys,
+                &keys[0],
+                FinalizeProposalFixture {
+                    epoch: 3,
+                    view,
+                    parent_view: 8,
+                    fb_hash,
+                },
+            ),
+        );
+    }
+
+    assert_eq!(store.pending_vote_count(fb_hash), 2);
+
+    store.resolve_finalized_target(
+        FinalizeVoteTarget {
+            epoch: 3,
+            view: 9,
+            parent_view: 8,
+            fb_hash,
+        },
+        10,
+        LateFinalizeCommittee {
+            set_hash: B256::ZERO,
+            size: 4,
+        },
+    );
+    assert_eq!(
+        store.pending_vote_count(fb_hash),
+        2,
+        "a local F(v1) must not discard votes for a competing F(v2) child"
+    );
+}
+
+#[test]
+fn branch_credit_selects_its_own_view_without_local_finalization() {
+    let keys = keys(4);
+    let snapshot = snapshot_for(&keys);
+    let fb_hash = B256::repeat_byte(0x68);
+    let csh = committee_set_hash_v2(3, &snapshot);
+    let mut store = LateFinalizeSigStore::new(3);
+    for (view, signer) in [(9, 0u32), (10, 1u32)] {
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch: 3,
+                view,
+                parent_view: 8,
+                fb_hash,
+            },
+            signer,
+            finalize_sig(
+                &keys,
+                &keys[signer as usize],
+                FinalizeProposalFixture {
+                    epoch: 3,
+                    view,
+                    parent_view: 8,
+                    fb_hash,
+                },
+            ),
+        );
+    }
+
+    for (view, signer) in [(9, 0usize), (10, 1usize)] {
+        let target = LateCreditBranchTarget {
+            fb_number: 10,
+            binding: FinalizeVoteTarget {
+                epoch: 3,
+                view,
+                parent_view: 8,
+                fb_hash,
+            },
+            committee_set_hash: csh,
+            committee_size: snapshot.committee.len(),
+        };
+        let artifact = store.build_artifact_for_branch(12, &[target]);
+        assert_eq!(artifact.batches.len(), 1);
+        assert_eq!(artifact.batches[0].view, view);
+        assert_eq!(
+            verify_late_finalize_proof(&snapshot, &artifact.batches[0])
+                .expect("branch aggregate verifies"),
+            vec![signer],
+        );
+    }
+}
+
+#[test]
+fn branch_credit_never_uses_other_fork_at_same_height() {
+    let keys = keys(4);
+    let snapshot = snapshot_for(&keys);
+    let csh = committee_set_hash_v2(3, &snapshot);
+    let hash_a = B256::repeat_byte(0x69);
+    let hash_b = B256::repeat_byte(0x6a);
+    let mut store = LateFinalizeSigStore::new(3);
+    for (hash, signer) in [(hash_a, 0u32), (hash_b, 1u32)] {
+        store.record_bound_vote(
+            FinalizeVoteTarget {
+                epoch: 3,
+                view: 9,
+                parent_view: 8,
+                fb_hash: hash,
+            },
+            signer,
+            finalize_sig(
+                &keys,
+                &keys[signer as usize],
+                FinalizeProposalFixture {
+                    epoch: 3,
+                    view: 9,
+                    parent_view: 8,
+                    fb_hash: hash,
+                },
+            ),
+        );
+    }
+
+    for (hash, signer) in [(hash_a, 0usize), (hash_b, 1usize)] {
+        let target = LateCreditBranchTarget {
+            fb_number: 10,
+            binding: FinalizeVoteTarget {
+                epoch: 3,
+                view: 9,
+                parent_view: 8,
+                fb_hash: hash,
+            },
+            committee_set_hash: csh,
+            committee_size: snapshot.committee.len(),
+        };
+        let artifact = store.build_artifact_for_branch(11, &[target]);
+        assert_eq!(artifact.batches.len(), 1);
+        assert_eq!(artifact.batches[0].fb_hash, hash);
+        assert_eq!(
+            verify_late_finalize_proof(&snapshot, &artifact.batches[0]).unwrap(),
+            vec![signer]
+        );
+    }
 }
 
 /// A *pure* post-finalization vote must still build a credit that the verifier

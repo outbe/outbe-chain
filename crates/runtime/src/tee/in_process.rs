@@ -1,11 +1,13 @@
-//! Fresh RAM identity with the stable, owner-only NodeHost key kept on disk.
+//! Restore the local resident identity with the owner-only NodeHost key.
 use super::*;
 use outbe_primitives::tee_attestation_v1::{
     EnclaveInitializationManifestV1, NodeIdV1, TrustedNetworkDescriptorV1,
 };
+#[cfg(test)]
+use outbe_tee::resident::ResidentTeeKeys;
 use outbe_tee::{
     in_process::{InProcessTeeContext, ProofSourceV1},
-    resident::ResidentTeeKeys,
+    node_host::ResidentStateStore,
 };
 
 pub(super) fn initialize(
@@ -28,28 +30,32 @@ pub(super) fn initialize(
         reth_p2p_public,
     };
     let authorization = identity.authorization_witness_v1(&node_host)?;
-    let keys = ResidentTeeKeys::generate()?;
+    let (store, restored) = ResidentStateStore::load_or_create(node_data_dir, &authorization)?;
+    let keys = restored.keys;
     let manifest = EnclaveInitializationManifestV1 {
         chain_id: policy.chain_id,
         genesis_hash: policy.genesis_hash,
         attestation_mode: policy.attestation_mode,
         node_id: NodeIdV1 { reth_p2p_public },
-        initialization_challenge: alloy_primitives::B256::random().0,
+        initialization_challenge: restored.initialization_challenge,
         node_host_noise_x25519: authorization.node_host_noise_x25519,
         recipient_x25519: keys.tribute_offer_public(),
         attestation_ed25519: keys.attestation_pub(),
         noise_responder_x25519: keys.noise_public(),
     };
-    let context = Arc::new(InProcessTeeContext::new(
-        keys,
-        identity,
-        manifest,
-        TrustedNetworkDescriptorV1 {
-            network_binding: policy.network_binding(),
-            genesis_consensus_keys: binding.genesis_consensus_keys,
-        },
-        proof,
-    )?);
+    let context = Arc::new(
+        InProcessTeeContext::new(
+            keys,
+            identity,
+            manifest,
+            TrustedNetworkDescriptorV1 {
+                network_binding: policy.network_binding(),
+                genesis_consensus_keys: binding.genesis_consensus_keys,
+            },
+            proof,
+        )?
+        .with_restored_state(store, restored.material, restored.anchor),
+    );
     let expected_enclave_id = Some(context.manifest().enclave_id()?);
     outbe_tee::install_in_process_tee_context(context)?;
     Ok(outbe_consensus::validators::LocalTeeRuntimeIdentityV1 {
@@ -188,29 +194,46 @@ pub(super) enum AutonomousStartupError {
 enum NodeHostStartupError {
     #[error("NodeHost directory must be a non-symlink directory with mode 0700")]
     InvalidDirectory,
+    #[error("NodeHost identity key is missing while committed TEE state exists")]
+    OrphanedNodeHostState,
 }
+
+const RESIDENT_STATE_FILE: &str = "resident-state.v1";
+const LIVE_JOIN_ANCHOR_REL_PATH: &str = "tee-live-join-admission-v1/anchor.bin";
+const SERVICE_TX_JOURNAL_REL_PATH: &str = "tee-service-tx-v1/journal.json";
 
 fn load_node_host_key(
     node_data_dir: &Path,
 ) -> eyre::Result<outbe_tee::node_host::NodeHostIdentityKey> {
+    use outbe_primitives::filesystem::entry_exists;
     use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
     let directory = node_data_dir.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
-    let fresh = match std::fs::DirBuilder::new().mode(0o700).create(&directory) {
-        Ok(()) => true,
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+    match std::fs::DirBuilder::new().mode(0o700).create(&directory) {
+        Ok(()) => {
+            if let Some(parent) = directory.parent().filter(|p| !p.as_os_str().is_empty()) {
+                std::fs::File::open(parent)?.sync_all()?;
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
         Err(error) => return Err(error.into()),
-    };
+    }
     let metadata = std::fs::symlink_metadata(&directory)?;
     if !metadata.is_dir() || metadata.permissions().mode() & 0o777 != 0o700 {
         return Err(NodeHostStartupError::InvalidDirectory.into());
     }
-    let path = directory.join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1);
-    // A previously initialized directory never regenerates a lost identity.
-    Ok(if fresh {
-        outbe_tee::node_host::NodeHostIdentityKey::create_new(&path)?
-    } else {
-        outbe_tee::node_host::NodeHostIdentityKey::load(&path)?
-    })
+    let key_path = directory.join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1);
+    if entry_exists(&key_path)? {
+        return Ok(outbe_tee::node_host::NodeHostIdentityKey::load(&key_path)?);
+    }
+    let resident_exists = entry_exists(&directory.join(RESIDENT_STATE_FILE))?;
+    let anchor_exists = entry_exists(&node_data_dir.join(LIVE_JOIN_ANCHOR_REL_PATH))?;
+    let journal_exists = entry_exists(&node_data_dir.join(SERVICE_TX_JOURNAL_REL_PATH))?;
+    if resident_exists || anchor_exists || journal_exists {
+        return Err(NodeHostStartupError::OrphanedNodeHostState.into());
+    }
+    Ok(outbe_tee::node_host::NodeHostIdentityKey::create_new(
+        &key_path,
+    )?)
 }
 
 /// Before block one, only the genesis consensus set may bootstrap authority.
@@ -283,18 +306,123 @@ mod tests {
     use outbe_consensus::protocol_state::EngineProtocolState as _;
     use outbe_tee::TeeAuthorityState;
 
+    fn test_p2p_public(seed: u8) -> [u8; 33] {
+        k256::ecdsa::SigningKey::from_slice(&[seed; 32])
+            .unwrap()
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .try_into()
+            .unwrap()
+    }
+
+    fn test_authorization(
+        node_host: &outbe_tee::node_host::NodeHostIdentityKey,
+        p2p_seed: u8,
+    ) -> outbe_primitives::tee_attestation_v1::NodeHostAuthorizationWitnessV1 {
+        let identity = outbe_tee::NodeHostIdentityV1 {
+            network_binding: outbe_primitives::tee_attestation_v1::NetworkBindingV1 {
+                chain_id: [0x11; 32],
+                genesis_hash: alloy_primitives::B256::repeat_byte(0x22),
+                attestation_mode:
+                    outbe_primitives::tee_attestation_v1::AttestationMode::NoAttestationDev,
+            },
+            reth_p2p_public: test_p2p_public(p2p_seed),
+        };
+        identity.authorization_witness_v1(node_host).unwrap()
+    }
+
     #[test]
-    fn node_host_key_is_stable_and_loss_never_regenerates_identity() {
-        let root = tempfile::tempdir().unwrap();
-        let first = load_node_host_key(root.path()).unwrap().public();
-        assert_eq!(load_node_host_key(root.path()).unwrap().public(), first);
-        let path = root
-            .path()
-            .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
-            .join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1);
-        std::fs::remove_file(&path).unwrap();
-        assert!(load_node_host_key(root.path()).is_err());
-        assert!(!path.exists());
+    fn node_host_key_enforces_k_r_a_startup_matrix() {
+        use std::os::unix::fs::{DirBuilderExt as _, PermissionsExt as _};
+
+        // M1: K=no, R=no, A=no with pre-existing empty 0700 dir recovers first boot.
+        {
+            let root = tempfile::tempdir().unwrap();
+            let host_dir = root
+                .path()
+                .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
+            std::fs::DirBuilder::new()
+                .mode(0o700)
+                .create(&host_dir)
+                .unwrap();
+            let first = load_node_host_key(root.path()).unwrap().public();
+            assert_eq!(load_node_host_key(root.path()).unwrap().public(), first);
+        }
+
+        // M2: K=no, R=no, A=yes (anchor.bin or journal.json) -> OrphanedNodeHostState.
+        for rel in [LIVE_JOIN_ANCHOR_REL_PATH, SERVICE_TX_JOURNAL_REL_PATH] {
+            let root = tempfile::tempdir().unwrap();
+            let artifact = root.path().join(rel);
+            std::fs::create_dir_all(artifact.parent().unwrap()).unwrap();
+            std::fs::write(&artifact, b"committed").unwrap();
+            let error = load_node_host_key(root.path()).unwrap_err();
+            assert!(
+                matches!(
+                    error.downcast_ref::<NodeHostStartupError>(),
+                    Some(NodeHostStartupError::OrphanedNodeHostState)
+                ),
+                "{rel}: {error:?}"
+            );
+            let key_path = root
+                .path()
+                .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+                .join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1);
+            assert!(!key_path.exists());
+        }
+
+        // M3: K=no, R=yes (with or without A) -> OrphanedNodeHostState without regenerating K.
+        {
+            let root = tempfile::tempdir().unwrap();
+            let node_host = load_node_host_key(root.path()).unwrap();
+            let auth = test_authorization(&node_host, 0x33);
+            ResidentStateStore::load_or_create(root.path(), &auth).unwrap();
+            let key_path = root
+                .path()
+                .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+                .join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1);
+            std::fs::remove_file(&key_path).unwrap();
+            let error = load_node_host_key(root.path()).unwrap_err();
+            assert!(matches!(
+                error.downcast_ref::<NodeHostStartupError>(),
+                Some(NodeHostStartupError::OrphanedNodeHostState)
+            ));
+            assert!(!key_path.exists());
+        }
+
+        // M4: K=yes, R=no, A=yes -> loads K and creates OBRESID2 tag 0 unkeyed (759n I5).
+        {
+            let root = tempfile::tempdir().unwrap();
+            let node_host = load_node_host_key(root.path()).unwrap();
+            let anchor = root.path().join(LIVE_JOIN_ANCHOR_REL_PATH);
+            std::fs::create_dir_all(anchor.parent().unwrap()).unwrap();
+            std::fs::write(&anchor, b"anchor").unwrap();
+            let reloaded_key = load_node_host_key(root.path()).unwrap();
+            assert_eq!(reloaded_key.public(), node_host.public());
+            let auth = test_authorization(&reloaded_key, 0x33);
+            let (_, loaded) = ResidentStateStore::load_or_create(root.path(), &auth).unwrap();
+            assert!(loaded.material.is_none());
+            assert!(loaded.anchor.is_none());
+        }
+
+        // M7: invalid K (bad mode) and invalid directory mode fail closed.
+        {
+            let root = tempfile::tempdir().unwrap();
+            load_node_host_key(root.path()).unwrap();
+            let host_dir = root
+                .path()
+                .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
+            let key_path = host_dir.join(outbe_tee::node_host::NODE_HOST_IDENTITY_KEY_V1);
+            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(load_node_host_key(root.path()).is_err());
+            std::fs::set_permissions(&key_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            std::fs::set_permissions(&host_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let error = load_node_host_key(root.path()).unwrap_err();
+            assert!(matches!(
+                error.downcast_ref::<NodeHostStartupError>(),
+                Some(NodeHostStartupError::InvalidDirectory)
+            ));
+        }
     }
 
     #[test]
@@ -399,7 +527,10 @@ mod tests {
             LiveTeeSnapshotV1 {
                 identity,
                 context: fresh.clone(),
-                gate: TeeLeaseGuardGateV1::Pending(anchor),
+                gate: TeeLeaseGuardGateV1::Pending {
+                    target: anchor,
+                    floor: None,
+                },
             },
             outbe_tee::TeeAuthorityChannel::default(),
         )
@@ -412,5 +543,53 @@ mod tests {
         );
         assert!(!owner.authority.snapshot().is_authority_open());
         assert!(!fresh.offer_key_ready().unwrap());
+    }
+
+    #[test]
+    fn p2p_key_rotation_rejected_at_startup_load_with_binding_mismatch() {
+        let root = tempfile::tempdir().unwrap();
+        let node_host = load_node_host_key(root.path()).unwrap();
+        let auth_a = test_authorization(&node_host, 0x33);
+        let chain_id = alloy_primitives::B256::from(auth_a.chain_id);
+        let (store, first) = ResidentStateStore::load_or_create(root.path(), &auth_a).unwrap();
+        let manifest_hash = EnclaveInitializationManifestV1 {
+            chain_id: auth_a.chain_id,
+            genesis_hash: auth_a.genesis_hash,
+            attestation_mode: auth_a.attestation_mode,
+            node_id: auth_a.node_id.clone(),
+            initialization_challenge: first.initialization_challenge,
+            node_host_noise_x25519: auth_a.node_host_noise_x25519,
+            recipient_x25519: first.keys.tribute_offer_public(),
+            attestation_ed25519: first.keys.attestation_pub(),
+            noise_responder_x25519: first.keys.noise_public(),
+        }
+        .authorization_hash()
+        .unwrap();
+        let material =
+            outbe_tee::resident::ResidentOfferMaterial::for_test(vec![7; 96], chain_id, 0, 0)
+                .unwrap();
+        store
+            .persist_active(
+                &first.keys,
+                first.initialization_challenge,
+                manifest_hash,
+                &material,
+                None,
+            )
+            .unwrap();
+
+        let resident_path = root
+            .path()
+            .join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1)
+            .join(RESIDENT_STATE_FILE);
+        let before = std::fs::read(&resident_path).unwrap();
+
+        let auth_b = test_authorization(&node_host, 0x44);
+        let reloaded = ResidentStateStore::load_or_create(root.path(), &auth_b);
+        assert!(matches!(
+            reloaded,
+            Err(outbe_tee::node_host::ResidentStateError::BindingMismatch)
+        ));
+        assert_eq!(std::fs::read(&resident_path).unwrap(), before);
     }
 }

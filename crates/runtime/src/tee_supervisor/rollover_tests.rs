@@ -758,3 +758,216 @@ async fn successor_upgrade_proof_retries_proof_window_move_in_the_same_tick() {
     assert!(!error.is_proof_window_moved());
     handle.stop().unwrap();
 }
+
+#[tokio::test]
+async fn background_admitted_publishes_pending_gate_and_arms_on_matching_local_head() {
+    use crate::admission::{LocalTeeAdmissionAnchorV1, TeeLeaseGuardGateV1};
+    use crate::admission_authority::live::*;
+    use outbe_tee::{TeeAuthorityChannel, TeeAuthorityState};
+    use std::os::unix::fs::DirBuilderExt as _;
+
+    let root = tempfile::tempdir().unwrap();
+    let host = root.path().join(NODE_HOST_DIRECTORY_V1);
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&host)
+        .unwrap();
+    let host_key = NodeHostIdentityKey::create_new(&host.join(NODE_HOST_IDENTITY_KEY_V1)).unwrap();
+    let committee = FinalityCommitteeFixture::new(11);
+    let (live, descriptor) = resident(9, Some(&host_key), &committee, false);
+    let (donor, _) = resident(8, None, &committee, true);
+    let policy = no_attestation_dev_policy_v1(676, live.manifest().genesis_hash).unwrap();
+
+    // Reachable startup Path A (upstream at H_up == 0 -> prepare() returns Ok(None))
+    // and Path B (non-founder validator at local H == 0 -> founder_lease_gate returns AwaitingAnchor).
+    let (provider_genesis, _, _) = support::provider(&donor, 0, 1_000, 50_000, false);
+    let gate_upstream_h0 = crate::tee::select_startup_lease_gate(
+        &provider_genesis,
+        0,
+        (true, true, false),
+        (None, None),
+        || unreachable!("upstream launch never calls founder_lease_gate"),
+    )
+    .unwrap();
+    let gate_non_founder_h0 = crate::tee::select_startup_lease_gate(
+        &provider_genesis,
+        0,
+        (false, true, false),
+        (None, None),
+        || Ok(TeeLeaseGuardGateV1::AwaitingAnchor),
+    )
+    .unwrap();
+    assert_eq!(gate_upstream_h0, TeeLeaseGuardGateV1::AwaitingAnchor);
+    assert_eq!(gate_non_founder_h0, TeeLeaseGuardGateV1::AwaitingAnchor);
+
+    // Later, network advances past block 1 and background LiveTask::tick enrolls and returns Admitted.
+    let intent = RegistrationIntentFixture {
+        operation: AttestationOperationV1::RegisterEnclave,
+        policy_hash: policy.policy_hash().unwrap(),
+        binding_id: B256::repeat_byte(0x41),
+        binding_version: 1,
+        registration_version: 0,
+        renewal_nonce: 0,
+        transition_nonce: 0,
+        requested_valid_until: 50_000,
+    }
+    .for_manifest(live.manifest())
+    .unwrap();
+    let context = DcapOnboardingContextV1 {
+        chain_id: intent.chain_id,
+        genesis_hash: intent.genesis_hash,
+        intent_hash: intent.intent_hash().unwrap(),
+        node_id_hash: intent.node_id.node_id_hash().unwrap(),
+        enclave_id: intent.enclave_id,
+        binding_id: intent.binding_id,
+        policy_hash: intent.policy_hash,
+        recipient_x25519: intent.recipient_x25519,
+        network_encryption_public: donor.network_encryption_public().unwrap(),
+        key_epoch: 0,
+        network_encryption_epoch: 0,
+    };
+    let artifact = donor
+        .prepare_no_attestation_dev_onboarding_artifact_v2(context)
+        .unwrap()
+        .onboarding_artifact;
+    let chain = Arc::new(served_chain(
+        &committee,
+        &context,
+        policy,
+        binding_for(&intent),
+        artifact,
+    ));
+    let (url, handle, _) = serve(chain.clone()).await;
+    let supervisor = super::TeeLifecycleSupervisor::new(
+        &url,
+        (
+            Arc::new(outbe_evm::OutbeEvmSigner::from_secret_bytes([0x47; 32]).unwrap()),
+            k256::ecdsa::SigningKey::from_slice(&[0x31; 32]).unwrap(),
+        ),
+        (Arc::clone(&live), root.path().to_owned(), descriptor),
+    )
+    .unwrap();
+
+    let (provider_below, reg_chain, mut identity) = support::provider(
+        &donor,
+        chain.h2.height - 1,
+        chain.h2.timestamp - 1,
+        50_000,
+        false,
+    );
+    identity.reth_p2p_public = live.identity().reth_p2p_public;
+    identity.expected_enclave_id = Some(live.manifest().enclave_id().unwrap());
+    let owner = Arc::new(
+        LiveTeeRuntimeV1::new(
+            LiveTeeSnapshotV1 {
+                context: Arc::clone(&live),
+                identity,
+                gate: gate_upstream_h0,
+            },
+            TeeAuthorityChannel::new(TeeAuthorityState::UnkeyedAwaitingAdmission),
+        )
+        .unwrap(),
+    );
+    let protocol = Arc::new(crate::OutbeRuntime::new());
+    let mut live_task = super::LiveTask {
+        supervisor,
+        owner: Arc::clone(&owner),
+        provider: provider_below.clone(),
+        protocol: Arc::clone(&protocol),
+    };
+
+    // Before admission (context admission_anchor is None), publish_admitted_anchor is a no-op.
+    assert!(live.admission_anchor().unwrap().is_none());
+    owner.publish_admitted_anchor().unwrap();
+    assert_eq!(
+        owner.lock().unwrap().gate,
+        TeeLeaseGuardGateV1::AwaitingAnchor
+    );
+
+    let step = LifecycleTask::tick(&mut live_task).await.unwrap();
+    let engine::Step::Enrollment(EnrollmentOutcome::Admitted { anchor }) = step else {
+        panic!("expected background EnrollmentOutcome::Admitted, got {step:?}");
+    };
+    assert!(live.offer_key_ready().unwrap());
+
+    let expected_anchor = LocalTeeAdmissionAnchorV1 {
+        finalized_height: anchor.finalized_height,
+        finalized_hash: anchor.finalized_hash,
+    };
+    let expected_gate = TeeLeaseGuardGateV1::Pending {
+        target: expected_anchor,
+        floor: None,
+    };
+    assert_eq!(owner.lock().unwrap().gate, expected_gate);
+
+    // Below anchor height (H=1 < 2): authority stays closed and gate stays Pending.
+    support::bind_context(&provider_below, &live);
+    let closed = owner
+        .refresh(&provider_below, protocol.as_ref(), &reg_chain)
+        .unwrap();
+    assert_eq!(closed, TeeAuthorityState::SuspendedPolicyMismatch);
+    assert!(!closed.is_authority_open());
+    assert_eq!(owner.lock().unwrap().gate, expected_gate);
+
+    // At matching anchor height and canonical hash (H=2) with live binding + matching offer key:
+    // refresh validates anchor and arms authority.
+    let exact_header = outbe_consensus::committee_chain::decode_public_block(&chain.block)
+        .unwrap()
+        .header()
+        .clone();
+    let (mut provider_at_anchor, _, _) =
+        support::provider(&live, chain.h2.height, chain.h2.timestamp, 50_000, false);
+    provider_at_anchor
+        .inner
+        .headers
+        .lock()
+        .retain(|_, header| header.inner.number != chain.h2.height);
+    provider_at_anchor
+        .inner
+        .add_header(chain.h2.hash, exact_header);
+    provider_at_anchor.finalized = Some(alloy_eips::BlockNumHash::new(
+        chain.h2.height,
+        chain.h2.hash,
+    ));
+    let opened = owner
+        .refresh(&provider_at_anchor, protocol.as_ref(), &reg_chain)
+        .unwrap();
+    assert!(
+        opened.is_authority_open(),
+        "expected open authority, got {opened:?}"
+    );
+    assert_eq!(owner.lock().unwrap().gate, TeeLeaseGuardGateV1::Armed);
+
+    // Monotonicity: publish_admitted_anchor never downgrades Armed or a newer Pending gate.
+    owner.publish_admitted_anchor().unwrap();
+    assert_eq!(owner.lock().unwrap().gate, TeeLeaseGuardGateV1::Armed);
+    let newer_gate = TeeLeaseGuardGateV1::Pending {
+        target: LocalTeeAdmissionAnchorV1 {
+            finalized_height: anchor.finalized_height + 5,
+            finalized_hash: B256::repeat_byte(0xEE),
+        },
+        floor: Some(expected_anchor),
+    };
+    owner.lock().unwrap().gate = newer_gate;
+    owner.publish_admitted_anchor().unwrap();
+    assert_eq!(owner.lock().unwrap().gate, newer_gate);
+
+    // State-based idempotency: if gate is still AwaitingAnchor when a subsequent Resident tick runs,
+    // publish_admitted_anchor recovers it from owner.context.admission_anchor().
+    owner.lock().unwrap().gate = TeeLeaseGuardGateV1::AwaitingAnchor;
+    let resident_step = LifecycleTask::tick(&mut live_task).await.unwrap();
+    assert!(matches!(resident_step, engine::Step::Resident { .. }));
+    assert_eq!(owner.lock().unwrap().gate, expected_gate);
+
+    // Error-path publication (B1): even when observe_tick fails after admission (stopped HTTP server),
+    // LiveTask::tick still publishes Pending before propagating the error.
+    owner.lock().unwrap().gate = TeeLeaseGuardGateV1::AwaitingAnchor;
+    handle.stop().unwrap();
+    handle.stopped().await;
+    let failed_tick = LifecycleTask::tick(&mut live_task).await;
+    assert!(
+        failed_tick.is_err(),
+        "stopped HTTP server must cause observe_tick Err, got {failed_tick:?}"
+    );
+    assert_eq!(owner.lock().unwrap().gate, expected_gate);
+}

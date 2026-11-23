@@ -2,14 +2,13 @@ use super::*;
 
 #[tokio::test]
 async fn empty_and_completed_renewal_are_terminal_without_sending() {
-    let (_root, mut journal, live, mut record, mut chain) = fixture();
+    let (_root, mut journal, live, record, mut chain) = renew_fixture();
     assert_eq!(
         reconcile_service_tx_v1(&chain, &mut journal, &live, record.sender)
             .await
             .unwrap(),
         ServiceTxReconciliationV1::Empty
     );
-    record.kind = ServiceTxKindV1::Renew;
     journal.begin(record.clone()).unwrap();
     chain.binding = Some(applied(&record));
     chain.receipt = Some(LifecycleReceiptV1 {
@@ -235,8 +234,7 @@ async fn candidate_prepare_cancel_and_transition_reconcile_distinct_mutations() 
 
 #[tokio::test]
 async fn pool_eviction_transitions_wait_for_finality_to_replace_lost_identity() {
-    let (root, mut journal, _old, mut record, mut chain) = fixture();
-    record.kind = ServiceTxKindV1::Renew;
+    let (root, mut journal, _old, record, mut chain) = renew_fixture();
     journal.begin(record.clone()).unwrap();
     let fresh = context(10);
     let path = root.path().join("tee-service-tx-v1/journal.json");

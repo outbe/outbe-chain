@@ -23,7 +23,10 @@ fn validator_gate_stays_pending_after_enrollment_until_validator_binding_and_off
         finalized_height: 7,
         finalized_hash: hashes_at_join[0].1,
     };
-    let mut gate = super::TeeLeaseGuardGateV1::Pending(join_anchor);
+    let mut gate = super::TeeLeaseGuardGateV1::Pending {
+        target: join_anchor,
+        floor: None,
+    };
 
     let admission_at_join =
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
@@ -42,7 +45,10 @@ fn validator_gate_stays_pending_after_enrollment_until_validator_binding_and_off
     );
     assert_eq!(
         gate,
-        super::TeeLeaseGuardGateV1::Pending(join_anchor),
+        super::TeeLeaseGuardGateV1::Pending {
+            target: join_anchor,
+            floor: None,
+        },
         "gate must remain Pending until validator binding is finalized"
     );
 
@@ -99,7 +105,10 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
         finalized_height: 7,
         finalized_hash: hashes[0].1,
     };
-    let mut gate = super::TeeLeaseGuardGateV1::Pending(join_anchor);
+    let mut gate = super::TeeLeaseGuardGateV1::Pending {
+        target: join_anchor,
+        floor: None,
+    };
     let jailed_verdict =
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
             (&crate::OutbeRuntime::new(), &jailed_provider),
@@ -128,10 +137,13 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
             offer_key,
         },
     );
-    let mut mismatch_gate = super::TeeLeaseGuardGateV1::Pending(super::LocalTeeAdmissionAnchorV1 {
-        finalized_height: 7,
-        finalized_hash: mismatch_hashes[0].1,
-    });
+    let mut mismatch_gate = super::TeeLeaseGuardGateV1::Pending {
+        target: super::LocalTeeAdmissionAnchorV1 {
+            finalized_height: 7,
+            finalized_hash: mismatch_hashes[0].1,
+        },
+        floor: None,
+    };
     assert_eq!(
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
             (&crate::OutbeRuntime::new(), &mismatch_provider),
@@ -157,10 +169,13 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
             offer_key,
         },
     );
-    let mut offer_gate = super::TeeLeaseGuardGateV1::Pending(super::LocalTeeAdmissionAnchorV1 {
-        finalized_height: 7,
-        finalized_hash: ready_hashes[0].1,
-    });
+    let mut offer_gate = super::TeeLeaseGuardGateV1::Pending {
+        target: super::LocalTeeAdmissionAnchorV1 {
+            finalized_height: 7,
+            finalized_hash: ready_hashes[0].1,
+        },
+        floor: None,
+    };
     let wrong_offer = alloy_primitives::B256::repeat_byte(0xEE);
     let offer_err = crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
         (&crate::OutbeRuntime::new(), &ready_provider),
@@ -187,10 +202,13 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
             offer_key,
         },
     );
-    let mut expired_gate = super::TeeLeaseGuardGateV1::Pending(super::LocalTeeAdmissionAnchorV1 {
-        finalized_height: 7,
-        finalized_hash: expired_hashes[0].1,
-    });
+    let mut expired_gate = super::TeeLeaseGuardGateV1::Pending {
+        target: super::LocalTeeAdmissionAnchorV1 {
+            finalized_height: 7,
+            finalized_hash: expired_hashes[0].1,
+        },
+        floor: None,
+    };
     assert_eq!(
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
             (&crate::OutbeRuntime::new(), &expired_now_provider),
@@ -208,10 +226,13 @@ fn validator_gate_never_arms_on_rejection_or_offer_mismatch() {
     // Scenario 3e: Provider state read failure -> returns Err and never arms or signals armed=true.
     let mut failing_provider = ready_provider;
     failing_provider.fail_state_read = true;
-    let mut failing_gate = super::TeeLeaseGuardGateV1::Pending(super::LocalTeeAdmissionAnchorV1 {
-        finalized_height: 7,
-        finalized_hash: ready_hashes[0].1,
-    });
+    let mut failing_gate = super::TeeLeaseGuardGateV1::Pending {
+        target: super::LocalTeeAdmissionAnchorV1 {
+            finalized_height: 7,
+            finalized_hash: ready_hashes[0].1,
+        },
+        floor: None,
+    };
     assert!(
         crate::admission::read_gated_finalized_local_tee_admission_with_resident_offer(
             (&crate::OutbeRuntime::new(), &failing_provider),

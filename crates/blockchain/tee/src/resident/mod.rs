@@ -1,4 +1,4 @@
-//! RAM-only secret ownership and domain-neutral operations on opaque handles.
+//! Secret ownership and domain-neutral operations on opaque handles.
 pub(crate) mod crypto_ops;
 mod envelopes;
 mod handles;

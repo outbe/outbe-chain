@@ -25,12 +25,13 @@ impl LifecycleAuthorityProbe {
                     crate::admission_authority::live::LiveTeeSnapshotV1 {
                         context,
                         identity,
-                        gate: crate::admission::TeeLeaseGuardGateV1::Pending(
-                            LocalTeeAdmissionAnchorV1 {
+                        gate: crate::admission::TeeLeaseGuardGateV1::Pending {
+                            target: LocalTeeAdmissionAnchorV1 {
                                 finalized_height: anchor.0,
                                 finalized_hash: anchor.1,
                             },
-                        ),
+                            floor: None,
+                        },
                     },
                     authority,
                 )
@@ -202,7 +203,11 @@ impl LifecycleSupervisorProbe {
         &mut self,
     ) -> eyre::Result<Option<outbe_tee::lifecycle::renewal::RenewalStep>> {
         Ok(match self.0.observe_tick().await? {
-            engine::Step::Renewal(outcome) => Some(outcome),
+            engine::Step::Renewal(outcome)
+            | engine::Step::Resident {
+                renewal: Some(outcome),
+                ..
+            } => Some(outcome),
             _ => None,
         })
     }

@@ -217,7 +217,10 @@ fn complete_cold_recovery_overwrites_anchor_from_a_previous_enclave() {
     assert!(Arc::ptr_eq(&owner.lock().unwrap().context, &candidate));
     assert_eq!(
         owner.lock().unwrap().gate,
-        TeeLeaseGuardGateV1::Pending(anchor)
+        TeeLeaseGuardGateV1::Pending {
+            target: anchor,
+            floor: None,
+        }
     );
     assert!(matches!(
         supervisor.phase,

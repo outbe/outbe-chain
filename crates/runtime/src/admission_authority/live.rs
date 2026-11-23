@@ -145,6 +145,27 @@ impl LiveTeeRuntimeV1 {
         })
     }
 
+    /// Promote `AwaitingAnchor` to `Pending` once the resident context holds a
+    /// verified admission anchor. Never downgrades `Pending` or `Armed`.
+    pub(crate) fn publish_admitted_anchor(&self) -> Result<(), LiveTeeError> {
+        let mut active = self.lock()?;
+        if !matches!(active.gate, TeeLeaseGuardGateV1::AwaitingAnchor) {
+            return Ok(());
+        }
+        let Some(anchor) = active.context.admission_anchor()? else {
+            return Ok(());
+        };
+        active.gate = TeeLeaseGuardGateV1::Pending {
+            target: LocalTeeAdmissionAnchorV1 {
+                finalized_height: anchor.block_number,
+                finalized_hash: anchor.block_hash,
+            },
+            floor: None,
+        };
+        self.bootstrap_allowed.store(false, Ordering::Relaxed);
+        Ok(())
+    }
+
     /// Binds the door-side refresh to this owner.
     ///
     /// `upgradeKey`, `derive*Keys`, and Signer call the hook on every freshness
@@ -331,7 +352,10 @@ impl LiveTeeRuntimeV1 {
                         expected_enclave_id: Some(enclave_id),
                         ..active.identity
                     },
-                    gate: TeeLeaseGuardGateV1::Pending(anchor),
+                    gate: TeeLeaseGuardGateV1::Pending {
+                        target: anchor,
+                        floor: None,
+                    },
                     context: candidate,
                 };
                 *staged = None;

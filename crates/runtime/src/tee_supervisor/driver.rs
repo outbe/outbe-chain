@@ -68,6 +68,18 @@ pub(crate) async fn prepare<T: LifecycleTask>(
         if matches!(step, Step::AwaitingNetwork) {
             return Ok(None);
         }
+        if let Step::Resident { at, jailed, .. } = step {
+            tracing::info!(
+                height = at.height,
+                hash = %at.hash,
+                jailed,
+                "TEE pre-sync verified resident identity"
+            );
+            return Ok(Some(PreparedAnchor {
+                height: at.height,
+                hash: at.hash,
+            }));
+        }
         if let Some(anchor) = task.prepared(&step).map_err(PrepareError::Observation)? {
             return Ok(Some(anchor));
         }
@@ -89,7 +101,11 @@ pub(crate) async fn run<T: LifecycleTask>(
         };
         match result {
             Ok(step) => match step {
-                Step::Renewal(outcome) => tracing::debug!(?outcome, "TEE renewal observation"),
+                Step::Renewal(outcome)
+                | Step::Resident {
+                    renewal: Some(outcome),
+                    ..
+                } => tracing::debug!(?outcome, "TEE renewal observation"),
                 step => tracing::debug!(reason=?step, "TEE lifecycle observation"),
             },
             // Keep resident keys and durable intent across transient chain I/O.
