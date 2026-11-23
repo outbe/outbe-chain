@@ -329,6 +329,11 @@ pub fn render(
     };
     for (index, validator) in validators.iter().enumerate() {
         write_validator_scripts(config, index, validator, &paths)?;
+        let validator_bootnodes = output_dir
+            .join(format!("validator-{index}"))
+            .join("reth-bootnodes.txt");
+        fs::copy(&bootnodes_path, &validator_bootnodes)
+            .map_err(|err| GenesisError::io(&validator_bootnodes, err))?;
     }
 
     stage_crs(config, output_dir)?;

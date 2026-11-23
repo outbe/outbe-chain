@@ -156,6 +156,7 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
                 "{removed} must not be generated"
             );
         }
+        assert!(directory.join("reth-bootnodes.txt").is_file());
         for name in [
             "run-radicle.sh",
             "run-node.sh",
@@ -213,6 +214,9 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
         assert!(feeder.contains(&format!("private_key = \"0x{:064x}\"", index + 11)));
         assert!(!feeder.contains(&format!("private_key = \"0x{:064x}\"", index + 1)));
         assert!(directory.join("systemd/outbe-validator.target").is_file());
+        let node = fs::read_to_string(directory.join("run-node.sh")).expect("node script");
+        assert!(node.contains("--tee-bootstrap-timeout-secs 300"));
+        assert!(node.contains(&format!("/validator-{index}/reth-bootnodes.txt")));
     }
 
     let first_bootnodes =

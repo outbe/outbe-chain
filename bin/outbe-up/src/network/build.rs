@@ -20,7 +20,8 @@ use crate::{
     validator::bundle::{self, BundleInput},
     validator::config::{
         FeederConfig as OperatorFeederConfig, NetworkConfig as OperatorNetworkConfig,
-        OperatorConfig, CONFIG_VERSION as OPERATOR_CONFIG_VERSION,
+        NetworkPorts as OperatorNetworkPorts, OperatorConfig,
+        CONFIG_VERSION as OPERATOR_CONFIG_VERSION,
     },
     validator::{validator_address, FEEDER_FUNDING_WEI},
 };
@@ -197,6 +198,9 @@ pub fn run(
     .wrap_err("failed to finalize the genesis TEE policy")?;
     launch_bundle::render(&genesis_config, &validators, &final_genesis, &keys)
         .wrap_err("failed to render founder launch bundles")?;
+    write_founder_bootnodes(staging.path(), &resolved)?;
+    launch_bundle::build_distribution(staging.path(), &validators, &keys, "/opt/outbe-chain")
+        .wrap_err("failed to package founder launch bundles")?;
 
     progress.stage("assembling founder and joining artifacts");
     let founders = founder_artifacts(staging.path(), &resolved, &validators)?;
@@ -357,6 +361,43 @@ fn generate_keys(config: &NetworkConfig, software: &Path, keys: &Path) -> Result
                 "--chain-id",
                 &chain_id,
             ],
+        )?;
+    }
+    Ok(())
+}
+
+fn write_founder_bootnodes(root: &Path, founders: &[ResolvedFounder]) -> Result<()> {
+    let public = fs::read_to_string(root.join("reth-bootnodes.txt"))?;
+    let identities = public
+        .lines()
+        .map(|line| {
+            line.rsplit_once('@')
+                .map(|(identity, _)| identity.to_owned())
+                .ok_or_else(|| eyre::eyre!("invalid generated Reth bootnode: {line}"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    ensure!(
+        identities.len() == founders.len(),
+        "generated Reth bootnode count does not match founders"
+    );
+
+    for (index, founder) in founders.iter().enumerate() {
+        let bootnodes = identities
+            .iter()
+            .zip(founders)
+            .map(|(identity, peer)| {
+                let host = if peer.machine == founder.machine {
+                    peer.private_ip
+                } else {
+                    peer.public_ip
+                };
+                format!("{identity}@{host}:{}", peer.ports.reth_p2p)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(
+            root.join(format!("validator-{index}/reth-bootnodes.txt")),
+            format!("{bootnodes}\n"),
         )?;
     }
     Ok(())
@@ -639,6 +680,7 @@ fn joining_operator_config(
             certified_rpc: config.certified_rpc.clone(),
             advertise_ip: Ipv4Addr::new(192, 0, 2, 10),
             rpc_bind_ip: Ipv4Addr::LOCALHOST,
+            ports: OperatorNetworkPorts::default(),
             bootnodes,
             consensus_peers,
             use_local_defaults: config.topology.use_local_defaults,
@@ -807,6 +849,41 @@ mod tests {
     }
 
     #[test]
+    fn founder_bootnodes_use_private_addresses_on_the_same_machine() {
+        let root = tempfile::tempdir().unwrap();
+        let config: NetworkConfig = serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
+        let founders = config.resolve_topology().unwrap();
+        for index in 0..founders.len() {
+            fs::create_dir(root.path().join(format!("validator-{index}"))).unwrap();
+        }
+        fs::write(
+            root.path().join("reth-bootnodes.txt"),
+            (0..founders.len())
+                .map(|index| {
+                    format!(
+                        "enode://node-{index}@{}:{}",
+                        founders[index].public_ip, founders[index].ports.reth_p2p
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n",
+        )
+        .unwrap();
+
+        write_founder_bootnodes(root.path(), &founders).unwrap();
+
+        let first = fs::read_to_string(root.path().join("validator-0/reth-bootnodes.txt")).unwrap();
+        assert!(first.contains("@10.77.0.11:30303"));
+        assert!(first.contains("@10.77.0.12:30304"));
+        assert!(first.contains("@203.0.113.20:30303"));
+        let third = fs::read_to_string(root.path().join("validator-2/reth-bootnodes.txt")).unwrap();
+        assert!(third.contains("@203.0.113.10:30303"));
+        assert!(third.contains("@10.77.0.11:30303"));
+        assert!(third.contains("@10.77.0.12:30304"));
+    }
+
+    #[test]
     fn mainnet_rejects_generated_unattested_policy() {
         let temp = tempfile::tempdir().unwrap();
         let mut config: NetworkConfig =
@@ -866,6 +943,8 @@ mod tests {
         let yaml = serde_yaml_ng::to_string(&operator).unwrap();
         assert!(yaml.contains("version: 1"));
         assert!(yaml.contains(&format!("chain_id: {}", config.chain_id)));
+        assert!(yaml.contains("reth_p2p: 30303"));
+        assert!(yaml.contains("consensus: 30400"));
         assert!(!yaml.contains("$serde_json"));
         assert!(!yaml.contains("poll_interval_secs:"));
         assert!(!yaml.contains("signer_funding_wei:"));
