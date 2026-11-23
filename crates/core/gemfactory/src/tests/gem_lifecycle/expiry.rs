@@ -78,9 +78,10 @@ fn forfeit_deletes_the_gem_and_returns_promis_load() {
         })
         .expect("the burn is announced");
     assert_eq!((burned.from, burned.tokenId), (ALICE, gem_id));
-    let forfeited = events
+    let forfeited = provider
+        .get_events(outbe_system_common::addresses::GEM_FACTORY_ADDRESS)
         .iter()
-        .find_map(|log| IGem::GemSeriesClosed::decode_log_data(log).ok())
+        .find_map(|log| crate::precompile::IGemFactory::GemSeriesClosed::decode_log_data(log).ok())
         .unwrap();
     assert_eq!(
         (forfeited.forfeitedCount, forfeited.forfeitedAmountMinor),
@@ -128,9 +129,11 @@ fn a_fully_settled_group_closes_with_zero_forfeit() {
     });
 
     let closed: Vec<_> = provider
-        .get_events(GEM_ADDRESS)
+        .get_events(outbe_system_common::addresses::GEM_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| IGem::GemSeriesClosed::decode_log_data(log).ok())
+        .filter_map(|log| {
+            crate::precompile::IGemFactory::GemSeriesClosed::decode_log_data(log).ok()
+        })
         .collect();
     assert_eq!(closed.len(), 1);
     assert_eq!(

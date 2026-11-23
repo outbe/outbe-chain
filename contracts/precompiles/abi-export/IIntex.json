@@ -444,43 +444,6 @@
   },
   {
     "type": "event",
-    "name": "IntexSeriesClosed",
-    "inputs": [
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
-      },
-      {
-        "name": "issuanceCurrency",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "referenceCurrency",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "forfeitedCount",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
-      },
-      {
-        "name": "forfeitedAmountMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "IntexSettled",
     "inputs": [
       {

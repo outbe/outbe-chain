@@ -124,13 +124,4 @@ interface IIntex {
         uint256 amountMinor,
         uint32 units
     );
-
-    /// @notice The series settlement window closed. Both are zero when every unit was realized in time.
-    event IntexSeriesClosed(
-        bytes14 indexed seriesId,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        uint32 forfeitedCount,
-        uint256 forfeitedAmountMinor
-    );
 }

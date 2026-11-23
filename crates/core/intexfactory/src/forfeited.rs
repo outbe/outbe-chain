@@ -7,7 +7,6 @@ use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::StorageHandle};
 use outbe_system_common::pass_budget::PassBudget;
 
-use outbe_intex::precompile::IIntex;
 use outbe_intex::{ForfeitQueue, IntexContract};
 
 use crate::errors::IntexFactoryError;
@@ -74,7 +73,7 @@ impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
             returned = returned
                 .checked_add(series_returned)
                 .ok_or(IntexFactoryError::ForfeitedPromisLoadOverflow)?;
-            closed_events.push(IIntex::IntexSeriesClosed {
+            closed_events.push(crate::precompile::IIntexFactory::IntexSeriesClosed {
                 seriesId: series_id.into(),
                 issuanceCurrency: series.issuance_currency,
                 referenceCurrency: series.reference_currency,
@@ -88,7 +87,7 @@ impl DeadlineHandler<B256> for IntexForfeit<'_, '_> {
         }
         self.intex.hand_to_cleanup(group)?;
         for event in closed_events {
-            self.intex.emit(event)?;
+            crate::runtime::emit_event(self.storage, event)?;
         }
         Ok(())
     }

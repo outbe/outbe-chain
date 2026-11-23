@@ -104,23 +104,4 @@ interface IGem {
         address asset,
         uint256 amountMinor
     );
-    /// @notice The daily Call scan force-called every gem in the sub-series.
-    event GemSeriesCalled(
-        bytes14 indexed seriesId,
-        uint16 indexed subSeriesId,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        uint64 calledAt,
-        uint64 settlementDeadline
-    );
-    /// @notice The sub-series notice period lapsed: its `forfeitedCount` unsettled gems are forfeited and
-    ///         their `forfeitedAmountMinor` returned at once. The cleanup deletes them after.
-    event GemSeriesClosed(
-        bytes14 indexed seriesId,
-        uint16 indexed subSeriesId,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        uint32 forfeitedCount,
-        uint256 forfeitedAmountMinor
-    );
 }

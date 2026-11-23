@@ -154,6 +154,15 @@ interface IIntexFactory {
         uint256 unitPromisLoadMinor
     );
 
+    /// @notice The series settlement window closed. Both are zero when every unit was realized in time.
+    event IntexSeriesClosed(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint32 forfeitedCount,
+        uint256 forfeitedAmountMinor
+    );
+
     /// @notice All 8 tries of the series' call notice to `dstChainId` failed, so the factory sends
     ///         it to that chain no more. A kept message stays in the origin router for anyone to
     ///         resend. `errorData` is the revert data of the last try. `dstChainId` is 0 when
