@@ -195,13 +195,19 @@ pub fn take_series_unsettled_load(
     nod.take_series_unsettled_load(group_key, sub_series, load)
 }
 
-/// Removes a loaded Nod item and decrements membership, deleting the group only if empty.
+/// Removes a loaded Nod item and decrements membership. A forfeited group closes with its
+/// last Nod; a group never called stays for [`close_empty_group`].
 pub fn remove_nod(
     storage: &StorageHandle<'_>,
     item: LoadedNodItem,
     group: LoadedNodGroup,
 ) -> Result<()> {
     crate::state_api::remove_item(storage, item, group)
+}
+
+/// Closes `group_key` when it holds no Nod and was never called. Returns whether it did.
+pub fn close_empty_group(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
+    crate::state_api::close_empty_group(storage, group_key)
 }
 
 /// Loads a Nod item while retaining its exact stored state for mutation.

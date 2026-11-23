@@ -87,6 +87,25 @@ pub fn clean_item(storage: &StorageHandle<'_>, nod_id: U256) -> Result<()> {
         NodContract::new(storage.clone()).record_nod_removed_state(item, group)
     })
 }
+/// Closes `group_key` when it holds no Nod and was never called. Returns whether it did.
+pub fn close_empty_group(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
+    storage.with_checkpoint(|| {
+        let mut nod = NodContract::new(storage.clone());
+        let Some(group) = nod.groups.get(group_key)? else {
+            return Ok(false);
+        };
+        if group.settled_nods != 0
+            || nod.group_nod_count.read(&group_key)? != 0
+            || nod.group_called_at.read(&group_key)? != 0
+        {
+            return Ok(false);
+        }
+        nod.group_nod_count.clear(&group_key)?;
+        nod.close_group(group_key)?;
+        nod.groups.delete(group_key)?;
+        Ok(true)
+    })
+}
 pub fn record_settled(
     storage: &StorageHandle<'_>,
     item: LoadedNodItem,
@@ -138,7 +157,7 @@ impl NodContract<'_> {
         let current_group = self.groups.get(item.group_key)?;
         let member_count = self.group_nod_count.read(&item.group_key)?;
         let settled_count = current_group.as_ref().map_or(0, |group| group.settled_nods);
-        if current_group.is_some() != (member_count > 0 || settled_count > 0) {
+        if current_group.is_none() && (member_count > 0 || settled_count > 0) {
             return Err(NodError::GroupExistenceDisagreesWithMemberCount {
                 group_id,
                 member_count,
@@ -232,8 +251,10 @@ impl NodContract<'_> {
             self.remove_group_member(item.group_key, item.nod_id)?
         };
         self.delete_state_record(item.nod_id)?;
+        // A group that was never called stays open for the rest of its offering window:
+        // NodFactory closes it once no Nod can join it.
         let empty = remaining == 0 && group.settled_nods == 0;
-        if empty && !self.waiting_for_forfeit(item.group_key)? {
+        if empty && self.group_is_forfeited.read(&item.group_key)? {
             self.group_nod_count.clear(&item.group_key)?;
             self.close_group(item.group_key)?;
             self.groups.delete(group.group_key)?;
@@ -418,6 +439,8 @@ mod tests {
             )
             .unwrap();
             assert!(contract.state_records(item.owner).unwrap().is_empty());
+            assert!(contract.groups.get(item.group_key).unwrap().is_some());
+            assert!(close_empty_group(&storage, item.group_key).unwrap());
             assert!(contract.groups.get(item.group_key).unwrap().is_none());
         });
     }

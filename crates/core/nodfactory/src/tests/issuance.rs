@@ -232,6 +232,11 @@ fn mining_deletes_item_and_last_group_then_emits_burn() {
     world.provider.clear_events(NOD_ADDRESS);
     world.provider.clear_events(NOD_FACTORY_ADDRESS);
     world.settle(nod_id, input.owner).unwrap();
+    // After the offering of its emission day no Nod can join the group, so it closes.
+    world.set_timestamp(
+        outbe_system_common::time::date_key_to_utc_timestamp(input.emission_day).unwrap()
+            + 3 * 86_400,
+    );
     let nonce = world.pow_nonce(nod_id);
     let minted = world
         .mine_gratis(api::MineGratisRequest {
@@ -734,13 +739,20 @@ fn a_series_left_open_defers_the_group_and_the_retry_credits_once() {
     });
 }
 
+/// A sub-series whose group empties inside the offering window keeps its terms, so the
+/// next Nod of its hour joins it and the sub-series opens once.
 #[test]
-fn a_sub_series_keeps_its_group_until_the_group_closes() {
+fn a_sub_series_emptied_inside_its_offering_window_opens_once() {
     let _enclave = outbe_nod::test_support::scope();
     let mut world = World::new();
     world.enter(|storage| {
-        let nod_id = issue_offered(&storage, Address::repeat_byte(0x71), 840, 15);
-        let group = group_of(&storage, nod_id);
+        let first = issue_offered(&storage, Address::repeat_byte(0x71), 840, 15);
+        let group = group_of(&storage, first);
+        settle_item(&storage, first);
+        let item = nod_api::load_item(&storage, first).unwrap().unwrap();
+        let loaded_group = nod_api::load_group(&storage, group).unwrap().unwrap();
+        nod_api::remove_nod(&storage, item, loaded_group).unwrap();
+        assert!(nod_api::get_group(&storage, group).unwrap().is_some());
         assert_eq!(
             nod_api::sub_series_group(&storage, series(840), 0).unwrap(),
             Some(group)
@@ -749,15 +761,16 @@ fn a_sub_series_keeps_its_group_until_the_group_closes() {
             nod_api::sub_series_entry_price(&storage, series(840), 0).unwrap(),
             Some(U256::from(500_000))
         );
-
-        let item = nod_api::load_item(&storage, nod_id).unwrap().unwrap();
-        let loaded_group = nod_api::load_group(&storage, group).unwrap().unwrap();
-        nod_api::remove_nod(&storage, item, loaded_group).unwrap();
-        assert_eq!(
-            nod_api::sub_series_group(&storage, series(840), 0).unwrap(),
-            None
-        );
+        let second = issue_offered(&storage, Address::repeat_byte(0x72), 840, 15);
+        assert_eq!(group_of(&storage, second), group);
     });
+    let opened = world
+        .provider
+        .get_events(NOD_FACTORY_ADDRESS)
+        .iter()
+        .filter(|log| INodFactory::NodSeriesOpened::decode_log_data(log).is_ok())
+        .count();
+    assert_eq!(opened, 1);
 }
 
 fn settle_item(storage: &StorageHandle<'_>, nod_id: U256) {
@@ -850,4 +863,50 @@ fn forfeited_nod_loads_go_to_the_promis_limit_once() {
                 .is_settled
         );
     });
+}
+
+/// Two sub-series of one series at two entry prices sit in two groups. The first group
+/// closes, and the call of the second still names the currencies of its sub-series.
+#[test]
+fn a_closed_group_leaves_the_other_groups_of_its_series_their_currencies() {
+    let _enclave = outbe_nod::test_support::scope();
+    let mut world = World::new();
+    world.enter(|storage| {
+        let early = issue_offered(&storage, Address::repeat_byte(0x71), 840, 15);
+        let mut input = params(Address::repeat_byte(0x73));
+        input.emission_day = GROUP_DAY;
+        input.issuance_currency = 840;
+        input.entry_price_minor = U256::from(700_000);
+        let late = runtime::issue_offer_nod(
+            &storage,
+            &outbe_nod::test_support::encrypted_fixture(&input, CHAIN_ID),
+            offered_at() + 3_600,
+            1,
+        )
+        .unwrap();
+        let first_group = group_of(&storage, early);
+        let second_group = group_of(&storage, late);
+        assert_ne!(first_group, second_group);
+
+        settle_item(&storage, early);
+        let item = nod_api::load_item(&storage, early).unwrap().unwrap();
+        let loaded = nod_api::load_group(&storage, first_group).unwrap().unwrap();
+        nod_api::remove_nod(&storage, item, loaded).unwrap();
+        assert!(nod_api::close_empty_group(&storage, first_group).unwrap());
+        call(&storage, second_group);
+    });
+    let called: Vec<_> = world
+        .provider
+        .get_events(NOD_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| INodFactory::NodSeriesCalled::decode_log_data(log).ok())
+        .map(|event| {
+            (
+                event.subSeriesId,
+                event.issuanceCurrency,
+                event.referenceCurrency,
+            )
+        })
+        .collect();
+    assert_eq!(called, [(1, 840, 840)]);
 }

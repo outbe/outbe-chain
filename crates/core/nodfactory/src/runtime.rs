@@ -273,8 +273,14 @@ pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> R
     let owner = item.body().owner;
     validate_pow(nod_id, owner, nonce)?;
     let encrypted = item.body().encrypted.clone();
+    let group_key = item.body().group_key;
+    let start_day = group.body().full_day_after_issue;
     storage.clone().with_checkpoint(|| {
         nod_api::remove_nod(storage, item, group)?;
+        let nod = outbe_nod::NodContract::new(storage.clone());
+        if storage.now_secs()? >= crate::called::offering_end_of(&nod, start_day)? {
+            nod_api::close_empty_group(storage, group_key)?;
+        }
         // The Nod owner authorizes the mint, including when a relayer submits it.
         outbe_gratisfactory::api::mint_encrypted_nod(storage.clone(), &encrypted, auth)?;
         outbe_gratisfactory::api::encrypted_balance(storage.clone(), owner)

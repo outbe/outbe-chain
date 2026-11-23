@@ -170,9 +170,8 @@ impl NodContract<'_> {
             self.group_series_unsettled_load_minor_ct
                 .bytes(&gs_key)
                 .clear()?;
-            let series_id = self.sub_series_series_id.read(&sub_series)?;
-            self.series_issuance_currency.clear(&series_id)?;
-            self.series_reference_currency.clear(&series_id)?;
+            self.sub_series_issuance_currency.clear(&sub_series)?;
+            self.sub_series_reference_currency.clear(&sub_series)?;
             self.sub_series_series_id.clear(&sub_series)?;
             self.sub_series_number.clear(&sub_series)?;
             self.sub_series_entry_price_minor.clear(&sub_series)?;
@@ -180,13 +179,6 @@ impl NodContract<'_> {
         }
         self.group_series.list(&group_key).clear()?;
         deadline_queue::remove(&CleanupQueue(self), group_key)
-    }
-
-    /// Called and not yet through `NodForfeit`. The group stays so the pass can emit
-    /// `NodSeriesClosed`, including `(0, 0, 0)` when every Nod and Tribute is already gone.
-    pub(crate) fn waiting_for_forfeit(&self, group_key: B256) -> Result<bool> {
-        Ok(self.group_called_at.read(&group_key)? != 0
-            && !self.group_is_forfeited.read(&group_key)?)
     }
 
     /// Closes a called group after `NodSeriesClosed` once nothing settled remains.
@@ -216,6 +208,10 @@ impl NodContract<'_> {
             self.group_series_present.write(&gs_key, true)?;
             self.sub_series_series_id.write(&sub_series, series_id)?;
             self.sub_series_number.write(&sub_series, number)?;
+            self.sub_series_issuance_currency
+                .write(&sub_series, issuance_currency)?;
+            self.sub_series_reference_currency
+                .write(&sub_series, reference_currency)?;
         }
         if self
             .sub_series_entry_price_minor
@@ -226,10 +222,7 @@ impl NodContract<'_> {
                 .write(&sub_series, entry_price_minor)?;
             self.sub_series_group.write(&sub_series, group_key)?;
         }
-        self.series_issuance_currency
-            .write(&series_id, issuance_currency)?;
-        self.series_reference_currency
-            .write(&series_id, reference_currency)
+        Ok(())
     }
 
     pub(crate) fn increment_series_nod_count(

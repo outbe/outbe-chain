@@ -234,7 +234,8 @@ pub(crate) fn call_currency(
 }
 
 /// Takes a group every Nod of which is settled out of its bin once the offering of its
-/// emission day ended: no Nod can join it after. Returns whether it did.
+/// emission day ended, and closes it when no Nod is left: no Nod can join it after.
+/// Returns whether it did.
 fn retire_settled_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) -> Result<bool> {
     if nod.group_nod_count.read(&group_key)? != 0 || nod.group_called_at.read(&group_key)? != 0 {
         return Ok(false);
@@ -248,6 +249,7 @@ fn retire_settled_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) ->
         return Ok(false);
     }
     nod.remove_call_bin(group_key)?;
+    outbe_nod::api::close_empty_group(&nod.storage, group_key)?;
     Ok(true)
 }
 
@@ -271,7 +273,7 @@ fn call_if_breached(
 
 /// The end of the offering of emission day `day`, whose Nods count their call from its
 /// 00:00. Without a Worldwide Day record it is that 00:00.
-fn offering_end_of(
+pub(crate) fn offering_end_of(
     nod: &NodContract<'_>,
     day: outbe_system_common::time::WorldwideDay,
 ) -> Result<u64> {
@@ -318,8 +320,8 @@ pub(crate) fn mark_called(
     nod.record_group_called(group_key, now, deadline)?;
     for sub_series in nod.group_series.list(&group_key).read_all()? {
         let series_id = nod.sub_series_series_id.read(&sub_series)?;
-        let issuance_currency = nod.series_issuance_currency.read(&series_id)?;
-        let reference_currency = nod.series_reference_currency.read(&series_id)?;
+        let issuance_currency = nod.sub_series_issuance_currency.read(&sub_series)?;
+        let reference_currency = nod.sub_series_reference_currency.read(&sub_series)?;
         crate::runtime::emit_event(
             &nod.storage,
             crate::precompile::INodFactory::NodSeriesCalled {

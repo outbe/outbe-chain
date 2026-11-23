@@ -136,8 +136,8 @@ impl NodForfeit<'_, '_> {
             crate::precompile::INodFactory::NodSeriesClosed {
                 seriesId: series_id.into(),
                 subSeriesId: self.nod.sub_series_number.read(&sub_series)?,
-                issuanceCurrency: self.nod.series_issuance_currency.read(&series_id)?,
-                referenceCurrency: self.nod.series_reference_currency.read(&series_id)?,
+                issuanceCurrency: self.nod.sub_series_issuance_currency.read(&sub_series)?,
+                referenceCurrency: self.nod.sub_series_reference_currency.read(&sub_series)?,
                 forfeitedCount: forfeited_count,
                 forfeitedAmountMinor: forfeited_amount_minor,
             },

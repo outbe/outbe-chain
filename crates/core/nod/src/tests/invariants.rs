@@ -137,6 +137,11 @@ fn group_record_survives_membership_changes_until_last_removal() {
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.group_nod_count.read(&first.group_key).unwrap(), 0);
         assert_eq!(api::balance_of(&storage, second.owner).unwrap(), 0);
+        assert!(
+            api::get_group(&storage, group_id).unwrap().is_some(),
+            "a group never called stays until NodFactory closes it"
+        );
+        assert!(api::close_empty_group(&storage, group_id).unwrap());
         assert!(api::get_group(&storage, group_id).unwrap().is_none());
     });
 }

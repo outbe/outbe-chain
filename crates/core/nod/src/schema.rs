@@ -317,12 +317,12 @@ pub struct NodContract {
     /// Whether `group_series_key(group_key, sub_series)` is listed in `group_series`.
     #[attribute(order = 111)]
     pub group_series_present: outbe_primitives::storage::dsl::Map<B256, bool>,
-    /// Issuance currency (ISO 4217 numeric) of the series.
+    /// Issuance currency (ISO 4217 numeric) of a sub-series, keyed by `sub_series_key`.
     #[attribute(order = 112)]
-    pub series_issuance_currency: outbe_primitives::storage::dsl::Map<SeriesId, u16>,
-    /// Reference currency (ISO 4217 numeric) of the series.
+    pub sub_series_issuance_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
+    /// Reference currency (ISO 4217 numeric) of a sub-series, keyed by `sub_series_key`.
     #[attribute(order = 113)]
-    pub series_reference_currency: outbe_primitives::storage::dsl::Map<SeriesId, u16>,
+    pub sub_series_reference_currency: outbe_primitives::storage::dsl::Map<B256, u16>,
     /// Unsettled Nod count of `(group_key, sub_series)`, keyed by `group_series_key`.
     #[attribute(order = 114)]
     pub group_series_nod_count: outbe_primitives::storage::dsl::Map<B256, u32>,

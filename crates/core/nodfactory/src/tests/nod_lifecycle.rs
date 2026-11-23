@@ -1617,7 +1617,9 @@ fn a_group_settled_in_full_closes_with_zero_forfeit() {
         );
         assert!(api::get_group(&storage, id).unwrap().is_some());
         assert_ne!(
-            nod.series_issuance_currency.read(&item.series_id).unwrap(),
+            nod.sub_series_issuance_currency
+                .read(&item.sub_series_key())
+                .unwrap(),
             0
         );
 
@@ -1629,11 +1631,15 @@ fn a_group_settled_in_full_closes_with_zero_forfeit() {
         .unwrap();
         assert!(api::get_group(&storage, id).unwrap().is_none());
         assert_eq!(
-            nod.series_issuance_currency.read(&item.series_id).unwrap(),
+            nod.sub_series_issuance_currency
+                .read(&item.sub_series_key())
+                .unwrap(),
             0
         );
         assert_eq!(
-            nod.series_reference_currency.read(&item.series_id).unwrap(),
+            nod.sub_series_reference_currency
+                .read(&item.sub_series_key())
+                .unwrap(),
             0
         );
         (
@@ -1698,6 +1704,44 @@ fn a_group_settled_in_full_leaves_its_call_bin() {
         assert_eq!(nod.call_group_slot.read(&item.group_key).unwrap(), 0);
         assert_eq!(called_at(storage, item.group_key), 0);
         assert!(api::get_group(storage, item.group_key).unwrap().is_some());
+    });
+}
+
+/// A group whose last Nod left inside its offering window closes at the first walk after the
+/// window, with its sub-series.
+#[test]
+fn an_emptied_group_closes_once_no_nod_can_join_it() {
+    harness(|storage| {
+        let item = issue_owned(storage, Address::repeat_byte(0x32), ISO);
+        api::record_settled(
+            storage,
+            api::load_item(storage, item.nod_id).unwrap().unwrap(),
+            api::load_group(storage, item.group_key).unwrap().unwrap(),
+        )
+        .unwrap();
+        api::remove_nod(
+            storage,
+            api::load_item(storage, item.nod_id).unwrap().unwrap(),
+            api::load_group(storage, item.group_key).unwrap().unwrap(),
+        )
+        .unwrap();
+        assert!(api::get_group(storage, item.group_key).unwrap().is_some());
+
+        let at = START + 30 * DAY;
+        fill_days(
+            storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(storage, at), 0);
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(nod.call_group_slot.read(&item.group_key).unwrap(), 0);
+        assert!(api::get_group(storage, item.group_key).unwrap().is_none());
+        assert_eq!(
+            api::sub_series_group(storage, item.series_id, item.sub_series_id).unwrap(),
+            None
+        );
     });
 }
 
