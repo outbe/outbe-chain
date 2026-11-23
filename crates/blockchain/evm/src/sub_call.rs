@@ -137,7 +137,21 @@ pub(crate) fn run_frame(
 
     let prev_depth = evm.ext().current_call_depth;
     evm.ext_mut().current_call_depth = depth;
+    // Deliberately no Drop guard: if a panic unwinds through `evm.execute_message`,
+    // `evm2` leaves `current_frame` pointing at the dropped child interpreter.
+    // Leaving `native_frame_depth` incremented forces `outbe_ctx_dispatch` to
+    // escalate the unwind to `PrecompileError::Fatal` instead of continuing the
+    // parent frame on a dangling pointer.
+    evm.ext_mut().native_frame_depth += 1;
+    #[cfg(test)]
+    {
+        let current = evm.ext().native_frame_depth;
+        if current > evm.ext().max_native_frame_depth {
+            evm.ext_mut().max_native_frame_depth = current;
+        }
+    }
     let result = evm.execute_message(&mut message);
+    evm.ext_mut().native_frame_depth -= 1;
     evm.ext_mut().current_call_depth = prev_depth;
 
     match result {

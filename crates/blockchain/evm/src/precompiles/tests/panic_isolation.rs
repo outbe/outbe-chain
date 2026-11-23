@@ -34,6 +34,8 @@ use std::sync::Arc;
 const OUTER: Address = Address::repeat_byte(0x81);
 const INNER: Address = Address::repeat_byte(0x82);
 const CALLER: Address = Address::repeat_byte(0x83);
+const CHILD_CONTRACT: Address = Address::repeat_byte(0x84);
+const PANIC_PRECOMPILE: Address = Address::repeat_byte(0x85);
 const GAS_LIMIT: u64 = 200_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +74,9 @@ impl crate::EvmRuntimeHost for PanicHost {
     }
 
     fn is_registered_precompile(&self, address: &Address) -> bool {
+        if *address == PANIC_PRECOMPILE {
+            panic!("secret interpreter unwind");
+        }
         matches!(*address, OUTER | INNER)
     }
 
@@ -110,6 +115,10 @@ impl crate::EvmRuntimeHost for PanicHost {
                 panic!("secret panic text");
             }
             b"offline" => Err(PrecompileError::EnclaveUnavailable("offline".into())),
+            b"child_unwind" => {
+                let _ = storage.call_with_gas(CHILD_CONTRACT, U256::ZERO, Bytes::new(), 50_000);
+                Ok(Bytes::new())
+            }
             _ => write_then_panic(storage, *address),
         }
     }
@@ -397,7 +406,54 @@ fn nested_outbe_precompile_panic_is_caught_at_innermost_dispatch_preserving_jour
             .values()
             .all(|slot| slot.value.current == U256::ZERO));
     }
+    assert!(evm.ext().max_native_frame_depth >= 1);
     assert_eq!(evm.ext().native_frame_depth, 0);
+    assert_eq!(ReentrancyStack::depth(), 0);
+}
+
+#[test]
+fn panic_unwinding_through_subcall_execute_message_escalates_to_fatal() {
+    use evm2::{bytecode::Bytecode, evm::AccountInfo};
+
+    // Child EVM bytecode that STATICCALLs `PANIC_PRECOMPILE`, triggering a panic
+    // inside `evm2::Evm::execute_message` while `run_interpreter` holds `current_frame`.
+    let mut child_code = vec![0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x73];
+    child_code.extend_from_slice(PANIC_PRECOMPILE.as_slice());
+    child_code.extend_from_slice(&[0x5a, 0xfa]);
+    let child_bytecode = Bytecode::new_legacy(child_code.into());
+
+    let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_info(
+        &CHILD_CONTRACT,
+        AccountInfo {
+            code_hash: child_bytecode.hash_slow(),
+            code: Some(child_bytecode),
+            ..Default::default()
+        },
+    );
+    let mut evm = crate::OutbeEvmFactory::new(PanicHost::new(PanicAt::Handler)).create_evm(
+        db,
+        EthEvmEnv::new(
+            SpecId::PRAGUE,
+            BlockEnvExt {
+                gas_limit: U256::from(30_000_000_u64),
+                ..Default::default()
+            },
+            1,
+        ),
+    );
+    let error = evm
+        .transact(&tx(b"child_unwind"))
+        .expect_err("panic unwinding through execute_message must escalate to Fatal");
+    assert!(matches!(error, HandlerError::Fatal(_)));
+    assert!(
+        error
+            .to_string()
+            .contains("precompile subcall unwound with dirty journal depth"),
+        "unexpected error: {error}"
+    );
+    assert!(!error.to_string().contains("secret interpreter unwind"));
+    assert_eq!(evm.ext().native_frame_depth, 1);
     assert_eq!(ReentrancyStack::depth(), 0);
 }
 

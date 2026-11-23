@@ -6,13 +6,23 @@
 //! transaction registry (`outbe_tx_registry`).
 
 use alloy_consensus::Transaction as _;
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use evm2::{
-    ethereum::{eip1559, eip2930, eip4844, eip7702, legacy, PreparedTx, TxEnvelope},
-    evm::{handler::DefaultTxHandlerHooks, DynDatabase, SystemTx as EvmSystemTx},
+    env::TxEnvExt,
+    ethereum::{
+        default_settle_gas, effective_gas_price, eip1559, eip2930, eip4844, eip7702,
+        execute_initial_frame, halted_initial_frame, initial_gas_and_reservoir, legacy,
+        prepare_initial_frame, LazyTxEip7702, PreparedTx, TxEnvelope,
+    },
+    evm::{
+        handler::{DefaultTxHandlerHooks, GasSettlement, TxHandlerHooks},
+        DynDatabase, SystemTx as EvmSystemTx,
+    },
+    interpreter::{GasTracker, MessageResult},
     registry::{HandlerResult, TxHandler, TxRegistry, TxRequest},
-    Evm, EvmConfig, EvmConfigSelector, EvmTypesHost, ExecutionConfig, OpcodeConfig, SpecId,
-    TxResult, Version,
+    utils::b256_to_word,
+    Evm, EvmConfig, EvmConfigSelector, EvmFeatures, EvmTypesHost, ExecutionConfig, OpcodeConfig,
+    SpecId, TxResult, Version,
 };
 #[cfg(any(test, feature = "test-hooks"))]
 use evm2::{interpreter::InstrStop, registry::HandlerError, TxResultExt};
@@ -21,10 +31,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::{
     create_guard::{GuardedCreate, TopLevelCreateGuard},
-    native_delegation::{
-        GuardedCall, GuardedCallCode, GuardedDelegateCall, GuardedStaticCall,
-        TopLevelNativeDelegateGuard,
-    },
+    native_delegation::{normalize_delegated_native_call, GuardedNativeMarkerOpcode},
     precompiles::{
         ExecutionAbortBridge, OutbePrecompileExecutionContext, OutbePrecompileProvider,
         OutbePrecompileRuntime,
@@ -101,6 +108,15 @@ impl Drop for DetachedTraceCleanupGuard {
     }
 }
 
+/// Intrinsic/floor gas values and pre-bump sender nonce captured around `prepare_with_hooks`.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct CapturedPreparedGas {
+    pub(crate) intrinsic: u64,
+    pub(crate) initial_state_gas: u64,
+    pub(crate) floor_gas: u64,
+    pub(crate) sender_nonce: u64,
+}
+
 /// Outbe instance-specific extension state stored inside `evm2::Evm<'a, OutbeEvmTypes>`.
 #[derive(Default)]
 pub struct OutbeEvmExt {
@@ -111,7 +127,10 @@ pub struct OutbeEvmExt {
     pub(crate) witness_state: Option<Arc<Mutex<outbe_tee::witness::WitnessState>>>,
     detached_trace_guard: DetachedTraceCleanupGuard,
     pub(crate) native_frame_depth: usize,
+    #[cfg(test)]
+    pub(crate) max_native_frame_depth: usize,
     pub(crate) current_call_depth: u16,
+    pub(crate) captured_prepared_gas: Option<CapturedPreparedGas>,
     #[cfg(test)]
     pub(crate) last_system_call: Option<EvmSystemTx>,
 }
@@ -183,22 +202,7 @@ const fn build_outbe_opcode_config<const BASE_SPEC_ID: u32>() -> OpcodeConfig<Ou
         let gas = cfg.static_gas(op::SELFDESTRUCT);
         cfg.set_instruction::<GuardedSelfdestruct>(op::SELFDESTRUCT, gas);
     }
-    if cfg.is_defined(op::CALL) {
-        let gas = cfg.static_gas(op::CALL);
-        cfg.set_instruction::<GuardedCall>(op::CALL, gas);
-    }
-    if cfg.is_defined(op::CALLCODE) {
-        let gas = cfg.static_gas(op::CALLCODE);
-        cfg.set_instruction::<GuardedCallCode>(op::CALLCODE, gas);
-    }
-    if cfg.is_defined(op::DELEGATECALL) {
-        let gas = cfg.static_gas(op::DELEGATECALL);
-        cfg.set_instruction::<GuardedDelegateCall>(op::DELEGATECALL, gas);
-    }
-    if cfg.is_defined(op::STATICCALL) {
-        let gas = cfg.static_gas(op::STATICCALL);
-        cfg.set_instruction::<GuardedStaticCall>(op::STATICCALL, gas);
-    }
+    cfg.set_instruction::<GuardedNativeMarkerOpcode>(0xef, 0);
     cfg
 }
 
@@ -336,6 +340,28 @@ pub fn transact_outbe_system_call(
     call.finish(outcome)
 }
 
+/// Captures the validated intrinsic/floor gas values computed by `evm2::ethereum::*::prepare_with_hooks`
+/// while preserving all default upstream pre-execution and settlement behavior.
+struct CapturePreparedHooks;
+
+impl TxHandlerHooks<OutbeEvmTypes> for CapturePreparedHooks {
+    fn adjust_intrinsic_gas(
+        host: &mut OutbeEvm<'_>,
+        _envelope: &TxEnvelope,
+        intrinsic: &mut u64,
+        initial_state_gas: &mut u64,
+        floor_gas: &mut u64,
+    ) -> HandlerResult<()> {
+        host.ext_mut().captured_prepared_gas = Some(CapturedPreparedGas {
+            intrinsic: *intrinsic,
+            initial_state_gas: *initial_state_gas,
+            floor_gas: *floor_gas,
+            sender_nonce: 0,
+        });
+        Ok(())
+    }
+}
+
 /// Builds Outbe's transaction registry for `spec_id`.
 ///
 /// Wraps all active Ethereum transaction types with:
@@ -343,14 +369,15 @@ pub fn transact_outbe_system_call(
 /// - `with_evm_transact_witness_scope`,
 /// - `ExecutionAbortBridge` fatal-abort preservation,
 /// - top-level reserved-dynamic-precompile CREATE collision guarding, and
-/// - top-level EIP-7702 native delegation marker normalization.
+/// - post-authorization top-level EIP-7702 native delegation frame normalization (zero state mutation).
 pub fn outbe_tx_registry(spec_id: SpecId) -> TxRegistry<OutbeEvmTypes, TxResult<OutbeEvmTypes>> {
     let mut registry = TxRegistry::new().with_handler(
         0,
         TxEnvelope::as_legacy,
         OutbeTxHandler {
-            prepare: legacy::prepare_with_hooks::<OutbeEvmTypes, DefaultTxHandlerHooks>,
-            execute: legacy::execute_prepared::<OutbeEvmTypes, DefaultTxHandlerHooks>,
+            validate_prepare: legacy::prepare_with_hooks::<OutbeEvmTypes, DefaultTxHandlerHooks>,
+            prepare: legacy::prepare_with_hooks::<OutbeEvmTypes, CapturePreparedHooks>,
+            execute: execute_standard_prepared,
         },
     );
 
@@ -359,8 +386,12 @@ pub fn outbe_tx_registry(spec_id: SpecId) -> TxRegistry<OutbeEvmTypes, TxResult<
             1,
             TxEnvelope::as_eip2930,
             OutbeTxHandler {
-                prepare: eip2930::prepare_with_hooks::<OutbeEvmTypes, DefaultTxHandlerHooks>,
-                execute: eip2930::execute_prepared::<OutbeEvmTypes, DefaultTxHandlerHooks>,
+                validate_prepare: eip2930::prepare_with_hooks::<
+                    OutbeEvmTypes,
+                    DefaultTxHandlerHooks,
+                >,
+                prepare: eip2930::prepare_with_hooks::<OutbeEvmTypes, CapturePreparedHooks>,
+                execute: execute_standard_prepared,
             },
         );
     }
@@ -369,8 +400,12 @@ pub fn outbe_tx_registry(spec_id: SpecId) -> TxRegistry<OutbeEvmTypes, TxResult<
             2,
             TxEnvelope::as_eip1559,
             OutbeTxHandler {
-                prepare: eip1559::prepare_with_hooks::<OutbeEvmTypes, DefaultTxHandlerHooks>,
-                execute: eip1559::execute_prepared::<OutbeEvmTypes, DefaultTxHandlerHooks>,
+                validate_prepare: eip1559::prepare_with_hooks::<
+                    OutbeEvmTypes,
+                    DefaultTxHandlerHooks,
+                >,
+                prepare: eip1559::prepare_with_hooks::<OutbeEvmTypes, CapturePreparedHooks>,
+                execute: execute_standard_prepared,
             },
         );
     }
@@ -379,8 +414,12 @@ pub fn outbe_tx_registry(spec_id: SpecId) -> TxRegistry<OutbeEvmTypes, TxResult<
             3,
             TxEnvelope::as_eip4844,
             OutbeTxHandler {
-                prepare: eip4844::prepare_with_hooks::<OutbeEvmTypes, DefaultTxHandlerHooks>,
-                execute: eip4844::execute_prepared::<OutbeEvmTypes, DefaultTxHandlerHooks>,
+                validate_prepare: eip4844::prepare_with_hooks::<
+                    OutbeEvmTypes,
+                    DefaultTxHandlerHooks,
+                >,
+                prepare: eip4844::prepare_with_hooks::<OutbeEvmTypes, CapturePreparedHooks>,
+                execute: execute_standard_prepared,
             },
         );
     }
@@ -389,8 +428,12 @@ pub fn outbe_tx_registry(spec_id: SpecId) -> TxRegistry<OutbeEvmTypes, TxResult<
             4,
             TxEnvelope::as_eip7702,
             OutbeTxHandler {
-                prepare: eip7702::prepare_with_hooks::<OutbeEvmTypes, DefaultTxHandlerHooks>,
-                execute: eip7702::execute_prepared::<OutbeEvmTypes, DefaultTxHandlerHooks>,
+                validate_prepare: eip7702::prepare_with_hooks::<
+                    OutbeEvmTypes,
+                    DefaultTxHandlerHooks,
+                >,
+                prepare: eip7702::prepare_with_hooks::<OutbeEvmTypes, CapturePreparedHooks>,
+                execute: execute_eip7702_prepared,
             },
         );
     }
@@ -398,12 +441,187 @@ pub fn outbe_tx_registry(spec_id: SpecId) -> TxRegistry<OutbeEvmTypes, TxResult<
     registry
 }
 
-struct OutbeTxHandler<P, E> {
+fn execute_standard_prepared<Tx: alloy_consensus::Transaction>(
+    req: TxRequest<'_, '_, OutbeEvmTypes, Tx>,
+    gas: CapturedPreparedGas,
+) -> HandlerResult<TxResult<OutbeEvmTypes>> {
+    let caller = req.tx.signer();
+    let tx: &Tx = req.tx.inner();
+    let gas_price = tx.gas_price().map(U256::from).unwrap_or_else(|| {
+        effective_gas_price(
+            U256::from(tx.max_fee_per_gas()),
+            U256::from(tx.max_priority_fee_per_gas().unwrap_or(0)),
+            req.host.block().basefee,
+        )
+    });
+    let blob_hashes = tx
+        .blob_versioned_hashes()
+        .unwrap_or_default()
+        .iter()
+        .copied()
+        .map(b256_to_word)
+        .collect();
+    let (execution_gas_limit, reservoir) = initial_gas_and_reservoir(
+        req.host.version(),
+        tx.gas_limit(),
+        gas.intrinsic,
+        gas.initial_state_gas,
+    );
+    *req.host.tx_env_mut() = TxEnvExt {
+        origin: caller,
+        gas_price,
+        chain_id: U256::from(req.host.version().chain_id),
+        blob_hashes,
+        ext: (),
+        _non_exhaustive: (),
+    };
+    let mut tx_gas =
+        GasTracker::new_with_execution_gas_and_reservoir(execution_gas_limit, reservoir);
+    let mut frame = prepare_initial_frame(
+        req.host,
+        caller,
+        gas.sender_nonce,
+        tx.kind(),
+        tx.input(),
+        tx.value(),
+        &mut tx_gas,
+    )?;
+    if !frame.runtime_oog {
+        normalize_delegated_native_call(
+            req.host.feature(EvmFeatures::EIP7702),
+            req.host.ext().runtime_host.as_deref(),
+            &mut frame.message,
+        );
+    }
+    let result =
+        execute_initial_frame(req.host, frame, &mut tx_gas, execution_gas_limit, reservoir)?;
+    default_settle_gas(
+        req.host,
+        GasSettlement {
+            caller,
+            gas_price,
+            gas_limit: tx.gas_limit(),
+            floor_gas: gas.floor_gas,
+            initial_state_gas: gas.initial_state_gas,
+            state_refund: 0,
+            result,
+        },
+    )
+}
+
+fn apply_eip7702_auth_phase(
+    host: &mut OutbeEvm<'_>,
+    caller: Address,
+    tx: &LazyTxEip7702,
+    tx_gas: &mut GasTracker,
+) -> HandlerResult<(bool, u64, u64)> {
+    let chain_id = host.version().chain_id;
+    if host.feature(EvmFeatures::EIP2780) {
+        let mut auth_charges =
+            eip7702::RuntimeAuthCharges::new(host.version(), tx_gas, caller, tx.to, tx.value);
+        let oog = eip7702::apply_auth_list(host, chain_id, tx.authorizations(), &mut auth_charges)?;
+        Ok((oog, 0, 0))
+    } else {
+        let mut auth_refunds = eip7702::AuthRefunds::new(host.version());
+        eip7702::apply_auth_list(host, chain_id, tx.authorizations(), &mut auth_refunds)?;
+        tx_gas.set_reservoir(tx_gas.reservoir() + auth_refunds.state_refund);
+        Ok((
+            false,
+            auth_refunds.state_refund,
+            auth_refunds.execution_refund,
+        ))
+    }
+}
+
+fn execute_eip7702_prepared(
+    req: TxRequest<'_, '_, OutbeEvmTypes, LazyTxEip7702>,
+    gas: CapturedPreparedGas,
+) -> HandlerResult<TxResult<OutbeEvmTypes>> {
+    let caller = req.tx.signer();
+    let tx = req.tx.inner();
+    let gas_price = effective_gas_price(
+        U256::from(tx.max_fee_per_gas),
+        U256::from(tx.max_priority_fee_per_gas),
+        req.host.block().basefee,
+    );
+    *req.host.tx_env_mut() = TxEnvExt {
+        origin: caller,
+        gas_price,
+        chain_id: U256::from(req.host.version().chain_id),
+        ..TxEnvExt::default()
+    };
+    let (execution_gas_limit, reservoir) = initial_gas_and_reservoir(
+        req.host.version(),
+        tx.gas_limit,
+        gas.intrinsic,
+        gas.initial_state_gas,
+    );
+    let mut tx_gas =
+        GasTracker::new_with_execution_gas_and_reservoir(execution_gas_limit, reservoir);
+    let runtime_checkpoint = req.host.state_mut().checkpoint();
+    let (auth_oog, state_refund, execution_refund) =
+        apply_eip7702_auth_phase(req.host, caller, tx, &mut tx_gas)?;
+
+    let mut frame = if auth_oog {
+        halted_initial_frame(
+            req.host,
+            caller,
+            tx.nonce,
+            tx.to.into(),
+            &tx.input,
+            tx.value,
+            &GasTracker::new_with_execution_gas_and_reservoir(execution_gas_limit, reservoir),
+        )
+    } else {
+        prepare_initial_frame(
+            req.host,
+            caller,
+            gas.sender_nonce,
+            tx.to.into(),
+            &tx.input,
+            tx.value,
+            &mut tx_gas,
+        )?
+    };
+    if frame.runtime_oog {
+        let features = req.host.version().features;
+        req.host.state_mut().rollback(runtime_checkpoint, features);
+    } else {
+        normalize_delegated_native_call(
+            req.host.feature(EvmFeatures::EIP7702),
+            req.host.ext().runtime_host.as_deref(),
+            &mut frame.message,
+        );
+    }
+    let mut result: MessageResult<OutbeEvmTypes> =
+        execute_initial_frame(req.host, frame, &mut tx_gas, execution_gas_limit, reservoir)?;
+    result.gas.set_refunded(
+        result
+            .gas
+            .refunded()
+            .saturating_add(i64::try_from(execution_refund).unwrap_or(i64::MAX)),
+    );
+    default_settle_gas(
+        req.host,
+        GasSettlement {
+            caller,
+            gas_price,
+            gas_limit: tx.gas_limit,
+            floor_gas: gas.floor_gas,
+            initial_state_gas: gas.initial_state_gas,
+            state_refund,
+            result,
+        },
+    )
+}
+
+struct OutbeTxHandler<V, P, E> {
+    validate_prepare: V,
     prepare: P,
     execute: E,
 }
 
-impl<P, E> OutbeTxHandler<P, E> {
+impl<V, P, E> OutbeTxHandler<V, P, E> {
     fn run_prepared_with_guards<Tx>(
         &self,
         mut req: TxRequest<'_, '_, OutbeEvmTypes, Tx>,
@@ -412,17 +630,30 @@ impl<P, E> OutbeTxHandler<P, E> {
         P: Fn(&mut TxRequest<'_, '_, OutbeEvmTypes, Tx>) -> HandlerResult<PreparedTx> + Send + Sync,
         E: Fn(
                 TxRequest<'_, '_, OutbeEvmTypes, Tx>,
-                PreparedTx,
+                CapturedPreparedGas,
             ) -> HandlerResult<TxResult<OutbeEvmTypes>>
             + Send
             + Sync,
     {
+        let caller = req.tx.signer();
         let kind = req.envelope.kind();
-        let create_dest = TopLevelCreateGuard::detect(req.host, req.tx.signer(), kind)?;
-        let prepared = (self.prepare)(&mut req)?;
+        let sender_nonce = req
+            .host
+            .state_mut()
+            .account_info_untracked(&caller)?
+            .map_or(0, |info| info.nonce);
+        let create_dest = TopLevelCreateGuard::detect(req.host, caller, kind)?;
+        req.host.ext_mut().captured_prepared_gas = None;
+        let _prepared = (self.prepare)(&mut req)?;
+        let mut gas = req
+            .host
+            .ext_mut()
+            .captured_prepared_gas
+            .take()
+            .unwrap_or_default();
+        gas.sender_nonce = sender_nonce;
 
         let create_guard = TopLevelCreateGuard::arm(req.host, create_dest)?;
-        let delegate_guard = TopLevelNativeDelegateGuard::arm(req.host, req.envelope, kind)?;
 
         let result = (self.execute)(
             TxRequest {
@@ -431,28 +662,27 @@ impl<P, E> OutbeTxHandler<P, E> {
                 host: &mut *req.host,
                 _non_exhaustive: (),
             },
-            prepared,
+            gas,
         );
 
-        let failed = result.is_err();
-        delegate_guard.finish(req.host, failed)?;
-        create_guard.finish(req.host, failed)?;
+        create_guard.finish(req.host, result.is_err())?;
         result
     }
 }
 
-impl<Tx, P, E> TxHandler<OutbeEvmTypes, Tx, TxResult<OutbeEvmTypes>> for OutbeTxHandler<P, E>
+impl<Tx, V, P, E> TxHandler<OutbeEvmTypes, Tx, TxResult<OutbeEvmTypes>> for OutbeTxHandler<V, P, E>
 where
+    V: Fn(&mut TxRequest<'_, '_, OutbeEvmTypes, Tx>) -> HandlerResult<PreparedTx> + Send + Sync,
     P: Fn(&mut TxRequest<'_, '_, OutbeEvmTypes, Tx>) -> HandlerResult<PreparedTx> + Send + Sync,
     E: Fn(
             TxRequest<'_, '_, OutbeEvmTypes, Tx>,
-            PreparedTx,
+            CapturedPreparedGas,
         ) -> HandlerResult<TxResult<OutbeEvmTypes>>
         + Send
         + Sync,
 {
     fn validate(&self, mut req: TxRequest<'_, '_, OutbeEvmTypes, Tx>) -> HandlerResult<()> {
-        (self.prepare)(&mut req).map(|_| ())
+        (self.validate_prepare)(&mut req).map(|_| ())
     }
 
     fn execute(
