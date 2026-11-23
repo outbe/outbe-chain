@@ -194,15 +194,16 @@ where
         );
 
         // Combine OutbeReporter + marshal mailbox as a joint Simplex reporter.
-        // Both receive Activity events including Finalization:
-        // - OutbeReporter: bridge/VRF processing AND
-        // `Activity::Certification` -> CertifiedParentProofStore.
+        // Both receive Activity events including Certification and Finalization:
+        // - OutbeReporter: bridge/VRF processing AND persistent
+        //   `Activity::Certification` -> CertifiedParentProofStore.
         // - Marshal: finalized block delivery -> executor -> ack -> recovery truth.
-        //   Marshal forwards only Notarization and Finalization. Every other
-        //   activity, including Certification, returns `Feedback::Ok`
-        //   (monorepo `consensus/src/marshal/core/mailbox.rs:996-1008`).
-        //   `Reporters::from((outbe, marshal))` runs both via `futures::join!`,
-        //   and Outbe is the sole persistent consumer of Certification.
+        //   Marshal forwards Notarization, Finalization, and Certification
+        //   (recording certified block/parent commitments in in-memory `certified`,
+        //   not persisted). Via `Reporters::from((outbe, marshal))` (`combine()`),
+        //   marshal can therefore return `Backoff`/`Closed` on `Certification`,
+        //   while raw votes (e.g. `Activity::Finalize`) still return `Feedback::Ok`.
+        //   Outbe remains the sole persistent consumer of Certification.
         let combined_reporter = Reporters::from((outbe_reporter, self.marshal_mailbox.clone()));
 
         // -- d. Resolve the Simplex genesis floor -------------------------

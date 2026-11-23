@@ -794,7 +794,8 @@ fn native_marshal_reports_processed_absent_at_floor_then_block_after_ack() {
         assert!(mailbox.get_block(Height::new(H)).await.is_none());
 
         // Acknowledging the floor block at H+1 transitions to Processed::Block(H+1).
-        for ack in held.lock().unwrap().drain(..) {
+        let pending_acks: Vec<_> = held.lock().unwrap().drain(..).collect();
+        for ack in pending_acks {
             ack.acknowledge();
         }
         tokio::time::timeout(Duration::from_secs(10), async {
