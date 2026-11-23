@@ -281,6 +281,49 @@ async fn dcap_live_rejoin_waits_for_lease_expiry_then_reaches_hardware_source() 
 
     // After in-flight Renew/Pending WaitForFinality settles -> WaitForLeaseExpiry until valid_until
     let b = h.chain.binding.as_ref().unwrap().clone();
+    let old_live = context(9, AttestationMode::NoAttestationDev);
+    let old_m = old_live.manifest();
+    let renew_intent = RegistrationIntentV1 {
+        chain_id: old_m.chain_id,
+        genesis_hash: old_m.genesis_hash,
+        operation: AttestationOperationV1::RenewEnclave,
+        attestation_mode: AttestationMode::NoAttestationDev,
+        policy_hash: b.policy_hash,
+        node_id: old_m.node_id.clone(),
+        enclave_id: old_m.enclave_id().unwrap(),
+        binding_id: b.binding_id,
+        binding_version: b.binding_version,
+        registration_version: b.registration_version,
+        renewal_nonce: b.renewal_nonce + 1,
+        transition_nonce: b.transition_nonce,
+        requested_valid_until: b.valid_until + 500,
+        recipient_x25519: old_m.recipient_x25519,
+        attestation_ed25519: old_m.attestation_ed25519,
+        noise_responder_x25519: old_m.noise_responder_x25519,
+        node_host_authorization_hash: old_m.node_host_authorization_hash().unwrap(),
+    };
+    let renew_enc_sig = old_live
+        .sign_registration_intent_dev_v1(&renew_intent)
+        .unwrap();
+    let renew_node_sig =
+        EnrollmentSignerV1::sign_node_hash(&Signer, renew_intent.intent_hash().unwrap()).unwrap();
+    let renew_evidence = AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
+        intent: renew_intent.clone(),
+        dev_attestation_public: old_m.attestation_ed25519,
+        dev_signature: renew_enc_sig,
+        transition_key_ready_proof: None,
+    })
+    .encode_canonical()
+    .unwrap();
+    let renew_calldata = {
+        use alloy_sol_types::SolCall as _;
+        outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1::renewEnclaveCall {
+            evidence: renew_evidence.into(),
+            nodeSignature: renew_node_sig.to_vec().into(),
+            enclaveSignature: renew_enc_sig.to_vec().into(),
+        }
+        .abi_encode()
+    };
     let tx = alloy_consensus::TxEip1559 {
         chain_id: h.chain.at.chain_id,
         nonce: 0,
@@ -288,7 +331,7 @@ async fn dcap_live_rejoin_waits_for_lease_expiry_then_reaches_hardware_source() 
         max_fee_per_gas: h.config.max_fee_per_gas,
         max_priority_fee_per_gas: 0,
         to: alloy_primitives::TxKind::Call(outbe_primitives::addresses::TEE_REGISTRY_ADDRESS),
-        input: Default::default(),
+        input: renew_calldata.into(),
         ..Default::default()
     };
     let sig = EnrollmentSignerV1::sign_operator_hash(&Signer, {
@@ -306,16 +349,16 @@ async fn dcap_live_rejoin_waits_for_lease_expiry_then_reaches_hardware_source() 
         kind: ServiceTxKindV1::Renew,
         public_intent: ServiceTxIntentV1 {
             target: ServiceBindingTargetV1 {
-                node_id_hash: b.node_id_hash,
-                enclave_id: b.enclave_id,
-                binding_id: b.binding_id,
-                binding_version: b.binding_version,
-                registration_version: b.registration_version,
-                renewal_nonce: b.renewal_nonce + 1,
-                transition_nonce: b.transition_nonce,
-                valid_until: b.valid_until + 500,
-                policy_hash: b.policy_hash,
-                recipient_x25519: b.recipient_x25519,
+                node_id_hash: renew_intent.node_id.node_id_hash().unwrap(),
+                enclave_id: renew_intent.enclave_id,
+                binding_id: renew_intent.binding_id,
+                binding_version: renew_intent.binding_version,
+                registration_version: renew_intent.registration_version,
+                renewal_nonce: renew_intent.renewal_nonce,
+                transition_nonce: renew_intent.transition_nonce,
+                valid_until: renew_intent.requested_valid_until,
+                policy_hash: renew_intent.policy_hash,
+                recipient_x25519: renew_intent.recipient_x25519.into(),
             },
             candidate: None,
         },

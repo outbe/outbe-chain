@@ -475,6 +475,65 @@ async fn lost_process_unbroadcast_cross_kind_pending_is_replaced_with_register_a
         ) {
             record.public_intent.candidate = None;
         }
+        if kind == ServiceTxKindV1::Renew {
+            use alloy_consensus::SignableTransaction as _;
+            use alloy_sol_types::SolCall as _;
+            let manifest = h.live.manifest();
+            let target = &record.public_intent.target;
+            let intent = RegistrationIntentV1 {
+                chain_id: manifest.chain_id,
+                genesis_hash: manifest.genesis_hash,
+                operation: AttestationOperationV1::RenewEnclave,
+                attestation_mode: manifest.attestation_mode,
+                policy_hash: target.policy_hash,
+                node_id: manifest.node_id.clone(),
+                enclave_id: manifest.enclave_id().unwrap(),
+                binding_id: target.binding_id,
+                binding_version: target.binding_version,
+                registration_version: target.registration_version,
+                renewal_nonce: target.renewal_nonce,
+                transition_nonce: target.transition_nonce,
+                requested_valid_until: target.valid_until,
+                recipient_x25519: manifest.recipient_x25519,
+                attestation_ed25519: manifest.attestation_ed25519,
+                noise_responder_x25519: manifest.noise_responder_x25519,
+                node_host_authorization_hash: manifest.node_host_authorization_hash().unwrap(),
+            };
+            let signature = h.live.sign_registration_intent_dev_v1(&intent).unwrap();
+            let node_signature =
+                EnrollmentSignerV1::sign_node_hash(&Signer, intent.intent_hash().unwrap()).unwrap();
+            let evidence = AttestationEvidenceV1::NoAttestationDev(NoAttestationDevEvidenceV1 {
+                intent,
+                dev_attestation_public: manifest.attestation_ed25519,
+                dev_signature: signature,
+                transition_key_ready_proof: None,
+            })
+            .encode_canonical()
+            .unwrap();
+            let calldata = ITeeRegistryV1::renewEnclaveCall {
+                evidence: evidence.into(),
+                nodeSignature: node_signature.to_vec().into(),
+                enclaveSignature: signature.to_vec().into(),
+            }
+            .abi_encode();
+            let tx = alloy_consensus::TxEip1559 {
+                chain_id: h.chain.at.chain_id,
+                nonce: record.nonce,
+                gas_limit: 500_000,
+                max_fee_per_gas: h.config.max_fee_per_gas,
+                max_priority_fee_per_gas: 0,
+                to: alloy_primitives::TxKind::Call(
+                    outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+                ),
+                input: calldata.into(),
+                ..Default::default()
+            };
+            let sig = EnrollmentSignerV1::sign_operator_hash(&Signer, tx.signature_hash()).unwrap();
+            let mut raw = vec![2];
+            tx.into_signed(sig).rlp_encode(&mut raw);
+            record.tx_hash = alloy_primitives::keccak256(&raw);
+            record.raw_signed_tx = raw.into();
+        }
         if kind == ServiceTxKindV1::UpgradePrepare {
             use alloy_consensus::SignableTransaction as _;
             use alloy_sol_types::SolCall as _;

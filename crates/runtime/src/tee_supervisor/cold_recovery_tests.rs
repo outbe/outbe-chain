@@ -839,7 +839,13 @@ async fn cancel_required_retries_cold_prepare_and_verifies_the_second_intent() {
     assert!(Arc::ptr_eq(&owner.lock().unwrap().context, &candidate));
     let snapshot = owner.lock().unwrap().clone();
     assert_eq!(snapshot.identity.expected_enclave_id, Some(second_enclave));
-    assert_eq!(snapshot.gate, TeeLeaseGuardGateV1::Pending(anchor));
+    assert_eq!(
+        snapshot.gate,
+        TeeLeaseGuardGateV1::Pending {
+            target: anchor,
+            floor: None,
+        }
+    );
     assert_eq!(
         watch.snapshot(),
         outbe_tee::TeeAuthorityState::SuspendedPolicyMismatch

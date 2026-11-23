@@ -199,6 +199,9 @@ impl TeeLifecycleSupervisor {
             &successor.candidate,
             record,
         )?;
+        successor
+            .candidate
+            .persist_for_promotion(&self.node_data_dir)?;
         Ok(local)
     }
 
@@ -247,6 +250,7 @@ impl TeeLifecycleSupervisor {
                 &candidate,
                 record,
             )?;
+            candidate.persist_for_promotion(&self.node_data_dir)?;
             if let (Some(owner), Some(snapshot)) = (owner, owner_guard.as_deref_mut()) {
                 // Do not expose the old enclave's open verdict after switching dispatch.
                 crate::admission_authority::publish_state(
@@ -258,7 +262,10 @@ impl TeeLifecycleSupervisor {
                     .note_observed_finalized_height(anchor.finalized_height);
                 snapshot.identity.expected_enclave_id = Some(enclave_id);
                 snapshot.context = candidate.clone();
-                snapshot.gate = TeeLeaseGuardGateV1::Pending(anchor);
+                snapshot.gate = TeeLeaseGuardGateV1::Pending {
+                    target: anchor,
+                    floor: None,
+                };
             }
             Ok::<(), SuccessorRuntimeError>(())
         })?;

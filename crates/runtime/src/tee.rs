@@ -319,20 +319,28 @@ pub(crate) fn start_runtime_workers(
             },
         )?
     };
-    let gate = if args.upstream.is_none()
-        && args.is_validator
-        && node
-            .provider
-            .finalized_block_num_hash()?
-            .is_none_or(|head| head.number == 0)
-    {
-        in_process::founder_lease_gate(protocol.as_ref(), node, args, genesis_hash)?
-    } else {
-        tee_admission_anchor.map_or(
-            TeeLeaseGuardGateV1::AwaitingAnchor,
-            TeeLeaseGuardGateV1::Pending,
-        )
-    };
+    let local_finalized_height = node
+        .provider
+        .finalized_block_num_hash()?
+        .map_or(0, |head| head.number);
+    let durable_floor =
+        context
+            .admission_anchor()?
+            .map(|anchor| crate::admission::LocalTeeAdmissionAnchorV1 {
+                finalized_height: anchor.block_number,
+                finalized_hash: anchor.block_hash,
+            });
+    let gate = select_startup_lease_gate(
+        &node.provider,
+        local_finalized_height,
+        (
+            args.upstream.is_some(),
+            args.is_validator,
+            context.offer_key_ready()?,
+        ),
+        (durable_floor, tee_admission_anchor),
+        || in_process::founder_lease_gate(protocol.as_ref(), node, args, genesis_hash),
+    )?;
     let finalization_notify = Arc::new(tokio::sync::Notify::new());
     let (tee_lease_armed_tx, tee_lease_armed_rx) = tokio::sync::watch::channel(false);
     let owner = Arc::new(crate::admission_authority::live::LiveTeeRuntimeV1::new(
@@ -418,6 +426,64 @@ pub(crate) fn start_runtime_workers(
         tee_lease_guard_handle: Some(tee_lease_guard_handle),
         tee_canary_handle,
     })
+}
+
+pub(crate) fn select_startup_lease_gate<P>(
+    provider: &P,
+    local_finalized_height: u64,
+    (has_upstream, is_validator, offer_key_ready): (bool, bool, bool),
+    (durable_floor, upstream_target): (
+        Option<crate::admission::LocalTeeAdmissionAnchorV1>,
+        Option<crate::admission::LocalTeeAdmissionAnchorV1>,
+    ),
+    founder_gate: impl FnOnce() -> eyre::Result<TeeLeaseGuardGateV1>,
+) -> eyre::Result<TeeLeaseGuardGateV1>
+where
+    P: HeaderProvider<Header = OutbeHeader>,
+{
+    if let Some(floor) = durable_floor {
+        if local_finalized_height >= floor.finalized_height {
+            crate::admission::verify_local_anchor_hash(provider, floor)?;
+        }
+        if let Some(upstream) = upstream_target {
+            if upstream.finalized_height == floor.finalized_height
+                && upstream.finalized_hash != floor.finalized_hash
+            {
+                return Err(LaunchError::TeeAdmissionAnchorHashMismatch {
+                    height: floor.finalized_height,
+                    expected: floor.finalized_hash,
+                    local: upstream.finalized_hash,
+                }
+                .into());
+            }
+            if upstream.finalized_height > floor.finalized_height {
+                let deferred_floor =
+                    (local_finalized_height < floor.finalized_height).then_some(floor);
+                return Ok(TeeLeaseGuardGateV1::Pending {
+                    target: upstream,
+                    floor: deferred_floor,
+                });
+            }
+        }
+        return Ok(TeeLeaseGuardGateV1::Pending {
+            target: floor,
+            floor: None,
+        });
+    }
+    if !has_upstream && local_finalized_height == 0 && is_validator {
+        return founder_gate();
+    }
+    if !has_upstream && local_finalized_height > 0 && offer_key_ready {
+        return Ok(TeeLeaseGuardGateV1::Armed);
+    }
+    Ok(
+        upstream_target.map_or(TeeLeaseGuardGateV1::AwaitingAnchor, |target| {
+            TeeLeaseGuardGateV1::Pending {
+                target,
+                floor: None,
+            }
+        }),
+    )
 }
 
 pub(crate) struct FoundingResident {

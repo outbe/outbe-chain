@@ -82,8 +82,8 @@ pub fn record_finalization_dropped(reason: FinalizationDropReason) {
 /// A SUSTAINED non-zero rate is the operator alarm: the block is unavailable
 /// network-wide or local state has diverged. Investigate it, because the actor
 /// (correctly) cannot advance finalization past an unresolved block.
-pub fn record_finalization_resolution_stalled() {
-    counter!("outbe_consensus_finalization_resolution_stalled_total").increment(1);
+pub fn record_finalization_resolution_stalled(cycles: u64) {
+    counter!("outbe_consensus_finalization_resolution_stalled_total").increment(cycles);
 }
 
 /// Raise the suspected-local-divergence alarm for one stall episode.
@@ -120,6 +120,20 @@ pub fn record_finalization_persist_degraded() {
 /// Clear the parent-cert persist degraded gauge after a fully successful store cycle.
 pub fn record_finalization_persist_recovered() {
     gauge!("outbe_consensus_finalization_persist_degraded").set(0.0);
+}
+
+/// Record bounded per-event work performed by `FinalizationActor` reconciliation.
+pub fn record_finalization_event_work(reads: usize, crypto: usize, applies: usize) {
+    if reads > 0 {
+        counter!("outbe_consensus_finalization_event_marshal_reads_total").increment(reads as u64);
+    }
+    if crypto > 0 {
+        counter!("outbe_consensus_finalization_event_crypto_checks_total").increment(crypto as u64);
+    }
+    if applies > 0 {
+        counter!("outbe_consensus_finalization_event_applied_steps_total")
+            .increment(applies as u64);
+    }
 }
 
 /// Record a pre-finalization canonical-head reorg at the same height.

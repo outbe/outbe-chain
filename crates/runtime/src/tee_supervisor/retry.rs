@@ -102,6 +102,7 @@ where
         | RenewalError::PendingOtherOperation
         | RenewalError::SubmittedHashMismatch
         | RenewalError::StalePending
+        | RenewalError::PendingRenewDiverged
         | RenewalError::PendingCalldata(_) => None,
     }
 }

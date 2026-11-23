@@ -15,6 +15,11 @@ pub(crate) enum Step {
     AwaitingNetwork,
     Enrollment(EnrollmentOutcome),
     Renewal(RenewalStep),
+    Resident {
+        at: LifecycleCheckpointV1,
+        jailed: bool,
+        renewal: Option<RenewalStep>,
+    },
     SuccessorRequired,
 }
 
@@ -129,23 +134,36 @@ where
                     )
                 })
         });
-    let imported_current =
-        if ready && own_live && current_registration && live.admission_anchor()?.is_some() {
-            let anchor = load_live_join_admission_anchor_v1(node_data_dir, live)
-                .map_err(EnrollmentError::Anchor)?;
-            view.binding
-                .as_ref()
-                .is_some_and(|b| anchor.is_some_and(|a| a.intent_hash == b.intent_hash))
-        } else {
-            true
-        };
-    if live.offer_key_ready()? && own_live && imported_current {
-        if jailed {
-            return Ok(Step::Enrollment(EnrollmentOutcome::WaitForUnjail));
+    let imported_current = if ready && own_live && current_registration {
+        let anchor = load_live_join_admission_anchor_v1(node_data_dir, live)
+            .map_err(EnrollmentError::Anchor)?;
+        view.binding
+            .as_ref()
+            .is_some_and(|b| anchor.is_some_and(|a| a.intent_hash == b.intent_hash))
+    } else {
+        true
+    };
+    if ready && own_live && imported_current {
+        let binding = view.binding.as_ref().ok_or(RenewalError::BindingMismatch)?;
+        validate_binding::<P::Error, <S as LifecycleSignerV1>::Error>(binding, live, &view.policy)?;
+        let offer_matches = !at.hash.is_zero()
+            && !view.network_encryption_public_key.is_zero()
+            && B256::from(live.network_encryption_public()?) == view.network_encryption_public_key
+            && live.key_epoch()? == view.key_epoch
+            && live.network_encryption_epoch()? == view.network_encryption_epoch;
+        if !offer_matches {
+            return Err(RenewalError::BindingMismatch.into());
         }
-        return Ok(Step::Renewal(
-            renew_once_v1(port, signer, live, journal, phase).await?,
-        ));
+        let renewal = if jailed {
+            None
+        } else {
+            Some(renew_once_v1(port, signer, live, journal, phase).await?)
+        };
+        return Ok(Step::Resident {
+            at,
+            jailed,
+            renewal,
+        });
     }
     if ready
         && view

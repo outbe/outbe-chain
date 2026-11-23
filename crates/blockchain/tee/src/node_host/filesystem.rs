@@ -23,6 +23,12 @@ pub const NODE_HOST_IDENTITY_KEY_V1: &str = "noise-initiator.key";
 
 pub const NODE_HOST_MANIFEST_V1: &str = "initialization-manifest.bin";
 
+pub const NODE_HOST_RESIDENT_STATE_V1: &str = "resident-state.v1";
+
+const NODE_HOST_RESIDENT_STATE_NEXT_V1: &str = "resident-state.next";
+
+const NODE_HOST_RESIDENT_STATE_SCRATCH_V1: &str = "resident-state.tmp";
+
 #[cfg(test)]
 const NODE_HOST_PENDING_MANIFEST_V1: &str = "initialization-manifest.pending";
 
@@ -248,6 +254,9 @@ pub(super) struct NodeHostPaths {
     pub(super) state_lock: PathBuf,
     pub(super) identity_key: PathBuf,
     pub(super) manifest: PathBuf,
+    pub(super) resident_state: PathBuf,
+    pub(super) resident_state_next: PathBuf,
+    pub(super) resident_state_scratch: PathBuf,
     #[cfg(test)]
     pub(super) pending_manifest: PathBuf,
     pub(super) replacement_candidate: PathBuf,
@@ -269,6 +278,9 @@ impl NodeHostPaths {
             state_lock: root.join(NODE_HOST_STATE_LOCK_V1),
             identity_key: root.join(NODE_HOST_IDENTITY_KEY_V1),
             manifest: root.join(NODE_HOST_MANIFEST_V1),
+            resident_state: root.join(NODE_HOST_RESIDENT_STATE_V1),
+            resident_state_next: root.join(NODE_HOST_RESIDENT_STATE_NEXT_V1),
+            resident_state_scratch: root.join(NODE_HOST_RESIDENT_STATE_SCRATCH_V1),
             #[cfg(test)]
             pending_manifest: root.join(NODE_HOST_PENDING_MANIFEST_V1),
             replacement_candidate: root.join(NODE_HOST_REPLACEMENT_CANDIDATE_V1),

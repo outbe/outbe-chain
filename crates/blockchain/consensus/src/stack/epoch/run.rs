@@ -395,6 +395,8 @@ where
         tokio::sync::mpsc::unbounded_channel::<u64>();
     let (execution_finalized_height_tx, execution_finalized_height_rx) =
         tokio::sync::mpsc::unbounded_channel::<u64>();
+    let (finalization_view_advanced_tx, finalization_view_advanced_rx) =
+        tokio::sync::mpsc::unbounded_channel::<u64>();
     let (consensus_tip_tx, consensus_tip_rx) =
         tokio::sync::watch::channel::<Option<crate::marshal_update_reporter::ConsensusTip>>(None);
 
@@ -765,10 +767,12 @@ where
             vrf_safety: vrf_safety.clone(),
             parent_cert_store: finalized_parent_cert_store.clone(),
             certificate_scheme_provider: certificate_scheme_provider.clone(),
+            committee_provider: committee_provider.clone(),
             late_sig_store: late_sig_store.clone(),
         })
         .with_epocher(epocher.clone())
         .with_finalization_notify(finalization_notify);
+    let finalization_actor = finalization_actor.with_view_advanced(finalization_view_advanced_tx);
     let finalization_handle = ctx
         .child("finalization")
         .spawn(move |ctx| finalization_actor.run(ctx));
@@ -887,6 +891,7 @@ where
         radicle_updates,
         execution_finalized_height_rx,
         execution_finalized_height_tx,
+        finalization_view_advanced_rx,
         consensus_tip_rx,
         epocher,
         vote_backup_rx,

@@ -215,7 +215,11 @@ async fn running_jail_preserves_ram_and_reopens_the_same_channel_without_signer_
     r.until(|s| {
         matches!(
             s,
-            engine::Step::Enrollment(EnrollmentOutcome::WaitForUnjail)
+            engine::Step::Resident {
+                jailed: true,
+                renewal: None,
+                ..
+            }
         )
     })
     .await;
@@ -224,8 +228,17 @@ async fn running_jail_preserves_ram_and_reopens_the_same_channel_without_signer_
         outbe_tee::TeeAuthorityState::SuspendedJailed
     );
     r.change(|h| h.chain.jailed = false).await;
-    r.until(|s| matches!(s, engine::Step::Renewal(RenewalStep::NotDue { .. })))
-        .await;
+    r.until(|s| {
+        matches!(
+            s,
+            engine::Step::Resident {
+                jailed: false,
+                renewal: Some(RenewalStep::NotDue { .. }),
+                ..
+            }
+        )
+    })
+    .await;
     assert!(r.authority.snapshot().is_authority_open());
     let state = r.state.lock().await;
     assert!(Arc::ptr_eq(&live, &state.live));
@@ -245,8 +258,17 @@ async fn background_zero_balance_renewal_runs_for_unstaked_validator_and_keyed_f
             h.chain.at.timestamp = h.chain.binding.as_ref().unwrap().valid_until - 3600;
         })
         .await;
-        r.until(|s| matches!(s, engine::Step::Renewal(RenewalStep::Submitted { .. })))
-            .await;
+        r.until(|s| {
+            matches!(
+                s,
+                engine::Step::Resident {
+                    jailed: false,
+                    renewal: Some(RenewalStep::Submitted { .. }),
+                    ..
+                }
+            )
+        })
+        .await;
         let state = r.state.lock().await;
         let record = state.journal.load().unwrap().unwrap();
         assert_eq!(record.kind, ServiceTxKindV1::Renew);
@@ -356,8 +378,17 @@ async fn external_nonce_displacement_rebuilds_then_reconciles_applied_mutation_w
     })
     .await;
     while !matches!(r.events.recv().await.unwrap(), Event::Prepared) {}
-    r.until(|s| matches!(s, engine::Step::Renewal(RenewalStep::NotDue { .. })))
-        .await;
+    r.until(|s| {
+        matches!(
+            s,
+            engine::Step::Resident {
+                jailed: false,
+                renewal: Some(RenewalStep::NotDue { .. }),
+                ..
+            }
+        )
+    })
+    .await;
     let state = r.state.lock().await;
     assert_eq!(state.sent(), 2);
     assert!(Arc::ptr_eq(&live, &state.live));
@@ -432,7 +463,11 @@ async fn finalized_renewal_keeps_resident_admission_and_schedules_the_next_renew
     h.chain.at.timestamp = h.chain.binding.as_ref().unwrap().valid_until - 3600;
     assert!(matches!(
         h.step().await,
-        engine::Step::Renewal(RenewalStep::Submitted { .. })
+        engine::Step::Resident {
+            jailed: false,
+            renewal: Some(RenewalStep::Submitted { .. }),
+            ..
+        }
     ));
     let renewal = h.pending_intent();
     let binding = h.chain.binding.as_mut().unwrap();
@@ -450,14 +485,22 @@ async fn finalized_renewal_keeps_resident_admission_and_schedules_the_next_renew
     );
     assert!(matches!(
         h.step().await,
-        engine::Step::Renewal(RenewalStep::NotDue { .. })
+        engine::Step::Resident {
+            jailed: false,
+            renewal: Some(RenewalStep::NotDue { .. }),
+            ..
+        }
     ));
     assert!(Arc::ptr_eq(&live, &h.live));
     assert_eq!(h.sent(), 2);
     h.chain.at.timestamp = h.chain.binding.as_ref().unwrap().valid_until - 3600;
     assert!(matches!(
         h.step().await,
-        engine::Step::Renewal(RenewalStep::Submitted { .. })
+        engine::Step::Resident {
+            jailed: false,
+            renewal: Some(RenewalStep::Submitted { .. }),
+            ..
+        }
     ));
     assert_eq!(
         h.journal.load().unwrap().unwrap().kind,
@@ -535,7 +578,11 @@ async fn completed_register_steady_state_never_queries_a_receipt() {
         .store(0, std::sync::atomic::Ordering::SeqCst);
     assert!(matches!(
         h.step().await,
-        engine::Step::Renewal(RenewalStep::NotDue { .. })
+        engine::Step::Resident {
+            jailed: false,
+            renewal: Some(RenewalStep::NotDue { .. }),
+            ..
+        }
     ));
     assert_eq!(
         h.chain
@@ -610,7 +657,7 @@ fn retry_classification_preserves_fatal_enrollment_and_identity_errors() {
     for error in transient {
         assert!(retry::observation(&error), "{error:?}");
     }
-    let fatal: [Error; 8] = [
+    let fatal: [Error; 9] = [
         RenewalError::UpgradeProofCheckpoint(
             outbe_tee::lifecycle::renewal::UpgradeProofCheckpointError::MissingBaseFee,
         )
@@ -625,6 +672,7 @@ fn retry_classification_preserves_fatal_enrollment_and_identity_errors() {
         EnrollmentError::IdentityMismatch.into(),
         EnrollmentError::WrongServiceTransaction.into(),
         RenewalError::BindingMismatch.into(),
+        RenewalError::PendingRenewDiverged.into(),
         RenewalError::Reconcile(ReconcileError::FinalizedMutationConflict).into(),
     ];
     for error in fatal {
@@ -735,10 +783,14 @@ async fn seam_c1_enrollment_restart_over_in_pool_renew_admits_across_h1_h2_h3() 
     h.chain.at.timestamp = lease_until - h.chain.policy.maximum_lease / 2;
     assert!(matches!(
         h.step().await,
-        engine::Step::Renewal(RenewalStep::Submitted {
-            replayed: false,
+        engine::Step::Resident {
+            jailed: false,
+            renewal: Some(RenewalStep::Submitted {
+                replayed: false,
+                ..
+            }),
             ..
-        })
+        }
     ));
     let renew = h.journal.load().unwrap().unwrap();
     assert_eq!(renew.kind, ServiceTxKindV1::Renew);
@@ -795,7 +847,11 @@ async fn seam_c1_replace_lost_identity_and_stale_renew_race_admits_across_h1_h2_
     h.chain.at.timestamp = lease_until - h.chain.policy.maximum_lease / 2;
     assert!(matches!(
         h.step().await,
-        engine::Step::Renewal(RenewalStep::Submitted { .. })
+        engine::Step::Resident {
+            jailed: false,
+            renewal: Some(RenewalStep::Submitted { .. }),
+            ..
+        }
     ));
     let renew = h.journal.load().unwrap().unwrap();
     assert_eq!(renew.kind, ServiceTxKindV1::Renew);
@@ -943,7 +999,11 @@ async fn seam_r3_1_cold_successor_cancels_lost_renew_replays_exact_then_prepares
     h.chain.at.timestamp = lease_until - h.chain.policy.maximum_lease / 2;
     assert!(matches!(
         h.step().await,
-        engine::Step::Renewal(RenewalStep::Submitted { .. })
+        engine::Step::Resident {
+            jailed: false,
+            renewal: Some(RenewalStep::Submitted { .. }),
+            ..
+        }
     ));
     let lost_renew = h.journal.load().unwrap().unwrap();
     assert_eq!(lost_renew.kind, ServiceTxKindV1::Renew);
@@ -1183,4 +1243,342 @@ async fn seam_authority_h1_to_h2_lag_keeps_signer_open_and_retirement_closes_bot
     assert!(!channel.snapshot().is_authority_open());
     assert!(!watch.ensure_current_for_signer().is_authority_open());
     assert!(!watch.ensure_current().is_authority_open());
+}
+
+fn file_backed_context(
+    dir: &std::path::Path,
+    descriptor: &TrustedNetworkDescriptorV1,
+) -> Arc<InProcessTeeContext> {
+    use std::os::unix::fs::PermissionsExt as _;
+    let host = dir.join(outbe_tee::node_host::NODE_HOST_DIRECTORY_V1);
+    std::fs::set_permissions(&host, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let template = proof::context(11, descriptor);
+    let authorization = template.authorization_witness().unwrap();
+    let (store, loaded) =
+        outbe_tee::node_host::ResidentStateStore::load_or_create(dir, &authorization).unwrap();
+    let mut manifest = template.manifest().clone();
+    manifest.recipient_x25519 = loaded.keys.tribute_offer_public();
+    manifest.attestation_ed25519 = loaded.keys.attestation_pub();
+    manifest.noise_responder_x25519 = loaded.keys.noise_public();
+    manifest.initialization_challenge = loaded.initialization_challenge;
+    Arc::new(
+        InProcessTeeContext::new(
+            loaded.keys,
+            *template.identity(),
+            manifest,
+            descriptor.clone(),
+            outbe_tee::in_process::ProofSourceV1::NoHardware,
+        )
+        .unwrap()
+        .with_restored_state(store, loaded.material, loaded.anchor),
+    )
+}
+
+fn binding_for_resident(
+    live: &InProcessTeeContext,
+    policy: &TeePolicyV1,
+    valid_until: u64,
+) -> outbe_tee::registry_view::RenewalBindingV1 {
+    let manifest = live.manifest();
+    let mut b = outbe_tee::test_utils::RenewalBindingFixtureV1::new(1).build();
+    b.node_id_hash = manifest.node_id.node_id_hash().unwrap();
+    b.enclave_id = manifest.enclave_id().unwrap();
+    b.binding_id = B256::repeat_byte(0x41);
+    b.intent_hash = B256::repeat_byte(0x42);
+    b.policy_hash = policy.policy_hash().unwrap();
+    b.binding_version = 1;
+    b.registration_version = 0;
+    b.renewal_nonce = 0;
+    b.transition_nonce = 0;
+    b.valid_until = valid_until;
+    b.recipient_x25519 = manifest.recipient_x25519.into();
+    b.attestation_ed25519 = manifest.attestation_ed25519.into();
+    b.noise_responder_x25519 = manifest.noise_responder_x25519.into();
+    b.node_host_authorization_hash = manifest.node_host_authorization_hash().unwrap();
+    b
+}
+
+async fn run_prepare_once(
+    h: Harness,
+    validator: bool,
+) -> (
+    Result<
+        Option<driver::PreparedAnchor>,
+        driver::PrepareError<engine::SupervisorError<std::io::Error, std::convert::Infallible>>,
+    >,
+    Arc<Mutex<Harness>>,
+    outbe_tee::TeeAuthorityChannel,
+) {
+    let state = Arc::new(Mutex::new(h));
+    let cancellation = CancellationToken::new();
+    let wake = Arc::new(Notify::new());
+    let (sender, _events) = mpsc::unbounded_channel();
+    let tracker = authority::Tracker::new(validator);
+    let authority = tracker.channel.clone();
+    let mut task = Task {
+        state: state.clone(),
+        authority: tracker,
+        events: sender,
+    };
+    let result = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        driver::prepare(&mut task, &cancellation, &wake),
+    )
+    .await
+    .expect("prepare timed out instead of exiting for restored resident");
+    (result, state, authority)
+}
+
+#[tokio::test]
+async fn restored_founder_and_enrolled_resident_exit_presync_for_not_due_submitted_and_jailed() {
+    let genesis = finality::FinalityCommitteeFixture::new(10);
+    let descriptor = proof::descriptor(&genesis);
+
+    // 1. File-restored founder (no Register journal, no anchor.bin), unjailed, NotDue.
+    {
+        let mut h = Harness::new();
+        h.live = file_backed_context(&h.dir, &descriptor);
+        let material = outbe_tee::resident::ResidentOfferMaterial::for_test(
+            vec![5; 96],
+            B256::from(h.live.manifest().chain_id),
+            0,
+            0,
+        )
+        .unwrap();
+        h.live.activate_for_test(material).unwrap();
+        let valid_until = h.chain.at.timestamp + h.chain.policy.maximum_lease;
+        h.chain.public = h.live.network_encryption_public().unwrap().into();
+        h.chain.binding = Some(binding_for_resident(&h.live, &h.chain.policy, valid_until));
+
+        // Simulate restart restoring founder from resident-state.v1 (OBRESID2 tag 1 has anchor None).
+        h.live = file_backed_context(&h.dir, &descriptor);
+        assert!(h.live.offer_key_ready().unwrap());
+        assert!(h.live.admission_anchor().unwrap().is_none());
+
+        let expected_at = h.chain.at;
+        let (result, state, authority) = run_prepare_once(h, true).await;
+        let anchor = result.unwrap().expect("founder must exit with anchor");
+        assert_eq!(anchor.height, expected_at.height);
+        assert_eq!(anchor.hash, expected_at.hash);
+        assert_eq!(state.lock().await.sent(), 0);
+        assert!(authority.snapshot().is_authority_open());
+    }
+
+    // 2. File-restored enrolled resident: NotDue, Submitted, and Jailed.
+    for (label, in_renewal_window, jailed) in [
+        ("not_due", false, false),
+        ("submitted", true, false),
+        ("jailed", false, true),
+    ] {
+        let mut h = Harness::new();
+        h.live = file_backed_context(&h.dir, &descriptor);
+        h.admit().await;
+        let sent_before = h.sent();
+
+        // Simulate restart restoring from resident-state.v1 (OBRESID2 tag 2 restores anchor).
+        h.live = file_backed_context(&h.dir, &descriptor);
+        assert!(h.live.offer_key_ready().unwrap());
+        assert!(h.live.admission_anchor().unwrap().is_some());
+
+        h.chain.jailed = jailed;
+        if in_renewal_window {
+            let valid_until = h.chain.binding.as_ref().unwrap().valid_until;
+            h.chain.at.timestamp = valid_until - h.chain.policy.maximum_lease / 2;
+        }
+        let expected_at = h.chain.at;
+        let (result, state, authority) = run_prepare_once(h, true).await;
+        let anchor = result
+            .unwrap()
+            .unwrap_or_else(|| panic!("{label}: expected PreparedAnchor"));
+        assert_eq!(anchor.height, expected_at.height, "{label}");
+        assert_eq!(anchor.hash, expected_at.hash, "{label}");
+        let state = state.lock().await;
+        if in_renewal_window {
+            assert_eq!(state.sent(), sent_before + 1, "{label}");
+            assert_eq!(
+                state.journal.load().unwrap().unwrap().kind,
+                ServiceTxKindV1::Renew,
+                "{label}"
+            );
+        } else {
+            assert_eq!(state.sent(), sent_before, "{label}");
+        }
+        if jailed {
+            assert_eq!(
+                authority.snapshot(),
+                outbe_tee::TeeAuthorityState::SuspendedJailed,
+                "{label}"
+            );
+        } else {
+            assert!(authority.snapshot().is_authority_open(), "{label}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn restored_resident_mismatch_fails_closed_non_retryably() {
+    let genesis = finality::FinalityCommitteeFixture::new(10);
+    let descriptor = proof::descriptor(&genesis);
+
+    enum Mismatch {
+        OfferKey,
+        KeyEpoch,
+        OfferEpoch,
+        NodeIdHash,
+        NodeHostAuth,
+        PolicyHash,
+        RecipientKey,
+    }
+
+    for jailed in [false, true] {
+        for case in [
+            Mismatch::OfferKey,
+            Mismatch::KeyEpoch,
+            Mismatch::OfferEpoch,
+            Mismatch::NodeIdHash,
+            Mismatch::NodeHostAuth,
+            Mismatch::PolicyHash,
+            Mismatch::RecipientKey,
+        ] {
+            let mut h = Harness::new();
+            h.live = file_backed_context(&h.dir, &descriptor);
+            let (key_epoch, offer_epoch) = match case {
+                Mismatch::KeyEpoch => (1, 0),
+                Mismatch::OfferEpoch => (0, 1),
+                _ => (0, 0),
+            };
+            let material = outbe_tee::resident::ResidentOfferMaterial::for_test(
+                vec![5; 96],
+                B256::from(h.live.manifest().chain_id),
+                key_epoch,
+                offer_epoch,
+            )
+            .unwrap();
+            h.live.activate_for_test(material).unwrap();
+            let valid_until = h.chain.at.timestamp + h.chain.policy.maximum_lease;
+            h.chain.public = match case {
+                Mismatch::OfferKey => B256::repeat_byte(0xAA),
+                _ => h.live.network_encryption_public().unwrap().into(),
+            };
+            let mut binding = binding_for_resident(&h.live, &h.chain.policy, valid_until);
+            match case {
+                Mismatch::NodeIdHash => binding.node_id_hash = B256::repeat_byte(0xBB),
+                Mismatch::NodeHostAuth => {
+                    binding.node_host_authorization_hash = B256::repeat_byte(0xCC);
+                }
+                Mismatch::PolicyHash => binding.policy_hash = B256::repeat_byte(0xDD),
+                Mismatch::RecipientKey => binding.recipient_x25519 = B256::repeat_byte(0xEE),
+                Mismatch::OfferKey | Mismatch::KeyEpoch | Mismatch::OfferEpoch => {}
+            }
+            h.chain.binding = Some(binding);
+            h.chain.jailed = jailed;
+            h.live = file_backed_context(&h.dir, &descriptor);
+
+            let err = engine::step(
+                &h.chain,
+                &Signer,
+                engine::ResidentSession {
+                    live: &h.live,
+                    journal: &mut h.journal,
+                    node_data_dir: &h.dir,
+                    phase: RenewalUpgradePhaseV1::Idle,
+                },
+            )
+            .await
+            .unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    engine::SupervisorError::Renewal(RenewalError::BindingMismatch)
+                ),
+                "jailed={jailed}: unexpected error {err:?}"
+            );
+            assert!(!retry::observation(&err));
+
+            let (prep, state, _) = run_prepare_once(h, true).await;
+            assert!(matches!(prep, Err(driver::PrepareError::Observation(_))));
+            assert_eq!(state.lock().await.sent(), 0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn unadmitted_jailed_never_exits_presync_as_prepared_anchor() {
+    let mut h = Harness::new();
+    h.chain.jailed = true;
+    let step = h.step().await;
+    assert!(matches!(
+        step,
+        engine::Step::Enrollment(EnrollmentOutcome::WaitForUnjail)
+    ));
+
+    let state = Arc::new(Mutex::new(h));
+    let cancellation = CancellationToken::new();
+    let wake = Arc::new(Notify::new());
+    let (sender, mut events) = mpsc::unbounded_channel();
+    let tracker = authority::Tracker::new(true);
+    let mut task = Task {
+        state: state.clone(),
+        authority: tracker,
+        events: sender,
+    };
+    let cancel_task = cancellation.clone();
+    let handle = tokio::spawn(async move { driver::prepare(&mut task, &cancel_task, &wake).await });
+    assert!(matches!(
+        events.recv().await,
+        Some(Event::Observation(engine::Step::Enrollment(
+            EnrollmentOutcome::WaitForUnjail
+        )))
+    ));
+    cancellation.cancel();
+    assert!(matches!(
+        handle.await.unwrap(),
+        Err(driver::PrepareError::Cancelled)
+    ));
+    assert_eq!(state.lock().await.sent(), 0);
+}
+
+#[tokio::test]
+async fn restored_resident_with_missing_anchor_for_current_register_reingests() {
+    let genesis = finality::FinalityCommitteeFixture::new(10);
+    let descriptor = proof::descriptor(&genesis);
+    let mut h = Harness::new();
+    h.live = file_backed_context(&h.dir, &descriptor);
+    h.admit().await;
+
+    // Simulate crash between activate (resident-state.v1 written) and anchor.bin write.
+    let anchor_path = h.dir.join("tee-live-join-admission-v1/anchor.bin");
+    assert!(anchor_path.exists());
+    std::fs::remove_file(&anchor_path).unwrap();
+
+    // Restart restoring from resident-state.v1 (OBRESID2 tag 2 restores anchor).
+    h.live = file_backed_context(&h.dir, &descriptor);
+    assert!(h.live.offer_key_ready().unwrap());
+    assert!(h.live.admission_anchor().unwrap().is_some());
+
+    let step = h.step().await;
+    assert!(
+        matches!(
+            step,
+            engine::Step::Enrollment(EnrollmentOutcome::Admitted { .. })
+        ),
+        "missing anchor.bin for current Register must re-ingest, got {step:?}"
+    );
+    let restored_anchor = load_live_join_admission_anchor_v1(&h.dir, &h.live)
+        .unwrap()
+        .expect("re-ingest must persist anchor.bin");
+    assert_eq!(
+        restored_anchor.intent_hash,
+        h.chain.binding.as_ref().unwrap().intent_hash
+    );
+
+    // Subsequent restart with anchor.bin present exits pre-sync as Step::Resident.
+    h.live = file_backed_context(&h.dir, &descriptor);
+    let expected_at = h.chain.at;
+    let (prep, _, _) = run_prepare_once(h, true).await;
+    let anchor = prep
+        .unwrap()
+        .expect("expected PreparedAnchor after re-ingest");
+    assert_eq!(anchor.height, expected_at.height);
+    assert_eq!(anchor.hash, expected_at.hash);
 }

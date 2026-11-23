@@ -96,6 +96,7 @@ pub(super) struct EpochSupervisor<E: Clock, N: ExecutionNodeBackend> {
         tokio::sync::watch::Receiver<outbe_radicle::integration::RadicleStatusSnapshot>,
     pub(super) execution_finalized_height_rx: tokio::sync::mpsc::UnboundedReceiver<u64>,
     pub(super) execution_finalized_height_tx: tokio::sync::mpsc::UnboundedSender<u64>,
+    pub(super) finalization_view_advanced_rx: tokio::sync::mpsc::UnboundedReceiver<u64>,
     pub(super) consensus_tip_rx:
         tokio::sync::watch::Receiver<Option<crate::marshal_update_reporter::ConsensusTip>>,
     pub(super) epocher: crate::follow::FollowerEpocher,
