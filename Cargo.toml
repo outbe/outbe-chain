@@ -288,7 +288,6 @@ alloy-rpc-types = { version = "=2.5.0" }
 
 # evm2 (pinned to match reth v2.11.0)
 evm2 = { git = "https://github.com/alloy-rs/evm2", rev = "66687c18b34d3bdbb899f5eb7605070615c03475", default-features = false }
-evm2-inspectors = { git = "https://github.com/alloy-rs/evm2", rev = "66687c18b34d3bdbb899f5eb7605070615c03475", default-features = false }
 
 # Reth v2.11.0 (evm2, alloy 2.5)
 reth-ethereum = { git = "https://github.com/paradigmxyz/reth.git", tag = "v2.11.0" }
