@@ -11,10 +11,9 @@ use crate::precompile::IHyperlaneController;
 use crate::runtime::consensus_threshold;
 use crate::schema::{validator_domain_key, HyperlaneControllerContract};
 
-/// Submissions younger than this many blocks do not count towards the
-/// per-domain reference index. This gives the agent time to sign and upload,
-/// and `outbe-hyperlane-validator` time to submit, before the controller
-/// considers a lagging validator behind.
+/// Submissions younger than this many blocks do not count towards the next
+/// per-domain target index. This way, the target is an index that most
+/// validators already signed when the window starts.
 pub const GRACE_BLOCKS: u64 = 30;
 /// The liveness verdict runs when the block number is a multiple of this
 /// value. The oracle slash window is a separate genesis parameter.
@@ -42,14 +41,22 @@ pub struct SignedCheckpoint<'a> {
 /// few settled submissions exist for that domain.
 type DomainReference = (u32, Option<u32>);
 
+/// Target of one domain in a liveness window: the domain, its target index,
+/// and the anchor root. The anchor is the root that at least `threshold`
+/// active validators signed at the target index. It is `None` when no root
+/// has that many votes.
+type DomainAnchor = (u32, u32, Option<B256>);
+
 /// Standing of one active validator in a liveness window.
 enum WindowStanding {
     /// At least one domain had no submission. The window stamps that domain
     /// and evaluates the validator from the next window.
     Newcomer,
-    /// The validator is at or above the reference index on every domain.
+    /// The vote of the validator equals the anchor root on every domain
+    /// that has an anchor.
     OnTime,
-    /// The validator is below the reference index on some domain.
+    /// On some domain with an anchor, the validator has no vote at the
+    /// target index, or its root is not the anchor root.
     Behind,
 }
 
@@ -85,11 +92,17 @@ impl HyperlaneControllerContract<'_> {
     }
 
     /// Liveness proof for one domain. The validator or its Hyperlane delegate
-    /// submits its latest signed checkpoint.
+    /// submits a signed checkpoint.
     /// The controller verifies the signature against the validator's
-    /// Hyperlane signer and records only the index. The controller never
-    /// accepts index 0: the first submission must be strictly newer than the
-    /// stored zero.
+    /// Hyperlane signer. Then it does one or both of these:
+    /// - The index equals the target index of the domain: the root becomes
+    ///   the vote of the validator. A different root replaces an earlier vote.
+    /// - The index is strictly newer than the stored index: it becomes the
+    ///   latest index of the validator.
+    ///
+    /// When neither applies, the call fails with `StaleIndex`. The
+    /// controller never accepts index 0: zero means "no target" and "no
+    /// submission".
     pub fn submit_checkpoint(
         &mut self,
         caller: Address,
@@ -124,38 +137,79 @@ impl HyperlaneControllerContract<'_> {
             }
             .into());
         }
-        self.record_submission(validator, domain, checkpoint.index)
+        self.record_submission(validator, domain, checkpoint.index, checkpoint.root)
     }
 
-    /// Records a verified submission. The index must be strictly newer than
-    /// the stored index.
-    fn record_submission(&mut self, validator: Address, domain: u32, index: u32) -> Result<()> {
+    /// Records a verified submission as a vote, as the latest index, or as
+    /// both. See [`Self::submit_checkpoint`].
+    pub(crate) fn record_submission(
+        &mut self,
+        validator: Address,
+        domain: u32,
+        index: u32,
+        root: B256,
+    ) -> Result<()> {
         let key = validator_domain_key(validator, domain);
         let submitted = self.submitted_index.read(&key)?;
-        if index <= submitted {
+        let target = self.target_index.read(&domain)?;
+        let is_latest = index > submitted;
+        // A repeat of the stored vote changes nothing, so it is not a vote.
+        let is_vote = target != 0
+            && index == target
+            && self.vote_at(validator, domain, target)? != Some(root);
+        if !is_latest && !is_vote {
             return Err(HyperlaneControllerError::StaleIndex { index, submitted }.into());
         }
         let block = self.storage.block_number()?;
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
-            self.submitted_index.write(&key, index)?;
-            self.submitted_block.write(&key, block)?;
-            self.emit(IHyperlaneController::CheckpointSubmitted {
-                validator,
-                domain,
-                index,
-            })
+            if is_vote {
+                self.vote_index.write(&key, index)?;
+                self.vote_root.write(&key, root)?;
+                self.emit(IHyperlaneController::TargetCheckpointSubmitted {
+                    validator,
+                    domain,
+                    index,
+                    root,
+                })?;
+            }
+            if is_latest {
+                self.submitted_index.write(&key, index)?;
+                self.submitted_block.write(&key, block)?;
+                self.emit(IHyperlaneController::CheckpointSubmitted {
+                    validator,
+                    domain,
+                    index,
+                })?;
+            }
+            Ok(())
         })
     }
 
-    /// Liveness-window verdict (every [`LIVENESS_WINDOW_BLOCKS`]). For each
-    /// domain, the reference index is the `threshold`-th highest submission
-    /// among active validators. Only submissions older than [`GRACE_BLOCKS`]
-    /// count. This way, one validator cannot inflate the reference, and the
-    /// verdict ignores a checkpoint that everyone still trails. A validator
-    /// below the reference on any domain gets a miss. [`MAX_MISSES`]
-    /// consecutive misses jail it (no slash). A validator with no submission
-    /// yet gets a stamp, and the verdict evaluates it from the next window.
+    /// The root that `validator` signed at the index `target` of `domain`.
+    /// `None` when its last vote is for another index. `target` must not be 0.
+    fn vote_at(&self, validator: Address, domain: u32, target: u32) -> Result<Option<B256>> {
+        let key = validator_domain_key(validator, domain);
+        if self.vote_index.read(&key)? != target {
+            return Ok(None);
+        }
+        Ok(Some(self.vote_root.read(&key)?))
+    }
+
+    /// Liveness-window verdict (every [`LIVENESS_WINDOW_BLOCKS`]).
+    ///
+    /// Each domain has a target index. In the window, every validator signs
+    /// the checkpoint at that index. The anchor is the root that at least
+    /// `threshold` active validators signed. A validator with no vote at the
+    /// target, or with a root that is not the anchor, gets a miss.
+    /// [`MAX_MISSES`] consecutive misses jail it (no slash). A domain with no
+    /// target or no anchor gives no miss. A validator with no submission yet
+    /// gets a stamp, and the verdict evaluates it from the next window.
+    ///
+    /// Then the verdict sets the target of the next window: the
+    /// `threshold`-th highest latest index among active validators. Only
+    /// submissions older than [`GRACE_BLOCKS`] count. This way, one validator
+    /// cannot inflate the target. The target never decreases.
     /// Returns the validators jailed.
     pub fn check_liveness(&mut self) -> Result<Vec<Address>> {
         if !self.is_initialized()? {
@@ -172,20 +226,74 @@ impl HyperlaneControllerContract<'_> {
             return Ok(Vec::new());
         }
         let threshold = usize::from(consensus_threshold(active.len())?);
+        let anchors = self.anchors(&active, threshold)?;
         let references = self.reference_indexes(&active, threshold, now)?;
 
         let mut jailed = Vec::new();
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             for validator in &active {
-                let standing = self.window_standing(*validator, &references, now)?;
+                let standing = self.window_standing(*validator, &anchors, now)?;
                 if self.apply_standing(&mut validator_set, *validator, standing)? {
                     jailed.push(*validator);
                 }
             }
-            Ok(())
+            self.advance_targets(&references)
         })?;
         Ok(jailed)
+    }
+
+    /// The target index and the anchor root of every domain.
+    fn anchors(&self, active: &[Address], threshold: usize) -> Result<Vec<DomainAnchor>> {
+        let domains = self.domains.read_all()?;
+        let mut anchors = Vec::with_capacity(domains.len());
+        for domain in domains {
+            let target = self.target_index.read(&domain)?;
+            let mut roots = Vec::with_capacity(active.len());
+            if target != 0 {
+                for validator in active {
+                    roots.extend(self.vote_at(*validator, domain, target)?);
+                }
+            }
+            // `threshold` is above half of the active set, so at most one
+            // root can reach it.
+            let anchor = roots
+                .iter()
+                .find(|root| roots.iter().filter(|other| other == root).count() >= threshold)
+                .copied();
+            anchors.push((domain, target, anchor));
+        }
+        Ok(anchors)
+    }
+
+    /// Moves the target of each domain up to its reference index.
+    fn advance_targets(&mut self, references: &[DomainReference]) -> Result<()> {
+        for (domain, reference) in references {
+            let Some(index) = *reference else { continue };
+            if index > self.target_index.read(domain)? {
+                self.target_index.write(domain, index)?;
+                self.emit(IHyperlaneController::TargetIndexSet {
+                    domain: *domain,
+                    index,
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Clears the liveness state of `domain`: the target, and the votes and
+    /// submissions of the active validators.
+    pub(crate) fn clear_liveness(&mut self, domain: u32) -> Result<()> {
+        self.target_index.clear(&domain)?;
+        let validator_set = ValidatorSet::new(self.storage.clone());
+        for record in validator_set.get_active_validators()? {
+            let key = validator_domain_key(record.validator_address, domain);
+            self.submitted_index.clear(&key)?;
+            self.submitted_block.clear(&key)?;
+            self.vote_index.clear(&key)?;
+            self.vote_root.clear(&key)?;
+        }
+        Ok(())
     }
 
     /// The reference index of every domain: the `threshold`-th highest
@@ -219,25 +327,25 @@ impl HyperlaneControllerContract<'_> {
         Ok(settled)
     }
 
-    /// Compares `validator` with every domain reference. A domain without a
-    /// submission gets the stamp `now`.
+    /// Compares the vote of `validator` with every domain anchor. A domain
+    /// without a submission gets the stamp `now`.
     fn window_standing(
         &mut self,
         validator: Address,
-        references: &[DomainReference],
+        anchors: &[DomainAnchor],
         now: u64,
     ) -> Result<WindowStanding> {
         let mut newcomer = false;
         let mut behind = false;
-        for (domain, reference) in references {
+        for (domain, target, anchor) in anchors {
             let key = validator_domain_key(validator, *domain);
             if self.submitted_block.read(&key)? == 0 {
                 self.submitted_block.write(&key, now)?;
                 newcomer = true;
                 continue;
             }
-            if let Some(reference) = reference {
-                behind |= self.submitted_index.read(&key)? < *reference;
+            if anchor.is_some() {
+                behind |= self.vote_at(validator, *domain, *target)? != *anchor;
             }
         }
         Ok(if newcomer {
