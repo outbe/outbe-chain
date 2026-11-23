@@ -5,7 +5,7 @@ use alloy_rlp::Encodable as _;
 use outbe_primitives::{OutbePrimitives, OutbeTxEnvelope};
 use reth_chainspec::{EthChainSpec, EthereumHardforks};
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
-use reth_evm::{execute::BlockBuilder, Evm};
+use reth_evm::{execute::BlockBuilder, EvmEnv as _};
 use reth_payload_builder::BlobSidecars;
 use reth_payload_primitives::PayloadBuilderError;
 use reth_primitives_traits::Recovered;
@@ -26,11 +26,7 @@ pub(super) trait PayloadGasAccounting {
     fn tx_gas_limit_cap(&self) -> u64;
 }
 
-impl<E> PayloadGasAccounting for outbe_evm::executor::OutbeBlockExecutor<'_, E>
-where
-    E: Evm,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-{
+impl PayloadGasAccounting for outbe_evm::executor::OutbeBlockExecutor<'_> {
     fn gas_accounting(&self) -> (u64, u64, u64) {
         Self::gas_accounting(self)
     }
@@ -109,7 +105,7 @@ impl PayloadBuildState {
             self.regular_gas_used,
             self.state_gas_used,
         ) = builder.executor().gas_accounting();
-        self.eip8037 = builder.evm().cfg_env().enable_amsterdam_eip8037;
+        self.eip8037 = builder.evm_env().uses_separate_block_gas();
         self.tx_gas_limit_cap = builder.executor().tx_gas_limit_cap();
     }
 
