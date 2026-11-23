@@ -611,7 +611,7 @@ mod bls_load_tests {
     }
 
     #[tokio::test]
-    async fn corrupt_bls_with_upstream_fails_before_tee_prepare() {
+    async fn corrupt_bls_fails_before_tee_prepare_with_and_without_upstream() {
         use std::sync::atomic::Ordering;
         let root = tempfile::tempdir().unwrap();
         let hex_path = root.path().join("signing-key.hex");

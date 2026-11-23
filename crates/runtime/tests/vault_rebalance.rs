@@ -171,19 +171,23 @@ fn caller_memory_is_preserved_across_outbe_precompile_subcall() {
 
     const EOA: Address = Address::new([0x99; 20]);
     let sentinels: [[u8; 32]; 4] = [[0x11; 32], [0x22; 32], [0x33; 32], [0x44; 32]];
+    let post_ret_sentinel: [u8; 32] = [0x55; 32];
 
     // Build caller contract bytecode deployed at bonded `CCA`:
-    // 1. MSTORE four 32-byte sentinels at 0x00, 0x20, 0x40, 0x60.
+    // 1. MSTORE four 32-byte sentinels at 0x00, 0x20, 0x40, 0x60 and one above ret window at 0x220.
     // 2. CALLDATACOPY(0x100, 0x00, CALLDATASIZE).
     // 3. CALL(GAS, VAULT_ROUTER_ADDRESS, 0, 0x100, CALLDATASIZE, 0x200, 0x20).
-    // 4. MSTORE(0x80, call_status); MSTORE(0xa0, MLOAD(0x200)).
-    // 5. RETURN(0x00, 0xc0).
+    // 4. MSTORE(0x80, call_status); MSTORE(0xa0, MLOAD(0x200)); MSTORE(0xc0, MLOAD(0x220)).
+    // 5. RETURN(0x00, 0xe0).
     let mut caller_code = Vec::new();
     for (idx, word) in sentinels.iter().enumerate() {
         caller_code.push(0x7f); // PUSH32
         caller_code.extend_from_slice(word);
         caller_code.extend_from_slice(&[0x60, (idx as u8) * 0x20, 0x52]); // PUSH1 offset; MSTORE
     }
+    caller_code.push(0x7f); // PUSH32 post_ret_sentinel
+    caller_code.extend_from_slice(&post_ret_sentinel);
+    caller_code.extend_from_slice(&[0x61, 0x02, 0x20, 0x52]); // PUSH2 0x0220; MSTORE
     caller_code.extend_from_slice(&[
         0x36, // CALLDATASIZE
         0x60, 0x00, // PUSH1 0x00 (calldata offset)
@@ -206,7 +210,11 @@ fn caller_memory_is_preserved_across_outbe_precompile_subcall() {
         0x51, // MLOAD amount_to
         0x60, 0xa0, // PUSH1 0xa0
         0x52, // MSTORE amount_to
-        0x60, 0xc0, // PUSH1 0xc0 (192 bytes)
+        0x61, 0x02, 0x20, // PUSH2 0x0220
+        0x51, // MLOAD post_ret_sentinel
+        0x60, 0xc0, // PUSH1 0xc0
+        0x52, // MSTORE post_ret_sentinel
+        0x60, 0xe0, // PUSH1 0xe0 (224 bytes)
         0x60, 0x00, // PUSH1 0x00
         0xf3, // RETURN
     ]);
@@ -251,7 +259,7 @@ fn caller_memory_is_preserved_across_outbe_precompile_subcall() {
         .expect("top-level transaction calling VaultRouter must execute")
         .commit();
     assert!(result.is_success(), "expected success, got {result:?}");
-    assert_eq!(result.output.len(), 0xc0, "caller must return 6 ABI words");
+    assert_eq!(result.output.len(), 0xe0, "caller must return 7 ABI words");
 
     for (idx, expected) in sentinels.iter().enumerate() {
         let start = idx * 32;
@@ -261,6 +269,11 @@ fn caller_memory_is_preserved_across_outbe_precompile_subcall() {
             "caller memory word {idx} at offset {start:#x} was corrupted by Outbe precompile sub-call"
         );
     }
+    assert_eq!(
+        &result.output[0xc0..0xe0],
+        &post_ret_sentinel,
+        "caller memory sentinel above retSize (0x220) was overwritten by Outbe precompile sub-call"
+    );
     let call_status = U256::from_be_slice(&result.output[0x80..0xa0]);
     let amount_to = U256::from_be_slice(&result.output[0xa0..0xc0]);
     assert_eq!(

@@ -145,6 +145,10 @@ fn reth_mainnet_alias_is_not_outbe_mainnet_676() {
     );
 }
 
+/// Verifies that Outbe's `ConsensusArgs` flags (`--upstream`, `--testnet.unix-time-offset-secs`)
+/// do not collide with Reth v2.11.0 RPC/IPC flags (`--http*`, `--ipcdisable`, `--ipcpath`,
+/// `--auth-ipc.path`) and that `--chain` validates a real `tee_genesis::run` genesis through
+/// `OutbeChainSpecParser`.
 #[test]
 fn node_cli_flag_matrix_parses_http_upstream_time_offset_and_ipc_settings() {
     install_cli_defaults_for_test();
@@ -271,7 +275,8 @@ fn node_cli_flag_matrix_parses_http_upstream_time_offset_and_ipc_settings() {
         if let Some(expected_auth_ipc) = case.auth_ipc_path {
             assert_eq!(node.rpc.auth_ipc_path(), expected_auth_ipc);
         } else {
-            assert!(!node.rpc.auth_ipc_path().is_empty());
+            let default_rpc = reth_ethereum::node::core::args::RpcServerArgs::default();
+            assert_eq!(node.rpc.auth_ipc_path(), default_rpc.auth_ipc_path());
         }
     }
 }

@@ -529,12 +529,16 @@ fn build_paid_block_with_hook_mode(
             .expect("paid user tx executes");
         builder.executor_mut().apply_end_block_phase().unwrap();
 
-        let pre_settlement_root = use_parallel_hook.then(|| {
+        let (pre_len, pre_settlement_root) = if use_parallel_hook {
             let snapshot = hook_updates.lock().unwrap().clone();
-            provider
+            let pre_len = snapshot.len();
+            let root = provider
                 .state_root(fold_state_updates_to_hashed(&snapshot))
-                .expect("pre-settlement root computes")
-        });
+                .expect("pre-settlement root computes");
+            (pre_len, Some(root))
+        } else {
+            (0, None)
+        };
 
         let hook_reader = Arc::clone(&hook_updates);
         let outcome = builder
@@ -543,13 +547,22 @@ fn build_paid_block_with_hook_mode(
                     return Ok(None);
                 }
                 let streamed = hook_reader.lock().unwrap().clone();
-                let saw_promis_limit = streamed.iter().any(|u| {
+                let post_exec = &streamed[pre_len..];
+                assert!(
+                    !post_exec.is_empty(),
+                    "finish() must stream post-execution updates after apply_end_block_phase"
+                );
+                let settled_nonzero_burned = post_exec.iter().any(|u| {
                     u.account(&outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS)
-                        .is_some_and(|acc| !acc.storage.is_empty())
+                        .is_some_and(|acc| {
+                            acc.storage
+                                .iter()
+                                .any(|(_, slot)| slot.present_value > U256::ZERO)
+                        })
                 });
                 assert!(
-                    saw_promis_limit,
-                    "state hook must observe PROMIS_LIMIT burned-fee settlement before drop"
+                    settled_nonzero_burned,
+                    "post-exec state hook slice after apply_end_block_phase must observe non-zero PROMIS_LIMIT burned-fee settlement"
                 );
                 let parallel_root = provider
                     .state_root(fold_state_updates_to_hashed(&streamed))
@@ -655,14 +668,29 @@ fn sign_test_eip1559(
     signed.try_into_recovered().unwrap()
 }
 
-fn seed_h1_h2_seam_state(
-    db: &mut CacheDB<EmptyDB>,
+fn find_reserved_create2_salt(factory: Address, initcode: &[u8]) -> alloy_primitives::B256 {
+    use alloy_primitives::{keccak256, B256};
+    use outbe_primitives::addresses::is_reserved_dynamic_precompile_address;
+
+    let hash = keccak256(initcode);
+    (0u64..2_000_000)
+        .map(|n| B256::from(U256::from(n)))
+        .find(|salt| is_reserved_dynamic_precompile_address(factory.create2(*salt, hash)))
+        .expect("search range contains a reserved dynamic precompile CREATE2 destination")
+}
+
+struct H1H2SeamAddresses {
     user: Address,
     create_caller: Address,
+    reserved_create2_salt: alloy_primitives::B256,
+    reserved_create2_dest: Address,
     selfdestruct_victim: Address,
     delegated_eoa: Address,
+    delegation_caller: Address,
     policy_caller: Address,
-) {
+}
+
+fn seed_h1_h2_seam_state(db: &mut CacheDB<EmptyDB>, addrs: &H1H2SeamAddresses) {
     use evm2::bytecode::Bytecode as EvmBytecode;
     use outbe_system_common::addresses::{
         PROMIS_LIMIT_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS, UPDATE_ADDRESS, ZEROFEE_ADDRESS,
@@ -682,34 +710,40 @@ fn seed_h1_h2_seam_state(
     }
     db.insert_account_storage(&UPDATE_ADDRESS, &U256::ZERO, &U256::from(2u64));
     db.insert_account_info(
-        &user,
+        &addrs.user,
         AccountInfo {
             balance: U256::from(100_000_000_000_000_000_000u128),
             ..Default::default()
         },
     );
 
-    // 1. CREATE2 contract trying to collide with a reserved address (stores returned address at slot 0).
-    // Minimal initcode `0x00` (STOP) at mem[0..1], salt=0 -> CREATE2 -> SSTORE(0, addr).
-    let create_code = EvmBytecode::new_legacy(Bytes::from_static(&[
-        0x60, 0x00, 0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0xf5, 0x60, 0x00, 0x55, 0x00,
-    ]));
+    // 1. CREATE2 contract colliding with a real reserved dynamic precompile address:
+    //    slot 0 is pre-seeded to 0xDEAD so CREATE2 returning 0 on guard collision is observable.
+    let mut create_bytes = vec![0x7f];
+    create_bytes.extend_from_slice(addrs.reserved_create2_salt.as_slice());
+    create_bytes.extend_from_slice(&[
+        0x60, 0x01, 0x60, 0x00, 0x60, 0x00, 0xf5, // CREATE2(0, 0, 1, salt)
+        0x60, 0x00, 0x55, 0x00, // SSTORE(0, addr); STOP
+    ]);
+    let create_code = EvmBytecode::new_legacy(Bytes::from(create_bytes));
     db.insert_account_info(
-        &create_caller,
+        &addrs.create_caller,
         AccountInfo {
             code_hash: create_code.hash_slow(),
             code: Some(create_code),
             ..Default::default()
         },
     );
+    db.insert_account_storage(&addrs.create_caller, &U256::ZERO, &U256::from(0xDEADu64));
 
-    // 2. Funded contract executing SELFDESTRUCT(beneficiary = 0xEE..EE).
+    // 2. Funded contract executing SELFDESTRUCT(beneficiary = ZEROFEE_ADDRESS), which carries
+    //    the [0xef] system marker so GuardedSelfdestruct must redirect the balance to Address::ZERO.
     let mut sd_bytes = vec![0x73];
-    sd_bytes.extend_from_slice(Address::repeat_byte(0xEE).as_slice());
+    sd_bytes.extend_from_slice(ZEROFEE_ADDRESS.as_slice());
     sd_bytes.push(0xff); // SELFDESTRUCT
     let sd_code = EvmBytecode::new_legacy(Bytes::from(sd_bytes));
     db.insert_account_info(
-        &selfdestruct_victim,
+        &addrs.selfdestruct_victim,
         AccountInfo {
             balance: U256::from(123_456u64),
             code_hash: sd_code.hash_slow(),
@@ -718,19 +752,45 @@ fn seed_h1_h2_seam_state(
         },
     );
 
-    // 3. EIP-7702 EOA delegated to registered native precompile ZEROFEE_ADDRESS.
+    // 3. EIP-7702 EOA delegated to registered native precompile ZEROFEE_ADDRESS, invoked via
+    //    `delegation_caller` which records CALL status at slot 0 and RETURNDATASIZE at slot 1
+    //    (pre-seeded to 0xBEEF so empty-code execution returning 0 bytes is explicitly verified).
     let delegation = EvmBytecode::new_eip7702(ZEROFEE_ADDRESS);
     db.insert_account_info(
-        &delegated_eoa,
+        &addrs.delegated_eoa,
         AccountInfo {
             code_hash: delegation.hash_slow(),
             code: Some(delegation),
             ..Default::default()
         },
     );
+    let mut del_caller_bytes = vec![
+        0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x60, 0x00, 0x73,
+    ];
+    del_caller_bytes.extend_from_slice(addrs.delegated_eoa.as_slice());
+    del_caller_bytes.extend_from_slice(&[
+        0x5a, 0xf1, // GAS; CALL(gas, delegated_eoa, 0, 0, 0, 0, 0)
+        0x60, 0x00, 0x55, // SSTORE(0, status)
+        0x3d, 0x60, 0x01, 0x55, // SSTORE(1, RETURNDATASIZE)
+        0x00,
+    ]);
+    let del_caller_code = EvmBytecode::new_legacy(Bytes::from(del_caller_bytes));
+    db.insert_account_info(
+        &addrs.delegation_caller,
+        AccountInfo {
+            code_hash: del_caller_code.hash_slow(),
+            code: Some(del_caller_code),
+            ..Default::default()
+        },
+    );
+    db.insert_account_storage(
+        &addrs.delegation_caller,
+        &U256::from(1u64),
+        &U256::from(0xBEEFu64),
+    );
 
     // 4. Contract performing a nested STATICCALL into STABLECOIN_POLICY_REGISTRY_ADDRESS and
-    // storing the returned bool word at slot 0.
+    //    storing the returned bool word at slot 0.
     let mut pol_bytes = vec![
         0x36, 0x60, 0x00, 0x60, 0x00, 0x37, // CALLDATACOPY(0, 0, CALLDATASIZE)
         0x60, 0x20, 0x60, 0x40, 0x36, 0x60, 0x00, 0x73,
@@ -743,7 +803,7 @@ fn seed_h1_h2_seam_state(
     ]);
     let pol_code = EvmBytecode::new_legacy(Bytes::from(pol_bytes));
     db.insert_account_info(
-        &policy_caller,
+        &addrs.policy_caller,
         AccountInfo {
             code_hash: pol_code.hash_slow(),
             code: Some(pol_code),
@@ -753,25 +813,42 @@ fn seed_h1_h2_seam_state(
 }
 
 /// `[C-S.1]` Advancing-height (`H1 -> H2`) seam across `outbe-evm`, `outbe-execution`, and
-/// `outbe-runtime`: exercises `create_guard`, `selfdestruct_guard`, EIP-7702 native delegation,
-/// stateful precompile nested `STATICCALL`, and non-zero burned fees across two consecutive
-/// heights, confirming proposer (`OutbeBlockBuilder`) and follower (`batch_executor`) derive
-/// byte-identical state roots, receipts, and header artifacts at both `H1` and `H2`.
+/// `outbe-runtime`: actively triggers and asserts `create_guard` (reserved dynamic CREATE2
+/// collision), `selfdestruct_guard` (`[0xef]` beneficiary redirect to `Address::ZERO`),
+/// EIP-7702 native delegation normalization (empty-code execution), stateful precompile nested
+/// `STATICCALL`, and non-zero burned fees across two consecutive heights, confirming proposer
+/// (`OutbeBlockBuilder`) and follower (`batch_executor`) derive byte-identical state roots,
+/// receipts, and header artifacts at both `H1` and `H2`.
 #[test]
 fn advancing_heights_h1_to_h2_guards_subcalls_delegation_and_follower_parity() {
+    use alloy_primitives::keccak256;
     use alloy_sol_types::SolCall as _;
     use evm2::block::BundleSource;
     use outbe_evm::signer::OutbeEvmSigner;
+    use outbe_primitives::addresses::is_reserved_dynamic_precompile_address;
     use outbe_stablecoinpolicy::precompile::IStablecoinPolicyRegistry;
+    use outbe_system_common::addresses::ZEROFEE_ADDRESS;
 
     const USER_KEY: u8 = 0x51;
-    let user = OutbeEvmSigner::from_secret_bytes([USER_KEY; 32])
-        .unwrap()
-        .address();
     let create_caller = Address::repeat_byte(0xC1);
-    let selfdestruct_victim = Address::repeat_byte(0xC2);
-    let delegated_eoa = Address::repeat_byte(0xC3);
-    let policy_caller = Address::repeat_byte(0xC4);
+    let reserved_create2_salt = find_reserved_create2_salt(create_caller, &[0x00]);
+    let reserved_create2_dest = create_caller.create2(reserved_create2_salt, keccak256([0x00]));
+    assert!(is_reserved_dynamic_precompile_address(
+        reserved_create2_dest
+    ));
+
+    let addrs = H1H2SeamAddresses {
+        user: OutbeEvmSigner::from_secret_bytes([USER_KEY; 32])
+            .unwrap()
+            .address(),
+        create_caller,
+        reserved_create2_salt,
+        reserved_create2_dest,
+        selfdestruct_victim: Address::repeat_byte(0xC2),
+        delegated_eoa: Address::repeat_byte(0xC3),
+        delegation_caller: Address::repeat_byte(0xC5),
+        policy_caller: Address::repeat_byte(0xC4),
+    };
 
     let parent_h0 = SealedHeader::seal_slow(OutbeHeader::new(Header {
         number: 1,
@@ -790,24 +867,50 @@ fn advancing_heights_h1_to_h2_guards_subcalls_delegation_and_follower_parity() {
         parent_h0.header().inner.timestamp,
         parent_h0.header().inner.state_root,
     );
-    let config = test_config(bridge.clone());
+    // Use a Prague-activated chain spec so EIP-7702 delegation is active alongside CREATE2
+    // and SELFDESTRUCT guards across H1 -> H2 (matching Outbe's Prague runtime).
+    let prague_spec = {
+        use outbe_primitives::tee_test_utils::{
+            no_attestation_dev_policy_v1, tee_attestation_v1_extra_field,
+        };
+        let mut spec = reth_chainspec::ChainSpecBuilder::from(&*reth_ethereum::chainspec::MAINNET)
+            .prague_activated()
+            .build();
+        spec.chain = NO_ATTESTATION_DEV_CHAIN_ID.into();
+        spec.genesis.config.chain_id = NO_ATTESTATION_DEV_CHAIN_ID;
+        spec.genesis.timestamp = TEST_BLOCK_ONE_TIMESTAMP - 1;
+        let policy = no_attestation_dev_policy_v1(spec.chain().id(), spec.genesis_hash())
+            .expect("test NoAttestationDev policy is canonical");
+        spec.genesis.config.extra_fields.insert(
+            "teeAttestationV1".to_owned(),
+            tee_attestation_v1_extra_field(&policy)
+                .expect("test TEE activation manifest is canonical"),
+        );
+        std::sync::Arc::new(spec.map_header(OutbeHeader::new))
+    };
+    let config = outbe_evm::config::OutbeEvmConfig::new_with_bridge(
+        prague_spec,
+        bridge.clone(),
+        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+    )
+    .with_evm_signer(test_evm_signer());
     let provider = DeterministicEmptyStateProvider;
 
     let mut proposer_db = CacheDB::new(EmptyDB::default());
-    seed_h1_h2_seam_state(
-        &mut proposer_db,
-        user,
-        create_caller,
-        selfdestruct_victim,
-        delegated_eoa,
-        policy_caller,
-    );
+    seed_h1_h2_seam_state(&mut proposer_db, &addrs);
     let mut follower_db = proposer_db.clone();
 
     let h1_txs = vec![
-        sign_test_eip1559(USER_KEY, 0, create_caller, 200_000, Bytes::new()),
-        sign_test_eip1559(USER_KEY, 1, selfdestruct_victim, 100_000, Bytes::new()),
-        sign_test_eip1559(USER_KEY, 2, delegated_eoa, 100_000, Bytes::new()),
+        // 1M gas so the 1/64 remaining after CREATE2 collision covers the trailing SSTORE(0, 0).
+        sign_test_eip1559(USER_KEY, 0, addrs.create_caller, 1_000_000, Bytes::new()),
+        sign_test_eip1559(
+            USER_KEY,
+            1,
+            addrs.selfdestruct_victim,
+            100_000,
+            Bytes::new(),
+        ),
+        sign_test_eip1559(USER_KEY, 2, addrs.delegation_caller, 200_000, Bytes::new()),
     ];
     let policy_calldata = Bytes::from(
         IStablecoinPolicyRegistry::policyExistsCall {
@@ -816,7 +919,7 @@ fn advancing_heights_h1_to_h2_guards_subcalls_delegation_and_follower_parity() {
         .abi_encode(),
     );
     let h2_txs = vec![
-        sign_test_eip1559(USER_KEY, 3, policy_caller, 200_000, policy_calldata),
+        sign_test_eip1559(USER_KEY, 3, addrs.policy_caller, 200_000, policy_calldata),
         sign_test_eip1559(
             USER_KEY,
             4,
@@ -830,6 +933,7 @@ fn advancing_heights_h1_to_h2_guards_subcalls_delegation_and_follower_parity() {
     for (step, (height, txs)) in [(2u64, h1_txs), (3u64, h2_txs)].into_iter().enumerate() {
         let mut attrs = next_block_attrs(Bytes::new());
         attrs.inner.timestamp = TEST_BLOCK_ONE_TIMESTAMP + step as u64;
+        attrs.inner.parent_beacon_block_root = Some(alloy_primitives::B256::ZERO);
         attrs.parent_consensus_metadata = Some(CertifiedParentAccountingMetadata {
             finalized_block_number: height - 1,
             finalized_block_hash: parent.hash(),
@@ -863,6 +967,11 @@ fn advancing_heights_h1_to_h2_guards_subcalls_delegation_and_follower_parity() {
             builder.executor_mut().apply_end_block_phase().unwrap();
             builder.finish(&provider, None).unwrap()
         });
+        assert!(
+            built.execution_result.receipts.iter().all(|r| r.success),
+            "all transactions at height {height} must succeed, got {:?}",
+            built.execution_result.receipts
+        );
         proposer_db.commit_source(&BundleSource(&built.execution_state));
 
         let follower_bundle = outbe_evm::executor::with_phase1_verify_disabled(|| {
@@ -899,20 +1008,67 @@ fn advancing_heights_h1_to_h2_guards_subcalls_delegation_and_follower_parity() {
         parent = built.block.sealed_header().clone();
     }
 
-    // Confirm H2's nested precompile STATICCALL persisted policyExists(1) == true on both sides.
+    // Verify every guard and sub-call outcome explicitly on BOTH proposer and follower state.
     use evm2::evm::Database as _;
-    assert_eq!(
-        proposer_db
-            .get_storage(&policy_caller, &U256::ZERO)
-            .unwrap(),
-        U256::from(1u64),
-        "nested STATICCALL to STABLECOIN_POLICY_REGISTRY must return true at H2"
-    );
-    assert_eq!(
-        follower_db
-            .get_storage(&policy_caller, &U256::ZERO)
-            .unwrap(),
-        U256::from(1u64),
-        "follower state at H2 must match proposer post-state"
-    );
+    for (side, db) in [
+        ("proposer", &mut proposer_db),
+        ("follower", &mut follower_db),
+    ] {
+        // 1. create_guard blocked reserved CREATE2 collision -> returned 0 (overwrote 0xDEAD),
+        //    and deployed no code at the reserved destination.
+        assert_eq!(
+            db.get_storage(&addrs.create_caller, &U256::ZERO).unwrap(),
+            U256::ZERO,
+            "{side}: create_guard must return 0 on reserved CREATE2 collision"
+        );
+        assert!(
+            db.account_info(&addrs.reserved_create2_dest).is_none(),
+            "{side}: reserved CREATE2 destination must remain undeployed"
+        );
+
+        // 2. selfdestruct_guard redirected [0xef]-marked beneficiary (ZEROFEE_ADDRESS) to Address::ZERO.
+        assert_eq!(
+            db.account_info(&ZEROFEE_ADDRESS)
+                .map(|a| a.balance)
+                .unwrap_or_default(),
+            U256::ZERO,
+            "{side}: [0xef] system beneficiary must not receive selfdestruct balance"
+        );
+        assert_eq!(
+            db.account_info(&addrs.selfdestruct_victim)
+                .map(|a| a.balance)
+                .unwrap_or_default(),
+            U256::ZERO,
+            "{side}: selfdestruct victim balance must be drained"
+        );
+        assert_eq!(
+            db.account_info(&Address::ZERO)
+                .map(|a| a.balance)
+                .unwrap_or_default(),
+            U256::from(123_456u64),
+            "{side}: selfdestruct_guard must redirect victim balance to Address::ZERO"
+        );
+
+        // 3. native_delegation normalized EIP-7702 -> ZEROFEE_ADDRESS into empty-code execution
+        //    (CALL status == 1, RETURNDATASIZE == 0 overwriting 0xBEEF).
+        assert_eq!(
+            db.get_storage(&addrs.delegation_caller, &U256::ZERO)
+                .unwrap(),
+            U256::from(1u64),
+            "{side}: delegated native call must succeed"
+        );
+        assert_eq!(
+            db.get_storage(&addrs.delegation_caller, &U256::from(1u64))
+                .unwrap(),
+            U256::ZERO,
+            "{side}: delegated native call must execute empty code (0 returndata)"
+        );
+
+        // 4. H2 nested STATICCALL to STABLECOIN_POLICY_REGISTRY persisted policyExists(1) == true.
+        assert_eq!(
+            db.get_storage(&addrs.policy_caller, &U256::ZERO).unwrap(),
+            U256::from(1u64),
+            "{side}: nested STATICCALL to STABLECOIN_POLICY_REGISTRY must return true at H2"
+        );
+    }
 }

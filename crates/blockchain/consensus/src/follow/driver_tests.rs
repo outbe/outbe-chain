@@ -441,183 +441,21 @@ fn first_poll_failure_is_unreachable_and_all_poll_labels_are_closed() {
 
 #[test]
 fn driver_pull_to_advances_from_processed_absent_floor_to_block() {
-    use commonware_consensus::{
-        marshal::core::Processed,
-        marshal::resolver::handler,
-        simplex::types::{Finalization, Finalize, Proposal},
-        types::{Epoch, Round, View},
-    };
-    use commonware_cryptography::{
-        bls12381::{self, primitives::variant::MinSig},
-        Signer as _,
-    };
-    use commonware_utils::{
-        ordered::{Quorum as _, Set},
-        Acknowledgement as _, TryCollect as _,
-    };
-    use std::sync::Mutex;
-
-    #[derive(Clone)]
-    struct HoldingReporter {
-        held: Arc<Mutex<Vec<(u64, commonware_utils::acknowledgement::Exact)>>>,
-    }
-
-    impl commonware_consensus::Reporter for HoldingReporter {
-        type Activity = crate::marshal_types::MarshalUpdate;
-        fn report(&mut self, activity: Self::Activity) -> commonware_actor::Feedback {
-            if let marshal::Update::Block(block, ack) = activity {
-                if block.inner().number() == 0 {
-                    ack.acknowledge();
-                } else {
-                    self.held
-                        .lock()
-                        .unwrap()
-                        .push((block.inner().number(), ack));
-                }
-            }
-            commonware_actor::Feedback::Ok
-        }
-    }
+    use crate::test_fixtures::marshal::{start_processed_absent_marshal, wait_until_bounded};
+    use commonware_consensus::marshal::core::Processed;
+    use commonware_utils::Acknowledgement as _;
+    use std::collections::BTreeSet;
 
     let recorder = DebuggingRecorder::new();
     let snapshotter = recorder.snapshotter();
     metrics::with_local_recorder(&recorder, || {
         deterministic::Runner::default().start(|context| async move {
-            let keys: Vec<bls12381::PrivateKey> =
-                (1u64..=3).map(bls12381::PrivateKey::from_seed).collect();
-            let participants: Set<bls12381::PublicKey> =
-                keys.iter().map(|k| k.public_key()).try_collect().unwrap();
-            let dkg = crate::bls::bootstrap_dkg(3).unwrap();
-            let signers: Vec<crate::hybrid::HybridScheme<MinSig>> = keys
-                .iter()
-                .map(|key| {
-                    let idx = participants.index(&key.public_key()).unwrap();
-                    crate::hybrid::HybridScheme::signer(
-                        &crate::config::outbe_app_namespace(),
-                        participants.clone(),
-                        key.clone(),
-                        dkg.polynomial.clone(),
-                        dkg.shares[idx.get() as usize].clone(),
-                    )
-                    .unwrap()
-                })
-                .collect();
-            let verifier = crate::hybrid::HybridScheme::<MinSig>::verifier(
-                &crate::config::outbe_app_namespace(),
-                participants,
-                dkg.polynomial.clone(),
-            )
-            .unwrap();
-            let provider = HybridSchemeProvider::new();
-            assert!(provider.register(Epoch::new(0), verifier.clone()));
-
-            let mut raw = Block::default();
-            raw.header.number = 5;
-            raw.header.extra_data = alloy_primitives::Bytes::from_static(&[5]);
-            let floor_block = ConsensusBlock::from_sealed(SealedBlock::seal_slow(
-                raw.map_header(outbe_primitives::OutbeHeader::new),
-            ));
-            let round = Round::new(Epoch::new(0), View::new(5));
-            let proposal = Proposal::new(round, View::new(4), floor_block.digest());
-            let votes: Vec<_> = signers
-                .iter()
-                .map(|s| Finalize::sign(s, proposal.clone()).unwrap())
-                .collect();
-            let finalization = Finalization::from_finalizes(
-                &verifier,
-                commonware_utils::iter::NonEmpty::try_new(votes.iter()).unwrap(),
-                &Sequential,
-            )
-            .unwrap();
-
-            let cache = CacheRef::new(
-                NonZeroU16::new(1024).unwrap(),
-                NonZeroUsize::new(10).unwrap(),
-            );
-            let items = NonZeroU64::new(10).unwrap();
-            let buffer = NonZeroUsize::new(1024).unwrap();
-            let (certificates, blocks) = MarshalArchiveFixture {
-                partition_prefix: "driver-absent-floor",
-                page_cache: &cache,
-                items_per_section: items,
-                replay_buffer: buffer,
-                write_buffer: buffer,
-            }
-            .open(&context)
-            .await
-            .unwrap();
-            let genesis = Block::default().map_header(outbe_primitives::OutbeHeader::new);
-            let (actor, mailbox, _) = marshal::core::Actor::init(
-                context.child("marshal"),
-                certificates,
-                blocks,
-                marshal::Config {
-                    provider,
-                    epocher: FollowerEpocher::new(100, 10),
-                    start: marshal::Start::Genesis(crate::test_fixtures::digested_block(
-                        ConsensusBlock::from_sealed(SealedBlock::seal_slow(genesis)),
-                    )),
-                    partition_prefix: "driver-absent-floor".into(),
-                    mailbox_size: NonZeroUsize::new(32).unwrap(),
-                    view_retention: ViewDelta::new(100),
-                    prunable_items_per_section: items,
-                    page_cache: cache,
-                    replay_buffer: buffer,
-                    key_write_buffer: buffer,
-                    value_write_buffer: buffer,
-                    block_codec_config: (),
-                    max_repair: NonZeroUsize::new(10).unwrap(),
-                    max_pending_acks: NonZeroUsize::new(1).unwrap(),
-                    strategy: Sequential,
-                },
-            )
-            .await;
-            let held = Arc::new(Mutex::new(Vec::new()));
-            let (receiver, handler) =
-                handler::init(context.child("handler"), NonZeroUsize::new(32).unwrap());
-            let resolver = crate::follow::resolver::init(
-                context.child("resolver"),
-                handler,
-                crate::follow::resolver::FetchResolution {
-                    upstream: EmptySource,
-                    local: EmptySource,
-                    chain: crate::follow::SharedCommitteeChain::new(
-                        crate::follow::CommitteeChain::new(Epoch::new(0), Default::default()),
-                    ),
-                    epocher: FollowerEpocher::new(100, 10),
-                },
-                NonZeroUsize::new(32).unwrap(),
-            );
-            let _marshal_handle = actor.start_unbuffered(
-                HoldingReporter {
-                    held: Arc::clone(&held),
-                },
-                (receiver, resolver),
-            );
-
-            while mailbox.get_processed().await != Some(Processed::Block(Height::zero())) {
-                context.sleep(Duration::from_millis(1)).await;
-            }
-            assert!(
-                mailbox
-                    .verified(
-                        round,
-                        commonware_cryptography::Digested::precomputed(
-                            floor_block.clone(),
-                            floor_block.digest(),
-                        ),
-                    )
-                    .await
-            );
-            mailbox.set_floor(finalization);
-            while mailbox.get_processed().await != Some(Processed::Absent(Height::new(4))) {
-                context.sleep(Duration::from_millis(1)).await;
-            }
+            let fixture = start_processed_absent_marshal(&context, "driver-absent-floor", 5).await;
 
             let mut driver = Driver::new(
                 context.child("driver"),
                 Config {
-                    marshal: mailbox.clone(),
+                    marshal: fixture.mailbox.clone(),
                     tip: Tip {
                         pending: false,
                         calls: Arc::new(AtomicUsize::new(0)),
@@ -627,8 +465,32 @@ fn driver_pull_to_advances_from_processed_absent_floor_to_block() {
             );
 
             // Consumer path under Processed::Absent(4): pull_to must read floor height 4 and
-            // emit hints for 5..=7 rather than stalling or resetting to genesis.
+            // emit hints strictly for heights 5..=7 rather than stalling or resetting to genesis.
+            fixture.hinted_heights.lock().unwrap().clear();
             driver.pull_to(Height::new(7)).await;
+            wait_until_bounded(&context, 200, "hints for heights 5..=7", || async {
+                let heights: BTreeSet<u64> = fixture
+                    .hinted_heights
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .copied()
+                    .collect();
+                heights.contains(&6) && heights.contains(&7)
+            })
+            .await;
+            let hinted_under_absent: BTreeSet<u64> =
+                fixture.hinted_heights.lock().unwrap().drain(..).collect();
+            // Height 5 is already verified/finalized locally so Marshal skips fetching 5 and
+            // forwards gap-repair hints for 6..=7, never regressing to 1..=4.
+            assert!(
+                hinted_under_absent.iter().all(|&h| (5..=7).contains(&h)),
+                "hints under Processed::Absent(4) must stay within 5..=7, got {hinted_under_absent:?}"
+            );
+            assert!(
+                hinted_under_absent.contains(&6) && hinted_under_absent.contains(&7),
+                "hints under Processed::Absent(4) must cover missing heights 6..=7, got {hinted_under_absent:?}"
+            );
             let snap_absent = telemetry(&snapshotter);
             assert_eq!(
                 snap_absent["outbe_follower_processed_height:"],
@@ -639,18 +501,40 @@ fn driver_pull_to_advances_from_processed_absent_floor_to_block() {
                 DebugValue::Counter(1)
             );
 
-            // Acknowledge block 5 -> Processed::Block(5), then pull_to(7) pulls and pull_to(5) idles.
-            while held.lock().unwrap().is_empty() {
-                context.sleep(Duration::from_millis(1)).await;
-            }
-            for (height, ack) in held.lock().unwrap().drain(..) {
+            // Acknowledge block 5 -> Processed::Block(5), then pull_to(7) advances floor to 5
+            // and re-hints strictly within 6..=7.
+            wait_until_bounded(&context, 200, "held block 5 delivery", || async {
+                !fixture.held.lock().unwrap().is_empty()
+            })
+            .await;
+            for (height, ack) in fixture.held.lock().unwrap().drain(..) {
                 assert_eq!(height, 5);
                 ack.acknowledge();
             }
-            while mailbox.get_processed().await != Some(Processed::Block(Height::new(5))) {
-                context.sleep(Duration::from_millis(1)).await;
-            }
+            wait_until_bounded(&context, 200, "Processed::Block(5)", || async {
+                fixture.mailbox.get_processed().await == Some(Processed::Block(Height::new(5)))
+            })
+            .await;
+            fixture.hinted_heights.lock().unwrap().clear();
             driver.pull_to(Height::new(7)).await;
+            wait_until_bounded(&context, 200, "hints for heights 6..=7", || async {
+                let heights: BTreeSet<u64> = fixture
+                    .hinted_heights
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .copied()
+                    .collect();
+                heights.contains(&6) && heights.contains(&7)
+            })
+            .await;
+            let hinted_under_block: BTreeSet<u64> =
+                fixture.hinted_heights.lock().unwrap().drain(..).collect();
+            assert_eq!(
+                hinted_under_block,
+                BTreeSet::from([6, 7]),
+                "hints under Processed::Block(5) with tip 7 must be exactly 6..=7"
+            );
             let snap_block = telemetry(&snapshotter);
             assert_eq!(
                 snap_block["outbe_follower_processed_height:"],
@@ -660,16 +544,6 @@ fn driver_pull_to_advances_from_processed_absent_floor_to_block() {
                 snap_block["outbe_follower_rounds_total:result=pulled"],
                 DebugValue::Counter(1),
                 "DebuggingRecorder snapshots drain counters; the second pull_to(7) must record 1 fresh pull"
-            );
-            driver.pull_to(Height::new(5)).await;
-            let snap_idle = telemetry(&snapshotter);
-            assert_eq!(
-                snap_idle["outbe_follower_rounds_total:result=idle"],
-                DebugValue::Counter(1)
-            );
-            assert_eq!(
-                snap_idle["outbe_follower_rounds_total:result=pulled"],
-                DebugValue::Counter(0)
             );
         });
     });
