@@ -60,6 +60,10 @@ where
     type Error = Infallible;
     type PublicKey = P;
 
+    fn capacity(&self) -> std::num::NonZeroUsize {
+        commonware_utils::NZUsize!(64)
+    }
+
     async fn recv(&mut self) -> Result<Message<Self::PublicKey>, Self::Error> {
         std::future::pending().await
     }
@@ -204,11 +208,12 @@ fn global_stop_reopens_voter_journal_and_resumes_without_conflicting_votes() {
                 view_retention: ViewDelta::new(16),
                 skip: commonware_consensus::simplex::SkipPolicy::Disabled,
                 track_historical_votes: true,
-                fetch_timeout: Duration::from_millis(20),
+                fetch_timeout: commonware_utils::NZDuration!(Duration::from_millis(20)),
+                fetch_retry_delay: Duration::from_millis(10),
 
                 replay_buffer: NZUsize!(64 * 1024),
                 write_buffer: NZUsize!(4 * 1024),
-                page_cache: CacheRef::from_pooler(&context, PAGE_SIZE, PAGE_CACHE_SIZE),
+                page_cache: CacheRef::new(PAGE_SIZE, PAGE_CACHE_SIZE),
             };
             let engine = Engine::new(context.child("engine"), engine_config);
             let mut engine_handle =
@@ -295,7 +300,7 @@ fn planned_abort_during_pending_sync_reopens_the_same_voter_journal() {
         .expect("single-validator hybrid signer");
         let partition = "planned_abort_voter_journal";
 
-        let engine_config = |context: &commonware_runtime::tokio::Context| SimplexConfig {
+        let engine_config = |_context: &commonware_runtime::tokio::Context| SimplexConfig {
             scheme: scheme.clone(),
             elector: RoundRobin::<Sha256>::default(),
             blocker: NullBlocker(PhantomData),
@@ -318,11 +323,12 @@ fn planned_abort_during_pending_sync_reopens_the_same_voter_journal() {
             view_retention: ViewDelta::new(16),
             skip: commonware_consensus::simplex::SkipPolicy::Disabled,
             track_historical_votes: true,
-            fetch_timeout: Duration::from_millis(20),
+            fetch_timeout: commonware_utils::NZDuration!(Duration::from_millis(20)),
+            fetch_retry_delay: Duration::from_millis(10),
 
             replay_buffer: NZUsize!(64 * 1024),
             write_buffer: NZUsize!(4 * 1024),
-            page_cache: CacheRef::from_pooler(context, PAGE_SIZE, PAGE_CACHE_SIZE),
+            page_cache: CacheRef::new(PAGE_SIZE, PAGE_CACHE_SIZE),
         };
         let (durable_vote_tx, durable_vote_rx) = mpsc::channel();
         let networks = || {

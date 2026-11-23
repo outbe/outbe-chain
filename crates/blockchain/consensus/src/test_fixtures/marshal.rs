@@ -32,17 +32,14 @@ pub(crate) struct MarshalArchiveFixture<'a> {
 
 type MarshalTestArchives<E> = (
     immutable::Archive<E, crate::digest::Digest, crate::marshal_types::Finalization>,
-    immutable::Archive<E, crate::digest::Digest, crate::block::ConsensusBlock>,
+    immutable::Archive<E, crate::digest::Digest, std::sync::Arc<crate::block::ConsensusBlock>>,
 );
 
 impl MarshalArchiveFixture<'_> {
     /// Open both archives in the same order and partitions used by every harness.
     pub(crate) async fn open<E>(&self, context: &E) -> eyre::Result<MarshalTestArchives<E>>
     where
-        E: commonware_runtime::Storage
-            + commonware_runtime::Clock
-            + commonware_runtime::Metrics
-            + commonware_runtime::BufferPooler,
+        E: commonware_runtime::Storage + commonware_runtime::Clock + commonware_runtime::Metrics,
     {
         let finalizations = immutable::Archive::init(
             context.child("marshal_finalizations"),

@@ -265,11 +265,11 @@ fn decode_metadata_finalization(
     actual: &CertifiedParentAccountingMetadata,
     member_count: usize,
 ) -> Result<Finalization<HybridScheme<MinSig>, Digest>, AttestationVerdict> {
-    let mut proof_reader = actual.proof.as_ref();
+    let mut proof_reader = commonware_codec::Copying(actual.proof.as_ref());
     let finalization =
         Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(&mut proof_reader, &member_count)
             .map_err(|_| AttestationVerdict::RejectCertificate)?;
-    if !proof_reader.is_empty() {
+    if !proof_reader.0.is_empty() {
         return Err(AttestationVerdict::RejectCertificate);
     }
     Ok(finalization)

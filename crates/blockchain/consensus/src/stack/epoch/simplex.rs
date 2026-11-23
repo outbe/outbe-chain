@@ -67,17 +67,7 @@ pub(crate) fn epoch_partition(epoch: Epoch, signer_enabled: bool) -> String {
 
 impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
-    E: BufferPooler
-        + Clock
-        + CryptoRng
-        + Network
-        + Resolver
-        + Spawner
-        + Storage
-        + Metrics
-        + Send
-        + Sync
-        + 'static,
+    E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     pub(super) async fn start_engine(
         &mut self,
@@ -266,7 +256,8 @@ where
             view_retention: ViewDelta::new(u64::from(config::ACTIVITY_TIMEOUT)),
             skip: commonware_consensus::simplex::SkipPolicy::Disabled,
             track_historical_votes: true,
-            fetch_timeout: config::DEFAULT_PEER_RESPONSE_TIMEOUT,
+            fetch_timeout: commonware_utils::NZDuration!(config::DEFAULT_PEER_RESPONSE_TIMEOUT),
+            fetch_retry_delay: std::time::Duration::from_millis(100),
         };
 
         // -- f. Start engine ---------------------------------------------

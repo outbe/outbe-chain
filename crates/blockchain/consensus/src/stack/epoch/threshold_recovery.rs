@@ -36,17 +36,7 @@ pub(super) async fn recover_threshold<E, N: StackNodeAccess>(
     input: ThresholdRecovery<'_, E, N>,
 ) -> Result<RecoveredThreshold>
 where
-    E: BufferPooler
-        + Clock
-        + CryptoRng
-        + Network
-        + Resolver
-        + Spawner
-        + Storage
-        + Metrics
-        + Send
-        + Sync
-        + 'static,
+    E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     let ThresholdRecovery {
         args,

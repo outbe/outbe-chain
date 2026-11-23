@@ -30,7 +30,7 @@ use commonware_consensus::marshal::resolver::handler;
 use commonware_consensus::marshal::store::{Blocks, Certificates};
 use commonware_consensus::types::{Epoch, Epocher, Height};
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
-use commonware_runtime::{BufferPooler, Clock, Metrics, Spawner, Storage};
+use commonware_runtime::{Clock, Metrics, Spawner, Storage};
 use commonware_storage::archive::Identifier;
 use eyre::Result;
 use futures::FutureExt as _;
@@ -50,16 +50,7 @@ use crate::marshal_types::{FollowMarshalActor, MarshalMailbox};
 /// Inputs to [`run_follow_engine`].
 pub struct FollowEngineConfig<E, F, L, T, R>
 where
-    E: Spawner
-        + Clock
-        + Metrics
-        + BufferPooler
-        + Storage
-        + RngCore
-        + CryptoRng
-        + Send
-        + Sync
-        + 'static,
+    E: Spawner + Clock + Metrics + Storage + RngCore + CryptoRng + Send + Sync + 'static,
 {
     /// The marshal actor (already initialized over the committee-chain scheme
     /// provider), ready to `start`.
@@ -104,16 +95,7 @@ pub async fn run_follow_engine<E, F, L, T, R>(
     config: FollowEngineConfig<E, F, L, T, R>,
 ) -> Result<()>
 where
-    E: Spawner
-        + Clock
-        + Metrics
-        + BufferPooler
-        + Storage
-        + RngCore
-        + CryptoRng
-        + Send
-        + Sync
-        + 'static,
+    E: Spawner + Clock + Metrics + Storage + RngCore + CryptoRng + Send + Sync + 'static,
     F: FinalizedSource,
     L: LocalBlockSource,
     T: TipSource,
@@ -344,7 +326,7 @@ pub async fn authenticate_and_reconcile_replay_suffix<F, FC, FB>(
 where
     F: FinalizedSource,
     FC: Certificates<BlockDigest = Digest, Commitment = Digest, Scheme = HybridScheme<MinSig>>,
-    FB: Blocks<Block = crate::block::ConsensusBlock>,
+    FB: Blocks<Block = std::sync::Arc<crate::block::ConsensusBlock>>,
 {
     authority.run(window, archives).await
 }

@@ -125,7 +125,10 @@ mod tests {
             let block = make_test_block(0xCC);
 
             let (ack, _waiter) = Exact::handle();
-            let update = commonware_consensus::marshal::Update::Block(block.into(), ack);
+            let update = commonware_consensus::marshal::Update::Block(
+                crate::test_fixtures::digested_block(block),
+                ack,
+            );
 
             mailbox.report(update);
 

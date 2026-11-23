@@ -491,7 +491,7 @@ fn build_reshare_parity_fixture() -> ReshareParityFixture {
             dkg_logs.record(dealer, log);
         }
         let (out, share) = player
-            .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
+            .finalize::<N3f1>(
                 &mut ChaCha20Rng::from_seed([0x20 + idx as u8; 32]),
                 dkg_logs,
                 &Sequential,

@@ -332,7 +332,11 @@ fn marshal_delivery_closed_for_both_kinds_is_observed() {
 
 #[test]
 fn delivery_relay_preserves_verdicts_and_cancels_original_receiver() {
-    for outcome in [Some(true), Some(false), None] {
+    for outcome in [
+        Some(Outcome::Resolved(Resolution::Complete)),
+        Some(Outcome::Invalid),
+        None,
+    ] {
         let recorder = DebuggingRecorder::new();
         let snapshotter = recorder.snapshotter();
         metrics::with_local_recorder(&recorder, || {
@@ -351,7 +355,7 @@ fn delivery_relay_preserves_verdicts_and_cancels_original_receiver() {
                     handle.await.unwrap();
                     assert!(original.is_closed());
                 }
-                let expected = if outcome == Some(false) {
+                let expected = if outcome == Some(Outcome::Invalid) {
                     BTreeMap::from([(("block".to_string(), "delivery_rejected".to_string()), 1)])
                 } else {
                     BTreeMap::new()
@@ -470,12 +474,12 @@ impl Consumer for BundleConsumer {
     type Key = ResolverKey;
     type Value = Bytes;
     type Subscriber = Annotation;
-    type Outcome = bool;
+    type Outcome = Outcome;
     fn deliver(
         &mut self,
         delivery: Delivery<ResolverKey, Annotation>,
         _: Bytes,
-    ) -> oneshot::Receiver<bool> {
+    ) -> oneshot::Receiver<Outcome> {
         let accepted = !self.reject_ancestor || !matches!(delivery.key, Key::Block(_));
         let (annotation, _) = delivery.subscribers.into_iter().next().unwrap();
         self.deliveries
@@ -483,7 +487,13 @@ impl Consumer for BundleConsumer {
             .unwrap()
             .push((delivery.key, annotation));
         let (sender, receiver) = oneshot::channel();
-        sender.send(accepted).unwrap();
+        sender
+            .send(if accepted {
+                Outcome::Resolved(Resolution::Complete)
+            } else {
+                Outcome::Invalid
+            })
+            .unwrap();
         receiver
     }
 }

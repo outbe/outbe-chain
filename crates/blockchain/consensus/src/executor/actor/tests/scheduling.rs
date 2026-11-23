@@ -100,7 +100,7 @@ fn run_live_loop_propagates_fatal_executor_error() {
         let (ack, _waiter) = Exact::handle();
         mailbox_tx
             .send(crate::executor::ingress::Message::MarshalUpdate(Box::new(
-                Update::Block(block.into(), ack),
+                Update::Block(crate::test_fixtures::digested_block(block), ack),
             )))
             .expect("mailbox send must succeed");
 

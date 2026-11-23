@@ -41,7 +41,7 @@ pub type MarshalActor<E> = marshal::core::Actor<
     Variant,
     HybridSchemeProvider<MinSig>,
     commonware_storage::archive::immutable::Archive<E, Digest, Finalization>,
-    commonware_storage::archive::immutable::Archive<E, Digest, ConsensusBlock>,
+    commonware_storage::archive::immutable::Archive<E, Digest, std::sync::Arc<ConsensusBlock>>,
     crate::epoch_registry::FollowerEpocher,
     Sequential,
     Exact,

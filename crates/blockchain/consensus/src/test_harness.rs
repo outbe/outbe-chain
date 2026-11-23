@@ -104,8 +104,7 @@ fn namespace() -> Vec<u8> {
 const VOTES_CHANNEL: u64 = crate::config::VOTES_CHANNEL;
 const CERTIFICATES_CHANNEL: u64 = crate::config::CERTIFICATES_CHANNEL;
 const RESOLVER_CHANNEL: u64 = crate::config::RESOLVER_CHANNEL;
-const MUXER_MAILBOX: usize = 64;
-const TEST_QUOTA: Quota = Quota::per_second(NonZeroU32::MAX);
+const TEST_QUOTA: Quota = Quota::per_second(NonZeroU32::new(1_000).unwrap());
 const PAGE_SIZE: NonZeroU16 = match NonZeroU16::new(1024) {
     Some(n) => n,
     None => unreachable!(),
@@ -299,14 +298,11 @@ impl ConsensusReporter for MockReporter {
 // ------------------------------------------------------------------
 
 type SimSender = commonware_p2p::simulated::Sender<bls12381::PublicKey, deterministic::Context>;
-type SimReceiver = commonware_p2p::simulated::Receiver<bls12381::PublicKey>;
-type Mux = commonware_p2p::utils::mux::MuxHandle<SimSender, SimReceiver>;
-/// Mux handles cannot be `Clone` because `simulated::Receiver` is
-/// not `Clone` (mpsc::UnboundedReceiver is single-consumer). Wrap in
-/// `Arc<TokioMutex>` so per-node tasks can register sub-channels
+type Mux = commonware_p2p::utils::mux::MuxHandle<SimSender>;
+/// Wrap in `Arc<TokioMutex>` so per-node tasks can register sub-channels
 /// concurrently without taking ownership.
 type SharedMux = Arc<TokioMutex<Mux>>;
-type Stash = Option<EpochSubchannels<SimSender, SimReceiver>>;
+type Stash = Option<EpochSubchannels<SimSender>>;
 
 struct Node {
     signing_key: bls12381::PrivateKey,
@@ -457,21 +453,18 @@ impl Harness {
                 ctx.child("vote_mux").with_attribute("index", i),
                 votes_tx,
                 votes_rx,
-                MUXER_MAILBOX,
             );
             vote_muxer.start();
             let (cert_muxer, cert_mux) = Muxer::new(
                 ctx.child("cert_mux").with_attribute("index", i),
                 certs_tx,
                 certs_rx,
-                MUXER_MAILBOX,
             );
             cert_muxer.start();
             let (res_muxer, res_mux) = Muxer::new(
                 ctx.child("res_mux").with_attribute("index", i),
                 res_tx,
                 res_rx,
-                MUXER_MAILBOX,
             );
             res_muxer.start();
 
@@ -669,14 +662,15 @@ impl Harness {
                         floor: commonware_consensus::simplex::Floor::Genesis(mock_genesis(epoch)),
                         replay_buffer: REPLAY_BUFFER,
                         write_buffer: WRITE_BUFFER,
-                        page_cache: CacheRef::from_pooler(&task_ctx, PAGE_SIZE, PAGE_CACHE_SIZE),
+                        page_cache: CacheRef::new(PAGE_SIZE, PAGE_CACHE_SIZE),
                         leader_timeout,
                         certification_timeout: leader_timeout * 2,
                         timeout_retry: leader_timeout * 4,
                         view_retention: ViewDelta::new(64),
                         skip: commonware_consensus::simplex::SkipPolicy::Disabled,
                         track_historical_votes: true,
-                        fetch_timeout: leader_timeout,
+                        fetch_timeout: commonware_utils::NonZeroDuration::new_panic(leader_timeout),
+                        fetch_retry_delay: Duration::from_millis(100),
                     };
                     let engine = Engine::new(
                         task_ctx

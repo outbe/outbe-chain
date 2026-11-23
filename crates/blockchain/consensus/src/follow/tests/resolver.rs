@@ -1,7 +1,7 @@
 use super::super::resolver::{FetchResolution, ResolverKey};
 use super::*;
 use commonware_consensus::marshal::resolver::handler::{self, Annotation, Finalized, Key};
-use commonware_resolver::{Consumer, Delivery, Fetch};
+use commonware_resolver::{Consumer, Delivery, Fetch, Outcome, Resolution};
 use commonware_utils::channel::oneshot;
 use std::{collections::VecDeque, sync::Mutex};
 use upstream::AncestorFinalityProof;
@@ -49,7 +49,7 @@ type Deliveries = Arc<Mutex<Vec<(ResolverKey, Vec<Annotation>, bytes::Bytes)>>>;
 struct Recorder {
     deliveries: Deliveries,
     acknowledgements: VecDeque<Ack>,
-    pending: Arc<Mutex<Option<oneshot::Sender<bool>>>>,
+    pending: Arc<Mutex<Option<oneshot::Sender<Outcome>>>>,
 }
 impl Recorder {
     fn new(acknowledgements: impl IntoIterator<Item = Ack>) -> Self {
@@ -64,12 +64,12 @@ impl Consumer for Recorder {
     type Key = ResolverKey;
     type Value = bytes::Bytes;
     type Subscriber = Annotation;
-    type Outcome = bool;
+    type Outcome = Outcome;
     fn deliver(
         &mut self,
         delivery: Delivery<ResolverKey, Annotation>,
         value: bytes::Bytes,
-    ) -> oneshot::Receiver<bool> {
+    ) -> oneshot::Receiver<Outcome> {
         self.deliveries.lock().unwrap().push((
             delivery.key,
             delivery.subscribers.into_iter().map(|(a, _)| a).collect(),
@@ -82,10 +82,12 @@ impl Consumer for Recorder {
             .expect("unexpected marshal delivery")
         {
             Ack::Accept => {
-                sender.send(true).unwrap();
+                sender
+                    .send(Outcome::Resolved(Resolution::Complete))
+                    .unwrap();
             }
             Ack::Reject => {
-                sender.send(false).unwrap();
+                sender.send(Outcome::Invalid).unwrap();
             }
             Ack::Closed => drop(sender),
             Ack::Hold => {
@@ -184,7 +186,9 @@ fn local_block_keeps_ack_receiver_alive_until_response_or_cancellation() {
                 drop(resolving);
                 assert!(sender.is_closed());
             } else {
-                sender.send(true).unwrap();
+                sender
+                    .send(Outcome::Resolved(Resolution::Complete))
+                    .unwrap();
                 resolving.await;
             }
         });

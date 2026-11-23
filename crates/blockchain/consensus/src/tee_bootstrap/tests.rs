@@ -101,6 +101,10 @@ mod identity_phase_regression {
         type Error = Infallible;
         type PublicKey = bls12381::PublicKey;
 
+        fn capacity(&self) -> std::num::NonZeroUsize {
+            commonware_utils::NZUsize!(64)
+        }
+
         async fn recv(&mut self) -> Result<Message<Self::PublicKey>, Self::Error> {
             let message = self.0.lock().unwrap().pop_front();
             match message {

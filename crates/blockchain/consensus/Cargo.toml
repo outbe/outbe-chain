@@ -31,6 +31,7 @@ commonware-broadcast.workspace = true
 commonware-consensus.workspace = true
 commonware-cryptography.workspace = true
 commonware-p2p.workspace = true
+commonware-stream.workspace = true
 commonware-runtime.workspace = true
 commonware-storage.workspace = true
 commonware-codec.workspace = true

@@ -77,7 +77,16 @@ impl Walk {
             self.step = Step::Stopped;
             return;
         };
-        self.step = Step::Fetching(marshal.subscribe_parent(self.cursor.as_ref()).boxed());
+        let digested = commonware_cryptography::Digested::precomputed(
+            self.cursor.clone(),
+            self.cursor.digest(),
+        );
+        self.step = Step::Fetching(
+            marshal
+                .subscribe_parent(&digested, Some(self.round))
+                .map(|parent| parent.map(Arc::from))
+                .boxed(),
+        );
     }
 
     pub(super) fn poll(&mut self, cx: &mut std::task::Context<'_>) -> Poll<eyre::Result<()>> {

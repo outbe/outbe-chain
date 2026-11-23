@@ -121,6 +121,11 @@ impl<E: Spawner> Relay for OutbeApplication<E> {
         // ::Disabled the batcher never emits `Forward`. If a future policy
         // enables targeted forwarding, we must NOT silently widen it to All.
         let (round, recipients) = match plan {
+            commonware_consensus::simplex::Plan::Prepare { .. } => {
+                // Outbe does not stage speculative handoff candidates; defer relay
+                // until `Plan::Propose` commits to the candidate.
+                return commonware_actor::Feedback::Ok;
+            }
             commonware_consensus::simplex::Plan::Propose { round } => (round, Recipients::All),
             commonware_consensus::simplex::Plan::Forward { round, recipients } => {
                 (round, recipients)

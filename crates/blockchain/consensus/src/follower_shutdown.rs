@@ -333,7 +333,9 @@ mod tests {
         let (ack, acknowledged) = Exact::handle();
         tokio::pin!(acknowledged);
         reporter.report(Update::Block(
-            ConsensusBlock::from_sealed(SealedBlock::seal_slow(block)).into(),
+            crate::test_fixtures::digested_block(ConsensusBlock::from_sealed(
+                SealedBlock::seal_slow(block),
+            )),
             ack,
         ));
         assert!(rx.next().await.is_none());

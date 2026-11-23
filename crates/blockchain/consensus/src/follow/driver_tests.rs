@@ -21,8 +21,7 @@ use crate::{
 async fn pending_marshal(
     context: &deterministic::Context,
 ) -> (FollowMarshalActor<deterministic::Context>, MarshalMailbox) {
-    let cache = CacheRef::from_pooler(
-        context,
+    let cache = CacheRef::new(
         NonZeroU16::new(1024).unwrap(),
         NonZeroUsize::new(10).unwrap(),
     );
@@ -46,9 +45,9 @@ async fn pending_marshal(
         marshal::Config {
             provider: HybridSchemeProvider::new(),
             epocher: FollowerEpocher::new(100, 10),
-            start: marshal::Start::Genesis(ConsensusBlock::from_sealed(SealedBlock::seal_slow(
-                genesis,
-            ))),
+            start: marshal::Start::Genesis(crate::test_fixtures::digested_block(
+                ConsensusBlock::from_sealed(SealedBlock::seal_slow(genesis)),
+            )),
             partition_prefix: "driver-test".into(),
             mailbox_size: NonZeroUsize::new(32).unwrap(),
             view_retention: ViewDelta::new(100),

@@ -4,17 +4,7 @@ use super::runtime::*;
 
 impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
-    E: BufferPooler
-        + Clock
-        + CryptoRng
-        + Network
-        + Resolver
-        + Spawner
-        + Storage
-        + Metrics
-        + Send
-        + Sync
-        + 'static,
+    E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     pub(super) async fn restore_pending(
         &mut self,

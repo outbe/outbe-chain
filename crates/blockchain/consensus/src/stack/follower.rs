@@ -175,17 +175,7 @@ pub async fn run_follow_stack<E, N: StackNodeAccess>(
     services: services::FollowerStackServices,
 ) -> Result<crate::follower_shutdown::FollowStackExit>
 where
-    E: BufferPooler
-        + Clock
-        + CryptoRng
-        + Network
-        + Resolver
-        + Spawner
-        + Storage
-        + Metrics
-        + Send
-        + Sync
-        + 'static,
+    E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     let services::FollowerConnection {
         node,
@@ -348,19 +338,19 @@ impl<N: StackNodeAccess> FollowerProofPersistence<'_, N> {
                     height,
                 },
             )?;
-        if block.number() != height {
+        if block.inner().number() != height {
             return Err(
                 crate::errors::FollowerStackError::MarshalFinalizedBlockHeightMismatch {
-                    block_hash: block.block_hash(),
-                    actual: block.number(),
+                    block_hash: block.inner().block_hash(),
+                    actual: block.inner().number(),
                     expected: height,
                 }
                 .into(),
             );
         }
 
-        self.reconcile_record(&finalization, &block)?;
-        Ok(block)
+        self.reconcile_record(&finalization, block.inner())?;
+        Ok(block.inner().clone())
     }
 
     fn reconcile_record(

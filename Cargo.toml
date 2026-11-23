@@ -338,6 +338,7 @@ commonware-broadcast = { git = "https://github.com/commonwarexyz/monorepo", tag 
 commonware-consensus = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.11.0" }
 commonware-cryptography = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.11.0" }
 commonware-p2p = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.11.0" }
+commonware-stream = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.11.0" }
 commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.11.0" }
 commonware-runtime = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.11.0" }
 commonware-storage = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.11.0" }
