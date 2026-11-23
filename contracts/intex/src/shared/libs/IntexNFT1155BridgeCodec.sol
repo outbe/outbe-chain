@@ -20,6 +20,9 @@ library IntexNFT1155BridgeCodec {
     /// @notice `msgType` for a multi-recipient batch (`MultiPayload`).
     uint8 internal constant SEND_MULTI = 2;
 
+    /// @notice `msgType` for one Intex id to one recipient (`SinglePayload`).
+    uint8 internal constant SEND_ONE = 3;
+
     /// @notice Items one bridge message may carry. Narrower than the other payload caps because a
     ///         rejected item is recorded with its revert bytes, the dearest per-item work anywhere
     ///         in the protocol.
@@ -37,6 +40,13 @@ library IntexNFT1155BridgeCodec {
         bytes32 to;
         uint256[] tokenIds;
         uint256[] units;
+    }
+
+    /// @notice Single transfer body (`SEND_ONE`).
+    struct SinglePayload {
+        bytes32 to;
+        uint256 intexId;
+        uint256 units;
     }
 
     /// @notice Multi-recipient batch body (`SEND_MULTI`): each entry has its own recipient.
@@ -87,6 +97,20 @@ library IntexNFT1155BridgeCodec {
     /// @return The wire body: `[BODY_VERSION_V1][SEND_MULTI][abi.encode(_payload)]`.
     function encodeMulti(MultiPayload memory _payload) internal pure returns (bytes memory) {
         return abi.encodePacked(BODY_VERSION_V1, SEND_MULTI, abi.encode(_payload));
+    }
+
+    /// @return The wire body: `[BODY_VERSION_V1][SEND_ONE][abi.encode(_payload)]`.
+    function encodeSingle(SinglePayload memory _payload) internal pure returns (bytes memory) {
+        return abi.encodePacked(BODY_VERSION_V1, SEND_ONE, abi.encode(_payload));
+    }
+
+    /// @notice Decode + validate a `SEND_ONE` body: {UnsupportedBodyVersion} on a non-V1 header,
+    ///         {MalformedBody} on a non-canonical body.
+    function decodeSingle(bytes calldata _message) internal pure returns (SinglePayload memory payload) {
+        _assertBodyVersion(_message);
+        bytes calldata body = _message[HEADER_LEN:];
+        payload = abi.decode(body, (SinglePayload));
+        if (keccak256(abi.encode(payload)) != keccak256(body)) revert MalformedBody();
     }
 
     /// @notice Decode + validate a `SEND` body. Reverts with:
