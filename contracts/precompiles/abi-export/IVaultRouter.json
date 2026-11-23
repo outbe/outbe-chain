@@ -500,7 +500,7 @@
     ],
     "outputs": [
       {
-        "name": "reservationId",
+        "name": "credisReservationId",
         "type": "uint256",
         "internalType": "uint256"
       }

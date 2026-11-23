@@ -262,7 +262,7 @@ impl BenchmarkScenario for CredisScenario {
         provider.enable_storage_trace();
         let event_offset = provider.get_ordered_events().len();
         let calldata = ICredisFactory::issueCredisCall {
-            reservationId: prepared.reservation_id,
+            credisReservationId: prepared.reservation_id,
         }
         .abi_encode();
 
@@ -300,7 +300,7 @@ impl BenchmarkScenario for CredisScenario {
         if record.owner != ALICE
             || record.source != ALICE
             || pledged != pledge_cost()
-            || decoded.principalMinor != pledge_stables()
+            || decoded.amountMinor != pledge_stables()
         {
             return Err("Credis request postcondition does not match the sealed pledge".to_owned());
         }

@@ -1,4 +1,4 @@
-//! The rules that change a Credis: issue on a reservation, settle interest first, delete
+//! The rules that change a Credis: issue on a reservation, settle fee first, delete
 //! a forfeited one. Its series is called and forfeited by the sweeps. Credis keeps the
 //! record and its reads.
 
@@ -30,7 +30,7 @@ pub(crate) fn date_step_error(
 }
 
 /// Terms captured when a Credis is issued. Grouped rather than passed positionally
-/// so a mis-ordered `U256` cannot silently swap principal for collateral.
+/// so a mis-ordered `U256` cannot silently swap amount for collateral.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct IssueCredisParams {
     pub owner: Address,
@@ -46,7 +46,7 @@ pub struct IssueCredisParams {
     /// `r`, the issuance currency's policy rate, 1e6 scaled.
     pub policy_rate: U256,
     /// `P` - stablecoin minor units disbursed.
-    pub principal_minor: U256,
+    pub amount_minor: U256,
     /// Entry price in the issuance currency, scale 1e6, fixed by the reservation.
     pub entry_price_minor: U256,
     /// Call anchor price in the reference currency, scale 1e6, fixed by the reservation.
@@ -63,29 +63,29 @@ pub struct IssueCredisParams {
 }
 
 /// Outcome of [`CredisContract::settle`]. The caller moves the money. It pulls
-/// `amount_minor` from the payer into the vault. It releases `gratis_released_minor` to
+/// `amount_minor` from the payer into the vault. It releases `unpledged_gratis_minor` to
 /// the pledger, never to the payer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repayment {
-    /// Interest collected, in full, before any principal.
-    pub interest_settled_minor: U256,
-    /// Principal covered by this payment.
-    pub principal_settled_minor: U256,
-    /// `interest_settled_minor + principal_settled_minor` - what the payer owes for this repayment.
+    /// Fee collected, in full, before any of the amount.
+    pub settled_fee_minor: U256,
+    /// Amount covered by this payment.
+    pub settled_amount_minor: U256,
+    /// `settled_fee_minor + settled_amount_minor` - what the payer owes for this repayment.
     pub amount_minor: U256,
     /// Collateral freed and owed back to the pledger.
-    pub gratis_released_minor: U256,
+    pub unpledged_gratis_minor: U256,
     pub asset: Address,
-    /// True when this repayment drove the outstanding principal to zero.
+    /// True when this repayment drove the outstanding amount to zero.
     pub closed: bool,
 }
 
 /// What a forfeit writes off. `forfeited_gratis_minor` is the unpaid share of the collateral.
-/// Principal written off is never collected. Unpaid interest is not booked.
+/// Amount written off is never collected. Unpaid fee is not booked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Forfeit {
     pub forfeited_gratis_minor: U256,
-    pub forfeited_principal_minor: U256,
+    pub forfeited_amount_minor: U256,
 }
 
 /// The anchor marked up by `rate_pct` percentage points.
@@ -129,7 +129,7 @@ pub fn issue_in_series(
     let storage = credis.storage.clone();
     storage.with_checkpoint(|| {
         let terms = [
-            params.principal_minor,
+            params.amount_minor,
             params.gratis_minor,
             params.entry_price_minor,
             params.call_anchor_price_minor,
@@ -162,8 +162,8 @@ pub fn issue_in_series(
             issuance_currency: params.issuance_currency,
             reference_currency: params.reference_currency,
             source: params.source,
-            principal_minor: params.principal_minor,
-            outstanding_principal_minor: params.principal_minor,
+            amount_minor: params.amount_minor,
+            outstanding_amount_minor: params.amount_minor,
             gratis_minor: params.gratis_minor,
             outstanding_gratis_minor: params.gratis_minor,
             policy_rate: params.policy_rate,
@@ -178,7 +178,7 @@ pub fn issue_in_series(
             call_window_seconds: params.call_window_seconds,
             call_threshold_seconds: params.call_threshold_seconds,
             call_anchor_price_minor: params.call_anchor_price_minor,
-            interest_settled_minor: U256::ZERO,
+            settled_fee_minor: U256::ZERO,
         };
         outbe_ccaregistry::api::credis_issued(
             &credis.storage,
@@ -193,17 +193,17 @@ pub fn issue_in_series(
     })
 }
 
-/// Applies a settlement of `amount`: interest first, principal second.
+/// Applies a settlement of `amount`: fee first, amount second.
 ///
 /// Any payer may settle any Issued or Called Credis. The released collateral
 /// is owed to the pledger recorded on the Credis. Thus a payer can never
 /// redirect value to themselves.
 ///
 /// - Called Credis accept repayment through deadline equality.
-/// - The function rejects a payment below the accrued interest outright.
+/// - The function rejects a payment below the accrued fee outright.
 /// - The function consumes only what the Credis needs, so it does not
 ///   over-pull an over-payment. The caller charges `Repayment::amount_minor`.
-/// - Collateral release is principal-proportional, rounded up and capped by
+/// - Collateral release is amount-proportional, rounded up and capped by
 ///   the locked remainder. Final settlement releases exactly what is left.
 pub fn settle(
     credis: &mut CredisContract<'_>,
@@ -220,34 +220,34 @@ pub fn settle(
     }
 
     let days = CredisContract::elapsed_days(&record, now);
-    let interest = CredisContract::accrued_interest(&record, now)?;
-    if amount < interest {
-        return Err(CredisFactoryError::PaymentBelowAccruedInterest.into());
+    let fee = CredisContract::accrued_fee(&record, now)?;
+    if amount < fee {
+        return Err(CredisFactoryError::PaymentBelowAccruedFee.into());
     }
-    let principal_paid = (amount - interest).min(record.outstanding_principal_minor);
+    let amount_paid = (amount - fee).min(record.outstanding_amount_minor);
 
     // C34 favors the user on each partial. Repeated ceilings can exhaust
-    // collateral before principal, so cap every return at the remainder.
-    let gratis_released_minor = if principal_paid == record.outstanding_principal_minor {
+    // collateral before the amount, so cap every return at the remainder.
+    let unpledged_gratis_minor = if amount_paid == record.outstanding_amount_minor {
         record.outstanding_gratis_minor
     } else {
         record
             .gratis_minor
-            .checked_mul(principal_paid)
+            .checked_mul(amount_paid)
             .ok_or(CredisError::ArithmeticOverflow)?
-            .div_ceil(record.principal_minor)
+            .div_ceil(record.amount_minor)
             .min(record.outstanding_gratis_minor)
     };
 
-    record.outstanding_principal_minor = record
-        .outstanding_principal_minor
-        .checked_sub(principal_paid)
+    record.outstanding_amount_minor = record
+        .outstanding_amount_minor
+        .checked_sub(amount_paid)
         .ok_or(CredisError::ArithmeticOverflow)?;
     record.outstanding_gratis_minor = record
         .outstanding_gratis_minor
-        .checked_sub(gratis_released_minor)
+        .checked_sub(unpledged_gratis_minor)
         .ok_or(CredisError::ArithmeticOverflow)?;
-    // Accrual restarts on the reduced principal. No unpaid interest ever
+    // Accrual restarts on the reduced amount. No unpaid fee ever
     // carries between settlements. The anchor advances by the whole days
     // actually charged, never to `now`. Settling on a sub-day boundary must
     // not discard the remainder. Otherwise, repeated dust settlements just
@@ -255,24 +255,24 @@ pub fn settle(
     record.last_settled_at = record
         .last_settled_at
         .saturating_add(days.saturating_mul(SECONDS_PER_DAY));
-    // Sum of successful interest deltas. Every revert path returns above this write.
-    record.interest_settled_minor = record
-        .interest_settled_minor
-        .checked_add(interest)
+    // Sum of successful fee deltas. Every revert path returns above this write.
+    record.settled_fee_minor = record
+        .settled_fee_minor
+        .checked_add(fee)
         .ok_or(CredisError::ArithmeticOverflow)?;
 
     let closed = record.is_settled();
     let series = record.series_id;
     // A settled Credis keeps the call and terms it read from its series.
     credis.update_credis_record(&record)?;
-    credis.take_owner_outstanding(record.owner, principal_paid)?;
-    credis.take_series_unpaid_gratis(series, gratis_released_minor)?;
+    credis.take_owner_outstanding(record.owner, amount_paid)?;
+    credis.take_series_unpaid_gratis(series, unpledged_gratis_minor)?;
     if closed {
         credis.leave_series(series, credis_id)?;
     }
 
-    let total_paid = interest
-        .checked_add(principal_paid)
+    let total_paid = fee
+        .checked_add(amount_paid)
         .ok_or(CredisError::ArithmeticOverflow)?;
     emit(
         &credis.storage,
@@ -283,16 +283,16 @@ pub fn settle(
             issuanceCurrency: record.issuance_currency,
             referenceCurrency: record.reference_currency,
             amountMinor: total_paid,
-            interestSettledMinor: interest,
-            principalSettledMinor: principal_paid,
+            settledFeeMinor: fee,
+            settledAmountMinor: amount_paid,
         },
     )?;
 
     Ok(Repayment {
-        interest_settled_minor: interest,
-        principal_settled_minor: principal_paid,
+        settled_fee_minor: fee,
+        settled_amount_minor: amount_paid,
         amount_minor: total_paid,
-        gratis_released_minor,
+        unpledged_gratis_minor,
         asset: record.asset,
         closed,
     })
@@ -326,17 +326,17 @@ pub(crate) fn validate_forfeit_by_owner(
 
 /// Deletes a forfeited Credis. Only the unpaid share is written off: every settlement
 /// already released its proportional share. Rounded-up partial returns may leave zero
-/// collateral even while principal remains outstanding.
+/// collateral even while an amount remains outstanding.
 ///
 /// Returns what the caller burned.
 pub fn delete_forfeited(credis: &mut CredisContract<'_>, record: Credis) -> Result<Forfeit> {
-    if record.outstanding_principal_minor.is_zero() {
+    if record.outstanding_amount_minor.is_zero() {
         return Err(CredisFactoryError::NothingOutstanding.into());
     }
     let credis_id = record.credis_id;
     let forfeit = Forfeit {
         forfeited_gratis_minor: record.outstanding_gratis_minor,
-        forfeited_principal_minor: record.outstanding_principal_minor,
+        forfeited_amount_minor: record.outstanding_amount_minor,
     };
     outbe_ccaregistry::api::credis_forfeited(
         &credis.storage,
@@ -351,7 +351,7 @@ pub fn delete_forfeited(credis: &mut CredisContract<'_>, record: Credis) -> Resu
         asset: record.asset,
         issuanceCurrency: record.issuance_currency,
         referenceCurrency: record.reference_currency,
-        forfeitedPrincipalMinor: forfeit.forfeited_principal_minor,
+        forfeitedAmountMinor: forfeit.forfeited_amount_minor,
     })?;
     credis.leave_series(record.series_id, credis_id)?;
     credis.take_series_unpaid_gratis(record.series_id, forfeit.forfeited_gratis_minor)?;

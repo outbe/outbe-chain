@@ -215,7 +215,7 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
         let record = CredisContract::new(storage.clone())
             .get_credis(credis_id)
             .unwrap();
-        let interest = CredisContract::accrued_interest(&record, CREATED_AT + DAY).unwrap();
+        let interest = CredisContract::accrued_fee(&record, CREATED_AT + DAY).unwrap();
         assert!(!interest.is_zero());
         (credis_id, fidelity, interest)
     });
@@ -517,7 +517,7 @@ fn credis_series_lifecycle_emits_open_issue_settle_call_close_and_forfeit_events
     assert_eq!(settled.len(), 2);
     assert!(settled
         .iter()
-        .all(|ev| ev.credisId == id_settled && ev.principalSettledMinor == half));
+        .all(|ev| ev.credisId == id_settled && ev.settledAmountMinor == half));
 
     let released: Vec<_> = provider
         .get_events(GRATIS_FACTORY_ADDRESS)

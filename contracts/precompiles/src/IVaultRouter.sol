@@ -273,7 +273,7 @@ interface IVaultRouter {
         address asset,
         uint256 amountMinor,
         uint16 referenceCurrency
-    ) external returns (uint256 reservationId);
+    ) external returns (uint256 credisReservationId);
 
     /// @notice Validates `receiver` as the reservation's Credis owner, pays `amountMinor` to
     ///         the recorded CCA to cover COEN delivered to that owner, and

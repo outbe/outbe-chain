@@ -5,7 +5,7 @@ use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
 use crate::runtime::{effective_state, outcome, settlement_deadline};
 use crate::schema::{Credis, CredisContract, CredisState};
 
-/// The Credis's `tokenURI` at block time `now`. It evaluates accrued interest at `now`.
+/// The Credis's `tokenURI` at block time `now`. It evaluates accrued fee at `now`.
 pub(crate) fn token_uri(record: &Credis, now: u64) -> Result<String> {
     let effective = effective_state(record, now)?;
     let outcome = outcome(record, now)?;
@@ -15,20 +15,20 @@ pub(crate) fn token_uri(record: &Credis, now: u64) -> Result<String> {
         CredisState::Settled => nft_card::SETTLED,
         CredisState::Forfeited => nft_card::FORFEITED,
     };
-    let accrued_interest = CredisContract::accrued_interest(record, now)?;
+    let accrued_fee = CredisContract::accrued_fee(record, now)?;
 
     let mut rows = vec![
         (
-            "Principal",
-            nft_card::amount_grouped(record.principal_minor, AMOUNT_PRECISION),
+            "Amount",
+            nft_card::amount_grouped(record.amount_minor, AMOUNT_PRECISION),
         ),
         (
             "Outstanding",
-            nft_card::amount_grouped(outcome.outstanding_principal_minor, AMOUNT_PRECISION),
+            nft_card::amount_grouped(outcome.outstanding_amount_minor, AMOUNT_PRECISION),
         ),
         (
-            "Accrued Interest",
-            nft_card::amount_grouped(accrued_interest, AMOUNT_PRECISION),
+            "Accrued Fee",
+            nft_card::amount_grouped(accrued_fee, AMOUNT_PRECISION),
         ),
         (
             "Entry Price",
@@ -45,13 +45,13 @@ pub(crate) fn token_uri(record: &Credis, now: u64) -> Result<String> {
     ];
     let mut traits = vec![
         Trait::text("State", state.label),
-        Trait::amount("Principal", record.principal_minor, AMOUNT_PRECISION),
+        Trait::amount("Amount", record.amount_minor, AMOUNT_PRECISION),
         Trait::amount(
             "Outstanding",
-            outcome.outstanding_principal_minor,
+            outcome.outstanding_amount_minor,
             AMOUNT_PRECISION,
         ),
-        Trait::amount("Accrued Interest", accrued_interest, AMOUNT_PRECISION),
+        Trait::amount("Accrued Fee", accrued_fee, AMOUNT_PRECISION),
         Trait::amount("Entry Price", record.entry_price_minor, PRICE_PRECISION),
         Trait::amount(
             "Call Anchor",

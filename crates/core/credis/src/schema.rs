@@ -44,8 +44,8 @@ impl CredisState {
 /// Credis record. Keyed by `keccak256(series_id || owner || block_number)`.
 ///
 /// Every term, both currency codes included, is sealed at issuance and never
-/// changes afterwards. Only `outstanding_principal_minor`, `outstanding_gratis_minor`,
-/// `interest_settled_minor`, `last_settled_at` and `called_at` move over the
+/// changes afterwards. Only `outstanding_amount_minor`, `outstanding_gratis_minor`,
+/// `settled_fee_minor`, `last_settled_at` and `called_at` move over the
 /// Credis's life. A live Credis is called with its series: loading it reads the call and
 /// its terms from the series, and settling it copies them onto the record.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,19 +56,19 @@ pub struct Credis {
 
     /// `P` - stablecoin minor units disbursed. Fixed.
     #[attribute(order = 0)]
-    pub principal_minor: U256,
+    pub amount_minor: U256,
 
-    /// `P_out` - outstanding principal. Reaching zero settles the Credis. Past its
-    /// deadline it is the principal written off; readers go through `outcome`.
+    /// `P_out` - outstanding amount. Reaching zero settles the Credis. Past its
+    /// deadline it is the amount written off; readers go through `outcome`.
     #[attribute(order = 1)]
-    pub outstanding_principal_minor: U256,
+    pub outstanding_amount_minor: U256,
 
-    /// `G` - pledged Gratis: principal priced at the reservation's eight-hour
+    /// `G` - pledged Gratis: amount priced at the reservation's eight-hour
     /// COEN/`issuance_currency` VWAP. Fixed.
     #[attribute(order = 2)]
     pub gratis_minor: U256,
 
-    /// The share of `G` still locked. Released principal-proportionally. Past its
+    /// The share of `G` still locked. Released amount-proportionally. Past its
     /// deadline it is the Gratis burned.
     #[attribute(order = 3)]
     pub outstanding_gratis_minor: U256,
@@ -78,7 +78,7 @@ pub struct Credis {
     #[attribute(order = 4)]
     pub policy_rate: U256,
 
-    /// Principal / Gratis, in the issuance currency (scale `1e6`). Sealed on the
+    /// Amount / Gratis, in the issuance currency (scale `1e6`). Sealed on the
     /// pledge and copied here. Not an oracle quote and not the call anchor.
     #[attribute(order = 5)]
     pub entry_price_minor: U256,
@@ -96,17 +96,17 @@ pub struct Credis {
     #[attribute(order = 7)]
     pub call_anchor_price_minor: U256,
 
-    /// Lifetime interest collected, in the asset's minor units. The sum of
-    /// successful settlement interest deltas. Unpaid interest is left out,
+    /// Lifetime fee collected, in the asset's minor units. The sum of
+    /// successful settlement fee deltas. Unpaid fee is left out,
     /// including when the remainder is forfeited.
     #[attribute(order = 8)]
-    pub interest_settled_minor: U256,
+    pub settled_fee_minor: U256,
 
     /// The address the Credis was issued to.
     #[attribute(order = 9)]
     pub owner: Address,
 
-    /// Issuance timestamp. The interest anchor starts here. The series id is the one
+    /// Issuance timestamp. The fee anchor starts here. The series id is the one
     /// the reservation fixed, not a day derived from this timestamp.
     #[attribute(order = 10)]
     pub issued_at: u64,
@@ -179,7 +179,7 @@ pub struct Credis {
 
 impl Credis {
     pub fn is_settled(&self) -> bool {
-        self.outstanding_principal_minor.is_zero()
+        self.outstanding_amount_minor.is_zero()
     }
 }
 
@@ -319,9 +319,9 @@ pub struct CredisContract {
     #[attribute(order = 51)]
     pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
-    /// Each account's principal and outstanding principal over its live Credis.
+    /// Each account's amount and outstanding amount over its live Credis.
     #[attribute(order = 52)]
-    pub owner_principal_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
+    pub owner_amount_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
     #[attribute(order = 53)]
     pub owner_outstanding_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
     #[attribute(order = 54)]

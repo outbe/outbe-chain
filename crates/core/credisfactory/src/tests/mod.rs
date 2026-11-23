@@ -566,11 +566,11 @@ pub fn paying<R>(
 }
 
 /// The accrued interest plus `principal` of the outstanding balance.
-pub fn interest_plus(storage: &StorageHandle<'_>, credis_id: U256, principal: U256) -> U256 {
+pub fn fee_plus(storage: &StorageHandle<'_>, credis_id: U256, principal: U256) -> U256 {
     let record = CredisContract::new(storage.clone())
         .get_credis(credis_id)
         .unwrap();
-    CredisContract::accrued_interest(&record, now_of(storage)).unwrap() + principal
+    CredisContract::accrued_fee(&record, now_of(storage)).unwrap() + principal
 }
 
 /// Settles exactly the accrued interest plus `principal` of the outstanding
@@ -581,9 +581,7 @@ pub fn settle_principal(
     credis_id: U256,
     principal: U256,
 ) -> (U256, U256) {
-    let amount = StorageHandle::enter(provider, |storage| {
-        interest_plus(&storage, credis_id, principal)
-    });
+    let amount = StorageHandle::enter(provider, |storage| fee_plus(&storage, credis_id, principal));
     paying(provider, credis_id, amount, |storage| {
         runtime::settle_credis(storage, payer, credis_id, amount).unwrap()
     })

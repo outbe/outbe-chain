@@ -49,15 +49,11 @@ impl<'storage> CredisContract<'storage> {
     /// opens the series for the first time.
     pub fn create_credis_record(&mut self, record: &Credis, call_start_day: u32) -> Result<bool> {
         create_indexed(&self.records, record, self.record_indexes(record.owner))?;
-        add_to(
-            &self.owner_principal_minor,
-            record.owner,
-            record.principal_minor,
-        )?;
+        add_to(&self.owner_amount_minor, record.owner, record.amount_minor)?;
         add_to(
             &self.owner_outstanding_minor,
             record.owner,
-            record.outstanding_principal_minor,
+            record.outstanding_amount_minor,
         )?;
         let newly_opened = self.join_series(record, call_start_day)?;
         self.emit(ICredis::Transfer {
@@ -82,15 +78,11 @@ impl<'storage> CredisContract<'storage> {
             .records
             .get(credis_id)?
             .ok_or(CredisError::CredisNotFound)?;
-        take_from(
-            &self.owner_principal_minor,
-            record.owner,
-            record.principal_minor,
-        )?;
+        take_from(&self.owner_amount_minor, record.owner, record.amount_minor)?;
         take_from(
             &self.owner_outstanding_minor,
             record.owner,
-            record.outstanding_principal_minor,
+            record.outstanding_amount_minor,
         )?;
         delete_indexed(&self.records, credis_id, |record: &Credis| {
             self.record_indexes(record.owner)
@@ -102,7 +94,7 @@ impl<'storage> CredisContract<'storage> {
         })
     }
 
-    /// Takes repaid principal out of its owner's outstanding sum.
+    /// Takes repaid amount out of its owner's outstanding sum.
     pub fn take_owner_outstanding(&mut self, owner: Address, repaid: U256) -> Result<()> {
         take_from(&self.owner_outstanding_minor, owner, repaid)
     }

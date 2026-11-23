@@ -30,8 +30,8 @@ pub enum CredisFactoryError {
     CredisAlreadyExists,
     #[error("Credis is closed")]
     CredisClosed,
-    #[error("payment is below the interest accrued since the last settlement")]
-    PaymentBelowAccruedInterest,
+    #[error("payment is below the fee accrued since the last settlement")]
+    PaymentBelowAccruedFee,
     #[error("Credis is not called")]
     NotCalled,
     #[error("Credis is not Issued")]
@@ -40,7 +40,7 @@ pub enum CredisFactoryError {
     SettlementDeadlineNotPassed,
     #[error("settlement deadline has passed")]
     SettlementDeadlinePassed,
-    #[error("Credis has no outstanding principal")]
+    #[error("Credis has no outstanding amount")]
     NothingOutstanding,
     #[error("only the Credis owner can forfeit it")]
     NotCredisOwner,
@@ -86,9 +86,7 @@ impl From<CredisFactoryError> for PrecompileError {
             CredisFactoryError::InvalidOwner => revert_with(I::InvalidOwner {}),
             CredisFactoryError::CredisAlreadyExists => revert_with(I::CredisAlreadyExists {}),
             CredisFactoryError::CredisClosed => revert_with(I::CredisClosed {}),
-            CredisFactoryError::PaymentBelowAccruedInterest => {
-                revert_with(I::PaymentBelowAccruedInterest {})
-            }
+            CredisFactoryError::PaymentBelowAccruedFee => revert_with(I::PaymentBelowAccruedFee {}),
             CredisFactoryError::NotCalled => revert_with(I::NotCalled {}),
             CredisFactoryError::CredisNotIssued => revert_with(I::CredisNotIssued {}),
             CredisFactoryError::SettlementDeadlineNotPassed => {

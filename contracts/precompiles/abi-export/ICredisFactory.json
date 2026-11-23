@@ -16,7 +16,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "forfeitedPrincipalMinor",
+        "name": "forfeitedAmountMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -89,7 +89,7 @@
     "name": "issueCredis",
     "inputs": [
       {
-        "name": "reservationId",
+        "name": "credisReservationId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -101,7 +101,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "principalMinor",
+        "name": "amountMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -144,12 +144,12 @@
     ],
     "outputs": [
       {
-        "name": "principalSettledMinor",
+        "name": "settledAmountMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "interestSettledMinor",
+        "name": "settledFeeMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -222,7 +222,7 @@
         "internalType": "address"
       },
       {
-        "name": "principalMinor",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -332,13 +332,13 @@
         "internalType": "uint256"
       },
       {
-        "name": "interestSettledMinor",
+        "name": "settledFeeMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "principalSettledMinor",
+        "name": "settledAmountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -453,7 +453,7 @@
   },
   {
     "type": "error",
-    "name": "PaymentBelowAccruedInterest",
+    "name": "PaymentBelowAccruedFee",
     "inputs": []
   },
   {

@@ -12,7 +12,7 @@ interface ICredisFactory {
     error InvalidOwner();
     error CredisAlreadyExists();
     error CredisClosed();
-    error PaymentBelowAccruedInterest();
+    error PaymentBelowAccruedFee();
     error NotCalled();
     error CredisNotFound();
     error CredisNotIssued();
@@ -50,11 +50,11 @@ interface ICredisFactory {
         uint16 referenceCurrency,
         address cca,
         address asset,
-        uint256 principalMinor,
+        uint256 amountMinor,
         uint256 gratisMinor
     );
-    /// @notice One successful settlement. `interestSettledMinor` and `principalSettledMinor`
-    ///         are this payment's interest and principal deltas, and `amountMinor` is their
+    /// @notice One successful settlement. `settledFeeMinor` and `settledAmountMinor`
+    ///         are this payment's fee and amount deltas, and `amountMinor` is their
     ///         sum. A reverted settlement emits nothing and leaves the Credis unchanged.
     event CredisSettled(
         uint256 indexed credisId,
@@ -63,21 +63,21 @@ interface ICredisFactory {
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint256 amountMinor,
-        uint256 interestSettledMinor,
-        uint256 principalSettledMinor
+        uint256 settledFeeMinor,
+        uint256 settledAmountMinor
     );
 
     /// Use the reservation's pledge and every term it fixed, the call terms included.
     /// The caller must be its CCA.
     /// msg.value exactly matches reserved Gratis collateral in native COEN units.
-    function issueCredis(uint256 reservationId) external payable returns (uint256 credisId, uint256 principalMinor);
+    function issueCredis(uint256 credisReservationId) external payable returns (uint256 credisId, uint256 amountMinor);
     /// Any payer may repay. Freed collateral is released to the source's liquid Gratis.
     /// The payer approves the VaultRouter for the repayment first.
     function settleCredis(uint256 credisId, uint256 amountCapMinor)
         external
-        returns (uint256 principalSettledMinor, uint256 interestSettledMinor);
-    /// What paying the Credis off now takes: its outstanding principal plus the interest
-    /// accrued since the last settlement. Zero once it is Settled or Forfeited. Interest
+        returns (uint256 settledAmountMinor, uint256 settledFeeMinor);
+    /// What paying the Credis off now takes: its outstanding amount plus the fee
+    /// accrued since the last settlement. Zero once it is Settled or Forfeited. Fee
     /// grows by whole days, so a payment landing a day later needs that day more;
     /// `settleCredis` takes only what is owed, so paying more is safe.
     function quoteSettlement(uint256 credisId) external view returns (uint256 payoffMinor);
@@ -104,9 +104,9 @@ interface ICredisFactory {
     ///         `CredisNotIssued` once it is Called, Settled or Forfeited.
     function getCallProgress(uint256 credisId) external view returns (CallProgress memory);
     /// The owner gives up an Issued or Called Credis before its settlement deadline: its remaining
-    /// Gratis burns, the principal is forfeited and the Credis is deleted.
+    /// Gratis burns, the amount is forfeited and the Credis is deleted.
     function forfeitCredis(uint256 credisId)
         external
-        returns (uint256 forfeitedGratisMinor, uint256 forfeitedPrincipalMinor);
+        returns (uint256 forfeitedGratisMinor, uint256 forfeitedAmountMinor);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

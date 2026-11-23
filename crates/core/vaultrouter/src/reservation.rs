@@ -1,4 +1,4 @@
-//! Quote once, before withdrawing the reserved principal. Issuance never refreshes these terms.
+//! Quote once, before withdrawing the reserved amount. Issuance never refreshes these terms.
 use crate::{
     errors::{date_step_error, VaultRouterError},
     schema::LiquidityReservation,

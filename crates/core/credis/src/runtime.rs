@@ -1,8 +1,8 @@
 //! Read-time derivations of a Credis: its deadline, effective state, outcome and the
-//! interest accrued. CredisFactory applies the rules that change a Credis.
+//! fee accrued. CredisFactory applies the rules that change a Credis.
 //!
 //! A Credis lives on the COEN price path, not on a calendar. Nothing here is
-//! scheduled off `issued_at`. The only time-driven quantity is the interest
+//! scheduled off `issued_at`. The only time-driven quantity is the fee
 //! day count. Even that is evaluated lazily at settlement, not accrued per
 //! block.
 
@@ -46,71 +46,71 @@ pub fn effective_state(record: &Credis, now: u64) -> Result<CredisState> {
     )
 }
 
-/// Where a Credis's principal and Gratis went, as a reader sees it at `now`.
+/// Where a Credis's amount and Gratis went, as a reader sees it at `now`.
 /// Past the deadline its remainders are what is written off and burned, and nothing is
 /// outstanding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Outcome {
-    pub outstanding_principal_minor: U256,
-    pub principal_settled_minor: U256,
-    pub forfeited_principal_minor: U256,
+    pub outstanding_amount_minor: U256,
+    pub settled_amount_minor: U256,
+    pub forfeited_amount_minor: U256,
     pub outstanding_gratis_minor: U256,
-    pub gratis_released_minor: U256,
+    pub unpledged_gratis_minor: U256,
     pub forfeited_gratis_minor: U256,
 }
 
 pub fn outcome(record: &Credis, now: u64) -> Result<Outcome> {
-    let principal_settled_minor = record
-        .principal_minor
-        .checked_sub(record.outstanding_principal_minor)
+    let settled_amount_minor = record
+        .amount_minor
+        .checked_sub(record.outstanding_amount_minor)
         .ok_or(CredisError::ArithmeticOverflow)?;
-    let gratis_released_minor = record
+    let unpledged_gratis_minor = record
         .gratis_minor
         .checked_sub(record.outstanding_gratis_minor)
         .ok_or(CredisError::ArithmeticOverflow)?;
     let forfeited = effective_state(record, now)? == CredisState::Forfeited;
-    let (outstanding_principal, forfeited_principal_minor) = match forfeited {
-        true => (U256::ZERO, record.outstanding_principal_minor),
-        false => (record.outstanding_principal_minor, U256::ZERO),
+    let (outstanding_amount, forfeited_amount_minor) = match forfeited {
+        true => (U256::ZERO, record.outstanding_amount_minor),
+        false => (record.outstanding_amount_minor, U256::ZERO),
     };
     let (outstanding_gratis, forfeited_gratis_minor) = match forfeited {
         true => (U256::ZERO, record.outstanding_gratis_minor),
         false => (record.outstanding_gratis_minor, U256::ZERO),
     };
     Ok(Outcome {
-        outstanding_principal_minor: outstanding_principal,
-        principal_settled_minor,
-        forfeited_principal_minor,
+        outstanding_amount_minor: outstanding_amount,
+        settled_amount_minor,
+        forfeited_amount_minor,
         outstanding_gratis_minor: outstanding_gratis,
-        gratis_released_minor,
+        unpledged_gratis_minor,
         forfeited_gratis_minor,
     })
 }
 
 impl CredisContract<'_> {
     /// Whole UTC days that a settlement at `now` charges. This is the day count
-    /// for the interest and the amount by which the accrual anchor advances.
+    /// for the fee and the amount by which the accrual anchor advances.
     /// The function deliberately does not consume the sub-day remainder. The
     /// remainder stays on the Credis, and a later settlement charges it.
     pub fn elapsed_days(record: &Credis, now: u64) -> u64 {
         now.saturating_sub(record.last_settled_at) / SECONDS_PER_DAY
     }
 
-    /// Interest accrued on the outstanding principal since the accrual anchor.
-    /// The interest is simple and non-compounding, ACT/365 over whole elapsed days.
+    /// Fee accrued on the outstanding amount since the accrual anchor.
+    /// The fee is simple and non-compounding, ACT/365 over whole elapsed days.
     /// It is floored in the user's favor to the asset's minor unit (C34).
     /// A Forfeited Credis accrues nothing.
-    pub fn accrued_interest(record: &Credis, now: u64) -> Result<U256> {
+    pub fn accrued_fee(record: &Credis, now: u64) -> Result<U256> {
         let days = Self::elapsed_days(record, now);
         if days == 0
-            || record.outstanding_principal_minor.is_zero()
+            || record.outstanding_amount_minor.is_zero()
             || record.policy_rate.is_zero()
             || effective_state(record, now)? == CredisState::Forfeited
         {
             return Ok(U256::ZERO);
         }
         let numerator = record
-            .outstanding_principal_minor
+            .outstanding_amount_minor
             .checked_mul(record.policy_rate)
             .and_then(|v| v.checked_mul(U256::from(days)))
             .ok_or(CredisError::ArithmeticOverflow)?;
@@ -131,12 +131,12 @@ impl CredisContract<'_> {
         self.load_credis(credis_id)
     }
 
-    /// Sum of `principal_minor` and of `outstanding_principal_minor` across the live Credis
+    /// Sum of `amount_minor` and of `outstanding_amount_minor` across the live Credis
     /// of `account`, kept as they change. A lapsed Credis counts until the cleanup deletes
     /// it.
-    pub fn principal_and_outstanding_of(&self, account: Address) -> Result<(U256, U256)> {
+    pub fn amount_and_outstanding_of(&self, account: Address) -> Result<(U256, U256)> {
         Ok((
-            self.owner_principal_minor.read(&account)?,
+            self.owner_amount_minor.read(&account)?,
             self.owner_outstanding_minor.read(&account)?,
         ))
     }

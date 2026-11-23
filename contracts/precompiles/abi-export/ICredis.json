@@ -1,6 +1,25 @@
 [
   {
     "type": "function",
+    "name": "accruedFeeMinor",
+    "inputs": [
+      {
+        "name": "credisId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "approve",
     "inputs": [
       {
@@ -38,6 +57,30 @@
   },
   {
     "type": "function",
+    "name": "credisAmountAndOutstandingOf",
+    "inputs": [
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "outstandingAmountMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "credisExists",
     "inputs": [
       {
@@ -51,30 +94,6 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "credisPrincipalAndOutstandingOf",
-    "inputs": [
-      {
-        "name": "owner",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "principalMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "outstandingPrincipalMinor",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -112,7 +131,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct ICredis.Credis",
+        "internalType": "struct ICredis.CredisData",
         "components": [
           {
             "name": "credisId",
@@ -150,12 +169,12 @@
             "internalType": "address"
           },
           {
-            "name": "principalMinor",
+            "name": "amountMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
           {
-            "name": "outstandingPrincipalMinor",
+            "name": "outstandingAmountMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -195,7 +214,7 @@
             "internalType": "uint8"
           },
           {
-            "name": "interestSettledMinor",
+            "name": "settledFeeMinor",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -247,17 +266,17 @@
             "internalType": "struct ICredis.Outcome",
             "components": [
               {
-                "name": "principalSettledMinor",
+                "name": "settledAmountMinor",
                 "type": "uint256",
                 "internalType": "uint256"
               },
               {
-                "name": "forfeitedPrincipalMinor",
+                "name": "forfeitedAmountMinor",
                 "type": "uint256",
                 "internalType": "uint256"
               },
               {
-                "name": "gratisReleasedMinor",
+                "name": "unpledgedGratisMinor",
                 "type": "uint256",
                 "internalType": "uint256"
               },
@@ -274,44 +293,6 @@
             "internalType": "bytes14"
           }
         ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "interestAccruedMinor",
-    "inputs": [
-      {
-        "name": "credisId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "interestSettledMinor",
-    "inputs": [
-      {
-        "name": "credisId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "stateMutability": "view"
@@ -440,6 +421,25 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "settledFeeMinor",
+    "inputs": [
+      {
+        "name": "credisId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -644,7 +644,7 @@
         "internalType": "uint16"
       },
       {
-        "name": "forfeitedPrincipalMinor",
+        "name": "forfeitedAmountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

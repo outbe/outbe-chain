@@ -1104,7 +1104,7 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
         let outstanding = CredisContract::new(storage.clone())
             .get_credis(credis_id)
             .unwrap()
-            .outstanding_principal_minor;
+            .outstanding_amount_minor;
         (credis_id, outstanding)
     });
     settle_principal(&mut storage, alice(), credis_id, outstanding);

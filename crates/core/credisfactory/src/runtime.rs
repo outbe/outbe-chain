@@ -81,7 +81,7 @@ pub fn issue_credis(
                 issuance_currency: r.issuance_currency,
                 reference_currency: r.reference_currency,
                 policy_rate: r.policy_rate,
-                principal_minor: r.amount_minor,
+                amount_minor: r.amount_minor,
                 entry_price_minor: r.entry_price_minor,
                 call_anchor_price_minor: r.call_anchor_price_minor,
                 gratis_minor: r.gratis_minor,
@@ -131,7 +131,7 @@ pub fn issue_credis(
                 referenceCurrency: opened.reference_currency,
                 cca: caller,
                 asset: r.asset,
-                principalMinor: r.amount_minor,
+                amountMinor: r.amount_minor,
                 gratisMinor: r.gratis_minor,
             }),
         )?;
@@ -139,7 +139,7 @@ pub fn issue_credis(
     })
 }
 
-/// What paying `credis_id` off now takes: outstanding principal plus accrued interest.
+/// What paying `credis_id` off now takes: outstanding amount plus accrued fee.
 /// Zero once it is Settled or Forfeited.
 pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<U256> {
     let record = CredisContract::new(storage.clone()).get_credis(credis_id)?;
@@ -147,8 +147,8 @@ pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<
     match effective_state(&record, now)? {
         CredisState::Settled | CredisState::Forfeited => Ok(U256::ZERO),
         CredisState::Issued | CredisState::Called => record
-            .outstanding_principal_minor
-            .checked_add(CredisContract::accrued_interest(&record, now)?)
+            .outstanding_amount_minor
+            .checked_add(CredisContract::accrued_fee(&record, now)?)
             .ok_or_else(|| CredisFactoryError::PayoffOverflow.into()),
     }
 }
@@ -174,7 +174,7 @@ pub fn settle_credis(
             .outstanding_gratis_minor
             .checked_sub(after.outstanding_gratis_minor)
             .ok_or(CredisFactoryError::CollateralIncreased)?;
-        if released != repayment.gratis_released_minor {
+        if released != repayment.unpledged_gratis_minor {
             return Err(CredisFactoryError::CollateralReleaseMismatch.into());
         }
         outbe_vaultrouter::settlement::collect(
@@ -189,10 +189,7 @@ pub fn settle_credis(
         if !released.is_zero() {
             pledges::release_from_credis(&storage, credis_id, released)?;
         }
-        Ok((
-            repayment.principal_settled_minor,
-            repayment.interest_settled_minor,
-        ))
+        Ok((repayment.settled_amount_minor, repayment.settled_fee_minor))
     })
 }
 
@@ -224,7 +221,7 @@ fn burn_forfeited_collateral(
         let mut credis = CredisContract::new(storage.clone());
         let before = credis.get_credis(credis_id)?;
         validate(&credis, &before)?;
-        if before.outstanding_principal_minor.is_zero() {
+        if before.outstanding_amount_minor.is_zero() {
             return Err(CredisFactoryError::NothingOutstanding.into());
         }
         let pledged = before.outstanding_gratis_minor;
