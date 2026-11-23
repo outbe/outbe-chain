@@ -133,7 +133,7 @@ impl Receiver for MockReceiver {
     }
 
     fn capacity(&self) -> std::num::NonZeroUsize {
-        std::num::NonZeroUsize::new(1).expect("non-zero capacity")
+        std::num::NonZeroUsize::MIN
     }
 }
 

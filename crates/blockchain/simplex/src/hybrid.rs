@@ -866,7 +866,12 @@ impl<V: Variant> certificate::Scheme for HybridScheme<V> {
         J: IntoIterator<Item = &'a Attestation<Self>>,
         J::IntoIter: Send,
     {
-        certificate::optimistic_assemble::<Self, _, D, _, _>(
+        // HybridScheme is non-batchable (`is_batchable() == false`) and treats each vote + VRF
+        // seed partial as an atomic contribution. Because `threshold::recover` only interpolates
+        // the first `required` partials by index, skipping per-attestation verification when
+        // `pending + verified > quorum` could include a signer with a corrupt VRF partial in
+        // `cert.signers` and bypass `record_seed_partial_drop` slashing attribution.
+        certificate::verify_then_assemble::<Self, _, D, _, _>(
             self, rng, subject, pending, verified, strategy,
         )
     }
@@ -2370,5 +2375,78 @@ mod tests {
             assert!(stale_err.invalid.is_empty());
             assert_eq!(stale_err.verified.len(), pending_len - 1);
         }
+    }
+
+    /// Regression test (R1): with >quorum attestations (verified=[0, 1], pending=[2, 3]),
+    /// a corrupt VRF seed partial at index 3 (outside `threshold::recover`'s first-3
+    /// interpolation set) must still be excluded from `cert.signers` and recorded via
+    /// `outbe_vrf_partial_dropped_total`.
+    #[test]
+    fn optimistic_assemble_excludes_over_quorum_corrupt_vrf_partial_and_records_drop() {
+        use metrics_util::debugging::{DebugValue, DebuggingRecorder};
+
+        let (schemes, verifier) = signers_and_verifier(4);
+        let round = Round::new(Epoch::new(1), View::new(12));
+        let proposal = sample_proposal(round.epoch(), round.view(), 88);
+        let subject = Subject::Finalize {
+            proposal: &proposal,
+        };
+        let mut by_index: Vec<_> = schemes
+            .iter()
+            .map(|scheme| (scheme, scheme.sign::<Sha256Digest>(subject).unwrap()))
+            .collect();
+        by_index.sort_by_key(|(_, attestation)| attestation.signer);
+
+        let verified: Vec<_> = by_index[..2].iter().map(|(_, a)| a.clone()).collect();
+        let (corrupt_scheme, mut corrupt_vote) = (by_index[3].0, by_index[3].1.clone());
+        let excluded_signer = corrupt_vote.signer;
+        assert_eq!(excluded_signer, Participant::new(3));
+        corrupt_seed_partial(
+            &mut corrupt_vote,
+            &foreign_round_attestation(corrupt_scheme),
+        );
+        let pending = vec![by_index[2].1.clone(), corrupt_vote];
+
+        let mut rng = bls_batch_verification_rng();
+        let recorder = DebuggingRecorder::new();
+        let cert = metrics::with_local_recorder(&recorder, || {
+            verifier.optimistic_assemble::<_, Sha256Digest, _, _>(
+                &mut rng,
+                subject,
+                pending,
+                verified.iter(),
+                &Sequential,
+            )
+        })
+        .ok()
+        .expect("3 valid attestations out of 4 must still assemble a valid certificate");
+
+        assert_eq!(cert.signers.count(), 3);
+        assert!(
+            !cert.signers.iter().any(|s| s == excluded_signer),
+            "signer 3 with corrupt VRF partial must be excluded from cert.signers"
+        );
+        assert!(verifier.verify_certificate::<_, Sha256Digest>(
+            &mut rng,
+            subject,
+            &cert,
+            &Sequential,
+        ));
+        assert!(verifier
+            .verified_vrf_seed_for_round(&mut rng, round, &cert, &Sequential)
+            .is_some());
+
+        let snapshot = recorder.snapshotter().snapshot().into_vec();
+        let drop_entry = snapshot
+            .iter()
+            .find(|(key, _, _, _)| {
+                key.key().name() == "outbe_vrf_partial_dropped_total"
+                    && key
+                        .key()
+                        .labels()
+                        .any(|l| l.key() == "signer" && l.value() == "3")
+            })
+            .expect("vrf_partial_drop metric must be recorded for signer 3");
+        assert_eq!(drop_entry.3, DebugValue::Counter(1));
     }
 }
