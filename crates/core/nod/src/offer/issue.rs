@@ -14,6 +14,7 @@ use super::protocol::{EncryptedTributeOffer, TributeZkExpectedHashes};
 use super::zk_claim::derive_expected_hashes;
 use super::{open_offer, OfferKeyMaterial};
 use crate::constants::LOAD_RATE_PCT;
+use outbe_core_common::confidential_tee::ComputeError;
 
 /// An offer and the public terms its Nod gets.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,12 +109,16 @@ fn issue(
         return Err(ProcessError::AmountNotPositive.into());
     }
     let zk_expected_hashes = derive_expected_hashes(offer, &payload, &amount)?;
-    let (nominal, _) = compute_nominal(
+    let nominal = match compute_nominal(
         amount.amount_minor,
         offer.issuance_wwd_vwap_minor,
         offer.reference_wwd_vwap_minor,
         offer.reference_scurve_minor,
-    )?;
+    ) {
+        Ok((nominal, _)) => nominal,
+        Err(ComputeError::NominalRoundsToZero) => U256::ZERO,
+        Err(err) => return Err(err.into()),
+    };
     let load = nod_load_of(nominal);
     if load.is_zero() {
         return Ok(NodAtOfferResultV1::refused(

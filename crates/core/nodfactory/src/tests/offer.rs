@@ -700,10 +700,12 @@ fn issue_nod_with_no_load_reverts() {
         worldwide_day: TARGET_WWD,
     });
     let dust = PrecompileError::from(OfferError::LoadBelowOneMinorUnit);
-    // 0.000001 at 0.333334 per COEN is a nominal of 2 minor units and a load of 0.
+    // 0.000001 at 0.333334 per COEN is a nominal of 2 minor units and a load of 0; at 2
+    // per COEN the nominal itself rounds to 0.
     for (currency, amount, rate, expected) in [
-        (826, ("100", "0"), 100, unpriced),
-        (840, ("0", "1"), 333_334, dust),
+        (826, ("100", "0"), 100, unpriced.to_string()),
+        (840, ("0", "1"), 333_334, dust.to_string()),
+        (840, ("0", "1"), 2_000_000, dust.to_string()),
     ] {
         let mut provider = priced_world();
         StorageHandle::enter(&mut provider, |storage| {
@@ -722,7 +724,7 @@ fn issue_nod_with_no_load_reverts() {
             let error = storage
                 .with_checkpoint(|| issue_past_proof(&storage, &input, None))
                 .unwrap_err();
-            assert_eq!(error.to_string(), expected.to_string());
+            assert_eq!(error.to_string(), expected);
         });
         assert_eq!(provider.storage, before, "a refused offer wrote state");
         assert_eq!(provider.get_ordered_events(), events);
@@ -967,4 +969,38 @@ fn issue_nod_is_atomic_at_each_write() {
         });
         assert_eq!(provider.storage, control.storage, "retry {write}");
     }
+}
+
+/// The offer of an owner for a Worldwide Day is spent with its Nod: once the Nod is mined
+/// or forfeited, a second offer still reverts.
+#[test]
+fn a_second_offer_fails_after_the_first_nod_is_gone() {
+    let _enclave = outbe_nod::test_support::scope();
+    let mut provider = priced_world();
+    StorageHandle::enter(&mut provider, |storage| {
+        at_offer_hour(&storage, (1, 0), Some(100));
+        let nod_id =
+            issue_past_proof(&storage, &offer_of(CALLER, 840, ("100", "0")), None).unwrap();
+        let item = nod_api::load_item(&storage, nod_id).unwrap().unwrap();
+        let group = nod_api::load_group(&storage, item.body().group_key)
+            .unwrap()
+            .unwrap();
+        nod_api::record_settled(&storage, item, group).unwrap();
+        let item = nod_api::load_item(&storage, nod_id).unwrap().unwrap();
+        let group = nod_api::load_group(&storage, item.body().group_key)
+            .unwrap()
+            .unwrap();
+        nod_api::remove_nod(&storage, item, group).unwrap();
+        assert!(nod_api::get_item(&storage, nod_id).unwrap().is_none());
+        for currency in [840, 978] {
+            assert_reverts(
+                storage
+                    .with_checkpoint(|| {
+                        issue_past_proof(&storage, &offer_of(CALLER, currency, ("100", "0")), None)
+                    })
+                    .unwrap_err(),
+                outbe_nod::errors::NodError::OfferAlreadyMade,
+            );
+        }
+    });
 }
