@@ -13,6 +13,11 @@ fn planted_cold() -> (
     let (root, host_key) = host_tree();
     let committee = FinalityCommitteeFixture::new(6);
     let (old, descriptor) = source_for_promotion(&host_key, &committee);
+    outbe_tee::node_host::ResidentStateStore::load_or_create(
+        root.path(),
+        &old.authorization_witness().unwrap(),
+    )
+    .unwrap();
     let old_attempt = admit_successor(&old, &old, &committee);
     let verified = old.admission_anchor().unwrap().unwrap();
     let intent = &old_attempt.prepare_intent;
@@ -133,6 +138,11 @@ fn directory_marker_rejects_cold_recovery_before_any_publish() {
     let (root, host_key) = host_tree();
     let committee = FinalityCommitteeFixture::new(5);
     let (old, descriptor) = source_for_promotion(&host_key, &committee);
+    outbe_tee::node_host::ResidentStateStore::load_or_create(
+        root.path(),
+        &old.authorization_witness().unwrap(),
+    )
+    .unwrap();
     let candidate = fresh_candidate(&old, descriptor.clone()).unwrap();
     let attempt = admit_successor(&old, &candidate, &committee);
     std::fs::create_dir(root.path().join("tee-cold-recovery-v1")).unwrap();

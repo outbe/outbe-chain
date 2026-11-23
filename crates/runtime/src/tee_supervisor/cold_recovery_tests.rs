@@ -678,6 +678,11 @@ async fn cancel_required_retries_cold_prepare_and_verifies_the_second_intent() {
     let (root, host_key) = host_tree();
     let committee = FinalityCommitteeFixture::new(4);
     let (live, descriptor) = source_for_promotion(&host_key, &committee);
+    outbe_tee::node_host::ResidentStateStore::load_or_create(
+        root.path(),
+        &live.authorization_witness().unwrap(),
+    )
+    .unwrap();
     let manifest = live.manifest();
     let chain_id = u64::try_from(U256::from_be_bytes(manifest.chain_id)).unwrap();
     let predecessor = no_attestation_dev_policy_v1(chain_id, manifest.genesis_hash).unwrap();
