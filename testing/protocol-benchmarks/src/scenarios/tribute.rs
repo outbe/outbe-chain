@@ -23,6 +23,11 @@ use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
+use evm2::interpreter::{
+    gas::{SSTORE_RESET, WARM_STORAGE_READ_COST},
+    GasTracker,
+};
+use evm2::precompiles::bn254::pair::run_istanbul as run_bn254_pair_istanbul;
 use outbe_core_common::confidential_tee::ecdhe_tribute_offer_decrypt;
 use outbe_core_common::confidential_tee::OFFER_HKDF_SALT;
 use outbe_l2registry::L2RegistryContract;
@@ -60,11 +65,6 @@ use outbe_zk::wire::decode_public_words;
 use outbe_zk::INCLUSION_DEPTH;
 use outbe_zk_backend::barretenberg::{verify_circuit, Barretenberg, BarretenbergHandler};
 use rand::{rngs::StdRng, SeedableRng};
-use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
-use revm::precompile::bn254::{
-    pair::{ISTANBUL_PAIR_BASE, ISTANBUL_PAIR_PER_POINT},
-    run_pair,
-};
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
 
 use crate::{
@@ -94,6 +94,9 @@ const REWARD_UTC_DAY: u32 = 20_260_802;
 const CALLER: Address = Address::repeat_byte(0x77);
 const SU_HASH: B256 = B256::with_last_byte(0x22);
 const OFFER_PRIVATE_KEY: [u8; 32] = [0x33; 32];
+// EIP-1108 Istanbul BN254 ecPairing gas schedule (pub(crate) inside evm2::precompiles::bn254::pair).
+const ISTANBUL_PAIR_BASE: u64 = 45_000;
+const ISTANBUL_PAIR_PER_POINT: u64 = 34_000;
 const PAIRING_REFERENCE_GAS: u64 = ISTANBUL_PAIR_BASE + 2 * ISTANBUL_PAIR_PER_POINT;
 const VERIFIER_SAFETY_MULTIPLIER: f64 = 1.5;
 const GAS_ROUNDING: u64 = 10_000;
@@ -389,7 +392,7 @@ fn measure_gate(fixture: &Fixture) -> GateMeasurement {
     });
     let wall_ms = started.elapsed().as_secs_f64() * 1_000.0;
     let (reads, writes) = provider.metered_storage_operations();
-    let gas = reads * WARM_STORAGE_READ_COST + writes * SSTORE_RESET;
+    let gas = reads * u64::from(WARM_STORAGE_READ_COST) + writes * u64::from(SSTORE_RESET);
     assert_eq!(gas_used, gas);
     GateMeasurement { wall_ms }
 }
@@ -416,14 +419,10 @@ fn measure_pairing_ms(input: &[u8]) -> f64 {
     const INNER_ITERATIONS: u32 = 10;
     let started = Instant::now();
     for _ in 0..INNER_ITERATIONS {
+        let mut gas = GasTracker::new(PAIRING_REFERENCE_GAS);
         black_box(
-            run_pair(
-                black_box(input),
-                ISTANBUL_PAIR_PER_POINT,
-                ISTANBUL_PAIR_BASE,
-                PAIRING_REFERENCE_GAS,
-            )
-            .expect("reference pairing succeeds"),
+            run_bn254_pair_istanbul(black_box(input), &mut gas)
+                .expect("reference pairing succeeds"),
         );
     }
     started.elapsed().as_secs_f64() * 1_000.0 / f64::from(INNER_ITERATIONS)
@@ -591,8 +590,8 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
     let calldata_stats = CalldataStats::ethereum(&calldata);
     let configured_base = outbe_tributefactory::precompile::base_gas(&calldata);
     let storage_gas = reads
-        .saturating_mul(WARM_STORAGE_READ_COST)
-        .saturating_add(writes.saturating_mul(SSTORE_RESET));
+        .saturating_mul(u64::from(WARM_STORAGE_READ_COST))
+        .saturating_add(writes.saturating_mul(u64::from(SSTORE_RESET)));
     let explicit_runtime_gas = runtime_gas
         .checked_sub(storage_gas)
         .ok_or_else(|| "runtime gas is lower than metered storage gas".to_owned())?;
