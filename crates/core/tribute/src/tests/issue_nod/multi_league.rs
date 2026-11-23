@@ -229,7 +229,7 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
             let call = outbe_nod::precompile::INod::getNodCall { nodId: nod_id }.abi_encode();
             let raw = outbe_nod::precompile::dispatch(storage.clone(), &call, owner1, U256::ZERO)
                 .unwrap();
-            for chunk in raw.chunks_exact(32) {
+            for chunk in raw.as_chunks::<32>().0 {
                 let word = U256::from_be_slice(chunk);
                 assert!(
                     !forbidden_words.contains(&word),

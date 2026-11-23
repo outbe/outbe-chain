@@ -116,6 +116,12 @@ fn is_lower_git_sha(s: &str) -> bool {
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
 
+fn is_exact_semver(s: &str) -> bool {
+    s.split('.').count() == 3
+        && s.split('.')
+            .all(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+}
+
 pub fn validate_build_spec(build_spec: &Value) -> Result<()> {
     ensure!(
         build_spec.get("spec_version").and_then(Value::as_i64) == Some(1),
@@ -130,8 +136,11 @@ pub fn validate_build_spec(build_spec: &Value) -> Result<()> {
         "the v1 release recipe must preserve the release profile"
     );
     ensure!(
-        build_spec.get("rust_toolchain").and_then(Value::as_str) == Some("1.100.0"),
-        "the v1 release recipe requires Rust 1.100.0"
+        build_spec
+            .get("rust_toolchain")
+            .and_then(Value::as_str)
+            .is_some_and(is_exact_semver),
+        "the v1 release recipe requires an exact Rust X.Y.Z toolchain version"
     );
 
     let builder = build_spec
@@ -655,6 +664,20 @@ fn validate_network_schema(net: &Map<String, Value>) -> Result<&'static str> {
     }
 }
 
+fn validate_build_schema(build: &Value) -> Result<String> {
+    if let Some(toolchain) = build.get("rust_toolchain") {
+        ensure!(
+            toolchain.as_str().is_some_and(is_exact_semver),
+            "invalid build.rust_toolchain"
+        );
+    }
+    let prov = build
+        .get("provenance")
+        .and_then(Value::as_object)
+        .ok_or_else(|| eyre!("missing build.provenance"))?;
+    validate_provenance_schema(prov)
+}
+
 pub fn validate_release_manifest_v1(manifest: &Value) -> Result<()> {
     let obj = manifest
         .as_object()
@@ -693,11 +716,10 @@ pub fn validate_release_manifest_v1(manifest: &Value) -> Result<()> {
         .and_then(Value::as_str)
         .ok_or_else(|| eyre!("missing release.tag"))?;
     ensure!(is_printable_ascii(tag), "invalid release.tag");
-    let prov = obj["build"]
-        .get("provenance")
-        .and_then(Value::as_object)
+    let prov_mode = validate_build_schema(&obj["build"])?;
+    let prov = obj["build"]["provenance"]
+        .as_object()
         .ok_or_else(|| eyre!("missing build.provenance"))?;
-    let prov_mode = validate_provenance_schema(prov)?;
     let artifacts = obj["artifacts"]
         .as_array()
         .ok_or_else(|| eyre!("artifacts must be array"))?;

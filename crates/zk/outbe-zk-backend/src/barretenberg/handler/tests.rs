@@ -39,7 +39,9 @@ fn concurrent_operations_share_state_without_interleaving() {
     }
     let events = state.lock().unwrap();
     assert_eq!(events.len(), 16);
-    for pair in events.chunks_exact(2) {
+    let (pairs, remainder) = events.as_chunks::<2>();
+    assert!(remainder.is_empty());
+    for pair in pairs {
         assert_eq!(pair[0], (pair[1].0, "setup"));
         assert_eq!(pair[1].1, "prove");
     }
