@@ -15,6 +15,14 @@ contract CodecHarness {
         return IntexNFT1155BridgeCodec.decodeMulti(_message);
     }
 
+    function decodeSingle(bytes calldata _message)
+        external
+        pure
+        returns (IntexNFT1155BridgeCodec.SinglePayload memory)
+    {
+        return IntexNFT1155BridgeCodec.decodeSingle(_message);
+    }
+
     function assertAddress(bytes32 _value) external pure {
         IntexNFT1155BridgeCodec.assertAddress(_value);
     }
@@ -36,6 +44,29 @@ contract IntexNFT1155BridgeCodecTest is Test {
     }
 
     // --- round-trip ---
+
+    function test_SingleRoundTrip_PreservesFields() public view {
+        IntexNFT1155BridgeCodec.SinglePayload memory p =
+            IntexNFT1155BridgeCodec.SinglePayload({to: _bytes32(address(0xBEEF)), intexId: 7, units: 3});
+        bytes memory encoded = IntexNFT1155BridgeCodec.encodeSingle(p);
+        assertEq(uint8(encoded[0]), IntexNFT1155BridgeCodec.BODY_VERSION_V1);
+        assertEq(uint8(encoded[1]), IntexNFT1155BridgeCodec.SEND_ONE);
+        IntexNFT1155BridgeCodec.SinglePayload memory d = harness.decodeSingle(encoded);
+        assertEq(d.to, p.to);
+        assertEq(d.intexId, 7);
+        assertEq(d.units, 3);
+    }
+
+    function test_DecodeSingle_RevertsOnTrailingBytes() public {
+        bytes memory encoded = abi.encodePacked(
+            IntexNFT1155BridgeCodec.encodeSingle(
+                IntexNFT1155BridgeCodec.SinglePayload({to: _bytes32(address(0xBEEF)), intexId: 7, units: 3})
+            ),
+            bytes32(0)
+        );
+        vm.expectRevert(IntexNFT1155BridgeCodec.MalformedBody.selector);
+        harness.decodeSingle(encoded);
+    }
 
     function test_BatchRoundTrip_PreservesFields() public view {
         uint256[] memory tokenIds = new uint256[](2);
