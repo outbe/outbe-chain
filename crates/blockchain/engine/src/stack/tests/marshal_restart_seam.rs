@@ -9,7 +9,8 @@ use super::*;
 use commonware_consensus::marshal::core::Processed;
 use futures::StreamExt as _;
 
-const MAX_POLL_ATTEMPTS: usize = 500;
+const MAX_POLL_ATTEMPTS: usize = 2_000;
+const DELIVERY_TIMEOUT: Duration = Duration::from_secs(10);
 const PARTITION_PREFIX: &str = "marshal-restart-seam-h1-h2";
 
 async fn wait_for_processed(
@@ -37,7 +38,14 @@ async fn ack_deliveries_through(
 ) -> Vec<u64> {
     let mut acked = Vec::new();
     while acked.last().copied() != Some(target_height) {
-        let msg = deliveries.next().await.expect("marshal delivery");
+        let msg = tokio::time::timeout(DELIVERY_TIMEOUT, deliveries.next())
+            .await
+            .unwrap_or_else(|_| {
+                panic!(
+                    "timed out waiting for marshal delivery up to height {target_height}; acked so far: {acked:?}"
+                )
+            })
+            .expect("marshal delivery");
         if let outbe_consensus::executor::ingress::Message::MarshalUpdate(update) = msg {
             if let Update::Block(delivered, ack) = *update {
                 acked.push(delivered.inner().number());
