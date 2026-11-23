@@ -103,6 +103,22 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
         uint32 units
     );
 
+    /// @notice Emitted when this chain creates a series from the terms that Outbe sent. It has the
+    ///         shape of the Intex factory's `IntexSeriesOpened`.
+    event IntexSeriesOpened(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint256 entryPriceMinor,
+        uint256 callPriceMinor,
+        uint64 callWindow,
+        uint64 callThreshold,
+        uint64 callNoticePeriod,
+        uint64 transitMargin,
+        uint32 units,
+        uint256 unitPromisLoadMinor
+    );
+
     /// @notice Emitted when this chain records the call notice of a series.
     /// @param seriesId Series identifier.
     /// @param issuanceCurrency Issuance currency (ISO numeric).

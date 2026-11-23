@@ -142,6 +142,19 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         $.seriesOfDay[params.emissionDay].push(params.seriesId);
         $.seriesOfPair[params.emissionDay][params.issuanceCurrency][params.referenceCurrency] = params.seriesId;
 
+        emit IntexSeriesOpened(
+            params.seriesId,
+            params.issuanceCurrency,
+            params.referenceCurrency,
+            params.entryPriceMinor,
+            params.callPriceMinor,
+            params.callTrigger.callWindow,
+            params.callTrigger.callThreshold,
+            params.callTrigger.callNoticePeriod,
+            params.callTrigger.transitMargin,
+            params.issuedUnits,
+            params.promisLoadMinor
+        );
         emit MetadataUpdate(iTok);
     }
 

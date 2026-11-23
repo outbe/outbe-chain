@@ -149,6 +149,7 @@ interface IIntexFactory {
         uint64 callWindow,
         uint64 callThreshold,
         uint64 callNoticePeriod,
+        uint64 transitMargin,
         uint32 units,
         uint256 unitPromisLoadMinor
     );

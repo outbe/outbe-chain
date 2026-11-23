@@ -403,6 +403,12 @@
         "internalType": "uint64"
       },
       {
+        "name": "transitMargin",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
         "name": "units",
         "type": "uint32",
         "indexed": false,

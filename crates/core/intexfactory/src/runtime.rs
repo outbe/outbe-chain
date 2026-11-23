@@ -99,6 +99,7 @@ pub fn issue_intex(
             callWindow: u64::from(trigger.call_window_seconds),
             callThreshold: u64::from(trigger.call_threshold_seconds),
             callNoticePeriod: u64::from(trigger.call_notice_period_seconds),
+            transitMargin: u64::from(trigger.transit_margin_seconds),
             units: params.issued_units,
             unitPromisLoadMinor: U256::from(params.promis_load_minor),
         },
