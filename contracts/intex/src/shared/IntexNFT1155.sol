@@ -197,7 +197,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         bytes memory payload = abi.encode(uint256(data.promisLoadMinor) * units);
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the uint16 check above
-        emit IntexIssued(tokenId, to, seriesId, data.issuanceCurrency, data.referenceCurrency, payload, uint32(units));
+        emit IntexIssued(tokenId, to, seriesId, data.issuanceCurrency, data.referenceCurrency, uint32(units), payload);
     }
 
     /// @inheritdoc IIntexNFT1155

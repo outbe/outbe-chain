@@ -91,16 +91,16 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @param issuanceCurrency Issuance currency (ISO numeric).
     /// @param referenceCurrency Reference currency (ISO numeric).
-    /// @param payload ABI-encoded total Promis load (`abi.encode(uint256(promisLoadMinor) * units)`).
     /// @param units Issued units minted to `owner`.
+    /// @param payload ABI-encoded total Promis load (`abi.encode(uint256(promisLoadMinor) * units)`).
     event IntexIssued(
         uint256 indexed intexId,
         address indexed owner,
         bytes14 indexed seriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        bytes payload,
-        uint32 units
+        uint32 units,
+        bytes payload
     );
 
     /// @notice Emitted when this chain creates a series from the terms that Outbe sent. It has the

@@ -431,7 +431,7 @@ contract IntexNFT1155Test is Test {
 
         bytes memory expectedPayload = abi.encode(uint256(100_000 * 1e6) * quantity);
         vm.expectEmit(true, true, true, true);
-        emit IIntexNFT1155.IntexIssued(TOKEN_ID_1, user, SERIES_ID_1, 840, 840, expectedPayload, uint32(quantity));
+        emit IIntexNFT1155.IntexIssued(TOKEN_ID_1, user, SERIES_ID_1, 840, 840, uint32(quantity), expectedPayload);
         vm.recordLogs();
         nft.issueIntex(user, quantity, SERIES_ID_1);
         Vm.Log[] memory logs = vm.getRecordedLogs();
@@ -442,7 +442,7 @@ contract IntexNFT1155Test is Test {
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics.length == 0) continue;
             if (logs[i].topics[0] == IIntexNFT1155.IntexIssued.selector) {
-                (,,, uint32 units) = abi.decode(logs[i].data, (uint16, uint16, bytes, uint32));
+                (,, uint32 units,) = abi.decode(logs[i].data, (uint16, uint16, uint32, bytes));
                 issuedUnits = uint256(units);
                 sawIssued = true;
             }
