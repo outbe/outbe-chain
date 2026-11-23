@@ -5676,6 +5676,14 @@
         {
           "module": "nod",
           "address": "0x0000000000000000000000000000000000001006",
+          "slot": "0x2bda26e2affd06dfb2b7972f4f489e805b4622e752048c3e5f567bb98216204f",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "nod",
+          "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x377de45d5a9d78b1601c7a6ddae91ba35ed10373a03c3e1921117f482558fa85",
           "operation": "read",
           "count": 2,
@@ -6004,14 +6012,6 @@
         {
           "module": "nod",
           "address": "0x0000000000000000000000000000000000001006",
-          "slot": "0xb431aa80ed29ef9b8d11569369b8f8424823b8731921f4b383a01d8d6de7e4a9",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "nod",
-          "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xbaaef8892f16dc0938e06381ed09d343dc970e4f0023bfd48efece8259cc2f24",
           "operation": "write",
           "count": 1,
@@ -6092,6 +6092,14 @@
         {
           "module": "nod",
           "address": "0x0000000000000000000000000000000000001006",
+          "slot": "0xd242aa79673f2557094f0b8d79cd0ae045d1a829f779bfe6ab38223d6de2d75f",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "nod",
+          "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xd5af181463ee845743bc8cb33f0c6dacb8411399b15fd85906ac04bb50d096a1",
           "operation": "read",
           "count": 1,
@@ -6109,14 +6117,6 @@
           "module": "nod",
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xd5cf5ea28b1308ce1994db564484c3aa91408588736aee0382f6ef85bf1c43ae",
-          "operation": "write",
-          "count": 1,
-          "gas": 5000
-        },
-        {
-          "module": "nod",
-          "address": "0x0000000000000000000000000000000000001006",
-          "slot": "0xd792c675b615fca0000a66c9d423cafda2b37f635d4dde624ba87d7bf0a53255",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -6290,7 +6290,7 @@
         "fidelity": "full"
       },
       "gas_totals": {
-        "system_internal": 1956000
+        "system_internal": 1866000
       },
       "gas_components": [
         {
@@ -6303,8 +6303,8 @@
         {
           "ledger": "system_internal",
           "key": "storage.nod.write",
-          "gas": 1920000,
-          "operations": 384,
+          "gas": 1830000,
+          "operations": 366,
           "module": "nod"
         },
         {
@@ -6616,6 +6616,14 @@
           "module": "nod",
           "address": "0x0000000000000000000000000000000000001006",
           "slot": "0x2aae49b8ec6fe6ee8f9699539e649a814bd215f761b7076856c36724603adfcf",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "nod",
+          "address": "0x0000000000000000000000000000000000001006",
+          "slot": "0x2bda26e2affd06dfb2b7972f4f489e805b4622e752048c3e5f567bb98216204f",
           "operation": "write",
           "count": 1,
           "gas": 5000
@@ -8103,14 +8111,6 @@
         {
           "module": "nod",
           "address": "0x0000000000000000000000000000000000001006",
-          "slot": "0xb431aa80ed29ef9b8d11569369b8f8424823b8731921f4b383a01d8d6de7e4a9",
-          "operation": "write",
-          "count": 10,
-          "gas": 50000
-        },
-        {
-          "module": "nod",
-          "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xb465e157909d3e63624b33c77443533a2a89adc8d388855c704744a3c400e927",
           "operation": "write",
           "count": 1,
@@ -8463,6 +8463,14 @@
         {
           "module": "nod",
           "address": "0x0000000000000000000000000000000000001006",
+          "slot": "0xd242aa79673f2557094f0b8d79cd0ae045d1a829f779bfe6ab38223d6de2d75f",
+          "operation": "write",
+          "count": 1,
+          "gas": 5000
+        },
+        {
+          "module": "nod",
+          "address": "0x0000000000000000000000000000000000001006",
           "slot": "0xd45ad14a0dd6a08fc9b7ab44b35b5207aaaa348770e89902fe4d747d5f33606",
           "operation": "read",
           "count": 3,
@@ -8531,14 +8539,6 @@
           "operation": "write",
           "count": 1,
           "gas": 5000
-        },
-        {
-          "module": "nod",
-          "address": "0x0000000000000000000000000000000000001006",
-          "slot": "0xd792c675b615fca0000a66c9d423cafda2b37f635d4dde624ba87d7bf0a53255",
-          "operation": "write",
-          "count": 10,
-          "gas": 50000
         },
         {
           "module": "nod",
