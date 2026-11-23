@@ -89,8 +89,10 @@ impl SubcallGasMeter {
     /// frame's settlement).
     #[inline]
     pub fn set_state_gas_spent(&mut self, val: i64) {
-        let delta = val.saturating_sub(self.inner.state_gas_spent());
-        self.inner.add_state_gas_spent(delta);
+        while self.inner.state_gas_spent() != val {
+            let delta = val.saturating_sub(self.inner.state_gas_spent());
+            self.inner.add_state_gas_spent(delta);
+        }
     }
 
     /// Sets the state gas reservoir (used when propagating from a child

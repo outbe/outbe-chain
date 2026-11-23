@@ -719,6 +719,21 @@ fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapsho
         let traced_observed = outbe_evm::executor::take_observed_runtime_block_contexts();
         assert_eq!(traced_observed.len(), 5);
         assert_end_block_contexts(&traced_observed, block_gas_limit, expected_user_gas);
+        if expect_refund {
+            for observed_ctx in &traced_observed {
+                assert_eq!(
+                    observed_ctx.user_gas_used,
+                    traced_user.tx_gas_used(),
+                    "detached trace must record post-refund net tx_gas_used for EndBlock contexts"
+                );
+                assert!(
+                    observed_ctx.user_gas_used < traced_user.total_gas_spent,
+                    "detached trace must not record gross pre-refund total_gas_spent ({} vs {})",
+                    observed_ctx.user_gas_used,
+                    traced_user.total_gas_spent
+                );
+            }
+        }
         outbe_evm::executor::witness::clear_detached_trace_witness();
     }
 }

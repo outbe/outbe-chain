@@ -152,7 +152,22 @@ fn wide_timestamp_rejects_sponsorship_before_quota_or_receipt_changes() {
         0,
         "no delegation or quota access"
     );
-    drop(executor);
+    assert!(
+        executor
+            .evm()
+            .state()
+            .overlay_db()
+            .cache
+            .accounts
+            .is_empty(),
+        "no committed overlay account writes"
+    );
+    assert!(
+        executor.evm().state().overlay_db().cache.storage.is_empty(),
+        "no committed overlay storage writes"
+    );
+    let bundle = executor.into_state();
+    assert!(bundle.is_empty(), "no committed block state changes");
     assert_eq!(live_counter(&mut state, signer), (0, 0));
     assert_eq!(signer_balance(&mut state, signer), initial_balance);
 }
@@ -494,6 +509,27 @@ fn sponsored_budget_deferral_precedes_quota_exhaustion() {
 
 #[test]
 fn sponsored_budget_matcher_requires_exact_reason() {
+    #[derive(Debug)]
+    struct ForeignNonceTooLow;
+
+    impl std::fmt::Display for ForeignNonceTooLow {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("nonce too low")
+        }
+    }
+
+    impl std::error::Error for ForeignNonceTooLow {}
+
+    impl reth_evm::InvalidTxError for ForeignNonceTooLow {
+        fn is_nonce_too_low(&self) -> bool {
+            true
+        }
+
+        fn as_any(&self) -> &(dyn std::any::Any + 'static) {
+            self
+        }
+    }
+
     assert!(outbe_evm::is_sponsored_block_budget_deferral(
         &OutbeInvalidTxError::SponsoredBlockBudgetExceeded
     ));
@@ -504,6 +540,9 @@ fn sponsored_budget_matcher_requires_exact_reason() {
     ] {
         assert!(!outbe_evm::is_sponsored_block_budget_deferral(&other));
     }
+    assert!(!outbe_evm::is_sponsored_block_budget_deferral(
+        &ForeignNonceTooLow
+    ));
 }
 
 #[test]

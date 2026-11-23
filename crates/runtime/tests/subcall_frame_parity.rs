@@ -12,11 +12,12 @@ use evm2::{
 };
 use outbe_evm::{
     sub_call,
-    test_support::{fresh_environment, install_code, set_call_depth, EvmCtx},
+    test_support::{call_depth, fresh_environment, install_code, set_call_depth, EvmCtx},
     OutbeEvmFactory,
 };
 use outbe_primitives::storage::{SubCallInput, SubCallStatus};
 use reth_ethereum::evm::EthEvmEnv;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 const CALLER: Address = Address::repeat_byte(0xc0);
@@ -152,34 +153,76 @@ fn compare(
     assert_eq!(actual.returndata, expected.output);
     assert_eq!(actual.gas_used, expected.gas.spent());
     assert_eq!(actual.gas_refunded, expected.gas.refunded());
+    assert_state_parity(&mut outbe, &mut reference, depth);
+    (outbe, actual)
+}
+
+fn assert_state_parity(
+    outbe: &mut EvmCtx,
+    reference: &mut Evm<'_, BaseEvmTypes>,
+    expected_depth: u16,
+) {
+    assert_eq!(
+        call_depth(outbe),
+        expected_depth,
+        "call depth must be restored after sub-call"
+    );
+    let mut tracked: BTreeMap<Address, BTreeSet<U256>> = BTreeMap::new();
     for address in [CALLER, TARGET, LEAF, DELEGATE] {
-        assert_eq!(
-            outbe.state_mut().account(&address).unwrap().balance(),
-            reference.state_mut().account(&address).unwrap().balance(),
-            "balance mismatch for {address}"
-        );
-        assert_eq!(
-            outbe
+        tracked
+            .entry(address)
+            .or_default()
+            .extend([U256::ZERO, U256::ONE]);
+    }
+    for (address, slots) in outbe.state().loaded_accounts() {
+        let entry = tracked.entry(*address).or_default();
+        entry.extend([U256::ZERO, U256::ONE]);
+        entry.extend(slots.copied());
+    }
+    for (address, slots) in reference.state().loaded_accounts() {
+        let entry = tracked.entry(*address).or_default();
+        entry.extend([U256::ZERO, U256::ONE]);
+        entry.extend(slots.copied());
+    }
+    for (address, slots) in tracked {
+        let outbe_info = {
+            let acc = outbe.state_mut().account(&address).unwrap();
+            (acc.balance(), acc.nonce(), acc.code_hash())
+        };
+        let ref_info = {
+            let acc = reference.state_mut().account(&address).unwrap();
+            (acc.balance(), acc.nonce(), acc.code_hash())
+        };
+        assert_eq!(outbe_info, ref_info, "account info mismatch for {address}");
+        for key in slots {
+            let outbe_val = outbe
                 .state_mut()
                 .account(&address)
                 .unwrap()
                 .storage()
-                .into_slot(U256::ONE)
+                .into_slot(key)
                 .unwrap()
-                .current(),
-            reference
+                .current();
+            let ref_val = reference
                 .state_mut()
                 .account(&address)
                 .unwrap()
                 .storage()
-                .into_slot(U256::ONE)
+                .into_slot(key)
                 .unwrap()
-                .current(),
-            "storage mismatch for {address}"
-        );
+                .current();
+            assert_eq!(
+                outbe_val, ref_val,
+                "storage mismatch for {address} slot {key}"
+            );
+            assert_eq!(
+                outbe.state_mut().tload(&address, &key),
+                reference.state_mut().tload(&address, &key),
+                "transient storage mismatch for {address} slot {key}"
+            );
+        }
     }
     assert_eq!(outbe.logs(), reference.logs());
-    (outbe, actual)
 }
 
 /// Return the child status bit and all child returndata.

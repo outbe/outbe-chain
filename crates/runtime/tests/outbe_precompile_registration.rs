@@ -83,6 +83,10 @@ fn provider_contains_ethereum_and_outbe_routes_while_warm_set_remains_ethereum_o
         let ethereum = Address::with_last_byte(suffix);
         assert!(precompiles.contains(&ethereum));
         assert!(eth_addresses.contains(&ethereum));
+        assert!(
+            warm.is_warm(&ethereum),
+            "Ethereum precompile {ethereum} must be in the warm set"
+        );
     }
     for outbe in expected_exact_addresses() {
         assert!(
@@ -92,6 +96,10 @@ fn provider_contains_ethereum_and_outbe_routes_while_warm_set_remains_ethereum_o
         assert!(
             !eth_addresses.contains(&outbe),
             "Ethereum precompile enumeration must not include Outbe route {outbe}"
+        );
+        assert!(
+            !warm.is_warm(&outbe),
+            "warm set must remain Ethereum-only and exclude Outbe route {outbe}"
         );
     }
 }

@@ -40,6 +40,26 @@ fn wide_timestamp_rejects_pre_execution_before_any_mutation_with_or_without_hook
                 0,
                 "no Ethereum or marker account writes"
             );
+            assert!(
+                executor
+                    .evm()
+                    .state()
+                    .overlay_db()
+                    .cache
+                    .accounts
+                    .is_empty(),
+                "no committed overlay account writes"
+            );
+            assert!(
+                executor.evm().state().overlay_db().cache.storage.is_empty(),
+                "no committed overlay storage writes"
+            );
+            drop(executor);
+            assert!(
+                state.cache.accounts.is_empty(),
+                "no outer account mutations"
+            );
+            assert!(state.cache.storage.is_empty(), "no outer storage mutations");
         }
     }
 }
@@ -91,6 +111,17 @@ fn wide_timestamp_rejects_standalone_transaction_routes_before_receipts_or_state
                 outbe_evm::system_tx::BlockExecutionStage::MidBlock
             );
             assert_eq!(executor.evm().state().loaded_accounts().count(), 0);
+            assert!(executor
+                .evm()
+                .state()
+                .overlay_db()
+                .cache
+                .accounts
+                .is_empty());
+            assert!(executor.evm().state().overlay_db().cache.storage.is_empty());
+            drop(executor);
+            assert!(state.cache.accounts.is_empty());
+            assert!(state.cache.storage.is_empty());
         }
     }
 }
@@ -113,6 +144,14 @@ fn standalone_finish_and_post_execution_reject_wide_time_before_side_effects() {
                 Ok(_) => panic!("wide timestamp must fail finish"),
             };
             assert_timestamp_validation(error);
+            assert!(
+                state.cache.accounts.is_empty(),
+                "failed finish must not mutate outer account cache"
+            );
+            assert!(
+                state.cache.storage.is_empty(),
+                "failed finish must not mutate outer storage cache"
+            );
         } else {
             assert_timestamp_validation(
                 executor.apply_outbe_ethereum_post_execution().unwrap_err(),
@@ -120,6 +159,17 @@ fn standalone_finish_and_post_execution_reject_wide_time_before_side_effects() {
             assert!(executor.ethereum_post_execution_requests.is_none());
             assert!(executor.receipts().is_empty());
             assert_eq!(executor.evm().state().loaded_accounts().count(), 0);
+            assert!(executor
+                .evm()
+                .state()
+                .overlay_db()
+                .cache
+                .accounts
+                .is_empty());
+            assert!(executor.evm().state().overlay_db().cache.storage.is_empty());
+            drop(executor);
+            assert!(state.cache.accounts.is_empty());
+            assert!(state.cache.storage.is_empty());
         }
     }
 }

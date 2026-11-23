@@ -727,9 +727,10 @@ fn assert_single_delegation_hop(inspect: bool, ordinary: Address) {
         true,
     );
     assert_eq!(actual.result, baseline.result);
-    assert!(
-        actual.result.is_halt(),
-        "expected halt for second delegation hop, got {:?}",
+    assert_eq!(
+        actual.result.stop,
+        evm2::interpreter::InstrStop::OpcodeNotFound,
+        "expected OpcodeNotFound halt for second delegation hop, got {:?}",
         actual.result
     );
 }

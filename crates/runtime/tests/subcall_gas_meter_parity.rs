@@ -115,23 +115,29 @@ proptest! {
         }
     }
 
-    /// Mirrors `evm2::interpreter::Gas::add_state_gas_spent`.
+    /// Verifies `SubcallGasMeter::set_state_gas_spent` sets `state_gas_spent` directly
+    /// across the full `i64` range (including extremes) without altering any other field.
     #[test]
     fn set_state_gas_spent_byte_equal(
         limit in 0u64..=u64::MAX,
         vals in proptest::collection::vec(i64::MIN..=i64::MAX, 1..16),
     ) {
-        let mut upstream = Gas::new(limit);
         let mut outbe = SubcallGasMeter::new(limit);
 
         for v in vals {
-            let delta = v.saturating_sub(upstream.state_gas_spent());
-            upstream.add_state_gas_spent(delta);
+            let before = snapshot_outbe(&outbe);
             outbe.set_state_gas_spent(v);
+            let after = snapshot_outbe(&outbe);
             prop_assert_eq!(
-                snapshot(&upstream),
-                snapshot_outbe(&outbe),
-                "post-set_state_gas_spent diverged at val={}",
+                after.3,
+                v,
+                "state_gas_spent must equal directly set value val={}",
+                v
+            );
+            prop_assert_eq!(
+                (after.0, after.1, after.2, after.4),
+                (before.0, before.1, before.2, before.4),
+                "set_state_gas_spent must not alter unrelated meter fields at val={}",
                 v
             );
         }
@@ -173,6 +179,17 @@ mod smoke {
         assert_eq!(m.remaining(), 0);
         assert_eq!(m.refunded(), 0);
         assert_eq!(m.state_gas_spent(), 0);
+        let mut meter = SubcallGasMeter::new(100_000);
+        for extreme in [i64::MIN, i64::MAX, i64::MIN, -1, 0, 1, i64::MAX] {
+            let before = snapshot_outbe(&meter);
+            meter.set_state_gas_spent(extreme);
+            let after = snapshot_outbe(&meter);
+            assert_eq!(after.3, extreme);
+            assert_eq!(
+                (after.0, after.1, after.2, after.4),
+                (before.0, before.1, before.2, before.4)
+            );
+        }
         assert_eq!(m.reservoir(), 0);
     }
 
