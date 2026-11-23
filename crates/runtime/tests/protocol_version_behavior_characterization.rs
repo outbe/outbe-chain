@@ -2,7 +2,16 @@ use std::sync::Arc;
 
 use alloy_consensus::Header;
 use alloy_primitives::{Address, Bytes, B256, U256};
-use outbe_evm::{sub_call, OutbeEvmConfig, OutbeNextBlockEnvAttributes};
+use evm2::{
+    bytecode::Bytecode,
+    evm::{AccountInfo, CacheDB, EmptyDB},
+    SpecId,
+};
+use outbe_evm::{
+    sub_call,
+    test_support::{EvmCtx, EvmWorld},
+    OutbeEvmConfig, OutbeNextBlockEnvAttributes,
+};
 use outbe_primitives::{
     storage::{SubCallInput, SubCallStatus},
     OutbeBlock, OutbeExecutionData, OutbeHeader,
@@ -14,13 +23,6 @@ use reth_ethereum::{
 };
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::Block as _;
-use revm::{
-    database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
-    primitives::hardfork::SpecId,
-    state::{AccountInfo, Bytecode},
-    Context,
-};
 
 const TARGET: Address = Address::new([0xA5; 20]);
 const CALLER: Address = Address::new([0xC5; 20]);
@@ -65,23 +67,23 @@ fn payload(number: u64, timestamp: u64) -> OutbeExecutionData {
     OutbeExecutionData::new(Arc::new(block.seal_slow()))
 }
 
-fn context_with_push0() -> alloy_evm::eth::EthEvmContext<CacheDB<EmptyDB>> {
+fn evm_with_push0(host: Arc<outbe_runtime::OutbeRuntime>) -> EvmCtx {
     let mut db = CacheDB::new(EmptyDB::default());
     let code = Bytecode::new_raw(Bytes::from_static(PUSH0_RETURN_EMPTY));
     db.insert_account_info(
-        TARGET,
+        &TARGET,
         AccountInfo {
             code_hash: code.hash_slow(),
             code: Some(code),
             ..Default::default()
         },
     );
-    Context::mainnet().with_db(db)
+    EvmWorld::new(db, host).evm
 }
 
 #[test]
 fn canonical_block_env_keeps_chain_spec_behavior_across_an_outbe_activation_boundary() {
-    // CHARACTERIZATION: `OutbeEvmConfig::evm_env` delegates `cfg_env.spec`
+    // CHARACTERIZATION: `OutbeEvmConfig::evm_env` delegates `spec`
     // derivation to the underlying `EthEvmConfig` chain spec and does not
     // alter the EVM `SpecId` at an Outbe protocol-update activation height.
     let config = OutbeEvmConfig::new(
@@ -97,7 +99,7 @@ fn canonical_block_env_keeps_chain_spec_behavior_across_an_outbe_activation_boun
             timestamp: 0,
             ..Default::default()
         });
-        observed.push(config.evm_env(&header).unwrap().cfg_env.spec);
+        observed.push(config.evm_env(&header).unwrap().spec);
     }
 
     assert_eq!(observed[0], observed[1]);
@@ -125,7 +127,6 @@ fn payload_builder_env_keeps_chain_spec_behavior_across_the_same_boundary() {
             config
                 .next_evm_env(&parent, &next_attributes(0))
                 .unwrap()
-                .cfg_env
                 .spec,
         );
     }
@@ -137,7 +138,7 @@ fn payload_builder_env_keeps_chain_spec_behavior_across_the_same_boundary() {
 #[test]
 fn validation_payload_env_matches_canonical_header_env_at_h_minus_one_h_and_h_plus_one() {
     // CHARACTERIZATION: `ConfigureEngineEvm::evm_env_for_payload` produces the
-    // same `cfg_env.spec` as `ConfigureEvm::evm_env` around an Outbe activation
+    // same `spec` as `ConfigureEvm::evm_env` around an Outbe activation
     // boundary for these supplied header/payload inputs.
     let config = OutbeEvmConfig::new(
         test_chain_spec(),
@@ -149,15 +150,15 @@ fn validation_payload_env_matches_canonical_header_env_at_h_minus_one_h_and_h_pl
         let payload = payload(number, 0);
         let validation = config.evm_env_for_payload(&payload).unwrap();
         let canonical = config.evm_env(payload.block.header()).unwrap();
-        assert_eq!(validation.cfg_env.spec, canonical.cfg_env.spec);
+        assert_eq!(validation.spec, canonical.spec);
     }
 }
 
 #[test]
 fn nested_call_currently_executes_push0_under_both_parent_spec_ids() {
     // CHARACTERIZATION: `sub_call::run` currently executes bytecode against the
-    // supplied `Context::mainnet()` instruction table rather than rebuilding the
-    // opcode table from `parent_env.spec_id`, so `PUSH0` succeeds even when the
+    // supplied EVM's configured spec rather than rebuilding the
+    // opcode table from `parent_env.spec`, so `PUSH0` succeeds even when the
     // caller passes `SpecId::LONDON` in `fresh_environment`. Do not treat this
     // characterization as a normative Ethereum fork rule.
     let input = SubCallInput {
@@ -168,11 +169,12 @@ fn nested_call_currently_executes_push0_under_both_parent_spec_ids() {
         is_static: true,
     };
 
+    let host = Arc::new(outbe_runtime::OutbeRuntime::new());
     let pre_shanghai = sub_call::run_with_host(
-        &mut context_with_push0(),
+        &mut evm_with_push0(host.clone()),
         outbe_evm::test_support::fresh_environment(CALLER, SpecId::LONDON),
         input.clone(),
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+        host.clone(),
     )
     .unwrap();
     assert!(
@@ -181,10 +183,10 @@ fn nested_call_currently_executes_push0_under_both_parent_spec_ids() {
     );
 
     let shanghai = sub_call::run_with_host(
-        &mut context_with_push0(),
+        &mut evm_with_push0(host.clone()),
         outbe_evm::test_support::fresh_environment(CALLER, SpecId::SHANGHAI),
         input,
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+        host,
     )
     .unwrap();
     assert!(matches!(shanghai.status, SubCallStatus::Success));

@@ -1,36 +1,97 @@
-//! Storage and subcall API tests using real revm frames.
-use alloy_evm::eth::EthEvmContext;
+//! Storage and subcall API tests using real evm2 frames.
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolError;
-use core::fmt::Debug;
-use outbe_evm::gas::SubcallGasMeter;
-use outbe_evm::storage::{CtxStorageProvider, CtxStorageProviderConfig, ReentrancyStack};
-use outbe_evm::EvmRuntimeHost;
+use evm2::{
+    bytecode::Bytecode,
+    evm::{AccountInfo, CacheDB, Database, DynDatabase, EmptyDB},
+    interpreter::InstrStop,
+    EvmFeatures, SpecId,
+};
+use outbe_evm::{
+    factory::OutbeEvmTypes,
+    gas::SubcallGasMeter,
+    storage::{CtxStorageProvider, CtxStorageProviderConfig, ReentrancyStack},
+    test_support::{set_call_depth, EvmCtx},
+    EvmRuntimeHost, OutbeEvmFactory,
+};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::{
     MutationEntitlements, PrecompileStorageProvider, SubCallError, SubCallInput, SubCallStatus,
 };
-use revm::context_interface::journaled_state::account::JournaledAccountTr as _;
-use revm::context_interface::ContextTr as _;
-use revm::context_interface::JournalTr as _;
-use revm::primitives::hardfork::SpecId;
-use revm::state::{AccountInfo, Bytecode};
-use revm::{
-    database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
-    Context, Database,
-};
+use reth_ethereum::evm::EthEvmEnv;
+use std::sync::Arc;
 
 const TARGET: Address = Address::repeat_byte(0xab);
 const CALLER: Address = Address::repeat_byte(0xc0);
 const GAS_WORD: &[u8] = &[0x5a, 0x60, 0, 0x52, 0x60, 32, 0x60, 0, 0xf3];
 
+fn host() -> Arc<outbe_runtime::OutbeRuntime> {
+    Arc::new(outbe_runtime::OutbeRuntime::new())
+}
+
+fn default_env() -> EthEvmEnv<OutbeEvmTypes> {
+    EthEvmEnv::new(SpecId::PRAGUE, Default::default(), 1)
+}
+
+fn db_with_target(code: &[u8]) -> CacheDB<EmptyDB> {
+    let mut db = CacheDB::new(EmptyDB::default());
+    let code = Bytecode::new_legacy(Bytes::copy_from_slice(code));
+    db.insert_account_info(
+        &TARGET,
+        AccountInfo {
+            code_hash: code.hash_slow(),
+            code: Some(code),
+            ..Default::default()
+        },
+    );
+    db
+}
+
+fn context_from_db<DB: DynDatabase + 'static>(db: DB, env: EthEvmEnv<OutbeEvmTypes>) -> EvmCtx {
+    let mut evm = OutbeEvmFactory::new(host()).create_evm(db, env);
+    // A real precompile frame already loaded its own account.
+    evm.state_mut().account(&CALLER).unwrap();
+    evm
+}
+
+fn context(code: &[u8]) -> EvmCtx {
+    context_from_db(db_with_target(code), default_env())
+}
+
+fn provider<'a>(evm: &'a mut EvmCtx, gas: u64) -> CtxStorageProvider<'a, 'static> {
+    CtxStorageProvider::new(
+        evm,
+        SubcallGasMeter::new(gas),
+        CtxStorageProviderConfig {
+            is_static: false,
+            self_address: CALLER,
+            reentrancy_stack: ReentrancyStack,
+            spec: SpecId::PRAGUE,
+            genesis_hash: B256::ZERO,
+            genesis_timestamp: 0,
+            abort_bridge: Default::default(),
+            scoped_mutation_entitlements: MutationEntitlements::NONE,
+        },
+        host(),
+    )
+}
+
+fn input(gas_limit: u64) -> SubCallInput {
+    SubCallInput {
+        target: TARGET,
+        value: U256::ZERO,
+        calldata: Bytes::new(),
+        gas_limit,
+        is_static: false,
+    }
+}
+
 #[test]
 fn trigger_budget_attributes_only_locally_reduced_child_oog() {
     use outbe_primitives::storage::StorageHandle;
     for explicit_cap in [100, u64::MAX] {
-        let mut ctx = context(&[0x5b, 0x60, 0, 0x56]); // Infinite jump loop.
-        let mut p = provider(&mut ctx, 50_000);
+        let mut evm = context(&[0x5b, 0x60, 0, 0x56]); // Infinite jump loop.
+        let mut p = provider(&mut evm, 50_000);
         let result = StorageHandle::enter(&mut p, |storage| {
             storage.with_trigger_budget(3600, || {
                 let child =
@@ -74,9 +135,10 @@ fn trigger_budget_attributes_only_locally_reduced_child_oog() {
 #[test]
 fn trigger_budget_does_not_attribute_fixed_memory_limit_to_local_allowance() {
     use outbe_primitives::storage::StorageHandle;
-    let mut ctx = context(&[0x60, 0, 0x60, 64, 0x52, 0]);
-    ctx.cfg.memory_limit = 32;
-    let mut p = provider(&mut ctx, 50_000);
+    let mut env = default_env();
+    env.version.memory_limit = 32;
+    let mut evm = context_from_db(db_with_target(&[0x60, 0, 0x60, 64, 0x52, 0]), env);
+    let mut p = provider(&mut evm, 50_000);
     StorageHandle::enter(&mut p, |storage| {
         storage.with_trigger_budget(4000, || {
             let child = storage.try_call(TARGET, U256::ZERO, Bytes::new())?;
@@ -96,8 +158,8 @@ fn trigger_budget_does_not_attribute_fixed_memory_limit_to_local_allowance() {
 fn trigger_budget_admission_and_exact_success_do_not_exhaust_parent() {
     use outbe_primitives::storage::StorageHandle;
     for budget in [2599, 2600] {
-        let mut ctx = context(&[0]);
-        let mut p = provider(&mut ctx, 50_000);
+        let mut evm = context(&[0]);
+        let mut p = provider(&mut evm, 50_000);
         let result = StorageHandle::enter(&mut p, |storage| {
             storage.with_trigger_budget(budget, || {
                 storage.call(TARGET, U256::ZERO, Bytes::new())?;
@@ -124,8 +186,8 @@ fn trigger_budget_admission_and_exact_success_do_not_exhaust_parent() {
 #[test]
 fn trigger_budget_remaining_reads_the_local_allowance_not_the_parent_meter() {
     use outbe_primitives::storage::StorageHandle;
-    let mut ctx = context(&[0]);
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context(&[0]);
+    let mut p = provider(&mut evm, 50_000);
     StorageHandle::enter(&mut p, |storage| {
         assert_eq!(storage.trigger_budget_remaining()?, None);
         storage.with_trigger_budget(5000, || {
@@ -143,8 +205,8 @@ fn trigger_budget_remaining_reads_the_local_allowance_not_the_parent_meter() {
 
 #[test]
 fn trigger_budget_returns_canonical_unused_allowance_without_double_charging() {
-    let mut ctx = context(GAS_WORD);
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context(GAS_WORD);
+    let mut p = provider(&mut evm, 50_000);
     p.begin_trigger_budget(5000).unwrap();
     for admission in [2600, 100] {
         let local_before = p.trigger_budget.as_ref().unwrap().remaining;
@@ -164,11 +226,9 @@ fn trigger_budget_returns_canonical_unused_allowance_without_double_charging() {
 
 #[test]
 fn trigger_budget_returns_allowance_on_depth_rejection() {
-    let mut ctx = context(GAS_WORD);
-    while ctx.journal().depth() <= 1024 {
-        ctx.journal_mut().checkpoint();
-    }
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context(GAS_WORD);
+    set_call_depth(&mut evm, 1024);
+    let mut p = provider(&mut evm, 50_000);
     p.begin_trigger_budget(5000).unwrap();
     let child = p.sub_call(input(u64::MAX)).unwrap();
     assert!(matches!(
@@ -182,8 +242,8 @@ fn trigger_budget_returns_allowance_on_depth_rejection() {
 
 #[test]
 fn trigger_budget_coexists_with_legacy_ceiling_and_preserves_unscoped_refunds() {
-    let mut ctx = context(&[0]);
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context(&[0]);
+    let mut p = provider(&mut evm, 50_000);
     let checkpoint = p.checkpoint();
     p.refund_gas(9);
     p.checkpoint_revert(checkpoint).unwrap();
@@ -212,8 +272,8 @@ fn trigger_budget_coexists_with_legacy_ceiling_and_preserves_unscoped_refunds() 
 
 #[test]
 fn trigger_budget_legacy_child_ceiling_caps_reservation_and_returns_unused() {
-    let mut ctx = context(GAS_WORD);
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context(GAS_WORD);
+    let mut p = provider(&mut evm, 50_000);
     p.begin_gas_ceiling(5000).unwrap();
     p.begin_trigger_budget(20_000).unwrap();
     let child = p.sub_call(input(u64::MAX)).unwrap();
@@ -232,8 +292,8 @@ fn trigger_budget_legacy_child_ceiling_caps_reservation_and_returns_unused() {
 
 #[test]
 fn trigger_budget_nested_standard_precompile_consumes_only_actual_work() {
-    let mut ctx = context(&[0]);
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context(&[0]);
+    let mut p = provider(&mut evm, 50_000);
     p.begin_trigger_budget(5000).unwrap();
     let payload = Bytes::from_static(b"bounded identity precompile");
     let child = p
@@ -257,10 +317,10 @@ fn trigger_budget_nested_standard_precompile_consumes_only_actual_work() {
 fn trigger_budget_rollback_removes_real_child_state_logs_balance_and_transient() {
     use outbe_primitives::storage::StorageHandle;
     // SSTORE(0,1), TSTORE(0,1), LOG0(empty), STOP.
-    let mut ctx = context(&[
+    let mut evm = context(&[
         0x60, 1, 0x60, 0, 0x55, 0x60, 1, 0x60, 0, 0x5d, 0x60, 0, 0x60, 0, 0xa0, 0,
     ]);
-    let mut p = provider(&mut ctx, 200_000);
+    let mut p = provider(&mut evm, 200_000);
     p.increase_balance(CALLER, U256::from(10)).unwrap();
     StorageHandle::enter(&mut p, |storage| {
         storage.refund_gas(9).unwrap();
@@ -286,66 +346,14 @@ fn trigger_budget_rollback_removes_real_child_state_logs_balance_and_transient()
             .with_trigger_budget(100, || storage.deduct_gas(100))
             .unwrap();
     });
-    assert!(p.ctx.journal().logs().is_empty());
+    assert!(p.evm.logs().is_empty());
     assert!(!p.subcall_out_of_gas);
-}
-
-fn context(code: &[u8]) -> EthEvmContext<CacheDB<EmptyDB>> {
-    let mut db = CacheDB::new(EmptyDB::default());
-    let code = Bytecode::new_raw(Bytes::copy_from_slice(code));
-    db.insert_account_info(
-        TARGET,
-        AccountInfo {
-            code_hash: code.hash_slow(),
-            code: Some(code),
-            ..Default::default()
-        },
-    );
-    let mut ctx = Context::mainnet().with_db(db).modify_cfg_chained(|cfg| {
-        cfg.set_spec_and_mainnet_gas_params(SpecId::PRAGUE);
-    });
-    // A real precompile frame already loaded its own account.
-    ctx.journal_mut().load_account_mut(CALLER).unwrap();
-    ctx
-}
-
-fn provider<DB: Database + Debug>(
-    ctx: &mut EthEvmContext<DB>,
-    gas: u64,
-) -> CtxStorageProvider<'_, DB> {
-    CtxStorageProvider::new(
-        ctx,
-        SubcallGasMeter::new(gas),
-        CtxStorageProviderConfig {
-            is_static: false,
-            self_address: CALLER,
-            reentrancy_stack: ReentrancyStack,
-            spec: SpecId::PRAGUE,
-            genesis_hash: B256::ZERO,
-            genesis_timestamp: 0,
-
-            abort_bridge: Default::default(),
-
-            scoped_mutation_entitlements: MutationEntitlements::NONE,
-        },
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
-    )
-}
-
-fn input(gas_limit: u64) -> SubCallInput {
-    SubCallInput {
-        target: TARGET,
-        value: U256::ZERO,
-        calldata: Bytes::new(),
-        gas_limit,
-        is_static: false,
-    }
 }
 
 #[test]
 fn explicit_cap_and_cold_then_warm_access_are_charged_once() {
-    let mut ctx = context(GAS_WORD);
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context(GAS_WORD);
+    let mut p = provider(&mut evm, 50_000);
     for access_cost in [2600, 100] {
         let before = p.gas.remaining();
         let child = p.sub_call(input(1000)).unwrap();
@@ -357,8 +365,8 @@ fn explicit_cap_and_cold_then_warm_access_are_charged_once() {
 
 #[test]
 fn max_sentinel_uses_eip150_after_upfront_cost() {
-    let mut ctx = context(GAS_WORD);
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context(GAS_WORD);
+    let mut p = provider(&mut evm, 50_000);
     let child = p.sub_call(input(u64::MAX)).unwrap();
     let available = 50_000 - 2600;
     assert_eq!(
@@ -370,8 +378,8 @@ fn max_sentinel_uses_eip150_after_upfront_cost() {
 
 #[test]
 fn caught_invalid_opcode_is_not_free() {
-    let mut ctx = context(&[0xfe]);
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context(&[0xfe]);
+    let mut p = provider(&mut evm, 50_000);
     let child = p.sub_call(input(1000)).unwrap();
     assert!(matches!(
         child.status,
@@ -383,8 +391,8 @@ fn caught_invalid_opcode_is_not_free() {
 
 #[test]
 fn admission_oog_exhausts_parent_and_cannot_be_hidden_by_try_call() {
-    let mut ctx = context(GAS_WORD);
-    let mut p = provider(&mut ctx, 99);
+    let mut evm = context(GAS_WORD);
+    let mut p = provider(&mut evm, 99);
     assert!(matches!(
         p.sub_call(input(1000)),
         Err(SubCallError::ParentOutOfGas)
@@ -398,16 +406,14 @@ fn admission_oog_exhausts_parent_and_cannot_be_hidden_by_try_call() {
 
 #[test]
 fn insufficient_balance_returns_unused_child_allowance() {
-    let mut ctx = context(GAS_WORD);
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context(GAS_WORD);
+    let mut p = provider(&mut evm, 50_000);
     let mut call = input(1000);
     call.value = U256::ONE;
     let child = p.sub_call(call).unwrap();
     assert!(matches!(
         child.status,
-        SubCallStatus::Halt(SubCallError::EvmHalt(
-            revm::context_interface::result::HaltReason::OutOfFunds
-        ))
+        SubCallStatus::Halt(SubCallError::EvmHalt(InstrStop::OutOfFunds))
     ));
     assert_eq!(child.gas_used, 0);
     assert_eq!(p.gas.remaining(), 50_000 - 2600 - 9000);
@@ -415,8 +421,8 @@ fn insufficient_balance_returns_unused_child_allowance() {
 
 #[test]
 fn static_value_is_rejected_before_entry_but_zero_value_call_can_read() {
-    let mut ctx = context(GAS_WORD);
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context(GAS_WORD);
+    let mut p = provider(&mut evm, 50_000);
     p.is_static = true;
     let mut call = input(1000);
     call.value = U256::ONE;
@@ -433,9 +439,10 @@ fn static_value_is_rejected_before_entry_but_zero_value_call_can_read() {
 
 #[test]
 fn child_memory_obeys_configured_limit() {
-    let mut ctx = context(&[0x60, 0, 0x60, 64, 0x52, 0]);
-    ctx.cfg.memory_limit = 32;
-    let mut p = provider(&mut ctx, 50_000);
+    let mut env = default_env();
+    env.version.memory_limit = 32;
+    let mut evm = context_from_db(db_with_target(&[0x60, 0, 0x60, 64, 0x52, 0]), env);
+    let mut p = provider(&mut evm, 50_000);
     let child = p.sub_call(input(1000)).unwrap();
     assert!(matches!(
         child.status,
@@ -453,12 +460,10 @@ fn refund_and_storage_survive_success_only() {
         } else {
             &[0]
         });
-        let mut ctx = context(&code);
-        ctx.journaled_state
-            .database
-            .insert_account_storage(TARGET, U256::ZERO, U256::ONE)
-            .unwrap();
-        let mut p = provider(&mut ctx, 50_000);
+        let mut db = db_with_target(&code);
+        db.insert_account_storage(&TARGET, &U256::ZERO, &U256::ONE);
+        let mut evm = context_from_db(db, default_env());
+        let mut p = provider(&mut evm, 50_000);
         let child = p.sub_call(input(20_000)).unwrap();
         assert_eq!(child.gas_refunded, if revert { 0 } else { 4800 });
         assert_eq!(p.gas.refunded(), child.gas_refunded);
@@ -472,27 +477,29 @@ fn refund_and_storage_survive_success_only() {
 #[test]
 fn zero_value_accounting_matches_native_call_after_wrapper_instructions() {
     for code in [GAS_WORD, &[0x60, 0, 0x60, 0, 0xfd][..], &[0xfe][..]] {
-        let mut ctx = context(code);
-        let mut p = provider(&mut ctx, 50_000);
+        let mut evm = context(code);
+        let mut p = provider(&mut evm, 50_000);
         p.sub_call(input(1000)).unwrap();
         let provider_charge = 50_000 - p.gas.remaining();
-        let mut ctx = context(code);
+
         // Seven PUSHes, CALL, POP, STOP. Native CALL catches child failure.
         let mut native = vec![0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x73];
         native.extend_from_slice(TARGET.as_slice());
         native.extend_from_slice(&[0x61, 0x03, 0xe8, 0xf1, 0x50, 0]);
-        let native = Bytecode::new_raw(native.into());
+        let native = Bytecode::new_legacy(native.into());
         let address = Address::repeat_byte(0xde);
-        ctx.journaled_state.database.insert_account_info(
-            address,
+        let mut db = db_with_target(code);
+        db.insert_account_info(
+            &address,
             AccountInfo {
                 code_hash: native.hash_slow(),
                 code: Some(native),
                 ..Default::default()
             },
         );
+        let mut evm = context_from_db(db, default_env());
         let output = outbe_evm::sub_call::run_with_host(
-            &mut ctx,
+            &mut evm,
             outbe_evm::sub_call::SubCallEnvironment {
                 self_address: CALLER,
                 outer_is_static: false,
@@ -502,7 +509,7 @@ fn zero_value_accounting_matches_native_call_after_wrapper_instructions() {
                 target: address,
                 ..input(50_000)
             },
-            std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+            host(),
         )
         .unwrap();
         assert!(matches!(output.status, SubCallStatus::Success));
@@ -516,11 +523,11 @@ fn zero_value_accounting_matches_native_call_after_wrapper_instructions() {
 
 #[test]
 fn delegated_target_is_priced_and_warmed_before_execution() {
-    let mut ctx = context(GAS_WORD);
+    let mut db = db_with_target(GAS_WORD);
     let delegated = Address::repeat_byte(0xdd);
-    let code = Bytecode::new_raw(Bytes::copy_from_slice(GAS_WORD));
-    ctx.journaled_state.database.insert_account_info(
-        delegated,
+    let code = Bytecode::new_legacy(Bytes::copy_from_slice(GAS_WORD));
+    db.insert_account_info(
+        &delegated,
         AccountInfo {
             code_hash: code.hash_slow(),
             code: Some(code),
@@ -528,15 +535,16 @@ fn delegated_target_is_priced_and_warmed_before_execution() {
         },
     );
     let designation = Bytecode::new_eip7702(delegated);
-    ctx.journaled_state.database.insert_account_info(
-        TARGET,
+    db.insert_account_info(
+        &TARGET,
         AccountInfo {
             code_hash: designation.hash_slow(),
             code: Some(designation),
             ..Default::default()
         },
     );
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context_from_db(db, default_env());
+    let mut p = provider(&mut evm, 50_000);
     for access_cost in [5200, 200] {
         let before = p.gas.remaining();
         let child = p.sub_call(input(1000)).unwrap();
@@ -547,12 +555,16 @@ fn delegated_target_is_priced_and_warmed_before_execution() {
 
 #[test]
 fn value_transfer_uses_explicit_allowance_without_automatic_stipend() {
-    let mut ctx = context(GAS_WORD);
-    ctx.journal_mut()
-        .load_account_mut(CALLER)
-        .unwrap()
-        .set_balance(U256::from(10));
-    let mut p = provider(&mut ctx, 50_000);
+    let mut db = db_with_target(GAS_WORD);
+    db.insert_account_info(
+        &CALLER,
+        AccountInfo {
+            balance: U256::from(10),
+            ..Default::default()
+        },
+    );
+    let mut evm = context_from_db(db, default_env());
+    let mut p = provider(&mut evm, 50_000);
     let mut call = input(1000);
     call.value = U256::ONE;
     let child = p.sub_call(call).unwrap();
@@ -564,11 +576,9 @@ fn value_transfer_uses_explicit_allowance_without_automatic_stipend() {
 
 #[test]
 fn depth_rejection_returns_reserved_allowance() {
-    let mut ctx = context(GAS_WORD);
-    while ctx.journal().depth() < 1025 {
-        ctx.journal_mut().checkpoint();
-    }
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context(GAS_WORD);
+    set_call_depth(&mut evm, 1024);
+    let mut p = provider(&mut evm, 50_000);
     let child = p.sub_call(input(1000)).unwrap();
     assert!(matches!(
         child.status,
@@ -589,21 +599,20 @@ fn native_calls_inside_child_keep_the_enclosing_depth_budget() {
     let mut probe = vec![0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x60, 0, 0x73];
     probe.extend_from_slice(empty.as_slice());
     probe.extend_from_slice(&[0x5a, 0xf1, 0x60, 0, 0x52, 0x60, 32, 0x60, 0, 0xf3]);
-    for (enclosing_depth, expected) in [(1022, 1), (1023, 0)] {
-        let mut ctx = context(&forward);
-        let code = Bytecode::new_raw(Bytes::copy_from_slice(&probe));
-        ctx.journaled_state.database.insert_account_info(
-            leaf,
+    for (enclosing_depth, expected) in [(1021, 1), (1022, 0)] {
+        let mut db = db_with_target(&forward);
+        let code = Bytecode::new_legacy(Bytes::copy_from_slice(&probe));
+        db.insert_account_info(
+            &leaf,
             AccountInfo {
                 code_hash: code.hash_slow(),
                 code: Some(code),
                 ..Default::default()
             },
         );
-        while ctx.journal().depth() < enclosing_depth {
-            ctx.journal_mut().checkpoint();
-        }
-        let mut p = provider(&mut ctx, 100_000);
+        let mut evm = context_from_db(db, default_env());
+        set_call_depth(&mut evm, enclosing_depth);
+        let mut p = provider(&mut evm, 100_000);
         let child = p.sub_call(input(50_000)).unwrap();
         assert!(matches!(child.status, SubCallStatus::Success));
         assert_eq!(
@@ -616,11 +625,9 @@ fn native_calls_inside_child_keep_the_enclosing_depth_budget() {
 
 #[test]
 fn child_entry_at_the_native_depth_limit_is_allowed() {
-    let mut ctx = context(GAS_WORD);
-    while ctx.journal().depth() < 1024 {
-        ctx.journal_mut().checkpoint();
-    }
-    let mut p = provider(&mut ctx, 50_000);
+    let mut evm = context(GAS_WORD);
+    set_call_depth(&mut evm, 1023);
+    let mut p = provider(&mut evm, 50_000);
     let child = p.sub_call(input(1000)).unwrap();
     assert!(matches!(child.status, SubCallStatus::Success), "{child:?}");
 }
@@ -638,31 +645,33 @@ impl std::fmt::Display for FailedRead {
     }
 }
 impl std::error::Error for FailedRead {}
-impl revm::database_interface::DBErrorMarker for FailedRead {}
 
 impl Database for FailedDatabase {
     type Error = FailedRead;
-    fn basic(&mut self, address: Address) -> std::result::Result<Option<AccountInfo>, FailedRead> {
-        if address != TARGET {
+    fn get_account(
+        &mut self,
+        address: &Address,
+    ) -> std::result::Result<Option<AccountInfo>, FailedRead> {
+        if *address != TARGET {
             return Ok(None);
         }
         if self.at_entry {
             return Err(FailedRead);
         }
-        let code = Bytecode::new_raw(Bytes::from_static(&[0x60, 0, 0x54, 0]));
+        let code = Bytecode::new_legacy(Bytes::from_static(&[0x60, 0, 0x54, 0]));
         Ok(Some(AccountInfo {
             code_hash: code.hash_slow(),
             code: Some(code),
             ..Default::default()
         }))
     }
-    fn code_by_hash(&mut self, _: B256) -> std::result::Result<Bytecode, FailedRead> {
+    fn get_code_by_hash(&mut self, _: &B256) -> std::result::Result<Bytecode, FailedRead> {
         Ok(Bytecode::default())
     }
-    fn storage(&mut self, _: Address, _: U256) -> std::result::Result<U256, FailedRead> {
+    fn get_storage(&mut self, _: &Address, _: &U256) -> std::result::Result<U256, FailedRead> {
         Err(FailedRead)
     }
-    fn block_hash(&mut self, _: u64) -> std::result::Result<B256, FailedRead> {
+    fn get_block_hash(&mut self, _: &U256) -> std::result::Result<B256, FailedRead> {
         Ok(B256::ZERO)
     }
 }
@@ -670,8 +679,11 @@ impl Database for FailedDatabase {
 #[test]
 fn account_and_child_storage_database_failures_remain_fatal() {
     for at_entry in [false, true] {
-        let mut ctx = Context::mainnet().with_db(FailedDatabase { at_entry });
-        let mut p = provider(&mut ctx, 50_000);
+        let mut evm = context_from_db(
+            evm2::evm::Db::new(FailedDatabase { at_entry }),
+            default_env(),
+        );
+        let mut p = provider(&mut evm, 50_000);
         let error = p
             .sub_call(input(10_000))
             .expect_err("DB failure has no VM status");
@@ -679,10 +691,10 @@ fn account_and_child_storage_database_failures_remain_fatal() {
             error,
             SubCallError::DatabaseError(_) | SubCallError::Fatal(_)
         ));
-        let output = outbe_evm::precompiles::map_outbe_precompile_result(Err(error.into()), 10);
+        let output = outbe_evm::precompiles::map_outbe_precompile_result(Err(error.into()));
         assert!(
-            output.is_err(),
-            "DB failure must not produce a user receipt"
+            matches!(output, Err(ref err) if err.is_fatal()),
+            "DB failure must not produce a user receipt: {output:?}"
         );
     }
 }
@@ -691,8 +703,11 @@ fn account_and_child_storage_database_failures_remain_fatal() {
 fn trigger_budget_caught_real_database_failure_stays_fatal() {
     use outbe_primitives::storage::StorageHandle;
     for at_entry in [false, true] {
-        let mut ctx = Context::mainnet().with_db(FailedDatabase { at_entry });
-        let mut p = provider(&mut ctx, 50_000);
+        let mut evm = context_from_db(
+            evm2::evm::Db::new(FailedDatabase { at_entry }),
+            default_env(),
+        );
+        let mut p = provider(&mut evm, 50_000);
         let result = StorageHandle::enter(&mut p, |storage| {
             storage.with_trigger_budget(20_000, || {
                 assert!(storage
@@ -716,9 +731,9 @@ fn inbox_getter_charges_actual_work_once_and_retains_its_child_cap() {
         storage::{direct::DirectStorageProvider, StorageHandle},
     };
     for code in [GAS_WORD, &[0xfe][..]] {
-        let mut ctx = context(code);
+        let mut db = db_with_target(code);
         let mut seed = DirectStorageProvider::new(
-            &mut ctx.journaled_state.database,
+            &mut db,
             BlockContext {
                 block_gas_limit: 0,
                 user_gas_used: 0,
@@ -738,7 +753,8 @@ fn inbox_getter_charges_actual_work_once_and_retains_its_child_cap() {
         });
         seed.flush().unwrap();
         drop(seed);
-        let mut p = provider(&mut ctx, 200_000);
+        let mut evm = context_from_db(db, default_env());
+        let mut p = provider(&mut evm, 200_000);
         let calldata =
             outbe_l2registry::precompile::IL2Registry::getNetworkCall { chainId: 42 }.abi_encode();
         let result = outbe_l2registry::precompile::dispatch(
@@ -774,9 +790,10 @@ fn inbox_getter_charges_actual_work_once_and_retains_its_child_cap() {
 
 #[test]
 fn unsupported_state_gas_is_rejected_before_execution() {
-    let mut ctx = context(GAS_WORD);
-    ctx.cfg.enable_amsterdam_eip8037 = true;
-    let mut p = provider(&mut ctx, 50_000);
+    let mut env = default_env();
+    env.version.features.insert(EvmFeatures::EIP8037);
+    let mut evm = context_from_db(db_with_target(GAS_WORD), env);
+    let mut p = provider(&mut evm, 50_000);
     assert!(matches!(
         p.sub_call(input(1000)),
         Err(SubCallError::Fatal(_))

@@ -1,29 +1,28 @@
 //! The borrowed child frame must expose a settled, typed VM outcome.
-use alloy_evm::{Evm as _, EvmFactory as _};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_consensus::TxLegacy;
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::SolCall;
-use outbe_evm::sub_call;
-use outbe_evm::OutbeEvmFactory;
+use evm2::{
+    bytecode::Bytecode,
+    env::BlockEnvExt,
+    ethereum::TxEnvelope,
+    evm::{AccountInfo, CacheDB, Database as _, EmptyDB},
+    interpreter::InstrStop,
+    SpecId, TxResult,
+};
+use outbe_evm::{factory::OutbeEvmTypes, sub_call, test_support::EvmWorld, OutbeEvmFactory};
 use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallStatus};
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_vaultrouter::precompile::IVaultRouter;
-use reth_ethereum::evm::primitives::EvmEnv;
-use revm::{
-    context::result::HaltReason,
-    database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
-    primitives::hardfork::SpecId,
-    state::{AccountInfo, Bytecode},
-    Context, DatabaseCommit,
-};
+use reth_ethereum::evm::EthEvmEnv;
+use reth_primitives_traits::Recovered;
 
-fn vault_read(code: &[u8]) -> revm::context::result::ExecutionResult {
-    use revm::context::{BlockEnv, CfgEnv, TxEnv};
+fn vault_read(code: &[u8]) -> TxResult<OutbeEvmTypes> {
     let sender = Address::repeat_byte(0xc0);
     let target = Address::repeat_byte(0xab);
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(
-        sender,
+        &sender,
         AccountInfo {
             balance: U256::from(10_u64.pow(18)),
             ..Default::default()
@@ -31,7 +30,7 @@ fn vault_read(code: &[u8]) -> revm::context::result::ExecutionResult {
     );
     let code = Bytecode::new_raw(Bytes::copy_from_slice(code));
     db.insert_account_info(
-        target,
+        &target,
         AccountInfo {
             code_hash: code.hash_slow(),
             code: Some(code),
@@ -41,58 +40,60 @@ fn vault_read(code: &[u8]) -> revm::context::result::ExecutionResult {
     let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
         .create_evm(
             db,
-            EvmEnv {
-                cfg_env: CfgEnv::new()
-                    .with_chain_id(1)
-                    .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-                block_env: BlockEnv {
+            EthEvmEnv::new(
+                SpecId::PRAGUE,
+                BlockEnvExt {
                     number: U256::from(1),
-                    gas_limit: 30_000_000,
+                    gas_limit: U256::from(30_000_000_u64),
                     ..Default::default()
                 },
-            },
+                1,
+            ),
         );
-    let outcome = evm
-        .transact_raw(
-            TxEnv::builder()
-                .caller(sender)
-                .nonce(0)
-                .kind(revm::primitives::TxKind::Call(VAULT_ROUTER_ADDRESS))
-                .data(
-                    IVaultRouter::sharesBalanceCall { vault: target }
-                        .abi_encode()
-                        .into(),
-                )
-                .gas_limit(200_000)
-                .build()
-                .unwrap(),
-        )
-        .expect("child VM failure must remain a transaction outcome");
-    evm.db_mut().commit(outcome.state);
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(1),
+            nonce: 0,
+            gas_price: 0,
+            gas_limit: 200_000,
+            to: TxKind::Call(VAULT_ROUTER_ADDRESS),
+            value: U256::ZERO,
+            input: IVaultRouter::sharesBalanceCall { vault: target }
+                .abi_encode()
+                .into(),
+        }),
+        sender,
+    );
+    let result = evm
+        .transact(&tx)
+        .expect("child VM failure must remain a transaction outcome")
+        .commit();
+    let next_tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(1),
+            nonce: 1,
+            gas_price: 0,
+            gas_limit: 21_000,
+            to: TxKind::Call(Address::repeat_byte(0xee)),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        }),
+        sender,
+    );
     let next = evm
-        .transact_raw(
-            TxEnv::builder()
-                .caller(sender)
-                .nonce(1)
-                .kind(revm::primitives::TxKind::Call(Address::repeat_byte(0xee)))
-                .gas_limit(21_000)
-                .build()
-                .unwrap(),
-        )
-        .expect("the next transaction still executes");
-    assert!(next.result.is_success());
-    outcome.result
+        .transact(&next_tx)
+        .expect("the next transaction still executes")
+        .commit();
+    assert!(next.is_success());
+    result
 }
 
 #[test]
 fn dispatcher_caps_unbounded_child_budget_to_parent_gas() {
     // GAS; MSTORE(0); RETURN(0,32): observe the actual child allowance.
     let result = vault_read(&[0x5a, 0x60, 0, 0x52, 0x60, 32, 0x60, 0, 0xf3]);
-    let bytes = result
-        .output()
-        .expect("successful getter returns the child's GAS");
     assert!(result.is_success(), "{result:?}");
-    let gas = U256::from_be_slice(bytes);
+    let gas = U256::from_be_slice(&result.output);
     assert!(
         gas < U256::from(200_000),
         "child received {gas} gas from a 200000-gas transaction"
@@ -103,17 +104,14 @@ fn dispatcher_caps_unbounded_child_budget_to_parent_gas() {
 fn dispatcher_propagates_child_invalid_and_out_of_gas_as_execution_halts() {
     for code in [&[0xfe][..], &[0x5b, 0x60, 0, 0x56][..]] {
         let result = vault_read(code);
-        assert!(
-            matches!(result, revm::context::result::ExecutionResult::Halt { .. }),
-            "{result:?}"
-        );
+        assert!(result.is_halt(), "{result:?}");
         assert_eq!(
             result.tx_gas_used(),
             200_000,
-            "revm spends the halted frame's gas"
+            "evm2 spends the halted frame's gas"
         );
         assert!(
-            result.output().is_none(),
+            result.output.is_empty(),
             "halts have no synthetic revert ABI"
         );
     }
@@ -152,16 +150,17 @@ fn invalid_opcode_spends_the_child_allowance_and_retains_its_vm_reason() {
     let mut db = CacheDB::new(EmptyDB::default());
     let code = Bytecode::new_raw(Bytes::from_static(&[0xfe]));
     db.insert_account_info(
-        target,
+        &target,
         AccountInfo {
             code_hash: code.hash_slow(),
             code: Some(code),
             ..Default::default()
         },
     );
-    let mut ctx = Context::mainnet().with_db(db);
+    let host = std::sync::Arc::new(outbe_runtime::OutbeRuntime::new());
+    let mut world = EvmWorld::new(db, host.clone());
     let result = sub_call::run_with_host(
-        &mut ctx,
+        &mut world.evm,
         outbe_evm::test_support::fresh_environment(Address::repeat_byte(0xc0), SpecId::PRAGUE),
         SubCallInput {
             target,
@@ -170,7 +169,7 @@ fn invalid_opcode_spends_the_child_allowance_and_retains_its_vm_reason() {
             gas_limit: 10_000,
             is_static: false,
         },
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+        host,
     )
     .expect("an invalid opcode is an ordinary child VM outcome");
 
@@ -181,7 +180,7 @@ fn invalid_opcode_spends_the_child_allowance_and_retains_its_vm_reason() {
     assert_eq!(result.gas_refunded, 0);
     assert!(matches!(
         result.status,
-        SubCallStatus::Halt(SubCallError::EvmHalt(HaltReason::InvalidFEOpcode))
+        SubCallStatus::Halt(SubCallError::EvmHalt(InstrStop::InvalidFEOpcode))
     ));
 }
 
@@ -196,7 +195,6 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
     };
     use outbe_system_common::addresses::GEM_FACTORY_ADDRESS;
     use outbe_system_common::time::EmissionDate;
-    use revm::context::{BlockEnv, CfgEnv, TxEnv};
     let sender = Address::repeat_byte(0xc0);
     let proxy = Address::repeat_byte(0xac);
     let series = SeriesId::pack(20_261_008, *b"USD", b'U').unwrap();
@@ -208,7 +206,7 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
     for (is_static, nested) in [(false, false), (true, false), (false, true)] {
         let mut db = CacheDB::new(EmptyDB::default());
         db.insert_account_info(
-            sender,
+            &sender,
             AccountInfo {
                 balance: U256::from(10_u64.pow(18)),
                 ..Default::default()
@@ -254,7 +252,7 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
             let invalid = Address::repeat_byte(0xde);
             let code = Bytecode::new_raw(Bytes::from_static(&[0xfe]));
             db.insert_account_info(
-                invalid,
+                &invalid,
                 AccountInfo {
                     code_hash: code.hash_slow(),
                     code: Some(code),
@@ -271,7 +269,7 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
             ]))
         };
         db.insert_account_info(
-            INTEX_NFT1155_ADDRESS,
+            &INTEX_NFT1155_ADDRESS,
             AccountInfo {
                 code_hash: child.hash_slow(),
                 code: Some(child),
@@ -313,7 +311,7 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
         ]);
         let code = Bytecode::new_raw(code.into());
         db.insert_account_info(
-            proxy,
+            &proxy,
             AccountInfo {
                 code_hash: code.hash_slow(),
                 code: Some(code),
@@ -325,32 +323,38 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
         ))
         .create_evm(
             &mut db,
-            EvmEnv {
-                cfg_env: CfgEnv::new()
-                    .with_chain_id(1)
-                    .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-                block_env: BlockEnv {
+            EthEvmEnv::new(
+                SpecId::PRAGUE,
+                BlockEnvExt {
                     number: U256::ONE,
                     timestamp: U256::from(1_700_000_000),
-                    gas_limit: 30_000_000,
+                    gas_limit: U256::from(30_000_000_u64),
                     ..Default::default()
                 },
-            },
+                1,
+            ),
         );
-        let outcome = evm
-            .transact_raw(
-                TxEnv::builder()
-                    .caller(sender)
-                    .nonce(0)
-                    .kind(revm::primitives::TxKind::Call(proxy))
-                    .data(Bytes::copy_from_slice(&data))
-                    .gas_limit(500_000)
-                    .build()
-                    .unwrap(),
-            )
-            .expect("static rejection never aborts execution");
-        assert!(outcome.result.is_success(), "proxy catches command failure");
-        let output = outcome.result.output().unwrap();
+        let tx = Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                chain_id: Some(1),
+                nonce: 0,
+                gas_price: 0,
+                gas_limit: 500_000,
+                to: TxKind::Call(proxy),
+                value: U256::ZERO,
+                input: Bytes::copy_from_slice(&data),
+            }),
+            sender,
+        );
+        let detached = evm
+            .transact(&tx)
+            .expect("static rejection never aborts execution")
+            .detach();
+        assert!(
+            detached.result.is_success(),
+            "proxy catches command failure"
+        );
+        let output = &detached.result.output;
         assert_eq!(&output[..32], &[0; 32]);
         if is_static {
             assert_eq!(output.len(), 32, "admission halt has no child returndata");
@@ -367,13 +371,11 @@ fn gem_static_gate_and_nested_child_failures_settle_inside_evm() {
                 "normal CALL reaches the writing child"
             );
         }
-        assert!(outcome.result.logs().is_empty());
-        evm.db_mut().commit(outcome.state);
-        use revm::Database as _;
+        assert!(detached.result.logs.is_empty());
+        drop(evm);
+        db.commit_pending(&detached.pending_state);
         assert_eq!(
-            evm.db_mut()
-                .storage(INTEX_NFT1155_ADDRESS, U256::ZERO)
-                .unwrap(),
+            db.get_storage(&INTEX_NFT1155_ADDRESS, &U256::ZERO).unwrap(),
             U256::ZERO,
             "child write rolled back"
         );

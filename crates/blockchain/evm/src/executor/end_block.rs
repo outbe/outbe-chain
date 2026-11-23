@@ -111,7 +111,7 @@ impl OutbeBlockExecutor<'_> {
     }
 
     pub fn tx_gas_limit_cap(&self) -> u64 {
-        self.inner.evm().version().tx_gas_caps().0
+        self.inner.evm().version().tx_gas_limit_cap
     }
 
     /// Builder stage after user transactions and before execution finalization.

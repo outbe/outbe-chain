@@ -10,23 +10,24 @@ pub(super) fn verify_accepted_auction_cleanup(
 ) {
     use outbe_evm::gas::SubcallGasMeter;
     use outbe_evm::storage::CtxStorageProvider;
-    use revm::{context_interface::JournalTr as _, handler::MainContext as _, Context};
     let day = EmissionDate::new(20240101);
-    let mut ctx = Context::mainnet().with_db(state).modify_cfg_chained(|cfg| {
-        cfg.chain_id = CHAIN_ID;
-        cfg.set_spec_and_mainnet_gas_params(SpecId::PRAGUE);
-    });
+    let host: Arc<dyn outbe_evm::EvmRuntimeHost> = Arc::new(outbe_runtime::OutbeRuntime::new());
+    let factory = outbe_evm::OutbeEvmFactory::new(Arc::clone(&host));
+    let env = EthEvmEnv::new(SpecId::PRAGUE, Default::default(), CHAIN_ID);
+    let mut evm = factory.create_evm(state, env);
     let (stage, bids, returned) = outcome;
     let mut previous = bids;
     let mut credit = None;
     for block in 2..=8u64 {
-        ctx.block.number = U256::from(block);
-        ctx.block.timestamp = U256::from(timestamp + block);
+        let mut block_env = *evm.block();
+        block_env.number = U256::from(block);
+        block_env.timestamp = U256::from(timestamp + block);
+        evm.set_block(block_env);
         let mut provider = CtxStorageProvider::new(
-            &mut ctx,
+            &mut evm,
             SubcallGasMeter::new(100_000_000),
             cleanup_storage_config(),
-            std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+            std::sync::Arc::clone(&host),
         );
         StorageHandle::enter(&mut provider, |storage| {
             let auction = outbe_desis::DesisContract::new(storage.clone());
@@ -107,7 +108,7 @@ pub(super) fn verify_accepted_auction_cleanup(
         outbe_desis::precompile::IDesis::DesisCompleted::decode_log(log).is_ok()
             || outbe_desis::precompile::IDesis::DesisFailed::decode_log(log).is_ok()
     }));
-    assert!(!ctx.journaled_state.logs().iter().any(|log| {
+    assert!(!evm.logs().iter().any(|log| {
         outbe_desis::precompile::IDesis::DesisCompleted::decode_log(log).is_ok()
             || outbe_desis::precompile::IDesis::DesisFailed::decode_log(log).is_ok()
             || outbe_intexfactory::precompile::IIntexFactory::IntexSeriesOpened::decode_log(log)

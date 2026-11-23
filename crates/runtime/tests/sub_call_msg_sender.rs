@@ -15,15 +15,13 @@
 //! ```
 
 use alloy_primitives::{Address, Bytes, U256};
-use outbe_evm::sub_call;
-use outbe_primitives::storage::{SubCallInput, SubCallStatus};
-use revm::{
-    database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
-    primitives::hardfork::SpecId,
-    state::{AccountInfo, Bytecode},
-    Context,
+use evm2::{
+    bytecode::Bytecode,
+    evm::{AccountInfo, CacheDB, EmptyDB},
+    SpecId,
 };
+use outbe_evm::{sub_call, test_support::EvmWorld};
+use outbe_primitives::storage::{SubCallInput, SubCallStatus};
 
 const TARGET: Address = Address::new([0xAB; 20]);
 const CALLER: Address = Address::new([0xC0; 20]);
@@ -48,11 +46,12 @@ fn sub_call_propagates_caller_as_msg_sender() {
         code: Some(code),
         ..Default::default()
     };
-    db.insert_account_info(TARGET, info);
-    let mut ctx = Context::mainnet().with_db(db);
+    db.insert_account_info(&TARGET, info);
+    let host = std::sync::Arc::new(outbe_runtime::OutbeRuntime::new());
+    let mut world = EvmWorld::new(db, host.clone());
 
     let result = sub_call::run_with_host(
-        &mut ctx,
+        &mut world.evm,
         outbe_evm::test_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: TARGET,
@@ -61,7 +60,7 @@ fn sub_call_propagates_caller_as_msg_sender() {
             gas_limit: 1_000_000,
             is_static: true,
         },
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+        host,
     )
     .expect("sub_call should succeed");
 

@@ -1,6 +1,7 @@
 //! Sponsorship quota is part of the block state only when the transaction is.
 
-use alloy_evm::block::CommitChanges;
+use evm2::{registry::HandlerError, EvmFeatures};
+use outbe_evm::executor::OutbeInvalidTxError;
 use outbe_system_common::addresses::{
     AGENT_REWARD_ADDRESS, TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS,
 };
@@ -39,32 +40,23 @@ fn sponsored_tx_to(
     .into()
 }
 
-fn pectra_evm_env() -> EvmEnv {
-    EvmEnv {
-        cfg_env: revm::context::CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(revm::primitives::hardfork::SpecId::PRAGUE),
-        block_env: pectra_block_env(),
-    }
+fn pectra_evm_env() -> EthEvmEnv<OutbeEvmTypes> {
+    EthEvmEnv::new(SpecId::PRAGUE, pectra_block_env(), CHAIN_ID)
 }
 
-fn pectra_block_env() -> revm::context::BlockEnv {
-    revm::context::BlockEnv {
+fn pectra_block_env() -> BlockEnvExt {
+    BlockEnvExt {
         number: U256::from(1),
-        gas_limit: 30_000_000,
-        basefee: alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE,
+        gas_limit: U256::from(30_000_000_u64),
+        basefee: U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE),
         beneficiary: OWNER,
         timestamp: U256::from(1_775_001_600u64),
         ..Default::default()
     }
 }
 
-fn delegated_state(
-    signer: Address,
-    balance: U256,
-    nonce: u64,
-) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+fn delegated_state(signer: Address, balance: U256, nonce: u64) -> CacheDB<EmptyDB> {
+    let mut db = CacheDB::new(EmptyDB::default());
     let marker = Bytecode::new_legacy([0xef].into());
     for address in [
         ZEROFEE_ADDRESS,
@@ -72,7 +64,7 @@ fn delegated_state(
         TRIBUTE_FACTORY_ADDRESS,
     ] {
         db.insert_account_info(
-            address,
+            &address,
             AccountInfo {
                 code_hash: marker.hash_slow(),
                 code: Some(marker.clone()),
@@ -82,7 +74,7 @@ fn delegated_state(
     }
     let delegation = Bytecode::new_eip7702(ZEROFEE_ADDRESS);
     db.insert_account_info(
-        signer,
+        &signer,
         AccountInfo {
             balance,
             nonce,
@@ -91,10 +83,7 @@ fn delegated_state(
             ..Default::default()
         },
     );
-    State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build()
+    db
 }
 
 fn counter_slot(signer: Address) -> U256 {
@@ -104,15 +93,25 @@ fn counter_slot(signer: Address) -> U256 {
     })
 }
 
-fn live_counter(
-    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
-    signer: Address,
-) -> (u32, u32) {
-    let packed = state
-        .storage(ZEROFEE_ADDRESS, counter_slot(signer))
+fn live_counter<DB: evm2::evm::DynDatabase>(db: &mut CacheDB<DB>, signer: Address) -> (u32, u32) {
+    let packed = evm2::evm::Database::get_storage(db, &ZEROFEE_ADDRESS, &counter_slot(signer))
         .expect("counter storage read")
         .saturating_to::<u64>();
     outbe_zerofee::unpack_counter(packed)
+}
+
+fn live_balance<DB: evm2::evm::DynDatabase>(db: &mut CacheDB<DB>, signer: Address) -> U256 {
+    evm2::evm::Database::get_account(db, &signer)
+        .expect("account read")
+        .map(|info| info.balance)
+        .unwrap_or_default()
+}
+
+fn live_nonce<DB: evm2::evm::DynDatabase>(db: &mut CacheDB<DB>, signer: Address) -> u64 {
+    evm2::evm::Database::get_account(db, &signer)
+        .expect("account read")
+        .expect("account")
+        .nonce
 }
 
 fn assert_invalid_tx(error: BlockExecutionError, nonce_too_low: bool) {
@@ -141,18 +140,19 @@ fn wide_timestamp_rejects_sponsorship_before_quota_or_receipt_changes() {
     let initial_balance = U256::from(1);
     let mut state = delegated_state(signer, initial_balance, 0);
     let mut env = pectra_evm_env();
-    env.block_env.timestamp = U256::MAX;
+    env.block.timestamp = U256::MAX;
     let evm = config.evm_with_env(&mut state, env);
     let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
     let error = executor.execute_transaction(recovered).unwrap_err();
     assert!(matches!(error, BlockExecutionError::Validation(_)));
     assert_eq!(error.to_string(), "timestamp exceeds u64");
     assert!(executor.receipts().is_empty());
-    drop(executor);
-    assert!(
-        state.cache.accounts.is_empty(),
+    assert_eq!(
+        executor.evm().state().loaded_accounts().count(),
+        0,
         "no delegation or quota access"
     );
+    drop(executor);
     assert_eq!(live_counter(&mut state, signer), (0, 0));
     assert_eq!(signer_balance(&mut state, signer), initial_balance);
 }
@@ -188,10 +188,10 @@ fn sponsored_included_revert_keeps_quota() {
             ),
             "an included revert still grants the sponsorship"
         );
+        let db = executor.evm_mut().state_mut().overlay_db_mut();
+        assert_eq!(live_counter(db, signer), (TODAY, 1));
+        assert_eq!(live_balance(db, signer), initial_balance);
     }
-
-    assert_eq!(live_counter(&mut state, signer), (TODAY, 1));
-    assert_eq!(signer_balance(&mut state, signer), initial_balance);
 }
 
 #[test]
@@ -216,12 +216,11 @@ fn sponsored_nonce_too_low_does_not_burn_quota() {
         assert_invalid_tx(error, true);
         assert_eq!(executor.sponsored_gas_used, 0);
         assert!(executor.receipts().is_empty());
+        let db = executor.evm_mut().state_mut().overlay_db_mut();
+        assert_eq!(live_counter(db, signer), (0, 0));
+        assert_eq!(live_balance(db, signer), initial_balance);
+        assert_eq!(live_nonce(db, signer), 1);
     }
-
-    assert_eq!(live_counter(&mut state, signer), (0, 0));
-    assert_eq!(signer_balance(&mut state, signer), initial_balance);
-    let account = state.basic(signer).expect("account read").expect("account");
-    assert_eq!(account.nonce, 1);
 }
 
 #[test]
@@ -248,12 +247,11 @@ fn sponsored_gas_below_intrinsic_does_not_burn_quota() {
         assert_invalid_tx(error, false);
         assert_eq!(executor.sponsored_gas_used, 0);
         assert!(executor.receipts().is_empty());
+        let db = executor.evm_mut().state_mut().overlay_db_mut();
+        assert_eq!(live_counter(db, signer), (0, 0));
+        assert_eq!(live_balance(db, signer), initial_balance);
+        assert_eq!(live_nonce(db, signer), 0);
     }
-
-    assert_eq!(live_counter(&mut state, signer), (0, 0));
-    assert_eq!(signer_balance(&mut state, signer), initial_balance);
-    let account = state.basic(signer).expect("account read").expect("account");
-    assert_eq!(account.nonce, 0);
 }
 
 #[test]
@@ -275,17 +273,16 @@ fn sponsored_declined_commit_does_not_burn_quota() {
         let evm = config.evm_with_env(&mut state, pectra_evm_env());
         let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
         let outcome = executor
-            .execute_transaction_with_commit_condition(recovered, |_| CommitChanges::No)
+            .execute_transaction_with_commit_condition(recovered, |_, _| CommitChanges::No)
             .expect("declining the commit is not an execution error");
         assert!(outcome.is_none());
         assert_eq!(executor.sponsored_gas_used, 0);
         assert!(executor.receipts().is_empty());
+        let db = executor.evm_mut().state_mut().overlay_db_mut();
+        assert_eq!(live_counter(db, signer), (0, 0));
+        assert_eq!(live_balance(db, signer), initial_balance);
+        assert_eq!(live_nonce(db, signer), 0);
     }
-
-    assert_eq!(live_counter(&mut state, signer), (0, 0));
-    assert_eq!(signer_balance(&mut state, signer), initial_balance);
-    let account = state.basic(signer).expect("account read").expect("account");
-    assert_eq!(account.nonce, 0);
 }
 
 #[test]
@@ -317,8 +314,8 @@ fn tribute_wrong_selector_above_default_gas_uses_paid_fallback() {
                         ..
                     }) => {
                         assert!(matches!(
-                            error.as_invalid_tx_err(),
-                            Some(InvalidTransaction::LackOfFundForMaxFee { .. })
+                            error.as_any().downcast_ref::<HandlerError>(),
+                            Some(HandlerError::InsufficientFunds { .. })
                         ));
                     }
                     other => panic!("expected insufficient funds, got {other}"),
@@ -339,19 +336,20 @@ fn tribute_wrong_selector_above_default_gas_uses_paid_fallback() {
             }
             assert_eq!(executor.sponsored_gas_used, 0);
             assert_eq!(executor.zero_fee_soft_failures, 0);
+            let db = executor.evm_mut().state_mut().overlay_db_mut();
+            assert_eq!(live_counter(db, signer), (0, 0));
+            assert_eq!(
+                live_balance(db, signer),
+                initial_balance
+                    - U256::from(paid_gas_used)
+                        * U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE),
+                "only the included paid revert debits ordinary gas fees"
+            );
+            assert_eq!(
+                live_nonce(db, signer),
+                u64::from(!initial_balance.is_zero())
+            );
         }
-        assert_eq!(live_counter(&mut state, signer), (0, 0));
-        assert_eq!(
-            signer_balance(&mut state, signer),
-            initial_balance
-                - U256::from(paid_gas_used)
-                    * U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE),
-            "only the included paid revert debits ordinary gas fees"
-        );
-        assert_eq!(
-            state.basic(signer).unwrap().unwrap().nonce,
-            u64::from(!initial_balance.is_zero())
-        );
     }
 }
 
@@ -396,9 +394,9 @@ fn sponsored_block_budget_defers_large_transaction_but_includes_smaller_and_rese
                 log.address == ZEROFEE_ADDRESS
                     && log.topics().first() == Some(&SponsorshipAuthorized::SIGNATURE_HASH)
             }));
-            let db = executor.inner.evm.db_mut();
+            let db = executor.evm_mut().state_mut().overlay_db_mut();
             assert_eq!(live_counter(db, signer), (TODAY, nonce as u32 + 1));
-            assert_eq!(signer_balance(db, signer), U256::ZERO);
+            assert_eq!(live_balance(db, signer), U256::ZERO);
         }
         assert_eq!(executor.sponsored_gas_used, 13_000_000);
         let error = executor
@@ -415,15 +413,19 @@ fn sponsored_block_budget_defers_large_transaction_but_includes_smaller_and_rese
         assert_eq!(executor.receipts().len(), 2);
         assert_eq!(executor.sponsored_gas_used, 13_000_000);
         assert_eq!(executor.zero_fee_soft_failures, 0);
-        let db = executor.inner.evm.db_mut();
-        assert_eq!(live_counter(db, signer), (TODAY, 2));
-        assert_eq!(db.basic(signer).unwrap().unwrap().nonce, 2);
+        {
+            let db = executor.evm_mut().state_mut().overlay_db_mut();
+            assert_eq!(live_counter(db, signer), (TODAY, 2));
+            assert_eq!(live_nonce(db, signer), 2);
+        }
 
         let smaller =
             Recovered::new_unchecked(sponsored_tx(2, 500_000, reverting_calldata()), signer);
         executor.execute_transaction(smaller).unwrap();
         assert_eq!(executor.receipts().len(), 3);
         assert_eq!(executor.sponsored_gas_used, 13_500_000);
+        let bundle = executor.into_state();
+        state.commit_source(&BundleSource(&bundle));
     }
     assert_eq!(live_counter(&mut state, signer), (TODAY, 3));
     assert_eq!(signer_balance(&mut state, signer), U256::ZERO);
@@ -437,6 +439,8 @@ fn sponsored_block_budget_defers_large_transaction_but_includes_smaller_and_rese
         assert_eq!(executor.sponsored_gas_used, 8_000_000);
         assert!(!executor.receipts()[0].success);
         assert_eq!(executor.zero_fee_soft_failures, 0);
+        let bundle = executor.into_state();
+        state.commit_source(&BundleSource(&bundle));
     }
     assert_eq!(live_counter(&mut state, signer), (TODAY, 4));
     assert_eq!(signer_balance(&mut state, signer), U256::ZERO);
@@ -454,10 +458,7 @@ fn sponsored_budget_deferral_precedes_quota_exhaustion() {
     let signer = Address::from(*recovered.signer());
     let mut state = delegated_state(signer, U256::ZERO, 0);
     let packed = outbe_zerofee::pack_counter(TODAY, outbe_zerofee::FREE_TX_DAILY_LIMIT);
-    state
-        .database
-        .insert_account_storage(ZEROFEE_ADDRESS, counter_slot(signer), U256::from(packed))
-        .unwrap();
+    state.insert_account_storage(&ZEROFEE_ADDRESS, &counter_slot(signer), &U256::from(packed));
     {
         let evm = config.evm_with_env(&mut state, pectra_evm_env());
         let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
@@ -474,14 +475,7 @@ fn sponsored_budget_deferral_precedes_quota_exhaustion() {
         assert!(executor.receipts().is_empty());
         assert_eq!(executor.zero_fee_soft_failures, 0);
         assert_eq!(
-            executor
-                .inner
-                .evm
-                .db_mut()
-                .basic(signer)
-                .unwrap()
-                .unwrap()
-                .nonce,
+            live_nonce(executor.evm_mut().state_mut().overlay_db_mut(), signer),
             0
         );
         // Once it fits, the same exhausted signer receives the existing soft failure.
@@ -491,29 +485,25 @@ fn sponsored_budget_deferral_precedes_quota_exhaustion() {
         assert!(!executor.receipts()[0].success);
         assert_eq!(executor.sponsored_gas_used, 0);
         assert_eq!(executor.zero_fee_soft_failures, 1);
+        assert_eq!(
+            live_counter(executor.evm_mut().state_mut().overlay_db_mut(), signer),
+            (TODAY, outbe_zerofee::FREE_TX_DAILY_LIMIT)
+        );
     }
-    assert_eq!(
-        live_counter(&mut state, signer),
-        (TODAY, outbe_zerofee::FREE_TX_DAILY_LIMIT)
-    );
 }
 
 #[test]
 fn sponsored_budget_matcher_requires_exact_reason() {
     assert!(outbe_evm::is_sponsored_block_budget_deferral(
-        &InvalidTransaction::Str(outbe_evm::SPONSORED_BLOCK_BUDGET_EXCEEDED.into(),)
+        &OutbeInvalidTxError::SponsoredBlockBudgetExceeded
     ));
-    for reason in [
-        "sponsored block budget exceeded suffix",
-        "zero-fee soft-failure cap exceeded",
+    for other in [
+        OutbeInvalidTxError::EnclaveWitnessBudgetExceeded,
+        OutbeInvalidTxError::ZeroFeeSoftFailureCapExceeded { cap: 1 },
+        OutbeInvalidTxError::UnsignedEnclaveError,
     ] {
-        assert!(!outbe_evm::is_sponsored_block_budget_deferral(
-            &InvalidTransaction::Str(reason.into())
-        ));
+        assert!(!outbe_evm::is_sponsored_block_budget_deferral(&other));
     }
-    assert!(!outbe_evm::is_sponsored_block_budget_deferral(
-        &InvalidTransaction::NonceTooLow { tx: 0, state: 1 }
-    ));
 }
 
 #[test]
@@ -532,20 +522,27 @@ fn sponsored_execution_restores_existing_fee_flags_on_every_result_exit() {
             let mut state = delegated_state(signer, U256::from(1), initial_nonce);
             let expected = (flags & 1 != 0, flags & 2 != 0, flags & 4 != 0);
             let mut env = pectra_evm_env();
-            env.cfg_env.disable_balance_check = expected.0;
-            env.cfg_env.disable_base_fee = expected.1;
-            env.cfg_env.disable_fee_charge = expected.2;
+            env.version
+                .features
+                .set(EvmFeatures::BALANCE_CHECK, !expected.0);
+            env.version
+                .features
+                .set(EvmFeatures::BASE_FEE_CHECK, !expected.1);
+            env.version
+                .features
+                .set(EvmFeatures::FEE_CHARGE, !expected.2);
             {
                 let evm = config.evm_with_env(&mut state, env);
                 let mut executor =
                     config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
-                let result = executor.execute_transaction_with_commit_condition(recovered, |_| {
-                    if outcome == "declined" {
-                        CommitChanges::No
-                    } else {
-                        CommitChanges::Yes
-                    }
-                });
+                let result =
+                    executor.execute_transaction_with_commit_condition(recovered, |_, _| {
+                        if outcome == "declined" {
+                            CommitChanges::No
+                        } else {
+                            CommitChanges::Yes
+                        }
+                    });
                 match outcome {
                     "included" => {
                         assert!(result.unwrap().is_some());
@@ -562,12 +559,12 @@ fn sponsored_execution_restores_existing_fee_flags_on_every_result_exit() {
                     }
                     _ => unreachable!(),
                 }
-                let cfg = &executor.inner.evm.ctx_mut().cfg;
+                let features = executor.evm().version().features;
                 assert_eq!(
                     (
-                        cfg.disable_balance_check,
-                        cfg.disable_base_fee,
-                        cfg.disable_fee_charge
+                        !features.contains(EvmFeatures::BALANCE_CHECK),
+                        !features.contains(EvmFeatures::BASE_FEE_CHECK),
+                        !features.contains(EvmFeatures::FEE_CHARGE),
                     ),
                     expected,
                     "flags={flags}, outcome={outcome}"
@@ -576,16 +573,17 @@ fn sponsored_execution_restores_existing_fee_flags_on_every_result_exit() {
                     executor.current_execution_summary().validator_fee_sum,
                     U256::ZERO
                 );
+                let db = executor.evm_mut().state_mut().overlay_db_mut();
+                assert_eq!(
+                    live_counter(db, signer),
+                    if outcome == "included" {
+                        (TODAY, 1)
+                    } else {
+                        (0, 0)
+                    }
+                );
+                assert_eq!(live_balance(db, signer), U256::from(1));
             }
-            assert_eq!(
-                live_counter(&mut state, signer),
-                if outcome == "included" {
-                    (TODAY, 1)
-                } else {
-                    (0, 0)
-                }
-            );
-            assert_eq!(signer_balance(&mut state, signer), U256::from(1));
         }
     }
 }

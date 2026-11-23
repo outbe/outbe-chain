@@ -1,17 +1,18 @@
 //! SELFDESTRUCT sends the COEN that would strand on a system address, or burn in a contract of
 //! the same transaction, to address 0 (OIP-00374).
-use alloy_evm::{Evm as _, EvmFactory as _};
-use alloy_primitives::{Address, Bytes, U256};
-use outbe_evm::OutbeEvmFactory;
-use outbe_system_common::addresses::{STAKING_ADDRESS, VOTE_ADDRESS, ZKPROOF_VERIFY_ADDRESS};
-use reth_ethereum::evm::primitives::EvmEnv;
-use revm::{
-    context::{result::ExecutionResult, BlockEnv, CfgEnv, TxEnv},
-    database::{CacheDB, EmptyDB},
-    primitives::{hardfork::SpecId, TxKind},
-    state::{AccountInfo, Bytecode},
-    DatabaseCommit,
+use alloy_consensus::TxLegacy;
+use alloy_primitives::{Address, Bytes, TxKind, U256};
+use evm2::{
+    bytecode::Bytecode,
+    env::BlockEnvExt,
+    ethereum::TxEnvelope,
+    evm::{AccountInfo, CacheDB, EmptyDB},
+    BaseEvmTypes, Evm, SpecId, TxResult,
 };
+use outbe_evm::{factory::OutbeEvmTypes, OutbeEvmFactory};
+use outbe_system_common::addresses::{STAKING_ADDRESS, VOTE_ADDRESS, ZKPROOF_VERIFY_ADDRESS};
+use reth_ethereum::evm::EthEvmEnv;
+use reth_primitives_traits::Recovered;
 
 const CALLER: Address = Address::repeat_byte(0xc1);
 const OLD: Address = Address::repeat_byte(0xd1);
@@ -22,7 +23,7 @@ const MARKER: [u8; 1] = [0xef];
 fn put(db: &mut CacheDB<EmptyDB>, address: Address, balance: U256, code: &[u8]) {
     let code = Bytecode::new_legacy(Bytes::copy_from_slice(code));
     db.insert_account_info(
-        address,
+        &address,
         AccountInfo {
             balance,
             code_hash: code.hash_slow(),
@@ -35,7 +36,7 @@ fn put(db: &mut CacheDB<EmptyDB>, address: Address, balance: U256, code: &[u8]) 
 fn world() -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(
-        CALLER,
+        &CALLER,
         AccountInfo {
             balance: U256::from(FIVE_COEN),
             ..Default::default()
@@ -63,65 +64,69 @@ fn transact(
     kind: TxKind,
     value: U256,
     data: Vec<u8>,
-) -> ExecutionResult {
-    let nonce = db.cache.accounts[&CALLER].info.nonce;
-    let env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(1)
-            .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-        block_env: BlockEnv {
-            gas_limit: 30_000_000,
+) -> TxResult<OutbeEvmTypes> {
+    let nonce = db.account_info(&CALLER).map_or(0, |info| info.nonce);
+    let env = EthEvmEnv::new(
+        SpecId::PRAGUE,
+        BlockEnvExt {
+            gas_limit: U256::from(30_000_000_u64),
             ..Default::default()
         },
-    };
-    let outcome = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
+        1,
+    );
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(1),
+            nonce,
+            gas_price: 0,
+            gas_limit: 3_000_000,
+            to: kind,
+            value,
+            input: Bytes::from(data),
+        }),
+        CALLER,
+    );
+    let detached = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
         .create_evm(&mut *db, env)
-        .transact_raw(
-            TxEnv::builder()
-                .caller(CALLER)
-                .nonce(nonce)
-                .kind(kind)
-                .value(value)
-                .data(Bytes::from(data))
-                .gas_limit(3_000_000)
-                .build()
-                .unwrap(),
-        )
-        .unwrap();
-    db.commit(outcome.state);
-    outcome.result
+        .transact(&tx)
+        .unwrap()
+        .detach();
+    db.commit_pending(&detached.pending_state);
+    detached.result
 }
 
-/// The same transaction on the upstream revm EVM, which has no Outbe instructions.
+/// The same transaction on the upstream evm2 EVM, which has no Outbe instructions.
 fn upstream_gas(db: &CacheDB<EmptyDB>, to: Address) -> u64 {
-    use revm::{context::ContextSetters, ExecuteEvm, MainBuilder, MainContext};
-    let mut evm = revm::Context::mainnet()
-        .with_db(db.clone())
-        .modify_cfg_chained(|cfg| {
-            cfg.chain_id = 1;
-            cfg.set_spec_and_mainnet_gas_params(SpecId::PRAGUE);
-        })
-        .modify_block_chained(|block| block.gas_limit = 30_000_000)
-        .build_mainnet();
-    let nonce = db.cache.accounts[&CALLER].info.nonce;
-    evm.set_tx(
-        TxEnv::builder()
-            .caller(CALLER)
-            .nonce(nonce)
-            .kind(TxKind::Call(to))
-            .gas_limit(3_000_000)
-            .chain_id(Some(1))
-            .build()
-            .unwrap(),
+    let nonce = db.account_info(&CALLER).map_or(0, |info| info.nonce);
+    let mut evm = Evm::<BaseEvmTypes>::new(
+        SpecId::PRAGUE,
+        BlockEnvExt {
+            gas_limit: U256::from(30_000_000_u64),
+            ..Default::default()
+        },
+        evm2::ethereum::ethereum_tx_registry(SpecId::PRAGUE),
+        db.clone(),
+        evm2::Precompiles::base(SpecId::PRAGUE),
     );
-    evm.replay().unwrap().result.tx_gas_used()
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(1),
+            nonce,
+            gas_price: 0,
+            gas_limit: 3_000_000,
+            to: TxKind::Call(to),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        }),
+        CALLER,
+    );
+    let gas = evm.transact(&tx).unwrap().result().tx_gas_used();
+    gas
 }
 
 fn balance(db: &CacheDB<EmptyDB>, address: Address) -> U256 {
-    db.cache
-        .accounts
-        .get(&address)
-        .map_or(U256::ZERO, |account| account.info.balance)
+    db.account_info(&address)
+        .map_or(U256::ZERO, |info| info.balance)
 }
 
 #[test]
@@ -213,10 +218,7 @@ fn a_reverted_selfdestruct_moves_nothing() {
     wrapper.extend_from_slice(&[0x5a, 0xf1, 0x5f, 0x5f, 0xfd]);
     put(&mut db, WRAPPER, U256::ZERO, &wrapper);
     let result = transact(&mut db, TxKind::Call(WRAPPER), U256::ZERO, vec![]);
-    assert!(
-        matches!(result, ExecutionResult::Revert { .. }),
-        "{result:?}"
-    );
+    assert!(result.is_revert(), "{result:?}");
     assert_eq!(balance(&db, OLD), U256::from(FIVE_COEN));
     assert_eq!(balance(&db, Address::ZERO), U256::ZERO);
     assert_eq!(balance(&db, STAKING_ADDRESS), U256::ZERO);

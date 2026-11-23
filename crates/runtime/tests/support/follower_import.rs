@@ -153,9 +153,13 @@ impl FollowerImport {
     pub(super) async fn finalize(&mut self, block: OutbeBlock) {
         let height = block.header.inner.number;
         let block = ConsensusBlock::from_sealed(SealedBlock::seal_slow(block));
+        let digest = block.digest();
         let (ack, wait) = Exact::handle();
         assert_eq!(
-            self.mailbox.report(Update::Block(Arc::new(block), ack)),
+            self.mailbox.report(Update::Block(
+                commonware_cryptography::Digested::precomputed(block, digest),
+                ack,
+            )),
             commonware_actor::Feedback::Ok
         );
         tokio::time::timeout(Duration::from_secs(35), async {

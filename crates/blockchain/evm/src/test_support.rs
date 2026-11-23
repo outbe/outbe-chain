@@ -35,6 +35,17 @@ pub fn fresh_environment(self_address: Address, spec: SpecId) -> SubCallEnvironm
     }
 }
 
+/// Sets the simulated enclosing call depth on an [`EvmCtx`] for depth-boundary tests.
+pub fn set_call_depth(evm: &mut EvmCtx, depth: u16) {
+    evm.ext_mut().current_call_depth = depth;
+}
+
+/// Returns the gas limit selected for the most recent Outbe system call on `evm`.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn last_system_call_gas_limit(evm: &EvmCtx) -> Option<u64> {
+    evm.ext().last_system_call.as_ref().map(|tx| tx.gas_limit)
+}
+
 /// Runtime bytecode from a hex fixture.
 pub fn runtime_code(hex: &str) -> Bytecode {
     Bytecode::new_legacy(Bytes::from(

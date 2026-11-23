@@ -296,23 +296,6 @@ impl<'a> OutbeBlockExecutor<'a> {
     pub fn set_final_extra_data(&mut self, bytes: Bytes) {
         self.final_extra_data = bytes;
     }
-
-    /// Pre-encodes the final execution-produced header fields.
-    /// Settles burned fees before encoding on the parallel-root path.
-    pub fn prepare_final_header_artifacts(
-        &mut self,
-        timestamp_millis_part: u64,
-    ) -> Result<(), BlockExecutionError> {
-        self.settle_block_burned_fees()?;
-        let enclave_witness = self.final_enclave_witness_bytes()?;
-        self.final_extra_data = crate::builder::encode_final_header_artifacts(
-            self.final_extra_data.as_ref(),
-            self.current_execution_summary(),
-            timestamp_millis_part,
-            enclave_witness,
-        )?;
-        Ok(())
-    }
 }
 
 impl<'a> BlockExecutor for OutbeBlockExecutor<'a> {

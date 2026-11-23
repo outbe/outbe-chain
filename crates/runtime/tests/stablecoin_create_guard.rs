@@ -1,18 +1,17 @@
-use alloy_evm::{Evm as _, EvmFactory as _};
-use alloy_primitives::{Address, Bytes, U256};
-use outbe_evm::OutbeEvmFactory;
-use outbe_system_common::addresses::is_stablecoin_address;
-use reth_ethereum::evm::primitives::EvmEnv;
-use revm::{
-    context::{
-        result::{ExecutionResult, HaltReason, Output},
-        BlockEnv, CfgEnv, TxEnv,
-    },
-    database::{CacheDB, EmptyDB},
-    inspector::NoOpInspector,
-    primitives::{hardfork::SpecId, TxKind},
-    state::{AccountInfo, Bytecode},
+use alloy_consensus::TxLegacy;
+use alloy_primitives::{Address, Bytes, TxKind, U256};
+use evm2::{
+    bytecode::Bytecode,
+    env::BlockEnvExt,
+    ethereum::TxEnvelope,
+    evm::{AccountInfo, CacheDB, EmptyDB},
+    interpreter::InstrStop,
+    NoopInspector, SpecId,
 };
+use outbe_evm::{factory::OutbeEvmTypes, OutbeEvmFactory};
+use outbe_system_common::addresses::is_stablecoin_address;
+use reth_ethereum::evm::EthEvmEnv;
+use reth_primitives_traits::Recovered;
 
 use std::sync::LazyLock;
 
@@ -25,16 +24,15 @@ static ADJACENT_CREATE_CALLER_NONCE_0: LazyLock<Address> =
 static RESERVED_CREATE_CALLER_NONCE_1: LazyLock<Address> =
     LazyLock::new(|| find_create_caller(1, true));
 
-fn test_env() -> EvmEnv {
-    EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(1)
-            .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-        block_env: BlockEnv {
-            gas_limit: 30_000_000,
+fn test_env() -> EthEvmEnv<OutbeEvmTypes> {
+    EthEvmEnv::new(
+        SpecId::PRAGUE,
+        BlockEnvExt {
+            gas_limit: U256::from(30_000_000_u64),
             ..Default::default()
         },
-    }
+        1,
+    )
 }
 
 fn address_from_counter(counter: u64) -> Address {
@@ -58,15 +56,19 @@ fn funded_account(nonce: u64) -> AccountInfo {
     }
 }
 
-fn create_tx(caller: Address, nonce: u64) -> TxEnv {
-    TxEnv::builder()
-        .caller(caller)
-        .nonce(nonce)
-        .kind(TxKind::Create)
-        .data(Bytes::from_static(&[0x00]))
-        .gas_limit(GAS_LIMIT)
-        .build()
-        .expect("valid create transaction")
+fn create_tx(caller: Address, nonce: u64) -> Recovered<TxEnvelope> {
+    Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(1),
+            nonce,
+            gas_price: 0,
+            gas_limit: GAS_LIMIT,
+            to: TxKind::Create,
+            value: U256::ZERO,
+            input: Bytes::from_static(&[0x00]),
+        }),
+        caller,
+    )
 }
 
 #[test]
@@ -77,51 +79,55 @@ fn top_level_create_uses_canonical_collision_while_adjacent_create_succeeds() {
     let adjacent_target = adjacent_caller.create(0);
 
     let mut reserved_db = CacheDB::new(EmptyDB::default());
-    reserved_db.insert_account_info(reserved_caller, funded_account(0));
+    reserved_db.insert_account_info(&reserved_caller, funded_account(0));
     let mut reserved_evm =
         OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
             .create_evm(reserved_db, test_env());
     let reserved = reserved_evm
-        .transact_raw(create_tx(reserved_caller, 0))
-        .expect("reserved create executes as an EVM halt");
+        .transact(&create_tx(reserved_caller, 0))
+        .expect("reserved create executes as an EVM halt")
+        .detach();
 
-    assert!(matches!(
-        reserved.result,
-        ExecutionResult::Halt {
-            reason: HaltReason::CreateCollision,
-            ..
+    assert!(reserved.result.is_halt());
+    assert_eq!(reserved.result.stop, InstrStop::CreateCollision);
+    assert_eq!(
+        reserved
+            .pending_state
+            .account_changes_for(&reserved_caller)
+            .and_then(|acc| acc.current.as_ref().map(|info| info.nonce)),
+        Some(1)
+    );
+    if let Some(dest) = reserved.pending_state.account_changes_for(&reserved_target) {
+        if let Some(info) = &dest.current {
+            assert_eq!(info.nonce, 0);
+            assert_eq!(info.balance, U256::ZERO);
+            assert!(info.is_empty_code_hash());
         }
-    ));
-    assert_eq!(reserved.state[&reserved_caller].info.nonce, 1);
-    let reserved_account = &reserved.state[&reserved_target].info;
-    assert_eq!(reserved_account.nonce, 0);
-    assert_eq!(reserved_account.balance, U256::ZERO);
-    assert!(reserved_account.code.clone().unwrap_or_default().is_empty());
+    }
 
     let mut inspected_db = CacheDB::new(EmptyDB::default());
-    inspected_db.insert_account_info(reserved_caller, funded_account(0));
+    inspected_db.insert_account_info(&reserved_caller, funded_account(0));
     let mut inspected_evm =
         OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
-            .create_evm_with_inspector(inspected_db, test_env(), NoOpInspector {});
+            .create_evm(inspected_db, test_env());
     let inspected = inspected_evm
-        .transact_raw(create_tx(reserved_caller, 0))
-        .expect("inspected reserved create executes as an EVM halt");
-    assert!(matches!(
-        inspected.result,
-        ExecutionResult::Halt {
-            reason: HaltReason::CreateCollision,
-            ..
-        }
-    ));
+        .transact_with_inspector(
+            &create_tx(reserved_caller, 0),
+            &mut NoopInspector::default(),
+        )
+        .expect("inspected reserved create executes as an EVM halt")
+        .detach();
+    assert!(inspected.result.is_halt());
+    assert_eq!(inspected.result.stop, InstrStop::CreateCollision);
     assert_eq!(
         inspected.result.tx_gas_used(),
         reserved.result.tx_gas_used()
     );
 
     let mut canonical_collision_db = CacheDB::new(EmptyDB::default());
-    canonical_collision_db.insert_account_info(adjacent_caller, funded_account(0));
+    canonical_collision_db.insert_account_info(&adjacent_caller, funded_account(0));
     canonical_collision_db.insert_account_info(
-        adjacent_target,
+        &adjacent_target,
         AccountInfo {
             nonce: 1,
             ..Default::default()
@@ -131,38 +137,39 @@ fn top_level_create_uses_canonical_collision_while_adjacent_create_succeeds() {
         OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
             .create_evm(canonical_collision_db, test_env());
     let canonical_collision = canonical_collision_evm
-        .transact_raw(create_tx(adjacent_caller, 0))
-        .expect("ordinary occupied target produces a collision halt");
-    assert!(matches!(
-        canonical_collision.result,
-        ExecutionResult::Halt {
-            reason: HaltReason::CreateCollision,
-            ..
-        }
-    ));
+        .transact(&create_tx(adjacent_caller, 0))
+        .expect("ordinary occupied target produces a collision halt")
+        .detach();
+    assert!(canonical_collision.result.is_halt());
+    assert_eq!(canonical_collision.result.stop, InstrStop::CreateCollision);
     assert_eq!(
         canonical_collision.result.tx_gas_used(),
         reserved.result.tx_gas_used()
     );
 
     let mut adjacent_db = CacheDB::new(EmptyDB::default());
-    adjacent_db.insert_account_info(adjacent_caller, funded_account(0));
+    adjacent_db.insert_account_info(&adjacent_caller, funded_account(0));
     let mut adjacent_evm =
         OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
             .create_evm(adjacent_db, test_env());
     let adjacent = adjacent_evm
-        .transact_raw(create_tx(adjacent_caller, 0))
-        .expect("adjacent create executes");
+        .transact(&create_tx(adjacent_caller, 0))
+        .expect("adjacent create executes")
+        .detach();
 
-    assert!(matches!(
-        adjacent.result,
-        ExecutionResult::Success {
-            output: Output::Create(_, Some(address)),
-            ..
-        } if address == adjacent_target
-    ));
-    assert_eq!(adjacent.state[&adjacent_caller].info.nonce, 1);
-    assert!(adjacent.state.contains_key(&adjacent_target));
+    assert!(adjacent.result.is_success());
+    assert_eq!(adjacent.result.created_address, Some(adjacent_target));
+    assert_eq!(
+        adjacent
+            .pending_state
+            .account_changes_for(&adjacent_caller)
+            .and_then(|acc| acc.current.as_ref().map(|info| info.nonce)),
+        Some(1)
+    );
+    assert!(adjacent
+        .pending_state
+        .account_changes_for(&adjacent_target)
+        .is_some());
 }
 
 fn create_and_store_runtime(create2_salt: Option<[u8; 32]>) -> Bytes {
@@ -191,7 +198,7 @@ fn execute_parent(parent: Address, nonce: u64, runtime: Bytes) -> (U256, u64) {
     let bytecode = Bytecode::new_raw(runtime);
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(
-        parent,
+        &parent,
         AccountInfo {
             nonce,
             code_hash: bytecode.hash_slow(),
@@ -200,23 +207,40 @@ fn execute_parent(parent: Address, nonce: u64, runtime: Bytes) -> (U256, u64) {
         },
     );
     let caller = Address::repeat_byte(0xee);
-    db.insert_account_info(caller, funded_account(0));
+    db.insert_account_info(&caller, funded_account(0));
 
-    let tx = TxEnv::builder()
-        .caller(caller)
-        .nonce(0)
-        .kind(TxKind::Call(parent))
-        .gas_limit(GAS_LIMIT)
-        .build()
-        .expect("valid parent call");
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(1),
+            nonce: 0,
+            gas_price: 0,
+            gas_limit: GAS_LIMIT,
+            to: TxKind::Call(parent),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        }),
+        caller,
+    );
     let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
         .create_evm(db, test_env());
-    let result = evm.transact_raw(tx).expect("parent call executes");
-    assert!(result.result.is_success());
-    (
-        result.state[&parent].storage[&U256::ZERO].present_value(),
-        result.state[&parent].info.nonce,
-    )
+    let detached = evm.transact(&tx).expect("parent call executes").detach();
+    assert!(detached.result.is_success());
+    let parent_changes = detached
+        .pending_state
+        .account_changes_for(&parent)
+        .expect("parent account touched");
+    let slot_zero = parent_changes
+        .storage
+        .slots
+        .get(&U256::ZERO)
+        .map(|change| change.value.current)
+        .unwrap_or(U256::ZERO);
+    let parent_nonce = parent_changes
+        .current
+        .as_ref()
+        .expect("parent info present")
+        .nonce;
+    (slot_zero, parent_nonce)
 }
 
 #[test]
@@ -249,20 +273,30 @@ fn native_value_transfer_to_reserved_address_remains_valid() {
     let sender = Address::repeat_byte(0x77);
     let reserved = RESERVED_CREATE_CALLER_NONCE_0.create(0);
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(sender, funded_account(0));
+    db.insert_account_info(&sender, funded_account(0));
 
-    let tx = TxEnv::builder()
-        .caller(sender)
-        .nonce(0)
-        .kind(TxKind::Call(reserved))
-        .value(U256::from(123u64))
-        .gas_limit(100_000)
-        .build()
-        .expect("valid transfer");
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(1),
+            nonce: 0,
+            gas_price: 0,
+            gas_limit: 100_000,
+            to: TxKind::Call(reserved),
+            value: U256::from(123u64),
+            input: Bytes::new(),
+        }),
+        sender,
+    );
     let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
         .create_evm(db, test_env());
-    let result = evm.transact_raw(tx).expect("transfer executes");
+    let detached = evm.transact(&tx).expect("transfer executes").detach();
 
-    assert!(result.result.is_success());
-    assert_eq!(result.state[&reserved].info.balance, U256::from(123u64));
+    assert!(detached.result.is_success());
+    assert_eq!(
+        detached
+            .pending_state
+            .account_changes_for(&reserved)
+            .and_then(|acc| acc.current.as_ref().map(|info| info.balance)),
+        Some(U256::from(123u64))
+    );
 }

@@ -98,10 +98,8 @@ pub(super) fn chain_spec(state: &ExecState) -> Arc<ChainSpec<OutbeHeader>> {
         gas_limit: outbe_primitives::system_tx::protocol_block_gas_limit(0),
         base_fee_per_gas: Some(u128::from(MIN_PROTOCOL_BASE_FEE)),
         alloc: complete_accounts(state)
-            .filter_map(|(address, account)| {
-                let info = account.info()?;
-                let storage = account
-                    .storage
+            .filter_map(|(address, info, storage)| {
+                let storage = storage
                     .into_iter()
                     .filter(|(_, value)| !value.is_zero())
                     .map(|(slot, value)| (B256::from(slot), B256::from(value)))
@@ -111,7 +109,7 @@ pub(super) fn chain_spec(state: &ExecState) -> Arc<ChainSpec<OutbeHeader>> {
                 }
                 let code = info
                     .code
-                    .or_else(|| state.database.cache.contracts.get(&info.code_hash).cloned());
+                    .or_else(|| state.cache.contracts.get(&info.code_hash).cloned());
                 Some((
                     address,
                     GenesisAccount {
@@ -278,46 +276,47 @@ fn keyed_owner(
 
 fn complete_accounts(
     state: &ExecState,
-) -> impl Iterator<Item = (Address, revm::database::DbAccount)> {
-    let mut post = state.database.cache.accounts.clone();
-    for (&address, changes) in state.bundle_state.state() {
-        let Some(info) = &changes.info else {
-            post.insert(address, revm::database::DbAccount::new_not_existing());
+) -> impl Iterator<Item = (Address, AccountInfo, std::collections::BTreeMap<U256, U256>)> {
+    let mut post = std::collections::BTreeMap::<
+        Address,
+        (AccountInfo, std::collections::BTreeMap<U256, U256>),
+    >::new();
+    for (&address, maybe_info) in &state.cache.accounts {
+        let Some(info) = maybe_info.clone() else {
             continue;
         };
-        let account = post.entry(address).or_default();
-        if changes.status.was_destroyed() {
-            account.storage.clear();
-        }
-        account.info = info.clone();
-        // A cache miss can already exist as NotExisting before this block creates it.
-        account.account_state = revm::database::AccountState::Touched;
-        for (&slot, change) in &changes.storage {
-            account.storage.insert(slot, change.present_value);
-        }
+        let storage = state
+            .cache
+            .storage
+            .get(&address)
+            .map(|s| s.slots.iter().map(|(&k, &v)| (k, v)).collect())
+            .unwrap_or_default();
+        post.insert(address, (info, storage));
     }
     post.into_iter()
+        .map(|(address, (info, storage))| (address, info, storage))
 }
 
 pub(super) fn state_root(state: &ExecState) -> B256 {
     use alloy_trie::root::{state_root_unhashed, storage_root_unhashed};
-    state_root_unhashed(complete_accounts(state).filter_map(|(address, account)| {
-        let info = account.info()?;
-        let storage = account.storage.into_iter().filter_map(|(slot, value)| {
-            (!value.is_zero()).then_some((B256::from(slot.to_be_bytes::<32>()), value))
-        });
-        let storage_root = storage_root_unhashed(storage);
-        if info.is_empty() && storage_root == alloy_trie::EMPTY_ROOT_HASH {
-            return None;
-        }
-        Some((
-            address,
-            alloy_trie::TrieAccount {
-                nonce: info.nonce,
-                balance: info.balance,
-                code_hash: info.code_hash,
-                storage_root,
-            },
-        ))
-    }))
+    state_root_unhashed(
+        complete_accounts(state).filter_map(|(address, info, storage)| {
+            let storage = storage.into_iter().filter_map(|(slot, value)| {
+                (!value.is_zero()).then_some((B256::from(slot.to_be_bytes::<32>()), value))
+            });
+            let storage_root = storage_root_unhashed(storage);
+            if info.is_empty() && storage_root == alloy_trie::EMPTY_ROOT_HASH {
+                return None;
+            }
+            Some((
+                address,
+                alloy_trie::TrieAccount {
+                    nonce: info.nonce,
+                    balance: info.balance,
+                    code_hash: info.code_hash,
+                    storage_root,
+                },
+            ))
+        }),
+    )
 }

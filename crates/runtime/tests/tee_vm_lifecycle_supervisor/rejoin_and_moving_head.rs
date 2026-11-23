@@ -114,7 +114,7 @@ fn mine_unjail_without_finalizing(chain: &Mutex<RejoinChain>, expiry: u64, nonce
     assert_eq!(chain.finalized.nonce_and_balance().0, nonce);
 
     let jailed = chain.finalized.tip;
-    chain
+    let _ = chain
         .advance(jailed.timestamp + 1, Some(&sign_unjail(nonce)))
         .unwrap();
     assert_ne!(chain.latest.status(), VALIDATOR_STATUS_JAILED);

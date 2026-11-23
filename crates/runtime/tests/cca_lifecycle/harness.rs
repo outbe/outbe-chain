@@ -1,7 +1,14 @@
 // CCA custody and registration through real EVM transactions.
-pub(crate) use alloy_evm::{Evm as _, EvmFactory as _};
-pub(crate) use alloy_primitives::{Address, Bytes, U256};
+pub(crate) use alloy_consensus::TxLegacy;
+pub(crate) use alloy_primitives::{Address, Bytes, TxKind, U256};
 pub(crate) use alloy_sol_types::{SolCall, SolError, SolEvent};
+pub(crate) use evm2::{
+    bytecode::Bytecode,
+    env::BlockEnvExt,
+    ethereum::TxEnvelope,
+    evm::{AccountInfo, CacheDB, EmptyDB},
+    SpecId, TxResult,
+};
 pub(crate) use outbe_agentreward::{
     constants::REWARD_BALANCE_IDLE_SECONDS, schema::RewardPool, AgentRewardContract,
 };
@@ -12,7 +19,7 @@ pub(crate) use outbe_ccaregistry::{
     runtime,
     schema::CcaContract,
 };
-pub(crate) use outbe_evm::OutbeEvmFactory;
+pub(crate) use outbe_evm::{factory::OutbeEvmTypes, OutbeEvmFactory};
 pub(crate) use outbe_gem::precompile::IGem;
 pub(crate) use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
@@ -23,24 +30,29 @@ pub(crate) use outbe_system_common::addresses::{
     PROMIS_LIMIT_ADDRESS,
 };
 pub(crate) use outbe_system_common::time::SECONDS_PER_DAY;
-pub(crate) use reth_ethereum::evm::primitives::EvmEnv;
-pub(crate) use revm::{
-    context::{result::ExecutionResult, BlockEnv, CfgEnv, TxEnv},
-    database::{CacheDB, EmptyDB},
-    primitives::{hardfork::SpecId, TxKind},
-    state::{AccountInfo, Bytecode},
-    DatabaseCommit,
-};
+pub(crate) use reth_ethereum::evm::EthEvmEnv;
+pub(crate) use reth_primitives_traits::Recovered;
 
 pub(super) const CCA: Address = Address::repeat_byte(0xc1);
 pub(super) const NOW: u64 = 1_700_000_000;
+
+pub(super) fn balance(db: &CacheDB<EmptyDB>, address: Address) -> U256 {
+    db.account_info(&address)
+        .map_or(U256::ZERO, |info| info.balance)
+}
+
+pub(super) fn set_balance(db: &mut CacheDB<EmptyDB>, address: Address, amount: U256) {
+    let mut info = db.account_info(&address).cloned().unwrap_or_default();
+    info.balance = amount;
+    db.insert_account_info(&address, info);
+}
 
 pub(super) fn tx(
     db: &mut CacheDB<EmptyDB>,
     value: U256,
     data: Vec<u8>,
     now: u64,
-) -> ExecutionResult {
+) -> TxResult<OutbeEvmTypes> {
     tx_to(db, CCA_REGISTRY_ADDRESS, value, data, now)
 }
 
@@ -50,7 +62,7 @@ pub(super) fn tx_to(
     value: U256,
     data: Vec<u8>,
     now: u64,
-) -> ExecutionResult {
+) -> TxResult<OutbeEvmTypes> {
     try_tx_to(db, target, value, data, now).unwrap()
 }
 
@@ -60,7 +72,7 @@ pub(super) fn try_tx_to(
     value: U256,
     data: Vec<u8>,
     now: u64,
-) -> Result<ExecutionResult, String> {
+) -> Result<TxResult<OutbeEvmTypes>, String> {
     try_tx_to_with_gas(db, target, value, data, now, 3_000_000)
 }
 
@@ -71,35 +83,39 @@ pub(super) fn try_tx_to_with_gas(
     data: Vec<u8>,
     now: u64,
     gas_limit: u64,
-) -> Result<ExecutionResult, String> {
-    let nonce = db.cache.accounts.get(&CCA).unwrap().info.nonce;
-    let env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(1)
-            .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-        block_env: BlockEnv {
+) -> Result<TxResult<OutbeEvmTypes>, String> {
+    let nonce = db.account_info(&CCA).map_or(0, |info| info.nonce);
+    let env = EthEvmEnv::new(
+        SpecId::PRAGUE,
+        BlockEnvExt {
             timestamp: U256::from(now),
-            gas_limit: 30_000_000,
+            gas_limit: U256::from(30_000_000_u64),
             ..Default::default()
         },
-    };
+        1,
+    );
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(1),
+            nonce,
+            gas_price: 0,
+            gas_limit,
+            to: TxKind::Call(target),
+            value,
+            input: Bytes::from(data),
+        }),
+        CCA,
+    );
     let outcome = {
         let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
             .create_evm(&mut *db, env);
-        evm.transact_raw(
-            TxEnv::builder()
-                .caller(CCA)
-                .nonce(nonce)
-                .kind(TxKind::Call(target))
-                .value(value)
-                .data(Bytes::from(data))
-                .gas_limit(gas_limit)
-                .build()
-                .unwrap(),
-        )
-        .map_err(|error| error.to_string())?
+        let detached = evm
+            .transact(&tx)
+            .map_err(|error| error.to_string())?
+            .detach();
+        detached
     };
-    db.commit(outcome.state);
+    db.commit_pending(&outcome.pending_state);
     Ok(outcome.result)
 }
 
@@ -184,7 +200,7 @@ pub(super) const REWARD: U256 = U256::from_limbs([250, 0, 0, 0]);
 /// COEN/USD VWAP of [`PRICE`] at [`NOW`].
 pub(super) fn reward_world() -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(CCA, AccountInfo::default());
+    db.insert_account_info(&CCA, AccountInfo::default());
     let code = Bytecode::new_raw(Bytes::from_static(&[0xef]));
     for address in [
         AGENT_REWARD_ADDRESS,
@@ -195,7 +211,7 @@ pub(super) fn reward_world() -> CacheDB<EmptyDB> {
         PROMIS_LIMIT_ADDRESS,
     ] {
         db.insert_account_info(
-            address,
+            &address,
             AccountInfo {
                 code_hash: code.hash_slow(),
                 code: Some(code.clone()),
@@ -222,7 +238,7 @@ pub(super) fn claim_tx(
     db: &mut CacheDB<EmptyDB>,
     pool: RewardPool,
     requested: U256,
-) -> ExecutionResult {
+) -> TxResult<OutbeEvmTypes> {
     tx_to(
         db,
         AGENT_REWARD_ADDRESS,
@@ -249,10 +265,9 @@ pub(super) fn claim_by_tx(
     let load = if requested.is_zero() { held } else { requested };
     let result = claim_tx(db, pool, requested);
     assert!(result.is_success(), "{result:?}");
-    let gem_id =
-        IAgentReward::claimRewardCall::abi_decode_returns(result.output().unwrap()).unwrap();
+    let gem_id = IAgentReward::claimRewardCall::abi_decode_returns(&result.output).unwrap();
     let claimed = result
-        .logs()
+        .logs
         .iter()
         .find_map(|log| IAgentReward::RewardsClaimed::decode_log(log).ok())
         .expect("the claim emits RewardsClaimed")
@@ -262,7 +277,7 @@ pub(super) fn claim_by_tx(
     assert_eq!(claimed.promisLoadMinor, load);
     assert_eq!(claimed.gemId, gem_id);
     let issued = result
-        .logs()
+        .logs
         .iter()
         .find_map(|log| IGem::GemIssued::decode_log(log).ok())
         .expect("the claim emits GemIssued")
@@ -282,10 +297,7 @@ pub(super) fn claim_by_tx(
             held - load
         );
     });
-    assert_eq!(
-        db.cache.accounts[&AGENT_REWARD_ADDRESS].info.balance,
-        U256::ZERO
-    );
+    assert_eq!(balance(db, AGENT_REWARD_ADDRESS), U256::ZERO);
     gem_id
 }
 
@@ -314,7 +326,7 @@ pub(super) fn balance_deadline(
         NOW,
     );
     assert!(result.is_success(), "{result:?}");
-    IAgentReward::getPoolBalanceDeadlineCall::abi_decode_returns(result.output().unwrap()).unwrap()
+    IAgentReward::getPoolBalanceDeadlineCall::abi_decode_returns(&result.output).unwrap()
 }
 
 pub(super) fn promis_limit(db: &mut CacheDB<EmptyDB>) -> U256 {
@@ -326,7 +338,7 @@ pub(super) fn promis_limit(db: &mut CacheDB<EmptyDB>) -> U256 {
         NOW,
     );
     assert!(result.is_success(), "{result:?}");
-    IPromisLimit::promisLimitCall::abi_decode_returns(result.output().unwrap()).unwrap()
+    IPromisLimit::promisLimitCall::abi_decode_returns(&result.output).unwrap()
 }
 
 /// Forward calldata with STATICCALL and return its success word followed by returndata.
@@ -339,7 +351,7 @@ pub(super) fn static_reward_proxy(db: &mut CacheDB<EmptyDB>) -> Address {
     ]);
     let code = Bytecode::new_raw(Bytes::from(code));
     db.insert_account_info(
-        address,
+        &address,
         AccountInfo {
             code_hash: code.hash_slow(),
             code: Some(code),
@@ -385,11 +397,11 @@ pub(super) fn snapshot(db: &mut CacheDB<EmptyDB>) -> (ICcaRegistry::Cca, Vec<Con
     ] {
         let mut slots = db
             .cache
-            .accounts
+            .storage
             .get(&address)
-            .map(|account| {
-                account
-                    .storage
+            .map(|storage| {
+                storage
+                    .slots
                     .iter()
                     .filter(|(_, value)| !value.is_zero())
                     .map(|(key, value)| (*key, *value))
@@ -397,13 +409,7 @@ pub(super) fn snapshot(db: &mut CacheDB<EmptyDB>) -> (ICcaRegistry::Cca, Vec<Con
             })
             .unwrap_or_default();
         slots.sort();
-        let balance = db
-            .cache
-            .accounts
-            .get(&address)
-            .map(|a| a.info.balance)
-            .unwrap_or_default();
-        contracts.push((address, balance, slots));
+        contracts.push((address, balance(db, address), slots));
     }
     (record, contracts)
 }

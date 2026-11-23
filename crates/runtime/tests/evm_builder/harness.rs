@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
 use alloy_primitives::{address, Address, Bytes, StorageKey, StorageValue, B256, U256};
+use evm2::{
+    bytecode::Bytecode as EvmBytecode,
+    evm::{AccountInfo, CacheDB, EmptyDB},
+};
 use outbe_evm::{
     config::{OutbeEvmConfig, OutbeNextBlockEnvAttributes},
     signer::OutbeEvmSigner,
@@ -22,17 +26,12 @@ use reth_ethereum::{
         MultiProof, MultiProofTargets, StorageMultiProof, StorageProof, TrieInput,
     },
 };
-use reth_evm::{execute::ProviderError, NextBlockEnvAttributes};
+use reth_evm::NextBlockEnvAttributes;
 use reth_provider::{
     AccountReader, BlockHashReader, BytecodeReader, HashedPostStateProvider, ProviderResult,
     StateProofProvider, StateProvider, StateRootProvider, StorageRootProvider,
 };
 use reth_trie::test_utils::{state_root_prehashed, storage_root_prehashed};
-use revm::{
-    database::CacheDB,
-    database_interface::EmptyDBTyped,
-    state::{AccountInfo, Bytecode as RevmBytecode},
-};
 
 pub(super) const GENESIS_OWNER: Address = address!("0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf");
 pub(super) const TEST_BLOCK_ONE_TIMESTAMP: u64 = 1_700_000_001;
@@ -148,7 +147,7 @@ impl StateProofProvider for DeterministicEmptyStateProvider {
 impl HashedPostStateProvider for DeterministicEmptyStateProvider {
     fn hashed_post_state(
         &self,
-        bundle_state: &revm::database::BundleState,
+        bundle_state: &evm2::block::BundleState,
     ) -> ProviderResult<HashedPostState> {
         Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(
             bundle_state.state(),
@@ -296,7 +295,7 @@ pub(super) fn next_block_attrs(extra_data: Bytes) -> OutbeNextBlockEnvAttributes
     }
 }
 
-pub(super) type TestDb = CacheDB<EmptyDBTyped<ProviderError>>;
+pub(super) type TestDb = CacheDB<EmptyDB>;
 
 pub(super) fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
     let chain_spec = test_chain_spec();
@@ -345,25 +344,24 @@ pub(super) fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
             .unwrap();
     });
     db.insert_account_info(
-        outbe_system_common::addresses::STAKING_ADDRESS,
+        &outbe_system_common::addresses::STAKING_ADDRESS,
         AccountInfo {
             balance: metadosis_genesis.get_balance(outbe_system_common::addresses::STAKING_ADDRESS),
             ..Default::default()
         },
     );
     for ((address, slot), value) in metadosis_genesis.storage {
-        db.insert_account_storage(address, slot, value)
-            .expect("production-route genesis seed must install");
+        db.insert_account_storage(&address, &slot, &value);
     }
 
-    let marker_code = RevmBytecode::new_legacy([0xef].into());
+    let marker_code = EvmBytecode::new_legacy([0xef].into());
     for address in [
         outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
         outbe_system_common::addresses::ORACLE_ADDRESS,
         outbe_system_common::addresses::METADOSIS_ADDRESS,
     ] {
         db.insert_account_info(
-            address,
+            &address,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code.clone()),

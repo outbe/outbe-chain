@@ -31,7 +31,7 @@ use reth_ethereum::{
     chainspec::{ChainSpec, MAINNET},
     primitives::{Header, SealedHeader},
 };
-use reth_provider::{HeaderProvider, ProviderResult};
+use reth_provider::{HeaderProvider, ProviderError, ProviderResult};
 
 // ---------------------------------------------------------------------------
 // Test fixture: an in-memory HeaderProvider. It lets us seed an arbitrary
@@ -167,7 +167,7 @@ fn real_reth_provider_preserves_artifact_lookup_contract() {
     assert_eq!(found.state_root, Some(state_root));
     assert!(matches!(
         provider.execution_summary_by_hash(1, hash),
-        Err(reth_evm::execute::ProviderError::HeaderNotFound(_))
+        Err(ProviderError::HeaderNotFound(_))
     ));
     // A hash miss must not return the canonical artifact for a different hash.
     assert!(provider
@@ -276,9 +276,14 @@ fn unfinalized_side_chain_parent_artifact_resolves_by_exact_hash() {
 #[test]
 fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_without_bridge() {
     use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-    use alloy_evm::block::BlockExecutor;
-    use alloy_evm::eth::EthBlockExecutionCtx;
     use alloy_primitives::Bytes;
+    use evm2::{
+        block::BundleSource,
+        bytecode::Bytecode,
+        env::BlockEnvExt,
+        evm::{AccountInfo, CacheDB, EmptyDB},
+        SpecId,
+    };
     use outbe_evm::{OutbeBlockExecutionCtx, OutbeEvmSigner};
     use outbe_primitives::{
         addresses::REWARDS_ADDRESS,
@@ -288,15 +293,8 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
         system_tx::protocol_block_gas_limit,
     };
     use outbe_system_common::time::timestamp_to_date_key;
-    use reth_ethereum::evm::revm::db::State;
-    use reth_evm::{execute::ProviderError, ConfigureEvm, EvmEnv};
-    use revm::{
-        context::{BlockEnv, CfgEnv},
-        database::CacheDB,
-        database_interface::EmptyDBTyped,
-        primitives::hardfork::SpecId,
-        state::AccountInfo,
-    };
+    use reth_ethereum::evm::{EthBlockExecutionCtx, EthEvmEnv};
+    use reth_evm::{execute::BlockExecutor as _, BlockExecutorFactory};
 
     let seeded_fee = U256::from(55u64);
     let parent_timestamp = 1_700_001_000u64;
@@ -373,35 +371,32 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
                 .write(4)
                 .unwrap();
         });
-        let marker_code = revm::state::Bytecode::new_legacy([0xef].into());
+        let marker_code = Bytecode::new_legacy([0xef].into());
         let marker_info = || AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code.clone()),
             ..Default::default()
         };
-        let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        let mut db = CacheDB::new(EmptyDB::default());
         let entries: Vec<_> = seed_storage.storage.into_iter().collect();
         let mut addresses: Vec<Address> =
             entries.iter().map(|((address, _), _)| *address).collect();
         addresses.sort_unstable();
         addresses.dedup();
         for address in addresses {
-            db.insert_account_info(address, marker_info());
+            db.insert_account_info(&address, marker_info());
         }
         for ((address, slot), value) in entries {
-            db.insert_account_storage(address, slot, value).unwrap();
+            db.insert_account_storage(&address, &slot, &value);
         }
         db.insert_account_info(
-            REWARDS_ADDRESS,
+            &REWARDS_ADDRESS,
             AccountInfo {
                 balance: seeded_fee,
                 ..marker_info()
             },
         );
-        State::builder()
-            .with_database(db)
-            .with_bundle_update()
-            .build()
+        db
     };
 
     let metadata = CertifiedParentAccountingMetadata {
@@ -411,19 +406,18 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
         signer_bitmap: vec![1],
         ..Default::default()
     };
-    let evm_env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(1)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+    let evm_env = EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::from(6u64),
-            gas_limit: protocol_block_gas_limit(6),
-            basefee: MIN_PROTOCOL_BASE_FEE,
+            gas_limit: U256::from(protocol_block_gas_limit(6)),
+            basefee: U256::from(MIN_PROTOCOL_BASE_FEE),
             beneficiary: REWARDS_ADDRESS,
             timestamp: U256::from(1_700_001_006u64),
             ..Default::default()
         },
-    };
+        1,
+    );
     let make_ctx = || OutbeBlockExecutionCtx {
         inner: EthBlockExecutionCtx {
             parent_hash: block_hash,
@@ -477,6 +471,8 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
             .expect("Phase 1 CPA must resolve parent artifact through provider-only config");
         assert_eq!(executor.receipts().len(), 1);
         assert!(executor.receipts()[0].success);
+        let bundle = executor.into_state();
+        state.commit_source(&BundleSource(&bundle));
     }
 
     let read_ctx = BlockContext {
@@ -649,12 +645,8 @@ impl HeaderLookupResult {
     fn into_provider_result(self, key: B256) -> ProviderResult<Option<SealedHeader<OutbeHeader>>> {
         match self {
             HeaderLookupResult::None => Ok(None),
-            HeaderLookupResult::HeaderNotFound => {
-                Err(reth_evm::execute::ProviderError::HeaderNotFound(key.into()))
-            }
-            HeaderLookupResult::Other(msg) => {
-                Err(reth_evm::execute::ProviderError::TrieWitnessError(msg))
-            }
+            HeaderLookupResult::HeaderNotFound => Err(ProviderError::HeaderNotFound(key.into())),
+            HeaderLookupResult::Other(msg) => Err(ProviderError::TrieWitnessError(msg)),
         }
     }
 }

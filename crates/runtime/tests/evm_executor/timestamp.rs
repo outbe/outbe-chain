@@ -16,12 +16,9 @@ fn wide_timestamp_rejects_pre_execution_before_any_mutation_with_or_without_hook
                 test_chain_spec(),
                 std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
             );
-            let mut state = State::builder()
-                .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-                .with_bundle_update()
-                .build();
+            let mut state = CacheDB::new(EmptyDB::default());
             let mut env = test_evm_env(1, REWARDS_ADDRESS);
-            env.block_env.timestamp = timestamp;
+            env.block.timestamp = timestamp;
             let evm = config.evm_with_env(&mut state, env);
             let mut ctx = execution_ctx(Some(1), Bytes::new());
             ctx.execute_outbe_block_hooks = hooks;
@@ -38,9 +35,9 @@ fn wide_timestamp_rejects_pre_execution_before_any_mutation_with_or_without_hook
             );
             assert!(executor.receipts().is_empty());
             assert!(executor.ethereum_post_execution_requests.is_none());
-            drop(executor);
-            assert!(
-                state.cache.accounts.is_empty(),
+            assert_eq!(
+                executor.evm().state().loaded_accounts().count(),
+                0,
                 "no Ethereum or marker account writes"
             );
         }
@@ -63,26 +60,27 @@ fn wide_timestamp_rejects_standalone_transaction_routes_before_receipts_or_state
                 test_chain_spec(),
                 std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
             );
-            let mut state = State::builder()
-                .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-                .with_bundle_update()
-                .build();
+            let mut state = CacheDB::new(EmptyDB::default());
             let mut env = test_evm_env(1, REWARDS_ADDRESS);
-            env.block_env.timestamp = U256::MAX;
+            env.block.timestamp = U256::MAX;
             let evm = config.evm_with_env(&mut state, env);
             let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
             let recovered = tx.clone().try_into_recovered().unwrap();
             let error = match entry_point {
                 0 => executor.execute_transaction(recovered).unwrap_err(),
-                1 => executor
-                    .execute_transaction_without_commit(recovered)
-                    .unwrap_err(),
+                1 => match executor.execute_transaction_without_commit(recovered) {
+                    Err(err) => err,
+                    Ok(_) => panic!("wide timestamp must fail execute_transaction_without_commit"),
+                },
                 _ if is_reserved_system_tx(&tx) => executor
-                    .execute_reserved_system_tx(recovered, |_| CommitChanges::Yes)
+                    .execute_reserved_system_tx(recovered, |_, _| CommitChanges::Yes)
                     .unwrap_err(),
-                _ => executor
-                    .route_user_transaction(TxEnv::default(), recovered, |_| CommitChanges::Yes)
-                    .unwrap_err(),
+                _ => {
+                    let tx_env = tx_env(&config, &recovered);
+                    executor
+                        .route_user_transaction(tx_env, recovered, |_, _| CommitChanges::Yes)
+                        .unwrap_err()
+                }
             };
             assert_timestamp_validation(error);
             assert!(executor.receipts().is_empty());
@@ -92,8 +90,7 @@ fn wide_timestamp_rejects_standalone_transaction_routes_before_receipts_or_state
                 executor.fsm.stage(),
                 outbe_evm::system_tx::BlockExecutionStage::MidBlock
             );
-            drop(executor);
-            assert!(state.cache.accounts.is_empty());
+            assert_eq!(executor.evm().state().loaded_accounts().count(), 0);
         }
     }
 }
@@ -105,12 +102,9 @@ fn standalone_finish_and_post_execution_reject_wide_time_before_side_effects() {
             test_chain_spec(),
             std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
         );
-        let mut state = State::builder()
-            .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-            .with_bundle_update()
-            .build();
+        let mut state = CacheDB::new(EmptyDB::default());
         let mut env = test_evm_env(0, REWARDS_ADDRESS);
-        env.block_env.timestamp = U256::from(u64::MAX) + U256::from(1);
+        env.block.timestamp = U256::from(u64::MAX) + U256::from(1);
         let evm = config.evm_with_env(&mut state, env);
         let mut executor = config.create_executor(evm, execution_ctx(Some(0), Bytes::new()));
         if finish {
@@ -125,9 +119,8 @@ fn standalone_finish_and_post_execution_reject_wide_time_before_side_effects() {
             );
             assert!(executor.ethereum_post_execution_requests.is_none());
             assert!(executor.receipts().is_empty());
-            drop(executor);
+            assert_eq!(executor.evm().state().loaded_accounts().count(), 0);
         }
-        assert!(state.cache.accounts.is_empty());
     }
 }
 
@@ -137,12 +130,9 @@ fn maximum_u64_time_passes_pending_pre_execution_conversion() {
         test_chain_spec(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
-    let mut state = State::builder()
-        .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-        .with_bundle_update()
-        .build();
+    let mut state = CacheDB::new(EmptyDB::default());
     let mut env = test_evm_env(1, REWARDS_ADDRESS);
-    env.block_env.timestamp = U256::from(u64::MAX);
+    env.block.timestamp = U256::from(u64::MAX);
     let evm = config.evm_with_env(&mut state, env);
     let mut ctx = execution_ctx(Some(1), Bytes::new());
     ctx.inner.parent_beacon_block_root = Some(B256::ZERO);

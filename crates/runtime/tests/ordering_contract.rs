@@ -442,11 +442,10 @@ fn block_order_preserves_hard_criticality_and_pins_calibrated_soft_step_gas_limi
 
 #[test]
 fn outbe_evm_factory_applies_runtime_step_gas_limits_to_every_encoded_system_tx() {
-    use alloy_evm::{Evm, EvmEnv, EvmFactory};
+    use evm2::{env::BlockEnvExt, evm::EmptyDB, SpecId};
+    use outbe_evm::factory::transact_outbe_system_call;
     use outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS;
-    use revm::{
-        context::BlockEnv, context::CfgEnv, database::EmptyDB, primitives::hardfork::SpecId,
-    };
+    use reth_ethereum::evm::EthEvmEnv;
     use std::sync::Arc;
 
     let factory = outbe_evm::OutbeEvmFactory::new(Arc::new(outbe_runtime::OutbeRuntime::new()));
@@ -467,20 +466,21 @@ fn outbe_evm_factory_applies_runtime_step_gas_limits_to_every_encoded_system_tx(
             };
             let mut evm = factory.create_evm(
                 EmptyDB::default(),
-                EvmEnv {
-                    cfg_env: CfgEnv::new()
-                        .with_chain_id(CHAIN_ID)
-                        .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-                    block_env: BlockEnv::default(),
-                },
+                EthEvmEnv::new(SpecId::SHANGHAI, BlockEnvExt::default(), CHAIN_ID),
             );
             // Execution may reject unseeded state; gas selection precedes dispatch.
-            let _ = evm.transact_system_call(
+            let _ = transact_outbe_system_call(
+                &mut evm,
                 SYSTEM_ADDRESS,
                 OUTBE_SYSTEM_TX_ADDRESS,
                 tx.encode().unwrap(),
             );
-            assert_eq!(evm.ctx().tx.gas_limit, step.gas_limit, "{}", step.name);
+            assert_eq!(
+                outbe_evm::test_support::last_system_call_gas_limit(&evm).unwrap(),
+                step.gas_limit,
+                "{}",
+                step.name
+            );
         }
     }
 }

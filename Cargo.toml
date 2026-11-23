@@ -354,7 +354,6 @@ blst = { version = "0.3.16", default-features = false }
 # Crypto
 argon2 = "0.5"
 k256 = { version = "0.13", features = ["ecdsa"] }
-secp256k1 = { version = "0.30.0", default-features = false }
 keyring = { version = "3", features = ["apple-native", "linux-native"] }
 ring = "0.17"
 zeroize = "1"

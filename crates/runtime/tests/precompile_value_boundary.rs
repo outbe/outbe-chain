@@ -4,7 +4,7 @@
 //! These drive real EVM frames through `OutbeEvmFactory` rather than calling the
 //! classifier directly, so they exercise the opcode shapes an attacker actually
 //! emits. `CALLCODE` and `DELEGATECALL` reach a precompile with a
-//! `bytecode_address` that differs from the `target_address` revm credited. In
+//! `bytecode_address` that differs from the `target_address` the EVM credited. In
 //! that shape, a payable precompile that trusts `msg.value` would book forged
 //! value. In that shape, a contract would also act under its own caller's
 //! identity against the precompile's global state.
@@ -13,10 +13,24 @@
 mod borrow_code_fixture;
 use borrow_code_fixture::borrow_code;
 
-use alloy_evm::{Evm as _, EvmFactory as _};
-use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
+use alloy_consensus::TxLegacy;
+use alloy_primitives::{keccak256, Address, Bytes, TxKind, B256, U256};
 use alloy_sol_types::{SolCall, SolError};
-use outbe_evm::OutbeEvmFactory;
+use evm2::{
+    bytecode::Bytecode,
+    env::BlockEnvExt,
+    ethereum::{ethereum_tx_registry, TxEnvelope},
+    evm::{AccountInfo, CacheDB, EmptyDB, SystemTx},
+    inspector::NoopInspector,
+    Evm, ExecutionConfig, SpecId, TxResult, TxResultWithState, Version,
+};
+use outbe_evm::{
+    factory::OutbeEvmTypes,
+    precompiles::{
+        OutbePrecompileExecutionContext, OutbePrecompileProvider, OutbePrecompileRuntime,
+    },
+    OutbeEvmFactory,
+};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_staking::precompile::IStaking;
 use outbe_system_common::addresses::{
@@ -24,16 +38,9 @@ use outbe_system_common::addresses::{
     VALIDATOR_SET_ADDRESS, ZEROFEE_ADDRESS,
 };
 use outbe_validatorset::contract::ValidatorSet;
-use reth_ethereum::evm::primitives::EvmEnv;
-use revm::{
-    context::{
-        result::{ExecutionResult, Output, ResultAndState},
-        BlockEnv, CfgEnv, TxEnv,
-    },
-    database::{CacheDB, EmptyDB},
-    primitives::{hardfork::SpecId, TxKind},
-    state::{AccountInfo, Bytecode},
-};
+use reth_ethereum::evm::EthEvmEnv;
+use reth_primitives_traits::Recovered;
+use std::sync::Arc;
 
 const CHAIN_ID: u64 = 1;
 const EOA: Address = Address::new([0xc0; 20]);
@@ -42,16 +49,40 @@ const BORROWER: Address = Address::new([0xaa; 20]);
 const GAS_LIMIT: u64 = 3_000_000;
 const STAKE_VALUE: u64 = 7_000;
 
-fn test_env() -> EvmEnv {
-    EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-        block_env: BlockEnv {
-            gas_limit: 30_000_000,
-            ..Default::default()
-        },
+fn test_block_env() -> BlockEnvExt<()> {
+    BlockEnvExt {
+        gas_limit: U256::from(30_000_000_u64),
+        ..Default::default()
     }
+}
+
+fn test_env() -> EthEvmEnv<OutbeEvmTypes> {
+    EthEvmEnv::new(SpecId::PRAGUE, test_block_env(), CHAIN_ID)
+}
+
+fn host() -> Arc<outbe_runtime::OutbeRuntime> {
+    Arc::new(outbe_runtime::OutbeRuntime::new())
+}
+
+fn baseline_evm(db: CacheDB<EmptyDB>) -> Evm<'static, OutbeEvmTypes> {
+    let mut version = Version::new(SpecId::PRAGUE);
+    version.chain_id = CHAIN_ID;
+    let exec_cfg = ExecutionConfig::<OutbeEvmTypes>::for_config::<
+        evm2::BaseEvmConfig<{ SpecId::PRAGUE as u32 }>,
+    >()
+    .with_version(version);
+    Evm::new_with_execution_config(
+        exec_cfg,
+        SpecId::PRAGUE,
+        test_block_env(),
+        ethereum_tx_registry(SpecId::PRAGUE),
+        db,
+        OutbePrecompileProvider::new(
+            OutbePrecompileExecutionContext::new(SpecId::PRAGUE, B256::ZERO),
+            OutbePrecompileRuntime::new(),
+            host(),
+        ),
+    )
 }
 
 fn funded(balance: u64) -> AccountInfo {
@@ -84,57 +115,73 @@ fn topup_calldata(validator: Address, amount: u64) -> Bytes {
     .into()
 }
 
-fn revert_reason(result: &ExecutionResult) -> Option<String> {
-    let bytes = match result {
-        ExecutionResult::Revert { output, .. } => output,
-        ExecutionResult::Success {
-            output: Output::Call(output),
-            ..
-        } => output,
-        _ => return None,
-    };
-    alloy_sol_types::Revert::abi_decode(bytes)
+fn revert_reason(result: &TxResult<OutbeEvmTypes>) -> Option<String> {
+    if !result.is_revert() && !result.is_success() {
+        return None;
+    }
+    alloy_sol_types::Revert::abi_decode(&result.output)
         .ok()
         .map(|revert| revert.reason)
 }
 
-/// Runs `calldata` against `to` with `value` and returns the whole outcome so
-/// callers can assert on post-state as well as the result.
-fn run(db: CacheDB<EmptyDB>, to: Address, value: u64, calldata: Bytes) -> ResultAndState {
-    let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
-        .create_evm(db, test_env());
-    let tx = TxEnv::builder()
-        .caller(EOA)
-        .nonce(0)
-        .kind(TxKind::Call(to))
-        .value(U256::from(value))
-        .data(calldata)
-        .gas_limit(GAS_LIMIT)
-        .build()
-        .expect("tx builds");
-    evm.transact_raw(tx).expect("transaction executes")
+fn legacy_tx(to: Address, value: u64, gas_price: u128, calldata: Bytes) -> Recovered<TxEnvelope> {
+    Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(CHAIN_ID),
+            nonce: 0,
+            gas_price,
+            gas_limit: GAS_LIMIT,
+            to: TxKind::Call(to),
+            value: U256::from(value),
+            input: calldata,
+        }),
+        EOA,
+    )
 }
 
-fn balance_of(outcome: &ResultAndState, address: Address) -> U256 {
+/// Runs `calldata` against `to` with `value` and returns the whole outcome so
+/// callers can assert on post-state as well as the result.
+fn run(
+    db: CacheDB<EmptyDB>,
+    to: Address,
+    value: u64,
+    calldata: Bytes,
+) -> TxResultWithState<OutbeEvmTypes> {
+    let mut evm = OutbeEvmFactory::new(host()).create_evm(db, test_env());
+    let tx = legacy_tx(to, value, 0, calldata);
+    evm.transact(&tx).expect("transaction executes").detach()
+}
+
+fn balance_of(outcome: &TxResultWithState<OutbeEvmTypes>, address: Address) -> U256 {
     outcome
-        .state
-        .get(&address)
-        .map(|account| account.info.balance)
+        .pending_state
+        .account_changes_for(&address)
+        .and_then(|account| account.current.map(|info| info.balance))
         .unwrap_or_default()
+}
+
+fn account_info_of(outcome: &TxResultWithState<OutbeEvmTypes>, address: Address) -> AccountInfo {
+    outcome
+        .pending_state
+        .account_changes_for(&address)
+        .and_then(|account| account.current)
+        .expect("account present in pending state")
+        .clone()
 }
 
 /// Number of storage slots this transaction actually wrote at `address`. The
 /// boundary rejects before any storage provider exists, so a rejected call must
 /// leave the precompile's storage untouched - including the stake ledger.
-fn storage_writes(outcome: &ResultAndState, address: Address) -> usize {
+fn storage_writes(outcome: &TxResultWithState<OutbeEvmTypes>, address: Address) -> usize {
     outcome
-        .state
-        .get(&address)
+        .pending_state
+        .account_changes_for(&address)
         .map(|account| {
             account
                 .storage
+                .slots
                 .values()
-                .filter(|slot| slot.present_value != slot.original_value)
+                .filter(|slot| slot.value.current != slot.value.original)
                 .count()
         })
         .unwrap_or(0)
@@ -142,12 +189,12 @@ fn storage_writes(outcome: &ResultAndState, address: Address) -> usize {
 
 fn db_with_borrower(opcode: u8) -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(EOA, funded(1_000_000_000));
+    db.insert_account_info(&EOA, funded(1_000_000_000));
     let mut borrower = funded(0);
-    let code = Bytecode::new_raw(borrow_code(opcode, STAKING_ADDRESS));
+    let code = Bytecode::new_legacy(borrow_code(opcode, STAKING_ADDRESS));
     borrower.code_hash = code.hash_slow();
     borrower.code = Some(code);
-    db.insert_account_info(BORROWER, borrower);
+    db.insert_account_info(&BORROWER, borrower);
     db
 }
 
@@ -166,10 +213,10 @@ fn db_with_registered_validator(validator: Address) -> CacheDB<EmptyDB> {
     });
 
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(validator, funded(1_000_000_000));
+    db.insert_account_info(&validator, funded(1_000_000_000));
     let marker = Bytecode::new_legacy([0xef].into());
     db.insert_account_info(
-        VALIDATOR_SET_ADDRESS,
+        &VALIDATOR_SET_ADDRESS,
         AccountInfo {
             code_hash: marker.hash_slow(),
             code: Some(marker),
@@ -177,21 +224,17 @@ fn db_with_registered_validator(validator: Address) -> CacheDB<EmptyDB> {
         },
     );
     for ((address, slot), value) in seed.storage {
-        db.insert_account_storage(address, slot, value)
-            .expect("validator registration storage seeds");
+        db.insert_account_storage(&address, &slot, &value);
     }
     db
 }
 
 /// CALLCODE hands the boundary a `CallValue::Transfer` whose amount came off the
-/// stack. But caller and target are the same account, so revm's journal performs a
+/// stack. But caller and target are the same account, so the journal performs a
 /// balance check and moves nothing. Crediting it would let `staking.stake` book
 /// stake `STAKING_ADDRESS` never received - repeatable at no cost.
 #[test]
 fn callcode_to_staking_with_value_cannot_credit_stake() {
-    // CALLCODE sets `caller` to the executing account, so the borrower stakes to
-    // itself. Both payable selectors must fail at the frame boundary, before
-    // registration validation or stake accounting.
     for calldata in [
         stake_calldata(BORROWER, STAKE_VALUE),
         topup_calldata(BORROWER, STAKE_VALUE),
@@ -221,9 +264,6 @@ fn callcode_to_staking_with_value_cannot_credit_stake() {
 /// balance at all.
 #[test]
 fn delegatecall_to_staking_with_value_cannot_credit_stake() {
-    // DELEGATECALL keeps the inherited `caller`, which is the EOA that funded
-    // the borrower. So the stake must name the EOA for the self-stake gate to
-    // pass. The boundary rejects both payable selectors before their own validation.
     for calldata in [
         stake_calldata(EOA, STAKE_VALUE),
         topup_calldata(EOA, STAKE_VALUE),
@@ -256,9 +296,6 @@ fn zero_value_callcode_is_refused_too() {
         stake_calldata(BORROWER, STAKE_VALUE),
     );
 
-    // A delegated frame is refused whether or not it carries value. Otherwise
-    // dispatch would run against the precompile's own storage while `caller`
-    // stays the frame's inherited caller.
     assert_eq!(
         revert_reason(&outcome.result).as_deref(),
         Some("outbe precompile: delegated call frame cannot execute a precompile"),
@@ -272,7 +309,7 @@ fn zero_value_callcode_is_refused_too() {
 #[test]
 fn plain_call_with_value_to_non_payable_precompile_is_rejected() {
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(EOA, funded(1_000_000_000));
+    db.insert_account_info(&EOA, funded(1_000_000_000));
 
     let outcome = run(db, GRATIS_ADDRESS, 500, Bytes::new());
 
@@ -322,11 +359,6 @@ fn plain_call_with_value_credits_a_payable_precompile() {
 /// Reserving the `0x53c0...` class must not make native value unspendable there.
 /// An empty-calldata send is an ordinary transfer. The class dispatch returns
 /// from it without touching token state.
-///
-/// This address is unissued, which is the branch that also existed before the
-/// class narrowing. So the test guards against over-restricting rather than
-/// proving the narrowing. The issued-token half is
-/// `precompile_routes::tests::registered_stablecoin_token_refuses_a_plain_native_transfer`.
 #[test]
 fn native_transfer_to_stablecoin_class_address_succeeds() {
     let mut token = [0u8; 20];
@@ -335,20 +367,9 @@ fn native_transfer_to_stablecoin_class_address_succeeds() {
     let token = Address::from(token);
 
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(EOA, funded(1_000_000_000));
+    db.insert_account_info(&EOA, funded(1_000_000_000));
 
-    let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
-        .create_evm(db, test_env());
-    let tx = TxEnv::builder()
-        .caller(EOA)
-        .nonce(0)
-        .kind(TxKind::Call(token))
-        .value(U256::from(500u64))
-        .data(Bytes::new())
-        .gas_limit(GAS_LIMIT)
-        .build()
-        .expect("tx builds");
-    let outcome = evm.transact_raw(tx).expect("transaction executes");
+    let outcome = run(db, token, 500, Bytes::new());
 
     assert!(
         outcome.result.is_success(),
@@ -356,33 +377,22 @@ fn native_transfer_to_stablecoin_class_address_succeeds() {
         outcome.result
     );
     assert_eq!(
-        outcome
-            .state
-            .get(&token)
-            .map(|account| account.info.balance)
-            .unwrap_or_default(),
+        balance_of(&outcome, token),
         U256::from(500u64),
         "the transferred value must land at the token address"
     );
 }
 
 /// The impersonation the delegated-frame refusal closes, independent of value.
-///
-/// `DELEGATECALL` keeps the frame's inherited caller, and dispatch keys the
-/// precompile's storage on the borrowed address. So before the refusal, a
-/// contract could run any caller-authenticated selector - here `unstake` - as
-/// whoever called it, against real staking state. Without the guard, this
-/// reaches staking and fails on staking's own accounting. With the guard, the
-/// frame never runs.
 #[test]
 fn delegatecall_cannot_act_under_the_inherited_caller() {
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(EOA, funded(1_000_000_000));
+    db.insert_account_info(&EOA, funded(1_000_000_000));
     let mut borrower = funded(0);
-    let code = Bytecode::new_raw(borrow_code(0xf4, STAKING_ADDRESS));
+    let code = Bytecode::new_legacy(borrow_code(0xf4, STAKING_ADDRESS));
     borrower.code_hash = code.hash_slow();
     borrower.code = Some(code);
-    db.insert_account_info(BORROWER, borrower);
+    db.insert_account_info(&BORROWER, borrower);
 
     let unstake = IStaking::unstakeCall {
         amount: U256::from(1u64),
@@ -405,16 +415,10 @@ fn delegatecall_cannot_act_under_the_inherited_caller() {
 }
 
 /// The stranding bug R-02 names, at execution level.
-///
-/// Oracle put its value check on mutating selectors only. So a funded call to a
-/// view like `getPairCount` used to **succeed**: revm had already credited the
-/// precompile account, the view ignored the value, and the frame committed. The
-/// value then sat at an address with no accounting entry and no way out. The
-/// boundary now refuses it before dispatch, and the revert returns the funds.
 #[test]
 fn funded_call_to_a_reject_route_view_no_longer_settles() {
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(EOA, funded(1_000_000_000));
+    db.insert_account_info(&EOA, funded(1_000_000_000));
 
     let outcome = run(
         db,
@@ -436,11 +440,6 @@ fn funded_call_to_a_reject_route_view_no_longer_settles() {
     );
 }
 
-use revm::{
-    context_interface::ContextSetters,
-    handler::{EthFrame, Handler, MainnetHandler},
-    ExecuteEvm,
-};
 fn insert_code(
     db: &mut CacheDB<EmptyDB>,
     address: Address,
@@ -449,7 +448,7 @@ fn insert_code(
     nonce: u64,
 ) {
     db.insert_account_info(
-        address,
+        &address,
         AccountInfo {
             balance: U256::from(balance),
             nonce,
@@ -459,9 +458,10 @@ fn insert_code(
         },
     );
 }
+
 fn delegation_db(marker: bool) -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(EOA, funded(1_000_000_000));
+    db.insert_account_info(&EOA, funded(1_000_000_000));
     insert_code(
         &mut db,
         BORROWER,
@@ -478,10 +478,10 @@ fn delegation_db(marker: bool) -> CacheDB<EmptyDB> {
             0,
         );
     }
-    db.insert_account_storage(ZEROFEE_ADDRESS, U256::from(42), U256::from(99))
-        .unwrap();
+    db.insert_account_storage(&ZEROFEE_ADDRESS, &U256::from(42), &U256::from(99));
     db
 }
+
 struct DelegationCall {
     to: Address,
     value: u64,
@@ -493,41 +493,22 @@ fn execute_delegation_call(
     call: DelegationCall,
     inspect: bool,
     normalize: bool,
-) -> ResultAndState {
+) -> TxResultWithState<OutbeEvmTypes> {
     let DelegationCall { to, value, data } = call;
-    use revm::inspector::InspectorHandler;
-    let tx = TxEnv::builder()
-        .caller(EOA)
-        .nonce(0)
-        .kind(TxKind::Call(to))
-        .value(U256::from(value))
-        .data(data)
-        .gas_price(1)
-        .gas_limit(GAS_LIMIT)
-        .build()
-        .unwrap();
-    let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
-        .create_evm(db, test_env());
-    if normalize {
-        evm.set_inspector_enabled(inspect);
-        evm.transact_raw(tx).unwrap()
+    let tx = legacy_tx(to, value, 1, data);
+    let mut evm = if normalize {
+        OutbeEvmFactory::new(host()).create_evm(db, test_env())
     } else {
-        // Unmodified Revm is the independent empty-code/gas baseline.
-        let mut raw = evm.into_inner();
-        raw.ctx.set_tx(tx);
-        let mut handler: MainnetHandler<
-            _,
-            revm::context::result::EVMError<std::convert::Infallible>,
-            EthFrame,
-        > = Default::default();
-        let output = if inspect {
-            handler.inspect_run(&mut raw)
-        } else {
-            handler.run(&mut raw)
-        }
-        .unwrap();
-        ResultAndState::new(output, raw.finalize())
+        // Unmodified evm2 opcodes and tx registry are the independent empty-code/gas baseline.
+        baseline_evm(db)
+    };
+    let executed = if inspect {
+        evm.transact_with_inspector(&tx, &mut NoopInspector::default())
+    } else {
+        evm.transact(&tx)
     }
+    .unwrap();
+    executed.detach()
 }
 
 fn forward_call(target: Address, opcode: u8, revert: bool) -> Bytecode {
@@ -545,6 +526,7 @@ fn forward_call(target: Address, opcode: u8, revert: bool) -> Bytecode {
     }
     Bytecode::new_legacy(code.into())
 }
+
 #[test]
 fn execution_code_normalization_controls() {
     let forwarder = Address::new([0xbb; 20]);
@@ -589,13 +571,13 @@ fn assert_native_transfer_identity(inspect: bool) {
     );
     assert_eq!(balance_of(&actual, BORROWER), U256::from(11));
     assert_eq!(balance_of(&actual, EOA), balance_of(&empty, EOA));
-    assert_eq!(actual.state[&BORROWER].info.nonce, 2);
+    assert_eq!(account_info_of(&actual, BORROWER).nonce, 2);
     assert_eq!(
-        actual.state[&BORROWER].info.code_hash,
+        account_info_of(&actual, BORROWER).code_hash,
         Bytecode::new_eip7702(ZEROFEE_ADDRESS).hash_slow()
     );
     assert_eq!(
-        actual.state[&ZEROFEE_ADDRESS].info.code_hash,
+        account_info_of(&actual, ZEROFEE_ADDRESS).code_hash,
         Bytecode::new_legacy([0xef].into()).hash_slow()
     );
     assert_eq!(storage_writes(&actual, ZEROFEE_ADDRESS), 0);
@@ -644,13 +626,10 @@ fn assert_nested_delegation_opcodes(inspect: bool, forwarder: Address) -> eyre::
             "nested CALL result and gas must match empty delegation: opcode={opcode:x}"
         );
         assert_eq!(balance_of(&actual, EOA), balance_of(&baseline, EOA));
-        match &actual.result {
-            ExecutionResult::Success {
-                output: Output::Call(data),
-                ..
-            } => assert_eq!(U256::from_be_slice(data), U256::from(1)),
-            other => eyre::bail!("call scheme {opcode:x}: {other:?}"),
+        if !actual.result.is_success() {
+            eyre::bail!("call scheme {opcode:x}: {:?}", actual.result);
         }
+        assert_eq!(U256::from_be_slice(&actual.result.output), U256::from(1));
         assert_eq!(
             balance_of(&actual, BORROWER),
             U256::from(if opcode == 0xf1 { 11 } else { 1 })
@@ -673,7 +652,7 @@ fn assert_outer_delegation_revert(inspect: bool, forwarder: Address) {
         inspect,
         true,
     );
-    assert!(matches!(actual.result, ExecutionResult::Revert { .. }));
+    assert!(actual.result.is_revert());
     assert_eq!(balance_of(&actual, BORROWER), U256::from(1));
     assert_eq!(balance_of(&actual, forwarder), U256::ZERO);
 }
@@ -709,13 +688,10 @@ fn assert_ordinary_delegation(inspect: bool, ordinary: Address) -> eyre::Result<
         true,
     );
     assert_eq!(actual.result, baseline.result);
-    match actual.result {
-        ExecutionResult::Success {
-            output: Output::Call(data),
-            ..
-        } => assert_eq!(U256::from_be_slice(&data), U256::from(42)),
-        other => eyre::bail!("ordinary delegation: {other:?}"),
+    if !actual.result.is_success() {
+        eyre::bail!("ordinary delegation: {:?}", actual.result);
     }
+    assert_eq!(U256::from_be_slice(&actual.result.output), U256::from(42));
 
     Ok(())
 }
@@ -751,7 +727,11 @@ fn assert_single_delegation_hop(inspect: bool, ordinary: Address) {
         true,
     );
     assert_eq!(actual.result, baseline.result);
-    assert!(format!("{:?}", actual.result).contains("OpcodeNotFound"));
+    assert!(
+        actual.result.is_halt(),
+        "expected halt for second delegation hop, got {:?}",
+        actual.result
+    );
 }
 
 fn assert_ethereum_precompile(inspect: bool) {
@@ -801,28 +781,28 @@ fn assert_direct_native_value_rejection(inspect: bool) {
         true,
     );
     assert_eq!(actual.result, baseline.result);
-    assert!(matches!(actual.result, ExecutionResult::Revert { .. }));
+    assert!(actual.result.is_revert());
 }
 
 #[test]
 fn system_call_to_native_delegation_executes_empty_code() {
-    use revm::SystemCallEvm;
-    let mut baseline =
-        OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
-            .create_evm(delegation_db(false), test_env())
-            .into_inner();
+    let mut baseline = baseline_evm(delegation_db(false));
     let expected = baseline
-        .system_call_with_caller(EOA, BORROWER, Bytes::new())
-        .unwrap();
-    let mut actual = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
-        .create_evm(delegation_db(true), test_env());
-    let actual = actual
-        .transact_system_call(EOA, BORROWER, Bytes::new())
-        .unwrap();
+        .system_call(SystemTx::new(BORROWER, Bytes::new()).with_caller(EOA))
+        .unwrap()
+        .detach();
+    let mut actual_evm = OutbeEvmFactory::new(host()).create_evm(delegation_db(true), test_env());
+    let actual = outbe_evm::factory::transact_outbe_system_call(
+        &mut actual_evm,
+        EOA,
+        BORROWER,
+        Bytes::new(),
+    )
+    .unwrap();
     assert!(actual.result.is_success());
     assert_eq!(actual.result, expected.result);
     assert_eq!(
-        actual.state[&BORROWER].info.code_hash,
+        account_info_of(&actual, BORROWER).code_hash,
         Bytecode::new_eip7702(ZEROFEE_ADDRESS).hash_slow()
     );
     assert_eq!(storage_writes(&actual, ZEROFEE_ADDRESS), 0);
@@ -855,7 +835,6 @@ fn borrowed_delegation_outcome(
     forwarder: Address,
 ) -> eyre::Result<(u64, i64, Bytes)> {
     use outbe_primitives::storage::{SubCallInput, SubCallStatus};
-    use revm::context_interface::{ContextTr, JournalTr};
     let mut db = delegation_db(marker);
     insert_code(
         &mut db,
@@ -864,12 +843,11 @@ fn borrowed_delegation_outcome(
         0,
         0,
     );
-    let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
-        .create_evm(db, test_env());
+    let mut evm = OutbeEvmFactory::new(host()).create_evm(db, test_env());
     // A native caller is already loaded by its enclosing frame.
-    evm.ctx_mut().journal_mut().load_account_with_code(EOA)?;
+    evm.state_mut().account(&EOA)?;
     let outcome = outbe_evm::sub_call::run_with_host(
-        evm.ctx_mut(),
+        &mut evm,
         outbe_evm::test_support::fresh_environment(EOA, SpecId::PRAGUE),
         SubCallInput {
             target: if nested { forwarder } else { BORROWER },
@@ -878,16 +856,11 @@ fn borrowed_delegation_outcome(
             gas_limit: 100_000,
             is_static,
         },
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+        host(),
     )?;
     assert!(matches!(outcome.status, SubCallStatus::Success));
     assert_eq!(
-        evm.ctx_mut()
-            .journal_mut()
-            .load_account_with_code(BORROWER)
-            .unwrap()
-            .info
-            .balance,
+        evm.state_mut().account(&BORROWER).unwrap().balance(),
         U256::from(if is_static { 1 } else { 11 })
     );
     Ok((outcome.gas_used, outcome.gas_refunded, outcome.returndata))

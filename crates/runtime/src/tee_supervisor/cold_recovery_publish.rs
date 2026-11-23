@@ -13,6 +13,11 @@ fn planted_cold() -> (
     let (root, host_key) = host_tree();
     let committee = FinalityCommitteeFixture::new(6);
     let (old, descriptor) = source_for_promotion(&host_key, &committee);
+    let _ = outbe_tee::node_host::ResidentStateStore::load_or_create(
+        root.path(),
+        &old.authorization_witness().unwrap(),
+    )
+    .unwrap();
     let old_attempt = admit_successor(&old, &old, &committee);
     let verified = old.admission_anchor().unwrap().unwrap();
     let intent = &old_attempt.prepare_intent;

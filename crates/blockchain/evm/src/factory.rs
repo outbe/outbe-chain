@@ -131,7 +131,7 @@ pub struct OutbeEvmExt {
     pub(crate) max_native_frame_depth: usize,
     pub(crate) current_call_depth: u16,
     pub(crate) captured_prepared_gas: Option<CapturedPreparedGas>,
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     pub(crate) last_system_call: Option<EvmSystemTx>,
 }
 
@@ -303,7 +303,7 @@ pub(crate) fn execute_outbe_system_call(
         return forced;
     }
     let sys_tx = build_outbe_system_tx(evm, caller, contract, data);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     {
         evm.ext_mut().last_system_call = Some(sys_tx.clone());
     }
@@ -331,7 +331,7 @@ pub fn transact_outbe_system_call(
         });
     }
     let sys_tx = build_outbe_system_tx(evm, caller, contract, data);
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-utils"))]
     {
         evm.ext_mut().last_system_call = Some(sys_tx.clone());
     }
@@ -725,7 +725,7 @@ where
                         let call = req.host.ext().abort_bridge.begin_call();
                         let result = call.finish(self.run_prepared_with_guards(req))?;
                         crate::executor::witness::record_detached_trace_user_gas(
-                            result.total_gas_spent,
+                            result.tx_gas_used(),
                         );
                         Ok(result)
                     }

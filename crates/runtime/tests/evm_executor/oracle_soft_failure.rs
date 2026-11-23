@@ -27,32 +27,27 @@ fn oracle_tx_keeps_fee_envelope_for_basefee_validation() {
         .try_into_recovered()
         .expect("oracle tx signer should recover");
 
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    db.insert_account_info(
-        oracle_tx.signer(),
+    let mut state = CacheDB::new(EmptyDB::default());
+    state.insert_account_info(
+        &oracle_tx.signer(),
         AccountInfo {
             balance: U256::from(1_000_000u64),
             ..Default::default()
         },
     );
 
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-    let evm_env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+    let evm_env = EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::from(1u64),
-            gas_limit: 30_000_000,
-            basefee: MIN_PROTOCOL_BASE_FEE,
+            gas_limit: U256::from(30_000_000_u64),
+            basefee: U256::from(MIN_PROTOCOL_BASE_FEE),
             beneficiary: OWNER,
             timestamp: U256::from(1u64),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
     let evm = config.evm_with_env(&mut state, evm_env);
     let ctx = execution_ctx(Some(1), Bytes::new());
     let mut executor = config.create_executor(evm, ctx);
@@ -74,20 +69,16 @@ fn low_gas_zero_fee_policy_failure_must_not_mint_intrinsic_gas() {
         .try_into_recovered()
         .expect("oracle tx signer should recover");
 
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut state = CacheDB::new(EmptyDB::default());
     let marker_code = Bytecode::new_legacy([0xef].into());
-    db.insert_account_info(
-        ORACLE_ADDRESS,
+    state.insert_account_info(
+        &ORACLE_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code),
             ..Default::default()
         },
     );
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
     let evm = config.evm_with_env(&mut state, test_evm_env(1, REWARDS_ADDRESS));
     let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
 
@@ -104,14 +95,8 @@ fn low_gas_zero_fee_policy_failure_must_not_mint_intrinsic_gas() {
     );
 }
 
-/// The per-block zero-fee soft-failure cap admits up to
-/// `MAX_ZERO_FEE_SOFT_FAILURES_PER_BLOCK` soft-failures. Then it rejects further
-/// ones with a tx-level `InvalidTx`. The payload builder SKIPS this variant
-/// (mark_invalid + continue), and a validator REJECTS the block on it. It is NOT
-/// a fatal `Internal` error that would abort the build (the 2026-05-15 halt).
 #[test]
 fn zero_fee_soft_failure_cap_admits_then_rejects_with_invalid_tx() {
-    use alloy_evm::block::{BlockExecutionError, BlockValidationError};
     let signer = test_evm_signer();
     let proposer = signer.address();
     let mut state = state_with_active_proposer(proposer);
@@ -149,6 +134,7 @@ fn zero_fee_soft_failure_cap_admits_then_rejects_with_invalid_tx() {
 
 #[test]
 fn sponsored_budget_excludes_protocol_oracle_waiver_from_delegated_feeder() {
+    use evm2::EvmFeatures;
     let config = OutbeEvmConfig::new(
         test_chain_spec(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
@@ -164,9 +150,6 @@ fn sponsored_budget_excludes_protocol_oracle_waiver_from_delegated_feeder() {
     StorageHandle::enter(&mut seed_storage, |storage| {
         seed_registered_active_validator(storage.clone(), validator, &pk);
 
-        // Feeder resolution moved to the role-scoped ValidatorSet
-        // delegation registry. `resolve_validator_for_feeder` no longer
-        // consults the legacy oracle-side mapping.
         let mut validator_set = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         validator_set.set_delegate(
             validator,
@@ -177,22 +160,21 @@ fn sponsored_budget_excludes_protocol_oracle_waiver_from_delegated_feeder() {
     })
     .expect("test genesis state must be seeded");
 
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut state = CacheDB::new(EmptyDB::default());
     for address in seed_storage
         .storage
         .keys()
         .map(|(address, _)| *address)
         .collect::<std::collections::HashSet<_>>()
     {
-        db.insert_account_info(address, AccountInfo::default());
+        state.insert_account_info(&address, AccountInfo::default());
     }
     for ((address, slot), value) in seed_storage.storage {
-        db.insert_account_storage(address, slot, value)
-            .expect("seed storage insert should succeed");
+        state.insert_account_storage(&address, &slot, &value);
     }
     let marker_code = Bytecode::new_legacy([0xef].into());
-    db.insert_account_info(
-        ORACLE_ADDRESS,
+    state.insert_account_info(
+        &ORACLE_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code),
@@ -200,13 +182,8 @@ fn sponsored_budget_excludes_protocol_oracle_waiver_from_delegated_feeder() {
         },
     );
 
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-
     let feeder_balance_before = state
-        .basic(feeder)
+        .get_account(&feeder)
         .expect("feeder account read should succeed")
         .map(|account| account.balance)
         .unwrap_or_default();
@@ -239,22 +216,22 @@ fn sponsored_budget_excludes_protocol_oracle_waiver_from_delegated_feeder() {
     })
     .expect("seeded zero-fee authorization state should be readable");
 
-    {
-        let evm_env = EvmEnv {
-            cfg_env: CfgEnv::new()
-                .with_chain_id(CHAIN_ID)
-                .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-            block_env: BlockEnv {
+    let output = {
+        let evm_env = EthEvmEnv::new(
+            SpecId::SHANGHAI,
+            BlockEnvExt {
                 number: U256::from(1u64),
-                gas_limit: 30_000_000,
-                basefee: 1_000_000_000,
+                gas_limit: U256::from(30_000_000_u64),
+                basefee: U256::from(1_000_000_000_u64),
                 beneficiary: OWNER,
                 timestamp: U256::from(1u64),
                 ..Default::default()
             },
-        };
+            CHAIN_ID,
+        );
         let evm = config.evm_with_env(&mut state, evm_env);
-        let ctx = execution_ctx(Some(1), Bytes::new());
+        let mut ctx = execution_ctx(Some(1), Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
         let mut executor = config.create_executor(evm, ctx);
 
         // Protocol waivers remain executable even when no sponsored gas remains.
@@ -270,14 +247,14 @@ fn sponsored_budget_excludes_protocol_oracle_waiver_from_delegated_feeder() {
             "protocol fee waivers must not charge the sponsored budget"
         );
 
-        let cfg = &executor.inner.evm.ctx_mut().cfg;
+        let features = executor.evm().version().features;
         assert_eq!(
             (
-                cfg.disable_balance_check,
-                cfg.disable_base_fee,
-                cfg.disable_fee_charge
+                features.contains(EvmFeatures::BALANCE_CHECK),
+                features.contains(EvmFeatures::BASE_FEE_CHECK),
+                features.contains(EvmFeatures::FEE_CHARGE)
             ),
-            (false, false, false),
+            (true, true, true),
             "oracle waiver must restore fee validation after execution"
         );
 
@@ -288,8 +265,9 @@ fn sponsored_budget_excludes_protocol_oracle_waiver_from_delegated_feeder() {
             .logs
             .iter()
             .any(|log| log.address == ORACLE_ADDRESS));
-    }
-    state.merge_transitions(BundleRetention::Reverts);
+        executor.into_state()
+    };
+    state.commit_source(&BundleSource(&output));
 
     let mut slot_storage = HashMapStorageProvider::new(CHAIN_ID);
     let vote_slot = StorageHandle::enter(&mut slot_storage, |storage| {
@@ -299,25 +277,20 @@ fn sponsored_budget_excludes_protocol_oracle_waiver_from_delegated_feeder() {
             .slot()
     });
     assert_eq!(
-        state
-            .bundle_state
+        output
             .storage(&ORACLE_ADDRESS, vote_slot)
             .unwrap_or_default(),
         U256::from(1u64)
     );
 
     let feeder_balance_after = state
-        .basic(feeder)
+        .get_account(&feeder)
         .expect("feeder account read should succeed")
         .map(|account| account.balance)
         .unwrap_or_default();
     assert_eq!(feeder_balance_after, U256::ZERO);
 }
 
-/// Two executors with identical state and tx
-/// produce byte-equal soft-fail receipts. This is the on-chain parity
-/// invariant that keeps `receipts_root` deterministic across proposer
-/// and validators when a zero-fee tx is soft-failed.
 #[test]
 fn parity_soft_failed_zero_fee_receipt_is_byte_equal_across_runs() {
     fn run() -> Vec<reth_ethereum::Receipt> {
@@ -325,16 +298,14 @@ fn parity_soft_failed_zero_fee_receipt_is_byte_equal_across_runs() {
             test_chain_spec(),
             std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
         );
-        // No validator-set seeding, no feeder delegation: the oracle vote will
-        // hit `authorize_fee_waiver` -> `UnauthorizedSigner` (code 107).
         let zero_fee_tx = test_oracle_submit_vote_tx()
             .try_into_recovered()
             .expect("oracle submitVote tx signer should recover");
 
-        let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        let mut state = CacheDB::new(EmptyDB::default());
         let marker_code = Bytecode::new_legacy([0xef].into());
-        db.insert_account_info(
-            ORACLE_ADDRESS,
+        state.insert_account_info(
+            &ORACLE_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
@@ -342,24 +313,18 @@ fn parity_soft_failed_zero_fee_receipt_is_byte_equal_across_runs() {
             },
         );
 
-        let mut state = State::builder()
-            .with_database(db)
-            .with_bundle_update()
-            .build();
-
-        let evm_env = EvmEnv {
-            cfg_env: CfgEnv::new()
-                .with_chain_id(CHAIN_ID)
-                .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-            block_env: BlockEnv {
+        let evm_env = EthEvmEnv::new(
+            SpecId::SHANGHAI,
+            BlockEnvExt {
                 number: U256::from(1u64),
-                gas_limit: 30_000_000,
-                basefee: 1_000_000_000,
+                gas_limit: U256::from(30_000_000_u64),
+                basefee: U256::from(1_000_000_000_u64),
                 beneficiary: OWNER,
                 timestamp: U256::from(1u64),
                 ..Default::default()
             },
-        };
+            CHAIN_ID,
+        );
         let evm = config.evm_with_env(&mut state, evm_env);
         let ctx = execution_ctx(Some(1), Bytes::new());
         let mut executor = config.create_executor(evm, ctx);
@@ -431,34 +396,29 @@ fn property_soft_fail_does_not_perturb_validator_fee_sum() {
             .try_into_recovered()
             .expect("oracle submitVote tx signer should recover");
 
-        let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        let mut state = CacheDB::new(EmptyDB::default());
         let marker_code = Bytecode::new_legacy([0xef].into());
-        db.insert_account_info(
-            ORACLE_ADDRESS,
+        state.insert_account_info(
+            &ORACLE_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
                 ..Default::default()
             },
         );
-        let mut state = State::builder()
-            .with_database(db)
-            .with_bundle_update()
-            .build();
 
-        let evm_env = EvmEnv {
-            cfg_env: CfgEnv::new()
-                .with_chain_id(CHAIN_ID)
-                .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-            block_env: BlockEnv {
+        let evm_env = EthEvmEnv::new(
+            SpecId::SHANGHAI,
+            BlockEnvExt {
                 number: U256::from(1u64 + run as u64),
-                gas_limit: 30_000_000,
-                basefee: 1_000_000_000,
+                gas_limit: U256::from(30_000_000_u64),
+                basefee: U256::from(1_000_000_000_u64),
                 beneficiary: OWNER,
                 timestamp: U256::from(1u64 + run as u64),
                 ..Default::default()
             },
-        };
+            CHAIN_ID,
+        );
         let evm = config.evm_with_env(&mut state, evm_env);
         let ctx = execution_ctx(Some(1), Bytes::new());
         // Construct OutbeBlockExecutor directly (instead of through
@@ -468,6 +428,8 @@ fn property_soft_fail_does_not_perturb_validator_fee_sum() {
         // return type hides it.
         let mut executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+            chain_spec.clone(),
+            None,
             fixtures::executor_inputs_from_ctx(&ctx, None, false),
         );
 
@@ -511,34 +473,29 @@ fn soft_fail_returns_ok_so_tx_lands_in_block_body() {
         .try_into_recovered()
         .expect("oracle submitVote tx signer should recover");
 
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut state = CacheDB::new(EmptyDB::default());
     let marker_code = Bytecode::new_legacy([0xef].into());
-    db.insert_account_info(
-        ORACLE_ADDRESS,
+    state.insert_account_info(
+        &ORACLE_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code),
             ..Default::default()
         },
     );
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
 
-    let evm_env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+    let evm_env = EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::from(1u64),
-            gas_limit: 30_000_000,
-            basefee: 1_000_000_000,
+            gas_limit: U256::from(30_000_000_u64),
+            basefee: U256::from(1_000_000_000_u64),
             beneficiary: OWNER,
             timestamp: U256::from(1u64),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
     let evm = config.evm_with_env(&mut state, evm_env);
     let ctx = execution_ctx(Some(1), Bytes::new());
     let mut executor = config.create_executor(evm, ctx);

@@ -40,39 +40,23 @@ pub(super) struct Output {
     pub reservation_exists: bool,
 }
 
-fn full_state_root(state: &State<CacheDB<EmptyDBTyped<ProviderError>>>) -> B256 {
-    let mut accounts: BTreeMap<Address, (AccountInfo, BTreeMap<U256, U256>)> = state
-        .database
-        .cache
-        .accounts
-        .iter()
-        .filter_map(|(address, account)| {
-            account.info().map(|info| {
-                (
-                    *address,
-                    (
-                        info,
-                        account.storage.iter().map(|(k, v)| (*k, *v)).collect(),
-                    ),
-                )
-            })
-        })
-        .collect();
-    for (address, cached) in &state.cache.accounts {
-        match &cached.account {
-            Some(current) => {
-                let entry = accounts
-                    .entry(*address)
-                    .or_insert_with(|| (current.info.clone(), BTreeMap::new()));
-                entry.0 = current.info.clone();
-                entry
-                    .1
-                    .extend(current.storage.iter().map(|(k, v)| (*k, *v)));
-            }
-            None => {
-                accounts.remove(address);
-            }
-        }
+fn full_state_root(state: &CacheDB<EmptyDB>) -> B256 {
+    let mut accounts: BTreeMap<Address, (AccountInfo, BTreeMap<U256, U256>)> = BTreeMap::new();
+    let mut addresses: std::collections::BTreeSet<Address> =
+        state.cache.accounts.keys().copied().collect();
+    addresses.extend(state.cache.storage.keys().copied());
+    for address in addresses {
+        let storage = state.cache.storage.get(&address);
+        let info = match state.cache.accounts.get(&address) {
+            Some(Some(info)) => info.clone(),
+            Some(None) => continue,
+            None if storage.is_some() => AccountInfo::default(),
+            None => continue,
+        };
+        let slots = storage
+            .map(|s| s.slots.iter().map(|(k, v)| (*k, *v)).collect())
+            .unwrap_or_default();
+        accounts.insert(address, (info, slots));
     }
     state_root(accounts.into_iter().map(|(address, (info, storage))| {
         let bytecode_hash = (!info.code_hash.is_zero() && info.code_hash != keccak256([]))
@@ -98,11 +82,7 @@ struct FactoryFixture {
     expected_token_id: B256,
     expected_token: Address,
 }
-type PreparedBoundary = (
-    State<CacheDB<EmptyDBTyped<ProviderError>>>,
-    Arc<OutbeEvmSigner>,
-    FactoryFixture,
-);
+type PreparedBoundary = (CacheDB<EmptyDB>, Arc<OutbeEvmSigner>, FactoryFixture);
 fn prepare_boundary(boundary: Boundary) -> eyre::Result<PreparedBoundary> {
     const CREATION_BLOCK: u64 = 7;
     let finalization_block = CREATION_BLOCK + VOTING_WINDOW_BLOCKS + 1;
@@ -209,7 +189,9 @@ pub(super) fn run(boundary: Boundary, validator_execution: bool) -> eyre::Result
     }
 
     let receipts = executor.receipts().to_vec();
+    let bundle = std::mem::take(&mut executor.inner.inner.block_state).into_bundle();
     drop(executor);
+    state.commit_source(&BundleSource(&bundle));
     let receipts = observe_receipts(&receipts);
 
     observe_boundary_state(&mut state, &fixture, boundary, receipts)
@@ -251,7 +233,7 @@ fn execution_config(
     (config, metadata, parent_hash)
 }
 fn observe_boundary_state(
-    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    state: &mut CacheDB<EmptyDB>,
     fixture: &FactoryFixture,
     boundary: Boundary,
     receipts: ReceiptObservation,
@@ -275,9 +257,8 @@ fn observe_boundary_state(
             expected_token_id,
         },
     )?;
-    let token_code_hash = state
-        .basic(expected_token)?
-        .map(|account| account.code_hash);
+    let token_code_hash =
+        evm2::evm::Database::get_account(state, &expected_token)?.map(|account| account.code_hash);
     let state_root = full_state_root(state);
 
     if matches!(boundary, Boundary::Approved) {
@@ -328,7 +309,7 @@ struct FactoryProposal<'a> {
     finalization_block: u64,
 }
 fn seed_factory_boundary(
-    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    state: &mut CacheDB<EmptyDB>,
     seed_context: BlockContext,
     fixture: &FactoryProposal<'_>,
 ) -> eyre::Result<(B256, Address)> {
@@ -467,7 +448,7 @@ struct FactoryContractState {
     reservation_exists: bool,
 }
 fn observe_contracts(
-    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    state: &mut CacheDB<EmptyDB>,
     fixture: &FactoryRead<'_>,
 ) -> eyre::Result<FactoryContractState> {
     let FactoryRead {

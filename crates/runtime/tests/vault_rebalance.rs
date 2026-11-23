@@ -23,16 +23,16 @@
 
 use alloy_primitives::{keccak256, Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolError, SolEvent};
+use evm2::{
+    bytecode::Bytecode,
+    evm::{AccountInfo, CacheDB, EmptyDB},
+};
 use outbe_evm::test_support::{seed_storage, EvmWorld};
 use outbe_primitives::storage::{SubCallOutput, SubCallStatus};
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_vaultrouter::precompile::IVaultRouter;
 use outbe_vaultrouter::schema::VaultActionData;
 use outbe_vaultrouter::VaultRouterContract;
-use revm::{
-    database::{CacheDB, EmptyDB},
-    state::{AccountInfo, Bytecode},
-};
 
 /// The bonded CCA caller.
 const CCA: Address = Address::new([0x11; 20]);
@@ -88,9 +88,9 @@ fn seeded_db(register_from: bool, register_to: bool, asset_reverts: bool) -> Cac
     } else {
         &ALWAYS_ONE
     };
-    database.insert_account_info(ASSET, code_account(asset_code));
-    database.insert_account_info(VAULT_FROM, vault_account(ASSET));
-    database.insert_account_info(VAULT_TO, vault_account(ASSET));
+    database.insert_account_info(&ASSET, code_account(asset_code));
+    database.insert_account_info(&VAULT_FROM, vault_account(ASSET));
+    database.insert_account_info(&VAULT_TO, vault_account(ASSET));
 
     seed_storage(&mut database, 1, CCA, |storage| {
         storage
@@ -293,10 +293,9 @@ fn approval_token() -> AccountInfo {
 
 fn vault_action_db(fail: bool, kind: u8) -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(ASSET, approval_token());
-    db.insert_account_info(VAULT_FROM, approval_vault());
-    db.insert_account_storage(ASSET, U256::from(2), U256::from(u8::from(fail)))
-        .unwrap();
+    db.insert_account_info(&ASSET, approval_token());
+    db.insert_account_info(&VAULT_FROM, approval_vault());
+    db.insert_account_storage(&ASSET, &U256::from(2), &U256::from(u8::from(fail)));
     seed_storage(&mut db, 1, CCA, |storage| {
         let router = VaultRouterContract::new(storage.clone());
         router
@@ -338,10 +337,9 @@ fn vault_action_world(fail: bool, kind: u8) -> EvmWorld {
 
 fn pending_removal_world() -> EvmWorld {
     let mut db = vault_action_db(false, 2);
-    db.insert_account_info(VAULT_FROM, stateful_vault());
-    db.insert_account_info(VAULT_TO, stateful_vault());
-    db.insert_account_storage(VAULT_FROM, U256::ZERO, U256::from(AMOUNT))
-        .unwrap();
+    db.insert_account_info(&VAULT_FROM, stateful_vault());
+    db.insert_account_info(&VAULT_TO, stateful_vault());
+    db.insert_account_storage(&VAULT_FROM, &U256::ZERO, &U256::from(AMOUNT));
     seed_storage(&mut db, 1, CCA, |storage| {
         storage
             .increase_balance(

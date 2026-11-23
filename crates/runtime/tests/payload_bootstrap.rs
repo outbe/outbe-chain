@@ -32,11 +32,11 @@ use outbe_system_common::units::SCALE_1E6_U256;
 use reth_basic_payload_builder::{BuildArguments, PayloadConfig};
 use reth_chainspec::{ChainSpec, ChainSpecBuilder, EthereumHardfork, ForkCondition};
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
+use reth_evm::database::StateProviderDatabase;
 use reth_evm::{execute::Executor as _, ConfigureEvm, RecoveredTx};
 use reth_payload_primitives::BuiltPayload as _;
 use reth_primitives_traits::{SealedHeader, SignedTransaction as _};
 use reth_provider::test_utils::{ExtendedAccount, MockEthProvider};
-use reth_revm::database::StateProviderDatabase;
 use reth_transaction_pool::{
     error::InvalidPoolTransactionError,
     identifier::{SenderId, TransactionId},
