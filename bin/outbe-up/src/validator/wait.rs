@@ -2,9 +2,13 @@ use std::time::{Duration, Instant};
 
 use eyre::{bail, ensure, Result};
 
-use crate::{support::progress::Progress, validator::rpc::RpcClient};
+use crate::{
+    support::progress::Progress,
+    validator::rpc::{Block, RpcClient},
+};
 
 const SYNC_POLL_TIMEOUT: Duration = Duration::from_secs(5);
+const SYNC_ACCEPTABLE_LAG: u64 = 16;
 
 #[derive(Default)]
 pub(super) struct CatchupEta {
@@ -55,25 +59,26 @@ pub async fn wait_for_sync(
 ) -> Result<(u64, u64)> {
     let started = Instant::now();
     let mut eta = CatchupEta::default();
+    let mut remote_block =
+        wait_for_remote_finalized(remote, progress, "waiting for certified finalized block").await;
     let mut last = None;
     loop {
         let poll = tokio::time::timeout(SYNC_POLL_TIMEOUT, async {
-            let remote_block = remote.finalized_block().await?;
             let local_block = local.finalized_block().await?;
             let peers = local.peer_count().await.unwrap_or(0);
-            Ok::<_, eyre::Report>((remote_block, local_block, peers))
+            Ok::<_, eyre::Report>((local_block, peers))
         })
         .await;
-        let (remote_block, local_block, peers) = match poll {
+        let (local_block, peers) = match poll {
             Ok(Ok(result)) => result,
             Ok(Err(error)) => {
-                progress.update(&format!("waiting for finalized blocks: {error}"));
+                progress.update(&format!("waiting for local finalized block: {error}"));
                 tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             }
             Err(_) => {
-                let detail = last.map_or_else(String::new, |(local, remote)| {
-                    format!("; last h={local}/{remote}")
+                let detail = last.map_or_else(String::new, |local| {
+                    format!("; last h={local}/{}", remote_block.number)
                 });
                 progress.update(&format!(
                     "sync RPC busy; node still running{}; running={}",
@@ -84,7 +89,7 @@ pub async fn wait_for_sync(
             }
         };
         let remaining = remote_block.number.saturating_sub(local_block.number);
-        last = Some((local_block.number, remote_block.number));
+        last = Some(local_block.number);
         progress.update(&format!(
             "sync h={}/{} left={}{} p2p={} running={}",
             local_block.number,
@@ -96,16 +101,42 @@ pub async fn wait_for_sync(
         ));
         if peers > 0 && local_block.number >= remote_block.number {
             let local_at_remote = local.block_number(remote_block.number).await?;
-            if local_at_remote.hash == remote_block.hash {
-                return Ok((remote_block.number, peers));
+            if local_at_remote.hash != remote_block.hash {
+                bail!(
+                    "local and certified RPC finalized hashes disagree at height {}",
+                    remote_block.number
+                );
             }
-            bail!(
-                "local and certified RPC finalized hashes disagree at height {}",
-                remote_block.number
-            );
+
+            let fresh_remote =
+                wait_for_remote_finalized(remote, progress, "rechecking certified finalized block")
+                    .await;
+            if !sync_checkpoint_is_stale(local_block.number, fresh_remote.number) {
+                return Ok((local_block.number, peers));
+            }
+            remote_block = fresh_remote;
         }
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
+}
+
+async fn wait_for_remote_finalized(
+    remote: &RpcClient,
+    progress: &mut Progress,
+    state: &str,
+) -> Block {
+    loop {
+        match tokio::time::timeout(SYNC_POLL_TIMEOUT, remote.finalized_block()).await {
+            Ok(Ok(block)) => return block,
+            Ok(Err(error)) => progress.update(&format!("{state}: {error}")),
+            Err(_) => progress.update(&format!("{state} RPC")),
+        }
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+}
+
+const fn sync_checkpoint_is_stale(local: u64, remote: u64) -> bool {
+    remote.saturating_sub(local) > SYNC_ACCEPTABLE_LAG
 }
 
 pub async fn wait_for_resident(local: &RpcClient, progress: &mut Progress) -> Result<()> {
@@ -197,5 +228,18 @@ pub const fn yes_no(value: bool) -> &'static str {
         "yes"
     } else {
         "no"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{sync_checkpoint_is_stale, SYNC_ACCEPTABLE_LAG};
+
+    #[test]
+    fn sync_checkpoint_accepts_only_a_small_live_lag() {
+        assert!(!sync_checkpoint_is_stale(100, 100));
+        assert!(!sync_checkpoint_is_stale(100, 100 + SYNC_ACCEPTABLE_LAG));
+        assert!(sync_checkpoint_is_stale(100, 100 + SYNC_ACCEPTABLE_LAG + 1));
+        assert!(!sync_checkpoint_is_stale(101, 100));
     }
 }
