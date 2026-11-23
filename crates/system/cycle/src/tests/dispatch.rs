@@ -269,8 +269,12 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
         run_cycle_tick(&ctx).unwrap();
         assert_eq!(claimable(slice - 1), U256::from(1_000u64));
         assert_eq!(claimable(slice), U256::ZERO);
-        let (failed, returned) =
-            outbe_emission::api::record_metadosis_failed(handle.clone(), day.value()).unwrap();
+        let (failed, returned) = outbe_emission::api::record_metadosis_failed(
+            handle.clone(),
+            day.value(),
+            alloy_primitives::U256::ZERO,
+        )
+        .unwrap();
         assert_eq!(returned, U256::ZERO);
         assert_eq!(
             failed.state,

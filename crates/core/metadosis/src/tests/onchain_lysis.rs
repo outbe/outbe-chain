@@ -334,7 +334,12 @@ fn failed_metadosis_forfeits_tributes() {
                 completed
             )
             .is_err());
-            assert!(outbe_emission::api::record_metadosis_failed(storage.clone(), DAY).is_err());
+            assert!(outbe_emission::api::record_metadosis_failed(
+                storage.clone(),
+                DAY,
+                alloy_primitives::U256::ZERO
+            )
+            .is_err());
             assert!(outbe_emission::api::record_metadosis_canceled(storage.clone(), DAY).is_err());
             assert_eq!(
                 MetadosisContract::new(storage)

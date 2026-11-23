@@ -23,7 +23,7 @@ mod emission_sink;
 pub mod errors;
 mod lifecycle;
 mod limits;
-mod lysis;
+mod loads;
 pub mod precompile;
 mod runtime;
 mod schema;

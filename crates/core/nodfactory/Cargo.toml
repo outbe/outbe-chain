@@ -20,7 +20,6 @@ outbe-l2registry.workspace = true
 outbe-worldwideday.workspace = true
 outbe-zk.workspace = true
 outbe-zk-backend.workspace = true
-postcard.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true

@@ -8488,7 +8488,6 @@ dependencies = [
  "outbe-worldwideday",
  "outbe-zk",
  "outbe-zk-backend",
- "postcard",
  "revm",
  "thiserror 2.0.18",
  "tracing",

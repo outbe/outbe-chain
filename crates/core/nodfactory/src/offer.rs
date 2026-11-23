@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolError;
 use outbe_agentreward::AgentRewardContract;
-use outbe_core_common::nod_encryption::{EncryptedNodGroupLoadV1, EncryptedNodV1};
+use outbe_core_common::nod_encryption::EncryptedNodV1;
 use outbe_core_common::series_id::SeriesId;
 use outbe_nod::api as nod_api;
 use outbe_nod::offer::issue::{IssueNodAtOfferRequestV1, NodAtOfferStatusV1};
@@ -249,43 +249,13 @@ fn offer_hour(now: u64, offerings_start: u64) -> Result<u16> {
     Ok(u16::try_from(hours).map_err(|_| crate::errors::NodFactoryError::InvalidEncryptedNod)?)
 }
 
-fn day_sum_scope(domain: &[u8], wwd: WorldwideDay) -> B256 {
-    let mut bytes = domain.to_vec();
-    bytes.extend_from_slice(&wwd.value().to_be_bytes());
-    alloy_primitives::keccak256(bytes)
-}
-
-/// The scope of the encrypted nominal sum of `wwd`.
-pub fn day_nominal_scope(wwd: WorldwideDay) -> B256 {
-    day_sum_scope(b"outbe/nod/day-nominal/v1", wwd)
-}
-
-/// The scope of the encrypted load sum of `wwd`.
-pub fn day_load_scope(wwd: WorldwideDay) -> B256 {
-    day_sum_scope(b"outbe/nod/day-load/v1", wwd)
-}
-
-/// Decodes a stored day sum. An empty sum has no record.
-pub fn decode_day_sum(bytes: &[u8]) -> Result<Option<EncryptedNodGroupLoadV1>> {
-    if bytes.is_empty() {
-        return Ok(None);
-    }
-    postcard::from_bytes(bytes)
-        .map(Some)
-        .map_err(|_| crate::errors::NodFactoryError::InvalidEncryptedNod.into())
-}
-
-fn encode_day_sum(record: &EncryptedNodGroupLoadV1) -> Result<Vec<u8>> {
-    postcard::to_allocvec(record)
-        .map_err(|_| crate::errors::NodFactoryError::InvalidEncryptedNod.into())
-}
-
 fn record_day_nod(
     storage: &StorageHandle<'_>,
     wwd: WorldwideDay,
     nod: &EncryptedNodV1,
 ) -> Result<()> {
     let totals = outbe_worldwideday::day_totals(storage.clone(), wwd)?;
+    use outbe_nod::offers::{day_load_scope, day_nominal_scope, decode_day_sum, encode_day_sum};
     let nominal = nod_api::add_to_day_sum(
         storage,
         day_nominal_scope(wwd),

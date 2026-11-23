@@ -134,20 +134,16 @@ pub(crate) fn fail_metadosis(
     reason: u8,
 ) -> Result<()> {
     cancel_auction_of(metadosis, day)?;
-    if metadosis.emission_days().get(day)?.is_some() {
-        let (record, limit_minor) =
-            outbe_emission::api::record_metadosis_failed(metadosis.storage.clone(), day)?;
+    if let Some(pending) = metadosis.emission_days().get(day)? {
+        let loads = crate::loads::day_loads(&metadosis.storage, pending.wwd)?;
+        let (record, limit_minor) = outbe_emission::api::record_metadosis_failed(
+            metadosis.storage.clone(),
+            day,
+            loads.loads_minor,
+        )?;
         if !limit_minor.is_zero() {
             PromisLimitContract::new(metadosis.storage.clone())
                 .add(outbe_promislimit::LimitSource::MetadosisLimit, limit_minor)?;
-        }
-        if record.wwd.value() != 0 {
-            let timestamp = metadosis.storage.timestamp()?.saturating_to::<u64>();
-            outbe_fidelity::api::finalize_wwd_max_fidelity(
-                metadosis.storage.clone(),
-                record.wwd,
-                timestamp,
-            )?;
         }
         if !outbe_agentreward::distribution::has_pending_accruals_for_day(
             &metadosis.storage,
