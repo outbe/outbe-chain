@@ -200,3 +200,79 @@ fn increase_balance_overflow_reverts_without_partial_mutation() {
     provider.flush().unwrap();
     assert!(provider.take_committed_changes().is_empty());
 }
+
+#[test]
+fn block_state_accumulator_delta_semantics_across_flushes() {
+    const ABSENT: Address = Address::new([0x33; 20]);
+    const SLOT_A: U256 = U256::from_limbs([10, 0, 0, 0]);
+    const SLOT_B: U256 = U256::from_limbs([11, 0, 0, 0]);
+    const SLOT_C: U256 = U256::from_limbs([12, 0, 0, 0]);
+
+    let marker_code = Bytecode::new_raw(Bytes::from_static(&[0xef]));
+    let mut db = CacheDB::new(EmptyDB::default());
+    db.insert_account_info(&FROM, account(U256::from(50), 9, marker_code));
+    db.insert_account_storage(&FROM, &SLOT_A, &U256::from(10));
+    db.insert_account_storage(&FROM, &SLOT_B, &U256::from(100));
+    db.insert_account_storage(&FROM, &SLOT_C, &U256::from(77));
+
+    let mut provider = DirectStorageProvider::new(&mut db, block_context());
+
+    // (a) Storage-only write on an existing account produces no account-info delta.
+    provider.sstore(FROM, SLOT_A, U256::from(20)).unwrap();
+    provider.flush().unwrap();
+    let changes_a = provider.take_committed_changes();
+    assert_eq!(changes_a.accounts().count(), 0);
+    let slot_a = changes_a
+        .storage()
+        .find(|(key, _)| *key == StorageKey::new(FROM, SLOT_A))
+        .map(|(_, delta)| *delta)
+        .expect("storage-only delta recorded");
+    assert_eq!(slot_a.original, U256::from(10));
+    assert_eq!(slot_a.current, U256::from(20));
+
+    // (b) Two consecutive flushes to one slot preserve the first original and latest current.
+    provider.sstore(FROM, SLOT_B, U256::from(200)).unwrap();
+    provider.flush().unwrap();
+    provider.sstore(FROM, SLOT_B, U256::from(300)).unwrap();
+    provider.flush().unwrap();
+    let changes_b = provider.take_committed_changes();
+    assert_eq!(changes_b.accounts().count(), 0);
+    let slot_b = changes_b
+        .storage()
+        .find(|(key, _)| *key == StorageKey::new(FROM, SLOT_B))
+        .map(|(_, delta)| *delta)
+        .expect("multi-flush delta recorded");
+    assert_eq!(slot_b.original, U256::from(100));
+    assert_eq!(slot_b.current, U256::from(300));
+
+    // (c) Writing a slot back to its original value across flushes cancels the delta.
+    provider.sstore(FROM, SLOT_C, U256::from(88)).unwrap();
+    provider.flush().unwrap();
+    provider.sstore(FROM, SLOT_C, U256::from(77)).unwrap();
+    provider.flush().unwrap();
+    let changes_c = provider.take_committed_changes();
+    assert!(changes_c.is_empty());
+
+    // (d) Writing storage on a non-existent account creates a default account delta alongside
+    // the storage delta (production module addresses are pre-seeded in genesis with 0xef).
+    provider.sstore(ABSENT, SLOT_A, U256::from(5)).unwrap();
+    provider.flush().unwrap();
+    let changes_d = provider.take_committed_changes();
+    let absent_account = changes_d
+        .accounts()
+        .find(|(addr, _)| *addr == ABSENT)
+        .map(|(_, delta)| delta)
+        .expect("absent account created by storage flush");
+    assert!(absent_account.original.is_none());
+    assert_eq!(
+        absent_account.current.as_ref(),
+        Some(&AccountInfo::default())
+    );
+    let absent_slot = changes_d
+        .storage()
+        .find(|(key, _)| *key == StorageKey::new(ABSENT, SLOT_A))
+        .map(|(_, delta)| *delta)
+        .expect("absent account storage delta");
+    assert_eq!(absent_slot.original, U256::ZERO);
+    assert_eq!(absent_slot.current, U256::from(5));
+}

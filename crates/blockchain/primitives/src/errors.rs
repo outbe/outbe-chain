@@ -607,14 +607,10 @@ impl From<SubCallError> for PrecompileError {
             SubCallError::StaticContextViolation | SubCallError::StateChangeDuringStaticCall => {
                 Self::WriteProtection
             }
-            SubCallError::EvmHalt(
-                InstrStop::OutOfGas
-                | InstrStop::MemoryOOG
-                | InstrStop::MemoryLimitOOG
-                | InstrStop::PrecompileOOG
-                | InstrStop::InvalidOperandOOG
-                | InstrStop::ReentrancySentryOOG,
-            ) => Self::OutOfGas,
+            SubCallError::EvmHalt(stop) if stop.is_fatal() => {
+                Self::SubCall(SubCallError::EvmHalt(stop))
+            }
+            SubCallError::EvmHalt(stop) if stop.is_out_of_gas() => Self::OutOfGas,
             SubCallError::EvmHalt(
                 InstrStop::StateChangeDuringStaticCall | InstrStop::CallNotAllowedInsideStatic,
             ) => Self::WriteProtection,
@@ -711,6 +707,7 @@ impl PrecompileError {
             Self::Storage(_)
             | Self::EnclaveUnavailable(_)
             | Self::SubCall(SubCallError::DatabaseError(_)) => true,
+            Self::SubCall(SubCallError::EvmHalt(stop)) if stop.is_fatal() => true,
             Self::OutOfGas
             | Self::TriggerBudgetExceeded { .. }
             | Self::TriggerScope(_)
@@ -847,6 +844,70 @@ mod tests {
             assert_eq!(error.is_node_local(), node_local, "{error}");
             assert_eq!(error.pass_failure(), failure, "{error}");
         }
+    }
+
+    #[test]
+    fn subcall_evm_halt_mapping_classifies_oog_static_fatal_and_other_halts() {
+        use evm2::{
+            interpreter::InstrStop,
+            precompiles::{PrecompileError as EvmPrecompileError, PrecompileHalt},
+        };
+
+        for oog in [
+            InstrStop::OutOfGas,
+            InstrStop::MemoryOOG,
+            InstrStop::MemoryLimitOOG,
+            InstrStop::PrecompileOOG,
+            InstrStop::InvalidOperandOOG,
+            InstrStop::ReentrancySentryOOG,
+        ] {
+            let err = PrecompileError::from(SubCallError::EvmHalt(oog));
+            assert!(matches!(err, PrecompileError::OutOfGas), "{oog:?}");
+            assert!(!err.is_node_local());
+            let evm_err = err.into_precompile_error();
+            assert!(!evm_err.is_fatal());
+            assert!(evm_err.is_oog());
+        }
+
+        for static_halt in [
+            InstrStop::StateChangeDuringStaticCall,
+            InstrStop::CallNotAllowedInsideStatic,
+        ] {
+            let err = PrecompileError::from(SubCallError::EvmHalt(static_halt));
+            assert!(
+                matches!(err, PrecompileError::WriteProtection),
+                "{static_halt:?}"
+            );
+            assert!(!err.is_node_local());
+            let evm_err = err.into_precompile_error();
+            assert!(!evm_err.is_fatal());
+            assert!(matches!(
+                evm_err,
+                EvmPrecompileError::Halt(PrecompileHalt::Other(_))
+            ));
+        }
+
+        let fatal = PrecompileError::from(SubCallError::EvmHalt(InstrStop::FatalExternalError));
+        assert!(matches!(
+            fatal,
+            PrecompileError::SubCall(SubCallError::EvmHalt(InstrStop::FatalExternalError))
+        ));
+        assert!(fatal.is_node_local());
+        assert_eq!(fatal.pass_failure(), PassFailure::Propagate);
+        assert!(fatal.into_precompile_error().is_fatal());
+
+        let other = PrecompileError::from(SubCallError::EvmHalt(InstrStop::InvalidJump));
+        assert!(matches!(
+            other,
+            PrecompileError::Halt(PrecompileHalt::Other(_))
+        ));
+        assert!(!other.is_node_local());
+        let evm_other = other.into_precompile_error();
+        assert!(!evm_other.is_fatal());
+        assert!(matches!(
+            evm_other,
+            EvmPrecompileError::Halt(PrecompileHalt::Other(_))
+        ));
     }
 
     #[test]
