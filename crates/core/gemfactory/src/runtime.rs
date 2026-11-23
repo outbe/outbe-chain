@@ -2,7 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_core_common::addresses::INTEX_NFT1155_ADDRESS;
 use outbe_core_common::markup::marked_up;
-use outbe_gem::precompile::IGem::{GemIssued, GemSettled};
+use outbe_gem::precompile::IGem::{GemBurned, GemIssued, GemSettled};
 use outbe_gem::{api as gem_api, CallTerms, GemAddParams, GemContract, GemParams, GemView};
 use outbe_intex::{IntexState, SeriesId};
 use outbe_oracle::api::{current_vwap_24h_snapshot, get_utc_day_vwap_for_iso, vwap_24h};
@@ -396,7 +396,9 @@ pub(crate) fn burn_settled(storage: &StorageHandle<'_>, gem_id: U256) -> Result<
     if !item.body().is_settled() {
         return Err(GemFactoryError::GemNotSettled.into());
     }
-    gem_api::remove_gem(storage, item, group)
+    let owner = item.body().owner;
+    gem_api::remove_gem(storage, item, group)?;
+    GemContract::new(storage.clone()).emit(GemBurned { gemId: gem_id, owner })
 }
 
 fn currencies(gem: &GemView) -> Currencies {
