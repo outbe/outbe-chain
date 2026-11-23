@@ -6,7 +6,7 @@ use outbe_agentreward::AgentRewardContract;
 use outbe_core_common::nod_encryption::EncryptedNodV1;
 use outbe_core_common::series_id::SeriesId;
 use outbe_nod::api as nod_api;
-use outbe_nod::offer::issue::{IssueNodAtOfferRequestV1, NodAtOfferStatusV1};
+use outbe_nod::offer::issue::{IssueNodAtOfferRequestV1, NodAtOfferResultV1, NodAtOfferStatusV1};
 use outbe_nod::offer::protocol::{
     EncryptedTributeOffer, TributePublicInputs, TributeZkContext, TributeZkExpectedHashes,
 };
@@ -179,6 +179,13 @@ struct VerifiedProof {
     verification_key: &'static [u8],
 }
 
+/// The claims of an offer that the enclave opened, parsed.
+pub(crate) struct OfferClaims {
+    su_hashes: Vec<B256>,
+    wallets: Vec<Address>,
+    sras: Vec<Address>,
+}
+
 /// The offer of `input` issues its Nod. Every check and every write runs in this call.
 pub fn issue_nod(storage: &StorageHandle<'_>, input: IssueNodInput) -> Result<U256> {
     validate_currency_code(input.issuance_currency)?;
@@ -186,13 +193,59 @@ pub fn issue_nod(storage: &StorageHandle<'_>, input: IssueNodInput) -> Result<U2
     let proof = verified_proof(storage, &input)?;
     let (wwd, pricing) = pricing(storage, &input)?;
     let now = storage.now_secs()?;
+    let (sub_series_id, entry_price_minor) = offer_terms(storage, &wwd, &input, now, &pricing)?;
+    let request = offer_request(
+        &input,
+        (wwd.day, entry_price_minor),
+        &pricing,
+        TributeZkContext {
+            derived_owner: proof.public.derived_owner,
+            chain_id: proof.host_chain_id,
+            l2_chain_id: u64::from(input.l2_chain_id),
+        },
+    );
+    let (nod, result) = issued_nod(nod_api::issue_at_offer(storage, request)?)?;
+    validate_zk_result(
+        &input.zk_proof,
+        proof.verification_key,
+        proof.public,
+        result.zk_expected_hashes.as_ref(),
+    )?;
+    let claims = offer_claims(&result)?;
+    record_offer(
+        storage,
+        input.worldwide_day,
+        &nod,
+        (now, sub_series_id),
+        &claims,
+    )
+}
+
+/// The sub-series of the offer hour of `now` and its entry price: the price of its first
+/// Nod, or the 24-hour reference VWAP of the hour for a new sub-series.
+pub(crate) fn offer_terms(
+    storage: &StorageHandle<'_>,
+    wwd: &outbe_worldwideday::WwdProjection,
+    input: &IssueNodInput,
+    now: u64,
+    pricing: &outbe_oracle::api::TributePricingInputs,
+) -> Result<(u16, U256)> {
     let sub_series_id = offer_hour(now, wwd.offerings_start)?;
     let series_id = SeriesId::for_pair(wwd.day, input.issuance_currency, input.reference_currency)
         .map_err(|_| crate::errors::NodFactoryError::InvalidEncryptedNod)?;
     let entry_price_minor = nod_api::sub_series_entry_price(storage, series_id, sub_series_id)?
         .unwrap_or(pricing.reference_vwap_minor);
-    let request = IssueNodAtOfferRequestV1 {
-        chain_id: proof.host_chain_id,
+    Ok((sub_series_id, entry_price_minor))
+}
+
+pub(crate) fn offer_request(
+    input: &IssueNodInput,
+    (emission_day, entry_price_minor): (u32, U256),
+    pricing: &outbe_oracle::api::TributePricingInputs,
+    zk_context: TributeZkContext,
+) -> IssueNodAtOfferRequestV1 {
+    IssueNodAtOfferRequestV1 {
+        chain_id: zk_context.chain_id,
         offer: EncryptedTributeOffer {
             owner: input.caller,
             cipher_text: input.cipher_text.to_vec(),
@@ -204,46 +257,63 @@ pub fn issue_nod(storage: &StorageHandle<'_>, input: IssueNodInput) -> Result<U2
             issuance_wwd_vwap_minor: pricing.issuance_vwap_minor,
             reference_wwd_vwap_minor: pricing.reference_vwap_minor,
             reference_scurve_minor: pricing.reference_scurve_minor,
-            zk_context: Some(TributeZkContext {
-                derived_owner: proof.public.derived_owner,
-                chain_id: proof.host_chain_id,
-                l2_chain_id: u64::from(input.l2_chain_id),
-            }),
+            zk_context: Some(zk_context),
         },
-        emission_day: wwd.day,
+        emission_day,
         entry_price_minor,
-    };
-    let result = nod_api::issue_at_offer(storage, request)?.map_err(OfferError::Enclave)?;
-    let nod = match result.status {
-        NodAtOfferStatusV1::Issued => result.nod.ok_or(OfferError::UnexpectedResponse)?,
+    }
+}
+
+/// The Nod of an issued offer. A refused offer reverts with its cause.
+pub(crate) fn issued_nod(
+    response: std::result::Result<NodAtOfferResultV1, outbe_tee::TransportError>,
+) -> Result<(EncryptedNodV1, NodAtOfferResultV1)> {
+    let result = response.map_err(OfferError::Enclave)?;
+    match &result.status {
+        NodAtOfferStatusV1::Issued => {}
         NodAtOfferStatusV1::LoadBelowOneMinorUnit => {
             return Err(OfferError::LoadBelowOneMinorUnit.into())
         }
         NodAtOfferStatusV1::Rejected { reason } => {
-            return Err(OfferError::EnclaveRejected(reason).into())
+            return Err(OfferError::EnclaveRejected(reason.clone()).into())
         }
-    };
+    }
+    let nod = result.nod.clone().ok_or(OfferError::UnexpectedResponse)?;
     if result.su_hashes.is_empty() {
         return Err(OfferError::EmptySuHashList.into());
     }
-    validate_zk_result(
-        &input.zk_proof,
-        proof.verification_key,
-        proof.public,
-        result.zk_expected_hashes.as_ref(),
-    )?;
+    Ok((nod, result))
+}
+
+pub(crate) fn offer_claims(result: &NodAtOfferResultV1) -> Result<OfferClaims> {
     let su_hashes = parse_su_hashes(&result.su_hashes)?;
     let (wallets, sras) =
         validate_agent_reward_addresses(&result.wallet_addresses, &result.sra_addresses)?;
-    outbe_nod::offers::mark_offer(storage, (input.worldwide_day, nod.terms.owner), &su_hashes)?;
-    let nod_id = crate::runtime::issue_offer_nod(storage, &nod, now, sub_series_id)?;
-    record_day_nod(storage, input.worldwide_day, &nod)?;
-    record_agent_reward_activity(storage, now, &wallets, &sras)?;
+    Ok(OfferClaims {
+        su_hashes,
+        wallets,
+        sras,
+    })
+}
+
+/// Every write of an offer whose proof holds: its marks, its Nod, the day sums and the
+/// agent reward activity.
+pub(crate) fn record_offer(
+    storage: &StorageHandle<'_>,
+    worldwide_day: WorldwideDay,
+    nod: &EncryptedNodV1,
+    (now, sub_series_id): (u64, u16),
+    claims: &OfferClaims,
+) -> Result<U256> {
+    outbe_nod::offers::mark_offer(storage, (worldwide_day, nod.terms.owner), &claims.su_hashes)?;
+    let nod_id = crate::runtime::issue_offer_nod(storage, nod, now, sub_series_id)?;
+    record_day_nod(storage, worldwide_day, nod)?;
+    record_agent_reward_activity(storage, now, &claims.wallets, &claims.sras)?;
     Ok(nod_id)
 }
 
 /// Whole hours from the start of the offering window to the hour of `now`.
-fn offer_hour(now: u64, offerings_start: u64) -> Result<u16> {
+pub(crate) fn offer_hour(now: u64, offerings_start: u64) -> Result<u16> {
     let hour_start = now - now % SECONDS_PER_HOUR;
     let hours = hour_start.saturating_sub(offerings_start) / SECONDS_PER_HOUR;
     Ok(u16::try_from(hours).map_err(|_| crate::errors::NodFactoryError::InvalidEncryptedNod)?)
@@ -333,7 +403,7 @@ fn verified_proof(storage: &StorageHandle<'_>, input: &IssueNodInput) -> Result<
     }
 }
 
-fn pricing(
+pub(crate) fn pricing(
     storage: &StorageHandle<'_>,
     input: &IssueNodInput,
 ) -> Result<(
@@ -461,7 +531,7 @@ fn parse_addresses(
         .collect()
 }
 
-fn validate_agent_reward_addresses(
+pub(crate) fn validate_agent_reward_addresses(
     wallet_addresses: &[String],
     sra_addresses: &[String],
 ) -> Result<(Vec<Address>, Vec<Address>)> {
