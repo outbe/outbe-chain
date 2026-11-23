@@ -9,7 +9,7 @@ impl DkgSession {
         encrypted_share: &EncryptedShare,
     ) -> Result<Option<CeremonyAck>> {
         let priv_bytes = decrypt_share(&self.enc_secret, encrypted_share)?;
-        let mut reader: &[u8] = priv_bytes.as_ref();
+        let mut reader = Copying(priv_bytes.as_ref());
         let priv_msg = DealerPrivMsg::read(&mut reader)
             .map_err(|e| dkg_err(DkgOperation::DecodeSealedShare, e))?;
         let player = self
@@ -56,7 +56,7 @@ impl DkgSession {
             finalize_logs.record(dealer_pk, log);
         }
         let (output, share) = player
-            .finalize::<N3f1, Batch>(
+            .finalize::<N3f1>(
                 // OS cryptographic randomness batches share verification, never a consensus seed.
                 &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                 finalize_logs,

@@ -50,7 +50,8 @@ pub fn check_zk_merkle_root_signature(
     }
 
     let pubkey = registry.resolve_public_key(&record)?;
-    let sig = G1::decode(signature).map_err(|_| L2RegistryError::InvalidZkSignature)?;
+    let sig = G1::decode(commonware_codec::Copying(signature))
+        .map_err(|_| L2RegistryError::InvalidZkSignature)?;
     verify_message::<MinSig>(&pubkey, ZK_MERKLE_ROOT_NAMESPACE, zk_merkle_root, &sig)
         .map_err(|_| L2RegistryError::InvalidZkSignature)?;
     Ok(ZkOfferCheck::Verified { chain_id })

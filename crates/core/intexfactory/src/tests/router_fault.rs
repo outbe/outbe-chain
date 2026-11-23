@@ -2,9 +2,9 @@ use alloy_primitives::{Address, LogData, B256, U256};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{
-    AccountInfo, Bytecode, PrecompileStorageProvider, SubCallError, SubCallInput, SubCallOutput,
+    AccountInfo, Bytecode, PrecompileStorageProvider, StateCheckpoint, SubCallError, SubCallInput,
+    SubCallOutput,
 };
-use revm::context::journaled_state::JournalCheckpoint;
 
 use crate::constants::ORIGIN_ROUTER_ADDRESS;
 
@@ -109,15 +109,15 @@ impl PrecompileStorageProvider for RouterFaultProvider {
         self.inner.is_static()
     }
 
-    fn checkpoint(&mut self) -> JournalCheckpoint {
+    fn checkpoint(&mut self) -> StateCheckpoint {
         self.inner.checkpoint()
     }
 
-    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+    fn checkpoint_commit(&mut self, checkpoint: StateCheckpoint) -> Result<()> {
         self.inner.checkpoint_commit(checkpoint)
     }
 
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+    fn checkpoint_revert(&mut self, checkpoint: StateCheckpoint) -> Result<()> {
         self.inner.checkpoint_revert(checkpoint)
     }
 

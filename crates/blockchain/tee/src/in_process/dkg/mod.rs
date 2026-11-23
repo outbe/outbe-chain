@@ -16,7 +16,7 @@ use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
 use alloy_primitives::{keccak256, B256};
-use commonware_codec::{Encode as _, Read as _, ReadExt as _};
+use commonware_codec::{Copying, Encode as _, Read as _, ReadExt as _};
 use commonware_cryptography::bls12381::{
     self,
     dkg::feldman_desmedt::{
@@ -29,7 +29,6 @@ use commonware_cryptography::bls12381::{
         sharing::Mode,
         variant::{MinSig, PartialSignature},
     },
-    Batch,
 };
 use commonware_cryptography::Signer as _;
 use commonware_parallel::Sequential;
@@ -54,7 +53,7 @@ pub type CeremonyPubMsg = DealerPubMsg<Variant>;
 /// Public acknowledgement of a verified encrypted dealing.
 pub type CeremonyAck = PlayerAck<PubKey>;
 /// Dealer-signed public dealing log.
-pub type CeremonySignedLog = SignedDealerLog<Variant, PrivKey>;
+pub type CeremonySignedLog = SignedDealerLog<Variant, PubKey>;
 /// Verified public dealer log used during player finalization.
 pub type CeremonyLog = DealerLog<Variant, PubKey>;
 /// Public group polynomial and participant binding.
@@ -134,7 +133,7 @@ pub fn verify_dealer_log(
 }
 
 fn decode_pubkey(bytes: &[u8]) -> Result<PubKey> {
-    let mut reader: &[u8] = bytes;
+    let mut reader = Copying(bytes);
     PubKey::read(&mut reader).map_err(|e| dkg_err(DkgOperation::DecodeBlsPubkey, e))
 }
 
@@ -192,7 +191,7 @@ impl DkgSession {
     ) -> Result<Option<Vec<u8>>> {
         let dealer = decode_pubkey(dealer_bls)?;
         let max = self.max_players()?;
-        let mut reader: &[u8] = pub_msg;
+        let mut reader = Copying(pub_msg);
         let pub_msg = DealerPubMsg::<Variant>::read_cfg(&mut reader, &max)
             .map_err(|e| dkg_err(DkgOperation::DecodePubMsg, e))?;
         let blob = share_cipher::decode(sealed_share)?;
@@ -203,7 +202,7 @@ impl DkgSession {
     /// Seam C wire adapter: decode and count a public acknowledgement.
     pub fn dealer_receive_ack_encoded(&mut self, player_bls: &[u8], ack: &[u8]) -> Result<()> {
         let player = decode_pubkey(player_bls)?;
-        let mut reader: &[u8] = ack;
+        let mut reader = Copying(ack);
         let ack = PlayerAck::<PubKey>::read(&mut reader)
             .map_err(|e| dkg_err(DkgOperation::DecodeAck, e))?;
         self.dealer_receive_ack(player, ack)
@@ -220,8 +219,8 @@ impl DkgSession {
         let mut logs = Vec::with_capacity(signed_logs.len());
         let mut distinct_dealers = std::collections::BTreeSet::new();
         for bytes in signed_logs {
-            let mut reader: &[u8] = bytes;
-            let signed = SignedDealerLog::<Variant, PrivKey>::read_cfg(&mut reader, &max)
+            let mut reader = Copying(bytes.as_slice());
+            let signed = SignedDealerLog::<Variant, PubKey>::read_cfg(&mut reader, &max)
                 .map_err(|e| dkg_err(DkgOperation::DecodeSignedLog, e))?;
             let (pk, log) = verify_dealer_log(&self.info, signed)
                 .ok_or(DkgError::DealerLogVerificationFailed)?;

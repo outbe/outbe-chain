@@ -164,7 +164,7 @@ impl L2RegistryContract<'_> {
     pub(crate) fn resolve_public_key(&self, record: &L2NetworkRecord) -> Result<G2> {
         let public_key = record.compressed_public_key_bytes();
         if public_key != [0; 96] {
-            return G2::decode(public_key.as_slice())
+            return G2::decode(commonware_codec::Copying(public_key.as_slice()))
                 .map_err(|_| L2RegistryError::InvalidPublicKey.into());
         }
 

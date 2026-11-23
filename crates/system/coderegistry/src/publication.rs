@@ -158,10 +158,14 @@ impl CodeRegistry<'_> {
                 .committee
                 .get(index as usize)
                 .ok_or(InvalidPublication("participant index"))?;
-            let key = bls12381::PublicKey::decode(member.consensus_pubkey.as_slice())
-                .map_err(|_| InvalidPublication("participant key"))?;
-            let signature = bls12381::Signature::decode(contribution.signature.as_slice())
-                .map_err(|_| InvalidPublication("identity signature encoding"))?;
+            let key = bls12381::PublicKey::decode(commonware_codec::Copying(
+                member.consensus_pubkey.as_slice(),
+            ))
+            .map_err(|_| InvalidPublication("participant key"))?;
+            let signature = bls12381::Signature::decode(commonware_codec::Copying(
+                contribution.signature.as_slice(),
+            ))
+            .map_err(|_| InvalidPublication("identity signature encoding"))?;
             if !key.verify(PUBLICATION_NAMESPACE, &encoded, &signature) {
                 return Err(InvalidPublication("identity signature").into());
             }

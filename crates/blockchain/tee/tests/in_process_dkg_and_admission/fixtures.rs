@@ -106,7 +106,10 @@ pub fn run_dkg(contexts: &[InProcessTeeContext]) -> [u8; 32] {
     let recipient_keys = contexts
         .iter()
         .map(|c| {
-            let key = bls12381::PublicKey::read(&mut c.tee_bls_public_bytes().as_slice()).unwrap();
+            let key = bls12381::PublicKey::read(&mut commonware_codec::Copying(
+                c.tee_bls_public_bytes().as_slice(),
+            ))
+            .unwrap();
             (key, c.dkg_enc_public())
         })
         .collect::<BTreeMap<_, _>>();
@@ -117,8 +120,10 @@ pub fn run_dkg(contexts: &[InProcessTeeContext]) -> [u8; 32] {
         Err(outbe_tee::in_process::InProcessError::IdentityMismatch)
     ));
     let mut wrong_local = recipient_keys.clone();
-    let local =
-        bls12381::PublicKey::read(&mut contexts[0].tee_bls_public_bytes().as_slice()).unwrap();
+    let local = bls12381::PublicKey::read(&mut commonware_codec::Copying(
+        contexts[0].tee_bls_public_bytes().as_slice(),
+    ))
+    .unwrap();
     wrong_local.insert(local, contexts[1].dkg_enc_public());
     assert!(matches!(
         contexts[0].open_dkg_session(id, 0, &participants, wrong_local),
