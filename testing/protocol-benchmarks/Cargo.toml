@@ -6,16 +6,11 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-system-common.workspace = true
 outbe-core-common.workspace = true
 outbe-ccaregistry.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
-ark-bn254.workspace = true
-ark-ff.workspace = true
-commonware-codec.workspace = true
-commonware-cryptography.workspace = true
 hex.workspace = true
 outbe-credis.workspace = true
 outbe-credisfactory.workspace = true
@@ -26,7 +21,6 @@ outbe-gratis = { workspace = true, features = ["test-enclave", "test-utils"] }
 outbe-gratisfactory = { workspace = true, features = ["test-utils"] }
 outbe-intex.workspace = true
 outbe-intexfactory = { workspace = true, features = ["bench-utils"] }
-outbe-l2registry.workspace = true
 outbe-metadosis = { workspace = true, features = ["bench-utils"] }
 outbe-stablecoin.workspace = true
 outbe-stablecoinfactory.workspace = true
@@ -34,19 +28,14 @@ outbe-nod = { workspace = true, features = ["test-enclave"] }
 outbe-nodfactory = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["bench-utils", "test-utils"] }
-outbe-zk.workspace = true
 outbe-promis = { workspace = true, features = ["test-enclave"] }
 outbe-promisfactory.workspace = true
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
-outbe-zk-backend.workspace = true
-rand.workspace = true
-rand-commonware.workspace = true
 revm.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
-x25519-dalek.workspace = true
 
 [[bench]]
 name = "protocol_operations"
