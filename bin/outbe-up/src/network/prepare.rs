@@ -57,7 +57,7 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("verifying network artifacts and software bundle");
     let build = NetworkArtifacts::load(artifacts)?;
-    let ssh = SshOptions::new(ssh_key, &build.root, &build.manifest.genesis.final_sha256)?;
+    let ssh = SshOptions::new(ssh_key, &build.manifest.genesis.final_sha256)?;
     let temporary = tempfile::tempdir()?;
     let software = temporary.path().join("software");
     fs::create_dir(&software)?;
@@ -137,6 +137,10 @@ fn prepare_founder(input: PrepareFounder<'_>) -> Result<()> {
         ports.reth_discovery,
         ports.consensus,
         ports.radicle,
+        8_551,
+        8_876,
+        9_002,
+        9_101,
         9_000,
         9_003,
     ]

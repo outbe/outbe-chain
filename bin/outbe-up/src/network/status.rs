@@ -45,7 +45,7 @@ pub async fn show(artifacts: &Path, ssh_key: Option<&Path>, watch: bool) -> Resu
     let mut progress = Progress::new();
     progress.stage("querying founding validator status");
     let build = NetworkArtifacts::load(artifacts)?;
-    let ssh = SshOptions::new(ssh_key, &build.root, &build.manifest.genesis.final_sha256)?;
+    let ssh = SshOptions::new(ssh_key, &build.manifest.genesis.final_sha256)?;
     let statuses = query_all(&build, &ssh).await?;
     if !watch {
         progress.done(&format!("queried {} founding validators", statuses.len()));

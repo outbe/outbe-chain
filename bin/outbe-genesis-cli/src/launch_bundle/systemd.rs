@@ -201,7 +201,7 @@ for stale in validator-{index}/data validator-{index}/consensus; do\n\
   [ -e \"$stale\" ] && {{ note \"leftover state\" \"$stale - remove before a new genesis\"; fail=1; }}\n\
 done\n\
 \n\
-for port in {rpc_port} {reth_p2p_port} {reth_discv5_port} {consensus_port} {radicle_port} 9000 9003; do\n\
+for port in {rpc_port} {reth_p2p_port} {reth_discv5_port} {consensus_port} {radicle_port} 8551 8876 9000 9002 9003 9101; do\n\
   ss -lntu 2>/dev/null | grep -q \":$port \" && {{ note \"port $port\" \"already in use\"; fail=1; }}\n\
 done\n\
 \n\

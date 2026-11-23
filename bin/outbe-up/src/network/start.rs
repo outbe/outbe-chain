@@ -17,7 +17,7 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) ->
     let mut progress = Progress::new();
     progress.stage("verifying network artifacts and SSH targets");
     let build = NetworkArtifacts::load(artifacts)?;
-    let ssh = SshOptions::new(ssh_key, &build.root, &build.manifest.genesis.final_sha256)?;
+    let ssh = SshOptions::new(ssh_key, &build.manifest.genesis.final_sha256)?;
     start_founders(&build, &ssh, &mut progress).await?;
     wait_until_ready(&build, &ssh, timeout, &mut progress).await
 }

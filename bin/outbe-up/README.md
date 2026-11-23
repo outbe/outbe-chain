@@ -39,8 +39,9 @@ recorded in `network-manifest.json` and printed for the separately managed host 
 
 `prepare`, `start`, and `status` connect to each private VM through its bare-metal machine without
 requiring local SSH aliases. The operator's default SSH identity is used unless `--ssh-key` is
-provided. Host fingerprints are kept in operator state next to the artifacts, not inside the
-immutable artifact directory. Bare-metal SSH must permit forwarding to the configured VM port 22.
+provided. Host fingerprints are kept in `$XDG_STATE_HOME/outbe-up` (or
+`~/.local/state/outbe-up`), not inside the immutable artifact directory. Bare-metal SSH must permit
+forwarding to the configured VM port 22.
 
 `genesis.base` may reference a custom pre-TEE genesis JSON; `build` verifies its chain ID, copies it
 into the immutable artifacts, then applies the fresh founder set and network policy. Private

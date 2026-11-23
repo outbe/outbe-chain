@@ -116,18 +116,11 @@ pub(super) struct SshOptions {
 }
 
 impl SshOptions {
-    pub(super) fn new(
-        ssh_key: Option<&Path>,
-        artifacts: &Path,
-        manifest_identity: &str,
-    ) -> Result<Self> {
+    pub(super) fn new(ssh_key: Option<&Path>, manifest_identity: &str) -> Result<Self> {
         if let Some(path) = ssh_key {
             ensure!(path.is_file(), "SSH key does not exist: {}", path.display());
         }
-        let state = artifacts
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join(".outbe-up");
+        let state = operator_state_dir()?;
         fs::create_dir_all(&state)?;
         fs::set_permissions(&state, fs::Permissions::from_mode(0o700))?;
         let identity = manifest_identity.chars().take(16).collect::<String>();
@@ -227,8 +220,6 @@ impl SshOptions {
             "-o",
             "ConnectTimeout=10",
             "-o",
-            "IdentitiesOnly=yes",
-            "-o",
             "StrictHostKeyChecking=accept-new",
             "-o",
             &format!("UserKnownHostsFile={}", self.known_hosts.display()),
@@ -237,6 +228,9 @@ impl SshOptions {
             "-o",
             &format!("ProxyCommand={}", self.proxy_command(founder)),
         ]);
+        if self.ssh_key.is_some() {
+            process.args(["-o", "IdentitiesOnly=yes"]);
+        }
     }
 
     fn proxy_command(&self, founder: &FounderArtifact) -> String {
@@ -251,8 +245,6 @@ impl SshOptions {
             "-o".to_owned(),
             "ConnectTimeout=10".to_owned(),
             "-o".to_owned(),
-            "IdentitiesOnly=yes".to_owned(),
-            "-o".to_owned(),
             "StrictHostKeyChecking=accept-new".to_owned(),
             "-o".to_owned(),
             format!("UserKnownHostsFile={}", self.known_hosts.display()),
@@ -263,6 +255,8 @@ impl SshOptions {
             ),
         ];
         if let Some(ssh_key) = &self.ssh_key {
+            args.push("-o".to_owned());
+            args.push("IdentitiesOnly=yes".to_owned());
             args.push("-i".to_owned());
             args.push(ssh_key.display().to_string());
         }
@@ -272,6 +266,24 @@ impl SshOptions {
             .collect::<Vec<_>>()
             .join(" ")
     }
+}
+
+fn operator_state_dir() -> Result<PathBuf> {
+    let base = if let Some(path) =
+        std::env::var_os("XDG_STATE_HOME").filter(|path| !path.is_empty())
+    {
+        PathBuf::from(path)
+    } else {
+        let home = std::env::var_os("HOME")
+            .filter(|path| !path.is_empty())
+            .ok_or_else(|| eyre::eyre!("HOME is not set; cannot locate outbe-up operator state"))?;
+        PathBuf::from(home).join(".local/state")
+    };
+    ensure!(
+        base.is_absolute(),
+        "outbe-up operator state directory must be absolute"
+    );
+    Ok(base.join("outbe-up"))
 }
 
 fn scp_host(host: &str) -> String {
@@ -325,6 +337,7 @@ mod tests {
         let founder = founder();
         let proxy = options.proxy_command(&founder);
         assert!(proxy.contains("ssh -W %h:%p"));
+        assert!(proxy.contains("IdentitiesOnly=yes"));
         assert!(proxy.contains("-i /keys/operator"));
         assert!(proxy.contains("ubuntu@203.0.113.10"));
         assert!(proxy.contains("HostKeyAlias=outbe-0123456789abcdef-fr5-jump"));
@@ -338,5 +351,19 @@ mod tests {
         assert!(args.iter().any(|arg| arg.starts_with("ProxyCommand=ssh ")));
         assert!(args.contains(&"HostKeyAlias=outbe-0123456789abcdef-validator-1-vm".into()));
         assert_eq!(args.last().map(String::as_str), Some("root@10.77.0.12"));
+
+        let agent_options = SshOptions {
+            ssh_key: None,
+            known_hosts: PathBuf::from("/state/known-hosts"),
+            identity: "0123456789abcdef".into(),
+        };
+        assert!(!agent_options
+            .proxy_command(&founder)
+            .contains("IdentitiesOnly"));
+        let mut agent_command = Command::new("ssh");
+        agent_options.ssh_args(&mut agent_command, &founder);
+        assert!(!agent_command
+            .get_args()
+            .any(|argument| argument == "IdentitiesOnly=yes"));
     }
 }
