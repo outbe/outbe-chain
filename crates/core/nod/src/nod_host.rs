@@ -435,12 +435,14 @@ fn has_requested_terms(
 ) -> bool {
     (
         terms.chain_id,
+        terms.owner,
         terms.emission_day,
         terms.entry_price_minor,
         terms.issuance_currency,
         terms.reference_currency,
     ) == (
         request.chain_id,
+        request.offer.owner,
         request.emission_day,
         request.entry_price_minor,
         request.offer.tribute_currency,

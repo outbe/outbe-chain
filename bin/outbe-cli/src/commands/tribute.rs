@@ -1,6 +1,6 @@
 //! Tribute commands.
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
 use clap::{Args, Subcommand};
 use eyre::Result;
@@ -95,9 +95,6 @@ pub struct TributeOfferArgs {
     /// produced with the network key registered in the L2Registry.
     #[arg(long)]
     signature: String,
-    /// Tribute owner from the encrypted payload; defaults to the transaction signer.
-    #[arg(long)]
-    creator: Option<Address>,
 }
 
 impl TributeCmd {
@@ -159,10 +156,9 @@ async fn offer(
         tribute_draft_id,
         su_hash,
         signature,
-        creator,
     } = args;
     let signer = crate::commands::require_signer(private_key)?;
-    let creator = creator.unwrap_or_else(|| signer.address());
+    let creator = signer.address();
     let zk_merkle_root = decode_hex_bytes(&zk_merkle_root, "--zk-merkle-root")?;
     let signature = decode_hex_bytes(&signature, "--signature")?;
     let tribute_draft_id = offer_hex32(&tribute_draft_id, "--tribute-draft-id")?;

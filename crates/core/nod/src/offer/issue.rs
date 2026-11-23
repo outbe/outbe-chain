@@ -104,6 +104,9 @@ fn issue(
         .creator
         .parse::<Address>()
         .map_err(|_| OfferError::from(ProcessError::InvalidCreatorAddress))?;
+    if owner != offer.owner {
+        return Err(ProcessError::CreatorIsNotTheSender.into());
+    }
     let amount = parse_canonical_amount(&payload.amount_base, &payload.amount_micro)?;
     if amount.amount_minor.is_zero() {
         return Err(ProcessError::AmountNotPositive.into());

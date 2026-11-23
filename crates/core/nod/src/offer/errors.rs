@@ -45,6 +45,9 @@ pub enum ProcessError {
     /// The `creator` string is not a valid L1 address.
     #[error("creator must be an L1 address")]
     InvalidCreatorAddress,
+    /// The `creator` is not the sender the proof is bound to.
+    #[error("creator must be the sender")]
+    CreatorIsNotTheSender,
     /// The parsed amount is zero.
     #[error("amount must be positive")]
     AmountNotPositive,

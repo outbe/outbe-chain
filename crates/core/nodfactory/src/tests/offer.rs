@@ -1004,3 +1004,44 @@ fn a_second_offer_fails_after_the_first_nod_is_gone() {
         }
     });
 }
+
+/// The Nod goes to the sender the proof is bound to: an offer that names another account as
+/// its creator reverts and takes nothing from that account.
+#[test]
+fn an_offer_cannot_issue_a_nod_to_another_account() {
+    let _enclave = outbe_nod::test_support::scope();
+    let victim = Address::repeat_byte(0x99);
+    let mut provider = priced_world();
+    StorageHandle::enter(&mut provider, |storage| {
+        at_offer_hour(&storage, (1, 0), Some(100));
+    });
+    let before = provider.storage.clone();
+    let events = provider.get_ordered_events().to_vec();
+    StorageHandle::enter(&mut provider, |storage| {
+        let (cipher_text, nonce, ephemeral_pubkey) =
+            sealed_offer(victim, ("100", "0"), &[B256::repeat_byte(0x31)]);
+        let gift = IssueNodInput {
+            cipher_text,
+            nonce,
+            ephemeral_pubkey,
+            ..offer(&[], &[])
+        };
+        let error = storage
+            .with_checkpoint(|| issue_past_proof(&storage, &gift, None))
+            .unwrap_err();
+        let PrecompileError::RevertBytes(bytes) = error else {
+            panic!("expected the enclave refusal, got {error:?}");
+        };
+        let refusal = INodFactory::EnclaveRejected::abi_decode(&bytes).unwrap();
+        assert!(
+            refusal.reason.contains("creator must be the sender"),
+            "{}",
+            refusal.reason
+        );
+    });
+    assert_eq!(provider.storage, before, "a gift offer wrote state");
+    assert_eq!(provider.get_ordered_events(), events);
+    StorageHandle::enter(&mut provider, |storage| {
+        issue_past_proof(&storage, &offer_of(victim, 840, ("100", "0")), None).unwrap();
+    });
+}
