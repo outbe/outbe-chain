@@ -11,21 +11,21 @@
 //!
 //! # The model (execute-then-agree)
 //!
-//! Every block's transactions run through REVM **twice, serially**: once on the
+//! Every block's transactions run through EVM (evm2) **twice, serially**: once on the
 //! proposer (build) and once on each validator (verify, on the critical path to
 //! the vote). The proposal is a fully executed, sealed block. Its hash binds the
 //! post-execution state root. Thus a validator cannot start verifying until it
 //! receives the proposer's executed block. Simplex arms `leader_deadline` and
 //! `certification_deadline` from the same view-entry instant `t0`.
 //!
-//! There is **no separate REVM execution timeout**. Two limits that already exist
-//! bound REVM:
+//! There is **no separate EVM (evm2) execution timeout**. Two limits that already exist
+//! bound EVM (evm2):
 //!
 //! - `leader_timeout` bounds it from above. The proposer self-nullifies if it
 //!   overruns its leader window.
 //! - `block_gas_limit` bounds it in volume.
 //!
-//! A wall-clock kill on REVM is pointless on the proposer, because the leader
+//! A wall-clock kill on EVM (evm2) is pointless on the proposer, because the leader
 //! timeout already bounds it. It is forbidden on validators, because a per-node
 //! wall-clock verdict on the same block would split consensus.
 //!

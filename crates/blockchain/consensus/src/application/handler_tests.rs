@@ -201,7 +201,7 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
 
 /// Marshal buffer that records every `send` (the wire-broadcast hook).
 ///
-/// commonware 2026.9.0 routes `marshal.forward(round, commitment, recipients)`
+/// commonware 2026.11.0 routes `marshal.forward(round, commitment, recipients)`
 /// to `buffer.send(round, block, recipients)`, whereas `marshal.verified(..)`
 /// only caches locally. Recording `send` lets a test prove the broadcast
 /// actually fired (DEFECT-A: the proposer kept the block only in its local cache).
