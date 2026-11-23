@@ -69,7 +69,7 @@ reth-primitives-traits.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 alloy-rpc-types-engine.workspace = true
 outbe-consensus = { workspace = true, features = ["test-utils"] }
-commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.9.0" }
+commonware-resolver.workspace = true
 tempfile.workspace = true
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 metrics-util = "0.20"
