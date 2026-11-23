@@ -17,7 +17,7 @@ pub fn with_phase1_verify_disabled<R>(f: impl FnOnce() -> R) -> R {
     result
 }
 
-impl<Evm> OutbeBlockExecutor<'_, Evm> {
+impl OutbeBlockExecutor<'_> {
     /// Marks Phase 1 as already executed so a detached replay can observe it.
     pub fn force_preexecuted_phase1_witness_for_test(&mut self, tx_hash: B256) {
         self.preexecuted_phase1_tx_hash = Some(tx_hash);
@@ -28,16 +28,12 @@ impl<Evm> OutbeBlockExecutor<'_, Evm> {
 mod tests {
     use super::*;
     use crate::executor::*;
-    use alloy_evm::{eth::EthBlockExecutionCtx, EvmEnv, EvmFactory};
     use alloy_primitives::{Bytes, U256};
-    use reth_ethereum::evm::RethReceiptBuilder;
-    use reth_primitives_traits::Recovered;
-    use revm::{
-        context::{BlockEnv, CfgEnv},
-        database::{EmptyDB, State},
-        inspector::NoOpInspector,
-        primitives::hardfork::SpecId,
+    use evm2::{env::BlockEnvExt, evm::EmptyDB, SpecId};
+    use reth_ethereum::evm::{
+        EthBlockExecutionCtx, EthBlockExecutor, EthEvmEnv, RethReceiptBuilder,
     };
+    use reth_primitives_traits::Recovered;
     use std::sync::Arc;
     use {
         crate::system_tx::{BlockExecutionFsm, BlockOrder, TEST_BLOCK_ORDER},
@@ -49,13 +45,11 @@ mod tests {
         },
     };
 
-    type TestEvm = <crate::OutbeEvmFactory as EvmFactory>::Evm<State<EmptyDB>, NoOpInspector>;
-
-    fn with_executor(f: impl FnOnce(OutbeBlockExecutor<'_, TestEvm>)) {
+    fn with_executor(f: impl FnOnce(OutbeBlockExecutor<'_>)) {
         with_executor_at(U256::from(1), f);
     }
 
-    fn with_executor_at(timestamp: U256, f: impl FnOnce(OutbeBlockExecutor<'_, TestEvm>)) {
+    fn with_executor_at(timestamp: U256, f: impl FnOnce(OutbeBlockExecutor<'_>)) {
         let host = crate::host::stub_host();
         let chain_spec = Arc::new(
             reth_chainspec::MAINNET
@@ -66,23 +60,19 @@ mod tests {
         let receipt_builder = RethReceiptBuilder::default();
         let signer = Arc::new(OutbeEvmSigner::from_secret_bytes([1; 32]).unwrap());
         let evm = crate::OutbeEvmFactory::new(host.clone()).create_evm(
-            State::builder()
-                .with_database(EmptyDB::default())
-                .with_bundle_update()
-                .build(),
-            EvmEnv {
-                cfg_env: CfgEnv::new()
-                    .with_chain_id(1)
-                    .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-                block_env: BlockEnv {
+            EmptyDB::default(),
+            EthEvmEnv::new(
+                SpecId::SHANGHAI,
+                BlockEnvExt {
                     number: U256::from(2),
-                    gas_limit: 30_000_000,
+                    gas_limit: U256::from(30_000_000_u64),
                     timestamp,
                     ..Default::default()
                 },
-            },
+                1,
+            ),
         );
-        let inner = alloy_evm::eth::EthBlockExecutor::new(
+        let inner = EthBlockExecutor::new(
             evm,
             EthBlockExecutionCtx {
                 parent_hash: B256::ZERO,
@@ -93,11 +83,13 @@ mod tests {
                 tx_count_hint: None,
                 slot_number: None,
             },
-            &chain_spec,
+            chain_spec.as_ref(),
             &receipt_builder,
         );
         let mut executor = OutbeBlockExecutor::new(
             inner,
+            Arc::clone(&chain_spec),
+            None,
             BlockExecutorInputs {
                 identity: BlockExecutionIdentity {
                     block_extra_data: Bytes::new(),
@@ -134,7 +126,7 @@ mod tests {
     }
 
     fn signed(
-        executor: &OutbeBlockExecutor<'_, TestEvm>,
+        executor: &OutbeBlockExecutor<'_>,
         input: &SystemTx,
         ordinal: u8,
     ) -> Recovered<reth_ethereum::TransactionSigned> {
@@ -159,7 +151,7 @@ mod tests {
             executor.force_preexecuted_phase1_witness_for_test(hash);
             let before = executor.fsm.clone();
             assert!(executor
-                .execute_reserved_system_tx(tx.clone(), |_| CommitChanges::Yes)
+                .execute_reserved_system_tx(tx.clone(), |_, _| CommitChanges::Yes)
                 .is_err());
             assert_eq!(executor.preexecuted_phase1_tx_hash, Some(hash));
             assert_eq!(executor.fsm, before);
@@ -177,12 +169,12 @@ mod tests {
             );
             let before = executor.fsm.clone();
             assert!(executor
-                .execute_reserved_system_tx(wrong, |_| CommitChanges::Yes)
+                .execute_reserved_system_tx(wrong, |_, _| CommitChanges::Yes)
                 .is_err());
             assert_eq!(executor.preexecuted_phase1_tx_hash, Some(hash));
             assert_eq!(executor.fsm, before);
             assert!(executor
-                .execute_reserved_system_tx(tx, |_| CommitChanges::Yes)
+                .execute_reserved_system_tx(tx, |_, _| CommitChanges::Yes)
                 .unwrap()
                 .is_none());
             assert_eq!(executor.preexecuted_phase1_tx_hash, None);
@@ -315,8 +307,7 @@ mod tests {
             executor.execute_outbe_block_hooks = true;
             let error = executor
                 .finish()
-                .err()
-                .expect("overflow must fail before FSM completion");
+                .expect_err("overflow must fail before FSM completion");
             assert!(error.to_string().contains("timestamp"));
             assert!(!error.to_string().contains("finished in stage"));
         });

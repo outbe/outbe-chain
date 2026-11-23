@@ -98,6 +98,10 @@ impl commonware_p2p::Receiver for MockReceiver {
     type Error = std::io::Error;
     type PublicKey = bls12381::PublicKey;
 
+    fn capacity(&self) -> std::num::NonZeroUsize {
+        commonware_utils::NZUsize!(1024)
+    }
+
     async fn recv(&mut self) -> Result<commonware_p2p::Message<Self::PublicKey>, Self::Error> {
         self.rx
             .recv()
@@ -214,7 +218,7 @@ pub(super) fn run_direct_initial_round(
             dkg_logs.record(dealer_pk.clone(), log.clone());
         }
         let (player_output, share) = player
-            .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
+            .finalize::<N3f1>(
                 &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                 dkg_logs,
                 &Sequential,

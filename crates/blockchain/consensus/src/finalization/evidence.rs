@@ -193,7 +193,7 @@ pub(crate) fn verify_child_parent_witness(
 
     let finalization = match metadata.proof_kind {
         ParentParticipationProof::Finalization => {
-            let mut reader = metadata.proof.as_ref();
+            let mut reader = commonware_codec::Copying(metadata.proof.as_ref());
             let member_count = committee.len();
             let decoded =
                 Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(&mut reader, &member_count)
@@ -203,7 +203,7 @@ pub(crate) fn verify_child_parent_witness(
                             format!("failed to decode verified Phase 1 Finalization: {err}"),
                         )
                     })?;
-            if !reader.is_empty() {
+            if !reader.0.is_empty() {
                 return Err(evidence_error(
                     parent_height,
                     "trailing bytes in Phase 1 Finalization proof",
@@ -331,7 +331,7 @@ pub(crate) fn verify_live_finalized_cert(
         )
         .into());
     }
-    let mut reader = encoded;
+    let mut reader = commonware_codec::Copying(encoded);
     let member_count = committee.len();
     let decoded =
         Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(&mut reader, &member_count)
@@ -341,7 +341,7 @@ pub(crate) fn verify_live_finalized_cert(
                     format!("failed to decode live finalization certificate: {err}"),
                 )
             })?;
-    if !reader.is_empty() {
+    if !reader.0.is_empty() {
         return Err(
             evidence_error(height, "trailing bytes in live finalization certificate").into(),
         );

@@ -324,20 +324,19 @@ fn run_round_with_offline_player(
     let mut signed_logs = BTreeMap::new();
     let mut dkg_logs = Logs::<MinSig, bls12381::PublicKey, N3f1>::new(info.clone());
     for dealer in dealers {
-        let signed_log: SignedDealerLog<MinSig, bls12381::PrivateKey> = dealer.finalize::<N3f1>();
+        let signed_log: SignedDealerLog<MinSig, bls12381::PublicKey> = dealer.finalize::<N3f1>();
         let encoded = Bytes::from(signed_log.encode());
         let (pk, log) = signed_log.check(&info).unwrap();
         signed_logs.insert(pk.clone(), encoded);
         dkg_logs.record(pk, log);
     }
 
-    let output =
-        observe::<MinSig, bls12381::PublicKey, N3f1, commonware_cryptography::bls12381::Batch>(
-            &mut rand_commonware::rngs::ChaCha20Rng::from_seed([0xA5; 32]),
-            dkg_logs,
-            &Sequential,
-        )
-        .unwrap();
+    let output = observe::<MinSig, bls12381::PublicKey, N3f1>(
+        &mut rand_commonware::rngs::ChaCha20Rng::from_seed([0xA5; 32]),
+        dkg_logs,
+        &Sequential,
+    )
+    .unwrap();
     (info, output, signed_logs.into_values().collect())
 }
 

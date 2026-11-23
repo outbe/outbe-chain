@@ -41,7 +41,7 @@ pub const STABLECOIN_V1_TOOLING_OWNER: &str = "bin/outbe-cli";
 pub const STABLECOIN_V1_MAINTAINED_SDK: bool = false;
 
 /// Semantic owners/classifications mirrored into the machine-readable manifest.
-pub const STABLECOIN_V1_ACCOUNT_ACCESS_OWNER: &str = "revm";
+pub const STABLECOIN_V1_ACCOUNT_ACCESS_OWNER: &str = "evm2";
 pub const STABLECOIN_V1_GAS_FORMULA: &str =
     "dispatchBase + explicitCryptoAndHash + actualStorageOperations";
 pub const STABLECOIN_V1_WALL_TIME_CLASSIFICATION: &str = "non-consensus-telemetry";
@@ -53,7 +53,7 @@ pub const STABLECOIN_V1_REOPEN_RULES: [&str; 3] = [
     "supported-network-genesis-does-not-preserve-the-reserved-namespace",
 ];
 
-/// Outbe-native dispatch and state accounting. revm owns the normal EVM
+/// Outbe-native dispatch and state accounting. evm2 owns the normal EVM
 /// CALL/account access charge. This schedule does not duplicate it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StablecoinGasSchedule {

@@ -6,17 +6,20 @@ use crate::payload_builder::{
 };
 use alloy_consensus::transaction::TxHashRef as _;
 use alloy_primitives::Address;
+use evm2::{
+    bytecode::Bytecode,
+    evm::{AccountInfo, Database},
+    interpreter::Word,
+};
 use reth_evm::{
-    block::CommitChanges,
-    execute::{BlockBuilderOutcome, BlockExecutor, ExecutorTx, GasOutput},
+    execute::{
+        BlockBuilderOutcome, BlockExecutionOutput, BlockExecutor, CommitChanges, ExecutorTx,
+        GasOutput,
+    },
+    Evm, RecoveredTx as _, StateUpdate,
 };
-use reth_storage_api::StateProvider as _;
+use reth_storage_api::AccountReader as _;
 use reth_tasks::CancelOnDrop;
-use revm::{
-    database_interface::DBErrorMarker,
-    state::{AccountInfo, Bytecode},
-    Database,
-};
 use std::sync::Mutex;
 
 struct UserStageResult {
@@ -62,6 +65,11 @@ struct DeferringBuilder<B> {
 impl<B: BlockBuilder> BlockBuilder for DeferringBuilder<B> {
     type Primitives = B::Primitives;
     type Executor = B::Executor;
+    type EvmEnv = B::EvmEnv;
+
+    fn evm_env(&self) -> &Self::EvmEnv {
+        self.inner.evm_env()
+    }
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         self.inner.apply_pre_execution_changes()
@@ -70,7 +78,10 @@ impl<B: BlockBuilder> BlockBuilder for DeferringBuilder<B> {
     fn execute_transaction_with_commit_condition(
         &mut self,
         tx: impl ExecutorTx<Self::Executor>,
-        f: impl FnOnce(&<Self::Executor as BlockExecutor>::Result) -> CommitChanges,
+        f: impl FnOnce(
+            &evm2::TxResult<<<Self::Executor as BlockExecutor>::Evm as Evm>::EvmTypes>,
+            evm2::TxStateChanges<'_>,
+        ) -> CommitChanges,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let (env, tx) = tx.into_parts();
         if std::mem::take(&mut self.defer_next) {
@@ -81,21 +92,39 @@ impl<B: BlockBuilder> BlockBuilder for DeferringBuilder<B> {
                 }.into());
             }
             return Err(if self.witness_deferral {
-                outbe_evm::enclave_witness_budget_deferral(*tx.tx_hash())
+                outbe_evm::enclave_witness_budget_deferral(*tx.tx().tx_hash())
             } else {
-                outbe_evm::sponsored_block_budget_deferral(*tx.tx_hash())
+                outbe_evm::sponsored_block_budget_deferral(*tx.tx().tx_hash())
             });
         }
         self.inner
             .execute_transaction_with_commit_condition((env, tx), f)
     }
 
-    fn finish(
+    fn execute_transaction_with_result_closure(
+        &mut self,
+        tx: impl ExecutorTx<Self::Executor>,
+        f: impl FnOnce(&<Self::Executor as BlockExecutor>::TransactionResultWithState),
+    ) -> Result<GasOutput, BlockExecutionError> {
+        self.inner.execute_transaction_with_result_closure(tx, f)
+    }
+
+    fn set_state_hook(&mut self, hook: impl FnMut(StateUpdate) + Send + 'static) -> bool {
+        self.inner.set_state_hook(hook)
+    }
+
+    fn finish_with_state_root(
         self,
         state_provider: impl reth_provider::StateProvider,
-        state_root_precomputed: Option<(B256, reth_trie::updates::TrieUpdates)>,
+        state_root: impl FnOnce(
+            &BlockExecutionOutput<<Self::Executor as BlockExecutor>::Receipt>,
+        ) -> Result<
+            Option<(B256, reth_trie::updates::TrieUpdates)>,
+            BlockExecutionError,
+        >,
     ) -> Result<BlockBuilderOutcome<Self::Primitives>, BlockExecutionError> {
-        self.inner.finish(state_provider, state_root_precomputed)
+        self.inner
+            .finish_with_state_root(state_provider, state_root)
     }
 
     fn executor_mut(&mut self) -> &mut Self::Executor {
@@ -114,7 +143,6 @@ impl<B: BlockBuilder> BlockBuilder for DeferringBuilder<B> {
 #[derive(Debug, thiserror::Error)]
 #[error("node storage read failed: {0}")]
 struct StageReadError(String);
-impl DBErrorMarker for StageReadError {}
 
 /// Faults the actual EVM database read, not the selection/error-policy code.
 #[derive(Debug)]
@@ -124,27 +152,27 @@ struct StageDatabase<DB> {
 }
 impl<DB: Database> Database for StageDatabase<DB> {
     type Error = StageReadError;
-    fn basic(&mut self, address: Address) -> Result<Option<AccountInfo>, Self::Error> {
+    fn get_account(&mut self, address: &Address) -> Result<Option<AccountInfo>, Self::Error> {
         self.inner
-            .basic(address)
+            .get_account(address)
             .map_err(|e| StageReadError(e.to_string()))
     }
-    fn code_by_hash(&mut self, hash: B256) -> Result<Bytecode, Self::Error> {
+    fn get_code_by_hash(&mut self, hash: &B256) -> Result<Bytecode, Self::Error> {
         self.inner
-            .code_by_hash(hash)
+            .get_code_by_hash(hash)
             .map_err(|e| StageReadError(e.to_string()))
     }
-    fn storage(&mut self, address: Address, key: U256) -> Result<U256, Self::Error> {
-        if self.fail_storage && address == address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC") {
+    fn get_storage(&mut self, address: &Address, key: &Word) -> Result<Word, Self::Error> {
+        if self.fail_storage && *address == address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC") {
             return Err(StageReadError("unavailable".into()));
         }
         self.inner
-            .storage(address, key)
+            .get_storage(address, key)
             .map_err(|e| StageReadError(e.to_string()))
     }
-    fn block_hash(&mut self, number: u64) -> Result<B256, Self::Error> {
+    fn get_block_hash(&mut self, number: &Word) -> Result<B256, Self::Error> {
         self.inner
-            .block_hash(number)
+            .get_block_hash(number)
             .map_err(|e| StageReadError(e.to_string()))
     }
 }
@@ -257,15 +285,12 @@ fn run_user_stage_inner(
             ExtendedAccount::new(0, U256::ZERO).with_bytecode(options.code.clone()),
         );
     }
-    let mut db = State::builder()
-        .with_database(StageDatabase {
-            inner: StateProviderDatabase::new((&provider).into_evm_state_provider()),
-            fail_storage: options.fail_storage,
-        })
-        .with_bundle_update()
-        .build();
+    let stage_db = StageDatabase {
+        inner: StateProviderDatabase::new(reth_storage_api::EvmStateProviderAdapter(&provider)),
+        fail_storage: options.fail_storage,
+    };
     let mut builder = evm_config
-        .builder_for_next_block(&mut db, &parent, env)
+        .builder_for_next_block(stage_db, &parent, env)
         .expect("user-stage builder initializes");
     preparation::apply_pre_execution_changes(&mut builder).expect("pre-execution succeeds");
     let mut builder = DeferringBuilder {
@@ -345,7 +370,7 @@ fn run_user_stage_inner(
         &context,
         &EthereumBuilderConfig::new(),
         block_gas_limit,
-        builder.evm_mut().block().basefee(),
+        builder.evm_env().block_base_fee(),
     )
     .expect("budgets initialize");
     if options.full_size {
@@ -372,34 +397,40 @@ fn run_user_stage_inner(
     let body_bytes = state.size_budget.estimate(0).unwrap() - initial_size;
     let gas_used = state.cumulative_gas_used;
     let fees = state.total_fees;
-    let payload = if options.finalize && matches!(outcome, Ok(StageOutcome::Completed)) {
-        let finished = finish_payload_with_state_root(
-            builder,
-            &provider,
-            |_| {
-                Ok(options
-                    .sparse_failure
-                    .then_some(Err(PayloadBuilderError::MissingPayload)))
-            },
-            PayloadId::new([0x09; 8]),
-        )
-        .expect("real EVM builder finishes");
-        Some(
-            finalization::into_payload(finished, &mut db, state, &context)
-                .expect("production finalization succeeds"),
-        )
-    } else {
-        drop(builder);
-        None
-    };
+    let (payload, bundle_state) =
+        if options.finalize && matches!(outcome, Ok(StageOutcome::Completed)) {
+            let finished = finish_payload_with_state_root(
+                builder,
+                &provider,
+                |_| {
+                    options
+                        .sparse_failure
+                        .then_some(Err(PayloadBuilderError::MissingPayload))
+                },
+                PayloadId::new([0x09; 8]),
+            )
+            .expect("real EVM builder finishes");
+            let bundle_state = finished.execution_state.clone();
+            let payload = finalization::into_payload(finished, state, &context)
+                .expect("production finalization succeeds");
+            (Some(payload), bundle_state)
+        } else {
+            (None, builder.into_executor().into_state())
+        };
     let included = candidates
         .into_iter()
         .filter(|&(sender, nonce, _)| {
-            db.basic(sender)
-                .expect("post-execution account is readable")
-                .expect("funded user exists")
-                .nonce
-                == nonce + 1
+            let post_nonce = bundle_state
+                .account(&sender)
+                .and_then(|account| account.info.as_ref().map(|info| info.nonce))
+                .or_else(|| {
+                    provider
+                        .basic_account(&sender)
+                        .expect("post-execution account is readable")
+                        .map(|account| account.nonce)
+                })
+                .expect("funded user exists");
+            post_nonce == nonce + 1
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -452,8 +483,14 @@ fn sponsored_budget_deferral_retains_candidate_and_continues_selection() {
         .downcast_ref::<crate::payload_builder::transaction_error::PreservedInvalidUserTx>()
         .unwrap();
     assert!(matches!(
-        preserved.reason.as_invalid_tx_err(),
-        Some(revm::context_interface::result::InvalidTransaction::NonceTooHigh { tx: 4, state: 0 })
+        preserved
+            .reason
+            .as_any()
+            .downcast_ref::<evm2::registry::HandlerError>(),
+        Some(evm2::registry::HandlerError::InvalidNonce {
+            expected: 0,
+            got: 4
+        })
     ));
 }
 
@@ -590,8 +627,14 @@ fn invalid_transaction_preserves_the_actual_validation_reason() {
         .downcast_ref::<crate::payload_builder::transaction_error::PreservedInvalidUserTx>()
         .unwrap();
     assert!(matches!(
-        preserved.reason.as_invalid_tx_err(),
-        Some(revm::context_interface::result::InvalidTransaction::NonceTooHigh { tx: 4, state: 0 })
+        preserved
+            .reason
+            .as_any()
+            .downcast_ref::<evm2::registry::HandlerError>(),
+        Some(evm2::registry::HandlerError::InvalidNonce {
+            expected: 0,
+            got: 4
+        })
     ));
 }
 

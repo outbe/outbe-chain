@@ -28,7 +28,8 @@ pub fn decode(public_key: &[u8]) -> Result<G2> {
     let key = blst::min_sig::PublicKey::deserialize(&uncompressed)
         .map_err(|_| L2RegistryError::InvalidPublicKey)?;
     // The common decoder rejects infinity and points outside the G2 subgroup.
-    G2::decode(key.compress().as_slice()).map_err(|_| L2RegistryError::InvalidPublicKey.into())
+    G2::decode(commonware_codec::Copying(key.compress().as_slice()))
+        .map_err(|_| L2RegistryError::InvalidPublicKey.into())
 }
 
 /// Encodes a nonidentity G2 public key in the registry's EIP-2537 wire format.

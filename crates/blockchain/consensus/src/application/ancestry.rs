@@ -67,7 +67,7 @@ impl<C: commonware_runtime::Clock> MarshalAncestryReader<C> {
             let mut lookup = std::pin::pin!(lookup);
             let mut sleep = std::pin::pin!(sleep);
             commonware_macros::select! {
-                block = &mut lookup => block,
+                block = &mut lookup => block.map(|block| block.inner().clone()),
                 _ = &mut sleep => None,
             }
         })
@@ -120,7 +120,7 @@ impl<C: commonware_runtime::Clock> AncestryReader for MarshalAncestryReader<C> {
             let mut block_future = std::pin::pin!(block_future);
             let mut sleep = std::pin::pin!(sleep);
             commonware_macros::select! {
-                result = &mut block_future => result.ok().map(|block| (*block).clone()),
+                result = &mut block_future => result.ok().map(|block| block.inner().clone()),
                 _ = &mut sleep => None,
             }
         })

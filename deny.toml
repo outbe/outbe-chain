@@ -10,8 +10,6 @@ ignore = [
     "RUSTSEC-2024-0436", # paste unmaintained
     "RUSTSEC-2025-0141", # bincode unmaintained
     "RUSTSEC-2026-0173", # proc-macro-error2 unmaintained
-    "RUSTSEC-2026-0543", # chrono unmaintained (via reth, radicle-log, rolling-file)
-    "RUSTSEC-2026-0542", # humantime unmaintained (via reth, humantime-serde)
     # The latest wasmtimer release still requires pin-utils. Revisit when
     # Alloy's wasmtimer dependency removes it; no maintained upgrade exists.
     { id = "RUSTSEC-2026-0441", reason = "pin-utils is a transitive dependency via Alloy -> wasmtimer 0.4.3; the advisory reports unmaintained status, not a vulnerability" },
@@ -27,8 +25,8 @@ ignore = [
     # arithmetic on this legacy path. cargo-deny 0.19 does not support scoping
     # advisory exceptions by dependency edge or enforcing an expiry.
     { id = "RUSTSEC-2026-0387", reason = "elliptic-curve 0.13.8 requires crypto-bigint 0.5.5, which has no compatible patched release; the 0.7 dependency is patched separately" },
-    # reth v2.8.1 and commonware-storage pin zstd 0.13 / zstd-safe 7; the fixes
-    # ship only in zstd 0.14.3 and zstd-safe 8.2. Revisit when upstreams bump.
+    # commonware-storage pins zstd 0.13 / zstd-safe 7; the fixes
+    # ship only in zstd 0.14.3 and zstd-safe 8.2. Revisit when upstream bumps.
     { id = "RUSTSEC-2026-0391", reason = "zstd 0.13 is pinned upstream; no dependency calls the affected with_context constructors" },
     { id = "RUSTSEC-2026-0398", reason = "zstd-safe 7 is pinned upstream; no dependency uses the seekable API" },
     { id = "RUSTSEC-2026-0403", reason = "zstd-safe 7 is pinned upstream; the fix needs zstd-safe 8.2" },

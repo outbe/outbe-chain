@@ -49,14 +49,7 @@ pub fn hash_boundary_active_set(addresses: &[Address]) -> B256 {
     keccak256(bytes)
 }
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
-    E::Error: std::fmt::Display,
-{
+impl OutbeBlockExecutor<'_> {
     pub fn begin_zone_proposer(
         &self,
         block_number: u64,
@@ -88,12 +81,12 @@ where
     ) -> Result<(), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
-        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-        let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+        let block_number = self.block_number();
+        let timestamp = outbe_primitives::time::timestamp_secs(self.block_timestamp_u256())
             .map_err(ExecutorValidationError::from)?;
         let ctx = self.block_context(block_number, timestamp, proposer);
         let host = std::sync::Arc::clone(&self.runtime_host);
-        let db = self.inner.evm.db_mut();
+        let db = self.inner.evm_mut().overlay_db_mut();
         let mut provider = DirectStorageProvider::new(db, ctx);
         let storage = StorageHandle::new(&mut provider);
         let host = host.as_ref();

@@ -13,32 +13,29 @@ fn eip7702_sponsored_bootstrap_accepts_one_atomic_unit_without_fee_or_quota() {
     let signer = Address::from(*recovered.signer());
     let initial_balance = U256::from(1);
 
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut state = CacheDB::new(EmptyDB::default());
     let marker = Bytecode::new_legacy([0xef].into());
-    db.insert_account_info(
-        ZEROFEE_ADDRESS,
+    state.insert_account_info(
+        &ZEROFEE_ADDRESS,
         AccountInfo {
             code_hash: marker.hash_slow(),
             code: Some(marker),
             ..Default::default()
         },
     );
-    db.insert_account_info(
-        signer,
+    state.insert_account_info(
+        &signer,
         AccountInfo {
             balance: initial_balance,
             nonce: 0,
             ..Default::default()
         },
     );
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
 
-    {
+    let output = {
         let evm = config.evm_with_env(&mut state, pectra_evm_env(1));
-        let ctx = execution_ctx(Some(1), Bytes::new());
+        let mut ctx = execution_ctx(Some(1), Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
         let mut executor = config.create_executor(evm, ctx);
 
         assert_eq!(executor.sponsored_gas_used, 0);
@@ -80,13 +77,17 @@ fn eip7702_sponsored_bootstrap_accepts_one_atomic_unit_without_fee_or_quota() {
             outbe_zerofee::FREE_TX_BOOTSTRAP_GAS_LIMIT,
             "rejected replay must not charge the budget"
         );
-    }
-    state.merge_transitions(BundleRetention::Reverts);
+        executor.into_state()
+    };
+    state.commit_source(&BundleSource(&output));
 
     let account = state
-        .basic(signer)
+        .get_account(&signer)
         .expect("bootstrap account read")
         .expect("bootstrap account exists");
+    let code = account
+        .code
+        .or_else(|| state.get_code_by_hash(&account.code_hash).ok());
     assert_eq!(
         account.balance, initial_balance,
         "bootstrap must not charge COEN"
@@ -96,7 +97,7 @@ fn eip7702_sponsored_bootstrap_accepts_one_atomic_unit_without_fee_or_quota() {
         "outer tx plus self-authorization consume two nonces"
     );
     assert_eq!(
-        account.code.and_then(|code| code.eip7702_address()),
+        code.and_then(|code| code.eip7702_address()),
         Some(ZEROFEE_ADDRESS),
         "bootstrap must install the canonical delegation"
     );
@@ -115,34 +116,33 @@ fn eip7702_bootstrap_rejects_zero_balance_without_state_change() {
     let recovered = bootstrap_test_tx();
     let signer = Address::from(*recovered.signer());
 
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut state = CacheDB::new(EmptyDB::default());
     let marker = Bytecode::new_legacy([0xef].into());
-    db.insert_account_info(
-        ZEROFEE_ADDRESS,
+    state.insert_account_info(
+        &ZEROFEE_ADDRESS,
         AccountInfo {
             code_hash: marker.hash_slow(),
             code: Some(marker),
             ..Default::default()
         },
     );
-    db.insert_account_info(signer, AccountInfo::default());
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
+    state.insert_account_info(&signer, AccountInfo::default());
 
-    {
+    let output = {
         let evm = config.evm_with_env(&mut state, pectra_evm_env(1));
-        let ctx = execution_ctx(Some(1), Bytes::new());
+        let mut ctx = execution_ctx(Some(1), Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
         let mut executor = config.create_executor(evm, ctx);
         let _error = executor
             .execute_transaction(recovered)
             .expect_err("zero-balance bootstrap must not receive the waiver");
         assert!(executor.receipts().is_empty());
-    }
+        executor.into_state()
+    };
+    state.commit_source(&BundleSource(&output));
 
     let account = state
-        .basic(signer)
+        .get_account(&signer)
         .expect("bootstrap account read")
         .expect("bootstrap account exists");
     assert!(account.balance.is_zero());
@@ -152,6 +152,7 @@ fn eip7702_bootstrap_rejects_zero_balance_without_state_change() {
 }
 #[test]
 fn sponsored_bootstrap_execution_restores_existing_fee_flags_on_every_result_exit() {
+    use evm2::EvmFeatures;
     let config = OutbeEvmConfig::new(
         test_chain_spec(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
@@ -160,52 +161,56 @@ fn sponsored_bootstrap_execution_restores_existing_fee_flags_on_every_result_exi
         for outcome in ["included", "declined", "error"] {
             let recovered = bootstrap_test_tx();
             let signer = Address::from(*recovered.signer());
-            let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+            let mut state = CacheDB::new(EmptyDB::default());
             let marker = Bytecode::new_legacy([0xef].into());
-            db.insert_account_info(
-                ZEROFEE_ADDRESS,
+            state.insert_account_info(
+                &ZEROFEE_ADDRESS,
                 AccountInfo {
                     code_hash: marker.hash_slow(),
                     code: Some(marker),
                     ..Default::default()
                 },
             );
-            db.insert_account_info(
-                signer,
+            state.insert_account_info(
+                &signer,
                 AccountInfo {
                     balance: U256::from(1),
                     ..Default::default()
                 },
             );
-            let mut state = State::builder()
-                .with_database(db)
-                .with_bundle_update()
-                .build();
             let expected = (flags & 1 != 0, flags & 2 != 0, flags & 4 != 0);
             let mut env = pectra_evm_env(1);
-            env.cfg_env.disable_balance_check = expected.0;
-            env.cfg_env.disable_base_fee = expected.1;
-            env.cfg_env.disable_fee_charge = expected.2;
+            env.version
+                .features
+                .set(EvmFeatures::BALANCE_CHECK, expected.0);
+            env.version
+                .features
+                .set(EvmFeatures::BASE_FEE_CHECK, expected.1);
+            env.version
+                .features
+                .set(EvmFeatures::FEE_CHARGE, expected.2);
             if outcome == "error" {
                 // The waiver is authorized, but the inner executor rejects
                 // the transaction against the available block gas.
-                env.block_env.gas_limit = 0;
+                env.block.gas_limit = U256::ZERO;
             }
-            {
+            let output = {
                 let evm = config.evm_with_env(&mut state, env);
-                let mut executor =
-                    config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+                let mut ctx = execution_ctx(Some(1), Bytes::new());
+                ctx.execute_outbe_block_hooks = false;
+                let mut executor = config.create_executor(evm, ctx);
                 // Leave exactly enough room so only confirmed inclusion exhausts the budget.
                 let initial_sponsored_gas = outbe_zerofee::SPONSORED_GAS_PER_BLOCK
                     - outbe_zerofee::FREE_TX_BOOTSTRAP_GAS_LIMIT;
                 executor.sponsored_gas_used = initial_sponsored_gas;
-                let result = executor.execute_transaction_with_commit_condition(recovered, |_| {
-                    if outcome == "declined" {
-                        CommitChanges::No
-                    } else {
-                        CommitChanges::Yes
-                    }
-                });
+                let result =
+                    executor.execute_transaction_with_commit_condition(recovered, |_, _| {
+                        if outcome == "declined" {
+                            CommitChanges::No
+                        } else {
+                            CommitChanges::Yes
+                        }
+                    });
                 match outcome {
                     "included" => {
                         assert!(result.unwrap().is_some());
@@ -231,12 +236,12 @@ fn sponsored_bootstrap_execution_restores_existing_fee_flags_on_every_result_exi
                     },
                     "flags={flags}, outcome={outcome}: only inclusion charges the budget"
                 );
-                let cfg = &executor.inner.evm.ctx_mut().cfg;
+                let features = executor.evm().version().features;
                 assert_eq!(
                     (
-                        cfg.disable_balance_check,
-                        cfg.disable_base_fee,
-                        cfg.disable_fee_charge
+                        features.contains(EvmFeatures::BALANCE_CHECK),
+                        features.contains(EvmFeatures::BASE_FEE_CHECK),
+                        features.contains(EvmFeatures::FEE_CHARGE)
                     ),
                     expected,
                     "flags={flags}, outcome={outcome}"
@@ -245,12 +250,17 @@ fn sponsored_bootstrap_execution_restores_existing_fee_flags_on_every_result_exi
                     executor.current_execution_summary().validator_fee_sum,
                     U256::ZERO
                 );
-            }
-            let account = state.basic(signer).unwrap().unwrap();
+                executor.into_state()
+            };
+            state.commit_source(&BundleSource(&output));
+            let account = state.get_account(&signer).unwrap().unwrap();
+            let code = account
+                .code
+                .or_else(|| state.get_code_by_hash(&account.code_hash).ok());
             assert_eq!(account.balance, U256::from(1));
             assert_eq!(account.nonce, if outcome == "included" { 2 } else { 0 });
             assert_eq!(
-                account.code.and_then(|code| code.eip7702_address()),
+                code.and_then(|code| code.eip7702_address()),
                 if outcome == "included" {
                     Some(ZEROFEE_ADDRESS)
                 } else {
@@ -263,46 +273,42 @@ fn sponsored_bootstrap_execution_restores_existing_fee_flags_on_every_result_exi
 }
 #[test]
 fn eip7702_sponsored_bootstrap_over_budget_defers_without_state_changes() {
-    use alloy_evm::block::{BlockExecutionError, BlockValidationError};
-
     let config = OutbeEvmConfig::new(
         test_chain_spec(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
     let recovered = bootstrap_test_tx();
     let signer = Address::from(*recovered.signer());
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut state = CacheDB::new(EmptyDB::default());
     let marker = Bytecode::new_legacy([0xef].into());
-    db.insert_account_info(
-        ZEROFEE_ADDRESS,
+    state.insert_account_info(
+        &ZEROFEE_ADDRESS,
         AccountInfo {
             code_hash: marker.hash_slow(),
             code: Some(marker),
             ..Default::default()
         },
     );
-    db.insert_account_info(
-        signer,
+    state.insert_account_info(
+        &signer,
         AccountInfo {
             balance: U256::from(1),
             ..Default::default()
         },
     );
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
 
-    {
+    let output = {
         let evm = config.evm_with_env(&mut state, pectra_evm_env(1));
-        let mut executor = config.create_executor(evm, execution_ctx(Some(1), Bytes::new()));
+        let mut ctx = execution_ctx(Some(1), Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
+        let mut executor = config.create_executor(evm, ctx);
         let used =
             outbe_zerofee::SPONSORED_GAS_PER_BLOCK - outbe_zerofee::FREE_TX_BOOTSTRAP_GAS_LIMIT + 1;
         executor.sponsored_gas_used = used;
         let soft_failures = executor.zero_fee_soft_failures;
         let mut commit_called = false;
         let error = executor
-            .execute_transaction_with_commit_condition(recovered, |_| {
+            .execute_transaction_with_commit_condition(recovered, |_, _| {
                 commit_called = true;
                 CommitChanges::Yes
             })
@@ -323,9 +329,11 @@ fn eip7702_sponsored_bootstrap_over_budget_defers_without_state_changes() {
             executor.current_execution_summary().validator_fee_sum,
             U256::ZERO
         );
-    }
+        executor.into_state()
+    };
+    state.commit_source(&BundleSource(&output));
 
-    let account = state.basic(signer).unwrap().unwrap();
+    let account = state.get_account(&signer).unwrap().unwrap();
     assert_eq!(account.balance, U256::from(1));
     assert_eq!(account.nonce, 0);
     assert!(
@@ -334,7 +342,7 @@ fn eip7702_sponsored_bootstrap_over_budget_defers_without_state_changes() {
     );
     assert_eq!(
         state
-            .storage(ZEROFEE_ADDRESS, zerofee_counter_slot(signer))
+            .get_storage(&ZEROFEE_ADDRESS, &zerofee_counter_slot(signer))
             .unwrap(),
         U256::ZERO,
         "deferred bootstrap must not consume daily quota"

@@ -1,15 +1,11 @@
 use alloy_primitives::{Address, Bytes, LogData, B256, U256};
-use revm::{
-    context::journaled_state::JournalCheckpoint,
-    state::{AccountInfo, Bytecode},
-};
 use std::{cell::RefCell, rc::Rc};
 
 use crate::{
     error::{PrecompileError, Result},
     storage::{
-        CheckpointGuard, PrecompileStorageProvider, StorageBacked, SubCallError, SubCallInput,
-        SubCallOutput, SubCallStatus,
+        AccountInfo, Bytecode, CheckpointGuard, PrecompileStorageProvider, StateCheckpoint,
+        StorageBacked, SubCallError, SubCallInput, SubCallOutput, SubCallStatus,
     },
 };
 
@@ -236,7 +232,7 @@ impl<'storage> StorageHandle<'storage> {
         })
     }
 
-    pub fn checkpoint(&self) -> Result<JournalCheckpoint> {
+    pub fn checkpoint(&self) -> Result<StateCheckpoint> {
         self.with_provider(|provider| Ok(provider.checkpoint()))
     }
 
@@ -256,11 +252,11 @@ impl<'storage> StorageHandle<'storage> {
         Ok(result)
     }
 
-    pub fn checkpoint_commit(&self, checkpoint: JournalCheckpoint) -> Result<()> {
+    pub fn checkpoint_commit(&self, checkpoint: StateCheckpoint) -> Result<()> {
         self.with_provider(|provider| provider.checkpoint_commit(checkpoint))
     }
 
-    pub fn checkpoint_revert(&self, checkpoint: JournalCheckpoint) -> Result<()> {
+    pub fn checkpoint_revert(&self, checkpoint: StateCheckpoint) -> Result<()> {
         self.with_provider(|provider| provider.checkpoint_revert(checkpoint))
     }
 
@@ -318,7 +314,7 @@ impl<'storage> StorageHandle<'storage> {
                 return Err(PrecompileError::FatalWithCause(Box::new(error)));
             }
         };
-        let checkpoint = CheckpointGuard::new(self.clone(), token);
+        let checkpoint = CheckpointGuard::new(self.clone(), token.clone());
         let result = f();
         let status = self.with_provider(|provider| provider.trigger_budget_status());
         // Infrastructure failures and genuine enclosing OOG outrank local exhaustion.
@@ -689,7 +685,7 @@ mod tests {
     #[test]
     fn trigger_budget_direct_hook_provider_is_explicitly_unsupported() {
         use crate::{block::BlockContext, storage::direct::DirectStorageProvider};
-        use revm::database::{CacheDB, EmptyDB};
+        use evm2::evm::{CacheDB, EmptyDB};
         let mut db = CacheDB::new(EmptyDB::default());
         let mut provider = DirectStorageProvider::new(
             &mut db,
@@ -836,7 +832,7 @@ mod tests {
         for err in [
             handle.checkpoint().unwrap_err(),
             handle.checkpoint_guard().map(|_| ()).unwrap_err(),
-            handle.checkpoint_commit(cp).unwrap_err(),
+            handle.checkpoint_commit(cp.clone()).unwrap_err(),
             handle.checkpoint_revert(cp).unwrap_err(),
             handle.refund_gas(10).unwrap_err(),
         ] {
@@ -882,11 +878,7 @@ mod tests {
         assert_eq!(handle.sload(account, slot).unwrap(), U256::from(10u64));
 
         // Out-of-bounds revert index must return a typed error rather than panicking.
-        let bad_cp = JournalCheckpoint {
-            log_i: 0,
-            journal_i: 99,
-            selfdestructed_i: 0,
-        };
+        let bad_cp = StateCheckpoint::new(99, 0);
         assert_eq!(
             handle.checkpoint_revert(bad_cp).unwrap_err().to_string(),
             crate::error::PrecompileError::from(

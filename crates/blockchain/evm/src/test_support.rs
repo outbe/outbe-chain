@@ -1,8 +1,12 @@
 //! In-memory EVM that drives calls through [`sub_call::run_with_host`], for integration tests.
 
-use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Address, Bytes, Log, U256};
 use alloy_sol_types::SolCall;
+use evm2::{
+    bytecode::Bytecode,
+    evm::{AccountInfo, CacheDB, DynDatabase, EmptyDB},
+    Evm, SpecId,
+};
 use outbe_primitives::{
     block::BlockContext,
     chain::CHAIN_ID,
@@ -11,18 +15,14 @@ use outbe_primitives::{
         SubCallStatus,
     },
 };
-use revm::{
-    context_interface::JournalTr,
-    database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
-    primitives::hardfork::SpecId,
-    state::{AccountInfo, Bytecode},
-    Context,
+use reth_ethereum::evm::EthEvmEnv;
+
+use crate::{
+    factory::{OutbeEvmFactory, OutbeEvmTypes},
+    sub_call::{self, SubCallEnvironment},
 };
 
-use crate::sub_call::{self, SubCallEnvironment};
-
-pub type EvmCtx = EthEvmContext<CacheDB<EmptyDB>>;
+pub type EvmCtx = Evm<'static, OutbeEvmTypes>;
 
 const CALL_GAS_LIMIT: u64 = 5_000_000;
 
@@ -35,39 +35,43 @@ pub fn fresh_environment(self_address: Address, spec: SpecId) -> SubCallEnvironm
     }
 }
 
+/// Sets the simulated enclosing call depth on an [`EvmCtx`] for depth-boundary tests.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn set_call_depth(evm: &mut EvmCtx, depth: u16) {
+    evm.ext_mut().current_call_depth = depth;
+}
+
+/// Returns the simulated enclosing call depth on an [`EvmCtx`].
+#[cfg(any(test, feature = "test-utils"))]
+pub fn call_depth(evm: &EvmCtx) -> u16 {
+    evm.ext().current_call_depth
+}
+
+/// Returns the gas limit selected for the most recent Outbe system call on `evm`.
+#[cfg(any(test, feature = "test-utils"))]
+pub fn last_system_call_gas_limit(evm: &EvmCtx) -> Option<u64> {
+    evm.ext().last_system_call.as_ref().map(|tx| tx.gas_limit)
+}
+
 /// Runtime bytecode from a hex fixture.
 pub fn runtime_code(hex: &str) -> Bytecode {
-    Bytecode::new_raw(Bytes::from(
+    Bytecode::new_legacy(Bytes::from(
         alloy_primitives::hex::decode(hex.trim()).expect("hex bytecode fixture"),
     ))
 }
 
-pub fn install_call_scan_markers<DB: revm::Database>(
+pub fn install_call_scan_markers<DB: DynDatabase>(
     db: &mut CacheDB<DB>,
     addresses: &[Address],
     code: &Bytecode,
 ) {
     for &address in addresses {
-        db.insert_account_info(
-            address,
-            AccountInfo {
-                code_hash: code.hash_slow(),
-                code: Some(code.clone()),
-                ..Default::default()
-            },
-        );
+        db.insert_account_info(&address, AccountInfo::default().with_code(code.clone()));
     }
 }
 
 pub fn install_code(db: &mut CacheDB<EmptyDB>, address: Address, code: &Bytecode) {
-    db.insert_account_info(
-        address,
-        AccountInfo {
-            code_hash: code.hash_slow(),
-            code: Some(code.clone()),
-            ..Default::default()
-        },
-    );
+    db.insert_account_info(&address, AccountInfo::default().with_code(code.clone()));
 }
 
 /// Runs `seed` against `db` as block 1 at `timestamp` and flushes its writes.
@@ -95,22 +99,24 @@ pub fn seed_storage<R>(
 }
 
 pub struct EvmWorld {
-    pub ctx: EvmCtx,
+    pub evm: EvmCtx,
     host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
 }
 
 impl EvmWorld {
     pub fn new(db: CacheDB<EmptyDB>, host: std::sync::Arc<dyn crate::EvmRuntimeHost>) -> Self {
+        let factory = OutbeEvmFactory::new(std::sync::Arc::clone(&host));
+        let env = EthEvmEnv::new(SpecId::PRAGUE, Default::default(), CHAIN_ID);
         Self {
-            ctx: Context::mainnet()
-                .with_db(db)
-                .modify_cfg_chained(|cfg| cfg.chain_id = CHAIN_ID),
+            evm: factory.create_evm(db, env),
             host,
         }
     }
 
     pub fn at(mut self, timestamp: u64) -> Self {
-        self.ctx.block.timestamp = U256::from(timestamp);
+        let mut block = *self.evm.block();
+        block.timestamp = U256::from(timestamp);
+        self.evm.set_block(block);
         self
     }
 
@@ -125,7 +131,7 @@ impl EvmWorld {
             spec: SpecId::PRAGUE,
         };
         sub_call::run_with_host(
-            &mut self.ctx,
+            &mut self.evm,
             environment,
             input,
             std::sync::Arc::clone(&self.host),
@@ -165,7 +171,7 @@ impl EvmWorld {
     }
 
     pub fn logs(&self) -> &[Log] {
-        self.ctx.journaled_state.logs()
+        self.evm.logs()
     }
 }
 

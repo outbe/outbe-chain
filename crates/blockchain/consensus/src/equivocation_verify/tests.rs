@@ -210,8 +210,10 @@ async fn all_classes_pack_exact_individual_votes_and_canonical_namespaces() {
             assert_eq!(&block[..48], expected.accused_pubkey);
             assert_eq!(block.len(), 144 + payload.len());
             assert_eq!(&block[144..], payload);
-            let pk = bls12381::PublicKey::read(&mut &block[..48]).unwrap();
-            let sig = bls12381::Signature::read(&mut &block[48..144]).unwrap();
+            let pk =
+                bls12381::PublicKey::read(&mut commonware_codec::Copying(&block[..48])).unwrap();
+            let sig =
+                bls12381::Signature::read(&mut commonware_codec::Copying(&block[48..144])).unwrap();
             let (namespace, wrong) = match kind {
                 EquivocationKind::ConflictingNotarize => (&notarize, &finalize),
                 EquivocationKind::NullifyFinalize if first => (&nullify, &finalize),

@@ -12,13 +12,15 @@ use crate::follow::metrics::{
 };
 use crate::follow::upstream::{FinalizedSource, LocalBlockSource};
 use crate::follow::{FollowerEpocher, SharedCommitteeChain};
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{BufMut, Bytes};
 use commonware_actor::Feedback;
-use commonware_codec::{EncodeSize, Read, ReadExt as _, Write};
+use commonware_codec::{Buf, EncodeSize, Read, ReadExt as _, Write};
 use commonware_consensus::marshal::resolver::handler::{self, Annotation, Key};
 use commonware_consensus::types::Height;
 use commonware_cryptography::bls12381;
-use commonware_resolver::{opaque, Consumer, Delivery, Fetch, Resolver, TargetedResolver};
+use commonware_resolver::{
+    opaque, Consumer, Delivery, Fetch, Outcome, Resolution, Resolver, TargetedResolver,
+};
 use commonware_runtime::{Clock, Metrics, Spawner};
 use commonware_utils::{channel::oneshot, vec::NonEmptyVec, Span};
 pub(super) use resolution::FetchResolution;
@@ -124,7 +126,8 @@ where
 
 fn block_request_height(annotation: &Annotation) -> Option<Height> {
     match annotation {
-        Annotation::Certified { height }
+        Annotation::Untrusted { height, .. }
+        | Annotation::Certified { height }
         | Annotation::Finalized(handler::Finalized::ByHeight { height }) => Some(*height),
         Annotation::Finalized(handler::Finalized::ByRound { .. })
         | Annotation::Notarization { .. } => None,
@@ -148,10 +151,10 @@ impl Resolver for FollowResolver {
     }
     fn fetch_all<Fr: Into<Fetch<Self::Key, Self::Subscriber>> + Send>(
         &mut self,
-        fetches: Vec<Fr>,
+        fetches: impl IntoIterator<Item = Fr>,
     ) -> Feedback {
         self.inner
-            .fetch_all(fetches.into_iter().map(|f| bind(f.into())).collect())
+            .fetch_all(fetches.into_iter().map(|f| bind(f.into())))
     }
     fn retain(
         &mut self,
@@ -172,14 +175,10 @@ impl TargetedResolver for FollowResolver {
     }
     fn fetch_all_targeted<Fr: Into<Fetch<Self::Key, Self::Subscriber>> + Send>(
         &mut self,
-        fetches: Vec<(Fr, NonEmptyVec<Self::PublicKey>)>,
+        fetches: impl IntoIterator<Item = (Fr, NonEmptyVec<Self::PublicKey>)>,
     ) -> Feedback {
-        self.inner.fetch_all_targeted(
-            fetches
-                .into_iter()
-                .map(|(f, t)| (bind(f.into()), t))
-                .collect(),
-        )
+        self.inner
+            .fetch_all_targeted(fetches.into_iter().map(|(f, t)| (bind(f.into()), t)))
     }
 }
 
@@ -209,12 +208,12 @@ impl<E: Spawner> Consumer for MarshalConsumer<E> {
     type Key = BoundKey;
     type Value = Acquired;
     type Subscriber = Annotation;
-    type Outcome = bool;
+    type Outcome = Outcome;
     fn deliver(
         &mut self,
         delivery: Delivery<BoundKey, Annotation>,
         value: Acquired,
-    ) -> oneshot::Receiver<bool> {
+    ) -> oneshot::Receiver<Outcome> {
         match value.value {
             Fetched::Value(bytes) => {
                 let key = delivery.key.key;
@@ -234,7 +233,7 @@ impl<E: Spawner> Consumer for MarshalConsumer<E> {
             // The authenticated ancestor bundle has already been acknowledged by marshal.
             Fetched::Delivered => {
                 let (tx, rx) = oneshot::channel();
-                let _ = tx.send(true);
+                let _ = tx.send(Outcome::Resolved(Resolution::Complete));
                 rx
             }
         }

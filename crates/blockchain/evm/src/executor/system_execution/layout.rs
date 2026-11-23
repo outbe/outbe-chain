@@ -21,7 +21,7 @@ pub struct ResolvedBeginSystemTx {
     pub finalized_summary: Option<AccountedParentArtifact>,
 }
 
-impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
+impl OutbeBlockExecutor<'_> {
     pub fn is_preexecuted_phase1_witness(&self, tx: &TransactionSigned) -> bool {
         self.preexecuted_phase1_tx_hash.is_some_and(|cached_hash| {
             is_reserved_system_tx(tx) && tx.signature_hash() == cached_hash
@@ -29,15 +29,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     }
 }
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    E::Error: std::fmt::Display,
-{
+impl OutbeBlockExecutor<'_> {
     fn expected_begin_input(&self, ordinal: usize) -> Result<SystemTx, BlockExecutionError> {
         let recovered = self
             .expected_begin_system_txs

@@ -22,7 +22,6 @@ thiserror.workspace = true
 
 [dev-dependencies]
 outbe-oracle = { workspace = true, features = ["test-utils"] }
-revm.workspace = true
 
 [features]
 test-utils = []

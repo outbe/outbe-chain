@@ -174,8 +174,8 @@ impl LogVerification {
             let DkgProgress::LocalDealerLog(bytes) = progress else {
                 continue;
             };
-            let mut reader = bytes.as_ref();
-            let signed = SignedDealerLog::<MinSig, bls12381::PrivateKey>::read_cfg(
+            let mut reader = commonware_codec::Copying(bytes.as_ref());
+            let signed = SignedDealerLog::<MinSig, bls12381::PublicKey>::read_cfg(
                 &mut reader,
                 &self.max_players,
             )?;

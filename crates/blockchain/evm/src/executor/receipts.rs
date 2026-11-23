@@ -33,22 +33,10 @@ pub fn burned_fee_for_gas(
     base_fee_minor.checked_add(blob_fee_minor)
 }
 
-impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
+impl OutbeBlockExecutor<'_> {
     /// Pushes a `status=0` synthetic receipt with exactly one
     /// `OutbeFailure(code, reason)` log, advances the user transaction gas
     /// accumulators by `SOFT_FAILURE_GAS`, and leaves EVM state untouched.
-    ///
-    /// Used by:
-    /// - the zero-fee user-tx path (`outbe-zerofee` rejection).
-    ///
-    /// System transaction failures use [`Self::push_system_failure_receipt`]
-    /// so they charge the signed envelope's visible gas while keeping internal
-    /// execution gas in `system_tx_execution_gas`.
-    ///
-    /// Determinism: the synthetic log encoding depends only on
-    /// `(log_address, code, reason)`. Identical inputs across proposer
-    /// and validators yield byte-equal receipts and therefore byte-equal
-    /// `receipts_root`. See `crate::failure_receipt`.
     pub fn push_failure_receipt(
         &mut self,
         tx_type: alloy_consensus::TxType,
@@ -59,35 +47,28 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
         let log = crate::failure_receipt::build_outbe_failure_log(log_address, code, reason);
         let user_cumulative_gas_used = self
             .inner
-            .cumulative_tx_gas_used
+            .inner
+            .cumulative_gas_used
             .saturating_add(Self::SOFT_FAILURE_GAS);
-        self.inner.receipts.push(Receipt {
+        self.inner.inner.receipts.push(Receipt {
             tx_type,
             success: false,
             cumulative_gas_used: user_cumulative_gas_used,
             logs: vec![log],
         });
-        self.inner.cumulative_tx_gas_used = user_cumulative_gas_used;
-        self.inner.block_regular_gas_used = self
+        self.inner.inner.cumulative_gas_used = user_cumulative_gas_used;
+        self.inner.inner.block_regular_gas_used = self
+            .inner
             .inner
             .block_regular_gas_used
             .saturating_add(Self::SOFT_FAILURE_GAS);
-        self.inner.block_state_gas_used = self
+        self.inner.inner.block_state_gas_used = self
+            .inner
             .inner
             .block_state_gas_used
             .saturating_add(Self::SOFT_FAILURE_GAS);
     }
-}
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    E::Error: std::fmt::Display,
-{
     /// Pushes a `status=0` system synthetic receipt with `0` visible gas under
     /// the Tempo 0-gas model while accounting internal execution gas in
     /// `system_tx_execution_gas`.
@@ -100,10 +81,10 @@ where
             input.code,
             input.reason,
         );
-        self.inner.receipts.push(Receipt {
+        self.inner.inner.receipts.push(Receipt {
             tx_type: input.tx_type,
             success: false,
-            cumulative_gas_used: self.inner.cumulative_tx_gas_used,
+            cumulative_gas_used: self.inner.inner.cumulative_gas_used,
             logs: vec![log],
         });
         self.system_tx_execution_gas = self
@@ -112,6 +93,6 @@ where
         self.system_tx_gross_gas = self
             .system_tx_gross_gas
             .saturating_add(input.internal_gross_gas_used);
-        Ok(GasOutput::new(0))
+        Ok(GasOutput::new(0, 0))
     }
 }

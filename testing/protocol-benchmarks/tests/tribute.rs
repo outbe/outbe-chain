@@ -1,12 +1,12 @@
 use alloy_primitives::{Address, B256};
 use alloy_sol_types::SolEvent;
+use evm2::interpreter::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use outbe_protocol_benchmarks::{
     run_scenario, scenarios::tribute::TributeScenario, GasLedger, RunConfig, ScenarioReport,
     StorageOperationKind,
 };
 use outbe_system_common::addresses::TRIBUTE_ADDRESS;
 use outbe_tribute::precompile::ITribute;
-use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 
 fn emitted(report: &ScenarioReport, emitter: Address, topic: B256) -> u64 {
     let (emitter, topic) = (format!("{emitter:#x}"), format!("{topic:#x}"));
@@ -75,8 +75,8 @@ fn zk_tribute_creation_runs_through_the_unified_interface() {
     assert_eq!(trace_operations, component_operations);
     assert!(report.storage.iter().all(|entry| {
         let unit = match entry.operation {
-            StorageOperationKind::Read => WARM_STORAGE_READ_COST,
-            StorageOperationKind::Write => SSTORE_RESET,
+            StorageOperationKind::Read => u64::from(WARM_STORAGE_READ_COST),
+            StorageOperationKind::Write => u64::from(SSTORE_RESET),
         };
         entry.count > 0 && entry.gas == entry.count * unit
     }));

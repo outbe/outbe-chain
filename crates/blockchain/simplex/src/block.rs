@@ -3,8 +3,8 @@
 //! Wraps Reth's `SealedBlock` so it can be used as a Commonware consensus block.
 
 use alloy_primitives::B256;
-use bytes::{Buf, BufMut};
-use commonware_codec::{EncodeSize, Read, Write};
+use bytes::BufMut;
+use commonware_codec::{Buf, EncodeSize, Read, Write};
 use commonware_consensus::{types::Height, Heightable};
 use commonware_cryptography::{Committable, Digestible};
 use outbe_primitives::OutbeBlock;
@@ -232,7 +232,7 @@ mod tests {
             assert_eq!(original.commitment(), original.digest());
 
             let encoded = original.encode();
-            let mut buf = encoded.as_ref();
+            let mut buf = commonware_codec::Copying(encoded.as_ref());
             let decoded = ConsensusBlock::read_cfg(&mut buf, &())
                 .expect("genesis-anchor ConsensusBlock must RLP round-trip");
 
@@ -246,7 +246,7 @@ mod tests {
             assert_eq!(decoded.block_hash(), original.block_hash());
             assert_eq!(decoded.number(), original.number());
             assert!(
-                buf.is_empty(),
+                !bytes::Buf::has_remaining(&buf),
                 "decode must consume exactly the encoded block bytes"
             );
         }
@@ -318,7 +318,7 @@ mod tests {
 
     fn assert_decode_rejects(block: &ConsensusBlock, root: &'static str) {
         let encoded = block.encode();
-        let mut buf = encoded.as_ref();
+        let mut buf = commonware_codec::Copying(encoded.as_ref());
         match ConsensusBlock::read_cfg(&mut buf, &()) {
             Err(commonware_codec::Error::Invalid("ConsensusBlock", message)) => {
                 assert_eq!(message, root);

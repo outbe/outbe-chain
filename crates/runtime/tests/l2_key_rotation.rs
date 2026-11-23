@@ -14,11 +14,18 @@
 //! The forwarding bytecode here is test-only helper code, not a production
 //! operator contract.
 
-use alloy_evm::{Evm as _, EvmFactory as _};
-use alloy_primitives::{Address, Bytes, Log, U256};
+use alloy_consensus::TxLegacy;
+use alloy_primitives::{Address, Bytes, Log, TxKind, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use commonware_cryptography::bls12381::primitives::{ops, variant::MinSig};
-use outbe_evm::OutbeEvmFactory;
+use evm2::{
+    bytecode::Bytecode,
+    env::BlockEnvExt,
+    ethereum::TxEnvelope,
+    evm::{AccountInfo, CacheDB, Database, EmptyDB},
+    SpecId, TxResultWithState,
+};
+use outbe_evm::{factory::OutbeEvmTypes, OutbeEvmFactory};
 use outbe_l2registry::precompile::IL2Registry;
 use outbe_l2registry::L2RegistryContract;
 use outbe_primitives::block::BlockContext;
@@ -26,17 +33,8 @@ use outbe_primitives::storage::{direct::DirectStorageProvider, StorageHandle};
 use outbe_system_common::addresses::L2_REGISTRY_ADDRESS;
 use rand_commonware::rngs::ChaCha20Rng;
 use rand_commonware::SeedableRng;
-use reth_ethereum::evm::primitives::EvmEnv;
-use revm::{
-    context::{
-        result::{ExecutionResult, Output, ResultAndState},
-        BlockEnv, CfgEnv, TxEnv,
-    },
-    database::{CacheDB, EmptyDB},
-    primitives::{hardfork::SpecId, TxKind},
-    state::{AccountInfo, Bytecode},
-    Database, DatabaseCommit,
-};
+use reth_ethereum::evm::EthEvmEnv;
+use reth_primitives_traits::Recovered;
 
 /// L1 chain id this harness runs on.
 const CHAIN_ID: u64 = 1;
@@ -66,17 +64,16 @@ enum Forward {
     CallThenRevert,
 }
 
-fn test_env() -> EvmEnv {
-    EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-        block_env: BlockEnv {
+fn test_env() -> EthEvmEnv<OutbeEvmTypes> {
+    EthEvmEnv::new(
+        SpecId::PRAGUE,
+        BlockEnvExt {
             timestamp: U256::from(NOW),
-            gas_limit: 30_000_000,
+            gas_limit: U256::from(30_000_000_u64),
             ..Default::default()
         },
-    }
+        CHAIN_ID,
+    )
 }
 
 fn funded() -> AccountInfo {
@@ -157,7 +154,7 @@ fn deploy_forwarder(db: &mut CacheDB<EmptyDB>, address: Address, mode: Forward) 
     let mut info = funded();
     info.code_hash = code.hash_slow();
     info.code = Some(code);
-    db.insert_account_info(address, info);
+    db.insert_account_info(&address, info);
 }
 
 fn with_storage<R>(db: &mut CacheDB<EmptyDB>, f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
@@ -185,11 +182,11 @@ fn with_storage<R>(db: &mut CacheDB<EmptyDB>, f: impl FnOnce(StorageHandle<'_>) 
 /// runtime.
 fn db_with_registry(l1_address: Address, public_key: &[u8]) -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(OWNER_EOA, funded());
-    db.insert_account_info(OUTSIDER, funded());
+    db.insert_account_info(&OWNER_EOA, funded());
+    db.insert_account_info(&OUTSIDER, funded());
     let marker = Bytecode::new_raw(Bytes::from_static(&[0xef]));
     db.insert_account_info(
-        L2_REGISTRY_ADDRESS,
+        &L2_REGISTRY_ADDRESS,
         AccountInfo {
             code_hash: marker.hash_slow(),
             code: Some(marker),
@@ -206,54 +203,57 @@ fn db_with_registry(l1_address: Address, public_key: &[u8]) -> CacheDB<EmptyDB> 
 
 /// Runs `data` against `to` from `caller` and returns the whole outcome, so
 /// callers can assert on post-state as well as on the result.
-fn run(db: &mut CacheDB<EmptyDB>, caller: Address, to: Address, data: Vec<u8>) -> ResultAndState {
+fn run(
+    db: &mut CacheDB<EmptyDB>,
+    caller: Address,
+    to: Address,
+    data: Vec<u8>,
+) -> TxResultWithState<OutbeEvmTypes> {
     let nonce = db
-        .basic(caller)
+        .get_account(&caller)
         .expect("caller account loads")
         .map_or(0, |info| info.nonce);
     let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
         .create_evm(&mut *db, test_env());
-    let tx = TxEnv::builder()
-        .caller(caller)
-        .nonce(nonce)
-        .kind(TxKind::Call(to))
-        .value(U256::ZERO)
-        .data(Bytes::from(data))
-        .gas_limit(GAS_LIMIT)
-        .build()
-        .expect("tx builds");
-    evm.transact_raw(tx).expect("transaction executes")
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(CHAIN_ID),
+            nonce,
+            gas_price: 0,
+            gas_limit: GAS_LIMIT,
+            to: TxKind::Call(to),
+            value: U256::ZERO,
+            input: Bytes::from(data),
+        }),
+        caller,
+    );
+    evm.transact(&tx).expect("transaction executes").detach()
 }
 
 /// Commits a finished transaction so later calls observe its post-state.
-fn commit(db: &mut CacheDB<EmptyDB>, outcome: ResultAndState) {
-    db.commit(outcome.state);
+fn commit(db: &mut CacheDB<EmptyDB>, outcome: TxResultWithState<OutbeEvmTypes>) {
+    db.commit_pending(&outcome.pending_state);
 }
 
-fn revert_output(result: &ExecutionResult) -> Option<&Bytes> {
-    match result {
-        ExecutionResult::Revert { output, .. } => Some(output),
-        _ => None,
-    }
+fn revert_output(result: &evm2::TxResult<OutbeEvmTypes>) -> Option<&Bytes> {
+    result.is_revert().then_some(&result.output)
 }
 
 /// The registry's key-update log as the transaction committed it, if any.
-fn key_updated_event(result: &ExecutionResult) -> Option<Log<IL2Registry::L2PublicKeyUpdated>> {
+fn key_updated_event(
+    result: &evm2::TxResult<OutbeEvmTypes>,
+) -> Option<Log<IL2Registry::L2PublicKeyUpdated>> {
     result
-        .logs()
+        .logs
         .iter()
         .find_map(|log| IL2Registry::L2PublicKeyUpdated::decode_log(log).ok())
 }
 
 /// Calls the registry like any other EVM caller, without committing the read.
 fn view(db: &mut CacheDB<EmptyDB>, data: Vec<u8>) -> Bytes {
-    match run(db, OUTSIDER, L2_REGISTRY_ADDRESS, data).result {
-        ExecutionResult::Success {
-            output: Output::Call(bytes),
-            ..
-        } => bytes,
-        other => panic!("registry view failed: {other:?}"),
-    }
+    let result = run(db, OUTSIDER, L2_REGISTRY_ADDRESS, data).result;
+    assert!(result.is_success(), "registry view failed: {result:?}");
+    result.output
 }
 
 /// Reads the registered network the way a downstream consumer does.
@@ -297,7 +297,7 @@ fn operator_contract_rotates_key_through_nested_call() {
 
     let outcome = run(&mut db, OUTSIDER, OPERATOR, rotate_calldata(&new));
     assert!(
-        matches!(outcome.result, ExecutionResult::Success { .. }),
+        outcome.result.is_success(),
         "nested CALL must succeed, got {:?}",
         outcome.result
     );
@@ -333,7 +333,7 @@ fn forwarding_contract_cannot_reuse_the_registered_origin_authority() {
         rotate_calldata(&rotated),
     );
     assert!(
-        matches!(outcome.result, ExecutionResult::Success { .. }),
+        outcome.result.is_success(),
         "the registered EOA operator rotates directly, got {:?}",
         outcome.result
     );
@@ -385,7 +385,7 @@ fn static_call_cannot_rotate_key() {
 
     let outcome = run(&mut db, OUTSIDER, OPERATOR, rotate_calldata(&bls_key(9)));
     assert!(
-        !matches!(outcome.result, ExecutionResult::Success { .. }),
+        !outcome.result.is_success(),
         "a static frame cannot rotate, got {:?}",
         outcome.result
     );

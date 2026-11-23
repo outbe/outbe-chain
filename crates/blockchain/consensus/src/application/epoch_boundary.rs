@@ -160,7 +160,7 @@ pub(crate) async fn resolve_epoch_boundary_parent(
         .timeout(PROPOSE_RESOLUTION_TIMEOUT, block_future)
         .await
     {
-        Ok(Ok(block)) => (*block).clone(),
+        Ok(Ok(block)) => block.inner().clone(),
         Ok(Err(_)) | Err(_) => {
             return Err(EpochBoundaryParentError::MissingMarshalBlock {
                 height: expected_height,

@@ -5,8 +5,8 @@
 //! traffic is rejected before it mutates the DKG state machine.
 
 use alloy_primitives::{keccak256, B256};
-use bytes::{Buf, BufMut};
-use commonware_codec::{Encode, EncodeSize, Error, Read, ReadExt, Write};
+use bytes::BufMut;
+use commonware_codec::{Buf, Encode, EncodeSize, Error, Read, ReadExt, Write};
 use commonware_cryptography::bls12381::{
     self,
     dkg::feldman_desmedt::{DealerPrivMsg, DealerPubMsg, Output, PlayerAck, SignedDealerLog},
@@ -138,7 +138,7 @@ pub enum DkgMessage {
     /// and in reshares).
     FinalizedLog {
         ceremony_id: DkgCeremonyId,
-        signed_log: SignedDealerLog<MinSig, bls12381::PrivateKey>,
+        signed_log: SignedDealerLog<MinSig, bls12381::PublicKey>,
     },
 }
 
@@ -226,7 +226,7 @@ impl DkgMessage {
                 Ok(Self::Ack { ceremony_id, ack })
             }
             FINALIZED_LOG_TAG => {
-                let signed_log = SignedDealerLog::<MinSig, bls12381::PrivateKey>::read_cfg(
+                let signed_log = SignedDealerLog::<MinSig, bls12381::PublicKey>::read_cfg(
                     reader,
                     &cfg.max_players,
                 )?;
@@ -340,9 +340,9 @@ mod tests {
         assert_eq!(msg.encode_size(), encoded.len());
         assert_eq!(encoded[0], DKG_WIRE_VERSION);
 
-        let mut reader = encoded.as_ref();
+        let mut reader = commonware_codec::Copying(encoded.as_ref());
         let decoded = DkgMessage::read_cfg(&mut reader, &cfg).unwrap();
-        assert!(reader.is_empty(), "all bytes must be consumed");
+        assert!(reader.0.is_empty(), "all bytes must be consumed");
         match decoded {
             DkgMessage::DealerBundle {
                 ceremony_id,
@@ -396,9 +396,9 @@ mod tests {
         assert_eq!(msg.encode_size(), encoded.len());
         assert_eq!(encoded[0], DKG_WIRE_VERSION);
 
-        let mut reader = encoded.as_ref();
+        let mut reader = commonware_codec::Copying(encoded.as_ref());
         let decoded = DkgMessage::read_cfg(&mut reader, &cfg).unwrap();
-        assert!(reader.is_empty(), "all bytes must be consumed");
+        assert!(reader.0.is_empty(), "all bytes must be consumed");
         match decoded {
             DkgMessage::Ack { ceremony_id, ack } => {
                 assert_eq!(ceremony_id, cfg.expected_ceremony_id);
@@ -454,9 +454,9 @@ mod tests {
         assert_eq!(msg.encode_size(), encoded.len());
         assert_eq!(encoded[0], DKG_WIRE_VERSION);
 
-        let mut reader = encoded.as_ref();
+        let mut reader = commonware_codec::Copying(encoded.as_ref());
         let decoded = DkgMessage::read_cfg(&mut reader, &cfg).unwrap();
-        assert!(reader.is_empty(), "all bytes must be consumed");
+        assert!(reader.0.is_empty(), "all bytes must be consumed");
         match decoded {
             DkgMessage::FinalizedLog {
                 ceremony_id,
@@ -478,7 +478,8 @@ mod tests {
         bad_data.push(DKG_WIRE_VERSION);
         cfg.expected_ceremony_id.write(&mut bad_data);
         bad_data.push(0xFF);
-        let result = DkgMessage::read_cfg(&mut bad_data.as_ref(), &cfg);
+        let result =
+            DkgMessage::read_cfg(&mut commonware_codec::Copying(bad_data.as_slice()), &cfg);
         assert!(result.is_err());
     }
 
@@ -488,7 +489,7 @@ mod tests {
         let (_, _, participants) = setup_dkg(3);
         let cfg = wire_cfg(max_players, &participants);
         let empty: &[u8] = &[];
-        let result = DkgMessage::read_cfg(&mut &empty[..], &cfg);
+        let result = DkgMessage::read_cfg(&mut commonware_codec::Copying(empty), &cfg);
         assert!(result.is_err());
     }
 
@@ -514,7 +515,8 @@ mod tests {
         };
 
         let encoded = msg.encode();
-        let result = DkgMessage::read_for_ceremony(&mut encoded.as_ref(), &cfg);
+        let result =
+            DkgMessage::read_for_ceremony(&mut commonware_codec::Copying(encoded.as_ref()), &cfg);
         assert!(matches!(
             result,
             Err(DkgMessageReadError::WrongCeremonyId { .. })

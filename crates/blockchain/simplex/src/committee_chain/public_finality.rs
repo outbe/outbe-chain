@@ -4,7 +4,8 @@ use crate::{
     block::ConsensusBlock, bls::MAX_COMMITTEE_MEMBERS, errors::FollowError,
     marshal_types::Finalization,
 };
-use commonware_codec::Read as _;
+use bytes::Buf as _;
+use commonware_codec::{Copying, Read as _};
 use commonware_consensus::types::Height;
 use std::fmt;
 
@@ -173,10 +174,10 @@ pub fn decode_public_finalized_block(
 pub fn decode_public_block(
     block_bytes: &[u8],
 ) -> Result<ConsensusBlock, PublicFinalizedBlockDecodeError> {
-    let mut block_reader = block_bytes;
+    let mut block_reader = Copying(block_bytes);
     let block = ConsensusBlock::read_cfg(&mut block_reader, &())
         .map_err(PublicFinalizedBlockDecodeError::block)?;
-    if !block_reader.is_empty() {
+    if block_reader.has_remaining() {
         return Err(PublicFinalizedBlockDecodeError::TrailingBlock);
     }
     Ok(block)
@@ -192,10 +193,10 @@ pub fn decode_public_finalization(
     if max_committee_members == 0 {
         return Err(PublicFinalizedBlockDecodeError::ZeroCommitteeBound);
     }
-    let mut reader = finalization_bytes;
+    let mut reader = Copying(finalization_bytes);
     let finalization = Finalization::read_cfg(&mut reader, &max_committee_members)
         .map_err(PublicFinalizedBlockDecodeError::finalization)?;
-    if !reader.is_empty() {
+    if reader.has_remaining() {
         return Err(PublicFinalizedBlockDecodeError::TrailingFinalization);
     }
     Ok(finalization)

@@ -1,15 +1,11 @@
 //! EVM-level witness scope attachment for direct RPC, prewarm, and historical trace replay.
 
-use crate::executor::PreloadedSystemTxContext;
+use crate::{executor::PreloadedSystemTxContext, factory::OutbeEvmTypes};
+use alloy_consensus::Transaction as _;
 use alloy_primitives::{Bytes, Log, TxKind};
+use evm2::{ethereum::TxEnvelope, interpreter::InstrStop, TxResult, TxResultExt};
 use outbe_tee::witness::{
     EnclaveWitnessTapeV1, WitnessExecutionMode, WitnessExecutionScope, WitnessState,
-};
-use reth_ethereum::evm::revm::{
-    context::TxEnv,
-    context_interface::result::{
-        ExecutionResult, HaltReason, Output, ResultAndState, ResultGas, SuccessReason,
-    },
 };
 use std::sync::{Arc, Mutex};
 
@@ -127,16 +123,20 @@ pub fn record_detached_trace_user_gas(user_gas: u64) {
     });
 }
 
-pub fn synthetic_trace_success(gas_limit: u64, logs: Vec<Log>) -> ResultAndState<HaltReason> {
-    ResultAndState::new(
-        ExecutionResult::Success {
-            reason: SuccessReason::Stop,
-            gas: ResultGas::new_with_state_gas(gas_limit, 0, 0, 0),
-            logs,
-            output: Output::Call(Bytes::new()),
-        },
-        Default::default(),
-    )
+pub fn synthetic_trace_success(gas_limit: u64, logs: Vec<Log>) -> TxResult<OutbeEvmTypes> {
+    TxResultExt {
+        status: true,
+        total_gas_spent: gas_limit,
+        state_gas_spent: 0,
+        refunded: 0,
+        floor_gas: 0,
+        stop: InstrStop::Stop,
+        output: Bytes::new(),
+        created_address: None,
+        logs,
+        ext: (),
+        _non_exhaustive: (),
+    }
 }
 
 fn is_still_active_trace_cursor(ctx: &DetachedTraceWitnessContext, idx: usize) -> bool {
@@ -159,19 +159,19 @@ fn trace_action_for_tx(
     meta: &DetachedTraceExecutionMeta,
     idx: usize,
     is_system_call: bool,
-    tx: &TxEnv,
+    tx: &TxEnvelope,
 ) -> DetachedTraceTxAction {
     if !is_system_call {
         return DetachedTraceTxAction::NormalTransact;
     }
     if idx == 0 && meta.phase1_preexecuted {
         return DetachedTraceTxAction::SkipPreexecutedPhase1 {
-            gas_limit: tx.gas_limit,
+            gas_limit: tx.gas_limit(),
         };
     }
     match meta.system_tx_context.clone() {
         Some(context) => DetachedTraceTxAction::ReservedSystemCall {
-            data: tx.data.clone(),
+            data: tx.input().clone(),
             context: Box::new(context),
         },
         None => DetachedTraceTxAction::NormalTransact,
@@ -199,7 +199,7 @@ fn active_trace_cursor_for_input(
 
 pub fn match_detached_trace_tx(
     input: &EvmTransactWitnessInput<'_>,
-    tx: &TxEnv,
+    tx: &TxEnvelope,
 ) -> Option<MatchedDetachedTraceTx> {
     if input.owned_by_executor || input.precompiles_mut_called || input.attached_state.is_some() {
         return None;
@@ -212,12 +212,12 @@ pub fn match_detached_trace_tx(
             return None;
         };
         let is_system_call =
-            tx.kind == TxKind::Call(outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS);
+            tx.kind() == TxKind::Call(outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS);
         if ctx
             .meta
             .expected_begin_inputs
             .get(idx)
-            .is_some_and(|expected_input| !is_system_call || &tx.data != expected_input)
+            .is_some_and(|expected_input| !is_system_call || tx.input() != expected_input)
         {
             *borrow = None;
             return None;

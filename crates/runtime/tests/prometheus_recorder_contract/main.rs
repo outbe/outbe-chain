@@ -88,8 +88,8 @@ fn emit_consensus() {
 }
 
 fn emit_consensus_events() {
+    record_finalization_resolution_stalled(1);
     for emit in [
-        record_finalization_resolution_stalled,
         record_finalization_divergence_suspected,
         record_finalization_divergence_cleared,
         record_finalization_snapshot_build_degraded,

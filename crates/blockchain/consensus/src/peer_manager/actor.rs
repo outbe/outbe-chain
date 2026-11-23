@@ -142,8 +142,8 @@ where
                 Update::Tip(..) => {}
                 Update::Block(block, ack) => {
                     ack.acknowledge();
-                    self.pending_refresh = Some((*block).clone());
-                    self.schedule_executor_finalized_wait(Height::new(block.number()));
+                    self.pending_refresh = Some(block.inner().clone());
+                    self.schedule_executor_finalized_wait(Height::new(block.inner().number()));
                 }
             },
         }

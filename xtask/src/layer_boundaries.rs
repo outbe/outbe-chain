@@ -27,15 +27,13 @@ const READ_ONLY_RELEASE_ALLOWLIST: [&str; 2] = [
     "release/dcap-native-qvl-v1.json",
 ];
 
-const VENDOR_PATH_ALLOWLIST: [&str; 4] = [
-    "vendor/alloy-evm",
+const VENDOR_PATH_ALLOWLIST: [&str; 3] = [
     "vendor/heartwood/crates/radicle",
     "vendor/heartwood/crates/radicle-crypto",
     "vendor/heartwood/crates/radicle-git-metadata",
 ];
 
-const TRANSITIVE_VENDOR_PATH_ALLOWLIST: [&str; 10] = [
-    "vendor/alloy-evm",
+const TRANSITIVE_VENDOR_PATH_ALLOWLIST: [&str; 9] = [
     "vendor/heartwood/crates/radicle",
     "vendor/heartwood/crates/radicle-cob",
     "vendor/heartwood/crates/radicle-core",

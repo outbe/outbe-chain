@@ -1,4 +1,6 @@
 use super::*;
+use alloy_eips::eip7928::{BlockAccessIndex, BlockAccessList};
+use alloy_primitives::map::{AddressSet, B256HashMap};
 
 /// Outbe block executor.
 ///
@@ -10,9 +12,15 @@ use super::*;
 /// hooks. In the main loop, the executor validates `body[0]` against that witness
 /// and does not execute it again. The other begin-zone phases execute when their
 /// reserved-address body transaction reaches the loop.
-pub struct OutbeBlockExecutor<'a, Evm> {
+pub struct OutbeBlockExecutor<'a> {
     /// Inner Ethereum execution strategy.
-    pub inner: EthBlockExecutor<'a, Evm, &'a Arc<ChainSpec<OutbeHeader>>, &'a RethReceiptBuilder>,
+    pub inner: EthBlockExecutor<'a, OutbeEvmTypes, &'a RethReceiptBuilder>,
+    /// Canonical Outbe chain specification.
+    pub chain_spec: Arc<ChainSpec<OutbeHeader>>,
+    /// Raw block withdrawals retained for Outbe native withdrawal validation
+    /// (inner `EthBlockExecutor` receives `withdrawals: None` so Ethereum's
+    /// Gwei-to-Wei conversion never runs on native withdrawals).
+    pub withdrawals: Option<Vec<Withdrawal>>,
     /// Immutable chain identity sourced from the executor's canonical ChainSpec.
     pub chain_id: u64,
     pub genesis_hash: B256,
@@ -21,10 +29,7 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub bridge: Option<ConsensusExecutionBridge>,
     /// Header-carried consensus artifact bytes (`extra_data`) used by begin-zone phases.
     pub block_extra_data: Bytes,
-    /// Canonical final header `extra_data` bytes. On the verifier path this is
-    /// initialized from the sealed block header. On the proposer path the block
-    /// builder overwrites it after it injects the execution summary and timestamp
-    /// millis, but before `finish()`.
+    /// Canonical final header `extra_data` bytes.
     pub final_extra_data: Bytes,
     /// Historical header artifact reader used for finalized-block settlement.
     pub accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
@@ -44,12 +49,9 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     /// Whether `settle_block_burned_fees` has already flushed this block's burned fees.
     pub burned_fees_settled: bool,
     /// Refund-adjusted gas consumed by begin-zone system transactions under the
-    /// Outbe-only execution lane (`SYSTEM_TX_ARTIFACT_GAS_LIMIT`, 10B gas). The
-    /// Ethereum-visible block counters use each system tx envelope's visible
-    /// intrinsic gas instead.
+    /// Outbe-only execution lane (`SYSTEM_TX_ARTIFACT_GAS_LIMIT`, 10B gas).
     pub system_tx_execution_gas: u64,
-    /// Gross begin-zone gas before refunds. Kept separate from receipt gas and
-    /// the existing refund-adjusted internal limit for work-budget calibration.
+    /// Gross begin-zone gas before refunds.
     pub system_tx_gross_gas: u64,
     /// Validator-mode signer used by proposer path to sign system-tx artifacts.
     pub evm_signer: Option<SharedOutbeEvmSigner>,
@@ -64,78 +66,47 @@ pub struct OutbeBlockExecutor<'a, Evm> {
     pub block_order: crate::system_tx::BlockOrder,
     /// Signature hash committed in pre-execution; cleared only after FSM admission.
     pub preexecuted_phase1_tx_hash: Option<B256>,
-    /// Proposer-side prebuilt Phase 1 body[0] tx. The payload builder sets it
-    /// before `apply_pre_execution_changes`. `apply_phase1_commit_in_preexec`
-    /// consumes it as the canonical witness whose `signature_hash` is cached in
-    /// `preexecuted_phase1_tx_hash`. It is `None` on the validator path (the witness comes
-    /// from `expected_begin_system_txs.first()`) and for
-    /// `block_number <= GENESIS_BOOTSTRAP_BLOCK_NUMBER`.
+    /// Proposer-side prebuilt Phase 1 body[0] tx.
     pub prebuilt_phase1_tx: Option<Recovered<TransactionSigned>>,
     /// Optional accounted-parent artifact hint from the payload builder.
-    /// [`Self::accounted_parent_artifact_for_metadata`] consumes it when the
-    /// [`AccountedParentArtifactProvider`] returns `None`. That function accepts
-    /// the hint only if the metadata's `(finalized_block_number, finalized_block_hash)`
-    /// matches `(block_number - 1, self.parent_hash)`.
     pub parent_artifact_hint: Option<AccountedParentArtifact>,
-    /// Canonical VRF proof hash that `verify_phase1_in_preexec` captures from
-    /// the verified parent certificate
-    /// (`outbe_primitives::proof::VerifiedProof::vrf_proof_hash`).
-    /// `apply_phase1_commit_in_preexec` and the main-tx-loop Phase 1 path
-    /// consume it to populate `PreloadedSystemTxContext.canonical_vrf_proof_hash`.
-    /// The V3 Rewards fingerprint binds that field. It is `None` until the
-    /// preflight runs. It remains `None` for skip paths (block 0 / 1, test opt-out).
+    /// Canonical VRF proof hash captured from the verified parent certificate.
     pub verified_phase1_vrf_proof_hash: Option<B256>,
-    /// Proposer-only one-time Phase 3b `TeeBootstrap` payload. When `Some` on the
-    /// proposer path, `begin_block_system_tx_inputs` injects the bootstrap system
-    /// tx after `BoundaryOutcome`. It does this identically to
-    /// `build_begin_system_txs`, so the body that the proposer signs matches the
-    /// inputs that the executor expects. It is `None` on the validator path (the
-    /// body carries it via `expected_begin_system_txs`) and until the TEE-DKG
-    /// bootstrap producer supplies a payload.
+    /// Proposer-only one-time Phase 3b `TeeBootstrap` payload.
     pub pending_tee_bootstrap: Option<outbe_primitives::tee_bootstrap_v2::TeeBootstrapV2>,
-    /// Explicit block execution state machine:
-    /// `ConsensusStage -> BeginBlock -> MidBlock -> EndBlock -> Completed`.
+    /// Explicit block execution state machine.
     pub fsm: crate::system_tx::BlockExecutionFsm,
-    /// Number of zero-fee soft-failure receipts emitted in THIS
-    /// block. Bounds block-stuffing by zero-cost 21k soft-failures (see
-    /// [`Self::record_zero_fee_soft_failure`]). The executor is constructed
-    /// fresh per block, so this resets per block. It is identical on the
-    /// proposer (build) and validator (re-execution) paths.
+    /// Number of zero-fee soft-failure receipts emitted in THIS block.
     pub zero_fee_soft_failures: u32,
     /// Per-hook soft-failure counts, reset with each block executor.
     pub(super) zero_fee_hook_soft_failures: std::collections::BTreeMap<u8, u32>,
     /// Sum of included sponsored and bootstrap gas limits, reset per block.
     pub sponsored_gas_used: u64,
-    /// Block-scoped consensus enclave witness state (`ProposerRecord`, `VerifierWithEnclave`,
-    /// `VerifierReplay`, or `RpcDirect`).
+    /// Block-scoped consensus enclave witness state.
     pub witness_state: Option<Arc<std::sync::Mutex<outbe_tee::witness::WitnessState>>>,
     /// Zero-based index of the next committed transaction in `body.transactions`.
     pub body_tx_index: u32,
-    /// Cached compressed `OART 0x0A` payload on the proposer path so
-    /// `prepare_final_header_artifacts`
-    /// and `finalize_header_artifacts` never re-compress the witness tape.
+    /// Cached compressed `OART 0x0A` payload on the proposer path.
     pub frozen_enclave_witness: Option<Bytes>,
     /// End-zone transactions built by the proposer. The block builder appends them.
     pub staged_end_block_txs: Vec<Recovered<TransactionSigned>>,
-    /// Decoded `block_extra_data` cached once at block open so reserved system transactions
-    /// do not re-decode header artifacts on every system tx.
+    /// Decoded `block_extra_data` cached once at block open.
     pub decoded_block_artifacts: Option<OutbeBlockArtifacts>,
-    /// Phase-1 (`CertifiedParentAccounting`) input and parent execution summary resolved once
-    /// and shared across `verify_phase1_in_preexec`, `apply_phase1_commit_in_preexec`,
-    /// and `begin_block_system_tx_inputs`.
+    /// Phase-1 (`CertifiedParentAccounting`) input and parent execution summary cached once.
     pub cached_phase1_input: Option<(SystemTx, AccountedParentArtifact)>,
     /// Resolved begin-zone system transactions and visible gas plan computed once per block.
     pub resolved_begin_zone: Option<Vec<ResolvedBeginSystemTx>>,
-    /// Pre-verified signer indices per `LateFinalizeCredits` batch from
-    /// `verify_late_finalize_credits_in_preexec`.
+    /// Pre-verified signer indices per `LateFinalizeCredits` batch.
     pub verified_late_credit_signers: Option<Arc<Vec<Vec<usize>>>>,
     /// Domain host captured when this executor is built.
     pub runtime_host: Arc<dyn crate::EvmRuntimeHost>,
 }
 
-impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
+impl<'a> OutbeBlockExecutor<'a> {
     pub fn new(
-        inner: EthBlockExecutor<'a, Evm, &'a Arc<ChainSpec<OutbeHeader>>, &'a RethReceiptBuilder>,
+        inner: EthBlockExecutor<'a, OutbeEvmTypes, &'a RethReceiptBuilder>,
+        chain_spec: Arc<ChainSpec<OutbeHeader>>,
+        withdrawals: Option<Vec<Withdrawal>>,
         inputs: BlockExecutorInputs,
     ) -> Self {
         let BlockExecutorInputs {
@@ -170,11 +141,13 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
                 },
         } = inputs;
         let block_order = runtime_host.block_order();
-        let chain_id = inner.spec.chain.id();
-        let genesis_hash = inner.spec.genesis_hash();
-        let genesis_timestamp = inner.spec.genesis_timestamp();
+        let chain_id = chain_spec.chain().id();
+        let genesis_hash = chain_spec.genesis_hash();
+        let genesis_timestamp = chain_spec.genesis_timestamp();
         Self {
             inner,
+            chain_spec,
+            withdrawals,
             chain_id,
             genesis_hash,
             genesis_timestamp,
@@ -202,8 +175,6 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             preexecuted_phase1_tx_hash: None,
             prebuilt_phase1_tx,
             parent_artifact_hint,
-            // `verify_phase1_in_preexec` populates this on a real
-            // verify. It remains `None` for skip paths.
             verified_phase1_vrf_proof_hash: None,
             pending_tee_bootstrap,
             fsm: crate::system_tx::BlockExecutionFsm::for_mid_block(&block_order),
@@ -221,18 +192,96 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
             runtime_host,
         }
     }
-}
 
-impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
-    pub fn current_execution_summary(&self) -> ExecutionSummaryArtifact
-    where
-        Evm: reth_ethereum::evm::primitives::Evm,
-    {
-        // ExecutionSummaryArtifact wire format v0x04 carries
-        // only `validator_fee_sum`. The per-block emission field is
-        // removed. The Cycle handler computes daily emission from the
-        // closed-form formula, so emission does not need to travel in
-        // `extra_data`.
+    #[inline]
+    pub(crate) fn block_number(&self) -> u64 {
+        self.inner.evm().block().number.saturating_to::<u64>()
+    }
+
+    #[inline]
+    pub(crate) fn block_timestamp_u256(&self) -> U256 {
+        self.inner.evm().block().timestamp
+    }
+
+    #[inline]
+    pub(crate) fn block_beneficiary(&self) -> Address {
+        self.inner.evm().block().beneficiary
+    }
+
+    #[inline]
+    pub(crate) fn block_gas_limit(&self) -> u64 {
+        self.inner.evm().block().gas_limit.saturating_to::<u64>()
+    }
+
+    #[inline]
+    pub(crate) fn block_prevrandao(&self) -> Option<B256> {
+        Some(B256::from(self.inner.evm().block().prevrandao))
+    }
+
+    #[inline]
+    pub(crate) fn block_basefee(&self) -> u128 {
+        self.inner.evm().block().basefee.saturating_to::<u128>()
+    }
+
+    #[inline]
+    pub(crate) fn block_blob_gasprice(&self) -> u128 {
+        self.inner
+            .evm()
+            .block()
+            .blob_basefee
+            .saturating_to::<u128>()
+    }
+
+    /// Propagates a [`BlockStateAccumulator`] produced by [`DirectStorageProvider::flush`] into
+    /// `self.inner.inner.block_state` AND any attached `StateUpdate` hook (`OnStateHook` /
+    /// parallel state root) via `self.inner.commit_pending_state(&pending)`.
+    pub(crate) fn commit_block_accumulator(
+        &mut self,
+        changes: &BlockStateAccumulator,
+    ) -> Result<(), BlockExecutionError> {
+        if changes.is_empty() {
+            return Ok(());
+        }
+        let mut pending = PendingState::default();
+        let codes: B256HashMap<evm2::bytecode::Bytecode> = changes
+            .code()
+            .map(|(hash, code)| (*hash, code.clone()))
+            .collect();
+        let mut inserted = AddressSet::default();
+
+        for (addr, tracked) in changes.accounts() {
+            let mut current = tracked.current.clone();
+            if let Some(info) = current.as_mut() {
+                if info.code.is_none() {
+                    if let Some(code) = codes.get(&info.code_hash) {
+                        info.code = Some(code.clone());
+                    }
+                }
+            }
+            pending.insert_account(addr, tracked.original.clone(), current);
+            inserted.insert(addr);
+        }
+
+        for (key, tracked) in changes.storage() {
+            let addr = key.address();
+            if !inserted.contains(&addr) {
+                let info = self
+                    .inner
+                    .evm_mut()
+                    .overlay_db_mut()
+                    .get_account(&addr)
+                    .map_err(BlockExecutionError::other)?;
+                pending.insert_account(addr, info.clone(), info);
+                inserted.insert(addr);
+            }
+            pending.insert_storage(addr, key.key(), tracked.original, tracked.current);
+        }
+
+        self.inner.commit_pending_state(&pending);
+        Ok(())
+    }
+
+    pub fn current_execution_summary(&self) -> ExecutionSummaryArtifact {
         ExecutionSummaryArtifact {
             validator_fee_sum: self.current_block_validator_fees,
         }
@@ -247,58 +296,64 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     pub fn set_final_extra_data(&mut self, bytes: Bytes) {
         self.final_extra_data = bytes;
     }
-
-    /// Pre-encodes the final execution-produced header fields.
-    /// Settles burned fees before encoding on the parallel-root path.
-    #[allow(private_bounds)]
-    pub fn prepare_final_header_artifacts<DB>(
-        &mut self,
-        timestamp_millis_part: u64,
-    ) -> Result<(), BlockExecutionError>
-    where
-        DB: StateDB,
-        DB::Error: std::fmt::Display,
-        Evm: reth_ethereum::evm::primitives::Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
-        Evm::Error: std::fmt::Display,
-    {
-        self.settle_block_burned_fees()?;
-        let enclave_witness = self.final_enclave_witness_bytes()?;
-        self.final_extra_data = crate::builder::encode_final_header_artifacts(
-            self.final_extra_data.as_ref(),
-            self.current_execution_summary(),
-            timestamp_millis_part,
-            enclave_witness,
-        )?;
-        Ok(())
-    }
-
-    // `set_pending_consensus_metadata` and
-    // `ingest_consensus_metadata_tx` are deleted. Finalized-parent
-    // metadata now lives in the begin-zone Phase 1 system transaction input.
-    // The pre-exec dispatch arm at `execute_transaction_with_commit_condition`
-    // no longer accepts consensus metadata transactions. The proposer no
-    // longer produces them.
 }
 
-#[allow(private_bounds)]
-impl<DB, E> BlockExecutor for OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    // outbe-evm is pinned to revm's standard `HaltReason`; this constraint
-    // is what lets [`system_tx_failure_code_for_result`] pattern-match the
-    // halt variants for soft-failure code assignment.
-    E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + ZeroFeeCfgAccess,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    E::Error: std::fmt::Display,
-{
+impl<'a> BlockExecutor for OutbeBlockExecutor<'a> {
     type Transaction = TransactionSigned;
     type Receipt = Receipt;
-    type Evm = E;
-    type Result = EthTxResult<E::HaltReason, reth_ethereum::TxType>;
+    type Evm = OutbeEvm<'a>;
+    type TransactionResultWithState =
+        EthTransactionResultWithState<OutbeEvmTypes, alloy_consensus::TxType>;
+    type BlockAccessList = evm2::evm::Bal;
+
+    fn evm(&self) -> &Self::Evm {
+        self.inner.evm()
+    }
+
+    fn evm_mut(&mut self) -> &mut Self::Evm {
+        self.inner.evm_mut()
+    }
+
+    fn set_state_hook(&mut self, hook: impl FnMut(StateUpdate) + Send + 'static) -> bool {
+        self.inner.set_state_hook(hook)
+    }
+
+    fn convert_block_access_list(
+        block_access_list: &BlockAccessList,
+    ) -> Result<Self::BlockAccessList, BlockExecutionError> {
+        evm2::evm::Bal::try_from(block_access_list.as_slice()).map_err(BlockExecutionError::other)
+    }
+
+    fn set_block_access_list(&mut self, block_access_list: Arc<Self::BlockAccessList>) {
+        self.inner.set_block_access_list(block_access_list);
+    }
+
+    fn set_block_access_index(&mut self, index: BlockAccessIndex) {
+        self.inner.set_block_access_index(index);
+    }
+
+    fn enable_block_access_list_builder(&mut self) {
+        self.inner.enable_block_access_list_builder();
+    }
+
+    fn take_block_access_list(&mut self) -> Option<BlockAccessList> {
+        self.inner.take_block_access_list()
+    }
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         self.apply_outbe_pre_execution()
+    }
+
+    fn into_state(self) -> reth_evm::BundleState {
+        self.inner.into_state()
+    }
+
+    fn validate_transaction_gas_limit(
+        &mut self,
+        transaction_gas_limit: u64,
+    ) -> Result<(), BlockExecutionError> {
+        self.inner
+            .validate_transaction_gas_limit(transaction_gas_limit)
     }
 
     fn receipts(&self) -> &[Self::Receipt] {
@@ -307,10 +362,10 @@ where
 
     fn execute_transaction_without_commit(
         &mut self,
-        tx: impl ExecutableTx<Self>,
-    ) -> Result<Self::Result, BlockExecutionError> {
+        tx: impl ExecutorTx<Self>,
+    ) -> Result<Self::TransactionResultWithState, BlockExecutionError> {
         crate::executor::witness::clear_detached_trace_witness();
-        outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+        outbe_primitives::time::timestamp_secs(self.block_timestamp_u256())
             .map_err(crate::errors::ExecutorValidationError::from)?;
         let (tx_env, recovered) = tx.into_parts();
         if is_reserved_system_tx(recovered.tx()) {
@@ -325,24 +380,24 @@ where
         }
         if self.witness_state.is_none() {
             self.init_rpc_direct_witness_state();
-            self.inner.evm.set_witness_state(self.witness_state.clone());
+            self.inner
+                .evm_mut()
+                .ext_mut()
+                .set_attached_witness_state(self.witness_state.clone());
         }
         let _witness_scope = self.prepare_tx_witness_scope(false)?;
         self.inner
-            .execute_transaction_without_commit(WithTxEnv {
-                tx: Arc::new(recovered),
-                tx_env,
-            })
+            .execute_transaction_without_commit((tx_env, recovered))
             .map_err(preserve_cancelled_execution)
     }
 
     fn execute_transaction_with_commit_condition(
         &mut self,
-        tx: impl ExecutableTx<Self>,
-        f: impl FnOnce(&Self::Result) -> CommitChanges,
+        tx: impl ExecutorTx<Self>,
+        f: impl FnOnce(&TxResult<OutbeEvmTypes>, TxStateChanges<'_>) -> CommitChanges,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         crate::executor::witness::clear_detached_trace_witness();
-        outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+        outbe_primitives::time::timestamp_secs(self.block_timestamp_u256())
             .map_err(crate::errors::ExecutorValidationError::from)?;
         let (tx_env, recovered) = tx.into_parts();
         let tx_hash = *recovered.tx().tx_hash();
@@ -372,21 +427,22 @@ where
         let witness_state = self.witness_state.clone();
         let body_tx_index = self.body_tx_index;
         let base_extra_data = self.block_extra_data.clone();
-        let wrapped_f = |result: &Self::Result| -> CommitChanges {
-            if !Self::check_witness_commit_allowed_with(
-                witness_state.as_ref(),
-                body_tx_index,
-                base_extra_data.as_ref(),
-                is_user_candidate,
-            ) {
-                return CommitChanges::No;
-            }
-            let decision = f(result);
-            if !decision.should_commit() {
-                clear_uncommitted_witness_on_decline(witness_state.as_ref());
-            }
-            decision
-        };
+        let wrapped_f =
+            |result: &TxResult<OutbeEvmTypes>, changes: TxStateChanges<'_>| -> CommitChanges {
+                if !Self::check_witness_commit_allowed_with(
+                    witness_state.as_ref(),
+                    body_tx_index,
+                    base_extra_data.as_ref(),
+                    is_user_candidate,
+                ) {
+                    return CommitChanges::No;
+                }
+                let decision = f(result, changes);
+                if !decision.should_commit() {
+                    clear_uncommitted_witness_on_decline(witness_state.as_ref());
+                }
+                decision
+            };
         let outcome = if is_system_tx {
             self.execute_reserved_system_tx(recovered, wrapped_f)
         } else {
@@ -398,38 +454,35 @@ where
         outcome.map_err(preserve_cancelled_execution)
     }
 
-    fn commit_transaction(&mut self, output: Self::Result) -> GasOutput {
+    fn commit_transaction(
+        &mut self,
+        output: Self::TransactionResultWithState,
+    ) -> Result<GasOutput, BlockExecutionError> {
         self.inner.commit_transaction(output)
     }
 
-    fn execute_block(
-        mut self,
-        transactions: impl IntoIterator<Item = impl ExecutableTx<Self>>,
-    ) -> Result<BlockExecutionResult<Self::Receipt>, BlockExecutionError>
-    where
-        Self: Sized,
+    fn finish_with_block_access_list(
+        self,
+    ) -> Result<(BlockExecutionOutput<Self::Receipt>, Option<BlockAccessList>), BlockExecutionError>
     {
-        self.apply_pre_execution_changes()?;
-
-        for tx in transactions {
-            self.execute_transaction_with_commit_condition(tx, |_| CommitChanges::Yes)?;
-        }
-
-        self.apply_post_execution_changes()
+        let (output, bal) = self.finish_with_prepared_block_access_list()?;
+        Ok((output, bal.map(Into::into)))
     }
 
-    fn finish(mut self) -> Result<(Self::Evm, BlockExecutionResult<Receipt>), BlockExecutionError> {
+    fn finish_with_prepared_block_access_list(
+        mut self,
+    ) -> Result<(BlockExecutionOutput<Self::Receipt>, Option<evm2::evm::Bal>), BlockExecutionError>
+    {
         crate::executor::witness::clear_detached_trace_witness();
-        let block_timestamp =
-            outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
-                .map_err(crate::errors::ExecutorValidationError::from)?;
+        let block_timestamp = outbe_primitives::time::timestamp_secs(self.block_timestamp_u256())
+            .map_err(crate::errors::ExecutorValidationError::from)?;
         if self.execute_outbe_block_hooks {
             self.fsm
                 .finish()
                 .map_err(crate::errors::ExecutorValidationError::from)?;
         }
         let current_summary = self.current_execution_summary();
-        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+        let block_number = self.block_number();
         let block_artifacts =
             artifacts::validate_finish_artifacts(&self, block_number, current_summary)?;
 
@@ -438,12 +491,8 @@ where
             .ethereum_post_execution_requests
             .take()
             .ok_or(crate::errors::ExecutorValidationError::MissingPostExecutionOutput)?;
-        let gas_used = if self.inner.evm.cfg_env().enable_amsterdam_eip8037 {
-            self.inner.max_block_gas_used()
-        } else {
-            self.inner.cumulative_tx_gas_used
-        };
-        let block_gas_limit = self.inner.evm.block().gas_limit();
+        let gas_used = self.accounted_block_gas();
+        let block_gas_limit = self.block_gas_limit();
         if gas_used > block_gas_limit {
             return Err(
                 BlockValidationError::TransactionGasLimitMoreThanAvailableBlockGas {
@@ -453,18 +502,16 @@ where
                 .into(),
             );
         }
+        let receipts = std::mem::take(&mut self.inner.inner.receipts);
+        let blob_gas_used = self.inner.inner.blob_gas_used;
+        let bal = self.inner.inner.evm.state_mut().take_bal_builder();
+        let state = self.inner.into_state();
         let result = BlockExecutionResult {
-            receipts: std::mem::take(&mut self.inner.receipts),
+            receipts,
             requests,
             gas_used,
-            blob_gas_used: self.inner.blob_gas_used,
+            blob_gas_used,
         };
-        let evm = self.inner.evm;
-        // Validator/import execution ends before Reth validates receipt and
-        // state roots, so it must not publish speculative execution artifacts here. The
-        // proposer publishes only after block assembly supplies the final hash.
-        // A finalized validator block is reconstructed from durable canonical
-        // receipts after the DB-only persistence barrier.
         if let (Some(bridge), Some(block_hash), Some(summary)) = (
             self.bridge.as_ref(),
             self.block_hash,
@@ -483,15 +530,7 @@ where
             }
         }
 
-        Ok((evm, result))
-    }
-
-    fn evm_mut(&mut self) -> &mut Self::Evm {
-        self.inner.evm_mut()
-    }
-
-    fn evm(&self) -> &Self::Evm {
-        self.inner.evm()
+        Ok((BlockExecutionOutput::new(result, state), bal))
     }
 }
 
@@ -511,44 +550,26 @@ fn clear_uncommitted_witness_on_decline(
     }
 }
 
-/// The upstream EVM variant stores its boxed cause without exposing it as source.
-/// Unwrap only a proven cancellation or node-local abort so the engine's internal-error path
-/// retains it.
-fn preserve_cancelled_execution(error: BlockExecutionError) -> BlockExecutionError {
-    match error {
-        BlockExecutionError::Internal(InternalBlockExecutionError::EVM { hash, error }) => {
-            if outbe_primitives::projection::ExecutionReadCancelled::find(error.as_ref()).is_some()
-                || outbe_primitives::projection::NodeLocalExecutionAbort::find(error.as_ref())
-                    .is_some()
-            {
-                BlockExecutionError::Internal(InternalBlockExecutionError::Other(error))
-            } else {
-                BlockExecutionError::Internal(InternalBlockExecutionError::EVM { hash, error })
-            }
-        }
-        error => error,
-    }
-}
+use crate::precompiles::preserve_cancelled_execution;
 
 #[cfg(test)]
 mod cancellation_tests {
     use super::*;
+    use evm2::{registry::HandlerError, AnyError};
     use outbe_primitives::projection::{
         ExecutionReadBudget, ExecutionReadCancelled, NodeLocalExecutionAbort,
     };
-    use revm::context_interface::result::{AnyError, EVMError};
 
     #[test]
     fn raw_execution_abort_is_internal_and_keeps_its_typed_cause() {
         let budget = ExecutionReadBudget::new();
         budget.cancel();
-        let evm_error: EVMError<std::convert::Infallible> =
-            EVMError::CustomAny(AnyError::new(ExecutionReadCancelled {
-                budget: budget.clone(),
-            }));
+        let evm_error = HandlerError::Fatal(AnyError::new(ExecutionReadCancelled {
+            budget: budget.clone(),
+        }));
         let error = BlockExecutionError::Internal(InternalBlockExecutionError::EVM {
             hash: B256::ZERO,
-            error: Box::new(evm_error),
+            error: AnyError::new(evm_error),
         });
         let error = preserve_cancelled_execution(error);
         assert!(matches!(error, BlockExecutionError::Internal(_)));
@@ -558,12 +579,12 @@ mod cancellation_tests {
 
     #[test]
     fn node_local_execution_abort_is_preserved_across_evm_error() {
-        let evm_error: EVMError<std::convert::Infallible> = EVMError::CustomAny(AnyError::new(
-            NodeLocalExecutionAbort::new("TEE sidecar down"),
-        ));
+        let evm_error = HandlerError::Fatal(AnyError::new(NodeLocalExecutionAbort::new(
+            "TEE sidecar down",
+        )));
         let error = BlockExecutionError::Internal(InternalBlockExecutionError::EVM {
             hash: B256::ZERO,
-            error: Box::new(evm_error),
+            error: AnyError::new(evm_error),
         });
         let error = preserve_cancelled_execution(error);
         assert!(matches!(error, BlockExecutionError::Internal(_)));

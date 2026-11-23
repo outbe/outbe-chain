@@ -1,9 +1,9 @@
 //! Preserves node-local execution failures across the provider fatal channel.
+use evm2::{registry::HandlerError, AnyError};
 use outbe_primitives::{
     error::PrecompileError, projection::NodeLocalExecutionAbort, storage::SubCallError,
 };
 use parking_lot::Mutex;
-use revm::context_interface::result::{AnyError, EVMError};
 use std::sync::Arc;
 
 #[derive(Clone, Default)]
@@ -50,16 +50,71 @@ pub(crate) struct ExecutionCall {
     bridge: ExecutionAbortBridge,
 }
 
+/// Transparent wrapper that exposes `E` via [`std::error::Error::source`] when stored inside
+/// [`evm2::AnyError`] (whose `source()` delegates to the inner error's `source()`, skipping the
+/// outer concrete type).
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub(crate) struct SourceVisibleAbort<E: std::error::Error + Send + Sync + 'static>(
+    #[source] pub(crate) E,
+);
+
 impl ExecutionCall {
-    pub(crate) fn finish<T, D>(self, result: Result<T, EVMError<D>>) -> Result<T, EVMError<D>> {
+    pub(crate) fn finish<T>(self, result: Result<T, HandlerError>) -> Result<T, HandlerError> {
         let terminal = self.bridge.terminal.lock().take();
         match (result, terminal) {
-            (Err(EVMError::Custom(_)), Some(abort)) | (Ok(_), Some(abort)) => {
-                Err(EVMError::CustomAny(AnyError::new(abort)))
-            }
+            (Err(HandlerError::Fatal(_)), Some(abort)) | (Ok(_), Some(abort)) => Err(
+                HandlerError::Fatal(AnyError::new(SourceVisibleAbort(abort))),
+            ),
             (result, _) => result,
         }
     }
+}
+
+/// Unwraps only a proven cancellation or node-local abort from an upstream
+/// `InternalBlockExecutionError::EVM` so the engine retains its typed cause via
+/// [`std::error::Error::source`].
+pub(crate) fn preserve_cancelled_execution(
+    error: reth_evm::BlockExecutionError,
+) -> reth_evm::BlockExecutionError {
+    use outbe_primitives::projection::ExecutionReadCancelled;
+    use reth_evm::{BlockExecutionError, InternalBlockExecutionError};
+
+    match error {
+        BlockExecutionError::Internal(InternalBlockExecutionError::EVM { hash, error }) => {
+            if ExecutionReadCancelled::find(&error).is_some()
+                || NodeLocalExecutionAbort::find(&error).is_some()
+            {
+                return BlockExecutionError::Internal(InternalBlockExecutionError::Other(error));
+            }
+            if let Some(wrapped) = rewrap_direct_abort(&error) {
+                return BlockExecutionError::Internal(InternalBlockExecutionError::Other(wrapped));
+            }
+            BlockExecutionError::Internal(InternalBlockExecutionError::EVM { hash, error })
+        }
+        error => error,
+    }
+}
+
+fn rewrap_direct_abort(error: &AnyError) -> Option<AnyError> {
+    use outbe_primitives::projection::ExecutionReadCancelled;
+
+    let candidates = [
+        Some(error),
+        match error.downcast_ref::<HandlerError>() {
+            Some(HandlerError::Fatal(inner)) => Some(inner),
+            _ => None,
+        },
+    ];
+    for candidate in candidates.into_iter().flatten() {
+        if let Some(cancelled) = candidate.downcast_ref::<ExecutionReadCancelled>() {
+            return Some(AnyError::new(SourceVisibleAbort(cancelled.clone())));
+        }
+        if let Some(abort) = candidate.downcast_ref::<NodeLocalExecutionAbort>() {
+            return Some(AnyError::new(SourceVisibleAbort(abort.clone())));
+        }
+    }
+    None
 }
 
 impl Drop for ExecutionCall {
@@ -71,6 +126,7 @@ impl Drop for ExecutionCall {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use evm2::DatabaseError;
 
     #[test]
     fn abort_marker_cannot_reclassify_a_database_or_later_provider_failure() {
@@ -79,12 +135,12 @@ mod tests {
         bridge.observe(&PrecompileError::EnclaveUnavailable(
             "enclave offline".into(),
         ));
-        let database_error: Result<(), EVMError<std::io::Error>> = Err(EVMError::Database(
-            std::io::Error::other("database failure"),
+        let database_error: Result<(), HandlerError> = Err(HandlerError::Database(
+            DatabaseError::new(std::io::Error::other("database failure"), true),
         ));
         assert!(matches!(
             call.finish(database_error),
-            Err(EVMError::Database(_))
+            Err(HandlerError::Database(_))
         ));
 
         let call = bridge.begin_call();
@@ -92,12 +148,13 @@ mod tests {
             "enclave offline".into(),
         ));
         bridge.observe(&PrecompileError::Fatal("invalid result".into()));
-        let provider_error: Result<(), EVMError<std::convert::Infallible>> =
-            Err(EVMError::Custom("provider failure".into()));
-        assert!(matches!(
-            call.finish(provider_error),
-            Err(EVMError::Custom(_))
-        ));
+        let provider_error: Result<(), HandlerError> =
+            Err(HandlerError::Fatal(AnyError::from("provider failure")));
+        let err = call
+            .finish(provider_error)
+            .expect_err("later provider failure must survive");
+        assert!(matches!(err, HandlerError::Fatal(_)));
+        assert!(NodeLocalExecutionAbort::find(&err).is_none());
     }
 
     #[test]
@@ -110,11 +167,14 @@ mod tests {
         assert!(bridge.check_subcall().is_err());
         drop(call);
         assert!(bridge.check_subcall().is_ok());
-        let error: Result<(), EVMError<std::convert::Infallible>> =
-            Err(EVMError::Custom("provider fatal failure".into()));
-        assert!(matches!(
-            bridge.begin_call().finish(error),
-            Err(EVMError::Custom(_))
-        ));
+        let error: Result<(), HandlerError> = Err(HandlerError::Fatal(AnyError::from(
+            "provider fatal failure",
+        )));
+        let err = bridge
+            .begin_call()
+            .finish(error)
+            .expect_err("provider fatal failure must survive");
+        assert!(matches!(err, HandlerError::Fatal(_)));
+        assert!(NodeLocalExecutionAbort::find(&err).is_none());
     }
 }

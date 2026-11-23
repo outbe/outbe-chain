@@ -25,7 +25,7 @@ pub fn validate_execution_summary_artifact(
 }
 
 pub fn validate_finish_artifacts(
-    executor: &OutbeBlockExecutor<'_, impl Sized>,
+    executor: &OutbeBlockExecutor<'_>,
     block_number: u64,
     current_summary: ExecutionSummaryArtifact,
 ) -> Result<outbe_primitives::reshare_artifact::OutbeBlockArtifacts, BlockExecutionError> {

@@ -40,7 +40,6 @@ outbe-promislimit.workspace = true
 outbe-tribute = { path = ".", features = ["test-enclave", "test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 proptest.workspace = true
-revm.workspace = true
 tempfile.workspace = true
 k256.workspace = true
 outbe-gratis = { workspace = true, features = ["test-enclave"] }

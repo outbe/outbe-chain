@@ -60,8 +60,8 @@ impl LocalReceiptClient {
         }
         let mut messages = Vec::with_capacity(count);
         for _ in 0..count {
-            let sender =
-                bls12381::PublicKey::decode(input.take(48)?).map_err(|_| Error::Protocol)?;
+            let sender = bls12381::PublicKey::decode(commonware_codec::Copying(input.take(48)?))
+                .map_err(|_| Error::Protocol)?;
             let length = usize::from(u16::from_be_bytes(input.array()?));
             if length > MAX_REPOSITORY_GOSSIP_BYTES {
                 return Err(Error::Protocol);

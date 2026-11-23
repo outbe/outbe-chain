@@ -5,9 +5,7 @@ use commonware_consensus::marshal;
 use commonware_cryptography::certificate::Verifier as _;
 use commonware_storage::archive::immutable;
 
-pub(super) struct RecoveredMarshal<
-    E: BufferPooler + Clock + CryptoRng + Spawner + Storage + Metrics,
-> {
+pub(super) struct RecoveredMarshal<E: Clock + CryptoRng + Spawner + Storage + Metrics> {
     pub(super) actor: MarshalActor<E>,
     pub(super) mailbox: MarshalMailbox,
     pub(super) processed_height: Height,
@@ -22,7 +20,7 @@ pub(super) async fn recover_marshal<E>(
     args: &ConsensusArgs,
 ) -> Result<RecoveredMarshal<E>>
 where
-    E: BufferPooler + Clock + CryptoRng + Spawner + Storage + Metrics + Send + Sync + 'static,
+    E: Clock + CryptoRng + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     let partition_prefix = "outbe-marshal".to_string();
     let epoch_length_blocks = epoch_length_blocks_from_genesis(node)?;
@@ -85,7 +83,11 @@ where
     // means no durable consensus finalization yet (fresh genesis). Map that to
     // height 0. This keeps the prior non-optional `Height` semantics that the
     // genesis-formation proof, crash-recovery detection, and executor start use.
-    let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt.height());
+    let last_consensus_finalized = map_marshal_init_height(
+        last_consensus_finalized_opt
+            .processed()
+            .map(commonware_consensus::marshal::core::Processed::height),
+    );
     let last_execution_height = node.provider().last_block_number().map_err(|error| {
         crate::errors::StackDkgError::GetLastBlockNumber {
             reason: format!("{error}"),

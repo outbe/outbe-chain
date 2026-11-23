@@ -1,11 +1,32 @@
 //! Native-value admission for an already validated EVM call frame.
 use super::routes::ValuePolicy;
 use alloy_primitives::U256;
+use evm2::interpreter::{MessageExt, MessageKind};
+
+/// Call-boundary value semantics derived from an evm2 call message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum BoundaryCallValue {
+    /// Native value transferred by a non-delegated `CALL` frame.
+    Transfer(U256),
+    /// Apparent value inherited by a delegated frame without moving funds.
+    Apparent(U256),
+}
+
+impl BoundaryCallValue {
+    pub(super) fn from_message<E>(message: &MessageExt<E>) -> Self {
+        match message.kind {
+            MessageKind::DelegateCall => Self::Apparent(message.value),
+            MessageKind::StaticCall => Self::Transfer(U256::ZERO),
+            MessageKind::Call | MessageKind::CallCode => Self::Transfer(message.value),
+            _ => Self::Apparent(message.value),
+        }
+    }
+}
 
 /// Classification of a call's native value at the precompile boundary.
 #[derive(Debug, PartialEq, Eq)]
 pub(super) enum BoundaryValue {
-    /// Value revm has already moved into the precompile account, safe to credit.
+    /// Value the EVM has already moved into the precompile account, safe to credit.
     Credited(U256),
     /// Value that must not reach dispatch, with the reason to revert with.
     Rejected(&'static str),
@@ -14,10 +35,10 @@ pub(super) enum BoundaryValue {
 /// Decide how much native value a precompile call may credit.
 ///
 /// Only a non-delegated frame reaches this: dispatch refuses `DELEGATECALL` and
-/// `CALLCODE` outright, so revm has already moved any `CallValue::Transfer` into
+/// `CALLCODE` outright, so the EVM has already moved any `Transfer` value into
 /// the account whose storage dispatch is about to mutate.
 ///
-/// The `CallValue::Apparent` arm is therefore unreachable. It is not a fallback
+/// The `BoundaryCallValue::Apparent` arm is therefore unreachable. It is not a fallback
 /// for the delegated-frame guard and must not be read as one. `CALLCODE` carries
 /// a `Transfer`. If someone removes that guard, this function would credit a
 /// self-transfer that moved nothing. The guard is the only thing standing there.
@@ -28,15 +49,15 @@ pub(super) enum BoundaryValue {
 /// address 0, and the Promis Limit burns it.
 pub(super) fn classify_boundary_value(
     policy: ValuePolicy,
-    value: &revm::interpreter::CallValue,
+    value: &BoundaryCallValue,
 ) -> BoundaryValue {
     let credited = match *value {
-        revm::interpreter::CallValue::Transfer(v) | revm::interpreter::CallValue::Apparent(v) => v,
+        BoundaryCallValue::Transfer(v) | BoundaryCallValue::Apparent(v) => v,
     };
     if credited.is_zero() {
         return BoundaryValue::Credited(U256::ZERO);
     }
-    if matches!(*value, revm::interpreter::CallValue::Apparent(_)) {
+    if matches!(*value, BoundaryCallValue::Apparent(_)) {
         return BoundaryValue::Rejected("outbe precompile: apparent value is not a transfer");
     }
     if policy == ValuePolicy::Reject {

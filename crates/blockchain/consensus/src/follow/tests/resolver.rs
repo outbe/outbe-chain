@@ -1,7 +1,7 @@
 use super::super::resolver::{FetchResolution, ResolverKey};
 use super::*;
 use commonware_consensus::marshal::resolver::handler::{self, Annotation, Finalized, Key};
-use commonware_resolver::{Consumer, Delivery, Fetch};
+use commonware_resolver::{Consumer, Delivery, Fetch, Outcome, Resolution};
 use commonware_utils::channel::oneshot;
 use std::{collections::VecDeque, sync::Mutex};
 use upstream::AncestorFinalityProof;
@@ -40,6 +40,7 @@ impl LocalBlockSource for Local {
 #[derive(Clone, Copy)]
 enum Ack {
     Accept,
+    Ignore,
     Reject,
     Closed,
     Hold,
@@ -49,7 +50,7 @@ type Deliveries = Arc<Mutex<Vec<(ResolverKey, Vec<Annotation>, bytes::Bytes)>>>;
 struct Recorder {
     deliveries: Deliveries,
     acknowledgements: VecDeque<Ack>,
-    pending: Arc<Mutex<Option<oneshot::Sender<bool>>>>,
+    pending: Arc<Mutex<Option<oneshot::Sender<Outcome>>>>,
 }
 impl Recorder {
     fn new(acknowledgements: impl IntoIterator<Item = Ack>) -> Self {
@@ -64,12 +65,12 @@ impl Consumer for Recorder {
     type Key = ResolverKey;
     type Value = bytes::Bytes;
     type Subscriber = Annotation;
-    type Outcome = bool;
+    type Outcome = Outcome;
     fn deliver(
         &mut self,
         delivery: Delivery<ResolverKey, Annotation>,
         value: bytes::Bytes,
-    ) -> oneshot::Receiver<bool> {
+    ) -> oneshot::Receiver<Outcome> {
         self.deliveries.lock().unwrap().push((
             delivery.key,
             delivery.subscribers.into_iter().map(|(a, _)| a).collect(),
@@ -82,10 +83,15 @@ impl Consumer for Recorder {
             .expect("unexpected marshal delivery")
         {
             Ack::Accept => {
-                sender.send(true).unwrap();
+                sender
+                    .send(Outcome::Resolved(Resolution::Complete))
+                    .unwrap();
+            }
+            Ack::Ignore => {
+                sender.send(Outcome::Ignored).unwrap();
             }
             Ack::Reject => {
-                sender.send(false).unwrap();
+                sender.send(Outcome::Invalid).unwrap();
             }
             Ack::Closed => drop(sender),
             Ack::Hold => {
@@ -184,7 +190,9 @@ fn local_block_keeps_ack_receiver_alive_until_response_or_cancellation() {
                 drop(resolving);
                 assert!(sender.is_closed());
             } else {
-                sender.send(true).unwrap();
+                sender
+                    .send(Outcome::Resolved(Resolution::Complete))
+                    .unwrap();
                 resolving.await;
             }
         });
@@ -267,33 +275,59 @@ fn finalized_anchor_precedes_reversed_ancestors_and_rejection_stops_delivery() {
         certified: records[3].clone(),
         ancestors: vec![records[1].block.clone(), records[2].block.clone()],
     };
-    for (acks, count) in [
-        (vec![Ack::Accept, Ack::Accept, Ack::Accept], 3),
-        (vec![Ack::Reject], 1),
-        (vec![Ack::Accept, Ack::Reject], 2),
-        (vec![Ack::Closed], 1),
+    for (acks, count, expect_rejected_metric) in [
+        (vec![Ack::Accept, Ack::Accept, Ack::Accept], 3, false),
+        (vec![Ack::Ignore, Ack::Accept, Ack::Ignore], 3, false),
+        (vec![Ack::Reject], 1, true),
+        (vec![Ack::Accept, Ack::Reject], 2, true),
+        (vec![Ack::Closed], 1, true),
     ] {
+        let metrics_recorder = metrics_util::debugging::DebuggingRecorder::new();
+        let snapshotter = metrics_recorder.snapshotter();
         let recorder = Recorder::new(acks);
         let delivered = Arc::clone(&recorder.deliveries);
-        futures::executor::block_on(
-            resolution(
-                &signer,
-                None,
-                Source {
-                    block: None,
-                    proof: Some(proof.clone()),
-                    reads: Arc::default(),
-                },
-            )
-            .resolve(
-                request(
-                    Key::Finalized {
-                        height: Height::new(2),
+        ::metrics::with_local_recorder(&metrics_recorder, || {
+            futures::executor::block_on(
+                resolution(
+                    &signer,
+                    None,
+                    Source {
+                        block: None,
+                        proof: Some(proof.clone()),
+                        reads: Arc::default(),
                     },
-                    Height::new(2),
+                )
+                .resolve(
+                    request(
+                        Key::Finalized {
+                            height: Height::new(2),
+                        },
+                        Height::new(2),
+                    ),
+                    recorder,
                 ),
-                recorder,
-            ),
+            );
+        });
+        let rejected_count = snapshotter
+            .snapshot()
+            .into_vec()
+            .into_iter()
+            .filter_map(|(key, _, _, value)| {
+                let is_rejected = key.key().name() == "outbe_follower_resolver_failures_total"
+                    && key
+                        .key()
+                        .labels()
+                        .any(|l| l.key() == "reason" && l.value() == "delivery_rejected");
+                match (is_rejected, value) {
+                    (true, metrics_util::debugging::DebugValue::Counter(c)) => Some(c),
+                    _ => None,
+                }
+            })
+            .sum::<u64>();
+        assert_eq!(
+            rejected_count > 0,
+            expect_rejected_metric,
+            "MarshalDelivery::at_height must treat Outcome::Ignored as accepted (no delivery_rejected metric)"
         );
         let deliveries = delivered.lock().unwrap();
         assert_eq!(deliveries.len(), count);

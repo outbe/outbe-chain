@@ -11,7 +11,8 @@ use crate::{
         constants::{finalize_namespace, notarize_namespace},
     },
 };
-use commonware_codec::{Encode, Read, ReadExt as _};
+use bytes::Buf as _;
+use commonware_codec::{Copying, Encode, Read, ReadExt as _};
 use commonware_consensus::simplex::types::Proposal;
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
 
@@ -60,7 +61,7 @@ fn decode_proof(
     metadata: &CertifiedParentAccountingMetadata,
     participants_len: usize,
 ) -> Result<DecodedProof, V2VerifyError> {
-    let mut proof_reader = metadata.proof.as_ref();
+    let mut proof_reader = Copying(metadata.proof.as_ref());
     let subject = match metadata.proof_kind {
         ParentParticipationProof::Finalization => VoteSubject::Finalize,
         ParentParticipationProof::CertifiedNotarization => VoteSubject::Notarize,
@@ -69,7 +70,7 @@ fn decode_proof(
         Proposal::<OutbeDigest>::read(&mut proof_reader).map_err(V2VerifyError::Decode)?;
     let cert = super::HybridCertificate::<MinSig>::read_cfg(&mut proof_reader, &participants_len)
         .map_err(V2VerifyError::Decode)?;
-    if !proof_reader.is_empty() {
+    if proof_reader.has_remaining() {
         return Err(V2VerifyError::TrailingBytes);
     }
 

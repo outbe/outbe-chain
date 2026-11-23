@@ -12,7 +12,9 @@
 //! Also includes a centralized DKG bootstrap utility for genesis setup.
 
 use crate::errors::BlsKeyError;
-use commonware_codec::{Encode, EncodeSize, Read as CodecRead, ReadExt as _, Write as CodecWrite};
+use commonware_codec::{
+    Copying, Encode, EncodeSize, Read as CodecRead, ReadExt as _, Write as CodecWrite,
+};
 use commonware_cryptography::bls12381::{
     self,
     dkg::feldman_desmedt as dkg,
@@ -434,7 +436,7 @@ pub fn remove_raw(path: &Path, backend: &KeyBackend) -> Result<()> {
 /// Load a BLS12-381 signing share.
 pub fn load_signing_share(path: &Path, backend: &KeyBackend) -> Result<Share> {
     let bytes = load_raw(path, backend)?;
-    Share::read(&mut bytes.as_slice())
+    Share::read(&mut Copying(bytes.as_slice()))
         .map_err(|e| BlsKeyError::InvalidSigningShare(format!("{e}")).into())
 }
 
@@ -451,7 +453,7 @@ pub fn save_signing_share(path: &Path, share: &Share, backend: &KeyBackend) -> R
 pub fn load_public_polynomial(path: &Path, backend: &KeyBackend) -> Result<Sharing<MinSig>> {
     let bytes = load_raw(path, backend)?;
     let cfg = (NonZeroU32::new(MAX_VALIDATORS).unwrap(), ModeVersion::v0());
-    Sharing::read_cfg(&mut bytes.as_slice(), &cfg)
+    Sharing::read_cfg(&mut Copying(bytes.as_slice()), &cfg)
         .map_err(|e| BlsKeyError::InvalidPublicPolynomial(format!("{e}")).into())
 }
 
@@ -477,7 +479,7 @@ pub fn load_dkg_output(
 ) -> Result<dkg::Output<MinSig, bls12381::PublicKey>> {
     let bytes = load_raw(path, backend)?;
     let cfg = (NonZeroU32::new(MAX_VALIDATORS).unwrap(), ModeVersion::v0());
-    dkg::Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut bytes.as_slice(), &cfg)
+    dkg::Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut Copying(bytes.as_slice()), &cfg)
         .map_err(|e| BlsKeyError::InvalidDkgOutput(format!("{e}")).into())
 }
 
@@ -499,7 +501,7 @@ pub fn save_dkg_output(
 /// Load a BLS12-381 individual signing key (MinPk).
 pub fn load_individual_key(path: &Path, backend: &KeyBackend) -> Result<bls12381::PrivateKey> {
     let bytes = load_raw(path, backend)?;
-    bls12381::PrivateKey::read(&mut bytes.as_slice())
+    bls12381::PrivateKey::read(&mut Copying(bytes.as_slice()))
         .map_err(|e| BlsKeyError::InvalidIndividualKey(format!("{e}")).into())
 }
 

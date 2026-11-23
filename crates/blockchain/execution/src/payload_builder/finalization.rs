@@ -4,20 +4,15 @@ use outbe_primitives::{consensus::OUTBE_MAX_BLOCK_SIZE, OutbeBuiltPayload, Outbe
 use reth_chainspec::EthereumHardforks;
 use reth_consensus_common::validation::MAX_RLP_BLOCK_SIZE;
 use reth_errors::ConsensusError;
-use reth_evm::{
-    execute::{BlockBuilderOutcome, BlockExecutionOutput},
-    Database,
-};
+use reth_evm::execute::{BlockBuilderOutcome, BlockExecutionOutput};
 use reth_payload_builder::EthBuiltPayload;
 use reth_payload_primitives::{BuiltPayloadExecutedBlock, PayloadBuilderError};
-use reth_revm::db::State;
 use std::sync::Arc;
 
 use super::{execution::PayloadBuildState, preparation::PayloadContext};
 
-pub(super) fn into_payload<DB: Database>(
+pub(super) fn into_payload(
     outcome: BlockBuilderOutcome<OutbePrimitives>,
-    db: &mut State<DB>,
     state: PayloadBuildState,
     context: &PayloadContext<'_>,
 ) -> Result<OutbeBuiltPayload, PayloadBuilderError> {
@@ -29,6 +24,7 @@ pub(super) fn into_payload<DB: Database>(
     } = state;
     let BlockBuilderOutcome {
         execution_result,
+        execution_state,
         hashed_state,
         trie_updates,
         block,
@@ -42,8 +38,6 @@ pub(super) fn into_payload<DB: Database>(
 
     // Capture the full execution result of the block we just built, so the
     // proposer does NOT re-execute and re-root it at finalize time.
-    // `builder` only borrowed `&mut db`. After `finish`, the merged post-state
-    // bundle is back on our local `db`, and this code takes it here.
     // Reth's launch loop inserts `executed_block()` into the engine tree, so
     // `ExecutorActor`'s finalize-time `new_payload` becomes a cache hit.
     // (Validators already get this through their verify-time `new_payload`.)
@@ -52,7 +46,7 @@ pub(super) fn into_payload<DB: Database>(
     // validator do not diverge.
     let recovered_block = Arc::new(block);
     let execution_output = Arc::new(BlockExecutionOutput {
-        state: db.take_bundle(),
+        state: execution_state,
         result: execution_result,
     });
     let executed_block = BuiltPayloadExecutedBlock::<OutbePrimitives> {
@@ -85,7 +79,7 @@ pub(super) fn into_payload<DB: Database>(
         recovered_block,
         total_fees,
         requests,
-        block_access_list.map(|bal| alloy_rlp::encode(&bal).into()),
+        block_access_list.map(|bal| bal.split().1),
     )
     .with_sidecars(blob_sidecars);
     let payload = OutbeBuiltPayload::new(inner, Some(executed_block));

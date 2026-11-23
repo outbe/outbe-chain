@@ -1,5 +1,3 @@
-use alloy_evm::eth::EthBlockExecutionCtx;
-
 use alloy_primitives::{Address, B256};
 
 use outbe_primitives::{
@@ -7,8 +5,8 @@ use outbe_primitives::{
     OutbeHeader,
 };
 
-use reth_ethereum::evm::primitives::NextBlockEnvAttributes;
-use reth_ethereum::TransactionSigned;
+use reth_ethereum::{evm::EthBlockExecutionCtx, TransactionSigned};
+use reth_evm::NextBlockEnvAttributes;
 
 use reth_primitives_traits::Recovered;
 use reth_primitives_traits::SealedHeader;

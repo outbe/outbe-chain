@@ -67,9 +67,9 @@ fn cycle_worker_failure_is_a_success_receipt_but_corrupt_cleanup_rejects_block()
         }
         if !corrupt {
             executor.apply_end_block_phase().unwrap();
-            executor.prepare_final_header_artifacts(0).unwrap();
-            let (evm, _) = executor.finish().unwrap();
-            drop(evm);
+            finalize_executor_header_artifacts(&mut executor, 0).unwrap();
+            let output = executor.finish().unwrap();
+            state.commit_source(&BundleSource(&output.state));
         } else {
             drop(executor);
         }

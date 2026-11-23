@@ -2,27 +2,19 @@
 
 use super::*;
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + ZeroFeeCfgAccess,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    E::Error: std::fmt::Display,
-{
+impl OutbeBlockExecutor<'_> {
     pub fn apply_outbe_pre_execution(&mut self) -> Result<(), BlockExecutionError> {
         use crate::errors::ExecutorValidationError;
 
-        self.inner.evm.set_executor_owned(true);
+        self.inner.evm_mut().ext_mut().set_owned_by_executor(true);
         crate::executor::witness::clear_detached_trace_witness();
-        let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+        let timestamp = outbe_primitives::time::timestamp_secs(self.block_timestamp_u256())
             .map_err(ExecutorValidationError::from)?;
-        validate_outbe_withdrawals(self.inner.ctx.withdrawals.as_deref())
+        validate_outbe_withdrawals(self.withdrawals.as_deref())
             .map_err(ExecutorValidationError::invalid_withdrawals)?;
 
-        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
-        let beneficiary = self.inner.evm.block().beneficiary();
+        let block_number = self.block_number();
+        let beneficiary = self.block_beneficiary();
         let regime = outbe_primitives::block::BlockHeightRegime::for_block(block_number);
 
         self.decoded_block_artifacts = None;
@@ -40,20 +32,21 @@ where
             return Err(ExecutorValidationError::invalid_system_tx_layout(error).into());
         }
 
-        // 1. Standard Ethereum pre-execution (blockhashes, beacon root, state clear flag).
+        // 1. Standard Ethereum pre-execution (blockhashes, beacon root, DAO fork).
         self.inner.apply_pre_execution_changes()?;
 
-        // 2. Deploy 0xEF marker bytecode to all Outbe runtime addresses.
-        //    Without bytecode these accounts are "empty" under EIP-161 and their
-        //    storage is silently discarded during state root calculation.
-        //    State::commit notifies reth's parallel state root task.
+        // 2. Deploy 0xEF marker bytecode to all Outbe runtime addresses and propagate into
+        //    `block_state` + any attached `StateUpdate` hook.
         self.preserve_runtime_markers()?;
 
         // Pending-block RPC executes against its isolated EVM state.
         if !self.execute_outbe_block_hooks {
             if regime.has_system_tx_prefix() {
                 self.init_rpc_direct_witness_state();
-                self.inner.evm.set_witness_state(self.witness_state.clone());
+                self.inner
+                    .evm_mut()
+                    .ext_mut()
+                    .set_attached_witness_state(self.witness_state.clone());
                 crate::executor::witness::install_detached_trace_witness_with_meta(
                     self.chain_id,
                     block_number,
@@ -76,7 +69,7 @@ where
         );
         let proposer = self
             .begin_zone_proposer(block_number)?
-            .unwrap_or_else(|| self.inner.evm.block().beneficiary());
+            .unwrap_or_else(|| self.block_beneficiary());
         let allow_boundary_proposer = self.boundary_allows_proposer(&block_artifacts, proposer);
         crate::genesis::validate_genesis_enclave_witness(regime, &block_artifacts)?;
         if regime.has_system_tx_prefix() {
@@ -104,43 +97,46 @@ where
             let witness_state = self.witness_state.clone();
             let base_extra_data = self.block_extra_data.clone();
             let ctx = self.block_context(block_number, timestamp, proposer);
-            let host = std::sync::Arc::clone(&self.runtime_host);
-            let db = self.inner.evm.db_mut();
-            let ctx = build_block_context(host.as_ref(), db, ctx)?;
-            let _ = run_atomic_storage_hooks_with_pre_flush(
-                db,
-                ctx,
-                |hook_ctx| -> outbe_primitives::error::Result<()> {
-                    if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
-                        block_artifacts.consensus_header_artifact.as_ref()
-                    {
-                        prepare_boundary_epoch_counters(
+            let host = Arc::clone(&self.runtime_host);
+            let changes = {
+                let db = self.inner.evm_mut().overlay_db_mut();
+                let ctx = build_block_context(host.as_ref(), db, ctx)?;
+                let (changes, _events) = run_atomic_storage_hooks_with_pre_flush(
+                    db,
+                    ctx,
+                    |hook_ctx| -> outbe_primitives::error::Result<()> {
+                        if let Some(ConsensusHeaderArtifact::BoundaryOutcome(boundary)) =
+                            block_artifacts.consensus_header_artifact.as_ref()
+                        {
+                            prepare_boundary_epoch_counters(
+                                host.as_ref(),
+                                hook_ctx.storage.clone(),
+                                boundary,
+                                block_number,
+                            )?;
+                        }
+                        crate::genesis::validate_genesis_state_for_regime(
                             host.as_ref(),
+                            hook_ctx.block.regime(),
                             hook_ctx.storage.clone(),
-                            boundary,
-                            block_number,
-                        )?;
-                    }
-                    crate::genesis::validate_genesis_state_for_regime(
-                        host.as_ref(),
-                        hook_ctx.block.regime(),
-                        hook_ctx.storage.clone(),
-                        genesis_validators.as_ref(),
-                    )
-                },
-                || {
-                    crate::executor::witness::finalize_prefix_witness_with(
-                        witness_state.as_ref(),
-                        base_extra_data.as_ref(),
-                    )
-                },
-            )?;
+                            genesis_validators.as_ref(),
+                        )
+                    },
+                    || {
+                        crate::executor::witness::finalize_prefix_witness_with(
+                            witness_state.as_ref(),
+                            base_extra_data.as_ref(),
+                        )
+                    },
+                )?;
+                changes
+            };
+            self.commit_block_accumulator(&changes)?;
             Ok(())
         })();
         drop(prefix_witness_scope);
         self.check_no_witness_fault()?;
         preexec_outcome?;
-        // Provider dropped here - mutable DB borrow released.
 
         let phase1_preexecuted = self.preexecuted_phase1_tx_hash.is_some();
         crate::executor::witness::install_detached_trace_witness_with_meta(
@@ -154,14 +150,10 @@ where
                     .iter()
                     .map(|tx| tx.tx().input().clone())
                     .collect(),
-                expected_tx_count: self.inner.ctx.tx_count_hint,
+                expected_tx_count: self.inner.context().tx_count_hint,
                 phase1_preexecuted,
                 system_tx_context: Some(PreloadedSystemTxContext {
                     proposer,
-                    // Under the test-only `PHASE1_VERIFY_DISABLED` flag, steady-state
-                    // blocks skip pre-executing `CertifiedParentAccounting` (`OSA3`) in
-                    // `apply_pre_execution_changes`, so `phase1_preexecuted` is `false`
-                    // and `OSA3` runs during detached trace replay with this summary.
                     finalized_summary: if phase1_preexecuted {
                         None
                     } else {
@@ -171,7 +163,7 @@ where
                         .verified_phase1_vrf_proof_hash
                         .unwrap_or(B256::ZERO),
                     verified_late_credit_signers: self.verified_late_credit_signers.clone(),
-                    block_gas_limit: self.inner.evm.block().gas_limit(),
+                    block_gas_limit: self.block_gas_limit(),
                     user_gas_used: 0,
                 }),
             },
@@ -181,34 +173,29 @@ where
     }
 
     fn preserve_runtime_markers(&mut self) -> Result<(), BlockExecutionError> {
-        use revm::state::{Account, Bytecode, EvmState};
         let precompile_addresses = self.runtime_host.marker_addresses();
+        let mut pending = PendingState::default();
 
-        let db = self.inner.evm.db_mut();
-        let mut marker_state = EvmState::default();
-
-        for addr in precompile_addresses.iter().copied() {
-            let info = db
-                .basic(addr)
-                .map_err(|e| {
+        {
+            let db = self.inner.evm_mut().overlay_db_mut();
+            for addr in precompile_addresses.iter().copied() {
+                let original = db.get_account(&addr).map_err(|e| {
                     BlockExecutionError::other(
                         crate::errors::ExecutorStorageError::load_precompile_account(addr, e),
                     )
-                })?
-                .unwrap_or_default();
-            if info.is_empty_code_hash() {
-                let code = Bytecode::new_legacy([0xef].into());
-                let mut new_info = info;
-                new_info.code_hash = code.hash_slow();
-                new_info.code = Some(code);
-                let mut account: Account = new_info.into();
-                account.mark_touch();
-                marker_state.insert(addr, account);
+                })?;
+                let mut current = original.clone().unwrap_or_default();
+                if current.is_empty_code_hash() {
+                    let code = evm2::bytecode::Bytecode::new_legacy([0xef].into());
+                    current.code_hash = code.hash_slow();
+                    current.code = Some(code);
+                    pending.insert_account(addr, original, Some(current));
+                }
             }
         }
 
-        if !marker_state.is_empty() {
-            self.inner.evm.db_mut().commit(marker_state);
+        if !pending.is_empty() {
+            self.inner.commit_pending_state(&pending);
         }
         Ok(())
     }
@@ -219,10 +206,9 @@ pub fn run_atomic_storage_hooks<DB, F>(
     db: &mut DB,
     ctx: BlockContext,
     hooks: F,
-) -> Result<(AddressMap<Account>, Vec<Log>), BlockExecutionError>
+) -> Result<(BlockStateAccumulator, Vec<Log>), BlockExecutionError>
 where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
+    DB: DynDatabase + StateChangeSink<Error = std::convert::Infallible>,
     F: FnOnce(&BlockRuntimeContext) -> outbe_primitives::error::Result<()>,
 {
     run_atomic_storage_hooks_with_pre_flush(db, ctx, hooks, || Ok(()))
@@ -233,10 +219,9 @@ pub fn run_atomic_storage_hooks_with_pre_flush<DB, F, G>(
     ctx: BlockContext,
     hooks: F,
     pre_flush: G,
-) -> Result<(AddressMap<Account>, Vec<Log>), BlockExecutionError>
+) -> Result<(BlockStateAccumulator, Vec<Log>), BlockExecutionError>
 where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
+    DB: DynDatabase + StateChangeSink<Error = std::convert::Infallible>,
     F: FnOnce(&BlockRuntimeContext) -> outbe_primitives::error::Result<()>,
     G: FnOnce() -> Result<(), BlockExecutionError>,
 {

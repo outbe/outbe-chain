@@ -1,18 +1,23 @@
 //! Registers Outbe precompiles and preserves their public execution interface.
 //! This facade keeps domain admission and EVM outcome translation behind it.
 
-use crate::tee_attestation_activation::TeeAttestationChainSpecStateV1;
-use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap};
+use crate::{factory::OutbeEvmTypes, tee_attestation_activation::TeeAttestationChainSpecStateV1};
 use alloy_primitives::{Address, B256};
-use core::fmt::Debug;
 use dispatch::{outbe_ctx_dispatch, OutbeDispatchRuntime};
-use revm::{primitives::hardfork::SpecId, Database};
+use evm2::{
+    evm::{precompile::PrecompileProvider, PrewarmSet},
+    interpreter::{GasTracker, Message},
+    precompiles::{MovePrecompileError, PrecompileId, PrecompileResult},
+    Evm, Precompiles, SpecId,
+};
+use std::sync::Arc;
 
 mod call_authority;
 pub(crate) mod routes;
 pub use call_authority::PrecompileMutationCall;
 mod cancellation;
 pub use cancellation::ExecutionAbortBridge;
+pub(crate) use cancellation::{preserve_cancelled_execution, SourceVisibleAbort};
 mod dispatch;
 mod outcome;
 mod sub_call_provider;
@@ -22,7 +27,6 @@ mod value_policy;
 
 pub use outcome::map_outbe_precompile_result;
 pub use routes::assert_valid_production_routes;
-pub(crate) use sub_call_provider::OutbeSubCallPrecompiles;
 
 /// Immutable protocol context shared by every Outbe precompile dispatch.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -69,69 +73,96 @@ impl OutbePrecompileRuntime {
     pub fn new() -> Self {
         Self::default()
     }
+
     pub(crate) fn with_abort_bridge(mut self, bridge: ExecutionAbortBridge) -> Self {
         self.abort_bridge = bridge;
         self
     }
 }
 
-/// Register outbe stateful precompile dispatch on the given [`PrecompilesMap`]
-/// via the `set_ctx_dispatch_hook` fork extension.
-///
-/// The hook receives a raw pointer to the unbroken `&mut EthEvmContext<DB>`
-/// before revm destructures it into `EvmInternals`. The dispatch closure then:
-/// - casts the pointer back to `&mut EthEvmContext<DB>`. This is safe because the
-///   `EvmFactory` impl that called us is specialised for the same DB.
-/// - builds a [`crate::storage::CtxStorageProvider`] that borrows that context.
-/// - dispatches the outbe precompile through a [`StorageHandle`].
-///
-/// A sub-call from a precompile body reaches `sub_call::run_with_host` through the provider's
-/// `sub_call` method.
-/// Registers Outbe precompiles with the executor-owned EVM context.
-pub fn extend_outbe_precompiles<DB>(
-    precompiles: &mut PrecompilesMap,
+/// Safe `evm2` precompile provider that dispatches Outbe stateful routes directly
+/// against `&mut evm2::Evm<'_, OutbeEvmTypes>` and delegates all other addresses
+/// to the standard Ethereum precompile table.
+#[derive(Clone)]
+pub struct OutbePrecompileProvider {
+    inner: Precompiles<OutbeEvmTypes>,
     execution_context: OutbePrecompileExecutionContext,
     runtime: OutbePrecompileRuntime,
-    host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
-) where
-    DB: Database + Debug,
-    DB::Error: Debug,
-{
-    let OutbePrecompileExecutionContext {
-        spec,
-        genesis_hash,
-        genesis_timestamp,
-        tee_attestation_v1,
-    } = execution_context;
-    let OutbePrecompileRuntime { abort_bridge } = runtime;
-    let handles_host = std::sync::Arc::clone(&host);
-    precompiles.set_ctx_dispatch_hook(
-        // handles: claim every registered runtime precompile address.
-        move |addr: &Address| handles_host.is_registered_precompile(addr),
-        // dispatch: ctx_ptr is `*mut EthEvmContext<DB>` (cast in our caller, see
-        // `PrecompileProvider::run` in the fork's `precompiles.rs`).
-        move |ctx_ptr, inputs| {
-            #[allow(unsafe_code)] // sole audited unsafe site; justified below.
-            // SAFETY: alloy-evm fork's `PrecompileProvider::run` for
-            // PrecompilesMap (specialised at impl site for our `Context<DB>`)
-            // casts `&mut Context<...>` to `*mut c_void` and feeds it here.
-            // The `DB` generic of this closure is the same `DB` of the
-            // `Context<...>` the impl is specialised for (set at
-            // `OutbeEvmFactory::create_evm<DB>` call site).
-            let ctx: &mut EthEvmContext<DB> = unsafe { &mut *(ctx_ptr as *mut _) };
-            outbe_ctx_dispatch::<DB>(
-                ctx,
-                inputs,
+    host: Arc<dyn crate::EvmRuntimeHost>,
+}
+
+impl std::fmt::Debug for OutbePrecompileProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OutbePrecompileProvider")
+            .field("execution_context", &self.execution_context)
+            .field("host", &"installed")
+            .finish()
+    }
+}
+
+impl OutbePrecompileProvider {
+    /// Builds a new safe precompile provider combining standard Ethereum
+    /// precompiles for `execution_context.spec_id()` with Outbe stateful routes.
+    #[must_use]
+    pub fn new(
+        execution_context: OutbePrecompileExecutionContext,
+        runtime: OutbePrecompileRuntime,
+        host: Arc<dyn crate::EvmRuntimeHost>,
+    ) -> Self {
+        Self {
+            inner: Precompiles::base(execution_context.spec_id()),
+            execution_context,
+            runtime,
+            host,
+        }
+    }
+}
+
+impl PrecompileProvider<OutbeEvmTypes> for OutbePrecompileProvider {
+    fn contains(&self, address: &Address) -> bool {
+        self.host.is_registered_precompile(address) || self.inner.contains(address)
+    }
+
+    fn addresses(&self) -> Vec<Address> {
+        self.inner.addresses()
+    }
+
+    fn precompile_ids(&self) -> Vec<(Address, PrecompileId)> {
+        self.inner.precompile_ids()
+    }
+
+    fn warm_addresses(&self, warm: &mut PrewarmSet) {
+        self.inner.warm_addresses(warm);
+    }
+
+    fn execute(
+        &mut self,
+        evm: &mut Evm<'_, OutbeEvmTypes>,
+        message: &Message<OutbeEvmTypes>,
+        gas: &mut GasTracker,
+    ) -> Option<PrecompileResult> {
+        if self.host.is_registered_precompile(&message.code_address) {
+            return outbe_ctx_dispatch(
+                evm,
+                message,
+                gas,
                 OutbeDispatchRuntime {
-                    abort_bridge: &abort_bridge,
-                    spec,
-                    genesis_hash,
-                    genesis_timestamp,
-                    tee_attestation_v1: &tee_attestation_v1,
-                    host: std::sync::Arc::clone(&host),
+                    abort_bridge: &self.runtime.abort_bridge,
+                    spec: self.execution_context.spec,
+                    genesis_hash: self.execution_context.genesis_hash,
+                    genesis_timestamp: self.execution_context.genesis_timestamp,
+                    tee_attestation_v1: &self.execution_context.tee_attestation_v1,
+                    host: Arc::clone(&self.host),
                 },
-            )
-            .map_err(String::from)
-        },
-    );
+            );
+        }
+        self.inner.execute(evm, message, gas)
+    }
+
+    fn move_precompiles(
+        &mut self,
+        moves: &[(Address, Address)],
+    ) -> Result<(), MovePrecompileError> {
+        self.inner.move_precompiles(moves)
+    }
 }

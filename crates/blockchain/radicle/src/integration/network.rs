@@ -1141,6 +1141,10 @@ pub(crate) mod shutdown_tests {
                 std::io::Error::new(std::io::ErrorKind::BrokenPipe, "transport closed witness")
             })
         }
+
+        fn capacity(&self) -> std::num::NonZeroUsize {
+            std::num::NonZeroUsize::MIN
+        }
     }
 
     struct Running {

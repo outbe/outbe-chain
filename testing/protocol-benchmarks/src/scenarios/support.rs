@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use alloy_primitives::Address;
+use evm2::interpreter::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS;
 use outbe_primitives::storage::hashmap::{
     HashMapStorageProvider, StorageTraceKind, StorageTraceOperation,
@@ -13,7 +14,6 @@ use outbe_system_common::addresses::{
     PROMIS_FACTORY_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
     TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
-use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 
 use crate::{EventCount, GasComponent, GasLedger, StorageOperationKind, StorageTraceEntry};
 
@@ -48,8 +48,8 @@ pub(crate) fn capture_execution(
     }
 
     let storage_gas = reads
-        .saturating_mul(WARM_STORAGE_READ_COST)
-        .saturating_add(writes.saturating_mul(SSTORE_RESET));
+        .saturating_mul(u64::from(WARM_STORAGE_READ_COST))
+        .saturating_add(writes.saturating_mul(u64::from(SSTORE_RESET)));
     let explicit_runtime_gas = runtime_gas
         .checked_sub(storage_gas)
         .ok_or_else(|| "runtime gas is lower than metered storage gas".to_owned())?;
@@ -96,8 +96,8 @@ pub(crate) fn storage_gas_components_with_modules(
         .into_iter()
         .map(|((module, kind), count)| {
             let (suffix, per_operation) = match kind {
-                StorageTraceKind::Read => ("read", WARM_STORAGE_READ_COST),
-                StorageTraceKind::Write => ("write", SSTORE_RESET),
+                StorageTraceKind::Read => ("read", u64::from(WARM_STORAGE_READ_COST)),
+                StorageTraceKind::Write => ("write", u64::from(SSTORE_RESET)),
             };
             GasComponent::new(
                 ledger,
@@ -143,8 +143,8 @@ pub(crate) fn aggregate_storage_trace_with_modules(
                 operation,
                 count,
                 gas: count.saturating_mul(match operation {
-                    StorageOperationKind::Read => WARM_STORAGE_READ_COST,
-                    StorageOperationKind::Write => SSTORE_RESET,
+                    StorageOperationKind::Read => u64::from(WARM_STORAGE_READ_COST),
+                    StorageOperationKind::Write => u64::from(SSTORE_RESET),
                 }),
             },
         )

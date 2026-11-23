@@ -1,6 +1,8 @@
 use super::*;
+use evm2::evm::{DynDatabase, StateChangeSink};
+use std::convert::Infallible;
 
-impl<E: Evm> OutbeBlockExecutor<'_, E> {
+impl OutbeBlockExecutor<'_> {
     pub fn block_context(
         &self,
         block_number: u64,
@@ -15,7 +17,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             genesis_timestamp: self.genesis_timestamp,
             proposer,
             validators: Vec::new(),
-            block_gas_limit: self.inner.evm.block().gas_limit(),
+            block_gas_limit: self.block_gas_limit(),
             user_gas_used: self.accounted_block_gas(),
         }
     }
@@ -29,8 +31,7 @@ pub fn read_committee_snapshot<DB>(
     validation_error: impl FnOnce(PrecompileError) -> crate::errors::ExecutorValidationError,
 ) -> Result<Option<outbe_primitives::committee_snapshot::CommitteeSnapshot>, BlockExecutionError>
 where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
+    DB: DynDatabase + StateChangeSink<Error = Infallible>,
 {
     let mut provider = DirectStorageProvider::new(db, context);
     let storage = StorageHandle::new(&mut provider);
@@ -50,8 +51,7 @@ pub fn build_block_context<DB>(
     mut context: BlockContext,
 ) -> Result<BlockContext, BlockExecutionError>
 where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
+    DB: DynDatabase + StateChangeSink<Error = Infallible>,
 {
     let mut provider = DirectStorageProvider::new(db, context.clone());
     let storage = StorageHandle::new(&mut provider);

@@ -192,6 +192,7 @@ pub(in crate::stack) mod harness;
 mod lifecycle;
 mod local_anchor;
 mod marshal_reporter;
+mod marshal_restart_seam;
 #[cfg(test)]
 mod muxer_contract;
 mod recovery;

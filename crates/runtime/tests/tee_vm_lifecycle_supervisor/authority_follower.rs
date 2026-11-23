@@ -16,9 +16,9 @@ use outbe_primitives::{
 use outbe_validatorset::{contract::ValidatorSet, CommitteeSnapshot};
 use reth_chainspec::ChainSpec;
 use reth_ethereum::TransactionSigned;
+use reth_evm::database::StateProviderDatabase;
 use reth_evm::{execute::BlockBuilder, ConfigureEvm, NextBlockEnvAttributes};
 use reth_primitives_traits::{Recovered, SealedHeader};
-use reth_revm::database::StateProviderDatabase;
 use reth_storage_api::{EvmStateProviderAdapter, StateProviderFactory};
 
 pub(super) fn chain_spec() -> ChainSpec<OutbeHeader> {
@@ -116,7 +116,7 @@ pub(super) fn seed_execution_committee(
 pub(super) fn seed_recovered_state(ledger: &mut Ledger) {
     let last_accounted = ledger.tip.height;
     ledger.storage(|storage| {
-        let marker = revm::state::Bytecode::new_legacy(Bytes::from_static(&[0xef]));
+        let marker = evm2::bytecode::Bytecode::new_legacy(Bytes::from_static(&[0xef]));
         for &address in outbe_runtime::OutbeRuntime::new().marker_addresses() {
             storage.set_code(address, marker.clone()).unwrap();
         }
@@ -210,10 +210,7 @@ pub(super) fn build_successor(
         outbe_consensus::proof::verify_v2_proof(&metadata, snapshot, &metadata.proof, hash)
             .unwrap();
     let state = provider.state_by_block_hash(hash).unwrap();
-    let mut db = revm::database::State::builder()
-        .with_database(StateProviderDatabase::new(EvmStateProviderAdapter(&state)))
-        .with_bundle_update()
-        .build();
+    let mut db = StateProviderDatabase::new(EvmStateProviderAdapter(&state));
     let gas_limit = protocol_block_gas_limit(height + 1);
     let extra = Bytes::new();
     let phase1 = config

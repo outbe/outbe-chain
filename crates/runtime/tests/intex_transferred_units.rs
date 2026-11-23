@@ -3,6 +3,7 @@
 
 use alloy_primitives::{keccak256, Address, Bytes, FixedBytes, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
+use evm2::evm::{CacheDB, EmptyDB};
 use outbe_core_common::addresses::INTEX_NFT1155_ADDRESS;
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_intex::precompile::IIntex;
@@ -15,7 +16,6 @@ use outbe_vaultrouter::{
     precompile::IVaultRouter::StablecoinSource,
     test_support::{register_source, register_vault},
 };
-use revm::database::{CacheDB, EmptyDB};
 
 sol!("../../contracts/intex/src/shared/interfaces/IIntexNFT1155.sol");
 

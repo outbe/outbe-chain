@@ -1,12 +1,13 @@
-//! Outbe EVM config - wraps `EthEvmConfig<ChainSpec, OutbeEvmFactory>` and
-//! replaces the executor factory so that every block goes through
-//! [`crate::executor::OutbeBlockExecutor`] instead of [`EthBlockExecutor`] directly.
+//! Outbe EVM config - configures [`OutbeEvmFactory`], [`OutbeBlockAssembler`],
+//! and [`crate::executor::OutbeBlockExecutor`] for Reth v2.11 (`evm2`).
 
+use alloy_eips::eip7840::BlobParams;
 use alloy_primitives::Bytes;
-use reth_ethereum::chainspec::ChainSpec;
-use reth_ethereum::chainspec::EthChainSpec;
-use reth_ethereum::evm::EthEvmConfig;
-
+use evm2::SpecId;
+use reth_ethereum::{
+    chainspec::{ChainSpec, EthChainSpec},
+    evm::{EthEvmEnv, RethReceiptBuilder},
+};
 use std::sync::Arc;
 
 use outbe_primitives::{
@@ -15,7 +16,8 @@ use outbe_primitives::{
 };
 
 use crate::{
-    executor::AccountedParentArtifactProvider, factory::OutbeEvmFactory,
+    executor::AccountedParentArtifactProvider,
+    factory::{OutbeEvmFactory, OutbeEvmTypes},
     signer::SharedOutbeEvmSigner,
 };
 
@@ -41,13 +43,14 @@ pub use builder::OutbeExecutorBuilder;
 
 /// Outbe EVM configuration.
 ///
-/// Wraps [`EthEvmConfig`] parametrised with [`OutbeEvmFactory`] and overrides
-/// the block executor factory. As a result, [`crate::executor::OutbeBlockExecutor`]
-/// processes every block, including reserved-address system tx verification in
-/// the normal ordered transaction loop.
+/// Configures [`OutbeEvmFactory`] and acts as the [`reth_evm::BlockExecutorFactory`]
+/// so that [`crate::executor::OutbeBlockExecutor`] processes every block, including
+/// reserved-address system tx verification in the normal ordered transaction loop.
 #[derive(Clone)]
 pub struct OutbeEvmConfig {
-    pub(crate) inner: EthEvmConfig<ChainSpec<OutbeHeader>, OutbeEvmFactory>,
+    pub(crate) chain_spec: Arc<ChainSpec<OutbeHeader>>,
+    pub(crate) evm_factory: OutbeEvmFactory,
+    pub(crate) receipt_builder: RethReceiptBuilder,
     block_assembler: OutbeBlockAssembler,
     tee_attestation_v1: crate::tee_attestation_activation::TeeAttestationChainSpecStateV1,
     /// Optional bridge to the consensus layer for finalization data.
@@ -62,7 +65,8 @@ pub struct OutbeEvmConfig {
 impl std::fmt::Debug for OutbeEvmConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OutbeEvmConfig")
-            .field("inner", &self.inner)
+            .field("chain_spec", &self.chain_spec)
+            .field("evm_factory", &self.evm_factory)
             .field("block_assembler", &self.block_assembler)
             .field("tee_attestation_v1", &self.tee_attestation_v1)
             .field("bridge", &self.bridge)
@@ -85,27 +89,13 @@ impl OutbeEvmConfig {
     /// execution or proof verification.
     ///
     /// EVERY `OutbeEvmConfig` constructor calls this function, so the binding is
-    /// live no matter which constructor the running node uses. The offline reth
-    /// subcommands use `new_with_bridge`. The live validator and full node use
-    /// `new_with_bridge_and_summary_provider` /
-    /// `new_with_provider_only` via
-    /// [`OutbeExecutorBuilder::build_evm`]. Previously only `::new` installed it,
-    /// but production never builds via `::new`. As a result, `consensus_chain_id()`
-    /// stayed at its default `0`, and the signing namespace collapsed to
-    /// `b"outbe" || 0` on every chain. This silently disabled the
-    /// cross-chain-replay binding.
-    ///
-    /// Reinstalling the same genesis-fixed id is idempotent. A conflicting
-    /// construction is a process configuration error and fails immediately
-    /// instead of silently retaining the first namespace.
+    /// live no matter which constructor the running node uses.
     fn install_consensus_chain_id(chain_spec: &Arc<ChainSpec<OutbeHeader>>) {
         if let Err(error) =
             outbe_primitives::proof::init_consensus_chain_id(chain_spec.chain().id())
         {
             panic!("failed to bind the EVM to its consensus chain id: {error}");
         }
-        // Surface the actually-bound id exactly once so operators can confirm the
-        // namespace is chain-separated (a `0` here would mean it is degenerate).
         static LOG_ONCE: std::sync::Once = std::sync::Once::new();
         LOG_ONCE.call_once(|| {
             tracing::info!(
@@ -116,9 +106,10 @@ impl OutbeEvmConfig {
         });
     }
 
-    /// Creates a new [`OutbeEvmConfig`] with the given chain spec and host.
-    pub fn new(
+    fn build(
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
+        bridge: Option<ConsensusExecutionBridge>,
+        accounted_parent_artifact_provider: Option<Arc<dyn AccountedParentArtifactProvider>>,
         runtime_host: Arc<dyn crate::EvmRuntimeHost>,
     ) -> Self {
         Self::install_consensus_chain_id(&chain_spec);
@@ -126,21 +117,30 @@ impl OutbeEvmConfig {
             crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
                 &chain_spec,
             );
+        let evm_factory = OutbeEvmFactory::new(Arc::clone(&runtime_host))
+            .with_genesis_hash(chain_spec.genesis_hash())
+            .with_genesis_timestamp(chain_spec.genesis_timestamp())
+            .with_tee_attestation_v1(tee_attestation_v1.clone());
+        let block_assembler = OutbeBlockAssembler::new(Arc::clone(&chain_spec));
         Self {
-            inner: EthEvmConfig::new_with_evm_factory(
-                chain_spec.clone(),
-                OutbeEvmFactory::new(Arc::clone(&runtime_host))
-                    .with_genesis_hash(chain_spec.genesis_hash())
-                    .with_genesis_timestamp(chain_spec.genesis_timestamp())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
-            ),
-            block_assembler: OutbeBlockAssembler::new(chain_spec),
+            chain_spec,
+            evm_factory,
+            receipt_builder: RethReceiptBuilder::default(),
+            block_assembler,
             tee_attestation_v1,
-            bridge: None,
-            accounted_parent_artifact_provider: None,
+            bridge,
+            accounted_parent_artifact_provider,
             evm_signer: None,
             runtime_host,
         }
+    }
+
+    /// Creates a new [`OutbeEvmConfig`] with the given chain spec and host.
+    pub fn new(
+        chain_spec: Arc<ChainSpec<OutbeHeader>>,
+        runtime_host: Arc<dyn crate::EvmRuntimeHost>,
+    ) -> Self {
+        Self::build(chain_spec, None, None, runtime_host)
     }
 
     /// Creates a new [`OutbeEvmConfig`] with a consensus bridge.
@@ -149,29 +149,9 @@ impl OutbeEvmConfig {
         bridge: ConsensusExecutionBridge,
         runtime_host: Arc<dyn crate::EvmRuntimeHost>,
     ) -> Self {
-        Self::install_consensus_chain_id(&chain_spec);
-        let summary_cache = bridge.clone();
-        let tee_attestation_v1 =
-            crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
-                &chain_spec,
-            );
-        Self {
-            inner: EthEvmConfig::new_with_evm_factory(
-                chain_spec.clone(),
-                OutbeEvmFactory::new(Arc::clone(&runtime_host))
-                    .with_genesis_hash(chain_spec.genesis_hash())
-                    .with_genesis_timestamp(chain_spec.genesis_timestamp())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
-            ),
-            block_assembler: OutbeBlockAssembler::new(chain_spec),
-            tee_attestation_v1,
-            bridge: Some(bridge),
-            accounted_parent_artifact_provider: Some(Arc::new(
-                BridgeAccountedParentArtifactProvider::new(summary_cache),
-            )),
-            evm_signer: None,
-            runtime_host,
-        }
+        let provider: Arc<dyn AccountedParentArtifactProvider> =
+            Arc::new(BridgeAccountedParentArtifactProvider::new(bridge.clone()));
+        Self::build(chain_spec, Some(bridge), Some(provider), runtime_host)
     }
 
     fn new_with_bridge_and_summary_provider(
@@ -180,77 +160,39 @@ impl OutbeEvmConfig {
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
         runtime_host: Arc<dyn crate::EvmRuntimeHost>,
     ) -> Self {
-        Self::install_consensus_chain_id(&chain_spec);
-        let tee_attestation_v1 =
-            crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
-                &chain_spec,
-            );
-        Self {
-            inner: EthEvmConfig::new_with_evm_factory(
-                chain_spec.clone(),
-                OutbeEvmFactory::new(Arc::clone(&runtime_host))
-                    .with_genesis_hash(chain_spec.genesis_hash())
-                    .with_genesis_timestamp(chain_spec.genesis_timestamp())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
-            ),
-            block_assembler: OutbeBlockAssembler::new(chain_spec),
-            tee_attestation_v1,
-            bridge: Some(bridge),
-            accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
-            evm_signer: None,
+        Self::build(
+            chain_spec,
+            Some(bridge),
+            Some(accounted_parent_artifact_provider),
             runtime_host,
-        }
+        )
     }
 
-    /// Full-node constructor. Installs an
-    /// [`AccountedParentArtifactProvider`] backed solely by a Reth
-    /// [`reth_provider::HeaderProvider`] (no consensus bridge / proof cache).
-    /// It installs no runtime body readers. `OutbeExecutorBuilder` does not use
-    /// it. The no-bridge production path uses
-    /// `new_with_provider_only`. Without a provider, the
-    /// executor's Phase 1 lookup would fail with "missing provider" on every
-    /// block.
+    /// Full-node constructor. Installs an [`AccountedParentArtifactProvider`] backed
+    /// solely by a Reth [`reth_provider::HeaderProvider`] (no consensus bridge / proof cache).
     pub fn new_with_provider_only(
         chain_spec: Arc<ChainSpec<OutbeHeader>>,
         accounted_parent_artifact_provider: Arc<dyn AccountedParentArtifactProvider>,
         runtime_host: Arc<dyn crate::EvmRuntimeHost>,
     ) -> Self {
-        Self::install_consensus_chain_id(&chain_spec);
-        let tee_attestation_v1 =
-            crate::tee_attestation_activation::TeeAttestationChainSpecStateV1::from_chain_spec(
-                &chain_spec,
-            );
-        Self {
-            inner: EthEvmConfig::new_with_evm_factory(
-                chain_spec.clone(),
-                OutbeEvmFactory::new(Arc::clone(&runtime_host))
-                    .with_genesis_hash(chain_spec.genesis_hash())
-                    .with_genesis_timestamp(chain_spec.genesis_timestamp())
-                    .with_tee_attestation_v1(tee_attestation_v1.clone()),
-            ),
-            block_assembler: OutbeBlockAssembler::new(chain_spec),
-            tee_attestation_v1,
-            bridge: None,
-            accounted_parent_artifact_provider: Some(accounted_parent_artifact_provider),
-            evm_signer: None,
+        Self::build(
+            chain_spec,
+            None,
+            Some(accounted_parent_artifact_provider),
             runtime_host,
-        }
+        )
+    }
+
+    /// Returns the chain spec associated with this configuration.
+    pub const fn chain_spec(&self) -> &Arc<ChainSpec<OutbeHeader>> {
+        &self.chain_spec
     }
 
     /// Stores `host` on this config and on the factory that builds its EVMs.
     #[must_use]
     pub fn with_runtime_host(mut self, host: Arc<dyn crate::EvmRuntimeHost>) -> Self {
         self.runtime_host = Arc::clone(&host);
-        let evm_factory = self
-            .inner
-            .executor_factory
-            .evm_factory()
-            .clone()
-            .with_runtime_host(host);
-        let receipt_builder = *self.inner.executor_factory.receipt_builder();
-        let spec = self.inner.executor_factory.spec().clone();
-        self.inner.executor_factory =
-            alloy_evm::eth::EthBlockExecutorFactory::new(receipt_builder, spec, evm_factory);
+        self.evm_factory = self.evm_factory.clone().with_runtime_host(host);
         self
     }
 
@@ -261,6 +203,19 @@ impl OutbeEvmConfig {
 
     pub fn evm_signer(&self) -> Option<&SharedOutbeEvmSigner> {
         self.evm_signer.as_ref()
+    }
+
+    pub(crate) fn evm_env_from_base_spec(
+        &self,
+        spec: SpecId,
+        block: evm2::env::BlockEnv,
+        blob_params: Option<BlobParams>,
+    ) -> EthEvmEnv<OutbeEvmTypes> {
+        let mut version = self.evm_factory.version(spec, self.chain_spec.chain().id());
+        if let Some(blob_params) = blob_params {
+            version.max_blobs_per_tx = blob_params.max_blobs_per_tx as usize;
+        }
+        EthEvmEnv::new_with_version(spec, block.with_ext(()), version)
     }
 
     fn sanitize_next_block_extra_data(extra_data: Bytes) -> outbe_primitives::error::Result<Bytes> {
