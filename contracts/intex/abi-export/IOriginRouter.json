@@ -926,7 +926,7 @@
   },
   {
     "type": "event",
-    "name": "IssuanceInstructionsSent",
+    "name": "IntexSeriesSent",
     "inputs": [
       {
         "name": "sendId",
@@ -935,16 +935,34 @@
         "internalType": "bytes32"
       },
       {
-        "name": "seriesId",
-        "type": "bytes14",
+        "name": "emissionDay",
+        "type": "uint32",
         "indexed": true,
-        "internalType": "bytes14"
+        "internalType": "uint32"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "pageIndex",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "totalPages",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
       },
       {
         "name": "seriesCount",
-        "type": "uint256",
+        "type": "uint32",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint32"
       }
     ],
     "anonymous": false

@@ -154,10 +154,10 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         vm.recordLogs();
         _deliver(2, 3, IssuanceBatchLib.one(_series(EUR)));
         _deliver(0, 3, IssuanceBatchLib.one(_series(USD)));
-        assertEq(_countTopic(ITargetRouter.IssuanceCompleted.selector), 0, "not complete yet");
+        assertEq(_countTopic(ITargetRouter.IntexSeriesAllReceived.selector), 0, "not complete yet");
 
         vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.IssuanceCompleted(DAY, 3);
+        emit ITargetRouter.IntexSeriesAllReceived(DAY, OUTBE_CHAIN_ID, 3);
         _deliver(1, 3, IssuanceBatchLib.one(_series(USD)));
         (uint16 seen, uint16 total) = router.getIntexIssuanceState(DAY);
         assertEq(seen, 3, "every chunk counted");
@@ -166,7 +166,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
 
     function test_ASingleChunkCompletesTheDay() public {
         vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.IssuanceCompleted(DAY, 1);
+        emit ITargetRouter.IntexSeriesAllReceived(DAY, OUTBE_CHAIN_ID, 1);
         _deliver(0, 1, IssuanceBatchLib.one(_series(USD)));
         assertTrue(intex.seriesExists(USD), "series created");
     }

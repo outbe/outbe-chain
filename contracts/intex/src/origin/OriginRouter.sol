@@ -443,7 +443,8 @@ contract OriginRouter is
             BridgeMsgCodec.encodeIntexSeries(emissionDay, pageIndex, totalPages, _toCodecPayloads(series)),
             IntexGas.issuance(series.length)
         );
-        emit IssuanceInstructionsSent(sendId, series[0].seriesId, series.length);
+        // forge-lint: disable-next-line(unsafe-typecast) -- a page holds at most MAX_SERIES_PER_ISSUANCE series
+        emit IntexSeriesSent(sendId, emissionDay, dstChainId, pageIndex, totalPages, uint32(series.length));
     }
 
     /// @inheritdoc IOriginRouter
