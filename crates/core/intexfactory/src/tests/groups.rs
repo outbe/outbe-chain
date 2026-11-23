@@ -200,4 +200,72 @@ mod group_scans {
             .collect();
         assert_eq!(closed, vec![(id.into(), 840, 840, 0, U256::ZERO)]);
     }
+
+    /// Mined units end with `IntexBurned` from the Intex precompile, and the close of the series
+    /// comes from the factory.
+    #[test]
+    fn each_upton_item_has_one_end_event() {
+        use alloy_sol_types::SolEvent;
+        use outbe_system_common::addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS};
+        use outbe_system_common::pass_budget::PassBudget;
+
+        let mut storage = super::super::factory_provider();
+        let id = super::super::sid(7);
+        let owner = super::super::owner();
+        StorageHandle::enter(&mut storage, |s| {
+            super::super::select_prod_profile(&s);
+            runtime::issue_intex(&s, super::super::sample(7)).unwrap();
+            outbe_intex::api::call_group_of(&s, id, super::super::ISSUED_AT).unwrap();
+            outbe_intex::api::record_settled_units(&s, id, owner, 60).unwrap();
+            outbe_intex::api::record_mined_units(&s, id, owner, 60).unwrap();
+
+            let record = outbe_intex::api::get_series(&s, id).unwrap();
+            let close_at = outbe_intex::api::call_stamp(&s, &record).unwrap().close_at;
+            let due = IntexContract::day_end(IntexContract::deadline_day(close_at));
+            let ctx = outbe_primitives::block::BlockRuntimeContext::new(
+                outbe_primitives::block::BlockContext {
+                    block_gas_limit: 0,
+                    user_gas_used: 0,
+                    block_number: 2,
+                    timestamp: due,
+                    chain_id: super::super::CHAIN_ID,
+                    genesis_hash: alloy_primitives::B256::ZERO,
+                    genesis_timestamp: u64::max(due, 1),
+                    proposer: alloy_primitives::Address::ZERO,
+                    validators: Vec::new(),
+                },
+                s.clone(),
+            );
+            let mut budget = PassBudget::new(100, 100);
+            crate::forfeited::forfeit_through(&ctx, IntexContract::deadline_day(due), &mut budget)
+                .unwrap();
+        });
+
+        let burned: Vec<_> = storage
+            .get_events(INTEX_ADDRESS)
+            .iter()
+            .filter_map(|log| {
+                outbe_intex::precompile::IIntex::IntexBurned::decode_log_data(log).ok()
+            })
+            .map(|event| (event.intexId, event.owner, event.units))
+            .collect();
+        assert_eq!(burned, vec![(outbe_intex::intex_id(id), owner, 60)]);
+
+        let closed_from = |address| {
+            storage
+                .get_events(address)
+                .iter()
+                .filter(|log| {
+                    crate::precompile::IIntexFactory::IntexSeriesClosed::decode_log_data(log)
+                        .is_ok()
+                })
+                .count()
+        };
+        assert_eq!(
+            closed_from(INTEX_FACTORY_ADDRESS),
+            1,
+            "series_events_come_from_the_factory"
+        );
+        assert_eq!(closed_from(INTEX_ADDRESS), 0);
+    }
 }

@@ -5,6 +5,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "./helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
+import {IIntexFactory} from "@precompiles/IIntexFactory.sol";
 import {IERC1155} from "@openzeppelin/contracts/token/ERC1155/IERC1155.sol";
 import {IERC1155Receiver} from "@openzeppelin/contracts/token/ERC1155/IERC1155Receiver.sol";
 import {Test, Vm} from "forge-std/Test.sol";
@@ -647,6 +648,79 @@ contract IntexNFT1155Test is Test {
         vm.prank(bridger);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, TOKEN_ID_1));
         nft.crosschainMint(user, TOKEN_ID_1, 10);
+    }
+
+    // --- the series and item events of the token ---
+
+    function test_intex_token_opens_a_series_with_the_factory_shape() public {
+        assertEq(IIntexNFT1155.IntexSeriesOpened.selector, IIntexFactory.IntexSeriesOpened.selector, "one shape");
+        IIntexNFT1155.CreateSeriesParams memory p = CreateSeriesLib.params(SERIES_ID_1_DAY, ISSUED_UNITS, 7 days);
+        p.callTrigger.callWindow = 28 days;
+        p.callTrigger.callThreshold = 21 days;
+
+        vm.expectEmit(true, true, true, true, address(nft));
+        emit IIntexNFT1155.IntexSeriesOpened(
+            SERIES_ID_1, 840, 840, 1e6, 200, 28 days, 21 days, 7 days, 1 hours, ISSUED_UNITS, 100_000 * 1e6
+        );
+        vm.prank(bridger);
+        nft.createSeries(p);
+    }
+
+    function test_intex_issued_has_units_before_payload() public {
+        assertEq(
+            IIntexNFT1155.IntexIssued.selector,
+            keccak256("IntexIssued(uint256,address,bytes14,uint16,uint16,uint32,bytes)"),
+            "units come before the payload"
+        );
+        _createSeries(SERIES_ID_1_DAY, 0);
+        vm.recordLogs();
+        vm.prank(bridger);
+        nft.issueIntex(user, 3, SERIES_ID_1);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].topics[0] != IIntexNFT1155.IntexIssued.selector) continue;
+            (,, uint32 units, bytes memory payload) = abi.decode(logs[i].data, (uint16, uint16, uint32, bytes));
+            assertEq(units, 3);
+            assertEq(abi.decode(payload, (uint256)), uint256(100_000 * 1e6) * 3);
+            return;
+        }
+        fail();
+    }
+
+    function test_intex_units_sent_to_the_gem_factory_end_with_their_event() public {
+        _createSeries(SERIES_ID_1_DAY, 0);
+        vm.prank(bridger);
+        nft.issueIntex(user, 10, SERIES_ID_1);
+        _grantBurnerRole(address(this));
+        uint256 gemFactoryPositionId = 0xabc;
+
+        vm.expectEmit(true, true, true, true, address(nft));
+        emit IERC1155.TransferSingle(address(this), user, address(0), TOKEN_ID_1, 4);
+        vm.expectEmit(true, true, true, true, address(nft));
+        emit IIntexNFT1155.IntexSentToGemFactory(TOKEN_ID_1, user, gemFactoryPositionId, 4);
+        nft.sendIntexToGemFactory(user, SERIES_ID_1, 4, gemFactoryPositionId);
+
+        assertEq(nft.balanceOf(user, TOKEN_ID_1), 6);
+        assertEq(nft.totalSupply(TOKEN_ID_1), 6);
+    }
+
+    function test_SendIntexToGemFactory_OnlyBurner() public {
+        _createSeries(SERIES_ID_1_DAY, 0);
+        vm.expectRevert();
+        nft.sendIntexToGemFactory(user, SERIES_ID_1, 1, 1);
+    }
+
+    function test_BurnIntex_EmitsNoGemFactoryEvent() public {
+        _createSeries(SERIES_ID_1_DAY, 0);
+        vm.prank(bridger);
+        nft.issueIntex(user, 2, SERIES_ID_1);
+        _grantBurnerRole(address(this));
+        vm.recordLogs();
+        nft.burnIntex(user, SERIES_ID_1, 1);
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(logs[i].topics[0] != IIntexNFT1155.IntexSentToGemFactory.selector, "a settlement is no Gem send");
+        }
     }
 
     // --- burnIntex: the burn of a settlement or a Gem position on Outbe ---

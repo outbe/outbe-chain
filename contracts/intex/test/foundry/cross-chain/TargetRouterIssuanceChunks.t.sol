@@ -10,6 +10,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
+import {Vm} from "forge-std/Vm.sol";
 
 /// A day's series reach a chain as numbered chunks. The router acknowledges these without effect:
 /// - a repeated chunk
@@ -162,6 +163,28 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         (uint16 seen, uint16 total) = router.getIntexIssuanceState(DAY);
         assertEq(seen, 3, "every chunk counted");
         assertEq(total, 3, "total as declared");
+    }
+
+    function test_intex_series_pages_have_one_sent_and_one_all_received_event() public {
+        BridgeMsgCodec.IntexSeriesPayload[] memory two = new BridgeMsgCodec.IntexSeriesPayload[](2);
+        two[0] = _series(USD);
+        two[1] = _series(EUR);
+        vm.recordLogs();
+        _deliver(0, 3, two);
+        _deliver(1, 3, IssuanceBatchLib.one(_series(USD)));
+        _deliver(2, 3, IssuanceBatchLib.one(_series(EUR)));
+
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 allReceived;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter != address(router)) continue;
+            assertEq(logs[i].topics[0], ITargetRouter.IntexSeriesAllReceived.selector, "no router event per series");
+            allReceived++;
+            assertEq(uint256(logs[i].topics[1]), DAY);
+            assertEq(uint256(logs[i].topics[2]), OUTBE_CHAIN_ID);
+            assertEq(abi.decode(logs[i].data, (uint32)), 3);
+        }
+        assertEq(allReceived, 1, "one event for the day");
     }
 
     function test_ASingleChunkCompletesTheDay() public {
