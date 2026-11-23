@@ -3,7 +3,7 @@
 use alloy_primitives::{Address, U256};
 use outbe_nod::NodItemState;
 
-/// The Nod of `owner` of emission day `day`, with entry 13, gratis load 11, league 4
+/// The Nod of `owner` of emission day `day`, with entry 13, gratis load 11
 /// and ISO 840. The caller supplies the entry price of the terms.
 pub(crate) fn nod_day_item(owner: Address, day: u32, entry_price_minor: U256) -> NodItemState {
     let entry = U256::from(13u64);
@@ -14,7 +14,7 @@ pub(crate) fn nod_day_item(owner: Address, day: u32, entry_price_minor: U256) ->
             owner,
             gratis_load_minor: U256::from(11u64),
             emission_day: day,
-            group_key: outbe_nod::test_support::group_key(1_752_534_000, entry, 840),
+            group_key: outbe_nod::test_support::group_key(day, entry, 840),
             issuance_currency: 840,
             reference_currency: 840,
             issued_at: 1_752_534_000,

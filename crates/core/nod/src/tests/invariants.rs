@@ -23,14 +23,7 @@ fn item(owner: Address) -> NodItemState {
             owner,
             gratis_load_minor: U256::from(11),
             emission_day: worldwide_day.value(),
-            group_key: crate::test_support::group_key(
-                date_key_to_utc_timestamp(
-                    previous_date_key(timestamp_to_date_key(NOW)).expect("date step"),
-                )
-                .expect("date step"),
-                U256::from(5),
-                978,
-            ),
+            group_key: crate::test_support::group_key(worldwide_day.value(), U256::from(5), 978),
             issuance_currency: 840,
             reference_currency: 978,
             // Midnight of the last UTC day closed at `NOW`.

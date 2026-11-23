@@ -186,7 +186,7 @@ fn subcall_reaches_nod_in_the_same_evm_state() {
     let nod_id = outbe_nod::test_support::nod_id_of(owner, day.value(), 840, 978);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::TESTNET,
-        1_700_000_000,
+        day.value(),
         U256::from(9),
         978,
     );

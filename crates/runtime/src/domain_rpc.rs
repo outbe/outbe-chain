@@ -519,7 +519,7 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        assert_eq!(expected.len(), 22);
+        assert_eq!(expected.len(), 21);
         assert_eq!(names, expected);
     }
 

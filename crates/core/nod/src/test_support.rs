@@ -1,5 +1,7 @@
 //! Encrypted fixtures using the production cryptographic implementation.
-pub use crate::enclave_client::test_enclave::{install, scope, state_key, uninstall, Guard};
+pub use crate::enclave_client::test_enclave::{
+    install, scope, state_key, uninstall, Guard, OFFER_SECRET,
+};
 use crate::{NodIssueParams, NodItemState};
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::{
@@ -91,7 +93,11 @@ pub fn item(f: NodItemFixture, entry_price_minor: U256) -> NodItemState {
 /// Creates an unsettled fixture with a group derived from its encrypted terms.
 pub fn unsettled_item(terms: NodTermsV1, amount: U256, issued_at: u64) -> NodItemState {
     assert_eq!(terms.chain_id, 1, "NOD item fixture requires chain 1");
-    let group_key = group_key(issued_at, terms.entry_price_minor, terms.reference_currency);
+    let group_key = group_key(
+        terms.emission_day,
+        terms.entry_price_minor,
+        terms.reference_currency,
+    );
     item(
         NodItemFixture {
             nod_id: terms.nod_id,
@@ -145,7 +151,7 @@ pub fn sample_item(owner: Address, emission_day: u32) -> NodItemState {
             owner,
             gratis_load_minor: U256::from(11),
             emission_day,
-            group_key: group_key(1_752_534_000, U256::from(5), 978),
+            group_key: group_key(emission_day, U256::from(5), 978),
             issuance_currency: 840,
             reference_currency: 978,
             issued_at: 1_752_534_000,
@@ -155,10 +161,10 @@ pub fn sample_item(owner: Address, emission_day: u32) -> NodItemState {
 }
 
 /// The group NodFactory puts a Nod in under the production call rate the fixtures seal.
-pub fn group_key(issued_at: u64, entry_price_minor: U256, reference_currency: u16) -> B256 {
+pub fn group_key(emission_day: u32, entry_price_minor: U256, reference_currency: u16) -> B256 {
     group_key_at(
         &crate::config::NodParams::MAINNET,
-        issued_at,
+        emission_day,
         entry_price_minor,
         reference_currency,
     )
@@ -167,12 +173,12 @@ pub fn group_key(issued_at: u64, entry_price_minor: U256, reference_currency: u1
 /// The group NodFactory puts a Nod in under the call rate of `params`.
 pub fn group_key_at(
     params: &crate::config::NodParams,
-    issued_at: u64,
+    emission_day: u32,
     entry_price_minor: U256,
     reference_currency: u16,
 ) -> B256 {
     crate::identity::group_key(
-        outbe_system_common::time::first_full_day(issued_at).expect("date step"),
+        emission_day,
         outbe_core_common::markup::marked_up(entry_price_minor, params.call_rate).unwrap(),
         reference_currency,
     )

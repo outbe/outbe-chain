@@ -81,7 +81,7 @@ const FIRST_BLOCK: u64 = 1;
 const USER_TXS: usize = 4;
 const MINT_MINOR: u64 = 1_000_000;
 const BURN_MINOR: u64 = 1;
-const DOMAIN_TAGS: [u8; 6] = [1, 2, 5, 10, 21, 13];
+const DOMAIN_TAGS: [u8; 5] = [1, 2, 5, 10, 21];
 const OFFER: &[u8] = b"executor-nod-quote-group-signature-v1!";
 
 type Signed = Recovered<TransactionSigned>;

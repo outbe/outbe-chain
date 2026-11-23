@@ -4,7 +4,8 @@
 use alloy_primitives::{hex, Address, B256, U256};
 use outbe_core_common::confidential_tee::{
     decrypt_fidelity_cohorts, decrypt_gratis_balance, decrypt_nod_for_owner,
-    decrypt_promis_balance, decrypt_tribute_for_owner, LocalCryptoError,
+    decrypt_nod_nominal_for_owner, decrypt_promis_balance, decrypt_tribute_for_owner,
+    LocalCryptoError,
 };
 use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_core_common::{
@@ -16,9 +17,10 @@ use outbe_system_common::time::WorldwideDay;
 const FIDELITY_BLOB: &str = "01020304050607084649443231313131313131313131313131313131313131313131313131313131313131316f227d375d26e7d0c69faf0aa386d6b2f7e739b4de99fc0828f54a8b22d4e223";
 const GRATIS_BLOB: &str = "111213141516171847524132515151515151515151515151515151515151515151515151515151515151515146185e002fe9d80f2f80daea54dcfbd2faa5ce7014252c82b2d6dccd3455cc7a79fdb10771779339ce5f26d6aa2f2027";
 const PROMIS_BLOB: &str = "111213141516171850524f325151515151515151515151515151515151515151515151515151515151515151950f76eb13183701977ca3510b80c426f3dacad91248fa9961b5857074a00025091a5da1a6224be9617c475e65c22d71";
-const NOD_CONTEXT_DIGEST: &str = "9f5ed554cb633715b10ef9300eee7572dd8d7bd9b7ee96f47b23f87152ae6720";
-const NOD_AMOUNT_BLOB: &str = "000000000000000137f1780dda06389d4099f641acdc47b29f3834a3915aebccfda1eeb5cb1be0eb266f7e6a40d529099d3ea3df0ee44c17";
-const NOD_WRONG_NONCE_DOMAIN_BLOB: &str = "0000000000000001b4cb27b25a97fb3f37dc0a8ee5525ce83bce9c4fdd1efb170fd412e8a76ea5bcd8feaf71b8df565d8b0d2b7d838b26cd";
+const NOD_CONTEXT_DIGEST: &str = "b09e597ba7d0c3f500971679c335da4fec642cad4f3a5f4e4017762e362b8ad3";
+const NOD_AMOUNT_BLOB: &str = "0000000000000001e49a4a79c30f2f7fdb34b16e286f66b81d1258a7c3dead888ea07880c8080d7f6bed38808fb49611b17a1224b7748b0d";
+const NOD_NOMINAL_BLOB: &str = "000000000000000159f9bcc390542bace5ab522b5a6fbbcbe1a50f0870618bc327a3c53c8deda06d547dd59c1f3960ce825fca6f04188687";
+const NOD_WRONG_NONCE_DOMAIN_BLOB: &str = "0000000000000001fba976114a9798d9106c080ee3ba9a1b2c146b31d46a2fcbc35758963fe72c0aed54c67d9ec4366fca285d20d393228e";
 const TRIBUTE_CONTEXT_DIGEST: &str =
     "79d19e3d69598d12698496e748a6ddef52b72392b6722778db2de3c2ef493d8a";
 const TRIBUTE_AMOUNT_BLOB: &str = "000000000000000179a55ad0e1010fe5e34697e51f7cd2437e3825a0b0fd20c9095ca5186559021c48a5068d2190e57034954031961c1261d83647abd7ca0081e6c6d3f80aa4dcde6ef60e38fb95d1696d93c830a06309f3";
@@ -42,7 +44,7 @@ fn fixed_nod() -> EncryptedNodV1 {
         },
         encryption_binding: B256::repeat_byte(0xa5),
         encrypted_gratis_amount: hex::decode(NOD_AMOUNT_BLOB).unwrap(),
-        encrypted_nominal_amount: hex::decode(NOD_AMOUNT_BLOB).unwrap(),
+        encrypted_nominal_amount: hex::decode(NOD_NOMINAL_BLOB).unwrap(),
     };
     assert_eq!(
         nod.context_digest().as_slice(),
@@ -136,6 +138,10 @@ fn fixed_nod_and_tribute_ciphertexts_open_exact_amounts() {
     assert_eq!(
         decrypt_nod_for_owner(&view_key, &fixed_nod()).unwrap(),
         U256::from(987_654_321u64)
+    );
+    assert_eq!(
+        decrypt_nod_nominal_for_owner(&view_key, &fixed_nod()).unwrap(),
+        U256::from(3_086_419_753u64)
     );
     assert_eq!(
         decrypt_tribute_for_owner(&view_key, &fixed_tribute()).unwrap(),

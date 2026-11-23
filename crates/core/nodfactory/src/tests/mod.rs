@@ -399,4 +399,5 @@ mod currency_snapshots;
 mod direct_fx_admission;
 mod issuance;
 mod nod_lifecycle;
+mod offer;
 mod settled_entitlement;

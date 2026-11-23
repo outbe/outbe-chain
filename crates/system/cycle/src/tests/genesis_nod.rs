@@ -366,6 +366,8 @@ fn issue_nod(
         },
         U256::from(entry),
     );
+    // Each entry price is the price of its own offer hour.
+    body.sub_series_id = u16::try_from(entry % 50).unwrap();
     let terms = outbe_nod::test_support::sealed_terms(storage, &body, U256::from(entry));
     body.group_key = outbe_nod::identity::group_key(
         worldwide_day.value(),

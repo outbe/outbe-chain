@@ -19,7 +19,7 @@ use outbe_system_common::pass_budget::{
 use outbe_system_common::time::WorldwideDay;
 use outbe_system_common::time::SECONDS_PER_DAY_U32;
 use outbe_system_common::time::{
-    date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key,
+    date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key,
 };
 
 use outbe_nod::{
@@ -45,10 +45,7 @@ const OTHER_ISO: u16 = 978;
 /// Issuance instant, 2027-01-15 08:00 UTC.
 const START: u64 = 1_800_000_000;
 
-/// The worldwide day [`START`] falls in. The breach walk now stops at
-/// `first_full_day(issued_at)`, not this WWD key. The two still have to
-/// agree so fixtures that reason in WWD days do not silently miss the
-/// issuance cutoff.
+/// The emission day of the Nods issued at [`START`]. The breach walk stops at it.
 const WWD: u32 = 20_270_115;
 
 /// Entry price every group here is issued at: 2.0 at scale 1e6. The call price
@@ -99,7 +96,17 @@ fn nod_item_issued(
     issued_at: u64,
 ) -> NodItemState {
     let worldwide_day = WorldwideDay::new(worldwide_day);
-    outbe_nod::test_support::item(
+    let sub_series_id = SUB_SERIES.with(|assigned| {
+        let mut assigned = assigned.borrow_mut();
+        let next = assigned
+            .keys()
+            .filter(|(day, currency, _)| (*day, *currency) == (worldwide_day.value(), iso))
+            .count();
+        *assigned
+            .entry((worldwide_day.value(), iso, entry_price_minor))
+            .or_insert(u16::try_from(next).unwrap())
+    });
+    let mut item = outbe_nod::test_support::item(
         outbe_nod::test_support::NodItemFixture {
             is_settled: false,
             nod_id: outbe_nod::test_support::nod_id_of(owner, worldwide_day.value(), iso, iso),
@@ -116,7 +123,15 @@ fn nod_item_issued(
             issued_at,
         },
         entry_price_minor,
-    )
+    );
+    item.sub_series_id = sub_series_id;
+    item
+}
+
+thread_local! {
+    /// The sub-series of each entry price of a series: one entry price per offer hour.
+    static SUB_SERIES: std::cell::RefCell<std::collections::HashMap<(u32, u16, U256), u16>> =
+        std::cell::RefCell::default();
 }
 
 /// Registers `COEN/<iso>` and lists `iso` as a reference currency.
@@ -369,7 +384,9 @@ fn group_forfeits(provider: &HashMapStorageProvider) -> Vec<(u32, U256)> {
     provider
         .get_events(NOD_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| crate::precompile::INodFactory::NodSeriesClosed::decode_log_data(log).ok())
+        .filter_map(|log| {
+            crate::precompile::INodFactory::NodSeriesClosed::decode_log_data(log).ok()
+        })
         .map(|event| (event.forfeitedCount, event.forfeitedAmountMinor))
         .collect()
 }
@@ -440,7 +457,7 @@ fn issuance_seals_the_call_terms_on_the_group() {
                 .unwrap()
                 .full_day_after_issue
                 .value(),
-            first_full_day(START).expect("date step")
+            WWD
         );
         assert_ne!(
             nod.call_group_slot.read(&item.group_key).unwrap(),
@@ -484,35 +501,6 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
                 dev.call_notice_period_seconds
             )
         );
-    });
-}
-
-/// A Nod of a called group's Worldwide Day issued after the call opens its own group:
-/// a group is closed to new members before it can be called.
-#[test]
-fn a_late_nod_opens_a_new_group_instead_of_joining_a_called_one() {
-    harness(|storage| {
-        let at = START + 30 * DAY;
-        let first = call_group(storage, Address::repeat_byte(0x11), at);
-        let late = issue_item(
-            storage,
-            nod_item_issued(
-                Address::repeat_byte(0x22),
-                ISO,
-                entry_price(),
-                WWD,
-                at + CLOSED_DAY_DELAY,
-            ),
-        );
-        assert_ne!(first.group_key, late.group_key);
-        assert_eq!(called_at(storage, first.group_key), at);
-        assert_eq!(called_at(storage, late.group_key), 0);
-
-        let past = at + NOTICE + CLOSED_DAY_DELAY;
-        finalize_through(storage, past);
-        assert_eq!(scan(storage, past), 1);
-        assert!(api::get_item(storage, first.nod_id).unwrap().is_none());
-        assert!(api::get_item(storage, late.nod_id).unwrap().is_some());
     });
 }
 
@@ -759,9 +747,9 @@ fn missing_days_do_not_count_as_breaches() {
 fn a_breach_run_that_predates_the_group_does_not_call_it() {
     harness(|storage| {
         let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
-        // Scan two days after issuance. Only a couple of closed UTC days sit at
-        // or after `first_full_day(issued_at)`. The scan ignores the
-        // pre-existence run beyond them, even though the whole series breaches.
+        // Scan two days after issuance. Only a couple of closed UTC days sit on
+        // or after the emission day. The scan ignores the run before them,
+        // even though the whole series breaches.
         let at = START + 2 * DAY;
         fill_days(
             storage,
@@ -775,71 +763,49 @@ fn a_breach_run_that_predates_the_group_does_not_call_it() {
     });
 }
 
-/// Both midnight (`00:00:00`) and a second later (`00:00:01`) start counting on the
-/// next UTC day, while a Nod issued on the previous day counts the full day starting at midnight.
+/// The call count starts at 00:00 of the emission day, whenever its offer issued the Nod.
 #[test]
-fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
+fn nod_call_count_starts_at_the_emission_day() {
     let scan_at = START + 30 * DAY;
     let latest = last_closed_day(scan_at);
     let mut oldest_breach = latest;
     for _ in 1..CALL_THRESHOLD_DAYS {
         oldest_breach = previous_date_key(oldest_breach).expect("date step");
     }
-    let midnight = date_key_to_utc_timestamp(oldest_breach).expect("date step");
-
-    for (issued_at, expected) in [(midnight - 1, 1u32), (midnight, 0u32), (midnight + 1, 0u32)] {
+    let day_after =
+        |day: u32| timestamp_to_date_key(date_key_to_utc_timestamp(day).expect("date step") + DAY);
+    for (emission_day, expected) in [
+        (previous_date_key(oldest_breach).expect("date step"), 1u32),
+        (oldest_breach, 1),
+        (day_after(oldest_breach), 0),
+    ] {
         harness(|storage| {
-            let wwd = WorldwideDay::from_timestamp(issued_at).value();
+            let offered_at =
+                date_key_to_utc_timestamp(emission_day).expect("date step") - 14 * 3600;
             let item = issue_item(
                 storage,
                 nod_item_issued(
                     Address::repeat_byte(0x11),
                     ISO,
                     entry_price(),
-                    wwd,
-                    issued_at,
+                    emission_day,
+                    offered_at,
                 ),
             );
             fill_days(storage, latest, CALL_LOOKBACK_DAYS, below_call());
             fill_days(storage, latest, CALL_THRESHOLD_DAYS, above_call());
-            assert_eq!(scan(storage, scan_at), expected, "issued at {issued_at}");
+            assert_eq!(
+                scan(storage, scan_at),
+                expected,
+                "emission day {emission_day}"
+            );
             assert_eq!(
                 called_at(storage, item.group_key) != 0,
                 expected == 1,
-                "issued at {issued_at}"
+                "emission day {emission_day}"
             );
         });
     }
-}
-
-/// Q027: a delayed materialization must not inherit VWAP days from its Tribute
-/// WWD. A 21-day breach run that sits on or after WWD but before
-/// `first_full_day(issued_at)` would have called under the old cutoff.
-#[test]
-fn a_delayed_issuance_does_not_count_pre_issuance_wwd_days() {
-    harness(|storage| {
-        // WWD a month before issuance. 21 closed UTC days ending on the
-        // partial issuance day all post-date that WWD and all predate
-        // `first_full_day(START)` = 2027-01-16.
-        let delayed_wwd = 20_261_216;
-        let item = issue_item(
-            storage,
-            nod_item_issued(
-                Address::repeat_byte(0x11),
-                ISO,
-                entry_price(),
-                delayed_wwd,
-                START,
-            ),
-        );
-        let issuance_utc_day = timestamp_to_date_key(START);
-        fill_days(storage, issuance_utc_day, CALL_THRESHOLD_DAYS, above_call());
-        let scan_at = date_key_to_utc_timestamp(first_full_day(START).expect("date step"))
-            .expect("date step");
-        finalize_through(storage, scan_at);
-        assert_eq!(scan(storage, scan_at), 0);
-        assert_eq!(called_at(storage, item.group_key), 0);
-    });
 }
 
 #[test]
@@ -1137,15 +1103,22 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
     harness(|storage| {
         let at = START + 30 * DAY;
         // One call bin; the last group is too young to hold the threshold.
+        let young = WorldwideDay::from_timestamp(at - 5 * DAY).value();
         let items: Vec<NodItemState> = [
-            (11u64, 0x11u8, START),
-            (22, 0x22, START),
-            (33, 0x33, at - 5 * DAY),
+            (11u64, 0x11u8, WWD, START),
+            (22, 0x22, WWD, START),
+            (33, 0x33, young, at - 5 * DAY),
         ]
         .into_iter()
-        .map(|(offset, owner, issued_at)| {
+        .map(|(offset, owner, emission_day, issued_at)| {
             let entry = entry_price() + U256::from(offset);
-            let item = nod_item_issued(Address::repeat_byte(owner), ISO, entry, WWD, issued_at);
+            let item = nod_item_issued(
+                Address::repeat_byte(owner),
+                ISO,
+                entry,
+                emission_day,
+                issued_at,
+            );
             add(storage, &item);
             item
         })
@@ -1673,7 +1646,9 @@ fn a_group_settled_in_full_closes_with_zero_forfeit() {
     let closed: Vec<_> = provider
         .get_events(NOD_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| crate::precompile::INodFactory::NodSeriesClosed::decode_log_data(log).ok())
+        .filter_map(|log| {
+            crate::precompile::INodFactory::NodSeriesClosed::decode_log_data(log).ok()
+        })
         .collect();
     assert_eq!(closed.len(), 1);
     assert_eq!(

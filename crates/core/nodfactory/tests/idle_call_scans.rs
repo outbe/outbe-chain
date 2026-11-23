@@ -28,11 +28,12 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
             .record_utc_day_vwap(20260715, index, U256::from(13))
             .unwrap();
         oracle.utc_day_vwap_last_finalized.write(20260715).unwrap();
-        for (owner, entry) in [(0x51, 12u64), (0x52, 13)] {
+        for (sub_series_id, (owner, entry)) in [(0x51, 12u64), (0x52, 13)].into_iter().enumerate() {
             let entry = U256::from(entry);
             let mut body =
                 outbe_nod::test_support::sample_item(Address::repeat_byte(owner), 20260715);
-            body.group_key = outbe_nod::test_support::group_key(body.issued_at, entry, 978);
+            body.sub_series_id = u16::try_from(sub_series_id).unwrap();
+            body.group_key = outbe_nod::test_support::group_key(body.series_id.day(), entry, 978);
             outbe_nod::test_support::set_entry_price(&mut body, entry);
             outbe_nod::test_support::add(&storage, &body).unwrap();
         }

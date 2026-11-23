@@ -39,6 +39,11 @@ alloy-primitives = { workspace = true, features = ["rand"] }
 revm.workspace = true
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
+commonware-codec.workspace = true
+commonware-cryptography.workspace = true
+rand-commonware.workspace = true
+x25519-dalek.workspace = true
+serde_json.workspace = true
 
 [features]
 default = []

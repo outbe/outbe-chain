@@ -25,7 +25,7 @@ thiserror.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-outbe-nod = { path = ".", features = ["test-enclave"] }
+outbe-nod = { path = ".", features = ["test-enclave", "test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 base64.workspace = true
 tempfile.workspace = true

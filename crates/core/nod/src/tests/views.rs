@@ -159,7 +159,8 @@ fn settlement_updates_only_the_settled_nod() {
     use alloy_sol_types::SolEvent;
 
     let first = item(Address::repeat_byte(0x51), U256::from(500_000), USD);
-    let second = item(Address::repeat_byte(0x52), U256::from(600_000), USD);
+    let mut second = item(Address::repeat_byte(0x52), U256::from(600_000), USD);
+    second.sub_series_id = 1;
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
@@ -243,14 +244,21 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         assert_eq!(json["name"], format!("Nod {id}"));
         assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
         assert!(!json.to_string().contains("https://"));
-        assert_eq!(value(&json, "Series").unwrap(), body.series_id.to_string());
-        assert_eq!(value(&json, "League").unwrap(), 4);
+        assert_eq!(
+            value(&json, "Series").unwrap(),
+            format!("{}-{}", body.series_id, body.sub_series_id)
+        );
+        assert!(value(&json, "League").is_none());
         assert_eq!(value(&json, "Entry Price").unwrap(), 0.4);
         assert!(value(&json, "Floor Price").is_none());
         assert_eq!(value(&json, "Call Price").unwrap(), 1.424);
         assert_eq!(
             value(&json, "Encrypted Gratis Load").unwrap(),
             alloy_primitives::hex::encode_prefixed(&body.encrypted.encrypted_gratis_amount)
+        );
+        assert_eq!(
+            value(&json, "Encrypted Nominal").unwrap(),
+            alloy_primitives::hex::encode_prefixed(&body.encrypted.encrypted_nominal_amount)
         );
         assert!(!json.to_string().contains("1250.12"));
         assert!(value(&json, "Settlement Deadline").is_none());

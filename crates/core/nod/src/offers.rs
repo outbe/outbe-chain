@@ -112,3 +112,120 @@ pub fn mark_offer(
     nod.offer_marks.write(&key, true)?;
     nod.mark_su_hashes_used(su_hashes)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::precompile::INod;
+    use alloy_sol_types::SolError;
+    use outbe_primitives::error::PrecompileError;
+    use outbe_primitives::storage::hashmap::HashMapStorageProvider;
+
+    fn reverts_with<E: SolError>(error: PrecompileError, expected: E) {
+        assert!(
+            matches!(&error, PrecompileError::RevertBytes(bytes) if bytes.as_ref() == expected.abi_encode()),
+            "unexpected error: {error:?}"
+        );
+    }
+
+    #[test]
+    fn su_hash_can_only_be_used_once() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let events_before = provider.get_ordered_events().to_vec();
+        StorageHandle::enter(&mut provider, |storage| {
+            let (a, b, c) = (
+                B256::repeat_byte(0xAA),
+                B256::repeat_byte(0xBB),
+                B256::repeat_byte(0xDD),
+            );
+            let mut nod = NodContract::new(storage.clone());
+            nod.mark_su_hashes_used(&[a, b]).unwrap();
+            assert_eq!(nod.su_hash_ring_seq.read().unwrap(), 2);
+            assert_eq!(nod.su_hash_ring.read(&0).unwrap(), a);
+            assert_eq!(nod.su_hash_ring.read(&1).unwrap(), b);
+
+            reverts_with(
+                nod.mark_su_hashes_used(&[a]).unwrap_err(),
+                INod::SuHashAlreadyUsed {},
+            );
+            let dup = B256::repeat_byte(0xCC);
+            reverts_with(
+                storage
+                    .with_checkpoint(|| {
+                        NodContract::new(storage.clone()).mark_su_hashes_used(&[dup, dup])
+                    })
+                    .unwrap_err(),
+                INod::SuHashAlreadyUsed {},
+            );
+
+            // At the wrap point `[c, a]` still rejects `a`, which `c` would evict.
+            nod.su_hash_ring_seq.write(SU_HASH_RETAIN).unwrap();
+            reverts_with(
+                storage
+                    .with_checkpoint(|| {
+                        NodContract::new(storage.clone()).mark_su_hashes_used(&[c, a])
+                    })
+                    .unwrap_err(),
+                INod::SuHashAlreadyUsed {},
+            );
+            assert!(nod.has_used_su_hash(a).unwrap());
+            assert!(!nod.has_used_su_hash(c).unwrap());
+
+            nod.mark_su_hashes_used(&[c]).unwrap();
+            assert!(!nod.has_used_su_hash(a).unwrap());
+            assert!(nod.has_used_su_hash(b).unwrap());
+            assert!(nod.has_used_su_hash(c).unwrap());
+            assert_eq!(nod.su_hash_ring_seq.read().unwrap(), SU_HASH_RETAIN + 1);
+            assert_eq!(nod.su_hash_ring.read(&0).unwrap(), c);
+
+            let self_hash = B256::repeat_byte(0xEE);
+            nod.su_hash_prune_ring()
+                .seed_for_test_with_retain::<SU_HASH_RETAIN>(SU_HASH_RETAIN, self_hash)
+                .unwrap();
+            nod.mark_su_hashes_used(&[self_hash]).unwrap();
+            assert!(nod.has_used_su_hash(self_hash).unwrap());
+            assert_eq!(nod.su_hash_ring_seq.read().unwrap(), SU_HASH_RETAIN + 1);
+
+            nod.su_hash_ring_seq.write(u64::MAX).unwrap();
+            let tail = u64::MAX % SU_HASH_RETAIN;
+            let tail_before = nod.su_hash_ring.read(&tail).unwrap();
+            reverts_with(
+                storage
+                    .with_checkpoint(|| NodContract::new(storage.clone()).mark_su_hashes_used(&[a]))
+                    .unwrap_err(),
+                INod::SuHashRingSeqOverflow {},
+            );
+            assert!(!nod.has_used_su_hash(a).unwrap());
+            assert_eq!(nod.su_hash_ring_seq.read().unwrap(), u64::MAX);
+            assert_eq!(nod.su_hash_ring.read(&tail).unwrap(), tail_before);
+        });
+        assert_eq!(provider.get_ordered_events(), events_before);
+    }
+
+    #[test]
+    fn an_owner_offers_once_for_each_worldwide_day() {
+        let mut provider = HashMapStorageProvider::new(1);
+        StorageHandle::enter(&mut provider, |storage| {
+            let owner = Address::repeat_byte(0x11);
+            let day = WorldwideDay::new(20_261_018);
+            let next_day = WorldwideDay::new(20_261_019);
+            mark_offer(&storage, (day, owner), &[B256::repeat_byte(1)]).unwrap();
+            reverts_with(
+                storage
+                    .with_checkpoint(|| mark_offer(&storage, (day, owner), &[B256::repeat_byte(2)]))
+                    .unwrap_err(),
+                INod::OfferAlreadyMade {},
+            );
+            assert!(!NodContract::new(storage.clone())
+                .has_used_su_hash(B256::repeat_byte(2))
+                .unwrap());
+            mark_offer(&storage, (next_day, owner), &[B256::repeat_byte(2)]).unwrap();
+            mark_offer(
+                &storage,
+                (day, Address::repeat_byte(0x22)),
+                &[B256::repeat_byte(3)],
+            )
+            .unwrap();
+        });
+    }
+}

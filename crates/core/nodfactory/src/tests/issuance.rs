@@ -263,6 +263,7 @@ fn mining_deletes_item_and_last_group_then_emits_burn() {
         [
             (NOD_ADDRESS, INod::MetadataUpdate::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::NodSettled::SIGNATURE_HASH),
+            (NOD_ADDRESS, INod::NodBurned::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::Transfer::SIGNATURE_HASH),
         ]
     );
@@ -349,4 +350,504 @@ fn a_stranger_can_mine_with_the_owners_auth() {
         .expect("GratisMinedFromNod event");
     assert_eq!(mined.account, input.owner);
     assert_eq!(mined.nodId, nod_id);
+}
+
+const GROUP_DAY: u32 = 20_261_019;
+
+/// The offer hour of a [`GROUP_DAY`] Nod: 10:00 UTC of the day before.
+fn offered_at() -> u64 {
+    outbe_system_common::time::date_key_to_utc_timestamp(20_261_018).unwrap() + 10 * 3_600
+}
+
+/// Issues at the offer the Nod of `owner` in sub-series 0 of the `issuance_currency`
+/// series of [`GROUP_DAY`], reference 840 and entry 0.5.
+fn issue_offered(
+    storage: &StorageHandle<'_>,
+    owner: Address,
+    issuance_currency: u16,
+    load: u64,
+) -> U256 {
+    let mut input = params(owner);
+    input.emission_day = GROUP_DAY;
+    input.issuance_currency = issuance_currency;
+    input.gratis_load_minor = U256::from(load);
+    let encrypted = outbe_nod::test_support::encrypted_fixture(&input, CHAIN_ID);
+    runtime::issue_offer_nod(storage, &encrypted, offered_at(), 0).unwrap()
+}
+
+fn series(issuance_currency: u16) -> outbe_core_common::series_id::SeriesId {
+    outbe_core_common::series_id::SeriesId::for_pair(GROUP_DAY, issuance_currency, 840).unwrap()
+}
+
+fn group_of(storage: &StorageHandle<'_>, nod_id: U256) -> B256 {
+    nod_api::get_item(storage, nod_id)
+        .unwrap()
+        .unwrap()
+        .group_key
+}
+
+/// Calls `group` a day after its emission day and returns the settlement deadline.
+fn call(storage: &StorageHandle<'_>, group: B256) -> (u64, u64) {
+    let mut nod = outbe_nod::NodContract::new(storage.clone());
+    let terms = nod.read_call_terms(group).unwrap();
+    let called_at =
+        outbe_system_common::time::date_key_to_utc_timestamp(GROUP_DAY).unwrap() + 86_400;
+    crate::called::mark_called(&mut nod, group, called_at, terms.call_notice_period_seconds)
+        .unwrap();
+    (
+        called_at,
+        nod_api::settlement_deadline_of(called_at, terms.call_notice_period_seconds),
+    )
+}
+
+fn block_at<'s>(
+    storage: &StorageHandle<'s>,
+    block_number: u64,
+    timestamp: u64,
+) -> outbe_primitives::block::BlockRuntimeContext<'s> {
+    outbe_primitives::block::BlockRuntimeContext::new(
+        outbe_primitives::block::BlockContext {
+            block_gas_limit: 0,
+            user_gas_used: 0,
+            block_number,
+            timestamp,
+            chain_id: CHAIN_ID,
+            genesis_hash: B256::ZERO,
+            genesis_timestamp: offered_at() - 86_400,
+            proposer: Address::ZERO,
+            validators: Vec::new(),
+        },
+        storage.clone(),
+    )
+}
+
+fn forfeit_at(
+    storage: &StorageHandle<'_>,
+    block_number: u64,
+    timestamp: u64,
+    writes: u32,
+) -> outbe_core_common::deadline_queue::Progress {
+    let ctx = block_at(storage, block_number, timestamp);
+    let through_day = outbe_core_common::deadline_queue::deadline_day(timestamp).unwrap();
+    let mut budget = outbe_system_common::pass_budget::PassBudget::new(100, writes);
+    crate::forfeited::forfeit_through(&ctx, through_day, &mut budget).unwrap()
+}
+
+fn promis_limit(storage: &StorageHandle<'_>) -> U256 {
+    outbe_promislimit::PromisLimitContract::new(storage.clone())
+        .promis_limit()
+        .unwrap()
+}
+
+fn forfeit_queue_is_empty(storage: &StorageHandle<'_>) -> bool {
+    let nod = outbe_nod::NodContract::new(storage.clone());
+    outbe_core_common::deadline_queue::first_day(&outbe_nod::state::ForfeitQueue(&nod))
+        .unwrap()
+        .is_none()
+}
+
+fn closed_series(world: &World) -> Vec<(u16, U256)> {
+    world
+        .provider
+        .get_events(NOD_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| INodFactory::NodSeriesClosed::decode_log_data(log).ok())
+        .map(|event| (event.issuanceCurrency, event.forfeitedAmountMinor))
+        .collect()
+}
+
+/// A called group of a USD Nod with load 30 and a EUR Nod with load 10, both unsettled.
+fn lapsed_two_series_group(storage: &StorageHandle<'_>) -> (B256, u64) {
+    let usd = issue_offered(storage, Address::repeat_byte(0x71), 840, 30);
+    let eur = issue_offered(storage, Address::repeat_byte(0x72), 978, 10);
+    let group = group_of(storage, usd);
+    assert_eq!(group_of(storage, eur), group);
+    (group, call(storage, group).1)
+}
+
+#[test]
+fn sub_series_of_one_day_and_reference_share_one_call_group() {
+    let _enclave = outbe_nod::test_support::scope();
+    let mut world = World::new();
+    let (nods, called_at, deadline) = world.enter(|storage| {
+        let settled = issue_offered(&storage, Address::repeat_byte(0x71), 840, 15);
+        let usd = issue_offered(&storage, Address::repeat_byte(0x72), 840, 15);
+        let eur = issue_offered(&storage, Address::repeat_byte(0x73), 978, 10);
+        let group = group_of(&storage, settled);
+        for nod_id in [usd, eur] {
+            assert_eq!(group_of(&storage, nod_id), group);
+        }
+        for currency in [840, 978] {
+            assert_eq!(
+                nod_api::sub_series_group(&storage, series(currency), 0).unwrap(),
+                Some(group)
+            );
+        }
+        let nod = outbe_nod::NodContract::new(storage.clone());
+        assert_eq!(nod.read_group_open_load(group).unwrap(), U256::from(40));
+        assert_eq!(
+            nod_api::get_group(&storage, group)
+                .unwrap()
+                .unwrap()
+                .full_day_after_issue,
+            outbe_system_common::time::WorldwideDay::new(GROUP_DAY),
+            "the call counts from 00:00 of the emission day"
+        );
+
+        let loaded_item = nod_api::load_item(&storage, settled).unwrap().unwrap();
+        let loaded_group = nod_api::load_group(&storage, group).unwrap().unwrap();
+        nod_api::record_settled(&storage, loaded_item, loaded_group).unwrap();
+
+        let (called_at, deadline) = call(&storage, group);
+        forfeit_at(&storage, 10, deadline + 86_400, 100);
+        assert_eq!(promis_limit(&storage), U256::from(25));
+        crate::cleanup::cleanup(&block_at(&storage, 11, deadline + 86_400)).unwrap();
+        assert!(nod_api::get_item(&storage, settled).unwrap().is_some());
+        for nod_id in [usd, eur] {
+            assert!(nod_api::get_item(&storage, nod_id).unwrap().is_none());
+        }
+        ([settled, usd, eur], called_at, deadline)
+    });
+
+    let opened: Vec<_> = world
+        .provider
+        .get_events(NOD_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| INodFactory::NodSeriesOpened::decode_log_data(log).ok())
+        .map(|event| {
+            (
+                event.subSeriesId,
+                event.issuanceCurrency,
+                event.referenceCurrency,
+                event.entryPriceMinor,
+            )
+        })
+        .collect();
+    assert_eq!(
+        opened,
+        [
+            (0, 840, 840, U256::from(500_000)),
+            (0, 978, 840, U256::from(500_000))
+        ],
+        "a sub-series opens once, with its first Nod"
+    );
+
+    let issued: Vec<_> = world
+        .provider
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .filter_map(|log| INod::NodIssued::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(issued.len(), 3);
+    assert_eq!(
+        issued.iter().map(|event| event.nodId).collect::<Vec<_>>(),
+        nods
+    );
+    assert_eq!(
+        (
+            issued[2].subSeriesId,
+            issued[2].issuanceCurrency,
+            issued[2].referenceCurrency
+        ),
+        (0, 978, 840)
+    );
+    let opened_load = world.enter(|storage| {
+        let item = nod_api::get_item(&storage, nods[0]).unwrap().unwrap();
+        assert_eq!(
+            issued[0].payload.as_ref(),
+            item.encrypted.encrypted_gratis_amount.as_slice()
+        );
+        let view_key = outbe_nod::nod_encryption::derive_view_key(
+            &outbe_nod::test_support::state_key(),
+            item.owner,
+        )
+        .expect("owner view key");
+        outbe_nod::test_support::decrypt_for_owner(&view_key, &item.encrypted)
+            .expect("open nod load")
+    });
+    assert_eq!(opened_load, U256::from(15));
+
+    let called_series: Vec<_> = world
+        .provider
+        .get_events(NOD_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| INodFactory::NodSeriesCalled::decode_log_data(log).ok())
+        .map(|event| {
+            (
+                event.issuanceCurrency,
+                event.referenceCurrency,
+                event.calledAt,
+                event.settlementDeadline,
+            )
+        })
+        .collect();
+    assert_eq!(
+        called_series,
+        [
+            (840, 840, called_at, deadline),
+            (978, 840, called_at, deadline)
+        ]
+    );
+
+    let closed: Vec<_> = world
+        .provider
+        .get_events(NOD_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| INodFactory::NodSeriesClosed::decode_log_data(log).ok())
+        .map(|event| {
+            (
+                event.issuanceCurrency,
+                event.referenceCurrency,
+                event.forfeitedCount,
+                event.forfeitedAmountMinor,
+            )
+        })
+        .collect();
+    assert_eq!(
+        closed,
+        [(840, 840, 1, U256::from(15)), (978, 840, 1, U256::from(10))]
+    );
+
+    let forfeited: Vec<_> = world
+        .provider
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .filter_map(|log| INod::NodForfeited::decode_log_data(log).ok())
+        .map(|event| (event.nodId, event.issuanceCurrency, event.referenceCurrency))
+        .collect();
+    assert_eq!(forfeited, [(nods[1], 840, 840), (nods[2], 978, 840)]);
+    assert!(world
+        .provider
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .all(|log| INod::NodBurned::decode_log_data(log).is_err()));
+}
+
+/// A group wider than the block's write budget forfeits sub-series by sub-series over
+/// several blocks, with one Promis Limit credit when its last sub-series closes.
+#[test]
+fn a_group_forfeits_one_series_per_write_and_credits_once() {
+    let _enclave = outbe_nod::test_support::scope();
+    let mut world = World::new();
+    world.enter(|storage| {
+        let (group, deadline) = lapsed_two_series_group(&storage);
+        let at = deadline + 86_400;
+
+        forfeit_at(&storage, 10, at, 1);
+        assert_eq!(promis_limit(&storage), U256::ZERO);
+        assert!(!nod_api::is_group_forfeited(&storage, group).unwrap());
+        assert!(nod_api::is_group_forfeit_started(&storage, group).unwrap());
+
+        let progress = forfeit_at(&storage, 11, at, 1);
+        assert!(matches!(
+            progress,
+            outbe_core_common::deadline_queue::Progress::Complete
+        ));
+        assert_eq!(promis_limit(&storage), U256::from(40));
+        assert!(nod_api::is_group_forfeited(&storage, group).unwrap());
+        assert!(forfeit_queue_is_empty(&storage));
+    });
+    assert_eq!(
+        closed_series(&world),
+        [(840, U256::from(30)), (978, U256::from(10))]
+    );
+}
+
+/// A sub-series that fails to close keeps the group open and in the queue while the healthy
+/// one commits its close once; the retry closes only the open one and credits the group once.
+#[test]
+fn a_series_left_open_defers_the_group_and_the_retry_credits_once() {
+    let _enclave = outbe_nod::test_support::scope();
+    for (corrupt_usd, expected_after_first, expected_final) in [
+        (
+            true,
+            vec![(978, U256::from(10))],
+            vec![(978, U256::from(10)), (840, U256::from(30))],
+        ),
+        (
+            false,
+            vec![(840, U256::from(30))],
+            vec![(840, U256::from(30)), (978, U256::from(10))],
+        ),
+    ] {
+        let mut world = World::new();
+        let (group, target_key, saved_load, deadline) = world.enter(|storage| {
+            let (group, deadline) = lapsed_two_series_group(&storage);
+            let nod = outbe_nod::NodContract::new(storage.clone());
+            let target = series(if corrupt_usd { 840 } else { 978 });
+            let target_key = outbe_nod::index_keys::group_series_key(
+                group,
+                outbe_nod::index_keys::sub_series_key(target, 0),
+            );
+            let saved_load = nod
+                .group_series_unsettled_load_minor_ct
+                .bytes(&target_key)
+                .read()
+                .unwrap();
+            nod.group_series_unsettled_load_minor_ct
+                .bytes(&target_key)
+                .write(&[0xFF; 3])
+                .unwrap();
+
+            forfeit_at(&storage, 10, deadline + 86_400, 64);
+            assert_eq!(promis_limit(&storage), U256::ZERO);
+            assert!(!nod_api::is_group_forfeited(&storage, group).unwrap());
+            assert!(nod_api::is_group_forfeit_started(&storage, group).unwrap());
+            assert!(!forfeit_queue_is_empty(&storage));
+            (group, target_key, saved_load, deadline)
+        });
+        assert_eq!(closed_series(&world), expected_after_first);
+
+        world.enter(|storage| {
+            let nod = outbe_nod::NodContract::new(storage.clone());
+            nod.group_series_unsettled_load_minor_ct
+                .bytes(&target_key)
+                .write(&saved_load)
+                .unwrap();
+            forfeit_at(&storage, 11, deadline + 2 * 86_400, 64);
+            assert_eq!(promis_limit(&storage), U256::from(40));
+            assert!(nod_api::is_group_forfeited(&storage, group).unwrap());
+            assert!(forfeit_queue_is_empty(&storage));
+        });
+        assert_eq!(closed_series(&world), expected_final);
+    }
+
+    // Even when every sub-series fails on the first attempt, `group_forfeiting` latches.
+    let mut world = World::new();
+    world.enter(|storage| {
+        let (group, deadline) = lapsed_two_series_group(&storage);
+        let nod = outbe_nod::NodContract::new(storage.clone());
+        for currency in [840, 978] {
+            let key = outbe_nod::index_keys::group_series_key(
+                group,
+                outbe_nod::index_keys::sub_series_key(series(currency), 0),
+            );
+            nod.group_series_unsettled_load_minor_ct
+                .bytes(&key)
+                .write(&[0xFF; 3])
+                .unwrap();
+        }
+        forfeit_at(&storage, 10, deadline + 86_400, 64);
+        assert!(!nod_api::is_group_forfeited(&storage, group).unwrap());
+        assert!(nod_api::is_group_forfeit_started(&storage, group).unwrap());
+        assert!(!forfeit_queue_is_empty(&storage));
+    });
+}
+
+#[test]
+fn a_sub_series_keeps_its_group_until_the_group_closes() {
+    let _enclave = outbe_nod::test_support::scope();
+    let mut world = World::new();
+    world.enter(|storage| {
+        let nod_id = issue_offered(&storage, Address::repeat_byte(0x71), 840, 15);
+        let group = group_of(&storage, nod_id);
+        assert_eq!(
+            nod_api::sub_series_group(&storage, series(840), 0).unwrap(),
+            Some(group)
+        );
+        assert_eq!(
+            nod_api::sub_series_entry_price(&storage, series(840), 0).unwrap(),
+            Some(U256::from(500_000))
+        );
+
+        let item = nod_api::load_item(&storage, nod_id).unwrap().unwrap();
+        let loaded_group = nod_api::load_group(&storage, group).unwrap().unwrap();
+        nod_api::remove_nod(&storage, item, loaded_group).unwrap();
+        assert_eq!(
+            nod_api::sub_series_group(&storage, series(840), 0).unwrap(),
+            None
+        );
+    });
+}
+
+fn settle_item(storage: &StorageHandle<'_>, nod_id: U256) {
+    let item = nod_api::load_item(storage, nod_id).unwrap().unwrap();
+    let group = nod_api::load_group(storage, item.body().group_key)
+        .unwrap()
+        .unwrap();
+    nod_api::record_settled(storage, item, group).unwrap();
+}
+
+fn clean_as(
+    storage: &StorageHandle<'_>,
+    caller: Address,
+    nod_id: U256,
+) -> Result<(), PrecompileError> {
+    outbe_nod::precompile::dispatch(
+        storage.clone(),
+        &INod::cleanCall { nodId: nod_id }.abi_encode(),
+        caller,
+        U256::ZERO,
+    )
+    .map(|_| ())
+}
+
+#[test]
+fn any_account_cleans_a_forfeited_unsettled_nod() {
+    let _enclave = outbe_nod::test_support::scope();
+    let stranger = Address::repeat_byte(0x99);
+    let mut world = World::new();
+    world.enter(|storage| {
+        let unsettled = issue_offered(&storage, Address::repeat_byte(0x71), 840, 30);
+        let settled = issue_offered(&storage, Address::repeat_byte(0x72), 840, 10);
+        settle_item(&storage, settled);
+        let group = group_of(&storage, unsettled);
+        assert!(
+            clean_as(&storage, stranger, unsettled).is_err(),
+            "a Nod that is not forfeited stays"
+        );
+        let (_, deadline) = call(&storage, group);
+        forfeit_at(&storage, 10, deadline + 86_400, 100);
+        assert!(
+            clean_as(&storage, stranger, settled).is_err(),
+            "a settled Nod stays"
+        );
+        clean_as(&storage, stranger, unsettled).unwrap();
+        assert!(nod_api::get_item(&storage, unsettled).unwrap().is_none());
+        assert!(nod_api::get_item(&storage, settled).unwrap().is_some());
+    });
+    let forfeited: Vec<_> = world
+        .provider
+        .get_events(NOD_ADDRESS)
+        .iter()
+        .filter_map(|log| INod::NodForfeited::decode_log_data(log).ok())
+        .map(|event| event.owner)
+        .collect();
+    assert_eq!(forfeited, [Address::repeat_byte(0x71)]);
+}
+
+/// The forfeit credits the Promis Limit with the exact sum of the forfeited loads, once. A
+/// settled Nod that is not mined yet gets no credit and stays.
+#[test]
+fn forfeited_nod_loads_go_to_the_promis_limit_once() {
+    let _enclave = outbe_nod::test_support::scope();
+    let mut world = World::new();
+    world.enter(|storage| {
+        let forfeited: Vec<_> = [(0x71, 840, 7u64), (0x72, 840, 11), (0x73, 978, 13)]
+            .into_iter()
+            .map(|(owner, currency, load)| {
+                issue_offered(&storage, Address::repeat_byte(owner), currency, load)
+            })
+            .collect();
+        let settled = issue_offered(&storage, Address::repeat_byte(0x74), 840, 100);
+        settle_item(&storage, settled);
+        let group = group_of(&storage, settled);
+        let (_, deadline) = call(&storage, group);
+        let at = deadline + 86_400;
+        forfeit_at(&storage, 10, at, 100);
+        assert_eq!(promis_limit(&storage), U256::from(31));
+        crate::cleanup::cleanup(&block_at(&storage, 11, at)).unwrap();
+        forfeit_at(&storage, 12, at + 86_400, 100);
+        crate::cleanup::cleanup(&block_at(&storage, 13, at + 86_400)).unwrap();
+        assert_eq!(promis_limit(&storage), U256::from(31));
+        for nod_id in forfeited {
+            assert!(nod_api::get_item(&storage, nod_id).unwrap().is_none());
+        }
+        assert!(
+            nod_api::get_item(&storage, settled)
+                .unwrap()
+                .unwrap()
+                .is_settled
+        );
+    });
 }

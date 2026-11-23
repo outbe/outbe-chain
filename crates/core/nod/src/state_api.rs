@@ -277,6 +277,7 @@ mod tests {
         record.series_id = SeriesId::for_pair(20261015, 840, 978).unwrap();
         record.encrypted_gratis_amount = vec![0; NOD_BLOB_LEN];
         record.encrypted_gratis_amount[..8].copy_from_slice(&1u64.to_be_bytes());
+        record.encrypted_nominal_amount = record.encrypted_gratis_amount.clone();
         record
     }
 
@@ -293,7 +294,7 @@ mod tests {
             issued_at: 9,
             is_settled: true,
             encryption_binding: B256::repeat_byte(10),
-            encrypted_nominal_amount: (vec![12; NOD_BLOB_LEN]).clone(),
+            encrypted_nominal_amount: vec![12; NOD_BLOB_LEN],
             sub_series_id: 0,
             encrypted_gratis_amount: vec![12; NOD_BLOB_LEN],
             series_id: SeriesId::for_pair(20261016, 840, 978).unwrap(),

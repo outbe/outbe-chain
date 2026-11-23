@@ -174,7 +174,7 @@ fn independent_evm_states_produce_identical_full_block_state_receipts_and_balanc
     let issued_at = issued_at_on_protocol_floor(1);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::TESTNET,
-        issued_at,
+        worldwide_day.value(),
         entry_price_minor,
         840,
     );
@@ -249,7 +249,7 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     let issued_at = issued_at_on_protocol_floor(15);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::TESTNET,
-        issued_at,
+        day.value(),
         U256::from(16),
         978,
     );
@@ -600,7 +600,7 @@ fn the_forfeit_read_rides_the_end_block_witness_in_every_mode() {
     let issued_at = issued_at_on_protocol_floor(1);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::TESTNET,
-        issued_at,
+        worldwide_day.value(),
         entry_price_minor,
         840,
     );

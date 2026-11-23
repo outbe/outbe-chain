@@ -21,7 +21,7 @@ pub(crate) fn quote_nod_seed(nod_state_key: &StateKeyHandle, chain_id: u64) -> Q
     let issued_at = outbe_system_common::time::date_key_to_utc_timestamp(20_200_101).unwrap() + 1;
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::TESTNET,
-        issued_at,
+        worldwide_day.value(),
         entry_price_minor,
         840,
     );

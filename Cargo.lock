@@ -8468,6 +8468,8 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "base64 0.22.1",
+ "commonware-codec",
+ "commonware-cryptography",
  "hex",
  "outbe-agentreward",
  "outbe-core-common",
@@ -8484,9 +8486,12 @@ dependencies = [
  "outbe-worldwideday",
  "outbe-zk",
  "outbe-zk-backend",
+ "rand 0.10.2",
  "revm",
+ "serde_json",
  "thiserror 2.0.18",
  "tracing",
+ "x25519-dalek 2.0.1",
 ]
 
 [[package]]

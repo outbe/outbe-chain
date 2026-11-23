@@ -73,5 +73,6 @@ fn arm_reference_price(storage: &StorageHandle, timestamp: u64) {
 }
 
 mod api;
+mod day_loads;
 mod emission_day_lifecycle;
 mod precompile;

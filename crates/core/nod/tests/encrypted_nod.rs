@@ -36,8 +36,8 @@ use outbe_tee::witness::{
 use outbe_tee::InProcessDispatchError;
 use outbe_tee::TransportError;
 
-const TERMS: &str = r#"{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"league_id":7,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978}"#;
-const NOD_FIXTURE: &str = r#"{"terms":{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"league_id":7,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978},"encryption_binding":"0x3333333333333333333333333333333333333333333333333333333333333333","encrypted_gratis_amount":[65]}"#;
+const TERMS: &str = r#"{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978}"#;
+const NOD_FIXTURE: &str = r#"{"terms":{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978},"encryption_binding":"0x3333333333333333333333333333333333333333333333333333333333333333","encrypted_gratis_amount":[65],"encrypted_nominal_amount":[66]}"#;
 const LOAD: &str = r#"{"chain_id":1,"scope":"0x2222222222222222222222222222222222222222222222222222222222222222","operation_hash":"0x3333333333333333333333333333333333333333333333333333333333333333","encrypted_load":[65]}"#;
 const LOAD_REQUEST: &str = r#"{"chain_id":1,"scope":"0x2222222222222222222222222222222222222222222222222222222222222222","previous":{"chain_id":1,"scope":"0x2222222222222222222222222222222222222222222222222222222222222222","operation_hash":"0x3333333333333333333333333333333333333333333333333333333333333333","encrypted_load":[65]},"operation":{"AdjustTransient":{"load_minor":"0x11","add":false}}}"#;
 const QUOTE_CONTEXT: &str = r#"{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","asset":"0x4444444444444444444444444444444444444444","settlement_currency":840,"snapshot_id":"0x5"}"#;
@@ -87,11 +87,15 @@ fn cipher_and_preimage_vectors_match_the_frozen_nod_answers() {
     let nod = encrypt_nod(&fixture_key(), terms, U256::from(17), U256::from(17)).unwrap();
     assert_eq!(
         hex::encode(nod.encryption_binding),
-        "d2f75a55db07c33cccf750c02012e077beaaf5ee33877c53943be451c3db6bd9"
+        "c57a345d010710898a6a947e6c9388ec9ba61f39852d39b22b4693a0de0c546b"
     );
     assert_eq!(
         hex::encode(&nod.encrypted_gratis_amount),
-        "0000000000000001669f99a7b9d70b9cb0cd668126a4c34d44acf8f56b90b94c9b8d093a5ba1e066e3d903c2c91c3a479dfa81082b9c147a"
+        "00000000000000016d6dc14d47a6e3c11db90ce464a15d01c8449450ee085cf51a37f619ccdbb65e7e9d64245df32d0172dd8135e565bf16"
+    );
+    assert_eq!(
+        hex::encode(&nod.encrypted_nominal_amount),
+        "0000000000000001d005d2b537ffcf0fcca85db34f36fc8d4cd6217064b31258c7fac9625f7c0effc0ebc530a7516778fad065f3f224595d"
     );
     let sealed = seal_group_load(
         &fixture_key(),
@@ -125,7 +129,7 @@ fn cipher_and_preimage_vectors_match_the_frozen_nod_answers() {
     let request: NodGroupLoadOpRequestV1 = parse(LOAD_REQUEST);
     assert_eq!(
         hex::encode(nod_read_hash(&fixture_nod).unwrap()),
-        "ac7fe9f255dcda9ad3ce660a537058a7714eba59ef4447e3da4ea07f0a50af25"
+        "5b621a46c0bd3dcc9ce9f456c92066d1e94ce732d19308677997379cc346b8cf"
     );
     assert_eq!(
         hex::encode(keccak256(nod_read_preimage(inputs, U256::from(17)))),
@@ -155,7 +159,7 @@ fn cipher_and_preimage_vectors_match_the_frozen_nod_answers() {
     let fixture_context: NodQuoteContextV1 = parse(QUOTE_CONTEXT);
     assert_eq!(
         hex::encode(nod_quote_inputs_hash(&fixture_nod, &fixture_context, U256::from(18)).unwrap()),
-        "b665b0b89642a4117ce7ae1b6565d2d33e1d3462046879c722c0b05188ca4263"
+        "190c8a9cc51d9fc5f72c756c70742b4156c1b2d922aab853d700407dd628b76f"
     );
 }
 
@@ -674,14 +678,14 @@ fn encrypt_nod_quote_accepts_the_fixed_ed25519_vector() {
     let inputs = nod_quote_inputs_hash(&nod, &context, U256::from(18)).unwrap();
     assert_eq!(
         hex::encode(inputs),
-        "b665b0b89642a4117ce7ae1b6565d2d33e1d3462046879c722c0b05188ca4263"
+        "190c8a9cc51d9fc5f72c756c70742b4156c1b2d922aab853d700407dd628b76f"
     );
     let leader: [u8; 32] =
         hex::decode("f80cccdce4ae1c07ae208a2adf99a310ae4207e0306fa0236110b06827bbb8d0")
             .unwrap()
             .try_into()
             .unwrap();
-    let attestation_tag = hex::decode("b49c44dd138c16f09ad19fc25d34598ab2f9bc9ab638f8b714808db7403987b00221e7262d2410bef2d9aec6999bda74713610581e8aa0b722b3745320518c0b").unwrap();
+    let attestation_tag = hex::decode("dacbac9b380925f059111b3f19620ca68cce7c8f36cce09d1d8d9ec7d6485b8671f3a3518022f308f5c262a5a97d0c9de0b92377d6bb10f2bc2dbde0d7f49900").unwrap();
     let _absent = set_in_process_tee_context_for_test(None);
     let (state, scope) = enter(
         WitnessExecutionMode::VerifierReplay,
@@ -809,9 +813,10 @@ fn read_nod_amount_rejects_a_mutated_owner() {
     assert!(read_nod_amount(&nod).is_err());
 }
 
-const NOD_CONTEXT_DIGEST: &str = "9f5ed554cb633715b10ef9300eee7572dd8d7bd9b7ee96f47b23f87152ae6720";
-const NOD_AMOUNT_BLOB: &str = "000000000000000137f1780dda06389d4099f641acdc47b29f3834a3915aebccfda1eeb5cb1be0eb266f7e6a40d529099d3ea3df0ee44c17";
-const NOD_WRONG_NONCE_DOMAIN_BLOB: &str = "0000000000000001b4cb27b25a97fb3f37dc0a8ee5525ce83bce9c4fdd1efb170fd412e8a76ea5bcd8feaf71b8df565d8b0d2b7d838b26cd";
+const NOD_CONTEXT_DIGEST: &str = "b09e597ba7d0c3f500971679c335da4fec642cad4f3a5f4e4017762e362b8ad3";
+const NOD_AMOUNT_BLOB: &str = "0000000000000001e49a4a79c30f2f7fdb34b16e286f66b81d1258a7c3dead888ea07880c8080d7f6bed38808fb49611b17a1224b7748b0d";
+const NOD_NOMINAL_BLOB: &str = "000000000000000159f9bcc390542bace5ab522b5a6fbbcbe1a50f0870618bc327a3c53c8deda06d547dd59c1f3960ce825fca6f04188687";
+const NOD_WRONG_NONCE_DOMAIN_BLOB: &str = "0000000000000001fba976114a9798d9106c080ee3ba9a1b2c146b31d46a2fcbc35758963fe72c0aed54c67d9ec4366fca285d20d393228e";
 
 fn fixed_nod() -> EncryptedNodV1 {
     let nod = EncryptedNodV1 {
@@ -829,8 +834,8 @@ fn fixed_nod() -> EncryptedNodV1 {
             reference_currency: 978,
         },
         encryption_binding: B256::repeat_byte(0xa5),
-        encrypted_nominal_amount: (hex::decode(NOD_AMOUNT_BLOB).unwrap()).clone(),
         encrypted_gratis_amount: hex::decode(NOD_AMOUNT_BLOB).unwrap(),
+        encrypted_nominal_amount: hex::decode(NOD_NOMINAL_BLOB).unwrap(),
     };
     assert_eq!(hex::encode(nod.context_digest()), NOD_CONTEXT_DIGEST);
     nod
