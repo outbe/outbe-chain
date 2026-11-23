@@ -420,20 +420,32 @@ fn auth_issue_at_offer(
     )?;
     let issued = matches!(value.result.status, NodAtOfferStatusV1::Issued);
     let matches = match &value.result.nod {
-        Some(nod) => {
-            issued
-                && nod.terms.chain_id == request.chain_id
-                && nod.terms.emission_day == request.emission_day
-                && nod.terms.entry_price_minor == request.entry_price_minor
-                && nod.terms.issuance_currency == request.offer.tribute_currency
-                && nod.terms.reference_currency == request.offer.reference_currency
-        }
+        Some(nod) => issued && has_requested_terms(&nod.terms, request),
         None => !issued,
     };
     if matches {
         return Ok(());
     }
     Err(TransportError::UnexpectedResponse)
+}
+
+fn has_requested_terms(
+    terms: &outbe_core_common::nod_encryption::NodTermsV1,
+    request: &IssueNodAtOfferRequestV1,
+) -> bool {
+    (
+        terms.chain_id,
+        terms.emission_day,
+        terms.entry_price_minor,
+        terms.issuance_currency,
+        terms.reference_currency,
+    ) == (
+        request.chain_id,
+        request.emission_day,
+        request.entry_price_minor,
+        request.offer.tribute_currency,
+        request.offer.reference_currency,
+    )
 }
 
 fn auth_amount_read(

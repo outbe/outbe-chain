@@ -208,27 +208,32 @@ pub fn decrypt_nod_for_owner(
     view_key: &[u8; 32],
     nod: &EncryptedNodV1,
 ) -> Result<U256, LocalCryptoError> {
-    if !nod.has_valid_encoding() {
-        return Err(LocalCryptoError::InvalidNodEncoding);
-    }
-    let digest = nod.context_digest();
-    let key_info = nod.amount_key_info();
-    let slot = nod.crypto_slot();
-    open_counter_amount(CounterAmountInput {
+    open_nod_amount(
         view_key,
-        context_digest: digest.as_slice(),
-        key_info: &key_info,
-        crypto_slot: slot.as_slice(),
-        nonce_info: NOD_AMOUNT_NONCE_INFO,
-        ciphertext: &nod.encrypted_gratis_amount,
-        map_error: map_nod,
-    })
+        nod,
+        NOD_AMOUNT_NONCE_INFO,
+        &nod.encrypted_gratis_amount,
+    )
 }
 
 /// Open an [`EncryptedNodV1`] nominal with the owner's NOD view key.
 pub fn decrypt_nod_nominal_for_owner(
     view_key: &[u8; 32],
     nod: &EncryptedNodV1,
+) -> Result<U256, LocalCryptoError> {
+    open_nod_amount(
+        view_key,
+        nod,
+        NOD_NOMINAL_NONCE_INFO,
+        &nod.encrypted_nominal_amount,
+    )
+}
+
+fn open_nod_amount(
+    view_key: &[u8; 32],
+    nod: &EncryptedNodV1,
+    nonce_info: &[u8],
+    ciphertext: &[u8],
 ) -> Result<U256, LocalCryptoError> {
     if !nod.has_valid_encoding() {
         return Err(LocalCryptoError::InvalidNodEncoding);
@@ -241,8 +246,8 @@ pub fn decrypt_nod_nominal_for_owner(
         context_digest: digest.as_slice(),
         key_info: &key_info,
         crypto_slot: slot.as_slice(),
-        nonce_info: NOD_NOMINAL_NONCE_INFO,
-        ciphertext: &nod.encrypted_nominal_amount,
+        nonce_info,
+        ciphertext,
         map_error: map_nod,
     })
 }
