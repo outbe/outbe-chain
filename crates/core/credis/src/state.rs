@@ -122,10 +122,9 @@ impl<'storage> CredisContract<'storage> {
         take_from(&self.owner_outstanding_minor, owner, repaid)
     }
 
-    /// Subtracts released or forfeited Gratis from the sub-series's unpaid Gratis total.
-    pub fn take_unpaid_gratis(&mut self, record: &Credis, amount: U256) -> Result<()> {
+    pub fn take_outstanding_amount(&mut self, record: &Credis, amount: U256) -> Result<()> {
         take_from(
-            &self.sub_series_unpaid_gratis_minor,
+            &self.sub_series_outstanding_amount_minor,
             Self::sub_series_key(record.series_id, record.sub_series),
             amount,
         )
@@ -190,9 +189,9 @@ impl<'storage> CredisContract<'storage> {
             .ok_or(CredisError::ArithmeticOverflow)?;
         self.sub_series_unsettled_count.write(&key, count)?;
         add_to(
-            &self.sub_series_unpaid_gratis_minor,
+            &self.sub_series_outstanding_amount_minor,
             key,
-            record.gratis_minor,
+            record.outstanding_amount_minor,
         )?;
         self.group_index(group).insert(record.credis_id)?;
         Ok(newly_opened)
@@ -269,7 +268,7 @@ impl<'storage> CredisContract<'storage> {
                 sub_series: self.sub_series_number.read(&key)?,
                 issuance_currency: self.sub_series_issuance_currency.read(&key)?,
                 unsettled_count: self.sub_series_unsettled_count.read(&key)?,
-                unpaid_gratis_minor: self.sub_series_unpaid_gratis_minor.read(&key)?,
+                outstanding_amount_minor: self.sub_series_outstanding_amount_minor.read(&key)?,
             });
         }
         Ok(out)

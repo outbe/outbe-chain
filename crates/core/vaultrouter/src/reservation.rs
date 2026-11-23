@@ -6,11 +6,10 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_core_common::series_id::SeriesId;
 use outbe_credis::CredisContract;
 use outbe_oracle::api::{self, current_vwap_24h_snapshot, vwap_24h};
 use outbe_primitives::{error::Result, storage::StorageHandle};
-use outbe_system_common::time::{first_full_day, timestamp_to_date_key};
+use outbe_system_common::time::first_full_day;
 use outbe_system_common::{math::scaled_math::checked_quote, units::MAX_ASSET_DECIMALS};
 pub(crate) fn quote(
     storage: &StorageHandle<'_>,
@@ -49,7 +48,7 @@ pub(crate) fn quote(
         return Err(VaultRouterError::PolicyRateTooOld.into());
     }
     let call_start_day = first_full_day(now).map_err(date_step_error)?;
-    let series_id = SeriesId::for_pair(timestamp_to_date_key(now), currency, reference_currency)
+    let series_id = CredisContract::series_of(now, currency, reference_currency)
         .map_err(|_| VaultRouterError::InvalidAssetCurrency)?;
     Ok(LiquidityReservation {
         asset,

@@ -76,7 +76,7 @@ impl DeadlineHandler<B256> for CredisForfeit<'_> {
                     issuanceCurrency: sub.issuance_currency,
                     referenceCurrency: reference_currency,
                     forfeitedCount: sub.unsettled_count,
-                    forfeitedAmountMinor: sub.unpaid_gratis_minor,
+                    forfeitedAmountMinor: sub.outstanding_amount_minor,
                 },
             )?;
         }

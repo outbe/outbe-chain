@@ -39,6 +39,7 @@ interface IVaultRouter {
         uint8 assetDecimals;
         uint16 referenceCurrency;
         address source;
+        bytes14 seriesId;
         /// @dev UTC hour of the reservation, 0-23.
         uint8 subSeries;
     }

@@ -49,7 +49,7 @@ interface ICredis {
 
     /// Call terms in the reference currency, sealed by the first Credis of the call group.
     struct CallTerms {
-        /// entryPriceMinor * 1.64.
+        /// entryPriceMinor marked up by the call rate.
         uint256 callPriceMinor;
         /// Breach window and threshold, in seconds.
         uint32 callWindow;

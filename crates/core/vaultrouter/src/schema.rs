@@ -121,7 +121,7 @@ pub struct VaultRouterContract {
     #[attribute(order = 9)]
     pub reservation_nonce: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// roots 13-34: CCA stables reservations keyed by id. Each record field
+    /// roots 13-33: CCA stables reservations keyed by id. Each record field
     /// hashes its key with a separate root; these roots must not be reused.
     #[attribute(order = 10)]
     pub reservations: outbe_primitives::storage::dsl::Map<U256, LiquidityReservation>,
@@ -177,6 +177,7 @@ impl From<LiquidityReservation> for crate::precompile::IVaultRouter::LiquidityRe
             assetDecimals: r.asset_decimals,
             referenceCurrency: r.reference_currency,
             source: r.source,
+            seriesId: r.series_id.into(),
             subSeries: r.sub_series,
         }
     }

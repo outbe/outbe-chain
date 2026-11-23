@@ -150,8 +150,7 @@ pub struct Credis {
     pub source: Address,
 
     /// ISO 4217 numeric code of `asset` (e.g. 840 = USD), read at issuance.
-    /// Denominates the Credis and keys its policy rate. It is NOT the call
-    /// threshold anchor. See [`Self::reference_currency`].
+    /// Denominates the Credis and keys its policy rate.
     #[attribute(order = 18)]
     pub issuance_currency: u16,
 
@@ -352,9 +351,9 @@ pub struct CredisContract {
     pub sub_series_call_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
     #[attribute(order = 63)]
     pub sub_series_unsettled_count: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// Outstanding Gratis of the sub-series's unsettled Credis.
+    /// Outstanding amount of the sub-series's unsettled Credis.
     #[attribute(order = 64)]
-    pub sub_series_unpaid_gratis_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
+    pub sub_series_outstanding_amount_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 }
 
 /// One sub-series of a call group, as the call and close events report it.
@@ -364,7 +363,7 @@ pub struct SubSeriesSummary {
     pub sub_series: u8,
     pub issuance_currency: u16,
     pub unsettled_count: u32,
-    pub unpaid_gratis_minor: U256,
+    pub outstanding_amount_minor: U256,
 }
 
 impl CredisContract<'_> {

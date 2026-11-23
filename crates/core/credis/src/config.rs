@@ -17,7 +17,7 @@ use crate::schema::CredisContract;
 
 pub use outbe_core_common::profile::{PROFILE_AUTO, PROFILE_E2E, PROFILE_MAINNET, PROFILE_TESTNET};
 
-/// Resolved Credis call terms. All periods are in seconds.
+/// Resolved Credis profile. All periods are in seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CredisParams {
     /// Percentage points over the entry price. See `crate::constants`.

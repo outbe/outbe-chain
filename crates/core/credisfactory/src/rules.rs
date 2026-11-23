@@ -273,7 +273,7 @@ pub fn settle(
     // A settled Credis keeps the call and terms it read from its group.
     credis.update_credis_record(&record)?;
     credis.take_owner_outstanding(record.owner, amount_paid)?;
-    credis.take_unpaid_gratis(&record, unpledged_gratis_minor)?;
+    credis.take_outstanding_amount(&record, amount_paid)?;
     if closed {
         credis.leave_group(&record)?;
     }
@@ -361,7 +361,7 @@ pub fn delete_forfeited(credis: &mut CredisContract<'_>, record: Credis) -> Resu
         forfeitedAmountMinor: forfeit.forfeited_amount_minor,
     })?;
     credis.leave_group(&record)?;
-    credis.take_unpaid_gratis(&record, forfeit.forfeited_gratis_minor)?;
+    credis.take_outstanding_amount(&record, forfeit.forfeited_amount_minor)?;
     credis.delete_credis_record(credis_id)?;
     Ok(forfeit)
 }
