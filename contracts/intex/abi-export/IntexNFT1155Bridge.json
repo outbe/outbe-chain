@@ -73,7 +73,7 @@
   },
   {
     "type": "function",
-    "name": "SEND",
+    "name": "SEND_BATCH",
     "inputs": [],
     "outputs": [
       {

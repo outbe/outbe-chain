@@ -30,9 +30,9 @@ contract IntexNFT1155Bridge is
     ReentrancyGuardTransient,
     UUPSUpgradeable
 {
-    uint16 public constant SEND = IntexNFT1155BridgeCodec.SEND;
-    uint16 public constant SEND_MULTI = IntexNFT1155BridgeCodec.SEND_MULTI;
     uint16 public constant SEND_ONE = IntexNFT1155BridgeCodec.SEND_ONE;
+    uint16 public constant SEND_BATCH = IntexNFT1155BridgeCodec.SEND_BATCH;
+    uint16 public constant SEND_MULTI = IntexNFT1155BridgeCodec.SEND_MULTI;
     uint8 public constant BODY_VERSION_V1 = IntexNFT1155BridgeCodec.BODY_VERSION_V1;
     uint256 public constant MAX_BATCH_SIZE = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
 
@@ -243,7 +243,7 @@ contract IntexNFT1155Bridge is
 
         if (msgType == SEND_ONE) {
             _handleSingleReceive(srcChainId, receiveId, message);
-        } else if (msgType == SEND) {
+        } else if (msgType == SEND_BATCH) {
             _handleBatchReceive(srcChainId, receiveId, message);
         } else if (msgType == SEND_MULTI) {
             _handleMultiReceive(srcChainId, receiveId, message);

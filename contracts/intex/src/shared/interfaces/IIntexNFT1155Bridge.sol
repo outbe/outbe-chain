@@ -123,7 +123,7 @@ interface IIntexNFT1155Bridge {
     /// @notice Zero address provided.
     /// @param field Field name.
     error ZeroAddress(string field);
-    /// @notice Inbound `msgType` is not in the SEND / SEND_MULTI set.
+    /// @notice Inbound `msgType` is not in the SEND_ONE / SEND_BATCH / SEND_MULTI set.
     /// @dev Wire-format reverts (`UnsupportedBodyVersion`, `MalformedAddress`, `BatchTooLarge`,
     ///      `InvalidPayloadLength`, `ArrayLengthMismatch`) are owned by `IntexNFT1155BridgeCodec`.
     /// @param got The unsupported message-type tag received.

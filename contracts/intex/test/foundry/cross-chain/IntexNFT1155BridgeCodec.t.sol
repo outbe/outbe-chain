@@ -83,7 +83,7 @@ contract IntexNFT1155BridgeCodecTest is Test {
 
         // Wire prefix is [bodyVersion(1)][msgType(1)].
         assertEq(uint8(encoded[0]), IntexNFT1155BridgeCodec.BODY_VERSION_V1, "version byte V1");
-        assertEq(uint8(encoded[1]), IntexNFT1155BridgeCodec.SEND, "msgType SEND");
+        assertEq(uint8(encoded[1]), IntexNFT1155BridgeCodec.SEND_BATCH, "msgType SEND_BATCH");
 
         IntexNFT1155BridgeCodec.BatchPayload memory decoded = harness.decodeBatch(encoded);
         assertEq(decoded.to, p.to, "to round-trips");
@@ -123,7 +123,7 @@ contract IntexNFT1155BridgeCodecTest is Test {
     // --- version gating: an unknown version fails closed ---
 
     function test_DecodeBatch_Version2_RevertsUnsupportedBodyVersion() public {
-        bytes memory unknown = abi.encodePacked(uint8(2), IntexNFT1155BridgeCodec.SEND, abi.encode(_emptyBatch()));
+        bytes memory unknown = abi.encodePacked(uint8(2), IntexNFT1155BridgeCodec.SEND_BATCH, abi.encode(_emptyBatch()));
         vm.expectRevert(abi.encodeWithSelector(IntexNFT1155BridgeCodec.UnsupportedBodyVersion.selector, uint8(2)));
         harness.decodeBatch(unknown);
     }
@@ -171,8 +171,9 @@ contract IntexNFT1155BridgeCodecTest is Test {
         IntexNFT1155BridgeCodec.BatchPayload memory p = _emptyBatch();
         p.tokenIds = new uint256[](2);
         p.units = new uint256[](1);
-        bytes memory encoded =
-            abi.encodePacked(IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND, abi.encode(p));
+        bytes memory encoded = abi.encodePacked(
+            IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND_BATCH, abi.encode(p)
+        );
         vm.expectRevert(IntexNFT1155BridgeCodec.ArrayLengthMismatch.selector);
         harness.decodeBatch(encoded);
     }
@@ -180,13 +181,13 @@ contract IntexNFT1155BridgeCodecTest is Test {
     // --- schema binding: a body of the wrong type must not decode as this type ---
 
     function test_DecodeBatch_MultiPayloadBody_RevertsMalformedBody() public {
-        // Route a SEND_MULTI-shaped body through the SEND decoder. `abi.decode` is permissive.
+        // Route a SEND_MULTI-shaped body through the SEND_BATCH decoder. `abi.decode` is permissive.
         // Without the canonical-form check, it would misread the MultiPayload into a garbage
         // BatchPayload (e.g. `to == bytes32(0x60)`). It would then crosschainMint a wrong
         // address.
         bytes memory multiBody = abi.encode(_multiOfSize(1));
         bytes memory packet =
-            abi.encodePacked(IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND, multiBody);
+            abi.encodePacked(IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND_BATCH, multiBody);
         vm.expectRevert(IntexNFT1155BridgeCodec.MalformedBody.selector);
         harness.decodeBatch(packet);
     }
@@ -206,7 +207,7 @@ contract IntexNFT1155BridgeCodecTest is Test {
         // `abi.decode` silently ignores trailing bytes. The canonical check rejects them.
         bytes memory packet = abi.encodePacked(
             IntexNFT1155BridgeCodec.BODY_VERSION_V1,
-            IntexNFT1155BridgeCodec.SEND,
+            IntexNFT1155BridgeCodec.SEND_BATCH,
             abi.encode(_batchOfSize(1)),
             hex"deadbeef"
         );
