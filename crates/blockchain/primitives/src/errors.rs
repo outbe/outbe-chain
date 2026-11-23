@@ -1,6 +1,14 @@
+use std::borrow::Cow;
+
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{Revert, SolError};
-use revm::precompile::{PrecompileHalt, PrecompileOutput, PrecompileResult};
+use evm2::{
+    interpreter::InstrStop,
+    precompiles::{
+        PrecompileError as EvmPrecompileError, PrecompileHalt,
+        PrecompileResult as EvmPrecompileResult,
+    },
+};
 
 use crate::storage::SubCallError;
 
@@ -45,7 +53,7 @@ pub enum PrecompileError {
     /// A provider sub-call failed.
     #[error("sub-call error: {0}")]
     SubCall(SubCallError),
-    /// Execution halted deterministically through the revm precompile result.
+    /// Execution halted deterministically through the evm2 precompile result.
     #[error("execution halted: {0:?}")]
     Halt(PrecompileHalt),
 
@@ -599,15 +607,23 @@ impl From<SubCallError> for PrecompileError {
             SubCallError::StaticContextViolation | SubCallError::StateChangeDuringStaticCall => {
                 Self::WriteProtection
             }
-            SubCallError::EvmHalt(revm::context::result::HaltReason::OutOfGas(_)) => Self::OutOfGas,
             SubCallError::EvmHalt(
-                revm::context::result::HaltReason::StateChangeDuringStaticCall
-                | revm::context::result::HaltReason::CallNotAllowedInsideStatic,
+                InstrStop::OutOfGas
+                | InstrStop::MemoryOOG
+                | InstrStop::MemoryLimitOOG
+                | InstrStop::PrecompileOOG
+                | InstrStop::InvalidOperandOOG
+                | InstrStop::ReentrancySentryOOG,
+            ) => Self::OutOfGas,
+            SubCallError::EvmHalt(
+                InstrStop::StateChangeDuringStaticCall | InstrStop::CallNotAllowedInsideStatic,
             ) => Self::WriteProtection,
             error @ (SubCallError::DepthLimitExceeded
             | SubCallError::InvalidTarget
             | SubCallError::NotActivated
-            | SubCallError::EvmHalt(_)) => Self::Halt(PrecompileHalt::other(error.to_string())),
+            | SubCallError::EvmHalt(_)) => {
+                Self::Halt(PrecompileHalt::Other(Cow::Owned(error.to_string())))
+            }
             error @ (SubCallError::NotAvailable
             | SubCallError::ProviderBorrowed
             | SubCallError::DatabaseError(_)
@@ -642,43 +658,38 @@ impl PrecompileError {
         Self::BodyReadCorruption(message.into())
     }
 
-    /// Convert domain errors into a precompile result.
-    /// Execution failures return Revert or Halt, and infrastructure failures return Fatal.
-    pub fn into_precompile_result(self, gas: u64) -> PrecompileResult {
+    /// Convert domain errors into an evm2 precompile error.
+    /// Execution failures return Revert or Halt, and infrastructure failures return Fatal
+    /// while retaining the typed `PrecompileError` (including `#[source]` causes).
+    pub fn into_precompile_error(self) -> EvmPrecompileError {
         match self {
-            Self::OutOfGas => Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0)),
-            Self::WriteProtection => Ok(PrecompileOutput::halt(
-                PrecompileHalt::other_static("state change during static call"),
-                0,
+            Self::OutOfGas => EvmPrecompileError::Halt(PrecompileHalt::OutOfGas),
+            Self::WriteProtection => EvmPrecompileError::Halt(PrecompileHalt::Other(
+                Cow::Borrowed("state change during static call"),
             )),
-            Self::Halt(reason) => Ok(PrecompileOutput::halt(reason, 0)),
-            Self::Revert(message) => Ok(PrecompileOutput::revert(
-                gas,
-                Revert::from(message).abi_encode().into(),
-                0,
-            )),
-            error @ Self::BodyReadCorruption(_) => Ok(PrecompileOutput::revert(
-                gas,
-                Revert::from(error.to_string()).abi_encode().into(),
-                0,
-            )),
-            Self::RevertBytes(bytes) => Ok(PrecompileOutput::revert(gas, bytes, 0)),
-            Self::SubCall(error) => Err(revm::precompile::PrecompileError::Fatal(format!(
-                "sub-call error: {error:?}"
-            ))),
-            error @ (Self::TriggerBudgetExceeded { .. } | Self::TriggerScope(_)) => {
-                Err(revm::precompile::PrecompileError::Fatal(error.to_string()))
+            Self::Halt(reason) => EvmPrecompileError::Halt(reason),
+            Self::Revert(message) => {
+                EvmPrecompileError::Revert(Revert::from(message).abi_encode().into())
             }
-            Self::Unsupported => Err(revm::precompile::PrecompileError::Fatal(
-                "precompile reported Unsupported".into(),
-            )),
-            error @ (Self::Storage(_)
+            error @ Self::BodyReadCorruption(_) => {
+                EvmPrecompileError::Revert(Revert::from(error.to_string()).abi_encode().into())
+            }
+            Self::RevertBytes(bytes) => EvmPrecompileError::Revert(bytes),
+            error @ (Self::SubCall(_)
+            | Self::TriggerBudgetExceeded { .. }
+            | Self::TriggerScope(_)
+            | Self::Unsupported
+            | Self::Storage(_)
             | Self::Fatal(_)
             | Self::FatalWithCause(_)
-            | Self::EnclaveUnavailable(_)) => {
-                Err(revm::precompile::PrecompileError::Fatal(error.to_string()))
-            }
+            | Self::EnclaveUnavailable(_)) => EvmPrecompileError::fatal(error),
         }
+    }
+
+    /// Convert domain errors into an evm2 precompile result.
+    /// Execution failures return Revert or Halt, and infrastructure failures return Fatal.
+    pub fn into_precompile_result(self) -> EvmPrecompileResult {
+        Err(self.into_precompile_error())
     }
 }
 
@@ -780,7 +791,8 @@ mod tests {
             }
         ));
         assert_eq!(error.pass_failure(), PassFailure::Propagate);
-        assert!(error.into_precompile_result(100).is_err());
+        let evm_error = error.into_precompile_result().unwrap_err();
+        assert!(evm_error.is_fatal());
     }
 
     #[test]
