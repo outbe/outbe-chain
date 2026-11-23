@@ -57,15 +57,25 @@ impl FinalizationActor {
             marshal: &marshal,
         };
         loop {
-            let action = match job.phase {
-                CatchUpPhase::LocateAnchor { .. } => {
-                    self.step_locate_anchor(ctx, &mut job, budget).await?
+            let action = match &job.phase {
+                CatchUpPhase::LocateAnchor { height, child } => {
+                    let height = *height;
+                    let child = child.clone();
+                    self.step_locate_anchor(ctx, &mut job, height, child, budget)
+                        .await?
                 }
-                CatchUpPhase::PreflightAncestry { .. } => {
-                    self.step_preflight_ancestry(ctx, &mut job, budget).await?
+                CatchUpPhase::PreflightAncestry { height, expected } => {
+                    let (height, expected) = (*height, *expected);
+                    self.step_preflight_ancestry(ctx, &mut job, height, expected, budget)
+                        .await?
                 }
-                CatchUpPhase::ApplyForward { .. } => {
-                    self.step_apply_forward(ctx, &mut job, budget).await?
+                CatchUpPhase::ApplyForward {
+                    next_height,
+                    parent_hash,
+                } => {
+                    let (height, parent_hash) = (*next_height, *parent_hash);
+                    self.step_apply_forward(ctx, &mut job, height, parent_hash, budget)
+                        .await?
                 }
             };
             match action {
@@ -108,11 +118,10 @@ impl FinalizationActor {
         &mut self,
         ctx: StepCtx<'_, C>,
         job: &mut CatchUpJob,
+        height: u64,
+        expected: Digest,
         budget: &mut EventWorkBudget,
     ) -> eyre::Result<JobStepAction> {
-        let CatchUpPhase::PreflightAncestry { height, expected } = job.phase else {
-            unreachable!();
-        };
         let block = match self.read_job_block(ctx, height, budget).await {
             BlockFetch::Loaded(block) => block,
             BlockFetch::Yield(outcome) => return Ok(JobStepAction::Yield(outcome)),
@@ -142,15 +151,10 @@ impl FinalizationActor {
         &mut self,
         ctx: StepCtx<'_, C>,
         job: &mut CatchUpJob,
+        height: u64,
+        parent_hash: alloy_primitives::B256,
         budget: &mut EventWorkBudget,
     ) -> eyre::Result<JobStepAction> {
-        let CatchUpPhase::ApplyForward {
-            next_height: height,
-            parent_hash,
-        } = job.phase
-        else {
-            unreachable!();
-        };
         if !budget.can_apply() || !budget.can_read() || !budget.can_crypto() {
             return Ok(JobStepAction::Yield(ReconcileStepOutcome::YieldMoreWork));
         }

@@ -28,12 +28,10 @@ impl FinalizationActor {
         &mut self,
         ctx: StepCtx<'_, C>,
         job: &mut CatchUpJob,
+        height: u64,
+        child: Option<ConsensusBlock>,
         budget: &mut EventWorkBudget,
     ) -> eyre::Result<JobStepAction> {
-        let CatchUpPhase::LocateAnchor { height, child } = &job.phase else {
-            unreachable!();
-        };
-        let height = *height;
         if height <= job.base_height {
             return Ok(self.finish_anchor_search_missing_verifier(job));
         }
