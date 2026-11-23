@@ -163,6 +163,14 @@ pub fn preflight_script(
     index: usize,
 ) -> Result<String, GenesisError> {
     let rpc_port = port_of(config, "rpc_port")?;
+    let reth_p2p_port = port_of(config, "reth_p2p_port")?;
+    let reth_discv5_port = port_of(config, "reth_discv5_port")?;
+    let consensus_port = config
+        .get("consensus_p2p_port")
+        .and_then(Value::as_u64)
+        .and_then(|port| u16::try_from(port).ok())
+        .unwrap_or(30_400);
+    let radicle_port = port_of(config, "radicle_port")?;
     let hyperlane_binary = config
         .get("hyperlane_binary")
         .and_then(Value::as_str)
@@ -193,8 +201,8 @@ for stale in validator-{index}/data validator-{index}/consensus; do\n\
   [ -e \"$stale\" ] && {{ note \"leftover state\" \"$stale - remove before a new genesis\"; fail=1; }}\n\
 done\n\
 \n\
-for port in {rpc_port} 9000 9003; do\n\
-  ss -ltn 2>/dev/null | grep -q \":$port \" && {{ note \"port $port\" \"already in use\"; fail=1; }}\n\
+for port in {rpc_port} {reth_p2p_port} {reth_discv5_port} {consensus_port} {radicle_port} 9000 9003; do\n\
+  ss -lntu 2>/dev/null | grep -q \":$port \" && {{ note \"port $port\" \"already in use\"; fail=1; }}\n\
 done\n\
 \n\
 if command -v ufw >/dev/null 2>&1 \

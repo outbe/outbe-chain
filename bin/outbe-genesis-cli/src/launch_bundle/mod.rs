@@ -93,6 +93,27 @@ pub fn port_of(config: &Value, name: &str) -> Result<u16, GenesisError> {
         .ok_or_else(|| GenesisError::validation(format!("unknown port key: {name}")))
 }
 
+/// Overlay one founder's resolved runtime ports and bind address on the shared config.
+fn validator_config(config: &Value, index: usize) -> Result<Value, GenesisError> {
+    let mut resolved = config.clone();
+    let Some(entries) = config.get("validator_runtime").and_then(Value::as_array) else {
+        return Ok(resolved);
+    };
+    let fields = entries
+        .get(index)
+        .and_then(Value::as_object)
+        .ok_or_else(|| {
+            GenesisError::validation(format!("missing validator_runtime entry {index}"))
+        })?;
+    let target = resolved
+        .as_object_mut()
+        .ok_or_else(|| GenesisError::validation("network configuration must be a mapping"))?;
+    for (key, value) in fields {
+        target.insert(key.clone(), value.clone());
+    }
+    Ok(resolved)
+}
+
 /// Write an executable bash script with `set -euo pipefail`.
 pub fn write_script(path: &Path, body: &str) -> Result<(), GenesisError> {
     if let Some(parent) = path.parent() {
@@ -185,52 +206,52 @@ fn write_validator_scripts(
         .map(|(h, _)| h)
         .unwrap_or(p2p_address);
 
-    write_script(
-        &directory.join("run-radicle.sh"),
-        &radicle_script(config, index, host, paths.remote_keys_dir)?,
-    )?;
-
-    let mut node_config = config.clone();
-    if let Some(obj) = node_config.as_object_mut() {
+    let mut runtime_config = validator_config(config, index)?;
+    if let Some(obj) = runtime_config.as_object_mut() {
         obj.insert(
             "remote_keys_dir".to_owned(),
             Value::String(paths.remote_keys_dir.to_owned()),
         );
     }
+
+    write_script(
+        &directory.join("run-radicle.sh"),
+        &radicle_script(&runtime_config, index, host, paths.remote_keys_dir)?,
+    )?;
     write_script(
         &directory.join("run-node.sh"),
-        &node_script(&node_config, index, paths.base_dir, p2p_address)?,
+        &node_script(&runtime_config, index, paths.base_dir, p2p_address)?,
     )?;
     write_script(
         &directory.join("run-feeder.sh"),
-        &feeder_script(config, index, paths.base_dir),
+        &feeder_script(&runtime_config, index, paths.base_dir),
     )?;
     write_script(
         &directory.join("run-hyperlane.sh"),
-        &hyperlane_script(config, index, paths.base_dir, host, validator)?,
+        &hyperlane_script(&runtime_config, index, paths.base_dir, host, validator)?,
     )?;
     write_script(
         &directory.join("configure-hyperlane.sh"),
-        &hyperlane_setup_script(config, index, paths.base_dir, host)?,
+        &hyperlane_setup_script(&runtime_config, index, paths.base_dir, host)?,
     )?;
     let hyperlane_config_path = directory.join("hyperlane-public.toml");
     fs::write(
         &hyperlane_config_path,
-        hyperlane_public_config(config, index)?,
+        hyperlane_public_config(&runtime_config, index)?,
     )
     .map_err(|err| GenesisError::io(&hyperlane_config_path, err))?;
     fs::set_permissions(&hyperlane_config_path, fs::Permissions::from_mode(0o600))
         .map_err(|err| GenesisError::io(&hyperlane_config_path, err))?;
     let caddyfile_path = directory.join("Caddyfile");
-    fs::write(&caddyfile_path, caddyfile(config, host)?)
+    fs::write(&caddyfile_path, caddyfile(&runtime_config, host)?)
         .map_err(|err| GenesisError::io(&caddyfile_path, err))?;
     write_script(
         &directory.join("preflight.sh"),
-        &preflight_script(config, paths.base_dir, index)?,
+        &preflight_script(&runtime_config, paths.base_dir, index)?,
     )?;
     write_script(
         &directory.join("install-caddy.sh"),
-        &caddy_install_script(config, paths.base_dir, index)?,
+        &caddy_install_script(&runtime_config, paths.base_dir, index)?,
     )?;
 
     let feeder_key_path = paths
@@ -246,13 +267,13 @@ fn write_validator_scripts(
     let feeder_path = directory.join("feeder.toml");
     fs::write(
         &feeder_path,
-        feeder_config(config, index, validator, signer_key)?,
+        feeder_config(&runtime_config, index, validator, signer_key)?,
     )
     .map_err(|err| GenesisError::io(&feeder_path, err))?;
     fs::set_permissions(&feeder_path, fs::Permissions::from_mode(0o600))
         .map_err(|err| GenesisError::io(&feeder_path, err))?;
     let pairs_path = directory.join("pairs.toml");
-    fs::write(&pairs_path, feeder_pairs(config)?)
+    fs::write(&pairs_path, feeder_pairs(&runtime_config)?)
         .map_err(|err| GenesisError::io(&pairs_path, err))?;
 
     write_systemd_units(&directory, paths.base_dir, index)?;
@@ -278,9 +299,10 @@ pub fn render(
         .map(ToOwned::to_owned)
         .unwrap_or_else(|| keys_dir.display().to_string());
 
-    let reth_p2p_port = port_of(config, "reth_p2p_port")?;
     let mut enodes = Vec::with_capacity(validators.len());
     for (index, validator) in validators.iter().enumerate() {
+        let runtime_config = validator_config(config, index)?;
+        let reth_p2p_port = port_of(&runtime_config, "reth_p2p_port")?;
         let node_id = ensure_reth_p2p_secret(&keys_dir.join(format!("validator-{index}")))?;
         let p2p_address = validator
             .get("p2p_address")

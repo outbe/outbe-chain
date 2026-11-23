@@ -25,9 +25,9 @@ use crate::{
     validator::{validator_address, FEEDER_FUNDING_WEI},
 };
 
-use super::config::{Network, NetworkConfig};
+use super::config::{Network, NetworkConfig, ResolvedFounder, ResolvedPorts};
 
-const MANIFEST_VERSION: u32 = 1;
+pub(super) const MANIFEST_VERSION: u32 = 2;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -46,6 +46,7 @@ pub(super) struct NetworkManifest {
     pub(super) software: SoftwareIdentity,
     pub(super) genesis: GenesisIdentity,
     pub(super) founders: Vec<FounderArtifact>,
+    pub(super) firewall_mappings: Vec<FirewallMapping>,
     pub(super) joining: JoiningArtifact,
 }
 
@@ -70,17 +71,35 @@ pub(super) struct GenesisIdentity {
     pub(super) genesis_block_hash: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct FounderArtifact {
     pub(super) index: usize,
     pub(super) name: String,
-    pub(super) ssh_host: String,
-    pub(super) advertise_ip: Ipv4Addr,
+    pub(super) machine: String,
+    pub(super) public_ip: Ipv4Addr,
+    pub(super) private_ip: Ipv4Addr,
+    pub(super) offset: u16,
+    pub(super) jump_user: String,
+    pub(super) jump_port: u16,
+    pub(super) vm_user: String,
+    pub(super) ports: ResolvedPorts,
     pub(super) validator_address: String,
     pub(super) hyperlane_address: String,
     pub(super) consensus_public_key: String,
     pub(super) archive: String,
     pub(super) archive_sha256: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(super) struct FirewallMapping {
+    pub(super) founder: String,
+    pub(super) machine: String,
+    pub(super) service: String,
+    pub(super) protocol: String,
+    pub(super) public_ip: Ipv4Addr,
+    pub(super) public_port: u16,
+    pub(super) private_ip: Ipv4Addr,
+    pub(super) private_port: u16,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -116,6 +135,7 @@ pub fn run(
         output.display()
     );
     let config = NetworkConfig::read(config_path)?;
+    let resolved = config.resolve_topology()?;
     let parent = output.parent().unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
 
@@ -146,6 +166,7 @@ pub fn run(
 
     let genesis_config = genesis_cli_config(
         &config,
+        &resolved,
         software_root.path(),
         &keys,
         base_genesis.as_deref(),
@@ -178,11 +199,13 @@ pub fn run(
         .wrap_err("failed to render founder launch bundles")?;
 
     progress.stage("assembling founder and joining artifacts");
-    let founders = founder_artifacts(staging.path(), &config, &validators)?;
+    let founders = founder_artifacts(staging.path(), &resolved, &validators)?;
     println!("\nHyperlane signers:");
     for founder in &founders {
         println!("  {:<20} {}", founder.name, founder.hyperlane_address);
     }
+    let firewall_mappings = firewall_mappings(&resolved);
+    print_firewall_mappings(&firewall_mappings);
     let joining = build_joining_artifacts(&BuildArtifacts {
         root: staging.path(),
         software_root: software_root.path(),
@@ -219,6 +242,7 @@ pub fn run(
             genesis_block_hash,
         },
         founders,
+        firewall_mappings,
         joining,
     };
     fs::write(
@@ -340,6 +364,7 @@ fn generate_keys(config: &NetworkConfig, software: &Path, keys: &Path) -> Result
 
 pub(super) fn genesis_cli_config(
     config: &NetworkConfig,
+    founders: &[ResolvedFounder],
     software: &Path,
     keys: &Path,
     base_genesis: Option<&Path>,
@@ -350,15 +375,27 @@ pub(super) fn genesis_cli_config(
         .iter()
         .map(|(key, value)| Ok((key.clone(), serde_json::to_value(value)?)))
         .collect::<Result<Map<String, Value>>>()?;
-    let validators = config
-        .founders
+    let validators = founders
         .iter()
-        .map(|founder| Value::String(founder.advertise_ip.to_string()))
+        .map(|founder| Value::String(founder.consensus_endpoint()))
         .collect();
+    let validator_runtime = founders
+        .iter()
+        .map(|founder| {
+            json!({
+                "rpc_bind_ip": founder.private_ip,
+                "reth_p2p_port": founder.ports.reth_p2p,
+                "reth_discv5_port": founder.ports.reth_discovery,
+                "radicle_port": founder.ports.radicle,
+                "consensus_p2p_port": founder.ports.consensus,
+            })
+        })
+        .collect::<Vec<_>>();
     for (key, value) in [
         ("network", json!(config.network.as_str())),
         ("chain_id", json!(config.chain_id)),
         ("validators", Value::Array(validators)),
+        ("validator_runtime", Value::Array(validator_runtime)),
         ("keys_dir", json!(keys)),
         (
             "base_profile",
@@ -389,10 +426,9 @@ pub(super) fn genesis_cli_config(
         ),
         (
             "hyperlane_public_urls",
-            json!(config
-                .founders
+            json!(founders
                 .iter()
-                .map(|founder| &founder.hyperlane_public_url)
+                .map(ResolvedFounder::hyperlane_public_url)
                 .collect::<Vec<_>>()),
         ),
         ("hyperlane_origins", json!(config.hyperlane.origins)),
@@ -401,7 +437,6 @@ pub(super) fn genesis_cli_config(
             "consensus_use_local_defaults",
             json!(config.topology.use_local_defaults),
         ),
-        ("rpc_bind_ip", json!(rpc_bind(config)?)),
         ("tee", json!({"mode": "no-attestation-dev"})),
     ] {
         root.insert(key.to_owned(), value);
@@ -453,32 +488,12 @@ pub(super) fn genesis_cli_config(
     Ok(Value::Object(root))
 }
 
-fn rpc_bind(config: &NetworkConfig) -> Result<String> {
-    if config
-        .founders
-        .iter()
-        .all(|founder| founder.rpc_bind_ip == founder.advertise_ip)
-    {
-        return Ok("validator".into());
-    }
-    let first = config.founders[0].rpc_bind_ip;
-    ensure!(
-        config
-            .founders
-            .iter()
-            .all(|founder| founder.rpc_bind_ip == first),
-        "founder rpc_bind_ip values must all match or equal each founder advertise_ip"
-    );
-    Ok(first.to_string())
-}
-
 pub(super) fn founder_artifacts(
     root: &Path,
-    config: &NetworkConfig,
+    founders: &[ResolvedFounder],
     validators: &[Value],
 ) -> Result<Vec<FounderArtifact>> {
-    config
-        .founders
+    founders
         .iter()
         .zip(validators)
         .enumerate()
@@ -488,8 +503,14 @@ pub(super) fn founder_artifacts(
             Ok(FounderArtifact {
                 index,
                 name: founder.name.clone(),
-                ssh_host: founder.ssh.host.clone(),
-                advertise_ip: founder.advertise_ip,
+                machine: founder.machine.clone(),
+                public_ip: founder.public_ip,
+                private_ip: founder.private_ip,
+                offset: founder.offset,
+                jump_user: founder.jump_user.clone(),
+                jump_port: founder.jump_port,
+                vm_user: founder.vm_user.clone(),
+                ports: founder.ports.clone(),
                 validator_address: required_validator_field(validator, "address")?.to_owned(),
                 hyperlane_address: required_validator_field(validator, "hyperlane_address")?
                     .to_owned(),
@@ -499,6 +520,77 @@ pub(super) fn founder_artifacts(
             })
         })
         .collect()
+}
+
+pub(super) fn firewall_mappings(founders: &[ResolvedFounder]) -> Vec<FirewallMapping> {
+    let mut mappings = Vec::new();
+    for founder in founders {
+        let mut push = |service: &str, protocol: &str, public_port, private_port| {
+            mappings.push(FirewallMapping {
+                founder: founder.name.clone(),
+                machine: founder.machine.clone(),
+                service: service.to_owned(),
+                protocol: protocol.to_owned(),
+                public_ip: founder.public_ip,
+                public_port,
+                private_ip: founder.private_ip,
+                private_port,
+            });
+        };
+        push(
+            "reth-p2p",
+            "tcp",
+            founder.ports.reth_p2p,
+            founder.ports.reth_p2p,
+        );
+        push(
+            "reth-p2p",
+            "udp",
+            founder.ports.reth_p2p,
+            founder.ports.reth_p2p,
+        );
+        push(
+            "reth-discovery",
+            "udp",
+            founder.ports.reth_discovery,
+            founder.ports.reth_discovery,
+        );
+        push(
+            "consensus",
+            "tcp",
+            founder.ports.consensus,
+            founder.ports.consensus,
+        );
+        push(
+            "radicle",
+            "tcp",
+            founder.ports.radicle,
+            founder.ports.radicle,
+        );
+        push("hyperlane", "tcp", founder.ports.hyperlane_public, 9_000);
+        if let Some(port) = founder.ports.rpc_public {
+            push("rpc", "tcp", port, 8_545);
+        }
+    }
+    mappings
+}
+
+fn print_firewall_mappings(mappings: &[FirewallMapping]) {
+    println!("\nFirewall mappings:");
+    println!(
+        "  Founder              Service          Proto  Public endpoint              VM endpoint"
+    );
+    for mapping in mappings {
+        println!(
+            "  {:<20} {:<16} {:<6} {:<28} {}:{}",
+            mapping.founder,
+            mapping.service,
+            mapping.protocol,
+            format!("{}:{}", mapping.public_ip, mapping.public_port),
+            mapping.private_ip,
+            mapping.private_port,
+        );
+    }
 }
 
 pub(super) fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<JoiningArtifact> {
@@ -678,19 +770,32 @@ mod tests {
     }
 
     #[test]
-    fn resolves_per_founder_rpc_binding_without_public_wildcards() {
-        let config: NetworkConfig = serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
-        assert_eq!(rpc_bind(&config).unwrap(), "validator");
-    }
-
-    #[test]
     fn genesis_cli_config_carries_prefunds_and_runtime_axes() {
         let temp = tempfile::tempdir().unwrap();
         let config: NetworkConfig = serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
+        let founders = config.resolve_topology().unwrap();
         let (keys, feeder_addresses) = feeder_keys(temp.path(), config.founders.len());
-        let value = genesis_cli_config(&config, temp.path(), &keys, None).unwrap();
+        let value = genesis_cli_config(&config, &founders, temp.path(), &keys, None).unwrap();
         assert_eq!(value["network"], "testnet");
         assert_eq!(value["tee"]["mode"], "no-attestation-dev");
+        assert_eq!(value["validators"][0], "203.0.113.10:30400");
+        assert_eq!(value["validators"][1], "203.0.113.10:30401");
+        assert_eq!(value["validator_runtime"][1]["rpc_bind_ip"], "10.77.0.12");
+        assert_eq!(value["validator_runtime"][1]["reth_p2p_port"], 30304);
+        let mappings = firewall_mappings(&founders);
+        assert_eq!(
+            mappings
+                .iter()
+                .filter(|mapping| mapping.service == "rpc")
+                .count(),
+            1
+        );
+        assert!(mappings.iter().any(|mapping| {
+            mapping.founder == "validator-1"
+                && mapping.service == "hyperlane"
+                && mapping.public_port == 9001
+                && mapping.private_port == 9000
+        }));
         outbe_genesis_cli::network::validate_config(&value).unwrap();
         assert_eq!(
             value["balance"]["0x1111111111111111111111111111111111111111"],
@@ -713,8 +818,9 @@ mod tests {
             serde_yaml_ng::Value::String("https://prices.example.invalid".into()),
         );
         config.validate().unwrap();
+        let founders = config.resolve_topology().unwrap();
         let (keys, _) = feeder_keys(temp.path(), config.founders.len());
-        let value = genesis_cli_config(&config, temp.path(), &keys, None).unwrap();
+        let value = genesis_cli_config(&config, &founders, temp.path(), &keys, None).unwrap();
         let error = outbe_genesis_cli::network::validate_config(&value).unwrap_err();
         assert!(error.to_string().contains("TDX/SNP attestation"), "{error}");
     }
@@ -793,9 +899,10 @@ mod tests {
             serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
         config.network = Network::Devnet;
         config.chain_id = Network::Devnet.chain_id();
+        let founders = config.resolve_topology().unwrap();
         let (keys, feeder_addresses) = feeder_keys(temp.path(), config.founders.len());
 
-        let genesis = genesis_cli_config(&config, temp.path(), &keys, None).unwrap();
+        let genesis = genesis_cli_config(&config, &founders, temp.path(), &keys, None).unwrap();
         assert_eq!(genesis["price_provider"], "mock");
         assert_eq!(genesis["feeder_pairs"], json!(pairs));
         for address in feeder_addresses {
