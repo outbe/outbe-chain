@@ -70,9 +70,13 @@ fn immutable_tribute_and_nod_cipher_vectors() {
     let actual = encrypt_tribute(&StateKeyHandle::for_test([0x11; 32]), context, &amounts).unwrap();
     assert_eq!(hex::encode(actual.encrypted_amounts), "000000000000000198a4b541b8b5c614da53e1220561668ea032a7a6ac51584569aed305006f30580961ef3fe4ab762af8facfb6bd8eb418bd4c54ee144c996b62ae3158c1c92d49ae24a0316f5929cbb541a8c296b5f6a8");
     let terms: NodTermsV1 = serde_json::from_str(r#"{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"league_id":7,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978}"#).unwrap();
-    let actual =
-        nod_encryption::encrypt_nod(&StateKeyHandle::for_test([0x11; 32]), terms, U256::from(17))
-            .unwrap();
+    let actual = nod_encryption::encrypt_nod(
+        &StateKeyHandle::for_test([0x11; 32]),
+        terms,
+        U256::from(17),
+        U256::from(17),
+    )
+    .unwrap();
     assert_eq!(
         hex::encode(actual.encryption_binding),
         "d2f75a55db07c33cccf750c02012e077beaaf5ee33877c53943be451c3db6bd9"

@@ -36,13 +36,13 @@ fn fixed_nod() -> EncryptedNodV1 {
             .unwrap(),
             owner: Address::repeat_byte(0x42),
             emission_day: day.value(),
-            league_id: 7,
             entry_price_minor: U256::from(123_456u64),
             issuance_currency: 840,
             reference_currency: 978,
         },
         encryption_binding: B256::repeat_byte(0xa5),
         encrypted_gratis_amount: hex::decode(NOD_AMOUNT_BLOB).unwrap(),
+        encrypted_nominal_amount: hex::decode(NOD_AMOUNT_BLOB).unwrap(),
     };
     assert_eq!(
         nod.context_digest().as_slice(),

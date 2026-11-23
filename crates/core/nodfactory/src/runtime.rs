@@ -44,7 +44,44 @@ pub(crate) fn issue_nod_at(
     encrypted: &EncryptedNodV1,
     issued_at: u64,
 ) -> Result<U256> {
-    issue_nod_with_cost(storage, encrypted, issued_at, None)
+    issue_nod_with_cost(storage, encrypted, (issued_at, 0), None)
+}
+
+/// Issues the Nod of an offer into sub-series `sub_series_id` of its series. The first Nod
+/// of a sub-series opens it with the entry price and the call terms of its group.
+pub(crate) fn issue_offer_nod(
+    storage: &StorageHandle<'_>,
+    encrypted: &EncryptedNodV1,
+    issued_at: u64,
+    sub_series_id: u16,
+) -> Result<U256> {
+    let series_id = encrypted
+        .terms
+        .series_id()
+        .map_err(|_| NodFactoryError::InvalidEncryptedNod)?;
+    let opens = nod_api::sub_series_entry_price(storage, series_id, sub_series_id)?.is_none();
+    let nod_id = issue_nod_with_cost(storage, encrypted, (issued_at, sub_series_id), None)?;
+    if opens {
+        let group_key = nod_api::get_item(storage, nod_id)?
+            .ok_or(NodFactoryError::NodNotFound)?
+            .group_key;
+        let terms =
+            outbe_nod::schema::NodContract::new(storage.clone()).read_call_terms(group_key)?;
+        emit_event(
+            storage,
+            INodFactory::NodSeriesOpened {
+                seriesId: series_id.into(),
+                issuanceCurrency: encrypted.terms.issuance_currency,
+                referenceCurrency: encrypted.terms.reference_currency,
+                entryPriceMinor: encrypted.terms.entry_price_minor,
+                callPriceMinor: terms.call_price_minor,
+                callWindow: u64::from(terms.call_window_seconds),
+                callThreshold: u64::from(terms.call_threshold_seconds),
+                callNoticePeriod: u64::from(terms.call_notice_period_seconds),
+            },
+        )?;
+    }
+    Ok(nod_id)
 }
 
 /// Issues a Nod claimed from a Tribute of a Lysis-sealed series into the series' call group.
@@ -55,7 +92,12 @@ pub fn issue_tribute_nod_in_series(
     encrypted: &EncryptedNodV1,
     series_id: SeriesId,
 ) -> Result<U256> {
-    issue_nod_with_cost(storage, encrypted, storage.now_secs()?, Some(series_id))
+    issue_nod_with_cost(
+        storage,
+        encrypted,
+        (storage.now_secs()?, 0),
+        Some(series_id),
+    )
 }
 
 /// Seals a Lysis series into the call group of its first full day after `sealed_at`, its
@@ -74,15 +116,14 @@ pub fn seal_lysis_series(storage: &StorageHandle<'_>, input: LysisSeriesInput) -
         return Err(NodFactoryError::EntryPriceOutOfBounds.into());
     }
     let terms = call_terms(storage, entry_price_minor, reference_currency)?;
+    let call_start_day =
+        outbe_system_common::time::first_full_day(sealed_at).map_err(date_step_error)?;
     let group_key = outbe_nod::identity::group_key(
-        sealed_at,
+        call_start_day,
         terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
         reference_currency,
-    )
-    .map_err(date_step_error)?;
-    let full_day_after_issue = outbe_system_common::time::WorldwideDay::new(
-        outbe_system_common::time::first_full_day(sealed_at).map_err(date_step_error)?,
     );
+    let full_day_after_issue = outbe_system_common::time::WorldwideDay::new(call_start_day);
     let sealed = nod_api::seal_lysis_series(
         storage,
         nod_api::LysisSeriesSeal {
@@ -120,7 +161,7 @@ pub fn seal_lysis_series(storage: &StorageHandle<'_>, input: LysisSeriesInput) -
 fn issue_nod_with_cost(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
-    issued_at: u64,
+    (issued_at, sub_series_id): (u64, u16),
     sealed_series: Option<SeriesId>,
 ) -> Result<U256> {
     let terms = &encrypted.terms;
@@ -149,10 +190,14 @@ fn issue_nod_with_cost(
     let group_key = match sealed_series {
         Some(series_id) => nod_api::series_group(storage, series_id)?
             .ok_or(NodFactoryError::InvalidEncryptedNod)?,
-        None => {
-            outbe_nod::identity::group_key(issued_at, call_price_minor, terms.reference_currency)
-                .map_err(date_step_error)?
-        }
+        None => match nod_api::sub_series_group(storage, series_id, sub_series_id)? {
+            Some(group_key) => group_key,
+            None => outbe_nod::identity::group_key(
+                terms.emission_day,
+                call_price_minor,
+                terms.reference_currency,
+            ),
+        },
     };
     let item = NodItemState {
         is_settled: false,
@@ -160,7 +205,7 @@ fn issue_nod_with_cost(
         owner: terms.owner,
         encrypted: encrypted.clone(),
         series_id,
-        league_id: terms.league_id,
+        sub_series_id,
         group_key,
         issuance_currency: terms.issuance_currency,
         reference_currency: terms.reference_currency,
@@ -181,7 +226,6 @@ fn issue_nod_with_cost(
             seriesId: series_id.into(),
             issuanceCurrency: terms.issuance_currency,
             referenceCurrency: terms.reference_currency,
-            leagueId: terms.league_id,
             payload: encrypted.encrypted_gratis_amount.clone().into(),
         },
     )?;

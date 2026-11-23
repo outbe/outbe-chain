@@ -320,11 +320,11 @@ fn mine_request_amount(amount: u64, flip: bool) -> MineEncryptedNodRequestV1 {
             nod_id: U256::from_be_bytes([4; 32]),
             owner,
             emission_day: 20250115,
-            league_id: 0,
             entry_price_minor: U256::ONE,
             issuance_currency: 840,
             reference_currency: 978,
         },
+        amount,
         amount,
     )
     .unwrap();

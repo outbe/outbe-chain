@@ -97,6 +97,15 @@ pub enum NodError {
 
     #[error("nod is already settled")]
     NodAlreadySettled,
+
+    #[error("SU hash already used")]
+    SuHashAlreadyUsed,
+
+    #[error("SU hash ring sequence overflow")]
+    SuHashRingSeqOverflow,
+
+    #[error("the owner already made an offer for this Worldwide Day")]
+    OfferAlreadyMade,
 }
 
 pub(crate) fn date_step_error(err: outbe_system_common::time::TimeError) -> PrecompileError {
@@ -193,6 +202,9 @@ impl From<NodError> for PrecompileError {
             }),
             NodError::NodNotForfeited => revert_with(I::NodNotForfeited {}),
             NodError::NodAlreadySettled => revert_with(I::NodAlreadySettled {}),
+            NodError::SuHashAlreadyUsed => revert_with(I::SuHashAlreadyUsed {}),
+            NodError::SuHashRingSeqOverflow => revert_with(I::SuHashRingSeqOverflow {}),
+            NodError::OfferAlreadyMade => revert_with(I::OfferAlreadyMade {}),
         }
     }
 }

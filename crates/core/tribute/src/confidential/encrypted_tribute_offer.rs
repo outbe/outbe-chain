@@ -1,20 +1,17 @@
 //! V2 offer processing: creator ownership and encrypted canonical amounts.
 
 use alloy_primitives::{Address, B256};
-use outbe_core_common::confidential_tee::ecdhe_tribute_offer_decrypt;
 use outbe_core_common::tribute_encryption::{TributeAmountsV2, TributeContextV2};
 use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_tee::resident::StateKeyHandle;
-use zeroize::Zeroizing;
 
-use super::compute::{compute_nominal, compute_token_id, parse_canonical_amount};
-use super::errors::{display_text, OfferError, OfferResult, PayloadError, ProcessError};
-use super::payload::{self, TributeInputPayload};
+use super::errors::{display_text, OfferError, OfferResult, ProcessError};
 use super::process::TributeOfferKeyMaterial;
 use super::protocol::{EncryptedTributeOffer, TributeOfferStatus};
 use super::tribute_encryption::encrypt_tribute;
 use super::tribute_v2::{encrypted_offer_inputs_hash, EncryptedTributeOfferResultV2};
-use super::zk_claim::derive_expected_hashes;
+use outbe_nod::offer::compute::{compute_nominal, compute_token_id, parse_canonical_amount};
+use outbe_nod::offer::zk_claim::derive_expected_hashes;
 
 /// Process one encrypted batch. A single offer failure stays `Rejected`.
 pub fn process_encrypted_tribute_offer_batch(
@@ -33,26 +30,6 @@ pub fn process_encrypted_tribute_offer_batch(
     (results, encrypted_offer_inputs_hash(chain_id, offers))
 }
 
-fn decrypt_payload(
-    key: &TributeOfferKeyMaterial<'_>,
-    offer: &EncryptedTributeOffer,
-) -> OfferResult<TributeInputPayload> {
-    let plaintext = Zeroizing::new(
-        ecdhe_tribute_offer_decrypt(
-            key.tribute_offer_private_key,
-            key.salt,
-            &offer.ephemeral_pubkey.to_be_bytes::<32>(),
-            &offer.nonce,
-            &offer.cipher_text,
-        )
-        .map_err(ProcessError::DecryptionFailed)?,
-    );
-    let payload: TributeInputPayload =
-        serde_json::from_slice(&plaintext).map_err(PayloadError::InvalidEncryptedTributePayload)?;
-    payload::validate(&payload)?;
-    Ok(payload)
-}
-
 fn process_one(
     key: &TributeOfferKeyMaterial<'_>,
     tribute_state_key: &StateKeyHandle,
@@ -66,7 +43,7 @@ fn process_one(
     {
         return Err(ProcessError::OfferProofChainMismatch.into());
     }
-    let payload = decrypt_payload(key, offer)?;
+    let payload = outbe_nod::offer::open_offer(key, offer)?;
     let owner = payload
         .creator
         .parse::<Address>()

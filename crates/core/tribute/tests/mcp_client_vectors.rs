@@ -351,7 +351,6 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
         ),
         owner: v["owner"].as_str().unwrap().parse().unwrap(),
         emission_day: v["emissionDay"].as_u64().unwrap() as u32,
-        league_id: v["leagueId"].as_u64().unwrap() as u16,
         entry_price_minor: decimal(&v["entryPriceMinor"]),
         issuance_currency: v["issuanceCurrency"].as_u64().unwrap() as u16,
         reference_currency: v["referenceCurrency"].as_u64().unwrap() as u16,
@@ -367,6 +366,7 @@ fn mcp_opens_the_nod_amount_the_enclave_encrypts() {
     let nod = encrypt_nod(
         &StateKeyHandle::for_test(nod_state_key),
         terms,
+        decimal(&v["gratisAmount"]),
         decimal(&v["gratisAmount"]),
     )
     .unwrap();

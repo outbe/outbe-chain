@@ -21,6 +21,27 @@ interface INodFactory {
     error MissingGroupForCall(bytes32 groupKey);
     error CallPriceOverflow();
     error DateStep(uint8 kind, uint32 dateKey);
+    error EnclaveRejected(string reason);
+    error OfferEnclaveFailed(string reason);
+    error NodLoadBelowOneMinorUnit();
+    error ZkProofRequired();
+    error UnknownCircuitVersion(uint32 chainId, string version);
+    error UnsupportedZkCircuit();
+    error MalformedZkProof(string value);
+    error ZkPublicInputMismatch(string field);
+    error InvalidZkProof();
+    error ZkVerifierUnavailable(string value);
+    error InvalidWorldwideDay(uint32 worldwideDay);
+    error WorldwideDayNotOffering(uint32 worldwideDay);
+    error IssuanceCurrencyNotRegistered(uint16 issuanceCurrency);
+    error CurrencyPriceUnavailable(uint32 worldwideDay);
+    error EmptySuHashList();
+    error InvalidSuHashHex(string hash);
+    error InvalidSuHashLength(uint64 length);
+    error WalletAddressesRequiredWhenSraProvided();
+    error SraAddressesRequiredWhenWalletProvided();
+    error InvalidWalletAddressAtIndex(uint64 index, string walletAddress);
+    error InvalidSraAddressAtIndex(uint64 index, string sraAddress);
 
     event NodSeriesOpened(
         bytes14 indexed seriesId,
@@ -39,7 +60,6 @@ interface INodFactory {
         bytes14 indexed seriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint16 leagueId,
         bytes payload
     );
 
@@ -52,6 +72,28 @@ interface INodFactory {
         uint16 referenceCurrency,
         uint256 amountMinor
     );
+
+    /// @notice Offer the spends of `worldwideDay` and issue their Nod in this transaction.
+    /// The Nod gets its entry price, its call price and its Gratis load: 32% of the
+    /// nominal of the offer. Reverts with no Nod when a currency has no 24-hour VWAP at
+    /// the offer hour, or when the load is below one minor unit.
+    /// @param cipherText The offer payload, encrypted to the network offer key.
+    /// @param chainId The registered L2 that signed `zkMerkleRoot`.
+    /// @param version The exact L2 circuit version of `zkProof`.
+    /// @param signature The L2 committee's BLS MinSig signature in G1 over `zkMerkleRoot`.
+    function issueNod(
+        bytes calldata cipherText,
+        bytes calldata nonce,
+        uint256 ephemeralPubkey,
+        uint32 worldwideDay,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        bytes calldata zkProof,
+        uint32 chainId,
+        string calldata version,
+        bytes calldata zkMerkleRoot,
+        bytes calldata signature
+    ) external returns (uint256 nodId);
 
     /// @notice Settle an uncalled Nod, or a called one at or before its settlement
     /// deadline, in ERC20 base units of `asset`. Any caller may pay. The Nod stays

@@ -11,20 +11,16 @@ fn an_issuable_entry_keeps_the_call_price_at_any_rate_in_range() {
 
 #[test]
 fn group_key_binds_the_reference_currency() {
-    let issued_at = 1_752_534_000;
+    let call_start_day = 20_250_715;
     let call_price = U256::from(13);
     assert_ne!(
-        crate::identity::group_key(issued_at, call_price, USD).expect("date step"),
-        crate::identity::group_key(issued_at, call_price, EUR).expect("date step"),
+        crate::identity::group_key(call_start_day, call_price, USD),
+        crate::identity::group_key(call_start_day, call_price, EUR),
         "same day and call price in two currencies must not share a group"
     );
     assert_eq!(
-        crate::identity::group_key(issued_at, call_price, USD).expect("date step"),
-        outbe_system_common::call_breach::group_key(
-            outbe_system_common::time::first_full_day(issued_at).expect("date step"),
-            call_price,
-            USD
-        )
+        crate::identity::group_key(call_start_day, call_price, USD),
+        outbe_system_common::call_breach::group_key(call_start_day, call_price, USD)
     );
 }
 

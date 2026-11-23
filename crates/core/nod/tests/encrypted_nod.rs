@@ -84,7 +84,7 @@ fn assert_tag_free_body(tag: u8, body: &impl serde::Serialize, signed_hex: &str)
 #[test]
 fn cipher_and_preimage_vectors_match_the_frozen_nod_answers() {
     let terms: NodTermsV1 = parse(TERMS);
-    let nod = encrypt_nod(&fixture_key(), terms, U256::from(17)).unwrap();
+    let nod = encrypt_nod(&fixture_key(), terms, U256::from(17), U256::from(17)).unwrap();
     assert_eq!(
         hex::encode(nod.encryption_binding),
         "d2f75a55db07c33cccf750c02012e077beaaf5ee33877c53943be451c3db6bd9"
@@ -211,14 +211,13 @@ fn same_amount_encrypts_equal_and_owner_open_rejects_tampering() {
         nod_id: U256::from(2u64),
         owner,
         emission_day: 20261116,
-        league_id: 7,
         entry_price_minor: U256::from(3u64),
         issuance_currency: 840,
         reference_currency: 978,
     };
-    let first = encrypt_nod(&nod_key, terms.clone(), U256::from(123)).unwrap();
-    let repeated = encrypt_nod(&nod_key, terms.clone(), U256::from(123)).unwrap();
-    let divergent = encrypt_nod(&nod_key, terms, U256::from(124)).unwrap();
+    let first = encrypt_nod(&nod_key, terms.clone(), U256::from(123), U256::from(123)).unwrap();
+    let repeated = encrypt_nod(&nod_key, terms.clone(), U256::from(123), U256::from(123)).unwrap();
+    let divergent = encrypt_nod(&nod_key, terms, U256::from(124), U256::from(124)).unwrap();
     assert_eq!(first, repeated);
     assert_ne!(first.encryption_binding, divergent.encryption_binding);
     assert_ne!(
@@ -410,8 +409,8 @@ fn load_request(amount: u64) -> NodGroupLoadOpRequestV1 {
 #[test]
 fn witness_amount_group_load_and_quote_keep_leader_bytes() {
     let key = resident_key();
-    let nod = encrypt_nod(&key, terms(), U256::from(17)).unwrap();
-    let other = encrypt_nod(&key, terms(), U256::from(18)).unwrap();
+    let nod = encrypt_nod(&key, terms(), U256::from(17), U256::from(17)).unwrap();
+    let other = encrypt_nod(&key, terms(), U256::from(18), U256::from(18)).unwrap();
     let inputs = nod_read_hash(&nod).unwrap();
     prove_witness(
         10,
@@ -502,8 +501,8 @@ fn quote_payload(payment: Vec<u8>, inputs: B256) -> Vec<u8> {
 #[test]
 fn replay_rejects_a_different_request_before_the_cursor_moves() {
     let key = resident_key();
-    let nod = encrypt_nod(&key, terms(), U256::from(17)).unwrap();
-    let other = encrypt_nod(&key, terms(), U256::from(18)).unwrap();
+    let nod = encrypt_nod(&key, terms(), U256::from(17), U256::from(17)).unwrap();
+    let other = encrypt_nod(&key, terms(), U256::from(18), U256::from(18)).unwrap();
     let (leader, tape) = record(&|| read_nod_amount(&nod).map(|_| ()));
     replay_fault(
         leader,
@@ -560,7 +559,7 @@ fn foreign_state_key_rejects_the_same_request_before_the_cursor_moves() {
     let leader_key = resident_key();
     let foreign_ctx = resident_with(9, b"outbe-nod-s2w1-other-group-signature");
     let foreign_key = derive_resident_state_key(&foreign_ctx, &NOD_DOMAIN, 0).unwrap();
-    let nod = encrypt_nod(&leader_key, terms(), U256::from(17)).unwrap();
+    let nod = encrypt_nod(&leader_key, terms(), U256::from(17), U256::from(17)).unwrap();
     let context: NodQuoteContextV1 = parse(QUOTE_CONTEXT);
     let request = load_request(17);
     let leader_record = apply_pure(&leader_key, &request).unwrap();
@@ -718,7 +717,7 @@ fn rpc_direct_authenticates_all_four_tags_without_staging() {
     let first = resident(4);
     let leader = first.attestation_public();
     let key = derive_resident_state_key(&first, &NOD_DOMAIN, 0).unwrap();
-    let nod = encrypt_nod(&key, terms(), U256::from(17)).unwrap();
+    let nod = encrypt_nod(&key, terms(), U256::from(17), U256::from(17)).unwrap();
     let request = load_request(17);
     let quote: NodQuoteContextV1 = parse(QUOTE_CONTEXT);
     let _guard = install(&first);
@@ -803,7 +802,7 @@ fn rpc_direct_authenticates_all_four_tags_without_staging() {
 fn read_nod_amount_rejects_a_mutated_owner() {
     let context = resident(4);
     let key = derive_resident_state_key(&context, &NOD_DOMAIN, 0).unwrap();
-    let mut nod = encrypt_nod(&key, terms(), U256::from(17)).unwrap();
+    let mut nod = encrypt_nod(&key, terms(), U256::from(17), U256::from(17)).unwrap();
     let _guard = install(&context);
     assert_eq!(read_nod_amount(&nod).unwrap(), U256::from(17));
     nod.terms.owner = Address::repeat_byte(9);
@@ -825,12 +824,12 @@ fn fixed_nod() -> EncryptedNodV1 {
             .unwrap(),
             owner: Address::repeat_byte(0x42),
             emission_day: 20_260_824,
-            league_id: 7,
             entry_price_minor: U256::from(123_456u64),
             issuance_currency: 840,
             reference_currency: 978,
         },
         encryption_binding: B256::repeat_byte(0xa5),
+        encrypted_nominal_amount: (hex::decode(NOD_AMOUNT_BLOB).unwrap()).clone(),
         encrypted_gratis_amount: hex::decode(NOD_AMOUNT_BLOB).unwrap(),
     };
     assert_eq!(hex::encode(nod.context_digest()), NOD_CONTEXT_DIGEST);

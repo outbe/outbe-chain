@@ -11,7 +11,7 @@ use super::errors::{OfferResult, ProcessError};
 use super::payload::TributeInputPayload;
 use super::protocol::{EncryptedTributeOffer, TributeZkExpectedHashes};
 
-pub(crate) fn derive_expected_hashes(
+pub fn derive_expected_hashes(
     offer: &EncryptedTributeOffer,
     payload: &TributeInputPayload,
     amount: &CanonicalAmount,

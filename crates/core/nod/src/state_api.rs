@@ -152,7 +152,8 @@ impl NodContract<'_> {
                 self.sealed_series_group(series_id)?
                     .ok_or_else(|| PrecompileError::fatal("a Nod claims an unsealed series"))?,
             ),
-            None => None,
+            None => Some(self.sub_series_group.read(&item.sub_series_key())?)
+                .filter(|group_key| !group_key.is_zero()),
         };
         crate::issuance::validate_item(
             item,
@@ -195,18 +196,22 @@ impl NodContract<'_> {
 
         self.register_group_series(
             item.group_key,
-            item.series_id,
-            item.issuance_currency,
-            item.reference_currency,
+            (item.series_id, item.sub_series_id),
+            (item.issuance_currency, item.reference_currency),
+            item.entry_price_minor(),
         )?;
         if let Some(series_id) = series_id {
             self.consume_unclaimed_tribute_from_series(series_id, item.group_key)?;
         } else {
             let _ = gratis_load_minor;
             self.add_nod_to_open_load(item.group_key, &item.encrypted)?;
-            self.add_nod_to_series_open_load(item.group_key, item.series_id, &item.encrypted)?;
+            self.add_nod_to_series_open_load(
+                item.group_key,
+                item.sub_series_key(),
+                &item.encrypted,
+            )?;
         }
-        self.increment_series_nod_count(item.group_key, item.series_id)?;
+        self.increment_series_nod_count(item.group_key, item.sub_series_key())?;
         self.insert_group_member(item.group_key, item.nod_id)?;
         self.insert_state_record(&StoredNod::from(item))?;
         if let Some(group) = new_group {
@@ -235,9 +240,9 @@ impl NodContract<'_> {
             .checked_add(1)
             .ok_or(NodError::SettledCountOverflow)?;
         self.remove_group_member(item.group_key, item.nod_id)?;
-        self.decrement_series_nod_count(item.group_key, item.series_id)?;
+        self.decrement_series_nod_count(item.group_key, item.sub_series_key())?;
         self.sub_nod_from_open_load(item.group_key, &item.encrypted)?;
-        self.sub_nod_from_series_open_load(item.group_key, item.series_id, &item.encrypted)?;
+        self.sub_nod_from_series_open_load(item.group_key, item.sub_series_key(), &item.encrypted)?;
         item.is_settled = true;
         self.records.update(&StoredNod::from(&item))?;
         self.groups.update(&group)?;
@@ -264,7 +269,7 @@ impl NodContract<'_> {
         } else {
             // An unsettled Nod leaves only through its forfeited group's cleanup, after the
             // group's whole unsettled load was returned. So its load stays on the total.
-            self.decrement_series_nod_count(item.group_key, item.series_id)?;
+            self.decrement_series_nod_count(item.group_key, item.sub_series_key())?;
             self.remove_group_member(item.group_key, item.nod_id)?
         };
         self.delete_state_record(item.nod_id)?;
@@ -309,7 +314,6 @@ mod tests {
             nod_id: U256::from_be_bytes([7; 32]),
             owner: Address::repeat_byte(1),
             chain_id: 2,
-            league_id: 3,
             entry_price_minor: U256::from(4),
             issuance_currency: 5,
             reference_currency: 6,
@@ -317,6 +321,8 @@ mod tests {
             issued_at: 9,
             is_settled: true,
             encryption_binding: B256::repeat_byte(10),
+            encrypted_nominal_amount: (vec![12; NOD_BLOB_LEN]).clone(),
+            sub_series_id: 0,
             encrypted_gratis_amount: vec![12; NOD_BLOB_LEN],
             series_id: SeriesId::for_pair(20261016, 840, 978).unwrap(),
         };
@@ -384,7 +390,6 @@ mod tests {
             let params = NodIssueParams {
                 owner: Address::repeat_byte(1),
                 emission_day: 20261015,
-                league_id: 1,
                 gratis_load_minor: U256::from(5_000_000),
                 entry_price_minor: U256::from(1_000_000),
                 issuance_currency: 840,
@@ -399,13 +404,12 @@ mod tests {
                     params.issuance_currency,
                     params.reference_currency,
                 ),
-                league_id: params.league_id,
+                sub_series_id: 0,
                 group_key: crate::identity::group_key(
-                    date_key_to_utc_timestamp(20_200_101).unwrap(),
+                    params.emission_day,
                     U256::ZERO,
                     params.reference_currency,
-                )
-                .expect("date step"),
+                ),
                 issuance_currency: params.issuance_currency,
                 reference_currency: params.reference_currency,
                 issued_at: date_key_to_utc_timestamp(20_200_101).unwrap(),

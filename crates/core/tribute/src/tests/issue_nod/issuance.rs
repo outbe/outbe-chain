@@ -121,7 +121,6 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
             .unwrap()
             .expect("Nod must be created");
         assert_eq!(nod_item.owner, owner1);
-        assert_eq!(nod_item.league_id, 100);
         assert_eq!(
             nod_item.issued_at,
             base_ts + 3 * outbe_system_common::time::SECONDS_PER_DAY
@@ -190,7 +189,6 @@ fn v1_mechanics_fi_groups_fractions_and_late_issue_nod_burns_tribute() {
             .unwrap()
             .expect("late Nod");
         assert_eq!(late_nod.owner, owner2);
-        assert_eq!(late_nod.league_id, 4000);
         assert_eq!(late_nod.issued_at, late);
         let totals_after_t2 = tc.get_day_totals(day).unwrap();
         assert_eq!(totals_after_t2.tribute_count, 0);
@@ -358,6 +356,7 @@ fn lysis_keys_its_result_by_the_emission_day_and_binds_the_nod_to_it() {
             )
             .unwrap();
             crate::confidential::IssueNodFromTributeRequestV1 {
+                league_id: 1,
                 tribute: record.encrypted().unwrap().clone(),
                 day_fractions: tc.day_fractions_record(fractions_day).unwrap().unwrap(),
                 terms: outbe_core_common::nod_encryption::NodTermsV1 {
@@ -365,7 +364,6 @@ fn lysis_keys_its_result_by_the_emission_day_and_binds_the_nod_to_it() {
                     nod_id: outbe_core_common::nod_rules::derive_nod_id(series, tribute.owner),
                     owner: tribute.owner,
                     emission_day: fractions_day.value(),
-                    league_id: 100,
                     issuance_currency: tribute.issuance_currency,
                     reference_currency: tribute.reference_currency,
                     entry_price_minor: U256::from(2_000_000u64),

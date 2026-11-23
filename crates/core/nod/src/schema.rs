@@ -2,8 +2,9 @@ use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::series_id::SeriesId;
 use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_macros::{contract, storage_record, storage_schema};
+use outbe_primitives::storage::types::Mapping;
 use outbe_system_common::addresses::NOD_ADDRESS;
-use outbe_system_common::time::{first_full_day, TimeError, WorldwideDay};
+use outbe_system_common::time::{TimeError, WorldwideDay};
 use serde::{Deserialize, Serialize};
 
 /// Read-time lifecycle state. Values are part of the public Nod ABI, not storage.
@@ -24,7 +25,6 @@ pub struct NodIssueParams {
     pub owner: Address,
     /// The UTC day whose VWAP prices the Nod, `YYYYMMDD`.
     pub emission_day: u32,
-    pub league_id: u16,
     pub gratis_load_minor: U256,
     pub entry_price_minor: U256,
     pub issuance_currency: u16,
@@ -42,10 +42,12 @@ pub struct NodItemState {
 
     pub encrypted: outbe_core_common::nod_encryption::EncryptedNodV1,
 
-    /// The emission day and currencies of the Tribute the Nod comes from.
+    /// The emission day and currencies of the offer the Nod comes from.
     pub series_id: SeriesId,
 
-    pub league_id: u16,
+    /// The offer hour of the Nod, counted from the start of the offering window.
+    #[serde(default)]
+    pub sub_series_id: u16,
 
     pub group_key: B256,
 
@@ -66,9 +68,15 @@ impl NodItemState {
         self.encrypted.terms.entry_price_minor
     }
 
-    /// The first full day the Nod counts call days from. The group key binds it.
+    /// The day the Nod counts call days from: 00:00 of its emission day. The group key binds it.
     pub fn full_day_after_issue(&self) -> Result<WorldwideDay, TimeError> {
-        Ok(WorldwideDay::new(first_full_day(self.issued_at)?))
+        Ok(WorldwideDay::new(self.series_id.day()))
+    }
+
+    /// Key and encrypted-load scope of the Nod's sub-series.
+    #[must_use]
+    pub fn sub_series_key(&self) -> B256 {
+        crate::index_keys::sub_series_key(self.series_id, self.sub_series_id)
     }
 
     /// Identity of the group the Nod belongs to.
@@ -315,12 +323,12 @@ pub struct NodContract {
     #[attribute(order = 109)]
     pub series_unclaimed_tribute_count: outbe_primitives::storage::dsl::Map<SeriesId, u64>,
 
-    /// Series belonging to a call group, kept until `close_group` so `NodSeriesCalled`
-    /// and `NodSeriesClosed` emit per series.
+    /// Sub-series keys belonging to a call group, kept until `close_group` so
+    /// `NodSeriesCalled` and `NodSeriesClosed` emit per sub-series.
     #[attribute(order = 110)]
     pub group_series:
-        outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::List<SeriesId>>,
-    /// Whether `group_series_key(group_key, series_id)` is listed in `group_series`.
+        outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::List<B256>>,
+    /// Whether `group_series_key(group_key, sub_series)` is listed in `group_series`.
     #[attribute(order = 111)]
     pub group_series_present: outbe_primitives::storage::dsl::Map<B256, bool>,
     /// Issuance currency (ISO 4217 numeric) of the series.
@@ -329,10 +337,10 @@ pub struct NodContract {
     /// Reference currency (ISO 4217 numeric) of the series.
     #[attribute(order = 113)]
     pub series_reference_currency: outbe_primitives::storage::dsl::Map<SeriesId, u16>,
-    /// Unsettled Nod count of `(group_key, series_id)`, keyed by `group_series_key`.
+    /// Unsettled Nod count of `(group_key, sub_series)`, keyed by `group_series_key`.
     #[attribute(order = 114)]
     pub group_series_nod_count: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// Encrypted open load (`unsettled Nods + unclaimed Tributes`) of `(group_key, series_id)`.
+    /// Encrypted open load (`unsettled Nods + unclaimed Tributes`) of `(group_key, sub_series)`.
     #[attribute(order = 115)]
     pub group_series_unsettled_load_minor_ct:
         outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::Bytes>,
@@ -342,7 +350,31 @@ pub struct NodContract {
     /// The open loads of the group series the forfeit pass has closed so far.
     #[attribute(order = 117)]
     pub group_forfeit_load_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
-    /// Whether the forfeit pass has closed `group_series_key(group_key, series_id)`.
+    /// Whether the forfeit pass has closed `group_series_key(group_key, sub_series)`.
     #[attribute(order = 118)]
     pub group_series_forfeited: outbe_primitives::storage::dsl::Map<B256, bool>,
+    /// The series of a sub-series key.
+    #[attribute(order = 119)]
+    pub sub_series_series_id: outbe_primitives::storage::dsl::Map<B256, SeriesId>,
+    /// The number of a sub-series key, its offer hour.
+    #[attribute(order = 120)]
+    pub sub_series_number: outbe_primitives::storage::dsl::Map<B256, u16>,
+    /// The entry price a sub-series got with its first Nod.
+    #[attribute(order = 121)]
+    pub sub_series_entry_price_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
+    /// The call group a sub-series joined with its first Nod.
+    #[attribute(order = 126)]
+    pub sub_series_group: outbe_primitives::storage::dsl::Map<B256, B256>,
+    /// Used SU hash marker of an offer (suHash -> bool).
+    #[attribute(order = 122)]
+    pub used_su_hashes: outbe_primitives::storage::dsl::Map<B256, bool>,
+    /// Bounded prune ring of recent SU hashes (seq % SU_HASH_RETAIN -> suHash).
+    #[attribute(order = 123)]
+    pub su_hash_ring: Mapping<u64, B256>,
+    /// Monotonic write cursor of `su_hash_ring`.
+    #[attribute(order = 124)]
+    pub su_hash_ring_seq: outbe_primitives::storage::dsl::Value<u64>,
+    /// One offer for each owner and Worldwide Day, kept after its Nod is deleted.
+    #[attribute(order = 125)]
+    pub offer_marks: outbe_primitives::storage::dsl::Map<B256, bool>,
 }

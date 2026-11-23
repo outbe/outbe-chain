@@ -11,7 +11,7 @@ use outbe_system_common::{
     time::{EmissionDate, WorldwideDay},
 };
 
-use crate::{day_schema::StoredDayTotals, DayTotals, TributeContract};
+use crate::{DayTotals, TributeContract};
 
 impl TributeContract<'_> {
     pub fn freeze_day_nominal(&self, totals: &DayTotals) -> Result<()> {
@@ -114,7 +114,7 @@ impl TributeContract<'_> {
 
     #[cfg(any(test, feature = "test-enclave"))]
     pub(crate) fn store_day_metadata(&mut self, totals: &DayTotals) -> Result<()> {
-        let mut stored = StoredDayTotals::with_key(totals.worldwide_day);
+        let mut stored = crate::day_schema::StoredDayTotals::with_key(totals.worldwide_day);
         stored.initialized = totals.initialized;
         stored.tribute_count = totals.tribute_count;
         outbe_worldwideday::WorldwideDayContract::new(self.storage_handle())

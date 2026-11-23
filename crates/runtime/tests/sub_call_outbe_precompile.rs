@@ -197,7 +197,6 @@ fn subcall_reaches_nod_in_the_same_evm_state() {
             owner,
             gratis_load_minor: U256::from(11),
             emission_day: day.value(),
-            league_id: 3,
             group_key,
             issuance_currency: 840,
             reference_currency: 978,

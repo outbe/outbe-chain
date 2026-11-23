@@ -69,7 +69,7 @@ fn resolve_tribute_series_scope(
         record.issuance_currency,
         record.reference_currency,
     )?;
-    let scope = alloy_primitives::B256::right_padding_from(series_id.as_bytes());
+    let scope = outbe_nod::index_keys::sub_series_key(series_id, 0);
     series_meta.entry(scope).or_insert((
         series_id,
         record.issuance_currency,
@@ -243,11 +243,11 @@ pub(super) fn issue_nod_from_tribute(
                     nod_id: outbe_core_common::nod_rules::derive_nod_id(series_id, record.owner),
                     owner: record.owner,
                     emission_day: series_id.day(),
-                    league_id: raw_league.max(1),
                     issuance_currency: record.issuance_currency,
                     reference_currency: record.reference_currency,
                     entry_price_minor: gratis_day_price,
                 },
+                league_id: raw_league.max(1),
             },
         )
         .map_err(TributeError::private_amount_read_failed)?;

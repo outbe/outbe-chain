@@ -29,10 +29,10 @@ type AmountResult<T> = Result<T, ComputeError>;
 
 /// Canonical Tribute amount parsed once before the ZK/non-ZK paths diverge.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) struct CanonicalAmount {
-    pub(crate) base: u64,
-    pub(crate) micro: u64,
-    pub(crate) amount_minor: U256,
+pub struct CanonicalAmount {
+    pub base: u64,
+    pub micro: u64,
+    pub amount_minor: U256,
 }
 
 /// Returns the token id `Poseidon2(owner, worldwide_day)`, BN254.
@@ -69,7 +69,7 @@ pub fn compute_token_id(
 ///
 /// The function widens intermediate products to 512 bits. Overflow, missing required
 /// VWAPs, and a positive result rounded to zero reject the offer.
-pub(crate) fn compute_nominal(
+pub fn compute_nominal(
     amount_minor: U256,
     issuance_wwd_vwap_minor: U256,
     reference_wwd_vwap_minor: U256,
@@ -111,7 +111,7 @@ fn parse_canonical_u64(value: &str, field: &'static str) -> AmountResult<u64> {
 /// Parse the `amount_base`/`amount_micro` wire fields into the canonical
 /// six-decimal Tribute amount. `amount_base` is a whole unsigned `u64` and the
 /// `amount_micro` field is the raw remainder `0..999_999`.
-pub(crate) fn parse_canonical_amount(
+pub fn parse_canonical_amount(
     base_amount: &str,
     micro_amount: &str,
 ) -> AmountResult<CanonicalAmount> {

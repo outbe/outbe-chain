@@ -30,6 +30,9 @@ interface INod {
     error DateStep(uint8 kind, uint32 dateKey);
     error NodNotForfeited();
     error NodAlreadySettled();
+    error SuHashAlreadyUsed();
+    error SuHashRingSeqOverflow();
+    error OfferAlreadyMade();
 
     /// Emitted when a Nod is issued and when it is burned by forfeit or mining.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
@@ -72,11 +75,14 @@ interface INod {
         // keccak256(seriesId || owner).
         uint256 nodId;
         address owner;
-        /// The emission day `YYYYMMDD` and the currencies of the Tribute the Nod comes from.
+        /// The emission day `YYYYMMDD` and the currencies of the offer the Nod comes from.
         bytes14 seriesId;
-        uint16 leagueId;
+        /// The offer hour of the Nod, 0 to 49 from the start of the offering window.
+        uint16 subSeriesId;
         /// Encrypted Gratis entitlement, readable by the owner and enclave.
         bytes encryptedGratisAmount;
+        /// Encrypted nominal of the offer, readable by the owner and enclave.
+        bytes encryptedNominalAmount;
         bytes32 encryptionBinding;
         uint64 chainId;
         /// Price of one whole COEN in referenceCurrency at six-decimal precision.

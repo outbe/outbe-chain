@@ -38,7 +38,6 @@ pub(crate) fn quote_nod_seed(nod_state_key: &StateKeyHandle, chain_id: u64) -> Q
                 owner: user_sender,
                 gratis_load_minor: U256::from(1_000_000u64),
                 emission_day: worldwide_day.value(),
-                league_id: 1,
                 group_key,
                 issuance_currency: 840,
                 reference_currency: 840,
@@ -54,11 +53,11 @@ pub(crate) fn quote_nod_seed(nod_state_key: &StateKeyHandle, chain_id: u64) -> Q
             nod_id,
             owner: user_sender,
             emission_day: worldwide_day.value(),
-            league_id: 1,
             entry_price_minor,
             issuance_currency: 840,
             reference_currency: 840,
         },
+        U256::from(1_000_000u64),
         U256::from(1_000_000u64),
     )
     .expect("seal nod under the resident state key");

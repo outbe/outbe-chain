@@ -106,13 +106,11 @@ fn nod_item_issued(
             owner,
             gratis_load_minor: U256::from(11),
             emission_day: worldwide_day.value(),
-            league_id: 4,
             group_key: outbe_nod::identity::group_key(
-                issued_at,
+                worldwide_day.value(),
                 outbe_core_common::markup::marked_up(entry_price_minor, CALL_RATE_PCT).unwrap(),
                 iso,
-            )
-            .expect("date step"),
+            ),
             issuance_currency: iso,
             reference_currency: iso,
             issued_at,
@@ -464,11 +462,10 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
         let dev = outbe_nod::config::NodParams::TESTNET;
         let mut item = nod_item(Address::repeat_byte(0x11), ISO);
         item.group_key = outbe_nod::identity::group_key(
-            item.issued_at,
+            item.series_id.day(),
             outbe_core_common::markup::marked_up(entry_price(), dev.call_rate).unwrap(),
             ISO,
-        )
-        .expect("date step");
+        );
         add(storage, &item);
         assert_eq!(
             (

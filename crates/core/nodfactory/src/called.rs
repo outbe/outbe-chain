@@ -308,7 +308,8 @@ pub(crate) fn mark_called(
 ) -> Result<()> {
     let deadline = api::settlement_deadline_of(now, notice_period);
     nod.record_group_called(group_key, now, deadline)?;
-    for series_id in nod.group_series.list(&group_key).read_all()? {
+    for sub_series in nod.group_series.list(&group_key).read_all()? {
+        let series_id = nod.sub_series_series_id.read(&sub_series)?;
         let issuance_currency = nod.series_issuance_currency.read(&series_id)?;
         let reference_currency = nod.series_reference_currency.read(&series_id)?;
         nod.emit(INod::NodSeriesCalled {

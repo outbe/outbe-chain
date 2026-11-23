@@ -1,22 +1,18 @@
 //! Tribute engine, day arithmetic, and the Tribute-to-NOD bridge.
 
-mod compute;
 mod day_protocol;
 mod encrypted_tribute_offer;
 mod errors;
 mod nod_bridge;
-mod payload;
 mod process;
 mod protocol;
 mod source;
 mod tribute_day;
 mod tribute_encryption;
 mod tribute_v2;
-mod zk_claim;
 
 pub mod host;
 
-pub use compute::compute_token_id;
 pub use day_protocol::{
     day_fractions_read_attestation_preimage, day_fractions_read_inputs_hash,
     day_operation_attestation_preimage, day_operation_inputs_hash, day_read_attestation_preimage,
@@ -30,6 +26,7 @@ pub use nod_bridge::{
     issue_nod_from_tribute as issue_nod_from_tribute_pure, IssueNodFromTributeOutcomeV1,
     IssueNodFromTributeRequestV1,
 };
+pub use outbe_nod::offer::compute::compute_token_id;
 pub use process::{process_tribute_offer_batch, TributeOfferKeyMaterial};
 pub use protocol::{
     inputs_canonical_hash, tribute_offer_attestation_preimage, EncryptedTributeOffer,

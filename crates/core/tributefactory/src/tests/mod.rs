@@ -516,7 +516,7 @@ fn assert_real_zk_offer_with_key_source(
         outbe_core_common::confidential_tee::encrypt_tribute_offer(&offer_public_key, &payload)
             .unwrap();
     let key = TributeOfferKeyMaterial {
-        tribute_offer_private_key: &outbe_tee::resident::OfferKeyHandle::for_test(PRIVATE_KEY),
+        offer_private_key: &outbe_tee::resident::OfferKeyHandle::for_test(PRIVATE_KEY),
         salt: &outbe_core_common::confidential_tee::OFFER_HKDF_SALT,
     };
     let mut rng =

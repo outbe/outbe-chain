@@ -704,7 +704,10 @@ fn a_series_left_open_defers_the_group_and_the_retry_credits_once() {
             } else {
                 lapsed.eur
             };
-            let target_key = outbe_nod::index_keys::group_series_key(lapsed.group, target);
+            let target_key = outbe_nod::index_keys::group_series_key(
+                lapsed.group,
+                outbe_nod::index_keys::sub_series_key(target, 0),
+            );
             let saved_load = nod
                 .group_series_unsettled_load_minor_ct
                 .bytes(&target_key)
@@ -753,7 +756,10 @@ fn a_series_left_open_defers_the_group_and_the_retry_credits_once() {
         let lapsed = lapsed_two_series_group(&storage);
         let nod = outbe_nod::NodContract::new(storage.clone());
         for series in [lapsed.usd, lapsed.eur] {
-            let key = outbe_nod::index_keys::group_series_key(lapsed.group, series);
+            let key = outbe_nod::index_keys::group_series_key(
+                lapsed.group,
+                outbe_nod::index_keys::sub_series_key(series, 0),
+            );
             nod.group_series_unsettled_load_minor_ct
                 .bytes(&key)
                 .write(&[0xFF; 3])

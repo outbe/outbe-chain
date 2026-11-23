@@ -157,7 +157,7 @@ fn authenticate_encrypted(
 
 fn material(handle: &outbe_tee::resident::OfferKeyHandle) -> TributeOfferKeyMaterial<'_> {
     TributeOfferKeyMaterial {
-        tribute_offer_private_key: handle,
+        offer_private_key: handle,
         salt: &OFFER_HKDF_SALT,
     }
 }

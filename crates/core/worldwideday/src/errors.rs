@@ -98,6 +98,9 @@ pub enum WwdStorageCorruptionError {
 
     #[error("created WWD record disappeared")]
     CreatedWwdRecordDisappeared,
+
+    #[error("Nod count of WWD {wwd} overflows")]
+    DayNodCountOverflow { wwd: WorldwideDay },
 }
 
 impl From<WwdStorageCorruptionError> for PrecompileError {

@@ -38,7 +38,6 @@ impl Rail for Nod {
             owner: OWNER,
             gratis_load_minor: U256::from(GRATIS_LOAD),
             emission_day: 20_241_220,
-            league_id: 1,
             entry_price_minor: self.cost * U256::from(1_000),
             issuance_currency,
             reference_currency: 840,

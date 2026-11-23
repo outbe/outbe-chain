@@ -15,8 +15,8 @@ pub use aggregate::{
     close_worldwide_day, open_worldwide_day, NewWwdSchedule, ValidatedWwdAggregate, WwdProjection,
 };
 pub use api::{
-    emission_day_of, is_offering_day, is_sealed, offering_worldwide_days, seal_worldwide_day,
-    worldwide_day, worldwide_days,
+    day_totals, emission_day_of, is_offering_day, is_sealed, offering_worldwide_days,
+    record_day_nod, seal_worldwide_day, worldwide_day, worldwide_days, DayTotals,
 };
 pub use lifecycle::{
     advance_worldwide_days, advance_worldwide_days_command,

@@ -75,6 +75,7 @@ fn nod_quote_cipher_vector() {
         &StateKeyHandle::for_test([0x11; 32]),
         parse(TERMS),
         U256::from(17),
+        U256::from(17),
     )
     .unwrap();
     let context = parse(QUOTE_CONTEXT);

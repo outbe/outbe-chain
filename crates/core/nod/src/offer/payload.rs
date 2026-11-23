@@ -33,7 +33,7 @@ pub fn parse_and_validate(plaintext: &[u8]) -> OfferResult<TributeInputPayload> 
     Ok(payload)
 }
 
-pub(crate) fn validate(payload: &TributeInputPayload) -> OfferResult<()> {
+pub fn validate(payload: &TributeInputPayload) -> OfferResult<()> {
     if payload.tribute_draft_id.is_empty() {
         return Err(PayloadError::DraftIdRequired.into());
     }

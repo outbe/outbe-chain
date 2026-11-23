@@ -517,9 +517,7 @@ fn measure_scenario_once(prepared: &PreparedTribute) -> Result<Observation, Stri
 
     let input = bench_input(fixture);
     let key = TributeOfferKeyMaterial {
-        tribute_offer_private_key: &outbe_tee::resident::OfferKeyHandle::for_test(
-            OFFER_PRIVATE_KEY,
-        ),
+        offer_private_key: &outbe_tee::resident::OfferKeyHandle::for_test(OFFER_PRIVATE_KEY),
         salt: &OFFER_HKDF_SALT,
     };
     let mut enclave_ns = 0_u64;

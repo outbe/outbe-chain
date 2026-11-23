@@ -20,6 +20,9 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
 /// gem/intex's 128, one rung up the same ladder.
 pub const CALL_RATE_PCT: u16 = 256;
 
+/// Share of the nominal of an offer that its Nod takes as its Gratis load, in percent.
+pub const LOAD_RATE_PCT: u64 = 32;
+
 /// Trailing window the daily call scan inspects, in whole UTC days.
 pub const CALL_LOOKBACK_DAYS: u32 = 28;
 

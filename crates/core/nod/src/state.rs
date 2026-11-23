@@ -163,8 +163,8 @@ impl NodContract<'_> {
         self.group_is_forfeited.clear(&group_key)?;
         self.group_forfeiting.clear(&group_key)?;
         self.group_forfeit_load_minor.clear(&group_key)?;
-        for series_id in self.group_series.list(&group_key).read_all()? {
-            let gs_key = crate::index_keys::group_series_key(group_key, series_id);
+        for sub_series in self.group_series.list(&group_key).read_all()? {
+            let gs_key = crate::index_keys::group_series_key(group_key, sub_series);
             self.group_series_present.clear(&gs_key)?;
             self.group_series_forfeited.clear(&gs_key)?;
             self.group_series_nod_count.clear(&gs_key)?;
@@ -172,9 +172,14 @@ impl NodContract<'_> {
                 .bytes(&gs_key)
                 .clear()?;
             // The series stays bound after its last Tribute so call and close can still name it.
+            let series_id = self.sub_series_series_id.read(&sub_series)?;
             self.series_group.clear(&series_id)?;
             self.series_issuance_currency.clear(&series_id)?;
             self.series_reference_currency.clear(&series_id)?;
+            self.sub_series_series_id.clear(&sub_series)?;
+            self.sub_series_number.clear(&sub_series)?;
+            self.sub_series_entry_price_minor.clear(&sub_series)?;
+            self.sub_series_group.clear(&sub_series)?;
         }
         self.group_series.list(&group_key).clear()?;
         deadline_queue::remove(&CleanupQueue(self), group_key)
@@ -206,14 +211,26 @@ impl NodContract<'_> {
     pub(crate) fn register_group_series(
         &mut self,
         group_key: B256,
-        series_id: SeriesId,
-        issuance_currency: u16,
-        reference_currency: u16,
+        (series_id, number): (SeriesId, u16),
+        (issuance_currency, reference_currency): (u16, u16),
+        entry_price_minor: U256,
     ) -> Result<()> {
-        let gs_key = crate::index_keys::group_series_key(group_key, series_id);
+        let sub_series = crate::index_keys::sub_series_key(series_id, number);
+        let gs_key = crate::index_keys::group_series_key(group_key, sub_series);
         if !self.group_series_present.read(&gs_key)? {
-            self.group_series.list(&group_key).push(series_id)?;
+            self.group_series.list(&group_key).push(sub_series)?;
             self.group_series_present.write(&gs_key, true)?;
+            self.sub_series_series_id.write(&sub_series, series_id)?;
+            self.sub_series_number.write(&sub_series, number)?;
+        }
+        if self
+            .sub_series_entry_price_minor
+            .read(&sub_series)?
+            .is_zero()
+        {
+            self.sub_series_entry_price_minor
+                .write(&sub_series, entry_price_minor)?;
+            self.sub_series_group.write(&sub_series, group_key)?;
         }
         self.series_issuance_currency
             .write(&series_id, issuance_currency)?;
@@ -224,9 +241,9 @@ impl NodContract<'_> {
     pub(crate) fn increment_series_nod_count(
         &mut self,
         group_key: B256,
-        series_id: SeriesId,
+        sub_series: B256,
     ) -> Result<()> {
-        let gs_key = crate::index_keys::group_series_key(group_key, series_id);
+        let gs_key = crate::index_keys::group_series_key(group_key, sub_series);
         let next = self
             .group_series_nod_count
             .read(&gs_key)?
@@ -238,9 +255,9 @@ impl NodContract<'_> {
     pub(crate) fn decrement_series_nod_count(
         &mut self,
         group_key: B256,
-        series_id: SeriesId,
+        sub_series: B256,
     ) -> Result<()> {
-        let gs_key = crate::index_keys::group_series_key(group_key, series_id);
+        let gs_key = crate::index_keys::group_series_key(group_key, sub_series);
         let next = self
             .group_series_nod_count
             .read(&gs_key)?
@@ -275,8 +292,8 @@ impl NodContract<'_> {
         if self.sealed_series_group(series_id)?.is_some() {
             return Err(PrecompileError::fatal("a Lysis series is sealed twice"));
         }
-        let expected_series_scope = B256::right_padding_from(series_id.as_bytes());
-        if unclaimed_tribute_load.scope != expected_series_scope {
+        let sub_series = crate::index_keys::sub_series_key(series_id, 0);
+        if unclaimed_tribute_load.scope != sub_series {
             return Err(NodError::EncryptedTermsMismatch.into());
         }
         let current_group = self.groups.get(group_key)?;
@@ -293,8 +310,13 @@ impl NodContract<'_> {
                 series_load: Box::new(unclaimed_tribute_load),
             },
         )?;
-        self.register_group_series(group_key, series_id, issuance_currency, reference_currency)?;
-        let gs_key = crate::index_keys::group_series_key(group_key, series_id);
+        self.register_group_series(
+            group_key,
+            (series_id, 0),
+            (issuance_currency, reference_currency),
+            entry_price_minor,
+        )?;
+        let gs_key = crate::index_keys::group_series_key(group_key, sub_series);
         self.group_series_unsettled_load_minor_ct
             .bytes(&gs_key)
             .write(&series_load_bytes)?;
@@ -416,15 +438,14 @@ impl NodContract<'_> {
     pub(crate) fn series_open_load_record(
         &self,
         group_key: B256,
-        series_id: SeriesId,
+        sub_series: B256,
     ) -> Result<Option<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1>> {
-        let gs_key = crate::index_keys::group_series_key(group_key, series_id);
-        let scope = B256::right_padding_from(series_id.as_bytes());
+        let gs_key = crate::index_keys::group_series_key(group_key, sub_series);
         self.open_load_record(
             self.group_series_unsettled_load_minor_ct
                 .bytes(&gs_key)
                 .read()?,
-            scope,
+            sub_series,
         )
     }
 
@@ -444,8 +465,8 @@ impl NodContract<'_> {
         self.read_open_load_record(self.group_open_load_record(group_key)?)
     }
 
-    pub fn read_series_open_load(&self, group_key: B256, series_id: SeriesId) -> Result<U256> {
-        self.read_open_load_record(self.series_open_load_record(group_key, series_id)?)
+    pub fn read_series_open_load(&self, group_key: B256, sub_series: B256) -> Result<U256> {
+        self.read_open_load_record(self.series_open_load_record(group_key, sub_series)?)
     }
 
     fn apply_scoped_open_load(
@@ -485,13 +506,12 @@ impl NodContract<'_> {
     pub(crate) fn apply_series_open_load(
         &mut self,
         group_key: B256,
-        series_id: SeriesId,
+        sub_series: B256,
         operation: NodGroupLoadOperationV1,
     ) -> Result<()> {
-        let scope = B256::right_padding_from(series_id.as_bytes());
-        let previous = self.series_open_load_record(group_key, series_id)?;
-        let bytes = self.apply_scoped_open_load(group_key, scope, previous, operation)?;
-        let gs_key = crate::index_keys::group_series_key(group_key, series_id);
+        let previous = self.series_open_load_record(group_key, sub_series)?;
+        let bytes = self.apply_scoped_open_load(group_key, sub_series, previous, operation)?;
+        let gs_key = crate::index_keys::group_series_key(group_key, sub_series);
         self.group_series_unsettled_load_minor_ct
             .bytes(&gs_key)
             .write(&bytes)
@@ -513,12 +533,12 @@ impl NodContract<'_> {
     pub(crate) fn add_nod_to_series_open_load(
         &mut self,
         group_key: B256,
-        series_id: SeriesId,
+        sub_series: B256,
         nod: &outbe_core_common::nod_encryption::EncryptedNodV1,
     ) -> Result<()> {
         self.apply_series_open_load(
             group_key,
-            series_id,
+            sub_series,
             NodGroupLoadOperationV1::AddNod {
                 nod: Box::new(nod.clone()),
             },
@@ -541,12 +561,12 @@ impl NodContract<'_> {
     pub(crate) fn sub_nod_from_series_open_load(
         &mut self,
         group_key: B256,
-        series_id: SeriesId,
+        sub_series: B256,
         nod: &outbe_core_common::nod_encryption::EncryptedNodV1,
     ) -> Result<()> {
         self.apply_series_open_load(
             group_key,
-            series_id,
+            sub_series,
             NodGroupLoadOperationV1::SubNod {
                 nod: Box::new(nod.clone()),
             },
@@ -566,12 +586,12 @@ impl NodContract<'_> {
     pub(crate) fn take_series_unsettled_load(
         &mut self,
         group_key: B256,
-        series_id: SeriesId,
+        sub_series: B256,
         load: U256,
     ) -> Result<()> {
         self.apply_series_open_load(
             group_key,
-            series_id,
+            sub_series,
             NodGroupLoadOperationV1::AdjustTransient {
                 load_minor: load,
                 add: false,

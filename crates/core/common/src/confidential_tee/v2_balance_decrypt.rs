@@ -2,7 +2,8 @@
 
 use alloy_primitives::{Address, U256};
 use outbe_core_common::nod_encryption::{
-    EncryptedNodV1, NodQuoteContextV1, NOD_AMOUNT_NONCE_INFO, NOD_BLOB_LEN, NOD_QUOTE_NONCE_INFO,
+    EncryptedNodV1, NodQuoteContextV1, NOD_AMOUNT_NONCE_INFO, NOD_BLOB_LEN, NOD_NOMINAL_NONCE_INFO,
+    NOD_QUOTE_NONCE_INFO,
 };
 use outbe_core_common::tribute_encryption::{
     EncryptedTributeV2, TributeAmountsV2, TRIBUTE_AMOUNT_NONCE_INFO,
@@ -220,6 +221,28 @@ pub fn decrypt_nod_for_owner(
         crypto_slot: slot.as_slice(),
         nonce_info: NOD_AMOUNT_NONCE_INFO,
         ciphertext: &nod.encrypted_gratis_amount,
+        map_error: map_nod,
+    })
+}
+
+/// Open an [`EncryptedNodV1`] nominal with the owner's NOD view key.
+pub fn decrypt_nod_nominal_for_owner(
+    view_key: &[u8; 32],
+    nod: &EncryptedNodV1,
+) -> Result<U256, LocalCryptoError> {
+    if !nod.has_valid_encoding() {
+        return Err(LocalCryptoError::InvalidNodEncoding);
+    }
+    let digest = nod.context_digest();
+    let key_info = nod.amount_key_info();
+    let slot = nod.crypto_slot();
+    open_counter_amount(CounterAmountInput {
+        view_key,
+        context_digest: digest.as_slice(),
+        key_info: &key_info,
+        crypto_slot: slot.as_slice(),
+        nonce_info: NOD_NOMINAL_NONCE_INFO,
+        ciphertext: &nod.encrypted_nominal_amount,
         map_error: map_nod,
     })
 }

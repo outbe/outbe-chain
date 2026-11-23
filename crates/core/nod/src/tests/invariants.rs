@@ -23,7 +23,6 @@ fn item(owner: Address) -> NodItemState {
             owner,
             gratis_load_minor: U256::from(11),
             emission_day: worldwide_day.value(),
-            league_id: 4,
             group_key: crate::test_support::group_key(
                 date_key_to_utc_timestamp(
                     previous_date_key(timestamp_to_date_key(NOW)).expect("date step"),

@@ -21,6 +21,17 @@ mod abi {
 }
 pub use abi::INodFactory;
 
+/// Every `issueNod` runs the pinned UltraHonk verifier, so its base gas covers verification.
+pub fn base_gas(input: &[u8]) -> u64 {
+    use alloy_sol_types::SolCall;
+    match input.get(..4) {
+        Some(selector) if selector == INodFactory::issueNodCall::SELECTOR => {
+            outbe_primitives::storage::gas::ZK_VERIFY_GAS
+        }
+        _ => outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS,
+    }
+}
+
 /// Dispatches NodFactory calls against EVM state.
 pub fn dispatch(
     storage: outbe_primitives::storage::StorageHandle,
@@ -32,6 +43,25 @@ pub fn dispatch(
     dispatch_call(data, INodFactory::INodFactoryCalls::abi_decode, |call| {
         use INodFactory::INodFactoryCalls::*;
         match call {
+            issueNod(c) => mutate(&storage, c, caller, |sender, c| {
+                crate::offer::issue_nod(
+                    &storage,
+                    crate::offer::IssueNodInput {
+                        caller: sender,
+                        cipher_text: c.cipherText,
+                        nonce: c.nonce,
+                        ephemeral_pubkey: c.ephemeralPubkey,
+                        worldwide_day: c.worldwideDay.into(),
+                        issuance_currency: c.issuanceCurrency,
+                        reference_currency: c.referenceCurrency,
+                        zk_proof: c.zkProof,
+                        l2_chain_id: c.chainId,
+                        circuit_version: c.version,
+                        zk_merkle_root: c.zkMerkleRoot,
+                        signature: c.signature,
+                    },
+                )
+            }),
             settleNod(c) => mutate(&storage, c, caller, |sender, c| {
                 runtime::settle_nod(
                     &storage,

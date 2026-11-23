@@ -524,11 +524,11 @@ fn encrypted_nod(
             nod_id: U256::from_be_bytes([nod_id_byte; 32]),
             owner: alice(),
             emission_day: WorldwideDay::new(20250115).value(),
-            league_id: 0,
             entry_price_minor: U256::ONE,
             issuance_currency: 840,
             reference_currency: 978,
         },
+        amount,
         amount,
     )
     .unwrap()

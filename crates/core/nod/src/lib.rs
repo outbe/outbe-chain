@@ -25,6 +25,8 @@ mod metadata;
 pub mod nod_decrypt;
 pub mod nod_encryption;
 pub mod nod_host;
+pub mod offer;
+pub mod offers;
 pub mod openings;
 pub mod precompile;
 pub mod pricing;

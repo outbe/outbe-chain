@@ -163,11 +163,11 @@ fn nod() -> outbe_core_common::nod_encryption::EncryptedNodV1 {
             nod_id: U256::ONE,
             owner: account(),
             emission_day: 20250115,
-            league_id: 2,
             entry_price_minor: U256::ONE,
             issuance_currency: 840,
             reference_currency: 840,
         },
+        U256::from(1_000_000u64),
         U256::from(1_000_000u64),
     )
     .expect("encrypt nod")

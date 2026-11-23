@@ -48,7 +48,8 @@ pub use response_auth::{
 };
 pub use v2_balance_decrypt::{
     decrypt_fidelity_cohorts, decrypt_gratis_balance, decrypt_nod_for_owner,
-    decrypt_nod_quote_for_owner, decrypt_promis_balance, decrypt_tribute_for_owner,
+    decrypt_nod_nominal_for_owner, decrypt_nod_quote_for_owner, decrypt_promis_balance,
+    decrypt_tribute_for_owner,
 };
 pub use witness_envelope::{
     consensus_witness_call, decode_canonical_body, decode_tagged_payload,

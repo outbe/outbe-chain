@@ -20,6 +20,8 @@ pub struct IssueNodFromTributeRequestV1 {
     pub day_fractions: EncryptedTributeDayFractionsV1,
     /// Public NOD terms for the issued asset.
     pub terms: NodTermsV1,
+    /// League of the Tribute, which selects its day fraction.
+    pub league_id: u16,
 }
 
 /// Outcome of [`issue_nod_from_tribute`].
@@ -48,11 +50,12 @@ pub fn encrypt_nod_for_tribute(
             reason: NOD_SOURCE_MISMATCH,
         });
     }
-    let _ = decrypt_tribute(tribute_state_key, tribute)?;
+    let amounts = decrypt_tribute(tribute_state_key, tribute)?;
     Ok(outbe_nod::nod_encryption::encrypt_nod(
         nod_state_key,
         terms,
         amount,
+        amounts.nominal_amount_minor,
     )?)
 }
 
@@ -76,7 +79,12 @@ pub fn issue_nod_from_tribute(
     }
     let amounts = decrypt_tribute(tribute_state_key, &request.tribute)?;
     let fractions = read_day_fractions(network_secret, &request.day_fractions)?;
-    let fraction = U256::from(fractions.get(&terms.league_id.max(1)).copied().unwrap_or(0));
+    let fraction = U256::from(
+        fractions
+            .get(&request.league_id.max(1))
+            .copied()
+            .unwrap_or(0),
+    );
     let gratis_load_minor = match outbe_lysis::program_v1::calculate_gratis_load(
         amounts.nominal_amount_minor,
         fraction,
@@ -93,8 +101,12 @@ pub fn issue_nod_from_tribute(
     if cost.is_zero() {
         return Ok(IssueNodFromTributeOutcomeV1::ZeroSettlementCost);
     }
-    let nod =
-        outbe_nod::nod_encryption::encrypt_nod(nod_state_key, terms.clone(), gratis_load_minor)?;
+    let nod = outbe_nod::nod_encryption::encrypt_nod(
+        nod_state_key,
+        terms.clone(),
+        gratis_load_minor,
+        amounts.nominal_amount_minor,
+    )?;
     Ok(IssueNodFromTributeOutcomeV1::Issued(nod))
 }
 

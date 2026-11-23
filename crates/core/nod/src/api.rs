@@ -87,6 +87,77 @@ pub fn add_nod(
     crate::state_api::add_item(storage, item, call_terms, gratis_load_minor)
 }
 
+/// Decrypts one offer, prices it and encrypts its Nod in the enclave.
+pub fn issue_at_offer(
+    storage: &StorageHandle<'_>,
+    request: crate::offer::issue::IssueNodAtOfferRequestV1,
+) -> Result<std::result::Result<crate::offer::issue::NodAtOfferResultV1, outbe_tee::TransportError>>
+{
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
+    Ok(crate::enclave_client::issue_nod_at_offer(request))
+}
+
+/// Adds the load, or with `nominal` the nominal, of `nod` to the day sum `previous`
+/// of `scope`.
+pub fn add_to_day_sum(
+    storage: &StorageHandle<'_>,
+    scope: B256,
+    previous: Option<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1>,
+    (nod, nominal): (&outbe_core_common::nod_encryption::EncryptedNodV1, bool),
+) -> Result<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1> {
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
+    let nod = Box::new(nod.clone());
+    let operation = if nominal {
+        crate::nod_encryption::NodGroupLoadOperationV1::AddNodNominal { nod }
+    } else {
+        crate::nod_encryption::NodGroupLoadOperationV1::AddNod { nod }
+    };
+    let request = crate::nod_encryption::NodGroupLoadOpRequestV1 {
+        chain_id: storage.chain_id()?,
+        scope,
+        previous,
+        operation,
+    };
+    crate::enclave_client::apply_group_load_operation(request)
+        .map_err(|err| crate::errors::NodError::AmountReadFailed(err).into())
+}
+
+/// Reads a day sum in the enclave.
+pub fn read_day_sum(
+    storage: &StorageHandle<'_>,
+    record: &outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1,
+) -> Result<U256> {
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
+    crate::enclave_client::read_group_load(record)
+        .map_err(|err| crate::errors::NodError::AmountReadFailed(err).into())
+}
+
+/// The call group sub-series `number` of `series_id` joined with its first Nod.
+pub fn sub_series_group(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    number: u16,
+) -> Result<Option<B256>> {
+    let key = crate::index_keys::sub_series_key(series_id, number);
+    let group_key = NodContract::new(storage.clone())
+        .sub_series_group
+        .read(&key)?;
+    Ok((!group_key.is_zero()).then_some(group_key))
+}
+
+/// The entry price sub-series `number` of `series_id` got with its first Nod.
+pub fn sub_series_entry_price(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    number: u16,
+) -> Result<Option<U256>> {
+    let key = crate::index_keys::sub_series_key(series_id, number);
+    let price = NodContract::new(storage.clone())
+        .sub_series_entry_price_minor
+        .read(&key)?;
+    Ok((!price.is_zero()).then_some(price))
+}
+
 /// Inserts a Nod claimed from a Tribute of a Lysis series into the series' call group.
 /// The group's encrypted open load (`unsettled + unclaimed`) is unchanged because the Tribute's
 /// load stays in the same call group.
@@ -168,16 +239,16 @@ pub fn take_unsettled_load(storage: &StorageHandle<'_>, group_key: B256, load: U
     NodContract::new(storage.clone()).take_unsettled_load(group_key, load)
 }
 
-/// Removes `load` from both `group_key` and `(group_key, series_id)` open loads.
+/// Removes `load` from both `group_key` and `(group_key, sub_series)` open loads.
 pub fn take_series_unsettled_load(
     storage: &StorageHandle<'_>,
     group_key: B256,
-    series_id: SeriesId,
+    sub_series: B256,
     load: U256,
 ) -> Result<()> {
     let mut nod = NodContract::new(storage.clone());
     nod.take_unsettled_load(group_key, load)?;
-    nod.take_series_unsettled_load(group_key, series_id, load)
+    nod.take_series_unsettled_load(group_key, sub_series, load)
 }
 
 /// Removes a loaded Nod item and decrements membership, deleting the group only if empty.

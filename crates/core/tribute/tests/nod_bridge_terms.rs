@@ -70,7 +70,6 @@ fn nod_bridge_rejects_mutated_terms_and_a_tampered_tribute_blob() {
         ),
         owner,
         emission_day: day.value(),
-        league_id: 1,
         entry_price_minor: U256::from(700u64),
         issuance_currency: 840,
         reference_currency: 978,
@@ -103,6 +102,7 @@ fn nod_bridge_rejects_mutated_terms_and_a_tampered_tribute_blob() {
             &tribute_key,
             &nod_key,
             &IssueNodFromTributeRequestV1 {
+                league_id: 1,
                 tribute: tribute.clone(),
                 day_fractions: fractions.clone(),
                 terms: wrong,
@@ -129,6 +129,7 @@ fn nod_bridge_rejects_mutated_terms_and_a_tampered_tribute_blob() {
             &tribute_key,
             &nod_key,
             &IssueNodFromTributeRequestV1 {
+                league_id: 1,
                 tribute: tampered,
                 day_fractions: fractions.clone(),
                 terms: terms.clone(),
@@ -270,6 +271,7 @@ fn resident_host_encrypts_reads_and_issues_nod() {
         .expect("offer key")
         .expect("sealed fractions");
     let issued = issue_nod_from_tribute(IssueNodFromTributeRequestV1 {
+        league_id: 1,
         tribute,
         day_fractions: sealed,
         terms,
@@ -363,7 +365,6 @@ fn bridge_fixture(tribute_key: &StateKeyHandle) -> (EncryptedTributeV2, NodTerms
         ),
         owner,
         emission_day: day.value(),
-        league_id: 0,
         entry_price_minor: U256::from(700u64),
         issuance_currency: 840,
         reference_currency: 978,

@@ -59,6 +59,26 @@ pub(crate) fn seal_group_load(
     crate::nod_host::seal_group_load((chain_id, scope), (sequence, inputs_hash), load_minor)
 }
 
+pub(crate) fn issue_nod_at_offer(
+    request: crate::offer::issue::IssueNodAtOfferRequestV1,
+) -> Result<crate::offer::issue::NodAtOfferResultV1, TransportError> {
+    #[cfg(any(test, feature = "test-enclave"))]
+    if test_enclave::enabled() {
+        let handle = outbe_tee::resident::OfferKeyHandle::for_test(test_enclave::OFFER_SECRET);
+        let material = crate::offer::OfferKeyMaterial {
+            offer_private_key: &handle,
+            salt: &outbe_core_common::confidential_tee::OFFER_HKDF_SALT,
+        };
+        return Ok(crate::offer::issue::issue_nod_at_offer(
+            &material,
+            &test_enclave::state_key(),
+            request.chain_id,
+            &request,
+        ));
+    }
+    crate::nod_host::issue_nod_at_offer(request)
+}
+
 pub(crate) fn encrypt_nod_quote(
     nod: &EncryptedNodV1,
     context: NodQuoteContextV1,
@@ -86,6 +106,8 @@ pub(crate) fn encrypt_nod_quote(
 pub mod test_enclave {
     use std::cell::Cell;
     thread_local! { static INSTALLED: Cell<bool> = const { Cell::new(false) }; }
+    /// Fixed resident offer secret of the stand-in.
+    pub const OFFER_SECRET: [u8; 32] = [0x6b; 32];
     /// Opaque fixture capability; construction requires `outbe-tee/test-utils`.
     pub fn state_key() -> outbe_tee::resident::StateKeyHandle {
         outbe_tee::resident::StateKeyHandle::for_test([0x5a; 32])

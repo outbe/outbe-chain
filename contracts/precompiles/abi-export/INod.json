@@ -100,12 +100,17 @@
             "internalType": "bytes14"
           },
           {
-            "name": "leagueId",
+            "name": "subSeriesId",
             "type": "uint16",
             "internalType": "uint16"
           },
           {
             "name": "encryptedGratisAmount",
+            "type": "bytes",
+            "internalType": "bytes"
+          },
+          {
+            "name": "encryptedNominalAmount",
             "type": "bytes",
             "internalType": "bytes"
           },
@@ -823,12 +828,27 @@
   },
   {
     "type": "error",
+    "name": "OfferAlreadyMade",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "QueryLimitExceeded",
     "inputs": []
   },
   {
     "type": "error",
     "name": "SettledCountOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuHashAlreadyUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuHashRingSeqOverflow",
     "inputs": []
   },
   {

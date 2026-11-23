@@ -24,20 +24,14 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::confidential_tee::ecdhe_tribute_offer_decrypt;
-use outbe_tee::resident::OfferKeyHandle;
 
-use super::compute::{compute_nominal, compute_token_id, parse_canonical_amount};
 use super::errors::{display_text, OfferError, OfferResult, ProcessError};
-use super::payload::parse_and_validate;
 use super::protocol::{self, EncryptedTributeOffer, TributeOfferResult, TributeOfferStatus};
-use super::zk_claim::derive_expected_hashes;
+use outbe_nod::offer::compute::{compute_nominal, compute_token_id, parse_canonical_amount};
+use outbe_nod::offer::payload::parse_and_validate;
+use outbe_nod::offer::zk_claim::derive_expected_hashes;
 
-/// The enclave-resident offer decryption key material (derived from the sealed
-/// root seed via the HKDF chain). Borrowed for the duration of a batch call.
-pub struct TributeOfferKeyMaterial<'a> {
-    pub tribute_offer_private_key: &'a OfferKeyHandle,
-    pub salt: &'a [u8; 32],
-}
+pub use outbe_nod::offer::OfferKeyMaterial as TributeOfferKeyMaterial;
 
 /// Process a batch of encrypted offers, each carrying its own node-resolved
 /// price. Per-offer failures become `Rejected{reason}` (never abort the whole
@@ -65,7 +59,7 @@ fn process_one(
 ) -> OfferResult<TributeOfferResult> {
     let ephemeral = offer.ephemeral_pubkey.to_be_bytes::<32>();
     let plaintext = ecdhe_tribute_offer_decrypt(
-        key.tribute_offer_private_key,
+        key.offer_private_key,
         key.salt,
         &ephemeral,
         &offer.nonce,
@@ -140,10 +134,10 @@ fn rejected(reason: OfferError) -> TributeOfferResult {
 
 #[cfg(test)]
 mod tests {
-    use super::super::compute::compute_token_id;
     use super::super::protocol::{TributeZkContext, WorldwideDay};
     use super::*;
     use outbe_core_common::confidential_tee::{chacha20poly1305_encrypt, hkdf_sha256};
+    use outbe_nod::offer::compute::compute_token_id;
     use outbe_system_common::units::SCALE_1E6_U256;
     use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -180,10 +174,11 @@ mod tests {
     }
 
     fn key() -> TributeOfferKeyMaterial<'static> {
-        static OFFER_HANDLE: std::sync::OnceLock<OfferKeyHandle> = std::sync::OnceLock::new();
+        static OFFER_HANDLE: std::sync::OnceLock<outbe_tee::resident::OfferKeyHandle> =
+            std::sync::OnceLock::new();
         TributeOfferKeyMaterial {
-            tribute_offer_private_key: OFFER_HANDLE
-                .get_or_init(|| OfferKeyHandle::for_test(OFFER_SK)),
+            offer_private_key: OFFER_HANDLE
+                .get_or_init(|| outbe_tee::resident::OfferKeyHandle::for_test(OFFER_SK)),
             salt: &SALT,
         }
     }

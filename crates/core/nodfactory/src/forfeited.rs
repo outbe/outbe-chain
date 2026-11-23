@@ -3,7 +3,6 @@
 
 use alloy_primitives::B256;
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
-use outbe_core_common::series_id::SeriesId;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, PrecompileError, Result},
@@ -92,8 +91,8 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
 
     fn process_member(&mut self, group: B256, slot: SeriesSlot) -> Result<()> {
         self.nod.group_forfeiting.write(&group, true)?;
-        if let Some(series_id) = self.nod.group_series.list(&group).get(slot.position)? {
-            self.close_series(group, series_id)?;
+        if let Some(sub_series) = self.nod.group_series.list(&group).get(slot.position)? {
+            self.close_series(group, sub_series)?;
         }
         if slot.last {
             self.close_group(group)?;
@@ -112,8 +111,9 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
 
 impl NodForfeit<'_, '_> {
     /// Adds the series' open load to the group's credit and emits its close, once per series.
-    fn close_series(&mut self, group: B256, series_id: SeriesId) -> Result<()> {
-        let gs_key = group_series_key(group, series_id);
+    fn close_series(&mut self, group: B256, sub_series: B256) -> Result<()> {
+        let gs_key = group_series_key(group, sub_series);
+        let series_id = self.nod.sub_series_series_id.read(&sub_series)?;
         if self.nod.group_series_forfeited.read(&gs_key)? {
             return Ok(());
         }
@@ -121,7 +121,7 @@ impl NodForfeit<'_, '_> {
         let forfeited_tribute_count =
             u32::try_from(self.nod.series_unclaimed_tribute_count.read(&series_id)?)
                 .map_err(|_| NodError::GroupMemberIndexOverflow { group_key: group })?;
-        let forfeited_amount_minor = self.nod.read_series_open_load(group, series_id)?;
+        let forfeited_amount_minor = self.nod.read_series_open_load(group, sub_series)?;
         let total = self
             .nod
             .group_forfeit_load_minor
@@ -149,8 +149,8 @@ impl NodForfeit<'_, '_> {
     fn close_group(&mut self, group: B256) -> Result<()> {
         // A series a failed slot left open keeps the group in the queue so healthy slots commit
         // their close once and the retry reads only the open series.
-        for series_id in self.nod.group_series.list(&group).read_all()? {
-            let gs_key = group_series_key(group, series_id);
+        for sub_series in self.nod.group_series.list(&group).read_all()? {
+            let gs_key = group_series_key(group, sub_series);
             if !self.nod.group_series_forfeited.read(&gs_key)? {
                 return Ok(());
             }

@@ -195,7 +195,7 @@ fn offer_creator_owns_the_tribute_while_proof_binding_uses_the_transaction_calle
         }),
     };
     let key = TributeOfferKeyMaterial {
-        tribute_offer_private_key: &f.tribute_state_key,
+        offer_private_key: &f.tribute_state_key,
         salt: &OFFER_HKDF_SALT,
     };
     let (results, _) = process_encrypted_tribute_offer_batch(
