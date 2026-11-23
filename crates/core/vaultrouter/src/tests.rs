@@ -2097,50 +2097,62 @@ fn with_reservable_vault_at_block<R>(
     block: u64,
     f: impl FnOnce(StorageHandle<'_>) -> R,
 ) -> R {
+    with_reservable_asset(USD_ISO_CODE, 6, shares, block, f)
+}
+
+/// A reservable vault whose asset is in `issuance_iso`; USD is the priced reference currency.
+fn with_reservable_asset<R>(
+    issuance_iso: u16,
+    decimals: u8,
+    shares: U256,
+    block: u64,
+    f: impl FnOnce(StorageHandle<'_>) -> R,
+) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_block_number(block);
     storage.set_timestamp(U256::from(1_700_000_000u64));
     storage.stub_sub_call_at(vault(), word(shares));
     storage.enable_sub_call_stub();
-    storage.stub_sub_call_at_selector(asset(), IERC20::decimalsCall::SELECTOR, word(U256::from(6)));
+    storage.stub_sub_call_at_selector(
+        asset(),
+        IERC20::decimalsCall::SELECTOR,
+        word(U256::from(decimals)),
+    );
     storage.stub_sub_call_at_selector(
         asset(),
         IReferenceCurrency::isoCodeCall::SELECTOR,
-        word(U256::from(USD_ISO_CODE)),
+        word(U256::from(issuance_iso)),
     );
     StorageHandle::enter(&mut storage, |storage| {
         storage
             .set_code(asset(), Bytecode::new_raw(vec![0x00].into()))
             .unwrap();
-        let pair = AddressPair::new_coen_to(USD_ISO_CODE);
-        outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+        for iso in [USD_ISO_CODE, issuance_iso] {
+            let pair = AddressPair::new_coen_to(iso);
+            if outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
+                .unwrap()
+                .is_some()
+            {
+                continue;
+            }
+            outbe_oracle::api::register_pair(storage.clone(), pair).unwrap();
+            outbe_oracle::test_support::seed_covered_trailing_window(
+                &storage,
+                pair,
+                U256::from(2_000_000),
+                U256::ONE,
+            )
+            .unwrap();
+        }
         let oracle = OracleContract::new(storage.clone());
         oracle
             .policy_rate
-            .write(&USD_ISO_CODE, U256::from(43_000))
+            .write(&issuance_iso, U256::from(43_000))
             .unwrap();
         oracle
             .policy_rate_published_at
-            .write(&USD_ISO_CODE, 1)
+            .write(&issuance_iso, storage.now_secs().unwrap())
             .unwrap();
-        outbe_oracle::test_support::seed_covered_trailing_window(
-            &storage,
-            pair,
-            U256::from(2_000_000),
-            U256::ONE,
-        )
-        .unwrap();
-        let day = outbe_system_common::time::previous_date_key(
-            outbe_system_common::time::timestamp_to_date_key(1_700_000_000),
-        )
-        .expect("date step");
-        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD_ISO_CODE)
-            .unwrap()
-            .unwrap();
-        oracle
-            .record_utc_day_vwap(day, index, U256::from(2_000_000))
-            .unwrap();
-        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
         bond_cca(&storage);
         register_vault(&storage, asset(), vault());
         storage
@@ -2226,14 +2238,9 @@ fn a_reservation_needs_every_call_term() {
                 .is_zero());
         };
     with_reservable_vault(U256::from(100u64), |storage| {
-        let day = outbe_system_common::time::previous_date_key(
-            outbe_system_common::time::timestamp_to_date_key(1_700_000_000),
-        )
-        .expect("date step");
         let oracle = OracleContract::new(storage.clone());
-        let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), USD_ISO_CODE)
-            .unwrap()
-            .unwrap();
+        let now = storage.now_secs().unwrap();
+        let max_age = u64::from(outbe_credis::constants::MAX_POLICY_RATE_AGE);
 
         rejected(
             &storage,
@@ -2256,25 +2263,16 @@ fn a_reservation_needs_every_call_term() {
         );
         oracle
             .policy_rate_published_at
-            .write(&USD_ISO_CODE, 1)
+            .write(&USD_ISO_CODE, now - max_age - 1)
             .unwrap();
-
-        oracle.utc_day_vwap_last_finalized.write(day - 1).unwrap();
         rejected(
             &storage,
             USD_ISO_CODE,
-            VaultRouterError::ReferencePriceUnavailable.into(),
-        );
-        oracle.utc_day_vwap_last_finalized.write(day).unwrap();
-
-        oracle.record_utc_day_vwap(day, index, U256::ZERO).unwrap();
-        rejected(
-            &storage,
-            USD_ISO_CODE,
-            VaultRouterError::ReferencePriceUnavailable.into(),
+            VaultRouterError::PolicyRateTooOld.into(),
         );
         oracle
-            .record_utc_day_vwap(day, index, U256::from(2_000_000))
+            .policy_rate_published_at
+            .write(&USD_ISO_CODE, now - max_age)
             .unwrap();
 
         rejected(
@@ -2287,17 +2285,20 @@ fn a_reservation_needs_every_call_term() {
     });
 }
 
-/// The anchor is the reference currency's own previous-day VWAP; the policy rate and
-/// the pledge valuation stay with the issuance currency.
+/// The entry price is the reference currency's 24-hour VWAP; the policy rate and the
+/// pledge valuation stay with the issuance currency.
 #[test]
-fn a_reservation_quotes_the_call_terms_in_its_reference_currency() {
+fn credis_prices_use_the_24_hour_vwap_of_the_reservation_hour() {
     with_reservable_vault(U256::from(100u64), |storage| {
-        let day = outbe_system_common::time::previous_date_key(
-            outbe_system_common::time::timestamp_to_date_key(1_700_000_000),
+        let eur = AddressPair::new_coen_to(EUR_ISO_CODE);
+        outbe_oracle::api::register_pair(storage.clone(), eur).unwrap();
+        outbe_oracle::test_support::seed_covered_trailing_window(
+            &storage,
+            eur,
+            U256::from(2_500_000),
+            U256::ONE,
         )
-        .expect("date step");
-        outbe_oracle::api::register_pair(storage.clone(), AddressPair::new_coen_to(EUR_ISO_CODE))
-            .unwrap();
+        .unwrap();
         let oracle = OracleContract::new(storage.clone());
         oracle
             .policy_rate
@@ -2305,22 +2306,14 @@ fn a_reservation_quotes_the_call_terms_in_its_reference_currency() {
             .unwrap();
         oracle
             .policy_rate_published_at
-            .write(&EUR_ISO_CODE, 1)
+            .write(&EUR_ISO_CODE, storage.now_secs().unwrap())
             .unwrap();
-        for (iso, vwap) in [(EUR_ISO_CODE, 2_500_000u64), (USD_ISO_CODE, 9_000_000)] {
-            let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
-                .unwrap()
-                .unwrap();
-            oracle
-                .record_utc_day_vwap(day, index, U256::from(vwap))
-                .unwrap();
-        }
-
         let id = reserve_in(&storage, EUR_ISO_CODE).unwrap();
         let held = runtime::reservation_of(&storage, id).unwrap();
         assert_eq!(held.issuance_currency, USD_ISO_CODE);
         assert_eq!(held.reference_currency, EUR_ISO_CODE);
         assert_eq!(held.entry_price_minor, U256::from(2_500_000));
+        assert_eq!(held.gratis_minor, U256::from(5));
         assert_eq!(held.policy_rate, U256::from(43_000));
     });
 }
@@ -2704,7 +2697,7 @@ fn same_utc_day_reservations_share_series_id_including_midnight_and_next_day_ope
             .unwrap();
         oracle
             .policy_rate_published_at
-            .write(&USD_ISO_CODE, 1)
+            .write(&USD_ISO_CODE, storage.now_secs().unwrap())
             .unwrap();
         outbe_oracle::test_support::seed_covered_trailing_window(
             &storage,
@@ -2752,6 +2745,11 @@ fn same_utc_day_reservations_share_series_id_including_midnight_and_next_day_ope
         let r_plus_1s = runtime::reservation_of(&storage, id_plus_1s).unwrap();
 
         assert_eq!(r_midnight.series_id, r_plus_1s.series_id);
+        assert_eq!(
+            r_midnight.series_id,
+            outbe_core_common::series_id::SeriesId::for_pair(day_0, USD_ISO_CODE, USD_ISO_CODE)
+                .unwrap()
+        );
         assert_eq!(r_midnight.call_start_day, r_plus_1s.call_start_day);
         assert_eq!(
             r_midnight.call_start_day,
@@ -2780,9 +2778,156 @@ fn same_utc_day_reservations_share_series_id_including_midnight_and_next_day_ope
         assert_ne!(r_next_day.series_id, r_midnight.series_id);
         assert_eq!(
             r_next_day.series_id,
-            outbe_core_common::series_id::SeriesId::for_pair(day_0, USD_ISO_CODE, USD_ISO_CODE)
-                .unwrap()
+            outbe_core_common::series_id::SeriesId::for_pair(
+                outbe_system_common::time::next_date_key(day_0).unwrap(),
+                USD_ISO_CODE,
+                USD_ISO_CODE
+            )
+            .unwrap()
         );
+    });
+}
+
+fn reserve_amount(
+    storage: &StorageHandle<'_>,
+    amount: U256,
+) -> outbe_primitives::error::Result<U256> {
+    runtime::reserve_stables(
+        storage.clone(),
+        cca(),
+        IVaultRouter::reserveStablesCall {
+            credisOwner: receiver(),
+            source: pledger(),
+            asset: asset(),
+            amountMinor: amount,
+            referenceCurrency: USD_ISO_CODE,
+        },
+    )
+}
+
+fn assert_no_reservation(storage: &StorageHandle<'_>) {
+    let router = VaultRouterContract::new(storage.clone());
+    assert!(router.reservation_nonce.read().unwrap().is_zero());
+}
+
+#[test]
+fn credis_sub_series_by_reservation_hour() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let day_start = 1_700_000_000 - 1_700_000_000 % outbe_system_common::time::SECONDS_PER_DAY
+            + outbe_system_common::time::SECONDS_PER_DAY;
+        let reserve_at = |at: u64| {
+            storage.set_block_timestamp(U256::from(at)).unwrap();
+            outbe_oracle::test_support::seed_covered_trailing_window(
+                &storage,
+                AddressPair::new_coen_to(USD_ISO_CODE),
+                U256::from(2_000_000),
+                U256::ONE,
+            )
+            .unwrap();
+            let id = reserve_in(&storage, USD_ISO_CODE).unwrap();
+            runtime::reservation_of(&storage, id).unwrap()
+        };
+        let at_14_20 = reserve_at(day_start + 14 * 3_600 + 20 * 60);
+        let at_14_50 = reserve_at(day_start + 14 * 3_600 + 50 * 60);
+        let at_15_10 = reserve_at(day_start + 15 * 3_600 + 10 * 60);
+        let next_day = reserve_at(
+            day_start + outbe_system_common::time::SECONDS_PER_DAY + 14 * 3_600 + 20 * 60,
+        );
+
+        assert_eq!(at_14_20.series_id, at_14_50.series_id);
+        assert_eq!((at_14_20.sub_series, at_14_50.sub_series), (14, 14));
+        assert_eq!(at_14_20.entry_price_minor, at_14_50.entry_price_minor);
+        assert_eq!(at_15_10.series_id, at_14_20.series_id);
+        assert_eq!(at_15_10.sub_series, 15);
+        assert_ne!(next_day.series_id, at_14_20.series_id);
+        assert_eq!(next_day.sub_series, 14);
+    });
+}
+
+#[test]
+fn credis_uses_each_priced_issuance_currency() {
+    const BRL_ISO_CODE: u16 = 986;
+    assert!(!outbe_oracle::api::REFERENCE_CURRENCIES.contains(&BRL_ISO_CODE));
+    with_reservable_asset(BRL_ISO_CODE, 6, U256::from(100u64), 0, |storage| {
+        let id = reserve_in(&storage, USD_ISO_CODE).unwrap();
+        let held = runtime::reservation_of(&storage, id).unwrap();
+        assert_eq!(held.issuance_currency, BRL_ISO_CODE);
+        assert_eq!(held.reference_currency, USD_ISO_CODE);
+        assert_eq!(held.policy_rate, U256::from(43_000));
+    });
+}
+
+#[test]
+fn reservation_reads_the_last_closed_policy_rate() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let oracle = OracleContract::new(storage.clone());
+        let now = storage.now_secs().unwrap();
+        oracle
+            .policy_rate
+            .write(&USD_ISO_CODE, U256::from(51_000))
+            .unwrap();
+        oracle
+            .policy_rate_published_at
+            .write(
+                &USD_ISO_CODE,
+                now - 3 * outbe_system_common::time::SECONDS_PER_DAY,
+            )
+            .unwrap();
+        let id = reserve_in(&storage, USD_ISO_CODE).unwrap();
+        oracle
+            .policy_rate
+            .write(&USD_ISO_CODE, U256::from(60_000))
+            .unwrap();
+        let held = runtime::reservation_of(&storage, id).unwrap();
+        assert_eq!(held.policy_rate, U256::from(51_000));
+    });
+}
+
+#[test]
+fn zero_rate_is_valid() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        OracleContract::new(storage.clone())
+            .policy_rate
+            .write(&USD_ISO_CODE, U256::ZERO)
+            .unwrap();
+        let id = reserve_in(&storage, USD_ISO_CODE).unwrap();
+        assert!(runtime::reservation_of(&storage, id)
+            .unwrap()
+            .policy_rate
+            .is_zero());
+    });
+}
+
+#[test]
+fn reservation_rejects_a_bad_price_or_bad_decimals() {
+    with_reservable_asset(USD_ISO_CODE, 19, U256::from(100u64), 0, |storage| {
+        let err = reserve_amount(&storage, U256::from(10)).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(VaultRouterError::UnsupportedAssetDecimalsSimple).to_string()
+        );
+        assert_no_reservation(&storage);
+    });
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let err = reserve_amount(&storage, U256::ZERO).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(VaultRouterError::InvalidReservationAmount).to_string()
+        );
+        let err = reserve_amount(&storage, U256::ONE).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(
+                outbe_system_common::errors::PrimitivesMathError::ValueRoundsToZero
+            )
+            .to_string()
+        );
+        let err = reserve_in(&storage, EUR_ISO_CODE).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            PrecompileError::from(VaultRouterError::ReferencePriceUnavailable).to_string()
+        );
+        assert_no_reservation(&storage);
     });
 }
 

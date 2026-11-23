@@ -13,8 +13,8 @@ use outbe_primitives::storage::{
     gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, StorageHandle,
 };
 use outbe_system_common::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
+use outbe_system_common::time::timestamp_to_date_key;
 use outbe_system_common::time::SECONDS_PER_DAY;
-use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
 
@@ -152,21 +152,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
         .policy_rate_published_at
         .write(&ISSUANCE_ISO, 1)
         .map_err(|error| error.to_string())?;
-    // This scenario anchors to the issuance currency, a reference currency. The code
-    // above already seeds the COEN pair of that currency. Issuance also requires that
-    // pair's previous closed UTC-day VWAP.
-    let oracle = OracleContract::new(storage.clone());
-    let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), REFERENCE_ISO)
-        .map_err(|error| error.to_string())?
-        .ok_or("benchmark COEN pair is not registered")?;
-    let closed_day = previous_date_key(timestamp_to_date_key(CREATED_AT)).expect("date step");
-    oracle
-        .record_utc_day_vwap(closed_day, index, oracle_rate())
-        .map_err(|error| error.to_string())?;
-    oracle
-        .utc_day_vwap_last_finalized
-        .write(closed_day)
-        .map_err(|error| error.to_string())?;
+    let reservation_day = timestamp_to_date_key(CREATED_AT);
 
     let contract = VaultRouterContract::new(storage.clone());
     let profile = outbe_credis::config::read(&storage).map_err(|error| error.to_string())?;
@@ -190,7 +176,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
             reference_currency: REFERENCE_ISO,
             source: ALICE,
             series_id: outbe_core_common::series_id::SeriesId::for_pair(
-                closed_day,
+                reservation_day,
                 ISSUANCE_ISO,
                 REFERENCE_ISO,
             )

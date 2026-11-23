@@ -35,15 +35,11 @@ const PRINCIPAL: u64 = 1_000_000_000;
 fn collateral() -> U256 {
     U256::from(2_000u64) * SCALE_1E6_U256
 }
-/// P0 = $0.50, scale 1e6. Issuance-currency entry, independent of the call anchor.
+/// P0 = $0.50, scale 1e6.
 fn entry_price() -> U256 {
     U256::from(500_000u64)
 }
 
-/// Call anchor in the reference currency, deliberately not the entry price.
-fn call_anchor_price() -> U256 {
-    U256::from(1_000_000u64)
-}
 /// r = 4% annual, scale 1e6.
 fn policy_rate() -> U256 {
     U256::from(40_000u64)
@@ -275,20 +271,15 @@ fn credis_id_matches_keccak_and_binds_every_field() {
 }
 
 #[test]
-fn issuance_seals_the_call_price_from_the_call_anchor() {
+fn issuance_seals_the_call_price_from_the_entry_price() {
     with_credis(|storage| {
         let mut credis = CredisContract::new(storage);
         let id = rules::issue(&mut credis, params(alice())).unwrap();
         let p = credis.get_credis(id).unwrap();
 
-        // Entry stays 0.50. The anchor is 1.00, and 1.00 * 1.64 = 1.64.
         assert_eq!(p.entry_price_minor, entry_price());
-        assert_eq!(p.call_price_minor, U256::from(1_640_000u64));
+        assert_eq!(p.call_price_minor, U256::from(820_000u64));
         assert_eq!(
-            p.call_price_minor,
-            calc_call_price(call_anchor_price(), CALL_RATE_PCT).unwrap()
-        );
-        assert_ne!(
             p.call_price_minor,
             calc_call_price(entry_price(), CALL_RATE_PCT).unwrap()
         );
@@ -1659,7 +1650,7 @@ fn precompile_get_credis_returns_the_full_record() {
         assert_eq!(decoded.amountMinor, U256::from(PRINCIPAL));
         assert_eq!(decoded.gratisMinor, collateral());
         assert_eq!(decoded.entryPriceMinor, entry_price());
-        assert_eq!(decoded.call.callPriceMinor, U256::from(1_640_000u64));
+        assert_eq!(decoded.call.callPriceMinor, U256::from(820_000u64));
         assert_eq!(decoded.issuedAt, ORIGINATED_AT);
         assert_eq!(decoded.policyRate, policy_rate());
         assert_eq!(decoded.state, CredisState::Issued as u8);
@@ -2268,12 +2259,11 @@ fn token_uri_renders_the_credis_image_and_metadata() {
             outbe_credis::constants::TOKEN_DESCRIPTION
         );
         assert_eq!(trait_value(&json, "State").unwrap(), "Issued");
-        assert_eq!(trait_value(&json, "Principal").unwrap(), 1000);
+        assert_eq!(trait_value(&json, "Amount").unwrap(), 1000);
         assert_eq!(trait_value(&json, "Outstanding").unwrap(), 1000);
-        assert_eq!(trait_value(&json, "Accrued Interest").unwrap(), 0);
+        assert_eq!(trait_value(&json, "Accrued Fee").unwrap(), 0);
         assert_eq!(trait_value(&json, "Entry Price").unwrap(), 0.5);
-        assert_eq!(trait_value(&json, "Call Anchor").unwrap(), 1);
-        assert_eq!(trait_value(&json, "Call Price").unwrap(), 1.64);
+        assert_eq!(trait_value(&json, "Call Price").unwrap(), 0.82);
         assert_eq!(trait_value(&json, "Policy Rate").unwrap(), 0.04);
         assert_eq!(trait_value(&json, "Collateral").unwrap(), 2000);
         assert_eq!(trait_value(&json, "Reference Currency").unwrap(), "EUR");
@@ -2287,7 +2277,7 @@ fn token_uri_renders_the_credis_image_and_metadata() {
         assert!(svg.contains(">ISSUED</text>"));
         assert!(svg.contains(">Outstanding</text>"));
         assert!(svg.contains(">1,000</text>"));
-        assert!(svg.contains(">1.64</text>"));
+        assert!(svg.contains(">0.82</text>"));
     });
 }
 
@@ -2347,7 +2337,7 @@ fn a_called_credis_past_its_deadline_shows_forfeited() {
         let (json, _) = token_uri_parts(&storage, id);
         assert_eq!(trait_value(&json, "Outstanding").unwrap(), 0);
         assert_eq!(trait_value(&json, "Collateral Locked").unwrap(), 0);
-        assert_eq!(trait_value(&json, "Accrued Interest").unwrap(), 0);
+        assert_eq!(trait_value(&json, "Accrued Fee").unwrap(), 0);
         assert_eq!(trait_value(&json, "Settlement Deadline").unwrap(), deadline);
     });
 }
@@ -2472,14 +2462,190 @@ fn issuance_off_mainnet_seals_the_dev_terms() {
             ),
             (3 * DAY, 2 * DAY, 3 * DAY)
         );
-        // The TESTNET call rate is 2, so the anchor 1.00 gives the call price 1.02.
         assert_eq!(record.call_rate, 2);
         assert_eq!(
             record.call_price_minor,
-            call_anchor_price() * U256::from(102u64) / U256::from(100u64)
+            entry_price() * U256::from(102u64) / U256::from(100u64)
         );
-        assert_eq!(record.call_price_minor, U256::from(1_020_000u64));
+        assert_eq!(record.call_price_minor, U256::from(510_000u64));
         id
     });
     assert!(!id.is_zero());
+}
+
+#[test]
+fn zero_policy_rate_charges_no_fee() {
+    let mut provider = credis_provider();
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        let free = IssueCredisParams {
+            policy_rate: U256::ZERO,
+            ..params(alice())
+        };
+        rules::issue(&mut CredisContract::new(storage), free).unwrap()
+    });
+
+    provider.set_timestamp(U256::from(at(90)));
+    StorageHandle::enter(&mut provider, |storage| {
+        let fee = super::credis_view(&storage, ICredis::accruedFeeMinorCall { credisId: id });
+        assert_eq!(fee, U256::ZERO);
+        assert_eq!(
+            crate::runtime::quote_settlement(&storage, id).unwrap(),
+            U256::from(PRINCIPAL)
+        );
+
+        let repayment = rules::settle(
+            &mut CredisContract::new(storage.clone()),
+            id,
+            U256::from(PRINCIPAL),
+            at(90),
+        )
+        .unwrap();
+        assert_eq!(repayment.settled_fee_minor, U256::ZERO);
+        assert_eq!(repayment.settled_amount_minor, U256::from(PRINCIPAL));
+        assert_eq!(repayment.amount_minor, U256::from(PRINCIPAL));
+        assert_eq!(repayment.unpledged_gratis_minor, collateral());
+        assert!(repayment.closed);
+
+        let data = super::credis_view(&storage, ICredis::getCredisCall { credisId: id });
+        assert_eq!(data.state, CredisState::Settled as u8);
+        assert_eq!(data.settledFeeMinor, U256::ZERO);
+        assert_eq!(
+            super::credis_view(&storage, ICredis::settledFeeMinorCall { credisId: id }),
+            U256::ZERO
+        );
+    });
+}
+
+fn assert_parts_add_up(data: &ICredis::CredisData) {
+    assert_eq!(
+        data.amountMinor,
+        data.outcome.settledAmountMinor
+            + data.outstandingAmountMinor
+            + data.outcome.forfeitedAmountMinor
+    );
+    assert_eq!(
+        data.gratisMinor,
+        data.outcome.unpledgedGratisMinor
+            + data.outstandingGratisMinor
+            + data.outcome.forfeitedGratisMinor
+    );
+}
+
+#[test]
+fn credis_names_use_amount_and_fee() {
+    let principal = U256::from(PRINCIPAL);
+    let half = principal / U256::from(2u64);
+    let mut provider = credis_provider();
+    let (lapsing, paid) = StorageHandle::enter(&mut provider, |storage| {
+        let mut credis = CredisContract::new(storage);
+        (
+            rules::issue(&mut credis, params(alice())).unwrap(),
+            rules::issue(&mut credis, params(bob())).unwrap(),
+        )
+    });
+
+    provider.set_timestamp(U256::from(at(30)));
+    let (lapsing_fee, paid_fee) = StorageHandle::enter(&mut provider, |storage| {
+        let mut credis = CredisContract::new(storage.clone());
+        let lapsing_fee =
+            super::credis_view(&storage, ICredis::accruedFeeMinorCall { credisId: lapsing });
+        assert!(lapsing_fee > U256::ZERO);
+        let paid_fee =
+            super::credis_view(&storage, ICredis::accruedFeeMinorCall { credisId: paid });
+        assert_eq!(
+            crate::runtime::quote_settlement(&storage, paid).unwrap(),
+            principal + paid_fee
+        );
+
+        rules::settle(&mut credis, lapsing, lapsing_fee + half, at(30)).unwrap();
+        rules::settle(&mut credis, paid, paid_fee + principal, at(30)).unwrap();
+        assert!(call(&mut credis, lapsing, at(30)).unwrap());
+
+        let part = super::credis_view(&storage, ICredis::getCredisCall { credisId: lapsing });
+        assert_parts_add_up(&part);
+        assert_eq!(part.outcome.settledAmountMinor, half);
+        assert_eq!(part.outstandingAmountMinor, principal - half);
+        assert_eq!(part.outcome.forfeitedAmountMinor, U256::ZERO);
+        assert_eq!(part.settledFeeMinor, lapsing_fee);
+        assert_eq!(
+            super::credis_view(&storage, ICredis::accruedFeeMinorCall { credisId: lapsing }),
+            U256::ZERO
+        );
+
+        let full = super::credis_view(&storage, ICredis::getCredisCall { credisId: paid });
+        assert_parts_add_up(&full);
+        assert_eq!(full.state, CredisState::Settled as u8);
+        assert_eq!(full.outcome.settledAmountMinor, principal);
+        assert_eq!(full.outcome.unpledgedGratisMinor, collateral());
+        assert_eq!(full.settledFeeMinor, paid_fee);
+        (lapsing_fee, paid_fee)
+    });
+
+    let lapsed_at = StorageHandle::enter(&mut provider, |storage| {
+        settlement_deadline(&CredisContract::new(storage).get_credis(lapsing).unwrap()) + 1
+    });
+    provider.set_timestamp(U256::from(lapsed_at));
+    StorageHandle::enter(&mut provider, |storage| {
+        let lapsed = super::credis_view(&storage, ICredis::getCredisCall { credisId: lapsing });
+        assert_parts_add_up(&lapsed);
+        assert_eq!(lapsed.state, CredisState::Forfeited as u8);
+        assert_eq!(lapsed.outstandingAmountMinor, U256::ZERO);
+        assert_eq!(lapsed.outstandingGratisMinor, U256::ZERO);
+        assert_eq!(lapsed.outcome.settledAmountMinor, half);
+        assert_eq!(lapsed.outcome.forfeitedAmountMinor, principal - half);
+        assert!(lapsed.outcome.forfeitedGratisMinor > U256::ZERO);
+        assert_eq!(lapsed.settledFeeMinor, lapsing_fee);
+        assert_eq!(
+            super::credis_view(&storage, ICredis::settledFeeMinorCall { credisId: lapsing }),
+            lapsing_fee
+        );
+        assert_eq!(
+            super::credis_view(&storage, ICredis::accruedFeeMinorCall { credisId: lapsing }),
+            U256::ZERO
+        );
+        assert_eq!(
+            super::credis_view(&storage, ICredis::settledFeeMinorCall { credisId: paid }),
+            paid_fee
+        );
+
+        let alice_sums = super::credis_view(
+            &storage,
+            ICredis::credisAmountAndOutstandingOfCall { owner: alice() },
+        );
+        assert_eq!(
+            (alice_sums.amountMinor, alice_sums.outstandingAmountMinor),
+            (principal, principal - half)
+        );
+        let bob_sums = super::credis_view(
+            &storage,
+            ICredis::credisAmountAndOutstandingOfCall { owner: bob() },
+        );
+        assert_eq!(
+            (bob_sums.amountMinor, bob_sums.outstandingAmountMinor),
+            (principal, U256::ZERO)
+        );
+
+        let forfeit = forfeit_lapsed(
+            &mut CredisContract::new(storage.clone()),
+            lapsing,
+            lapsed_at,
+        )
+        .unwrap();
+        assert_eq!(
+            forfeit.forfeited_amount_minor,
+            lapsed.outcome.forfeitedAmountMinor
+        );
+        assert_eq!(
+            forfeit.forfeited_gratis_minor,
+            lapsed.outcome.forfeitedGratisMinor
+        );
+        let alice_sums = super::credis_view(
+            &storage,
+            ICredis::credisAmountAndOutstandingOfCall { owner: alice() },
+        );
+        assert_eq!(
+            (alice_sums.amountMinor, alice_sums.outstandingAmountMinor),
+            (U256::ZERO, U256::ZERO)
+        );
+    });
 }

@@ -203,6 +203,87 @@ pub fn seed_reservation(
     id
 }
 
+/// The series day, issuance currency, hour and entry price a reservation is placed at.
+#[derive(Debug, Clone, Copy)]
+pub struct Placement {
+    pub day: u32,
+    pub issuance_currency: u16,
+    pub asset: Address,
+    pub hour: u8,
+    pub entry_price_minor: U256,
+}
+
+impl Placement {
+    pub fn hour(storage: &StorageHandle<'_>, hour: u8, entry_price_minor: U256) -> Self {
+        Self {
+            day: last_closed_day(storage.now_secs().unwrap()),
+            issuance_currency: ISSUANCE_ISO,
+            asset: settlement_asset(),
+            hour,
+            entry_price_minor,
+        }
+    }
+}
+
+pub fn seed_reservation_at(
+    storage: &StorageHandle<'_>,
+    credis_owner: Address,
+    at: Placement,
+) -> U256 {
+    let id = seed_reservation(storage, credis_owner, credis_owner, pledge_stables());
+    let router = VaultRouterContract::new(storage.clone());
+    let mut reservation = router.reservations.get(id).unwrap().unwrap();
+    reservation.series_id = outbe_core_common::series_id::SeriesId::for_pair(
+        at.day,
+        at.issuance_currency,
+        REFERENCE_ISO,
+    )
+    .expect("series id");
+    reservation.issuance_currency = at.issuance_currency;
+    reservation.asset = at.asset;
+    reservation.sub_series = at.hour;
+    reservation.entry_price_minor = at.entry_price_minor;
+    router.reservations.update(&reservation).unwrap();
+    id
+}
+
+pub fn open_at(storage: &StorageHandle<'_>, who: Address, nonce: u64, at: Placement) -> U256 {
+    let reservation_id = seed_reservation_at(storage, who, at);
+    pledge(storage, who, reservation_id, nonce);
+    fund_stake(storage, pledge_stake());
+    runtime::issue_credis(storage.clone(), cca(), reservation_id, pledge_stake())
+        .unwrap()
+        .0
+}
+
+pub fn stub_asset(provider: &mut HashMapStorageProvider, asset: Address, iso: u16) {
+    provider.stub_sub_call_at(asset, iso_word(iso));
+    provider.stub_sub_call_at_selector(
+        asset,
+        crate::sol_ext::IERC20::decimalsCall::SELECTOR,
+        iso_word(6),
+    );
+}
+
+pub fn factory_events<E: alloy_sol_types::SolEvent>(provider: &HashMapStorageProvider) -> Vec<E> {
+    provider
+        .get_events(CREDIS_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| E::decode_log_data(log).ok())
+        .collect()
+}
+
+pub fn credis_view<C: SolCall>(storage: &StorageHandle<'_>, call: C) -> C::Return {
+    let out = outbe_credis::precompile::dispatch(
+        storage.clone(),
+        &call.abi_encode(),
+        Address::ZERO,
+        U256::ZERO,
+    )
+    .unwrap();
+    C::abi_decode_returns(&out).unwrap()
+}
+
 pub fn chain_b256() -> B256 {
     B256::from(U256::from(CHAIN_ID))
 }

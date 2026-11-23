@@ -150,7 +150,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         IVaultRouter::StablecoinTarget::Credis,
     )?;
     // Reserve before pledging. The code below funds the held assets through real ERC20 calls.
-    let closed_day = previous_date_key(timestamp_to_date_key(NOW)).expect("date step");
+    let reservation_day = timestamp_to_date_key(NOW);
     let call_terms = outbe_credis::config::read(&storage)?;
     router.reservations.create(&LiquidityReservation {
         id: U256::ONE,
@@ -168,7 +168,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         asset_decimals: 6,
         reference_currency: 840,
         source: OWNER,
-        series_id: outbe_core_common::series_id::SeriesId::for_pair(closed_day, 840, 840)
+        series_id: outbe_core_common::series_id::SeriesId::for_pair(reservation_day, 840, 840)
             .expect("series id"),
         sub_series: outbe_credis::CredisContract::sub_series_of(NOW),
         call_start_day: outbe_system_common::time::first_full_day(NOW).expect("date step"),

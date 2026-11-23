@@ -404,6 +404,9 @@ fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
         );
         assert_eq!(record.issued_at, midnight + 300);
         assert_eq!(record.last_settled_at, record.issued_at);
+        assert_eq!(record.series_id, reservation.series_id);
+        assert_eq!(record.sub_series, reservation.sub_series);
+        assert_eq!(record.sub_series, 23);
     });
     teardown();
 }
@@ -546,7 +549,7 @@ fn credis_series_lifecycle_emits_open_issue_settle_call_close_and_forfeit_events
     assert_eq!(series_closed[0].issuanceCurrency, ISSUANCE_ISO);
     assert_eq!(series_closed[0].referenceCurrency, REFERENCE_ISO);
     assert_eq!(series_closed[0].forfeitedCount, 1);
-    assert_eq!(series_closed[0].forfeitedAmountMinor, pledge_cost());
+    assert_eq!(series_closed[0].forfeitedAmountMinor, pledge_stables());
 
     let pledge_burned: Vec<_> = provider
         .get_events(GRATIS_FACTORY_ADDRESS)
@@ -559,7 +562,7 @@ fn credis_series_lifecycle_emits_open_issue_settle_call_close_and_forfeit_events
         .filter(|ev| ev.credisId == id_swept)
         .map(|ev| ev.gratisMinor)
         .sum();
-    assert_eq!(series_closed[0].forfeitedAmountMinor, cleanup_burned);
+    assert_eq!(cleanup_burned, pledge_cost());
 
     let gratis_burned: Vec<_> = provider
         .get_events(GRATIS_ADDRESS)
@@ -764,5 +767,61 @@ fn a_called_series_settled_before_its_deadline_closes_with_zero_forfeit() {
         series_id
     );
 
+    teardown();
+}
+
+#[test]
+fn credis_series_opened_once_per_sub_series() {
+    use crate::precompile::ICredisFactory::{CredisIssued, CredisSeriesOpened};
+
+    let other_entry = U256::from(2_100_000u64);
+    let mut provider = env();
+    let series = StorageHandle::enter(&mut provider, |storage| {
+        for owner in [alice(), bob(), cca()] {
+            bootstrap_for(&storage, owner, pledge_cost());
+        }
+        let hour = Placement::hour(&storage, 4, oracle_rate());
+        let first = open_at(&storage, alice(), 1, hour);
+        let second = open_at(&storage, bob(), 1, hour);
+        let credis = CredisContract::new(storage.clone());
+        assert_eq!(
+            credis.get_credis(first).unwrap().sub_series,
+            credis.get_credis(second).unwrap().sub_series
+        );
+        credis.get_credis(first).unwrap().series_id
+    });
+
+    let opened = factory_events::<CredisSeriesOpened>(&provider);
+    assert_eq!(opened.len(), 1);
+    assert_eq!(
+        opened[0].seriesId,
+        alloy_primitives::FixedBytes::from(series)
+    );
+    assert_eq!(opened[0].subSeries, 4);
+    assert_eq!(opened[0].entryPriceMinor, oracle_rate());
+    assert_eq!(
+        opened[0].callPriceMinor,
+        crate::rules::calc_call_price(oracle_rate(), outbe_credis::constants::CALL_RATE_PCT)
+            .unwrap()
+    );
+
+    StorageHandle::enter(&mut provider, |storage| {
+        open_at(
+            &storage,
+            cca(),
+            1,
+            Placement::hour(&storage, 7, other_entry),
+        );
+    });
+
+    let opened = factory_events::<CredisSeriesOpened>(&provider);
+    assert_eq!(opened.len(), 2);
+    assert_eq!(
+        opened[1].seriesId,
+        alloy_primitives::FixedBytes::from(series)
+    );
+    assert_eq!(opened[1].subSeries, 7);
+    assert_eq!(opened[1].entryPriceMinor, other_entry);
+    assert_eq!(factory_events::<CredisIssued>(&provider).len(), 3);
     teardown();
 }
