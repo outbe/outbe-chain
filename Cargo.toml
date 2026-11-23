@@ -41,7 +41,6 @@ members = [
     "crates/core/gratis",
     "crates/core/promis",
     "crates/core/promisfactory",
-    "crates/core/tribute",
     "crates/core/nod",
     "crates/core/nodfactory",
     "crates/core/gem",
@@ -59,7 +58,6 @@ members = [
     "crates/core/fidelity-math",
     "crates/core/metadosis",
     "crates/core/promislimit",
-    "crates/core/tributefactory",
     "crates/core/worldwideday",
     "crates/core/gratisfactory",
     "crates/core/stablecoinpolicy",
@@ -129,7 +127,6 @@ default-members = [
     "crates/core/gratis",
     "crates/core/promis",
     "crates/core/promisfactory",
-    "crates/core/tribute",
     "crates/core/nod",
     "crates/core/nodfactory",
     "crates/core/gem",
@@ -147,7 +144,6 @@ default-members = [
     "crates/core/fidelity-math",
     "crates/core/metadosis",
     "crates/core/promislimit",
-    "crates/core/tributefactory",
     "crates/core/worldwideday",
     "crates/core/gratisfactory",
     "crates/core/stablecoinpolicy",
@@ -243,7 +239,6 @@ radicle-signals = { path = "vendor/heartwood/crates/radicle-signals" }
 outbe-gratis = { path = "crates/core/gratis" }
 outbe-promis = { path = "crates/core/promis" }
 outbe-promisfactory = { path = "crates/core/promisfactory" }
-outbe-tribute = { path = "crates/core/tribute" }
 outbe-nod = { path = "crates/core/nod" }
 outbe-nodfactory = { path = "crates/core/nodfactory" }
 outbe-gem = { path = "crates/core/gem" }
@@ -261,7 +256,6 @@ outbe-fidelity = { path = "crates/core/fidelity" }
 outbe-fidelity-math = { path = "crates/core/fidelity-math" }
 outbe-metadosis = { path = "crates/core/metadosis" }
 outbe-promislimit = { path = "crates/core/promislimit" }
-outbe-tributefactory = { path = "crates/core/tributefactory" }
 outbe-worldwideday = { path = "crates/core/worldwideday" }
 outbe-gratisfactory = { path = "crates/core/gratisfactory" }
 outbe-stablecoinpolicy = { path = "crates/core/stablecoinpolicy" }

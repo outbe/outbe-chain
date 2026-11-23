@@ -658,7 +658,7 @@ mod canary {
     use outbe_execution::tee_canary::{
         run_tee_canary_worker, EnclaveRequester, TeeCanaryConfig, TeeCanaryTarget,
     };
-    use outbe_runtime::TributeCanaryProbe;
+    use outbe_runtime::OfferCanaryProbe;
     use outbe_tee::{
         canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthState},
         errors::TransportError,
@@ -684,7 +684,7 @@ mod canary {
                         key: SigningKey::from_bytes(&[9; 32]),
                         resident,
                     },
-                    TributeCanaryProbe,
+                    OfferCanaryProbe,
                 ),
                 TeeCanaryConfig {
                     interval: period,
@@ -705,7 +705,7 @@ mod canary {
         let status = TeeEnclaveHealthChannel::default();
         let shutdown = CancellationToken::new();
         let period = Duration::from_millis(5);
-        let worker = tokio::spawn(TributeCanaryProbe::run_in_process_worker(
+        let worker = tokio::spawn(OfferCanaryProbe::run_in_process_worker(
             Arc::clone(&context),
             TeeCanaryConfig {
                 interval: period,

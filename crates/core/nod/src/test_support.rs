@@ -195,7 +195,6 @@ pub fn add(
         storage,
         &item,
         sealed_terms(storage, &item, item.entry_price_minor()),
-        crate::api::calculation_amount(&item)?,
     )
 }
 

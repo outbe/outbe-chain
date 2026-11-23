@@ -6,9 +6,9 @@
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::confidential_tee::{
-    attestation, consensus_witness_call, derive_resident_state_key, hash, session_witness_call,
-    sign_attestation_tag, verify_response_attestation, verify_signed_domain, ResponseAuthSpec,
-    WitnessResponseTag, WitnessSchema, NOD, OFFER_HKDF_SALT,
+    attestation, consensus_witness_call, derive_resident_state_key, hash, sign_attestation_tag,
+    verify_response_attestation, verify_signed_domain, ResponseAuthSpec, WitnessResponseTag,
+    WitnessSchema, NOD, OFFER_HKDF_SALT,
 };
 use outbe_core_common::nod_encryption::{
     EncryptedNodGroupLoadV1, EncryptedNodV1, NodQuoteContextV1,
@@ -216,27 +216,72 @@ pub fn issue_nod_at_offer(
     Ok(issued.result)
 }
 
-/// Seal a group-load total in the installed runtime. Not witness-recorded.
-pub fn seal_group_load(
-    (chain_id, scope): (u64, B256),
-    (sequence, inputs_hash): (u64, B256),
-    load_minor: U256,
-) -> Result<EncryptedNodGroupLoadV1, TransportError> {
-    session_witness_call(
-        CallMeta::session_only("seal_nod_group_load"),
-        move |context| {
-            require_resident_chain(context, chain_id)?;
-            let key = nod_state_key(context)?;
-            nod_encryption::seal_group_load(
-                &key,
-                (chain_id, scope),
-                (sequence, inputs_hash),
-                load_minor,
-            )
-            .map_err(reject)
-        },
+/// What the enclave opened from the canary offer. Session-only, not witness-recorded.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfferCanaryV1 {
+    /// The `creator` field of the decrypted payload.
+    pub creator: String,
+    /// The canonical amount of the decrypted payload, in minor units.
+    pub amount_minor: U256,
+    /// `inputs_canonical_hash` of the one canary offer.
+    pub inputs_canonical_hash: B256,
+    /// Ed25519 signature over the canary result.
+    pub attestation_tag: Vec<u8>,
+}
+
+const OFFER_CANARY_RESULT: &[u8] = b"outbe/nod/offer-canary-result/v1";
+
+/// Open `offer` with the resident offer key of `context` and sign what it holds.
+pub fn open_offer_canary_with(
+    context: &InProcessTeeContext,
+    offer: &crate::offer::protocol::EncryptedTributeOffer,
+) -> Result<OfferCanaryV1, TransportError> {
+    let expected = crate::offer::protocol::inputs_canonical_hash(std::slice::from_ref(offer));
+    let payload = context
+        .with_offer_key_handle(|handle| {
+            let material = crate::offer::OfferKeyMaterial {
+                offer_private_key: handle,
+                salt: &OFFER_HKDF_SALT,
+            };
+            Ok::<_, TransportError>(crate::offer::open_offer(&material, offer).map_err(reject))
+        })
+        .map_err(|err| {
+            TransportError::from(outbe_tee::InProcessDispatchError::Resident(err))
+        })???;
+    let amount_minor =
+        crate::offer::compute::parse_canonical_amount(&payload.amount_base, &payload.amount_micro)
+            .map_err(reject)?
+            .amount_minor;
+    let preimage = attestation(
+        OFFER_CANARY_RESULT,
+        expected,
+        &(payload.creator.as_str(), amount_minor),
     )
-    .ok_or_else(|| TransportError::unavailable(NodHostError::RuntimeMissing))?
+    .map_err(TransportError::codec)?;
+    Ok(OfferCanaryV1 {
+        creator: payload.creator,
+        amount_minor,
+        inputs_canonical_hash: expected,
+        attestation_tag: sign_bytes(context, &preimage),
+    })
+}
+
+/// Verify the signature of a canary result against `expected` inputs.
+pub fn verify_offer_canary(
+    attestation_pub: &[u8; 32],
+    expected: B256,
+    value: &OfferCanaryV1,
+) -> Result<(), TransportError> {
+    verify_signed_domain(
+        &auth_spec(
+            attestation_pub,
+            expected,
+            value.inputs_canonical_hash,
+            &value.attestation_tag,
+        ),
+        OFFER_CANARY_RESULT,
+        &(value.creator.as_str(), value.amount_minor),
+    )
 }
 
 fn recorded<T: WitnessSchema>(

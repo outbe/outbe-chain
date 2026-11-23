@@ -6,18 +6,15 @@ use clap::{Args, Subcommand};
 use eyre::Result;
 use outbe_system_common::time::WorldwideDay;
 use outbe_zk::{noir::L2_CIRCUITS_REGISTRY, L2CircuitVersion};
-use serde_json::Value;
 
 use crate::abi::{
-    ITeeRegistry, ITribute, ITributeFactory, TEE_REGISTRY_ADDR, TRIBUTE_ADDR, TRIBUTE_FACTORY_ADDR,
+    INodFactory, ITeeRegistry, IWorldwideDay, NOD_FACTORY_ADDR, TEE_REGISTRY_ADDR,
+    WORLDWIDE_DAY_ADDR,
 };
 use crate::errors::TributeError;
 use crate::rpc::Rpc;
 
-const TOKEN_URI_JSON_PREFIX: &str = "data:application/json;utf8,";
-
-type DayTotalsReturn = <ITribute::dayTotalsCall as SolCall>::Return;
-type TokenIdsReturn = <ITribute::tokensByOwnerCall as SolCall>::Return;
+type DayTotalsReturn = <IWorldwideDay::dayTotalsCall as SolCall>::Return;
 
 fn canonical_amount_base(value: &str) -> std::result::Result<String, TributeError> {
     let parsed = value
@@ -41,29 +38,14 @@ fn canonical_amount_micro(value: &str) -> std::result::Result<String, TributeErr
 
 #[derive(Subcommand)]
 pub enum TributeCmd {
-    /// Show tribute metadata via tokenURI JSON
-    Show {
-        /// Tribute token ID (`0x`-hex)
-        token_id: U256,
-    },
-    /// Show aggregate totals for an emission day
+    /// Show the Nod totals of the Worldwide Day of an emission day
     DayTotals {
         /// Emission day, `YYYYMMDD`
         emission_day: u32,
     },
-    /// Show tribute token IDs owned by an address
-    ByOwner {
-        /// Owner address
-        owner: Address,
-    },
-    /// Show current owner for a Tribute token ID
-    Owner {
-        /// Tribute token ID (`0x`-hex)
-        token_id: U256,
-    },
-    /// Submit an encrypted tribute offer (decrypted inside the SGX enclave).
+    /// Submit an encrypted offer and issue its Nod (decrypted inside the enclave).
     /// Encrypts to the DKG-derived offer key registered in the TeeRegistry and
-    /// sends `offerTribute`. Requires `--private-key` and the ZK offer inputs
+    /// sends `issueNod`. Requires `--private-key` and the ZK offer inputs
     /// (`--zk-proof`, `--zk-merkle-root`, `--signature`).
     Offer(Box<TributeOfferArgs>),
 }
@@ -121,103 +103,43 @@ pub struct TributeOfferArgs {
 impl TributeCmd {
     pub async fn run(self, client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
         match self {
-            Self::Show { token_id } => show(client, token_id).await,
             Self::DayTotals { emission_day } => day_totals(client, emission_day).await,
-            Self::ByOwner { owner } => by_owner(client, owner).await,
-            Self::Owner { token_id } => owner(client, token_id).await,
             Self::Offer(args) => offer(client, private_key, *args).await,
         }
     }
-}
-
-async fn fetch_owner_of(client: &(impl Rpc + Sync), token_id: U256) -> Result<Address> {
-    let call = ITribute::ownerOfCall {
-        tributeId: token_id,
-    };
-    let result = client.eth_call(TRIBUTE_ADDR, &call.abi_encode()).await?;
-    Ok(ITribute::ownerOfCall::abi_decode_returns(&result)?)
-}
-
-async fn fetch_token_uri(client: &(impl Rpc + Sync), token_id: U256) -> Result<String> {
-    let call = ITribute::tokenURICall {
-        tributeId: token_id,
-    };
-    let result = client.eth_call(TRIBUTE_ADDR, &call.abi_encode()).await?;
-    Ok(ITribute::tokenURICall::abi_decode_returns(&result)?)
 }
 
 async fn fetch_day_totals(
     client: &(impl Rpc + Sync),
     emission_day: u32,
 ) -> Result<DayTotalsReturn> {
-    let call = ITribute::dayTotalsCall {
+    let call = IWorldwideDay::dayTotalsCall {
         emissionDay: emission_day,
     };
-    let result = client.eth_call(TRIBUTE_ADDR, &call.abi_encode()).await?;
-    Ok(ITribute::dayTotalsCall::abi_decode_returns(&result)?)
-}
-
-async fn fetch_tributes_by_owner(
-    client: &(impl Rpc + Sync),
-    owner: Address,
-) -> Result<TokenIdsReturn> {
-    let call = ITribute::tokensByOwnerCall { owner };
-    let result = client.eth_call(TRIBUTE_ADDR, &call.abi_encode()).await?;
-    Ok(ITribute::tokensByOwnerCall::abi_decode_returns(&result)?)
-}
-
-async fn show(client: &(impl Rpc + Sync), token_id: U256) -> Result<()> {
-    let token_uri = fetch_token_uri(client, token_id).await?;
-
-    println!("Token ID: {token_id:#x}");
-    if let Some(json_payload) = token_uri.strip_prefix(TOKEN_URI_JSON_PREFIX) {
-        match serde_json::from_str::<Value>(json_payload) {
-            Ok(json) => println!("{}", serde_json::to_string_pretty(&json)?),
-            Err(_) => println!("{token_uri}"),
-        }
-    } else {
-        println!("{token_uri}");
-    }
-
-    Ok(())
+    let result = client
+        .eth_call(WORLDWIDE_DAY_ADDR, &call.abi_encode())
+        .await?;
+    Ok(IWorldwideDay::dayTotalsCall::abi_decode_returns(&result)?)
 }
 
 async fn day_totals(client: &(impl Rpc + Sync), emission_day: u32) -> Result<()> {
     let ret = fetch_day_totals(client, emission_day).await?;
 
     println!("Emission day:           {}", emission_day);
-    println!("Tribute Count:          {}", ret.tributeCount);
-    println!("Encrypted Nominal:      {}", ret.tributeNominalTotalMinor);
+    println!("Nod Count:              {}", ret.nodCount);
+    println!("Encrypted Nominal:      {}", ret.encryptedNominal);
+    println!("Encrypted Load:         {}", ret.encryptedLoad);
     println!("Sealed:                 {}", ret.isSealed);
     Ok(())
 }
 
-async fn by_owner(client: &(impl Rpc + Sync), owner: Address) -> Result<()> {
-    let token_ids = fetch_tributes_by_owner(client, owner).await?;
-
-    println!("Owner: {owner:?}");
-    println!("Tributes: {}", token_ids.len());
-    for token_id in token_ids {
-        println!("- {token_id:?}");
-    }
-    Ok(())
-}
-
-async fn owner(client: &(impl Rpc + Sync), token_id: U256) -> Result<()> {
-    let token_owner = fetch_owner_of(client, token_id).await?;
-    println!("Token ID: {token_id:#x}");
-    println!("Owner:    {token_owner:?}");
-    Ok(())
-}
-
-/// Submit an encrypted tribute offer. This function:
+/// Submit an encrypted offer. This function:
 /// 1. Reads the DKG-derived offer key from the TeeRegistry.
 /// 2. Encrypts the payload to it (X25519 ECDHE + HKDF-SHA256 + ChaCha20Poly1305,
 ///    byte-identical to the enclave decrypt path).
-/// 3. Sends `offerTribute`.
+/// 3. Sends `issueNod`.
 ///
-/// The enclave decrypts the payload inside SGX during execution. The `TributeFactory`
-/// issues the canonical Tribute.
+/// The enclave decrypts the payload during execution, and the Nod factory issues the Nod.
 #[allow(clippy::too_many_arguments)]
 async fn offer(
     client: &(impl Rpc + Sync),
@@ -295,18 +217,17 @@ async fn offer(
         outbe_core_common::confidential_tee::encrypt_tribute_offer(&offer_pub, &plaintext)
             .map_err(TributeError::OfferEncryptionFailed)?;
 
-    // 4. Build + send `offerTribute` (msg.value MUST be 0).
-    let call = ITributeFactory::offerTributeCall {
+    // 4. Build + send `issueNod` (msg.value MUST be 0).
+    let call = INodFactory::issueNodCall {
         cipherText: cipher_text.into(),
         nonce: nonce.to_vec().into(),
         ephemeralPubkey: U256::from_be_bytes(eph_pub),
         worldwideDay: wwd,
-        tributeCurrency: issuance_currency,
+        issuanceCurrency: issuance_currency,
         referenceCurrency: reference_currency,
         zkProof: zk_proof,
         chainId: l2_chain_id,
         version: circuit_version,
-        zkPublicKey: Bytes::new(),
         zkMerkleRoot: zk_merkle_root,
         signature,
     };
@@ -315,18 +236,17 @@ async fn offer(
     let tx_hash = signer
         .send_tx_with_gas(
             client,
-            TRIBUTE_FACTORY_ADDR,
+            NOD_FACTORY_ADDR,
             call.abi_encode(),
             U256::ZERO,
             8_000_000,
         )
         .await?;
 
-    println!("offerTribute tx: {tx_hash}");
+    println!("issueNod tx: {tx_hash}");
     println!(
         "  creator={creator:?} worldwide_day={wwd} issuance_currency={issuance_currency} reference_currency={reference_currency} amount_base={amount_base} amount_micro={amount_micro}"
     );
-    println!("Verify once mined: outbe-cli tribute by-owner {creator:?}");
     println!(
         "  l2_chain_id={l2_chain_id} circuit_version={:?}",
         call.version
@@ -401,7 +321,6 @@ fn offer_hex32(value: &str, flag: &str) -> Result<String> {
 mod tests {
     use super::*;
     use crate::rpc::mock::{call_map, MockRpc};
-    use alloy_primitives::address;
     use clap::Parser;
     use std::collections::HashMap;
 
@@ -427,34 +346,19 @@ mod tests {
         .unwrap()
     }
 
-    fn sample_token_id() -> U256 {
-        U256::from(0xaa_u64)
-    }
-
-    fn tribute_mock() -> MockRpc {
-        let owner = address!("0x1111111111111111111111111111111111111111");
-        let token_uri = "data:application/json;utf8,{\"name\":\"Tribute 170\",\"attributes\":[{\"trait_type\":\"worldwide_day\",\"value\":20241220}]}".to_string();
-        let day_totals = (2u32, Bytes::from(vec![0x53; 56]), true).into();
-        let token_ids = vec![sample_token_id()];
-
+    fn day_totals_mock() -> MockRpc {
+        let day_totals = (
+            2u32,
+            Bytes::from(vec![0x53; 56]),
+            Bytes::from(vec![0x54; 56]),
+            true,
+        )
+            .into();
         let mut map = HashMap::new();
         map.insert(
-            (TRIBUTE_ADDR, ITribute::ownerOfCall::SELECTOR),
-            ITribute::ownerOfCall::abi_encode_returns(&owner),
+            (WORLDWIDE_DAY_ADDR, IWorldwideDay::dayTotalsCall::SELECTOR),
+            IWorldwideDay::dayTotalsCall::abi_encode_returns(&day_totals),
         );
-        map.insert(
-            (TRIBUTE_ADDR, ITribute::tokenURICall::SELECTOR),
-            ITribute::tokenURICall::abi_encode_returns(&token_uri),
-        );
-        map.insert(
-            (TRIBUTE_ADDR, ITribute::dayTotalsCall::SELECTOR),
-            ITribute::dayTotalsCall::abi_encode_returns(&day_totals),
-        );
-        map.insert(
-            (TRIBUTE_ADDR, ITribute::tokensByOwnerCall::SELECTOR),
-            ITribute::tokensByOwnerCall::abi_encode_returns(&token_ids),
-        );
-
         MockRpc {
             eth_call_map: Some(call_map(map)),
             ..Default::default()
@@ -462,38 +366,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_token_uri_returns_metadata_json() {
-        let mock = tribute_mock();
-
-        let result = fetch_token_uri(&mock, sample_token_id()).await.unwrap();
-        assert!(result.starts_with(TOKEN_URI_JSON_PREFIX));
-        assert!(result.contains("worldwide_day"));
-    }
-
-    #[tokio::test]
     async fn test_fetch_day_totals_returns_expected_values() {
-        let mock = tribute_mock();
+        let mock = day_totals_mock();
 
         let result = fetch_day_totals(&mock, 20241220).await.unwrap();
-        assert_eq!(result.tributeCount, 2);
-        assert_eq!(result.tributeNominalTotalMinor, Bytes::from(vec![0x53; 56]));
+        assert_eq!(result.nodCount, 2);
+        assert_eq!(result.encryptedNominal, Bytes::from(vec![0x53; 56]));
+        assert_eq!(result.encryptedLoad, Bytes::from(vec![0x54; 56]));
         assert!(result.isSealed);
-    }
-
-    #[tokio::test]
-    async fn test_fetch_tributes_by_owner_returns_token_ids() {
-        let owner = address!("0x1111111111111111111111111111111111111111");
-        let mock = tribute_mock();
-
-        let result = fetch_tributes_by_owner(&mock, owner).await.unwrap();
-        assert_eq!(result, vec![sample_token_id()]);
-    }
-
-    #[tokio::test]
-    async fn test_show_uses_token_uri_without_error() {
-        let mock = tribute_mock();
-
-        show(&mock, sample_token_id()).await.unwrap();
     }
 
     #[test]

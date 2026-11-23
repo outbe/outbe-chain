@@ -1,5 +1,5 @@
 //! Private arithmetic access to encrypted NOD amounts.
-use alloy_primitives::{B256, U256};
+use alloy_primitives::U256;
 use outbe_core_common::nod_encryption::{
     EncryptedNodGroupLoadV1, EncryptedNodV1, NodQuoteContextV1,
 };
@@ -37,26 +37,6 @@ pub(crate) fn read_group_load(record: &EncryptedNodGroupLoadV1) -> Result<U256, 
             .map_err(TransportError::enclave_error);
     }
     crate::nod_host::read_nod_group_load(record)
-}
-
-pub(crate) fn seal_group_load(
-    chain_id: u64,
-    scope: B256,
-    sequence: u64,
-    inputs_hash: B256,
-    load_minor: U256,
-) -> Result<EncryptedNodGroupLoadV1, TransportError> {
-    #[cfg(any(test, feature = "test-enclave"))]
-    if test_enclave::enabled() {
-        return crate::nod_encryption::seal_group_load(
-            &test_enclave::state_key(),
-            (chain_id, scope),
-            (sequence, inputs_hash),
-            load_minor,
-        )
-        .map_err(TransportError::enclave_error);
-    }
-    crate::nod_host::seal_group_load((chain_id, scope), (sequence, inputs_hash), load_minor)
 }
 
 pub(crate) fn issue_nod_at_offer(

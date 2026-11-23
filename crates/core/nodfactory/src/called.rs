@@ -233,14 +233,10 @@ pub(crate) fn call_currency(
     Ok((called, finished))
 }
 
-/// Takes a group every Nod of which is settled out of its bin once its first full day is
-/// under way: a Nod issued at its 00:00:00 still joins it, none after. Returns whether
-/// it did.
+/// Takes a group every Nod of which is settled out of its bin once the offering of its
+/// emission day ended: no Nod can join it after. Returns whether it did.
 fn retire_settled_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) -> Result<bool> {
-    if nod.group_nod_count.read(&group_key)? != 0
-        || nod.group_unclaimed_tribute_count.read(&group_key)? != 0
-        || nod.group_called_at.read(&group_key)? != 0
-    {
+    if nod.group_nod_count.read(&group_key)? != 0 || nod.group_called_at.read(&group_key)? != 0 {
         return Ok(false);
     }
     let start_day = nod
@@ -248,10 +244,7 @@ fn retire_settled_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) ->
         .get(group_key)?
         .ok_or(crate::errors::NodFactoryError::MissingGroupForCall { group_key })?
         .full_day_after_issue;
-    let start_ts = start_day
-        .to_timestamp_utc()
-        .map_err(crate::errors::date_step_error)?;
-    if now <= start_ts {
+    if now < offering_end_of(nod, start_day)? {
         return Ok(false);
     }
     nod.remove_call_bin(group_key)?;
@@ -265,10 +258,7 @@ fn call_if_breached(
     group_key: B256,
     now: u64,
 ) -> Result<bool> {
-    if (nod.group_nod_count.read(&group_key)? == 0
-        && nod.group_unclaimed_tribute_count.read(&group_key)? == 0)
-        || nod.group_called_at.read(&group_key)? != 0
-    {
+    if nod.group_nod_count.read(&group_key)? == 0 || nod.group_called_at.read(&group_key)? != 0 {
         return Ok(false);
     }
     let terms = nod.read_call_terms(group_key)?;
@@ -279,8 +269,26 @@ fn call_if_breached(
     Ok(true)
 }
 
+/// The end of the offering of emission day `day`, whose Nods count their call from its
+/// 00:00. Without a Worldwide Day record it is that 00:00.
+fn offering_end_of(
+    nod: &NodContract<'_>,
+    day: outbe_system_common::time::WorldwideDay,
+) -> Result<u64> {
+    let start_ts = day
+        .to_timestamp_utc()
+        .map_err(crate::errors::date_step_error)?;
+    let wwd = outbe_system_common::time::WorldwideDay::new(
+        outbe_system_common::time::previous_date_key(day.value())
+            .map_err(crate::errors::date_step_error)?,
+    );
+    Ok(outbe_worldwideday::worldwide_day(nod.storage.clone(), wwd)?
+        .filter(|record| record.day == day.value())
+        .map_or(start_ts, |record| record.offering_end))
+}
+
 /// The terms a group is decided on: the ones it sealed, from the group's own first
-/// full day, which a Lysis series takes from its sealing.
+/// full day, 00:00 of its emission day.
 pub(crate) fn breach_terms(
     nod: &NodContract<'_>,
     group_key: B256,

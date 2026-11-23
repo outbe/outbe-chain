@@ -118,9 +118,6 @@ impl NodForfeit<'_, '_> {
             return Ok(());
         }
         let forfeited_count = self.nod.group_series_nod_count.read(&gs_key)?;
-        let forfeited_tribute_count =
-            u32::try_from(self.nod.series_unclaimed_tribute_count.read(&series_id)?)
-                .map_err(|_| NodError::GroupMemberIndexOverflow { group_key: group })?;
         let forfeited_amount_minor = self.nod.read_series_open_load(group, sub_series)?;
         let total = self
             .nod
@@ -139,13 +136,13 @@ impl NodForfeit<'_, '_> {
             issuanceCurrency: self.nod.series_issuance_currency.read(&series_id)?,
             referenceCurrency: self.nod.series_reference_currency.read(&series_id)?,
             forfeitedCount: forfeited_count,
-            forfeitedTributeCount: forfeited_tribute_count,
+            forfeitedTributeCount: 0,
             forfeitedAmountMinor: forfeited_amount_minor,
         })
     }
 
-    /// Returns the Gratis load of the group's unsettled Nods and unclaimed Tributes in one credit.
-    /// Lysis drew it out of the day limit and only mining converts it, so unmined it goes back.
+    /// Returns the Gratis load of the group's unsettled Nods in one credit. Metadosis drew it
+    /// out of the day limit and only mining converts it, so unmined it goes back.
     fn close_group(&mut self, group: B256) -> Result<()> {
         // A series a failed slot left open keeps the group in the queue so healthy slots commit
         // their close once and the retry reads only the open series.
@@ -166,9 +163,7 @@ impl NodForfeit<'_, '_> {
             .group_unsettled_load_minor_ct
             .bytes(&group)
             .clear()?;
-        let unsettled = self.nod.group_nod_count.read(&group)?;
-        let unclaimed = self.nod.group_unclaimed_tribute_count.read(&group)?;
-        if unsettled == 0 && unclaimed == 0 {
+        if self.nod.group_nod_count.read(&group)? == 0 {
             // Nothing left to burn. The close events have fired, so the group leaves
             // the forfeit queue without a cleanup entry.
             self.nod.remove_called(group)?;

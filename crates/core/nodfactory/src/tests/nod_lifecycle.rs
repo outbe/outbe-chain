@@ -192,7 +192,6 @@ fn add(storage: &StorageHandle<'_>, item: &NodItemState) {
         item,
         crate::runtime::call_terms(storage, item.entry_price_minor(), item.reference_currency)
             .unwrap(),
-        api::calculation_amount(item).unwrap(),
     )
     .unwrap();
 }

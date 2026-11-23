@@ -19,7 +19,7 @@
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
 use outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT;
 
-pub use crate::sponsorship::{ELEVATED_SPONSORED_GAS, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT};
+pub use crate::sponsorship::{ELEVATED_SPONSORED_GAS, FREE_TX_ISSUE_NOD_GAS_LIMIT};
 pub use outbe_primitives::zero_fee_types::FREE_TX_BOOTSTRAP_GAS_LIMIT;
 
 /// Maximum number of sponsored free transactions per signer per UTC day.
@@ -77,7 +77,7 @@ pub const SPONSORED_GAS_PER_BLOCK: u64 = 15_000_000;
 
 const _: () = {
     assert!(SPONSORED_GAS_PER_BLOCK < STEADY_BLOCK_GAS_LIMIT);
-    assert!(SPONSORED_GAS_PER_BLOCK >= FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT);
+    assert!(SPONSORED_GAS_PER_BLOCK >= FREE_TX_ISSUE_NOD_GAS_LIMIT);
 };
 
 /// Maximum calldata size accepted for a sponsored free transaction.
@@ -97,15 +97,20 @@ pub const MIN_FREE_TX_MAX_FEE_PER_GAS: u128 = MIN_PROTOCOL_BASE_FEE as u128;
 mod selector_tests {
     use super::*;
     use alloy_sol_types::SolCall;
-    use outbe_system_common::addresses::TRIBUTE_FACTORY_ADDRESS;
+    use outbe_system_common::addresses::NOD_FACTORY_ADDRESS;
 
-    alloy_sol_types::sol!("../../../contracts/precompiles/src/ITributeFactory.sol");
+    // Alloy 1.6 generates event constructors with the Solidity argument lists.
+    #[allow(clippy::too_many_arguments)]
+    mod abi {
+        alloy_sol_types::sol!("../../../contracts/precompiles/src/INodFactory.sol");
+    }
+    use abi::INodFactory;
 
     #[test]
-    fn elevated_offer_tribute_matches_the_tribute_factory_abi() {
+    fn elevated_issue_nod_matches_the_nod_factory_abi() {
         let (target, selector, gas) = ELEVATED_SPONSORED_GAS[0];
-        assert_eq!(target, TRIBUTE_FACTORY_ADDRESS);
-        assert_eq!(selector, ITributeFactory::offerTributeCall::SELECTOR);
-        assert_eq!(gas, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT);
+        assert_eq!(target, NOD_FACTORY_ADDRESS);
+        assert_eq!(selector, INodFactory::issueNodCall::SELECTOR);
+        assert_eq!(gas, FREE_TX_ISSUE_NOD_GAS_LIMIT);
     }
 }

@@ -563,7 +563,7 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         outbe_system_common::addresses::METADOSIS_ADDRESS,
         outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
         outbe_system_common::addresses::HYPERLANE_CONTROLLER_ADDRESS,
-        outbe_system_common::addresses::TRIBUTE_ADDRESS,
+        outbe_system_common::addresses::WORLDWIDE_DAY_ADDRESS,
         NOD_ADDRESS,
         outbe_system_common::addresses::GEM_ADDRESS,
         outbe_system_common::addresses::GEM_FACTORY_ADDRESS,

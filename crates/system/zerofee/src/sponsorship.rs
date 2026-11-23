@@ -1,27 +1,17 @@
 //! Domain-specific elevated sponsored gas ceilings for EIP-7702 paymaster transactions.
 
 use alloy_primitives::Address;
-use outbe_system_common::addresses::{NOD_FACTORY_ADDRESS, TRIBUTE_FACTORY_ADDRESS};
+use outbe_system_common::addresses::NOD_FACTORY_ADDRESS;
 
-/// Maximum sponsored gas limit for `TributeFactory.offerTribute`.
-pub const FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT: u64 = 8_000_000;
-
-/// `offerTribute(bytes,bytes,uint256,uint32,uint16,uint16,bytes,uint32,string,bytes,bytes,bytes)`.
-const OFFER_TRIBUTE_SELECTOR: [u8; 4] = [0x7c, 0x65, 0xe0, 0x88];
+/// Maximum sponsored gas limit for `NodFactory.issueNod`.
+pub const FREE_TX_ISSUE_NOD_GAS_LIMIT: u64 = 8_000_000;
 
 /// `issueNod(bytes,bytes,uint256,uint32,uint16,uint16,bytes,uint32,string,bytes,bytes)`.
 const ISSUE_NOD_SELECTOR: [u8; 4] = [0x8d, 0x62, 0x15, 0x42];
 
 /// Operation-specific sponsored gas ceilings, keyed by `(target, selector)`.
-pub const ELEVATED_SPONSORED_GAS: &[(Address, [u8; 4], u64)] = &[
-    (
-        TRIBUTE_FACTORY_ADDRESS,
-        OFFER_TRIBUTE_SELECTOR,
-        FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
-    ),
-    (
-        NOD_FACTORY_ADDRESS,
-        ISSUE_NOD_SELECTOR,
-        FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
-    ),
-];
+pub const ELEVATED_SPONSORED_GAS: &[(Address, [u8; 4], u64)] = &[(
+    NOD_FACTORY_ADDRESS,
+    ISSUE_NOD_SELECTOR,
+    FREE_TX_ISSUE_NOD_GAS_LIMIT,
+)];

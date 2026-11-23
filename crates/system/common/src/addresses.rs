@@ -17,9 +17,6 @@ pub const PROMIS_ADDRESS: Address = address!("0x00000000000000000000000000000000
 /// `mineCoen`. Carries no persistent storage of its own.
 pub const PROMIS_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000002337");
 
-/// Tribute NFT precompile address.
-pub const TRIBUTE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001101");
-
 /// Nod NFT precompile address.
 pub const NOD_ADDRESS: Address = address!("0x0000000000000000000000000000000000001006");
 
@@ -55,9 +52,6 @@ pub const CREDIS_FACTORY_ADDRESS: Address = address!("0x000000000000000000000000
 
 /// Worldwide Day precompile address: the WWD schedule, its seal and its reads.
 pub const WORLDWIDE_DAY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001018");
-
-/// Tribute factory precompile address.
-pub const TRIBUTE_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001100");
 
 /// Agent reward precompile address.
 pub const AGENT_REWARD_ADDRESS: Address = address!("0x000000000000000000000000000000000000100B");

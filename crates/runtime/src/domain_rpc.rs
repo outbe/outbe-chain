@@ -1,27 +1,8 @@
 //! Domain JSON-RPC endpoints merged into the `outbe_*` namespace by the runtime composition root.
 
-use std::sync::Arc;
-
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, B256};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
-use outbe_core_common::wwd_entity_id::WwdEntityId;
-use outbe_primitives::{
-    header::OutbeHeader,
-    storage::{
-        proof::AccountStorageProof,
-        readonly::{ReadOnlyStorageProvider, StorageReader},
-        StorageHandle,
-    },
-};
-use outbe_system_common::addresses::TRIBUTE_ADDRESS;
-use outbe_tribute::confidential::{TributeSourceSubject, TributeStateSource};
-use reth_ethereum::primitives::AlloyBlockHeader as _;
-use reth_ethereum::storage::{
-    HeaderProvider, StateProvider as _, StateProviderBox, StateProviderFactory,
-};
-use reth_provider::BlockIdReader;
-use reth_trie::TrieInput;
 use thiserror::Error;
 
 /// Sealed view + modify keys returned by `outbe_deriveKeys` and
@@ -42,14 +23,6 @@ pub struct GratisKeysSealed {
 /// Domain methods registered under the `outbe_*` RPC namespace alongside [`outbe_rpc::OutbeApiServer`].
 #[rpc(server, namespace = "outbe")]
 pub trait OutbeDomainApi {
-    /// Returns an encrypted Tribute and exact storage proof at the requested checkpoint.
-    #[method(name = "getTributeStateSource")]
-    async fn get_tribute_state_source(
-        &self,
-        subject: TributeSourceSubject,
-        tribute_id: WwdEntityId,
-    ) -> RpcResult<TributeStateSource>;
-
     /// Derive the account's confidential view + modify keys for `ledger` (`Gratis`,
     /// `Promis`, `Fidelity`, `Tribute`, or `Nod`) inside the enclave and return them
     /// sealed to `ephemeralPubkey` (a client X25519 public key). This is off-chain key
@@ -79,10 +52,6 @@ enum DomainRpcInternalError {
     PrivateExecutionUnavailable,
     #[error("enclave DeriveAccountKeys failed: {0}")]
     EnclaveDeriveAccountKeysFailed(#[source] outbe_tee::TransportError),
-    #[error("state read failed: {0}")]
-    StateReadFailed(String),
-    #[error("Tribute source worker failed: {0}")]
-    TributeSourceWorkerFailed(String),
 }
 
 impl From<DomainRpcInternalError> for outbe_primitives::error::PrecompileError {
@@ -102,27 +71,6 @@ enum DomainRpcInvalidParamsError {
         recovered: Address,
         account: Address,
     },
-    #[error("Tribute source day mismatch")]
-    TributeSourceDayMismatch,
-    #[error("Tribute source chain or day mismatch")]
-    TributeSourceChainOrDayMismatch,
-    #[error("Tribute source checkpoint is not finalized")]
-    TributeSourceCheckpointNotFinalized,
-    #[error("Tribute source checkpoint does not match the canonical header")]
-    TributeSourceHeaderMismatch,
-}
-
-struct RethStateReader<'a> {
-    state: &'a StateProviderBox,
-}
-
-impl StorageReader for RethStateReader<'_> {
-    fn read_storage(&self, address: Address, key: B256) -> outbe_primitives::error::Result<U256> {
-        self.state
-            .storage(address, key)
-            .map(|opt| opt.unwrap_or(U256::ZERO))
-            .map_err(|error| DomainRpcInternalError::StateReadFailed(error.to_string()).into())
-    }
 }
 
 pub(crate) const OUTBE_RPC_NAMESPACE: &str = "outbe";
@@ -160,19 +108,15 @@ type AccountQueryFn = fn(
 
 /// Runtime handler serving domain RPC methods in the `outbe_*` namespace.
 #[derive(Clone)]
-pub(crate) struct OutbeDomainRpcHandler<P> {
-    provider: Arc<P>,
-    chain_identity: Option<(u64, B256)>,
+pub(crate) struct OutbeDomainRpcHandler {
     account_query: AccountQueryFn,
     authority_watch: Option<outbe_tee::authority::TeeAuthorityWatch>,
 }
 
-impl<P> OutbeDomainRpcHandler<P> {
+impl OutbeDomainRpcHandler {
     #[must_use]
-    pub(crate) fn new(provider: Arc<P>, chain_identity: (u64, B256)) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
-            provider,
-            chain_identity: Some(chain_identity),
             account_query: outbe_core_common::confidential_tee::try_derive_sealed_account_keys,
             authority_watch: None,
         }
@@ -258,39 +202,7 @@ impl<P> OutbeDomainRpcHandler<P> {
 }
 
 #[jsonrpsee::core::async_trait]
-impl<P> OutbeDomainApiServer for OutbeDomainRpcHandler<P>
-where
-    P: StateProviderFactory
-        + HeaderProvider<Header = OutbeHeader>
-        + BlockIdReader
-        + Send
-        + Sync
-        + 'static,
-{
-    async fn get_tribute_state_source(
-        &self,
-        subject: TributeSourceSubject,
-        tribute_id: WwdEntityId,
-    ) -> RpcResult<TributeStateSource> {
-        require_private_authority(self.authority_watch.as_ref())?;
-        let watch = self
-            .authority_watch
-            .clone()
-            .or_else(outbe_tee::authority::tee_authority_watch);
-        let provider = Arc::clone(&self.provider);
-        let chain_identity = self.chain_identity;
-        tokio::task::spawn_blocking(move || {
-            require_private_authority(watch.as_ref())?;
-            serve_tribute_state_source(&*provider, chain_identity, subject, tribute_id)
-        })
-        .await
-        .map_err(|error| {
-            internal_err(DomainRpcInternalError::TributeSourceWorkerFailed(
-                error.to_string(),
-            ))
-        })?
-    }
-
+impl OutbeDomainApiServer for OutbeDomainRpcHandler {
     async fn derive_keys(
         &self,
         ledger: outbe_core_common::confidential_tee::Ledger,
@@ -321,7 +233,7 @@ pub async fn account_query_through_authority_gate(
     ephemeral_pubkey: B256,
     signature: Bytes,
 ) -> RpcResult<GratisKeysSealed> {
-    let mut handler = OutbeDomainRpcHandler::new(Arc::new(()), (1, B256::ZERO));
+    let mut handler = OutbeDomainRpcHandler::new();
     if let Some(watch) = watch {
         handler = handler.with_authority_watch(watch);
     }
@@ -349,92 +261,6 @@ fn require_private_authority(
     }
 }
 
-fn serve_tribute_state_source<P>(
-    provider: &P,
-    chain_identity: Option<(u64, B256)>,
-    subject: TributeSourceSubject,
-    tribute_id: WwdEntityId,
-) -> RpcResult<TributeStateSource>
-where
-    P: StateProviderFactory + HeaderProvider<Header = OutbeHeader> + BlockIdReader,
-{
-    if tribute_id.worldwide_day() != subject.worldwide_day {
-        return Err(invalid_params_err(
-            DomainRpcInvalidParamsError::TributeSourceDayMismatch,
-        ));
-    }
-    let (chain_id, genesis_hash, state) = checkpoint_state(provider, chain_identity, subject)?;
-    let reader = RethStateReader { state: &state };
-    let mut readonly =
-        ReadOnlyStorageProvider::new_with_chain_identity(reader, chain_id, genesis_hash);
-    let (tribute, day_index, expected_words) = StorageHandle::enter(&mut readonly, |storage| {
-        outbe_tribute::state_proof::read_tribute_source_words(storage, &subject, tribute_id)
-    })
-    .map_err(internal_err)?;
-    let slots = expected_words
-        .iter()
-        .map(|(slot, _)| *slot)
-        .collect::<Vec<_>>();
-    let proof = state
-        .proof(TrieInput::default(), TRIBUTE_ADDRESS, &slots)
-        .map_err(internal_err)?;
-    let source = TributeStateSource {
-        tribute,
-        day_index,
-        expected_words,
-        proof: AccountStorageProof::try_from(&proof).map_err(internal_err)?,
-    };
-    source
-        .verify(
-            &subject,
-            source.binding().map_err(internal_err)?,
-            outbe_tribute::confidential::proof_limits(),
-        )
-        .map_err(internal_err)?;
-    Ok(source)
-}
-
-fn checkpoint_state<P>(
-    provider: &P,
-    chain_identity: Option<(u64, B256)>,
-    subject: TributeSourceSubject,
-) -> RpcResult<(u64, B256, StateProviderBox)>
-where
-    P: StateProviderFactory + HeaderProvider<Header = OutbeHeader> + BlockIdReader,
-{
-    let (chain_id, genesis_hash) = chain_identity
-        .filter(|(chain_id, genesis_hash)| *chain_id != 0 && !genesis_hash.is_zero())
-        .ok_or_else(|| internal_err("immutable chain identity is not configured"))?;
-    if chain_id != subject.chain_id || subject.worldwide_day.value() == 0 {
-        return Err(invalid_params_err(
-            DomainRpcInvalidParamsError::TributeSourceChainOrDayMismatch,
-        ));
-    }
-    let checkpoint = subject.checkpoint;
-    let finalized = provider
-        .finalized_block_num_hash()
-        .map_err(internal_err)?
-        .ok_or_else(|| internal_err("finalized state unavailable"))?;
-    if checkpoint.block_number == 0 || checkpoint.block_number > finalized.number {
-        return Err(invalid_params_err(
-            DomainRpcInvalidParamsError::TributeSourceCheckpointNotFinalized,
-        ));
-    }
-    let header = provider
-        .sealed_header(checkpoint.block_number)
-        .map_err(internal_err)?
-        .ok_or_else(|| internal_err("Tribute source header unavailable"))?;
-    if header.hash() != checkpoint.block_hash || header.state_root() != checkpoint.state_root {
-        return Err(invalid_params_err(
-            DomainRpcInvalidParamsError::TributeSourceHeaderMismatch,
-        ));
-    }
-    let state = provider
-        .state_by_block_hash(checkpoint.block_hash)
-        .map_err(internal_err)?;
-    Ok((chain_id, genesis_hash, state))
-}
-
 fn internal_err(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObject<'static> {
     jsonrpsee::types::ErrorObject::owned(
         jsonrpsee::types::error::INTERNAL_ERROR_CODE,
@@ -455,9 +281,11 @@ fn invalid_params_err(msg: impl std::fmt::Display) -> jsonrpsee::types::ErrorObj
 mod tests {
     use super::*;
     use outbe_core_common::confidential_tee::{derive_account_keys_message, eip191_hash, Ledger};
+    use outbe_primitives::header::OutbeHeader;
     use outbe_primitives::signer::OutbeEvmSigner;
     use outbe_rpc::OutbeApiServer as _;
     use reth_provider::test_utils::NoopProvider;
+    use std::sync::Arc;
 
     fn sample_recoverable_sig(prehash: &B256, exclude: Option<Address>) -> ([u8; 65], Address) {
         (1u8..=16)
@@ -482,8 +310,7 @@ mod tests {
                 valid_until: 123,
             },
         );
-        let handler = OutbeDomainRpcHandler::new(Arc::new(()), (1, B256::repeat_byte(0x11)))
-            .with_authority_watch(authority.subscribe());
+        let handler = OutbeDomainRpcHandler::new().with_authority_watch(authority.subscribe());
         let account = Address::repeat_byte(0x11);
         let ephemeral_pubkey = B256::repeat_byte(0x22);
 
@@ -577,7 +404,7 @@ mod tests {
                 valid_until: 123,
             },
         );
-        let handler = OutbeDomainRpcHandler::new(Arc::new(()), (1, B256::repeat_byte(0x11)))
+        let handler = OutbeDomainRpcHandler::new()
             .with_authority_watch(authority.subscribe())
             .with_account_query(|_, _, _, _| None);
         let signer = OutbeEvmSigner::from_secret_bytes([0x42; 32]).expect("signer");
@@ -662,7 +489,7 @@ mod tests {
             Arc::clone(&provider),
             runtime as Arc<dyn outbe_rpc::state_reader::OutbeRpcStateReader>,
         );
-        let domain = OutbeDomainRpcHandler::new(provider, (1, B256::repeat_byte(0xAA)));
+        let domain = OutbeDomainRpcHandler::new();
         let rpc_module = merge_outbe_rpc_modules(infra.into_rpc(), domain.into_rpc())
             .expect("infra and domain outbe_* RPC modules must merge cleanly");
 
@@ -680,7 +507,6 @@ mod tests {
             "outbe_getSlashConfig",
             "outbe_getSlashInfo",
             "outbe_getStake",
-            "outbe_getTributeStateSource",
             "outbe_getValidator",
             "outbe_getValidators",
             "outbe_getVrfSeed",
@@ -709,7 +535,7 @@ mod tests {
             Arc::clone(&provider),
             runtime as Arc<dyn outbe_rpc::state_reader::OutbeRpcStateReader>,
         );
-        let domain = OutbeDomainRpcHandler::new(provider, (1, B256::repeat_byte(0xAA)));
+        let domain = OutbeDomainRpcHandler::new();
 
         let mut unconfigured = reth_ethereum::rpc::builder::TransportRpcModules::default();
         register_outbe_rpc_if_configured(&mut unconfigured, infra.into_rpc(), domain.into_rpc())

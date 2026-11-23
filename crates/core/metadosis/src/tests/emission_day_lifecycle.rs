@@ -310,7 +310,6 @@ fn wwd_takes_offers_only_by_the_time_and_seals_on_close() {
         let genesis_ts = date_key_to_utc_timestamp(20261001).unwrap() + 12 * 3_600;
         advance_at(&storage, genesis_ts, genesis_ts);
 
-        let tribute = TributeContract::new(storage.clone());
         let factory = WorldwideDayContract::new(storage.clone());
         let proj = api::worldwide_day(storage.clone(), wwd).unwrap().unwrap();
         assert_eq!(
@@ -325,7 +324,7 @@ fn wwd_takes_offers_only_by_the_time_and_seals_on_close() {
             proj.offering_end,
             date_key_to_utc_timestamp(20261003).unwrap() + 12 * 3_600
         );
-        assert!(!tribute.is_day_sealed(wwd).unwrap());
+        assert!(!outbe_worldwideday::is_sealed(storage.clone(), wwd).unwrap());
 
         // The day takes offers by the time, with no oracle price.
         storage
@@ -344,7 +343,7 @@ fn wwd_takes_offers_only_by_the_time_and_seals_on_close() {
         let seal_ts = proj.offering_end + 12 * 3_600;
         advance_at(&storage, seal_ts, genesis_ts);
         assert!(!factory.pipeline_wwd.read_all().unwrap().contains(&wwd));
-        assert!(tribute.is_day_sealed(wwd).unwrap());
+        assert!(outbe_worldwideday::is_sealed(storage.clone(), wwd).unwrap());
     });
 }
 
@@ -380,23 +379,7 @@ fn wwd_without_price_runs_as_empty_day() {
         storage
             .set_block_timestamp(U256::from(proj.offerings_start))
             .unwrap();
-        // The day takes offers by the time. An offer fails because no currency
-        // has a 24-hour VWAP.
         assert!(api::is_offering_day(storage.clone(), wwd).unwrap());
-        let offer_err = outbe_tributefactory::test_support::submit_signed_test_offer_for_day(
-            storage.clone(),
-            wwd,
-        )
-        .expect_err("offer_tribute must revert when no currency has a 24-hour VWAP");
-        assert_ne!(
-            offer_err.to_string(),
-            outbe_primitives::error::PrecompileError::from(
-                outbe_tributefactory::errors::TributeFactoryError::WorldwideDayNotOffering {
-                    worldwide_day: wwd,
-                }
-            )
-            .to_string()
-        );
 
         let expected_limit = outbe_emission::day_emission::emission_limit_of_day(1);
         let settle_ts = date_key_to_utc_timestamp(20261003).unwrap() + 12 * 3_600;
@@ -417,9 +400,7 @@ fn wwd_without_price_runs_as_empty_day() {
         );
         allocate_to_metadosis(&ctx_03, emission_day, expected_limit);
         outbe_worldwideday::advance_worldwide_days_command(&ctx_03).unwrap();
-        assert!(!TributeContract::new(storage.clone())
-            .is_day_sealed(wwd)
-            .unwrap());
+        assert!(!outbe_worldwideday::is_sealed(storage.clone(), wwd).unwrap());
 
         crate::commands::process_emission_day(&ctx_03, emission_day).unwrap();
         advance_at(
@@ -427,19 +408,16 @@ fn wwd_without_price_runs_as_empty_day() {
             date_key_to_utc_timestamp(20261004).unwrap(),
             genesis_ts,
         );
-        assert!(TributeContract::new(storage.clone())
-            .is_day_sealed(wwd)
-            .unwrap());
+        assert!(outbe_worldwideday::is_sealed(storage.clone(), wwd).unwrap());
         let settled = api::emission_day(storage.clone(), emission_day)
             .unwrap()
             .unwrap();
         assert_eq!(settled.state, metadosis_state::COMPLETED);
         assert_eq!(settled.wwd, wwd);
         assert_eq!(
-            TributeContract::new(storage.clone())
-                .get_day_totals(wwd)
+            outbe_worldwideday::day_totals(storage.clone(), wwd)
                 .unwrap()
-                .tribute_count,
+                .nod_count,
             0
         );
         assert_eq!(

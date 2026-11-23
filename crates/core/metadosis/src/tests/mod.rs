@@ -2,7 +2,6 @@ use alloy_primitives::{Address, U256};
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::{MutationPurposeTag, StorageHandle};
-use outbe_tribute::TributeContract;
 
 use crate::precompile::IMetadosis;
 use crate::schema::MetadosisContract;
@@ -18,7 +17,7 @@ fn with_storage<R>(f: impl FnOnce(StorageHandle) -> R) -> R {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 64);
     outbe_fidelity::enclave_client::test_enclave::install();
-    outbe_tribute::enclave_client::test_enclave::install();
+    outbe_nod::test_support::install();
     StorageHandle::enter(&mut storage, |storage| f(storage.clone()))
 }
 
@@ -43,7 +42,7 @@ fn allocate_to_metadosis(ctx: &BlockRuntimeContext<'_>, day: u32, limit: U256) {
 
 fn install_test_enclaves() {
     outbe_fidelity::enclave_client::test_enclave::install();
-    outbe_tribute::enclave_client::test_enclave::install();
+    outbe_nod::test_support::install();
 }
 
 /// Price the day-type currency, which genesis lists as a reference: the brief needs a
@@ -75,5 +74,4 @@ fn arm_reference_price(storage: &StorageHandle, timestamp: u64) {
 
 mod api;
 mod emission_day_lifecycle;
-mod onchain_lysis;
 mod precompile;

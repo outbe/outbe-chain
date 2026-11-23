@@ -81,17 +81,9 @@ impl LifecycleAuthorityProbe {
         self.owner.bind_sync_refresh(provider, protocol, chain);
     }
 
-    pub fn domain_rpc<P>(&self, provider: Arc<P>, chain: (u64, B256)) -> jsonrpsee::Methods
-    where
-        P: crate::BlockIdReader
-            + crate::HeaderProvider<Header = crate::OutbeHeader>
-            + crate::StateProviderFactory
-            + Send
-            + Sync
-            + 'static,
-    {
+    pub fn domain_rpc(&self) -> jsonrpsee::Methods {
         use crate::domain_rpc::OutbeDomainApiServer as _;
-        crate::domain_rpc::OutbeDomainRpcHandler::new(provider, chain)
+        crate::domain_rpc::OutbeDomainRpcHandler::new()
             .with_authority_watch(self.owner.authority.subscribe())
             .into_rpc()
             .into()

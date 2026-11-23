@@ -78,7 +78,7 @@ use fixtures::{
 
 const HEIGHTS: u64 = 3;
 const FIRST_BLOCK: u64 = 1;
-const USER_TXS: usize = 5;
+const USER_TXS: usize = 4;
 const MINT_MINOR: u64 = 1_000_000;
 const BURN_MINOR: u64 = 1;
 const DOMAIN_TAGS: [u8; 6] = [1, 2, 5, 10, 21, 13];
@@ -109,8 +109,6 @@ struct Prepared {
     keyed: Arc<outbe_tee::in_process::InProcessTeeContext>,
     gratis_keys: outbe_tee::resident::AccountKeysHandle,
     promis_keys: outbe_tee::resident::AccountKeysHandle,
-    tribute_day: outbe_system_common::time::WorldwideDay,
-    tribute_owners: [Address; 3],
     committee: execution_committee::Committee,
 }
 
@@ -262,15 +260,6 @@ fn prepare(
         user_sender,
     );
     let fidelity_sig = fidelity_signature(&user_signer, user_sender, chain);
-    let tribute_day = outbe_system_common::time::WorldwideDay::new(20_241_221);
-    let tribute_owners = [
-        user_sender,
-        Address::repeat_byte(0x44),
-        Address::repeat_byte(0x45),
-    ];
-    let tribute_ids = tribute_owners.map(|owner| {
-        outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(owner, tribute_day).to_u256()
-    });
     let signer = test_evm_signer();
     let user_tx = |nonce, to, input| sign_user(&user_signer, nonce, to, input);
     let user_txs = std::iter::once(Vec::new())
@@ -302,11 +291,6 @@ fn prepare(
                     fidelity_call(user_sender, &fidelity_sig),
                 ),
                 user_tx(base + 3, nod_factory(), nod_call(nod_id, settlement_asset)),
-                user_tx(
-                    base + 4,
-                    tribute(),
-                    tribute_call(tribute_ids[height as usize]),
-                ),
             ]
         }))
         .collect();
@@ -331,8 +315,6 @@ fn prepare(
         keyed: Arc::clone(keyed),
         gratis_keys,
         promis_keys,
-        tribute_day,
-        tribute_owners,
         committee: execution_committee::Committee::new(21),
     }
 }
@@ -357,12 +339,6 @@ fn seeded_state(prepared: &Prepared) -> ExecState {
             prepared.user_sender,
             &prepared.gratis_keys,
             &prepared.promis_keys,
-        );
-        seed_tributes(
-            &storage,
-            &prepared.leader,
-            prepared.tribute_owners,
-            prepared.tribute_day,
         );
         drop(_seed);
         outbe_tee::witness::set_witness_policy_for_test(policy);
@@ -530,13 +506,6 @@ fn nod_call(nod_id: U256, asset: Address) -> Bytes {
     .abi_encode()
     .into()
 }
-fn tribute_call(tribute_id: U256) -> Bytes {
-    outbe_tribute::precompile::ITribute::cleanCall {
-        tributeId: tribute_id,
-    }
-    .abi_encode()
-    .into()
-}
 fn gratis_factory() -> Address {
     outbe_system_common::addresses::GRATIS_FACTORY_ADDRESS
 }
@@ -549,13 +518,9 @@ fn fidelity() -> Address {
 fn nod_factory() -> Address {
     outbe_system_common::addresses::NOD_FACTORY_ADDRESS
 }
-fn tribute() -> Address {
-    outbe_system_common::addresses::TRIBUTE_ADDRESS
-}
-fn marker_accounts() -> [Address; 6] {
+fn marker_accounts() -> [Address; 5] {
     use outbe_system_common::addresses::{
-        EMISSION_ADDRESS, FIDELITY_ADDRESS, GRATIS_ADDRESS, PROMIS_ADDRESS, TRIBUTE_ADDRESS,
-        VAULT_ROUTER_ADDRESS,
+        EMISSION_ADDRESS, FIDELITY_ADDRESS, GRATIS_ADDRESS, PROMIS_ADDRESS, VAULT_ROUTER_ADDRESS,
     };
     [
         VAULT_ROUTER_ADDRESS,
@@ -563,7 +528,6 @@ fn marker_accounts() -> [Address; 6] {
         PROMIS_ADDRESS,
         FIDELITY_ADDRESS,
         EMISSION_ADDRESS,
-        TRIBUTE_ADDRESS,
     ]
 }
 
@@ -571,7 +535,6 @@ fn uninstall_domain_standins() {
     outbe_gratis::enclave_client::test_enclave::uninstall();
     outbe_fidelity::enclave_client::test_enclave::uninstall();
     outbe_nod::test_support::uninstall();
-    outbe_tribute::enclave_client::test_enclave::uninstall();
 }
 
 fn account_keys(
@@ -694,49 +657,6 @@ fn fidelity_signature(
     signer
         .sign_hash(&outbe_core_common::confidential_tee::eip191_hash(&message))
         .unwrap()
-}
-fn seed_tributes(
-    storage: &StorageHandle<'_>,
-    leader: &outbe_tee::in_process::InProcessTeeContext,
-    owners: [Address; 3],
-    day: outbe_system_common::time::WorldwideDay,
-) {
-    let key = leader
-        .state_key_handle(outbe_core_common::confidential_tee::TRIBUTE.state_info(), 0)
-        .unwrap();
-    for owner in owners {
-        let tribute_id = outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(owner, day);
-        let body = outbe_tribute::confidential::encrypt_tribute(
-            &key,
-            outbe_core_common::tribute_encryption::TributeContextV2 {
-                chain_id: storage.chain_id().unwrap(),
-                tribute_id,
-                owner,
-                worldwide_day: day,
-                issuance_currency: 840,
-                reference_currency: 978,
-                tribute_price_minor: U256::ONE,
-                offer_input_hash: B256::repeat_byte(0x5A),
-            },
-            &outbe_core_common::tribute_encryption::TributeAmountsV2 {
-                issuance_amount_minor: U256::from(1_000u64),
-                nominal_amount_minor: U256::from(100u64),
-            },
-        )
-        .unwrap();
-        outbe_tribute::state_api::issue_encrypted_with_league(storage, &body, Some(1)).unwrap();
-    }
-    let emission_day = outbe_system_common::time::EmissionDate::new(day.value());
-    outbe_tribute::TributeContract::new(storage.clone())
-        .day_emission_day
-        .write(&day, emission_day)
-        .unwrap();
-    outbe_emission::api::record_failed_day_allocation(
-        storage.clone(),
-        day.value(),
-        U256::from(MINT_MINOR),
-    )
-    .unwrap();
 }
 fn resident_context(
     seed: u8,

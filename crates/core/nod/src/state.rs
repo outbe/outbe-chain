@@ -1,7 +1,7 @@
 use alloy_primitives::{B256, U256};
 use outbe_core_common::deadline_queue;
 use outbe_core_common::series_id::SeriesId;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_system_common::call_bins;
 
 use crate::nod_encryption::{NodGroupLoadOpRequestV1, NodGroupLoadOperationV1};
@@ -159,7 +159,6 @@ impl NodContract<'_> {
         self.group_unsettled_load_minor_ct
             .bytes(&group_key)
             .clear()?;
-        self.group_unclaimed_tribute_count.clear(&group_key)?;
         self.group_is_forfeited.clear(&group_key)?;
         self.group_forfeiting.clear(&group_key)?;
         self.group_forfeit_load_minor.clear(&group_key)?;
@@ -171,9 +170,7 @@ impl NodContract<'_> {
             self.group_series_unsettled_load_minor_ct
                 .bytes(&gs_key)
                 .clear()?;
-            // The series stays bound after its last Tribute so call and close can still name it.
             let series_id = self.sub_series_series_id.read(&sub_series)?;
-            self.series_group.clear(&series_id)?;
             self.series_issuance_currency.clear(&series_id)?;
             self.series_reference_currency.clear(&series_id)?;
             self.sub_series_series_id.clear(&sub_series)?;
@@ -197,10 +194,7 @@ impl NodContract<'_> {
         let Some(group) = self.groups.get(group_key)? else {
             return Ok(());
         };
-        if group.settled_nods != 0
-            || self.group_nod_count.read(&group_key)? != 0
-            || self.group_unclaimed_tribute_count.read(&group_key)? != 0
-        {
+        if group.settled_nods != 0 || self.group_nod_count.read(&group_key)? != 0 {
             return Ok(());
         }
         self.group_nod_count.clear(&group_key)?;
@@ -266,144 +260,7 @@ impl NodContract<'_> {
         self.group_series_nod_count.write(&gs_key, next)
     }
 
-    /// Seals a Lysis series into its call group, opening the group on `call_terms` if it is
-    /// the first, and adds the series' unclaimed Tributes to the group's.
-    pub(crate) fn seal_lysis_series_state(
-        &mut self,
-        seal: crate::api::LysisSeriesSeal,
-    ) -> Result<bool> {
-        let crate::api::LysisSeriesSeal {
-            series_id,
-            group_key,
-            full_day_after_issue,
-            issuance_currency,
-            reference_currency,
-            entry_price_minor,
-            call_terms,
-            unclaimed_tribute_count,
-            unclaimed_tribute_load,
-        } = seal;
-        if reference_currency == 0 {
-            return Err(NodError::ZeroReferenceCurrency.into());
-        }
-        if unclaimed_tribute_count == 0 {
-            return Ok(false);
-        }
-        if self.sealed_series_group(series_id)?.is_some() {
-            return Err(PrecompileError::fatal("a Lysis series is sealed twice"));
-        }
-        let sub_series = crate::index_keys::sub_series_key(series_id, 0);
-        if unclaimed_tribute_load.scope != sub_series {
-            return Err(NodError::EncryptedTermsMismatch.into());
-        }
-        let current_group = self.groups.get(group_key)?;
-        let next_count = self
-            .group_unclaimed_tribute_count
-            .read(&group_key)?
-            .checked_add(unclaimed_tribute_count)
-            .ok_or(NodError::GroupMemberIndexOverflow { group_key })?;
-        let series_load_bytes = postcard::to_allocvec(&unclaimed_tribute_load)
-            .map_err(|_| NodError::EncryptedTermsMismatch)?;
-        self.apply_group_open_load(
-            group_key,
-            NodGroupLoadOperationV1::AddSeriesLoad {
-                series_load: Box::new(unclaimed_tribute_load),
-            },
-        )?;
-        self.register_group_series(
-            group_key,
-            (series_id, 0),
-            (issuance_currency, reference_currency),
-            entry_price_minor,
-        )?;
-        let gs_key = crate::index_keys::group_series_key(group_key, sub_series);
-        self.group_series_unsettled_load_minor_ct
-            .bytes(&gs_key)
-            .write(&series_load_bytes)?;
-        self.group_unclaimed_tribute_count
-            .write(&group_key, next_count)?;
-        self.series_group.write(&series_id, group_key)?;
-        self.series_entry_price_minor
-            .write(&series_id, entry_price_minor)?;
-        self.series_unclaimed_tribute_count
-            .write(&series_id, unclaimed_tribute_count)?;
-        if current_group.is_none() {
-            if let Some(terms) = call_terms {
-                self.seal_group_call_terms(group_key, terms)?;
-                self.insert_call_bin(group_key)?;
-            }
-            self.groups.create(&crate::schema::NodGroupState {
-                group_key,
-                full_day_after_issue,
-                reference_currency,
-                settled_nods: 0,
-            })?;
-        }
-        Ok(true)
-    }
-
-    /// The call group Lysis sealed `series_id` into. The binding stays until `close_group`.
-    pub(crate) fn sealed_series_group(&self, series_id: SeriesId) -> Result<Option<B256>> {
-        let group_key = self.series_group.read(&series_id)?;
-        Ok((!group_key.is_zero()).then_some(group_key))
-    }
-
-    /// Takes one claimed Tribute off its series and group counts.
-    /// The group's encrypted open load (`unsettled + unclaimed`) is unchanged because the
-    /// claimed Tribute becomes an unsettled Nod in the same call group.
-    pub(crate) fn consume_unclaimed_tribute_from_series(
-        &mut self,
-        series_id: SeriesId,
-        group_key: B256,
-    ) -> Result<()> {
-        self.release_series_tribute(series_id, group_key)
-    }
-
-    /// Takes one cleaned forfeited Tribute off its series and group, deleting the group once
-    /// nothing is left in it.
-    pub(crate) fn record_unclaimed_tribute_cleaned_state(
-        &mut self,
-        series_id: SeriesId,
-    ) -> Result<()> {
-        let Some(group_key) = self.sealed_series_group(series_id)? else {
-            return Ok(());
-        };
-        self.release_series_tribute(series_id, group_key)?;
-        if self.group_unclaimed_tribute_count.read(&group_key)? == 0
-            && self.group_nod_count.read(&group_key)? == 0
-            && !self.waiting_for_forfeit(group_key)?
-        {
-            if let Some(group) = self.groups.get(group_key)? {
-                if group.settled_nods == 0 {
-                    self.group_nod_count.clear(&group_key)?;
-                    self.close_group(group_key)?;
-                    self.groups.delete(group_key)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn release_series_tribute(&mut self, series_id: SeriesId, group_key: B256) -> Result<()> {
-        let group_count = self.group_unclaimed_tribute_count.read(&group_key)?;
-        let series_count = self.series_unclaimed_tribute_count.read(&series_id)?;
-        if group_count == 0 || series_count == 0 {
-            return Err(PrecompileError::fatal(
-                "a Lysis series has no unclaimed Tribute left",
-            ));
-        }
-        self.group_unclaimed_tribute_count
-            .write(&group_key, group_count - 1)?;
-        if series_count > 1 {
-            return self
-                .series_unclaimed_tribute_count
-                .write(&series_id, series_count - 1);
-        }
-        self.series_unclaimed_tribute_count.clear(&series_id)?;
-        self.series_entry_price_minor.clear(&series_id)
-    }
-
-    // --- Encrypted group open load (unsettled + unclaimed) -----------------------
+    // --- Encrypted group open load of the unsettled Nods -------------------------
 
     pub fn encrypted_group_open_load(&self, group_key: B256) -> Result<Vec<u8>> {
         self.group_unsettled_load_minor_ct.bytes(&group_key).read()

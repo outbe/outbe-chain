@@ -272,7 +272,7 @@ pub struct NodContract {
     #[attribute(order = 88)]
     pub owner_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    /// Encrypted Gratis load of the group's unsettled Nods and unclaimed Tributes, opened only when forfeited.
+    /// Encrypted Gratis load of the group's unsettled Nods, opened only when forfeited.
     #[attribute(order = 89)]
     pub group_unsettled_load_minor_ct:
         outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::Bytes>,
@@ -305,23 +305,9 @@ pub struct NodContract {
     #[attribute(order = 103)]
     pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// Unclaimed Tributes of the Lysis series in the group.
-    #[attribute(order = 104)]
-    pub group_unclaimed_tribute_count: outbe_primitives::storage::dsl::Map<B256, u64>,
-
-    /// Set to `true` when the group's call notice deadline lapses and its unsettled/unclaimed load is forfeited.
+    /// Set to `true` when the group's call notice deadline lapses and its unsettled load is forfeited.
     #[attribute(order = 106)]
     pub group_is_forfeited: outbe_primitives::storage::dsl::Map<B256, bool>,
-
-    /// The call group Lysis sealed the series into.
-    #[attribute(order = 107)]
-    pub series_group: outbe_primitives::storage::dsl::Map<SeriesId, B256>,
-    /// The series' entry price, its emission day VWAP, sealed at Lysis.
-    #[attribute(order = 108)]
-    pub series_entry_price_minor: outbe_primitives::storage::dsl::Map<SeriesId, U256>,
-    /// Unclaimed Tributes of the series; at zero its records are cleared.
-    #[attribute(order = 109)]
-    pub series_unclaimed_tribute_count: outbe_primitives::storage::dsl::Map<SeriesId, u64>,
 
     /// Sub-series keys belonging to a call group, kept until `close_group` so
     /// `NodSeriesCalled` and `NodSeriesClosed` emit per sub-series.
@@ -340,7 +326,7 @@ pub struct NodContract {
     /// Unsettled Nod count of `(group_key, sub_series)`, keyed by `group_series_key`.
     #[attribute(order = 114)]
     pub group_series_nod_count: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// Encrypted open load (`unsettled Nods + unclaimed Tributes`) of `(group_key, sub_series)`.
+    /// Encrypted open load of the unsettled Nods of `(group_key, sub_series)`.
     #[attribute(order = 115)]
     pub group_series_unsettled_load_minor_ct:
         outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::Bytes>,

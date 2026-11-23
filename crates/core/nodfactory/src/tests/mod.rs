@@ -12,7 +12,6 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_system_common::addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS};
-use outbe_system_common::time::WorldwideDay;
 use outbe_system_common::units::SCALE_1E6_U64;
 use outbe_vaultrouter::settlement::SettlementPayment;
 

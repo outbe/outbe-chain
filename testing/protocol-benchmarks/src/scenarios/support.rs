@@ -11,7 +11,7 @@ use outbe_system_common::addresses::{
     GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS, INTEX_ADDRESS, INTEX_FACTORY_ADDRESS,
     METADOSIS_ADDRESS, NOD_ADDRESS, NOD_FACTORY_ADDRESS, ORACLE_ADDRESS, PROMIS_ADDRESS,
     PROMIS_FACTORY_ADDRESS, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_POLICY_REGISTRY_ADDRESS,
-    TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
+    VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS, WORLDWIDE_DAY_ADDRESS,
 };
 use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 
@@ -196,8 +196,7 @@ fn module_name(address: Address) -> &'static str {
         PROMIS_FACTORY_ADDRESS => "promis_factory",
         STABLECOIN_FACTORY_ADDRESS => "stablecoin_factory",
         STABLECOIN_POLICY_REGISTRY_ADDRESS => "stablecoin_policy_registry",
-        TRIBUTE_ADDRESS => "tribute",
-        TRIBUTE_FACTORY_ADDRESS => "tribute_factory",
+        WORLDWIDE_DAY_ADDRESS => "worldwide_day",
         VALIDATOR_SET_ADDRESS => "validator_set",
         VAULT_ROUTER_ADDRESS => "vault_router",
         _ => "other",

@@ -3,7 +3,7 @@ use crate::precompile::INod;
 use crate::schema::{CallTerms, NodContract, NodGroupState, NodItemState};
 use crate::storage_records::{StoredNod, StoredNodEntryExt};
 use alloy_primitives::{Address, B256, U256};
-use outbe_core_common::{nod_encryption::NOD_BLOB_LEN, series_id::SeriesId};
+use outbe_core_common::nod_encryption::NOD_BLOB_LEN;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
@@ -68,31 +68,9 @@ pub fn add_item(
     storage: &StorageHandle<'_>,
     item: &NodItemState,
     terms: Option<CallTerms>,
-    gratis_load_minor: U256,
 ) -> Result<()> {
-    storage.with_checkpoint(|| {
-        NodContract::new(storage.clone()).record_nod_issued_state(
-            item,
-            terms,
-            gratis_load_minor,
-            None,
-        )
-    })
-}
-pub fn add_series_item(
-    storage: &StorageHandle<'_>,
-    item: &NodItemState,
-    terms: Option<CallTerms>,
-    series_id: SeriesId,
-) -> Result<()> {
-    storage.with_checkpoint(|| {
-        NodContract::new(storage.clone()).record_nod_issued_state(
-            item,
-            terms,
-            U256::ZERO,
-            Some(series_id),
-        )
-    })
+    storage
+        .with_checkpoint(|| NodContract::new(storage.clone()).record_nod_issued_state(item, terms))
 }
 pub fn clean_item(storage: &StorageHandle<'_>, nod_id: U256) -> Result<()> {
     storage.with_checkpoint(|| {
@@ -144,21 +122,13 @@ impl NodContract<'_> {
         &mut self,
         item: &NodItemState,
         call_terms: Option<CallTerms>,
-        gratis_load_minor: U256,
-        series_id: Option<SeriesId>,
     ) -> Result<()> {
-        let series_group = match series_id {
-            Some(series_id) => Some(
-                self.sealed_series_group(series_id)?
-                    .ok_or_else(|| PrecompileError::fatal("a Nod claims an unsealed series"))?,
-            ),
-            None => Some(self.sub_series_group.read(&item.sub_series_key())?)
-                .filter(|group_key| !group_key.is_zero()),
-        };
+        let sub_series_group = Some(self.sub_series_group.read(&item.sub_series_key())?)
+            .filter(|group_key| !group_key.is_zero());
         crate::issuance::validate_item(
             item,
             call_terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
-            series_group,
+            sub_series_group,
         )?;
         if self.records.get(item.nod_id)?.is_some() {
             return Err(NodError::NodAlreadyExists.into());
@@ -168,9 +138,7 @@ impl NodContract<'_> {
         let current_group = self.groups.get(item.group_key)?;
         let member_count = self.group_nod_count.read(&item.group_key)?;
         let settled_count = current_group.as_ref().map_or(0, |group| group.settled_nods);
-        let unclaimed_count = self.group_unclaimed_tribute_count.read(&item.group_key)?;
-        if current_group.is_some() != (member_count > 0 || settled_count > 0 || unclaimed_count > 0)
-        {
+        if current_group.is_some() != (member_count > 0 || settled_count > 0) {
             return Err(NodError::GroupExistenceDisagreesWithMemberCount {
                 group_id,
                 member_count,
@@ -200,17 +168,8 @@ impl NodContract<'_> {
             (item.issuance_currency, item.reference_currency),
             item.entry_price_minor(),
         )?;
-        if let Some(series_id) = series_id {
-            self.consume_unclaimed_tribute_from_series(series_id, item.group_key)?;
-        } else {
-            let _ = gratis_load_minor;
-            self.add_nod_to_open_load(item.group_key, &item.encrypted)?;
-            self.add_nod_to_series_open_load(
-                item.group_key,
-                item.sub_series_key(),
-                &item.encrypted,
-            )?;
-        }
+        self.add_nod_to_open_load(item.group_key, &item.encrypted)?;
+        self.add_nod_to_series_open_load(item.group_key, item.sub_series_key(), &item.encrypted)?;
         self.increment_series_nod_count(item.group_key, item.sub_series_key())?;
         self.insert_group_member(item.group_key, item.nod_id)?;
         self.insert_state_record(&StoredNod::from(item))?;
@@ -273,8 +232,7 @@ impl NodContract<'_> {
             self.remove_group_member(item.group_key, item.nod_id)?
         };
         self.delete_state_record(item.nod_id)?;
-        let unclaimed_count = self.group_unclaimed_tribute_count.read(&item.group_key)?;
-        let empty = remaining == 0 && group.settled_nods == 0 && unclaimed_count == 0;
+        let empty = remaining == 0 && group.settled_nods == 0;
         if empty && !self.waiting_for_forfeit(item.group_key)? {
             self.group_nod_count.clear(&item.group_key)?;
             self.close_group(item.group_key)?;
@@ -294,6 +252,7 @@ impl NodContract<'_> {
 mod tests {
     use super::*;
     use crate::{test_support, NodIssueParams};
+    use outbe_core_common::series_id::SeriesId;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_system_common::time::date_key_to_utc_timestamp;
 
@@ -416,7 +375,7 @@ mod tests {
                 is_settled: false,
                 encrypted,
             };
-            add_item(&storage, &item, None, params.gratis_load_minor).unwrap();
+            add_item(&storage, &item, None).unwrap();
             let contract = NodContract::new(storage.clone());
             assert_eq!(contract.state_records(item.owner).unwrap().len(), 1);
             let stale_item = load_item(&storage, item.nod_id).unwrap().unwrap();

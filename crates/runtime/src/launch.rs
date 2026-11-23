@@ -222,10 +222,7 @@ where
                     )
                     .with_radicle_status(radicle_status.clone())
                     .with_tee_enclave_health(tee_enclave_health.clone());
-                    let domain_api = crate::domain_rpc::OutbeDomainRpcHandler::new(
-                        provider,
-                        (proof_chain_id, genesis_hash),
-                    ).with_authority_watch(outbe_tee::tee_authority_watch()
+                    let domain_api = crate::domain_rpc::OutbeDomainRpcHandler::new().with_authority_watch(outbe_tee::tee_authority_watch()
                         .ok_or(outbe_consensus::protocol_state::EngineProtocolError::NotInstalled)?);
                     let outbe_rpc = outbe_api.into_rpc();
                     let domain_rpc = domain_api.into_rpc();

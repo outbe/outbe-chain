@@ -1,9 +1,9 @@
 //! Two executor blocks. H2 runs on H1's merged post-state.
 //!
-//! Each height sends five signed user transactions through `OutbeBlockExecutor`:
-//! Gratis `mineCoen`, Promis `mineCoen`, Fidelity `getFidelityIndex`,
-//! NOD `quoteSettlement`, and Tribute `clean`. The tape must carry a tag from
-//! every confidential domain, indexed on those user transactions.
+//! Each height sends four signed user transactions through `OutbeBlockExecutor`:
+//! Gratis `mineCoen`, Promis `mineCoen`, Fidelity `getFidelityIndex`, and
+//! NOD `quoteSettlement`. The tape must carry a tag from every confidential
+//! domain, indexed on those user transactions.
 
 use super::*;
 use alloy_consensus::TxEip1559;
@@ -19,24 +19,22 @@ use outbe_primitives::reshare_artifact::decode_outbe_block_artifacts;
 use outbe_promisfactory::precompile::IPromisFactory;
 use outbe_system_common::addresses::{
     EMISSION_ADDRESS, FIDELITY_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS,
-    NOD_FACTORY_ADDRESS, PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS, REWARDS_ADDRESS, TRIBUTE_ADDRESS,
+    NOD_FACTORY_ADDRESS, PROMIS_ADDRESS, PROMIS_FACTORY_ADDRESS, REWARDS_ADDRESS,
 };
-use outbe_system_common::time::{EmissionDate, WorldwideDay};
 use outbe_tee::witness::{decode_witness_payload_v1, EnclaveWitnessEntryV1};
-use outbe_tribute::precompile::ITribute;
 use reth_ethereum::TransactionSigned;
 use reth_evm::ConfigureEvm;
 use reth_primitives_traits::Recovered;
 use revm::database::states::bundle_state::BundleRetention;
 use revm::Database;
 
-const USER_TXS: usize = 5;
+const USER_TXS: usize = 4;
 const MINT_MINOR: u64 = 1_000_000;
 const BURN_MINOR: u64 = 1;
-const DOMAIN_TAGS: [u8; 6] = [1, 2, 5, 10, 21, 13];
+const DOMAIN_TAGS: [u8; 5] = [1, 2, 5, 10, 21];
 
 #[test]
-fn two_blocks_record_five_domains_across_three_witness_modes() {
+fn two_blocks_record_every_domain_across_three_witness_modes() {
     use super::fixtures::{
         begin_system_txs_for_test, dummy_pubkey, post_state_root,
         state_with_active_validators_seeded, test_chain_spec, test_evm_env, test_evm_signer,
@@ -78,9 +76,6 @@ fn two_blocks_record_five_domains_across_three_witness_modes() {
         user_sender,
     );
     let fidelity_sig = fidelity_signature(&user_signer, user_sender, chain);
-    let tribute_day = WorldwideDay::new(20_241_221);
-    let other_owner = Address::repeat_byte(0x44);
-    let tribute_ids = tribute_ids(user_sender, other_owner, tribute_day);
 
     let signer = test_evm_signer();
     let proposer = signer.address();
@@ -101,10 +96,7 @@ fn two_blocks_record_five_domains_across_three_witness_modes() {
             .try_into_recovered()
             .unwrap()
     };
-    let calls_at = |nonce_base: u64,
-                    op_nonce: u64,
-                    tribute: U256|
-     -> Vec<Recovered<TransactionSigned>> {
+    let calls_at = |nonce_base: u64, op_nonce: u64| -> Vec<Recovered<TransactionSigned>> {
         vec![
             user_tx(
                 nonce_base,
@@ -149,17 +141,10 @@ fn two_blocks_record_five_domains_across_three_witness_modes() {
                 .abi_encode()
                 .into(),
             ),
-            user_tx(
-                nonce_base + 4,
-                TRIBUTE_ADDRESS,
-                ITribute::cleanCall { tributeId: tribute }
-                    .abi_encode()
-                    .into(),
-            ),
         ]
     };
-    let user_h1 = calls_at(0, 1, tribute_ids[0]);
-    let user_h2 = calls_at(USER_TXS as u64, 2, tribute_ids[1]);
+    let user_h1 = calls_at(0, 1);
+    let user_h2 = calls_at(USER_TXS as u64, 2);
 
     let asset_bytecode = revm::state::Bytecode::new_raw(Bytes::from_static(&[
         0x5f, 0x35, 0x60, 0xe0, 0x1c, 0x63, 0x31, 0x3c, 0xe5, 0x67, 0x14, 0x60, 0x17, 0x57, 0x61,
@@ -178,7 +163,6 @@ fn two_blocks_record_five_domains_across_three_witness_modes() {
                     ));
                 outbe_nod::test_support::add(&storage, &nod_item).unwrap();
                 seed_minted_balances(&storage, user_sender, chain, &gratis_keys, &promis_keys);
-                seed_forfeited_tributes(&storage, &leader, user_sender, other_owner, tribute_day);
                 drop(_seed_runtime);
                 outbe_tee::witness::set_witness_policy_for_test(policy);
                 outbe_vaultrouter::schema::VaultRouterContract::new(storage.clone())
@@ -203,7 +187,6 @@ fn two_blocks_record_five_domains_across_three_witness_modes() {
             PROMIS_ADDRESS,
             FIDELITY_ADDRESS,
             EMISSION_ADDRESS,
-            TRIBUTE_ADDRESS,
         ] {
             state.database.insert_account_info(
                 address,
@@ -321,7 +304,7 @@ fn two_blocks_record_five_domains_across_three_witness_modes() {
                 begin.len()
             );
         }
-        assert_five_domain_witness(&extra, begin.len(), block_number);
+        assert_domain_witness(&extra, begin.len(), block_number);
         let matched = (
             result.receipts,
             result.gas_used,
@@ -342,7 +325,7 @@ fn two_blocks_record_five_domains_across_three_witness_modes() {
             h1_extra,
             parent_hash,
         );
-        assert_eq!(nonce_h1, USER_TXS as u64, "H1 must consume five nonces");
+        assert_eq!(nonce_h1, USER_TXS as u64, "H1 must consume four nonces");
         let (_state, h2, nonce_h2) = run_height(
             state,
             3,
@@ -387,7 +370,7 @@ fn two_blocks_record_five_domains_across_three_witness_modes() {
     outbe_tee::witness::set_witness_policy_for_test(None);
 }
 
-fn assert_five_domain_witness(extra: &Bytes, begin_len: usize, block_number: u64) {
+fn assert_domain_witness(extra: &Bytes, begin_len: usize, block_number: u64) {
     let artifacts = decode_outbe_block_artifacts(extra)
         .unwrap_or_else(|error| panic!("block {block_number} artifacts: {error}"));
     let witness = artifacts
@@ -435,7 +418,6 @@ fn uninstall_domain_standins() {
     outbe_gratis::enclave_client::test_enclave::uninstall();
     outbe_fidelity::enclave_client::test_enclave::uninstall();
     outbe_nod::test_support::uninstall();
-    outbe_tribute::enclave_client::test_enclave::uninstall();
 }
 
 fn account_keys(
@@ -575,58 +557,6 @@ fn fidelity_signature(
     );
     let hash = outbe_core_common::confidential_tee::eip191_hash(&message);
     signer.sign_hash(&hash).expect("fidelity query signature")
-}
-
-fn tribute_ids(first_owner: Address, second_owner: Address, day: WorldwideDay) -> [U256; 2] {
-    [first_owner, second_owner].map(|owner| {
-        outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(owner, day).to_u256()
-    })
-}
-
-fn seed_forfeited_tributes(
-    storage: &outbe_primitives::storage::StorageHandle<'_>,
-    leader: &outbe_tee::in_process::InProcessTeeContext,
-    first_owner: Address,
-    second_owner: Address,
-    day: WorldwideDay,
-) {
-    let key = leader
-        .state_key_handle(outbe_core_common::confidential_tee::TRIBUTE.state_info(), 0)
-        .expect("tribute state key");
-    for owner in [first_owner, second_owner] {
-        let tribute_id = outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(owner, day);
-        let body = outbe_tribute::confidential::encrypt_tribute(
-            &key,
-            outbe_core_common::tribute_encryption::TributeContextV2 {
-                chain_id: storage.chain_id().expect("chain"),
-                tribute_id,
-                owner,
-                worldwide_day: day,
-                issuance_currency: 840,
-                reference_currency: 978,
-                tribute_price_minor: U256::ONE,
-                offer_input_hash: B256::repeat_byte(0x5A),
-            },
-            &outbe_core_common::tribute_encryption::TributeAmountsV2 {
-                issuance_amount_minor: U256::from(1_000u64),
-                nominal_amount_minor: U256::from(100u64),
-            },
-        )
-        .expect("encrypt tribute");
-        outbe_tribute::state_api::issue_encrypted_with_league(storage, &body, Some(1))
-            .expect("issue tribute");
-    }
-    let emission_day = EmissionDate::new(day.value());
-    outbe_tribute::TributeContract::new(storage.clone())
-        .day_emission_day
-        .write(&day, emission_day)
-        .expect("link emission day");
-    outbe_emission::api::record_failed_day_allocation(
-        storage.clone(),
-        day.value(),
-        U256::from(MINT_MINOR),
-    )
-    .expect("cancel emission day");
 }
 
 fn resident_context(seed: u8) -> std::sync::Arc<outbe_tee::in_process::InProcessTeeContext> {

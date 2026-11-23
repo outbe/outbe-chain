@@ -8,9 +8,7 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
     transaction_call::TransactionCallFields,
 };
-use outbe_system_common::addresses::{
-    AGENT_REWARD_ADDRESS, TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS,
-};
+use outbe_system_common::addresses::{AGENT_REWARD_ADDRESS, NOD_FACTORY_ADDRESS, ZEROFEE_ADDRESS};
 use outbe_system_common::time::SECONDS_PER_DAY;
 
 const SIGNER: Address = address!("0x1111111111111111111111111111111111111111");
@@ -313,25 +311,25 @@ fn classify_rejects_oversized_gas_limit() {
 }
 
 #[test]
-fn classify_accepts_tribute_factory_zk_gas_limit() {
+fn classify_accepts_nod_factory_zk_gas_limit() {
     let mut tx = ok_envelope(&ELEVATED_SPONSORED_GAS[0].1);
-    tx.call.to = Some(TRIBUTE_FACTORY_ADDRESS);
-    tx.call.gas_limit = crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT;
+    tx.call.to = Some(NOD_FACTORY_ADDRESS);
+    tx.call.gas_limit = crate::FREE_TX_ISSUE_NOD_GAS_LIMIT;
 
     assert!(classify_sponsorship(&tx).is_ok());
 }
 
 #[test]
-fn classify_rejects_tribute_factory_above_zk_gas_limit() {
+fn classify_rejects_nod_factory_above_zk_gas_limit() {
     let mut tx = ok_envelope(&ELEVATED_SPONSORED_GAS[0].1);
-    tx.call.to = Some(TRIBUTE_FACTORY_ADDRESS);
-    tx.call.gas_limit = crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT + 1;
+    tx.call.to = Some(NOD_FACTORY_ADDRESS);
+    tx.call.gas_limit = crate::FREE_TX_ISSUE_NOD_GAS_LIMIT + 1;
 
     assert_eq!(
         classify_sponsorship(&tx),
         Err(ZeroFeePolicyError::FreeTxDailyGasLimitExceeded {
-            gas_limit: crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT + 1,
-            limit: crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
+            gas_limit: crate::FREE_TX_ISSUE_NOD_GAS_LIMIT + 1,
+            limit: crate::FREE_TX_ISSUE_NOD_GAS_LIMIT,
         })
     );
 }
@@ -343,27 +341,27 @@ fn classify_scopes_elevated_gas_to_target_and_selector() {
     assert_ne!(selector, unknown);
     for (to, input, limit) in [
         (
-            Some(TRIBUTE_FACTORY_ADDRESS),
+            Some(NOD_FACTORY_ADDRESS),
             &unknown[..],
             FREE_TX_DAILY_GAS_LIMIT,
         ),
         (
-            Some(TRIBUTE_FACTORY_ADDRESS),
+            Some(NOD_FACTORY_ADDRESS),
             &selector[..0],
             FREE_TX_DAILY_GAS_LIMIT,
         ),
         (
-            Some(TRIBUTE_FACTORY_ADDRESS),
+            Some(NOD_FACTORY_ADDRESS),
             &selector[..1],
             FREE_TX_DAILY_GAS_LIMIT,
         ),
         (
-            Some(TRIBUTE_FACTORY_ADDRESS),
+            Some(NOD_FACTORY_ADDRESS),
             &selector[..2],
             FREE_TX_DAILY_GAS_LIMIT,
         ),
         (
-            Some(TRIBUTE_FACTORY_ADDRESS),
+            Some(NOD_FACTORY_ADDRESS),
             &selector[..3],
             FREE_TX_DAILY_GAS_LIMIT,
         ),
@@ -373,9 +371,9 @@ fn classify_scopes_elevated_gas_to_target_and_selector() {
             FREE_TX_DAILY_GAS_LIMIT,
         ),
         (
-            Some(TRIBUTE_FACTORY_ADDRESS),
+            Some(NOD_FACTORY_ADDRESS),
             &selector[..],
-            crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
+            crate::FREE_TX_ISSUE_NOD_GAS_LIMIT,
         ),
     ] {
         let mut tx = ok_envelope(input);
@@ -395,7 +393,7 @@ fn classify_scopes_elevated_gas_to_target_and_selector() {
     }
 
     let mut tx = ok_envelope(&selector);
-    tx.call.to = Some(TRIBUTE_FACTORY_ADDRESS);
+    tx.call.to = Some(NOD_FACTORY_ADDRESS);
     tx.call.gas_limit = FREE_TX_DAILY_GAS_LIMIT + 1;
     assert_eq!(classify_sponsorship(&tx), Ok(()));
 
@@ -417,8 +415,8 @@ fn elevated_grant_preserves_other_envelope_constraints() {
     let mut input = vec![0; FREE_TX_DAILY_CALLDATA_BYTES + 1];
     input[..4].copy_from_slice(&ELEVATED_SPONSORED_GAS[0].1);
     let mut tx = ok_envelope(&input);
-    tx.call.to = Some(TRIBUTE_FACTORY_ADDRESS);
-    tx.call.gas_limit = crate::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT;
+    tx.call.to = Some(NOD_FACTORY_ADDRESS);
+    tx.call.gas_limit = crate::FREE_TX_ISSUE_NOD_GAS_LIMIT;
     assert_eq!(
         classify_sponsorship(&tx),
         Err(ZeroFeePolicyError::FreeTxDailyCalldataTooLarge {

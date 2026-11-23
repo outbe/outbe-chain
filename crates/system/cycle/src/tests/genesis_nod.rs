@@ -372,12 +372,7 @@ fn issue_nod(
         terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
         840,
     );
-    outbe_nod::api::add_nod(
-        storage,
-        &body,
-        terms,
-        outbe_nod::api::calculation_amount(&body)?,
-    )?;
+    outbe_nod::api::add_nod(storage, &body, terms)?;
     Ok(body.group_key)
 }
 
