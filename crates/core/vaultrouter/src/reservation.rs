@@ -35,17 +35,18 @@ pub(crate) fn quote(
     )?;
     let currency = IReferenceCurrency::isoCodeCall::abi_decode_returns_validate(&data)
         .map_err(|_| VaultRouterError::InvalidAssetCurrency)?;
-    api::check_reference_currency(currency)?;
     api::check_reference_currency(reference_currency)?;
     let snapshot = current_vwap_24h_snapshot(storage.clone())?;
     let valuation = vwap_24h(storage.clone(), currency, snapshot)?
         .filter(|v| !v.is_zero())
         .ok_or(VaultRouterError::PledgePriceUnavailable)?;
     let (gratis_minor, entry_price_minor) = checked_quote(amount, decimals, valuation)?;
-    // The last closed rate. The publication time is not checked here.
-    let (policy_rate, _published_at) = api::get_policy_rate(storage.clone(), currency)?;
     let call_terms = outbe_credis::config::read(storage)?;
     let now = storage.now_secs()?;
+    let (policy_rate, published_at) = api::get_policy_rate(storage.clone(), currency)?;
+    if now.saturating_sub(published_at) > u64::from(call_terms.max_policy_rate_age_seconds) {
+        return Err(VaultRouterError::PolicyRateTooOld.into());
+    }
     let day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;
     let call_start_day = first_full_day(now).map_err(date_step_error)?;
     let series_id = SeriesId::for_pair(day, currency, reference_currency)

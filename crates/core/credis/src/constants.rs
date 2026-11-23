@@ -36,5 +36,8 @@ pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECONDS_PER_DAY_U32;
 /// `call_notice_period_seconds`.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 
+/// Oldest policy rate a reservation accepts, in seconds since its source published it.
+pub const MAX_POLICY_RATE_AGE: u32 = 7 * SECONDS_PER_DAY_U32;
+
 /// Day count convention for fee accrual: simple, ACT/365.
 pub const DAYS_PER_YEAR: u64 = 365;

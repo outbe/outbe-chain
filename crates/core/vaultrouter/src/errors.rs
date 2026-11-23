@@ -90,6 +90,8 @@ pub enum VaultRouterError {
     InvalidAssetCurrency,
     #[error("pledge price unavailable")]
     PledgePriceUnavailable,
+    #[error("policy rate is older than the maximum rate age")]
+    PolicyRateTooOld,
     #[error("previous day VWAP unavailable")]
     PreviousDayVwapUnavailable,
     #[error("reference pair unavailable")]
@@ -211,6 +213,7 @@ impl From<VaultRouterError> for PrecompileError {
             }
             VaultRouterError::InvalidAssetCurrency => revert_with(I::InvalidAssetCurrency {}),
             VaultRouterError::PledgePriceUnavailable => revert_with(I::PledgePriceUnavailable {}),
+            VaultRouterError::PolicyRateTooOld => revert_with(I::PolicyRateTooOld {}),
             VaultRouterError::PreviousDayVwapUnavailable => {
                 revert_with(I::PreviousDayVwapUnavailable {})
             }

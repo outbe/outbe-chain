@@ -77,6 +77,7 @@ interface IVaultRouter {
     error UnsupportedAssetDecimalsSimple();
     error InvalidAssetCurrency();
     error PledgePriceUnavailable();
+    error PolicyRateTooOld();
     error PreviousDayVwapUnavailable();
     error ReferencePairUnavailable();
     error AssetVaultsCount();
