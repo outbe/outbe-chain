@@ -282,10 +282,24 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @inheritdoc IIntexNFT1155
     function burnIntex(address owner, bytes14 seriesId, uint256 units) external onlyRole(BURNER_ROLE) {
+        _burnIssued(owner, seriesId, units);
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function sendIntexToGemFactory(address owner, bytes14 seriesId, uint256 units, uint256 gemFactoryPositionId)
+        external
+        onlyRole(BURNER_ROLE)
+    {
+        uint256 tokenId = _burnIssued(owner, seriesId, units);
+        // forge-lint: disable-next-line(unsafe-typecast) -- _burnIssued bounded units by the uint32 supply
+        emit IntexSentToGemFactory(tokenId, owner, gemFactoryPositionId, uint32(units));
+    }
+
+    function _burnIssued(address owner, bytes14 seriesId, uint256 units) private returns (uint256 tokenId) {
         if (owner == address(0)) revert ZeroAddress("owner", owner);
         if (units == 0) revert ZeroUnits();
 
-        uint256 tokenId = _issuedTokenId(seriesId);
+        tokenId = _issuedTokenId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) revert NonexistentToken(tokenId);
 

@@ -124,4 +124,7 @@ interface IIntex {
         uint256 amountMinor,
         uint32 units
     );
+
+    /// @notice Promis was mined from `units` settled units of `owner`, which ends them.
+    event IntexBurned(uint256 indexed intexId, address indexed owner, uint32 units);
 }

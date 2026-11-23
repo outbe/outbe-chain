@@ -444,6 +444,31 @@
   },
   {
     "type": "event",
+    "name": "IntexBurned",
+    "inputs": [
+      {
+        "name": "intexId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "units",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "IntexSettled",
     "inputs": [
       {
