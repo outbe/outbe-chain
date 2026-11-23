@@ -99,7 +99,8 @@ impl Rail for Nod {
             .evm
             .logs()
             .iter()
-            .filter_map(|log| INodFactory::NodSettled::decode_log_data(&log.data).ok())
+            .filter(|log| log.address == NOD_ADDRESS)
+            .filter_map(|log| INod::NodSettled::decode_log_data(&log.data).ok())
             .collect();
         assert_eq!(settled.len(), 1);
         assert_eq!(settled[0].owner, OWNER);

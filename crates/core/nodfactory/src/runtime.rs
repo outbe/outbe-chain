@@ -15,6 +15,7 @@ use outbe_core_common::nod_encryption::EncryptedNodV1;
 use outbe_core_common::pow;
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodGroup, LoadedNodItem};
+use outbe_nod::precompile::INod;
 use outbe_nod::schema::{CallTerms, NodItemState};
 
 use crate::errors::NodFactoryError;
@@ -58,6 +59,7 @@ pub(crate) fn issue_offer_nod(
             storage,
             INodFactory::NodSeriesOpened {
                 seriesId: series_id.into(),
+                subSeriesId: sub_series_id,
                 issuanceCurrency: encrypted.terms.issuance_currency,
                 referenceCurrency: encrypted.terms.reference_currency,
                 entryPriceMinor: encrypted.terms.entry_price_minor,
@@ -121,17 +123,15 @@ fn issue_nod_with_cost(
     let gratis_load_minor = nod_api::calculation_amount(&item)?;
     let _ = nod_api::settlement_cost_minor(terms.entry_price_minor, gratis_load_minor)?;
     nod_api::add_nod(storage, &item, call_terms)?;
-    emit_event(
-        storage,
-        INodFactory::NodIssued {
-            nodId: nod_id,
-            owner: terms.owner,
-            seriesId: series_id.into(),
-            issuanceCurrency: terms.issuance_currency,
-            referenceCurrency: terms.reference_currency,
-            payload: encrypted.encrypted_gratis_amount.clone().into(),
-        },
-    )?;
+    outbe_nod::NodContract::new(storage.clone()).emit(INod::NodIssued {
+        nodId: nod_id,
+        owner: terms.owner,
+        seriesId: series_id.into(),
+        subSeriesId: sub_series_id,
+        issuanceCurrency: terms.issuance_currency,
+        referenceCurrency: terms.reference_currency,
+        payload: encrypted.encrypted_gratis_amount.clone().into(),
+    })?;
     Ok(nod_id)
 }
 
@@ -183,17 +183,14 @@ pub fn settle_nod(
         // settle the same Nod twice. A failed payment rolls the transition back.
         nod_api::record_settled(storage, item, group)?;
         settlement::collect(storage, payer, asset, quote.payment_minor)?;
-        emit_event(
-            storage,
-            INodFactory::NodSettled {
-                nodId: nod_id,
-                owner,
-                asset,
-                issuanceCurrency: issuance_currency,
-                referenceCurrency: reference_currency,
-                amountMinor: quote.payment_minor,
-            },
-        )
+        outbe_nod::NodContract::new(storage.clone()).emit(INod::NodSettled {
+            nodId: nod_id,
+            owner,
+            issuanceCurrency: issuance_currency,
+            referenceCurrency: reference_currency,
+            asset,
+            amountMinor: quote.payment_minor,
+        })
     })
 }
 

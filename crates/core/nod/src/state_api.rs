@@ -240,6 +240,19 @@ impl NodContract<'_> {
         } else if item.is_settled {
             self.groups.update(&group)?;
         }
+        if item.is_settled {
+            self.emit(INod::NodBurned {
+                nodId: item.nod_id,
+                owner: item.owner,
+            })?;
+        } else {
+            self.emit(INod::NodForfeited {
+                nodId: item.nod_id,
+                owner: item.owner,
+                issuanceCurrency: item.issuance_currency,
+                referenceCurrency: item.reference_currency,
+            })?;
+        }
         self.emit(INod::Transfer {
             from: item.owner,
             to: Address::ZERO,

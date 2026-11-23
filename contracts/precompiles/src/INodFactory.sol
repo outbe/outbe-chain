@@ -43,8 +43,11 @@ interface INodFactory {
     error InvalidWalletAddressAtIndex(uint64 index, string walletAddress);
     error InvalidSraAddressAtIndex(uint64 index, string sraAddress);
 
+    /// The first Nod of sub-series `subSeriesId` opened it with its entry price, its call
+    /// price and the call terms of its group.
     event NodSeriesOpened(
         bytes14 indexed seriesId,
+        uint16 indexed subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint256 entryPriceMinor,
@@ -53,24 +56,26 @@ interface INodFactory {
         uint64 callThreshold,
         uint64 callNoticePeriod
     );
-
-    event NodIssued(
-        uint256 indexed nodId,
-        address indexed owner,
+    /// The daily call scan called the group of the sub-series. Every Nod in it must be
+    /// settled by `settlementDeadline`, or it is forfeited when the sub-series closes.
+    event NodSeriesCalled(
         bytes14 indexed seriesId,
+        uint16 indexed subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        bytes payload
+        uint64 calledAt,
+        uint64 settlementDeadline
     );
-
-    /// @notice Emitted when a Nod is settled.
-    event NodSettled(
-        uint256 indexed nodId,
-        address indexed owner,
-        address asset,
+    /// The settlement deadline lapsed: the `forfeitedCount` unsettled Nods of the sub-series
+    /// are forfeited and their `forfeitedAmountMinor` returned to the Promis Limit at once.
+    /// The cleanup deletes them after.
+    event NodSeriesClosed(
+        bytes14 indexed seriesId,
+        uint16 indexed subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint256 amountMinor
+        uint32 forfeitedCount,
+        uint256 forfeitedAmountMinor
     );
 
     /// @notice Offer the spends of `worldwideDay` and issue their Nod in this transaction.

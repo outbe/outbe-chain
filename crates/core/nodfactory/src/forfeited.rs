@@ -13,8 +13,8 @@ use outbe_system_common::pass_budget::{PassBudget, WITNESS_BYTES_PER_WRITE};
 
 use outbe_nod::errors::NodError;
 use outbe_nod::index_keys::group_series_key;
+use outbe_nod::schema::NodContract;
 use outbe_nod::state::ForfeitQueue;
-use outbe_nod::{precompile::INod, schema::NodContract};
 
 pub(crate) fn forfeit_through(
     ctx: &BlockRuntimeContext,
@@ -131,14 +131,17 @@ impl NodForfeit<'_, '_> {
             .bytes(&gs_key)
             .clear()?;
         self.nod.group_series_forfeited.write(&gs_key, true)?;
-        self.nod.emit(INod::NodSeriesClosed {
-            seriesId: series_id.into(),
-            issuanceCurrency: self.nod.series_issuance_currency.read(&series_id)?,
-            referenceCurrency: self.nod.series_reference_currency.read(&series_id)?,
-            forfeitedCount: forfeited_count,
-            forfeitedTributeCount: 0,
-            forfeitedAmountMinor: forfeited_amount_minor,
-        })
+        crate::runtime::emit_event(
+            self.storage,
+            crate::precompile::INodFactory::NodSeriesClosed {
+                seriesId: series_id.into(),
+                subSeriesId: self.nod.sub_series_number.read(&sub_series)?,
+                issuanceCurrency: self.nod.series_issuance_currency.read(&series_id)?,
+                referenceCurrency: self.nod.series_reference_currency.read(&series_id)?,
+                forfeitedCount: forfeited_count,
+                forfeitedAmountMinor: forfeited_amount_minor,
+            },
+        )
     }
 
     /// Returns the Gratis load of the group's unsettled Nods in one credit. Metadosis drew it

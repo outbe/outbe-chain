@@ -11,7 +11,7 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
-use outbe_system_common::addresses::NOD_ADDRESS;
+use outbe_system_common::addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS};
 use outbe_system_common::math::constants::MAX_BIN_ID;
 use outbe_system_common::pass_budget::{
     PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK,
@@ -367,9 +367,9 @@ fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, 
 /// Each `NodSeriesClosed` as (Nods forfeited, Gratis load returned).
 fn group_forfeits(provider: &HashMapStorageProvider) -> Vec<(u32, U256)> {
     provider
-        .get_events(NOD_ADDRESS)
+        .get_events(NOD_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| INod::NodSeriesClosed::decode_log_data(log).ok())
+        .filter_map(|log| crate::precompile::INodFactory::NodSeriesClosed::decode_log_data(log).ok())
         .map(|event| (event.forfeitedCount, event.forfeitedAmountMinor))
         .collect()
 }
@@ -1671,9 +1671,9 @@ fn a_group_settled_in_full_closes_with_zero_forfeit() {
     });
 
     let closed: Vec<_> = provider
-        .get_events(NOD_ADDRESS)
+        .get_events(NOD_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| INod::NodSeriesClosed::decode_log_data(log).ok())
+        .filter_map(|log| crate::precompile::INodFactory::NodSeriesClosed::decode_log_data(log).ok())
         .collect();
     assert_eq!(closed.len(), 1);
     assert_eq!(
@@ -1682,10 +1682,9 @@ fn a_group_settled_in_full_closes_with_zero_forfeit() {
             closed[0].issuanceCurrency,
             closed[0].referenceCurrency,
             closed[0].forfeitedCount,
-            closed[0].forfeitedTributeCount,
             closed[0].forfeitedAmountMinor
         ),
-        (series_id, issuance, reference, 0, 0, U256::ZERO)
+        (series_id, issuance, reference, 0, U256::ZERO)
     );
     assert_eq!(
         outbe_core_common::series_id::SeriesId::for_pair(

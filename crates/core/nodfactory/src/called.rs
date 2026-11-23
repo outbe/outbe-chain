@@ -320,13 +320,17 @@ pub(crate) fn mark_called(
         let series_id = nod.sub_series_series_id.read(&sub_series)?;
         let issuance_currency = nod.series_issuance_currency.read(&series_id)?;
         let reference_currency = nod.series_reference_currency.read(&series_id)?;
-        nod.emit(INod::NodSeriesCalled {
-            seriesId: series_id.into(),
-            issuanceCurrency: issuance_currency,
-            referenceCurrency: reference_currency,
-            calledAt: now,
-            settlementDeadline: deadline,
-        })?;
+        crate::runtime::emit_event(
+            &nod.storage,
+            crate::precompile::INodFactory::NodSeriesCalled {
+                seriesId: series_id.into(),
+                subSeriesId: nod.sub_series_number.read(&sub_series)?,
+                issuanceCurrency: issuance_currency,
+                referenceCurrency: reference_currency,
+                calledAt: now,
+                settlementDeadline: deadline,
+            },
+        )?;
     }
     Ok(())
 }

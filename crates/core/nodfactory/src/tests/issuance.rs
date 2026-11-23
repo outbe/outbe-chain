@@ -55,7 +55,7 @@ fn issue_is_immediately_readable_and_keeps_product_event_order() {
         events,
         [
             (NOD_ADDRESS, INod::Transfer::SIGNATURE_HASH),
-            (NOD_FACTORY_ADDRESS, INodFactory::NodIssued::SIGNATURE_HASH),
+            (NOD_ADDRESS, INod::NodIssued::SIGNATURE_HASH),
         ]
     );
 }
@@ -262,7 +262,7 @@ fn mining_deletes_item_and_last_group_then_emits_burn() {
         signatures,
         [
             (NOD_ADDRESS, INod::MetadataUpdate::SIGNATURE_HASH),
-            (NOD_FACTORY_ADDRESS, INodFactory::NodSettled::SIGNATURE_HASH),
+            (NOD_ADDRESS, INod::NodSettled::SIGNATURE_HASH),
             (NOD_ADDRESS, INod::Transfer::SIGNATURE_HASH),
         ]
     );

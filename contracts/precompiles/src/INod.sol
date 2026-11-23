@@ -46,30 +46,30 @@ interface INod {
     /// Nods of several series, so no narrower range covers it.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
-    /// Series force-called by the daily Call scan: the reference price
-    /// exceeded the series' call price on enough of the trailing window. Every
-    /// Nod in the series must be settled by `settlementDeadline`. Otherwise it is
-    /// forfeited when the series closes.
-    event NodSeriesCalled(
+    /// A Nod was issued at its offer into sub-series `subSeriesId` of `seriesId`.
+    /// `payload` is its encrypted Gratis load.
+    event NodIssued(
+        uint256 indexed nodId,
+        address indexed owner,
         bytes14 indexed seriesId,
+        uint16 subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint64 calledAt,
-        uint64 settlementDeadline
+        bytes payload
     );
-
-    /// The series' settlement deadline lapsed: its `forfeitedCount` unsettled Nods and
-    /// `forfeitedTributeCount` unclaimed Tributes are forfeited and their
-    /// `forfeitedAmountMinor` returned to the Promis reserve at once. No Gratis is
-    /// minted. The cleanup deletes them after.
-    event NodSeriesClosed(
-        bytes14 indexed seriesId,
+    /// A Nod's cost was settled into the Reserve: `amountMinor` of `asset`.
+    event NodSettled(
+        uint256 indexed nodId,
+        address indexed owner,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint32 forfeitedCount,
-        uint32 forfeitedTributeCount,
-        uint256 forfeitedAmountMinor
+        address asset,
+        uint256 amountMinor
     );
+    /// Gratis was mined from the Nod. Its end event.
+    event NodBurned(uint256 indexed nodId, address indexed owner);
+    /// The cleanup deleted the forfeited unsettled Nod. Its end event. The load stays private.
+    event NodForfeited(uint256 indexed nodId, address indexed owner, uint16 issuanceCurrency, uint16 referenceCurrency);
 
     struct NodData {
         // keccak256(seriesId || owner).

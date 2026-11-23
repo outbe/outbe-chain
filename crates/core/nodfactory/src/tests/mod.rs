@@ -323,12 +323,12 @@ fn dual_currency_params(owner: Address) -> NodIssueParams {
 /// A cap above every quoted cost that the stubbed allowance and balance cover.
 pub(crate) const AMOUNT_CAP: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
 
-fn settled_event(world: &World) -> INodFactory::NodSettled {
+fn settled_event(world: &World) -> INod::NodSettled {
     world
         .provider
         .get_ordered_events()
         .iter()
-        .filter_map(|event| INodFactory::NodSettled::decode_log_data(&event.data).ok())
+        .filter_map(|event| INod::NodSettled::decode_log_data(&event.data).ok())
         .last()
         .expect("NodSettled event")
 }

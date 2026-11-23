@@ -227,25 +227,19 @@
   },
   {
     "type": "event",
-    "name": "NodIssued",
+    "name": "NodSeriesCalled",
     "inputs": [
-      {
-        "name": "nodId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
       {
         "name": "seriesId",
         "type": "bytes14",
         "indexed": true,
         "internalType": "bytes14"
+      },
+      {
+        "name": "subSeriesId",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
       },
       {
         "name": "issuanceCurrency",
@@ -260,10 +254,59 @@
         "internalType": "uint16"
       },
       {
-        "name": "payload",
-        "type": "bytes",
+        "name": "calledAt",
+        "type": "uint64",
         "indexed": false,
-        "internalType": "bytes"
+        "internalType": "uint64"
+      },
+      {
+        "name": "settlementDeadline",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NodSeriesClosed",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
+      },
+      {
+        "name": "subSeriesId",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
+      },
+      {
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "forfeitedCount",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "forfeitedAmountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -277,6 +320,12 @@
         "type": "bytes14",
         "indexed": true,
         "internalType": "bytes14"
+      },
+      {
+        "name": "subSeriesId",
+        "type": "uint16",
+        "indexed": true,
+        "internalType": "uint16"
       },
       {
         "name": "issuanceCurrency",
@@ -319,49 +368,6 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "NodSettled",
-    "inputs": [
-      {
-        "name": "nodId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "issuanceCurrency",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "referenceCurrency",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "amountMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
