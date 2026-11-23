@@ -331,7 +331,7 @@ fn harness(body: impl FnOnce(&StorageHandle<'_>)) {
     });
 }
 
-/// Issues `specs` as (owner-byte, load, paid) into one group,
+/// Issues `specs` as (owner-byte, load, settled) into one group,
 /// force-calls it, and leaves the clock past the sealed notice.
 fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, Vec<NodItemState>) {
     let items: Vec<NodItemState> = specs
@@ -345,8 +345,8 @@ fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, 
         .collect();
     let group_key = items[0].group_key;
     let id = group_key;
-    for (item, &(_, _, paid)) in items.iter().zip(specs) {
-        if paid {
+    for (item, &(_, _, settled)) in items.iter().zip(specs) {
+        if settled {
             api::record_settled(
                 storage,
                 api::load_item(storage, item.nod_id).unwrap().unwrap(),
@@ -1481,7 +1481,7 @@ fn pending_calls_hold_forfeits_and_same_height_reentry_keeps_the_allowance() {
 }
 
 #[test]
-fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined() {
+fn mixed_group_forfeits_only_unsettled_loads_and_preserves_settled_terms_until_mined() {
     harness(|storage| {
         let items: Vec<_> = [0x91, 0x92, 0x93, 0x95]
             .into_iter()
@@ -1494,7 +1494,7 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined()
         let key = items[0].group_key;
         let id = key;
         let nod = NodContract::new(storage.clone());
-        // Settle the middle member, exercising swap-remove of the unpaid tail.
+        // Settle the middle member, exercising swap-remove of the unsettled tail.
         api::record_settled(
             storage,
             api::load_item(storage, items[1].nod_id).unwrap().unwrap(),
@@ -1532,7 +1532,10 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined()
             + outbe_nod::api::calculation_amount(&items[0]).unwrap()
             + outbe_nod::api::calculation_amount(&items[2]).unwrap();
         assert_eq!(reserve(storage), expected);
-        assert!(!is_queued(storage, key), "no unpaid member is left to burn");
+        assert!(
+            !is_queued(storage, key),
+            "no unsettled member is left to burn"
+        );
         assert_eq!(scan(storage, past), 0);
         assert_eq!(reserve(storage), expected);
         let group = api::get_group(storage, id).unwrap().unwrap();
@@ -1556,7 +1559,7 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined()
 }
 
 #[test]
-fn a_fully_paid_group_is_not_called_and_corrupt_paid_membership_is_not_forfeited() {
+fn a_fully_settled_group_is_not_called_and_corrupt_settled_membership_is_not_forfeited() {
     harness(|storage| {
         let item = issue_owned(storage, Address::repeat_byte(0x94), ISO);
         let id = item.group_key;
@@ -1575,13 +1578,13 @@ fn a_fully_paid_group_is_not_called_and_corrupt_paid_membership_is_not_forfeited
         );
         assert_eq!(scan(storage, at), 0);
         assert_eq!(called_at(storage, item.group_key), 0);
-        // Issuance into a paid-only group must retain its committed paid state.
+        // Issuance into a settled-only group must retain its committed settled state.
         let newcomer = nod_item(Address::repeat_byte(0x96), ISO);
-        let paid_group = api::get_group(storage, id).unwrap().unwrap();
+        let settled_group = api::get_group(storage, id).unwrap().unwrap();
         add(storage, &newcomer);
         assert_eq!(
             outbe_nod::canonical_group(&api::get_group(storage, id).unwrap().unwrap()),
-            outbe_nod::canonical_group(&paid_group),
+            outbe_nod::canonical_group(&settled_group),
         );
         api::remove_nod(
             storage,
@@ -1699,10 +1702,10 @@ fn a_group_settled_in_full_closes_with_zero_forfeit() {
     );
 }
 
-/// A group paid in full leaves its bin once no Nod can join it, so later walks do not
-/// visit it again. Its paid Nod stays with the group until mined.
+/// A group settled in full leaves its bin once no Nod can join it, so later walks do not
+/// visit it again. Its settled Nod stays with the group until mined.
 #[test]
-fn a_group_paid_in_full_leaves_its_call_bin() {
+fn a_group_settled_in_full_leaves_its_call_bin() {
     harness(|storage| {
         let item = issue_owned(storage, Address::repeat_byte(0x31), ISO);
         api::record_settled(
@@ -1881,12 +1884,12 @@ fn days_closed_behind_a_stalled_call_sweep_are_walked_in_order() {
     });
 }
 
-/// Promis Limit moves by the unpaid loads, not by reaching
-/// Forfeited or emitting `NodGroupForfeited`. A paid-but-unmined member is
+/// Promis Limit moves by the unsettled loads, not by reaching
+/// Forfeited or emitting `NodGroupForfeited`. A settled-but-unmined member is
 /// not credited. If the add were removed, this delta
 /// would fail while the events and burns could still look complete.
 #[test]
-fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
+fn forfeit_credits_distinct_unsettled_loads_and_ignores_settled_members() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -1902,19 +1905,19 @@ fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
                 (0x34, 20, false),
             ],
         );
-        let unpaid: U256 = items
+        let unsettled: U256 = items
             .iter()
             .zip([(false, 3u64), (true, 7), (false, 11), (false, 20)])
-            .filter_map(|(item, (paid, _))| {
-                (!paid).then_some(outbe_nod::api::calculation_amount(item).unwrap())
+            .filter_map(|(item, (settled, _))| {
+                (!settled).then_some(outbe_nod::api::calculation_amount(item).unwrap())
             })
             .fold(U256::ZERO, |sum, load| sum + load);
-        assert_eq!(unpaid, U256::from(34u64));
+        assert_eq!(unsettled, U256::from(34u64));
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
         assert_eq!(forfeit_block(&storage, past).unwrap(), 1);
-        assert_eq!(reserve(&storage), unpaid);
+        assert_eq!(reserve(&storage), unsettled);
         assert_eq!(forfeit_block(&storage, past + CLOSED_DAY_DELAY).unwrap(), 0);
-        assert_eq!(reserve(&storage), unpaid);
+        assert_eq!(reserve(&storage), unsettled);
         assert_eq!(
             NodContract::new(storage.clone())
                 .group_nod_count
@@ -2072,7 +2075,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
 }
 
 /// Every persistent write of a forfeit and its cleanup (credit, event,
-/// deletion) rolls back with its checkpoint. Retry credits the original unpaid
+/// deletion) rolls back with its checkpoint. Retry credits the original unsettled
 /// loads once, neither zero nor twice.
 #[test]
 fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {

@@ -16,8 +16,8 @@ interface INod {
     error GroupIdentityMismatch(bytes32 expected, bytes32 found);
     error NodAlreadyExists();
     error GroupExistenceDisagreesWithMemberCount(uint256 groupId, uint32 memberCount);
-    error GroupUnpaidLoadOverflow(bytes32 groupKey);
-    error GroupUnpaidLoadUnderflow(bytes32 groupKey);
+    error GroupUnsettledLoadOverflow(bytes32 groupKey);
+    error GroupUnsettledLoadUnderflow(bytes32 groupKey);
     error GroupSettledCountUnderflow(uint256 groupId);
     error AlreadySettled();
     error SettledCountOverflow();
@@ -55,7 +55,7 @@ interface INod {
         uint64 settlementDeadline
     );
 
-    /// The series' settlement deadline lapsed: its `forfeitedCount` unpaid Nods and
+    /// The series' settlement deadline lapsed: its `forfeitedCount` unsettled Nods and
     /// `forfeitedTributeCount` unclaimed Tributes are forfeited and their
     /// `forfeitedAmountMinor` returned to the Promis reserve at once. No Gratis is
     /// minted. The cleanup deletes them after.
@@ -89,7 +89,7 @@ interface INod {
         uint64 calledAt;
         bool isSettled;
         /// Read-time state: 0 Issued, 1 Called, 2 Settled, 3 Forfeited.
-        /// Paid entitlements remain Settled after expiry. Forfeited items stay
+        /// Settled entitlements remain Settled after expiry. Forfeited items stay
         /// in storage until cleanup. Reads of deleted items revert with NodNotFound.
         uint8 effectiveState;
         /// Group terms sealed at issuance, independent of current defaults.

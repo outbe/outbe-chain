@@ -103,8 +103,8 @@ pub struct CallTerms {
     pub call_notice_period_seconds: u32,
 }
 
-/// Shared group record. `group_nod_count` tracks unpaid membership.
-/// The record is deleted when both unpaid and settled counts reach zero.
+/// Shared group record. `group_nod_count` tracks unsettled membership.
+/// The record is deleted when both unsettled and settled counts reach zero.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[storage_record(exists_field = full_day_after_issue)]
 pub struct NodGroupState {
@@ -119,7 +119,7 @@ pub struct NodGroupState {
     #[attribute(order = 1)]
     pub reference_currency: u16,
 
-    /// Live paid entitlements. The count decreases when one is mined.
+    /// Live settled entitlements. The count decreases when one is mined.
     #[serde(default)]
     #[attribute(order = 2)]
     pub settled_nods: u64,
@@ -135,9 +135,9 @@ pub struct NodGroupState {
 #[storage_schema]
 #[contract(addr = NOD_ADDRESS)]
 pub struct NodContract {
-    // --- Group member index: lets the cleanup enumerate a group's unpaid Nods.
+    // --- Group member index: lets the cleanup enumerate a group's unsettled Nods.
     // U256 occupies one storage word; IDs require no reconstruction.
-    /// Authoritative unpaid member count, stored outside the shared group body.
+    /// Authoritative unsettled member count, stored outside the shared group body.
     #[attribute(order = 35)]
     pub group_nod_count: outbe_primitives::storage::dsl::Map<B256, u32>,
 
@@ -264,12 +264,12 @@ pub struct NodContract {
     #[attribute(order = 88)]
     pub owner_id_position: outbe_primitives::storage::dsl::Map<U256, u32>,
 
-    /// Encrypted Gratis load of the group's unpaid Nods and unclaimed Tributes, opened only when forfeited.
+    /// Encrypted Gratis load of the group's unsettled Nods and unclaimed Tributes, opened only when forfeited.
     #[attribute(order = 89)]
-    pub group_open_load_ct:
+    pub group_unsettled_load_minor_ct:
         outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::Bytes>,
 
-    // The queue orders forfeited groups by deadline day while their unpaid Nods await deletion.
+    // The queue orders forfeited groups by deadline day while their unsettled Nods await deletion.
     #[attribute(order = 90)]
     pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 91)]
@@ -301,7 +301,7 @@ pub struct NodContract {
     #[attribute(order = 104)]
     pub group_unclaimed_tribute_count: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// Set to `true` when the group's call notice deadline lapses and its unpaid/unclaimed load is forfeited.
+    /// Set to `true` when the group's call notice deadline lapses and its unsettled/unclaimed load is forfeited.
     #[attribute(order = 106)]
     pub group_is_forfeited: outbe_primitives::storage::dsl::Map<B256, bool>,
 
@@ -329,12 +329,12 @@ pub struct NodContract {
     /// Reference currency (ISO 4217 numeric) of the series.
     #[attribute(order = 113)]
     pub series_reference_currency: outbe_primitives::storage::dsl::Map<SeriesId, u16>,
-    /// Unpaid Nod count of `(group_key, series_id)`, keyed by `group_series_key`.
+    /// Unsettled Nod count of `(group_key, series_id)`, keyed by `group_series_key`.
     #[attribute(order = 114)]
     pub group_series_nod_count: outbe_primitives::storage::dsl::Map<B256, u32>,
-    /// Encrypted open load (`unpaid Nods + unclaimed Tributes`) of `(group_key, series_id)`.
+    /// Encrypted open load (`unsettled Nods + unclaimed Tributes`) of `(group_key, series_id)`.
     #[attribute(order = 115)]
-    pub group_series_open_load_ct:
+    pub group_series_unsettled_load_minor_ct:
         outbe_primitives::storage::dsl::Map<B256, outbe_primitives::storage::dsl::Bytes>,
     /// Set while the forfeit pass closes the group series by series, until the group is forfeited.
     #[attribute(order = 116)]

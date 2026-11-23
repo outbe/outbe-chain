@@ -56,11 +56,11 @@ pub enum NodError {
         member_count: u32,
     },
 
-    #[error("Nod group {group_key} unpaid load overflow")]
-    GroupUnpaidLoadOverflow { group_key: alloy_primitives::B256 },
+    #[error("Nod group {group_key} unsettled load overflow")]
+    GroupUnsettledLoadOverflow { group_key: alloy_primitives::B256 },
 
-    #[error("Nod group {group_key} unpaid load underflow")]
-    GroupUnpaidLoadUnderflow { group_key: alloy_primitives::B256 },
+    #[error("Nod group {group_key} unsettled load underflow")]
+    GroupUnsettledLoadUnderflow { group_key: alloy_primitives::B256 },
 
     #[error("Nod group {group_id} settled count underflow")]
     GroupSettledCountUnderflow { group_id: WwdEntityId },
@@ -144,13 +144,13 @@ impl From<NodError> for PrecompileError {
                 groupId: group_id.to_u256(),
                 memberCount: member_count,
             }),
-            NodError::GroupUnpaidLoadOverflow { group_key } => {
-                revert_with(I::GroupUnpaidLoadOverflow {
+            NodError::GroupUnsettledLoadOverflow { group_key } => {
+                revert_with(I::GroupUnsettledLoadOverflow {
                     groupKey: group_key,
                 })
             }
-            NodError::GroupUnpaidLoadUnderflow { group_key } => {
-                revert_with(I::GroupUnpaidLoadUnderflow {
+            NodError::GroupUnsettledLoadUnderflow { group_key } => {
+                revert_with(I::GroupUnsettledLoadUnderflow {
                     groupKey: group_key,
                 })
             }

@@ -25,6 +25,7 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
                     asset: SETTLEMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },
+                AMOUNT_CAP,
             )
         })
         .unwrap_err();

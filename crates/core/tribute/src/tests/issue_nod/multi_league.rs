@@ -83,7 +83,7 @@ fn multi_league_lysis_and_issue_nod_keep_league_nominals_fractions_and_loads_pri
             assert!(f1 > 0 && f2 > 0 && f1 != f2);
             let nod1_id = tc.issue_nod(owner1, t1.tribute_id).unwrap();
 
-            // `group_open_load_ct` and `tributeNominalTotalMinor` must be completely unchanged after `issueNod`.
+            // `group_unsettled_load_minor_ct` and `tributeNominalTotalMinor` must be completely unchanged after `issueNod`.
             let open_load_ct_after = nod_contract.encrypted_group_open_load(group_key).unwrap();
             assert_eq!(open_load_ct_after, open_load_ct_before);
             let totals_after = crate::precompile::ITribute::dayTotalsCall::abi_decode_returns(

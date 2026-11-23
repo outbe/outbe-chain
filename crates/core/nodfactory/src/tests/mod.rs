@@ -192,6 +192,7 @@ impl World {
                     asset: SETTLEMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },
+                AMOUNT_CAP,
             )
         })
     }
@@ -210,6 +211,14 @@ impl World {
             )),
         );
         self.set_asset_decimals(asset, 6);
+        let cap = Bytes::from(AMOUNT_CAP.to_be_bytes::<32>().to_vec());
+        self.provider.stub_sub_call_at_selector(
+            asset,
+            IERC20::balanceOfCall::SELECTOR,
+            cap.clone(),
+        );
+        self.provider
+            .stub_sub_call_at_selector(asset, IERC20::allowanceCall::SELECTOR, cap);
     }
 
     fn register_reference_currency_assets(&mut self, assets: Vec<Address>) {
@@ -313,7 +322,10 @@ fn dual_currency_params(owner: Address) -> NodIssueParams {
     }
 }
 
-fn paid_event(world: &World) -> INodFactory::NodSettled {
+/// A cap above every quoted cost that the stubbed allowance and balance cover.
+pub(crate) const AMOUNT_CAP: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
+
+fn settled_event(world: &World) -> INodFactory::NodSettled {
     world
         .provider
         .get_ordered_events()
@@ -379,6 +391,7 @@ fn settle_erc20(
                 asset,
                 snapshot_id: snapshot,
             },
+            AMOUNT_CAP,
         )
     })
 }
@@ -388,4 +401,4 @@ mod currency_snapshots;
 mod direct_fx_admission;
 mod issuance;
 mod nod_lifecycle;
-mod paid_entitlement;
+mod settled_entitlement;

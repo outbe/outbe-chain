@@ -2,7 +2,7 @@ use super::*;
 use outbe_primitives::time::SECONDS_PER_DAY;
 use outbe_vaultrouter::settlement::SettlementPayment;
 
-/// Settlement at the deadline remains valid. The paid Nod can then be mined.
+/// Settlement at the deadline remains valid. The settled Nod can then be mined.
 #[test]
 fn a_called_nod_still_mines_at_the_settlement_deadline() {
     let mut world = World::new();
@@ -185,7 +185,7 @@ fn settlement_failure_rolls_back_record_updates() {
 }
 
 #[test]
-fn unpaid_mining_is_rejected() {
+fn unsettled_mining_is_rejected() {
     let mut world = World::new();
     let input = params(Address::repeat_byte(0x84));
     let nod_id = world.issue(&input);
@@ -242,7 +242,7 @@ fn settlement_leaves_fidelity_alone_and_mining_records_it() {
 }
 
 #[test]
-fn fidelity_persistence_failure_preserves_paid_entitlement_and_mint_nonce() {
+fn fidelity_persistence_failure_preserves_settled_entitlement_and_mint_nonce() {
     let mut world = World::new();
     let input = free(Address::repeat_byte(0x85));
     let nod_id = world.issue(&input);
@@ -300,6 +300,7 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
                     asset,
                     snapshot_id: U256::ZERO,
                 },
+                AMOUNT_CAP,
             )
         })
     };
@@ -327,15 +328,15 @@ fn erc20_settlement_enforces_eligibility_before_payment_and_accepts_zero_cost() 
             .to_string(),
         PrecompileError::from(NodFactoryError::NodAlreadySettled).to_string()
     );
-    let paid = world
+    let settled = world
         .provider
         .get_ordered_events()
         .iter()
         .filter_map(|event| INodFactory::NodSettled::decode_log_data(&event.data).ok())
         .last()
         .unwrap();
-    assert_eq!(paid.owner, input.owner);
-    assert_eq!(paid.amountMinor, U256::ZERO);
+    assert_eq!(settled.owner, input.owner);
+    assert_eq!(settled.amountMinor, U256::ZERO);
 }
 
 #[test]
@@ -361,6 +362,7 @@ fn settlement_over_a_broken_member_index_reverts() {
                     asset: SETTLEMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },
+                AMOUNT_CAP,
             )
         })
         .unwrap_err();
@@ -410,6 +412,7 @@ fn erc20_settlement_uses_the_existing_inclusive_deadline() {
                         asset: foreign,
                         snapshot_id: U256::ZERO,
                     },
+                    AMOUNT_CAP,
                 )
             })
             .unwrap_err();
@@ -436,9 +439,10 @@ fn any_asset_registered_for_the_reference_currency_pays_the_nod() {
                     asset: second_asset,
                     snapshot_id: U256::ZERO,
                 },
+                AMOUNT_CAP,
             )
         })
         .unwrap();
-    assert_eq!(paid_event(&world).asset, second_asset);
+    assert_eq!(settled_event(&world).asset, second_asset);
     assert!(is_settled(&mut world, nod_id));
 }

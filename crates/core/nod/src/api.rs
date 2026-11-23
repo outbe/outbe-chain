@@ -7,7 +7,7 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 use crate::schema::{CallTerms, EffectiveState, NodContract, NodGroupState, NodItemState};
 
 /// Derives the current entitlement state without waiting for sweep cleanup.
-/// Paid entitlements survive expiry; the settlement deadline is inclusive.
+/// Settled entitlements survive expiry; the settlement deadline is inclusive.
 #[must_use]
 pub fn effective_state(
     item: &NodItemState,
@@ -55,7 +55,7 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, group_key: B256) -> Resu
 
 pub use outbe_core_common::settlement::settlement_deadline_of;
 
-/// The Nod's state as of this block, as `getNod` reports it: an unpaid Nod of a
+/// The Nod's state as of this block, as `getNod` reports it: an unsettled Nod of a
 /// forfeited group reads Forfeited.
 pub fn state_of(storage: &StorageHandle<'_>, item: &NodItemState) -> Result<EffectiveState> {
     let nod = NodContract::new(storage.clone());
@@ -77,7 +77,7 @@ pub use crate::state_api::{LoadedNodGroup, LoadedNodItem};
 /// Inserts a Nod item, increments membership and creates its group if absent atomically.
 /// A new group seals `call_terms`; NodFactory derives them from the live profile.
 /// Records a Nod in its group, opening the group with `call_terms` when it is the first.
-/// `gratis_load_minor` joins the group's unpaid load.
+/// `gratis_load_minor` joins the group's unsettled load.
 pub fn add_nod(
     storage: &StorageHandle<'_>,
     item: &NodItemState,
@@ -88,7 +88,7 @@ pub fn add_nod(
 }
 
 /// Inserts a Nod claimed from a Tribute of a Lysis series into the series' call group.
-/// The group's encrypted open load (`unpaid + unclaimed`) is unchanged because the Tribute's
+/// The group's encrypted open load (`unsettled + unclaimed`) is unchanged because the Tribute's
 /// load stays in the same call group.
 pub fn add_series_nod(
     storage: &StorageHandle<'_>,
@@ -155,29 +155,29 @@ pub fn record_unclaimed_tribute_cleaned(
     })
 }
 
-/// Permissionless cleanup of an unpaid forfeited Nod (`INod.clean(uint256)`).
+/// Permissionless cleanup of an unsettled forfeited Nod (`INod.clean(uint256)`).
 pub fn clean(storage: &StorageHandle<'_>, nod_id: U256) -> Result<()> {
     crate::state_api::clean_item(storage, nod_id)
 }
 
-/// Removes `load` from the group's unpaid total.
+/// Removes `load` from the group's unsettled total.
 ///
 /// `remove_nod` leaves an unsettled Nod's load on the old group. A storage-only
 /// reissue calls this first, then removes the item and adds it to the new group.
-pub fn take_unpaid_load(storage: &StorageHandle<'_>, group_key: B256, load: U256) -> Result<()> {
-    NodContract::new(storage.clone()).take_unpaid_load(group_key, load)
+pub fn take_unsettled_load(storage: &StorageHandle<'_>, group_key: B256, load: U256) -> Result<()> {
+    NodContract::new(storage.clone()).take_unsettled_load(group_key, load)
 }
 
 /// Removes `load` from both `group_key` and `(group_key, series_id)` open loads.
-pub fn take_series_unpaid_load(
+pub fn take_series_unsettled_load(
     storage: &StorageHandle<'_>,
     group_key: B256,
     series_id: SeriesId,
     load: U256,
 ) -> Result<()> {
     let mut nod = NodContract::new(storage.clone());
-    nod.take_unpaid_load(group_key, load)?;
-    nod.take_series_unpaid_load(group_key, series_id, load)
+    nod.take_unsettled_load(group_key, load)?;
+    nod.take_series_unsettled_load(group_key, series_id, load)
 }
 
 /// Removes a loaded Nod item and decrements membership, deleting the group only if empty.

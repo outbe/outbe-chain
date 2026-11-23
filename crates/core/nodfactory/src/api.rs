@@ -36,6 +36,7 @@ pub fn settle_nod(
     storage: &StorageHandle<'_>,
     nod_id: U256,
     payment: SettlementPayment,
+    amount_cap_minor: U256,
 ) -> Result<()> {
-    runtime::settle_nod(storage, nod_id, payment)
+    runtime::settle_nod(storage, nod_id, payment, amount_cap_minor)
 }

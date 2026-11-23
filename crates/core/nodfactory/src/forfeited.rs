@@ -1,5 +1,5 @@
 //! Forfeit pass: forfeits the called groups whose notice period lapsed, one credit per
-//! group, and hands their unpaid Nods to the cleanup.
+//! group, and hands their unsettled Nods to the cleanup.
 
 use alloy_primitives::B256;
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
@@ -127,9 +127,12 @@ impl NodForfeit<'_, '_> {
             .group_forfeit_load_minor
             .read(&group)?
             .checked_add(forfeited_amount_minor)
-            .ok_or(NodError::GroupUnpaidLoadOverflow { group_key: group })?;
+            .ok_or(NodError::GroupUnsettledLoadOverflow { group_key: group })?;
         self.nod.group_forfeit_load_minor.write(&group, total)?;
-        self.nod.group_series_open_load_ct.bytes(&gs_key).clear()?;
+        self.nod
+            .group_series_unsettled_load_minor_ct
+            .bytes(&gs_key)
+            .clear()?;
         self.nod.group_series_forfeited.write(&gs_key, true)?;
         self.nod.emit(INod::NodSeriesClosed {
             seriesId: series_id.into(),
@@ -141,7 +144,7 @@ impl NodForfeit<'_, '_> {
         })
     }
 
-    /// Returns the Gratis load of the group's unpaid Nods and unclaimed Tributes in one credit.
+    /// Returns the Gratis load of the group's unsettled Nods and unclaimed Tributes in one credit.
     /// Lysis drew it out of the day limit and only mining converts it, so unmined it goes back.
     fn close_group(&mut self, group: B256) -> Result<()> {
         // A series a failed slot left open keeps the group in the queue so healthy slots commit
@@ -159,10 +162,13 @@ impl NodForfeit<'_, '_> {
         }
         self.nod.group_forfeit_load_minor.clear(&group)?;
         self.nod.group_forfeiting.clear(&group)?;
-        self.nod.group_open_load_ct.bytes(&group).clear()?;
-        let unpaid = self.nod.group_nod_count.read(&group)?;
+        self.nod
+            .group_unsettled_load_minor_ct
+            .bytes(&group)
+            .clear()?;
+        let unsettled = self.nod.group_nod_count.read(&group)?;
         let unclaimed = self.nod.group_unclaimed_tribute_count.read(&group)?;
-        if unpaid == 0 && unclaimed == 0 {
+        if unsettled == 0 && unclaimed == 0 {
             // Nothing left to burn. The close events have fired, so the group leaves
             // the forfeit queue without a cleanup entry.
             self.nod.remove_called(group)?;

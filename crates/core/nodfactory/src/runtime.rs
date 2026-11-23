@@ -49,7 +49,7 @@ pub(crate) fn issue_nod_at(
 
 /// Issues a Nod claimed from a Tribute of a Lysis-sealed series into the series' call group.
 /// The enclave has already validated that the Nod's `gratis_load_minor` and `settlement_cost_minor`
-/// are positive, and the group's encrypted open load (`unpaid + unclaimed`) is invariant.
+/// are positive, and the group's encrypted open load (`unsettled + unclaimed`) is invariant.
 pub fn issue_tribute_nod_in_series(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
@@ -188,7 +188,7 @@ fn issue_nod_with_cost(
     Ok(nod_id)
 }
 
-/// Mining of one paid Nod. Any caller may submit. The owner's Gratis
+/// Mining of one settled Nod. Any caller may submit. The owner's Gratis
 /// modify-key MAC/`opNonce` authorizes the mint to that owner.
 pub struct MineGratisRequest {
     pub caller: Address,
@@ -198,11 +198,13 @@ pub struct MineGratisRequest {
 }
 
 /// Pays an uncalled or called Nod's known cost in ERC20 base units of `asset`. An
-/// issuance-currency payment must name the VWAP snapshot required at this block.
+/// issuance-currency payment must name the VWAP snapshot required at this block, and
+/// the cost must fit the payer's cap.
 pub fn settle_nod(
     storage: &StorageHandle<'_>,
     nod_id: U256,
     payment: SettlementPayment,
+    amount_cap_minor: U256,
 ) -> Result<()> {
     let SettlementPayment {
         payer,
@@ -227,6 +229,8 @@ pub fn settle_nod(
         &settlement_cost(item.body())?,
     )?;
     quote.require_snapshot(snapshot_id)?;
+    settlement::require_funds(storage, payer, asset, amount_cap_minor)?;
+    quote.require_within_cap(amount_cap_minor)?;
     storage.clone().with_checkpoint(|| {
         // Publish the transition before external payment calls so callbacks cannot
         // settle the same Nod twice. A failed payment rolls the transition back.
@@ -309,8 +313,8 @@ pub(crate) fn call_terms(
     }))
 }
 
-/// Mines a paid entitlement without payment or a deadline. Mint failure
-/// rolls back the removal, preserving the paid Nod for retry.
+/// Mines a settled entitlement without payment or a deadline. Mint failure
+/// rolls back the removal, preserving the settled Nod for retry.
 pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> Result<Bytes> {
     let MineGratisRequest {
         nod_id,

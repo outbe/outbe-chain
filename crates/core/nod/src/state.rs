@@ -33,10 +33,10 @@ impl NodContract<'_> {
 
     // --- Group member index ------------------------------------------------
     //
-    // The cleanup enumerates unpaid members with a count, positional map
+    // The cleanup enumerates unsettled members with a count, positional map
     // and reverse map for O(1) swap removal.
 
-    /// Appends `nod_id` and increments the group's authoritative unpaid count.
+    /// Appends `nod_id` and increments the group's authoritative unsettled count.
     pub(crate) fn insert_group_member(&mut self, group_key: B256, nod_id: U256) -> Result<()> {
         let index = self.group_nod_count.read(&group_key)?;
         let next = index
@@ -119,7 +119,7 @@ impl NodContract<'_> {
         deadline_queue::push(&ForfeitQueue(self), group_key, deadline)
     }
 
-    /// Records every unpaid member called at once: the group leaves the trie for the
+    /// Records every unsettled member called at once: the group leaves the trie for the
     /// forfeit queue, where it waits on `deadline` as one entry.
     pub fn record_group_called(&mut self, group_key: B256, now: u64, deadline: u64) -> Result<()> {
         self.remove_call_bin(group_key)?;
@@ -156,7 +156,9 @@ impl NodContract<'_> {
         self.group_call_threshold_seconds.clear(&group_key)?;
         self.group_call_notice_period_seconds.clear(&group_key)?;
         self.group_called_at.clear(&group_key)?;
-        self.group_open_load_ct.bytes(&group_key).clear()?;
+        self.group_unsettled_load_minor_ct
+            .bytes(&group_key)
+            .clear()?;
         self.group_unclaimed_tribute_count.clear(&group_key)?;
         self.group_is_forfeited.clear(&group_key)?;
         self.group_forfeiting.clear(&group_key)?;
@@ -166,7 +168,9 @@ impl NodContract<'_> {
             self.group_series_present.clear(&gs_key)?;
             self.group_series_forfeited.clear(&gs_key)?;
             self.group_series_nod_count.clear(&gs_key)?;
-            self.group_series_open_load_ct.bytes(&gs_key).clear()?;
+            self.group_series_unsettled_load_minor_ct
+                .bytes(&gs_key)
+                .clear()?;
             // The series stays bound after its last Tribute so call and close can still name it.
             self.series_group.clear(&series_id)?;
             self.series_issuance_currency.clear(&series_id)?;
@@ -291,7 +295,7 @@ impl NodContract<'_> {
         )?;
         self.register_group_series(group_key, series_id, issuance_currency, reference_currency)?;
         let gs_key = crate::index_keys::group_series_key(group_key, series_id);
-        self.group_series_open_load_ct
+        self.group_series_unsettled_load_minor_ct
             .bytes(&gs_key)
             .write(&series_load_bytes)?;
         self.group_unclaimed_tribute_count
@@ -323,8 +327,8 @@ impl NodContract<'_> {
     }
 
     /// Takes one claimed Tribute off its series and group counts.
-    /// The group's encrypted open load (`unpaid + unclaimed`) is unchanged because the
-    /// claimed Tribute becomes an unpaid Nod in the same call group.
+    /// The group's encrypted open load (`unsettled + unclaimed`) is unchanged because the
+    /// claimed Tribute becomes an unsettled Nod in the same call group.
     pub(crate) fn consume_unclaimed_tribute_from_series(
         &mut self,
         series_id: SeriesId,
@@ -377,10 +381,10 @@ impl NodContract<'_> {
         self.series_entry_price_minor.clear(&series_id)
     }
 
-    // --- Encrypted group open load (unpaid + unclaimed) -----------------------
+    // --- Encrypted group open load (unsettled + unclaimed) -----------------------
 
     pub fn encrypted_group_open_load(&self, group_key: B256) -> Result<Vec<u8>> {
-        self.group_open_load_ct.bytes(&group_key).read()
+        self.group_unsettled_load_minor_ct.bytes(&group_key).read()
     }
 
     fn open_load_record(
@@ -416,7 +420,12 @@ impl NodContract<'_> {
     ) -> Result<Option<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1>> {
         let gs_key = crate::index_keys::group_series_key(group_key, series_id);
         let scope = B256::right_padding_from(series_id.as_bytes());
-        self.open_load_record(self.group_series_open_load_ct.bytes(&gs_key).read()?, scope)
+        self.open_load_record(
+            self.group_series_unsettled_load_minor_ct
+                .bytes(&gs_key)
+                .read()?,
+            scope,
+        )
     }
 
     fn read_open_load_record(
@@ -468,7 +477,9 @@ impl NodContract<'_> {
     ) -> Result<()> {
         let previous = self.group_open_load_record(group_key)?;
         let bytes = self.apply_scoped_open_load(group_key, group_key, previous, operation)?;
-        self.group_open_load_ct.bytes(&group_key).write(&bytes)
+        self.group_unsettled_load_minor_ct
+            .bytes(&group_key)
+            .write(&bytes)
     }
 
     pub(crate) fn apply_series_open_load(
@@ -481,7 +492,9 @@ impl NodContract<'_> {
         let previous = self.series_open_load_record(group_key, series_id)?;
         let bytes = self.apply_scoped_open_load(group_key, scope, previous, operation)?;
         let gs_key = crate::index_keys::group_series_key(group_key, series_id);
-        self.group_series_open_load_ct.bytes(&gs_key).write(&bytes)
+        self.group_series_unsettled_load_minor_ct
+            .bytes(&gs_key)
+            .write(&bytes)
     }
 
     pub(crate) fn add_nod_to_open_load(
@@ -540,7 +553,7 @@ impl NodContract<'_> {
         )
     }
 
-    pub(crate) fn take_unpaid_load(&mut self, group_key: B256, load: U256) -> Result<()> {
+    pub(crate) fn take_unsettled_load(&mut self, group_key: B256, load: U256) -> Result<()> {
         self.apply_group_open_load(
             group_key,
             NodGroupLoadOperationV1::AdjustTransient {
@@ -550,7 +563,7 @@ impl NodContract<'_> {
         )
     }
 
-    pub(crate) fn take_series_unpaid_load(
+    pub(crate) fn take_series_unsettled_load(
         &mut self,
         group_key: B256,
         series_id: SeriesId,
@@ -567,7 +580,7 @@ impl NodContract<'_> {
     }
 
     /// Moves a forfeited group from the forfeit queue to the cleanup, which deletes its
-    /// unpaid Nods. Done with the group's credit, so a retry never credits it twice.
+    /// unsettled Nods. Done with the group's credit, so a retry never credits it twice.
     pub fn hand_to_cleanup(&mut self, group_key: B256) -> Result<()> {
         let deadline = self.called_deadline.read(&group_key)?;
         deadline_queue::remove(&ForfeitQueue(self), group_key)?;
@@ -591,15 +604,15 @@ fn open_load_error(group_key: B256, err: outbe_tee::TransportError) -> NodError 
         Some(NodEncryptionError::GroupLoadUnderflow)
     );
     if overflow {
-        NodError::GroupUnpaidLoadOverflow { group_key }
+        NodError::GroupUnsettledLoadOverflow { group_key }
     } else if underflow {
-        NodError::GroupUnpaidLoadUnderflow { group_key }
+        NodError::GroupUnsettledLoadUnderflow { group_key }
     } else {
         NodError::AmountReadFailed(err)
     }
 }
 
-/// Forfeited groups whose unpaid Nods wait to be deleted.
+/// Forfeited groups whose unsettled Nods wait to be deleted.
 pub struct CleanupQueue<'a, 'storage>(pub &'a NodContract<'storage>);
 
 outbe_core_common::impl_deadline_queue!(CleanupQueue<B256> {

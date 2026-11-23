@@ -745,7 +745,7 @@
   },
   {
     "type": "error",
-    "name": "GroupUnpaidLoadOverflow",
+    "name": "GroupUnsettledLoadOverflow",
     "inputs": [
       {
         "name": "groupKey",
@@ -756,7 +756,7 @@
   },
   {
     "type": "error",
-    "name": "GroupUnpaidLoadUnderflow",
+    "name": "GroupUnsettledLoadUnderflow",
     "inputs": [
       {
         "name": "groupKey",

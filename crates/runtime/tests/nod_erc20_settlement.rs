@@ -84,11 +84,12 @@ impl Rail for Nod {
         }
     }
 
-    fn settle_call(self, id: U256, snapshot_id: U256, _cost: U256) -> Bytes {
+    fn settle_call(self, id: U256, snapshot_id: U256, cost: U256) -> Bytes {
         INodFactory::settleNodCall {
             nodId: id,
             asset: ASSET,
             snapshotId: snapshot_id,
+            amountCapMinor: cost,
         }
         .abi_encode()
         .into()

@@ -262,8 +262,8 @@ impl NodContract<'_> {
                 .ok_or(NodError::GroupSettledCountUnderflow { group_id })?;
             self.group_nod_count.read(&item.group_key)?
         } else {
-            // An unpaid Nod leaves only through its forfeited group's cleanup, after the
-            // group's whole unpaid load was returned. So its load stays on the total.
+            // An unsettled Nod leaves only through its forfeited group's cleanup, after the
+            // group's whole unsettled load was returned. So its load stays on the total.
             self.decrement_series_nod_count(item.group_key, item.series_id)?;
             self.remove_group_member(item.group_key, item.nod_id)?
         };

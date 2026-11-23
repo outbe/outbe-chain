@@ -219,7 +219,7 @@ pub(crate) fn call_currency(
         budget,
         |group_key, budget| {
             call_pass::call_entry::<NodCallPass>(&ctx.storage, budget, group_key, || {
-                if retire_paid_group(nod, group_key, ctx.block.timestamp)? {
+                if retire_settled_group(nod, group_key, ctx.block.timestamp)? {
                     return Ok(1);
                 }
                 if !call_if_breached(nod, window, group_key, ctx.block.timestamp)? {
@@ -233,10 +233,10 @@ pub(crate) fn call_currency(
     Ok((called, finished))
 }
 
-/// Takes a group every Nod of which is paid out of its bin once its first full day is
+/// Takes a group every Nod of which is settled out of its bin once its first full day is
 /// under way: a Nod issued at its 00:00:00 still joins it, none after. Returns whether
 /// it did.
-fn retire_paid_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) -> Result<bool> {
+fn retire_settled_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) -> Result<bool> {
     if nod.group_nod_count.read(&group_key)? != 0
         || nod.group_unclaimed_tribute_count.read(&group_key)? != 0
         || nod.group_called_at.read(&group_key)? != 0

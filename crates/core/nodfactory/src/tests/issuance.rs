@@ -185,7 +185,7 @@ fn failed_authorization_preserves_the_loaded_nod() {
             )
         })
         .unwrap_err();
-    // Dummy MAC is rejected regardless of who submits; the paid Nod remains.
+    // Dummy MAC is rejected regardless of who submits; the settled Nod remains.
     assert!(world
         .enter(|storage| nod_api::get_item(&storage, nod_id))
         .unwrap()
@@ -706,11 +706,11 @@ fn a_series_left_open_defers_the_group_and_the_retry_credits_once() {
             };
             let target_key = outbe_nod::index_keys::group_series_key(lapsed.group, target);
             let saved_load = nod
-                .group_series_open_load_ct
+                .group_series_unsettled_load_minor_ct
                 .bytes(&target_key)
                 .read()
                 .unwrap();
-            nod.group_series_open_load_ct
+            nod.group_series_unsettled_load_minor_ct
                 .bytes(&target_key)
                 .write(&[0xFF; 3])
                 .unwrap();
@@ -727,7 +727,7 @@ fn a_series_left_open_defers_the_group_and_the_retry_credits_once() {
 
         world.enter(|storage| {
             let nod = outbe_nod::NodContract::new(storage.clone());
-            nod.group_series_open_load_ct
+            nod.group_series_unsettled_load_minor_ct
                 .bytes(&target_key)
                 .write(&saved_load)
                 .unwrap();
@@ -754,7 +754,7 @@ fn a_series_left_open_defers_the_group_and_the_retry_credits_once() {
         let nod = outbe_nod::NodContract::new(storage.clone());
         for series in [lapsed.usd, lapsed.eur] {
             let key = outbe_nod::index_keys::group_series_key(lapsed.group, series);
-            nod.group_series_open_load_ct
+            nod.group_series_unsettled_load_minor_ct
                 .bytes(&key)
                 .write(&[0xFF; 3])
                 .unwrap();

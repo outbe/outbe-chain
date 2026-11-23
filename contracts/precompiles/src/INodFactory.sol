@@ -53,9 +53,9 @@ interface INodFactory {
         uint256 amountMinor
     );
 
-    /// @notice Pay an uncalled Nod, or a called one at or before its settlement
+    /// @notice Settle an uncalled Nod, or a called one at or before its settlement
     /// deadline, in ERC20 base units of `asset`. Any caller may pay. The Nod stays
-    /// with its owner. Approve the VaultRouter for the `quoteSettlement` amount first.
+    /// with its owner. Approve the VaultRouter for `amountCapMinor` first.
     /// The asset must have a reserve vault and report the Nod's reference or
     /// issuance ISO 4217 code. Issuance-currency payment converts the
     /// reference-currency entry cost at the COEN cross rate of the trailing VWAP
@@ -63,7 +63,10 @@ interface INodFactory {
     /// @param snapshotId The snapshot `quoteSettlement` returned. An
     /// issuance-currency payment naming any other snapshot reverts. Ignored on
     /// the reference rail.
-    function settleNod(uint256 nodId, address asset, uint256 snapshotId) external;
+    /// @param amountCapMinor The most the payer pays, in `asset` units. A payer whose
+    /// allowance or balance is below it reverts `InsufficientFunds`; a cost above
+    /// it reverts `CostAboveCap`. The call takes only the cost.
+    function settleNod(uint256 nodId, address asset, uint256 snapshotId, uint256 amountCapMinor) external;
 
     /// @notice What settling `nodId` with `asset` costs, and which of the Nod's
     /// two currencies that asset settles on. Only the Nod owner may call this
@@ -100,7 +103,7 @@ interface INodFactory {
     ///         `NodNotIssued` once it is Called, Settled or Forfeited.
     function getCallProgress(uint256 nodId) external view returns (CallProgress memory);
 
-    /// @notice Mine a paid Nod and mint its Gratis load to the Nod owner.
+    /// @notice Mine a settled Nod and mint its Gratis load to the Nod owner.
     /// @param nonce PoW over
     /// `sha256("OUTBE_NOD_MINING_V1" || nodId_be32 || owner_20 || miningSequence_be8 || nonce_be8)`
     /// with `miningSequence = 0` and the required leading zero bytes. The owner is the Nod owner.
