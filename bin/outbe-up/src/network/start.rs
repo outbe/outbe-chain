@@ -35,9 +35,14 @@ async fn start_founders(
     for founder in build.manifest.founders.clone() {
         let ssh = ssh.clone();
         tasks.spawn_blocking(move || {
+            let marker = crate::support::process::SERVICES_ENABLED_MARKER;
             ssh.run_quiet(
                 &founder,
-                "if [ \"$(id -u)\" -eq 0 ]; then systemctl enable --now outbe-validator.target; else sudo -n systemctl enable --now outbe-validator.target; fi",
+                &format!(
+                    "if [ \"$(id -u)\" -eq 0 ]; then \
+systemctl enable --now outbe-validator.target && install -d -m 0755 /opt/outbe-chain/state && install -m 0644 /dev/null {marker}; \
+else sudo -n sh -c 'systemctl enable --now outbe-validator.target && install -d -m 0755 /opt/outbe-chain/state && install -m 0644 /dev/null {marker}'; fi"
+                ),
             )
             .wrap_err_with(|| format!("start {}", founder.name))
         });
