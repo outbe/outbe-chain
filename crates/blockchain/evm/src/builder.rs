@@ -1,27 +1,24 @@
-use alloy_evm::{block::BlockExecutor, Evm, RecoveredTx};
+use alloy_eips::eip7928::{bal::DecodedBal, compute_block_access_list_hash_with_buf};
+use alloy_primitives::B256;
 use outbe_primitives::{
     consensus::ConsensusExecutionBridge,
     reshare_artifact::{decode_outbe_block_artifacts, encode_outbe_block_artifacts},
     OutbeHeader, OutbePrimitives,
 };
-use reth_ethereum::evm::revm::primitives::hardfork::SpecId;
-use reth_ethereum::trie::updates::TrieUpdates;
-use reth_ethereum::{
-    evm::{primitives::Database, revm::db::State},
-    TransactionSigned,
-};
+use reth_ethereum::{evm::EthEvmEnv, trie::updates::TrieUpdates, TransactionSigned};
 use reth_evm::execute::{
     BlockAssembler, BlockAssemblerInput, BlockBuilder, BlockBuilderOutcome, BlockExecutionError,
-    ExecutorTx,
+    BlockExecutionOutput, BlockExecutor, CommitChanges, ExecutorTx, GasOutput,
 };
+use reth_evm::RecoveredTx as _;
+use reth_evm::StateUpdate;
 use reth_primitives_traits::{Recovered, RecoveredBlock, SealedHeader};
 use reth_provider::StateProvider;
-use revm::context::BlockEnv;
-use revm::database::states::bundle_state::BundleRetention;
 
 use crate::{
     config::{OutbeBlockAssembler, OutbeBlockExecutionCtx},
     executor::OutbeBlockExecutor,
+    factory::OutbeEvmTypes,
 };
 
 pub fn encode_final_header_artifacts(
@@ -39,11 +36,9 @@ pub fn encode_final_header_artifacts(
         .map_err(|err| crate::errors::ExecutorValidationError::block_artifacts(err).into())
 }
 
-pub struct OutbeBlockBuilder<'a, EVM>
-where
-    EVM: Evm,
-{
-    pub executor: OutbeBlockExecutor<'a, EVM>,
+pub struct OutbeBlockBuilder<'a> {
+    pub executor: OutbeBlockExecutor<'a>,
+    pub evm_env: EthEvmEnv<OutbeEvmTypes>,
     pub transactions: Vec<Recovered<TransactionSigned>>,
     pub ctx: OutbeBlockExecutionCtx<'a>,
     pub bridge: Option<ConsensusExecutionBridge>,
@@ -51,25 +46,29 @@ where
     pub assembler: &'a OutbeBlockAssembler,
 }
 
-impl<'a, EVM> OutbeBlockBuilder<'a, EVM>
-where
-    EVM: Evm,
-{
+impl<'a> OutbeBlockBuilder<'a> {
     pub fn new(
-        executor: OutbeBlockExecutor<'a, EVM>,
+        executor: OutbeBlockExecutor<'a>,
+        evm_env: EthEvmEnv<OutbeEvmTypes>,
         ctx: OutbeBlockExecutionCtx<'a>,
-        bridge: Option<ConsensusExecutionBridge>,
         assembler: &'a OutbeBlockAssembler,
         parent: &'a SealedHeader<OutbeHeader>,
     ) -> Self {
         Self {
             executor,
+            evm_env,
             transactions: Vec::new(),
             ctx,
-            bridge,
+            bridge: None,
             parent,
             assembler,
         }
+    }
+
+    #[must_use]
+    pub fn with_bridge(mut self, bridge: Option<ConsensusExecutionBridge>) -> Self {
+        self.bridge = bridge;
+        self
     }
 
     /// Encodes execution-produced header fields before state-root calculation.
@@ -87,20 +86,14 @@ where
     }
 }
 
-impl<'a, DB, EVM> BlockBuilder for OutbeBlockBuilder<'a, EVM>
-where
-    DB: Database + 'a,
-    OutbeBlockExecutor<'a, EVM>:
-        BlockExecutor<Evm = EVM, Transaction = TransactionSigned, Receipt = reth_ethereum::Receipt>,
-    EVM: Evm<
-            DB = &'a mut State<DB>,
-            Spec = SpecId,
-            BlockEnv = BlockEnv,
-            Tx = reth_ethereum::evm::revm::context::TxEnv,
-        > + crate::executor::ZeroFeeCfgAccess,
-{
+impl<'a> BlockBuilder for OutbeBlockBuilder<'a> {
     type Primitives = OutbePrimitives;
-    type Executor = OutbeBlockExecutor<'a, EVM>;
+    type Executor = OutbeBlockExecutor<'a>;
+    type EvmEnv = EthEvmEnv<OutbeEvmTypes>;
+
+    fn evm_env(&self) -> &Self::EvmEnv {
+        &self.evm_env
+    }
 
     fn apply_pre_execution_changes(&mut self) -> Result<(), BlockExecutionError> {
         self.executor.apply_pre_execution_changes()
@@ -109,8 +102,8 @@ where
     fn execute_transaction_with_commit_condition(
         &mut self,
         tx: impl ExecutorTx<Self::Executor>,
-        f: impl FnOnce(&<Self::Executor as BlockExecutor>::Result) -> alloy_evm::block::CommitChanges,
-    ) -> Result<Option<alloy_evm::block::GasOutput>, BlockExecutionError> {
+        f: impl FnOnce(&evm2::TxResult<OutbeEvmTypes>, evm2::TxStateChanges<'_>) -> CommitChanges,
+    ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let (tx_env, tx) = tx.into_parts();
         let include_preexecuted_phase1_witness =
             self.executor.is_preexecuted_phase1_witness(tx.tx());
@@ -119,47 +112,67 @@ where
             .executor
             .execute_transaction_with_commit_condition((tx_env, &tx), f)?
         {
-            self.transactions.push(tx);
+            self.transactions
+                .push(Recovered::new_unchecked(tx.tx().clone(), *tx.signer()));
             Ok(Some(gas_used))
         } else if include_preexecuted_phase1_witness {
-            self.transactions.push(tx);
+            self.transactions
+                .push(Recovered::new_unchecked(tx.tx().clone(), *tx.signer()));
             Ok(None)
         } else {
             Ok(None)
         }
     }
 
-    fn finish(
+    fn execute_transaction_with_result_closure(
+        &mut self,
+        tx: impl ExecutorTx<Self::Executor>,
+        f: impl FnOnce(&<Self::Executor as BlockExecutor>::TransactionResultWithState),
+    ) -> Result<GasOutput, BlockExecutionError> {
+        let (tx_env, tx) = tx.into_parts();
+        let output = self
+            .executor
+            .execute_transaction_without_commit((tx_env, &tx))?;
+        f(&output);
+        let gas_output = self.executor.commit_transaction(output)?;
+        self.transactions
+            .push(Recovered::new_unchecked(tx.tx().clone(), *tx.signer()));
+        Ok(gas_output)
+    }
+
+    fn set_state_hook(&mut self, hook: impl FnMut(StateUpdate) + Send + 'static) -> bool {
+        self.executor.set_state_hook(hook)
+    }
+
+    fn finish_with_state_root(
         mut self,
-        state: impl StateProvider,
-        state_root_precomputed: Option<(alloy_primitives::B256, TrieUpdates)>,
+        state_provider: impl StateProvider,
+        state_root: impl FnOnce(
+            &BlockExecutionOutput<reth_ethereum::Receipt>,
+        ) -> Result<Option<(B256, TrieUpdates)>, BlockExecutionError>,
     ) -> Result<BlockBuilderOutcome<OutbePrimitives>, BlockExecutionError> {
-        // finalized-parent metadata travels through payload
-        // attributes into the begin-zone Phase 1 system transaction body.
-        // Header `extra_data` here carries the execution summary, timestamp
-        // millis and the artifacts kept from
-        // the pre-final bytes (DKG/header artifacts and late-finalize credits).
-        // The proposer path does not produce the legacy header attestation tag.
         // Sub-second timestamp travels in `extra_data` under tag 0x05 so
         // the block hash stays Ethereum-spec-compliant
-        // (`keccak256(rlp(standard_header))`). The execution-context
-        // value is the canonical source for this block. This code overwrites
-        // whatever the proposer placed in `extra_data` earlier.
+        // (`keccak256(rlp(standard_header))`).
         let execution_summary = self.executor.current_execution_summary();
         self.transactions
             .extend(self.executor.take_staged_end_block_txs());
         self.finalize_header_artifacts()?;
-        let (evm, result) = self.executor.finish()?;
-        let (db, evm_env) = evm.finish();
+        let (output, block_access_list) = self.executor.finish_with_block_access_list()?;
 
-        db.merge_transitions(BundleRetention::Reverts);
+        let block_access_list = block_access_list.map(|bal| {
+            let mut raw = Vec::new();
+            let hash = compute_block_access_list_hash_with_buf(&bal, &mut raw);
+            DecodedBal::new_unchecked(bal.into(), raw.into(), hash)
+        });
+        let block_access_list_hash = block_access_list.as_ref().map(DecodedBal::hash);
 
-        let hashed_state = state
-            .hashed_post_state(&db.bundle_state)
+        let hashed_state = state_provider
+            .hashed_post_state(&output.state)
             .map_err(BlockExecutionError::other)?;
-        let (state_root, trie_updates) = match state_root_precomputed {
+        let (state_root, trie_updates) = match state_root(&output)? {
             Some(precomputed) => precomputed,
-            None => state
+            None => state_provider
                 .state_root_with_updates(hashed_state.clone())
                 .map_err(BlockExecutionError::other)?,
         };
@@ -174,15 +187,15 @@ where
             crate::config::OutbeEvmConfig,
             OutbeHeader,
         >::new(
-            evm_env,
+            self.evm_env,
             self.ctx,
             self.parent,
             transactions,
-            &result,
-            &db.bundle_state,
-            &state,
+            &output.result,
+            &output.state,
+            &state_provider,
             state_root,
-            None,
+            block_access_list_hash,
         ))?;
 
         let block = RecoveredBlock::new_unhashed(block, senders);
@@ -198,11 +211,12 @@ where
         }
 
         Ok(BlockBuilderOutcome {
-            block_access_list: None,
-            execution_result: result,
+            execution_result: output.result,
+            execution_state: output.state,
             hashed_state,
             trie_updates,
             block,
+            block_access_list,
         })
     }
 

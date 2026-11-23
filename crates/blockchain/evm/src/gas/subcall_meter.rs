@@ -1,18 +1,16 @@
-//! `SubcallGasMeter` - a thin wrapper over [`revm::interpreter::Gas`] used by
+//! `SubcallGasMeter` - a thin wrapper over [`evm2::interpreter::Gas`] used by
 //! the outbe sub-call driver.
 //!
-//! Each method delegates 1:1 to the inner [`revm::interpreter::Gas`] instance.
-//! Thus byte-for-byte parity with upstream is guaranteed by construction. 5 differential
-//! proptests verify the mirror in
-//! `crates/blockchain/evm/tests/subcall_gas_meter_parity.rs`.
+//! Each method delegates 1:1 to the inner [`evm2::interpreter::Gas`] instance.
+//! Thus byte-for-byte parity with upstream is guaranteed by construction.
 
-use revm::interpreter::Gas;
+use evm2::interpreter::Gas;
 
-/// Sub-call gas meter mirroring [`revm::interpreter::Gas`] byte-for-byte.
+/// Sub-call gas meter mirroring [`evm2::interpreter::Gas`] byte-for-byte.
 ///
 /// The driver owns one meter for each sub-call frame. All accounting semantics (regular
-/// gas, reservoir, refunds, state gas spent) match upstream `revm::interpreter::Gas`. Thus
-/// the settlement triple in produces identical results across proposer and validator
+/// gas, reservoir, refunds, state gas spent) match upstream `evm2::interpreter::Gas`. Thus
+/// the settlement triple produces identical results across proposer and validator
 /// re-execution paths.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SubcallGasMeter {
@@ -25,8 +23,6 @@ impl SubcallGasMeter {
     /// Reservoir is zero. Outbe does not use EIP-8037 at this stage, so the
     /// meter behaves as a single-pool tracker. The meter keeps the field to
     /// keep the byte-for-byte mirror with upstream `Gas`.
-    ///
-    /// Mirrors revm Gas::new.
     #[inline]
     pub const fn new(limit: u64) -> Self {
         Self {
@@ -35,40 +31,30 @@ impl SubcallGasMeter {
     }
 
     /// Returns the gas limit.
-    ///
-    /// Mirrors revm Gas::limit.
     #[inline]
     pub const fn limit(&self) -> u64 {
         self.inner.limit()
     }
 
     /// Returns the gas remaining (regular budget, exclusive of reservoir).
-    ///
-    /// Mirrors revm Gas::remaining.
     #[inline]
     pub const fn remaining(&self) -> u64 {
         self.inner.remaining()
     }
 
     /// Returns the total amount of gas refunded.
-    ///
-    /// Mirrors revm Gas::refunded.
     #[inline]
     pub const fn refunded(&self) -> i64 {
         self.inner.refunded()
     }
 
     /// Returns total state gas spent so far (EIP-8037).
-    ///
-    /// Mirrors revm Gas::state_gas_spent.
     #[inline]
     pub const fn state_gas_spent(&self) -> i64 {
         self.inner.state_gas_spent()
     }
 
     /// Returns the state gas reservoir (EIP-8037).
-    ///
-    /// Mirrors revm Gas::reservoir.
     #[inline]
     pub const fn reservoir(&self) -> u64 {
         self.inner.reservoir()
@@ -77,64 +63,50 @@ impl SubcallGasMeter {
     /// Deducts `cost` from `remaining` only (used for child frame gas
     /// forwarding). Does not touch reservoir or regular gas budget.
     ///
-    /// Returns `false` if total remaining gas is insufficient.
-    ///
-    /// Mirrors revm Gas::record_regular_cost.
+    /// Returns `false` if total remaining gas is insufficient, leaving
+    /// `remaining` unchanged on failure.
     #[inline]
     #[must_use = "On insufficient gas the caller must halt with an out-of-gas error"]
     pub fn record_regular_cost(&mut self, cost: u64) -> bool {
-        self.inner.record_regular_cost(cost)
+        self.inner.tracker_mut().try_spend(cost).is_ok()
     }
 
     /// Erases `returned` gas from the spent counter. That is, it returns unused
     /// gas from a child frame back into the meter's `remaining` budget.
-    ///
-    /// Mirrors revm Gas::erase_cost.
     #[inline]
     pub fn erase_cost(&mut self, returned: u64) {
-        self.inner.erase_cost(returned)
+        self.inner.erase_cost(returned);
     }
 
     /// Records a refund. `refund` may be negative. The cumulative refund
     /// counter is expected to be non-negative at the end of execution.
-    ///
-    /// Mirrors revm Gas::record_refund.
     #[inline]
     pub fn record_refund(&mut self, refund: i64) {
-        self.inner.record_refund(refund)
+        self.inner.record_refund(refund);
     }
 
     /// Sets the total state gas spent (used when propagating from a child
     /// frame's settlement).
-    ///
-    /// Mirrors revm Gas::set_state_gas_spent.
     #[inline]
     pub fn set_state_gas_spent(&mut self, val: i64) {
-        self.inner.set_state_gas_spent(val)
+        let delta = val.saturating_sub(self.inner.state_gas_spent());
+        self.inner.add_state_gas_spent(delta);
     }
 
     /// Sets the state gas reservoir (used when propagating from a child
     /// frame's settlement).
-    ///
-    /// Mirrors revm Gas::set_reservoir.
     #[inline]
     pub fn set_reservoir(&mut self, val: u64) {
-        self.inner.set_reservoir(val)
+        self.inner.set_reservoir(val);
     }
 
-    /// Returns the underlying revm [`Gas`] instance.
-    ///
-    /// With this method, the sub-call driver in can pass the
-    /// inner gas tracker to upstream helpers
-    /// (`handle_reservoir_remaining_gas`, `load_acc_and_calc_gas`).
-    /// **Not** marked `Mirrors revm Gas::*`. This is an outbe-only escape
-    /// hatch, not a method on `Gas`.
+    /// Returns the underlying evm2 [`Gas`] instance.
     #[inline]
     pub const fn inner(&self) -> &Gas {
         &self.inner
     }
 
-    /// Returns the underlying revm [`Gas`] instance mutably. See [`Self::inner`].
+    /// Returns the underlying evm2 [`Gas`] instance mutably. See [`Self::inner`].
     #[inline]
     pub const fn inner_mut(&mut self) -> &mut Gas {
         &mut self.inner

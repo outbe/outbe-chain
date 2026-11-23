@@ -1,9 +1,21 @@
 use super::super::dispatch::{outbe_ctx_dispatch, OutbeDispatchRuntime, PANIC_WITH_NATIVE_FRAME};
-use crate::precompiles::ExecutionAbortBridge;
-use crate::storage::ReentrancyStack;
-use crate::tee_attestation_activation::TeeAttestationChainSpecStateV1;
-use alloy_evm::{Evm, EvmEnv, EvmFactory};
+use crate::{
+    factory::{OutbeEvm, OutbeEvmTypes},
+    precompiles::ExecutionAbortBridge,
+    storage::ReentrancyStack,
+    tee_attestation_activation::TeeAttestationChainSpecStateV1,
+};
+use alloy_consensus::TxLegacy;
 use alloy_primitives::{Address, Bytes, LogData, TxKind, B256, U256};
+use evm2::{
+    env::BlockEnvExt,
+    ethereum::TxEnvelope,
+    evm::{CacheDB, EmptyDB},
+    interpreter::{GasTracker, InstrStop, Message, MessageExt, MessageKind},
+    precompiles::{PrecompileError as EvmPrecompileError, PrecompileHalt, PrecompileResult},
+    registry::HandlerError,
+    SpecId, TxResult,
+};
 use outbe_primitives::{
     block::{BlockHeightRegime, BlockRuntimeContext},
     committee_snapshot::CommitteeSnapshot,
@@ -15,16 +27,8 @@ use outbe_primitives::{
     storage::{MutationEntitlements, StorageHandle},
     system_tx_context::SystemTxExecutionContext,
 };
-use revm::interpreter::{CallInput, CallInputs, CallScheme, CallValue, InstructionResult};
-use revm::{
-    context::{BlockEnv, CfgEnv, TxEnv},
-    context_interface::{
-        result::{ExecutionResult, HaltReason},
-        JournalTr,
-    },
-    database::{CacheDB, EmptyDB},
-    primitives::hardfork::SpecId,
-};
+use reth_ethereum::evm::EthEvmEnv;
+use reth_primitives_traits::Recovered;
 use std::sync::Arc;
 
 const OUTER: Address = Address::repeat_byte(0x81);
@@ -286,45 +290,41 @@ fn nested_call(storage: StorageHandle<'_>, address: Address) -> Result<Bytes> {
     Ok(Bytes::new())
 }
 
-type TestEvm =
-    <crate::OutbeEvmFactory as EvmFactory>::Evm<CacheDB<EmptyDB>, revm::inspector::NoOpInspector>;
-
-fn evm(at: PanicAt) -> TestEvm {
+fn evm(at: PanicAt) -> OutbeEvm<'static> {
     crate::OutbeEvmFactory::new(PanicHost::new(at)).create_evm(
-        CacheDB::default(),
-        EvmEnv {
-            cfg_env: CfgEnv::new()
-                .with_chain_id(1)
-                .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-            block_env: BlockEnv {
-                gas_limit: 30_000_000,
+        CacheDB::new(EmptyDB::default()),
+        EthEvmEnv::new(
+            SpecId::PRAGUE,
+            BlockEnvExt {
+                gas_limit: U256::from(30_000_000_u64),
                 ..Default::default()
             },
-        },
+            1,
+        ),
     )
 }
 
-fn tx(data: &'static [u8]) -> TxEnv {
-    TxEnv {
-        caller: CALLER,
-        kind: TxKind::Call(OUTER),
-        data: Bytes::from_static(data),
-        gas_limit: GAS_LIMIT,
-        ..Default::default()
-    }
+fn tx(data: &'static [u8]) -> Recovered<TxEnvelope> {
+    Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(1),
+            nonce: 0,
+            gas_price: 0,
+            gas_limit: GAS_LIMIT,
+            to: TxKind::Call(OUTER),
+            value: U256::ZERO,
+            input: Bytes::from_static(data),
+        }),
+        CALLER,
+    )
 }
 
-fn assert_halt(result: &ExecutionResult<HaltReason>) {
-    assert!(matches!(
-        result,
-        ExecutionResult::Halt {
-            reason: HaltReason::PrecompileError,
-            ..
-        }
-    ));
-    assert_eq!(result.gas().tx_gas_used(), GAS_LIMIT);
-    assert_eq!(result.gas().final_refunded(), 0);
-    assert!(result.logs().is_empty());
+fn assert_halt(result: &TxResult<OutbeEvmTypes>) {
+    assert!(!result.is_success());
+    assert_eq!(result.stop, InstrStop::PrecompileError);
+    assert_eq!(result.tx_gas_used(), GAS_LIMIT);
+    assert_eq!(result.refunded, 0);
+    assert!(result.logs.is_empty());
     assert!(!format!("{result:?}").contains("secret panic text"));
     assert_eq!(ReentrancyStack::depth(), 0);
 }
@@ -332,98 +332,115 @@ fn assert_halt(result: &ExecutionResult<HaltReason>) {
 #[test]
 fn panic_in_host_prelude_before_provider_returns_payload_free_halt_and_spends_frame_gas() {
     for at in [PanicAt::BaseGas, PanicAt::CycleProbe, PanicAt::Entitlements] {
-        let frame = dispatch(&mut evm(at), at, &ExecutionAbortBridge::default())
-            .expect("dispatch does not unwind")
+        let mut gas = GasTracker::new(GAS_LIMIT);
+        let outcome = dispatch(&mut evm(at), at, &ExecutionAbortBridge::default(), &mut gas)
             .expect("route exists");
-        assert_eq!(frame.result, InstructionResult::PrecompileError);
-        assert_eq!(frame.gas.total_gas_spent(), GAS_LIMIT);
-        assert_eq!(frame.gas.refunded(), 0);
-        assert!(frame.output.is_empty());
+        assert!(matches!(
+            outcome,
+            Err(EvmPrecompileError::Halt(PrecompileHalt::Other(_)))
+        ));
+        assert_eq!(gas.spent(), GAS_LIMIT);
+        assert_eq!(gas.refunded(), 0);
         assert_eq!(ReentrancyStack::depth(), 0);
-        let result = evm(at)
-            .transact_raw(tx(b"panic"))
-            .expect("panic becomes a halt");
-        assert_halt(&result.result);
+        let mut e = evm(at);
+        let executed = e.transact(&tx(b"panic")).expect("panic becomes a halt");
+        let res = executed.detach();
+        assert_halt(&res.result);
     }
 }
 
 #[test]
 fn top_level_panic_after_writes_and_logs_rolls_back_frame_and_allows_next_call() {
     let mut evm = evm(PanicAt::Handler);
-    let result = evm
-        .transact_raw(tx(b"panic"))
-        .expect("panic becomes a halt");
-    assert_halt(&result.result);
-    if let Some(account) = result.state.get(&OUTER) {
+    let executed = evm.transact(&tx(b"panic")).expect("panic becomes a halt");
+    let detached = executed.detach();
+    assert_halt(&detached.result);
+    if let Some(account) = detached.pending_state.account_changes_for(&OUTER) {
         assert!(account
             .storage
+            .slots
             .values()
-            .all(|slot| slot.present_value == U256::ZERO));
+            .all(|slot| slot.value.current == U256::ZERO));
     }
-    let result = evm.transact_raw(tx(b"ok")).expect("next call succeeds");
-    assert!(result.result.is_success());
-    assert_eq!(result.result.output(), Some(&Bytes::from_static(b"ok")));
+    let executed = evm.transact(&tx(b"ok")).expect("next call succeeds");
+    let res = executed.detach();
+    assert!(res.result.is_success());
+    assert_eq!(res.result.output, Bytes::from_static(b"ok"));
     assert_eq!(ReentrancyStack::depth(), 0);
 }
 
 #[test]
 fn nested_outbe_precompile_panic_is_caught_at_innermost_dispatch_preserving_journal_depth() {
     let mut evm = evm(PanicAt::Handler);
-    let result = evm
-        .transact_raw(tx(b"outer"))
+    let executed = evm
+        .transact(&tx(b"outer"))
         .expect("outer transaction completes");
-    assert!(result.result.is_success());
-    assert!(result.result.logs().is_empty());
-    let account = &result.state[&OUTER];
-    assert_eq!(account.storage[&U256::ZERO].present_value, U256::from(1));
-    assert_eq!(account.storage[&U256::from(1)].present_value, U256::from(2));
-    if let Some(inner) = result.state.get(&INNER) {
+    let detached = executed.detach();
+    assert!(detached.result.is_success());
+    assert!(detached.result.logs.is_empty());
+    let account = detached
+        .pending_state
+        .account_changes_for(&OUTER)
+        .expect("OUTER account changes present");
+    assert_eq!(
+        account.storage.slots[&U256::ZERO].value.current,
+        U256::from(1)
+    );
+    assert_eq!(
+        account.storage.slots[&U256::from(1)].value.current,
+        U256::from(2)
+    );
+    if let Some(inner) = detached.pending_state.account_changes_for(&INNER) {
         assert!(inner
             .storage
+            .slots
             .values()
-            .all(|slot| slot.present_value == U256::ZERO));
+            .all(|slot| slot.value.current == U256::ZERO));
     }
-    assert_eq!(evm.ctx().journaled_state.depth(), 0);
+    assert_eq!(evm.ext().native_frame_depth, 0);
     assert_eq!(ReentrancyStack::depth(), 0);
 }
 
 #[test]
 fn panic_after_latched_node_local_abort_preserves_node_local_abort() {
-    let error = evm(PanicAt::Handler)
-        .transact_raw(tx(b"abort"))
+    let mut e = evm(PanicAt::Handler);
+    let error = e
+        .transact(&tx(b"abort"))
         .expect_err("node-local abort must survive");
     assert!(NodeLocalExecutionAbort::find(&error).is_some());
     assert_eq!(ReentrancyStack::depth(), 0);
 }
 
-fn inputs() -> CallInputs {
-    CallInputs {
-        input: CallInput::Bytes(Bytes::new()),
-        return_memory_offset: 0..0,
+fn message() -> Message<OutbeEvmTypes> {
+    MessageExt {
+        kind: MessageKind::Call,
+        depth: 0,
         gas_limit: GAS_LIMIT,
         reservoir: 0,
-        bytecode_address: OUTER,
-        known_bytecode: Default::default(),
-        target_address: OUTER,
+        destination: OUTER,
+        call_target: OUTER,
         caller: CALLER,
-        value: CallValue::Transfer(U256::ZERO),
-        scheme: CallScheme::Call,
-        is_static: false,
-        charged_new_account_state_gas: false,
+        input: Bytes::new().into(),
+        value: U256::ZERO,
+        code: Default::default(),
+        code_address: OUTER,
+        caller_is_static: false,
+        salt: B256::ZERO,
+        ext: (),
+        _non_exhaustive: (),
     }
 }
 
 fn dispatch(
-    evm: &mut TestEvm,
+    evm: &mut OutbeEvm<'_>,
     at: PanicAt,
     bridge: &ExecutionAbortBridge,
-) -> std::result::Result<
-    Option<revm::interpreter::InterpreterResult>,
-    crate::errors::OutbePrecompileFatalError,
-> {
+    gas: &mut GasTracker,
+) -> Option<PrecompileResult> {
     outbe_ctx_dispatch(
-        evm.ctx_mut(),
-        &inputs(),
+        evm,
+        &message(),
+        gas,
         OutbeDispatchRuntime {
             abort_bridge: bridge,
             spec: SpecId::PRAGUE,
@@ -438,32 +455,38 @@ fn dispatch(
 #[test]
 fn panic_with_leaked_native_journal_depth_escalates_to_fatal() {
     let mut evm = evm(PanicAt::Handler);
-    let entry_depth = evm.ctx().journaled_state.depth();
+    let entry_depth = evm.ext().native_frame_depth;
     PANIC_WITH_NATIVE_FRAME.set(true);
-    let error = dispatch(&mut evm, PanicAt::Handler, &ExecutionAbortBridge::default())
-        .expect_err("dirty depth is fatal");
+    let mut gas = GasTracker::new(GAS_LIMIT);
+    let error = dispatch(
+        &mut evm,
+        PanicAt::Handler,
+        &ExecutionAbortBridge::default(),
+        &mut gas,
+    )
+    .expect("route exists")
+    .expect_err("dirty depth is fatal");
+    assert!(matches!(error, EvmPrecompileError::Fatal(_)));
     assert!(error
         .to_string()
         .contains("precompile subcall unwound with dirty journal depth"));
     assert!(!error.to_string().contains("secret native frame panic"));
-    assert_eq!(evm.ctx().journaled_state.depth(), entry_depth + 1);
+    assert_eq!(evm.ext().native_frame_depth, entry_depth + 1);
 
     // Even a dirty native frame must not erase the earlier node-local failure.
     let bridge = ExecutionAbortBridge::default();
     let call = bridge.begin_call();
     bridge.observe(&PrecompileError::EnclaveUnavailable("offline".into()));
     PANIC_WITH_NATIVE_FRAME.set(true);
-    let error =
-        dispatch(&mut evm, PanicAt::Handler, &bridge).expect_err("abort wins over dirty depth");
+    let mut gas = GasTracker::new(GAS_LIMIT);
+    let error = dispatch(&mut evm, PanicAt::Handler, &bridge, &mut gas)
+        .expect("route exists")
+        .expect_err("abort wins over dirty depth");
     assert!(error
         .to_string()
         .contains("execution already stopped on a node-local failure"));
-    let result: std::result::Result<
-        (),
-        revm::context_interface::result::EVMError<std::convert::Infallible>,
-    > = Err(revm::context_interface::result::EVMError::Custom(
-        error.into(),
-    ));
+    let result: std::result::Result<(), HandlerError> =
+        Err(HandlerError::Fatal(evm2::AnyError::new(error)));
     let error = call
         .finish(result)
         .expect_err("latched abort survives translation");

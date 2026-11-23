@@ -132,17 +132,11 @@ impl From<OutbePrecompileDispatchError> for PrecompileError {
     }
 }
 
-/// Fatal error returned when an Outbe precompile aborts the REVM interpreter.
+/// Fatal error returned when an Outbe precompile aborts the EVM interpreter.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OutbePrecompileFatalError {
     #[error("{0}")]
-    RevmPrecompile(String),
-}
-
-impl OutbePrecompileFatalError {
-    pub(crate) fn from_revm(error: impl Display) -> Self {
-        Self::RevmPrecompile(error.to_string())
-    }
+    EvmPrecompile(String),
 }
 
 impl From<OutbePrecompileFatalError> for String {
@@ -215,10 +209,6 @@ impl CtxStorageError {
     pub(crate) fn burn_account_load_failed(error: impl Display) -> PrecompileError {
         Self::BurnAccountLoadFailed(error.to_string()).into()
     }
-
-    pub(crate) fn burn_set_balance_failed(error: impl Display) -> PrecompileError {
-        Self::BurnSetBalanceFailed(error.to_string()).into()
-    }
 }
 
 impl From<CtxStorageError> for PrecompileError {
@@ -268,40 +258,10 @@ impl SubCallDriverError {
         Self::DatabaseError(format!("{error:?}")).into()
     }
 
-    pub(crate) fn frame_init(
-        error: impl core::fmt::Debug,
-    ) -> outbe_primitives::storage::SubCallError {
-        Self::FrameInit(format!("{error:?}")).into()
-    }
-
-    pub(crate) fn frame_run(
-        error: impl core::fmt::Debug,
-    ) -> outbe_primitives::storage::SubCallError {
-        Self::FrameRun(format!("{error:?}")).into()
-    }
-
-    pub(crate) fn frame_return_result(
-        error: impl core::fmt::Debug,
-    ) -> outbe_primitives::storage::SubCallError {
-        Self::FrameReturnResult(format!("{error:?}")).into()
-    }
-
-    pub(crate) fn frame_init_nested(
-        error: impl core::fmt::Debug,
-    ) -> outbe_primitives::storage::SubCallError {
-        Self::FrameInitNested(format!("{error:?}")).into()
-    }
-
     pub(crate) fn non_vm_child_terminal(
         instr: impl core::fmt::Debug,
     ) -> outbe_primitives::storage::SubCallError {
         Self::NonVmChildTerminal(format!("{instr:?}")).into()
-    }
-
-    pub(crate) fn unexpected_child_terminal(
-        other: impl core::fmt::Debug,
-    ) -> outbe_primitives::storage::SubCallError {
-        Self::UnexpectedChildTerminal(format!("{other:?}")).into()
     }
 }
 

@@ -1,23 +1,9 @@
 //! `CtxStorageProvider` - sub-call-driver-aware `PrecompileStorageProvider`.
 //!
-//! The provider holds `&'a mut EthEvmContext<DB>` directly. Thus the `sub_call` body can hand
-//! the full `&mut Context` to `revm_handler::EthFrame::make_call_frame` (through
-//! the [`crate::sub_call`] driver) and keep access to journaled state between storage ops.
+//! The provider holds `&'a mut evm2::Evm<'evm, OutbeEvmTypes>` directly so both
+//! journaled storage operations and nested sub-calls run against the live EVM
+//! instance with full checkpoint and rollback semantics.
 //!
-//! For non-sub-call storage operations (sload/sstore/balance/log/...), the
-//! provider constructs an `alloy_evm::EvmInternals` from `self.ctx` on each
-//! call. The construction is cheap: one `Box<dyn EvmInternalsTr>` allocation
-//! per op. It is the standard cost of the `EvmInternals` facade that revm's
-//! `PrecompileInput.internals` exposes.
-//!
-//! Sub-call hands `self.ctx` to the driver in [`crate::sub_call`].
-//!
-//! ## Dispatch path
-//!
-//! The ctx-dispatch hook that [`crate::precompiles::extend_outbe_precompiles`]
-//! installs builds a `CtxStorageProvider` for every Outbe precompile dispatch,
-//! read-only or not, sub-call or not.
-
 //! ## Storage gas schedule
 //!
 //! Each persistent read costs 100 gas. Each persistent write costs 5000 gas.
@@ -25,9 +11,16 @@
 //! Transient reads, transient writes, and `enclave_upgrade_id` do not charge this meter.
 //! These prices define current behavior, not a resource-pricing benchmark.
 
-use alloy_evm::{eth::EthEvmContext, EvmInternals};
 use alloy_primitives::{Address, Log, LogData, B256, U256};
-use core::fmt::Debug;
+use evm2::{
+    bytecode::Bytecode,
+    evm::{AccountInfo, StateCheckpoint},
+    interpreter::{
+        gas::{SSTORE_RESET, WARM_STORAGE_READ_COST},
+        Host as _,
+    },
+    Evm, SpecId,
+};
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::{
@@ -35,26 +28,16 @@ use outbe_primitives::{
         SubCallInput, SubCallOutput, SubCallStatus,
     },
 };
-use revm::{
-    context::journaled_state::JournalCheckpoint,
-    context_interface::{
-        cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST},
-        Block as _, Cfg as _, ContextTr,
-    },
-    primitives::hardfork::SpecId,
-    state::{AccountInfo, Bytecode},
-    Database,
-};
 use std::cell::RefCell;
 
-use crate::gas::SubcallGasMeter;
+use crate::{factory::OutbeEvmTypes, gas::SubcallGasMeter};
 
 mod subcall;
 mod trigger_gas;
 
 thread_local! {
     /// Per-thread reentrancy stack. It records the outbe precompile addresses
-    /// that are currently dispatched on this call chain. revm processes one
+    /// that are currently dispatched on this call chain. The EVM processes one
     /// transaction synchronously per thread. Thus a thread-local stack is the
     /// natural scope: it lives exactly as long as the active tx execution.
     /// RAII Drop on [`ReentrancyGuard`] resets it (empty) at the end of every
@@ -118,16 +101,11 @@ impl Drop for ReentrancyGuard {
 }
 
 /// Sub-call-driver-aware [`PrecompileStorageProvider`] over a borrowed
-/// [`alloy_evm::eth::EthEvmContext`].
-///
-/// `DB: Debug` is required because [`alloy_evm::EvmInternals::from_context`]
-/// has a `Journal: Debug` bound (Journal<DB> Debug-derives over DB).
-pub struct CtxStorageProvider<'a, DB: Database + Debug> {
-    /// Borrowed EVM context. Sub-call hands this to
-    /// [`crate::sub_call::run_with_host`]. Non-sub-call ops derive an
-    /// [`alloy_evm::EvmInternals`] facade on-the-fly per call.
-    pub ctx: &'a mut EthEvmContext<DB>,
-    /// Per-call gas meter (mirrors `revm::Gas`).
+/// [`evm2::Evm`].
+pub struct CtxStorageProvider<'a, 'evm> {
+    /// Borrowed EVM instance. Sub-call hands this directly to [`crate::sub_call`].
+    pub evm: &'a mut Evm<'evm, OutbeEvmTypes>,
+    /// Per-call gas meter (mirrors `evm2::interpreter::Gas`).
     pub gas: SubcallGasMeter,
     /// Admission OOG cannot be caught by a domain `try_call` handler.
     pub subcall_out_of_gas: bool,
@@ -143,16 +121,14 @@ pub struct CtxStorageProvider<'a, DB: Database + Debug> {
     pub genesis_hash: B256,
     /// Immutable genesis timestamp sourced from the canonical ChainSpec.
     pub genesis_timestamp: u64,
-    /// Least-authority off-chain body readers propagated to nested precompiles.
+    /// Node-local failure bridge propagated to nested precompiles.
     pub abort_bridge: crate::precompiles::ExecutionAbortBridge,
-    /// Runtime host for nested precompile dispatch. Production sets the
-    /// executor host after construction. The default fails closed.
+    /// Runtime host for nested precompile dispatch.
     host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
-
     /// One-shot authority for the active scoped mutation frame.
     dispatch_frames: DispatchFrameAuthority,
-    /// Active journal checkpoints `(token, raw_revm_checkpoint)` in LIFO order.
-    checkpoints: Vec<(JournalCheckpoint, JournalCheckpoint, Option<i64>)>,
+    /// Active journal checkpoints `(token, raw_evm_checkpoint, trigger_refund)` in LIFO order.
+    checkpoints: Vec<(StateCheckpoint, StateCheckpoint, Option<i64>)>,
     pub trigger_budget: Option<outbe_primitives::storage::gas::TriggerBudget>,
     /// Remaining gas of the active resumable-unit child frame.
     pub gas_child_remaining: Option<u64>,
@@ -172,9 +148,7 @@ pub struct CtxStorageProviderConfig {
     pub spec: SpecId,
     pub genesis_hash: B256,
     pub genesis_timestamp: u64,
-
     pub abort_bridge: crate::precompiles::ExecutionAbortBridge,
-
     pub scoped_mutation_entitlements: MutationEntitlements,
 }
 
@@ -233,16 +207,16 @@ impl ScopedMutationFrameState {
     }
 }
 
-impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
+impl<'a, 'evm> CtxStorageProvider<'a, 'evm> {
     /// Constructor.
     pub fn new(
-        ctx: &'a mut EthEvmContext<DB>,
+        evm: &'a mut Evm<'evm, OutbeEvmTypes>,
         gas: SubcallGasMeter,
         config: CtxStorageProviderConfig,
         host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
     ) -> Self {
         Self {
-            ctx,
+            evm,
             gas,
             subcall_out_of_gas: false,
             is_static: config.is_static,
@@ -251,10 +225,8 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
             spec: config.spec,
             genesis_hash: config.genesis_hash,
             genesis_timestamp: 0,
-
             abort_bridge: config.abort_bridge,
             host,
-
             dispatch_frames: DispatchFrameAuthority {
                 scoped: ScopedMutationFrameState::new(config.scoped_mutation_entitlements),
             },
@@ -279,13 +251,7 @@ impl<'a, DB: Database + Debug> CtxStorageProvider<'a, DB> {
     }
 }
 
-/// Reborrow the EVM context for one storage operation.
-#[inline]
-fn internals<DB: Database + Debug>(ctx: &mut EthEvmContext<DB>) -> EvmInternals<'_> {
-    EvmInternals::from_context(ctx)
-}
-
-impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<'a, DB> {
+impl PrecompileStorageProvider for CtxStorageProvider<'_, '_> {
     fn begin_scoped_mutation_frame(
         &mut self,
         purpose: MutationPurposeTag,
@@ -296,8 +262,8 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         if self.trigger_budget.is_some() {
             self.trigger_budget_status()?;
         }
-        if ContextTr::cfg(self.ctx).chain_id() != chain_id
-            || ContextTr::block(self.ctx).number().saturating_to::<u64>() != block_number
+        if self.evm.version().chain_id != chain_id
+            || self.evm.block().number.saturating_to::<u64>() != block_number
         {
             return Err(crate::errors::CtxStorageError::ScopedMutationFrameScopeMismatch.into());
         }
@@ -329,7 +295,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn chain_id(&self) -> u64 {
-        ContextTr::cfg(self.ctx).chain_id()
+        self.evm.version().chain_id
     }
 
     fn genesis_hash(&self) -> B256 {
@@ -341,40 +307,57 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn timestamp(&self) -> U256 {
-        ContextTr::block(self.ctx).timestamp()
+        self.evm.block().timestamp
     }
 
     fn beneficiary(&self) -> Address {
-        ContextTr::block(self.ctx).beneficiary()
+        self.evm.block().beneficiary
     }
 
     fn block_number(&self) -> u64 {
-        ContextTr::block(self.ctx).number().saturating_to::<u64>()
+        self.evm.block().number.saturating_to::<u64>()
     }
 
     fn canonical_block_hash(&mut self, number: u64) -> Result<Option<B256>> {
         self.charge(0)?;
-        let hash = internals(self.ctx)
-            .db_mut()
-            .block_hash(number)
+        let hash = self
+            .evm
+            .block_hash(&U256::from(number))
             .map_err(|e| crate::errors::CtxStorageError::block_hash_failed(number, e))?;
         Ok((!hash.is_zero()).then_some(hash))
     }
 
     fn set_code(&mut self, address: Address, code: Bytecode) -> Result<()> {
         self.charge(0)?;
-        internals(self.ctx)
-            .set_code(address, code)
-            .map_err(crate::errors::CtxStorageError::storage)
+        self.evm
+            .state_mut()
+            .account(&address)
+            .map_err(crate::errors::CtxStorageError::storage)?
+            .set_code_slow(code);
+        Ok(())
     }
 
     fn account_info(&mut self, address: Address) -> Result<AccountInfo> {
         self.charge(0)?;
-        let mut internals = internals(self.ctx);
-        let account = internals
-            .load_account_code(address)
+        let mut account = self
+            .evm
+            .state_mut()
+            .account(&address)
             .map_err(crate::errors::CtxStorageError::storage)?;
-        Ok(account.data.account().info.clone())
+        let mut info = account.get().cloned().unwrap_or_default();
+        // Hydrate bytecode when absent on the account overlay: callers such as
+        // stablecoinfactory inspect `AccountInfo.code` to authenticate deployed
+        // contracts and reject `None`.
+        if info.code.is_none() {
+            info.code = Some(if info.is_empty_code_hash() {
+                Bytecode::default()
+            } else {
+                account
+                    .load_code()
+                    .map_err(crate::errors::CtxStorageError::storage)?
+            });
+        }
+        Ok(info)
     }
 
     fn metered_gas_remaining(&self) -> Option<u64> {
@@ -410,47 +393,52 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
     }
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
-        self.charge(WARM_STORAGE_READ_COST)?;
-        let mut internals = internals(self.ctx);
-        let value = internals
-            .sload(address, key)
+        self.charge(u64::from(WARM_STORAGE_READ_COST))?;
+        let slot = self
+            .evm
+            .state_mut()
+            .storage_slot(&address, key)
             .map_err(crate::errors::CtxStorageError::storage)?;
-        Ok(value.data)
+        Ok(slot.current())
     }
+
     fn enclave_upgrade_id(&mut self) -> Result<U256> {
         self.charge(0)?;
-        internals(self.ctx)
-            .sload(
-                outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+        let slot = self
+            .evm
+            .state_mut()
+            .storage_slot(
+                &outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
                 U256::from(44),
             )
-            .map(|value| value.data)
-            .map_err(crate::errors::CtxStorageError::storage)
+            .map_err(crate::errors::CtxStorageError::storage)?;
+        Ok(slot.current())
     }
 
     fn tload(&mut self, address: Address, key: U256) -> Result<U256> {
         self.charge(0)?;
-        Ok(internals(self.ctx).tload(address, key))
+        Ok(self.evm.state_mut().tload(&address, &key))
     }
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
-        self.charge(SSTORE_RESET)?;
-        let mut internals = internals(self.ctx);
-        internals
-            .sstore(address, key, value)
-            .map_err(crate::errors::CtxStorageError::storage)?;
+        self.charge(u64::from(SSTORE_RESET))?;
+        self.evm
+            .state_mut()
+            .storage_slot(&address, key)
+            .map_err(crate::errors::CtxStorageError::storage)?
+            .set(value);
         Ok(())
     }
 
     fn tstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         self.charge(0)?;
-        internals(self.ctx).tstore(address, key, value);
+        self.evm.state_mut().tstore(&address, &key, &value);
         Ok(())
     }
 
     fn emit_event(&mut self, address: Address, event: LogData) -> Result<()> {
         self.charge(0)?;
-        internals(self.ctx).log(Log {
+        self.evm.log(Log {
             address,
             data: event,
         });
@@ -477,41 +465,37 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         self.is_static
     }
 
-    fn checkpoint(&mut self) -> JournalCheckpoint {
-        let raw = internals(self.ctx).checkpoint();
+    fn checkpoint(&mut self) -> StateCheckpoint {
+        let raw = self.evm.state().checkpoint();
         let depth = self.checkpoints.len();
-        let token = JournalCheckpoint {
-            selfdestructed_i: depth,
-            ..raw
-        };
+        let token = StateCheckpoint::new(depth, raw.logs_len());
         self.checkpoints.push((
-            token,
+            token.clone(),
             raw,
             self.trigger_budget.as_ref().map(|_| self.gas.refunded()),
         ));
         token
     }
 
-    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+    fn checkpoint_commit(&mut self, checkpoint: StateCheckpoint) -> Result<()> {
         let expected = self
             .checkpoints
             .last()
-            .map(|(token, _, _)| token.selfdestructed_i);
-        if self.checkpoints.last().map(|(token, _, _)| *token) != Some(checkpoint) {
+            .map(|(token, _, _)| token.journal_len());
+        if self.checkpoints.last().map(|(token, _, _)| token) != Some(&checkpoint) {
             return Err(
                 outbe_primitives::error::PrimitivesStorageError::CheckpointOutOfOrder {
                     expected,
-                    actual: checkpoint.selfdestructed_i,
+                    actual: checkpoint.journal_len(),
                 }
                 .into(),
             );
         }
         self.checkpoints.pop();
-        internals(self.ctx).checkpoint_commit();
         Ok(())
     }
 
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+    fn checkpoint_revert(&mut self, checkpoint: StateCheckpoint) -> Result<()> {
         let Some(pos) = self
             .checkpoints
             .iter()
@@ -519,17 +503,18 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         else {
             return Err(
                 outbe_primitives::error::PrimitivesStorageError::InvalidCheckpointRevert {
-                    checkpoint: checkpoint.selfdestructed_i,
+                    checkpoint: checkpoint.journal_len(),
                     depth: self.checkpoints.len(),
                 }
                 .into(),
             );
         };
+        let features = self.evm.version().features;
         while let Some((_, raw, refund)) = (self.checkpoints.len() > pos)
             .then(|| self.checkpoints.pop())
             .flatten()
         {
-            internals(self.ctx).checkpoint_revert(raw);
+            self.evm.state_mut().rollback(raw, features);
             if let Some(refund) = refund {
                 self.gas.inner_mut().set_refund(refund);
             }
@@ -542,9 +527,9 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         if amount.is_zero() {
             return Ok(());
         }
-        match internals(self.ctx).transfer(from, to, amount) {
-            Ok(None) => Ok(()),
-            Ok(Some(_transfer_error)) => Err(
+        match self.evm.state_mut().transfer(&from, &to, &amount) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(
                 crate::errors::CtxStorageError::InsufficientBalanceForTransfer { from, amount }
                     .into(),
             ),
@@ -557,9 +542,11 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         if amount.is_zero() {
             return Ok(());
         }
-        internals(self.ctx)
-            .balance_incr(address, amount)
-            .map_err(crate::errors::CtxStorageError::balance_incr_failed)?;
+        self.evm
+            .state_mut()
+            .account(&address)
+            .map_err(crate::errors::CtxStorageError::balance_incr_failed)?
+            .add_balance(amount);
         Ok(())
     }
 
@@ -568,13 +555,12 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
         if amount.is_zero() {
             return Ok(());
         }
-        let balance = {
-            let mut internals = internals(self.ctx);
-            let account = internals
-                .load_account(address)
-                .map_err(crate::errors::CtxStorageError::burn_account_load_failed)?;
-            account.data.info.balance
-        };
+        let mut account = self
+            .evm
+            .state_mut()
+            .account(&address)
+            .map_err(crate::errors::CtxStorageError::burn_account_load_failed)?;
+        let balance = account.balance();
         let new_balance = balance.checked_sub(amount).ok_or(
             crate::errors::CtxStorageError::InsufficientBalanceForBurn {
                 address,
@@ -582,10 +568,7 @@ impl<'a, DB: Database + Debug> PrecompileStorageProvider for CtxStorageProvider<
                 amount,
             },
         )?;
-        let mut internals = internals(self.ctx);
-        internals
-            .set_balance(address, new_balance)
-            .map_err(crate::errors::CtxStorageError::burn_set_balance_failed)?;
+        account.set_balance(new_balance);
         Ok(())
     }
 

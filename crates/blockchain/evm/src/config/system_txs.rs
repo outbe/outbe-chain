@@ -4,9 +4,8 @@ use crate::system_tx::validate_system_tx_set_for_publication;
 use crate::system_tx::SystemTx;
 
 use alloy_consensus::Transaction as _;
-use alloy_evm::RecoveredTx;
-
 use alloy_primitives::{Address, Bytes, B256};
+use reth_evm::RecoveredTx;
 
 use {
     crate::system_tx::{assemble_prefix_system_txs, BlockOrder},

@@ -5,20 +5,16 @@
 
 use alloy_consensus::SignableTransaction as _;
 use alloy_consensus::Transaction as _;
-use alloy_eips::eip7685::Requests;
-use alloy_evm::{
-    block::{
-        state_changes::post_block_balance_increments, BlockExecutionError, BlockExecutor,
-        BlockValidationError, CommitChanges, ExecutableTx, GasOutput, InternalBlockExecutionError,
-        StateDB,
-    },
-    eth::{dao_fork, eip6110, EthBlockExecutor, EthTxResult},
-    revm::context::Block as _,
-    Database, RecoveredTx,
-};
+use alloy_eips::{eip4895::Withdrawal, eip7685::Requests};
 #[cfg(any(test, feature = "test-hooks"))]
 use alloy_primitives::keccak256;
-use alloy_primitives::{map::AddressMap, Address, Bytes, Log, B256, U256};
+use alloy_primitives::{Address, Bytes, Log, B256, U256};
+use evm2::{
+    ethereum::TxEnvelope,
+    evm::{BlockStateAccumulator, DynDatabase, PendingState, StateChangeSink},
+    interpreter::{Host as _, InstrStop},
+    EvmFeatures, TxResult, TxStateChanges,
+};
 use outbe_primitives::zero_fee_types::{BootstrapTransactionView, ZeroFeeTransaction};
 use outbe_primitives::{
     block::{BlockContext, BlockHeightRegime, BlockRuntimeContext},
@@ -34,23 +30,24 @@ use outbe_primitives::{
     OutbeHeader,
 };
 use reth_ethereum::{
-    evm::{primitives::Evm, revm::context::TxEnv, RethReceiptBuilder},
+    chainspec::{ChainSpec, EthChainSpec as _},
+    evm::{EthBlockExecutor, EthTransactionResultWithState, RethReceiptBuilder},
     provider::BlockExecutionResult,
     Receipt, TransactionSigned,
 };
-use reth_evm::execute::WithTxEnv;
+use reth_evm::StateUpdate;
+use reth_evm::{
+    BlockExecutionError, BlockExecutionOutput, BlockExecutor, BlockValidationError, CommitChanges,
+    ExecutorTx, GasOutput, InternalBlockExecutionError, RecoveredTx,
+};
 use reth_primitives_traits::Recovered;
-use revm::context::result::{ExecutionResult, HaltReason, InvalidTransaction, OutOfGasError};
-use revm::state::Account;
 use std::sync::Arc;
 
 use crate::{
-    factory::OutbeEvm,
+    factory::{transact_outbe_system_call, OutbeEvm, OutbeEvmTypes},
     signer::SharedOutbeEvmSigner,
     system_tx::{build_unsigned_system_tx, is_reserved_system_tx, SystemTx},
 };
-use reth_ethereum::chainspec::{ChainSpec, EthereumHardfork, EthereumHardforks};
-use revm::database::DatabaseCommitExt;
 
 mod artifacts;
 mod block;
@@ -101,7 +98,7 @@ pub use system_execution::layout::ResolvedBeginSystemTx;
 pub use zero_fee::{
     enclave_witness_budget_deferral, is_enclave_witness_budget_deferral,
     is_sponsored_block_budget_deferral, record_zero_fee_cap_exceeded_metric,
-    record_zero_fee_soft_failure_metric, sponsored_block_budget_deferral,
+    record_zero_fee_soft_failure_metric, sponsored_block_budget_deferral, OutbeInvalidTxError,
     ENCLAVE_WITNESS_BUDGET_EXCEEDED, SPONSORED_BLOCK_BUDGET_EXCEEDED,
 };
 pub use zero_fee::{ZeroFeeCfgAccess, ZeroFeeCfgSnapshot};

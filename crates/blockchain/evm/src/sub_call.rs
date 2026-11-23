@@ -1,45 +1,26 @@
 //! Sub-call driver.
 //!
-//! Drives a child CALL/STATICCALL frame from inside an outbe Rust precompile.
-//! The driver constructs a fresh borrow-mode
-//! `Evm<&mut EthEvmContext<DB>, (), EthInstructions<...>, OutbeSubCallPrecompiles,
-//! EthFrame<...>>`. Then it mirrors revm's canonical
-//! [`revm::handler::Handler::run_exec_loop`] from pinned revm-handler 43.0.2
-//! pattern until the child terminates.
+//! Drives a child CALL/STATICCALL frame from inside an outbe Rust precompile
+//! directly through the live [`evm2::Evm`]'s [`Host::execute_message`] entrypoint.
 //!
-//! The child frame uses [`crate::precompiles::OutbeSubCallPrecompiles`]. Thus both
-//! the Ethereum precompiles `0x01..0x0a` AND the outbe stateful precompiles are
-//! reachable from the child frame.
+//! The live EVM already carries [`crate::precompiles::OutbePrecompileProvider`]
+//! and Outbe's opcode guards, so both Ethereum precompiles `0x01..0x0a` and
+//! Outbe stateful precompiles are reachable from child frames with zero `unsafe`.
 //!
-//! The OUTER caller provides atomicity: it wraps
-//! `storage.call(...)` / `storage.staticcall(...)` in `StorageHandle::with_checkpoint`.
-//! The driver itself does NOT take an extra checkpoint. `make_call_frame`
-//! handles per-frame journal checkpoints internally.
+//! The OUTER caller provides atomicity: it wraps `storage.call(...)` /
+//! `storage.staticcall(...)` in `StorageHandle::with_checkpoint`. The driver
+//! itself does NOT take an extra checkpoint: `execute_message` handles
+//! per-frame journal checkpoints internally.
 
-use crate::precompiles::{OutbePrecompileExecutionContext, OutbePrecompileRuntime};
-use alloy_evm::eth::EthEvmContext;
+use crate::{factory::OutbeEvmTypes, precompiles::OutbePrecompileRuntime};
 use alloy_primitives::{Address, B256, U256};
-use core::fmt::Debug;
-use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
-use revm::{
-    context::{Evm, LocalContextTr},
-    context_interface::{
-        journaled_state::account::JournaledAccountTr, Cfg as _, ContextTr, JournalTr,
-    },
-    handler::{
-        handle_reservoir_remaining_gas, instructions::EthInstructions, EthFrame, EvmTr,
-        FrameResult, ItemOrResult,
-    },
-    interpreter::{
-        interpreter::EthInterpreter,
-        interpreter_action::{CallInputs, FrameInit, FrameInput},
-        CallInput, CallOutcome, CallScheme, CallValue, Gas, InstructionResult, SharedMemory,
-        SuccessOrHalt,
-    },
-    primitives::hardfork::SpecId,
-    state::Bytecode,
-    Database,
+use evm2::{
+    bytecode::Bytecode,
+    constants::CALL_DEPTH_LIMIT,
+    interpreter::{Gas, Host as _, InstrStop, Message, MessageExt, MessageKind, MessageResult},
+    Evm, EvmFeatures, ExecutionError, SpecId,
 };
+use outbe_primitives::storage::{SubCallError, SubCallInput, SubCallOutput, SubCallStatus};
 
 /// Execution environment shared by a sub-call's child frame and precompiles.
 pub struct SubCallEnvironment {
@@ -48,32 +29,27 @@ pub struct SubCallEnvironment {
     pub spec: SpecId,
 }
 
-/// Runs a sub-call through the executor-owned EVM context.
+/// Runs a sub-call through the executor-owned EVM instance.
 ///
 /// `environment.outer_is_static = true` forces the child to STATICCALL regardless of the
 /// caller's `input.is_static` field (outer STATIC propagates inward).
 /// `host` authorizes every precompile the child frame reaches.
-pub fn run_with_host<DB>(
-    ctx: &mut EthEvmContext<DB>,
+pub fn run_with_host(
+    evm: &mut Evm<'_, OutbeEvmTypes>,
     environment: SubCallEnvironment,
     input: SubCallInput,
     host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
-) -> std::result::Result<SubCallOutput, SubCallError>
-where
-    DB: Database + Debug,
-    DB::Error: Debug,
-{
+) -> std::result::Result<SubCallOutput, SubCallError> {
     let SubCallEnvironment {
         self_address,
         outer_is_static,
-        spec,
+        spec: _,
     } = environment;
     run_with_context(
-        ctx,
+        evm,
         SubCallContext {
             self_address,
             outer_is_static,
-            execution: OutbePrecompileExecutionContext::new(spec, B256::ZERO),
             runtime: OutbePrecompileRuntime::new(),
             host,
         },
@@ -84,22 +60,17 @@ where
 pub(crate) struct SubCallContext {
     pub(crate) self_address: Address,
     pub(crate) outer_is_static: bool,
-    pub(crate) execution: OutbePrecompileExecutionContext,
     pub(crate) runtime: OutbePrecompileRuntime,
     pub(crate) host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
 }
 
-pub(crate) fn run_with_context<DB>(
-    ctx: &mut EthEvmContext<DB>,
+pub(crate) fn run_with_context(
+    evm: &mut Evm<'_, OutbeEvmTypes>,
     context: SubCallContext,
     input: SubCallInput,
-) -> std::result::Result<SubCallOutput, SubCallError>
-where
-    DB: Database + Debug,
-    DB::Error: Debug,
-{
+) -> std::result::Result<SubCallOutput, SubCallError> {
     let limit = input.gas_limit;
-    let outcome = match run_frame(ctx, context, input, None) {
+    let outcome = match run_frame(evm, context, input, None) {
         Ok(outcome) => outcome,
         Err(
             error @ (SubCallError::DepthLimitExceeded | SubCallError::StateChangeDuringStaticCall),
@@ -116,7 +87,7 @@ where
     // Direct-driver users supply their own bounded allowance. Production uses
     // the provider's real parent meter instead of this standalone tracker.
     let mut parent = Gas::new(limit);
-    if !parent.record_regular_cost(limit) {
+    if parent.tracker_mut().try_spend(limit).is_err() {
         return Err(SubCallError::Fatal(
             "cannot reserve standalone child gas".into(),
         ));
@@ -126,16 +97,12 @@ where
 
 /// Execute one child; its caller owns reservation and canonical settlement.
 /// A supplied target was already loaded and priced by the provider.
-pub(crate) fn run_frame<DB>(
-    ctx: &mut EthEvmContext<DB>,
+pub(crate) fn run_frame(
+    evm: &mut Evm<'_, OutbeEvmTypes>,
     context: SubCallContext,
     input: SubCallInput,
-    target_code: Option<(B256, Bytecode)>,
-) -> std::result::Result<CallOutcome, SubCallError>
-where
-    DB: Database + Debug,
-    DB::Error: Debug,
-{
+    target_code: Option<(Address, Bytecode)>,
+) -> std::result::Result<MessageResult<OutbeEvmTypes>, SubCallError> {
     context.runtime.abort_bridge.check_subcall()?;
     let effective_is_static = context.outer_is_static || input.is_static;
 
@@ -144,267 +111,131 @@ where
         return Err(SubCallError::StateChangeDuringStaticCall);
     }
 
-    // Depth check via journal.
-    if ctx.journal().depth() > revm::primitives::constants::CALL_STACK_LIMIT as usize {
+    // Track call depth across native <-> Rust precompile boundaries.
+    let depth = evm.ext().current_call_depth.saturating_add(1);
+    if depth > CALL_DEPTH_LIMIT {
         return Err(SubCallError::DepthLimitExceeded);
     }
 
-    // Pre-load bytecode (revm-handler 43.0.2, execution::create_init_frame).
-    // Handles EIP-7702 delegation by re-loading from the delegate's address.
-    let (bytecode_hash, bytecode) = match target_code {
-        Some(code) => code,
-        None => load_target_bytecode(ctx, input.target)?,
+    let (code_address, bytecode) = match target_code {
+        Some(loaded) => loaded,
+        None => load_target_bytecode(evm, input.target)?,
     };
 
-    let call_inputs = build_call_inputs(
+    let mut message = build_call_message(
         &input,
-        context.self_address,
-        effective_is_static,
-        (bytecode_hash, bytecode),
-    );
-
-    // Construct fresh borrow-mode Evm wrapping &mut ctx.
-    // CTX = &mut EthEvmContext<DB> impls ContextTr via #[auto_impl(&mut, Box)]
-    // on the trait.
-    let mut instructions =
-        EthInstructions::<EthInterpreter, &mut EthEvmContext<DB>>::new_mainnet_with_spec(
-            context.execution.spec_id(),
-        );
-    crate::create_guard::install(&mut instructions);
-    crate::selfdestruct_guard::install(&mut instructions);
-    let host = std::sync::Arc::clone(&context.host);
-    let precompiles = crate::precompiles::OutbeSubCallPrecompiles::<DB>::new(
-        context.execution,
-        context.runtime,
-        context.host,
-    );
-    // A precompile resolves contract-originated calldata through `ctx.local()`, so the child
-    // frame has to carve its memory out of that buffer.
-    let mut caller_memory = CallerMemory(SharedMemory::new_with_buffer(
-        ctx.local().shared_memory_buffer().clone(),
-    ));
-    caller_memory.0.set_memory_limit(ctx.cfg().memory_limit());
-    // The enclosing precompile already owns a journal checkpoint. Continue
-    // that depth so native CALL/CREATE inside this child cannot reset the stack
-    // allowance. Domain checkpoints conservatively consume the same budget.
-    let depth = ctx.journal().depth();
-    #[allow(clippy::type_complexity)]
-    let mut evm: Evm<
-        &mut EthEvmContext<DB>,
-        (),
-        EthInstructions<EthInterpreter, &mut EthEvmContext<DB>>,
-        crate::precompiles::OutbeSubCallPrecompiles<DB>,
-        EthFrame<EthInterpreter>,
-    > = Evm::new(ctx, instructions, precompiles);
-
-    let frame_input = FrameInit {
+        &context,
         depth,
-        memory: caller_memory.0.new_child_context(),
-        frame_input: FrameInput::Call(Box::new(call_inputs)),
-    };
+        effective_is_static,
+        (code_address, bytecode),
+    );
+    crate::native_delegation::normalize_delegated_native_call(
+        evm.feature(EvmFeatures::EIP7702),
+        Some(context.host.as_ref()),
+        &mut message,
+    );
 
-    // Canonical handler frame loop (revm-handler 43.0.2, Handler::run_exec_loop).
-    let frame_result = run_exec_loop(
-        &mut crate::native_delegation::NativeDelegationEvm(&mut evm, Some(host.as_ref())),
-        frame_input,
-    )?;
+    let prev_depth = evm.ext().current_call_depth;
+    evm.ext_mut().current_call_depth = depth;
+    let result = evm.execute_message(&mut message);
+    evm.ext_mut().current_call_depth = prev_depth;
 
-    // Translate FrameResult -> SubCallOutput.
-    let call_outcome = match frame_result {
-        FrameResult::Call(outcome) => outcome,
-        FrameResult::Create(_) => {
-            return Err(SubCallError::Fatal(
-                "sub-call returned CREATE outcome (impossible for Call frame_input)".to_string(),
-            ));
-        }
-    };
-    Ok(call_outcome)
+    match result {
+        Ok(outcome) => Ok(outcome),
+        Err(ExecutionError::Database(err)) => Err(SubCallError::DatabaseError(err.to_string())),
+        Err(ExecutionError::Fatal(err)) => Err(SubCallError::Fatal(err.to_string())),
+    }
 }
 
-fn build_call_inputs(
+fn build_call_message(
     input: &SubCallInput,
-    caller: Address,
+    context: &SubCallContext,
+    depth: u16,
     effective_is_static: bool,
-    target_code: (B256, Bytecode),
-) -> CallInputs {
-    CallInputs {
-        input: CallInput::Bytes(input.calldata.clone()),
-        return_memory_offset: 0..0,
+    (code_address, code): (Address, Bytecode),
+) -> Message<OutbeEvmTypes> {
+    MessageExt {
+        kind: if effective_is_static {
+            MessageKind::StaticCall
+        } else {
+            MessageKind::Call
+        },
+        depth,
         gas_limit: input.gas_limit,
         reservoir: 0,
-        bytecode_address: input.target,
-        known_bytecode: target_code,
-        target_address: input.target,
-        caller,
+        destination: input.target,
+        call_target: input.target,
+        caller: context.self_address,
+        input: input.calldata.clone().into(),
         value: if effective_is_static {
-            CallValue::Transfer(U256::ZERO)
+            U256::ZERO
         } else {
-            CallValue::Transfer(input.value)
+            input.value
         },
-        scheme: if effective_is_static {
-            CallScheme::StaticCall
-        } else {
-            CallScheme::Call
-        },
-        is_static: effective_is_static,
-        charged_new_account_state_gas: false,
+        code,
+        code_address,
+        caller_is_static: effective_is_static,
+        salt: B256::ZERO,
+        ext: (),
+        _non_exhaustive: (),
     }
 }
 
-/// Gives the child context back even when the frame loop unwinds: the buffer outlives the sub-call.
-struct CallerMemory(SharedMemory);
-
-impl Drop for CallerMemory {
-    fn drop(&mut self) {
-        self.0.free_child_context();
-    }
-}
-
-/// Pre-load target bytecode + hash. Mirrors revm-handler's
-/// `create_init_frame` logic for EIP-7702 delegation.
-fn load_target_bytecode<DB>(
-    ctx: &mut EthEvmContext<DB>,
+/// Pre-load target bytecode + resolved code address (following EIP-7702 delegation once).
+fn load_target_bytecode(
+    evm: &mut Evm<'_, OutbeEvmTypes>,
     target: Address,
-) -> std::result::Result<(B256, Bytecode), SubCallError>
-where
-    DB: Database,
-    DB::Error: Debug,
-{
-    // First pass: read info from target (info + delegate decision).
-    let (delegate, hash, code) = {
-        let journal = ctx.journal_mut();
-        let account = journal
-            .load_account_with_code_mut(target)
-            .map_err(|e| SubCallError::DatabaseError(format!("{e:?}")))?;
-        let info = &account.data.account().info;
-        let delegate = info.code.as_ref().and_then(Bytecode::eip7702_address);
-        (
-            delegate,
-            info.code_hash,
-            info.code.clone().unwrap_or_default(),
-        )
-    };
+) -> std::result::Result<(Address, Bytecode), SubCallError> {
+    let eip7702 = evm.feature(EvmFeatures::EIP7702);
+    let code = evm
+        .state_mut()
+        .account(&target)
+        .and_then(|mut account| account.load_code())
+        .map_err(|e| SubCallError::DatabaseError(format!("{e:?}")))?;
 
-    // EIP-7702 delegate handling: re-load from the delegate address.
-    if let Some(delegate_addr) = delegate {
-        let journal = ctx.journal_mut();
-        let account = journal
-            .load_account_with_code_mut(delegate_addr)
-            .map_err(|e| SubCallError::DatabaseError(format!("{e:?}")))?;
-        let info = &account.data.account().info;
-        return Ok((info.code_hash, info.code.clone().unwrap_or_default()));
-    }
-
-    Ok((hash, code))
-}
-
-/// Mirrors pinned revm-handler 43.0.2's [`revm::handler::Handler::run_exec_loop`].
-/// Ordinary-bytecode equivalence is checked by `tests/subcall_frame_parity.rs`.
-///
-/// Runs the frame stack inside `evm` to completion for `first_frame_input`,
-/// returning the top-level [`FrameResult`].
-fn run_exec_loop<E>(
-    evm: &mut E,
-    first_frame_input: FrameInit,
-) -> std::result::Result<FrameResult, SubCallError>
-where
-    E: EvmTr<Frame = EthFrame<EthInterpreter>>,
-    <E as EvmTr>::Context: ContextTr,
-{
-    let res = evm
-        .frame_init(first_frame_input)
-        .map_err(crate::errors::SubCallDriverError::frame_init)?;
-    if let ItemOrResult::Result(frame_result) = res {
-        return Ok(frame_result);
-    }
-
-    loop {
-        let call_or_result = evm
-            .frame_run()
-            .map_err(crate::errors::SubCallDriverError::frame_run)?;
-        let Some(result) = finish_or_initialize_frame(evm, call_or_result)? else {
-            continue;
-        };
-        if let Some(r) = evm
-            .frame_return_result(result)
-            .map_err(crate::errors::SubCallDriverError::frame_return_result)?
-        {
-            return Ok(r);
+    if eip7702 {
+        if let Some(delegate_addr) = code.eip7702_address() {
+            let delegated_code = evm
+                .state_mut()
+                .account(&delegate_addr)
+                .and_then(|mut account| account.load_code())
+                .map_err(|e| SubCallError::DatabaseError(format!("{e:?}")))?;
+            return Ok((delegate_addr, delegated_code));
         }
     }
-}
 
-fn finish_or_initialize_frame<E>(
-    evm: &mut E,
-    call_or_result: ItemOrResult<FrameInit, FrameResult>,
-) -> std::result::Result<Option<FrameResult>, SubCallError>
-where
-    E: EvmTr<Frame = EthFrame<EthInterpreter>>,
-    <E as EvmTr>::Context: ContextTr,
-{
-    let init = match call_or_result {
-        ItemOrResult::Result(result) => return Ok(Some(result)),
-        ItemOrResult::Item(init) => init,
-    };
-    match evm
-        .frame_init(init)
-        .map_err(crate::errors::SubCallDriverError::frame_init_nested)?
-    {
-        ItemOrResult::Item(_) => Ok(None),
-        ItemOrResult::Result(result) => Ok(Some(result)),
-    }
+    Ok((target, code))
 }
 
 /// Settle against the parent before narrowing the child's full gas state to
 /// the public API. A halt spends its allowance, while a revert-like entry
 /// failure returns unused gas. This is the same helper as native CALL.
 pub(crate) fn settle_outcome(
-    mut outcome: CallOutcome,
+    outcome: MessageResult<OutbeEvmTypes>,
     parent: &mut Gas,
 ) -> std::result::Result<SubCallOutput, SubCallError> {
-    let instr = outcome.result.result;
-    let status = match instr {
-        InstructionResult::Stop | InstructionResult::Return | InstructionResult::SelfDestruct => {
-            SubCallStatus::Success
-        }
-        InstructionResult::CallTooDeep => SubCallStatus::Halt(SubCallError::DepthLimitExceeded),
-        InstructionResult::OutOfFunds => SubCallStatus::Halt(SubCallError::EvmHalt(
-            revm::context_interface::result::HaltReason::OutOfFunds,
-        )),
-        result if result.is_revert() => SubCallStatus::Revert(outcome.result.output.clone()),
-        InstructionResult::OutOfGas
-        | InstructionResult::MemoryOOG
-        | InstructionResult::MemoryLimitOOG
-        | InstructionResult::PrecompileOOG
-        | InstructionResult::InvalidOperandOOG
-        | InstructionResult::ReentrancySentryOOG => SubCallStatus::Halt(SubCallError::OutOfGas),
-        InstructionResult::CallNotAllowedInsideStatic
-        | InstructionResult::StateChangeDuringStaticCall => {
+    let stop = outcome.stop;
+    let status = match stop {
+        InstrStop::Stop | InstrStop::Return | InstrStop::SelfDestruct => SubCallStatus::Success,
+        InstrStop::CallTooDeep => SubCallStatus::Halt(SubCallError::DepthLimitExceeded),
+        InstrStop::OutOfFunds => SubCallStatus::Halt(SubCallError::EvmHalt(InstrStop::OutOfFunds)),
+        stop if stop.is_revert() => SubCallStatus::Revert(outcome.output.clone()),
+        stop if stop.is_out_of_gas() => SubCallStatus::Halt(SubCallError::OutOfGas),
+        InstrStop::CallNotAllowedInsideStatic | InstrStop::StateChangeDuringStaticCall => {
             SubCallStatus::Halt(SubCallError::StateChangeDuringStaticCall)
         }
-        InstructionResult::FatalExternalError | InstructionResult::Suspend => {
+        stop if stop.is_fatal() => {
             return Err(crate::errors::SubCallDriverError::non_vm_child_terminal(
-                instr,
+                stop,
             ));
         }
-        other => match SuccessOrHalt::<revm::context_interface::result::HaltReason>::from(other) {
-            SuccessOrHalt::Halt(reason) => SubCallStatus::Halt(SubCallError::EvmHalt(reason)),
-            _ => return Err(crate::errors::SubCallDriverError::unexpected_child_terminal(other)),
-        },
+        other => SubCallStatus::Halt(SubCallError::EvmHalt(other)),
     };
-    handle_reservoir_remaining_gas(
-        instr,
-        parent.tracker_mut(),
-        outcome.result.gas.tracker_mut(),
-    );
+    parent.merge_child_gas(outcome.gas, stop);
     Ok(SubCallOutput {
         status,
-        returndata: outcome.result.output,
-        gas_used: outcome
-            .result
-            .gas
-            .limit()
-            .saturating_sub(outcome.result.gas.remaining()),
-        gas_refunded: outcome.result.gas.refunded(),
+        returndata: outcome.output,
+        gas_used: outcome.gas.spent(),
+        gas_refunded: outcome.gas.refunded(),
     })
 }

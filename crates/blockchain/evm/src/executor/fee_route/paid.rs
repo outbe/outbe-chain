@@ -2,39 +2,27 @@
 
 use super::*;
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + ZeroFeeCfgAccess,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    E::Error: std::fmt::Display,
-{
+impl OutbeBlockExecutor<'_> {
     pub fn execute_paid_transaction<R, F>(
         &mut self,
-        tx_env: TxEnv,
+        tx_env: Recovered<TxEnvelope>,
         recovered: R,
         f: F,
     ) -> Result<Option<GasOutput>, BlockExecutionError>
     where
         R: RecoveredTx<TransactionSigned>,
-        F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
+        F: FnOnce(&TxResult<OutbeEvmTypes>, TxStateChanges<'_>) -> CommitChanges,
     {
         let tx = recovered.tx();
-        let base_fee_per_gas = self.inner.evm.block().basefee() as u128;
-        let blob_gas_price = self.inner.evm.block().blob_gasprice().unwrap_or(0);
+        let base_fee_per_gas = self.block_basefee();
+        let blob_gas_price = self.block_blob_gasprice();
         let max_fee_per_gas = tx.max_fee_per_gas();
         let max_priority_fee_per_gas = tx.max_priority_fee_per_gas();
         let blob_gas_used = tx.blob_gas_used().unwrap_or(0);
 
-        let result = self.inner.execute_transaction_with_commit_condition(
-            WithTxEnv {
-                tx_env,
-                tx: Arc::new(recovered),
-            },
-            f,
-        )?;
+        let result = self
+            .inner
+            .execute_transaction_with_commit_condition((tx_env, recovered), f)?;
 
         if let Some(gas_used) = result {
             let validator_fee = validator_fee_for_gas(

@@ -1,84 +1,73 @@
 //! SELFDESTRUCT that would strand COEN on a system address, or burn it in a contract that the same
 //! transaction made, sends the balance to address 0 instead. The Promis Limit burns it from there.
 
-use alloy_primitives::{keccak256, Address, U256};
-use outbe_primitives::addresses::is_reserved_dynamic_precompile_address;
-use revm::{
-    context::{ContextTr, Database, JournalTr},
-    context_interface::context::ContextError,
-    handler::instructions::EthInstructions,
+use crate::factory::OutbeEvmTypes;
+use alloy_primitives::{keccak256, Address};
+use evm2::{
     interpreter::{
-        instructions::host::selfdestruct,
-        interpreter_types::{InputsTr, StackTr},
-        Host, Instruction, InstructionContext, InstructionResult, InterpreterTypes,
+        instructions as instr,
+        private::{Instruction, InstructionFlags},
+        InstrStop, InterpreterState, Pc, Result as InstrResult, StackMut, Word,
     },
-    state::EvmState,
+    utils::WordExt as _,
+    ExecutionError,
 };
+use outbe_primitives::addresses::is_reserved_dynamic_precompile_address;
 
-const SELFDESTRUCT_OPCODE: u8 = 0xff;
 /// Every system address carries this one-byte code, from the executor's marker list or from
 /// genesis. EIP-3541 keeps any deployed code from starting with it.
 const MARKER_CODE: [u8; 1] = [0xef];
 
-pub(crate) fn install<WIRE, HOST>(instructions: &mut EthInstructions<WIRE, HOST>)
-where
-    WIRE: InterpreterTypes,
-    HOST: Host + ContextTr<Journal: JournalTr<State = EvmState>>,
-{
-    let gas = instructions.gas_table()[SELFDESTRUCT_OPCODE as usize];
-    instructions.insert_instruction(
-        SELFDESTRUCT_OPCODE,
-        Instruction::new(guarded_selfdestruct::<WIRE, HOST>),
-        gas,
-    );
-}
+/// Safe `SELFDESTRUCT` instruction wrapper that redirects protected beneficiaries to `Address::ZERO`.
+pub(crate) struct GuardedSelfdestruct;
 
-fn guarded_selfdestruct<WIRE, HOST>(
-    context: InstructionContext<'_, HOST, WIRE>,
-) -> revm::interpreter::InstructionExecResult
-where
-    WIRE: InterpreterTypes,
-    HOST: Host + ContextTr<Journal: JournalTr<State = EvmState>> + ?Sized,
-{
-    let address = context.interpreter.input.target_address();
-    if let Some(top) = context.interpreter.stack.top() {
-        let target = Address::from_word((*top).into());
-        if goes_to_address_zero(&mut *context.host, address, target)? {
-            *top = U256::ZERO;
+impl Instruction<OutbeEvmTypes> for GuardedSelfdestruct {
+    const FLAGS: InstructionFlags =
+        <instr::selfdestruct<OutbeEvmTypes> as Instruction<OutbeEvmTypes>>::FLAGS;
+
+    fn execute(
+        pc: &mut Pc,
+        mut stack: StackMut<'_>,
+        state: &mut InterpreterState<'_, '_, OutbeEvmTypes>,
+    ) -> InstrResult {
+        if !state.is_static() {
+            if let Some(top) = stack.as_slice_mut().last_mut() {
+                let address = state.message().destination;
+                let target = top.to_address();
+                if goes_to_address_zero(state, address, target)? {
+                    *top = Word::ZERO;
+                }
+            }
         }
+        instr::selfdestruct::<OutbeEvmTypes>::execute(pc, stack, state)
     }
-    selfdestruct::<WIRE, HOST>(context)
 }
 
-fn goes_to_address_zero<HOST>(
-    host: &mut HOST,
+fn goes_to_address_zero(
+    state: &mut InterpreterState<'_, '_, OutbeEvmTypes>,
     address: Address,
     target: Address,
-) -> Result<bool, InstructionResult>
-where
-    HOST: ContextTr<Journal: JournalTr<State = EvmState>> + ?Sized,
-{
+) -> std::result::Result<bool, InstrStop> {
     if target == address {
-        return Ok(host
-            .journal()
-            .evm_state()
-            .get(&address)
-            .is_some_and(|account| account.is_created_locally()));
+        let is_created = state
+            .host()
+            .state_mut()
+            .account(&address)
+            .map(|account| account.is_created())
+            .map_err(|err| state.fail(ExecutionError::Database(err)))?;
+        return Ok(is_created);
     }
     if target == Address::ZERO || is_reserved_dynamic_precompile_address(target) {
         return Ok(false);
     }
-    // Read the code hash without loading the account, so the gas of the normal path does not
-    // change.
-    let code_hash = match host.journal().evm_state().get(&target) {
-        Some(account) => account.info.code_hash,
-        None => match host.journal_mut().db_mut().basic(target) {
-            Ok(info) => info.map(|info| info.code_hash).unwrap_or_default(),
-            Err(err) => {
-                *host.error() = Err(ContextError::Db(err));
-                return Err(InstructionResult::FatalExternalError);
-            }
-        },
-    };
+    // Read the code hash without loading or warming the account so the gas of the normal path does
+    // not change.
+    let code_hash = state
+        .host()
+        .state_mut()
+        .account_info_untracked(&target)
+        .map_err(|err| state.fail(ExecutionError::Database(err)))?
+        .map(|info| info.code_hash)
+        .unwrap_or_default();
     Ok(code_hash == keccak256(MARKER_CODE))
 }

@@ -1,14 +1,15 @@
 use crate::executor::{
     BlockExecutionDependencies, BlockExecutionIdentity, BlockExecutorInputs, BlockSystemPlan,
-    ParentAccountingInputs,
+    OutbeBlockExecutor, ParentAccountingInputs,
 };
-use crate::{executor::OutbeBlockExecutor, factory::OutbeEvmFactory};
-use alloy_evm::block::{BlockExecutorFactory, StateDB};
-use reth_ethereum::evm::revm::inspector::Inspector;
-use reth_ethereum::Receipt;
-use reth_ethereum::TransactionSigned;
-
-use reth_evm::EvmFor;
+use crate::factory::{OutbeEvm, OutbeEvmFactory, OutbeEvmTypes};
+use evm2::evm::DynDatabase;
+use reth_ethereum::{
+    evm::{EthBlockExecutor, EthEvmEnv},
+    Receipt, TransactionSigned,
+};
+use reth_evm::BlockExecutorFactory;
+use std::sync::Arc;
 
 use super::{OutbeBlockExecutionCtx, OutbeEvmConfig};
 
@@ -17,102 +18,91 @@ use super::{OutbeBlockExecutionCtx, OutbeEvmConfig};
 // ---------------------------------------------------------------------------
 
 impl BlockExecutorFactory for OutbeEvmConfig {
-    /// We keep the same EVM factory as the inner config: it creates
-    /// `OutbeEvm<DB, I, PrecompilesMap>` with Outbe precompiles registered.
     type EvmFactory = OutbeEvmFactory;
-    type ExecutionCtx<'a> = OutbeBlockExecutionCtx<'a>;
+    type EvmTypes = OutbeEvmTypes;
     type Transaction = TransactionSigned;
     type Receipt = Receipt;
-    /// Per-tx execution result. `OutbeBlockExecutor` wraps reth's
-    /// `EthBlockExecutor`, so this is the same `EthTxResult` reth produces:
-    /// `EvmFactory = OutbeEvmFactory`, `Transaction = TransactionSigned`
-    /// (`TxType` resolves to `reth_ethereum::TxType`).
-    type TxExecutionResult = alloy_evm::eth::EthTxResult<
-        <OutbeEvmFactory as alloy_evm::EvmFactory>::HaltReason,
-        reth_ethereum::TxType,
-    >;
-    /// Concrete executor type that `create_executor` returns. The raw EVM
-    /// (`BlockExecutor::Evm = E`) parameterizes `OutbeBlockExecutor<'a, E>`. The trait
-    /// constrains that EVM to `<Self::EvmFactory>::Evm<DB, I>` (i.e. `EvmFor<Self, DB, I>`). The
-    /// `EthBlockExecutor` wrapper with `&Arc<ChainSpec<OutbeHeader>>` and
-    /// `&RethReceiptBuilder` lives inside `OutbeBlockExecutor`, not in this type param.
-    type Executor<
-        'a,
-        DB: StateDB,
-        I: Inspector<<Self::EvmFactory as alloy_evm::EvmFactory>::Context<DB>>,
-    > = OutbeBlockExecutor<'a, EvmFor<Self, DB, I>>;
+    type Evm<'a> = OutbeEvm<'a>;
+    type EvmEnv = EthEvmEnv<OutbeEvmTypes>;
+    type ExecutionCtx<'a>
+        = OutbeBlockExecutionCtx<'a>
+    where
+        Self: 'a;
+    type Executor<'a>
+        = OutbeBlockExecutor<'a>
+    where
+        Self: 'a;
 
     fn evm_factory(&self) -> &Self::EvmFactory {
-        // `ConfigureEvm::evm_factory()` delegates to
-        // `block_executor_factory().evm_factory()` which returns `&OutbeEvmFactory`.
-        self.inner.executor_factory.evm_factory()
+        &self.evm_factory
     }
 
-    fn create_executor<'a, DB, I>(
-        &'a self,
-        mut evm: EvmFor<Self, DB, I>,
-        ctx: OutbeBlockExecutionCtx<'a>,
-    ) -> Self::Executor<'a, DB, I>
+    fn evm_with_env<'a, DB>(&self, db: DB, evm_env: Self::EvmEnv) -> Self::Evm<'a>
     where
-        DB: StateDB,
-        I: Inspector<<Self::EvmFactory as alloy_evm::EvmFactory>::Context<DB>>,
+        DB: DynDatabase + 'a,
     {
-        use alloy_evm::eth::EthBlockExecutor;
-        evm.set_owned_by_executor(true);
+        self.evm_factory.create_evm(db, evm_env)
+    }
+
+    fn create_executor<'a>(
+        &'a self,
+        mut evm: Self::Evm<'a>,
+        ctx: OutbeBlockExecutionCtx<'a>,
+    ) -> Self::Executor<'a>
+    where
+        Self: 'a,
+    {
+        evm.ext_mut().set_owned_by_executor(true);
         let block_extra_data = ctx.inner.extra_data.clone();
         let block_hash = ctx.block_hash;
         let parent_hash = ctx.inner.parent_hash;
-        let expected_begin_system_txs = ctx.expected_begin_system_txs.clone();
-        let system_layout_error = ctx.system_layout_error.clone();
-        let parent_consensus_metadata = ctx.parent_consensus_metadata.clone();
-        let proposer_evm_address = ctx.proposer_evm_address;
-        let execute_outbe_block_hooks = ctx.execute_outbe_block_hooks;
-        let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
-        let parent_artifact_hint = ctx.parent_artifact_hint;
+        let withdrawals = ctx.inner.withdrawals.as_deref().map(<[_]>::to_vec);
+        let mut inner_ctx = ctx.inner;
+        // Outbe validates native withdrawals via `validate_outbe_withdrawals` and must not apply
+        // Ethereum's Gwei-to-Wei balance-increment conversion in post-execution.
+        inner_ctx.withdrawals = None;
+
         let system_plan = BlockSystemPlan {
-            expected_begin_system_txs,
-            system_layout_error,
-            proposer_evm_address,
-            execute_outbe_block_hooks,
-            prebuilt_phase1_tx,
-            pending_tee_bootstrap: ctx.pending_tee_bootstrap.clone(),
+            expected_begin_system_txs: ctx.expected_begin_system_txs,
+            system_layout_error: ctx.system_layout_error,
+            proposer_evm_address: ctx.proposer_evm_address,
+            execute_outbe_block_hooks: ctx.execute_outbe_block_hooks,
+            prebuilt_phase1_tx: ctx.prebuilt_phase1_tx,
+            pending_tee_bootstrap: ctx.pending_tee_bootstrap,
         };
 
-        {
-            let inner = EthBlockExecutor::new(
-                evm,
-                ctx.inner,
-                self.inner.chain_spec(),
-                self.inner.executor_factory.receipt_builder(),
-            );
-            let bridge = self.bridge.clone();
-            let accounted_parent_artifact_provider =
-                self.accounted_parent_artifact_provider.clone();
-            let validate_execution_summary = true;
-            let evm_signer = self.evm_signer.clone();
-            OutbeBlockExecutor::new(
-                inner,
-                BlockExecutorInputs {
-                    identity: BlockExecutionIdentity {
-                        block_extra_data,
-                        validate_execution_summary,
-                        block_hash,
-                        block_state_root: ctx.block_state_root,
-                        parent_hash,
-                    },
-                    system_plan,
-                    parent_accounting: ParentAccountingInputs {
-                        accounted_parent_artifact_provider,
-                        parent_consensus_metadata,
-                        parent_artifact_hint,
-                    },
-                    dependencies: BlockExecutionDependencies {
-                        bridge,
-                        evm_signer,
-                        runtime_host: std::sync::Arc::clone(&self.runtime_host),
-                    },
+        let inner = EthBlockExecutor::new(
+            evm,
+            inner_ctx,
+            self.chain_spec.as_ref(),
+            &self.receipt_builder,
+        );
+        OutbeBlockExecutor::new(
+            inner,
+            Arc::clone(&self.chain_spec),
+            withdrawals,
+            BlockExecutorInputs {
+                identity: BlockExecutionIdentity {
+                    block_extra_data,
+                    validate_execution_summary: true,
+                    block_hash,
+                    block_state_root: ctx.block_state_root,
+                    parent_hash,
                 },
-            )
-        }
+                system_plan,
+                parent_accounting: ParentAccountingInputs {
+                    accounted_parent_artifact_provider: self
+                        .accounted_parent_artifact_provider
+                        .clone(),
+                    parent_consensus_metadata: ctx.parent_consensus_metadata,
+                    parent_artifact_hint: ctx.parent_artifact_hint,
+                },
+                dependencies: BlockExecutionDependencies {
+                    bridge: self.bridge.clone(),
+                    evm_signer: self.evm_signer.clone(),
+                    runtime_host: Arc::clone(&self.runtime_host),
+                },
+            },
+        )
     }
 }

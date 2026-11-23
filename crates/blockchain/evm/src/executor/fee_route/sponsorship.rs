@@ -2,25 +2,17 @@
 
 use super::*;
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + ZeroFeeCfgAccess,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    E::Error: std::fmt::Display,
-{
+impl OutbeBlockExecutor<'_> {
     pub fn execute_sponsored_transaction<R, F>(
         &mut self,
         ctx: BlockContext,
-        tx_env: TxEnv,
+        tx_env: Recovered<TxEnvelope>,
         recovered: R,
         f: F,
     ) -> Result<Option<GasOutput>, BlockExecutionError>
     where
         R: RecoveredTx<TransactionSigned>,
-        F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
+        F: FnOnce(&TxResult<OutbeEvmTypes>, TxStateChanges<'_>) -> CommitChanges,
     {
         let gas_limit = recovered.tx().gas_limit();
         if !self.sponsored_gas_fits(gas_limit) {
@@ -32,7 +24,7 @@ where
         // Authorization is a read. Persist the counter only after inclusion.
         let host = self.runtime_host.clone();
         let authorized = {
-            let db = self.inner.evm.db_mut();
+            let db = self.inner.evm_mut().overlay_db_mut();
             let mut provider = DirectStorageProvider::new(db, ctx.clone());
             let storage = StorageHandle::new(&mut provider);
             host.user_fee_policy()
@@ -50,8 +42,8 @@ where
         }
         self.charge_sponsored_gas(gas_limit);
 
-        let sponsorship_events = {
-            let db = self.inner.evm.db_mut();
+        let (changes, sponsorship_events) = {
+            let db = self.inner.evm_mut().overlay_db_mut();
             let mut provider = DirectStorageProvider::new(db, ctx);
             let recorded = {
                 let storage = StorageHandle::new(&mut provider);
@@ -79,12 +71,12 @@ where
                 )
             })?;
             let events = provider.take_events();
-            // State::commit already notified the parallel state root hook.
-            let _changes = provider.take_committed_changes();
-            events
+            let changes = provider.take_committed_changes();
+            (changes, events)
         };
+        self.commit_block_accumulator(&changes)?;
         if !sponsorship_events.is_empty() {
-            if let Some(receipt) = self.inner.receipts.last_mut() {
+            if let Some(receipt) = self.inner.inner.receipts.last_mut() {
                 receipt.logs.extend(sponsorship_events);
             }
         }

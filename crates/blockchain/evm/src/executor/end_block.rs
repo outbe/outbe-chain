@@ -90,41 +90,33 @@ fn decode_expected_end_tx(
     Ok((input, ordinal))
 }
 
-impl<E: Evm> OutbeBlockExecutor<'_, E> {
+impl OutbeBlockExecutor<'_> {
     pub fn accounted_block_gas(&self) -> u64 {
-        if self.inner.evm.cfg_env().enable_amsterdam_eip8037 {
-            self.inner.max_block_gas_used()
+        if self.inner.evm().version().feature(EvmFeatures::EIP8037) {
+            self.inner
+                .inner
+                .block_regular_gas_used
+                .max(self.inner.inner.block_state_gas_used)
         } else {
-            self.inner.cumulative_tx_gas_used
+            self.inner.inner.cumulative_gas_used
         }
     }
 
     pub fn gas_accounting(&self) -> (u64, u64, u64) {
         (
-            self.inner.cumulative_tx_gas_used,
-            self.inner.block_regular_gas_used,
-            self.inner.block_state_gas_used,
+            self.inner.inner.cumulative_gas_used,
+            self.inner.inner.block_regular_gas_used,
+            self.inner.inner.block_state_gas_used,
         )
     }
 
-    pub fn tx_gas_limit_cap(&self) -> u64
-    where
-        E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    {
-        use revm::context_interface::Cfg as _;
-        self.inner.evm.cfg_env().tx_gas_limit_cap()
+    pub fn tx_gas_limit_cap(&self) -> u64 {
+        self.inner.evm().version().tx_gas_caps().0
     }
 
     /// Builder stage after user transactions and before execution finalization.
     /// Repeated calls are idempotent and do not execute the suffix twice.
-    pub fn apply_end_block_phase<DB>(&mut self) -> Result<(), BlockExecutionError>
-    where
-        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason>,
-        DB: StateDB,
-        DB::Error: std::fmt::Display,
-        E::Error: std::fmt::Display,
-        E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    {
+    pub fn apply_end_block_phase(&mut self) -> Result<(), BlockExecutionError> {
         let stage = self.enter_end_block_phase_if_needed()?;
         if stage == BlockExecutionStage::EndBlock && self.fsm.end_cursor() == 0 {
             self.execute_built_end_suffix()?;
@@ -135,7 +127,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
     fn enter_end_block_phase_if_needed(
         &mut self,
     ) -> Result<BlockExecutionStage, BlockExecutionError> {
-        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+        let block_number = self.block_number();
         self.fsm
             .enter_end_block(block_number)
             .map_err(|error| ExecutorValidationError::from(error).into())
@@ -159,14 +151,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         std::mem::take(&mut self.staged_end_block_txs)
     }
 
-    fn execute_built_end_suffix<DB>(&mut self) -> Result<(), BlockExecutionError>
-    where
-        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason>,
-        DB: StateDB,
-        DB::Error: std::fmt::Display,
-        E::Error: std::fmt::Display,
-        E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    {
+    fn execute_built_end_suffix(&mut self) -> Result<(), BlockExecutionError> {
         let steps = self.fsm.plan().end_block_steps.clone();
         let mut staged = Vec::with_capacity(steps.len());
         for planned in steps {
@@ -181,17 +166,11 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         Ok(())
     }
 
-    fn sign_end_tx<DB>(
+    fn sign_end_tx(
         &self,
         input: SystemTx,
-    ) -> Result<Recovered<TransactionSigned>, BlockExecutionError>
-    where
-        E: Evm<DB = DB, Tx = TxEnv>,
-        DB: StateDB,
-        DB::Error: std::fmt::Display,
-        E::Error: std::fmt::Display,
-    {
-        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+    ) -> Result<Recovered<TransactionSigned>, BlockExecutionError> {
+        let block_number = self.block_number();
         let proposer = self.end_block_proposer(block_number)?;
         sign_end_system_tx(
             self.evm_signer.as_ref(),
@@ -203,19 +182,12 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         )
     }
 
-    pub fn execute_end_block_system_tx<DB>(
+    pub fn execute_end_block_system_tx(
         &mut self,
         tx: &TransactionSigned,
         signer: Address,
-    ) -> Result<Option<GasOutput>, BlockExecutionError>
-    where
-        E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason>,
-        DB: StateDB,
-        DB::Error: std::fmt::Display,
-        E::Error: std::fmt::Display,
-        E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    {
-        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+    ) -> Result<Option<GasOutput>, BlockExecutionError> {
+        let block_number = self.block_number();
         if !BlockHeightRegime::for_block(block_number).has_end_block_system_txs() {
             return Err(ExecutorValidationError::ReservedSystemTxAfterBeginZoneConsumed.into());
         }
@@ -238,14 +210,15 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         )?;
         let input = admitted.input;
         let ordinal = admitted.ordinal;
-        let block_gas_limit = self.inner.evm.block().gas_limit();
+        let block_gas_limit = self.block_gas_limit();
         let user_gas_used = self.accounted_block_gas();
         let tx_hash = *tx.tx_hash();
         let witness_scope = self.prepare_tx_witness_scope(false)?;
         let transact_outcome = with_preloaded_system_tx_context(
             PreloadedSystemTxContext::for_end_block(proposer, block_gas_limit, user_gas_used),
             || {
-                self.inner.evm.transact_system_call(
+                transact_outbe_system_call(
+                    self.inner.evm_mut(),
                     outbe_primitives::addresses::SYSTEM_ADDRESS,
                     outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
                     tx.input().clone(),
@@ -255,21 +228,17 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         drop(witness_scope);
         match transact_outcome {
             Ok(result) if result.result.is_success() => {
-                let user_cumulative_tx_gas = self.inner.cumulative_tx_gas_used;
-                let user_regular_gas = self.inner.block_regular_gas_used;
-                let user_state_gas = self.inner.block_state_gas_used;
-                let output = EthTxResult {
-                    result,
-                    blob_gas_used: 0,
-                    tx_type: tx.tx_type(),
-                };
-                let _ = self.inner.commit_transaction(output);
-                if let Some(receipt) = self.inner.receipts.last_mut() {
+                let user_cumulative_tx_gas = self.inner.inner.cumulative_gas_used;
+                let user_regular_gas = self.inner.inner.block_regular_gas_used;
+                let user_state_gas = self.inner.inner.block_state_gas_used;
+                let output = EthTransactionResultWithState::new(result, tx.tx_type(), 0);
+                let _ = self.inner.commit_transaction(output)?;
+                if let Some(receipt) = self.inner.inner.receipts.last_mut() {
                     receipt.cumulative_gas_used = user_cumulative_tx_gas;
                 }
-                self.inner.cumulative_tx_gas_used = user_cumulative_tx_gas;
-                self.inner.block_regular_gas_used = user_regular_gas;
-                self.inner.block_state_gas_used = user_state_gas;
+                self.inner.inner.cumulative_gas_used = user_cumulative_tx_gas;
+                self.inner.inner.block_regular_gas_used = user_regular_gas;
+                self.inner.inner.block_state_gas_used = user_state_gas;
             }
             Ok(result) => {
                 let code = super::system_execution::execute::system_tx_failure_code_for_result(
@@ -300,7 +269,7 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
         // A reverted step is still in the body, and the verifier repeats its enclave calls.
         self.finish_tx_witness(tx_hash, true)?;
         self.advance_system_tx_step(&input)?;
-        Ok(Some(GasOutput::new(0)))
+        Ok(Some(GasOutput::new(0, 0)))
     }
 
     fn commit_end_block_failure_receipt(
@@ -314,10 +283,10 @@ impl<E: Evm> OutbeBlockExecutor<'_, E> {
             code,
             reason,
         );
-        self.inner.receipts.push(Receipt {
+        self.inner.inner.receipts.push(Receipt {
             tx_type: tx.tx_type(),
             success: false,
-            cumulative_gas_used: self.inner.cumulative_tx_gas_used,
+            cumulative_gas_used: self.inner.inner.cumulative_gas_used,
             logs: vec![log],
         });
     }

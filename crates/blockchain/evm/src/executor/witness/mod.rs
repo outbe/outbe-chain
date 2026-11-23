@@ -99,9 +99,7 @@ fn candidate_rejection_error(rejection: CandidateRejection, tx_hash: B256) -> Bl
         CandidateRejection::UnsignedEnclaveError => {
             BlockExecutionError::Validation(BlockValidationError::InvalidTx {
                 hash: tx_hash,
-                error: Box::new(InvalidTransaction::Str(
-                    "unsigned enclave error during candidate execution".into(),
-                )),
+                error: Box::new(super::zero_fee::OutbeInvalidTxError::UnsignedEnclaveError),
             })
         }
     }
@@ -304,11 +302,12 @@ pub fn witness_fault_to_block_error(
         BlockWitnessFault::LocalUnavailable => WitnessAbortReason::LocalUnavailable,
     };
     let abort = NodeLocalExecutionAbort::witness(reason, detail);
-    let evm_error: revm::context_interface::result::EVMError<std::convert::Infallible> =
-        revm::context_interface::result::EVMError::CustomAny(
-            revm::context_interface::result::AnyError::new(abort),
-        );
-    BlockExecutionError::Internal(InternalBlockExecutionError::Other(Box::new(evm_error)))
+    let evm_error = evm2::registry::HandlerError::Fatal(evm2::AnyError::new(
+        crate::precompiles::SourceVisibleAbort(abort),
+    ));
+    BlockExecutionError::Internal(InternalBlockExecutionError::Other(evm2::AnyError::new(
+        evm_error,
+    )))
 }
 
 fn payload_len_fits_extra_data(payload_len: usize, base_len: usize) -> bool {
@@ -367,7 +366,7 @@ pub fn finalize_prefix_witness_with(
     Ok(())
 }
 
-impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
+impl OutbeBlockExecutor<'_> {
     pub fn is_verifier_witness_mode(&self) -> bool {
         !self.expected_begin_system_txs.is_empty() || self.block_hash.is_some()
     }
