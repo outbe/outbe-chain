@@ -34,13 +34,14 @@ interface ICredisFactory {
 
     event CredisSeriesOpened(
         bytes14 indexed seriesId,
+        uint8 subSeries,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
+        uint256 entryPriceMinor,
         uint256 callPriceMinor,
         uint64 callWindow,
         uint64 callThreshold,
-        uint64 callNoticePeriod,
-        uint256 policyRate
+        uint64 callNoticePeriod
     );
     event CredisIssued(
         uint256 indexed credisId,
@@ -51,7 +52,26 @@ interface ICredisFactory {
         address cca,
         address asset,
         uint256 amountMinor,
-        uint256 gratisMinor
+        uint256 gratisMinor,
+        uint256 policyRate
+    );
+    /// Every unsettled Credis of the sub-series is called with its call group.
+    event CredisSeriesCalled(
+        bytes14 indexed seriesId,
+        uint8 subSeries,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint64 calledAt,
+        uint64 settlementDeadline
+    );
+    /// The deadline of the call group passed: the unsettled Credis of the sub-series are forfeited.
+    event CredisSeriesClosed(
+        bytes14 indexed seriesId,
+        uint8 subSeries,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint32 forfeitedCount,
+        uint256 forfeitedAmountMinor
     );
     /// @notice One successful settlement. `settledFeeMinor` and `settledAmountMinor`
     ///         are this payment's fee and amount deltas, and `amountMinor` is their

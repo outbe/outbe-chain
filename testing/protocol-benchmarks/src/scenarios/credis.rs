@@ -184,12 +184,10 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
             gratis_minor: pledge_cost(),
             snapshot_id: U256::from(17),
             entry_price_minor: oracle_rate(),
-            valuation_price_minor: oracle_rate(),
             policy_rate: U256::from(43_000),
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
-            call_anchor_price_minor: oracle_rate(),
             source: ALICE,
             series_id: outbe_core_common::series_id::SeriesId::for_pair(
                 closed_day,
@@ -197,6 +195,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
                 REFERENCE_ISO,
             )
             .expect("series id"),
+            sub_series: outbe_credis::CredisContract::sub_series_of(CREATED_AT),
             call_start_day: outbe_system_common::time::first_full_day(CREATED_AT)
                 .expect("date step"),
             call_rate: profile.call_rate,

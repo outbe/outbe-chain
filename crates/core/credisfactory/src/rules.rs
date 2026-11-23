@@ -1,5 +1,5 @@
 //! The rules that change a Credis: issue on a reservation, settle fee first, delete
-//! a forfeited one. Its series is called and forfeited by the sweeps. Credis keeps the
+//! a forfeited one. Its call group is called and forfeited by the sweeps. Credis keeps the
 //! record and its reads.
 
 use alloy_primitives::{Address, U256};
@@ -47,14 +47,14 @@ pub struct IssueCredisParams {
     pub policy_rate: U256,
     /// `P` - stablecoin minor units disbursed.
     pub amount_minor: U256,
-    /// Entry price in the issuance currency, scale 1e6, fixed by the reservation.
+    /// 24-hour COEN/`reference_currency` VWAP at the reservation hour, scale 1e6.
     pub entry_price_minor: U256,
-    /// Call anchor price in the reference currency, scale 1e6, fixed by the reservation.
-    pub call_anchor_price_minor: U256,
     /// `G` - pledged Gratis collateral.
     pub gratis_minor: U256,
     pub issued_at: u64,
     pub series_id: SeriesId,
+    /// UTC hour of the reservation, 0-23.
+    pub sub_series: u8,
     pub call_start_day: u32,
     pub call_rate: u16,
     pub call_window_seconds: u32,
@@ -88,7 +88,7 @@ pub struct Forfeit {
     pub forfeited_amount_minor: U256,
 }
 
-/// The anchor marked up by `rate_pct` percentage points.
+/// The entry price marked up by `rate_pct` percentage points.
 pub fn calc_call_price(price: U256, rate_pct: u16) -> Result<U256> {
     outbe_core_common::markup::marked_up(price, rate_pct)
         .ok_or_else(|| CredisError::ArithmeticOverflow.into())
@@ -104,6 +104,7 @@ pub fn issue(credis: &mut CredisContract<'_>, mut params: IssueCredisParams) -> 
             params.issuance_currency,
             params.reference_currency,
         )?;
+        params.sub_series = CredisContract::sub_series_of(params.issued_at);
     }
     if params.call_start_day == 0 {
         params.call_start_day =
@@ -132,7 +133,6 @@ pub fn issue_in_series(
             params.amount_minor,
             params.gratis_minor,
             params.entry_price_minor,
-            params.call_anchor_price_minor,
         ];
         if terms.iter().any(U256::is_zero) {
             return Err(CredisFactoryError::ZeroIssueTerm.into());
@@ -146,6 +146,15 @@ pub fn issue_in_series(
 
         let series_id = params.series_id;
         let call_start_day = params.call_start_day;
+        // An open sub-series keeps the prices its first Credis sealed.
+        let (entry_price_minor, call_price_minor) =
+            match credis.sub_series_prices(series_id, params.sub_series)? {
+                Some(prices) => prices,
+                None => (
+                    params.entry_price_minor,
+                    calc_call_price(params.entry_price_minor, params.call_rate)?,
+                ),
+            };
 
         let credis_id =
             CredisContract::generate_credis_id(series_id, params.owner, storage.block_number()?);
@@ -167,17 +176,17 @@ pub fn issue_in_series(
             gratis_minor: params.gratis_minor,
             outstanding_gratis_minor: params.gratis_minor,
             policy_rate: params.policy_rate,
-            entry_price_minor: params.entry_price_minor,
-            call_price_minor: calc_call_price(params.call_anchor_price_minor, params.call_rate)?,
+            entry_price_minor,
+            call_price_minor,
             issued_at: params.issued_at,
             last_settled_at: params.issued_at,
             called_at: 0,
             series_id,
+            sub_series: params.sub_series,
             call_notice_period_seconds: params.call_notice_period_seconds,
             call_rate: params.call_rate,
             call_window_seconds: params.call_window_seconds,
             call_threshold_seconds: params.call_threshold_seconds,
-            call_anchor_price_minor: params.call_anchor_price_minor,
             settled_fee_minor: U256::ZERO,
         };
         outbe_ccaregistry::api::credis_issued(
@@ -187,7 +196,6 @@ pub fn issue_in_series(
             params.gratis_minor,
         )?;
         let newly_opened = credis.create_credis_record(&record, call_start_day)?;
-        credis.widen_scan_terms(&record)?;
 
         Ok((credis_id, newly_opened))
     })
@@ -262,13 +270,12 @@ pub fn settle(
         .ok_or(CredisError::ArithmeticOverflow)?;
 
     let closed = record.is_settled();
-    let series = record.series_id;
-    // A settled Credis keeps the call and terms it read from its series.
+    // A settled Credis keeps the call and terms it read from its group.
     credis.update_credis_record(&record)?;
     credis.take_owner_outstanding(record.owner, amount_paid)?;
-    credis.take_series_unpaid_gratis(series, unpledged_gratis_minor)?;
+    credis.take_unpaid_gratis(&record, unpledged_gratis_minor)?;
     if closed {
-        credis.leave_series(series, credis_id)?;
+        credis.leave_group(&record)?;
     }
 
     let total_paid = fee
@@ -353,8 +360,8 @@ pub fn delete_forfeited(credis: &mut CredisContract<'_>, record: Credis) -> Resu
         referenceCurrency: record.reference_currency,
         forfeitedAmountMinor: forfeit.forfeited_amount_minor,
     })?;
-    credis.leave_series(record.series_id, credis_id)?;
-    credis.take_series_unpaid_gratis(record.series_id, forfeit.forfeited_gratis_minor)?;
+    credis.leave_group(&record)?;
+    credis.take_unpaid_gratis(&record, forfeit.forfeited_gratis_minor)?;
     credis.delete_credis_record(credis_id)?;
     Ok(forfeit)
 }

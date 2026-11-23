@@ -24,27 +24,7 @@ interface ICredis {
     /// ERC-4906: emitted over the whole id range when groups are called.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
-    /// Every unsettled Credis of the series is called.
-    event CredisSeriesCalled(
-        bytes14 indexed seriesId,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        uint64 calledAt,
-        uint64 settlementDeadline
-    );
-
-    /// The series's settlement deadline passed: its `forfeitedCount` unsettled Credis and
-    /// their `forfeitedAmountMinor` Gratis are forfeited. The cleanup burns each one's
-    /// Gratis into the Promis reserve and deletes it.
-    event CredisSeriesClosed(
-        bytes14 indexed seriesId,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        uint32 forfeitedCount,
-        uint256 forfeitedAmountMinor
-    );
-
-    /// @notice A forfeited Credis is deleted: by its owner, or by the cleanup after its series's
+    /// @notice A forfeited Credis is deleted: by its owner, or by the cleanup after its group's
     ///         deadline. Records the amount forfeited. Unpaid fee is left out of this
     ///         event and out of `settledFeeMinor`.
     event CredisForfeited(
@@ -67,12 +47,9 @@ interface ICredis {
         Forfeited
     }
 
-    /// Call terms in the reference currency. A live Credis is called and forfeited on the
-    /// window, threshold and notice its series's first Credis sealed.
+    /// Call terms in the reference currency, sealed by the first Credis of the call group.
     struct CallTerms {
-        /// Call anchor price, scale 1e6: the previous closed UTC-day VWAP, fixed by the reservation.
-        uint256 callAnchorPriceMinor;
-        /// callAnchorPriceMinor * 1.64.
+        /// entryPriceMinor * 1.64.
         uint256 callPriceMinor;
         /// Breach window and threshold, in seconds.
         uint32 callWindow;
@@ -113,13 +90,13 @@ interface ICredis {
         uint256 amountMinor;
         /// P_out - decreases with each settlement; 0 once Settled or Forfeited.
         uint256 outstandingAmountMinor;
-        /// G - the pledged Gratis: amount priced at the reservation's 24-hour VWAP.
+        /// G - the pledged Gratis at the 24-hour VWAP of the reservation hour.
         uint256 gratisMinor;
         /// The share of G still locked; 0 once Settled or Forfeited.
         uint256 outstandingGratisMinor;
         /// r - the annual policy rate of the issuance currency, scale 1e6, fixed by the reservation.
         uint256 policyRate;
-        /// Entry price in the issuance currency, scale 1e6, fixed by the reservation.
+        /// Entry price, scale 1e6: the 24-hour VWAP in the reference currency at the reservation hour.
         uint256 entryPriceMinor;
         /// Issuance timestamp.
         uint64 issuedAt;
@@ -134,8 +111,10 @@ interface ICredis {
         uint256 settledFeeMinor;
         CallTerms call;
         Outcome outcome;
-        /// The Credis series the Credis belongs to.
+        /// The Credis series the Credis belongs to: its reservation's UTC day and currencies.
         bytes14 seriesId;
+        /// The sub-series: the UTC hour of the reservation, 0-23.
+        uint8 subSeries;
     }
 
     function name() external view returns (string memory);

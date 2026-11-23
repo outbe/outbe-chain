@@ -3,7 +3,7 @@
 //! by the `config_profile` byte.
 //! Genesis leaves it unset, which resolves by network, so only mainnet runs MAINNET.
 //! The call rate is part of the profile. MAINNET keeps the call price at 1.64 times
-//! the anchor.
+//! the entry price.
 
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -20,7 +20,7 @@ pub use outbe_core_common::profile::{PROFILE_AUTO, PROFILE_E2E, PROFILE_MAINNET,
 /// Resolved Credis call terms. All periods are in seconds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CredisParams {
-    /// Percentage points over the call anchor. See `crate::constants`.
+    /// Percentage points over the entry price. See `crate::constants`.
     pub call_rate: u16,
     pub call_window_seconds: u32,
     pub call_threshold_seconds: u32,

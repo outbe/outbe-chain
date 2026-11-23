@@ -1,9 +1,8 @@
 //! Cleanup sweep: deletes the Credis of the forfeited groups. Each one takes its CCA's
 //! default, and its Gratis burns from the source's pledge into the Promis reserve.
 
-use alloy_primitives::U256;
+use alloy_primitives::{B256, U256};
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
-use outbe_core_common::series_id::SeriesId;
 use outbe_credis::{CleanupQueue, CredisContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -44,40 +43,40 @@ impl<'a, 's> CredisCleanup<'a, 's> {
     }
 }
 
-/// A forfeited series's members are its unsettled Credis.
-impl DeadlineHandler<SeriesId> for CredisCleanup<'_, '_> {
+/// A forfeited group's members are its unsettled Credis.
+impl DeadlineHandler<B256> for CredisCleanup<'_, '_> {
     type Member = U256;
 
-    fn due(&mut self, series: SeriesId) -> Result<Due> {
-        Ok(match self.credis.series_member_count(series)? {
+    fn due(&mut self, group: B256) -> Result<Due> {
+        Ok(match self.credis.group_member_count(group)? {
             0 => Due::Drop,
             _ => Due::Process,
         })
     }
 
-    fn member_count(&self, series: SeriesId) -> Result<u32> {
-        self.credis.series_member_count(series)
+    fn member_count(&self, group: B256) -> Result<u32> {
+        self.credis.group_member_count(group)
     }
 
-    fn member_at(&self, series: SeriesId, index: u32) -> Result<U256> {
-        self.credis.series_member(series, index)
+    fn member_at(&self, group: B256, index: u32) -> Result<U256> {
+        self.credis.group_member(group, index)
     }
 
     fn classify(&self, error: &PrecompileError) -> PassFailure {
         error.record_pass_failure()
     }
 
-    fn member_cost(&self, _series: SeriesId, _credis_id: U256) -> u32 {
+    fn member_cost(&self, _group: B256, _credis_id: U256) -> u32 {
         PLEDGE_BURN_COST
     }
 
-    fn process_member(&mut self, _series: SeriesId, credis_id: U256) -> Result<()> {
+    fn process_member(&mut self, _group: B256, credis_id: U256) -> Result<()> {
         crate::runtime::delete_forfeited_credis(self.ctx.storage.clone(), credis_id)?;
         Ok(())
     }
 
-    fn deferred(&mut self, series: SeriesId, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::credisfactory", %series, retry_at, "cleanup sweep: series deferred");
+    fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
+        tracing::warn!(target: "outbe::credisfactory", %group, retry_at, "cleanup sweep: group deferred");
         Ok(())
     }
 }

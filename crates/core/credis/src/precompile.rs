@@ -104,7 +104,6 @@ fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::CredisData
         state: crate::runtime::effective_state(p, now)? as u8,
         settledFeeMinor: p.settled_fee_minor,
         call: ICredis::CallTerms {
-            callAnchorPriceMinor: p.call_anchor_price_minor,
             callPriceMinor: p.call_price_minor,
             callWindow: p.call_window_seconds,
             callThreshold: p.call_threshold_seconds,
@@ -123,5 +122,6 @@ fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::CredisData
             forfeitedGratisMinor: outcome.forfeited_gratis_minor,
         },
         seriesId: p.series_id.into(),
+        subSeries: p.sub_series,
     })
 }

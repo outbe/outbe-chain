@@ -464,7 +464,7 @@ fn a_credis_settled_at_the_deadline_is_never_forfeited() {
         assert_eq!(outbe_system_common::call_bins::len(&bins, bin).unwrap(), 1);
         assert_eq!(
             outbe_system_common::call_bins::entry_at(&bins, bin, 0).unwrap(),
-            open.series_id
+            credis.group_of(&open).unwrap()
         );
         assert_eq!(
             outbe_credis::runtime::effective_state(&record(&storage, bystander), now_of(&storage))

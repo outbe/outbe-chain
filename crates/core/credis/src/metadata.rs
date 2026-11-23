@@ -35,16 +35,16 @@ pub(crate) fn token_uri(record: &Credis, now: u64) -> Result<String> {
             nft_card::amount_grouped(record.entry_price_minor, PRICE_PRECISION),
         ),
         (
-            "Call Anchor",
-            nft_card::amount_grouped(record.call_anchor_price_minor, PRICE_PRECISION),
-        ),
-        (
             "Call Price",
             nft_card::amount_grouped(record.call_price_minor, PRICE_PRECISION),
         ),
     ];
     let mut traits = vec![
         Trait::text("State", state.label),
+        Trait::text(
+            "Series",
+            format!("{}-{}", record.series_id, record.sub_series),
+        ),
         Trait::amount("Amount", record.amount_minor, AMOUNT_PRECISION),
         Trait::amount(
             "Outstanding",
@@ -53,11 +53,6 @@ pub(crate) fn token_uri(record: &Credis, now: u64) -> Result<String> {
         ),
         Trait::amount("Accrued Fee", accrued_fee, AMOUNT_PRECISION),
         Trait::amount("Entry Price", record.entry_price_minor, PRICE_PRECISION),
-        Trait::amount(
-            "Call Anchor",
-            record.call_anchor_price_minor,
-            PRICE_PRECISION,
-        ),
         Trait::amount("Call Price", record.call_price_minor, PRICE_PRECISION),
         Trait::amount("Policy Rate", record.policy_rate, PRICE_PRECISION),
         Trait::amount("Collateral", record.gratis_minor, AMOUNT_PRECISION),

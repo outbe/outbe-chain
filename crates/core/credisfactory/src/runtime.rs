@@ -83,10 +83,10 @@ pub fn issue_credis(
                 policy_rate: r.policy_rate,
                 amount_minor: r.amount_minor,
                 entry_price_minor: r.entry_price_minor,
-                call_anchor_price_minor: r.call_anchor_price_minor,
                 gratis_minor: r.gratis_minor,
                 issued_at: now,
                 series_id: r.series_id,
+                sub_series: r.sub_series,
                 call_start_day: r.call_start_day,
                 call_rate: r.call_rate,
                 call_window_seconds: r.call_window_seconds,
@@ -111,13 +111,14 @@ pub fn issue_credis(
                 CREDIS_FACTORY_ADDRESS,
                 alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisSeriesOpened {
                     seriesId: opened.series_id.into(),
+                    subSeries: opened.sub_series,
                     issuanceCurrency: opened.issuance_currency,
                     referenceCurrency: opened.reference_currency,
+                    entryPriceMinor: opened.entry_price_minor,
                     callPriceMinor: opened.call_price_minor,
                     callWindow: u64::from(opened.call_window_seconds),
                     callThreshold: u64::from(opened.call_threshold_seconds),
                     callNoticePeriod: u64::from(opened.call_notice_period_seconds),
-                    policyRate: opened.policy_rate,
                 }),
             )?;
         }
@@ -133,6 +134,7 @@ pub fn issue_credis(
                 asset: r.asset,
                 amountMinor: r.amount_minor,
                 gratisMinor: r.gratis_minor,
+                policyRate: opened.policy_rate,
             }),
         )?;
         Ok((id, r.amount_minor))
@@ -193,7 +195,7 @@ pub fn settle_credis(
     })
 }
 
-/// Deletes a Credis of a forfeited series.
+/// Deletes a Credis of a forfeited group.
 pub(crate) fn delete_forfeited_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
     burn_forfeited_collateral(storage, credis_id, |_, _| Ok(()))?;
     Ok(())

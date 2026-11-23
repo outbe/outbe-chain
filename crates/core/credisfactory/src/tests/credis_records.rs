@@ -133,7 +133,6 @@ fn params(owner: Address) -> IssueCredisParams {
         policy_rate: policy_rate(),
         amount_minor: U256::from(PRINCIPAL),
         entry_price_minor: entry_price(),
-        call_anchor_price_minor: call_anchor_price(),
         gratis_minor: collateral(),
         issued_at: ORIGINATED_AT,
         ..Default::default()
@@ -166,17 +165,17 @@ fn at(day: u64) -> u64 {
     ORIGINATED_AT + day * DAY
 }
 
-/// Calls the Credis's series at `now`, as the call scan does. Returns whether it moved.
+/// Calls the Credis's group at `now`, as the call scan does. Returns whether it moved.
 fn call(
     credis: &mut CredisContract<'_>,
     id: U256,
     now: u64,
 ) -> outbe_primitives::error::Result<bool> {
-    let series = credis.get_credis(id)?.series_id;
-    if credis.series_called_at.read(&series)? != 0 {
+    let group = credis.group_of(&credis.get_credis(id)?)?;
+    if credis.group_called_at.read(&group)? != 0 {
         return Ok(false);
     }
-    credis.record_series_called(series, now)?;
+    credis.record_group_called(group, now)?;
     Ok(true)
 }
 
@@ -284,7 +283,6 @@ fn issuance_seals_the_call_price_from_the_call_anchor() {
 
         // Entry stays 0.50. The anchor is 1.00, and 1.00 * 1.64 = 1.64.
         assert_eq!(p.entry_price_minor, entry_price());
-        assert_eq!(p.call_anchor_price_minor, call_anchor_price());
         assert_eq!(p.call_price_minor, U256::from(1_640_000u64));
         assert_eq!(
             p.call_price_minor,
@@ -1178,7 +1176,7 @@ fn called_repayment_and_forfeit_have_complementary_deadline_boundaries() {
             let id = open_pos(&mut credis);
             call(&mut credis, id, at(10)).unwrap();
             let before = credis.get_credis(id).unwrap();
-            let group = before.series_id;
+            let group = credis.group_of(&before).unwrap();
             let now = settlement_deadline(&before)
                 .checked_add_signed(offset)
                 .unwrap();
@@ -1206,7 +1204,7 @@ fn called_repayment_and_forfeit_have_complementary_deadline_boundaries() {
                 );
                 assert_eq!(credis.get_credis(id).unwrap(), before);
                 assert_ne!(
-                    credis.called_series_slot.read(&group).unwrap(),
+                    credis.called_group_slot.read(&group).unwrap(),
                     0,
                     "still queued"
                 );
@@ -1217,12 +1215,12 @@ fn called_repayment_and_forfeit_have_complementary_deadline_boundaries() {
                     before.outstanding_gratis_minor
                 );
                 assert_ne!(
-                    credis.called_series_slot.read(&group).unwrap(),
+                    credis.called_group_slot.read(&group).unwrap(),
                     0,
                     "a called series stays queued until its deadline"
                 );
                 super::daily_pass(&credis.storage, now + super::CLOSED_DAY_DELAY).unwrap();
-                assert_eq!(credis.called_series_slot.read(&group).unwrap(), 0);
+                assert_eq!(credis.called_group_slot.read(&group).unwrap(), 0);
             }
         });
     }
@@ -1390,7 +1388,7 @@ fn the_owner_forfeits_a_called_credis_only_before_its_deadline() {
         StorageHandle::enter(&mut provider, |storage| {
             let credis = CredisContract::new(storage.clone());
             let id = credis.tokens_by_owner(alice()).unwrap()[0];
-            let group = credis.get_credis(id).unwrap().series_id;
+            let group = credis.group_of(&credis.get_credis(id).unwrap()).unwrap();
             let forfeit = forfeit_by_owner(&storage, id, alice());
             if past_deadline {
                 assert_eq!(
@@ -1400,17 +1398,17 @@ fn the_owner_forfeits_a_called_credis_only_before_its_deadline() {
                     )
                     .to_string()
                 );
-                assert_ne!(credis.called_series_slot.read(&group).unwrap(), 0);
+                assert_ne!(credis.called_group_slot.read(&group).unwrap(), 0);
             } else {
                 forfeit.unwrap();
                 assert!(!credis.credis_exists(id).unwrap());
                 assert_ne!(
-                    credis.called_series_slot.read(&group).unwrap(),
+                    credis.called_group_slot.read(&group).unwrap(),
                     0,
                     "a called series stays queued until its deadline"
                 );
                 super::daily_pass(&storage, deadline + super::CLOSED_DAY_DELAY).unwrap();
-                assert_eq!(credis.called_series_slot.read(&group).unwrap(), 0);
+                assert_eq!(credis.called_group_slot.read(&group).unwrap(), 0);
             }
         });
     }
@@ -1443,11 +1441,8 @@ fn the_owners_forfeit_after_a_partial_settlement_burns_only_the_remainder() {
 // Reads and indexes
 // ---------------------------------------------------------------------------
 
-/// Reads back the series of the call bin `record` is priced into, as a plain list.
-fn bin_groups(
-    credis: &CredisContract<'_>,
-    record: &Credis,
-) -> Vec<outbe_core_common::series_id::SeriesId> {
+/// Reads back the groups of the call bin `record` is priced into, as a plain list.
+fn bin_groups(credis: &CredisContract<'_>, record: &Credis) -> Vec<alloy_primitives::B256> {
     let bins = CallBins(credis, record.reference_currency);
     let bin = call_bins::price_to_bin(record.call_price_minor).unwrap();
     (0..call_bins::len(&bins, bin).unwrap())
@@ -1459,7 +1454,7 @@ fn bin_groups(
 /// whose issuance date steps back `below` days, so the Credis opens a series of its own.
 fn params_below_anchor(owner: Address, below: u64) -> IssueCredisParams {
     IssueCredisParams {
-        call_anchor_price_minor: call_anchor_price() - U256::from(below),
+        entry_price_minor: entry_price() - U256::from(below),
         issued_at: ORIGINATED_AT - below * DAY,
         ..params(owner)
     }
@@ -1471,7 +1466,7 @@ fn the_call_index_holds_exactly_the_uncalled_groups() {
         let mut credis = CredisContract::new(storage);
         let id = rules::issue(&mut credis, params(alice())).unwrap();
         let record = credis.get_credis(id).unwrap();
-        let group = record.series_id;
+        let group = credis.group_of(&record).unwrap();
         assert_eq!(
             bin_groups(&credis, &record),
             vec![group],
@@ -1481,17 +1476,17 @@ fn the_call_index_holds_exactly_the_uncalled_groups() {
         // The call takes it out: from here the deadline queue tracks it.
         call(&mut credis, id, at(10)).unwrap();
         assert!(bin_groups(&credis, &record).is_empty());
-        assert_ne!(credis.called_series_slot.read(&group).unwrap(), 0);
+        assert_ne!(credis.called_group_slot.read(&group).unwrap(), 0);
 
         forfeit_lapsed(&mut credis, id, at(24)).unwrap();
         assert!(bin_groups(&credis, &record).is_empty());
         assert_ne!(
-            credis.called_series_slot.read(&group).unwrap(),
+            credis.called_group_slot.read(&group).unwrap(),
             0,
             "a called series stays queued until its deadline"
         );
         super::daily_pass(&credis.storage, at(24) + super::CLOSED_DAY_DELAY).unwrap();
-        assert_eq!(credis.called_series_slot.read(&group).unwrap(), 0);
+        assert_eq!(credis.called_group_slot.read(&group).unwrap(), 0);
     });
 }
 
@@ -1504,7 +1499,7 @@ fn settling_an_issued_credis_in_full_leaves_the_call_index() {
         rules::settle(&mut credis, id, U256::from(400_000_000u64), at(11)).unwrap();
         assert_eq!(
             bin_groups(&credis, &record),
-            vec![record.series_id],
+            vec![credis.group_of(&record).unwrap()],
             "a partial settlement stays"
         );
         rules::settle(&mut credis, id, U256::from(999_999_999_999u64), at(12)).unwrap();
@@ -1523,8 +1518,8 @@ fn removing_from_the_middle_keeps_the_call_index_consistent() {
     let third = open_at_block(&mut provider, 3, params_below_anchor(alice(), 2));
     StorageHandle::enter(&mut provider, |storage| {
         let mut credis = CredisContract::new(storage);
-        let [first_group, second_group, third_group] =
-            [first, second, third].map(|id| credis.get_credis(id).unwrap().series_id);
+        let [first_group, second_group, third_group] = [first, second, third]
+            .map(|id| credis.group_of(&credis.get_credis(id).unwrap()).unwrap());
         let record = credis.get_credis(first).unwrap();
         assert_eq!(
             bin_groups(&credis, &record),
@@ -1664,7 +1659,6 @@ fn precompile_get_credis_returns_the_full_record() {
         assert_eq!(decoded.amountMinor, U256::from(PRINCIPAL));
         assert_eq!(decoded.gratisMinor, collateral());
         assert_eq!(decoded.entryPriceMinor, entry_price());
-        assert_eq!(decoded.call.callAnchorPriceMinor, call_anchor_price());
         assert_eq!(decoded.call.callPriceMinor, U256::from(1_640_000u64));
         assert_eq!(decoded.issuedAt, ORIGINATED_AT);
         assert_eq!(decoded.policyRate, policy_rate());

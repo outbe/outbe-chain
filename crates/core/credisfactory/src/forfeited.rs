@@ -1,11 +1,12 @@
 //! Forfeits the called groups whose settlement window lapsed, earliest deadline first,
 //! and hands their Credis to the cleanup.
 
-use alloy_primitives::U256;
+use alloy_primitives::B256;
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
-use outbe_core_common::series_id::SeriesId;
-use outbe_credis::precompile::ICredis;
 use outbe_credis::{CredisContract, ForfeitQueue};
+
+use crate::called::emit;
+use crate::precompile::ICredisFactory;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_system_common::pass_budget::PassBudget;
 
@@ -36,52 +37,54 @@ impl<'s> CredisForfeit<'s> {
     }
 }
 
-/// A called series forfeits as one: it is its own and only member.
-impl DeadlineHandler<SeriesId> for CredisForfeit<'_> {
-    type Member = SeriesId;
+/// A called group forfeits as one: it is its own and only member.
+impl DeadlineHandler<B256> for CredisForfeit<'_> {
+    type Member = B256;
 
-    fn due(&mut self, series: SeriesId) -> Result<Due> {
-        // A called series closes even after every Credis has already settled.
-        if self.credis.series_called_at.read(&series)? != 0 {
+    fn due(&mut self, group: B256) -> Result<Due> {
+        // A called group closes even after every Credis has already settled.
+        if self.credis.group_called_at.read(&group)? != 0 {
             return Ok(Due::Process);
         }
         Ok(Due::Drop)
     }
 
-    fn member_count(&self, _series: SeriesId) -> Result<u32> {
+    fn member_count(&self, _group: B256) -> Result<u32> {
         Ok(1)
     }
 
-    fn member_at(&self, series: SeriesId, _index: u32) -> Result<SeriesId> {
-        Ok(series)
+    fn member_at(&self, group: B256, _index: u32) -> Result<B256> {
+        Ok(group)
     }
 
-    /// Forfeits the series's Credis at once. Each one's Gratis burns and returns to the
+    /// Forfeits the group's Credis at once. Each one's Gratis burns and returns to the
     /// Promis reserve together, in the cleanup.
-    fn process_member(&mut self, series: SeriesId, _member: SeriesId) -> Result<()> {
-        let forfeited_count = self.credis.series_member_count(series)?;
-        let issuance_currency = self.credis.series_issuance_currency.read(&series)?;
-        let reference_currency = self.credis.series_currency.read(&series)?;
-        let forfeited_amount_minor = if forfeited_count == 0 {
-            self.credis.remove_called(series)?;
-            U256::ZERO
+    fn process_member(&mut self, group: B256, _member: B256) -> Result<()> {
+        let sub_series = self.credis.group_sub_series(group)?;
+        let reference_currency = self.credis.group_currency.read(&group)?;
+        if self.credis.group_member_count(group)? == 0 {
+            self.credis.remove_called(group)?;
         } else {
-            let amount = self.credis.series_unpaid_gratis_minor.read(&series)?;
-            self.credis.hand_to_cleanup(series)?;
-            amount
-        };
-        self.credis.emit(ICredis::CredisSeriesClosed {
-            seriesId: series.into(),
-            issuanceCurrency: issuance_currency,
-            referenceCurrency: reference_currency,
-            forfeitedCount: forfeited_count,
-            forfeitedAmountMinor: forfeited_amount_minor,
-        })?;
+            self.credis.hand_to_cleanup(group)?;
+        }
+        for sub in sub_series {
+            emit(
+                &self.credis.storage,
+                &ICredisFactory::CredisSeriesClosed {
+                    seriesId: sub.series_id.into(),
+                    subSeries: sub.sub_series,
+                    issuanceCurrency: sub.issuance_currency,
+                    referenceCurrency: reference_currency,
+                    forfeitedCount: sub.unsettled_count,
+                    forfeitedAmountMinor: sub.unpaid_gratis_minor,
+                },
+            )?;
+        }
         Ok(())
     }
 
-    fn deferred(&mut self, series: SeriesId, retry_at: u64) -> Result<()> {
-        tracing::warn!(target: "outbe::credisfactory", %series, retry_at, "forfeit pass: series deferred");
+    fn deferred(&mut self, group: B256, retry_at: u64) -> Result<()> {
+        tracing::warn!(target: "outbe::credisfactory", %group, retry_at, "forfeit pass: group deferred");
         Ok(())
     }
 }

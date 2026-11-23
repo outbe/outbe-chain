@@ -146,7 +146,7 @@ pub fn pledge(storage: &StorageHandle<'_>, source: Address, reservation_id: U256
 /// `issue_credis` can consume it. This helper writes the hold through VaultRouter
 /// storage, not the ABI, because these tests stub EVM sub-calls into the router.
 ///
-/// Each reservation's call anchor sits a minor unit below the last one's, so every
+/// Each reservation's entry price sits a minor unit below the last one's, so every
 /// Credis opens a group of its own unless a test shares one.
 pub fn seed_reservation(
     storage: &StorageHandle<'_>,
@@ -185,15 +185,14 @@ pub fn seed_reservation(
             expires_at,
             gratis_minor: amount / U256::from(2),
             snapshot_id: U256::from(17),
-            entry_price_minor: oracle_rate(),
-            valuation_price_minor: oracle_rate(),
+            entry_price_minor: oracle_rate() - (nonce - U256::from(1)),
             policy_rate: policy_rate(),
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
-            call_anchor_price_minor: oracle_rate() - (nonce - U256::from(1)),
             source,
             series_id,
+            sub_series: CredisContract::sub_series_of(now),
             call_start_day,
             call_rate: call_terms.call_rate,
             call_window_seconds: call_terms.call_window_seconds,
@@ -456,10 +455,10 @@ pub fn daily_pass(
     }
 }
 
-fn due_forfeit_series(
+fn due_forfeit_groups(
     credis: &CredisContract<'_>,
     timestamp: u64,
-) -> outbe_primitives::error::Result<Vec<outbe_core_common::series_id::SeriesId>> {
+) -> outbe_primitives::error::Result<Vec<B256>> {
     let queue = outbe_credis::ForfeitQueue(credis);
     let mut due = Vec::new();
     let Some(first) = outbe_core_common::deadline_queue::first_day(&queue)? else {
@@ -467,12 +466,12 @@ fn due_forfeit_series(
     };
     for day in first..=outbe_core_common::deadline_queue::deadline_day(timestamp)? {
         for slot in 0..credis.forfeit_day_len.read(&day)? {
-            let Some(series) = outbe_core_common::deadline_queue::entry_at(&queue, day, slot)?
+            let Some(group) = outbe_core_common::deadline_queue::entry_at(&queue, day, slot)?
             else {
                 continue;
             };
-            if credis.series_member_count(series)? != 0 {
-                due.push(series);
+            if credis.group_member_count(group)? != 0 {
+                due.push(group);
             }
         }
     }
@@ -487,13 +486,13 @@ pub fn forfeited_by(
     pass: impl FnOnce() -> outbe_primitives::error::Result<()>,
 ) -> outbe_primitives::error::Result<u32> {
     let credis = CredisContract::new(storage.clone());
-    let due = due_forfeit_series(&credis, timestamp)?;
+    let due = due_forfeit_groups(&credis, timestamp)?;
     pass()?;
     let mut forfeited = 0;
-    for series in due {
-        if credis.called_series_slot.read(&series)? == 0
-            && (credis.cleanup_series_slot.read(&series)? != 0
-                || credis.series_member_count(series)? == 0)
+    for group in due {
+        if credis.called_group_slot.read(&group)? == 0
+            && (credis.cleanup_group_slot.read(&group)? != 0
+                || credis.group_member_count(group)? == 0)
         {
             forfeited += 1;
         }
@@ -506,14 +505,14 @@ pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     forfeited_by(storage, timestamp, || daily_pass(storage, timestamp)).unwrap()
 }
 
-/// Calls the Credis's series at `now`, as the call scan does. Returns whether it moved.
+/// Calls the Credis's group at `now`, as the call scan does. Returns whether it moved.
 pub fn call_credis(storage: &StorageHandle<'_>, id: U256, now: u64) -> bool {
     let mut credis = CredisContract::new(storage.clone());
-    let series = credis.get_credis(id).unwrap().series_id;
-    if credis.series_called_at.read(&series).unwrap() != 0 {
+    let group = credis.group_of(&credis.get_credis(id).unwrap()).unwrap();
+    if credis.group_called_at.read(&group).unwrap() != 0 {
         return false;
     }
-    credis.record_series_called(series, now).unwrap();
+    credis.record_group_called(group, now).unwrap();
     true
 }
 

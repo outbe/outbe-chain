@@ -1,4 +1,4 @@
-//! Credis: the terms, profile and records of a Credis and its series. The call bins,
+//! Credis: the terms, profile and records of a Credis, its sub-series and call groups. The call bins,
 //! the forfeit queue and the cleanup queue live here, with the read-time state, accrued
 //! fee and outcome.
 //!
@@ -15,7 +15,7 @@ pub mod schema;
 pub mod state;
 
 pub use runtime::{outcome, settlement_deadline, Outcome};
-pub use schema::{Credis, CredisContract, CredisState};
+pub use schema::{Credis, CredisContract, CredisState, SubSeriesSummary};
 pub use state::{CallBins, CleanupQueue, ForfeitQueue};
 
 #[cfg(test)]

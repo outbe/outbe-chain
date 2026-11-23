@@ -92,10 +92,8 @@ pub enum VaultRouterError {
     PledgePriceUnavailable,
     #[error("policy rate is older than the maximum rate age")]
     PolicyRateTooOld,
-    #[error("previous day VWAP unavailable")]
-    PreviousDayVwapUnavailable,
-    #[error("reference pair unavailable")]
-    ReferencePairUnavailable,
+    #[error("reference price unavailable")]
+    ReferencePriceUnavailable,
     #[error("date step kind {kind} from date key {date_key}")]
     DateStep { kind: u8, date_key: u32 },
 }
@@ -214,11 +212,8 @@ impl From<VaultRouterError> for PrecompileError {
             VaultRouterError::InvalidAssetCurrency => revert_with(I::InvalidAssetCurrency {}),
             VaultRouterError::PledgePriceUnavailable => revert_with(I::PledgePriceUnavailable {}),
             VaultRouterError::PolicyRateTooOld => revert_with(I::PolicyRateTooOld {}),
-            VaultRouterError::PreviousDayVwapUnavailable => {
-                revert_with(I::PreviousDayVwapUnavailable {})
-            }
-            VaultRouterError::ReferencePairUnavailable => {
-                revert_with(I::ReferencePairUnavailable {})
+            VaultRouterError::ReferencePriceUnavailable => {
+                revert_with(I::ReferencePriceUnavailable {})
             }
             VaultRouterError::DateStep { kind, date_key } => revert_with(I::DateStep {
                 kind,

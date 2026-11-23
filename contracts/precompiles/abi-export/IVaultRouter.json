@@ -429,11 +429,6 @@
             "internalType": "uint256"
           },
           {
-            "name": "valuationPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "policyRate",
             "type": "uint256",
             "internalType": "uint256"
@@ -454,14 +449,14 @@
             "internalType": "uint16"
           },
           {
-            "name": "callAnchorPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
             "name": "source",
             "type": "address",
             "internalType": "address"
+          },
+          {
+            "name": "subSeries",
+            "type": "uint8",
+            "internalType": "uint8"
           }
         ]
       }
@@ -1278,11 +1273,6 @@
   },
   {
     "type": "error",
-    "name": "PreviousDayVwapUnavailable",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "RebalanceInputExceedsMax",
     "inputs": [
       {
@@ -1315,7 +1305,7 @@
   },
   {
     "type": "error",
-    "name": "ReferencePairUnavailable",
+    "name": "ReferencePriceUnavailable",
     "inputs": []
   },
   {
