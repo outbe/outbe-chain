@@ -15,7 +15,7 @@
 use alloy_primitives::Address;
 use outbe_system_common::addresses::*;
 
-pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 36] = [
+pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 37] = [
     GRATIS_ADDRESS,
     GRATIS_FACTORY_ADDRESS,
     CREDIS_ADDRESS,
@@ -26,6 +26,7 @@ pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 36] = [
     NOD_ADDRESS,
     NOD_FACTORY_ADDRESS,
     TRIBUTE_FACTORY_ADDRESS,
+    WORLDWIDE_DAY_ADDRESS,
     GEM_ADDRESS,
     GEM_FACTORY_ADDRESS,
     INTEX_ADDRESS,

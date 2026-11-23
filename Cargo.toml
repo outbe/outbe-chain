@@ -60,6 +60,7 @@ members = [
     "crates/core/metadosis",
     "crates/core/promislimit",
     "crates/core/tributefactory",
+    "crates/core/worldwideday",
     "crates/core/gratisfactory",
     "crates/core/stablecoinpolicy",
     "crates/core/stablecoin",
@@ -147,6 +148,7 @@ default-members = [
     "crates/core/metadosis",
     "crates/core/promislimit",
     "crates/core/tributefactory",
+    "crates/core/worldwideday",
     "crates/core/gratisfactory",
     "crates/core/stablecoinpolicy",
     "crates/core/stablecoin",
@@ -260,6 +262,7 @@ outbe-fidelity-math = { path = "crates/core/fidelity-math" }
 outbe-metadosis = { path = "crates/core/metadosis" }
 outbe-promislimit = { path = "crates/core/promislimit" }
 outbe-tributefactory = { path = "crates/core/tributefactory" }
+outbe-worldwideday = { path = "crates/core/worldwideday" }
 outbe-gratisfactory = { path = "crates/core/gratisfactory" }
 outbe-stablecoinpolicy = { path = "crates/core/stablecoinpolicy" }
 outbe-stablecoin = { path = "crates/core/stablecoin" }

@@ -16,6 +16,7 @@ pub const TRIBUTE_ADDRESS: &str = "0000000000000000000000000000000000001101";
 pub const NOD_ADDRESS: &str = "0000000000000000000000000000000000001006";
 pub const METADOSIS_ADDRESS: &str = "000000000000000000000000000000000000100e";
 pub const TRIBUTE_FACTORY_ADDRESS: &str = "0000000000000000000000000000000000001100";
+pub const WORLDWIDE_DAY_ADDRESS: &str = "0000000000000000000000000000000000001018";
 pub const AGENT_REWARD_ADDRESS: &str = "000000000000000000000000000000000000100b";
 pub const FIDELITY_ADDRESS: &str = "000000000000000000000000000000000000100c";
 pub const EMISSION_ADDRESS: &str = "000000000000000000000000000000000000100d";
@@ -66,7 +67,7 @@ pub const P2P_ADDRESS_VERSION_V1: u64 = 1;
 pub const MAX_P2P_ADDRESS_ENCODED_LEN: usize = 512;
 pub const ISO_MARKER: u32 = 0xCC000;
 
-pub const ALL_PRECOMPILE_ADDRESSES: [&str; 32] = [
+pub const ALL_PRECOMPILE_ADDRESSES: [&str; 33] = [
     GRATIS_ADDRESS,
     GRATIS_FACTORY_ADDRESS,
     PROMIS_ADDRESS,
@@ -75,6 +76,7 @@ pub const ALL_PRECOMPILE_ADDRESSES: [&str; 32] = [
     GEM_ADDRESS,
     METADOSIS_ADDRESS,
     TRIBUTE_FACTORY_ADDRESS,
+    WORLDWIDE_DAY_ADDRESS,
     AGENT_REWARD_ADDRESS,
     FIDELITY_ADDRESS,
     EMISSION_ADDRESS,
@@ -443,7 +445,7 @@ pub fn parse_header_timestamp(genesis: &Value) -> Result<u64, GenesisError> {
         .map_err(|_| GenesisError::validation(format!("genesis timestamp overflows u64: {signed}")))
 }
 
-/// The first Worldwide Day the chain makes. Mirrors `first_wwd_for_genesis` in crates/core/tributefactory.
+/// The first Worldwide Day the chain makes. Mirrors `first_wwd_for_genesis` in crates/core/worldwideday.
 pub fn first_worldwide_day(genesis_timestamp: u64) -> u32 {
     timestamp_to_utc_date_key(genesis_timestamp.saturating_sub(12 * 60 * 60))
 }

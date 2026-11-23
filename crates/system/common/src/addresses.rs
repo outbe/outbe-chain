@@ -53,6 +53,9 @@ pub const CREDIS_ADDRESS: Address = address!("0x00000000000000000000000000000000
 /// Credis factory precompile address.
 pub const CREDIS_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001009");
 
+/// Worldwide Day precompile address: the WWD schedule, its seal and its reads.
+pub const WORLDWIDE_DAY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001018");
+
 /// Tribute factory precompile address.
 pub const TRIBUTE_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001100");
 

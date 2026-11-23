@@ -112,26 +112,14 @@ impl TributeContract<'_> {
         }
     }
 
-    pub(crate) fn set_day_sealed(&mut self, day: WorldwideDay, is_sealed: bool) -> Result<()> {
-        let mut stored = self
-            .day_totals
-            .get(day)?
-            .unwrap_or_else(|| StoredDayTotals::with_key(day));
-        stored.initialized = true;
-        stored.is_sealed = is_sealed;
-        if self.day_totals.exists(day)? {
-            self.day_totals.update(&stored)
-        } else {
-            self.day_totals.create(&stored)
-        }
-    }
-
     #[cfg(any(test, feature = "test-enclave"))]
     pub(crate) fn store_day_metadata(&mut self, totals: &DayTotals) -> Result<()> {
         let mut stored = StoredDayTotals::with_key(totals.worldwide_day);
         stored.initialized = totals.initialized;
         stored.tribute_count = totals.tribute_count;
-        stored.is_sealed = totals.is_sealed;
+        outbe_worldwideday::WorldwideDayContract::new(self.storage_handle())
+            .sealed
+            .write(&totals.worldwide_day, totals.is_sealed)?;
         if self.day_totals.exists(totals.worldwide_day)? {
             self.day_totals.update(&stored)
         } else {
@@ -173,10 +161,11 @@ impl TributeContract<'_> {
     }
 
     pub(crate) fn lysis_emission_day(&self, day: WorldwideDay) -> Result<Option<EmissionDate>> {
-        Ok(
-            Some(self.day_emission_day.read(&day)?)
-                .filter(|emission_day| emission_day.value() != 0),
-        )
+        let recorded = self.day_emission_day.read(&day)?;
+        if recorded.value() != 0 {
+            return Ok(Some(recorded));
+        }
+        outbe_worldwideday::emission_day_of(self.storage_handle(), day)
     }
 
     /// When the Lysis of the Tributes of `day` completed, or 0 before it did.

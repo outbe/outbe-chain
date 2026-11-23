@@ -3,7 +3,7 @@ pub use forfeiture::{LysisOutcome, PricedCurrencies};
 
 use alloy_primitives::U256;
 use outbe_core_common::wwd_entity_id::WwdEntityId;
-use outbe_primitives::error::{PrecompileError, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::metadosis_bindings::MetadosisStorageExt;
 use outbe_system_common::time::{EmissionDate, WorldwideDay};
@@ -75,12 +75,7 @@ impl TributeContract<'_> {
     }
 
     pub fn seal_worldwide_day(&mut self, day: WorldwideDay) -> Result<()> {
-        require_day_seal_lease(&self.storage_handle(), day)?;
-        self.set_day_sealed(day, true)?;
-        self.emit(ITribute::WorldwideDaySealed {
-            worldwideDay: day.into(),
-        })?;
-        Ok(())
+        outbe_worldwideday::seal_worldwide_day(self.storage_handle(), day)
     }
 
     /// Seals the Lysis of emission day `emission_day` over the priced Tributes of `day`.
@@ -116,75 +111,4 @@ impl TributeContract<'_> {
     pub fn clean(&mut self, tribute_id: WwdEntityId) -> Result<()> {
         forfeiture::clean_forfeited_tribute(self, tribute_id)
     }
-}
-
-#[derive(Clone, Copy)]
-enum DayLease {
-    InitGenesis,
-    CycleAllocation(WorldwideDay),
-    MetadosisReady,
-    AdvanceDue,
-}
-
-fn require_day_lease(storage: &StorageHandle<'_>, lease: DayLease) -> Result<()> {
-    match lease {
-        DayLease::InitGenesis => storage.require_metadosis_init_genesis(),
-        DayLease::CycleAllocation(day) => storage.require_metadosis_cycle_allocation(
-            day.to_timestamp_utc()
-                .map_err(crate::errors::date_step_error)?,
-        ),
-        DayLease::MetadosisReady => storage.require_metadosis_process_ready(),
-        DayLease::AdvanceDue => storage.require_metadosis_advance_due(),
-    }
-}
-
-/// Tries each caller binding. Only a lease identity mismatch selects the next
-/// binding. Storage, borrow, and time errors return immediately.
-fn accept_day_lease(storage: &StorageHandle<'_>, leases: &[DayLease]) -> Result<()> {
-    let mut mismatch = None;
-    for lease in leases {
-        match require_day_lease(storage, *lease) {
-            Ok(()) => return Ok(()),
-            Err(error) if lease_identity_mismatch(&error) => mismatch = Some(error),
-            Err(error) => return Err(error),
-        }
-    }
-    Err(mismatch.unwrap_or_else(|| PrecompileError::Fatal("day lease list is empty".into())))
-}
-
-fn lease_identity_mismatch(error: &PrecompileError) -> bool {
-    let PrecompileError::Revert(message) = error else {
-        return false;
-    };
-    message == "test provider scoped mutation lease identity mismatch"
-        || message == "scoped mutation frame identity mismatch"
-}
-
-/// Init-genesis, cycle allocation, Metadosis-ready and advance-due create worldwide days.
-pub fn require_worldwide_day_creation_lease(
-    storage: &StorageHandle<'_>,
-    day: WorldwideDay,
-) -> Result<()> {
-    accept_day_lease(
-        storage,
-        &[
-            DayLease::InitGenesis,
-            DayLease::CycleAllocation(day),
-            DayLease::MetadosisReady,
-            DayLease::AdvanceDue,
-        ],
-    )
-}
-
-/// Creation, offering sync, failure, and settlement each seal under their own binding.
-pub(crate) fn require_day_seal_lease(storage: &StorageHandle<'_>, day: WorldwideDay) -> Result<()> {
-    accept_day_lease(
-        storage,
-        &[
-            DayLease::InitGenesis,
-            DayLease::CycleAllocation(day),
-            DayLease::MetadosisReady,
-            DayLease::AdvanceDue,
-        ],
-    )
 }

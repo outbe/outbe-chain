@@ -32,8 +32,6 @@ interface ITribute {
         uint16 referenceCurrency
     );
 
-    event WorldwideDaySealed(uint32 indexed worldwideDay);
-
     event TributeBurned(uint256 indexed tributeId, address indexed owner);
 
     function name() external view returns (string memory);

@@ -257,19 +257,6 @@
     "anonymous": false
   },
   {
-    "type": "event",
-    "name": "WorldwideDaySealed",
-    "inputs": [
-      {
-        "name": "worldwideDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      }
-    ],
-    "anonymous": false
-  },
-  {
     "type": "error",
     "name": "CalculationView",
     "inputs": [

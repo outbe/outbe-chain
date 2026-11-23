@@ -13,7 +13,7 @@ use outbe_system_common::{
     },
 };
 
-use crate::schema::TributeFactoryContract;
+use crate::schema::WorldwideDayContract;
 
 use super::{
     aggregate::{close_worldwide_day, open_worldwide_day, NewWwdSchedule, ValidatedWwdAggregate},
@@ -69,7 +69,7 @@ pub fn compute_wwd_schedule(wwd: WorldwideDay) -> Result<(NewWwdSchedule, u64)> 
 pub fn open_worldwide_day_for_date(ctx: &BlockRuntimeContext<'_>, wwd: WorldwideDay) -> Result<()> {
     let (schedule, _) = compute_wwd_schedule(wwd)?;
     outbe_emission::api::link_wwd(ctx.storage.clone(), schedule.day, wwd)?;
-    let mut factory = TributeFactoryContract::new(ctx.storage.clone());
+    let mut factory = WorldwideDayContract::new(ctx.storage.clone());
     open_worldwide_day(&mut factory, wwd, schedule)?;
     Ok(())
 }
@@ -87,7 +87,7 @@ pub fn open_worldwide_day_for_date(ctx: &BlockRuntimeContext<'_>, wwd: Worldwide
 pub fn advance_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     validate_wwd_timestamp(ctx.block.timestamp)?;
     let block_utc_day = timestamp_to_date_key(ctx.block.timestamp);
-    let factory = TributeFactoryContract::new(ctx.storage.clone());
+    let factory = WorldwideDayContract::new(ctx.storage.clone());
     let last_day = factory.last_wwd_advance_day.read()?;
     if last_day >= block_utc_day {
         return Ok(());
@@ -101,7 +101,7 @@ pub fn advance_worldwide_days(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
     for current in aggregate.active_records() {
         verify_emission_day_link(&ctx.storage, current.day, current.worldwide_day)?;
         if current.offering_end <= cutoff_ts {
-            let mut factory_mut = TributeFactoryContract::new(ctx.storage.clone());
+            let mut factory_mut = WorldwideDayContract::new(ctx.storage.clone());
             close_worldwide_day(&mut factory_mut, current.worldwide_day)?;
         }
     }
@@ -149,7 +149,7 @@ fn open_worldwide_days(
         earliest_open_ts
     };
 
-    let factory = TributeFactoryContract::new(ctx.storage.clone());
+    let factory = WorldwideDayContract::new(ctx.storage.clone());
     let mut wwd_ts = start_ts;
     while wwd_ts <= target_ts {
         let wwd = WorldwideDay::new(timestamp_to_date_key(wwd_ts));

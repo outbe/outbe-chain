@@ -71,17 +71,13 @@ impl TributeContract<'_> {
         let mut view = DayTotals::with_key(day);
         view.initialized = stored.initialized;
         view.tribute_count = stored.tribute_count;
-        view.is_sealed = stored.is_sealed;
+        view.is_sealed = self.is_day_sealed(day)?;
         view.tribute_nominal_total_minor = self.day_nominal_amount(day, false)?;
         Ok(view)
     }
 
     pub fn is_day_sealed(&self, day: WorldwideDay) -> Result<bool> {
-        Ok(self
-            .day_totals
-            .get(day)?
-            .map(|totals| totals.is_sealed)
-            .unwrap_or(false))
+        outbe_worldwideday::is_sealed(self.storage_handle(), day)
     }
 
     pub fn get_tribute_ids_by_owner(&self, owner: Address) -> Result<Vec<WwdEntityId>> {
@@ -147,7 +143,7 @@ impl TributeContract<'_> {
         let mut context = b"outbe/tribute/day-count/v2".to_vec();
         context.extend_from_slice(&day.value().to_be_bytes());
         context.extend_from_slice(&totals.tribute_count.to_be_bytes());
-        context.push(u8::from(totals.is_sealed));
+        context.push(u8::from(self.is_day_sealed(day)?));
         self.apply_day_amount(day, operation, keccak256(context))?;
         if self.day_totals.exists(day)? {
             self.day_totals.update(&totals)

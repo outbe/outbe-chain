@@ -1,18 +1,30 @@
+//! The Worldwide Day: its schedule, its pipeline, its seal and its reads.
+
 pub mod aggregate;
 pub mod api;
 pub mod constants;
 pub mod errors;
+pub mod lease;
 pub mod lifecycle;
-pub(crate) mod queries;
+pub mod precompile;
+mod queries;
+pub mod record;
 pub mod schema;
 
 pub use aggregate::{
     close_worldwide_day, open_worldwide_day, NewWwdSchedule, ValidatedWwdAggregate, WwdProjection,
 };
-pub use api::{is_offering_day, offering_worldwide_days, worldwide_day, worldwide_days};
+pub use api::{
+    emission_day_of, is_offering_day, is_sealed, offering_worldwide_days, seal_worldwide_day,
+    worldwide_day, worldwide_days,
+};
 pub use lifecycle::{
     advance_worldwide_days, advance_worldwide_days_command,
     bootstrap_genesis_worldwide_days_command, compute_wwd_schedule, first_wwd_for_genesis,
     open_worldwide_day_for_date, validate_wwd_timestamp,
 };
-pub use schema::{WorldwideDay as WorldwideDayRecord, WorldwideDayEntryExt};
+pub use record::{WorldwideDay as WorldwideDayRecord, WorldwideDayEntryExt};
+pub use schema::WorldwideDayContract;
+
+#[cfg(test)]
+mod tests;

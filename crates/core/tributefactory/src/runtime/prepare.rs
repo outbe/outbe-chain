@@ -103,7 +103,7 @@ fn pricing(
         }
         .into());
     }
-    if !crate::worldwide_day::api::is_offering_day(storage.clone(), input.worldwide_day)? {
+    if !outbe_worldwideday::is_offering_day(storage.clone(), input.worldwide_day)? {
         return Err(TributeFactoryError::WorldwideDayNotOffering {
             worldwide_day: input.worldwide_day,
         }

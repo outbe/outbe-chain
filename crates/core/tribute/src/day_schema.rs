@@ -11,6 +11,4 @@ pub struct StoredDayTotals {
     pub initialized: bool,
     #[attribute(order = 1, default = 0)]
     pub tribute_count: u32,
-    #[attribute(order = 4, default = false)]
-    pub is_sealed: bool,
 }

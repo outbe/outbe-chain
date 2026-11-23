@@ -41,21 +41,6 @@ interface ITributeFactory {
     error ZkVerifierUnavailable(string value);
     error CalculationView(string value);
     error AttestationPreimageEncode(string value);
-    error FormingWindowOverflow();
-    error OfferingWindowOverflow();
-    error UtcPlus14TimestampOverflow();
-    error DurationOverflow(string label);
-    error DateStep(uint8 kind, uint32 dateKey);
-
-    event WorldwideDayOpened(
-        uint32 indexed worldwideDay, uint64 formingStart, uint64 formingEnd, uint64 offeringStart, uint64 offeringEnd
-    );
-
-    function getWorldwideDay(uint32 wwd)
-        external
-        view
-        returns (uint32 day, uint64 formingStart, uint64 formingEnd, uint64 offeringsStart, uint64 offeringEnd);
-    function activeWorldwideDays() external view returns (uint32[] memory wwds);
 
     // The caller need not be a registered L2 operator.
     // `chainId` selects a registered L2 and `version` selects an exact

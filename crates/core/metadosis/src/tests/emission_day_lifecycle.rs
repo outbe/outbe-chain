@@ -17,7 +17,7 @@ fn advance_at(storage: &StorageHandle<'_>, timestamp: u64, genesis_timestamp: u6
         validators: Vec::new(),
     };
     let ctx = BlockRuntimeContext::new(block, storage.clone());
-    outbe_tributefactory::worldwide_day::advance_worldwide_days_command(&ctx).unwrap();
+    outbe_worldwideday::advance_worldwide_days_command(&ctx).unwrap();
 }
 
 #[test]
@@ -27,7 +27,7 @@ fn init_genesis_day_creates_the_pipeline_lookahead_with_bidirectional_links_and_
         let genesis_ts = date_key_to_utc_timestamp(20260920).unwrap() + 12 * 3_600;
         advance_at(&storage, genesis_ts, genesis_ts);
 
-        let opened = TributeFactoryContract::new(storage.clone())
+        let opened = WorldwideDayContract::new(storage.clone())
             .pipeline_wwd
             .read_all()
             .unwrap();
@@ -43,7 +43,7 @@ fn init_genesis_day_creates_the_pipeline_lookahead_with_bidirectional_links_and_
             );
         }
 
-        let pipeline = TributeFactoryContract::new(storage.clone())
+        let pipeline = WorldwideDayContract::new(storage.clone())
             .pipeline_wwd
             .read_all()
             .unwrap();
@@ -167,7 +167,7 @@ fn schedule_places_emission_day_after_offering_wwd_and_resumes_oldest_due_after_
         storage
             .set_block_timestamp(U256::from(at_start.block.timestamp))
             .unwrap();
-        outbe_tributefactory::worldwide_day::advance_worldwide_days_command(&at_start).unwrap();
+        outbe_worldwideday::advance_worldwide_days_command(&at_start).unwrap();
 
         // Simulate a halt from 3 Sep to 8 Sep 2026: the first block after restart
         // still runs the Metadosis of 20260902.
@@ -229,11 +229,11 @@ fn first_wwd_for_genesis_splits_0_or_1_empty_emission_days_across_noon_utc() {
         let genesis_before_noon =
             date_key_to_utc_timestamp(20261001).unwrap() + 11 * 3_600 + 59 * 60;
         assert_eq!(
-            outbe_tributefactory::worldwide_day::first_wwd_for_genesis(genesis_before_noon),
+            outbe_worldwideday::first_wwd_for_genesis(genesis_before_noon),
             WorldwideDay::new(20260930)
         );
         let ctx = genesis_ctx(&storage, genesis_before_noon);
-        outbe_tributefactory::worldwide_day::advance_worldwide_days_command(&ctx).unwrap();
+        outbe_worldwideday::advance_worldwide_days_command(&ctx).unwrap();
 
         let first_proj = api::worldwide_day(storage.clone(), WorldwideDay::new(20260930))
             .unwrap()
@@ -246,11 +246,11 @@ fn first_wwd_for_genesis_splits_0_or_1_empty_emission_days_across_noon_utc() {
     with_storage(|storage| {
         let genesis_after_noon = date_key_to_utc_timestamp(20261001).unwrap() + 12 * 3_600 + 60;
         assert_eq!(
-            outbe_tributefactory::worldwide_day::first_wwd_for_genesis(genesis_after_noon),
+            outbe_worldwideday::first_wwd_for_genesis(genesis_after_noon),
             WorldwideDay::new(20261001)
         );
         let ctx = genesis_ctx(&storage, genesis_after_noon);
-        outbe_tributefactory::worldwide_day::advance_worldwide_days_command(&ctx).unwrap();
+        outbe_worldwideday::advance_worldwide_days_command(&ctx).unwrap();
 
         let first_proj = api::worldwide_day(storage.clone(), WorldwideDay::new(20261001))
             .unwrap()
@@ -290,7 +290,7 @@ fn first_wwd_for_genesis_splits_0_or_1_empty_emission_days_across_noon_utc() {
             },
             storage.clone(),
         );
-        outbe_tributefactory::worldwide_day::advance_worldwide_days_command(&catchup_ctx).unwrap();
+        outbe_worldwideday::advance_worldwide_days_command(&catchup_ctx).unwrap();
         for wwd_key in 20261009..=20261012 {
             let proj = api::worldwide_day(storage.clone(), WorldwideDay::new(wwd_key))
                 .unwrap()
@@ -311,7 +311,7 @@ fn wwd_takes_offers_only_by_the_time_and_seals_on_close() {
         advance_at(&storage, genesis_ts, genesis_ts);
 
         let tribute = TributeContract::new(storage.clone());
-        let factory = TributeFactoryContract::new(storage.clone());
+        let factory = WorldwideDayContract::new(storage.clone());
         let proj = api::worldwide_day(storage.clone(), wwd).unwrap().unwrap();
         assert_eq!(
             proj.forming_end,
@@ -416,7 +416,7 @@ fn wwd_without_price_runs_as_empty_day() {
             storage.clone(),
         );
         allocate_to_metadosis(&ctx_03, emission_day, expected_limit);
-        outbe_tributefactory::worldwide_day::advance_worldwide_days_command(&ctx_03).unwrap();
+        outbe_worldwideday::advance_worldwide_days_command(&ctx_03).unwrap();
         assert!(!TributeContract::new(storage.clone())
             .is_day_sealed(wwd)
             .unwrap());

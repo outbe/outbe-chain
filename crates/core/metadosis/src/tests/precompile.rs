@@ -7,9 +7,9 @@ fn query<C: SolCall>(storage: StorageHandle<'_>, call: C) -> C::Return {
     C::abi_decode_returns(&output).unwrap()
 }
 
-fn query_tribute_factory<C: SolCall>(storage: StorageHandle<'_>, call: C) -> C::Return {
+fn query_worldwide_day<C: SolCall>(storage: StorageHandle<'_>, call: C) -> C::Return {
     let output =
-        tribute_factory_dispatch(storage, &call.abi_encode(), Address::ZERO, U256::ZERO).unwrap();
+        worldwide_day_dispatch(storage, &call.abi_encode(), Address::ZERO, U256::ZERO).unwrap();
     C::abi_decode_returns(&output).unwrap()
 }
 
@@ -25,9 +25,9 @@ fn missing_emission_day_and_worldwide_day_revert_cleanly() {
         .unwrap_err();
         assert!(ed_err.to_string().contains("EmissionDay not found"));
 
-        let wwd_err = tribute_factory_dispatch(
+        let wwd_err = worldwide_day_dispatch(
             storage,
-            &ITributeFactory::getWorldwideDayCall { wwd: 20260920 }.abi_encode(),
+            &IWorldwideDay::getWorldwideDayCall { wwd: 20260920 }.abi_encode(),
             Address::ZERO,
             U256::ZERO,
         )
@@ -48,9 +48,9 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
             + outbe_chain_constants::OFFERING_START_AFTER_FORMING_START_SECONDS;
         let expected_offering_end = expected_offerings_start
             + outbe_chain_constants::get_metadosis_offering_period_seconds();
-        let day = query_tribute_factory(
+        let day = query_worldwide_day(
             storage.clone(),
-            ITributeFactory::getWorldwideDayCall { wwd: 20260920 },
+            IWorldwideDay::getWorldwideDayCall { wwd: 20260920 },
         );
         assert_eq!(day.day, 20261014);
         assert_eq!(
@@ -70,7 +70,7 @@ fn worldwide_day_and_emission_day_abi_preserve_bidirectional_link() {
         // `activeWorldwideDays` lists offering days. This WWD has no forming
         // VWAP and the block clock is outside its offering window.
         let active: Vec<u32> =
-            query_tribute_factory(storage.clone(), ITributeFactory::activeWorldwideDaysCall {});
+            query_worldwide_day(storage.clone(), IWorldwideDay::activeWorldwideDaysCall {});
         assert!(active.is_empty());
 
         let ed = query(storage, IEmission::getEmissionDayCall { day: 20261014 });
@@ -106,11 +106,11 @@ pub(super) fn seed_offering_day(storage: StorageHandle<'_>) {
         .with_scoped_mutation::<outbe_primitives::storage::CycleLifecyclePurpose, _>(
             binding,
             || {
-                let mut factory = TributeFactoryContract::new(storage.clone());
-                outbe_tributefactory::worldwide_day::open_worldwide_day(
+                let mut factory = WorldwideDayContract::new(storage.clone());
+                outbe_worldwideday::open_worldwide_day(
                     &mut factory,
                     wwd,
-                    outbe_tributefactory::worldwide_day::NewWwdSchedule {
+                    outbe_worldwideday::NewWwdSchedule {
                         day,
                         forming_start,
                         forming_end,
@@ -146,7 +146,7 @@ fn worldwide_day_reads_have_no_get_prefix() {
     with_storage(|storage| {
         seed_offering_day(storage.clone());
         let active: Vec<u32> =
-            query_tribute_factory(storage.clone(), ITributeFactory::activeWorldwideDaysCall {});
+            query_worldwide_day(storage.clone(), IWorldwideDay::activeWorldwideDaysCall {});
         assert!(active.is_empty());
         let totals = tribute_dispatch(
             storage.clone(),
@@ -169,7 +169,7 @@ fn worldwide_day_reads_have_no_get_prefix() {
             U256::ZERO,
         )
         .is_err());
-        assert!(tribute_factory_dispatch(
+        assert!(worldwide_day_dispatch(
             storage,
             &old_call("getActiveWorldwideDays()", &[]),
             Address::ZERO,

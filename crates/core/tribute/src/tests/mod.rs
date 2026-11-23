@@ -708,12 +708,16 @@ fn failed_mutations_emit_no_events_and_sealing_emits_only_its_business_event() {
                 contract.seal_worldwide_day(tribute.worldwide_day)
             });
         });
-        let events = provider.get_events(TRIBUTE_ADDRESS);
+        assert!(provider.get_events(TRIBUTE_ADDRESS).is_empty());
+        let events = provider.get_events(outbe_system_common::addresses::WORLDWIDE_DAY_ADDRESS);
         assert_eq!(events.len(), 1);
         assert_eq!(events[0].topics().len(), 2);
         assert!(events[0].data.is_empty());
         let sealed =
-            crate::precompile::ITribute::WorldwideDaySealed::decode_log_data(&events[0]).unwrap();
+            outbe_worldwideday::precompile::IWorldwideDay::WorldwideDaySealed::decode_log_data(
+                &events[0],
+            )
+            .unwrap();
         assert_eq!(sealed.worldwideDay, tribute.worldwide_day.value());
         StorageHandle::enter(&mut *provider, |storage| {
             let _enclave = crate::enclave_client::test_enclave::scope();

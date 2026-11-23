@@ -16,6 +16,7 @@ outbe-chain-constants.workspace = true
 outbe-macros.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-tribute.workspace = true
+outbe-worldwideday.workspace = true
 outbe-agentreward.workspace = true
 outbe-emission.workspace = true
 outbe-oracle.workspace = true

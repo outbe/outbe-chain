@@ -1,4 +1,4 @@
-use crate::precompile::ITributeFactory;
+use crate::precompile::IWorldwideDay;
 use alloy_primitives::Bytes;
 use alloy_sol_types::SolError;
 use outbe_primitives::error::PrecompileError;
@@ -28,7 +28,7 @@ fn revert_with<E: SolError>(error: E) -> PrecompileError {
     PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
 }
 
-pub(crate) fn date_step_error(err: outbe_system_common::time::TimeError) -> PrecompileError {
+pub fn date_step_error(err: outbe_system_common::time::TimeError) -> PrecompileError {
     match err.date_step() {
         Some((kind, date_key)) => WwdCallerError::DateStep { kind, date_key }.into(),
         None => PrecompileError::Fatal(err.to_string()),
@@ -37,7 +37,7 @@ pub(crate) fn date_step_error(err: outbe_system_common::time::TimeError) -> Prec
 
 impl From<WwdCallerError> for PrecompileError {
     fn from(value: WwdCallerError) -> Self {
-        use ITributeFactory as I;
+        use IWorldwideDay as I;
         match value {
             WwdCallerError::FormingWindowOverflow => revert_with(I::FormingWindowOverflow {}),
             WwdCallerError::OfferingWindowOverflow => revert_with(I::OfferingWindowOverflow {}),

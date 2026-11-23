@@ -7,7 +7,7 @@ use outbe_primitives::{
 };
 use outbe_promislimit::PromisLimitContract;
 use outbe_system_common::time::WorldwideDay;
-use outbe_tributefactory::TributeFactoryContract;
+use outbe_worldwideday::WorldwideDayContract;
 
 use crate::{
     errors::{MetadosisCallerError, MetadosisStorageCorruptionError},
@@ -25,7 +25,7 @@ pub(crate) fn date_step_error(
 }
 
 pub(crate) fn validate_metadosis_timestamp(timestamp: u64) -> Result<()> {
-    outbe_tributefactory::worldwide_day::validate_wwd_timestamp(timestamp)
+    outbe_worldwideday::validate_wwd_timestamp(timestamp)
 }
 
 /// The record of `day` when its Metadosis is due: the allocation gave it its limit, and
@@ -44,12 +44,12 @@ pub(crate) fn ready_emission_day(
     {
         return Ok(None);
     }
-    verify_record_wwd_backlink(&TributeFactoryContract::new(ctx.storage.clone()), &record)?;
+    verify_record_wwd_backlink(&WorldwideDayContract::new(ctx.storage.clone()), &record)?;
     Ok(Some(record))
 }
 
 fn verify_record_wwd_backlink(
-    factory: &TributeFactoryContract<'_>,
+    factory: &WorldwideDayContract<'_>,
     record: &EmissionDay,
 ) -> Result<()> {
     if record.wwd.value() == 0 {

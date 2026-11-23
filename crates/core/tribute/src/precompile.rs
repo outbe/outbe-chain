@@ -62,7 +62,7 @@ pub fn dispatch(
                 Ok((
                     dt.tribute_count,
                     alloy_primitives::Bytes::from(encrypted),
-                    dt.is_sealed,
+                    tribute.is_day_sealed(day)?,
                 )
                     .into())
             }),

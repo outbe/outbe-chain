@@ -45,7 +45,7 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
             .with_scoped_mutation::<outbe_primitives::storage::CycleLifecyclePurpose, _>(
                 binding,
                 || {
-                    let mut factory = TributeFactoryContract::new(storage.clone());
+                    let mut factory = WorldwideDayContract::new(storage.clone());
                     let mut tribute = TributeContract::new(storage.clone());
                     let metadosis = MetadosisContract::new(storage.clone());
                     let mut ed = crate::schema::EmissionDay::new_with_limit(
@@ -73,10 +73,10 @@ fn fixture_with_tributes(limit: u64, tributes: &[(u64, u16)]) -> HashMapStorageP
                             tribute_price_minor: U256::from(2),
                         })?;
                     }
-                    outbe_tributefactory::worldwide_day::open_worldwide_day(
+                    outbe_worldwideday::open_worldwide_day(
                         &mut factory,
                         WWD,
-                        outbe_tributefactory::worldwide_day::NewWwdSchedule {
+                        outbe_worldwideday::NewWwdSchedule {
                             day: DAY,
                             forming_start,
                             forming_end,

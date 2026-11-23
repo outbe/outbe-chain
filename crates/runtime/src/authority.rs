@@ -7,7 +7,7 @@ use outbe_slashindicator::constants::{
 };
 use outbe_slashindicator::runtime::admit_percent_word;
 use outbe_system_common::addresses::{
-    EMISSION_ADDRESS, SLASH_INDICATOR_ADDRESS, TRIBUTE_ADDRESS, TRIBUTE_FACTORY_ADDRESS,
+    EMISSION_ADDRESS, SLASH_INDICATOR_ADDRESS, TRIBUTE_ADDRESS, WORLDWIDE_DAY_ADDRESS,
 };
 
 use super::*;
@@ -116,7 +116,7 @@ fn admit_genesis_percent(
 
 /// The stores that the chain writes when it makes a Worldwide Day.
 const DAY_STATE_ADDRESSES: [Address; 3] =
-    [TRIBUTE_FACTORY_ADDRESS, TRIBUTE_ADDRESS, EMISSION_ADDRESS];
+    [WORLDWIDE_DAY_ADDRESS, TRIBUTE_ADDRESS, EMISSION_ADDRESS];
 
 fn validate_no_genesis_day_state(config: &LaunchConfig) -> std::result::Result<(), LaunchError> {
     let alloc = &config.chain.genesis.alloc;

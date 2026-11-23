@@ -1,12 +1,11 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
-use outbe_primitives::dispatch::{dispatch_call, mutate, view};
+use outbe_primitives::dispatch::{dispatch_call, mutate};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::gas::PRECOMPILE_BASE_GAS;
 
 use crate::runtime::OfferTributeInput;
 use crate::schema::TributeFactoryContract;
-use crate::worldwide_day::queries::worldwide_day;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -45,18 +44,6 @@ pub fn dispatch(
         |call| {
             use ITributeFactory::ITributeFactoryCalls::*;
             match call {
-                getWorldwideDay(c) => view(c, |c| {
-                    let factory = TributeFactoryContract::new(storage.clone());
-                    worldwide_day(&factory, c)
-                }),
-                activeWorldwideDays(c) => view(c, |_c| {
-                    Ok(
-                        crate::worldwide_day::api::offering_worldwide_days(storage.clone())?
-                            .into_iter()
-                            .map(u32::from)
-                            .collect::<Vec<_>>(),
-                    )
-                }),
                 offerTribute(c) => mutate(&storage, c, caller, |sender, c| {
                     let mut factory = TributeFactoryContract::new(storage.clone());
                     factory

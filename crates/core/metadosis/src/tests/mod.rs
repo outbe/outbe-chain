@@ -7,9 +7,9 @@ use outbe_tribute::TributeContract;
 use crate::precompile::IMetadosis;
 use crate::schema::MetadosisContract;
 use outbe_emission::schema::metadosis_state;
-use outbe_tributefactory::{
-    precompile::{dispatch as tribute_factory_dispatch, ITributeFactory},
-    TributeFactoryContract,
+use outbe_worldwideday::{
+    precompile::{dispatch as worldwide_day_dispatch, IWorldwideDay},
+    WorldwideDayContract,
 };
 
 const CHAIN_ID: u64 = 1;

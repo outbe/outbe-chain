@@ -63,6 +63,7 @@ outbe-tee.workspace = true
 outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
 outbe-tribute.workspace = true
 outbe-tributefactory.workspace = true
+outbe-worldwideday.workspace = true
 outbe-txpool.workspace = true
 outbe-update.workspace = true
 outbe-validatorset.workspace = true

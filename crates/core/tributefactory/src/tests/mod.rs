@@ -363,7 +363,7 @@ fn seed_offer_world(storage: StorageHandle<'_>, worldwide_day: WorldwideDay) {
     );
     storage
         .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
-            crate::worldwide_day::open_worldwide_day_for_date(&context, worldwide_day)
+            outbe_worldwideday::open_worldwide_day_for_date(&context, worldwide_day)
         })
         .unwrap();
 
@@ -824,7 +824,7 @@ fn empty_su_hash_list_rejects_before_issuance_and_rewards() {
     assert_eq!(provider.get_ordered_events(), ordered_before);
 }
 
-mod wwd_storage;
+mod su_hash_storage;
 
 #[test]
 fn an_offer_after_the_offering_window_fails_on_an_unsealed_day() {
@@ -836,8 +836,8 @@ fn an_offer_after_the_offering_window_fails_on_an_unsealed_day() {
 
     StorageHandle::enter(&mut provider, |storage| {
         seed_offer_world(storage.clone(), TARGET_WWD_A);
-        assert!(crate::worldwide_day::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
-        let offering_end = crate::worldwide_day::worldwide_day(storage.clone(), TARGET_WWD_A)
+        assert!(outbe_worldwideday::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
+        let offering_end = outbe_worldwideday::worldwide_day(storage.clone(), TARGET_WWD_A)
             .unwrap()
             .unwrap()
             .offering_end;
@@ -848,14 +848,14 @@ fn an_offer_after_the_offering_window_fails_on_an_unsealed_day() {
         assert!(!TributeContract::new(storage.clone())
             .is_day_sealed(TARGET_WWD_A)
             .unwrap());
-        assert!(!crate::worldwide_day::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
+        assert!(!outbe_worldwideday::is_offering_day(storage.clone(), TARGET_WWD_A).unwrap());
     });
 }
 
 #[test]
 fn offering_is_the_next_wwd() {
     let wwd = WorldwideDay::new(20_260_802);
-    let (schedule, metadosis_start) = crate::worldwide_day::compute_wwd_schedule(wwd).unwrap();
+    let (schedule, metadosis_start) = outbe_worldwideday::compute_wwd_schedule(wwd).unwrap();
     let next_wwd_start = WorldwideDay::new(20_260_803).start_timestamp().unwrap();
     assert_eq!(schedule.offerings_start, next_wwd_start);
     assert_eq!(schedule.offering_end, next_wwd_start + 50 * 60 * 60);
@@ -896,11 +896,11 @@ fn offering_is_the_next_wwd() {
             );
             storage
                 .with_scoped_mutation::<CycleLifecyclePurpose, _>(binding, || {
-                    crate::worldwide_day::open_worldwide_day_for_date(&context, next)
+                    outbe_worldwideday::open_worldwide_day_for_date(&context, next)
                 })
                 .unwrap();
         }
-        let mut offering = crate::worldwide_day::offering_worldwide_days(storage).unwrap();
+        let mut offering = outbe_worldwideday::offering_worldwide_days(storage).unwrap();
         offering.sort();
         assert_eq!(
             offering,

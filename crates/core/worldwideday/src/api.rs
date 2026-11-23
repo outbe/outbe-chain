@@ -1,8 +1,8 @@
 use outbe_primitives::{error::Result, storage::StorageHandle};
-use outbe_system_common::time::WorldwideDay;
-use outbe_tribute::TributeContract;
+use outbe_system_common::time::{EmissionDate, WorldwideDay};
 
-use crate::schema::TributeFactoryContract;
+use crate::precompile::IWorldwideDay;
+use crate::schema::WorldwideDayContract;
 
 use super::{
     aggregate::{ValidatedWwdAggregate, WwdProjection},
@@ -14,7 +14,7 @@ pub fn worldwide_day(
     storage: StorageHandle<'_>,
     wwd: WorldwideDay,
 ) -> Result<Option<WwdProjection>> {
-    let contract = TributeFactoryContract::new(storage);
+    let contract = WorldwideDayContract::new(storage);
     let Some(record) = contract.worldwide_days.get(wwd)? else {
         return Ok(None);
     };
@@ -30,6 +30,31 @@ pub fn worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WwdProjection>> 
         .collect())
 }
 
+/// The emission day of `wwd`, or `None` when the WWD was never opened.
+pub fn emission_day_of(
+    storage: StorageHandle<'_>,
+    wwd: WorldwideDay,
+) -> Result<Option<EmissionDate>> {
+    Ok(WorldwideDayContract::new(storage)
+        .worldwide_days
+        .get(wwd)?
+        .map(|record| EmissionDate::new(record.emission_day)))
+}
+
+pub fn is_sealed(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<bool> {
+    WorldwideDayContract::new(storage).sealed.read(&wwd)
+}
+
+/// Seals `wwd` under a Worldwide Day lease.
+pub fn seal_worldwide_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<()> {
+    crate::lease::require_worldwide_day_lease(&storage, wwd)?;
+    let mut contract = WorldwideDayContract::new(storage);
+    contract.sealed.write(&wwd, true)?;
+    contract.emit(IWorldwideDay::WorldwideDaySealed {
+        worldwideDay: wwd.into(),
+    })
+}
+
 /// Returns true when `wwd` exists, is not sealed, and the current block
 /// timestamp is within `[offerings_start, offering_end)`.
 pub fn is_offering_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<bool> {
@@ -40,16 +65,14 @@ pub fn is_offering_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<
     if !projection.is_offering_at(now) {
         return Ok(false);
     }
-    let tribute = TributeContract::new(storage);
-    Ok(!tribute.is_day_sealed(wwd)?)
+    Ok(!is_sealed(storage, wwd)?)
 }
 
 /// Returns indexed pipeline WWDs whose offering window `[offerings_start, offering_end)`
 /// contains the current block timestamp and which are not yet sealed.
 pub fn offering_worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WorldwideDay>> {
     let now = u64::try_from(storage.timestamp()?).unwrap_or(u64::MAX);
-    let contract = TributeFactoryContract::new(storage.clone());
-    let tribute = TributeContract::new(storage.clone());
+    let contract = WorldwideDayContract::new(storage.clone());
     let mut result = Vec::new();
     for wwd in contract.pipeline_wwd.read_all()? {
         let record = contract
@@ -58,7 +81,7 @@ pub fn offering_worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<Worldwi
             .ok_or(WwdStorageCorruptionError::ActiveIndexPointsToMissingWwd { wwd })?;
         if now >= record.offering_start
             && now < record.offering_end
-            && !tribute.is_day_sealed(wwd)?
+            && !contract.sealed.read(&wwd)?
         {
             result.push(wwd);
         }

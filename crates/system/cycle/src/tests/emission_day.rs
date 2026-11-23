@@ -10,7 +10,7 @@ use outbe_system_common::time::{
     date_key_to_utc_timestamp, day_number_between, timestamp_to_date_key, WorldwideDay,
     SECONDS_PER_DAY,
 };
-use outbe_tributefactory::TributeFactoryContract;
+use outbe_worldwideday::WorldwideDayContract;
 
 use super::*;
 
@@ -232,7 +232,7 @@ fn wwd_step_runs_once_a_day() {
 
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_tick(&anchor).unwrap();
-        let factory = TributeFactoryContract::new(handle);
+        let factory = WorldwideDayContract::new(handle);
         assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_101);
         assert_eq!(
             factory.pipeline_wwd.read_all().unwrap(),
@@ -249,7 +249,7 @@ fn wwd_step_runs_once_a_day() {
     storage.enter(|handle| {
         let ts_13h = GENESIS_TS + 13 * 3_600;
         let ctx = dispatch_at(handle.clone(), 2, ts_13h);
-        let factory = TributeFactoryContract::new(ctx.storage.clone());
+        let factory = WorldwideDayContract::new(ctx.storage.clone());
         assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_101);
         assert_eq!(
             factory.pipeline_wwd.read_all().unwrap(),
@@ -274,7 +274,7 @@ fn wwd_step_runs_once_a_day() {
             let ctx = dispatch_at(handle.clone(), block_no, midnight_ts);
             crate::handler::process_agent_rewards(&ctx).unwrap();
             let expected_day = timestamp_to_date_key(midnight_ts);
-            let factory = TributeFactoryContract::new(ctx.storage.clone());
+            let factory = WorldwideDayContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), expected_day);
         });
         block_no += 1;
@@ -296,11 +296,8 @@ fn wwd_step_runs_once_a_day() {
         ] {
             handle.set_block_timestamp(U256::from(ts)).unwrap();
             assert_eq!(
-                outbe_tributefactory::worldwide_day::is_offering_day(
-                    handle.clone(),
-                    WorldwideDay::new(20_240_103)
-                )
-                .unwrap(),
+                outbe_worldwideday::is_offering_day(handle.clone(), WorldwideDay::new(20_240_103))
+                    .unwrap(),
                 expected,
                 "unexpected is_offering_day at ts={ts}"
             );
@@ -320,10 +317,10 @@ fn wwd_step_runs_once_a_day() {
         storage.enter(|handle| {
             let ctx = dispatch_at(handle.clone(), block_no, ts_hour);
             crate::handler::process_agent_rewards(&ctx).unwrap();
-            let factory = TributeFactoryContract::new(ctx.storage.clone());
+            let factory = WorldwideDayContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_105);
             if hour == 13 {
-                assert!(!outbe_tributefactory::worldwide_day::is_offering_day(
+                assert!(!outbe_worldwideday::is_offering_day(
                     ctx.storage.clone(),
                     WorldwideDay::new(20_240_103)
                 )
@@ -370,7 +367,7 @@ fn wwd_step_runs_once_a_day() {
     storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 8);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle.clone(), block_no, ts_day6_00h);
-        let factory = TributeFactoryContract::new(ctx.storage.clone());
+        let factory = WorldwideDayContract::new(ctx.storage.clone());
         assert_eq!(
             factory.last_wwd_advance_day.read().unwrap(),
             20_240_105,
@@ -442,7 +439,7 @@ fn wwd_step_runs_once_a_day() {
     storage.enter(|handle| {
         let ctx = dispatch_at(handle.clone(), block_no, ts_day6_01h);
         crate::handler::process_agent_rewards(&ctx).unwrap();
-        let factory = TributeFactoryContract::new(ctx.storage.clone());
+        let factory = WorldwideDayContract::new(ctx.storage.clone());
         assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_106);
         assert!(
             !factory
@@ -503,7 +500,7 @@ fn wwd_step_runs_once_a_day() {
         };
         let ctx = runtime_context(block, handle);
         crate::handler::run_advance_worldwide_days_step(&ctx, 20_240_107).unwrap();
-        let factory = TributeFactoryContract::new(ctx.storage.clone());
+        let factory = WorldwideDayContract::new(ctx.storage.clone());
         assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_106);
         assert!(factory
             .worldwide_days
