@@ -28,6 +28,7 @@ mod gas;
 mod ism;
 mod liveness;
 mod runtime;
+mod signer;
 mod vote_target;
 
 pub use gas::{GAS_MARKUP_BPS, TOKEN_EXCHANGE_RATE_SCALE};
