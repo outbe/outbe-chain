@@ -90,6 +90,14 @@ pub fn dispatch(
                         .submitted_index
                         .read(&validator_domain_key(c.validator, c.domain))
                 }),
+                targetIndex(c) => view(c, |c| controller.target_index.read(&c.domain)),
+                targetVote(c) => view(c, |c| {
+                    let key = validator_domain_key(c.validator, c.domain);
+                    Ok(IHyperlaneController::targetVoteReturn {
+                        index: controller.vote_index.read(&key)?,
+                        root: controller.vote_root.read(&key)?,
+                    })
+                }),
                 missCount(c) => view(c, |c| controller.miss_count.read(&c.validator)),
                 getExchangeRateAndGasPrice(c) => view(c, |c| {
                     let (rate, price) = controller.gas_quote(c.destinationDomain)?;

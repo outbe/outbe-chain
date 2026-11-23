@@ -33,6 +33,12 @@ use outbe_system_common::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 ///      view gives to the IGP, in basis points (2000 = +20%)
 ///  13: queued_approved_actions - approved proposal ids that the Vote
 ///      begin-block step has not applied yet
+///  14: target_index - mapping(domain => checkpoint index that every
+///      validator must sign in the current liveness window). Zero = no target
+///  15: vote_root - mapping(validator_domain_key => root that the validator
+///      signed at `vote_index`)
+///  16: vote_index - mapping(validator_domain_key => index of that vote). The
+///      vote counts only while this index equals `target_index`
 #[storage_schema]
 #[contract(addr = HYPERLANE_CONTROLLER_ADDRESS)]
 pub struct HyperlaneControllerContract {
@@ -78,6 +84,15 @@ pub struct HyperlaneControllerContract {
     /// Approved actions that the Vote begin-block step has not applied yet.
     #[attribute(order = 13)]
     pub queued_approved_actions: outbe_primitives::storage::dsl::List<U256>,
+
+    #[attribute(order = 14)]
+    pub target_index: outbe_primitives::storage::dsl::Map<u32, u32>,
+
+    #[attribute(order = 15)]
+    pub vote_root: outbe_primitives::storage::dsl::Map<B256, B256>,
+
+    #[attribute(order = 16)]
+    pub vote_index: outbe_primitives::storage::dsl::Map<B256, u32>,
 }
 
 /// Composite key for the per-(validator, domain) checkpoint maps.

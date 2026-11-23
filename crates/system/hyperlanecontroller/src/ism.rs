@@ -156,6 +156,7 @@ impl HyperlaneControllerContract<'_> {
         storage.with_checkpoint(|| {
             self.ism_by_domain.clear(&domain)?;
             self.validator_announce_by_domain.clear(&domain)?;
+            self.clear_liveness(domain)?;
             let remaining: Vec<u32> = self
                 .domains
                 .read_all()?
