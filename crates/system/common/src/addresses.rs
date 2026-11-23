@@ -92,9 +92,6 @@ pub const DESIS_ADDRESS: Address = address!("0x000000000000000000000000000000000
 /// ERC-4626 vaults per asset.
 pub const VAULT_ROUTER_ADDRESS: Address = address!("0x0000000000000000000000000000000000001017");
 
-// 0x0000000000000000000000000000000000001018 is retired; never reassign it.
-// Cutover requires a new genesis or no pending Vote proposals targeting it.
-
 // ---------------------------------------------------------------------------
 // System & infrastructure domain precompiles (0xEE00 range)
 // ---------------------------------------------------------------------------
