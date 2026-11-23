@@ -1,5 +1,6 @@
 //! EmissionDay and WorldwideDay lifecycle orchestration.
 
+use alloy_primitives::U256;
 use outbe_emission::schema::metadosis_state;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -135,11 +136,16 @@ pub(crate) fn fail_metadosis(
 ) -> Result<()> {
     cancel_auction_of(metadosis, day)?;
     if let Some(pending) = metadosis.emission_days().get(day)? {
-        let loads = crate::loads::day_loads(&metadosis.storage, pending.wwd)?;
+        let loads_minor = match crate::loads::day_loads(&metadosis.storage, pending.wwd) {
+            Ok(loads) => loads.loads_minor,
+            // An unreadable day sum leaves the whole limit with the Nods: nothing goes back.
+            Err(err) if err.record_pass_failure() == PassFailure::Skip => U256::MAX,
+            Err(err) => return Err(err),
+        };
         let (record, limit_minor) = outbe_emission::api::record_metadosis_failed(
             metadosis.storage.clone(),
             day,
-            loads.loads_minor,
+            loads_minor,
         )?;
         if !limit_minor.is_zero() {
             PromisLimitContract::new(metadosis.storage.clone())

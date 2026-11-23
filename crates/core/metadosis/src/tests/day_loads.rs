@@ -377,3 +377,25 @@ fn metadosis_writes_roll_back_and_retry_exactly() {
         }
     }
 }
+
+/// A day sum that cannot be read does not stop the failure path: the day fails and the
+/// whole limit stays with its Nods.
+#[test]
+fn an_unreadable_day_sum_fails_the_day_with_no_credit() {
+    let mut provider = fixture(LIMIT, &[NOMINAL]);
+    StorageHandle::enter(&mut provider, |storage| {
+        WorldwideDayContract::new(storage.clone())
+            .day_load_ct
+            .bytes(&WWD)
+            .write(&[0xFF; 3])
+            .unwrap();
+    });
+    let before = promis_limit(&mut provider);
+    StorageHandle::enter(&mut provider, |storage| {
+        crate::commands::fail_metadosis(&block_at(storage), DAY).unwrap();
+    });
+    let record = record(&mut provider);
+    assert_eq!(record.metadosis_state, metadosis_state::FAILED);
+    assert_eq!(record.nods, u128::from(LIMIT));
+    assert_eq!(promis_limit(&mut provider), before);
+}
