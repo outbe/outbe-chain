@@ -67,7 +67,7 @@
   ],
   "builder": {
     "base_images": [
-      "rust:1.96.0-bookworm@sha256:64d9b7f60e3abb08d477cad983d0a3743acc53a19369ba4482510184c9c807e5",
+      "rust:1.100.0-bookworm@sha256:198cd28b4ba92b20fe849d5d8b119ace1bd28423d9e82e9c4de5ee1300d453a0",
       "ubuntu:24.04@sha256:1e0a86e57d247923571b75e0aaf48a1449cf8c543d51fb3e07a4a7d7bfa79316"
     ],
     "id": "https://github.com/outbe/outbe-chain/project-toolchain/v1",
@@ -144,7 +144,7 @@
   ],
   "profile": "release",
   "project_toolchain": "release/project-toolchain-v1.json",
-  "rust_toolchain": "1.96.0",
+  "rust_toolchain": "1.100.0",
   "spec_version": 1,
   "target": "x86_64-unknown-linux-gnu"
 }

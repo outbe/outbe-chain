@@ -130,8 +130,8 @@ pub fn validate_build_spec(build_spec: &Value) -> Result<()> {
         "the v1 release recipe must preserve the release profile"
     );
     ensure!(
-        build_spec.get("rust_toolchain").and_then(Value::as_str) == Some("1.96.0"),
-        "the v1 release recipe requires Rust 1.96.0"
+        build_spec.get("rust_toolchain").and_then(Value::as_str) == Some("1.100.0"),
+        "the v1 release recipe requires Rust 1.100.0"
     );
 
     let builder = build_spec

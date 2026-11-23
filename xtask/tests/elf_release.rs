@@ -303,18 +303,18 @@ fn release_manifest_is_canonical_and_enforces_schema_invariants() {
     fs::create_dir_all(&input_dir).unwrap();
 
     fs::write(input_dir.join("Cargo.lock"), b"locked\n").unwrap();
-    fs::write(input_dir.join("rust-toolchain.toml"), b"1.96.0\n").unwrap();
+    fs::write(input_dir.join("rust-toolchain.toml"), b"1.100.0\n").unwrap();
     fs::write(artifact_dir.join("outbe-chain"), b"chain-elf").unwrap();
 
     let spec = json!({
         "spec_version": 1,
         "target": "x86_64-unknown-linux-gnu",
         "profile": "release",
-        "rust_toolchain": "1.96.0",
+        "rust_toolchain": "1.100.0",
         "builder": {
             "id": "https://github.com/outbe/outbe-chain/reproducible-elf-builder/v1",
             "base_images": [
-                format!("rust:1.96.0-bookworm@sha256:{}", "1".repeat(64)),
+                format!("rust:1.100.0-bookworm@sha256:{}", "1".repeat(64)),
                 format!("ubuntu:24.04@sha256:{}", "2".repeat(64)),
             ],
             "recipe": "Dockerfile.project-toolchain",
@@ -356,7 +356,7 @@ fn release_manifest_is_canonical_and_enforces_schema_invariants() {
     let encoded = canonical_json(&manifest).unwrap();
     assert_eq!(
         hex::encode(Sha256::digest(&encoded)),
-        "6c8ea665ce9a7354d12f31be8503c5546deedbfb75f9b7ec74e7ca0bb88e04d1"
+        "61b9528875a8ef3df3296988eb83a7e86b8de82aeb46a45daeddbb955d0cd5c4"
     );
 
     let mut bad_verified = manifest.clone();

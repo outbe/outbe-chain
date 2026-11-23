@@ -72,7 +72,7 @@ fn project_declares_one_version_pin_without_registry_delivery_and_consumers_foll
     );
     assert_eq!(pin["target"].as_str(), Some("x86_64-unknown-linux-gnu"));
     assert_eq!(pin["platform"].as_str(), Some("linux/amd64"));
-    assert_eq!(pin["rust"]["version"].as_str(), Some("1.96.0"));
+    assert_eq!(pin["rust"]["version"].as_str(), Some("1.100.0"));
     assert!(pin.get("gramine").is_none());
     assert_eq!(
         pin["host_only_packages"]["libsgx-dcap-default-qpl"].as_str(),
