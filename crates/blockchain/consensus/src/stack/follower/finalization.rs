@@ -5,7 +5,6 @@ use crate::{
     finalization::parent_cert_store::FinalizedParentCertStore,
     marshal_types::{Finalization, MarshalMailbox},
 };
-use commonware_codec::Encode as _;
 
 pub async fn finalization_bytes_for_height(
     mailbox: &MarshalMailbox,

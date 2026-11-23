@@ -146,7 +146,7 @@ fn insert_code(db: &mut CacheDB<EmptyDB>, address: Address, code: Bytes) {
 
 /// Seeds the 256-byte key into the inbox's own storage slots 0..8.
 fn store_key(db: &mut CacheDB<EmptyDB>, address: Address, key: &[u8; 256]) {
-    for (slot, word) in key.chunks_exact(32).enumerate() {
+    for (slot, word) in key.as_chunks::<32>().0.iter().enumerate() {
         db.insert_account_storage(
             &address,
             &U256::from(slot as u64),

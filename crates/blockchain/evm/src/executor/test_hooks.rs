@@ -26,7 +26,6 @@ impl OutbeBlockExecutor<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::executor::*;
     use alloy_primitives::{Bytes, U256};
     use evm2::{env::BlockEnvExt, evm::EmptyDB, SpecId};

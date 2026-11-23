@@ -283,17 +283,34 @@ pub(crate) enum RuntimeSupervisorError {
     Journal(#[from] ServiceTxJournalError),
     #[error(transparent)]
     Renewal(
-        #[from]
-        outbe_tee::lifecycle::renewal::RenewalError<rpc::RpcLifecycleError, signer::SigningError>,
+        Box<
+            outbe_tee::lifecycle::renewal::RenewalError<
+                rpc::RpcLifecycleError,
+                signer::SigningError,
+            >,
+        >,
     ),
     #[error(transparent)]
     Observation(Box<engine::SupervisorError<rpc::RpcLifecycleError, signer::SigningError>>),
     #[error(transparent)]
-    Successor(#[from] successor::SuccessorRuntimeError),
+    Successor(Box<successor::SuccessorRuntimeError>),
     #[error(transparent)]
     Live(#[from] crate::admission_authority::live::LiveTeeError),
     #[error("chain id exceeds supported width")]
     InvalidChainId,
+}
+
+impl From<outbe_tee::lifecycle::renewal::RenewalError<rpc::RpcLifecycleError, signer::SigningError>>
+    for RuntimeSupervisorError
+{
+    fn from(
+        source: outbe_tee::lifecycle::renewal::RenewalError<
+            rpc::RpcLifecycleError,
+            signer::SigningError,
+        >,
+    ) -> Self {
+        Self::Renewal(Box::new(source))
+    }
 }
 
 impl From<engine::SupervisorError<rpc::RpcLifecycleError, signer::SigningError>>
@@ -301,6 +318,12 @@ impl From<engine::SupervisorError<rpc::RpcLifecycleError, signer::SigningError>>
 {
     fn from(source: engine::SupervisorError<rpc::RpcLifecycleError, signer::SigningError>) -> Self {
         Self::Observation(Box::new(source))
+    }
+}
+
+impl From<successor::SuccessorRuntimeError> for RuntimeSupervisorError {
+    fn from(source: successor::SuccessorRuntimeError) -> Self {
+        Self::Successor(Box::new(source))
     }
 }
 
@@ -361,18 +384,17 @@ impl RuntimeSupervisorError {
     pub(super) fn is_proof_window_moved(&self) -> bool {
         match self {
             Self::Rpc(error) => rpc_proof_window_moved(error),
-            Self::Successor(successor::SuccessorRuntimeError::Rpc(error)) => {
-                rpc_proof_window_moved(error)
-            }
-            Self::Successor(successor::SuccessorRuntimeError::Port(error)) => {
-                port_proof_window_moved(error)
-            }
-            Self::Successor(successor::SuccessorRuntimeError::Successor(error)) => {
-                successor_proof_window_moved(error)
-            }
+            Self::Successor(error) => match error.as_ref() {
+                successor::SuccessorRuntimeError::Rpc(error) => rpc_proof_window_moved(error),
+                successor::SuccessorRuntimeError::Port(error) => port_proof_window_moved(error),
+                successor::SuccessorRuntimeError::Successor(error) => {
+                    successor_proof_window_moved(error)
+                }
+                _ => false,
+            },
             Self::Observation(error) => observation_proof_window_moved(error),
             Self::Renewal(error) => renewal_proof_window_moved(error),
-            Self::Successor(_) | Self::Journal(_) | Self::Live(_) | Self::InvalidChainId => false,
+            Self::Journal(_) | Self::Live(_) | Self::InvalidChainId => false,
         }
     }
 

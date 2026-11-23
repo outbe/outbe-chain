@@ -415,7 +415,6 @@ toml = "0.8"
 # Testing
 tempfile = "3"
 proptest = "1"
-criterion = { version = "0.5", features = ["html_reports"] }
 
 # Proc-macro
 proc-macro2 = "1"
