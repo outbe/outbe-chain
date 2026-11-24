@@ -566,7 +566,7 @@ fn at_offer_hour(storage: &StorageHandle<'_>, (hour, minutes): (u64, u64), rate:
 }
 
 fn reference_vwap(storage: &StorageHandle<'_>) -> U256 {
-    outbe_oracle::api::tribute_pricing_inputs(storage.clone(), 840, 840)
+    outbe_oracle::api::offer_pricing_inputs(storage.clone(), 840, 840)
         .unwrap()
         .unwrap()
         .reference_vwap_minor

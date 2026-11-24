@@ -228,7 +228,7 @@ pub(crate) fn offer_terms(
     wwd: &outbe_worldwideday::WwdProjection,
     input: &IssueNodInput,
     now: u64,
-    pricing: &outbe_oracle::api::TributePricingInputs,
+    pricing: &outbe_oracle::api::OfferPricingInputs,
 ) -> Result<(u16, U256)> {
     let sub_series_id = offer_hour(now, wwd.offerings_start)?;
     let series_id = SeriesId::for_pair(wwd.day, input.issuance_currency, input.reference_currency)
@@ -241,7 +241,7 @@ pub(crate) fn offer_terms(
 pub(crate) fn offer_request(
     input: &IssueNodInput,
     (emission_day, entry_price_minor): (u32, U256),
-    pricing: &outbe_oracle::api::TributePricingInputs,
+    pricing: &outbe_oracle::api::OfferPricingInputs,
     zk_context: OfferZkContext,
 ) -> IssueNodAtOfferRequestV1 {
     IssueNodAtOfferRequestV1 {
@@ -414,7 +414,7 @@ pub(crate) fn pricing(
     input: &IssueNodInput,
 ) -> Result<(
     outbe_worldwideday::WwdProjection,
-    outbe_oracle::api::TributePricingInputs,
+    outbe_oracle::api::OfferPricingInputs,
 )> {
     let worldwide_day = input.worldwide_day;
     if !worldwide_day.is_valid() {
@@ -426,7 +426,7 @@ pub(crate) fn pricing(
     let wwd = outbe_worldwideday::worldwide_day(storage.clone(), worldwide_day)?
         .ok_or(OfferError::WorldwideDayNotOffering { worldwide_day })?;
     outbe_oracle::api::check_reference_currency(input.reference_currency)?;
-    let pricing = outbe_oracle::api::tribute_pricing_inputs(
+    let pricing = outbe_oracle::api::offer_pricing_inputs(
         storage.clone(),
         input.issuance_currency,
         input.reference_currency,

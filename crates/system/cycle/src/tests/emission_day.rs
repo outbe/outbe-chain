@@ -18,7 +18,7 @@ use super::*;
 fn every_utc_day_is_an_emission_day() {
     // Genesis at 2026-10-01 00:01:00 UTC (date key 20261001).
     // The first WWD is 20260930 (forming_end = 2026-10-01 12:00 UTC > genesis), whose E = D+1 is 20261001.
-    // Each day E from 20261001 has wwd == E-1, with 0 Tributes.
+    // Each day E from 20261001 has wwd == E-1, with 0 Nods.
     let genesis_oct_1 = date_key_to_utc_timestamp(20_261_001).unwrap() + 60;
     let mut storage = cycle_storage();
     storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 8);
@@ -40,7 +40,7 @@ fn every_utc_day_is_an_emission_day() {
     });
 
     // Advance hour by hour across 4 full UTC days (20261001..=20261004) into 20261005 13:00 UTC,
-    // after the Metadosis of 20261004, with zero Tributes and zero oracle prices.
+    // after the Metadosis of 20261004, with zero Nods and zero oracle prices.
     let first_hour = (genesis_oct_1 / 3_600 + 1) * 3_600;
     let end_ts = date_key_to_utc_timestamp(20_261_005).unwrap() + 13 * 3_600;
     let mut block_number = 2u64;
@@ -348,7 +348,7 @@ fn wwd_step_runs_once_a_day() {
     assert_eq!(
         storage.get_events(WORLDWIDE_DAY_ADDRESS).len(),
         events_before_intraday,
-        "intraday ticks 01:00..=23:00 UTC must not emit duplicate TributeFactory WWD events"
+        "intraday ticks 01:00..=23:00 UTC must not emit duplicate Worldwide Day events"
     );
 
     // Force an A6 revert at 2024-01-06 00:00 UTC by pre-linking future EmissionDay 20240108
@@ -418,7 +418,7 @@ fn wwd_step_runs_once_a_day() {
     assert_eq!(
         storage.get_events(WORLDWIDE_DAY_ADDRESS).len(),
         factory_events_before_failed_a6,
-        "a reverted A6 must emit no TributeFactory event"
+        "a reverted A6 must emit no Worldwide Day event"
     );
     block_no += 1;
 
@@ -510,7 +510,7 @@ fn wwd_step_runs_once_a_day() {
     assert_eq!(
         storage.get_events(WORLDWIDE_DAY_ADDRESS).len(),
         factory_events_before_text_revert,
-        "a text revert of A6 must emit no TributeFactory event"
+        "a text revert of A6 must emit no Worldwide Day event"
     );
 }
 
@@ -749,7 +749,7 @@ fn the_auction_starts_live_at_00_00_and_takes_its_brief_at_12_00() {
     });
     assert_eq!(desis_events(&storage), (vec![], vec![]));
 
-    // The day has no Tribute, so its brief at 12:00 carries a zero limit and cancels the started
+    // The day has no Nod, so its brief at 12:00 carries a zero limit and cancels the started
     // auction.
     storage.set_block_number(3);
     storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 16);

@@ -194,7 +194,7 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
             GENESIS_TS + SECONDS_PER_DAY + PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
         );
 
-        // No tributes for any AgentReward pool: all three WAA/SRA/CCA
+        // No offers for any AgentReward pool: all three WAA/SRA/CCA
         // allocations return to terminal Metadosis and no native COEN moves.
         let agent_reward_balance = ctx_fire
             .storage
