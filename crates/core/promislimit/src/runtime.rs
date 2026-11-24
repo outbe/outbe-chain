@@ -1,5 +1,6 @@
 use alloy_primitives::{address, Address, U256};
-use alloy_sol_types::SolEvent;
+use alloy_sol_types::{sol, SolCall, SolEvent};
+use outbe_core_common::addresses::WCOEN_ADDRESS;
 use outbe_primitives::addresses::REWARDS_ADDRESS;
 use outbe_primitives::error::Result;
 use outbe_system_common::addresses::{
@@ -9,6 +10,12 @@ use outbe_system_common::addresses::{
 use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 
 use crate::{errors::PromisLimitError, precompile::IPromisLimit, schema::PromisLimitContract};
+
+sol! {
+    interface IWCOEN {
+        function transfer(address dst, uint256 wad) external returns (bool);
+    }
+}
 
 /// The cause of a limit or a load that goes back to the Promis Limit.
 #[repr(u8)]
@@ -97,6 +104,27 @@ impl PromisLimitContract<'_> {
         self.burn_rests
             .write(&code, total % UNITS_PER_PROTOCOL_MINOR)?;
         self.burn_whole_minors(code, source.account(), total)?;
+        guard.commit()
+    }
+
+    /// Burns `amount` WCOEN that the calling module holds: the transfer to address 0 unwraps it
+    /// there, and the whole minors burn from address 0. The rest stays there for the daily step.
+    pub fn burn_wcoen(&mut self, source: BurnSource, amount: U256) -> Result<()> {
+        if amount.is_zero() {
+            return Ok(());
+        }
+        let guard = self.storage.checkpoint_guard()?;
+        self.storage.call(
+            WCOEN_ADDRESS,
+            U256::ZERO,
+            IWCOEN::transferCall {
+                dst: Address::ZERO,
+                wad: amount,
+            }
+            .abi_encode()
+            .into(),
+        )?;
+        self.burn_whole_minors(source as u8, Address::ZERO, amount)?;
         guard.commit()
     }
 

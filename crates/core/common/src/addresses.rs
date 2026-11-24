@@ -9,6 +9,19 @@ pub const INTEX_NFT1155_ADDRESS: Address = address!("0x8E5041c14D3f0b802E8eFA4e5
 #[cfg(feature = "e2e-test")]
 pub const INTEX_NFT1155_ADDRESS: Address = address!("0x116063CF0558225D808d1C309322d6C3CbfDE343");
 
+/// WCOEN on Outbe. CREATE3 proxy under salt "WCOENv7.0.0", same deployer and factory.
+#[cfg(not(feature = "e2e-test"))]
+pub const WCOEN_ADDRESS: Address = address!("0x3414f55f086Eb224135D9044299E6eBc6E841197");
+#[cfg(feature = "e2e-test")]
+pub const WCOEN_ADDRESS: Address = address!("0x5C8E0466cCD1f66A85f167Fa3ec75E5F48C7145F");
+
+/// The WCOEN token bridge, the same address on every chain. CREATE3 proxy under salt
+/// "WCOENBridgev7.0.0", same deployer and factory.
+#[cfg(not(feature = "e2e-test"))]
+pub const WCOEN_BRIDGE_ADDRESS: Address = address!("0xDEb9bA2f46395D03c6ff51b4A2c4898930ED170b");
+#[cfg(feature = "e2e-test")]
+pub const WCOEN_BRIDGE_ADDRESS: Address = address!("0x189b63A6583Ffd67082D15456F0fACD0CBb2B631");
+
 /// Intex OriginRouter: the auction's outbound ERC-7786 sends and target-chain
 /// registry. CREATE3 proxy under salt "outbe-intex:OriginRouter:v7.0.0", same deployer and factory.
 #[cfg(not(feature = "e2e-test"))]
