@@ -5,7 +5,7 @@ use clap::{Args, Parser, Subcommand};
 use eyre::{bail, ensure, Result, WrapErr as _};
 use xtask::{
     layer_boundaries, protocol_bench,
-    release::{canonical_json, elf, repository_root, software, toolchain},
+    release::{canonical_json, elf, repository_root, software, toolchain, vm_image},
     stablecoin,
 };
 
@@ -94,10 +94,37 @@ struct ReleaseArgs {
 enum ReleaseCommand {
     /// Build a deterministic, network-neutral Outbe software bundle.
     Build(SoftwareBuildArgs),
+    /// Build a reproducible dstack guest VM image from a verified software bundle.
+    VmImage(VmImageArgs),
     /// Validate build specs, generate manifests and compare reproducible ELF outputs.
     Elf(ElfArgs),
     /// Verify project toolchain pins, APT closures and Intel DCAP native-QVL artifacts.
     Toolchain(ToolchainArgs),
+}
+
+#[derive(Debug, Args)]
+struct VmImageArgs {
+    /// Verified `.tar.zst` software bundle produced by `cargo xtask release build`.
+    #[arg(long)]
+    software_bundle: PathBuf,
+    /// Directory that receives the built VM image artifacts and `vm-image-manifest.json`.
+    #[arg(long)]
+    output: PathBuf,
+    /// Comma-separated dstack image flavors to build (`dev`, `prod`).
+    #[arg(long, default_value = "dev,prod")]
+    flavors: String,
+    /// Local path or git URL of the dstack repository.
+    #[arg(long, default_value = vm_image::DEFAULT_DSTACK_REPO)]
+    dstack_repo: String,
+    /// Directory containing pinned LLVM 18 runtime libraries (`libc++.so.1`, `libc++abi.so.1`, `libunwind.so.1`).
+    #[arg(long)]
+    runtime_libs_dir: Option<PathBuf>,
+    /// Build parallelism passed to dstack's `repro-build.sh` (`JOBS`).
+    #[arg(long, default_value_t = 4)]
+    jobs: usize,
+    /// Run dstack `repro-check` (build twice and compare byte for byte).
+    #[arg(long)]
+    check: bool,
 }
 
 #[derive(Debug, Args)]
@@ -272,6 +299,27 @@ fn main() -> Result<()> {
                     inside_container: arguments.inside_container,
                 })?;
                 println!("software bundle: {}", output.display());
+            }
+            ReleaseCommand::VmImage(arguments) => {
+                let repo_root = repository_root()?;
+                let flavors = vm_image::parse_flavors(&arguments.flavors)?;
+                let manifest = vm_image::build(&vm_image::VmImageOptions {
+                    repo_root: &repo_root,
+                    software_bundle: &arguments.software_bundle,
+                    output_dir: &arguments.output,
+                    flavors: &flavors,
+                    dstack_repo: &arguments.dstack_repo,
+                    runtime_libs_dir: arguments.runtime_libs_dir.as_deref(),
+                    jobs: arguments.jobs,
+                    check: arguments.check,
+                })?;
+                println!(
+                    "vm image manifest: {}",
+                    arguments.output.join(vm_image::MANIFEST_NAME).display()
+                );
+                for (flavor, entry) in &manifest.flavors {
+                    println!("  {flavor:<6} os_image_hash={}", entry.os_image_hash);
+                }
             }
             ReleaseCommand::Elf(elf_args) => run_elf_command(elf_args.command)?,
             ReleaseCommand::Toolchain(toolchain_args) => {

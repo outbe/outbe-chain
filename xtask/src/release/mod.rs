@@ -1,6 +1,7 @@
 pub mod elf;
 pub mod software;
 pub mod toolchain;
+pub mod vm_image;
 
 use std::collections::BTreeMap;
 use std::fs;
