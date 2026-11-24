@@ -33,9 +33,8 @@ pub use dev::{
 };
 pub use errors::{
     map_consensus_transport_error, parse_tribute_draft_id, ComputeError, DraftIdHexError,
-    EnclaveClientError, LocalCryptoError, TeeError, TributeSourceError, FIDELITY_ATTESTATION,
-    GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION, TRIBUTE_OFFER_ATTESTATION,
-    TRIBUTE_SOURCE_REJECTED,
+    EnclaveClientError, LocalCryptoError, TeeError, FIDELITY_ATTESTATION, GRATIS_OP_ATTESTATION,
+    NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION,
 };
 pub use offer_encrypt::{
     canary_offer_json, encrypt_tribute_offer, encrypt_tribute_offer_with, EncryptedOfferParts,
@@ -49,7 +48,6 @@ pub use response_auth::{
 pub use v2_balance_decrypt::{
     decrypt_fidelity_cohorts, decrypt_gratis_balance, decrypt_nod_for_owner,
     decrypt_nod_nominal_for_owner, decrypt_nod_quote_for_owner, decrypt_promis_balance,
-    decrypt_tribute_for_owner,
 };
 pub use witness_envelope::{
     consensus_witness_call, decode_canonical_body, decode_tagged_payload,

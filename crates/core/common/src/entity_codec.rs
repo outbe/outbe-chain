@@ -9,26 +9,9 @@ pub use nod_v1::{
     decode_nod_item_v1, decode_stored_nod_item_v1, encode_nod_item_v1, NodItemBodyV1,
     NOD_BODY_SCHEMA_V1,
 };
-mod tribute_v2;
-pub use tribute_v2::{
-    decode_stored_tribute_v2, decode_tribute_v2, encode_tribute_v2, TRIBUTE_BODY_SCHEMA_V2,
-};
 
 /// Fork-supported schema for the canonical plaintext body messages.
 pub const BODY_SCHEMA_V1: u32 = 1;
-
-/// Canonical v1 Tribute payload.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TributeBodyV1 {
-    pub tribute_id: WwdEntityId,
-    pub owner: Address,
-    pub worldwide_day: WorldwideDay,
-    pub issuance_amount_minor: U256,
-    pub issuance_currency: u16,
-    pub nominal_amount_minor: U256,
-    pub reference_currency: u16,
-    pub tribute_price_minor: U256,
-}
 
 /// Canonical v1 Nod group payload.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -106,69 +89,6 @@ pub fn decode_stored_body(bytes: &[u8]) -> Result<StoredBody, CanonicalBodyError
     Ok(body)
 }
 
-/// Encodes and validates the canonical v1 Tribute payload.
-pub fn encode_tribute_v1(body: &TributeBodyV1) -> Result<Vec<u8>, CanonicalBodyError> {
-    validate_identity_day(body.tribute_id, body.worldwide_day)?;
-    let mut output = Vec::with_capacity(192);
-    encode_bytes_field(1, body.tribute_id.as_slice(), &mut output);
-    encode_bytes_field(2, body.owner.as_slice(), &mut output);
-    encode_optional_varint_field(3, u64::from(body.worldwide_day.value()), &mut output);
-    encode_bytes_field(
-        4,
-        &body.issuance_amount_minor.to_be_bytes::<32>(),
-        &mut output,
-    );
-    encode_optional_varint_field(5, u64::from(body.issuance_currency), &mut output);
-    encode_bytes_field(
-        6,
-        &body.nominal_amount_minor.to_be_bytes::<32>(),
-        &mut output,
-    );
-    encode_optional_varint_field(7, u64::from(body.reference_currency), &mut output);
-    encode_bytes_field(
-        8,
-        &body.tribute_price_minor.to_be_bytes::<32>(),
-        &mut output,
-    );
-    Ok(output)
-}
-
-/// Strictly decodes one canonical v1 Tribute payload.
-pub fn decode_tribute_v1(bytes: &[u8]) -> Result<TributeBodyV1, CanonicalBodyError> {
-    let mut fields = Fields::new(bytes);
-    let tribute_id = WwdEntityId::try_from(required_bytes(&mut fields, 1)?)?;
-    let owner_bytes = fixed_bytes::<20>(required_bytes(&mut fields, 2)?, 2)?;
-    let worldwide_day = WorldwideDay::new(optional_u32(&mut fields, 3)?);
-    let issuance_amount_minor = decode_u256(required_bytes(&mut fields, 4)?, 4)?;
-    let issuance_currency = optional_u16(&mut fields, 5)?;
-    let nominal_amount_minor = decode_u256(required_bytes(&mut fields, 6)?, 6)?;
-    let reference_currency = optional_u16(&mut fields, 7)?;
-    let tribute_price_minor = decode_u256(required_bytes(&mut fields, 8)?, 8)?;
-    fields.finish()?;
-
-    let body = TributeBodyV1 {
-        tribute_id,
-        owner: Address::from(owner_bytes),
-        worldwide_day,
-        issuance_amount_minor,
-        issuance_currency,
-        nominal_amount_minor,
-        reference_currency,
-        tribute_price_minor,
-    };
-    validate_identity_day(body.tribute_id, body.worldwide_day)?;
-    if encode_tribute_v1(&body)? != bytes {
-        return Err(CanonicalBodyError::NonCanonicalEncoding);
-    }
-    Ok(body)
-}
-
-/// Decodes a StoredBody and requires its fork-active Tribute schema.
-pub fn decode_stored_tribute_v1(bytes: &[u8]) -> Result<TributeBodyV1, CanonicalBodyError> {
-    let stored = decode_active_stored_body(bytes)?;
-    decode_tribute_v1(stored.payload())
-}
-
 /// Encodes the canonical v1 Nod group payload.
 pub fn encode_nod_group_v1(body: &NodGroupBodyV1) -> Result<Vec<u8>, CanonicalBodyError> {
     let mut output = Vec::with_capacity(128);
@@ -205,16 +125,6 @@ fn decode_active_stored_body(bytes: &[u8]) -> Result<StoredBody, CanonicalBodyEr
         });
     }
     Ok(stored)
-}
-
-fn validate_identity_day(
-    identity: WwdEntityId,
-    worldwide_day: WorldwideDay,
-) -> Result<(), CanonicalBodyError> {
-    if identity.worldwide_day() != worldwide_day {
-        return Err(CanonicalBodyError::IdentityDayMismatch);
-    }
-    Ok(())
 }
 
 fn decode_u256(bytes: &[u8], field: u32) -> Result<U256, CanonicalBodyError> {
@@ -455,10 +365,6 @@ pub enum CanonicalBodyError {
         expected: usize,
         actual: usize,
     },
-    #[error("body worldwide day does not match its WwdEntityId prefix")]
-    IdentityDayMismatch,
-    #[error("invalid encrypted Tribute blob or identity/day encoding")]
-    InvalidEncryptedTribute,
     #[error("invalid encrypted NOD blob or identity/day encoding")]
     InvalidEncryptedNod,
     #[error("input is not the canonical Protobuf representation")]
@@ -501,77 +407,15 @@ fn canonical_decoded<T>(
 mod tests {
     use super::*;
     use crate::nod_encryption::{EncryptedNodV1, NodTermsV1, NOD_BLOB_LEN};
-    use crate::tribute_encryption::{
-        EncryptedTributeV2, TributeContextV2, TRIBUTE_AMOUNTS_BLOB_LEN,
-    };
 
     fn sample_day() -> WorldwideDay {
         WorldwideDay::new(20_260_101)
     }
 
-    fn sample_id(day: WorldwideDay) -> WwdEntityId {
-        WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0x11))
-    }
-
     #[test]
-    fn canonical_v1_and_v2_entity_bodies_roundtrip_and_reject_malformed_wire() {
+    fn canonical_entity_bodies_roundtrip_and_reject_malformed_wire() {
         let day = sample_day();
-        let id = sample_id(day);
         let owner = Address::repeat_byte(0x22);
-
-        // V1 Tribute roundtrip + identity day mismatch rejection.
-        let tribute_v1 = TributeBodyV1 {
-            tribute_id: id,
-            owner,
-            worldwide_day: day,
-            issuance_amount_minor: U256::from(1_000_000u64),
-            issuance_currency: 840,
-            nominal_amount_minor: U256::from(2_000_000u64),
-            reference_currency: 840,
-            tribute_price_minor: U256::from(500_000u64),
-        };
-        let encoded_tribute_v1 = encode_tribute_v1(&tribute_v1).unwrap();
-        assert_eq!(decode_tribute_v1(&encoded_tribute_v1).unwrap(), tribute_v1);
-        let stored_tribute_v1 = StoredBody::new(BODY_SCHEMA_V1, encoded_tribute_v1.clone())
-            .unwrap()
-            .encode();
-        assert_eq!(
-            decode_stored_tribute_v1(&stored_tribute_v1).unwrap(),
-            tribute_v1
-        );
-
-        let mut bad_day_tribute = tribute_v1.clone();
-        bad_day_tribute.worldwide_day = WorldwideDay::new(20_260_102);
-        assert!(matches!(
-            encode_tribute_v1(&bad_day_tribute),
-            Err(CanonicalBodyError::IdentityDayMismatch)
-        ));
-
-        // V2 Tribute roundtrip + invalid blob rejection.
-        let mut amt_blob = vec![0xbb; TRIBUTE_AMOUNTS_BLOB_LEN];
-        amt_blob[..8].copy_from_slice(&1u64.to_be_bytes());
-        let tribute_v2 = EncryptedTributeV2 {
-            context: TributeContextV2 {
-                chain_id: 2026,
-                tribute_id: id,
-                owner,
-                worldwide_day: day,
-                issuance_currency: 840,
-                reference_currency: 840,
-                tribute_price_minor: U256::from(1_000_000u64),
-                offer_input_hash: B256::repeat_byte(0x33),
-            },
-            encrypted_amounts: amt_blob,
-        };
-        let encoded_tribute_v2 = encode_tribute_v2(&tribute_v2).unwrap();
-        assert_eq!(decode_tribute_v2(&encoded_tribute_v2).unwrap(), tribute_v2);
-        let stored_tribute_v2 = StoredBody::new(TRIBUTE_BODY_SCHEMA_V2, encoded_tribute_v2)
-            .unwrap()
-            .encode();
-        assert_eq!(
-            decode_stored_tribute_v2(&stored_tribute_v2).unwrap(),
-            tribute_v2
-        );
 
         // V1 encrypted Nod roundtrip.
         let mut nod_amt_blob = vec![0xdd; NOD_BLOB_LEN];
@@ -619,14 +463,13 @@ mod tests {
             decode_stored_body(&[0x08, 0x01, 0x08, 0x01, 0x12, 0x01, 0xff]),
             Err(CanonicalBodyError::NonAscendingOrDuplicateField { field: 1 })
         ));
-        // 4) explicit default scalar on optional field (field 3 = 0 in Tribute V1)
+        // 4) explicit default scalar on optional field (field 2 = 0 in a Nod group)
         let mut with_explicit_zero = Vec::new();
-        encode_bytes_field(1, id.as_slice(), &mut with_explicit_zero);
-        encode_bytes_field(2, owner.as_slice(), &mut with_explicit_zero);
-        encode_varint_field(3, 0, &mut with_explicit_zero);
+        encode_bytes_field(1, B256::repeat_byte(0x44).as_slice(), &mut with_explicit_zero);
+        encode_varint_field(2, 0, &mut with_explicit_zero);
         assert!(matches!(
-            decode_tribute_v1(&with_explicit_zero),
-            Err(CanonicalBodyError::ExplicitDefault { field: 3 })
+            decode_nod_group_v1(&with_explicit_zero),
+            Err(CanonicalBodyError::ExplicitDefault { field: 2 })
         ));
     }
 }

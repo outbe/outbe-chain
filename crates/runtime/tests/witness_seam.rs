@@ -7,9 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::confidential_tee::{
-    EnclaveClientError, LocalCryptoError, TributeSourceError, WitnessResponseTag, WitnessSchema,
-    FIDELITY_ATTESTATION, GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION,
-    TRIBUTE_OFFER_ATTESTATION, TRIBUTE_SOURCE_REJECTED,
+    LocalCryptoError, WitnessResponseTag, WitnessSchema, FIDELITY_ATTESTATION,
+    GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION,
 };
 use outbe_core_common::nod_encryption::NodTermsV1;
 use outbe_fidelity::enclave_client::snapshot_leagues;
@@ -655,7 +654,6 @@ impl std::error::Error for Reason {}
 fn metric_classes_and_local_crypto_error_messages_remain_exact() {
     let bad_sig = || TeeAttestationError::InvalidSignatureLength { actual: 3 };
     for (descriptor, expected) in [
-        (TRIBUTE_OFFER_ATTESTATION, "tribute_offer_attestation"),
         (GRATIS_OP_ATTESTATION, "gratis_op_attestation"),
         (PROMIS_OP_ATTESTATION, "promis_op_attestation"),
         (FIDELITY_ATTESTATION, "fidelity_attestation"),
@@ -665,21 +663,9 @@ fn metric_classes_and_local_crypto_error_messages_remain_exact() {
             expected
         );
     }
-    for (descriptor, expected) in [
-        (TRIBUTE_SOURCE_REJECTED, "tribute_source_rejected"),
-        (NOD_MINT_REJECTED, "nod_mint_rejected"),
-    ] {
-        assert_eq!(
-            TransportError::app_rejected(descriptor, Reason("rejected")).metric_class(),
-            expected
-        );
-    }
-    let source =
-        TransportError::app_rejected(TRIBUTE_SOURCE_REJECTED, TributeSourceError::ContextMismatch);
-    assert_eq!(source.metric_class(), "tribute_source_rejected");
     assert_eq!(
-        source.to_string(),
-        "Tribute source rejected: Tribute source context mismatch"
+        TransportError::app_rejected(NOD_MINT_REJECTED, Reason("rejected")).metric_class(),
+        "nod_mint_rejected"
     );
     let rejected = EncryptedNodMintRejectedV1 {
         reason: "bad nonce".into(),
@@ -697,10 +683,6 @@ fn metric_classes_and_local_crypto_error_messages_remain_exact() {
         format!("encrypted NOD mint rejected: {}", rejected.reason)
     );
     assert_local_crypto_sentences();
-    assert_eq!(
-        EnclaveClientError::TributeSourceRejected(TributeSourceError::ContextMismatch).to_string(),
-        "Tribute source rejected: Tribute source context mismatch"
-    );
 }
 
 #[test]
@@ -792,22 +774,6 @@ fn assert_local_crypto_sentences() {
         (
             E::InvalidNodAmountLength(plain(32)),
             "invalid NOD amount length",
-        ),
-        (
-            E::InvalidTributeEncoding,
-            "invalid encrypted Tribute encoding",
-        ),
-        (
-            E::InvalidTributeAmountKey(T::AeadKey),
-            "invalid Tribute amount key",
-        ),
-        (
-            E::TributeAmountDecryptionFailed(T::DecryptionFailed),
-            "Tribute amount decryption failed",
-        ),
-        (
-            E::InvalidTributeAmountLength(plain(64)),
-            "invalid Tribute amount length",
         ),
     ] {
         assert_eq!(error.to_string(), expected);

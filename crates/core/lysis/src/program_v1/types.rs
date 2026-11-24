@@ -1,7 +1,6 @@
 //! Typed storage-independent inputs, actions, observations and failures.
 
 use alloy_primitives::{Address, U256};
-use outbe_core_common::entity_codec::TributeBodyV1;
 use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_system_common::time::WorldwideDay;
 
@@ -17,20 +16,6 @@ pub struct TributeInputV1 {
     pub nominal_amount_minor: U256,
     pub reference_currency: u16,
     pub tribute_price_minor: U256,
-}
-
-impl From<&TributeBodyV1> for TributeInputV1 {
-    fn from(body: &TributeBodyV1) -> Self {
-        Self {
-            tribute_id: body.tribute_id,
-            owner: body.owner,
-            worldwide_day: body.worldwide_day,
-            issuance_currency: body.issuance_currency,
-            nominal_amount_minor: body.nominal_amount_minor,
-            reference_currency: body.reference_currency,
-            tribute_price_minor: body.tribute_price_minor,
-        }
-    }
 }
 
 /// A logical snapshot observation, including a deterministic unavailable value.

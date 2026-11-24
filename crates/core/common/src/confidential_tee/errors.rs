@@ -93,12 +93,6 @@ pub fn map_consensus_transport_error<E>(
     }
 }
 
-/// Tribute offer, read, day, or NOD attestation failure descriptor.
-pub const TRIBUTE_OFFER_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
-    "tribute_offer_attestation",
-    "offer attestation signature invalid",
-);
-
 /// Gratis ledger operation attestation failure descriptor.
 pub const GRATIS_OP_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
     "gratis_op_attestation",
@@ -116,10 +110,6 @@ pub const FIDELITY_ATTESTATION: AppErrorDescriptor = AppErrorDescriptor::new(
     "fidelity_attestation",
     "fidelity attestation signature invalid",
 );
-
-/// Tribute state-source proof or context rejection descriptor.
-pub const TRIBUTE_SOURCE_REJECTED: AppErrorDescriptor =
-    AppErrorDescriptor::new("tribute_source_rejected", "Tribute source rejected");
 
 /// Encrypted NOD mint business rejection descriptor.
 pub const NOD_MINT_REJECTED: AppErrorDescriptor =
@@ -237,40 +227,9 @@ pub enum ComputeError {
     AmountOverflow,
 }
 
-/// Typed rejection causes for a Tribute state-source opening.
-#[derive(Clone, Debug, PartialEq, Eq, Error)]
-pub enum TributeSourceError {
-    /// Checkpoint or Tribute context identity failed structural validation.
-    #[error("Tribute source context mismatch")]
-    ContextMismatch,
-    /// Expected storage slot list is empty, unsorted, oversized, or misaligned.
-    #[error("Tribute source slot set mismatch")]
-    SlotSetMismatch,
-    /// Source binding hash differed from the node's expected authority binding.
-    #[error("Tribute source does not match node authority")]
-    AuthorityMismatch,
-    /// Proven storage word differed from the expected word value.
-    #[error("Tribute source word mismatch")]
-    WordMismatch,
-    /// Underlying MPT account/storage proof verification failed.
-    #[error(transparent)]
-    ProofVerification(#[from] outbe_primitives::storage::proof::StateProofError),
-}
-
 /// Typed host-client errors for domain enclave operations.
 #[derive(Debug, Error)]
 pub enum EnclaveClientError {
-    /// Tribute state source verification rejected the supplied opening.
-    #[error("Tribute source rejected: {0}")]
-    TributeSourceRejected(#[from] TributeSourceError),
-    /// Tribute day or league predecessor record carried an invalid version.
-    #[error("invalid Tribute day predecessor version: expected {expected}, got {actual}")]
-    InvalidTributeDayPredecessorVersion {
-        /// Minimum expected predecessor version.
-        expected: u8,
-        /// Actual predecessor version byte observed.
-        actual: u8,
-    },
     /// Underlying enclave transport or codec error.
     #[error(transparent)]
     Transport(#[from] TransportError),
@@ -333,18 +292,6 @@ pub enum LocalCryptoError {
     /// Derived NOD amount key failed AEAD key initialization.
     #[error("invalid NOD amount key")]
     InvalidNodAmountKey(#[source] outbe_tee::TeeCryptoError),
-    /// Encrypted Tribute record failed structural encoding validation.
-    #[error("invalid encrypted Tribute encoding")]
-    InvalidTributeEncoding,
-    /// Encrypted Tribute amounts failed AEAD or key derivation.
-    #[error("Tribute amount decryption failed")]
-    TributeAmountDecryptionFailed(#[source] outbe_tee::TeeCryptoError),
-    /// Opened Tribute plaintext did not have the 64-byte amounts length.
-    #[error("invalid Tribute amount length")]
-    InvalidTributeAmountLength(#[source] outbe_tee::TeeCryptoError),
-    /// Derived Tribute amount key failed AEAD key initialization.
-    #[error("invalid Tribute amount key")]
-    InvalidTributeAmountKey(#[source] outbe_tee::TeeCryptoError),
 }
 
 impl PartialEq<&str> for LocalCryptoError {
@@ -379,10 +326,6 @@ impl LocalCryptoError {
             Self::NodAmountDecryptionFailed(_) => "NOD amount decryption failed",
             Self::InvalidNodAmountLength(_) => "invalid NOD amount length",
             Self::InvalidNodAmountKey(_) => "invalid NOD amount key",
-            Self::InvalidTributeEncoding => "invalid encrypted Tribute encoding",
-            Self::TributeAmountDecryptionFailed(_) => "Tribute amount decryption failed",
-            Self::InvalidTributeAmountLength(_) => "invalid Tribute amount length",
-            Self::InvalidTributeAmountKey(_) => "invalid Tribute amount key",
         }
     }
 }

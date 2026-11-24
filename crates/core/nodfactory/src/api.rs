@@ -9,6 +9,8 @@ use crate::runtime;
 
 pub use crate::runtime::MineGratisRequest;
 
+/// Issues a Nod with no offer checks: a fixture for tests and benchmarks.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Result<U256> {
     runtime::issue_nod(storage, encrypted)
 }
