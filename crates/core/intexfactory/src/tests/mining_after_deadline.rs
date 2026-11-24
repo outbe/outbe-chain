@@ -280,10 +280,10 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
         assert_eq!(reserve(), forfeited);
     });
     let closed_series: Vec<_> = storage
-        .get_events(outbe_system_common::addresses::INTEX_ADDRESS)
+        .get_events(outbe_system_common::addresses::INTEX_FACTORY_ADDRESS)
         .iter()
         .filter_map(|log| {
-            outbe_intex::precompile::IIntex::IntexSeriesClosed::decode_log_data(log).ok()
+            crate::precompile::IIntexFactory::IntexSeriesClosed::decode_log_data(log).ok()
         })
         .map(|event| (event.forfeitedCount, event.forfeitedAmountMinor))
         .collect();

@@ -188,7 +188,12 @@ pub fn record_mined_units(
     registry.settled_units.write(&id, settled)?;
     registry.mined_units.write(&id, mined)?;
     add_owner_units(storage, series_id, owner, units, OwnerLedger::Mined)?;
-    emit_settled_transfer(storage, series_id, owner, Address::ZERO, units)
+    emit_settled_transfer(storage, series_id, owner, Address::ZERO, units)?;
+    IntexContract::new(storage.clone()).emit(IIntex::IntexBurned {
+        intexId: id,
+        owner,
+        units,
+    })
 }
 
 /// The Settled collection's ERC-1155 record of a mint (`from` zero) or a burn (`to` zero).

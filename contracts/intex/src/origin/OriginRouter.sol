@@ -238,8 +238,7 @@ contract OriginRouter is
         _emitSent(sendId, p.dstChainId, payload);
     }
 
-    /// @dev The Sent event of an auction or call notice message that left. Series sends emit their
-    ///      own events at the call site.
+    /// @dev The Sent event of a message that left, at its first send or at a retry.
     function _emitSent(bytes32 sendId, uint32 dstChainId, bytes memory payload) private {
         uint8 msgType = uint8(payload[1]);
         uint32 emissionDay = _dayOf(payload);
@@ -253,6 +252,20 @@ contract OriginRouter is
             emit IntexAuctionResultSent(sendId, emissionDay, dstChainId, _word32(payload, 6), _word32(payload, 10));
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE) {
             _emitCallNoticeSent(sendId, dstChainId, payload);
+        } else if (msgType == BridgeMsgCodec.MSG_INTEX_SERIES) {
+            // Body `abi.encode(emissionDay, pageIndex, totalPages, series)`: word 3 points at the series.
+            uint256 seriesCount = _wordAt(payload, BridgeMsgCodec.HEADER_LEN + _bodyWord(payload, 3));
+            emit IntexSeriesSent(
+                sendId,
+                emissionDay,
+                dstChainId,
+                // forge-lint: disable-next-line(unsafe-typecast) -- the codec caps a day at MAX_PAGES pages
+                uint32(_bodyWord(payload, 1)),
+                // forge-lint: disable-next-line(unsafe-typecast) -- the codec caps a day at MAX_PAGES pages
+                uint32(_bodyWord(payload, 2)),
+                // forge-lint: disable-next-line(unsafe-typecast) -- the codec caps a page at MAX_SERIES_PER_ISSUANCE
+                uint32(seriesCount)
+            );
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS) {
             uint256 winnersCount = _wordAt(payload, BridgeMsgCodec.HEADER_LEN + _bodyWord(payload, 5));
             emit IntexAuctionWinnersSent(
@@ -443,7 +456,6 @@ contract OriginRouter is
             BridgeMsgCodec.encodeIntexSeries(emissionDay, pageIndex, totalPages, _toCodecPayloads(series)),
             IntexGas.issuance(series.length)
         );
-        emit IssuanceInstructionsSent(sendId, series[0].seriesId, series.length);
     }
 
     /// @inheritdoc IOriginRouter

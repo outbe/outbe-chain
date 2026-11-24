@@ -2,7 +2,7 @@ use alloy_primitives::{Address, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_core_common::addresses::INTEX_NFT1155_ADDRESS;
 use outbe_core_common::markup::marked_up;
-use outbe_gem::precompile::IGem::{GemIssued, GemSettled};
+use outbe_gem::precompile::IGem::{GemBurned, GemIssued, GemSettled};
 use outbe_gem::{api as gem_api, CallTerms, GemAddParams, GemContract, GemParams, GemView};
 use outbe_intex::{IntexState, SeriesId};
 use outbe_oracle::api::{current_vwap_24h_snapshot, get_utc_day_vwap_for_iso, vwap_24h};
@@ -182,8 +182,19 @@ pub fn create_gem_factory_position(
     }
 
     let issued_at = storage.now_secs()?;
+    let gem_factory_position_id = GemFactoryContract::generate_gem_factory_position_id(
+        source_series_id,
+        caller,
+        storage.block_number()?,
+    );
 
-    burn_intex_into_gem_factory(storage, caller, source_series_id, units)?;
+    send_intex_to_gem_factory(
+        storage,
+        caller,
+        source_series_id,
+        units,
+        gem_factory_position_id,
+    )?;
     let capacity = series
         .promis_load_minor
         .checked_mul(units)
@@ -198,12 +209,6 @@ pub fn create_gem_factory_position(
         gem_factory_units,
     )?;
     outbe_intex::api::release_if_spent(storage, source_series_id)?;
-
-    let gem_factory_position_id = GemFactoryContract::generate_gem_factory_position_id(
-        source_series_id,
-        caller,
-        storage.block_number()?,
-    );
 
     let mut factory = GemFactoryContract::new(storage.clone());
     let position = GemFactoryPosition {
@@ -237,21 +242,23 @@ pub fn create_gem_factory_position(
     Ok(gem_factory_position_id)
 }
 
-/// Burn `units` of the merchant's Issued Intex (BURNER_ROLE). Reverts on zero units
-/// or more than the merchant holds.
-fn burn_intex_into_gem_factory(
+/// Burn `units` of the merchant's Issued Intex into the position (BURNER_ROLE). Reverts on
+/// zero units or more than the merchant holds.
+fn send_intex_to_gem_factory(
     storage: &StorageHandle<'_>,
     owner: Address,
     series_id: SeriesId,
     units: U256,
+    gem_factory_position_id: U256,
 ) -> Result<()> {
     storage.call(
         INTEX_NFT1155_ADDRESS,
         U256::ZERO,
-        IIntexNFT1155::burnIntexCall {
+        IIntexNFT1155::sendIntexToGemFactoryCall {
             owner,
             seriesId: series_id.into(),
             units,
+            gemFactoryPositionId: gem_factory_position_id,
         }
         .abi_encode()
         .into(),
@@ -396,7 +403,12 @@ pub(crate) fn burn_settled(storage: &StorageHandle<'_>, gem_id: U256) -> Result<
     if !item.body().is_settled() {
         return Err(GemFactoryError::GemNotSettled.into());
     }
-    gem_api::remove_gem(storage, item, group)
+    let owner = item.body().owner;
+    gem_api::remove_gem(storage, item, group)?;
+    GemContract::new(storage.clone()).emit(GemBurned {
+        gemId: gem_id,
+        owner,
+    })
 }
 
 fn currencies(gem: &GemView) -> Currencies {

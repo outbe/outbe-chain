@@ -6,7 +6,7 @@ use outbe_primitives::{
 };
 use outbe_system_common::pass_budget::PassBudget;
 
-use outbe_gem::precompile::IGem::GemSeriesClosed;
+use crate::precompile::IGemFactory::GemSeriesClosed;
 use outbe_gem::{ForfeitQueue, GemContract};
 use outbe_primitives::error::PrecompileError;
 use outbe_primitives::storage::StorageHandle;
@@ -79,14 +79,17 @@ impl DeadlineHandler<B256> for GemForfeit<'_, '_> {
             self.gem.hand_to_cleanup(group)?;
         }
         for sub in sub_series {
-            self.gem.emit(GemSeriesClosed {
-                seriesId: sub.series_id.into(),
-                subSeriesId: sub.sub_series_id,
-                issuanceCurrency: sub.issuance_currency,
-                referenceCurrency: sub.reference_currency,
-                forfeitedCount: sub.unsettled_count,
-                forfeitedAmountMinor: sub.unsettled_load_minor,
-            })?;
+            crate::runtime::emit_event(
+                self.storage,
+                GemSeriesClosed {
+                    seriesId: sub.series_id.into(),
+                    subSeriesId: sub.sub_series_id,
+                    issuanceCurrency: sub.issuance_currency,
+                    referenceCurrency: sub.reference_currency,
+                    forfeitedCount: sub.unsettled_count,
+                    forfeitedAmountMinor: sub.unsettled_load_minor,
+                },
+            )?;
         }
         Ok(())
     }

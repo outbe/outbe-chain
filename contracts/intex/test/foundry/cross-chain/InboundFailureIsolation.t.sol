@@ -64,7 +64,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         return keccak256(abi.encode(sender, message));
     }
 
-    /// @dev SEND batch (V2 abi.encode): 2 items. Item 0 targets SERIES_GOOD, item 1 SERIES_BAD.
+    /// @dev SEND_BATCH (V2 abi.encode): 2 items. Item 0 targets SERIES_GOOD, item 1 SERIES_BAD.
     function _batchPacket(address recipient) internal pure returns (bytes memory) {
         uint256[] memory tokenIds = new uint256[](2);
         tokenIds[0] = TOKEN_GOOD;
@@ -96,7 +96,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // SEND batch - per-item isolation
+    // SEND_BATCH - per-item isolation
     // ---------------------------------------------------------------
 
     function test_BatchReceive_BadItemDoesNotRevertWholeBatch() public {

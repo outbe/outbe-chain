@@ -280,7 +280,7 @@ library TargetInbound {
     ///      - a repeated chunk
     ///      - a chunk whose header disagrees with the day's run
     ///      - a series whose stored params differ from the chunk's
-    ///      The last applied chunk emits `IssuanceCompleted`.
+    ///      The last applied page emits `IntexSeriesAllReceived`.
     function handleIntexSeries(
         TargetRouterStorage storage $,
         uint32 srcChainId,
@@ -334,7 +334,7 @@ library TargetInbound {
             _applyIssuance($, srcChainId, series[s], known[s]);
         }
 
-        if (seen == totalPages) emit ITargetRouter.IssuanceCompleted(emissionDay, totalPages);
+        if (seen == totalPages) emit ITargetRouter.IntexSeriesAllReceived(emissionDay, srcChainId, totalPages);
     }
 
     /// @dev Create the series if this chain has not seen it.
@@ -368,8 +368,6 @@ library TargetInbound {
                 );
             _applySlottedIntexSeriesCallNotice($, srcChainId, payload.seriesId);
         }
-
-        emit ITargetRouter.IssuanceInstructionsReceived(srcChainId, payload.seriesId);
     }
 
     /// @dev Whether two payloads of one chunk name a series under the same terms.

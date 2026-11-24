@@ -91,16 +91,38 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param seriesId Series identifier.
     /// @param issuanceCurrency Issuance currency (ISO numeric).
     /// @param referenceCurrency Reference currency (ISO numeric).
-    /// @param payload ABI-encoded total Promis load (`abi.encode(uint256(promisLoadMinor) * units)`).
     /// @param units Issued units minted to `owner`.
+    /// @param payload ABI-encoded total Promis load (`abi.encode(uint256(promisLoadMinor) * units)`).
     event IntexIssued(
         uint256 indexed intexId,
         address indexed owner,
         bytes14 indexed seriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        bytes payload,
-        uint32 units
+        uint32 units,
+        bytes payload
+    );
+
+    /// @notice Emitted when this chain creates a series from the terms that Outbe sent. It has the
+    ///         shape of the Intex factory's `IntexSeriesOpened`.
+    event IntexSeriesOpened(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint256 entryPriceMinor,
+        uint256 callPriceMinor,
+        uint64 callWindow,
+        uint64 callThreshold,
+        uint64 callNoticePeriod,
+        uint64 transitMargin,
+        uint32 units,
+        uint256 unitPromisLoadMinor
+    );
+
+    /// @notice Emitted when a merchant's Issued units leave their series for a Gem Factory position.
+    ///         `gemFactoryPositionId` links them to `GemFactoryPositionCreated` of the same transaction.
+    event IntexSentToGemFactory(
+        uint256 indexed intexId, address indexed owner, uint256 indexed gemFactoryPositionId, uint32 units
     );
 
     /// @notice Emitted when this chain records the call notice of a series.
@@ -200,13 +222,20 @@ interface IIntexNFT1155 is IERC1155, IERC1155Bridgeable {
     /// @param calledAt Unix time the origin marked the series Called. The deadline derives from it.
     function markCalled(bytes14 seriesId, uint64 calledAt) external;
 
-    /// @notice Burn `units` of `owner`'s Issued Intex on Outbe: settled, or sent to the Gem Factory.
-    /// @dev Entry point of the IntexFactory and GemFactory precompiles under BURNER_ROLE. They own
-    ///      the series state, so this burn checks none.
+    /// @notice Burn `units` of `owner`'s Issued Intex on Outbe when they are settled.
+    /// @dev Entry point of the IntexFactory precompile under BURNER_ROLE. It owns the series
+    ///      state, so this burn checks none.
     /// @param owner Owner whose Issued tokens are burned.
     /// @param seriesId Series identifier.
     /// @param units Issued units to burn.
     function burnIntex(address owner, bytes14 seriesId, uint256 units) external;
+
+    /// @notice Move `units` of `owner`'s Issued Intex on Outbe into the Gem Factory position
+    ///         `gemFactoryPositionId`: the units leave the series and end with `IntexSentToGemFactory`.
+    /// @dev Entry point of the GemFactory precompile under BURNER_ROLE. It owns the series state,
+    ///      so this call checks none.
+    function sendIntexToGemFactory(address owner, bytes14 seriesId, uint256 units, uint256 gemFactoryPositionId)
+        external;
 
     /// @notice Burn all of `owner`'s units of a series that reads Forfeited on this chain. Any
     ///         account may call it. Reverts before the transit close or for an empty balance.

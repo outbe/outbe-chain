@@ -142,6 +142,19 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
         $.seriesOfDay[params.emissionDay].push(params.seriesId);
         $.seriesOfPair[params.emissionDay][params.issuanceCurrency][params.referenceCurrency] = params.seriesId;
 
+        emit IntexSeriesOpened(
+            params.seriesId,
+            params.issuanceCurrency,
+            params.referenceCurrency,
+            params.entryPriceMinor,
+            params.callPriceMinor,
+            params.callTrigger.callWindow,
+            params.callTrigger.callThreshold,
+            params.callTrigger.callNoticePeriod,
+            params.callTrigger.transitMargin,
+            params.issuedUnits,
+            params.promisLoadMinor
+        );
         emit MetadataUpdate(iTok);
     }
 
@@ -184,7 +197,7 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
         bytes memory payload = abi.encode(uint256(data.promisLoadMinor) * units);
         // forge-lint: disable-next-line(unsafe-typecast) -- bounded by the uint16 check above
-        emit IntexIssued(tokenId, to, seriesId, data.issuanceCurrency, data.referenceCurrency, payload, uint32(units));
+        emit IntexIssued(tokenId, to, seriesId, data.issuanceCurrency, data.referenceCurrency, uint32(units), payload);
     }
 
     /// @inheritdoc IIntexNFT1155
@@ -269,10 +282,24 @@ contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgra
 
     /// @inheritdoc IIntexNFT1155
     function burnIntex(address owner, bytes14 seriesId, uint256 units) external onlyRole(BURNER_ROLE) {
+        _burnIssued(owner, seriesId, units);
+    }
+
+    /// @inheritdoc IIntexNFT1155
+    function sendIntexToGemFactory(address owner, bytes14 seriesId, uint256 units, uint256 gemFactoryPositionId)
+        external
+        onlyRole(BURNER_ROLE)
+    {
+        uint256 tokenId = _burnIssued(owner, seriesId, units);
+        // forge-lint: disable-next-line(unsafe-typecast) -- _burnIssued bounded units by the uint32 supply
+        emit IntexSentToGemFactory(tokenId, owner, gemFactoryPositionId, uint32(units));
+    }
+
+    function _burnIssued(address owner, bytes14 seriesId, uint256 units) private returns (uint256 tokenId) {
         if (owner == address(0)) revert ZeroAddress("owner", owner);
         if (units == 0) revert ZeroUnits();
 
-        uint256 tokenId = _issuedTokenId(seriesId);
+        tokenId = _issuedTokenId(seriesId);
         IIntexNFT1155.SeriesData storage data = _s().seriesData[tokenId];
         if (data.issuedAt == 0) revert NonexistentToken(tokenId);
 

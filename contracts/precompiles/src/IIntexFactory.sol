@@ -149,8 +149,18 @@ interface IIntexFactory {
         uint64 callWindow,
         uint64 callThreshold,
         uint64 callNoticePeriod,
+        uint64 transitMargin,
         uint32 units,
         uint256 unitPromisLoadMinor
+    );
+
+    /// @notice The series settlement window closed. Both are zero when every unit was realized in time.
+    event IntexSeriesClosed(
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        uint32 forfeitedCount,
+        uint256 forfeitedAmountMinor
     );
 
     /// @notice All 8 tries of the series' call notice to `dstChainId` failed, so the factory sends

@@ -30,7 +30,8 @@ contract IntexNFT1155Bridge is
     ReentrancyGuardTransient,
     UUPSUpgradeable
 {
-    uint16 public constant SEND = IntexNFT1155BridgeCodec.SEND;
+    uint16 public constant SEND_ONE = IntexNFT1155BridgeCodec.SEND_ONE;
+    uint16 public constant SEND_BATCH = IntexNFT1155BridgeCodec.SEND_BATCH;
     uint16 public constant SEND_MULTI = IntexNFT1155BridgeCodec.SEND_MULTI;
     uint8 public constant BODY_VERSION_V1 = IntexNFT1155BridgeCodec.BODY_VERSION_V1;
     uint256 public constant MAX_BATCH_SIZE = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
@@ -122,17 +123,14 @@ contract IntexNFT1155Bridge is
         return address(uint160(uint256(recipient)));
     }
 
-    /// @dev A single transfer is a 1-item `SEND` batch: it shares the batch wire format and receive path.
     function _buildSingleMsg(SendParam calldata _sendParam) internal pure returns (bytes memory) {
         // reject a malformed recipient before burning. The receive path rejects it too.
         IntexNFT1155BridgeCodec.assertAddress(_sendParam.to);
         if (_sendParam.to == bytes32(0)) revert InvalidReceiver();
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = _sendParam.tokenId;
-        uint256[] memory units = new uint256[](1);
-        units[0] = _sendParam.units;
-        return IntexNFT1155BridgeCodec.encodeBatch(
-            IntexNFT1155BridgeCodec.BatchPayload({to: _sendParam.to, tokenIds: tokenIds, units: units})
+        return IntexNFT1155BridgeCodec.encodeSingle(
+            IntexNFT1155BridgeCodec.SinglePayload({
+                to: _sendParam.to, intexId: _sendParam.tokenId, units: _sendParam.units
+            })
         );
     }
 
@@ -243,12 +241,27 @@ contract IntexNFT1155Bridge is
         if (version != BODY_VERSION_V1) revert IntexNFT1155BridgeCodec.UnsupportedBodyVersion(version);
         uint8 msgType = uint8(message[1]);
 
-        if (msgType == SEND) {
+        if (msgType == SEND_ONE) {
+            _handleSingleReceive(srcChainId, receiveId, message);
+        } else if (msgType == SEND_BATCH) {
             _handleBatchReceive(srcChainId, receiveId, message);
         } else if (msgType == SEND_MULTI) {
             _handleMultiReceive(srcChainId, receiveId, message);
         } else {
             revert UnknownMsgType(msgType);
+        }
+    }
+
+    function _handleSingleReceive(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal {
+        IntexNFT1155BridgeCodec.SinglePayload memory p = IntexNFT1155BridgeCodec.decodeSingle(message);
+
+        IntexNFT1155BridgeCodec.assertAddress(p.to);
+        if (p.to == bytes32(0)) revert InvalidReceiver();
+        address toAddress = address(uint160(uint256(p.to)));
+
+        // A failed mint is recorded with IntexCrosschainReceiveFailed, and its retry emits the receive.
+        if (_tryCrosschainMintOne(srcChainId, receiveId, 0, toAddress, p.intexId, p.units)) {
+            emit IntexCrosschainReceived(receiveId, srcChainId, toAddress, p.intexId, _units32(p.units));
         }
     }
 
@@ -289,11 +302,10 @@ contract IntexNFT1155Bridge is
         address to,
         uint256 tokenId,
         uint256 units
-    ) internal {
+    ) internal returns (bool minted) {
         try this.crosschainMintOne(to, tokenId, units) {
-        // ok
-        }
-        catch (bytes memory reason) {
+            minted = true;
+        } catch (bytes memory reason) {
             _bs().failedCrosschainMints[receiveId][idx] =
                 FailedCrosschainMint({to: to, srcChainId: srcChainId, exists: true, tokenId: tokenId, units: units});
             emit IntexCrosschainReceiveFailed(receiveId, srcChainId, idx, to, tokenId, _units32(units), reason);

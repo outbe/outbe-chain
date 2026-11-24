@@ -83,11 +83,17 @@ interface IOriginRouter {
         uint32 wonBidsCount
     );
 
-    /// @notice Emitted when issuance instructions are sent to a target chain.
-    /// @param sendId Bridge send identifier.
-    /// @param seriesId Series identifier.
-    /// @param seriesCount Number of series the chunk carries.
-    event IssuanceInstructionsSent(bytes32 indexed sendId, bytes14 indexed seriesId, uint256 seriesCount);
+    /// @notice Emitted for each page of a day's Intex series that leaves for one target chain, also when a
+    ///         kept page leaves through {retryMessageSend}.
+    /// @param seriesCount Number of series the page carries.
+    event IntexSeriesSent(
+        bytes32 indexed sendId,
+        uint32 indexed emissionDay,
+        uint32 indexed dstChainId,
+        uint32 pageIndex,
+        uint32 totalPages,
+        uint32 seriesCount
+    );
 
     /// @notice Emitted for each series of a call notice that leaves for a target chain, also when a
     ///         kept notice leaves through {retryMessageSend}.
