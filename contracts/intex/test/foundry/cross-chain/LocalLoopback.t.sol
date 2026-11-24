@@ -10,7 +10,7 @@ import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 
 import {DESIS} from "@precompiles/IDesis.sol";
-import {INTEX_FACTORY} from "@precompiles/IIntexFactory.sol";
+import {IIntexFactory, INTEX_FACTORY} from "@precompiles/IIntexFactory.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
@@ -21,7 +21,6 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {MockERC7786Bridge} from "@test-mocks/MockERC7786Bridge.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
-import {MockIntexFactory} from "@test-mocks/MockIntexFactory.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
 
@@ -95,7 +94,8 @@ contract LocalLoopbackTest is Test {
         bridge = new MockERC7786Bridge();
         bridge.setEnforceGasAttribute(true);
         vm.etch(DESIS, address(new MockDesis()).code);
-        vm.etch(INTEX_FACTORY, address(new MockIntexFactory()).code);
+        vm.etch(INTEX_FACTORY, hex"00");
+        vm.mockCall(INTEX_FACTORY, abi.encodeWithSelector(IIntexFactory.receiveLocalProceeds.selector), "");
 
         wcoen = new MockWCOEN();
         tokenBridge = new LocalTokenBridge(IERC20(address(wcoen)));
@@ -217,6 +217,7 @@ contract LocalLoopbackTest is Test {
         address[] memory bidders = new address[](2);
         bidders[0] = iba1;
         bidders[1] = iba2;
+        vm.expectCall(INTEX_FACTORY, abi.encodeCall(IIntexFactory.receiveLocalProceeds, (DAY, 0, 35e18)), 1);
         _fromOutbe(
             BridgeMsgCodec.encodeIntexAuctionWinners(DAY, 0, 1, 700_000, PROMIS_LOAD_MINOR, bidders, 1, 20),
             IntexGas.assetReturn(2, true)
@@ -230,11 +231,6 @@ contract LocalLoopbackTest is Test {
         auction.returnIntexAuctionAsset(DAY, iba2);
         assertEq(wcoen.balanceOf(iba1), INITIAL_WCOEN_BALANCE - 24e18 + 3e18, "iba1 refund"); // paid 30*1*0.7
         assertEq(wcoen.balanceOf(iba2), INITIAL_WCOEN_BALANCE - 28e18 + 14e18, "iba2 refund"); // paid 20*1*0.7
-        MockIntexFactory factory = MockIntexFactory(INTEX_FACTORY);
-        assertEq(factory.calls(), 1, "proceeds not handed over");
-        assertEq(factory.lastAmount(), 35e18, "proceeds amount");
-        assertEq(factory.lastEmissionDay(), DAY, "proceeds day");
-        assertEq(factory.lastPageIndex(), 0, "proceeds page");
         assertEq(wcoen.allowance(address(target), INTEX_FACTORY), 35e18, "IntexFactory may pull the proceeds");
 
         // 7. ISSUANCE_INSTRUCTIONS: the series lands on the canonical NFT.

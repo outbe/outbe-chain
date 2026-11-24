@@ -8,8 +8,7 @@ import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
-import {MockIntexFactory} from "@test-mocks/MockIntexFactory.sol";
-import {INTEX_FACTORY} from "@precompiles/IIntexFactory.sol";
+import {IIntexFactory, INTEX_FACTORY} from "@precompiles/IIntexFactory.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /// @dev Minimal EscrowAdapter stand-in. `chargeIntexAuctionAsset` returns a configured totalPaid. The mock
@@ -111,6 +110,12 @@ contract TargetRouterProceedsTest is CrossChainTest {
         vm.deal(address(target), 10 ether); // relay float for bridge fees
     }
 
+    /// @dev The IntexFactory precompile takes the local hand-over of the proceeds.
+    function _mockIntexFactory() internal {
+        vm.etch(INTEX_FACTORY, hex"00");
+        vm.mockCall(INTEX_FACTORY, abi.encodeWithSelector(IIntexFactory.receiveLocalProceeds.selector), "");
+    }
+
     function _targetOn(uint32 outbeChainId, address erc20Router) internal returns (TargetRouter router) {
         router = DeployProxy.targetRouter(address(bridge), address(this), outbeChainId, erc20Router);
         router.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
@@ -197,27 +202,23 @@ contract TargetRouterProceedsTest is CrossChainTest {
 
     function test_on_outbe_the_proceeds_of_a_page_go_to_intex_factory_with_no_send_id() public {
         uint32 local = uint32(block.chainid);
-        vm.etch(INTEX_FACTORY, address(new MockIntexFactory()).code);
+        _mockIntexFactory();
         TargetRouter outbeTarget = _targetOn(local, address(tokenBridge));
         escrow.setTotalPaid(AMOUNT);
+        vm.expectCall(INTEX_FACTORY, abi.encodeCall(IIntexFactory.receiveLocalProceeds, (SERIES_ID, 1, AMOUNT)), 1);
 
         vm.expectEmit(true, true, true, true, address(outbeTarget));
         emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), SERIES_ID, 1, AMOUNT);
         _deliver(local, outbeIca, address(outbeTarget), _winnersPage(SERIES_ID, 1, 2));
 
-        MockIntexFactory factory = MockIntexFactory(INTEX_FACTORY);
         assertEq(tokenBridge.calls(), 0, "the Outbe route does not use the token bridge");
-        assertEq(factory.calls(), 1);
-        assertEq(factory.lastCaller(), address(outbeTarget));
-        assertEq(factory.lastEmissionDay(), SERIES_ID);
-        assertEq(factory.lastPageIndex(), 1, "the hand-over carries the page");
-        assertEq(factory.lastAmount(), AMOUNT);
         assertEq(wcoen.allowance(address(outbeTarget), INTEX_FACTORY), AMOUNT, "IntexFactory may pull it");
     }
 
     function test_RefundInstructions_OnOutbeParksProceedsNotInWcoen() public {
         uint32 local = uint32(block.chainid);
-        vm.etch(INTEX_FACTORY, address(new MockIntexFactory()).code);
+        _mockIntexFactory();
+        vm.expectCall(INTEX_FACTORY, abi.encodeWithSelector(IIntexFactory.receiveLocalProceeds.selector), 0);
         MockWCOEN otherWcoen = new MockWCOEN();
         TargetRouter outbeTarget = _targetOn(local, address(new MockTokenBridge(IERC20(address(otherWcoen)))));
         escrow.setTotalPaid(AMOUNT);
@@ -232,7 +233,6 @@ contract TargetRouterProceedsTest is CrossChainTest {
         );
         _deliver(local, outbeIca, address(outbeTarget), _winnersPage(SERIES_ID, 0, 1));
 
-        assertEq(MockIntexFactory(INTEX_FACTORY).calls(), 0, "nothing handed over in a token the bridge does not move");
         (uint32 s,, uint128 a, bool exists, bool done) = outbeTarget.getFailedIntexAuctionProceedsSend(0);
         assertEq(s, SERIES_ID);
         assertEq(a, AMOUNT);
