@@ -9,6 +9,13 @@ pub const INTEX_NFT1155_ADDRESS: Address = address!("0x8E5041c14D3f0b802E8eFA4e5
 #[cfg(feature = "e2e-test")]
 pub const INTEX_NFT1155_ADDRESS: Address = address!("0x116063CF0558225D808d1C309322d6C3CbfDE343");
 
+/// The ERC-7786 hub on Outbe, which delivers the messages of the target chains. CREATE3 proxy
+/// under salt "ERC7786Bridgev7.0.0", same deployer and factory.
+#[cfg(not(feature = "e2e-test"))]
+pub const ERC7786_HUB_ADDRESS: Address = address!("0x1925D1af9dEd78172EF305Ff46A5999d05505f32");
+#[cfg(feature = "e2e-test")]
+pub const ERC7786_HUB_ADDRESS: Address = address!("0x2cFdf7b8b56300d97F90f51Dc489dbc77dC15555");
+
 /// Intex TargetRouter, the same address on every target chain and on Outbe. CREATE3 proxy under salt
 /// "outbe-intex:TargetRouter:v7.0.0", same deployer and factory.
 #[cfg(not(feature = "e2e-test"))]

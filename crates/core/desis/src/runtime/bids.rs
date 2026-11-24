@@ -1,4 +1,8 @@
 use super::*;
+use outbe_core_common::addresses::{ERC7786_HUB_ADDRESS, TARGET_ROUTER_ADDRESS};
+use outbe_intex::wire::{decode_bids_message, evm_chain_of, BidsMessage};
+use outbe_primitives::error::PassFailure;
+use outbe_system_common::addresses::DESIS_ADDRESS;
 
 /// - `Open` while `RevealingBids`/`CollectingBids`.
 /// - `Closed` once the day ended, and `UnknownDay` for a day that has not started. Both are acknowledged,
@@ -228,7 +232,7 @@ fn try_complete_intex_auction_bids(
 }
 
 fn require_origin_router(caller: Address) -> Result<()> {
-    if caller != ORIGIN_ROUTER_ADDRESS {
+    if caller != ORIGIN_ROUTER_ADDRESS && caller != DESIS_ADDRESS {
         return Err(DesisError::UnauthorizedOrigin(caller).into());
     }
     Ok(())
@@ -239,4 +243,124 @@ fn require_nonzero_emission_day(emission_day: EmissionDate) -> Result<()> {
         return Err(DesisError::InvalidEmissionDay(emission_day).into());
     }
     Ok(())
+}
+
+/// Takes a message of a target chain from the ERC-7786 hub. Only a caller other than the hub
+/// reverts, and a day before its reveal, so the hub delivers the message again later. Any other
+/// message that Desis cannot use is ignored with `IntexAuctionBidsIgnored`.
+pub fn receive_bids_message(
+    storage: StorageHandle<'_>,
+    caller: Address,
+    receive_id: B256,
+    sender: &[u8],
+    payload: &[u8],
+) -> Result<()> {
+    if caller != ERC7786_HUB_ADDRESS {
+        return Err(DesisError::UnauthorizedOrigin(caller).into());
+    }
+    let src_chain_id = evm_chain_of(sender, TARGET_ROUTER_ADDRESS);
+    let message = decode_bids_message(payload);
+    let mut contract = storage.contract::<DesisContract>();
+    let ignore = |contract: &mut DesisContract<'_>, day: u32, chain: u32, reason: u8| {
+        contract.emit(IDesis::IntexAuctionBidsIgnored {
+            receiveId: receive_id,
+            emissionDay: day,
+            srcChainId: chain,
+            reason,
+        })
+    };
+    let (Some(src_chain_id), Some(message)) = (src_chain_id, message) else {
+        return ignore(
+            &mut contract,
+            0,
+            src_chain_id.unwrap_or(0),
+            IGNORED_CONFLICT,
+        );
+    };
+    let day = message.emission_day();
+    if message.src_chain_id() != src_chain_id {
+        return ignore(&mut contract, day, src_chain_id, IGNORED_CONFLICT);
+    }
+    let emission_day = EmissionDate::new(day);
+    if !outbe_intexfactory::targets::day_targets(&storage, emission_day)?.contains(&src_chain_id) {
+        return ignore(&mut contract, day, src_chain_id, IGNORED_NOT_FOUND);
+    }
+    let stage = contract.read_stage(emission_day)?;
+    intake_state(stage)?;
+    let inbound = Inbound {
+        caller: DESIS_ADDRESS,
+        receive_id,
+        emission_day,
+        src_chain_id,
+    };
+    let applied = storage.with_checkpoint(|| match message {
+        BidsMessage::Page {
+            page_index,
+            total_pages,
+            bidders,
+            packed_bids,
+            ..
+        } => collect_intex_auction_bids(
+            storage.clone(),
+            inbound,
+            page_index,
+            total_pages,
+            crate::precompile::bids_from_sol_arrays(&bidders, &packed_bids)?,
+        ),
+        BidsMessage::Totals {
+            total_pages,
+            total_bids,
+            ..
+        } => complete_intex_auction_bids(storage.clone(), inbound, total_pages, total_bids),
+        BidsMessage::Pause { .. } => pause_bids(&storage, emission_day, src_chain_id, stage),
+    });
+    match applied {
+        Err(error) if error.pass_failure() == PassFailure::Skip => {
+            ignore(&mut contract, day, src_chain_id, IGNORED_CONFLICT)
+        }
+        other => other,
+    }
+}
+
+/// A target whose relay stopped with pages left asks for another round: the day's clearing start
+/// goes again with the gas of its first round, while the intake is still open.
+fn pause_bids(
+    storage: &StorageHandle<'_>,
+    emission_day: EmissionDate,
+    src_chain_id: u32,
+    stage: AuctionStage,
+) -> Result<()> {
+    if !matches!(
+        stage,
+        AuctionStage::RevealingBids | AuctionStage::CollectingBids
+    ) {
+        return storage
+            .contract::<DesisContract>()
+            .emit(IDesis::IntexAuctionBidsIgnored {
+                receiveId: B256::ZERO,
+                emissionDay: emission_day.into(),
+                srcChainId: src_chain_id,
+                reason: IGNORED_OBSOLETE,
+            });
+    }
+    let stored = storage
+        .contract::<DesisContract>()
+        .clearing_gas
+        .read(&DesisContract::chain_key(emission_day, src_chain_id))?;
+    let gas = if stored == 0 {
+        outbe_intex::gas::INTEX_AUCTION_CLEARING_START
+    } else {
+        stored
+    };
+    crate::outbox::push_to(
+        storage,
+        &[src_chain_id],
+        Label::new(
+            MSG_INTEX_AUCTION_CLEARING_START,
+            emission_day.value(),
+            [0; 3],
+        ),
+        gas,
+        &outbe_intex::wire::encode_intex_auction_clearing_start(emission_day.value()),
+    )
 }

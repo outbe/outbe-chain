@@ -4,9 +4,11 @@
 //! The runtime owns the protocol logic.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::SolInterface;
+use alloy_sol_types::{SolCall, SolInterface};
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
-use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
+use outbe_primitives::dispatch::{
+    dispatch_call, metadata, mutate, mutate_void, reject_value, view,
+};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -124,6 +126,18 @@ pub fn dispatch(
                 let id: [u8; 4] = c.interfaceId.0;
                 Ok(id == ERC165_INTERFACE_ID || id == IDESIS_INTERFACE_ID)
             }),
+            receiveMessage(c) => mutate(&storage, c, caller, |sender, c| {
+                runtime::receive_bids_message(
+                    storage.clone(),
+                    sender,
+                    c.receiveId,
+                    &c.sender,
+                    &c.payload,
+                )?;
+                Ok(alloy_primitives::FixedBytes(
+                    IDesis::receiveMessageCall::SELECTOR,
+                ))
+            }),
             flush(c) => mutate_void(&storage, c, caller, |_, _| crate::outbox::flush(&storage)),
             outboxHead(c) => metadata::<IDesis::outboxHeadCall>(|| {
                 crate::outbox::outbox_head(&storage, c.chainId)
@@ -134,7 +148,10 @@ pub fn dispatch(
 
 /// Mirrors `BridgeMsgCodec.packBid`: one word per bid, low bits up -
 /// reference(16) | issuance(16) | timestamp(32) | rate(32) | quantity(16).
-fn bids_from_sol_arrays(bidders: &[Address], packed: &[U256]) -> Result<Vec<IntexAuctionBidData>> {
+pub(crate) fn bids_from_sol_arrays(
+    bidders: &[Address],
+    packed: &[U256],
+) -> Result<Vec<IntexAuctionBidData>> {
     if bidders.len() != packed.len() {
         return Err(crate::errors::DesisError::PageArrayLengthMismatch.into());
     }

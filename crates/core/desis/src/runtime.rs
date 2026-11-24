@@ -448,7 +448,9 @@ mod schedule;
 
 #[cfg(test)]
 pub(crate) use algorithm::rate_lock;
-pub use bids::{collect_intex_auction_bids, complete_intex_auction_bids, Inbound};
+pub use bids::{
+    collect_intex_auction_bids, complete_intex_auction_bids, receive_bids_message, Inbound,
+};
 pub use clearing::complete_auctions;
 #[cfg(test)]
 pub(crate) use clearing::force_clear;

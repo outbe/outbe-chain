@@ -6,12 +6,15 @@ use outbe_primitives::error::PrecompileError;
 
 pub const BODY_VERSION_V1: u8 = 1;
 
+pub const MSG_BIDS_PAGE: u8 = 1;
+pub const MSG_BIDS_TOTALS: u8 = 2;
 pub const MSG_INTEX_AUCTION_START: u8 = 3;
 pub const MSG_INTEX_AUCTION_CLEARING_START: u8 = 4;
 pub const MSG_INTEX_AUCTION_RESULT: u8 = 5;
 pub const MSG_INTEX_SERIES: u8 = 6;
 pub const MSG_INTEX_AUCTION_WINNERS: u8 = 7;
 pub const MSG_INTEX_SERIES_CALL_NOTICE: u8 = 8;
+pub const MSG_BIDS_PAUSE: u8 = 9;
 pub const MSG_INTEX_AUCTION_CANCEL: u8 = 10;
 
 pub const MAX_PAYLOAD_ARRAY_LEN: usize = 64;
@@ -205,4 +208,117 @@ pub fn encode_intex_series_call_notice(
     }
     let body = (emission_day, called_at, series_ids.to_vec()).abi_encode_params();
     Ok(with_body(MSG_INTEX_SERIES_CALL_NOTICE, body))
+}
+
+/// A message of a target chain to Desis, with the day and the chain that its body names.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BidsMessage {
+    Page {
+        emission_day: u32,
+        src_chain_id: u32,
+        page_index: u16,
+        total_pages: u16,
+        bidders: Vec<Address>,
+        packed_bids: Vec<alloy_primitives::U256>,
+    },
+    Totals {
+        emission_day: u32,
+        src_chain_id: u32,
+        total_pages: u16,
+        total_bids: u32,
+    },
+    Pause {
+        emission_day: u32,
+        src_chain_id: u32,
+    },
+}
+
+impl BidsMessage {
+    pub fn emission_day(&self) -> u32 {
+        match self {
+            Self::Page { emission_day, .. }
+            | Self::Totals { emission_day, .. }
+            | Self::Pause { emission_day, .. } => *emission_day,
+        }
+    }
+
+    pub fn src_chain_id(&self) -> u32 {
+        match self {
+            Self::Page { src_chain_id, .. }
+            | Self::Totals { src_chain_id, .. }
+            | Self::Pause { src_chain_id, .. } => *src_chain_id,
+        }
+    }
+}
+
+fn be_u32(bytes: &[u8], at: usize) -> u32 {
+    u32::from_be_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+}
+
+fn be_u16(bytes: &[u8], at: usize) -> u16 {
+    u16::from_be_bytes([bytes[at], bytes[at + 1]])
+}
+
+/// Decodes BIDS_PAGE, BIDS_TOTALS and BIDS_PAUSE as `BridgeMsgCodec` encodes them; `None` for any
+/// other message.
+pub fn decode_bids_message(payload: &[u8]) -> Option<BidsMessage> {
+    if payload.len() < 2 || payload[0] != BODY_VERSION_V1 {
+        return None;
+    }
+    match payload[1] {
+        MSG_BIDS_PAGE => {
+            let (emission_day, src_chain_id, page_index, total_pages, bidders, packed_bids) =
+                <(
+                    u32,
+                    u32,
+                    u16,
+                    u16,
+                    Vec<Address>,
+                    Vec<alloy_primitives::U256>,
+                )>::abi_decode_params(&payload[2..])
+                .ok()?;
+            (bidders.len() == packed_bids.len() && bidders.len() <= MAX_PAYLOAD_ARRAY_LEN)
+                .then_some(BidsMessage::Page {
+                    emission_day,
+                    src_chain_id,
+                    page_index,
+                    total_pages,
+                    bidders,
+                    packed_bids,
+                })
+        }
+        MSG_BIDS_TOTALS if payload.len() == 16 => Some(BidsMessage::Totals {
+            emission_day: be_u32(payload, 2),
+            src_chain_id: be_u32(payload, 6),
+            total_pages: be_u16(payload, 10),
+            total_bids: be_u32(payload, 12),
+        }),
+        MSG_BIDS_PAUSE if payload.len() == 14 => Some(BidsMessage::Pause {
+            emission_day: be_u32(payload, 2),
+            src_chain_id: be_u32(payload, 6),
+        }),
+        _ => None,
+    }
+}
+
+/// The chain of an ERC-7930 EVM address when the address is `expected`, as `InteroperableAddress`
+/// formats it: version 1, chain type 0, the chain id in its fewest bytes, then the 20 address bytes.
+pub fn evm_chain_of(interop: &[u8], expected: Address) -> Option<u32> {
+    let (head, rest) = interop.split_at_checked(5)?;
+    if head[..4] != [0x00, 0x01, 0x00, 0x00] {
+        return None;
+    }
+    let chain_len = usize::from(head[4]);
+    if chain_len == 0 || chain_len > 4 || rest.len() != chain_len + 1 + 20 || rest[chain_len] != 20
+    {
+        return None;
+    }
+    if rest[chain_len + 1..] != expected[..] {
+        return None;
+    }
+    Some(
+        rest[..chain_len]
+            .iter()
+            .fold(0u32, |acc, byte| (acc << 8) | u32::from(*byte)),
+    )
 }
