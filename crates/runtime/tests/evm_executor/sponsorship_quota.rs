@@ -2,9 +2,7 @@
 
 use evm2::{registry::HandlerError, EvmFeatures};
 use outbe_evm::executor::OutbeInvalidTxError;
-use outbe_system_common::addresses::{
-    AGENT_REWARD_ADDRESS, NOD_FACTORY_ADDRESS, ZEROFEE_ADDRESS,
-};
+use outbe_system_common::addresses::{AGENT_REWARD_ADDRESS, NOD_FACTORY_ADDRESS, ZEROFEE_ADDRESS};
 use outbe_zerofee::precompile::IZeroFee::SponsorshipAuthorized;
 
 use super::*;
