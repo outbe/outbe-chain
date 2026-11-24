@@ -50,6 +50,7 @@ reth-chainspec.workspace = true
 alloy-consensus.workspace = true
 alloy-primitives.workspace = true
 alloy-rpc-types-engine.workspace = true
+alloy-sol-types.workspace = true
 bytes.workspace = true
 
 # Crypto (key encryption + EVM key generation)
