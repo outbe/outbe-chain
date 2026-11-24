@@ -76,16 +76,16 @@ pub fn chacha20poly1305_encrypt(
     Ok(in_out)
 }
 
-/// Inverse of [`super::offer_encrypt::encrypt_tribute_offer`].
-pub fn ecdhe_tribute_offer_decrypt(
-    tribute_offer_private_key: &OfferKeyHandle,
+/// Inverse of [`super::offer_encrypt::encrypt_offer`].
+pub fn ecdhe_offer_decrypt(
+    offer_private_key: &OfferKeyHandle,
     salt: &[u8; 32],
     ephemeral_pubkey: &[u8; 32],
     nonce: &[u8],
     ciphertext: &[u8],
 ) -> Result<Vec<u8>, TeeError> {
-    ecdhe_offer_decrypt(
-        tribute_offer_private_key,
+    ecdhe_offer_decrypt_with_info(
+        offer_private_key,
         (salt, OFFER_HKDF_INFO),
         ephemeral_pubkey,
         nonce,
@@ -93,8 +93,8 @@ pub fn ecdhe_tribute_offer_decrypt(
     )
 }
 
-fn ecdhe_offer_decrypt(
-    tribute_offer_private_key: &OfferKeyHandle,
+fn ecdhe_offer_decrypt_with_info(
+    offer_private_key: &OfferKeyHandle,
     (salt, info): (&[u8; 32], &[u8]),
     ephemeral_pubkey: &[u8; 32],
     nonce: &[u8],
@@ -106,7 +106,7 @@ fn ecdhe_offer_decrypt(
     let nonce_arr: &[u8; 12] = nonce
         .try_into()
         .map_err(|_| TeeError::InvalidNonce(nonce.len()))?;
-    Ok(tribute_offer_private_key
+    Ok(offer_private_key
         .ecdhe_decrypt(salt, info, ephemeral_pubkey, nonce_arr, ciphertext)?
         .to_vec())
 }
@@ -140,7 +140,7 @@ mod tests {
         );
         assert!(chacha20poly1305_decrypt(&key, &[0; 12], &round).is_err());
         assert!(chacha20poly1305_decrypt(&[0; 32], &nonce, &round).is_err());
-        let short = ecdhe_tribute_offer_decrypt(
+        let short = ecdhe_offer_decrypt(
             &OfferKeyHandle::for_test([0; 32]),
             &[0; 32],
             &[0; 32],

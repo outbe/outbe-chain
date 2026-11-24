@@ -3,10 +3,10 @@
 use alloy_primitives::{Address, B256, U256};
 pub use outbe_system_common::time::WorldwideDay;
 
-/// A single offer handed to the Tribute engine.
+/// A single offer handed to the enclave.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct EncryptedTributeOffer {
-    /// L1 `msg.sender` that owns the resulting Tribute (public, on-chain).
+pub struct EncryptedOffer {
+    /// L1 `msg.sender` that owns the resulting Nod (public, on-chain).
     pub owner: Address,
     /// ABI `cipherText`: AEAD ciphertext of the offer payload.
     pub cipher_text: Vec<u8>,
@@ -28,13 +28,13 @@ pub struct EncryptedTributeOffer {
     pub reference_scurve_minor: U256,
     /// Public ZK claim context supplied for every admitted offer.
     #[serde(default)]
-    pub zk_context: Option<TributeZkContext>,
+    pub zk_context: Option<OfferZkContext>,
 }
 
 /// Public ZK claim context bound to one offer.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct TributeZkContext {
-    /// Public input zero of the submitted Tribute proof.
+pub struct OfferZkContext {
+    /// Public input zero of the submitted offer proof.
     pub derived_owner: B256,
     /// Host chain id bound by the proof.
     pub chain_id: u64,
@@ -42,9 +42,9 @@ pub struct TributeZkContext {
     pub l2_chain_id: u64,
 }
 
-/// Shared four-word public claim for Demo Tribute and Niflheim Tribute.
+/// Shared four-word public claim of the Demo and Niflheim offer circuits.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TributePublicInputs {
+pub struct OfferPublicInputs {
     /// Public input zero.
     pub derived_owner: B256,
     /// Poseidon entity hash of the draft.
@@ -55,7 +55,7 @@ pub struct TributePublicInputs {
     pub merkle_root: B256,
 }
 
-impl TributePublicInputs {
+impl OfferPublicInputs {
     /// Map ABI-ordered words after the caller validates canonical field encoding.
     #[must_use]
     pub fn from_raw_parts(
@@ -72,7 +72,7 @@ impl TributePublicInputs {
 
 /// Recomputed public hashes of a decrypted TributeDraft.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct TributeZkExpectedHashes {
+pub struct OfferZkExpectedHashes {
     /// Poseidon entity hash.
     pub nft_hash: B256,
     /// Submission binding hash.
@@ -81,7 +81,7 @@ pub struct TributeZkExpectedHashes {
 
 /// Deterministic hash over the canonical batch inputs: every field of every offer.
 #[must_use]
-pub fn inputs_canonical_hash(offers: &[EncryptedTributeOffer]) -> B256 {
+pub fn inputs_canonical_hash(offers: &[EncryptedOffer]) -> B256 {
     let mut buf: Vec<u8> = Vec::new();
     buf.extend_from_slice(&(offers.len() as u32).to_be_bytes());
     for offer in offers {

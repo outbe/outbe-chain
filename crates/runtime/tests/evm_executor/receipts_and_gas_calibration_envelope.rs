@@ -122,9 +122,9 @@ fn calibration_bootstrap_and_dense_cleanup_overlap() {
                 let akey =
                     outbe_agentreward::AgentRewardContract::address_index_key(day.into(), index);
                 let ckey =
-                    outbe_agentreward::AgentRewardContract::tribute_count_key(day.into(), address);
+                    outbe_agentreward::AgentRewardContract::offer_count_key(day.into(), address);
                 agent.waa_addresses.write(&akey, address).unwrap();
-                agent.waa_tribute_counts.write(&ckey, 1).unwrap();
+                agent.waa_offer_counts.write(&ckey, 1).unwrap();
                 agent.waa_member_index.write(&ckey, index + 1).unwrap();
                 rewards
                     .day_voter_at
@@ -248,7 +248,7 @@ fn calibration_noop_and_calendar_horizon() {
                 if elapsed_days == 1 {
                     let mut agent = outbe_agentreward::AgentRewardContract::new(storage);
                     agent
-                        .increment_waa_tribute(20240101u32.into(), Address::repeat_byte(0x44))
+                        .increment_waa_offer(20240101u32.into(), Address::repeat_byte(0x44))
                         .unwrap();
                     agent
                         .pending_total_minor

@@ -1,6 +1,7 @@
 pub mod chain;
 pub mod epoch;
 pub mod monitor;
+pub mod offer;
 pub mod oracle;
 pub mod rad;
 pub mod radicle;
@@ -10,7 +11,6 @@ pub mod stablecoin;
 pub mod stake_identity;
 pub mod staking;
 pub mod tee;
-pub mod tribute;
 pub mod validator;
 pub mod vote;
 pub mod zerofee;

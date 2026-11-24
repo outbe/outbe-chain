@@ -10,29 +10,29 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::time::WorldwideDay;
 
 impl AgentRewardContract<'_> {
-    /// Increments WAA (wallet) tribute count for an address on `day`.
+    /// Increments WAA (wallet) offer count for an address on `day`.
     ///
-    /// On the first tribute for this address+day pair, the function also
+    /// On the first offer for this address+day pair, the function also
     /// appends the address to the per-day WAA address list. Distribution
     /// enumerates that list.
     /// Overflow rejects activity before any write. Multi-recipient offer
     /// atomicity requires the caller's checkpoint.
-    pub fn increment_waa_tribute(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
-        self.increment_tribute(RewardPool::Waa, day, address)
+    pub fn increment_waa_offer(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
+        self.increment_offer(RewardPool::Waa, day, address)
     }
 
-    /// Increments SRA tribute count for an address on `day`.
+    /// Increments SRA offer count for an address on `day`.
     ///
-    /// On the first tribute for this address+day pair, the function also
+    /// On the first offer for this address+day pair, the function also
     /// appends the address to the per-day SRA address list. Distribution
     /// enumerates that list.
     /// Overflow rejects activity before any write. Multi-recipient offer
     /// atomicity requires the caller's checkpoint.
-    pub fn increment_sra_tribute(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
-        self.increment_tribute(RewardPool::Sra, day, address)
+    pub fn increment_sra_offer(&mut self, day: WorldwideDay, address: Address) -> Result<()> {
+        self.increment_offer(RewardPool::Sra, day, address)
     }
 
-    fn increment_tribute(
+    fn increment_offer(
         &mut self,
         pool: RewardPool,
         day: WorldwideDay,
@@ -42,7 +42,7 @@ impl AgentRewardContract<'_> {
             return Err(AgentRewardError::DaySealed(day.value()).into());
         }
         let index = self.day_index(pool)?;
-        let key = AgentRewardContract::tribute_count_key(day, address);
+        let key = AgentRewardContract::offer_count_key(day, address);
         let count = index.counts.read(&key)?;
         let next_count = count
             .checked_add(1)
@@ -53,7 +53,7 @@ impl AgentRewardContract<'_> {
             .checked_add(1)
             .ok_or(AgentRewardError::TributeCounterOverflow)?;
         if count == 0 {
-            // First tribute for this address+day - add to address list
+            // First offer for this address+day - add to address list
             let addr_count = index.address_count.read(&day)?;
             let next_addr_count = addr_count
                 .checked_add(1)
@@ -258,32 +258,32 @@ impl AgentRewardContract<'_> {
         })
     }
 
-    /// Gets all WAA tribute counts for a day as (address, count) pairs.
+    /// Gets all WAA offer counts for a day as (address, count) pairs.
     pub fn get_all_waa_counts(&self, day: WorldwideDay) -> Result<Vec<(Address, u64)>> {
-        read_tribute_counts(
+        read_offer_counts(
             day,
             &self.waa_address_count,
             &self.waa_addresses,
-            &self.waa_tribute_counts,
+            &self.waa_offer_counts,
         )
     }
 
-    /// Gets all SRA tribute counts for a day as (address, count) pairs.
+    /// Gets all SRA offer counts for a day as (address, count) pairs.
     pub fn get_all_sra_counts(&self, day: WorldwideDay) -> Result<Vec<(Address, u64)>> {
-        read_tribute_counts(
+        read_offer_counts(
             day,
             &self.sra_address_count,
             &self.sra_addresses,
-            &self.sra_tribute_counts,
+            &self.sra_offer_counts,
         )
     }
 }
 
-fn read_tribute_counts(
+fn read_offer_counts(
     day: WorldwideDay,
     address_count: &Map<'_, WorldwideDay, u32>,
     addresses: &Map<'_, B256, Address>,
-    tribute_counts: &Map<'_, B256, u64>,
+    offer_counts: &Map<'_, B256, u64>,
 ) -> Result<Vec<(Address, u64)>> {
     let addr_count = address_count.read(&day)?;
     let mut result = Vec::with_capacity(addr_count as usize);
@@ -293,8 +293,8 @@ fn read_tribute_counts(
         if addr.is_zero() {
             continue;
         }
-        let count_key = AgentRewardContract::tribute_count_key(day, addr);
-        let count = tribute_counts.read(&count_key)?;
+        let count_key = AgentRewardContract::offer_count_key(day, addr);
+        let count = offer_counts.read(&count_key)?;
         if count > 0 {
             result.push((addr, count));
         }

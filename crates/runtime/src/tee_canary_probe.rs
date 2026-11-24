@@ -5,7 +5,7 @@ use std::time::{Instant, SystemTime};
 use alloy_primitives::{Address, B256, U256};
 use outbe_execution::tee_canary::{CanaryTickOutcome, EnclaveRequester, TeeCanaryProbe};
 use outbe_nod::nod_host::OfferCanaryV1;
-use outbe_nod::offer::protocol::{inputs_canonical_hash, EncryptedTributeOffer, WorldwideDay};
+use outbe_nod::offer::protocol::{inputs_canonical_hash, EncryptedOffer, WorldwideDay};
 use outbe_tee::in_process::InProcessTeeContext;
 use outbe_tee::TransportError;
 
@@ -77,11 +77,9 @@ pub(crate) enum CanaryValidationError {
     InvalidAttestationTag(#[source] TransportError),
 }
 
-fn encrypted_canary_offer(
-    offer_pub: &[u8; 32],
-) -> Result<EncryptedTributeOffer, CanaryTickOutcome> {
+fn encrypted_canary_offer(offer_pub: &[u8; 32]) -> Result<EncryptedOffer, CanaryTickOutcome> {
     let plaintext = outbe_core_common::confidential_tee::canary_offer_json(CANARY_DAY);
-    let cipher_text = match outbe_core_common::confidential_tee::encrypt_tribute_offer_with(
+    let cipher_text = match outbe_core_common::confidential_tee::encrypt_offer_with(
         offer_pub,
         CANARY_EPH_SK,
         CANARY_NONCE,
@@ -97,7 +95,7 @@ fn encrypted_canary_offer(
     };
     let eph_pub =
         x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(CANARY_EPH_SK)).to_bytes();
-    Ok(EncryptedTributeOffer {
+    Ok(EncryptedOffer {
         owner: CANARY_OWNER,
         cipher_text,
         nonce: CANARY_NONCE.to_vec(),
@@ -154,7 +152,7 @@ pub(crate) fn decrypt_canary_on(
 
 fn finish_canary(
     requester: &dyn EnclaveRequester,
-    offer: &EncryptedTributeOffer,
+    offer: &EncryptedOffer,
     response: Result<OfferCanaryV1, TransportError>,
     latency_ms: u64,
 ) -> CanaryTickOutcome {
@@ -166,7 +164,7 @@ fn finish_canary(
 
 fn validate_canary(
     requester: &dyn EnclaveRequester,
-    offer: &EncryptedTributeOffer,
+    offer: &EncryptedOffer,
     answer: &OfferCanaryV1,
     latency_ms: u64,
 ) -> CanaryTickOutcome {
@@ -181,7 +179,7 @@ fn validate_canary(
 
 fn check_canary(
     requester: &dyn EnclaveRequester,
-    offer: &EncryptedTributeOffer,
+    offer: &EncryptedOffer,
     answer: &OfferCanaryV1,
 ) -> Result<(), CanaryValidationError> {
     if answer.creator != CANARY_CREATOR {
@@ -221,7 +219,7 @@ mod tests {
         }
     }
 
-    fn offer() -> EncryptedTributeOffer {
+    fn offer() -> EncryptedOffer {
         let offer_pub =
             x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from([7u8; 32])).to_bytes();
         encrypted_canary_offer(&offer_pub).expect("canary offer encrypts")

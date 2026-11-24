@@ -8,14 +8,14 @@ use outbe_zk::protocol::entity::Entity as EntityTrait;
 
 use super::compute::CanonicalAmount;
 use super::errors::{OfferResult, ProcessError};
-use super::payload::TributeInputPayload;
-use super::protocol::{EncryptedTributeOffer, TributeZkExpectedHashes};
+use super::payload::OfferInputPayload;
+use super::protocol::{EncryptedOffer, OfferZkExpectedHashes};
 
 pub fn derive_expected_hashes(
-    offer: &EncryptedTributeOffer,
-    payload: &TributeInputPayload,
+    offer: &EncryptedOffer,
+    payload: &OfferInputPayload,
     amount: &CanonicalAmount,
-) -> OfferResult<Option<TributeZkExpectedHashes>> {
+) -> OfferResult<Option<OfferZkExpectedHashes>> {
     let Some(context) = &offer.zk_context else {
         return Ok(None);
     };
@@ -39,7 +39,7 @@ pub fn derive_expected_hashes(
     };
     let nft_hash = draft
         .entity_hash()
-        .map_err(ProcessError::InvalidCanonicalTributeDraft)?;
+        .map_err(ProcessError::InvalidCanonicalOfferDraft)?;
     let sender = offer.owner.into_array();
     let commitment_id: [u8; 32] = id.into();
     let binding_hash = outbe_zk::primitive::hash::binding(
@@ -50,7 +50,7 @@ pub fn derive_expected_hashes(
     )
     .map_err(ProcessError::DeriveBindingHashFailed)?;
 
-    Ok(Some(TributeZkExpectedHashes {
+    Ok(Some(OfferZkExpectedHashes {
         nft_hash: field_to_b256(nft_hash),
         binding_hash: field_to_b256(binding_hash),
     }))

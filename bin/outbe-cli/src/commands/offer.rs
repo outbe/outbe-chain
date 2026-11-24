@@ -1,4 +1,4 @@
-//! Tribute commands.
+//! Offer commands.
 
 use alloy_primitives::{Bytes, U256};
 use alloy_sol_types::SolCall;
@@ -11,33 +11,33 @@ use crate::abi::{
     INodFactory, ITeeRegistry, IWorldwideDay, NOD_FACTORY_ADDR, TEE_REGISTRY_ADDR,
     WORLDWIDE_DAY_ADDR,
 };
-use crate::errors::TributeError;
+use crate::errors::OfferError;
 use crate::rpc::Rpc;
 
 type WorldwideDayTotalsReturn = <IWorldwideDay::worldwideDayTotalsCall as SolCall>::Return;
 
-fn canonical_amount_base(value: &str) -> std::result::Result<String, TributeError> {
+fn canonical_amount_base(value: &str) -> std::result::Result<String, OfferError> {
     let parsed = value
         .parse::<u64>()
-        .map_err(|_| TributeError::InvalidAmountBase)?;
+        .map_err(|_| OfferError::InvalidAmountBase)?;
     if parsed.to_string() != value {
-        return Err(TributeError::InvalidAmountBase);
+        return Err(OfferError::InvalidAmountBase);
     }
     Ok(value.to_owned())
 }
 
-fn canonical_amount_micro(value: &str) -> std::result::Result<String, TributeError> {
+fn canonical_amount_micro(value: &str) -> std::result::Result<String, OfferError> {
     let parsed = value
         .parse::<u64>()
-        .map_err(|_| TributeError::InvalidAmountMicro)?;
+        .map_err(|_| OfferError::InvalidAmountMicro)?;
     if parsed.to_string() != value || parsed >= 1_000_000 {
-        return Err(TributeError::InvalidAmountMicro);
+        return Err(OfferError::InvalidAmountMicro);
     }
     Ok(value.to_owned())
 }
 
 #[derive(Subcommand)]
-pub enum TributeCmd {
+pub enum OfferCmd {
     /// Show the Nod totals of the Worldwide Day of an emission day
     WorldwideDayTotals {
         /// Emission day, `YYYYMMDD`
@@ -47,11 +47,11 @@ pub enum TributeCmd {
     /// Encrypts to the DKG-derived offer key registered in the TeeRegistry and
     /// sends `issueNod`. Requires `--private-key` and the ZK offer inputs
     /// (`--zk-proof`, `--zk-merkle-root`, `--signature`).
-    Offer(Box<TributeOfferArgs>),
+    IssueNod(Box<IssueNodArgs>),
 }
 
 #[derive(Args)]
-pub struct TributeOfferArgs {
+pub struct IssueNodArgs {
     /// WorldwideDay (must be in OFFERING status), e.g. 20241220
     worldwide_day: WorldwideDay,
     /// Issuance amount in whole units (`amount_base`)
@@ -60,7 +60,7 @@ pub struct TributeOfferArgs {
     /// Six-decimal raw remainder (`amount_micro`, 0..999999)
     #[arg(long, default_value = "0", value_parser = canonical_amount_micro)]
     amount_micro: String,
-    /// Issuance (tribute) currency, ISO 4217 numeric (e.g. 840 = USD)
+    /// Issuance currency, ISO 4217 numeric (e.g. 840 = USD)
     #[arg(long, value_parser = clap::value_parser!(u16).range(1..=999))]
     issuance_currency: u16,
     /// Reference currency the rights are priced in, ISO 4217 numeric
@@ -69,11 +69,11 @@ pub struct TributeOfferArgs {
     /// L2 zkMerkleRoot bytes (`0x`-hex).
     #[arg(long)]
     zk_merkle_root: String,
-    /// Combined Tribute proof bytes (`0x`-hex), including its four public
+    /// Combined offer proof bytes (`0x`-hex), including its four public
     /// inputs. Verifies under the circuit version enabled for `--l2-chain-id`.
     #[arg(long, value_parser = parse_zk_proof)]
     zk_proof: Bytes,
-    /// Registered L2 chain id selecting the Tribute circuit. Required.
+    /// Registered L2 chain id selecting the offer circuit. Required.
     #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
     l2_chain_id: u32,
     /// Circuit version. Defaults to the latest enabled version for the selected L2.
@@ -97,13 +97,13 @@ pub struct TributeOfferArgs {
     signature: String,
 }
 
-impl TributeCmd {
+impl OfferCmd {
     pub async fn run(self, client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
         match self {
             Self::WorldwideDayTotals { emission_day } => {
                 worldwide_day_totals(client, emission_day).await
             }
-            Self::Offer(args) => offer(client, private_key, *args).await,
+            Self::IssueNod(args) => issue_nod(client, private_key, *args).await,
         }
     }
 }
@@ -142,12 +142,12 @@ async fn worldwide_day_totals(client: &(impl Rpc + Sync), emission_day: u32) -> 
 ///
 /// The enclave decrypts the payload during execution, and the Nod factory issues the Nod.
 #[allow(clippy::too_many_arguments)]
-async fn offer(
+async fn issue_nod(
     client: &(impl Rpc + Sync),
     private_key: Option<&str>,
-    args: TributeOfferArgs,
+    args: IssueNodArgs,
 ) -> Result<()> {
-    let TributeOfferArgs {
+    let IssueNodArgs {
         worldwide_day,
         amount: amount_base,
         amount_micro,
@@ -179,7 +179,7 @@ async fn offer(
         ITeeRegistry::isBootstrappedCall::abi_decode_returns(&r)?
     };
     if !bootstrapped {
-        return Err(TributeError::TeeRegistryNotBootstrapped.into());
+        return Err(OfferError::TeeRegistryNotBootstrapped.into());
     }
     let offer_pub_u256 = {
         let r = client
@@ -214,8 +214,8 @@ async fn offer(
     //    `OFFER_HKDF_SALT` + ChaCha20Poly1305), byte-compatible with the enclave
     //    decrypt path and the node's canary probe.
     let (cipher_text, nonce, eph_pub) =
-        outbe_core_common::confidential_tee::encrypt_tribute_offer(&offer_pub, &plaintext)
-            .map_err(TributeError::OfferEncryptionFailed)?;
+        outbe_core_common::confidential_tee::encrypt_offer(&offer_pub, &plaintext)
+            .map_err(OfferError::OfferEncryptionFailed)?;
 
     // 4. Build + send `issueNod` (msg.value MUST be 0).
     let call = INodFactory::issueNodCall {
@@ -260,7 +260,7 @@ fn decode_hex_bytes(value: &str, flag: &str) -> Result<Bytes> {
     if stripped.is_empty() {
         return Ok(Bytes::new());
     }
-    let bytes = hex::decode(stripped).map_err(|source| TributeError::InvalidHexFlag {
+    let bytes = hex::decode(stripped).map_err(|source| OfferError::InvalidHexFlag {
         flag: flag.to_owned(),
         source,
     })?;
@@ -270,7 +270,7 @@ fn decode_hex_bytes(value: &str, flag: &str) -> Result<Bytes> {
 fn parse_zk_proof(value: &str) -> Result<Bytes> {
     let proof = decode_hex_bytes(value, "--zk-proof")?;
     if proof.is_empty() {
-        return Err(TributeError::EmptyZkProof.into());
+        return Err(OfferError::EmptyZkProof.into());
     }
     Ok(proof)
 }
@@ -308,7 +308,7 @@ fn circuit_version_defaults() -> impl Iterator<
 fn offer_hex32(value: &str, flag: &str) -> Result<String> {
     let bytes = decode_hex_bytes(value, flag)?;
     if bytes.len() != 32 {
-        return Err(TributeError::InvalidHex32Length {
+        return Err(OfferError::InvalidHex32Length {
             flag: flag.to_owned(),
             actual: bytes.len(),
         }
@@ -325,9 +325,9 @@ mod tests {
     use std::collections::HashMap;
 
     #[derive(Parser)]
-    struct TributeHarness {
+    struct OfferHarness {
         #[command(subcommand)]
-        command: TributeCmd,
+        command: OfferCmd,
     }
 
     #[derive(serde::Deserialize)]
@@ -341,7 +341,7 @@ mod tests {
     fn canonical_base_cases() -> CanonicalBaseCases {
         serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../testdata/tribute/canonical-amounts-v1.json"
+            "/../../testdata/offer/canonical-amounts-v1.json"
         )))
         .unwrap()
     }
@@ -405,10 +405,10 @@ mod tests {
         "0x2222222222222222222222222222222222222222222222222222222222222222",
     ];
 
-    /// `tribute offer 20250115` plus `extra` plus the required ZK flags.
+    /// `offer issue-nod 20250115` plus `extra` plus the required ZK flags.
     fn offer_argv(extra: &[&str]) -> Vec<String> {
         let mut argv: Vec<String> = Vec::new();
-        argv.extend(["tribute", "offer", "20250115"].map(str::to_owned));
+        argv.extend(["offer", "issue-nod", "20250115"].map(str::to_owned));
         argv.extend(extra.iter().map(|value| (*value).to_owned()));
         argv.extend(REQUIRED_OFFER_FLAGS.iter().map(|value| (*value).to_owned()));
         if !extra.contains(&"--l2-chain-id") {
@@ -436,20 +436,20 @@ mod tests {
                 .unwrap_or_else(|| panic!("{missing} is not in the offered argv"));
             argv.drain(index..=index + 1);
             assert!(
-                TributeHarness::try_parse_from(argv).is_err(),
+                OfferHarness::try_parse_from(argv).is_err(),
                 "{missing} must be required"
             );
         }
-        assert!(TributeHarness::try_parse_from(offer_argv(&[])).is_ok());
+        assert!(OfferHarness::try_parse_from(offer_argv(&[])).is_ok());
     }
 
     #[test]
     fn offer_cli_keeps_the_issuance_and_reference_currencies_apart() {
-        let parsed = TributeHarness::try_parse_from(offer_argv(&[])).unwrap();
-        let TributeCmd::Offer(args) = parsed.command else {
+        let parsed = OfferHarness::try_parse_from(offer_argv(&[])).unwrap();
+        let OfferCmd::IssueNod(args) = parsed.command else {
             panic!("expected offer command");
         };
-        let TributeOfferArgs {
+        let IssueNodArgs {
             issuance_currency,
             reference_currency,
             ..
@@ -464,7 +464,7 @@ mod tests {
                 .unwrap();
             argv[index + 1] = code.to_owned();
             assert!(
-                TributeHarness::try_parse_from(argv).is_err(),
+                OfferHarness::try_parse_from(argv).is_err(),
                 "{code} is not an ISO 4217 code"
             );
         }
@@ -481,11 +481,11 @@ mod tests {
                 "9.9.9",
             ),
         ] {
-            let parsed = TributeHarness::try_parse_from(offer_argv(&extra)).unwrap();
-            let TributeCmd::Offer(args) = parsed.command else {
+            let parsed = OfferHarness::try_parse_from(offer_argv(&extra)).unwrap();
+            let OfferCmd::IssueNod(args) = parsed.command else {
                 panic!("expected offer command");
             };
-            let TributeOfferArgs {
+            let IssueNodArgs {
                 l2_chain_id,
                 circuit_version,
                 ..
@@ -493,7 +493,7 @@ mod tests {
             assert_eq!(l2_chain_id, expected_chain);
             assert_eq!(circuit_version, expected_version);
         }
-        assert!(TributeHarness::try_parse_from(offer_argv(&["--l2-chain-id", "7"])).is_err());
+        assert!(OfferHarness::try_parse_from(offer_argv(&["--l2-chain-id", "7"])).is_err());
     }
 
     #[test]
@@ -511,22 +511,22 @@ mod tests {
             let mut argv = offer_argv(&[]);
             let index = argv.iter().position(|arg| arg == "--zk-proof").unwrap();
             argv[index + 1] = proof.to_owned();
-            assert!(TributeHarness::try_parse_from(argv).is_err());
+            assert!(OfferHarness::try_parse_from(argv).is_err());
         }
-        assert!(TributeHarness::try_parse_from(offer_argv(&["--l2-chain-id", "0"])).is_err());
-        assert!(TributeHarness::try_parse_from(offer_argv(&["--circuit-version", ""])).is_err());
+        assert!(OfferHarness::try_parse_from(offer_argv(&["--l2-chain-id", "0"])).is_err());
+        assert!(OfferHarness::try_parse_from(offer_argv(&["--circuit-version", ""])).is_err());
     }
 
     #[test]
     fn offer_cli_accepts_only_canonical_unsigned_whole_base_amounts() {
         let cases = canonical_base_cases();
         for canonical in cases.accepted_base {
-            assert!(TributeHarness::try_parse_from(offer_argv(&["--amount", &canonical])).is_ok());
+            assert!(OfferHarness::try_parse_from(offer_argv(&["--amount", &canonical])).is_ok());
         }
 
         for noncanonical in cases.rejected_base {
             assert!(
-                TributeHarness::try_parse_from(offer_argv(&["--amount", &noncanonical])).is_err(),
+                OfferHarness::try_parse_from(offer_argv(&["--amount", &noncanonical])).is_err(),
                 "non-canonical amount_base {noncanonical:?} was accepted"
             );
         }
@@ -537,13 +537,13 @@ mod tests {
         let cases = canonical_base_cases();
         for canonical in cases.accepted_micro {
             assert!(
-                TributeHarness::try_parse_from(offer_argv(&["--amount-micro", &canonical])).is_ok()
+                OfferHarness::try_parse_from(offer_argv(&["--amount-micro", &canonical])).is_ok()
             );
         }
 
         for noncanonical in cases.rejected_micro {
             assert!(
-                TributeHarness::try_parse_from(offer_argv(&["--amount-micro", &noncanonical]))
+                OfferHarness::try_parse_from(offer_argv(&["--amount-micro", &noncanonical]))
                     .is_err(),
                 "non-canonical amount_micro {noncanonical:?} was accepted"
             );
@@ -552,6 +552,6 @@ mod tests {
 
     #[test]
     fn offer_cli_rejects_legacy_amount_atto_flag() {
-        assert!(TributeHarness::try_parse_from(offer_argv(&["--amount-atto", "0"])).is_err());
+        assert!(OfferHarness::try_parse_from(offer_argv(&["--amount-atto", "0"])).is_err());
     }
 }

@@ -334,7 +334,7 @@ impl LocalCryptoError {
 ///
 /// The decoded bytes are validated and then discarded by token-id derivation.
 /// A malformed id still fails this function.
-pub fn parse_tribute_draft_id(draft_id: &str) -> Result<[u8; 32], ComputeError> {
+pub fn parse_offer_draft_id(draft_id: &str) -> Result<[u8; 32], ComputeError> {
     let hex_str = draft_id.strip_prefix("0x").unwrap_or(draft_id);
     let bytes = hex::decode(hex_str).map_err(|source| ComputeError::InvalidDraftIdHex {
         draft_id: draft_id.to_owned(),
@@ -391,7 +391,7 @@ mod tests {
 
     #[test]
     fn draft_id_hex_failure_keeps_the_decoder() {
-        let error = parse_tribute_draft_id("0xzz").unwrap_err();
+        let error = parse_offer_draft_id("0xzz").unwrap_err();
         let ComputeError::InvalidDraftIdHex { draft_id, source } = error else {
             panic!("odd or non-hex draft id is InvalidDraftIdHex");
         };
@@ -401,11 +401,11 @@ mod tests {
             DraftIdHexError::InvalidHexCharacter { c: 'z', index: 0 }
         ));
         assert_eq!(
-            parse_tribute_draft_id(&format!("0x{}", "11".repeat(32))).unwrap(),
+            parse_offer_draft_id(&format!("0x{}", "11".repeat(32))).unwrap(),
             [0x11; 32]
         );
         assert!(matches!(
-            parse_tribute_draft_id("0x11").unwrap_err(),
+            parse_offer_draft_id("0x11").unwrap_err(),
             ComputeError::DraftIdLength { len: 1 }
         ));
     }

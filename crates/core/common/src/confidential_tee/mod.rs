@@ -21,7 +21,7 @@ pub use confidential::{
     PROMIS, PROMIS_BALANCE_ENVELOPE, TRIBUTE,
 };
 pub use crypto::{
-    chacha20poly1305_decrypt, chacha20poly1305_encrypt, ecdhe_tribute_offer_decrypt, hkdf_sha256,
+    chacha20poly1305_decrypt, chacha20poly1305_encrypt, ecdhe_offer_decrypt, hkdf_sha256,
 };
 #[cfg(feature = "dev-keys")]
 pub use dev::encrypt_share;
@@ -32,13 +32,13 @@ pub use dev::{
     GRATIS_CHAIN, GRATIS_GROUP_SIG, OFFER_SECRET_KEY, PROMIS_CHAIN, PROMIS_GROUP_SIG,
 };
 pub use errors::{
-    map_consensus_transport_error, parse_tribute_draft_id, ComputeError, DraftIdHexError,
+    map_consensus_transport_error, parse_offer_draft_id, ComputeError, DraftIdHexError,
     EnclaveClientError, LocalCryptoError, TeeError, FIDELITY_ATTESTATION, GRATIS_OP_ATTESTATION,
     NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION,
 };
 pub use offer_encrypt::{
-    canary_offer_json, encrypt_tribute_offer, encrypt_tribute_offer_with, EncryptedOfferParts,
-    OFFER_HKDF_INFO, OFFER_HKDF_SALT,
+    canary_offer_json, encrypt_offer, encrypt_offer_with, EncryptedOfferParts, OFFER_HKDF_INFO,
+    OFFER_HKDF_SALT,
 };
 pub use response_auth::{
     attestation, hash, sign_attestation_tag, verify_app_attestation,

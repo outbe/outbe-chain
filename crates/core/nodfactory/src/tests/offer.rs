@@ -316,7 +316,7 @@ fn sealed_offer(
     let offer_key =
         PublicKey::from(&StaticSecret::from(outbe_nod::test_support::OFFER_SECRET)).to_bytes();
     let (cipher, nonce, ephemeral) =
-        outbe_core_common::confidential_tee::encrypt_tribute_offer(&offer_key, &payload).unwrap();
+        outbe_core_common::confidential_tee::encrypt_offer(&offer_key, &payload).unwrap();
     (
         Bytes::from(cipher),
         Bytes::from(nonce.to_vec()),
@@ -437,14 +437,14 @@ fn assert_real_zk_offer(proof: &[u8]) {
 
     // An SRA counter overflow after every other write rolls the offer back too.
     let reward_day = WorldwideDay::new(OFFER_DAY);
-    let count_key = AgentRewardContract::tribute_count_key(reward_day, REWARD_SRA);
+    let count_key = AgentRewardContract::offer_count_key(reward_day, REWARD_SRA);
     let index_key = AgentRewardContract::address_index_key(reward_day, 0);
     StorageHandle::enter(&mut provider, |storage| {
         let rewards = AgentRewardContract::new(storage);
         rewards.sra_addresses.write(&index_key, REWARD_SRA).unwrap();
         rewards.sra_address_count.write(&reward_day, 1).unwrap();
         rewards
-            .sra_tribute_counts
+            .sra_offer_counts
             .write(&count_key, u64::MAX)
             .unwrap();
         rewards
@@ -499,8 +499,8 @@ fn offer_of(owner: Address, issuance_currency: u16, amount: (&str, &str)) -> Iss
     }
 }
 
-fn zk_context() -> outbe_nod::offer::protocol::TributeZkContext {
-    outbe_nod::offer::protocol::TributeZkContext {
+fn zk_context() -> outbe_nod::offer::protocol::OfferZkContext {
+    outbe_nod::offer::protocol::OfferZkContext {
         derived_owner: B256::ZERO,
         chain_id: HOST_CHAIN_ID,
         l2_chain_id: L2_CHAIN_ID,

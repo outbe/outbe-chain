@@ -125,9 +125,9 @@ pub(crate) enum StablecoinError {
     ZeroPolicyAdmin,
 }
 
-/// Errors for the `tribute` subcommand.
+/// Errors for the `offer` subcommand.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum TributeError {
+pub(crate) enum OfferError {
     /// The base amount is not a canonical unsigned 64-bit integer.
     #[error("amount must be a canonical unsigned u64")]
     InvalidAmountBase,
@@ -137,7 +137,7 @@ pub(crate) enum TributeError {
     /// The on-chain `TeeRegistry` has no bootstrapped offer key.
     #[error("TeeRegistry is not bootstrapped yet - no offer key to encrypt to")]
     TeeRegistryNotBootstrapped,
-    /// Encrypting the tribute offer payload failed.
+    /// Encrypting the offer payload failed.
     #[error("offer encryption failed: {0}")]
     OfferEncryptionFailed(outbe_core_common::confidential_tee::LocalCryptoError),
     /// The command-line flag value is not valid hexadecimal.

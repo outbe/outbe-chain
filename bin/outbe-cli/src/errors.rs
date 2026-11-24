@@ -5,8 +5,8 @@ mod rpc;
 mod tee_common;
 
 pub(crate) use commands::{
-    CommandInputError, EpochError, MonitorError, OracleError, RadError, RadicleError, SlashError,
-    StablecoinError, StakingError, TributeError, ValidatorError, VoteError, ZeroFeeError,
+    CommandInputError, EpochError, MonitorError, OfferError, OracleError, RadError, RadicleError,
+    SlashError, StablecoinError, StakingError, ValidatorError, VoteError, ZeroFeeError,
 };
 pub(crate) use rpc::{RpcError, TxError};
 pub(crate) use tee_common::TeeStatusError;

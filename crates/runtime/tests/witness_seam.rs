@@ -277,7 +277,7 @@ fn active_resident_chain_mismatch_is_unsigned_on_a_user_tx_and_tape_invalid_on_p
 fn offer_request(chain_id: u64) -> IssueNodAtOfferRequestV1 {
     IssueNodAtOfferRequestV1 {
         chain_id,
-        offer: outbe_nod::offer::protocol::EncryptedTributeOffer {
+        offer: outbe_nod::offer::protocol::EncryptedOffer {
             owner: Address::repeat_byte(0xCA),
             cipher_text: Vec::new(),
             nonce: vec![0; 12],

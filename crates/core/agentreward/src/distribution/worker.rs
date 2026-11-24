@@ -188,7 +188,7 @@ fn source_entry(
             let address = index
                 .addresses
                 .read(&AgentRewardContract::address_index_key(day, job.next_index))?;
-            let count_key = AgentRewardContract::tribute_count_key(day, address);
+            let count_key = AgentRewardContract::offer_count_key(day, address);
             let count = index.counts.read(&count_key)?;
             // WAA/SRA append only on a positive first contribution and remain immutable.
             // Address zero itself is valid; a missing positive count is not.

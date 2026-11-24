@@ -56,10 +56,10 @@ fn export_authorizes_only_the_exact_domain_account_and_recipient() {
 
 #[test]
 fn resident_failures_preserve_domain_rejection_messages_and_typed_causes() {
-    use outbe_core_common::confidential_tee::ecdhe_tribute_offer_decrypt;
+    use outbe_core_common::confidential_tee::ecdhe_offer_decrypt;
     use outbe_tee::resident::{OfferKeyHandle, StateKeyHandle};
     use std::error::Error as _;
-    let error = ecdhe_tribute_offer_decrypt(
+    let error = ecdhe_offer_decrypt(
         &OfferKeyHandle::for_test([7; 32]),
         &[0; 32],
         &[8; 32],

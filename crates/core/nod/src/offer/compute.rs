@@ -1,8 +1,8 @@
-//! Tribute computation - economics. Pure, deterministic, integer (U256) only.
+//! Offer computation - economics. Pure, deterministic, integer (U256) only.
 //!
-//! The settlement->nominal computation runs **only in the enclave**. The host
-//! `outbe-tributefactory` runtime does not recompute private economics. It forwards
-//! the public pricing inputs and uses the enclave result.
+//! The settlement->nominal computation runs **only in the enclave**. The host does not
+//! recompute private economics. It forwards the public pricing inputs and uses the
+//! enclave result.
 //!
 //!   - Arithmetic is checked (no panics, per project safety rules). On overflow the
 //!     enclave rejects the offer and does not abort.
@@ -22,7 +22,7 @@ use outbe_system_common::units::SCALE_1E6_U256;
 
 type AmountResult<T> = Result<T, ComputeError>;
 
-/// Canonical Tribute amount parsed once before the ZK/non-ZK paths diverge.
+/// Canonical offer amount parsed once before the ZK/non-ZK paths diverge.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CanonicalAmount {
     pub base: u64,
@@ -30,7 +30,7 @@ pub struct CanonicalAmount {
     pub amount_minor: U256,
 }
 
-/// Computes the Tribute-only S-curve pricing contract:
+/// Computes the S-curve pricing contract of an offer:
 ///
 /// `effective_ref = max(reference_vwap, reference_scurve)`
 /// `nominal = floor(amount * 1_000_000 * reference_vwap /
@@ -78,7 +78,7 @@ fn parse_canonical_u64(value: &str, field: &'static str) -> AmountResult<u64> {
 }
 
 /// Parse the `amount_base`/`amount_micro` wire fields into the canonical
-/// six-decimal Tribute amount. `amount_base` is a whole unsigned `u64` and the
+/// six-decimal offer amount. `amount_base` is a whole unsigned `u64` and the
 /// `amount_micro` field is the raw remainder `0..999_999`.
 pub fn parse_canonical_amount(
     base_amount: &str,
@@ -116,7 +116,7 @@ mod tests {
     fn canonical_amount_cases() -> CanonicalAmountCases {
         serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../testdata/tribute/canonical-amounts-v1.json"
+            "/../../../testdata/offer/canonical-amounts-v1.json"
         )))
         .unwrap()
     }

@@ -8,7 +8,7 @@ use outbe_core_common::series_id::SeriesId;
 use outbe_nod::api as nod_api;
 use outbe_nod::offer::issue::{IssueNodAtOfferRequestV1, NodAtOfferResultV1, NodAtOfferStatusV1};
 use outbe_nod::offer::protocol::{
-    EncryptedTributeOffer, TributePublicInputs, TributeZkContext, TributeZkExpectedHashes,
+    EncryptedOffer, OfferPublicInputs, OfferZkContext, OfferZkExpectedHashes,
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -175,7 +175,7 @@ impl From<OfferError> for PrecompileError {
 
 struct VerifiedProof {
     host_chain_id: u64,
-    public: TributePublicInputs,
+    public: OfferPublicInputs,
     verification_key: &'static [u8],
 }
 
@@ -198,7 +198,7 @@ pub fn issue_nod(storage: &StorageHandle<'_>, input: IssueNodInput) -> Result<U2
         &input,
         (wwd.day, entry_price_minor),
         &pricing,
-        TributeZkContext {
+        OfferZkContext {
             derived_owner: proof.public.derived_owner,
             chain_id: proof.host_chain_id,
             l2_chain_id: u64::from(input.l2_chain_id),
@@ -242,11 +242,11 @@ pub(crate) fn offer_request(
     input: &IssueNodInput,
     (emission_day, entry_price_minor): (u32, U256),
     pricing: &outbe_oracle::api::TributePricingInputs,
-    zk_context: TributeZkContext,
+    zk_context: OfferZkContext,
 ) -> IssueNodAtOfferRequestV1 {
     IssueNodAtOfferRequestV1 {
         chain_id: zk_context.chain_id,
-        offer: EncryptedTributeOffer {
+        offer: EncryptedOffer {
             owner: input.caller,
             cipher_text: input.cipher_text.to_vec(),
             nonce: input.nonce.to_vec(),
@@ -364,10 +364,10 @@ fn record_agent_reward_activity(
     let reward_utc_day = WorldwideDay::new(timestamp_to_date_key(now));
     let mut agent_reward = AgentRewardContract::new(storage.clone());
     for address in wallets {
-        agent_reward.increment_waa_tribute(reward_utc_day, *address)?;
+        agent_reward.increment_waa_offer(reward_utc_day, *address)?;
     }
     for address in sras {
-        agent_reward.increment_sra_tribute(reward_utc_day, *address)?;
+        agent_reward.increment_sra_offer(reward_utc_day, *address)?;
     }
     Ok(())
 }
@@ -458,7 +458,7 @@ fn resolve_verification_key(
     Ok(binding.vk_bytes)
 }
 
-fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<TributePublicInputs> {
+fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<OfferPublicInputs> {
     // bb-keccak-v1 VK: log circuit size, public count (including eight
     // pairing-accumulator words), offset, then 28 two-word commitments.
     if verification_key.len() != 59 * 32 {
@@ -474,14 +474,14 @@ fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<Trib
     let combined_len = 4 + (4 + 82 + 12 * log_n as usize) * 32;
     let words = decode_public_words::<4>(proof, combined_len)
         .map_err(|err| OfferError::MalformedZkProof(err.to_string()))?;
-    Ok(TributePublicInputs::from_raw_parts(words))
+    Ok(OfferPublicInputs::from_raw_parts(words))
 }
 
 fn validate_zk_result(
     zk_proof: &[u8],
     verification_key: &[u8],
-    public: TributePublicInputs,
-    expected: Option<&TributeZkExpectedHashes>,
+    public: OfferPublicInputs,
+    expected: Option<&OfferZkExpectedHashes>,
 ) -> Result<()> {
     let expected = expected.ok_or(OfferError::ZkPublicInputMismatch {
         field: "tee_expected_hashes",

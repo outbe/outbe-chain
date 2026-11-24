@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::compute::{compute_nominal, parse_canonical_amount};
 use super::errors::{display_text, OfferError, OfferResult, ProcessError};
-use super::protocol::{EncryptedTributeOffer, TributeZkExpectedHashes};
+use super::protocol::{EncryptedOffer, OfferZkExpectedHashes};
 use super::zk_claim::derive_expected_hashes;
 use super::{open_offer, OfferKeyMaterial};
 use crate::constants::LOAD_RATE_PCT;
@@ -20,7 +20,7 @@ use outbe_core_common::confidential_tee::ComputeError;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IssueNodAtOfferRequestV1 {
     pub chain_id: u64,
-    pub offer: EncryptedTributeOffer,
+    pub offer: EncryptedOffer,
     /// Emission day of the series, `YYYYMMDD`.
     pub emission_day: u32,
     /// 24-hour VWAP of the reference currency at the offer hour.
@@ -46,7 +46,7 @@ pub struct NodAtOfferResultV1 {
     pub su_hashes: Vec<String>,
     pub wallet_addresses: Vec<String>,
     pub sra_addresses: Vec<String>,
-    pub zk_expected_hashes: Option<TributeZkExpectedHashes>,
+    pub zk_expected_hashes: Option<OfferZkExpectedHashes>,
 }
 
 impl NodAtOfferResultV1 {

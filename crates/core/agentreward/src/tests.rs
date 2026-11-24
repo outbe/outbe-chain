@@ -165,8 +165,8 @@ fn agentreward_dense_daily_distribution_completes_and_clears_indexes() {
         for n in 0..DAILY_ADDRESSES_PER_POOL {
             let waa = numbered_address(1 + n);
             let sra = numbered_address(10_000 + n);
-            contract.increment_waa_tribute(day, waa).unwrap();
-            contract.increment_sra_tribute(day, sra).unwrap();
+            contract.increment_waa_offer(day, waa).unwrap();
+            contract.increment_sra_offer(day, sra).unwrap();
             waa_addresses.push(waa);
             sra_addresses.push(sra);
         }
@@ -255,10 +255,10 @@ fn a_day_beyond_one_slice_is_credited_over_several_blocks_in_queue_order() {
         let mut contract = AgentRewardContract::new(storage.clone());
         for n in 0..recipients {
             contract
-                .increment_waa_tribute(waa_day, numbered_address(1 + n))
+                .increment_waa_offer(waa_day, numbered_address(1 + n))
                 .unwrap();
         }
-        contract.increment_sra_tribute(sra_day, sra).unwrap();
+        contract.increment_sra_offer(sra_day, sra).unwrap();
         let claimable = |n: u64| {
             AgentRewardContract::new(storage.clone())
                 .get_pool_claimable_reward(RewardPool::Waa, numbered_address(1 + n))
@@ -328,9 +328,9 @@ fn test_address_list_deduplication() {
     let wwd = WorldwideDay::new(5);
 
     with_contract_mut(|_storage, contract| {
-        contract.increment_waa_tribute(wwd, alice).unwrap();
-        contract.increment_waa_tribute(wwd, alice).unwrap();
-        contract.increment_waa_tribute(wwd, alice).unwrap();
+        contract.increment_waa_offer(wwd, alice).unwrap();
+        contract.increment_waa_offer(wwd, alice).unwrap();
+        contract.increment_waa_offer(wwd, alice).unwrap();
 
         let counts = contract.get_all_waa_counts(wwd).unwrap();
         assert_eq!(counts.len(), 1);
@@ -343,16 +343,16 @@ fn test_address_list_deduplication() {
 }
 
 #[test]
-fn the_day_total_counts_every_tribute_and_clears_with_the_day() {
+fn the_day_total_counts_every_offer_and_clears_with_the_day() {
     let alice = address!("0x1111111111111111111111111111111111111111");
     let bob = address!("0x2222222222222222222222222222222222222222");
     let wwd = WorldwideDay::new(20231113);
 
     with_contract_mut(|storage, contract| {
-        contract.increment_waa_tribute(wwd, alice).unwrap();
-        contract.increment_waa_tribute(wwd, alice).unwrap();
-        contract.increment_waa_tribute(wwd, bob).unwrap();
-        contract.increment_sra_tribute(wwd, bob).unwrap();
+        contract.increment_waa_offer(wwd, alice).unwrap();
+        contract.increment_waa_offer(wwd, alice).unwrap();
+        contract.increment_waa_offer(wwd, bob).unwrap();
+        contract.increment_sra_offer(wwd, bob).unwrap();
         assert_eq!(contract.waa_total_count.read(&wwd).unwrap(), 3);
         assert_eq!(contract.sra_total_count.read(&wwd).unwrap(), 1);
 
@@ -378,20 +378,20 @@ fn the_day_total_counts_every_tribute_and_clears_with_the_day() {
     });
 }
 
-fn increment_tribute_counter(
+fn increment_offer_counter(
     contract: &mut AgentRewardContract<'_>,
     pool: RewardPool,
     day: WorldwideDay,
     address: Address,
 ) -> outbe_primitives::error::Result<()> {
     match pool {
-        RewardPool::Waa => contract.increment_waa_tribute(day, address),
-        RewardPool::Sra => contract.increment_sra_tribute(day, address),
-        _ => panic!("tribute counters require WAA or SRA"),
+        RewardPool::Waa => contract.increment_waa_offer(day, address),
+        RewardPool::Sra => contract.increment_sra_offer(day, address),
+        _ => panic!("offer counters require WAA or SRA"),
     }
 }
 
-fn assert_tribute_counter_rejected_without_writes(
+fn assert_offer_counter_rejected_without_writes(
     provider: &mut HashMapStorageProvider,
     pool: RewardPool,
     day: WorldwideDay,
@@ -403,7 +403,7 @@ fn assert_tribute_counter_rejected_without_writes(
     provider.clear_mutation_failure();
     // Like with_contract_mut, this supplies no checkpoint: validation must precede all writes.
     let error = StorageHandle::enter(provider, |storage| {
-        increment_tribute_counter(&mut AgentRewardContract::new(storage), pool, day, address)
+        increment_offer_counter(&mut AgentRewardContract::new(storage), pool, day, address)
     })
     .unwrap_err();
     let expected = outbe_primitives::error::PrecompileError::from(
@@ -447,7 +447,7 @@ fn assert_boundary_address_slots(index: &DayIndex<'_, '_>, day: WorldwideDay, ex
 }
 
 #[test]
-fn tribute_counter_recipient_max_succeeds_then_rejects_without_zero_wrap_or_duplicate() {
+fn offer_counter_recipient_max_succeeds_then_rejects_without_zero_wrap_or_duplicate() {
     let day = WorldwideDay::new(20260525);
     let alice = numbered_address(1);
     let bob = numbered_address(2);
@@ -459,7 +459,7 @@ fn tribute_counter_recipient_max_succeeds_then_rejects_without_zero_wrap_or_dupl
             index
                 .counts
                 .write(
-                    &AgentRewardContract::tribute_count_key(day, alice),
+                    &AgentRewardContract::offer_count_key(day, alice),
                     u64::MAX - 1,
                 )
                 .unwrap();
@@ -474,12 +474,12 @@ fn tribute_counter_recipient_max_succeeds_then_rejects_without_zero_wrap_or_dupl
                 .addresses
                 .write(&AgentRewardContract::address_index_key(day, 1), bob)
                 .unwrap();
-            increment_tribute_counter(&mut contract, pool, day, alice).unwrap();
+            increment_offer_counter(&mut contract, pool, day, alice).unwrap();
             let index = contract.day_index(pool).unwrap();
             assert_eq!(
                 index
                     .counts
-                    .read(&AgentRewardContract::tribute_count_key(day, alice))
+                    .read(&AgentRewardContract::offer_count_key(day, alice))
                     .unwrap(),
                 u64::MAX
             );
@@ -493,12 +493,12 @@ fn tribute_counter_recipient_max_succeeds_then_rejects_without_zero_wrap_or_dupl
                 bob
             );
         });
-        assert_tribute_counter_rejected_without_writes(&mut provider, pool, day, alice);
+        assert_offer_counter_rejected_without_writes(&mut provider, pool, day, alice);
     }
 }
 
 #[test]
-fn tribute_counter_daily_total_max_succeeds_then_rejects_fresh_recipient_without_writes() {
+fn offer_counter_daily_total_max_succeeds_then_rejects_fresh_recipient_without_writes() {
     let day = WorldwideDay::new(20260525);
     let alice = numbered_address(1);
     let bob = numbered_address(2);
@@ -512,21 +512,21 @@ fn tribute_counter_daily_total_max_succeeds_then_rejects_fresh_recipient_without
                 .total
                 .write(&day, u64::MAX - 1)
                 .unwrap();
-            increment_tribute_counter(&mut contract, pool, day, alice).unwrap();
+            increment_offer_counter(&mut contract, pool, day, alice).unwrap();
             let index = contract.day_index(pool).unwrap();
             assert_eq!(index.total.read(&day).unwrap(), u64::MAX);
             assert_eq!(index.address_count.read(&day).unwrap(), 1);
             assert_eq!(
                 index
                     .counts
-                    .read(&AgentRewardContract::tribute_count_key(day, alice))
+                    .read(&AgentRewardContract::offer_count_key(day, alice))
                     .unwrap(),
                 1
             );
             assert_eq!(
                 index
                     .counts
-                    .read(&AgentRewardContract::tribute_count_key(day, bob))
+                    .read(&AgentRewardContract::offer_count_key(day, bob))
                     .unwrap(),
                 0
             );
@@ -545,12 +545,12 @@ fn tribute_counter_daily_total_max_succeeds_then_rejects_fresh_recipient_without
                 Address::ZERO
             );
         });
-        assert_tribute_counter_rejected_without_writes(&mut provider, pool, day, bob);
+        assert_offer_counter_rejected_without_writes(&mut provider, pool, day, bob);
     }
 }
 
 #[test]
-fn tribute_counter_address_count_max_succeeds_then_rejects_without_slot_overwrite() {
+fn offer_counter_address_count_max_succeeds_then_rejects_without_slot_overwrite() {
     let day = WorldwideDay::new(20260525);
     let alice = numbered_address(1);
     let bob = numbered_address(2);
@@ -562,14 +562,14 @@ fn tribute_counter_address_count_max_succeeds_then_rejects_without_slot_overwrit
             let index = contract.day_index(pool).unwrap();
             index.address_count.write(&day, u32::MAX - 1).unwrap();
             write_boundary_address_slots(&index, day, sentinel);
-            increment_tribute_counter(&mut contract, pool, day, alice).unwrap();
+            increment_offer_counter(&mut contract, pool, day, alice).unwrap();
             let index = contract.day_index(pool).unwrap();
             assert_eq!(index.address_count.read(&day).unwrap(), u32::MAX);
             assert_eq!(index.total.read(&day).unwrap(), 1);
             assert_eq!(
                 index
                     .counts
-                    .read(&AgentRewardContract::tribute_count_key(day, alice))
+                    .read(&AgentRewardContract::offer_count_key(day, alice))
                     .unwrap(),
                 1
             );
@@ -582,19 +582,19 @@ fn tribute_counter_address_count_max_succeeds_then_rejects_without_slot_overwrit
             );
             assert_boundary_address_slots(&index, day, sentinel);
         });
-        assert_tribute_counter_rejected_without_writes(&mut provider, pool, day, bob);
+        assert_offer_counter_rejected_without_writes(&mut provider, pool, day, bob);
 
-        // A full list limits new recipients, not further tributes for an indexed recipient.
+        // A full list limits new recipients, not further offers for an indexed recipient.
         StorageHandle::enter(&mut provider, |storage| {
             let mut contract = AgentRewardContract::new(storage);
-            increment_tribute_counter(&mut contract, pool, day, alice).unwrap();
+            increment_offer_counter(&mut contract, pool, day, alice).unwrap();
             let index = contract.day_index(pool).unwrap();
             assert_eq!(index.address_count.read(&day).unwrap(), u32::MAX);
             assert_eq!(index.total.read(&day).unwrap(), 2);
             assert_eq!(
                 index
                     .counts
-                    .read(&AgentRewardContract::tribute_count_key(day, alice))
+                    .read(&AgentRewardContract::offer_count_key(day, alice))
                     .unwrap(),
                 2
             );
@@ -1154,40 +1154,40 @@ mod distribute_daily_tests {
 
     #[test]
     fn sole_waa_and_sra_receive_full_pools() {
-        check_tribute_distribution(1_000, &[(0xaa, 1, 1_000)], 0);
+        check_offer_distribution(1_000, &[(0xaa, 1, 1_000)], 0);
     }
 
     #[test]
-    fn waa_and_sra_rewards_follow_tribute_weights_without_a_cap() {
-        check_tribute_distribution(1_000, &[(0xaa, 9, 900), (0xbb, 1, 100)], 0);
+    fn waa_and_sra_rewards_follow_offer_weights_without_a_cap() {
+        check_offer_distribution(1_000, &[(0xaa, 9, 900), (0xbb, 1, 100)], 0);
     }
 
     #[test]
     fn waa_and_sra_floor_each_share_and_return_rounding_residue() {
-        check_tribute_distribution(10, &[(0xaa, 1, 3), (0xbb, 1, 3), (0xcc, 1, 3)], 1);
+        check_offer_distribution(10, &[(0xaa, 1, 3), (0xbb, 1, 3), (0xcc, 1, 3)], 1);
     }
 
     #[test]
     fn waa_and_sra_leave_rounding_residue_without_redistribution() {
-        check_tribute_distribution(
+        check_offer_distribution(
             11,
             &[(0xaa, 1, 2), (0xbb, 1, 2), (0xcc, 1, 2), (0xdd, 1, 2)],
             3,
         );
     }
 
-    fn check_tribute_distribution(pool: u64, recipients: &[(u8, u64, u64)], expected_excess: u64) {
+    fn check_offer_distribution(pool: u64, recipients: &[(u8, u64, u64)], expected_excess: u64) {
         for (kind, reward_pool) in [
             (PoolKind::Waa, RewardPool::Waa),
             (PoolKind::Sra, RewardPool::Sra),
         ] {
             run(|ctx| {
                 let mut contract = AgentRewardContract::new(ctx.storage.clone());
-                seed_tributes(&mut contract, kind, recipients);
+                seed_offers(&mut contract, kind, recipients);
                 let excess = distribute_and_credit(ctx, DAY, &[(kind, U256::from(pool))]).unwrap();
                 assert_eq!(excess, U256::from(expected_excess));
                 let credited = assert_credited(&contract, reward_pool, kind, recipients);
-                assert_tribute_index_cleared(&contract, kind, recipients);
+                assert_offer_index_cleared(&contract, kind, recipients);
                 assert_eq!(
                     ctx.storage
                         .balance(outbe_system_common::addresses::AGENT_REWARD_ADDRESS)
@@ -1199,7 +1199,7 @@ mod distribute_daily_tests {
         }
     }
 
-    fn seed_tributes(
+    fn seed_offers(
         contract: &mut AgentRewardContract,
         kind: PoolKind,
         recipients: &[(u8, u64, u64)],
@@ -1207,21 +1207,17 @@ mod distribute_daily_tests {
         for &(byte, weight, _) in recipients {
             let address = Address::repeat_byte(byte);
             for _ in 0..weight {
-                record_one_tribute(contract, kind, address);
+                record_one_offer(contract, kind, address);
             }
         }
     }
 
-    fn record_one_tribute(
-        contract: &mut AgentRewardContract<'_>,
-        kind: PoolKind,
-        address: Address,
-    ) {
+    fn record_one_offer(contract: &mut AgentRewardContract<'_>, kind: PoolKind, address: Address) {
         match kind {
-            PoolKind::Waa => contract.increment_waa_tribute(DAY, address).unwrap(),
-            PoolKind::Sra => contract.increment_sra_tribute(DAY, address).unwrap(),
+            PoolKind::Waa => contract.increment_waa_offer(DAY, address).unwrap(),
+            PoolKind::Sra => contract.increment_sra_offer(DAY, address).unwrap(),
             PoolKind::Cca | PoolKind::Validator => {
-                panic!("tribute distribution covers WAA and SRA")
+                panic!("offer distribution covers WAA and SRA")
             }
         }
     }
@@ -1241,15 +1237,15 @@ mod distribute_daily_tests {
             assert_eq!(reward, U256::from(expected));
             credited += reward;
             let counts = match kind {
-                PoolKind::Waa => &contract.waa_tribute_counts,
-                PoolKind::Sra => &contract.sra_tribute_counts,
+                PoolKind::Waa => &contract.waa_offer_counts,
+                PoolKind::Sra => &contract.sra_offer_counts,
                 PoolKind::Cca | PoolKind::Validator => {
-                    panic!("tribute distribution covers WAA and SRA")
+                    panic!("offer distribution covers WAA and SRA")
                 }
             };
             assert_eq!(
                 counts
-                    .read(&AgentRewardContract::tribute_count_key(DAY, address))
+                    .read(&AgentRewardContract::offer_count_key(DAY, address))
                     .unwrap(),
                 0
             );
@@ -1257,7 +1253,7 @@ mod distribute_daily_tests {
         credited
     }
 
-    fn assert_tribute_index_cleared(
+    fn assert_offer_index_cleared(
         contract: &AgentRewardContract,
         kind: PoolKind,
         recipients: &[(u8, u64, u64)],
@@ -1274,7 +1270,7 @@ mod distribute_daily_tests {
                 &contract.sra_addresses,
             ),
             PoolKind::Cca | PoolKind::Validator => {
-                panic!("tribute distribution covers WAA and SRA")
+                panic!("offer distribution covers WAA and SRA")
             }
         };
         assert!(remaining.is_empty());
@@ -1290,7 +1286,7 @@ mod distribute_daily_tests {
     }
 
     #[test]
-    fn waa_no_tribute_returns_full_pool_without_minting() {
+    fn waa_no_offer_returns_full_pool_without_minting() {
         run(|ctx| {
             let excess =
                 distribute_and_credit(ctx, DAY, &[(PoolKind::Waa, U256::from(500u64))]).unwrap();
@@ -1305,7 +1301,7 @@ mod distribute_daily_tests {
     }
 
     #[test]
-    fn sra_no_tribute_returns_full_pool_without_minting() {
+    fn sra_no_offer_returns_full_pool_without_minting() {
         run(|ctx| {
             let excess =
                 distribute_and_credit(ctx, DAY, &[(PoolKind::Sra, U256::from(700u64))]).unwrap();
@@ -1377,14 +1373,14 @@ mod distribute_daily_tests {
             // Seed only WAA. SRA and CCA stay empty.
             let alice = address!("0x1111111111111111111111111111111111111111");
             let mut c = AgentRewardContract::new(ctx.storage.clone());
-            c.increment_waa_tribute(DAY, alice).unwrap();
+            c.increment_waa_offer(DAY, alice).unwrap();
 
             let excess = distribute_and_credit(
                 ctx,
                 DAY,
                 &[
                     (PoolKind::Waa, U256::from(1000u64)), // alice receives the full pool
-                    (PoolKind::Sra, U256::from(500u64)),  // no tribute -> excess 500
+                    (PoolKind::Sra, U256::from(500u64)),  // no offer -> excess 500
                     (PoolKind::Cca, U256::from(100u64)),  // no eligible CCA
                 ],
             )
@@ -1429,10 +1425,10 @@ mod distribute_daily_tests {
             let bob = address!("0x2222222222222222222222222222222222222222");
             let signer = address!("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
             let mut c = AgentRewardContract::new(ctx.storage.clone());
-            c.increment_waa_tribute(DAY, alice).unwrap();
-            c.increment_waa_tribute(DAY, alice).unwrap();
-            c.increment_waa_tribute(DAY, bob).unwrap();
-            c.increment_sra_tribute(DAY, signer).unwrap();
+            c.increment_waa_offer(DAY, alice).unwrap();
+            c.increment_waa_offer(DAY, alice).unwrap();
+            c.increment_waa_offer(DAY, bob).unwrap();
+            c.increment_sra_offer(DAY, signer).unwrap();
 
             let excess = distribute_and_credit(
                 ctx,
@@ -1464,8 +1460,8 @@ fn distribution_failure_restores_prior_pools_and_counts() {
     with_contract_mut(|storage, contract| {
         let alice = Address::repeat_byte(1);
         let day = WorldwideDay::new(20231113);
-        contract.increment_waa_tribute(day, alice).unwrap();
-        contract.increment_sra_tribute(day, alice).unwrap();
+        contract.increment_waa_offer(day, alice).unwrap();
+        contract.increment_sra_offer(day, alice).unwrap();
         contract
             .add_claimable_reward(RewardPool::Sra, alice, U256::MAX)
             .unwrap();
@@ -1542,7 +1538,7 @@ fn accrual_and_claim_emit_their_events_for_any_pool() {
     let gem_id = StorageHandle::enter(&mut provider, |storage| {
         seed_oracle(&storage, ONE_COEN);
         let mut contract = AgentRewardContract::new(storage.clone());
-        contract.increment_waa_tribute(day, alice).unwrap();
+        contract.increment_waa_offer(day, alice).unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
                 block_gas_limit: 0,
@@ -1600,16 +1596,16 @@ fn every_pool_day() -> HashMapStorageProvider {
         let day = WorldwideDay::new(timestamp_to_date_key(T_NOW));
         let mut contract = AgentRewardContract::new(storage.clone());
         contract
-            .increment_waa_tribute(day, Address::repeat_byte(1))
+            .increment_waa_offer(day, Address::repeat_byte(1))
             .unwrap();
         contract
-            .increment_waa_tribute(day, Address::repeat_byte(1))
+            .increment_waa_offer(day, Address::repeat_byte(1))
             .unwrap();
         contract
-            .increment_waa_tribute(day, Address::repeat_byte(2))
+            .increment_waa_offer(day, Address::repeat_byte(2))
             .unwrap();
         contract
-            .increment_sra_tribute(day, Address::repeat_byte(3))
+            .increment_sra_offer(day, Address::repeat_byte(3))
             .unwrap();
 
         let cca = Address::repeat_byte(4);
