@@ -107,9 +107,9 @@ impl Chains {
 /// each next place waits one more turn. Every relayer calculates the same
 /// order from the active validators, so the relayers do not talk. The order
 /// is different for each message: the work of a stopped relayer goes to all
-/// the others in equal parts. A relayer that is not an active validator is
-/// after all of them.
-pub fn turn_position(active: &[Address], me: Address, message_id: B256) -> usize {
+/// the others in equal parts. `None`: `me` is not an active validator and
+/// has no turn.
+pub fn turn_position(active: &[Address], me: Address, message_id: B256) -> Option<usize> {
     let rank = |validator: &Address| {
         let mut buf = [0u8; 52];
         buf[..32].copy_from_slice(message_id.as_slice());
@@ -117,10 +117,10 @@ pub fn turn_position(active: &[Address], me: Address, message_id: B256) -> usize
         keccak256(buf)
     };
     if !active.contains(&me) {
-        return active.len();
+        return None;
     }
     let mine = rank(&me);
-    active.iter().filter(|v| rank(v) < mine).count()
+    Some(active.iter().filter(|v| rank(v) < mine).count())
 }
 
 pub async fn delivered(
@@ -267,7 +267,7 @@ mod tests {
         let places = |id: u8| -> Vec<usize> {
             active
                 .iter()
-                .map(|v| turn_position(&active, *v, B256::repeat_byte(id)))
+                .map(|v| turn_position(&active, *v, B256::repeat_byte(id)).unwrap())
                 .collect()
         };
         let mut sorted = places(1);
@@ -276,9 +276,9 @@ mod tests {
         // The same order on every relayer, another order for another message.
         assert_eq!(places(1), places(1));
         assert!((2..20).any(|id| places(id) != places(1)));
-        // A relayer that is not active is after all active validators.
+        // A relayer that is not an active validator has no turn.
         let outsider = Address::repeat_byte(9);
-        assert_eq!(turn_position(&active, outsider, B256::ZERO), 5);
+        assert_eq!(turn_position(&active, outsider, B256::ZERO), None);
     }
 
     #[test]

@@ -169,7 +169,8 @@ pub struct Relayer {
     pub outbe: DynProvider,
     /// The key `H`. It pays the gas on each destination chain.
     pub wallet: EthereumWallet,
-    /// Validator `V`: the place of this relayer in the delivery order.
+    /// Validator `V`: the place of this relayer in the delivery order. It
+    /// sends only while `V` is an active validator.
     pub validator: Address,
 }
 
@@ -298,8 +299,12 @@ impl Relayer {
                 return Err(error);
             }
         }
-        let place = turn_position(active, self.validator, id) as u64;
-        if now < row.first_seen + place * dest.turn_secs {
+        // A validator that is not active does not send: it only removes
+        // its rows when another relayer delivers.
+        let Some(place) = turn_position(active, self.validator, id) else {
+            return Ok(Outcome::Wait);
+        };
+        if now < row.first_seen + place as u64 * dest.turn_secs {
             return Ok(Outcome::Wait);
         }
         let retry = |fast, reason: String| Ok(Outcome::Retry { fast, reason });
@@ -451,6 +456,7 @@ mod tests {
     const MAILBOX_97: Address = Address::repeat_byte(0xb9);
     const ISM: Address = Address::repeat_byte(0x15);
     const V: Address = Address::repeat_byte(0x77);
+    const W: Address = Address::repeat_byte(0x78);
 
     /// What the test reads back from the mock chain.
     #[derive(Default)]
@@ -525,7 +531,7 @@ mod tests {
                     let data: Bytes = serde_json::from_value(input.clone()).unwrap();
                     let selector: [u8; 4] = data[..4].try_into().unwrap();
                     let out = match (to, selector) {
-                        (VALIDATOR_SET_ADDRESS, _) => vec![V].abi_encode(),
+                        (VALIDATOR_SET_ADDRESS, _) => vec![V, W].abi_encode(),
                         (MAILBOX_97, IMailbox::deliveredCall::SELECTOR) => {
                             seen.delivered.abi_encode()
                         }
@@ -636,16 +642,22 @@ mod tests {
         };
         let mut take_in = TakeIn::new(origin(5, MAILBOX), store.clone());
 
-        // A relayer that is not an active validator is after the one active
-        // validator: it waits one turn of 40 seconds.
+        // A relayer that is not an active validator never sends.
         let outsider = relayer(Address::repeat_byte(0x99));
         outsider.tick(&mut take_in, 1_000).await.unwrap();
-        outsider.tick(&mut take_in, 1_039).await.unwrap();
+        outsider.tick(&mut take_in, 9_000).await.unwrap();
         assert_eq!(seen.lock().unwrap().sent, 0);
         assert_eq!(store.relay_rows(5).unwrap()[0].1.first_seen, 1_000);
 
-        // The active validator has the first turn: it sends at once.
-        let first = relayer(V);
+        // Two active validators: one has the first turn, the other waits one
+        // turn of 40 seconds.
+        let (first, second) = match turn_position(&[V, W], V, id) {
+            Some(0) => (relayer(V), relayer(W)),
+            _ => (relayer(W), relayer(V)),
+        };
+        second.tick(&mut take_in, 1_039).await.unwrap();
+        assert_eq!(seen.lock().unwrap().sent, 0);
+
         first.tick(&mut take_in, 1_001).await.unwrap();
         {
             let seen = seen.lock().unwrap();
@@ -662,8 +674,8 @@ mod tests {
         assert_eq!(store.relay_rows(5).unwrap().len(), 1);
 
         // The next tick sees the final delivery: the row goes away. The
-        // outsider does not send a second transaction after its wait.
-        outsider.tick(&mut take_in, 1_050).await.unwrap();
+        // second relayer does not send a transaction after its wait.
+        second.tick(&mut take_in, 1_050).await.unwrap();
         assert!(store.relay_rows(5).unwrap().is_empty());
         assert_eq!(seen.lock().unwrap().sent, 1);
     }
