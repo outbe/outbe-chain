@@ -1,36 +1,21 @@
 //! Typed storage-independent inputs, actions, observations and failures.
 
 use alloy_primitives::{Address, U256};
-use outbe_core_common::entity_codec::TributeBodyV1;
 use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_system_common::time::WorldwideDay;
 
 pub use crate::errors::{LysisArithmeticErrorV1, ProgramErrorV1};
 
-/// One canonical Tribute body required by Lysis V1.
+/// One canonical Offer body required by Lysis V1.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct TributeInputV1 {
-    pub tribute_id: WwdEntityId,
+pub struct OfferInputV1 {
+    pub offer_id: WwdEntityId,
     pub owner: Address,
     pub worldwide_day: WorldwideDay,
     pub issuance_currency: u16,
     pub nominal_amount_minor: U256,
     pub reference_currency: u16,
-    pub tribute_price_minor: U256,
-}
-
-impl From<&TributeBodyV1> for TributeInputV1 {
-    fn from(body: &TributeBodyV1) -> Self {
-        Self {
-            tribute_id: body.tribute_id,
-            owner: body.owner,
-            worldwide_day: body.worldwide_day,
-            issuance_currency: body.issuance_currency,
-            nominal_amount_minor: body.nominal_amount_minor,
-            reference_currency: body.reference_currency,
-            tribute_price_minor: body.tribute_price_minor,
-        }
-    }
+    pub offer_price_minor: U256,
 }
 
 /// A logical snapshot observation, including a deterministic unavailable value.
@@ -49,14 +34,14 @@ impl<T: Copy> ObservationValueV1<T> {
     }
 }
 
-/// One Tribute plus the two Fidelity observations, entry price
+/// One Offer plus the two Fidelity observations, entry price
 /// and reserved-target fact consumed at its semantic ordinal.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ObservedTributeV1 {
-    pub tribute: TributeInputV1,
+pub struct ObservedOfferV1 {
+    pub offer: OfferInputV1,
     pub first_league: ObservationValueV1<u16>,
     pub second_league: ObservationValueV1<u16>,
-    /// Snapshot price for this Tribute's reference currency.
+    /// Snapshot price for this Offer's reference currency.
     pub entry_price_minor: ObservationValueV1<U256>,
     pub nod_target_available: bool,
 }
@@ -67,7 +52,7 @@ pub struct ProgramInputV1 {
     pub worldwide_day: WorldwideDay,
     pub logical_evaluation_time: u64,
     pub lysis_limit_minor: U256,
-    pub tributes: Vec<ObservedTributeV1>,
+    pub offers: Vec<ObservedOfferV1>,
 }
 
 /// Which repeated Fidelity observation was made.
@@ -96,7 +81,7 @@ pub enum SemanticObservationV1 {
 /// One storage-free Nod creation action.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NodActionV1 {
-    pub source_tribute_id: WwdEntityId,
+    pub source_offer_id: WwdEntityId,
     pub owner: Address,
     pub league_id: u16,
     pub entry_price_minor: U256,
@@ -114,7 +99,7 @@ pub struct LeagueFractionV1 {
 /// Successful storage-independent Lysis result.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProgramResultV1 {
-    pub tribute_ids: Vec<WwdEntityId>,
+    pub offer_ids: Vec<WwdEntityId>,
     pub total_nominal: U256,
     pub lysis_limit_minor: U256,
     pub remaining_lysis_limit_minor: U256,

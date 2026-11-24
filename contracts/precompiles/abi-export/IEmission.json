@@ -51,11 +51,6 @@
             "internalType": "uint128"
           },
           {
-            "name": "lysisLimit",
-            "type": "uint128",
-            "internalType": "uint128"
-          },
-          {
             "name": "desisLimit",
             "type": "uint128",
             "internalType": "uint128"

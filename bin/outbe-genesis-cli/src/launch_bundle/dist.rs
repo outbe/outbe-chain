@@ -319,9 +319,9 @@ number and `validator list` shows {founder_count} active validators.\n\
 \n\
 ## Storage configuration\n\
 \n\
-Tribute, Nod and Gem records, buckets and indexes live in the node's EVM state.\n\
-Metadosis reads Tribute from state, executes confidential Lysis in the enclave,\n\
-and saves the ready encrypted Nod records. No separate entity datasource is configured.\n\
+Nod and Gem records, buckets and indexes live in the node's EVM state.\n\
+Metadosis reads the encrypted sums of the Nods of the day in the enclave.\n\
+No separate entity datasource is configured.\n\
 \n\
 ## Notes\n\
 \n\

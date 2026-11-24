@@ -45,7 +45,6 @@ pub fn dispatch(
                     metadosisState: record.metadosis_state,
                     emissionLimit: record.emission_limit,
                     metadosisLimit: record.metadosis_limit,
-                    lysisLimit: record.lysis_limit,
                     desisLimit: record.desis_limit,
                     validators: record.validators,
                     waa: record.waa,
@@ -92,7 +91,6 @@ mod tests {
                 metadosis_state: metadosis_state::COMPLETED,
                 emission_limit: 1_000,
                 metadosis_limit: 840,
-                lysis_limit: 300,
                 desis_limit: 540,
                 validators: 40,
                 waa: 40,
@@ -118,7 +116,6 @@ mod tests {
         assert_eq!(decoded.metadosisState, metadosis_state::COMPLETED);
         assert_eq!(decoded.emissionLimit, 1_000);
         assert_eq!(decoded.metadosisLimit, 840);
-        assert_eq!(decoded.lysisLimit, 300);
         assert_eq!(decoded.desisLimit, 540);
         assert_eq!(decoded.validators, 40);
         assert_eq!(decoded.waa, 40);

@@ -120,7 +120,7 @@ fn cleanup_entries(
     while *budget > 0 && job.next_index < job.recipient_count {
         let key = AgentRewardContract::address_index_key(day, job.next_index);
         let address = index.addresses.read(&key)?;
-        let count_key = AgentRewardContract::tribute_count_key(day, address);
+        let count_key = AgentRewardContract::offer_count_key(day, address);
         if index.member_index.read(&count_key)?
             != job
                 .next_index

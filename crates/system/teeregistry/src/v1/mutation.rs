@@ -87,7 +87,7 @@ impl TeeRegistry<'_> {
                     recipient_x25519: intent.recipient_x25519,
                     network_encryption_public: self.offer_public_key()?.0,
                     key_epoch: self.key_epoch()?,
-                    network_encryption_epoch: self.tribute_offer_epoch()?,
+                    network_encryption_epoch: self.offer_epoch()?,
                 };
                 candidate_context.context_hash()
             } else {

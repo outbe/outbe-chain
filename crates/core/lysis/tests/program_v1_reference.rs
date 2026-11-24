@@ -4,8 +4,8 @@ use alloy_primitives::{Address, U256};
 use outbe_core_common::wwd_entity_id::derive_poseidon_entity_id;
 use outbe_core_common::wwd_entity_id::WwdEntityId;
 use outbe_lysis::program_v1::{
-    execute, FidelityPhaseV1, ObservationValueV1, ObservedTributeV1, ProgramErrorV1,
-    ProgramInputV1, ProgramResultV1, SemanticObservationV1, TributeInputV1,
+    execute, FidelityPhaseV1, ObservationValueV1, ObservedOfferV1, OfferInputV1, ProgramErrorV1,
+    ProgramInputV1, ProgramResultV1, SemanticObservationV1,
 };
 use outbe_system_common::time::WorldwideDay;
 use outbe_system_common::units::SCALE_1E6_U256;
@@ -27,19 +27,19 @@ struct CorpusInput {
     worldwide_day: u32,
     logical_evaluation_time: u64,
     lysis_limit_minor: String,
-    tributes: Vec<CorpusTribute>,
+    offers: Vec<CorpusOffer>,
 }
 
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CorpusTribute {
-    tribute_id: String,
+struct CorpusOffer {
+    offer_id: String,
     owner: String,
     worldwide_day: u32,
     issuance_currency: u16,
     nominal: String,
     reference_currency: u16,
-    tribute_price: String,
+    offer_price: String,
     f1: Option<u16>,
     f2: Option<u16>,
     entry_price: Option<String>,
@@ -81,23 +81,23 @@ fn program_input(input: &CorpusInput) -> ProgramInputV1 {
         worldwide_day: WorldwideDay::new(input.worldwide_day),
         logical_evaluation_time: input.logical_evaluation_time,
         lysis_limit_minor: u256(&input.lysis_limit_minor),
-        tributes: input
-            .tributes
+        offers: input
+            .offers
             .iter()
-            .map(|tribute| ObservedTributeV1 {
-                tribute: TributeInputV1 {
-                    tribute_id: entity_id(&tribute.tribute_id),
-                    owner: address(&tribute.owner),
-                    worldwide_day: WorldwideDay::new(tribute.worldwide_day),
-                    issuance_currency: tribute.issuance_currency,
-                    nominal_amount_minor: u256(&tribute.nominal),
-                    reference_currency: tribute.reference_currency,
-                    tribute_price_minor: u256(&tribute.tribute_price),
+            .map(|offer| ObservedOfferV1 {
+                offer: OfferInputV1 {
+                    offer_id: entity_id(&offer.offer_id),
+                    owner: address(&offer.owner),
+                    worldwide_day: WorldwideDay::new(offer.worldwide_day),
+                    issuance_currency: offer.issuance_currency,
+                    nominal_amount_minor: u256(&offer.nominal),
+                    reference_currency: offer.reference_currency,
+                    offer_price_minor: u256(&offer.offer_price),
                 },
-                first_league: observed_value(tribute.f1),
-                second_league: observed_value(tribute.f2),
-                entry_price_minor: observed_value(tribute.entry_price.as_deref().map(u256)),
-                nod_target_available: tribute.nod_target_available,
+                first_league: observed_value(offer.f1),
+                second_league: observed_value(offer.f2),
+                entry_price_minor: observed_value(offer.entry_price.as_deref().map(u256)),
+                nod_target_available: offer.nod_target_available,
             })
             .collect(),
     }
@@ -109,10 +109,10 @@ fn lowercase_address(value: Address) -> String {
 
 fn group_table(input: &CorpusInput, result: &ProgramResultV1) -> Vec<Value> {
     let mut groups = BTreeMap::<u16, (U256, usize)>::new();
-    for tribute in &input.tributes {
-        let league = tribute.f1.expect("successful case has F1");
+    for offer in &input.offers {
+        let league = offer.f1.expect("successful case has F1");
         let entry = groups.entry(league).or_insert((U256::ZERO, 0));
-        entry.0 += u256(&tribute.nominal);
+        entry.0 += u256(&offer.nominal);
         entry.1 += 1;
     }
     let mut shares = groups
@@ -155,7 +155,7 @@ fn success_json(input: &CorpusInput, result: ProgramResultV1) -> Value {
         .iter()
         .map(|action| {
             json!({
-                "source_tribute_id": hex::encode(action.source_tribute_id.as_slice()),
+                "source_offer_id": hex::encode(action.source_offer_id.as_slice()),
                 "owner": lowercase_address(action.owner),
                 "league": action.league_id,
                 "entry_price": action.entry_price_minor.to_string(),
@@ -217,8 +217,8 @@ fn failure_json(error: ProgramErrorV1) -> Value {
         ProgramErrorV1::WorldwideDayMismatch { ordinal } => {
             ("WORLDWIDE_DAY_MISMATCH", Some(ordinal), None)
         }
-        ProgramErrorV1::InvalidTributeIdentity { ordinal } => {
-            ("INVALID_TRIBUTE_IDENTITY", Some(ordinal), None)
+        ProgramErrorV1::InvalidOfferIdentity { ordinal } => {
+            ("INVALID_OFFER_IDENTITY", Some(ordinal), None)
         }
         ProgramErrorV1::TotalNominalOverflow { ordinal } => {
             ("TOTAL_NOMINAL_OVERFLOW", Some(ordinal), None)
@@ -291,7 +291,7 @@ fn source_and_worker_order_are_not_semantic_inputs() {
     {
         let expected = execute_json(&case.input);
         let mut reversed = case.input.clone();
-        reversed.tributes.reverse();
+        reversed.offers.reverse();
         assert_eq!(
             execute_json(&reversed),
             expected,
@@ -302,20 +302,20 @@ fn source_and_worker_order_are_not_semantic_inputs() {
 }
 
 #[test]
-fn the_nod_entry_price_ignores_the_tribute_price() {
+fn the_nod_entry_price_ignores_the_offer_price() {
     let case = corpus_cases()
         .into_iter()
         .find(|case| case.case_id == "non840-entry-floor")
         .unwrap();
     let mut input = program_input(&case.input);
-    input.tributes[0].entry_price_minor = ObservationValueV1::Value(U256::from(2_000_000u64));
+    input.offers[0].entry_price_minor = ObservationValueV1::Value(U256::from(2_000_000u64));
     let entries = [
         U256::ZERO,
         U256::from(2_000_000u64),
         U256::from(3_000_000u64),
     ]
     .map(|price| {
-        input.tributes[0].tribute.tribute_price_minor = price;
+        input.offers[0].offer.offer_price_minor = price;
         let result = execute(input.clone()).unwrap();
         result.nod_actions[0].entry_price_minor
     });
@@ -324,16 +324,16 @@ fn the_nod_entry_price_ignores_the_tribute_price() {
 }
 
 #[test]
-fn entry_price_is_required_for_the_tribute_currency_only() {
+fn entry_price_is_required_for_the_offer_currency_only() {
     let case = corpus_cases()
         .into_iter()
         .find(|case| case.case_id == "non840-entry-floor")
         .unwrap();
     let mut input = program_input(&case.input);
     assert!(execute(input.clone()).is_ok());
-    input.tributes[0].tribute.reference_currency = 840;
+    input.offers[0].offer.reference_currency = 840;
     assert!(execute(input.clone()).is_ok());
-    input.tributes[0].entry_price_minor = ObservationValueV1::Unavailable;
+    input.offers[0].entry_price_minor = ObservationValueV1::Unavailable;
     assert_eq!(
         execute(input),
         Err(ProgramErrorV1::EntryPriceUnavailable {
@@ -347,21 +347,21 @@ fn entry_price_is_required_for_the_tribute_currency_only() {
 fn boundary_record_counts_keep_raw_id_order() {
     for count in [31_usize, 32, 33] {
         let day = WorldwideDay::new(20_260_723);
-        let mut tributes = (1..=count)
+        let mut offers = (1..=count)
             .map(|ordinal| {
                 let owner = Address::repeat_byte(
                     u8::try_from(ordinal).expect("boundary count fits an owner seed"),
                 );
-                let tribute_id = derive_poseidon_entity_id(owner, day);
-                ObservedTributeV1 {
-                    tribute: TributeInputV1 {
-                        tribute_id,
+                let offer_id = derive_poseidon_entity_id(owner, day);
+                ObservedOfferV1 {
+                    offer: OfferInputV1 {
+                        offer_id,
                         owner,
                         worldwide_day: day,
                         issuance_currency: 840,
                         nominal_amount_minor: U256::from(1_000_000_u64) * SCALE_1E6_U256,
                         reference_currency: 840,
-                        tribute_price_minor: U256::ZERO,
+                        offer_price_minor: U256::ZERO,
                     },
                     first_league: ObservationValueV1::Value((ordinal % 15 + 1) as u16),
                     second_league: ObservationValueV1::Value((ordinal % 15 + 1) as u16),
@@ -370,19 +370,19 @@ fn boundary_record_counts_keep_raw_id_order() {
                 }
             })
             .collect::<Vec<_>>();
-        tributes.reverse();
+        offers.reverse();
         let nominal = U256::from(count) * U256::from(1_000_000_u64) * SCALE_1E6_U256;
         let result = execute(ProgramInputV1 {
             worldwide_day: day,
             logical_evaluation_time: 1_784_765_900,
             lysis_limit_minor: nominal * U256::from(32_u8) / U256::from(100_u8),
-            tributes,
+            offers,
         })
         .expect("31/32/33 bounded shapes execute");
         assert_eq!(result.nod_actions.len(), count);
         assert!(result
             .nod_actions
             .windows(2)
-            .all(|pair| pair[0].source_tribute_id < pair[1].source_tribute_id));
+            .all(|pair| pair[0].source_offer_id < pair[1].source_offer_id));
     }
 }

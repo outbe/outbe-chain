@@ -25,7 +25,7 @@ fn zero_or_over_limit_gratis_load_is_a_hard_failure_without_consumption() {
 
 #[test]
 fn test_empty_population() {
-    let result = calc_fraction_distribution_fp(&[], &[], 0, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = compute_fraction_distribution_fp(&[], &[], 0, F_FP_DEFAULT, F_MAX_FP).unwrap();
     assert_eq!(result, vec![U256::ZERO]);
 }
 
@@ -33,14 +33,14 @@ fn test_empty_population() {
 fn test_share_and_population_length_mismatch_reverts() {
     let y_fp = vec![SCALE];
     let p = vec![1, 2, 3];
-    assert!(calc_fraction_distribution_fp(&y_fp, &p, 6, F_FP_DEFAULT, F_MAX_FP).is_err());
+    assert!(compute_fraction_distribution_fp(&y_fp, &p, 6, F_FP_DEFAULT, F_MAX_FP).is_err());
 }
 
 #[test]
 fn test_single_fi_returns_target_fraction() {
     let y_fp = vec![SCALE]; // 100%
     let p = vec![5];
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 1, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = compute_fraction_distribution_fp(&y_fp, &p, 1, F_FP_DEFAULT, F_MAX_FP).unwrap();
     assert_eq!(result.len(), 1);
     assert_eq!(result[0], F_FP_DEFAULT, "single FI should return f");
 }
@@ -52,7 +52,7 @@ fn test_two_fi_groups() {
         SCALE * U256::from(4u64) / U256::from(10u64),
     ]; // 60/40
     let p = vec![1, 2];
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 2, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = compute_fraction_distribution_fp(&y_fp, &p, 2, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
 
@@ -80,7 +80,7 @@ fn test_three_fi_groups() {
     ];
     let p = vec![50, 30, 20];
 
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 3, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = compute_fraction_distribution_fp(&y_fp, &p, 3, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 3);
 
@@ -96,7 +96,7 @@ fn test_many_fi_groups() {
     let y_fp: Vec<U256> = vec![SCALE / U256::from(n as u64); n];
     let p: Vec<u64> = (1..=n as u64).collect();
 
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 100, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = compute_fraction_distribution_fp(&y_fp, &p, 100, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), n);
 
@@ -112,7 +112,7 @@ fn test_with_zero_population_entries() {
     let y_fp = vec![half, U256::ZERO, half];
     let p = vec![10, 0, 5];
 
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 15, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = compute_fraction_distribution_fp(&y_fp, &p, 15, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 3);
     let bound = F_MAX_FP;
@@ -129,7 +129,7 @@ fn test_skewed_distribution() {
     ];
     let p = vec![900, 100];
 
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = compute_fraction_distribution_fp(&y_fp, &p, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
     assert!(!result[0].is_zero());
@@ -146,7 +146,7 @@ fn test_large_nominal_distribution() {
     ];
     let p = vec![600, 400];
 
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
+    let result = compute_fraction_distribution_fp(&y_fp, &p, 1000, F_FP_DEFAULT, F_MAX_FP).unwrap();
 
     assert_eq!(result.len(), 2);
     let bound = F_MAX_FP;
@@ -164,7 +164,7 @@ fn test_large_nominal_distribution() {
 // ---------------------------------------------------------------------------
 
 /// Assert the post-condition `sum(f1[i] * y_fp[i]) / SCALE <= f_fp` for the
-/// output of `calc_fraction_distribution_fp`. Small round-down error is
+/// output of `compute_fraction_distribution_fp`. Small round-down error is
 /// acceptable. Overshoot is not acceptable.
 fn assert_weighted_within_target(result: &[U256], y_fp: &[U256], f_fp: U256) {
     let weighted: U256 = result
@@ -187,7 +187,7 @@ fn test_normalized_f1_respects_limit_skewed_population() {
     let p = vec![100u64, 1, 1, 1];
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 103, f_fp, fmax_fp).unwrap();
+    let result = compute_fraction_distribution_fp(&y_fp, &p, 103, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 4);
     assert_weighted_within_target(&result, &y_fp, f_fp);
 }
@@ -199,7 +199,7 @@ fn test_normalized_f1_respects_limit_many_groups() {
     let p: Vec<u64> = (1..=n as u64).collect();
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 100, f_fp, fmax_fp).unwrap();
+    let result = compute_fraction_distribution_fp(&y_fp, &p, 100, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), n);
     assert_weighted_within_target(&result, &y_fp, f_fp);
 }
@@ -211,7 +211,7 @@ fn test_single_group_returns_f_without_normalization() {
     let y_fp = vec![SCALE];
     let p = vec![10];
     let f_fp = F_FP_DEFAULT;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 10, f_fp, F_MAX_FP).unwrap();
+    let result = compute_fraction_distribution_fp(&y_fp, &p, 10, f_fp, F_MAX_FP).unwrap();
     assert_eq!(result, vec![f_fp]);
     assert_weighted_within_target(&result, &y_fp, f_fp);
 }
@@ -225,7 +225,7 @@ fn test_normalized_f1_preserves_ratios_when_scaled_down() {
     let p = vec![50u64, 5];
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 55, f_fp, fmax_fp).unwrap();
+    let result = compute_fraction_distribution_fp(&y_fp, &p, 55, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
     assert_weighted_within_target(&result, &y_fp, f_fp);
     // Both fractions should still be positive (the scale-down did not reduce them to zero).
@@ -255,7 +255,7 @@ fn test_small_fi_group_survives_i256_precision() {
     let p = vec![1000u64, 1];
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 1001, f_fp, fmax_fp).unwrap();
+    let result = compute_fraction_distribution_fp(&y_fp, &p, 1001, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
     assert!(
         !result[1].is_zero(),
@@ -277,7 +277,7 @@ fn test_negative_beta_branch_produces_bounded_distribution() {
     let p = vec![1u64, 1];
     let f_fp = F_FP_DEFAULT;
     let fmax_fp = F_MAX_FP;
-    let result = calc_fraction_distribution_fp(&y_fp, &p, 2, f_fp, fmax_fp).unwrap();
+    let result = compute_fraction_distribution_fp(&y_fp, &p, 2, f_fp, fmax_fp).unwrap();
     assert_eq!(result.len(), 2);
     let bound = F_MAX_FP;
     for &f in &result {
@@ -289,31 +289,31 @@ fn test_negative_beta_branch_produces_bounded_distribution() {
 // Scale invariant: settlement_cost_minor must be in 10^6-minor units, not 10^12
 // ---------------------------------------------------------------------------
 
-/// 15 tributes with distinct amounts, all with fidelity index 1. The sum is a clean
+/// 15 offers with distinct amounts, all with fidelity index 1. The sum is a clean
 /// 1200 COEN, so the percentage scenarios (5%/30%/32%) divide exactly with no
 /// integer truncation in the deficit derivation. Thus the assertions can use
 /// strict equality rather than tolerance bands.
 fn uniform_fi_one_population_15() -> (Vec<U256>, Vec<u16>, U256) {
     let nominal_amounts: Vec<U256> = (1u64..=15).map(|i| coen(10u64 * i)).collect();
-    let tribute_fis = vec![1u16; 15];
+    let offer_fis = vec![1u16; 15];
     let total_interest: U256 = nominal_amounts
         .iter()
         .copied()
         .fold(U256::ZERO, |acc, v| acc + v);
     // Sanity: 10 * (1+2+...+15) = 1200 COEN.
     debug_assert_eq!(total_interest, coen(1200u64));
-    (nominal_amounts, tribute_fis, total_interest)
+    (nominal_amounts, offer_fis, total_interest)
 }
 
 #[test]
 fn test_compute_fi_fraction_map_single_fi_five_percent_allocation() {
-    let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
+    let (nominal_amounts, offer_fis, total_interest) = uniform_fi_one_population_15();
     // 5% deficit - well below the historical 8% floor.
     let lysis_limit_minor = total_interest * U256::from(5u64) / U256::from(100u64);
 
     let map = crate::runtime::compute_fi_fraction_map(
         &nominal_amounts,
-        &tribute_fis,
+        &offer_fis,
         total_interest,
         lysis_limit_minor,
     )
@@ -331,14 +331,14 @@ fn test_compute_fi_fraction_map_single_fi_five_percent_allocation() {
 
 #[test]
 fn test_compute_fi_fraction_map_single_fi_thirty_percent_allocation() {
-    let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
+    let (nominal_amounts, offer_fis, total_interest) = uniform_fi_one_population_15();
     // 30% deficit - well above the historical 8%/16% range. The new logic
     // must not silently cap the fraction at 16%.
     let lysis_limit_minor = total_interest * U256::from(30u64) / U256::from(100u64);
 
     let map = crate::runtime::compute_fi_fraction_map(
         &nominal_amounts,
-        &tribute_fis,
+        &offer_fis,
         total_interest,
         lysis_limit_minor,
     )
@@ -355,14 +355,14 @@ fn test_compute_fi_fraction_map_single_fi_thirty_percent_allocation() {
 
 #[test]
 fn test_compute_fi_fraction_map_single_fi_thirtytwo_percent_allocation() {
-    let (nominal_amounts, tribute_fis, total_interest) = uniform_fi_one_population_15();
+    let (nominal_amounts, offer_fis, total_interest) = uniform_fi_one_population_15();
     // 32% - matches the canonical metadosis symbolic rate (D1 in
     // metadosis-lysis-discrepancies.md). The fraction must reach 0.32, exactly.
     let lysis_limit_minor = total_interest * U256::from(32u64) / U256::from(100u64);
 
     let map = crate::runtime::compute_fi_fraction_map(
         &nominal_amounts,
-        &tribute_fis,
+        &offer_fis,
         total_interest,
         lysis_limit_minor,
     )
@@ -377,17 +377,17 @@ fn test_compute_fi_fraction_map_single_fi_thirtytwo_percent_allocation() {
     );
 }
 
-/// Multi-FI scenario: 100 distinct-nominal tributes spread across 15 fidelity
+/// Multi-FI scenario: 100 distinct-nominal offers spread across 15 fidelity
 /// indices, 32% gratis allocation.
 #[test]
-fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation() {
+fn test_compute_fi_fraction_map_100_offers_15_fis_thirtytwo_percent_allocation() {
     use std::collections::BTreeMap;
 
     // Distinct nominals 1..=100 COEN. Sum = 5050 COEN. 32% = 1616 COEN exactly.
     let nominal_amounts: Vec<U256> = (1u64..=100).map(coen).collect();
-    // Round-robin FI assignment over 1..=15: FIs 1..=10 each get 7 tributes,
+    // Round-robin FI assignment over 1..=15: FIs 1..=10 each get 7 offers,
     // FIs 11..=15 each get 6. This covers every bucket with uneven population.
-    let tribute_fis: Vec<u16> = (0u16..100).map(|i| (i % 15) + 1).collect();
+    let offer_fis: Vec<u16> = (0u16..100).map(|i| (i % 15) + 1).collect();
     let total_interest: U256 = nominal_amounts
         .iter()
         .copied()
@@ -399,7 +399,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
 
     let map = crate::runtime::compute_fi_fraction_map(
         &nominal_amounts,
-        &tribute_fis,
+        &offer_fis,
         total_interest,
         lysis_limit_minor,
     )
@@ -431,7 +431,7 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
     //    `sum(f_g * y_fp_g)/SCALE <= f_fp` post-condition. This is the
     //    `assert_weighted_within_target` invariant lifted to multi-FI inputs.
     let mut group_interest: BTreeMap<u16, U256> = BTreeMap::new();
-    for (i, &fi) in tribute_fis.iter().enumerate() {
+    for (i, &fi) in offer_fis.iter().enumerate() {
         *group_interest.entry(fi).or_insert(U256::ZERO) += nominal_amounts[i];
     }
     let mut y_fp: Vec<U256> = group_interest
@@ -458,6 +458,6 @@ fn test_compute_fi_fraction_map_100_tributes_15_fis_thirtytwo_percent_allocation
         "weighted sum(f*y_fp)/SCALE = {weighted} exceeds f_fp {f_fp} (32% limit violated)"
     );
 
-    println!("100-tribute / 15-FI fraction map: {:?}", map);
+    println!("100-offer / 15-FI fraction map: {:?}", map);
     println!("weighted sum(f*y_fp)/SCALE: {} (f_fp: {})", weighted, f_fp);
 }

@@ -1,7 +1,7 @@
 //! Base purpose tags, shared by every circuit.
 //!
 //! A tag names *what* is being hashed (a commitment, a nullifier, ...); a
-//! domain names *whose* it is (`EMIT_DOMAIN`, `DEMO_TRIBUTE_DOMAIN`, ...). The
+//! domain names *whose* it is (`EMIT_DOMAIN`, `DEMO_OFFER_DOMAIN`, ...). The
 //! value actually fed to `hash_multi` is the two combined:
 //!
 //! ```noir

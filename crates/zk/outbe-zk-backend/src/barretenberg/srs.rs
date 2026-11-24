@@ -97,8 +97,8 @@ const PINNED_G1_SHA256: &[(u32, [u8; 32])] = &[
             0x41, 0xbe, 0x30, 0x4d,
         ],
     ),
-    // (1<<16)+1 — the canonical set's largest domain (ownership, demo tribute,
-    // Niflheim tribute) and the handler's fixed capacity.
+    // (1<<16)+1 — the canonical set's largest domain (ownership, demo offer,
+    // Niflheim offer) and the handler's fixed capacity.
     (
         (1 << 16) + 1,
         [

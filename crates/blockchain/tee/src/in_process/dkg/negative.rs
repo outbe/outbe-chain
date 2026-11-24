@@ -215,7 +215,7 @@ fn seam_f_below_quorum_partials_errors() {
         .iter()
         .take(2)
         .map(|s| {
-            let sealed = s.tribute_offer_partials_sealed().expect("seal");
+            let sealed = s.offer_partials_sealed().expect("seal");
             sealed
                 .into_iter()
                 .find(|(r, _)| *r == my_pk)
@@ -224,7 +224,7 @@ fn seam_f_below_quorum_partials_errors() {
         })
         .collect();
     assert!(sessions[0]
-        .recover_tribute_offer_material(&for_me, B256::ZERO, 0)
+        .recover_offer_material(&for_me, B256::ZERO, 0)
         .is_err());
 }
 
@@ -236,24 +236,24 @@ fn seam_f_before_finalize_is_typed_error() {
     let session =
         DkgSession::new(info, keys[0].clone(), &enc_secrets[0], enc_keys).expect("session");
     assert!(matches!(
-        session.tribute_offer_partials_sealed(),
+        session.offer_partials_sealed(),
         Err(TeeError::Seam(_))
     ));
     assert!(matches!(
-        session.recover_tribute_offer_material(&[], B256::ZERO, 0),
+        session.recover_offer_material(&[], B256::ZERO, 0),
         Err(TeeError::Seam(_))
     ));
 }
 
 /// Public gossip ciphertexts cannot supply a quorum of plaintext offer partials.
 #[test]
-fn tribute_offer_key_not_recoverable_by_host_from_sealed_partials() {
+fn offer_key_not_recoverable_by_host_from_sealed_partials() {
     let sessions = drive_ceremony_to_shares(4);
     let chain_id = B256::repeat_byte(0xc1);
     let epoch = 7;
     let sealed: Vec<_> = sessions
         .iter()
-        .map(|s| s.tribute_offer_partials_sealed().unwrap())
+        .map(|s| s.offer_partials_sealed().unwrap())
         .collect();
     let materials: Vec<_> = sessions
         .iter()
@@ -269,7 +269,7 @@ fn tribute_offer_key_not_recoverable_by_host_from_sealed_partials() {
                 })
                 .collect();
             session
-                .recover_tribute_offer_material(&addressed, chain_id, epoch)
+                .recover_offer_material(&addressed, chain_id, epoch)
                 .unwrap()
         })
         .collect();

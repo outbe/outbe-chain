@@ -73,12 +73,12 @@ enum DecodedState {
     FoundingDkg {
         signature: Zeroizing<Vec<u8>>,
         key_epoch: u64,
-        tribute_offer_epoch: u64,
+        offer_epoch: u64,
     },
     Anchored {
         signature: Zeroizing<Vec<u8>>,
         key_epoch: u64,
-        tribute_offer_epoch: u64,
+        offer_epoch: u64,
         anchor: VerifiedAdmissionAnchorV1,
     },
 }
@@ -114,27 +114,27 @@ impl ResidentStateStore {
                 DecodedState::FoundingDkg {
                     signature,
                     key_epoch,
-                    tribute_offer_epoch,
+                    offer_epoch,
                 } => (
                     Some(ResidentOfferMaterial::from_group_signature(
                         signature,
                         chain_id,
                         key_epoch,
-                        tribute_offer_epoch,
+                        offer_epoch,
                     )?),
                     None,
                 ),
                 DecodedState::Anchored {
                     signature,
                     key_epoch,
-                    tribute_offer_epoch,
+                    offer_epoch,
                     anchor,
                 } => (
                     Some(ResidentOfferMaterial::from_group_signature(
                         signature,
                         chain_id,
                         key_epoch,
-                        tribute_offer_epoch,
+                        offer_epoch,
                     )?),
                     Some(anchor),
                 ),
@@ -212,8 +212,7 @@ impl ResidentStateStore {
         keys: &ResidentTeeKeys,
         challenge: [u8; 32],
         manifest_authorization_hash: B256,
-        material: &ResidentOfferMaterial,
-        anchor: Option<VerifiedAdmissionAnchorV1>,
+        promoted: (&ResidentOfferMaterial, Option<VerifiedAdmissionAnchorV1>),
     ) -> Result<(), ResidentStateError> {
         let (paths, _lock) = lock_node_host_state(node_data_dir)?;
         if !path_exists(&paths.resident_state)? {
@@ -221,12 +220,7 @@ impl ResidentStateStore {
         }
         let current = read_resident_file(&paths.resident_state)?;
         decode(&current)?;
-        let bytes = encode(
-            keys,
-            challenge,
-            manifest_authorization_hash,
-            Some((material, anchor)),
-        )?;
+        let bytes = encode(keys, challenge, manifest_authorization_hash, Some(promoted))?;
         replace_bytes_atomically(
             &paths.resident_state,
             &paths.resident_state_next,
@@ -250,7 +244,7 @@ fn manifest_authorization_hash(
         node_id: authorization.node_id.clone(),
         initialization_challenge,
         node_host_noise_x25519: authorization.node_host_noise_x25519,
-        recipient_x25519: keys.tribute_offer_public(),
+        recipient_x25519: keys.recipient_public(),
         attestation_ed25519: keys.attestation_pub(),
         noise_responder_x25519: keys.noise_public(),
     };
@@ -327,7 +321,7 @@ fn encode(
             bytes.extend_from_slice(&(signature.len() as u16).to_be_bytes());
             bytes.extend_from_slice(signature);
             bytes.extend_from_slice(&material.key_epoch.to_be_bytes());
-            bytes.extend_from_slice(&material.tribute_offer_epoch.to_be_bytes());
+            bytes.extend_from_slice(&material.offer_epoch.to_be_bytes());
             if let Some(anchor) = anchor {
                 bytes.extend_from_slice(&anchor.block_number.to_be_bytes());
                 bytes.extend_from_slice(anchor.block_hash.as_slice());
@@ -378,7 +372,7 @@ fn decode(bytes: &[u8]) -> Result<DecodedRecord, ResidentStateError> {
                     .try_into()
                     .map_err(|_| ResidentStateError::InvalidRecord)?,
             );
-            let tribute_offer_epoch = u64::from_be_bytes(
+            let offer_epoch = u64::from_be_bytes(
                 bytes[epochs_start + 8..anchor_start]
                     .try_into()
                     .map_err(|_| ResidentStateError::InvalidRecord)?,
@@ -387,7 +381,7 @@ fn decode(bytes: &[u8]) -> Result<DecodedRecord, ResidentStateError> {
                 DecodedState::FoundingDkg {
                     signature,
                     key_epoch,
-                    tribute_offer_epoch,
+                    offer_epoch,
                 }
             } else {
                 let block_number = u64::from_be_bytes(
@@ -412,7 +406,7 @@ fn decode(bytes: &[u8]) -> Result<DecodedRecord, ResidentStateError> {
                 DecodedState::Anchored {
                     signature,
                     key_epoch,
-                    tribute_offer_epoch,
+                    offer_epoch,
                     anchor,
                 }
             }
@@ -490,15 +484,15 @@ mod tests {
             first.keys.attestation_pub()
         );
         assert_eq!(
-            restored_tag1.keys.tribute_offer_public(),
-            first.keys.tribute_offer_public()
+            restored_tag1.keys.recipient_public(),
+            first.keys.recipient_public()
         );
         assert_eq!(restored_tag1.initialization_challenge, challenge);
         assert!(restored_tag1.anchor.is_none());
         let restored_offer = restored_tag1.material.unwrap();
         assert_eq!(restored_offer.public(), offer_public);
         assert_eq!(restored_offer.key_epoch(), 2);
-        assert_eq!(restored_offer.tribute_offer_epoch(), 4);
+        assert_eq!(restored_offer.offer_epoch(), 4);
 
         // Tag 2 (Anchored)
         let anchor = VerifiedAdmissionAnchorV1 {
@@ -641,8 +635,7 @@ mod tests {
             &successor,
             challenge,
             manifest_hash,
-            &material,
-            Some(anchor),
+            (&material, Some(anchor)),
         )
         .unwrap();
 

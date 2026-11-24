@@ -10,10 +10,10 @@ use crate::errors::AgentRewardError;
 
 /// EVM storage layout for the Agent Reward contract.
 ///
-/// Tracks tribute counts per address/reward UTC day, claimable reward balances
+/// Tracks offer counts per address/reward UTC day, claimable reward balances
 /// per address and pool, and per-day address lists for the WAA (wallet) and SRA
 /// (signer-of-record) participant pools. A reward day is the calendar day when
-/// an offer executes, not the Tribute's target WorldwideDay.
+/// an offer executes, not the target WorldwideDay of the offer.
 ///
 /// Naming history: Phase 2 of the Cycle epic renamed `wallet_*` to `waa_*`
 /// and `sfa_*` to `sra_*`, so the on-chain identifiers match the README and
@@ -21,13 +21,13 @@ use crate::errors::AgentRewardError;
 #[storage_schema]
 #[contract(addr = AGENT_REWARD_ADDRESS)]
 pub struct AgentRewardContract {
-    // slot 0: WAA tribute count per day+address (key: B256 = keccak(day, addr))
+    // slot 0: WAA offer count per day+address (key: B256 = keccak(day, addr))
     #[attribute(order = 0)]
-    pub waa_tribute_counts: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub waa_offer_counts: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    // slot 1: SRA tribute count per day+address (key: B256 = keccak(day, addr))
+    // slot 1: SRA offer count per day+address (key: B256 = keccak(day, addr))
     #[attribute(order = 1)]
-    pub sra_tribute_counts: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub sra_offer_counts: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     // slot 2: claimable WAA reward per address
     #[attribute(order = 2)]
@@ -61,11 +61,11 @@ pub struct AgentRewardContract {
     #[attribute(order = 9)]
     pub validator_claimable_minor: outbe_primitives::storage::dsl::Map<Address, U256>,
 
-    // slot 10: WAA tribute count per day, summed over its addresses
+    // slot 10: WAA offer count per day, summed over its addresses
     #[attribute(order = 10)]
     pub waa_total_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
 
-    // slot 11: SRA tribute count per day, summed over its addresses
+    // slot 11: SRA offer count per day, summed over its addresses
     #[attribute(order = 11)]
     pub sra_total_count: outbe_primitives::storage::dsl::Map<WorldwideDay, u64>,
 
@@ -125,7 +125,7 @@ pub struct AgentRewardContract {
 pub struct AccrualJob {
     #[key]
     pub seq: u64,
-    /// UTC day key (YYYYMMDD) whose tribute counts weight the pool.
+    /// UTC day key (YYYYMMDD) whose offer counts weight the pool.
     #[attribute(order = 0)]
     pub day: u32,
     /// Existing ABI discriminant; FIFO order is Validator, WAA, SRA, CCA.
@@ -166,7 +166,7 @@ impl RewardPool {
     }
 }
 
-/// The per-day tribute index of the WAA or the SRA pool.
+/// The per-day offer index of the WAA or the SRA pool.
 pub(crate) struct DayIndex<'a, 's> {
     pub(crate) address_count: &'a Map<'s, WorldwideDay, u32>,
     pub(crate) addresses: &'a Map<'s, B256, Address>,
@@ -181,14 +181,14 @@ impl<'s> AgentRewardContract<'s> {
             RewardPool::Waa => Ok(DayIndex {
                 address_count: &self.waa_address_count,
                 addresses: &self.waa_addresses,
-                counts: &self.waa_tribute_counts,
+                counts: &self.waa_offer_counts,
                 total: &self.waa_total_count,
                 member_index: &self.waa_member_index,
             }),
             RewardPool::Sra => Ok(DayIndex {
                 address_count: &self.sra_address_count,
                 addresses: &self.sra_addresses,
-                counts: &self.sra_tribute_counts,
+                counts: &self.sra_offer_counts,
                 total: &self.sra_total_count,
                 member_index: &self.sra_member_index,
             }),
@@ -207,8 +207,8 @@ impl AgentRewardContract<'_> {
         alloy_primitives::keccak256(buf)
     }
 
-    /// Computes the composite key for per-address per-day tribute counts.
-    pub fn tribute_count_key(day: WorldwideDay, address: Address) -> B256 {
+    /// Computes the composite key for per-address per-day offer counts.
+    pub fn offer_count_key(day: WorldwideDay, address: Address) -> B256 {
         use alloy_primitives::keccak256;
         let mut buf = [0u8; 24]; // 4 + 20
         buf[0..4].copy_from_slice(day.key_bytes().as_slice());

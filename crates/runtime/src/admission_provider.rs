@@ -264,7 +264,7 @@ pub(crate) fn build_tee_admission_mock_provider(
             .unwrap();
         if !state_cfg.offer_key.is_zero() {
             registry
-                .tribute_offer_public_key
+                .offer_public_key
                 .write(state_cfg.offer_key)
                 .unwrap();
         }

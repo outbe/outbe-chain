@@ -6,7 +6,7 @@ use serde_json::{json, Value};
 
 use crate::{
     arithmetic::{checked_add_u256, decimal, scale, u256_modulus, wrap_u256},
-    corpus::{CorpusCase, CorpusInput, CorpusTribute},
+    corpus::{CorpusCase, CorpusInput, CorpusOffer},
     distribution::fraction_table,
     failure::ReferenceFailure,
 };
@@ -21,19 +21,17 @@ fn is_day_identifier(raw_id: &str, worldwide_day: u32) -> bool {
     raw_id.len() == 64 && is_lower_hex && prefix_day == Some(worldwide_day)
 }
 
-pub(crate) fn validate_and_sort(
-    input: &CorpusInput,
-) -> Result<Vec<CorpusTribute>, ReferenceFailure> {
-    let mut tributes = input.tributes.clone();
-    tributes.sort_by(|left, right| left.tribute_id.cmp(&right.tribute_id));
-    if tributes.is_empty() {
+pub(crate) fn validate_and_sort(input: &CorpusInput) -> Result<Vec<CorpusOffer>, ReferenceFailure> {
+    let mut offers = input.offers.clone();
+    offers.sort_by(|left, right| left.offer_id.cmp(&right.offer_id));
+    if offers.is_empty() {
         return Err(ReferenceFailure::new("EMPTY_INPUT"));
     }
     let mut previous: Option<&str> = None;
-    for (ordinal, tribute) in tributes.iter().enumerate() {
-        let raw_id = tribute.tribute_id.as_str();
+    for (ordinal, offer) in offers.iter().enumerate() {
+        let raw_id = offer.offer_id.as_str();
         if !is_day_identifier(raw_id, input.worldwide_day)
-            || tribute.worldwide_day != input.worldwide_day
+            || offer.worldwide_day != input.worldwide_day
         {
             return Err(ReferenceFailure::ordinal("WORLDWIDE_DAY_MISMATCH", ordinal));
         }
@@ -42,7 +40,7 @@ pub(crate) fn validate_and_sort(
         }
         previous = Some(raw_id);
     }
-    Ok(tributes)
+    Ok(offers)
 }
 
 fn owner_is_zero(owner: &str) -> bool {
@@ -53,24 +51,24 @@ fn owner_is_zero(owner: &str) -> bool {
 }
 
 fn first_league_total(
-    tributes: &[CorpusTribute],
+    offers: &[CorpusOffer],
     observations: &mut Vec<Value>,
 ) -> Result<BigUint, ReferenceFailure> {
     let mut total_nominal = BigUint::zero();
-    for (ordinal, tribute) in tributes.iter().enumerate() {
-        let first = tribute
+    for (ordinal, offer) in offers.iter().enumerate() {
+        let first = offer
             .f1
             .ok_or_else(|| ReferenceFailure::ordinal("FIDELITY_FIRST_UNAVAILABLE", ordinal))?;
         observations.push(json!({
             "kind": "FIDELITY",
             "ordinal": ordinal,
             "phase": "FIRST",
-            "owner": tribute.owner,
+            "owner": offer.owner,
             "league": first,
         }));
         total_nominal = checked_add_u256(
             &total_nominal,
-            &decimal(&tribute.nominal)?,
+            &decimal(&offer.nominal)?,
             ReferenceFailure::ordinal("TOTAL_NOMINAL_OVERFLOW", ordinal),
         )?;
     }
@@ -108,10 +106,10 @@ impl Evaluation {
     fn gratis_load(
         &mut self,
         ordinal: usize,
-        tribute: &CorpusTribute,
+        offer: &CorpusOffer,
         fraction: &BigUint,
     ) -> Result<BigUint, ReferenceFailure> {
-        let load = wrap_u256(decimal(&tribute.nominal)? * fraction) / &self.unit;
+        let load = wrap_u256(decimal(&offer.nominal)? * fraction) / &self.unit;
         if load.is_zero() {
             return Err(ReferenceFailure::ordinal("ZERO_GRATIS_LOAD", ordinal));
         }
@@ -128,10 +126,10 @@ impl Evaluation {
     fn entry_price(
         &mut self,
         ordinal: usize,
-        tribute: &CorpusTribute,
+        offer: &CorpusOffer,
     ) -> Result<BigUint, ReferenceFailure> {
-        let currency = tribute.reference_currency;
-        let entry_price = tribute
+        let currency = offer.reference_currency;
+        let entry_price = offer
             .entry_price
             .as_deref()
             .ok_or_else(|| {
@@ -146,7 +144,7 @@ impl Evaluation {
         }));
 
         // Validated as input; the entry bound keeps any u16-rate call price in U256.
-        decimal(&tribute.tribute_price)?;
+        decimal(&offer.offer_price)?;
         if &entry_price * (100_u32 + u32::from(u16::MAX)) >= u256_modulus() {
             return Err(ReferenceFailure::new("ARITHMETIC"));
         }
@@ -156,17 +154,17 @@ impl Evaluation {
     fn second_league(
         &mut self,
         ordinal: usize,
-        tribute: &CorpusTribute,
+        offer: &CorpusOffer,
         first: u16,
     ) -> Result<u16, ReferenceFailure> {
-        let second = tribute
+        let second = offer
             .f2
             .ok_or_else(|| ReferenceFailure::ordinal("FIDELITY_SECOND_UNAVAILABLE", ordinal))?;
         self.observations.push(json!({
             "kind": "FIDELITY",
             "ordinal": ordinal,
             "phase": "SECOND",
-            "owner": tribute.owner,
+            "owner": offer.owner,
             "league": second,
         }));
         if second != first {
@@ -178,13 +176,13 @@ impl Evaluation {
     fn nod_action(
         &mut self,
         ordinal: usize,
-        tribute: &CorpusTribute,
+        offer: &CorpusOffer,
         first: u16,
         fraction: &BigUint,
     ) -> Result<(), ReferenceFailure> {
-        let load = self.gratis_load(ordinal, tribute, fraction)?;
-        let entry_price = self.entry_price(ordinal, tribute)?;
-        let second = self.second_league(ordinal, tribute, first)?;
+        let load = self.gratis_load(ordinal, offer, fraction)?;
+        let entry_price = self.entry_price(ordinal, offer)?;
+        let second = self.second_league(ordinal, offer, first)?;
         let cost = wrap_u256(&entry_price * &load) / &self.unit;
         let cost = if !entry_price.is_zero() && !load.is_zero() {
             cost.max(BigUint::one())
@@ -194,17 +192,17 @@ impl Evaluation {
         if cost.is_zero() {
             return Err(ReferenceFailure::ordinal("ZERO_COST", ordinal));
         }
-        if !tribute.nod_target_available || owner_is_zero(&tribute.owner) {
+        if !offer.nod_target_available || owner_is_zero(&offer.owner) {
             return Err(ReferenceFailure::ordinal("INVALID_NOD_TARGET", ordinal));
         }
 
         self.actions.push(json!({
-            "source_tribute_id": tribute.tribute_id,
-            "owner": tribute.owner,
+            "source_offer_id": offer.offer_id,
+            "owner": offer.owner,
             "league": second,
             "entry_price": entry_price.to_string(),
-            "issuance_currency": tribute.issuance_currency,
-            "reference_currency": tribute.reference_currency,
+            "issuance_currency": offer.issuance_currency,
+            "reference_currency": offer.reference_currency,
         }));
         Ok(())
     }
@@ -212,27 +210,27 @@ impl Evaluation {
 
 fn try_evaluate(case: &CorpusCase) -> Result<Value, ReferenceFailure> {
     let input = &case.input;
-    let tributes = validate_and_sort(input)?;
+    let offers = validate_and_sort(input)?;
     let mut observations = Vec::new();
-    let total_nominal = first_league_total(&tributes, &mut observations)?;
+    let total_nominal = first_league_total(&offers, &mut observations)?;
     let allocation = decimal(&input.lysis_limit_minor)?;
-    let table = fraction_table(&tributes, &total_nominal, &allocation)?;
+    let table = fraction_table(&offers, &total_nominal, &allocation)?;
     let fractions = fractions_by_league(&table);
 
     let mut evaluation = Evaluation {
         unit: scale(),
         remaining: allocation.clone(),
         observations,
-        actions: Vec::with_capacity(tributes.len()),
+        actions: Vec::with_capacity(offers.len()),
     };
-    for (ordinal, tribute) in tributes.iter().enumerate() {
-        let first = tribute
+    for (ordinal, offer) in offers.iter().enumerate() {
+        let first = offer
             .f1
             .expect("first league was validated before fraction lookup");
         let fraction = fractions
             .get(&first)
             .expect("fraction exists for every first league");
-        evaluation.nod_action(ordinal, tribute, first, fraction)?;
+        evaluation.nod_action(ordinal, offer, first, fraction)?;
     }
 
     Ok(json!({

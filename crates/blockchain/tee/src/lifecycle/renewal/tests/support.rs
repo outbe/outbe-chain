@@ -53,7 +53,7 @@ pub(crate) fn context(seed: u8) -> InProcessTeeContext {
         },
         initialization_challenge: [seed; 32],
         node_host_noise_x25519: [4; 32],
-        recipient_x25519: keys.tribute_offer_public(),
+        recipient_x25519: keys.recipient_public(),
         attestation_ed25519: keys.attestation_pub(),
         noise_responder_x25519: keys.noise_public(),
     };

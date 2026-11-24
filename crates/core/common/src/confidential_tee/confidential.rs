@@ -19,7 +19,6 @@ pub enum Ledger {
     Gratis,
     Promis,
     Fidelity,
-    Tribute,
     Nod,
 }
 
@@ -145,19 +144,6 @@ pub const FIDELITY: Domain = Domain {
     },
 };
 
-/// Tribute ledger labels.
-pub const TRIBUTE: Domain = Domain {
-    ledger: Ledger::Tribute,
-    state_info: b"outbe/tribute/state-key/v1/",
-    account_keys: AccountKeyDerivation {
-        view_info: b"outbe/tribute/view-key/v1",
-        modify_info: b"outbe/tribute/modify-key/v1",
-    },
-    authorization: ModifyDomain {
-        modify_tag: b"outbe/tribute/modify/v1",
-    },
-};
-
 /// NOD ledger labels.
 pub const NOD: Domain = Domain {
     ledger: Ledger::Nod,
@@ -202,7 +188,6 @@ pub fn domain_for(ledger: Ledger) -> &'static Domain {
         Ledger::Gratis => &GRATIS,
         Ledger::Promis => &PROMIS,
         Ledger::Fidelity => &FIDELITY,
-        Ledger::Tribute => &TRIBUTE,
         Ledger::Nod => &NOD,
     }
 }
@@ -218,7 +203,6 @@ pub fn derive_account_keys_message(
         Ledger::Gratis => b"outbe/gratis/derive-keys/v1",
         Ledger::Promis => b"outbe/promis/derive-keys/v1",
         Ledger::Fidelity => b"outbe/fidelity/derive-keys/v1",
-        Ledger::Tribute => b"outbe/tribute/derive-keys/v1",
         Ledger::Nod => b"outbe/nod/derive-keys/v1",
     };
     let mut message = Vec::with_capacity(tag.len() + 20 + 32);

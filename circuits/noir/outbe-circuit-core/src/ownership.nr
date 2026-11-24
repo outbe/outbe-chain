@@ -8,7 +8,7 @@
 //
 //   2. `verify_ownership_per_su` -- the sec.4.2 ownership-proof
 //      constraint set, factored out so the standalone
-//      `outbe-ownership-circuit` and Demo Tribute circuit can call it
+//      `outbe-ownership-circuit` and Demo offer circuit can call it
 //      without duplication.
 //
 // ## Curve choice

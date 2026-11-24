@@ -141,10 +141,8 @@ impl Founding {
             {
                 ITeeRegistryV1::validatorEnclaveBindingCall::abi_encode_returns(&self.binding)
             }
-            (TEE_REGISTRY_ADDRESS, s)
-                if s == ITeeRegistryV1::tributeOfferPublicKeyCall::SELECTOR =>
-            {
-                ITeeRegistryV1::tributeOfferPublicKeyCall::abi_encode_returns(&self.offer_public)
+            (TEE_REGISTRY_ADDRESS, s) if s == ITeeRegistryV1::offerPublicKeyCall::SELECTOR => {
+                ITeeRegistryV1::offerPublicKeyCall::abi_encode_returns(&self.offer_public)
             }
             (TEE_REGISTRY_ADDRESS, s) if s == ITeeRegistryV1::enclaveUpgradeV1Call::SELECTOR => {
                 ITeeRegistryV1::enclaveUpgradeV1Call::abi_encode_returns(
@@ -172,7 +170,7 @@ impl Founding {
             }
             (TEE_REGISTRY_ADDRESS, s)
                 if s == ITeeRegistryV1::keyEpochCall::SELECTOR
-                    || s == ITeeRegistryV1::tributeOfferEpochCall::SELECTOR =>
+                    || s == ITeeRegistryV1::offerEpochCall::SELECTOR =>
             {
                 U256::ZERO.abi_encode()
             }

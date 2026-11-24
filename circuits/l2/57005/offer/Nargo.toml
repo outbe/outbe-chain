@@ -1,5 +1,5 @@
 [package]
-name = "demo_tribute"
+name = "demo_offer"
 type = "bin"
 authors = ["outbe"]
 compiler_version = ">=1.0.0"

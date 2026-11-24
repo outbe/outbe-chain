@@ -28,7 +28,7 @@ fn worker_failures(storage: &HashMapStorageProvider) -> Vec<(u8, u64)> {
 
 fn seed_jobs(ctx: &BlockRuntimeContext) {
     let mut rewards = ctx.storage.contract::<AgentRewardContract>();
-    rewards.increment_waa_tribute(DAY, RECIPIENT).unwrap();
+    rewards.increment_waa_offer(DAY, RECIPIENT).unwrap();
     outbe_rewards::api::seal_votes_and_fees(ctx, DAY.value()).unwrap();
     let allocation = outbe_agentreward::api::allocate_day_agent_rewards(
         ctx,

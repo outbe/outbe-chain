@@ -17,9 +17,9 @@ pub struct TeeRegistry {
     #[attribute(order = 0)]
     pub bootstrapped: outbe_primitives::storage::dsl::Value<bool>,
 
-    /// slot 1: the tribute offer public key clients encrypt to.
+    /// slot 1: the offer public key clients encrypt to.
     #[attribute(order = 1)]
-    pub tribute_offer_public_key: outbe_primitives::storage::dsl::Value<B256>,
+    pub offer_public_key: outbe_primitives::storage::dsl::Value<B256>,
 
     /// slot 2: hash of the genesis TEE policy (mrsigner/mrenclave/min_isv_svn).
     #[attribute(order = 2)]
@@ -29,9 +29,9 @@ pub struct TeeRegistry {
     #[attribute(order = 3)]
     pub key_epoch: outbe_primitives::storage::dsl::Value<u64>,
 
-    /// slot 4: tribute-offer-key epoch (HKDF domain separation; reshare-rotation hook).
+    /// slot 4: offer-key epoch (HKDF domain separation; reshare-rotation hook).
     #[attribute(order = 4)]
-    pub tribute_offer_epoch: outbe_primitives::storage::dsl::Value<u64>,
+    pub offer_epoch: outbe_primitives::storage::dsl::Value<u64>,
 
     /// slot 5: DKG transcript hash.
     #[attribute(order = 5)]

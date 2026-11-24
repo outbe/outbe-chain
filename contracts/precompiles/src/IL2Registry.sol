@@ -3,7 +3,7 @@ pragma solidity ^0.8.30;
 
 /// Registry of L2 networks. Registration is governance-only. Chain id 0 is invalid.
 ///
-/// Any caller may offer a Tribute with a valid root signature and ZK proof for
+/// Any caller may send an offer with a valid root signature and ZK proof for
 /// the selected chain. The caller need not match the registered `l1Address`.
 ///
 /// Public keys use canonical EIP-2537 G2 encoding (256 bytes):
@@ -41,7 +41,7 @@ interface IL2Registry {
     /// Replaces the registered network's root-signing key immediately.
     /// `msg.sender` must equal the stored `l1Address`, which may be a contract.
     /// `publicKey` must be a valid, nonidentity EIP-2537 G2 key (256 bytes).
-    /// Subsequent Tribute offers are verified against the replacement key.
+    /// Subsequent offers are verified against the replacement key.
     function updatePublicKey(uint64 chainId, bytes calldata publicKey) external;
 
     /// Returns the operator and effective EIP-2537 G2 key (256 bytes).

@@ -22,7 +22,6 @@ interface IEmission {
         uint8 metadosisState;
         uint128 emissionLimit;
         uint128 metadosisLimit;
-        uint128 lysisLimit;
         uint128 desisLimit;
         uint128 validators;
         uint128 waa;

@@ -13,17 +13,17 @@ pub fn display_text(err: &impl fmt::Display) -> String {
     reason
 }
 
-/// Error from decrypted Tribute JSON payload parsing and validation.
+/// Error from decrypted offer JSON payload parsing and validation.
 #[derive(Debug, Error)]
 pub enum PayloadError {
     /// Parsing the decrypted JSON payload failed.
     #[error("failed to parse decrypted payload: {0}")]
     ParseDecryptedPayload(#[source] serde_json::Error),
-    /// Deserializing the V2 encrypted Tribute payload failed.
-    #[error("invalid encrypted Tribute payload: {0}")]
-    InvalidEncryptedTributePayload(#[source] serde_json::Error),
-    /// The `tribute_draft_id` field is empty.
-    #[error("tribute_draft_id is required")]
+    /// Deserializing the encrypted offer payload failed.
+    #[error("invalid encrypted offer payload: {0}")]
+    InvalidEncryptedOfferPayload(#[source] serde_json::Error),
+    /// The `offer_draft_id` field is empty.
+    #[error("offer_draft_id is required")]
     DraftIdRequired,
     /// The `creator` field is empty.
     #[error("creator is required")]
@@ -33,7 +33,7 @@ pub enum PayloadError {
     SuHashesEmpty,
 }
 
-/// Error from Tribute offer processing and ZK claim derivation.
+/// Error from offer processing and ZK claim derivation.
 #[derive(Debug, Error)]
 pub enum ProcessError {
     /// Offer decryption failed.
@@ -57,9 +57,6 @@ pub enum ProcessError {
         /// Day whose VWAP was missing.
         worldwide_day: WorldwideDay,
     },
-    /// Encrypting the output V2 Tribute record failed.
-    #[error("Tribute encryption failed: {0}")]
-    TributeEncryptionFailed(#[source] TeeError),
     /// A ZK claim hex field is invalid.
     #[error("{what} must be 0x-prefixed 32-byte hex")]
     InvalidB256Hex {
@@ -69,9 +66,9 @@ pub enum ProcessError {
     /// Canonical sorting of SU IDs failed.
     #[error("invalid canonical su_ids: {0}")]
     InvalidCanonicalSuIds(#[source] outbe_zk::Error),
-    /// Entity hash derivation for TributeDraftClaim failed.
-    #[error("invalid canonical TributeDraft: {0}")]
-    InvalidCanonicalTributeDraft(#[source] outbe_zk::Error),
+    /// Entity hash derivation for OfferDraftClaim failed.
+    #[error("invalid canonical OfferDraft: {0}")]
+    InvalidCanonicalOfferDraft(#[source] outbe_zk::Error),
     /// The emission day and currencies spell no series id.
     #[error("offer currencies spell no series id")]
     InvalidSeries,

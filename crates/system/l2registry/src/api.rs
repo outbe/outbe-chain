@@ -1,5 +1,5 @@
 //! Cross-module surface: ZK merkle-root signature verification for
-//! `TributeFactory.offerTribute`.
+//! `INodFactory.issueNod`.
 
 use commonware_codec::DecodeExt;
 use commonware_cryptography::bls12381::primitives::{

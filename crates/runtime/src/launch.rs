@@ -34,7 +34,7 @@ where
     }
 
     // Initialize the hash-pinned Barretenberg global CRS before block
-    // execution. Tribute admission is consensus-critical, so a node that
+    // execution. Offer admission is consensus-critical, so a node that
     // cannot initialize the verifier must not start. Database and other
     // operator commands never execute proofs and must remain offline.
     // CRS initialization blocks this thread and can use reqwest::blocking.

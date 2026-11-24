@@ -9,11 +9,11 @@
 //! immediate caller, not the transaction origin.
 //! An empty registration key or 256 zero bytes selects the registered inbox's
 //! `groupPubKey()` getter. The inbox may differ from the owner. Old records
-//! default to the owner. Registry views and Tribute verification resolve that
+//! default to the owner. Registry views and offer verification resolve that
 //! EIP-2537 G2 key via STATICCALL on every use, validate it, and never cache it.
 //!
 //! The cross-module surface ([`api`]) verifies the selected chain's BLS signature
-//! over `zkMerkleRoot` for `TributeFactory.offerTribute`, independent of the caller.
+//! over `zkMerkleRoot` for `INodFactory.issueNod`, independent of the caller.
 //!
 //! [`api::l2_circuits`] uses explicit deployment bindings outside Devnet.
 //! Devnet may use a frozen development binding for unbound L2s without

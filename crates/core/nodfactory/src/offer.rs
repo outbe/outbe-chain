@@ -8,7 +8,7 @@ use outbe_core_common::series_id::SeriesId;
 use outbe_nod::api as nod_api;
 use outbe_nod::offer::issue::{IssueNodAtOfferRequestV1, NodAtOfferResultV1, NodAtOfferStatusV1};
 use outbe_nod::offer::protocol::{
-    EncryptedTributeOffer, TributePublicInputs, TributeZkContext, TributeZkExpectedHashes,
+    EncryptedOffer, OfferPublicInputs, OfferZkContext, OfferZkExpectedHashes,
 };
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
@@ -175,7 +175,7 @@ impl From<OfferError> for PrecompileError {
 
 struct VerifiedProof {
     host_chain_id: u64,
-    public: TributePublicInputs,
+    public: OfferPublicInputs,
     verification_key: &'static [u8],
 }
 
@@ -198,7 +198,7 @@ pub fn issue_nod(storage: &StorageHandle<'_>, input: IssueNodInput) -> Result<U2
         &input,
         (wwd.day, entry_price_minor),
         &pricing,
-        TributeZkContext {
+        OfferZkContext {
             derived_owner: proof.public.derived_owner,
             chain_id: proof.host_chain_id,
             l2_chain_id: u64::from(input.l2_chain_id),
@@ -228,7 +228,7 @@ pub(crate) fn offer_terms(
     wwd: &outbe_worldwideday::WwdProjection,
     input: &IssueNodInput,
     now: u64,
-    pricing: &outbe_oracle::api::TributePricingInputs,
+    pricing: &outbe_oracle::api::OfferPricingInputs,
 ) -> Result<(u16, U256)> {
     let sub_series_id = offer_hour(now, wwd.offerings_start)?;
     let series_id = SeriesId::for_pair(wwd.day, input.issuance_currency, input.reference_currency)
@@ -241,18 +241,18 @@ pub(crate) fn offer_terms(
 pub(crate) fn offer_request(
     input: &IssueNodInput,
     (emission_day, entry_price_minor): (u32, U256),
-    pricing: &outbe_oracle::api::TributePricingInputs,
-    zk_context: TributeZkContext,
+    pricing: &outbe_oracle::api::OfferPricingInputs,
+    zk_context: OfferZkContext,
 ) -> IssueNodAtOfferRequestV1 {
     IssueNodAtOfferRequestV1 {
         chain_id: zk_context.chain_id,
-        offer: EncryptedTributeOffer {
+        offer: EncryptedOffer {
             owner: input.caller,
             cipher_text: input.cipher_text.to_vec(),
             nonce: input.nonce.to_vec(),
             ephemeral_pubkey: input.ephemeral_pubkey,
             worldwide_day: input.worldwide_day,
-            tribute_currency: input.issuance_currency,
+            issuance_currency: input.issuance_currency,
             reference_currency: input.reference_currency,
             issuance_wwd_vwap_minor: pricing.issuance_vwap_minor,
             reference_wwd_vwap_minor: pricing.reference_vwap_minor,
@@ -307,7 +307,7 @@ pub(crate) fn record_offer(
 ) -> Result<U256> {
     outbe_nod::offers::mark_offer(storage, (worldwide_day, nod.terms.owner), &claims.su_hashes)?;
     let nod_id = crate::runtime::issue_offer_nod(storage, nod, now, sub_series_id)?;
-    record_day_nod(storage, worldwide_day, nod)?;
+    record_worldwide_day_nod(storage, worldwide_day, nod)?;
     record_agent_reward_activity(storage, now, &claims.wallets, &claims.sras)?;
     Ok(nod_id)
 }
@@ -319,29 +319,35 @@ pub(crate) fn offer_hour(now: u64, offerings_start: u64) -> Result<u16> {
     Ok(u16::try_from(hours).map_err(|_| crate::errors::NodFactoryError::InvalidEncryptedNod)?)
 }
 
-fn record_day_nod(
+fn record_worldwide_day_nod(
     storage: &StorageHandle<'_>,
     wwd: WorldwideDay,
     nod: &EncryptedNodV1,
 ) -> Result<()> {
-    let totals = outbe_worldwideday::day_totals(storage.clone(), wwd)?;
-    use outbe_nod::offers::{day_load_scope, day_nominal_scope, decode_day_sum, encode_day_sum};
-    let nominal = nod_api::add_to_day_sum(
+    let totals = outbe_worldwideday::worldwide_day_totals(storage.clone(), wwd)?;
+    use outbe_nod::offers::{
+        decode_worldwide_day_sum, encode_worldwide_day_sum, worldwide_day_load_scope,
+        worldwide_day_nominal_scope,
+    };
+    let nominal = nod_api::add_to_worldwide_day_sum(
         storage,
-        day_nominal_scope(wwd),
-        decode_day_sum(&totals.encrypted_nominal)?,
+        worldwide_day_nominal_scope(wwd),
+        decode_worldwide_day_sum(&totals.encrypted_nominal)?,
         (nod, true),
     )?;
-    let load = nod_api::add_to_day_sum(
+    let load = nod_api::add_to_worldwide_day_sum(
         storage,
-        day_load_scope(wwd),
-        decode_day_sum(&totals.encrypted_load)?,
+        worldwide_day_load_scope(wwd),
+        decode_worldwide_day_sum(&totals.encrypted_load)?,
         (nod, false),
     )?;
-    outbe_worldwideday::record_day_nod(
+    outbe_worldwideday::record_worldwide_day_nod(
         storage.clone(),
         wwd,
-        (&encode_day_sum(&nominal)?, &encode_day_sum(&load)?),
+        (
+            &encode_worldwide_day_sum(&nominal)?,
+            &encode_worldwide_day_sum(&load)?,
+        ),
     )
 }
 
@@ -358,10 +364,10 @@ fn record_agent_reward_activity(
     let reward_utc_day = WorldwideDay::new(timestamp_to_date_key(now));
     let mut agent_reward = AgentRewardContract::new(storage.clone());
     for address in wallets {
-        agent_reward.increment_waa_tribute(reward_utc_day, *address)?;
+        agent_reward.increment_waa_offer(reward_utc_day, *address)?;
     }
     for address in sras {
-        agent_reward.increment_sra_tribute(reward_utc_day, *address)?;
+        agent_reward.increment_sra_offer(reward_utc_day, *address)?;
     }
     Ok(())
 }
@@ -408,7 +414,7 @@ pub(crate) fn pricing(
     input: &IssueNodInput,
 ) -> Result<(
     outbe_worldwideday::WwdProjection,
-    outbe_oracle::api::TributePricingInputs,
+    outbe_oracle::api::OfferPricingInputs,
 )> {
     let worldwide_day = input.worldwide_day;
     if !worldwide_day.is_valid() {
@@ -420,7 +426,7 @@ pub(crate) fn pricing(
     let wwd = outbe_worldwideday::worldwide_day(storage.clone(), worldwide_day)?
         .ok_or(OfferError::WorldwideDayNotOffering { worldwide_day })?;
     outbe_oracle::api::check_reference_currency(input.reference_currency)?;
-    let pricing = outbe_oracle::api::tribute_pricing_inputs(
+    let pricing = outbe_oracle::api::offer_pricing_inputs(
         storage.clone(),
         input.issuance_currency,
         input.reference_currency,
@@ -452,7 +458,7 @@ fn resolve_verification_key(
     Ok(binding.vk_bytes)
 }
 
-fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<TributePublicInputs> {
+fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<OfferPublicInputs> {
     // bb-keccak-v1 VK: log circuit size, public count (including eight
     // pairing-accumulator words), offset, then 28 two-word commitments.
     if verification_key.len() != 59 * 32 {
@@ -468,14 +474,14 @@ fn decode_zk_public_inputs(proof: &[u8], verification_key: &[u8]) -> Result<Trib
     let combined_len = 4 + (4 + 82 + 12 * log_n as usize) * 32;
     let words = decode_public_words::<4>(proof, combined_len)
         .map_err(|err| OfferError::MalformedZkProof(err.to_string()))?;
-    Ok(TributePublicInputs::from_raw_parts(words))
+    Ok(OfferPublicInputs::from_raw_parts(words))
 }
 
 fn validate_zk_result(
     zk_proof: &[u8],
     verification_key: &[u8],
-    public: TributePublicInputs,
-    expected: Option<&TributeZkExpectedHashes>,
+    public: OfferPublicInputs,
+    expected: Option<&OfferZkExpectedHashes>,
 ) -> Result<()> {
     let expected = expected.ok_or(OfferError::ZkPublicInputMismatch {
         field: "tee_expected_hashes",

@@ -99,10 +99,10 @@ fn reward_jobs_pay_256_receivers_per_block() {
         voters(&storage, DAY, 100);
         for n in 0..100 {
             contract
-                .increment_waa_tribute(DAY, numbered_address(1_000 + n))
+                .increment_waa_offer(DAY, numbered_address(1_000 + n))
                 .unwrap();
             contract
-                .increment_sra_tribute(DAY, numbered_address(2_000 + n))
+                .increment_sra_offer(DAY, numbered_address(2_000 + n))
                 .unwrap();
             originate(&storage, numbered_address(3_000 + n), DAY, U256::ONE);
         }
@@ -216,10 +216,10 @@ fn job_rounding_rest_goes_to_promis_limit_once() {
         voters(&storage, DAY, 3);
         for n in 1..=3 {
             contract
-                .increment_waa_tribute(DAY, numbered_address(n))
+                .increment_waa_offer(DAY, numbered_address(n))
                 .unwrap();
             contract
-                .increment_sra_tribute(DAY, numbered_address(n))
+                .increment_sra_offer(DAY, numbered_address(n))
                 .unwrap();
             originate(&storage, numbered_address(n), DAY, U256::ONE);
         }
@@ -312,10 +312,10 @@ fn each_pool_job_reports_its_rest_and_only_a_nonzero_rest_reaches_the_promis_lim
             voters(&storage, DAY, 3);
             for n in 1..=3 {
                 contract
-                    .increment_waa_tribute(DAY, numbered_address(n))
+                    .increment_waa_offer(DAY, numbered_address(n))
                     .unwrap();
                 contract
-                    .increment_sra_tribute(DAY, numbered_address(n))
+                    .increment_sra_offer(DAY, numbered_address(n))
                     .unwrap();
                 originate(&storage, numbered_address(n), DAY, U256::ONE);
             }
@@ -360,7 +360,10 @@ fn each_pool_job_reports_its_rest_and_only_a_nonzero_rest_reaches_the_promis_lim
         if rest == 0 {
             assert!(added.is_empty());
         } else {
-            assert_eq!(added, vec![(15, U256::ONE); 4]);
+            assert_eq!(
+                added,
+                vec![(outbe_promislimit::LimitSource::RewardLimit as u8, U256::ONE); 4]
+            );
         }
     }
 }
@@ -371,8 +374,8 @@ fn day_records_deleted_after_their_job() {
         voters(&storage, DAY, 300);
         for n in 1..=300 {
             let address = numbered_address(n);
-            contract.increment_waa_tribute(DAY, address).unwrap();
-            contract.increment_sra_tribute(DAY, address).unwrap();
+            contract.increment_waa_offer(DAY, address).unwrap();
+            contract.increment_sra_offer(DAY, address).unwrap();
             originate(&storage, address, DAY, U256::ONE);
             if n % 2 == 0 {
                 outbe_ccaregistry::api::credis_forfeited(
@@ -413,8 +416,8 @@ fn day_records_deleted_after_their_job() {
                 assert_eq!(contract.waa_address_count.read(&DAY).unwrap(), 300);
                 assert_eq!(
                     contract
-                        .waa_tribute_counts
-                        .read(&AgentRewardContract::tribute_count_key(
+                        .waa_offer_counts
+                        .read(&AgentRewardContract::offer_count_key(
                             DAY,
                             numbered_address(1)
                         ))
@@ -427,8 +430,8 @@ fn day_records_deleted_after_their_job() {
                 assert_eq!(contract.sra_address_count.read(&DAY).unwrap(), 300);
                 assert_eq!(
                     contract
-                        .sra_tribute_counts
-                        .read(&AgentRewardContract::tribute_count_key(
+                        .sra_offer_counts
+                        .read(&AgentRewardContract::offer_count_key(
                             DAY,
                             numbered_address(1)
                         ))
@@ -463,10 +466,10 @@ fn day_records_deleted_after_their_job() {
             DAY.value()
         );
         assert!(contract
-            .increment_waa_tribute(DAY, numbered_address(1))
+            .increment_waa_offer(DAY, numbered_address(1))
             .is_err());
         assert!(contract
-            .increment_sra_tribute(DAY, numbered_address(1))
+            .increment_sra_offer(DAY, numbered_address(1))
             .is_err());
         assert!(outbe_ccaregistry::api::credis_issued(
             &storage,
@@ -497,14 +500,14 @@ fn standalone_cleanup_and_worker_share_one_cleanup_budget_and_retry_failed_slice
         let next_day = WorldwideDay::new(20231114);
         for n in 1..=300 {
             contract
-                .increment_waa_tribute(DAY, numbered_address(n))
+                .increment_waa_offer(DAY, numbered_address(n))
                 .unwrap();
             contract
-                .increment_sra_tribute(DAY, numbered_address(n))
+                .increment_sra_offer(DAY, numbered_address(n))
                 .unwrap();
         }
         contract
-            .increment_waa_tribute(next_day, numbered_address(999))
+            .increment_waa_offer(next_day, numbered_address(999))
             .unwrap();
         let context = ctx(storage.clone(), 0);
         outbe_rewards::api::seal_votes_and_fees(&context, DAY.value()).unwrap();
@@ -529,7 +532,7 @@ fn standalone_cleanup_and_worker_share_one_cleanup_budget_and_retry_failed_slice
             256
         );
 
-        let key = AgentRewardContract::tribute_count_key(DAY, numbered_address(290));
+        let key = AgentRewardContract::offer_count_key(DAY, numbered_address(290));
         contract.waa_member_index.write(&key, 0).unwrap();
         let retry = ctx(storage.clone(), 1);
         assert!(crate::api::cleanup(&retry).is_err());
@@ -540,8 +543,8 @@ fn standalone_cleanup_and_worker_share_one_cleanup_budget_and_retry_failed_slice
         );
         assert_eq!(
             contract
-                .waa_tribute_counts
-                .read(&AgentRewardContract::tribute_count_key(
+                .waa_offer_counts
+                .read(&AgentRewardContract::offer_count_key(
                     DAY,
                     numbered_address(257)
                 ))
@@ -577,7 +580,7 @@ fn cleanup_is_bounded_sealed_and_independent_of_monetary_pending() {
     with_contract_mut(|storage, contract| {
         for n in 1..=600 {
             contract
-                .increment_waa_tribute(DAY, numbered_address(n))
+                .increment_waa_offer(DAY, numbered_address(n))
                 .unwrap();
         }
         let context = ctx(storage.clone(), 0);
@@ -585,8 +588,8 @@ fn cleanup_is_bounded_sealed_and_independent_of_monetary_pending() {
         crate::api::process_agent_rewards(&context).unwrap();
         assert_eq!(
             contract
-                .waa_tribute_counts
-                .read(&AgentRewardContract::tribute_count_key(
+                .waa_offer_counts
+                .read(&AgentRewardContract::offer_count_key(
                     DAY,
                     numbered_address(1)
                 ))
@@ -594,7 +597,7 @@ fn cleanup_is_bounded_sealed_and_independent_of_monetary_pending() {
             1
         );
         assert!(contract
-            .increment_waa_tribute(DAY, numbered_address(999))
+            .increment_waa_offer(DAY, numbered_address(999))
             .is_err());
         crate::api::process_agent_rewards(&ctx(storage.clone(), 1)).unwrap();
         crate::api::process_agent_rewards(&ctx(storage.clone(), 2)).unwrap();
@@ -602,8 +605,8 @@ fn cleanup_is_bounded_sealed_and_independent_of_monetary_pending() {
         assert_eq!(contract.waa_address_count.read(&DAY).unwrap(), 600);
         assert_eq!(
             contract
-                .waa_tribute_counts
-                .read(&AgentRewardContract::tribute_count_key(
+                .waa_offer_counts
+                .read(&AgentRewardContract::offer_count_key(
                     DAY,
                     numbered_address(256)
                 ))
@@ -612,8 +615,8 @@ fn cleanup_is_bounded_sealed_and_independent_of_monetary_pending() {
         );
         assert_eq!(
             contract
-                .waa_tribute_counts
-                .read(&AgentRewardContract::tribute_count_key(
+                .waa_offer_counts
+                .read(&AgentRewardContract::offer_count_key(
                     DAY,
                     numbered_address(257)
                 ))
@@ -624,7 +627,7 @@ fn cleanup_is_bounded_sealed_and_independent_of_monetary_pending() {
         crate::api::process_agent_rewards(&ctx(storage.clone(), 4)).unwrap();
         assert_eq!(contract.waa_address_count.read(&DAY).unwrap(), 0);
         assert!(contract
-            .increment_waa_tribute(DAY, numbered_address(1))
+            .increment_waa_offer(DAY, numbered_address(1))
             .is_err());
     });
 }
@@ -655,7 +658,7 @@ fn allocation_prevalidates_queue_and_freezes_immutable_inputs() {
         )
         .is_err());
         assert!(contract
-            .increment_sra_tribute(DAY, numbered_address(1))
+            .increment_sra_offer(DAY, numbered_address(1))
             .is_err());
         assert!(crate::api::abandon_day_agent_rewards(&context, DAY).is_err());
         crate::api::process_agent_rewards(&context).unwrap();
@@ -677,7 +680,7 @@ fn allocation_prevalidates_queue_and_freezes_immutable_inputs() {
 fn missing_ledger_rolls_back_credits_and_worker_height_and_is_retryable() {
     with_contract_mut(|storage, contract| {
         contract
-            .increment_waa_tribute(DAY, numbered_address(1))
+            .increment_waa_offer(DAY, numbered_address(1))
             .unwrap();
         let context = ctx(storage.clone(), 0);
         allocate_fixture(&context, DAY, &[(PoolKind::Waa, U256::from(10))]).unwrap();
@@ -705,7 +708,7 @@ fn failed_day_abandonment_queues_once_and_permanently_seals_all_owners() {
     with_contract_mut(|storage, contract| {
         for n in 1..=300 {
             contract
-                .increment_sra_tribute(DAY, numbered_address(n))
+                .increment_sra_offer(DAY, numbered_address(n))
                 .unwrap();
         }
         let context = ctx(storage.clone(), 0);
@@ -718,7 +721,7 @@ fn failed_day_abandonment_queues_once_and_permanently_seals_all_owners() {
         crate::api::process_agent_rewards(&ctx(storage.clone(), 1)).unwrap();
         assert_eq!(contract.sra_address_count.read(&DAY).unwrap(), 0);
         assert!(contract
-            .increment_sra_tribute(DAY, numbered_address(1))
+            .increment_sra_offer(DAY, numbered_address(1))
             .is_err());
         assert!(!crate::distribution::has_pending_accruals_for_day(&storage, DAY.value()).unwrap());
         assert!(crate::api::allocate_day_agent_rewards(
@@ -744,7 +747,7 @@ fn metered_accrual_and_three_owner_cleanup_fit_the_existing_block_envelope() {
             outbe_ccaregistry::api::credis_issued(&storage, address, next_day.value(), U256::ONE)
                 .unwrap();
             if n <= 256 {
-                contract.increment_waa_tribute(DAY, address).unwrap();
+                contract.increment_waa_offer(DAY, address).unwrap();
             }
         }
         let context = ctx(storage.clone(), 0);
@@ -865,21 +868,21 @@ fn each_worker_mutation_failure_preserves_committed_obligations_and_retries_once
 }
 
 #[test]
-fn missing_tribute_index_or_positive_count_never_becomes_residue() {
+fn missing_offer_index_or_positive_count_never_becomes_residue() {
     for pool in [RewardPool::Waa, RewardPool::Sra] {
         for clear_address in [false, true] {
             with_contract_mut(|storage, contract| {
                 let address = numbered_address(1);
-                increment_tribute_counter(contract, pool, DAY, address).unwrap();
+                increment_offer_counter(contract, pool, DAY, address).unwrap();
                 if clear_address {
                     // A valid zero-address recipient must not mask another missing index.
-                    increment_tribute_counter(contract, pool, DAY, Address::ZERO).unwrap();
+                    increment_offer_counter(contract, pool, DAY, Address::ZERO).unwrap();
                 }
                 let context = ctx(storage.clone(), 0);
                 allocate_fixture(&context, DAY, &[(pool, U256::from(10))]).unwrap();
                 let index = contract.day_index(pool).unwrap();
                 let address_key = AgentRewardContract::address_index_key(DAY, 0);
-                let count_key = AgentRewardContract::tribute_count_key(DAY, address);
+                let count_key = AgentRewardContract::offer_count_key(DAY, address);
                 if clear_address {
                     index.addresses.write(&address_key, Address::ZERO).unwrap();
                 } else {
@@ -913,11 +916,11 @@ fn exact_256_entry_boundary_does_not_credit_the_next_pool_in_the_same_block() {
     with_contract_mut(|storage, contract| {
         for n in 1..=256 {
             contract
-                .increment_waa_tribute(DAY, numbered_address(n))
+                .increment_waa_offer(DAY, numbered_address(n))
                 .unwrap();
         }
         contract
-            .increment_sra_tribute(DAY, numbered_address(999))
+            .increment_sra_offer(DAY, numbered_address(999))
             .unwrap();
         let context = ctx(storage.clone(), 0);
         allocate_fixture(

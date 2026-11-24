@@ -334,7 +334,7 @@ groups:
           summary: "TEE canary decrypt failing on {{ $labels.instance }}"
           description: |
             The enclave canary failed 3+ consecutive probes.
-            offerTribute execution on this validator is degraded or broken.
+            issueNod execution on this validator is degraded or broken.
             With a small committee, this slows every block (see the 2026-08-22 incident).
 
       - alert: OutbeTeeCanaryStale

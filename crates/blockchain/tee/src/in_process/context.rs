@@ -60,7 +60,7 @@ impl InProcessTeeContext {
             && identity.reth_p2p_public == manifest.node_id.reth_p2p_public;
         let keys_match = (
             keys.noise_public(),
-            keys.tribute_offer_public(),
+            keys.recipient_public(),
             keys.attestation_pub(),
         ) == (
             manifest.noise_responder_x25519,
@@ -110,8 +110,7 @@ impl InProcessTeeContext {
             &self.keys,
             self.manifest.initialization_challenge,
             manifest_authorization_hash,
-            &material,
-            anchor,
+            (&material, anchor),
         )?;
         Ok(())
     }
@@ -139,7 +138,7 @@ impl InProcessTeeContext {
     }
     /// Return the public onboarding-artifact recipient key.
     pub fn recipient_public(&self) -> [u8; 32] {
-        self.keys.tribute_offer_public()
+        self.keys.recipient_public()
     }
     /// Return the Ed25519 public key authenticating domain attestations.
     pub fn attestation_public(&self) -> [u8; 32] {
@@ -175,7 +174,7 @@ impl InProcessTeeContext {
     }
     /// Return the admitted network encryption epoch, or NotReady.
     pub fn network_encryption_epoch(&self) -> Result<u64> {
-        Ok(self.material()?.tribute_offer_epoch())
+        Ok(self.material()?.offer_epoch())
     }
     /// Return the verified admission anchor; founding DKG has no admission anchor.
     pub fn admission_anchor(&self) -> Result<Option<VerifiedAdmissionAnchorV1>> {
@@ -206,7 +205,7 @@ impl InProcessTeeContext {
         if let Some(old) = active.as_ref() {
             if old.material.public() != material.public()
                 || old.material.key_epoch() != material.key_epoch()
-                || old.material.tribute_offer_epoch() != material.tribute_offer_epoch()
+                || old.material.offer_epoch() != material.offer_epoch()
                 || old.anchor.is_some_and(|old| {
                     anchor.is_none_or(|new| {
                         new.block_number < old.block_number
@@ -346,7 +345,7 @@ impl InProcessTeeContext {
             .sessions
             .lock()
             .map_err(|_| InProcessError::LockPoisoned)?;
-        let material = sessions.get_mut(id)?.recover_tribute_offer_material(
+        let material = sessions.get_mut(id)?.recover_offer_material(
             sealed_partials,
             B256::from(self.manifest.chain_id),
             network_encryption_epoch,
@@ -413,7 +412,7 @@ mod tests {
         let (store, loaded) =
             ResidentStateStore::load_or_create(directory.path(), &authorization).unwrap();
         let mut manifest = fixture.manifest.clone();
-        manifest.recipient_x25519 = loaded.keys.tribute_offer_public();
+        manifest.recipient_x25519 = loaded.keys.recipient_public();
         manifest.attestation_ed25519 = loaded.keys.attestation_pub();
         manifest.noise_responder_x25519 = loaded.keys.noise_public();
         manifest.initialization_challenge = loaded.initialization_challenge;
@@ -450,7 +449,7 @@ mod tests {
         let (store, loaded) =
             ResidentStateStore::load_or_create(directory.path(), &authorization).unwrap();
         let mut manifest = fixture.manifest.clone();
-        manifest.recipient_x25519 = loaded.keys.tribute_offer_public();
+        manifest.recipient_x25519 = loaded.keys.recipient_public();
         manifest.attestation_ed25519 = loaded.keys.attestation_pub();
         manifest.noise_responder_x25519 = loaded.keys.noise_public();
         manifest.initialization_challenge = loaded.initialization_challenge;

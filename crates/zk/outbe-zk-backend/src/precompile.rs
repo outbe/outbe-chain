@@ -126,24 +126,24 @@ mod tests {
     #[test]
     #[ignore = "requires the pinned Barretenberg CRS"]
     fn zk_verify_real_proof_and_changed_statement() {
-        use outbe_zk::noir::demo_tribute::DemoTribute;
+        use outbe_zk::noir::demo_offer::DemoOffer;
         use outbe_zk::CircuitId as _;
 
         crate::barretenberg::BarretenbergHandler::init().unwrap();
         let proof = include_bytes!(
-            "../../../../testing/protocol-benchmarks/fixtures/tribute_demo_tribute_v1.bin"
+            "../../../../testing/protocol-benchmarks/fixtures/offer_demo_offer_v1.bin"
         );
         let mut valid = [0u8; 32];
         valid[31] = 1;
         assert_eq!(
-            zk_verify(&abi_encode(&DemoTribute::CIRCUIT_HASH, proof)).unwrap(),
+            zk_verify(&abi_encode(&DemoOffer::CIRCUIT_HASH, proof)).unwrap(),
             valid
         );
 
         let mut tampered = proof.to_vec();
         tampered[100..132].fill(0);
         assert_eq!(
-            zk_verify(&abi_encode(&DemoTribute::CIRCUIT_HASH, &tampered)).unwrap(),
+            zk_verify(&abi_encode(&DemoOffer::CIRCUIT_HASH, &tampered)).unwrap(),
             [0u8; 32]
         );
     }

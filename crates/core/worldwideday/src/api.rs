@@ -41,7 +41,7 @@ pub fn emission_day_of(
         .map(|record| EmissionDate::new(record.emission_day)))
 }
 
-pub fn is_sealed(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<bool> {
+pub fn is_worldwide_day_sealed(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<bool> {
     WorldwideDayContract::new(storage).sealed.read(&wwd)
 }
 
@@ -58,39 +58,45 @@ pub fn seal_worldwide_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Resu
 /// The Nods of a Worldwide Day: their count and the encrypted sums of their nominal
 /// and of their loads. An empty sum has no bytes.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct DayTotals {
+pub struct WorldwideDayTotals {
     pub nod_count: u32,
     pub encrypted_nominal: Vec<u8>,
     pub encrypted_load: Vec<u8>,
 }
 
-pub fn day_totals(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<DayTotals> {
+pub fn worldwide_day_totals(
+    storage: StorageHandle<'_>,
+    wwd: WorldwideDay,
+) -> Result<WorldwideDayTotals> {
     let contract = WorldwideDayContract::new(storage);
-    Ok(DayTotals {
-        nod_count: contract.day_nod_count.read(&wwd)?,
-        encrypted_nominal: contract.day_nominal_ct.bytes(&wwd).read()?,
-        encrypted_load: contract.day_load_ct.bytes(&wwd).read()?,
+    Ok(WorldwideDayTotals {
+        nod_count: contract.worldwide_day_nod_count.read(&wwd)?,
+        encrypted_nominal: contract.worldwide_day_nominal_ct.bytes(&wwd).read()?,
+        encrypted_load: contract.worldwide_day_load_ct.bytes(&wwd).read()?,
     })
 }
 
 /// Counts one more Nod of `wwd` and stores the sums that include it.
-pub fn record_day_nod(
+pub fn record_worldwide_day_nod(
     storage: StorageHandle<'_>,
     wwd: WorldwideDay,
     (encrypted_nominal, encrypted_load): (&[u8], &[u8]),
 ) -> Result<()> {
     let contract = WorldwideDayContract::new(storage);
     let count = contract
-        .day_nod_count
+        .worldwide_day_nod_count
         .read(&wwd)?
         .checked_add(1)
         .ok_or(WwdStorageCorruptionError::DayNodCountOverflow { wwd })?;
-    contract.day_nod_count.write(&wwd, count)?;
+    contract.worldwide_day_nod_count.write(&wwd, count)?;
     contract
-        .day_nominal_ct
+        .worldwide_day_nominal_ct
         .bytes(&wwd)
         .write(encrypted_nominal)?;
-    contract.day_load_ct.bytes(&wwd).write(encrypted_load)
+    contract
+        .worldwide_day_load_ct
+        .bytes(&wwd)
+        .write(encrypted_load)
 }
 
 /// Returns true when `wwd` exists, is not sealed, and the current block
@@ -103,7 +109,7 @@ pub fn is_offering_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<
     if !projection.is_offering_at(now) {
         return Ok(false);
     }
-    Ok(!is_sealed(storage, wwd)?)
+    Ok(!is_worldwide_day_sealed(storage, wwd)?)
 }
 
 /// Returns indexed pipeline WWDs whose offering window `[offerings_start, offering_end)`

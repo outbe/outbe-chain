@@ -9,7 +9,7 @@
 //! 2. Apply the op inside the enclave.
 //! 3. Store the returned ciphertext verbatim.
 //!
-//! This flow mirrors the determinism + attestation model of the tribute offer path.
+//! This flow mirrors the determinism + attestation model of the offer path.
 //!
 //! Module layout:
 //! - [`api`] - cross-crate surface (owner-authorized writes + credis-driven ops +

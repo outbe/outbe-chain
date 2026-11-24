@@ -620,7 +620,7 @@ impl EngineProtocolState for OutbeRuntime {
     }
 
     fn network_encryption_epoch(&self, storage: StorageHandle<'_>) -> Result<u64> {
-        outbe_teeregistry::TeeRegistry::new(storage).tribute_offer_epoch()
+        outbe_teeregistry::TeeRegistry::new(storage).offer_epoch()
     }
 
     fn tee_recipient(

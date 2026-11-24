@@ -47,7 +47,7 @@ pub trait Circuit {
 /// Implemented (build-generated) by canonical circuit markers; verifier routing
 /// chooses the appropriate identity for its registry.
 pub trait CircuitId {
-    /// Canonical dotted label, e.g. `outbe.ownership` / `demo.tribute`.
+    /// Canonical dotted label, e.g. `outbe.ownership` / `demo.offer`.
     const LABEL: &'static str;
     /// Semver-style version string ("1.0.0"). Not authoritative.
     const VERSION: &'static str;

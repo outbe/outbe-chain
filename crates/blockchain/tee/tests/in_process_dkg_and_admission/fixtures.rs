@@ -33,7 +33,7 @@ pub fn context(seed: u8, descriptor: &TrustedNetworkDescriptorV1) -> InProcessTe
         node_id: node_id(),
         initialization_challenge: [seed; 32],
         node_host_noise_x25519: [4; 32],
-        recipient_x25519: keys.tribute_offer_public(),
+        recipient_x25519: keys.recipient_public(),
         attestation_ed25519: keys.attestation_pub(),
         noise_responder_x25519: keys.noise_public(),
     };
@@ -184,7 +184,7 @@ pub fn run_dkg(contexts: &[InProcessTeeContext]) -> [u8; 32] {
     let partials = contexts
         .iter()
         .map(|c| {
-            c.with_dkg_session(&id, |s| s.tribute_offer_partials_sealed())
+            c.with_dkg_session(&id, |s| s.offer_partials_sealed())
                 .unwrap()
         })
         .collect::<Vec<_>>();

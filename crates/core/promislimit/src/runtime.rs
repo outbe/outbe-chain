@@ -16,9 +16,8 @@ use crate::{errors::PromisLimitError, precompile::IPromisLimit, schema::PromisLi
 pub enum LimitSource {
     DayEmissionLimit = 11,
     MetadosisLimit = 12,
-    LysisLimit = 13,
-    DesisLimit = 14,
-    RewardLimit = 15,
+    DesisLimit = 13,
+    RewardLimit = 14,
     Nod = 21,
     Intex = 22,
     Gem = 23,

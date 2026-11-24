@@ -9,11 +9,11 @@ use outbe_core_common::wwd_entity_id::derive_poseidon_entity_id;
 use outbe_system_common::math::scaled_math::checked_mul_div_floor;
 use outbe_system_common::time::WorldwideDay;
 
-use crate::algorithm::{calc_fraction_distribution_fp, SCALE};
+use crate::algorithm::{compute_fraction_distribution_fp, SCALE};
 
 use super::types::{
-    FidelityPhaseV1, LeagueFractionV1, NodActionV1, ProgramErrorV1, ProgramInputV1,
-    ProgramResultV1, SemanticObservationV1, TributeInputV1,
+    FidelityPhaseV1, LeagueFractionV1, NodActionV1, OfferInputV1, ProgramErrorV1, ProgramInputV1,
+    ProgramResultV1, SemanticObservationV1,
 };
 
 /// One load checked before the conditional Oracle/Fidelity reads at its ordinal.
@@ -25,7 +25,7 @@ pub(crate) struct PendingNodV1 {
 
 /// Stateful sequential reducer. It owns no storage and emits no chain effects.
 pub(crate) struct ProgramExecutionV1 {
-    tributes: Vec<TributeInputV1>,
+    offers: Vec<OfferInputV1>,
     first_leagues: Vec<u16>,
     fractions: BTreeMap<u16, U256>,
     total_nominal: U256,
@@ -46,21 +46,19 @@ pub fn execute(input: ProgramInputV1) -> Result<ProgramResultV1, ProgramErrorV1>
 pub fn execute_with_amounts(
     mut input: ProgramInputV1,
 ) -> Result<(ProgramResultV1, Vec<U256>), ProgramErrorV1> {
-    input
-        .tributes
-        .sort_by_key(|observed| observed.tribute.tribute_id);
-    let tributes = input
-        .tributes
+    input.offers.sort_by_key(|observed| observed.offer.offer_id);
+    let offers = input
+        .offers
         .iter()
-        .map(|observed| observed.tribute.clone())
+        .map(|observed| observed.offer.clone())
         .collect::<Vec<_>>();
-    if tributes.is_empty() {
+    if offers.is_empty() {
         return Err(ProgramErrorV1::EmptyInput);
     }
-    validate_canonical_tributes(input.worldwide_day, &tributes)?;
-    let mut first_leagues = Vec::with_capacity(input.tributes.len());
+    validate_canonical_offers(input.worldwide_day, &offers)?;
+    let mut first_leagues = Vec::with_capacity(input.offers.len());
     let mut observed_total = U256::ZERO;
-    for (ordinal, observed) in input.tributes.iter().enumerate() {
+    for (ordinal, observed) in input.offers.iter().enumerate() {
         let league = observed
             .first_league
             .copied()
@@ -69,24 +67,21 @@ pub fn execute_with_amounts(
                 phase: FidelityPhaseV1::First,
             })?;
         first_leagues.push(league);
-        observed_total = checked_nominal_step(
-            observed_total,
-            observed.tribute.nominal_amount_minor,
-            ordinal,
-        )?;
+        observed_total =
+            checked_nominal_step(observed_total, observed.offer.nominal_amount_minor, ordinal)?;
     }
     if observed_total.is_zero() {
         return Err(ProgramErrorV1::ZeroTotalNominal);
     }
     let mut execution = prepare(
         input.worldwide_day,
-        tributes,
+        offers,
         first_leagues,
         input.lysis_limit_minor,
     )?;
 
-    let mut loads = Vec::with_capacity(input.tributes.len());
-    for observed in &input.tributes {
+    let mut loads = Vec::with_capacity(input.offers.len());
+    for observed in &input.offers {
         let pending = execution.quote_next()?;
         loads.push(pending.gratis_load_minor);
         let ordinal = pending.ordinal;
@@ -96,7 +91,7 @@ pub fn execute_with_amounts(
                 .copied()
                 .ok_or(ProgramErrorV1::EntryPriceUnavailable {
                     ordinal,
-                    currency: observed.tribute.reference_currency,
+                    currency: observed.offer.reference_currency,
                 })?;
         let second_league =
             observed
@@ -119,26 +114,26 @@ pub fn execute_with_amounts(
 /// Validate canonical input, derive the FI fraction map, and initialize the reducer.
 pub(crate) fn prepare(
     worldwide_day: WorldwideDay,
-    tributes: Vec<TributeInputV1>,
+    offers: Vec<OfferInputV1>,
     first_leagues: Vec<u16>,
     lysis_limit_minor: U256,
 ) -> Result<ProgramExecutionV1, ProgramErrorV1> {
-    if tributes.is_empty() {
+    if offers.is_empty() {
         return Err(ProgramErrorV1::EmptyInput);
     }
-    if tributes.len() != first_leagues.len() {
+    if offers.len() != first_leagues.len() {
         return Err(ProgramErrorV1::OutputCountMismatch);
     }
 
-    validate_canonical_tributes(worldwide_day, &tributes)?;
+    validate_canonical_offers(worldwide_day, &offers)?;
     let mut total_nominal = U256::ZERO;
-    let mut observations = Vec::with_capacity(tributes.len());
-    for (ordinal, (tribute, league)) in tributes.iter().zip(&first_leagues).enumerate() {
-        total_nominal = checked_nominal_step(total_nominal, tribute.nominal_amount_minor, ordinal)?;
+    let mut observations = Vec::with_capacity(offers.len());
+    for (ordinal, (offer, league)) in offers.iter().zip(&first_leagues).enumerate() {
+        total_nominal = checked_nominal_step(total_nominal, offer.nominal_amount_minor, ordinal)?;
         observations.push(SemanticObservationV1::Fidelity {
             ordinal,
             phase: FidelityPhaseV1::First,
-            owner: tribute.owner,
+            owner: offer.owner,
             league: *league,
         });
     }
@@ -146,9 +141,9 @@ pub(crate) fn prepare(
         return Err(ProgramErrorV1::ZeroTotalNominal);
     }
 
-    let nominal_amounts = tributes
+    let nominal_amounts = offers
         .iter()
-        .map(|tribute| tribute.nominal_amount_minor)
+        .map(|offer| offer.nominal_amount_minor)
         .collect::<Vec<_>>();
     let fractions = compute_fraction_map(
         &nominal_amounts,
@@ -157,7 +152,7 @@ pub(crate) fn prepare(
         lysis_limit_minor,
     )?;
     Ok(ProgramExecutionV1 {
-        tributes,
+        offers,
         first_leagues,
         fractions,
         total_nominal,
@@ -173,8 +168,8 @@ impl ProgramExecutionV1 {
     /// Compute and limit-check the next Gratis load before external observations.
     pub(crate) fn quote_next(&self) -> Result<PendingNodV1, ProgramErrorV1> {
         let ordinal = self.next_ordinal;
-        let tribute = self
-            .tributes
+        let offer = self
+            .offers
             .get(ordinal)
             .ok_or(ProgramErrorV1::OutputCountMismatch)?;
         let fraction = self
@@ -182,8 +177,7 @@ impl ProgramExecutionV1 {
             .get(&self.first_leagues[ordinal])
             .copied()
             .unwrap_or(U256::ZERO);
-        let gratis_load_minor =
-            calculate_gratis_load(tribute.nominal_amount_minor, fraction, ordinal)?;
+        let gratis_load_minor = compute_gratis_load(offer.nominal_amount_minor, fraction, ordinal)?;
         let remaining_after = validate_required_gratis(self.remaining, gratis_load_minor, ordinal)?;
         Ok(PendingNodV1 {
             ordinal,
@@ -204,10 +198,10 @@ impl ProgramExecutionV1 {
         if pending.ordinal != ordinal {
             return Err(ProgramErrorV1::OutputCountMismatch);
         }
-        let tribute = &self.tributes[ordinal];
+        let offer = &self.offers[ordinal];
         self.observations.push(SemanticObservationV1::Oracle {
             ordinal,
-            currency: tribute.reference_currency,
+            currency: offer.reference_currency,
             entry_price_minor,
         });
 
@@ -220,7 +214,7 @@ impl ProgramExecutionV1 {
         self.observations.push(SemanticObservationV1::Fidelity {
             ordinal,
             phase: FidelityPhaseV1::Second,
-            owner: tribute.owner,
+            owner: offer.owner,
             league: second_league,
         });
         if first_league != second_league {
@@ -230,17 +224,17 @@ impl ProgramExecutionV1 {
                 second: second_league,
             });
         }
-        calculate_cost(entry_price_minor, pending.gratis_load_minor, ordinal)?;
-        if !nod_target_available || tribute.owner.is_zero() {
+        compute_cost(entry_price_minor, pending.gratis_load_minor, ordinal)?;
+        if !nod_target_available || offer.owner.is_zero() {
             return Err(ProgramErrorV1::InvalidNodTarget { ordinal });
         }
         let action = NodActionV1 {
-            source_tribute_id: tribute.tribute_id,
-            owner: tribute.owner,
+            source_offer_id: offer.offer_id,
+            owner: offer.owner,
             league_id: second_league,
             entry_price_minor,
-            issuance_currency: tribute.issuance_currency,
-            reference_currency: tribute.reference_currency,
+            issuance_currency: offer.issuance_currency,
+            reference_currency: offer.reference_currency,
         };
 
         self.remaining = pending.remaining_after;
@@ -250,18 +244,13 @@ impl ProgramExecutionV1 {
         Ok(&self.nod_actions[action_index])
     }
 
-    /// Finish only after exactly one action per canonical Tribute.
+    /// Finish only after exactly one action per canonical Offer.
     pub(crate) fn finish(self) -> Result<ProgramResultV1, ProgramErrorV1> {
-        if self.next_ordinal != self.tributes.len() || self.nod_actions.len() != self.tributes.len()
-        {
+        if self.next_ordinal != self.offers.len() || self.nod_actions.len() != self.offers.len() {
             return Err(ProgramErrorV1::OutputCountMismatch);
         }
         Ok(ProgramResultV1 {
-            tribute_ids: self
-                .tributes
-                .iter()
-                .map(|tribute| tribute.tribute_id)
-                .collect(),
+            offer_ids: self.offers.iter().map(|offer| offer.offer_id).collect(),
             total_nominal: self.total_nominal,
             lysis_limit_minor: self.lysis_limit_minor,
             remaining_lysis_limit_minor: self.remaining,
@@ -281,12 +270,12 @@ impl ProgramExecutionV1 {
 
 pub(crate) fn compute_fraction_map(
     nominal_amounts: &[U256],
-    tribute_fis: &[u16],
+    offer_fis: &[u16],
     total_interest: U256,
     lysis_limit_minor: U256,
 ) -> Result<BTreeMap<u16, U256>, ProgramErrorV1> {
     let mut fi_groups = BTreeMap::<u16, (u32, U256)>::new();
-    for (ordinal, &league) in tribute_fis.iter().enumerate() {
+    for (ordinal, &league) in offer_fis.iter().enumerate() {
         let group = fi_groups.entry(league).or_insert((0, U256::ZERO));
         group.0 = group
             .0
@@ -307,7 +296,7 @@ pub(crate) fn compute_fraction_map(
 
 pub fn compute_fraction_map_from_groups(
     fi_groups: &BTreeMap<u16, (u32, U256)>,
-    tribute_count: u32,
+    offer_count: u32,
     total_interest: U256,
     lysis_limit_minor: U256,
 ) -> Result<BTreeMap<u16, U256>, ProgramErrorV1> {
@@ -340,10 +329,10 @@ pub fn compute_fraction_map_from_groups(
     // The distribution prioritizes its first group: highest league first.
     shares.reverse();
     populations.reverse();
-    let mut fractions = calc_fraction_distribution_fp(
+    let mut fractions = compute_fraction_distribution_fp(
         &shares,
         &populations,
-        usize::try_from(tribute_count).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
+        usize::try_from(offer_count).map_err(|_| ProgramErrorV1::OutputCountMismatch)?,
         f,
         fmax,
     )
@@ -382,7 +371,7 @@ fn scaled_floor(
     checked_mul_div_floor(numerator, multiplier, denominator).map_err(ProgramErrorV1::math)
 }
 
-pub fn calculate_gratis_load(
+pub fn compute_gratis_load(
     nominal_amount_minor: U256,
     fraction: U256,
     ordinal: usize,
@@ -394,7 +383,7 @@ pub fn calculate_gratis_load(
     Ok(load)
 }
 
-pub(crate) fn calculate_cost(
+pub(crate) fn compute_cost(
     entry_price_minor: U256,
     gratis_load_minor: U256,
     ordinal: usize,
@@ -413,29 +402,27 @@ pub(crate) fn calculate_cost(
     Ok(cost)
 }
 
-pub(crate) fn validate_canonical_tributes(
+pub(crate) fn validate_canonical_offers(
     worldwide_day: WorldwideDay,
-    tributes: &[TributeInputV1],
+    offers: &[OfferInputV1],
 ) -> Result<(), ProgramErrorV1> {
     let mut previous = None;
-    for (ordinal, tribute) in tributes.iter().enumerate() {
-        if tribute.worldwide_day != worldwide_day
-            || tribute.tribute_id.worldwide_day() != worldwide_day
-        {
+    for (ordinal, offer) in offers.iter().enumerate() {
+        if offer.worldwide_day != worldwide_day || offer.offer_id.worldwide_day() != worldwide_day {
             return Err(ProgramErrorV1::WorldwideDayMismatch { ordinal });
         }
         if let Some(previous) = previous {
-            if tribute.tribute_id == previous {
+            if offer.offer_id == previous {
                 return Err(ProgramErrorV1::DuplicateInput { ordinal });
             }
-            if tribute.tribute_id < previous {
+            if offer.offer_id < previous {
                 return Err(ProgramErrorV1::NonCanonicalInput { ordinal });
             }
         }
-        previous = Some(tribute.tribute_id);
-        let expected = derive_poseidon_entity_id(tribute.owner, tribute.worldwide_day);
-        if tribute.tribute_id != expected {
-            return Err(ProgramErrorV1::InvalidTributeIdentity { ordinal });
+        previous = Some(offer.offer_id);
+        let expected = derive_poseidon_entity_id(offer.owner, offer.worldwide_day);
+        if offer.offer_id != expected {
+            return Err(ProgramErrorV1::InvalidOfferIdentity { ordinal });
         }
     }
     Ok(())
@@ -470,13 +457,13 @@ pub(crate) fn validate_required_gratis(
 #[cfg(test)]
 pub(crate) fn compute_fraction_hash_map(
     nominal_amounts: &[U256],
-    tribute_fis: &[u16],
+    offer_fis: &[u16],
     total_interest: U256,
     lysis_limit_minor: U256,
 ) -> Result<HashMap<u16, U256>, ProgramErrorV1> {
     compute_fraction_map(
         nominal_amounts,
-        tribute_fis,
+        offer_fis,
         total_interest,
         lysis_limit_minor,
     )

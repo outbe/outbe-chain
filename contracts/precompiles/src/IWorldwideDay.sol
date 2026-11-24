@@ -20,7 +20,7 @@ interface IWorldwideDay {
     function activeWorldwideDays() external view returns (uint32[] memory wwds);
     /// The Nods of the Worldwide Day of `emissionDay`: their count, the encrypted sum of their
     /// nominal, the encrypted sum of their loads, and whether the day is sealed.
-    function dayTotals(uint32 emissionDay)
+    function worldwideDayTotals(uint32 emissionDay)
         external
         view
         returns (uint32 nodCount, bytes memory encryptedNominal, bytes memory encryptedLoad, bool isSealed);
