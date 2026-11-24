@@ -4,7 +4,8 @@
 //! NOD crate's public name for them.
 
 pub use outbe_core_common::confidential_tee::{
-    decrypt_nod_for_owner, decrypt_nod_quote_for_owner, LocalCryptoError as NodDecryptError,
+    decrypt_nod_for_owner, decrypt_nod_nominal_for_owner, decrypt_nod_quote_for_owner,
+    LocalCryptoError as NodDecryptError,
 };
 
 #[cfg(test)]

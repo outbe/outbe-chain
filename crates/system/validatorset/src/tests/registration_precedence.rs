@@ -71,7 +71,7 @@ fn assert_rejected_first(
 
 /// OTHER is registered and owns its own Radicle NodeId and key 0xD2.
 fn other_registered(vs: &mut ValidatorSet<'_>) -> Result<()> {
-    vs.register_validator(OWNER, OTHER, &dummy_consensus_pubkey(0xD2))
+    vs.register_validator(OTHER, &dummy_consensus_pubkey(0xD2))
 }
 
 /// OTHER is registered and DELEGATE is its Oracle delegate.
@@ -81,25 +81,12 @@ fn delegate_assigned(vs: &mut ValidatorSet<'_>) -> Result<()> {
 }
 
 #[test]
-fn zero_key_is_rejected_before_authorization() -> Result<()> {
-    assert_rejected_first(
-        40,
-        |_| Ok(()),
-        |vs| vs.register_validator_with_sig(STRANGER, VALIDATOR, &[0; 48], B256::ZERO, None),
-        &super::typed_revert(I::ZeroConsensusPublicKey {}.abi_encode()),
-    )
-}
-
-#[test]
-fn unauthorized_caller_is_rejected_before_delegate_and_node_checks() -> Result<()> {
+fn zero_key_is_rejected_before_delegate_checks() -> Result<()> {
     assert_rejected_first(
         40,
         delegate_assigned,
-        |vs| {
-            let key = dummy_consensus_pubkey(0xD3);
-            vs.register_validator_with_sig(STRANGER, DELEGATE, &key, B256::ZERO, None)
-        },
-        &super::typed_revert(I::UnauthorizedOwnerOrValidator {}.abi_encode()),
+        |vs| vs.register_validator_with_sig(DELEGATE, &[0; 48], B256::ZERO, &[0; 96]),
+        &super::typed_revert(I::ZeroConsensusPublicKey {}.abi_encode()),
     )
 }
 
@@ -110,7 +97,7 @@ fn operational_delegate_is_rejected_before_node_checks() -> Result<()> {
         delegate_assigned,
         |vs| {
             let key = dummy_consensus_pubkey(0xD3);
-            vs.register_validator_with_sig(OWNER, DELEGATE, &key, B256::ZERO, None)
+            vs.register_validator_with_sig(DELEGATE, &key, B256::ZERO, &[0; 96])
         },
         &super::typed_revert(I::ValidatorAlreadyOperationalDelegate {}.abi_encode()),
     )
@@ -123,7 +110,7 @@ fn zero_node_id_is_rejected_before_proof_of_possession() -> Result<()> {
         |_| Ok(()),
         |vs| {
             let key = dummy_consensus_pubkey(0xD1);
-            vs.register_validator_with_sig(OWNER, VALIDATOR, &key, B256::ZERO, None)
+            vs.register_validator_with_sig(VALIDATOR, &key, B256::ZERO, &[0; 96])
         },
         &super::typed_revert(I::ZeroRadicleNodeId {}.abi_encode()),
     )
@@ -136,22 +123,9 @@ fn taken_node_id_is_rejected_before_proof_of_possession() -> Result<()> {
         other_registered,
         |vs| {
             let key = dummy_consensus_pubkey(0xD1);
-            vs.register_validator_with_sig(OWNER, VALIDATOR, &key, node_id(OTHER), None)
+            vs.register_validator_with_sig(VALIDATOR, &key, node_id(OTHER), &[0; 96])
         },
         &super::typed_revert(I::RadicleNodeIdAlreadyRegistered {}.abi_encode()),
-    )
-}
-
-#[test]
-fn missing_proof_of_possession_is_rejected_before_key_reuse() -> Result<()> {
-    assert_rejected_first(
-        40,
-        other_registered,
-        |vs| {
-            let reused = dummy_consensus_pubkey(0xD2);
-            vs.register_validator_with_sig(OWNER, VALIDATOR, &reused, node_id(VALIDATOR), None)
-        },
-        &super::typed_revert(I::RegistrationRequiresBlsPop {}.abi_encode()),
     )
 }
 
@@ -162,7 +136,7 @@ fn malformed_proof_inputs_are_rejected_key_first() -> Result<()> {
         |_| Ok(()),
         |vs| {
             let node = node_id(VALIDATOR);
-            vs.register_validator_with_sig(OWNER, VALIDATOR, &NOT_A_POINT, node, Some(&[0; 96]))
+            vs.register_validator_with_sig(VALIDATOR, &NOT_A_POINT, node, &[0; 96])
         },
         &super::typed_revert(I::InvalidBlsPublicKey {}.abi_encode()),
     )?;
@@ -172,7 +146,7 @@ fn malformed_proof_inputs_are_rejected_key_first() -> Result<()> {
         |_| Ok(()),
         |vs| {
             let node = node_id(VALIDATOR);
-            vs.register_validator_with_sig(OWNER, VALIDATOR, &key, node, Some(&[0; 96]))
+            vs.register_validator_with_sig(VALIDATOR, &key, node, &[0; 96])
         },
         &super::typed_revert(I::InvalidBlsSignature {}.abi_encode()),
     )
@@ -185,10 +159,10 @@ fn wrong_proof_of_possession_is_rejected_before_key_reuse() -> Result<()> {
     let wrong_node = proof_of_possession(&secret, VALIDATOR, node_id(OTHER));
     assert_rejected_first(
         40,
-        |vs| vs.register_validator(OWNER, OTHER, &key),
+        |vs| vs.register_validator(OTHER, &key),
         |vs| {
             let node = node_id(VALIDATOR);
-            vs.register_validator_with_sig(OWNER, VALIDATOR, &key, node, Some(&wrong_node))
+            vs.register_validator_with_sig(VALIDATOR, &key, node, &wrong_node)
         },
         &super::typed_revert(I::InvalidBlsRegistrationSignature {}.abi_encode()),
     )
@@ -199,11 +173,11 @@ fn key_reuse_is_rejected_before_registry_state_checks() -> Result<()> {
     assert_rejected_first(
         40,
         |vs| {
-            vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
+            vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
             activate_for_test(vs, VALIDATOR);
             other_registered(vs)
         },
-        |vs| vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD2)),
+        |vs| vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xD2)),
         &super::typed_revert(I::ConsensusPubkeyAlreadyRegistered {}.abi_encode()),
     )
 }
@@ -213,11 +187,11 @@ fn registered_validator_that_is_not_inactive_is_rejected() -> Result<()> {
     assert_rejected_first(
         40,
         |vs| {
-            vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
+            vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
             activate_for_test(vs, VALIDATOR);
             Ok(())
         },
-        |vs| vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD5)),
+        |vs| vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xD5)),
         &super::typed_revert(I::ValidatorAlreadyRegistered {}.abi_encode()),
     )
 }
@@ -231,11 +205,11 @@ fn reregistration_with_another_node_id_is_rejected_before_cooldown() -> Result<(
     assert_rejected_first(
         40,
         |vs| {
-            vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
+            vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
             make_inactive_for_test(vs, VALIDATOR);
             vs.config_reregistration_cooldown.write(10)
         },
-        |vs| vs.register_validator_with_sig(OWNER, VALIDATOR, &key, new_node, Some(&proof)),
+        |vs| vs.register_validator_with_sig(VALIDATOR, &key, new_node, &proof),
         &super::typed_revert(I::InactiveValidatorMustKeepRadicleNodeId {}.abi_encode()),
     )
 }
@@ -245,23 +219,23 @@ fn reregistration_cooldown_rejects_before_any_write() -> Result<()> {
     assert_rejected_first(
         40,
         |vs| {
-            vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
+            vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
             make_inactive_for_test(vs, VALIDATOR);
             vs.config_reregistration_cooldown.write(10)
         },
-        |vs| vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD5)),
+        |vs| vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xD5)),
         &super::typed_revert(I::ReregistrationCooldownNotExpired {}.abi_encode()),
     )?;
     assert_rejected_first(
         40,
         |vs| {
-            vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
+            vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
             make_inactive_for_test(vs, VALIDATOR);
             vs.val_deactivated_at_height.write(&VALIDATOR, u64::MAX)?;
             vs.epoch_start_block.write(u64::MAX)?;
             vs.config_reregistration_cooldown.write(1)
         },
-        |vs| vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD5)),
+        |vs| vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xD5)),
         &super::typed_revert(I::ReregistrationCooldownHeightOverflow {}.abi_encode()),
     )
 }
@@ -271,7 +245,7 @@ fn full_registry_is_rejected_before_any_write() -> Result<()> {
     assert_rejected_first(
         1,
         other_registered,
-        |vs| vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD1)),
+        |vs| vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xD1)),
         &super::typed_revert(I::MaxValidatorsReached {}.abi_encode()),
     )
 }
@@ -356,7 +330,7 @@ fn first_registration_writes_its_registry_bundle_atomically() -> Result<()> {
     let initial = registry_view(&mut seed(), &[key], 2);
     let views = HashMapStorageProvider::mutation_prefix_views(
         seed,
-        |storage| ValidatorSet::new(storage).register_validator(OWNER, VALIDATOR, &key),
+        |storage| ValidatorSet::new(storage).register_validator(VALIDATOR, &key),
         |storage| registry_view(storage, &[key], 2),
     )?;
     let mut lo = [0u8; 32];
@@ -393,7 +367,7 @@ fn reregistration_writes_its_registry_bundle_atomically() -> Result<()> {
     let new_key = [0xD6; 48];
     let seed = || {
         registration_seed(|vs| {
-            vs.register_validator(OWNER, VALIDATOR, &old_key)?;
+            vs.register_validator(VALIDATOR, &old_key)?;
             make_inactive_for_test(vs, VALIDATOR);
             Ok(())
         })
@@ -402,7 +376,7 @@ fn reregistration_writes_its_registry_bundle_atomically() -> Result<()> {
     let initial = registry_view(&mut seed(), &keys, 1);
     let views = HashMapStorageProvider::mutation_prefix_views(
         seed,
-        |storage| ValidatorSet::new(storage).register_validator(OWNER, VALIDATOR, &new_key),
+        |storage| ValidatorSet::new(storage).register_validator(VALIDATOR, &new_key),
         |storage| registry_view(storage, &keys, 1),
     )?;
     let (Ok(before), Ok(after)) = (&initial, &views.complete) else {
@@ -461,8 +435,8 @@ fn role_signer_must_be_active_with_a_bls_share() -> Result<()> {
     let mut storage = configured_storage(10);
     storage.enter(|storage| -> Result<()> {
         let mut vs = ValidatorSet::new(storage);
-        vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
-        vs.register_validator(OWNER, OTHER, &dummy_consensus_pubkey(0xD2))?;
+        vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xD1))?;
+        vs.register_validator(OTHER, &dummy_consensus_pubkey(0xD2))?;
         assert_eq!(vs.resolve_validator_for_role(VALIDATOR, role)?, None);
         vs.set_delegate(VALIDATOR, role, DELEGATE)?;
         assert_eq!(vs.resolve_validator_for_role(DELEGATE, role)?, None);
@@ -484,7 +458,7 @@ fn role_signer_must_be_active_with_a_bls_share() -> Result<()> {
         );
 
         vs.set_delegate(VALIDATOR, role, DELEGATE)?;
-        vs.deactivate_validator(OWNER, VALIDATOR)?;
+        vs.deactivate_validator(VALIDATOR)?;
         assert!(vs.val_has_bls_share.read(&VALIDATOR)?);
         assert_eq!(vs.resolve_validator_for_role(DELEGATE, role)?, None);
         vs.revoke_delegate(VALIDATOR, role)?;

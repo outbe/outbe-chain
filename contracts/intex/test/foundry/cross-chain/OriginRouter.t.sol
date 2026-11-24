@@ -220,6 +220,18 @@ contract OriginRouterTest is CrossChainTest {
         originRouter.sendIntexSeries(BNB_CHAIN_ID, EMISSION_DAY, 0, 1, _baseIssuanceParams());
     }
 
+    function test_IntexSeriesSentForEachPageOfOneChain() public {
+        vm.prank(desis);
+        originRouter.sendIntexAuctionStart(_baseStageStartParams());
+
+        for (uint16 page = 0; page < 3; page++) {
+            vm.expectEmit(false, true, true, true, address(originRouter));
+            emit IOriginRouter.IntexSeriesSent(bytes32(0), EMISSION_DAY, BNB_CHAIN_ID, page, 3, 1);
+            vm.prank(intexFactory);
+            originRouter.sendIntexSeries(BNB_CHAIN_ID, EMISSION_DAY, page, 3, _baseIssuanceParams());
+        }
+    }
+
     function test_sendRefundInstructions_emptyWinners_ok() public {
         // A chain whose bids all lost still gets a chunk, which closes its day.
         vm.prank(desis);

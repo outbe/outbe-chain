@@ -35,13 +35,7 @@
   {
     "type": "function",
     "name": "deactivateValidator",
-    "inputs": [
-      {
-        "name": "validatorAddress",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
+    "inputs": [],
     "outputs": [],
     "stateMutability": "nonpayable"
   },
@@ -300,11 +294,6 @@
     "type": "function",
     "name": "setP2pAddress",
     "inputs": [
-      {
-        "name": "validatorAddress",
-        "type": "address",
-        "internalType": "address"
-      },
       {
         "name": "version",
         "type": "uint8",
@@ -1304,11 +1293,6 @@
   },
   {
     "type": "error",
-    "name": "RegistrationRequiresBlsPop",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ReregistrationCooldownHeightOverflow",
     "inputs": []
   },
@@ -1406,11 +1390,6 @@
         "internalType": "uint8"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "UnauthorizedOwnerOrValidator",
-    "inputs": []
   },
   {
     "type": "error",

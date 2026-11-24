@@ -17,7 +17,11 @@ use outbe_vaultrouter::{
     test_support::{register_source, register_vault},
 };
 
-sol!("../../contracts/intex/src/shared/interfaces/IIntexNFT1155.sol");
+#[allow(clippy::too_many_arguments)]
+mod intex_nft1155 {
+    alloy_sol_types::sol!("../../contracts/intex/src/shared/interfaces/IIntexNFT1155.sol");
+}
+use intex_nft1155::IIntexNFT1155;
 
 sol! {
     interface IErc20Fixture {

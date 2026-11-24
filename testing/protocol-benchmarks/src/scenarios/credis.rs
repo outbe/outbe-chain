@@ -13,8 +13,8 @@ use outbe_primitives::storage::{
     gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, StorageHandle,
 };
 use outbe_system_common::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
+use outbe_system_common::time::timestamp_to_date_key;
 use outbe_system_common::time::SECONDS_PER_DAY;
-use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
 use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
 
@@ -152,21 +152,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
         .policy_rate_published_at
         .write(&ISSUANCE_ISO, 1)
         .map_err(|error| error.to_string())?;
-    // This scenario anchors to the issuance currency, a reference currency. The code
-    // above already seeds the COEN pair of that currency. Issuance also requires that
-    // pair's previous closed UTC-day VWAP.
-    let oracle = OracleContract::new(storage.clone());
-    let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), REFERENCE_ISO)
-        .map_err(|error| error.to_string())?
-        .ok_or("benchmark COEN pair is not registered")?;
-    let closed_day = previous_date_key(timestamp_to_date_key(CREATED_AT)).expect("date step");
-    oracle
-        .record_utc_day_vwap(closed_day, index, oracle_rate())
-        .map_err(|error| error.to_string())?;
-    oracle
-        .utc_day_vwap_last_finalized
-        .write(closed_day)
-        .map_err(|error| error.to_string())?;
+    let reservation_day = timestamp_to_date_key(CREATED_AT);
 
     let contract = VaultRouterContract::new(storage.clone());
     let profile = outbe_credis::config::read(&storage).map_err(|error| error.to_string())?;
@@ -184,19 +170,18 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
             gratis_minor: pledge_cost(),
             snapshot_id: U256::from(17),
             entry_price_minor: oracle_rate(),
-            valuation_price_minor: oracle_rate(),
             policy_rate: U256::from(43_000),
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
-            call_anchor_price_minor: oracle_rate(),
             source: ALICE,
             series_id: outbe_core_common::series_id::SeriesId::for_pair(
-                closed_day,
+                reservation_day,
                 ISSUANCE_ISO,
                 REFERENCE_ISO,
             )
             .expect("series id"),
+            sub_series: outbe_credis::CredisContract::sub_series_of(CREATED_AT),
             call_start_day: outbe_system_common::time::first_full_day(CREATED_AT)
                 .expect("date step"),
             call_rate: profile.call_rate,
@@ -262,7 +247,7 @@ impl BenchmarkScenario for CredisScenario {
         provider.enable_storage_trace();
         let event_offset = provider.get_ordered_events().len();
         let calldata = ICredisFactory::issueCredisCall {
-            reservationId: prepared.reservation_id,
+            credisReservationId: prepared.reservation_id,
         }
         .abi_encode();
 
@@ -300,7 +285,7 @@ impl BenchmarkScenario for CredisScenario {
         if record.owner != ALICE
             || record.source != ALICE
             || pledged != pledge_cost()
-            || decoded.principalMinor != pledge_stables()
+            || decoded.amountMinor != pledge_stables()
         {
             return Err("Credis request postcondition does not match the sealed pledge".to_owned());
         }

@@ -168,7 +168,6 @@ fn slash_window_rejects_unbounded_validator_work() {
     with_oracle(|storage, oracle| {
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_is_initialized.write(true).unwrap();
-        vs.config_owner.write(Address::ZERO).unwrap();
         vs.config_epoch_length_blocks.write(3600).unwrap();
         vs.config_max_validators
             .write((crate::tally::MAX_ORACLE_SLASH_WINDOW_VALIDATORS + 1) as u32)
@@ -198,7 +197,6 @@ fn slash_window_processes_every_admissible_registry() {
     with_oracle(|storage, oracle| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         vs.config_is_initialized.write(true).unwrap();
-        vs.config_owner.write(Address::ZERO).unwrap();
         vs.config_epoch_length_blocks.write(3600).unwrap();
         vs.set_config_max_validators(outbe_validatorset::runtime::CONSENSUS_VALIDATOR_BOUND)
             .unwrap();

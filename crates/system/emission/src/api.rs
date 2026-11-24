@@ -314,9 +314,12 @@ pub fn record_metadosis_canceled(storage: StorageHandle<'_>, day: u32) -> Result
 }
 
 /// Marks Metadosis of `day` as `Failed` and routes `metadosis_limit` to `promis_limit`.
+/// Records a failed Metadosis of `day`. The Nods of the day keep `nods_minor`, so the
+/// Promis Limit gets only the rest of the limit. Returns that rest.
 pub fn record_metadosis_failed(
     storage: StorageHandle<'_>,
     day: u32,
+    nods_minor: U256,
 ) -> Result<(EmissionDay, U256)> {
     let contract = EmissionContract::new(storage);
     let mut record = contract
@@ -331,13 +334,16 @@ pub fn record_metadosis_failed(
         }
         .into());
     }
-    let returned = U256::from(record.metadosis_limit);
+    let nods = u128::try_from(nods_minor.min(U256::from(record.metadosis_limit)))
+        .map_err(|_| EmissionError::AmountOverflow)?;
+    let rest = record.metadosis_limit - nods;
+    let returned = U256::from(rest);
     record.lysis_limit = 0;
     record.desis_limit = 0;
-    record.nods = 0;
+    record.nods = nods;
     record.promis_limit = record
         .promis_limit
-        .checked_add(record.metadosis_limit)
+        .checked_add(rest)
         .ok_or(EmissionError::AmountOverflow)?;
     record.metadosis_state = metadosis_state::FAILED;
     contract.emission_days.update(&record)?;
@@ -592,7 +598,7 @@ mod tests {
         );
         let allocated = record_day_allocation(storage.clone(), day, amounts).unwrap();
         assert_eq!(allocated.state, emission_day_state::PROCESSING);
-        record_metadosis_failed(storage.clone(), day).unwrap();
+        record_metadosis_failed(storage.clone(), day, U256::ZERO).unwrap();
         let completed = complete_day_emission_limit(storage.clone(), day).unwrap();
         assert_eq!(completed.state, emission_day_state::COMPLETED);
 
@@ -645,13 +651,13 @@ mod tests {
 
         let day = 20261001;
         record_day_allocation(storage.clone(), day, amounts).unwrap();
-        record_metadosis_failed(storage.clone(), day).unwrap();
+        record_metadosis_failed(storage.clone(), day, U256::ZERO).unwrap();
         let completed = complete_day_emission_limit(storage.clone(), day).unwrap();
         assert_eq!(completed.landed_sum(), Some(completed.emission_limit));
 
         let broken = 20261002;
         record_day_allocation(storage.clone(), broken, amounts).unwrap();
-        record_metadosis_failed(storage.clone(), broken).unwrap();
+        record_metadosis_failed(storage.clone(), broken, U256::ZERO).unwrap();
         let mut record = get_emission_day_record(storage.clone(), broken)
             .unwrap()
             .unwrap();
@@ -745,7 +751,7 @@ mod tests {
                 );
             }
             if !settle_metadosis_first {
-                record_metadosis_failed(storage.clone(), day).unwrap();
+                record_metadosis_failed(storage.clone(), day, U256::ZERO).unwrap();
             }
             let completed = complete_day_emission_limit(storage, day).unwrap();
             assert_eq!(completed.promis_limit, 72);

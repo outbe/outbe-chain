@@ -2,9 +2,7 @@
 
 use evm2::{registry::HandlerError, EvmFeatures};
 use outbe_evm::executor::OutbeInvalidTxError;
-use outbe_system_common::addresses::{
-    AGENT_REWARD_ADDRESS, TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS,
-};
+use outbe_system_common::addresses::{AGENT_REWARD_ADDRESS, NOD_FACTORY_ADDRESS, ZEROFEE_ADDRESS};
 use outbe_zerofee::precompile::IZeroFee::SponsorshipAuthorized;
 
 use super::*;
@@ -58,11 +56,7 @@ fn pectra_block_env() -> BlockEnvExt {
 fn delegated_state(signer: Address, balance: U256, nonce: u64) -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
     let marker = Bytecode::new_legacy([0xef].into());
-    for address in [
-        ZEROFEE_ADDRESS,
-        AGENT_REWARD_ADDRESS,
-        TRIBUTE_FACTORY_ADDRESS,
-    ] {
+    for address in [ZEROFEE_ADDRESS, AGENT_REWARD_ADDRESS, NOD_FACTORY_ADDRESS] {
         db.insert_account_info(
             &address,
             AccountInfo {
@@ -301,7 +295,7 @@ fn sponsored_declined_commit_does_not_burn_quota() {
 }
 
 #[test]
-fn tribute_wrong_selector_above_default_gas_uses_paid_fallback() {
+fn issue_nod_wrong_selector_above_default_gas_uses_paid_fallback() {
     let config = OutbeEvmConfig::new(
         test_chain_spec(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
@@ -312,7 +306,7 @@ fn tribute_wrong_selector_above_default_gas_uses_paid_fallback() {
         U256::from(gas_limit) * U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE);
     for initial_balance in [U256::ZERO, funded_balance] {
         let recovered = Recovered::new_unchecked(
-            sponsored_tx_to(0, gas_limit, reverting_calldata(), TRIBUTE_FACTORY_ADDRESS),
+            sponsored_tx_to(0, gas_limit, reverting_calldata(), NOD_FACTORY_ADDRESS),
             signer,
         );
         let mut state = delegated_state(signer, initial_balance, 0);
@@ -382,9 +376,8 @@ fn sponsored_block_budget_defers_large_transaction_but_includes_smaller_and_rese
                 nonce,
                 gas_limit,
                 // Selector-only calldata is sponsored but deliberately fails ABI decoding.
-                outbe_tributefactory::precompile::ITributeFactory::offerTributeCall::SELECTOR
-                    .to_vec(),
-                TRIBUTE_FACTORY_ADDRESS,
+                outbe_nodfactory::precompile::INodFactory::issueNodCall::SELECTOR.to_vec(),
+                NOD_FACTORY_ADDRESS,
             ),
             signer,
         )

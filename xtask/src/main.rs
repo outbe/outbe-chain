@@ -102,9 +102,6 @@ enum ReleaseCommand {
 
 #[derive(Debug, Args)]
 struct SoftwareBuildArgs {
-    /// Safe production binaries, or an explicitly unsafe local-development build.
-    #[arg(long, value_enum, default_value = "production")]
-    profile: software::SoftwareProfile,
     /// Directory that receives the versioned `.tar.zst` bundle.
     #[arg(long)]
     output: PathBuf,
@@ -270,7 +267,6 @@ fn main() -> Result<()> {
                 let output = software::build(&software::BuildOptions {
                     repo_root: &repo_root,
                     output_dir: &arguments.output,
-                    profile: arguments.profile,
                     release_tag: arguments.release_tag.as_deref(),
                     no_cache: arguments.no_cache,
                     inside_container: arguments.inside_container,

@@ -37,19 +37,12 @@ interface ITargetRouter {
     ///         little gas. `errorData` is empty when no send failed.
     event IntexAuctionBidsSendFailed(uint32 indexed emissionDay, uint32 nextPage, uint32 totalPages, bytes errorData);
 
-    /// @notice Emitted when issuance instructions are received from Outbe.
-    /// @param srcChainId Source chainId the message was authenticated against.
-    /// @param seriesId Series identifier.
-    event IssuanceInstructionsReceived(uint32 indexed srcChainId, bytes14 indexed seriesId);
-
     /// @notice Emitted when a whole message arrives and the router does nothing with it.
     /// @param reason One of the `InboundReason` codes.
     event MessageIgnored(bytes32 indexed receiveId, uint32 indexed srcChainId, uint8 reason);
 
-    /// @notice Emitted when the last of a day's issuance chunks has been applied on this chain.
-    /// @param emissionDay Emission day whose issuance is complete here.
-    /// @param totalPages How many chunks the day's run spanned.
-    event IssuanceCompleted(uint32 indexed emissionDay, uint16 totalPages);
+    /// @notice Emitted once the last page of a day's Intex series from `srcChainId` is applied on this chain.
+    event IntexSeriesAllReceived(uint32 indexed emissionDay, uint32 indexed srcChainId, uint32 totalPages);
 
     /// @notice Emitted when a page of the winners arrives. The last page closes the day in the escrow.
     event IntexAuctionWinnersReceived(

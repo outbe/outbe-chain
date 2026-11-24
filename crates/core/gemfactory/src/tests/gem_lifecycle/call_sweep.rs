@@ -486,9 +486,10 @@ fn a_call_slice_refreshes_all_metadata_once() {
         .map(|event| (event._fromTokenId, event._toTokenId))
         .collect();
     assert_eq!(batches, vec![(U256::ZERO, U256::MAX)]);
-    let called = events
+    let called = provider
+        .get_events(outbe_system_common::addresses::GEM_FACTORY_ADDRESS)
         .iter()
-        .filter(|log| IGem::GemSeriesCalled::decode_log_data(log).is_ok())
+        .filter(|log| crate::precompile::IGemFactory::GemSeriesCalled::decode_log_data(log).is_ok())
         .count();
     assert_eq!(called, 3);
 }

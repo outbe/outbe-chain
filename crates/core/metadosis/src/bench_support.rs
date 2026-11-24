@@ -37,11 +37,6 @@ pub fn open_worldwide_day(
     );
     storage.with_scoped_mutation::<outbe_primitives::storage::CycleLifecyclePurpose, _>(
         binding,
-        || {
-            outbe_tributefactory::worldwide_day::open_worldwide_day_for_date(
-                &context,
-                worldwide_day,
-            )
-        },
+        || outbe_worldwideday::open_worldwide_day_for_date(&context, worldwide_day),
     )
 }

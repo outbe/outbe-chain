@@ -1,8 +1,5 @@
 //! Static issuance invariants checked before Nod storage is changed.
-use crate::{
-    errors::{date_step_error, NodError},
-    NodItemState,
-};
+use crate::{errors::NodError, NodItemState};
 use alloy_primitives::U256;
 use outbe_core_common::nod_rules::derive_nod_id;
 use outbe_primitives::error::Result;
@@ -32,13 +29,11 @@ pub(crate) fn validate_item(
         || (
             terms.nod_id,
             terms.owner,
-            terms.league_id,
             terms.issuance_currency,
             terms.reference_currency,
         ) != (
             item.nod_id,
             item.owner,
-            item.league_id,
             item.issuance_currency,
             item.reference_currency,
         )
@@ -51,10 +46,11 @@ pub(crate) fn validate_item(
 
     let canonical_group_key = match expected_group_key {
         Some(expected) => expected,
-        None => {
-            crate::identity::group_key(item.issued_at, call_price_minor, item.reference_currency)
-                .map_err(date_step_error)?
-        }
+        None => crate::identity::group_key(
+            item.series_id.day(),
+            call_price_minor,
+            item.reference_currency,
+        ),
     };
     if item.group_key != canonical_group_key {
         return Err(NodError::GroupIdentityMismatch {

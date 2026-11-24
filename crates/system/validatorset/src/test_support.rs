@@ -147,23 +147,18 @@ impl ValidatorSet<'_> {
 }
 
 impl ValidatorSet<'_> {
-    /// Sets `owner` as the registry owner, then allows 100 validators.
-    pub fn test_configure_registry(&mut self, owner: Address) -> Result<()> {
-        self.config_owner.write(owner)?;
+    /// Configures the registry for tests by allowing 100 validators.
+    pub fn test_configure_registry(&mut self) -> Result<()> {
         self.set_config_max_validators(100)
     }
 
     /// Registers and activates each snapshot member that is not yet a
     /// validator, in snapshot order. Then writes `snapshot` for every retained
     /// epoch, so any test epoch resolves to this committee.
-    pub fn test_seed_committee_ring(
-        &mut self,
-        owner: Address,
-        snapshot: &CommitteeSnapshot,
-    ) -> Result<()> {
+    pub fn test_seed_committee_ring(&mut self, snapshot: &CommitteeSnapshot) -> Result<()> {
         for member in &snapshot.committee {
             if !self.is_validator(member.address)? {
-                self.register_validator(owner, member.address, &member.consensus_pubkey)?;
+                self.register_validator(member.address, &member.consensus_pubkey)?;
                 self.activate_validator_via_boundary_for_test(member.address)?;
             }
         }
@@ -173,28 +168,16 @@ impl ValidatorSet<'_> {
         Ok(())
     }
 
-    /// Registers a fixture through the explicit bootstrap-only no-PoP seam.
-    ///
-    /// The underlying registration path is unavailable in production builds.
-    /// Ordinary callers must submit a valid proof of possession.
-    pub fn test_register_validator_without_pop(
-        &mut self,
-        validator: Address,
-        consensus_pubkey: &[u8; 48],
-    ) -> Result<()> {
-        let owner = self.config_owner.read()?;
-        self.register_validator(owner, validator, consensus_pubkey)
-    }
-
-    /// Registers `validator` with `consensus_pubkey` through the no-PoP seam,
-    /// sets its bonded stake projection, then activates it through a boundary.
+    /// Registers `validator` with `consensus_pubkey` through the no-PoP fixture
+    /// seam, sets its bonded stake projection, then activates it through a
+    /// boundary.
     pub fn test_register_active_validator(
         &mut self,
         validator: Address,
         consensus_pubkey: &[u8; 48],
         bonded: U256,
     ) -> Result<()> {
-        self.test_register_validator_without_pop(validator, consensus_pubkey)?;
+        self.register_validator(validator, consensus_pubkey)?;
         self.test_set_stake_projection(validator, StakeProjection::new(bonded, None))?;
         self.activate_validator_via_boundary_for_test(validator)?;
         Ok(())
@@ -377,39 +360,35 @@ pub fn test_lifecycle_of(
 
 /// Pin the committee snapshot schema independently to its storage ABI slots.
 pub fn assert_committee_snapshot_schema_slots(vs: &ValidatorSet<'_>) {
-    assert_eq!(vs.committee_snapshot_exists.base_slot(), U256::from(31u64));
-    assert_eq!(vs.committee_snapshot_len.base_slot(), U256::from(32u64));
+    assert_eq!(vs.committee_snapshot_exists.base_slot(), U256::from(27u64));
+    assert_eq!(vs.committee_snapshot_len.base_slot(), U256::from(28u64));
     assert_eq!(
         vs.committee_snapshot_address_at.base_slot(),
-        U256::from(33u64)
+        U256::from(29u64)
     );
     assert_eq!(
         vs.committee_snapshot_pubkey_lo_at.base_slot(),
-        U256::from(34u64)
+        U256::from(30u64)
     );
     assert_eq!(
         vs.committee_snapshot_pubkey_hi_at.base_slot(),
-        U256::from(35u64)
+        U256::from(31u64)
     );
     assert_eq!(
         vs.committee_snapshot_vrf_material_version.base_slot(),
-        U256::from(36u64)
+        U256::from(32u64)
     );
     assert_eq!(
         vs.committee_snapshot_vrf_group_public_key_hash.base_slot(),
-        U256::from(37u64)
+        U256::from(33u64)
     );
     assert_eq!(
         vs.committee_snapshot_vrf_group_public_key_len.base_slot(),
-        U256::from(38u64)
+        U256::from(34u64)
     );
     assert_eq!(
         vs.committee_snapshot_vrf_group_public_key_chunk_at
             .base_slot(),
-        U256::from(39u64)
-    );
-    assert_eq!(
-        vs._reserved_committee_snapshot_slot_40.slot(),
-        U256::from(40u64),
+        U256::from(35u64)
     );
 }

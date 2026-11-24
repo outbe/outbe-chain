@@ -95,6 +95,10 @@ interface IGem {
         uint16 referenceCurrency,
         bytes payload
     );
+    /// @notice Promis was mined from the gem, which ends it.
+    event GemBurned(uint256 indexed gemId, address indexed owner);
+    /// @notice The gem lost its right after its sub-series closed unsettled, and the cleanup deleted it.
+    event GemForfeited(uint256 indexed gemId, address indexed owner, uint16 issuanceCurrency, uint16 referenceCurrency);
     /// @notice A gem's Cost Amount was settled into the Reserve: `amountMinor` of `asset`.
     event GemSettled(
         uint256 indexed gemId,
@@ -103,24 +107,5 @@ interface IGem {
         uint16 referenceCurrency,
         address asset,
         uint256 amountMinor
-    );
-    /// @notice The daily Call scan force-called every gem in the sub-series.
-    event GemSeriesCalled(
-        bytes14 indexed seriesId,
-        uint16 indexed subSeriesId,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        uint64 calledAt,
-        uint64 settlementDeadline
-    );
-    /// @notice The sub-series notice period lapsed: its `forfeitedCount` unsettled gems are forfeited and
-    ///         their `forfeitedAmountMinor` returned at once. The cleanup deletes them after.
-    event GemSeriesClosed(
-        bytes14 indexed seriesId,
-        uint16 indexed subSeriesId,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        uint32 forfeitedCount,
-        uint256 forfeitedAmountMinor
     );
 }

@@ -26,19 +26,19 @@ fn two_registered() -> HashMapStorageProvider {
     let mut storage = configured_storage(10);
     storage.enter(|storage| {
         let mut vs = ValidatorSet::new(storage);
-        vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xE1))
+        vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xE1))
             .unwrap();
-        vs.register_validator(OWNER, OTHER, &dummy_consensus_pubkey(0xE2))
+        vs.register_validator(OTHER, &dummy_consensus_pubkey(0xE2))
             .unwrap();
     });
     storage
 }
 
-/// Current bonded stake is Staking slot 3. ValidatorSet slot 7 stays empty.
+/// Current bonded stake is read directly from Staking slot 3.
 #[test]
-fn projection_reads_staking_amount_and_leaves_slot7_empty() {
+fn projection_reads_staking_amount() {
     use outbe_primitives::storage::types::Mapping;
-    use outbe_system_common::addresses::{STAKING_ADDRESS, VALIDATOR_SET_ADDRESS};
+    use outbe_system_common::addresses::STAKING_ADDRESS;
 
     let amount = U256::from(1_000u64);
     let mut storage = two_registered();
@@ -46,13 +46,10 @@ fn projection_reads_staking_amount_and_leaves_slot7_empty() {
         Mapping::<Address, U256>::new(U256::from(3u64), STAKING_ADDRESS, storage.clone())
             .write(&VALIDATOR, amount)
             .unwrap();
-        let vs = ValidatorSet::new(storage.clone());
+        let vs = ValidatorSet::new(storage);
         let state = vs.validator_state(VALIDATOR).unwrap();
         assert_eq!(state.bonded_stake(), amount);
         assert_eq!(vs.get_validator(VALIDATOR).unwrap().unwrap().stake, amount);
-        let mirror =
-            Mapping::<Address, U256>::new(U256::from(7u64), VALIDATOR_SET_ADDRESS, storage);
-        assert_eq!(mirror.read(&VALIDATOR).unwrap(), U256::ZERO);
     });
 }
 
@@ -251,10 +248,10 @@ type UnstakeableCase = (&'static str, fn(&mut ValidatorSet), String);
 #[test]
 fn stake_increase_rejects_unstakeable_lifecycles_without_writes() {
     let exiting = |vs: &mut ValidatorSet| {
-        vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xE1))
+        vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xE1))
             .unwrap();
         activate_for_test(vs, VALIDATOR);
-        vs.deactivate_validator(OWNER, VALIDATOR).unwrap();
+        vs.deactivate_validator(VALIDATOR).unwrap();
     };
     let cases: [UnstakeableCase; 4] = [
         (
@@ -270,10 +267,10 @@ fn stake_increase_rejects_unstakeable_lifecycles_without_writes() {
         (
             "unbonding",
             |vs| {
-                vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xE1))
+                vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xE1))
                     .unwrap();
                 activate_for_test(vs, VALIDATOR);
-                vs.deactivate_validator(OWNER, VALIDATOR).unwrap();
+                vs.deactivate_validator(VALIDATOR).unwrap();
                 vs.activate_reshared_set(&[], B256::ZERO).unwrap();
             },
             super::typed_revert(I::CannotIncreaseStakeWhileExitingOrUnbonding {}.abi_encode()),
@@ -281,7 +278,7 @@ fn stake_increase_rejects_unstakeable_lifecycles_without_writes() {
         (
             "inactive",
             |vs| {
-                vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xE1))
+                vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xE1))
                     .unwrap();
                 make_inactive_for_test(vs, VALIDATOR);
             },
@@ -316,10 +313,10 @@ fn complete_unbonding_finishes_only_unbonding_validators() {
     assert_eq!(storage.clear_mutation_failure(), 0, "ACTIVE is a no-op");
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, VALIDATOR, &dummy_consensus_pubkey(0xE1))
+        vs.register_validator(VALIDATOR, &dummy_consensus_pubkey(0xE1))
             .unwrap();
         activate_for_test(vs, VALIDATOR);
-        vs.deactivate_validator(OWNER, VALIDATOR).unwrap();
+        vs.deactivate_validator(VALIDATOR).unwrap();
         vs.activate_reshared_set(&[], B256::ZERO).unwrap();
         assert!(matches!(
             vs.validator_lifecycle(VALIDATOR).unwrap(),
@@ -412,12 +409,7 @@ fn p2p_address_update_commits_version_and_payload_atomically() {
     let views = HashMapStorageProvider::mutation_prefix_views(
         || active_with_bonded(1_000),
         |storage| {
-            ValidatorSet::new(storage).set_p2p_address(
-                OWNER,
-                VALIDATOR,
-                P2P_ADDRESS_VERSION_V1,
-                &encoded,
-            )
+            ValidatorSet::new(storage).set_p2p_address(VALIDATOR, P2P_ADDRESS_VERSION_V1, &encoded)
         },
         p2p_columns,
     )

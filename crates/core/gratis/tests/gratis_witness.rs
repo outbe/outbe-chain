@@ -320,11 +320,11 @@ fn mine_request_amount(amount: u64, flip: bool) -> MineEncryptedNodRequestV1 {
             nod_id: U256::from_be_bytes([4; 32]),
             owner,
             emission_day: 20250115,
-            league_id: 0,
             entry_price_minor: U256::ONE,
             issuance_currency: 840,
             reference_currency: 978,
         },
+        amount,
         amount,
     )
     .unwrap();
@@ -717,7 +717,7 @@ fn nod_rpc_direct_checks_tag_8_before_and_after_a_context_swap() {
     assert_rpc_quiet(&round);
 }
 
-const FROZEN_MINE_REQUEST: &str = r#"{"nod":{"terms":{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"league_id":7,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978},"encryption_binding":"0x3333333333333333333333333333333333333333333333333333333333333333","encrypted_gratis_amount":[65]},"current_balance":[81,82],"modify_auth":{"mac":[51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51],"op_nonce":5},"fidelity":{"op":"Out","timestamp":123,"first_qualified_start":124,"current_blob":[65,66]}}"#;
+const FROZEN_MINE_REQUEST: &str = r#"{"nod":{"terms":{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978},"encryption_binding":"0x3333333333333333333333333333333333333333333333333333333333333333","encrypted_gratis_amount":[65],"encrypted_nominal_amount":[66]},"current_balance":[81,82],"modify_auth":{"mac":[51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51],"op_nonce":5},"fidelity":{"op":"Out","timestamp":123,"first_qualified_start":124,"current_blob":[65,66]}}"#;
 
 fn frozen_bytes<const N: usize>(text: &str) -> [u8; N] {
     hex::decode(text)
@@ -728,12 +728,12 @@ fn frozen_bytes<const N: usize>(text: &str) -> [u8; N] {
 
 fn frozen_refusal_tape(reason: &str) -> (EnclaveWitnessTapeV1, [u8; 32]) {
     let inputs = B256::from(frozen_bytes::<32>(
-        "5b2a54224b14481d7dd879f3b7a37547dcfae32f9190da9bd114d0b6f7ba82f2",
+        "e66620bdb18c3bed4b4f00a9d2c64efcb870fa3cff2d6cf6b3043541bf91f855",
     ));
     let leader =
         frozen_bytes::<32>("f80cccdce4ae1c07ae208a2adf99a310ae4207e0306fa0236110b06827bbb8d0");
     let tag = frozen_bytes::<64>(
-        "ececd4ef4918af32db24790cb1b0d606d6cbe9f5dd8dea26fa5c14f91a2906a2c27ee84dd53b86e743bfb5e33c18e26ccc985307884389fd90cd236fa47c6907",
+        "f4c88413f0d2536bf74b5b8d40e6af31475e5e5b4dab2dd4c7d6dd802c2d7ac607a353a351a82f6c2d442db10bee01ac8df1bf957c9e35900492cad99dd0a502",
     );
     let body = EncryptedNodMintRejectedV1 {
         reason: reason.to_owned(),
@@ -760,7 +760,7 @@ fn frozen_nod_refusal_replays_through_the_host_client() {
     assert_eq!(
         expected,
         B256::from(frozen_bytes::<32>(
-            "5b2a54224b14481d7dd879f3b7a37547dcfae32f9190da9bd114d0b6f7ba82f2"
+            "e66620bdb18c3bed4b4f00a9d2c64efcb870fa3cff2d6cf6b3043541bf91f855"
         ))
     );
     let (tape, leader) = frozen_refusal_tape("bad \"quote\"\nline");

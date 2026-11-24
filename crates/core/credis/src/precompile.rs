@@ -61,19 +61,19 @@ pub fn dispatch(
             credisExists(c) => view(c, |c| contract.credis_exists(c.credisId)),
             balanceOf(c) => view(c, |c| Ok(U256::from(contract.credis_count_of(c.owner)?))),
             tokensByOwner(c) => view(c, |c| contract.tokens_by_owner(c.owner)),
-            interestAccruedMinor(c) => view(c, |c| {
+            accruedFeeMinor(c) => view(c, |c| {
                 let record = contract.get_credis(c.credisId)?;
                 let timestamp = contract.storage.now_secs()?;
-                CredisContract::accrued_interest(&record, timestamp)
+                CredisContract::accrued_fee(&record, timestamp)
             }),
-            interestSettledMinor(c) => view(c, |c| {
-                Ok(contract.get_credis(c.credisId)?.interest_settled_minor)
+            settledFeeMinor(c) => view(c, |c| {
+                Ok(contract.get_credis(c.credisId)?.settled_fee_minor)
             }),
-            credisPrincipalAndOutstandingOf(c) => view(c, |c| {
-                let (principal, outstanding) = contract.principal_and_outstanding_of(c.owner)?;
-                Ok(ICredis::credisPrincipalAndOutstandingOfReturn {
-                    principalMinor: principal,
-                    outstandingPrincipalMinor: outstanding,
+            credisAmountAndOutstandingOf(c) => view(c, |c| {
+                let (amount, outstanding) = contract.amount_and_outstanding_of(c.owner)?;
+                Ok(ICredis::credisAmountAndOutstandingOfReturn {
+                    amountMinor: amount,
+                    outstandingAmountMinor: outstanding,
                 })
             }),
             supportsInterface(c) => {
@@ -83,9 +83,9 @@ pub fn dispatch(
     })
 }
 
-fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::Credis> {
+fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::CredisData> {
     let outcome = crate::runtime::outcome(p, now)?;
-    Ok(ICredis::Credis {
+    Ok(ICredis::CredisData {
         credisId: p.credis_id,
         owner: p.owner,
         cca: p.cca,
@@ -93,8 +93,8 @@ fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::Credis> {
         issuanceCurrency: p.issuance_currency,
         referenceCurrency: p.reference_currency,
         source: p.source,
-        principalMinor: p.principal_minor,
-        outstandingPrincipalMinor: outcome.outstanding_principal_minor,
+        amountMinor: p.amount_minor,
+        outstandingAmountMinor: outcome.outstanding_amount_minor,
         gratisMinor: p.gratis_minor,
         outstandingGratisMinor: outcome.outstanding_gratis_minor,
         policyRate: p.policy_rate,
@@ -102,9 +102,8 @@ fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::Credis> {
         issuedAt: p.issued_at,
         lastSettledAt: p.last_settled_at,
         state: crate::runtime::effective_state(p, now)? as u8,
-        interestSettledMinor: p.interest_settled_minor,
+        settledFeeMinor: p.settled_fee_minor,
         call: ICredis::CallTerms {
-            callAnchorPriceMinor: p.call_anchor_price_minor,
             callPriceMinor: p.call_price_minor,
             callWindow: p.call_window_seconds,
             callThreshold: p.call_threshold_seconds,
@@ -117,11 +116,12 @@ fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::Credis> {
             },
         },
         outcome: ICredis::Outcome {
-            principalSettledMinor: outcome.principal_settled_minor,
-            forfeitedPrincipalMinor: outcome.forfeited_principal_minor,
-            gratisReleasedMinor: outcome.gratis_released_minor,
+            settledAmountMinor: outcome.settled_amount_minor,
+            forfeitedAmountMinor: outcome.forfeited_amount_minor,
+            unpledgedGratisMinor: outcome.unpledged_gratis_minor,
             forfeitedGratisMinor: outcome.forfeited_gratis_minor,
         },
         seriesId: p.series_id.into(),
+        subSeries: p.sub_series,
     })
 }

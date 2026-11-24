@@ -13,12 +13,12 @@ use outbe_system_common::addresses::NOD_FACTORY_ADDRESS;
 
 use outbe_core_common::nod_encryption::EncryptedNodV1;
 use outbe_core_common::pow;
-use outbe_core_common::series_id::SeriesId;
 use outbe_nod::api as nod_api;
 use outbe_nod::api::{LoadedNodGroup, LoadedNodItem};
+use outbe_nod::precompile::INod;
 use outbe_nod::schema::{CallTerms, NodItemState};
 
-use crate::errors::{date_step_error, NodFactoryError};
+use crate::errors::NodFactoryError;
 use crate::precompile::INodFactory;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
@@ -27,101 +27,56 @@ pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Res
     issue_nod_at(storage, encrypted, storage.now_secs()?)
 }
 
-/// A Lysis series sealed at `sealed_at`, with its unclaimed Tributes.
-#[derive(Debug, Clone)]
-pub struct LysisSeriesInput {
-    pub series_id: SeriesId,
-    pub sealed_at: u64,
-    pub issuance_currency: u16,
-    pub reference_currency: u16,
-    pub entry_price_minor: U256,
-    pub unclaimed_tribute_count: u64,
-    pub unclaimed_tribute_load: outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1,
-}
-
 pub(crate) fn issue_nod_at(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
     issued_at: u64,
 ) -> Result<U256> {
-    issue_nod_with_cost(storage, encrypted, issued_at, None)
+    issue_nod_with_cost(storage, encrypted, (issued_at, 0))
 }
 
-/// Issues a Nod claimed from a Tribute of a Lysis-sealed series into the series' call group.
-/// The enclave has already validated that the Nod's `gratis_load_minor` and `settlement_cost_minor`
-/// are positive, and the group's encrypted open load (`unpaid + unclaimed`) is invariant.
-pub fn issue_tribute_nod_in_series(
+/// Issues the Nod of an offer into sub-series `sub_series_id` of its series. The first Nod
+/// of a sub-series opens it with the entry price and the call terms of its group.
+pub(crate) fn issue_offer_nod(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
-    series_id: SeriesId,
+    issued_at: u64,
+    sub_series_id: u16,
 ) -> Result<U256> {
-    issue_nod_with_cost(storage, encrypted, storage.now_secs()?, Some(series_id))
-}
-
-/// Seals a Lysis series into the call group of its first full day after `sealed_at`, its
-/// call price on the live terms and its reference currency.
-pub fn seal_lysis_series(storage: &StorageHandle<'_>, input: LysisSeriesInput) -> Result<()> {
-    let LysisSeriesInput {
-        series_id,
-        sealed_at,
-        issuance_currency,
-        reference_currency,
-        entry_price_minor,
-        unclaimed_tribute_count,
-        unclaimed_tribute_load,
-    } = input;
-    if !outbe_nod::pricing::is_issuable_entry(entry_price_minor) {
-        return Err(NodFactoryError::EntryPriceOutOfBounds.into());
-    }
-    let terms = call_terms(storage, entry_price_minor, reference_currency)?;
-    let group_key = outbe_nod::identity::group_key(
-        sealed_at,
-        terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
-        reference_currency,
-    )
-    .map_err(date_step_error)?;
-    let full_day_after_issue = outbe_system_common::time::WorldwideDay::new(
-        outbe_system_common::time::first_full_day(sealed_at).map_err(date_step_error)?,
-    );
-    let sealed = nod_api::seal_lysis_series(
-        storage,
-        nod_api::LysisSeriesSeal {
-            series_id,
-            group_key,
-            full_day_after_issue,
-            issuance_currency,
-            reference_currency,
-            entry_price_minor,
-            call_terms: terms,
-            unclaimed_tribute_count,
-            unclaimed_tribute_load,
-        },
-    )?;
-    if sealed {
-        let sealed_terms =
+    let series_id = encrypted
+        .terms
+        .series_id()
+        .map_err(|_| NodFactoryError::InvalidEncryptedNod)?;
+    let opens = nod_api::sub_series_entry_price(storage, series_id, sub_series_id)?.is_none();
+    let nod_id = issue_nod_with_cost(storage, encrypted, (issued_at, sub_series_id))?;
+    if opens {
+        let group_key = nod_api::get_item(storage, nod_id)?
+            .ok_or(NodFactoryError::NodNotFound)?
+            .group_key;
+        let terms =
             outbe_nod::schema::NodContract::new(storage.clone()).read_call_terms(group_key)?;
         emit_event(
             storage,
             INodFactory::NodSeriesOpened {
                 seriesId: series_id.into(),
-                issuanceCurrency: issuance_currency,
-                referenceCurrency: reference_currency,
-                entryPriceMinor: entry_price_minor,
-                callPriceMinor: sealed_terms.call_price_minor,
-                callWindow: u64::from(sealed_terms.call_window_seconds),
-                callThreshold: u64::from(sealed_terms.call_threshold_seconds),
-                callNoticePeriod: u64::from(sealed_terms.call_notice_period_seconds),
+                subSeriesId: sub_series_id,
+                issuanceCurrency: encrypted.terms.issuance_currency,
+                referenceCurrency: encrypted.terms.reference_currency,
+                entryPriceMinor: encrypted.terms.entry_price_minor,
+                callPriceMinor: terms.call_price_minor,
+                callWindow: u64::from(terms.call_window_seconds),
+                callThreshold: u64::from(terms.call_threshold_seconds),
+                callNoticePeriod: u64::from(terms.call_notice_period_seconds),
             },
         )?;
     }
-    Ok(())
+    Ok(nod_id)
 }
 
 fn issue_nod_with_cost(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,
-    issued_at: u64,
-    sealed_series: Option<SeriesId>,
+    (issued_at, sub_series_id): (u64, u16),
 ) -> Result<U256> {
     let terms = &encrypted.terms;
     if terms.owner.is_zero() {
@@ -132,7 +87,6 @@ fn issue_nod_with_cost(
         .map_err(|_| NodFactoryError::InvalidEncryptedNod)?;
     let nod_id = outbe_nod::identity::generate_nod_id(series_id, terms.owner);
     if terms.nod_id != nod_id
-        || sealed_series.is_some_and(|sealed| sealed != series_id)
         || terms.chain_id != storage.chain_id()?
         || !encrypted.has_valid_encoding()
     {
@@ -146,13 +100,13 @@ fn issue_nod_with_cost(
     }
     let call_terms = call_terms(storage, terms.entry_price_minor, terms.reference_currency)?;
     let call_price_minor = call_terms.map_or(U256::ZERO, |t| t.call_price_minor);
-    let group_key = match sealed_series {
-        Some(series_id) => nod_api::series_group(storage, series_id)?
-            .ok_or(NodFactoryError::InvalidEncryptedNod)?,
-        None => {
-            outbe_nod::identity::group_key(issued_at, call_price_minor, terms.reference_currency)
-                .map_err(date_step_error)?
-        }
+    let group_key = match nod_api::sub_series_group(storage, series_id, sub_series_id)? {
+        Some(group_key) => group_key,
+        None => outbe_nod::identity::group_key(
+            terms.emission_day,
+            call_price_minor,
+            terms.reference_currency,
+        ),
     };
     let item = NodItemState {
         is_settled: false,
@@ -160,35 +114,28 @@ fn issue_nod_with_cost(
         owner: terms.owner,
         encrypted: encrypted.clone(),
         series_id,
-        league_id: terms.league_id,
+        sub_series_id,
         group_key,
         issuance_currency: terms.issuance_currency,
         reference_currency: terms.reference_currency,
         issued_at,
     };
-    if let Some(series_id) = sealed_series {
-        nod_api::add_series_nod(storage, &item, call_terms, series_id)?;
-    } else {
-        let gratis_load_minor = nod_api::calculation_amount(&item)?;
-        let _ = nod_api::settlement_cost_minor(terms.entry_price_minor, gratis_load_minor)?;
-        nod_api::add_nod(storage, &item, call_terms, gratis_load_minor)?;
-    }
-    emit_event(
-        storage,
-        INodFactory::NodIssued {
-            nodId: nod_id,
-            owner: terms.owner,
-            seriesId: series_id.into(),
-            issuanceCurrency: terms.issuance_currency,
-            referenceCurrency: terms.reference_currency,
-            leagueId: terms.league_id,
-            payload: encrypted.encrypted_gratis_amount.clone().into(),
-        },
-    )?;
+    let gratis_load_minor = nod_api::calculation_amount(&item)?;
+    let _ = nod_api::settlement_cost_minor(terms.entry_price_minor, gratis_load_minor)?;
+    nod_api::add_nod(storage, &item, call_terms)?;
+    outbe_nod::NodContract::new(storage.clone()).emit(INod::NodIssued {
+        nodId: nod_id,
+        owner: terms.owner,
+        seriesId: series_id.into(),
+        subSeriesId: sub_series_id,
+        issuanceCurrency: terms.issuance_currency,
+        referenceCurrency: terms.reference_currency,
+        payload: encrypted.encrypted_gratis_amount.clone().into(),
+    })?;
     Ok(nod_id)
 }
 
-/// Mining of one paid Nod. Any caller may submit. The owner's Gratis
+/// Mining of one settled Nod. Any caller may submit. The owner's Gratis
 /// modify-key MAC/`opNonce` authorizes the mint to that owner.
 pub struct MineGratisRequest {
     pub caller: Address,
@@ -198,11 +145,13 @@ pub struct MineGratisRequest {
 }
 
 /// Pays an uncalled or called Nod's known cost in ERC20 base units of `asset`. An
-/// issuance-currency payment must name the VWAP snapshot required at this block.
+/// issuance-currency payment must name the VWAP snapshot required at this block, and
+/// the cost must fit the payer's cap.
 pub fn settle_nod(
     storage: &StorageHandle<'_>,
     nod_id: U256,
     payment: SettlementPayment,
+    amount_cap_minor: U256,
 ) -> Result<()> {
     let SettlementPayment {
         payer,
@@ -227,22 +176,21 @@ pub fn settle_nod(
         &settlement_cost(item.body())?,
     )?;
     quote.require_snapshot(snapshot_id)?;
+    settlement::require_funds(storage, payer, asset, amount_cap_minor)?;
+    quote.require_within_cap(amount_cap_minor)?;
     storage.clone().with_checkpoint(|| {
         // Publish the transition before external payment calls so callbacks cannot
         // settle the same Nod twice. A failed payment rolls the transition back.
         nod_api::record_settled(storage, item, group)?;
         settlement::collect(storage, payer, asset, quote.payment_minor)?;
-        emit_event(
-            storage,
-            INodFactory::NodSettled {
-                nodId: nod_id,
-                owner,
-                asset,
-                issuanceCurrency: issuance_currency,
-                referenceCurrency: reference_currency,
-                amountMinor: quote.payment_minor,
-            },
-        )
+        outbe_nod::NodContract::new(storage.clone()).emit(INod::NodSettled {
+            nodId: nod_id,
+            owner,
+            issuanceCurrency: issuance_currency,
+            referenceCurrency: reference_currency,
+            asset,
+            amountMinor: quote.payment_minor,
+        })
     })
 }
 
@@ -309,8 +257,8 @@ pub(crate) fn call_terms(
     }))
 }
 
-/// Mines a paid entitlement without payment or a deadline. Mint failure
-/// rolls back the removal, preserving the paid Nod for retry.
+/// Mines a settled entitlement without payment or a deadline. Mint failure
+/// rolls back the removal, preserving the settled Nod for retry.
 pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> Result<Bytes> {
     let MineGratisRequest {
         nod_id,
@@ -325,8 +273,14 @@ pub fn mine_gratis(storage: &StorageHandle<'_>, request: MineGratisRequest) -> R
     let owner = item.body().owner;
     validate_pow(nod_id, owner, nonce)?;
     let encrypted = item.body().encrypted.clone();
+    let group_key = item.body().group_key;
+    let start_day = group.body().full_day_after_issue;
     storage.clone().with_checkpoint(|| {
         nod_api::remove_nod(storage, item, group)?;
+        let nod = outbe_nod::NodContract::new(storage.clone());
+        if storage.now_secs()? >= crate::called::offering_end_of(&nod, start_day)? {
+            nod_api::close_empty_group(storage, group_key)?;
+        }
         // The Nod owner authorizes the mint, including when a relayer submits it.
         outbe_gratisfactory::api::mint_encrypted_nod(storage.clone(), &encrypted, auth)?;
         outbe_gratisfactory::api::encrypted_balance(storage.clone(), owner)

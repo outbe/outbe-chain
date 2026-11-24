@@ -129,7 +129,7 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
     }
     seed_storage(&mut db, 100, SUBMITTER, |storage| {
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.test_configure_registry(Address::ZERO).unwrap();
+        vs.test_configure_registry().unwrap();
         vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
         let mut epoch = vs.epoch_snapshot().unwrap();
         epoch.number = U256::from(1);
@@ -142,18 +142,15 @@ fn invalid_evidence_reward_reverts_transaction_and_identical_signed_evidence_can
             .to_bytes();
         vs.test_register_active_validator(SUBMITTER, &submitter_key, U256::from(1))
             .unwrap();
-        vs.test_seed_committee_ring(
-            Address::ZERO,
-            &CommitteeSnapshot {
-                committee: vec![CommitteeEntry {
-                    address: ACCUSED,
-                    consensus_pubkey: pubkey,
-                }],
-                vrf_material_version: 1,
-                vrf_group_public_key_bytes: vec![0x11; 96],
-                vrf_public_polynomial_hash: B256::ZERO,
-            },
-        )
+        vs.test_seed_committee_ring(&CommitteeSnapshot {
+            committee: vec![CommitteeEntry {
+                address: ACCUSED,
+                consensus_pubkey: pubkey,
+            }],
+            vrf_material_version: 1,
+            vrf_group_public_key_bytes: vec![0x11; 96],
+            vrf_public_polynomial_hash: B256::ZERO,
+        })
         .unwrap();
         let staking = Staking::new(storage.clone());
         staking

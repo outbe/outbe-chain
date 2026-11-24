@@ -99,7 +99,7 @@ mod failure_code_tests {
     fn sponsored_gas_error_preserves_code_and_display_for_both_ceilings() {
         for limit in [
             crate::constants::FREE_TX_DAILY_GAS_LIMIT,
-            crate::constants::FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
+            crate::constants::FREE_TX_ISSUE_NOD_GAS_LIMIT,
         ] {
             let gas_limit = limit + 1;
             let err = ZeroFeePolicyError::FreeTxDailyGasLimitExceeded { gas_limit, limit };

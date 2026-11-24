@@ -3,6 +3,7 @@
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
+use outbe_gem::precompile::IGem::GemForfeited;
 use outbe_gem::{api as gem_api, CleanupQueue, GemContract};
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -75,7 +76,14 @@ impl DeadlineHandler<B256> for GemCleanup<'_, '_> {
         if item.body().is_settled() || item.body().group_key != group_key {
             return Err(GemFactoryError::IneligibleGroupMember { group_key, gem_id }.into());
         }
+        let forfeited = GemForfeited {
+            gemId: gem_id,
+            owner: item.body().owner,
+            issuanceCurrency: item.body().issuance_currency,
+            referenceCurrency: item.body().reference_currency,
+        };
         gem_api::remove_gem(self.storage, item, group)?;
+        self.gem.emit(forfeited)?;
         self.deleted = self.deleted.saturating_add(1);
         Ok(())
     }

@@ -528,20 +528,18 @@ fn validator_shape_checks() {
     ));
 }
 
-const VALIDATOR_OWNER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
-
 /// Registers `addr` with a BLS key that starts with `seed` and activates it
 /// through a boundary. The first call also configures the validator set.
 fn activate(storage: StorageHandle<'_>, addr: Address, seed: u8) -> Result<(), PrecompileError> {
     let mut vs = ValidatorSet::new(storage);
-    if vs.config_owner.read()?.is_zero() {
-        vs.test_configure_registry(VALIDATOR_OWNER)?;
+    if vs.config_max_validators.read()? == 0 {
+        vs.test_configure_registry()?;
     }
     let mut pubkey = [0u8; 48];
     pubkey[0] = seed;
     let minimum = U256::from(1_000u64);
     vs.test_seed_authoritative_min_stake(minimum)?;
-    vs.register_validator(VALIDATOR_OWNER, addr, &pubkey)?;
+    vs.register_validator(addr, &pubkey)?;
     vs.test_seed_authoritative_bonded(addr, minimum)?;
     vs.activate_validator_via_boundary_for_test(addr)?;
     Ok(())

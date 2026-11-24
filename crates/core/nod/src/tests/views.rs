@@ -55,8 +55,8 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
     use crate::precompile::{dispatch, INod};
     use alloy_sol_types::SolCall;
 
-    // paid, called_at, notice, now, expected state, expected deadline
-    for (paid, called_at, notice, now, state, deadline) in [
+    // settled, called_at, notice, now, expected state, expected deadline
+    for (settled, called_at, notice, now, state, deadline) in [
         (false, 0, 17, 118, 0, 0),
         (false, 100, 17, 116, 1, 117),
         (false, 100, 17, 117, 1, 117),
@@ -70,7 +70,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             let (item, group_id) = seed_public_lifecycle(
                 &storage,
                 PublicLifecycle {
-                    paid,
+                    settled,
                     called_at,
                     notice,
                 },
@@ -80,7 +80,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
                 dispatch(storage.clone(), &call.abi_encode(), item.owner, U256::ZERO).unwrap();
             let data = INod::getNodCall::abi_decode_returns(&bytes).unwrap();
             assert_eq!(data.effectiveState, state);
-            assert_eq!(data.isSettled, paid);
+            assert_eq!(data.isSettled, settled);
             assert_eq!(data.calledAt, called_at);
             assert_eq!(data.settlementDeadline, deadline);
             assert_sealed_call_terms(&data, notice);
@@ -92,7 +92,7 @@ fn public_lifecycle_reads_use_sealed_terms_and_effective_expiry() {
             )
             .unwrap();
             let uri = INod::tokenURICall::abi_decode_returns(&bytes).unwrap();
-            assert_lifecycle_metadata(&uri, state, called_at, paid, deadline);
+            assert_lifecycle_metadata(&uri, state, called_at, settled, deadline);
             // Cleanup removes the public entity instead of retaining a tombstone.
             api::remove_nod(
                 &storage,
@@ -127,7 +127,7 @@ fn assert_sealed_call_terms(data: &crate::precompile::INod::NodData, notice: u32
     );
 }
 
-fn assert_lifecycle_metadata(uri: &str, state: u8, called_at: u64, paid: bool, deadline: u64) {
+fn assert_lifecycle_metadata(uri: &str, state: u8, called_at: u64, settled: bool, deadline: u64) {
     use base64::Engine;
     let json = String::from_utf8(
         base64::engine::general_purpose::STANDARD
@@ -140,7 +140,7 @@ fn assert_lifecycle_metadata(uri: &str, state: u8, called_at: u64, paid: bool, d
         format!(r#"{{"trait_type":"State","value":"{label}"}}"#),
         r#"{"trait_type":"Call Price","value":0.000937,"display_type":"number"}"#.to_string(),
     ];
-    if called_at != 0 && !paid {
+    if called_at != 0 && !settled {
         expected.push(format!(
             r#"{{"trait_type":"Called At","value":{called_at},"display_type":"date"}}"#
         ));
@@ -159,7 +159,8 @@ fn settlement_updates_only_the_settled_nod() {
     use alloy_sol_types::SolEvent;
 
     let first = item(Address::repeat_byte(0x51), U256::from(500_000), USD);
-    let second = item(Address::repeat_byte(0x52), U256::from(600_000), USD);
+    let mut second = item(Address::repeat_byte(0x52), U256::from(600_000), USD);
+    second.sub_series_id = 1;
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);
@@ -243,21 +244,28 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         assert_eq!(json["name"], format!("Nod {id}"));
         assert_eq!(json["description"], crate::constants::TOKEN_DESCRIPTION);
         assert!(!json.to_string().contains("https://"));
-        assert_eq!(value(&json, "Series").unwrap(), body.series_id.to_string());
-        assert_eq!(value(&json, "League").unwrap(), 4);
+        assert_eq!(
+            value(&json, "Series").unwrap(),
+            format!("{}-{}", body.series_id, body.sub_series_id)
+        );
+        assert!(value(&json, "League").is_none());
         assert_eq!(value(&json, "Entry Price").unwrap(), 0.4);
         assert!(value(&json, "Floor Price").is_none());
-        assert_eq!(value(&json, "Call Price").unwrap(), 1.424);
+        assert_eq!(value(&json, "Call Price").unwrap(), 0.912);
         assert_eq!(
             value(&json, "Encrypted Gratis Load").unwrap(),
             alloy_primitives::hex::encode_prefixed(&body.encrypted.encrypted_gratis_amount)
+        );
+        assert_eq!(
+            value(&json, "Encrypted Nominal").unwrap(),
+            alloy_primitives::hex::encode_prefixed(&body.encrypted.encrypted_nominal_amount)
         );
         assert!(!json.to_string().contains("1250.12"));
         assert!(value(&json, "Settlement Deadline").is_none());
 
         assert!(svg.contains(">NOD</text>"));
         assert!(svg.contains(&format!(">{id}</text>")));
-        assert!(svg.contains(">1.424</text>"));
+        assert!(svg.contains(">0.912</text>"));
         assert!(svg.contains(">Encrypted</text>"));
         assert!(!svg.contains("1,250.12"));
         assert!(!svg.contains("Floor Price"));
@@ -321,7 +329,7 @@ fn nod_card_hides_call_rows_it_cannot_honour() {
 }
 
 struct PublicLifecycle {
-    paid: bool,
+    settled: bool,
     called_at: u64,
     notice: u32,
 }
@@ -332,7 +340,7 @@ fn seed_public_lifecycle(
 ) -> (NodItemState, B256) {
     use crate::schema::CallTerms;
     let PublicLifecycle {
-        paid,
+        settled,
         called_at,
         notice,
     } = scenario;
@@ -353,7 +361,7 @@ fn seed_public_lifecycle(
     )
     .unwrap();
     let group_id = item.group_key;
-    if paid {
+    if settled {
         api::record_settled(
             storage,
             api::load_item(storage, item.nod_id).unwrap().unwrap(),

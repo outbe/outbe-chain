@@ -61,7 +61,6 @@ ed25519-dalek.workspace = true
 proptest.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
-trybuild = "1"
 tokio = { workspace = true, features = ["macros", "rt", "test-util"] }
 
 [features]

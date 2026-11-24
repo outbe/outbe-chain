@@ -18,7 +18,7 @@ struct MultiRecipientSendParam {
     uint256[] units;
 }
 
-/// @notice Parameters for sending a SINGLE token type to one recipient (encoded as a 1-item batch).
+/// @notice Parameters for sending a SINGLE token type to one recipient (its own `SEND_ONE` message).
 struct SendParam {
     uint32 dstChainId;
     bytes32 to;
@@ -80,7 +80,7 @@ interface IIntexNFT1155Bridge {
         bytes32 indexed receiveId, uint32 indexed srcChainId, address[] recipients, uint256[] intexIds, uint32[] units
     );
 
-    /// @notice Emitted when the units of one item are minted, by a retry of an item that failed.
+    /// @notice Emitted when the units of one item are minted: a single send, or the retry of an item that failed.
     event IntexCrosschainReceived(
         bytes32 indexed receiveId, uint32 indexed srcChainId, address indexed to, uint256 intexId, uint32 units
     );
@@ -123,7 +123,7 @@ interface IIntexNFT1155Bridge {
     /// @notice Zero address provided.
     /// @param field Field name.
     error ZeroAddress(string field);
-    /// @notice Inbound `msgType` is not in the SEND / SEND_MULTI set.
+    /// @notice Inbound `msgType` is not in the SEND_ONE / SEND_BATCH / SEND_MULTI set.
     /// @dev Wire-format reverts (`UnsupportedBodyVersion`, `MalformedAddress`, `BatchTooLarge`,
     ///      `InvalidPayloadLength`, `ArrayLengthMismatch`) are owned by `IntexNFT1155BridgeCodec`.
     /// @param got The unsupported message-type tag received.

@@ -319,10 +319,8 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
         "visible system gas used {visible_system_gas_used} should fit within block gas limit"
     );
 
-    let deactivate_input = outbe_validatorset::precompile::IValidatorSet::deactivateValidatorCall {
-        validatorAddress: joining,
-    }
-    .abi_encode();
+    let deactivate_input =
+        outbe_validatorset::precompile::IValidatorSet::deactivateValidatorCall {}.abi_encode();
     let deactivate_tx: reth_ethereum::TransactionSigned = TxEip1559 {
         chain_id: CHAIN_ID,
         nonce: 0,

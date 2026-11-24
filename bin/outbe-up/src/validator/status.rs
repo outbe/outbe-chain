@@ -10,13 +10,12 @@ use crate::{
     },
     validator::{
         journal::Journal,
-        rpc::{Block, ConsensusStatus, EpochInfo, RpcClient, ValidatorRecord},
+        rpc::{Block, ConsensusStatus, RpcClient, ValidatorRecord},
         validator_address,
         wait::{eta_suffix, yes_no, CatchupEta},
     },
 };
 
-const FULL_NODE: &str = "outbe-full-node.service";
 const VALIDATOR_SERVICE: &str = "outbe-validator.service";
 const RADICLE_SERVICE: &str = "outbe-radicle.service";
 const FEEDER_SERVICE: &str = "outbe-feeder.service";
@@ -26,13 +25,11 @@ const STATUS_POLL_TIMEOUT: Duration = Duration::from_secs(5);
 struct StatusSnapshot<'a> {
     local: Option<&'a Block>,
     remote: Option<&'a Block>,
-    execution_peers: Option<u64>,
     consensus: Option<&'a ConsensusStatus>,
     validator: Option<&'a ValidatorRecord>,
-    local_epoch: Option<&'a EpochInfo>,
-    remote_epoch: Option<&'a EpochInfo>,
     sync_eta_seconds: Option<u64>,
     dkg_eta_seconds: Option<u64>,
+    feeder: Option<&'a serde_json::Value>,
     hyperlane: Option<&'a serde_json::Value>,
 }
 
@@ -103,24 +100,13 @@ async fn status_line(
     sync_eta: Option<&mut CatchupEta>,
     dkg_eta: Option<&mut CatchupEta>,
 ) -> String {
-    let (
-        remote_block,
-        local_block,
-        execution_peers,
-        consensus,
-        record,
-        local_epoch,
-        remote_epoch,
-        hyperlane,
-    ) = tokio::join!(
+    let (remote_block, local_block, consensus, record, feeder, hyperlane) = tokio::join!(
         remote.finalized_block(),
         local.finalized_block(),
-        local.peer_count(),
         local.consensus_status(),
         remote.validator(validator),
-        local.epoch_info(),
-        remote.epoch_info(),
-        hyperlane_status(),
+        sidecar_status("http://127.0.0.1:9002/status"),
+        sidecar_status("http://127.0.0.1:9003/status"),
     );
     let remote_block = remote_block.ok();
     let local_block = local_block.ok();
@@ -149,57 +135,39 @@ async fn status_line(
     format_status(StatusSnapshot {
         local: local_block.as_ref(),
         remote: remote_block.as_ref(),
-        execution_peers: execution_peers.ok(),
         consensus: consensus.as_ref(),
         validator: record.as_ref().ok(),
-        local_epoch: local_epoch.as_ref().ok(),
-        remote_epoch: remote_epoch.as_ref().ok(),
         sync_eta_seconds,
         dkg_eta_seconds,
+        feeder: feeder.as_ref().ok(),
         hyperlane: hyperlane.as_ref().ok(),
     })
 }
 
 fn format_status(snapshot: StatusSnapshot<'_>) -> String {
-    let fullnode = process::systemctl_is_active(FULL_NODE);
     let validator_service = process::systemctl_is_active(VALIDATOR_SERVICE);
     let chain = chain_status(snapshot.local, snapshot.remote, snapshot.sync_eta_seconds);
 
-    match (fullnode, validator_service) {
-        (true, true) => format!(
-            "Mode        conflict\nChain       {chain}\nServices    full-node active | validator active"
-        ),
-        (true, false) => {
-            let peers = snapshot
-                .execution_peers
-                .map_or_else(|| "?".to_owned(), |value| value.to_string());
-            let epoch = epoch_status(snapshot.local_epoch, snapshot.remote_epoch);
-            format!(
-                "Mode        full node\nChain       {chain}\nNetwork     execution peers {peers}\nEpochs      {epoch}\nServices    full-node active | validator inactive"
-            )
-        }
-        (false, true) => {
-            let lifecycle = snapshot
-                .validator
-                .map_or_else(|| "unknown".to_owned(), validator_lifecycle);
-            let consensus = validator_consensus_status(
-                snapshot.consensus,
-                snapshot.remote,
-                snapshot.dkg_eta_seconds,
-            );
-            let services = validator_services_status();
-            let hyperlane = hyperlane_status_line(snapshot.hyperlane);
-            let bls = snapshot
-                .validator
-                .map_or("?", |record| yes_no(record.has_bls_share));
-            format!(
-                "Mode        validator ({lifecycle})\nChain       {chain}\n{consensus}\nOn-chain    BLS share {bls}\nHyperlane   {hyperlane}\nServices    {services}"
-            )
-        }
-        (false, false) => {
-            format!("Mode        stopped\nChain       {chain}\nServices    node services inactive")
-        }
+    if !validator_service {
+        return format!("Mode        stopped\nChain       {chain}\nServices    validator inactive");
     }
+    let lifecycle = snapshot
+        .validator
+        .map_or_else(|| "unknown".to_owned(), validator_lifecycle);
+    let consensus = validator_consensus_status(
+        snapshot.consensus,
+        snapshot.remote,
+        snapshot.dkg_eta_seconds,
+    );
+    let services = validator_services_status();
+    let feeder = health_status_line(snapshot.feeder);
+    let hyperlane = hyperlane_status_line(snapshot.hyperlane);
+    let bls = snapshot
+        .validator
+        .map_or("?", |record| yes_no(record.has_bls_share));
+    format!(
+        "Mode        validator ({lifecycle})\nChain       {chain}\n{consensus}\nOn-chain    BLS share {bls}\nFeeder      {feeder}\nHyperlane   {hyperlane}\nServices    {services}"
+    )
 }
 
 fn chain_status(local: Option<&Block>, remote: Option<&Block>, eta_seconds: Option<u64>) -> String {
@@ -219,24 +187,6 @@ fn chain_status(local: Option<&Block>, remote: Option<&Block>, eta_seconds: Opti
             "{heights} | {remaining} blocks behind{}",
             eta_suffix(eta_seconds)
         )
-    }
-}
-
-fn epoch_status(local: Option<&EpochInfo>, remote: Option<&EpochInfo>) -> String {
-    match (local, remote) {
-        (Some(local), Some(remote)) if local.epoch_number == remote.epoch_number => {
-            format!("{} | reconstruction complete", local.epoch_number)
-        }
-        (Some(local), Some(remote)) => {
-            let remaining = remote.epoch_number.saturating_sub(local.epoch_number);
-            format!(
-                "local {} | remote {} | reconstructing ({remaining} remaining)",
-                local.epoch_number, remote.epoch_number
-            )
-        }
-        (Some(local), None) => format!("local {} | remote unavailable", local.epoch_number),
-        (None, Some(remote)) => format!("local unavailable | remote {}", remote.epoch_number),
-        (None, None) => "unavailable".to_owned(),
     }
 }
 
@@ -293,16 +243,24 @@ fn validator_services_status() -> String {
     .join(" | ")
 }
 
-async fn hyperlane_status() -> Result<serde_json::Value> {
+async fn sidecar_status(url: &str) -> Result<serde_json::Value> {
     Ok(reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()?
-        .get("http://127.0.0.1:9003/status")
+        .get(url)
         .send()
         .await?
         .error_for_status()?
         .json()
         .await?)
+}
+
+fn health_status_line(status: Option<&serde_json::Value>) -> &'static str {
+    match status.and_then(|value| value.get("healthy")?.as_bool()) {
+        Some(true) => "healthy",
+        Some(false) => "unhealthy",
+        None => "unavailable",
+    }
 }
 
 fn hyperlane_status_line(status: Option<&serde_json::Value>) -> String {
@@ -324,6 +282,9 @@ fn hyperlane_status_line(status: Option<&serde_json::Value>) -> String {
 }
 
 fn validator_lifecycle(record: &ValidatorRecord) -> String {
+    if !record.registered {
+        return "not promoted".to_owned();
+    }
     match record.status {
         1 => "pending".to_owned(),
         2 => "active".to_owned(),
@@ -332,5 +293,18 @@ fn validator_lifecycle(record: &ValidatorRecord) -> String {
         5 => "inactive".to_owned(),
         6 => "jailed".to_owned(),
         status => format!("status-{status}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unregistered_resident_validator_is_not_promoted() {
+        assert_eq!(
+            validator_lifecycle(&ValidatorRecord::default()),
+            "not promoted"
+        );
     }
 }

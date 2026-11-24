@@ -292,8 +292,9 @@ contract InboundValidationTest is CrossChainTest {
 
     function test_NFTBatch_TruncatedBody_Reverts() public {
         // Valid header but the abi.encode body is truncated - abi.decode rejects it (no misread).
-        bytes memory packet =
-            abi.encodePacked(IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND, hex"deadbeef");
+        bytes memory packet = abi.encodePacked(
+            IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND_BATCH, hex"deadbeef"
+        );
         vm.expectRevert();
         _deliverToBatch(packet);
     }
@@ -336,7 +337,7 @@ contract InboundValidationTest is CrossChainTest {
         bytes32 badTo = bytes32(uint256(1) << 200);
         bytes memory packet = abi.encodePacked(
             IntexNFT1155BridgeCodec.BODY_VERSION_V1,
-            IntexNFT1155BridgeCodec.SEND,
+            IntexNFT1155BridgeCodec.SEND_BATCH,
             abi.encode(
                 IntexNFT1155BridgeCodec.BatchPayload({to: badTo, tokenIds: new uint256[](0), units: new uint256[](0)})
             )
@@ -362,11 +363,11 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     function test_NFTBatch_ZeroTo_RevertsInvalidReceiver() public {
-        // SEND branch parity to the SEND_MULTI ZeroRecipient test: assertAddress passes for
+        // SEND_BATCH branch parity to the SEND_MULTI ZeroRecipient test: assertAddress passes for
         // bytes32(0), so the explicit `if (p.to == bytes32(0))` reject is what stops the crosschainMint.
         bytes memory packet = abi.encodePacked(
             IntexNFT1155BridgeCodec.BODY_VERSION_V1,
-            IntexNFT1155BridgeCodec.SEND,
+            IntexNFT1155BridgeCodec.SEND_BATCH,
             abi.encode(
                 IntexNFT1155BridgeCodec.BatchPayload({
                     to: bytes32(0), tokenIds: new uint256[](0), units: new uint256[](0)
@@ -378,7 +379,7 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     function test_NFTBatch_MultiOverCap_RevertsBatchTooLarge() public {
-        // SEND_MULTI cap parity to the SEND OverCap test - decodeMulti rejects oversize arrays
+        // SEND_MULTI cap parity to the SEND_BATCH OverCap test - decodeMulti rejects oversize arrays
         // before the per-item loop touches any recipient or crosschainMint.
         uint256 over = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE + 1;
         bytes32[] memory recipients = new bytes32[](over);
@@ -424,7 +425,7 @@ contract InboundValidationTest is CrossChainTest {
         _deliver(OUTBE_CHAIN_ID, address(nftBridgeOutbe), address(nftBridgeBnb), packet);
     }
 
-    /// @dev Build a one-item SEND packet for a single recipient.
+    /// @dev Build a one-item SEND_BATCH packet for a single recipient.
     function _batch(address to, uint256 tokenId_, uint256 amount_) internal pure returns (bytes memory) {
         uint256[] memory tokenIds = new uint256[](1);
         tokenIds[0] = tokenId_;

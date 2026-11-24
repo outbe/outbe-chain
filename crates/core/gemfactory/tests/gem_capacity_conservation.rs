@@ -15,7 +15,6 @@ use outbe_primitives::{
 };
 use outbe_promislimit::PromisLimitContract;
 use outbe_system_common::address_pair::AddressPair;
-use outbe_system_common::addresses::GEM_ADDRESS;
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
 const ISSUED: u64 = 1_704_067_200;
@@ -193,10 +192,10 @@ fn conserved(p: &mut HashMapStorageProvider, rights: &[(U256, U256)]) {
         rights.iter().map(|(_, load)| *load).sum::<U256>()
     );
     let expired = p
-        .get_events(GEM_ADDRESS)
+        .get_events(outbe_system_common::addresses::GEM_FACTORY_ADDRESS)
         .iter()
         .filter_map(|event| {
-            outbe_gem::precompile::IGem::GemSeriesClosed::decode_log_data(event).ok()
+            outbe_gemfactory::precompile::IGemFactory::GemSeriesClosed::decode_log_data(event).ok()
         })
         .collect::<Vec<_>>();
     assert_eq!(
@@ -326,10 +325,10 @@ fn a_settled_gem_stays_live_beside_its_forfeited_siblings() {
         group_key
     });
     let forfeited = p
-        .get_events(GEM_ADDRESS)
+        .get_events(outbe_system_common::addresses::GEM_FACTORY_ADDRESS)
         .iter()
         .filter_map(|event| {
-            outbe_gem::precompile::IGem::GemSeriesClosed::decode_log_data(event).ok()
+            outbe_gemfactory::precompile::IGemFactory::GemSeriesClosed::decode_log_data(event).ok()
         })
         .map(|event| (event.forfeitedCount, event.forfeitedAmountMinor))
         .collect::<Vec<_>>();

@@ -35,14 +35,10 @@ fn exact_snapshot() {
     provider.set_block_number(1);
     StorageHandle::enter(&mut provider, |storage| {
         let mut validators = ValidatorSet::new(storage.clone());
-        validators
-            .config_owner
-            .write(Address::repeat_byte(0xaa))
-            .unwrap();
         validators.set_config_max_validators(4).unwrap();
         validators.config_epoch_length_blocks.write(10).unwrap();
         validators
-            .test_register_validator_without_pop(validator, &public_key)
+            .register_validator(validator, &public_key)
             .unwrap();
         validators.activate_validator(validator).unwrap();
 

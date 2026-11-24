@@ -25,7 +25,7 @@ mod fixtures;
 use fixtures::{
     activate_for_test, activate_staked_for_test, at_height, configured_storage, confirm_ready,
     dummy_consensus_pubkey, make_inactive_for_test, register_boundary_active, register_participant,
-    register_validators, registry_storage, with_vs_configured, CHAIN_ID, OWNER,
+    register_validators, registry_storage, with_vs_configured, CHAIN_ID,
 };
 
 mod aggregate_seam;

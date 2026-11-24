@@ -583,17 +583,18 @@ mod tests {
                     nod_id: U256::MAX,
                     owner,
                     emission_day: day.value(),
-                    league_id: 3,
                     entry_price_minor: U256::from(1_000_000u64),
                     issuance_currency: 840,
                     reference_currency: 840,
                 },
                 encryption_binding: B256::repeat_byte(0x55),
-                encrypted_gratis_amount: nod_amt_blob,
+                encrypted_gratis_amount: nod_amt_blob.clone(),
+                encrypted_nominal_amount: nod_amt_blob,
             },
             group_key: B256::repeat_byte(0x44),
             issued_at: 1_700_000_000,
             is_settled: true,
+            sub_series_id: 7,
         };
         let encoded_nod_v1 = encode_nod_item_v1(&nod_v1).unwrap();
         assert_eq!(decode_nod_item_v1(&encoded_nod_v1).unwrap(), nod_v1);

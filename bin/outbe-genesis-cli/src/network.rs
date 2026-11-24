@@ -49,14 +49,7 @@ pub const SEED_SECTIONS: [&str; 14] = [
     "hyperlane_controller",
 ];
 
-pub const TEE_KEYS: [&str; 6] = [
-    "mode",
-    "mrenclave",
-    "mrsigner",
-    "isv_prod_id",
-    "minimum_isv_svn",
-    "minimum_tcb_evaluation_data_number",
-];
+pub const TEE_KEYS: [&str; 1] = ["mode"];
 
 const STATIC_TOP_LEVEL_KEYS: [&str; 43] = [
     "network",
@@ -281,42 +274,16 @@ fn validate_tee(config: &Value, obj: &Map<String, Value>) -> Result<(), GenesisE
     let (network, _, _) = network_identity(config)?;
     let mode = tee.get("mode").and_then(Value::as_str).unwrap_or("");
     if network == "mainnet" {
-        validate_mainnet(obj, mode)?;
+        return Err(GenesisError::validation(
+            "Mainnet requires TDX/SNP attestation, which is not implemented",
+        ));
     }
     match mode {
-        "no-attestation-dev" | "dcap-required" => Ok(()),
+        "no-attestation-dev" => Ok(()),
         _ => Err(GenesisError::validation(
-            "tee.mode must be no-attestation-dev or dcap-required",
+            "tee.mode must be no-attestation-dev",
         )),
     }
-}
-
-fn validate_mainnet(obj: &Map<String, Value>, mode: &str) -> Result<(), GenesisError> {
-    if mode != "dcap-required" {
-        return Err(GenesisError::validation(
-            "Mainnet requires tee.mode dcap-required",
-        ));
-    }
-    if obj.contains_key("protocol_constants") {
-        return Err(GenesisError::validation(
-            "Mainnet forbids protocol_constants overrides and uses canonical production defaults",
-        ));
-    }
-    let endpoint = obj
-        .get("price_feed_rest")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    if endpoint.is_empty() {
-        return Err(GenesisError::validation(
-            "Mainnet requires an explicit production price feed REST endpoint",
-        ));
-    }
-    if endpoint.to_ascii_lowercase().contains("testnet") {
-        return Err(GenesisError::validation(
-            "Mainnet may not use a testnet price endpoint",
-        ));
-    }
-    Ok(())
 }
 
 fn validate_ports(obj: &Map<String, Value>) -> Result<(), GenesisError> {

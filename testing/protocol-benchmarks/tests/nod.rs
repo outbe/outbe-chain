@@ -1,7 +1,9 @@
+use alloy_sol_types::SolEvent;
+use outbe_nod::precompile::INod;
 use outbe_protocol_benchmarks::{
     run_scenario, scenarios::nod::NodScenario, GasLedger, Profile, RunConfig, StorageOperationKind,
 };
-use outbe_system_common::addresses::NOD_FACTORY_ADDRESS;
+use outbe_system_common::addresses::NOD_ADDRESS;
 
 #[test]
 fn direct_nod_creation_covers_single_and_typical_profiles() {
@@ -25,12 +27,13 @@ fn direct_nod_creation_covers_single_and_typical_profiles() {
             .storage
             .iter()
             .any(|entry| entry.operation == StorageOperationKind::Write));
-        let nod_factory_emitter = format!("{NOD_FACTORY_ADDRESS:#x}");
+        let nod_emitter = format!("{NOD_ADDRESS:#x}");
+        let issued = format!("{:#x}", INod::NodIssued::SIGNATURE_HASH);
         assert_eq!(
             report
                 .events
                 .iter()
-                .filter(|event| event.emitter == nod_factory_emitter)
+                .filter(|event| event.emitter == nod_emitter && event.event == issued)
                 .map(|event| event.count)
                 .sum::<u64>(),
             expected_count

@@ -222,9 +222,12 @@ fn full_sale_returns_only_the_dust_once() {
         assert_eq!((counts.issued, counts.active, counts.forfeited), (3, 3, 0));
     });
     assert!(p
-        .get_events(outbe_system_common::addresses::INTEX_ADDRESS)
+        .get_events(outbe_system_common::addresses::INTEX_FACTORY_ADDRESS)
         .iter()
-        .all(|e| outbe_intex::precompile::IIntex::IntexSeriesClosed::decode_log_data(e).is_err()));
+        .all(|e| {
+            outbe_intexfactory::precompile::IIntexFactory::IntexSeriesClosed::decode_log_data(e)
+                .is_err()
+        }));
 }
 
 #[test]

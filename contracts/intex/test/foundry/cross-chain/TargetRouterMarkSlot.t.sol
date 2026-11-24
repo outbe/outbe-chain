@@ -124,6 +124,40 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         assertEq(called, 1, "the token reports the call once");
     }
 
+    function _routerTopics() internal returns (bytes32[] memory topics) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        topics = new bytes32[](logs.length);
+        uint256 n;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter == address(router)) topics[n++] = logs[i].topics[0];
+        }
+        assembly ("memory-safe") {
+            mstore(topics, n)
+        }
+    }
+
+    function test_notice_router_emits_only_the_apply_failure() public {
+        vm.recordLogs();
+        _deliver(_called());
+        bytes32[] memory waiting = _routerTopics();
+        assertEq(waiting.length, 1, "a waiting notice gives one router event");
+        assertEq(waiting[0], ITargetRouter.IntexSeriesCallNoticeApplyFailed.selector);
+
+        vm.recordLogs();
+        _deliver(_issuance());
+        bytes32[] memory applied = _routerTopics();
+        assertEq(applied.length, 1, "the later apply gives no router event of the notice");
+        assertEq(applied[0], ITargetRouter.IntexSeriesAllReceived.selector);
+
+        vm.warp(block.timestamp + 1);
+        bytes14 other = CreateSeriesLib.seriesId(DAY + 1);
+        intex.createSeries(CreateSeriesLib.params(DAY + 1, 10, 0));
+        vm.recordLogs();
+        _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY + 1, uint32(block.timestamp), MarkBatchLib.one(other)));
+        assertEq(_routerTopics().length, 0, "a notice the token takes gives no router event");
+        assertEq(uint8(intex.readData(other).state), uint8(IIntexNFT1155.IntexState.Called));
+    }
+
     /// @dev A series that lands after its deadline is still created, so the chain holds its terms.
     function test_IssuanceAfterTheDeadlineCreatesAForfeitedSeries() public {
         bytes memory called = _called();

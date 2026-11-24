@@ -2,7 +2,7 @@
 //!
 //! A network registered without a pinned key resolves its BLS key by
 //! STATICCALLing its registered L1 address on every read. As a result,
-//! `getNetwork` and `TributeFactory.offerTribute` both see the inbox's current
+//! `getNetwork` and `NodFactory.issueNod` both see the inbox's current
 //! answer. The inbox here is hand-written runtime bytecode answering
 //! `abi.encode(bytes)` with a 256-byte EIP-2537 G2 key. Registration goes through
 //! `DirectStorageProvider`, and reads go through `OutbeEvmFactory`. Provider-level
@@ -27,12 +27,12 @@ use outbe_evm::factory::OutbeEvmTypes;
 use outbe_l2registry::{
     api::ZK_MERKLE_ROOT_NAMESPACE, precompile::IL2Registry, public_key, schema::L2RegistryContract,
 };
+use outbe_nodfactory::precompile::INodFactory;
 use outbe_primitives::{
     block::BlockContext,
     storage::{direct::DirectStorageProvider, StorageHandle},
 };
-use outbe_system_common::addresses::{L2_REGISTRY_ADDRESS, TRIBUTE_FACTORY_ADDRESS};
-use outbe_tributefactory::precompile::ITributeFactory;
+use outbe_system_common::addresses::{L2_REGISTRY_ADDRESS, NOD_FACTORY_ADDRESS};
 use reth_ethereum::evm::EthEvmEnv;
 use reth_primitives_traits::Recovered;
 
@@ -167,7 +167,7 @@ fn database(key: &[u8; 256]) -> CacheDB<EmptyDB> {
         },
     );
     let marker = Bytecode::new_legacy([0xef].into());
-    for address in [L2_REGISTRY_ADDRESS, TRIBUTE_FACTORY_ADDRESS] {
+    for address in [L2_REGISTRY_ADDRESS, NOD_FACTORY_ADDRESS] {
         let info = AccountInfo {
             code_hash: marker.hash_slow(),
             code: Some(marker.clone()),
@@ -272,25 +272,24 @@ fn network_of(db: &mut CacheDB<EmptyDB>, chain_id: u64) -> IL2Registry::getNetwo
     IL2Registry::getNetworkCall::abi_decode_returns(&result.output).expect("the answer decodes")
 }
 
-/// Offers a Tribute for `chain_id` signed by `key`, with no ZK proof, so the
+/// Sends an offer for `chain_id` signed by `key`, with no ZK proof, so the
 /// call stops at the first gate after the key signature is accepted.
 fn offer(db: &mut CacheDB<EmptyDB>, chain_id: u64, key: &NetworkKey) -> TxResult<OutbeEvmTypes> {
-    let calldata = ITributeFactory::offerTributeCall {
+    let calldata = INodFactory::issueNodCall {
         cipherText: Bytes::new(),
         nonce: Bytes::new(),
         ephemeralPubkey: U256::ZERO,
         worldwideDay: DAY,
-        tributeCurrency: 840,
+        issuanceCurrency: 840,
         referenceCurrency: 840,
         zkProof: Bytes::new(),
         chainId: u32::try_from(chain_id).expect("the L2 chain id fits uint32"),
         version: "1.1.0".to_owned(),
-        zkPublicKey: Bytes::new(),
         zkMerkleRoot: Bytes::copy_from_slice(&ROOT),
         signature: Bytes::copy_from_slice(&key.signature),
     }
     .abi_encode();
-    call(db, TRIBUTE_FACTORY_ADDRESS, calldata.into())
+    call(db, NOD_FACTORY_ADDRESS, calldata.into())
 }
 
 /// Return the exact revert payload, including an empty child revert.
@@ -303,7 +302,7 @@ fn unset_key_resolves_from_the_inbox_and_gates_tribute() {
     let key = network_key(1);
     let rotated = network_key(2);
     let stranger = network_key(3);
-    let proof_required = ITributeFactory::ZkProofRequired {}.abi_encode();
+    let proof_required = INodFactory::ZkProofRequired {}.abi_encode();
     let invalid_signature = IL2Registry::InvalidZkSignature {}.abi_encode();
     let mut db = database(&key.public_key);
     // The empty key selects live resolution instead of a pinned key.
@@ -348,7 +347,7 @@ fn unset_key_resolves_from_the_inbox_and_gates_tribute() {
 fn pinned_key_wins_over_the_inbox() {
     let pinned = network_key(4);
     let live = network_key(5);
-    let proof_required = ITributeFactory::ZkProofRequired {}.abi_encode();
+    let proof_required = INodFactory::ZkProofRequired {}.abi_encode();
     // `INBOX` answers `live`, so a pinned network must not consult it.
     let mut db = database(&live.public_key);
 
@@ -474,6 +473,6 @@ fn unset_or_invalid_inbox_point_rejects_until_the_inbox_recovers() {
     );
     assert_eq!(
         revert_data(&offer(&mut db, L2_CHAIN_ID, &key)),
-        Some(ITributeFactory::ZkProofRequired {}.abi_encode()),
+        Some(INodFactory::ZkProofRequired {}.abi_encode()),
     );
 }

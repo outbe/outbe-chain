@@ -9,8 +9,8 @@ use crate::stablecoin::CurrencyCodeError;
 pub enum PrimitivesMathError {
     #[error("unsupported asset decimals")]
     UnsupportedAssetDecimals,
-    #[error("principal and valuation must be positive")]
-    PrincipalAndValuationMustBePositive,
+    #[error("amount and valuation must be positive")]
+    AmountAndValuationMustBePositive,
     #[error("arithmetic overflow")]
     ArithmeticOverflow,
     #[error("value rounds to zero")]

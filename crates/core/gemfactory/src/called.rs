@@ -2,8 +2,9 @@
 //! price on enough days of their window. The daily trigger schedules the closed day,
 //! and every CycleTick walks a slice of it.
 
+use crate::precompile::IGemFactory::GemSeriesCalled;
 use alloy_primitives::{B256, U256};
-use outbe_gem::precompile::IGem::{BatchMetadataUpdate, GemSeriesCalled};
+use outbe_gem::precompile::IGem::BatchMetadataUpdate;
 
 use crate::errors::GemFactoryError;
 use outbe_gem::{CallBins, CallTerms, GemContract, GemParams};
@@ -256,14 +257,17 @@ pub(crate) fn mark_called(
     let deadline = outbe_gem::api::settlement_deadline_of(now, terms.call_notice_period_seconds);
     gem.record_group_called(group, now, deadline)?;
     for sub in gem.group_sub_series(group)? {
-        gem.emit(GemSeriesCalled {
-            seriesId: sub.series_id.into(),
-            subSeriesId: sub.sub_series_id,
-            issuanceCurrency: sub.issuance_currency,
-            referenceCurrency: sub.reference_currency,
-            calledAt: now,
-            settlementDeadline: deadline,
-        })?;
+        crate::runtime::emit_event(
+            &gem.storage,
+            GemSeriesCalled {
+                seriesId: sub.series_id.into(),
+                subSeriesId: sub.sub_series_id,
+                issuanceCurrency: sub.issuance_currency,
+                referenceCurrency: sub.reference_currency,
+                calledAt: now,
+                settlementDeadline: deadline,
+            },
+        )?;
     }
     Ok(())
 }

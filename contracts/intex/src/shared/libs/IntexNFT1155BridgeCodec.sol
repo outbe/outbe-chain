@@ -14,11 +14,14 @@ library IntexNFT1155BridgeCodec {
     /// @notice Active body version emitted by the encoders and required by every decoder.
     uint8 internal constant BODY_VERSION_V1 = 1;
 
+    /// @notice `msgType` for one Intex id to one recipient (`SinglePayload`).
+    uint8 internal constant SEND_ONE = 1;
+
     /// @notice `msgType` for a single-recipient, multi-token batch (`BatchPayload`).
-    uint8 internal constant SEND = 1;
+    uint8 internal constant SEND_BATCH = 2;
 
     /// @notice `msgType` for a multi-recipient batch (`MultiPayload`).
-    uint8 internal constant SEND_MULTI = 2;
+    uint8 internal constant SEND_MULTI = 3;
 
     /// @notice Items one bridge message may carry. Narrower than the other payload caps because a
     ///         rejected item is recorded with its revert bytes, the dearest per-item work anywhere
@@ -32,11 +35,18 @@ library IntexNFT1155BridgeCodec {
     ///         `abi.encode(body)`.
     uint256 internal constant HEADER_LEN = 2;
 
-    /// @notice Single-recipient, multi-token batch body (`SEND`).
+    /// @notice Single-recipient, multi-token batch body (`SEND_BATCH`).
     struct BatchPayload {
         bytes32 to;
         uint256[] tokenIds;
         uint256[] units;
+    }
+
+    /// @notice Single transfer body (`SEND_ONE`).
+    struct SinglePayload {
+        bytes32 to;
+        uint256 intexId;
+        uint256 units;
     }
 
     /// @notice Multi-recipient batch body (`SEND_MULTI`): each entry has its own recipient.
@@ -70,16 +80,16 @@ library IntexNFT1155BridgeCodec {
 
     /// @notice The body is not the canonical `abi.encode` of the routed payload type. `abi.decode`
     ///         is permissive. It will misread a wrong-schema body (e.g. a `MultiPayload` encoding
-    ///         routed as `SEND`) into a garbage payload, and it ignores trailing bytes. Re-encoding
+    ///         routed as `SEND_BATCH`) into a garbage payload, and it ignores trailing bytes. Re-encoding
     ///         the decoded value and requiring an exact match closes both, so a mismatched or
     ///         padded packet fails closed instead of crosschain-minting to a wrong recipient.
     error MalformedBody();
 
     /// @notice Encode a single-recipient batch body. Single-pass `abi.encode` - no growing buffer.
     /// @param _payload The single-recipient batch (`to`, `tokenIds`, `units`).
-    /// @return The wire body: `[BODY_VERSION_V1][SEND][abi.encode(_payload)]`.
+    /// @return The wire body: `[BODY_VERSION_V1][SEND_BATCH][abi.encode(_payload)]`.
     function encodeBatch(BatchPayload memory _payload) internal pure returns (bytes memory) {
-        return abi.encodePacked(BODY_VERSION_V1, SEND, abi.encode(_payload));
+        return abi.encodePacked(BODY_VERSION_V1, SEND_BATCH, abi.encode(_payload));
     }
 
     /// @notice Encode a multi-recipient batch body. Single-pass `abi.encode` - no growing buffer.
@@ -89,7 +99,21 @@ library IntexNFT1155BridgeCodec {
         return abi.encodePacked(BODY_VERSION_V1, SEND_MULTI, abi.encode(_payload));
     }
 
-    /// @notice Decode + validate a `SEND` body. Reverts with:
+    /// @return The wire body: `[BODY_VERSION_V1][SEND_ONE][abi.encode(_payload)]`.
+    function encodeSingle(SinglePayload memory _payload) internal pure returns (bytes memory) {
+        return abi.encodePacked(BODY_VERSION_V1, SEND_ONE, abi.encode(_payload));
+    }
+
+    /// @notice Decode + validate a `SEND_ONE` body: {UnsupportedBodyVersion} on a non-V1 header,
+    ///         {MalformedBody} on a non-canonical body.
+    function decodeSingle(bytes calldata _message) internal pure returns (SinglePayload memory payload) {
+        _assertBodyVersion(_message);
+        bytes calldata body = _message[HEADER_LEN:];
+        payload = abi.decode(body, (SinglePayload));
+        if (keccak256(abi.encode(payload)) != keccak256(body)) revert MalformedBody();
+    }
+
+    /// @notice Decode + validate a `SEND_BATCH` body. Reverts with:
     ///         - {UnsupportedBodyVersion} on a non-V1 header.
     ///         - {MalformedBody} on a non-canonical/wrong-schema body.
     ///         - {ArrayLengthMismatch} on unequal tokenId/units arrays.

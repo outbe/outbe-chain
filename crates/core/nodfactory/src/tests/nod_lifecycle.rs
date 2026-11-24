@@ -11,7 +11,7 @@ use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
-use outbe_system_common::addresses::NOD_ADDRESS;
+use outbe_system_common::addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS};
 use outbe_system_common::math::constants::MAX_BIN_ID;
 use outbe_system_common::pass_budget::{
     PassBudget, SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK,
@@ -19,7 +19,7 @@ use outbe_system_common::pass_budget::{
 use outbe_system_common::time::WorldwideDay;
 use outbe_system_common::time::SECONDS_PER_DAY_U32;
 use outbe_system_common::time::{
-    date_key_to_utc_timestamp, first_full_day, previous_date_key, timestamp_to_date_key,
+    date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key,
 };
 
 use outbe_nod::{
@@ -45,27 +45,24 @@ const OTHER_ISO: u16 = 978;
 /// Issuance instant, 2027-01-15 08:00 UTC.
 const START: u64 = 1_800_000_000;
 
-/// The worldwide day [`START`] falls in. The breach walk now stops at
-/// `first_full_day(issued_at)`, not this WWD key. The two still have to
-/// agree so fixtures that reason in WWD days do not silently miss the
-/// issuance cutoff.
+/// The emission day of the Nods issued at [`START`]. The breach walk stops at it.
 const WWD: u32 = 20_270_115;
 
 /// Entry price every group here is issued at: 2.0 at scale 1e6. The call price
-/// is therefore `2.0 x 3.56 = 7.12`.
+/// is therefore `2.0 x 2.28 = 4.56`.
 fn entry_price() -> U256 {
     U256::from(2_000_000u64)
 }
 
-/// Exactly the call price (7.12). The breach test is strict `>`, so a day at
+/// Exactly the call price (4.56). The breach test is strict `>`, so a day at
 /// this value must NOT count.
 fn at_call() -> U256 {
-    U256::from(7_120_000u64)
+    U256::from(4_560_000u64)
 }
 
 /// A day above the call price.
 fn above_call() -> U256 {
-    U256::from(7_200_000u64)
+    U256::from(4_600_000u64)
 }
 
 /// A day below the call price.
@@ -99,26 +96,42 @@ fn nod_item_issued(
     issued_at: u64,
 ) -> NodItemState {
     let worldwide_day = WorldwideDay::new(worldwide_day);
-    outbe_nod::test_support::item(
+    let sub_series_id = SUB_SERIES.with(|assigned| {
+        let mut assigned = assigned.borrow_mut();
+        let next = assigned
+            .keys()
+            .filter(|(day, currency, _)| (*day, *currency) == (worldwide_day.value(), iso))
+            .count();
+        *assigned
+            .entry((worldwide_day.value(), iso, entry_price_minor))
+            .or_insert(u16::try_from(next).unwrap())
+    });
+    let mut item = outbe_nod::test_support::item(
         outbe_nod::test_support::NodItemFixture {
             is_settled: false,
             nod_id: outbe_nod::test_support::nod_id_of(owner, worldwide_day.value(), iso, iso),
             owner,
             gratis_load_minor: U256::from(11),
             emission_day: worldwide_day.value(),
-            league_id: 4,
             group_key: outbe_nod::identity::group_key(
-                issued_at,
+                worldwide_day.value(),
                 outbe_core_common::markup::marked_up(entry_price_minor, CALL_RATE_PCT).unwrap(),
                 iso,
-            )
-            .expect("date step"),
+            ),
             issuance_currency: iso,
             reference_currency: iso,
             issued_at,
         },
         entry_price_minor,
-    )
+    );
+    item.sub_series_id = sub_series_id;
+    item
+}
+
+thread_local! {
+    /// The sub-series of each entry price of a series: one entry price per offer hour.
+    static SUB_SERIES: std::cell::RefCell<std::collections::HashMap<(u32, u16, U256), u16>> =
+        std::cell::RefCell::default();
 }
 
 /// Registers `COEN/<iso>` and lists `iso` as a reference currency.
@@ -194,7 +207,6 @@ fn add(storage: &StorageHandle<'_>, item: &NodItemState) {
         item,
         crate::runtime::call_terms(storage, item.entry_price_minor(), item.reference_currency)
             .unwrap(),
-        api::calculation_amount(item).unwrap(),
     )
     .unwrap();
 }
@@ -331,7 +343,7 @@ fn harness(body: impl FnOnce(&StorageHandle<'_>)) {
     });
 }
 
-/// Issues `specs` as (owner-byte, load, paid) into one group,
+/// Issues `specs` as (owner-byte, load, settled) into one group,
 /// force-calls it, and leaves the clock past the sealed notice.
 fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, Vec<NodItemState>) {
     let items: Vec<NodItemState> = specs
@@ -345,8 +357,8 @@ fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, 
         .collect();
     let group_key = items[0].group_key;
     let id = group_key;
-    for (item, &(_, _, paid)) in items.iter().zip(specs) {
-        if paid {
+    for (item, &(_, _, settled)) in items.iter().zip(specs) {
+        if settled {
             api::record_settled(
                 storage,
                 api::load_item(storage, item.nod_id).unwrap().unwrap(),
@@ -370,9 +382,11 @@ fn arm_lapsed(storage: &StorageHandle<'_>, specs: &[(u8, u64, bool)]) -> (B256, 
 /// Each `NodSeriesClosed` as (Nods forfeited, Gratis load returned).
 fn group_forfeits(provider: &HashMapStorageProvider) -> Vec<(u32, U256)> {
     provider
-        .get_events(NOD_ADDRESS)
+        .get_events(NOD_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| INod::NodSeriesClosed::decode_log_data(log).ok())
+        .filter_map(|log| {
+            crate::precompile::INodFactory::NodSeriesClosed::decode_log_data(log).ok()
+        })
         .map(|event| (event.forfeitedCount, event.forfeitedAmountMinor))
         .collect()
 }
@@ -443,7 +457,7 @@ fn issuance_seals_the_call_terms_on_the_group() {
                 .unwrap()
                 .full_day_after_issue
                 .value(),
-            first_full_day(START).expect("date step")
+            WWD
         );
         assert_ne!(
             nod.call_group_slot.read(&item.group_key).unwrap(),
@@ -464,11 +478,10 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
         let dev = outbe_nod::config::NodParams::TESTNET;
         let mut item = nod_item(Address::repeat_byte(0x11), ISO);
         item.group_key = outbe_nod::identity::group_key(
-            item.issued_at,
+            item.series_id.day(),
             outbe_core_common::markup::marked_up(entry_price(), dev.call_rate).unwrap(),
             ISO,
-        )
-        .expect("date step");
+        );
         add(storage, &item);
         assert_eq!(
             (
@@ -488,35 +501,6 @@ fn an_unset_profile_seals_the_dev_terms_off_mainnet() {
                 dev.call_notice_period_seconds
             )
         );
-    });
-}
-
-/// A Nod of a called group's Worldwide Day issued after the call opens its own group:
-/// a group is closed to new members before it can be called.
-#[test]
-fn a_late_nod_opens_a_new_group_instead_of_joining_a_called_one() {
-    harness(|storage| {
-        let at = START + 30 * DAY;
-        let first = call_group(storage, Address::repeat_byte(0x11), at);
-        let late = issue_item(
-            storage,
-            nod_item_issued(
-                Address::repeat_byte(0x22),
-                ISO,
-                entry_price(),
-                WWD,
-                at + CLOSED_DAY_DELAY,
-            ),
-        );
-        assert_ne!(first.group_key, late.group_key);
-        assert_eq!(called_at(storage, first.group_key), at);
-        assert_eq!(called_at(storage, late.group_key), 0);
-
-        let past = at + NOTICE + CLOSED_DAY_DELAY;
-        finalize_through(storage, past);
-        assert_eq!(scan(storage, past), 1);
-        assert!(api::get_item(storage, first.nod_id).unwrap().is_none());
-        assert!(api::get_item(storage, late.nod_id).unwrap().is_some());
     });
 }
 
@@ -616,7 +600,7 @@ fn the_call_price_is_the_entry_price_times_the_call_rate() {
             stored,
             entry_price() * U256::from(100 + CALL_RATE_PCT) / U256::from(100)
         );
-        assert_eq!(stored, at_call(), "2.0 x 3.56 == 7.12");
+        assert_eq!(stored, at_call(), "2.0 x 2.28 == 4.56");
     });
 }
 
@@ -763,9 +747,9 @@ fn missing_days_do_not_count_as_breaches() {
 fn a_breach_run_that_predates_the_group_does_not_call_it() {
     harness(|storage| {
         let item = issue_owned(storage, Address::repeat_byte(0x11), ISO);
-        // Scan two days after issuance. Only a couple of closed UTC days sit at
-        // or after `first_full_day(issued_at)`. The scan ignores the
-        // pre-existence run beyond them, even though the whole series breaches.
+        // Scan two days after issuance. Only a couple of closed UTC days sit on
+        // or after the emission day. The scan ignores the run before them,
+        // even though the whole series breaches.
         let at = START + 2 * DAY;
         fill_days(
             storage,
@@ -779,71 +763,49 @@ fn a_breach_run_that_predates_the_group_does_not_call_it() {
     });
 }
 
-/// Both midnight (`00:00:00`) and a second later (`00:00:01`) start counting on the
-/// next UTC day, while a Nod issued on the previous day counts the full day starting at midnight.
+/// The call count starts at 00:00 of the emission day, whenever its offer issued the Nod.
 #[test]
-fn the_issue_day_counts_only_for_a_nod_issued_at_midnight() {
+fn nod_call_count_starts_at_the_emission_day() {
     let scan_at = START + 30 * DAY;
     let latest = last_closed_day(scan_at);
     let mut oldest_breach = latest;
     for _ in 1..CALL_THRESHOLD_DAYS {
         oldest_breach = previous_date_key(oldest_breach).expect("date step");
     }
-    let midnight = date_key_to_utc_timestamp(oldest_breach).expect("date step");
-
-    for (issued_at, expected) in [(midnight - 1, 1u32), (midnight, 0u32), (midnight + 1, 0u32)] {
+    let day_after =
+        |day: u32| timestamp_to_date_key(date_key_to_utc_timestamp(day).expect("date step") + DAY);
+    for (emission_day, expected) in [
+        (previous_date_key(oldest_breach).expect("date step"), 1u32),
+        (oldest_breach, 1),
+        (day_after(oldest_breach), 0),
+    ] {
         harness(|storage| {
-            let wwd = WorldwideDay::from_timestamp(issued_at).value();
+            let offered_at =
+                date_key_to_utc_timestamp(emission_day).expect("date step") - 14 * 3600;
             let item = issue_item(
                 storage,
                 nod_item_issued(
                     Address::repeat_byte(0x11),
                     ISO,
                     entry_price(),
-                    wwd,
-                    issued_at,
+                    emission_day,
+                    offered_at,
                 ),
             );
             fill_days(storage, latest, CALL_LOOKBACK_DAYS, below_call());
             fill_days(storage, latest, CALL_THRESHOLD_DAYS, above_call());
-            assert_eq!(scan(storage, scan_at), expected, "issued at {issued_at}");
+            assert_eq!(
+                scan(storage, scan_at),
+                expected,
+                "emission day {emission_day}"
+            );
             assert_eq!(
                 called_at(storage, item.group_key) != 0,
                 expected == 1,
-                "issued at {issued_at}"
+                "emission day {emission_day}"
             );
         });
     }
-}
-
-/// Q027: a delayed materialization must not inherit VWAP days from its Tribute
-/// WWD. A 21-day breach run that sits on or after WWD but before
-/// `first_full_day(issued_at)` would have called under the old cutoff.
-#[test]
-fn a_delayed_issuance_does_not_count_pre_issuance_wwd_days() {
-    harness(|storage| {
-        // WWD a month before issuance. 21 closed UTC days ending on the
-        // partial issuance day all post-date that WWD and all predate
-        // `first_full_day(START)` = 2027-01-16.
-        let delayed_wwd = 20_261_216;
-        let item = issue_item(
-            storage,
-            nod_item_issued(
-                Address::repeat_byte(0x11),
-                ISO,
-                entry_price(),
-                delayed_wwd,
-                START,
-            ),
-        );
-        let issuance_utc_day = timestamp_to_date_key(START);
-        fill_days(storage, issuance_utc_day, CALL_THRESHOLD_DAYS, above_call());
-        let scan_at = date_key_to_utc_timestamp(first_full_day(START).expect("date step"))
-            .expect("date step");
-        finalize_through(storage, scan_at);
-        assert_eq!(scan(storage, scan_at), 0);
-        assert_eq!(called_at(storage, item.group_key), 0);
-    });
 }
 
 #[test]
@@ -1141,15 +1103,22 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
     harness(|storage| {
         let at = START + 30 * DAY;
         // One call bin; the last group is too young to hold the threshold.
+        let young = WorldwideDay::from_timestamp(at - 5 * DAY).value();
         let items: Vec<NodItemState> = [
-            (11u64, 0x11u8, START),
-            (22, 0x22, START),
-            (33, 0x33, at - 5 * DAY),
+            (11u64, 0x11u8, WWD, START),
+            (22, 0x22, WWD, START),
+            (33, 0x33, young, at - 5 * DAY),
         ]
         .into_iter()
-        .map(|(offset, owner, issued_at)| {
+        .map(|(offset, owner, emission_day, issued_at)| {
             let entry = entry_price() + U256::from(offset);
-            let item = nod_item_issued(Address::repeat_byte(owner), ISO, entry, WWD, issued_at);
+            let item = nod_item_issued(
+                Address::repeat_byte(owner),
+                ISO,
+                entry,
+                emission_day,
+                issued_at,
+            );
             add(storage, &item);
             item
         })
@@ -1481,7 +1450,7 @@ fn pending_calls_hold_forfeits_and_same_height_reentry_keeps_the_allowance() {
 }
 
 #[test]
-fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined() {
+fn mixed_group_forfeits_only_unsettled_loads_and_preserves_settled_terms_until_mined() {
     harness(|storage| {
         let items: Vec<_> = [0x91, 0x92, 0x93, 0x95]
             .into_iter()
@@ -1494,7 +1463,7 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined()
         let key = items[0].group_key;
         let id = key;
         let nod = NodContract::new(storage.clone());
-        // Settle the middle member, exercising swap-remove of the unpaid tail.
+        // Settle the middle member, exercising swap-remove of the unsettled tail.
         api::record_settled(
             storage,
             api::load_item(storage, items[1].nod_id).unwrap().unwrap(),
@@ -1532,7 +1501,10 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined()
             + outbe_nod::api::calculation_amount(&items[0]).unwrap()
             + outbe_nod::api::calculation_amount(&items[2]).unwrap();
         assert_eq!(reserve(storage), expected);
-        assert!(!is_queued(storage, key), "no unpaid member is left to burn");
+        assert!(
+            !is_queued(storage, key),
+            "no unsettled member is left to burn"
+        );
         assert_eq!(scan(storage, past), 0);
         assert_eq!(reserve(storage), expected);
         let group = api::get_group(storage, id).unwrap().unwrap();
@@ -1556,7 +1528,7 @@ fn mixed_group_forfeits_only_unpaid_loads_and_preserves_paid_terms_until_mined()
 }
 
 #[test]
-fn a_fully_paid_group_is_not_called_and_corrupt_paid_membership_is_not_forfeited() {
+fn a_fully_settled_group_is_not_called_and_corrupt_settled_membership_is_not_forfeited() {
     harness(|storage| {
         let item = issue_owned(storage, Address::repeat_byte(0x94), ISO);
         let id = item.group_key;
@@ -1575,13 +1547,13 @@ fn a_fully_paid_group_is_not_called_and_corrupt_paid_membership_is_not_forfeited
         );
         assert_eq!(scan(storage, at), 0);
         assert_eq!(called_at(storage, item.group_key), 0);
-        // Issuance into a paid-only group must retain its committed paid state.
+        // Issuance into a settled-only group must retain its committed settled state.
         let newcomer = nod_item(Address::repeat_byte(0x96), ISO);
-        let paid_group = api::get_group(storage, id).unwrap().unwrap();
+        let settled_group = api::get_group(storage, id).unwrap().unwrap();
         add(storage, &newcomer);
         assert_eq!(
             outbe_nod::canonical_group(&api::get_group(storage, id).unwrap().unwrap()),
-            outbe_nod::canonical_group(&paid_group),
+            outbe_nod::canonical_group(&settled_group),
         );
         api::remove_nod(
             storage,
@@ -1645,7 +1617,9 @@ fn a_group_settled_in_full_closes_with_zero_forfeit() {
         );
         assert!(api::get_group(&storage, id).unwrap().is_some());
         assert_ne!(
-            nod.series_issuance_currency.read(&item.series_id).unwrap(),
+            nod.sub_series_issuance_currency
+                .read(&item.sub_series_key())
+                .unwrap(),
             0
         );
 
@@ -1657,11 +1631,15 @@ fn a_group_settled_in_full_closes_with_zero_forfeit() {
         .unwrap();
         assert!(api::get_group(&storage, id).unwrap().is_none());
         assert_eq!(
-            nod.series_issuance_currency.read(&item.series_id).unwrap(),
+            nod.sub_series_issuance_currency
+                .read(&item.sub_series_key())
+                .unwrap(),
             0
         );
         assert_eq!(
-            nod.series_reference_currency.read(&item.series_id).unwrap(),
+            nod.sub_series_reference_currency
+                .read(&item.sub_series_key())
+                .unwrap(),
             0
         );
         (
@@ -1672,9 +1650,11 @@ fn a_group_settled_in_full_closes_with_zero_forfeit() {
     });
 
     let closed: Vec<_> = provider
-        .get_events(NOD_ADDRESS)
+        .get_events(NOD_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| INod::NodSeriesClosed::decode_log_data(log).ok())
+        .filter_map(|log| {
+            crate::precompile::INodFactory::NodSeriesClosed::decode_log_data(log).ok()
+        })
         .collect();
     assert_eq!(closed.len(), 1);
     assert_eq!(
@@ -1683,10 +1663,9 @@ fn a_group_settled_in_full_closes_with_zero_forfeit() {
             closed[0].issuanceCurrency,
             closed[0].referenceCurrency,
             closed[0].forfeitedCount,
-            closed[0].forfeitedTributeCount,
             closed[0].forfeitedAmountMinor
         ),
-        (series_id, issuance, reference, 0, 0, U256::ZERO)
+        (series_id, issuance, reference, 0, U256::ZERO)
     );
     assert_eq!(
         outbe_core_common::series_id::SeriesId::for_pair(
@@ -1699,10 +1678,10 @@ fn a_group_settled_in_full_closes_with_zero_forfeit() {
     );
 }
 
-/// A group paid in full leaves its bin once no Nod can join it, so later walks do not
-/// visit it again. Its paid Nod stays with the group until mined.
+/// A group settled in full leaves its bin once no Nod can join it, so later walks do not
+/// visit it again. Its settled Nod stays with the group until mined.
 #[test]
-fn a_group_paid_in_full_leaves_its_call_bin() {
+fn a_group_settled_in_full_leaves_its_call_bin() {
     harness(|storage| {
         let item = issue_owned(storage, Address::repeat_byte(0x31), ISO);
         api::record_settled(
@@ -1725,6 +1704,44 @@ fn a_group_paid_in_full_leaves_its_call_bin() {
         assert_eq!(nod.call_group_slot.read(&item.group_key).unwrap(), 0);
         assert_eq!(called_at(storage, item.group_key), 0);
         assert!(api::get_group(storage, item.group_key).unwrap().is_some());
+    });
+}
+
+/// A group whose last Nod left inside its offering window closes at the first walk after the
+/// window, with its sub-series.
+#[test]
+fn an_emptied_group_closes_once_no_nod_can_join_it() {
+    harness(|storage| {
+        let item = issue_owned(storage, Address::repeat_byte(0x32), ISO);
+        api::record_settled(
+            storage,
+            api::load_item(storage, item.nod_id).unwrap().unwrap(),
+            api::load_group(storage, item.group_key).unwrap().unwrap(),
+        )
+        .unwrap();
+        api::remove_nod(
+            storage,
+            api::load_item(storage, item.nod_id).unwrap().unwrap(),
+            api::load_group(storage, item.group_key).unwrap().unwrap(),
+        )
+        .unwrap();
+        assert!(api::get_group(storage, item.group_key).unwrap().is_some());
+
+        let at = START + 30 * DAY;
+        fill_days(
+            storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(storage, at), 0);
+        let nod = NodContract::new(storage.clone());
+        assert_eq!(nod.call_group_slot.read(&item.group_key).unwrap(), 0);
+        assert!(api::get_group(storage, item.group_key).unwrap().is_none());
+        assert_eq!(
+            api::sub_series_group(storage, item.series_id, item.sub_series_id).unwrap(),
+            None
+        );
     });
 }
 
@@ -1881,12 +1898,12 @@ fn days_closed_behind_a_stalled_call_sweep_are_walked_in_order() {
     });
 }
 
-/// Promis Limit moves by the unpaid loads, not by reaching
-/// Forfeited or emitting `NodGroupForfeited`. A paid-but-unmined member is
+/// Promis Limit moves by the unsettled loads, not by reaching
+/// Forfeited or emitting `NodGroupForfeited`. A settled-but-unmined member is
 /// not credited. If the add were removed, this delta
 /// would fail while the events and burns could still look complete.
 #[test]
-fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
+fn forfeit_credits_distinct_unsettled_loads_and_ignores_settled_members() {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
 
     StorageHandle::enter(&mut provider, |storage| {
@@ -1902,19 +1919,19 @@ fn forfeit_credits_distinct_unpaid_loads_and_ignores_paid_members() {
                 (0x34, 20, false),
             ],
         );
-        let unpaid: U256 = items
+        let unsettled: U256 = items
             .iter()
             .zip([(false, 3u64), (true, 7), (false, 11), (false, 20)])
-            .filter_map(|(item, (paid, _))| {
-                (!paid).then_some(outbe_nod::api::calculation_amount(item).unwrap())
+            .filter_map(|(item, (settled, _))| {
+                (!settled).then_some(outbe_nod::api::calculation_amount(item).unwrap())
             })
             .fold(U256::ZERO, |sum, load| sum + load);
-        assert_eq!(unpaid, U256::from(34u64));
+        assert_eq!(unsettled, U256::from(34u64));
         let past = START + 30 * DAY + NOTICE + CLOSED_DAY_DELAY;
         assert_eq!(forfeit_block(&storage, past).unwrap(), 1);
-        assert_eq!(reserve(&storage), unpaid);
+        assert_eq!(reserve(&storage), unsettled);
         assert_eq!(forfeit_block(&storage, past + CLOSED_DAY_DELAY).unwrap(), 0);
-        assert_eq!(reserve(&storage), unpaid);
+        assert_eq!(reserve(&storage), unsettled);
         assert_eq!(
             NodContract::new(storage.clone())
                 .group_nod_count
@@ -2072,7 +2089,7 @@ fn a_node_local_failure_while_forfeiting_fails_the_slice() {
 }
 
 /// Every persistent write of a forfeit and its cleanup (credit, event,
-/// deletion) rolls back with its checkpoint. Retry credits the original unpaid
+/// deletion) rolls back with its checkpoint. Retry credits the original unsettled
 /// loads once, neither zero nor twice.
 #[test]
 fn every_nod_forfeit_mutation_rolls_back_then_retries_the_same_credit() {

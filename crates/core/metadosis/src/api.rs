@@ -1,7 +1,7 @@
 use alloy_primitives::U256;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_system_common::time::WorldwideDay;
-use outbe_tributefactory::worldwide_day::{ValidatedWwdAggregate, WwdProjection};
+use outbe_worldwideday::{ValidatedWwdAggregate, WwdProjection};
 
 use crate::schema::{EmissionContract, EmissionDay};
 
@@ -39,7 +39,7 @@ pub fn worldwide_day(
     storage: StorageHandle<'_>,
     wwd: WorldwideDay,
 ) -> Result<Option<WwdProjection>> {
-    outbe_tributefactory::worldwide_day::api::worldwide_day(storage, wwd)
+    outbe_worldwideday::api::worldwide_day(storage, wwd)
 }
 
 /// Reads the complete bounded typed WWD aggregate without exposing indexes or
@@ -53,10 +53,10 @@ pub fn worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WwdProjection>> 
 
 /// Checks whether the current block timestamp falls in the offering window of `wwd`.
 pub fn is_offering_day(storage: StorageHandle<'_>, wwd: WorldwideDay) -> Result<bool> {
-    outbe_tributefactory::worldwide_day::api::is_offering_day(storage, wwd)
+    outbe_worldwideday::api::is_offering_day(storage, wwd)
 }
 
 /// Returns active WorldwideDay keys whose offering window contains the block timestamp.
 pub fn offering_worldwide_days(storage: StorageHandle<'_>) -> Result<Vec<WorldwideDay>> {
-    outbe_tributefactory::worldwide_day::api::offering_worldwide_days(storage)
+    outbe_worldwideday::api::offering_worldwide_days(storage)
 }

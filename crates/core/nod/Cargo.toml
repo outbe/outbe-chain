@@ -11,8 +11,11 @@ outbe-core-common.workspace = true
 outbe-tee.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
+outbe-zk.workspace = true
 alloy-primitives = { workspace = true, features = ["serde"] }
 alloy-sol-types.workspace = true
+ark-bn254.workspace = true
+ark-ff.workspace = true
 hex.workspace = true
 postcard.workspace = true
 ring.workspace = true
@@ -22,7 +25,7 @@ thiserror.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-outbe-nod = { path = ".", features = ["test-enclave"] }
+outbe-nod = { path = ".", features = ["test-enclave", "test-utils"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 base64.workspace = true
 tempfile.workspace = true

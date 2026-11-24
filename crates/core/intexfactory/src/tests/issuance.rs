@@ -81,6 +81,7 @@ fn issue_creates_series_in_registry() {
             callWindow: u64::from(28 * SECONDS_PER_DAY_U32),
             callThreshold: u64::from(21 * SECONDS_PER_DAY_U32),
             callNoticePeriod: u64::from(CALL_NOTICE_PERIOD),
+            transitMargin: 3_600,
             units: 100,
             unitPromisLoadMinor: U256::from(PROMIS_LOAD_MINOR),
         }]

@@ -128,9 +128,7 @@ fn expiry_releases_identity_and_pending_cap_and_burns_once() {
             .unwrap();
 
         let mut validator_set = ValidatorSet::new(storage.clone());
-        validator_set
-            .deactivate_validator(VALIDATOR_OWNER, VALIDATOR_B)
-            .unwrap();
+        validator_set.deactivate_validator(VALIDATOR_B).unwrap();
         register_active_validator(storage.clone(), VALIDATOR_D, 4);
 
         let promis_limit_before = outbe_promislimit::PromisLimitContract::new(storage.clone())

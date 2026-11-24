@@ -1,20 +1,15 @@
 use std::sync::Arc;
 
+use super::{context, gratis_request, offer_request, prepared, ClearWitnessPolicy, CHAIN};
 use alloy_primitives::{Address, B256};
 use outbe_core_common::confidential_tee::{
     pause_account_query_for_test, try_derive_sealed_account_keys, Ledger, TeeError,
 };
 use outbe_execution::tee_canary::CanaryTickOutcome;
 use outbe_gratis::enclave_client::apply_gratis_op;
-use outbe_primitives::error::PrecompileError;
-use outbe_runtime::TributeCanaryProbe;
+use outbe_runtime::OfferCanaryProbe;
 use outbe_tee::in_process_dispatch::set_in_process_tee_context_for_test;
 use outbe_tee::{tee_authority_test_guard, TeeAuthorityChannel, TransportError};
-use outbe_tribute::confidential::host::{
-    derive_tribute_keys, process_offer_batch, DeriveTributeKeysRequest,
-};
-
-use super::{context, gratis_request, prepared, ClearWitnessPolicy};
 
 fn owner_signature(account: Address, ephemeral: B256) -> [u8; 65] {
     let signer =
@@ -42,7 +37,7 @@ async fn account_query_and_canary_open_only_with_an_active_resident_key() {
     let signature = owner_signature(owner, ephemeral);
     let cold = context(6, false);
     assert!(matches!(
-        TributeCanaryProbe::bound_canary_decrypt(&cold, &[0x44; 32]),
+        OfferCanaryProbe::bound_canary_decrypt(&cold, &[0x44; 32]),
         CanaryTickOutcome::Failure {
             unreachable: true,
             ..
@@ -53,7 +48,7 @@ async fn account_query_and_canary_open_only_with_an_active_resident_key() {
     let _hot_runtime = set_in_process_tee_context_for_test(Some(Arc::clone(&hot)));
     let offer_pub = hot.network_encryption_public().expect("offer public");
     assert!(matches!(
-        TributeCanaryProbe::bound_canary_decrypt(&hot, &offer_pub),
+        OfferCanaryProbe::bound_canary_decrypt(&hot, &offer_pub),
         CanaryTickOutcome::Success { .. }
     ));
 
@@ -90,46 +85,12 @@ async fn account_query_and_canary_open_only_with_an_active_resident_key() {
     // so consensus execution and the canary readiness probe still succeed.
     // BoundCanary does not consult TeeAuthorityState.
     assert!(matches!(
-        outbe_runtime::TributeCanaryProbe::bound_canary_decrypt(&hot, &offer_pub),
+        outbe_runtime::OfferCanaryProbe::bound_canary_decrypt(&hot, &offer_pub),
         CanaryTickOutcome::Success { .. }
     ));
     let ready = prepared();
     let _ready_runtime = set_in_process_tee_context_for_test(Some(Arc::clone(&ready.context)));
     apply_gratis_op(ready.gratis).expect("consensus gratis while jailed");
-}
-
-#[test]
-fn derive_tribute_keys_rejects_a_foreign_ledger_and_a_substituted_pubkey() {
-    let _policy = ClearWitnessPolicy;
-    outbe_tee::witness::set_witness_policy_for_test(None);
-    let hot = context(5, true);
-    let _runtime = set_in_process_tee_context_for_test(Some(hot));
-    let signer =
-        outbe_primitives::signer::OutbeEvmSigner::from_secret_bytes([0x55; 32]).expect("signer");
-    let owner = signer.address();
-    let pubkey = [0x33; 32];
-
-    let foreign = sign_derive(Ledger::Gratis, owner, pubkey, &signer);
-    assert_fatal_with_cause(
-        derive_tribute_keys(DeriveTributeKeysRequest {
-            account: owner,
-            requester_ephemeral_pubkey: pubkey,
-            owner_sig: foreign.to_vec(),
-        })
-        .expect_err("signature over a Gratis message"),
-    );
-
-    let tribute = sign_derive(Ledger::Tribute, owner, pubkey, &signer);
-    let mut substituted = pubkey;
-    substituted[0] ^= 0xff;
-    assert_fatal_with_cause(
-        derive_tribute_keys(DeriveTributeKeysRequest {
-            account: owner,
-            requester_ephemeral_pubkey: substituted,
-            owner_sig: tribute.to_vec(),
-        })
-        .expect_err("substituted requester pubkey"),
-    );
 }
 
 #[test]
@@ -192,7 +153,7 @@ fn blocked_account_query_does_not_block_consensus() {
         let consensus_context = Arc::clone(&hot);
         scope.spawn(move || {
             let _runtime = set_in_process_tee_context_for_test(Some(consensus_context));
-            let offers = process_offer_batch(Vec::new());
+            let offers = outbe_nod::nod_host::issue_nod_at_offer(offer_request(CHAIN));
             completed
                 .send((offers, apply_gratis_op(request)))
                 .expect("consensus result");
@@ -239,19 +200,6 @@ fn sign_derive(
     );
     let hash = outbe_core_common::confidential_tee::eip191_hash(&message);
     signer.sign_hash(&hash).expect("sign derive-keys message")
-}
-
-fn assert_fatal_with_cause(error: PrecompileError) {
-    use std::error::Error;
-    assert!(error.source().is_some(), "{error}");
-    let PrecompileError::FatalWithCause(cause) = error else {
-        panic!("expected FatalWithCause, got {error}");
-    };
-    let transport = cause
-        .downcast_ref::<TransportError>()
-        .expect("inner TransportError");
-    assert!(!transport.is_node_local(), "{transport}");
-    assert!(transport.source().is_some(), "{transport}");
 }
 
 async fn account_query(

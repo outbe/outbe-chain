@@ -125,12 +125,6 @@ interface IIntex {
         uint32 units
     );
 
-    /// @notice The series settlement window closed. Both are zero when every unit was realized in time.
-    event IntexSeriesClosed(
-        bytes14 indexed seriesId,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        uint32 forfeitedCount,
-        uint256 forfeitedAmountMinor
-    );
+    /// @notice Promis was mined from `units` settled units of `owner`, which ends them.
+    event IntexBurned(uint256 indexed intexId, address indexed owner, uint32 units);
 }

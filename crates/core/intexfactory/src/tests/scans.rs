@@ -734,10 +734,10 @@ fn a_group_requeued_at_retirement_is_expired_and_credited_once() {
     });
 
     let forfeited = provider
-        .get_events(outbe_system_common::addresses::INTEX_ADDRESS)
+        .get_events(outbe_system_common::addresses::INTEX_FACTORY_ADDRESS)
         .iter()
         .filter_map(|log| {
-            outbe_intex::precompile::IIntex::IntexSeriesClosed::decode_log_data(log).ok()
+            crate::precompile::IIntexFactory::IntexSeriesClosed::decode_log_data(log).ok()
         })
         .count();
     assert_eq!(forfeited, 1);
