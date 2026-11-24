@@ -49,20 +49,20 @@ const START: u64 = 1_800_000_000;
 const WWD: u32 = 20_270_115;
 
 /// Entry price every group here is issued at: 2.0 at scale 1e6. The call price
-/// is therefore `2.0 x 3.56 = 7.12`.
+/// is therefore `2.0 x 2.28 = 4.56`.
 fn entry_price() -> U256 {
     U256::from(2_000_000u64)
 }
 
-/// Exactly the call price (7.12). The breach test is strict `>`, so a day at
+/// Exactly the call price (4.56). The breach test is strict `>`, so a day at
 /// this value must NOT count.
 fn at_call() -> U256 {
-    U256::from(7_120_000u64)
+    U256::from(4_560_000u64)
 }
 
 /// A day above the call price.
 fn above_call() -> U256 {
-    U256::from(7_200_000u64)
+    U256::from(4_600_000u64)
 }
 
 /// A day below the call price.
@@ -600,7 +600,7 @@ fn the_call_price_is_the_entry_price_times_the_call_rate() {
             stored,
             entry_price() * U256::from(100 + CALL_RATE_PCT) / U256::from(100)
         );
-        assert_eq!(stored, at_call(), "2.0 x 3.56 == 7.12");
+        assert_eq!(stored, at_call(), "2.0 x 2.28 == 4.56");
     });
 }
 

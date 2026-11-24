@@ -16,9 +16,9 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
 /// group on the terms it was issued with. Gem and intex give the same guarantee.
 ///
 /// Call-price markup percent: `call = entry x (100 + CALL_RATE_PCT) / 100`
-/// (256 => +256%, i.e. 3.56x entry). Same shape as credis' 64 and
-/// gem/intex's 128, one rung up the same ladder.
-pub const CALL_RATE_PCT: u16 = 256;
+/// (128 => +128%, i.e. 2.28x entry). Same shape as credis' 64 and
+/// gem/intex's 128.
+pub const CALL_RATE_PCT: u16 = 128;
 
 /// Share of the nominal of an offer that its Nod takes as its Gratis load, in percent.
 pub const LOAD_RATE_PCT: u64 = 32;

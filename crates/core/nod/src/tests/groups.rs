@@ -99,8 +99,8 @@ fn same_day_and_currency_at_two_entries_are_two_groups_with_their_own_terms() {
 
         let nod = NodContract::new(storage.clone());
         for (body, entry, call_price) in [
-            (&low, low_entry, 7_120_000u64),
-            (&high, high_entry, 10_680_000),
+            (&low, low_entry, 4_560_000u64),
+            (&high, high_entry, 6_840_000),
         ] {
             assert_eq!(body.entry_price_minor(), entry);
             assert_eq!(nod.group_nod_count.read(&body.group_key).unwrap(), 1);

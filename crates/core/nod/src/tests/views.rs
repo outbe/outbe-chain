@@ -251,7 +251,7 @@ fn token_uri_renders_the_nod_image_and_metadata() {
         assert!(value(&json, "League").is_none());
         assert_eq!(value(&json, "Entry Price").unwrap(), 0.4);
         assert!(value(&json, "Floor Price").is_none());
-        assert_eq!(value(&json, "Call Price").unwrap(), 1.424);
+        assert_eq!(value(&json, "Call Price").unwrap(), 0.912);
         assert_eq!(
             value(&json, "Encrypted Gratis Load").unwrap(),
             alloy_primitives::hex::encode_prefixed(&body.encrypted.encrypted_gratis_amount)
@@ -265,7 +265,7 @@ fn token_uri_renders_the_nod_image_and_metadata() {
 
         assert!(svg.contains(">NOD</text>"));
         assert!(svg.contains(&format!(">{id}</text>")));
-        assert!(svg.contains(">1.424</text>"));
+        assert!(svg.contains(">0.912</text>"));
         assert!(svg.contains(">Encrypted</text>"));
         assert!(!svg.contains("1,250.12"));
         assert!(!svg.contains("Floor Price"));
