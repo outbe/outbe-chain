@@ -92,6 +92,9 @@ pub const DESIS_ADDRESS: Address = address!("0x000000000000000000000000000000000
 /// ERC-4626 vaults per asset.
 pub const VAULT_ROUTER_ADDRESS: Address = address!("0x0000000000000000000000000000000000001017");
 
+/// PayNote precompile address (stateful). Shielded ERC20 note pool. See `outbe-paynote`.
+pub const PAYNOTE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001019");
+
 // ---------------------------------------------------------------------------
 // System & infrastructure domain precompiles (0xEE00 range)
 // ---------------------------------------------------------------------------

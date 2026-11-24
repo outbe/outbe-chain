@@ -11,7 +11,7 @@ use outbe_evm::precompiles::{
 use outbe_runtime::precompiles::outbe_exact_precompile_addresses;
 use outbe_system_common::addresses::*;
 
-fn expected_exact_addresses() -> [Address; 38] {
+fn expected_exact_addresses() -> [Address; 39] {
     [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
@@ -24,6 +24,7 @@ fn expected_exact_addresses() -> [Address; 38] {
         INTEX_ADDRESS,
         INTEX_FACTORY_ADDRESS,
         DESIS_ADDRESS,
+        PAYNOTE_ADDRESS,
         VAULT_ROUTER_ADDRESS,
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,

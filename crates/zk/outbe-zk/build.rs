@@ -22,6 +22,7 @@ fn main() {
         .expect("manifest: proof_system must be a string")
         .to_string();
     let loaded = load_circuits(&manifest, &circuits_dir);
+    stage_l1_artifacts(&loaded, &circuits_dir, &out_dir);
     let l2 = load_l2_circuits(&manifest, &circuits_dir, &out_dir, &manifest_path, &loaded);
 
     let mut generated = String::new();
@@ -1321,6 +1322,23 @@ fn rerun_nr(dir: &Path) {
             .is_some_and(|ext| ext == "nr" || ext == "toml")
         {
             println!("cargo:rerun-if-changed={}", path.display());
+        }
+    }
+}
+
+/// Generated code embeds artifacts relative to `OUT_DIR`, so mirror the committed
+/// L1 releases there next to the compiled L2 packages.
+fn stage_l1_artifacts(loaded: &[Release], circuits_dir: &Path, out_dir: &Path) {
+    for release in loaded {
+        let artifacts = &release.circuit.artifacts;
+        let dst = out_dir.join(artifacts);
+        fs::create_dir_all(&dst).unwrap_or_else(|error| panic!("mkdir {}: {error}", dst.display()));
+        for name in ["bytecode.b64", "abi.json", "circuit.vk"] {
+            let src = circuits_dir.join(artifacts).join(name);
+            if src.exists() {
+                fs::copy(&src, dst.join(name))
+                    .unwrap_or_else(|error| panic!("copy {}: {error}", src.display()));
+            }
         }
     }
 }

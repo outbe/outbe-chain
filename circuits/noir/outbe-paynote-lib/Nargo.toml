@@ -1,0 +1,9 @@
+[package]
+name = "paynote_lib"
+type = "lib"
+authors = ["outbe"]
+compiler_version = ">=1.0.0"
+
+[dependencies]
+outbe_circuit_core = { path = "../outbe-circuit-core" }
+bignum = { tag = "v0.10.0", git = "https://github.com/noir-lang/noir-bignum" }

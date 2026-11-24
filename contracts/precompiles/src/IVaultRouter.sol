@@ -8,7 +8,8 @@ interface IVaultRouter {
         IntexCostAmount,
         CredisCostAmount,
         GemCostAmount,
-        NodCostAmount
+        NodCostAmount,
+        PayNoteDeposit
     }
 
     enum StablecoinTarget {

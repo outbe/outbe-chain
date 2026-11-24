@@ -29,6 +29,7 @@ outbe-credisfactory.workspace = true
 outbe-crosschainbridge.workspace = true
 outbe-cycle.workspace = true
 outbe-desis.workspace = true
+outbe-paynote.workspace = true
 outbe-emission.workspace = true
 outbe-engine.workspace = true
 outbe-evm.workspace = true
@@ -149,6 +150,7 @@ outbe-nodfactory = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
+outbe-zk.workspace = true
 outbe-teeregistry.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 outbe-evm = { workspace = true, features = ["test-hooks", "test-utils"] }
