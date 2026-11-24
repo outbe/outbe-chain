@@ -324,7 +324,6 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
         let mut seed_storage = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut seed_storage, |storage| {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-            vs.config_owner.write(proposer).unwrap();
             vs.set_config_max_validators(128).unwrap();
             vs.config_epoch_length_blocks.write(60).unwrap();
             vs.config_is_initialized.write(true).unwrap();
@@ -332,7 +331,7 @@ fn full_node_import_installs_provider_backed_accounted_parent_artifact_lookup_wi
             pubkey[0] = 0xA2;
             vs.test_seed_authoritative_min_stake(U256::from(1_000u64))
                 .unwrap();
-            vs.register_validator(proposer, proposer, &pubkey).unwrap();
+            vs.register_validator(proposer, &pubkey).unwrap();
             vs.test_seed_authoritative_bonded(proposer, U256::from(1_000u64))
                 .unwrap();
             vs.activate_validator_via_boundary_for_test(proposer)

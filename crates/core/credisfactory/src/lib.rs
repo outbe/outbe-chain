@@ -3,7 +3,7 @@
 //!
 //! - `issueCredis` uses the source's pledge for a fixed reservation, copies its pledge
 //!   and call terms, and records the source on the Credis.
-//! - `settleCredis` applies interest-first payments and returns released collateral
+//! - `settleCredis` applies fee-first payments and returns released collateral
 //!   to the source's liquid balance.
 //! - `forfeitCredis` lets the owner give up an Issued or Called Credis. Its
 //!   collateral burns as in an expired one.

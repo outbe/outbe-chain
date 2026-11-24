@@ -3,16 +3,12 @@ use outbe_primitives::error::Result;
 
 pub(super) const CHAIN_ID: u64 = 1;
 
-/// Owner address used across tests.
-pub(super) const OWNER: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-
-/// Storage at block `height` with the owner and room for `max` validators.
+/// Storage at block `height` with room for `max` validators.
 pub(super) fn registry_storage(height: u64, max: u32) -> Result<HashMapStorageProvider> {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_block_number(height);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = ValidatorSet::new(storage);
-        vs.config_owner.write(OWNER)?;
         vs.set_config_max_validators(max)
     })?;
     Ok(storage)
@@ -28,8 +24,8 @@ pub(super) fn at_height<R>(
     StorageHandle::enter(storage, |storage| f(&mut ValidatorSet::new(storage)))
 }
 
-/// Storage at block 1 with config_owner, config_max_validators and a 10-block
-/// epoch configured.
+/// Storage at block 1 with `config_max_validators` and a 10-block epoch
+/// configured.
 pub(super) fn configured_storage(max: u32) -> HashMapStorageProvider {
     // Height zero is the storage sentinel for an absent lifecycle height. Keep
     // semantic transition fixtures at a real block so EXITING/INACTIVE decode
@@ -44,7 +40,7 @@ pub(super) fn configured_storage(max: u32) -> HashMapStorageProvider {
     storage
 }
 
-/// Convenience: set config_owner and config_max_validators, then run test.
+/// Convenience: set `config_max_validators`, then run test.
 pub(super) fn with_vs_configured<R>(max: u32, f: impl FnOnce(&mut ValidatorSet) -> R) -> R {
     let mut storage = configured_storage(max);
     StorageHandle::enter(&mut storage, |storage| f(&mut ValidatorSet::new(storage)))
@@ -65,7 +61,7 @@ pub(super) fn activate_staked_for_test(vs: &mut ValidatorSet, addr: Address) {
 /// Move a registered validator through a complete canonical economic exit.
 pub(super) fn make_inactive_for_test(vs: &mut ValidatorSet, addr: Address) {
     activate_for_test(vs, addr);
-    vs.deactivate_validator(OWNER, addr).unwrap();
+    vs.deactivate_validator(addr).unwrap();
     let height = vs.storage.block_number().unwrap();
     vs.epoch_start_block.write(height).unwrap();
     vs.activate_reshared_set(&[], B256::ZERO).unwrap();
@@ -87,19 +83,18 @@ pub(super) fn confirm_ready(vs: &mut ValidatorSet<'_>, validator: Address, _seed
     vs.confirm_validator_ready(validator).unwrap();
 }
 
-/// Registers each `(validator, key seed)` pair through the owner, in order.
+/// Registers each `(validator, key seed)` pair in order.
 pub(super) fn register_validators(
     vs: &mut ValidatorSet,
     validators: &[(Address, u8)],
 ) -> Result<()> {
     for (validator, seed) in validators {
-        vs.register_validator(OWNER, *validator, &dummy_consensus_pubkey(*seed))?;
+        vs.register_validator(*validator, &dummy_consensus_pubkey(*seed))?;
     }
     Ok(())
 }
 
-/// Registers `validator` through the owner and activates it through the
-/// production boundary hook.
+/// Registers `validator` and activates it through the production boundary hook.
 pub(super) fn register_boundary_active(
     vs: &mut ValidatorSet,
     validator: Address,

@@ -1,17 +1,11 @@
 use std::path::PathBuf;
 
 use outbe_protocol_benchmarks::{
-    check_gas_baseline, render_text, run_scenario,
-    scenarios::confidential::ConfidentialScenario,
-    scenarios::credis::CredisScenario,
-    scenarios::credis_boundary::CredisVaultBoundaryScenario,
-    scenarios::gem::GemScenario,
-    scenarios::intex::IntexScenario,
-    scenarios::metadosis::MetadosisScenario,
-    scenarios::nod::NodScenario,
-    scenarios::stablecoin::StablecoinScenario,
-    scenarios::system_tx::SystemTxScenario,
-    scenarios::tribute::{render_gas_policy, TributeScenario},
+    check_gas_baseline, render_text, run_scenario, scenarios::confidential::ConfidentialScenario,
+    scenarios::credis::CredisScenario, scenarios::credis_boundary::CredisVaultBoundaryScenario,
+    scenarios::gem::GemScenario, scenarios::intex::IntexScenario,
+    scenarios::metadosis::MetadosisScenario, scenarios::nod::NodScenario,
+    scenarios::stablecoin::StablecoinScenario, scenarios::system_tx::SystemTxScenario,
     update_gas_baseline, write_json_atomic, BenchmarkRunReport, BenchmarkScenario, GasBaseline,
     Profile, RunConfig, ScenarioReport,
 };
@@ -46,7 +40,6 @@ fn execute() -> Result<(), String> {
         warmups: 3,
     };
     let mut reports = Vec::new();
-    run_if_selected(&TributeScenario, &arguments.filter, config, &mut reports)?;
     for scenario in [
         NodScenario::direct(Profile::Single),
         NodScenario::direct(Profile::Typical),
@@ -112,9 +105,6 @@ fn execute() -> Result<(), String> {
 
     let run_report = BenchmarkRunReport::new(reports);
     print!("{}", render_text(&run_report));
-    if let Some(policy) = render_gas_policy(&run_report.scenarios) {
-        print!("{policy}");
-    }
     if let Some(path) = arguments.json {
         write_json_atomic(&path, &run_report).map_err(|error| error.to_string())?;
     }

@@ -359,7 +359,6 @@ fn issue_nod(
             owner,
             gratis_load_minor: U256::from(11),
             emission_day: worldwide_day.value(),
-            league_id: 4,
             group_key: B256::ZERO,
             issuance_currency: 840,
             reference_currency: 840,
@@ -367,19 +366,15 @@ fn issue_nod(
         },
         U256::from(entry),
     );
+    // Each entry price is the price of its own offer hour.
+    body.sub_series_id = u16::try_from(entry % 50).unwrap();
     let terms = outbe_nod::test_support::sealed_terms(storage, &body, U256::from(entry));
     body.group_key = outbe_nod::identity::group_key(
-        GENESIS_TS,
+        worldwide_day.value(),
         terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
         840,
-    )
-    .expect("date step");
-    outbe_nod::api::add_nod(
-        storage,
-        &body,
-        terms,
-        outbe_nod::api::calculation_amount(&body)?,
-    )?;
+    );
+    outbe_nod::api::add_nod(storage, &body, terms)?;
     Ok(body.group_key)
 }
 

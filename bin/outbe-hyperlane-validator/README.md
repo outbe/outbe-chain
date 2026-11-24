@@ -274,9 +274,19 @@ is jailed:
 | `submitCheckpoint` | Skipped. The controller would reject it. |
 | `/status` | `"active": false`. This is not an error. |
 
-While `V` is active, the daemon submits the latest signed checkpoint of each
-running domain when its index is above `submittedIndex(V, domain)`. It never
-submits index 0. It waits up to 60 seconds for the receipt.
+While `V` is active, the daemon sends `submitCheckpoint` for each running
+domain in these two cases:
+
+- Liveness vote: `targetIndex(domain)` is not zero, the store has the signed
+  checkpoint at that index, and `targetVote(V, domain)` is not that index and
+  root. The controller compares the roots of all validators at the target
+  index. A missing vote, or a root that differs from the root of the quorum,
+  is a liveness miss.
+- Latest checkpoint: its index is above `submittedIndex(V, domain)`. The
+  controller sets the next target from these indexes.
+
+When the target index is also the latest index, one transaction does both. The
+daemon never submits index 0. It waits up to 60 seconds for the receipt.
 
 ## Limits
 

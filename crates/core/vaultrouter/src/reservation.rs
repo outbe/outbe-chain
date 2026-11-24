@@ -1,4 +1,4 @@
-//! Quote once, before withdrawing the reserved principal. Issuance never refreshes these terms.
+//! Quote once, before withdrawing the reserved amount. Issuance never refreshes these terms.
 use crate::{
     errors::{date_step_error, VaultRouterError},
     schema::LiquidityReservation,
@@ -6,13 +6,10 @@ use crate::{
 };
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
-use outbe_core_common::series_id::SeriesId;
-use outbe_oracle::{
-    api::{self, current_vwap_24h_snapshot, vwap_24h},
-    schema::OracleContract,
-};
+use outbe_credis::CredisContract;
+use outbe_oracle::api::{self, current_vwap_24h_snapshot, vwap_24h};
 use outbe_primitives::{error::Result, storage::StorageHandle};
-use outbe_system_common::time::{first_full_day, previous_date_key, timestamp_to_date_key};
+use outbe_system_common::time::first_full_day;
 use outbe_system_common::{math::scaled_math::checked_quote, units::MAX_ASSET_DECIMALS};
 pub(crate) fn quote(
     storage: &StorageHandle<'_>,
@@ -35,46 +32,36 @@ pub(crate) fn quote(
     )?;
     let currency = IReferenceCurrency::isoCodeCall::abi_decode_returns_validate(&data)
         .map_err(|_| VaultRouterError::InvalidAssetCurrency)?;
-    api::check_reference_currency(currency)?;
     api::check_reference_currency(reference_currency)?;
     let snapshot = current_vwap_24h_snapshot(storage.clone())?;
     let valuation = vwap_24h(storage.clone(), currency, snapshot)?
         .filter(|v| !v.is_zero())
         .ok_or(VaultRouterError::PledgePriceUnavailable)?;
-    let (gratis_minor, entry_price_minor) = checked_quote(amount, decimals, valuation)?;
-    // The last closed rate. The publication time is not checked here.
-    let (policy_rate, _published_at) = api::get_policy_rate(storage.clone(), currency)?;
+    let entry_price_minor = vwap_24h(storage.clone(), reference_currency, snapshot)?
+        .filter(|v| !v.is_zero())
+        .ok_or(VaultRouterError::ReferencePriceUnavailable)?;
+    let gratis_minor = checked_quote(amount, decimals, valuation)?;
     let call_terms = outbe_credis::config::read(storage)?;
     let now = storage.now_secs()?;
-    let day = previous_date_key(timestamp_to_date_key(now)).map_err(date_step_error)?;
-    let call_start_day = first_full_day(now).map_err(date_step_error)?;
-    let series_id = SeriesId::for_pair(day, currency, reference_currency)
-        .map_err(|_| VaultRouterError::InvalidAssetCurrency)?;
-    if OracleContract::new(storage.clone())
-        .utc_day_vwap_last_finalized
-        .read()?
-        < day
-    {
-        return Err(VaultRouterError::PreviousDayVwapUnavailable.into());
+    let (policy_rate, published_at) = api::get_policy_rate(storage.clone(), currency)?;
+    if now.saturating_sub(published_at) > u64::from(call_terms.max_policy_rate_age_seconds) {
+        return Err(VaultRouterError::PolicyRateTooOld.into());
     }
-    let index = api::coen_pair_index_opt(storage.clone(), reference_currency)?
-        .ok_or(VaultRouterError::ReferencePairUnavailable)?;
-    let anchor = api::get_utc_day_vwap(storage.clone(), day, index)?
-        .filter(|p| !p.is_zero())
-        .ok_or(VaultRouterError::PreviousDayVwapUnavailable)?;
+    let call_start_day = first_full_day(now).map_err(date_step_error)?;
+    let series_id = CredisContract::series_of(now, currency, reference_currency)
+        .map_err(|_| VaultRouterError::InvalidAssetCurrency)?;
     Ok(LiquidityReservation {
         asset,
         amount_minor: amount,
         gratis_minor,
         snapshot_id: snapshot.to_u256(),
         entry_price_minor,
-        valuation_price_minor: valuation,
         policy_rate,
         issuance_currency: currency,
         asset_decimals: decimals,
         reference_currency,
-        call_anchor_price_minor: anchor,
         series_id,
+        sub_series: CredisContract::sub_series_of(now),
         call_start_day,
         call_rate: call_terms.call_rate,
         call_window_seconds: call_terms.call_window_seconds,

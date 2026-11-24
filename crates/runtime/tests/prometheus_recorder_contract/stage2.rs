@@ -658,7 +658,7 @@ mod canary {
     use outbe_execution::tee_canary::{
         run_tee_canary_worker, EnclaveRequester, TeeCanaryConfig, TeeCanaryTarget,
     };
-    use outbe_runtime::TributeCanaryProbe;
+    use outbe_runtime::OfferCanaryProbe;
     use outbe_tee::{
         canary::{TeeEnclaveHealthChannel, TeeEnclaveHealthState},
         errors::TransportError,
@@ -677,14 +677,14 @@ mod canary {
             );
             let status = TeeEnclaveHealthChannel::default();
             let shutdown = CancellationToken::new();
-            let period = Duration::from_millis(5);
+            let period = Duration::from_secs(60);
             let worker = tokio::spawn(run_tee_canary_worker(
                 TeeCanaryTarget::new(
                     FakeEnclaveRequester {
                         key: SigningKey::from_bytes(&[9; 32]),
                         resident,
                     },
-                    TributeCanaryProbe,
+                    OfferCanaryProbe,
                 ),
                 TeeCanaryConfig {
                     interval: period,
@@ -693,7 +693,8 @@ mod canary {
                 status.clone(),
                 shutdown.clone(),
             ));
-            let observed = observe_tick(&status, expected, period).await;
+            // Ten seconds is far below the period, so only the immediate first tick fits.
+            let observed = observe_tick(&status, expected, Duration::from_secs(10)).await;
             shutdown.cancel();
             worker.await.expect("canary worker stopped");
             observed.expect("canary published expected tick");
@@ -705,7 +706,7 @@ mod canary {
         let status = TeeEnclaveHealthChannel::default();
         let shutdown = CancellationToken::new();
         let period = Duration::from_millis(5);
-        let worker = tokio::spawn(TributeCanaryProbe::run_in_process_worker(
+        let worker = tokio::spawn(OfferCanaryProbe::run_in_process_worker(
             Arc::clone(&context),
             TeeCanaryConfig {
                 interval: period,
@@ -746,10 +747,9 @@ mod canary {
     async fn observe_tick(
         status: &TeeEnclaveHealthChannel,
         expected: TeeEnclaveHealthState,
-        period: Duration,
+        budget: Duration,
     ) -> Result<(), tokio::time::error::Elapsed> {
-        // One period is the budget for observing the immediate first tick.
-        tokio::time::timeout(period, async {
+        tokio::time::timeout(budget, async {
             while status.snapshot().state != expected {
                 tokio::task::yield_now().await;
             }

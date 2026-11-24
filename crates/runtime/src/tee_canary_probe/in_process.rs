@@ -127,7 +127,7 @@ impl TeeCanaryProbe for BoundCanary {
     }
 }
 
-impl TributeCanaryProbe {
+impl OfferCanaryProbe {
     /// Run the existing bounded periodic worker against the resident Canary lane.
     pub async fn run_in_process_worker(
         context: Arc<InProcessTeeContext>,
@@ -315,7 +315,7 @@ mod rpc_tests {
         );
         let channel = TeeEnclaveHealthChannel::default();
         let shutdown = CancellationToken::new();
-        let worker = tokio::spawn(TributeCanaryProbe::run_in_process_worker(
+        let worker = tokio::spawn(OfferCanaryProbe::run_in_process_worker(
             Arc::clone(&context),
             TeeCanaryConfig {
                 interval: std::time::Duration::from_millis(5),
@@ -485,7 +485,7 @@ mod metrics_tests {
         });
         assert_offer_batch(Some("unavailable"), || {
             assert!(matches!(
-                TributeCanaryProbe.probe_decrypt(&Silent, &[0x44; 32]),
+                OfferCanaryProbe.probe_decrypt(&Silent, &[0x44; 32]),
                 CanaryTickOutcome::Failure {
                     unreachable: true,
                     ..

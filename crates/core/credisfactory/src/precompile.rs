@@ -48,24 +48,28 @@ pub fn dispatch(
                         value,
                     },
                     |sender, c, val| {
-                        let (credis_id, principal_minor) =
-                            runtime::issue_credis(storage.clone(), sender, c.reservationId, val)?;
+                        let (credis_id, amount_minor) = runtime::issue_credis(
+                            storage.clone(),
+                            sender,
+                            c.credisReservationId,
+                            val,
+                        )?;
                         Ok(ICredisFactory::issueCredisReturn {
                             credisId: credis_id,
-                            principalMinor: principal_minor,
+                            amountMinor: amount_minor,
                         })
                     },
                 ),
                 settleCredis(c) => mutate(&storage, c, caller, |sender, c| {
-                    let (principal, interest) = runtime::settle_credis(
+                    let (amount, fee) = runtime::settle_credis(
                         storage.clone(),
                         sender,
                         c.credisId,
                         c.amountCapMinor,
                     )?;
                     Ok(ICredisFactory::settleCredisReturn {
-                        principalSettledMinor: principal,
-                        interestSettledMinor: interest,
+                        settledAmountMinor: amount,
+                        settledFeeMinor: fee,
                     })
                 }),
                 quoteSettlement(c) => view(c, |c| runtime::quote_settlement(&storage, c.credisId)),
@@ -76,7 +80,7 @@ pub fn dispatch(
                     let forfeit = runtime::forfeit_by_owner(storage.clone(), sender, c.credisId)?;
                     Ok(ICredisFactory::forfeitCredisReturn {
                         forfeitedGratisMinor: forfeit.forfeited_gratis_minor,
-                        forfeitedPrincipalMinor: forfeit.forfeited_principal_minor,
+                        forfeitedAmountMinor: forfeit.forfeited_amount_minor,
                     })
                 }),
                 supportsInterface(c) => view(c, |c| {

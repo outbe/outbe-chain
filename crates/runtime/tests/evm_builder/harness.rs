@@ -316,7 +316,6 @@ pub(super) fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
     metadosis_genesis.set_block_number(1);
     metadosis_genesis.enter(|storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(Address::ZERO).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_epoch_length_blocks.write(60).unwrap();
         vs.config_is_initialized.write(true).unwrap();
@@ -325,8 +324,7 @@ pub(super) fn seed_active_validators(db: &mut TestDb, validators: &[Address]) {
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
         let staking = outbe_staking::contract::Staking::new(storage.clone());
         for (validator, consensus_key) in &founders {
-            vs.register_validator(Address::ZERO, *validator, consensus_key)
-                .unwrap();
+            vs.register_validator(*validator, consensus_key).unwrap();
             vs.test_seed_authoritative_bonded(*validator, minimum)
                 .unwrap();
             let total = staking.total_staked.read().unwrap();

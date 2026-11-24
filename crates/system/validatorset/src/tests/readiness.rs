@@ -11,7 +11,7 @@ fn test_confirm_ready_signals_pending_until_certified_boundary() {
         let pk = dummy_consensus_pubkey(0x01);
 
         // Register -> WaitingForReadiness (PENDING), pending_set_change = true
-        vs.register_validator(OWNER, val, &pk).unwrap();
+        vs.register_validator(val, &pk).unwrap();
         assert!(vs.has_pending_set_change().unwrap());
 
         // An empty boundary while val is WaitingForReadiness retains pending_set_change = true
@@ -45,7 +45,7 @@ fn test_activate_reshared_set_clears_pending_after_join() {
         let val = address!("0x1111111111111111111111111111111111111111");
         let pk = dummy_consensus_pubkey(0x01);
 
-        vs.register_validator(OWNER, val, &pk).unwrap();
+        vs.register_validator(val, &pk).unwrap();
         vs.mark_pending(val).unwrap();
         confirm_ready(vs, val, 0x02);
         assert!(vs.has_pending_set_change().unwrap());
@@ -171,8 +171,7 @@ fn inactive_reentry_with_same_bls_requires_fresh_readiness() {
         let minimum = U256::from(1_000u64);
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
 
-        vs.register_validator(OWNER, validator, &consensus_pubkey)
-            .unwrap();
+        vs.register_validator(validator, &consensus_pubkey).unwrap();
         vs.test_seed_authoritative_bonded(validator, minimum)
             .unwrap();
         vs.mark_pending(validator).unwrap();
@@ -183,8 +182,7 @@ fn inactive_reentry_with_same_bls_requires_fresh_readiness() {
         vs.test_seed_authoritative_bonded(validator, U256::ZERO)
             .unwrap();
         make_inactive_for_test(vs, validator);
-        vs.register_validator(OWNER, validator, &consensus_pubkey)
-            .unwrap();
+        vs.register_validator(validator, &consensus_pubkey).unwrap();
         vs.test_seed_authoritative_bonded(validator, minimum)
             .unwrap();
         assert_eq!(vs.val_status.read(&validator).unwrap(), status::PENDING);
@@ -217,7 +215,7 @@ fn test_already_active_validator_does_not_raise_pending() {
         let minimum = U256::from(1_000u64);
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
 
-        vs.register_validator(OWNER, val, &pk).unwrap();
+        vs.register_validator(val, &pk).unwrap();
         vs.test_seed_authoritative_bonded(val, minimum).unwrap();
         vs.activate_validator_via_boundary_for_test(val).unwrap();
 
@@ -246,7 +244,7 @@ fn confirm_validator_ready_requires_minimum_bond_in_waiting_and_joining() {
         let minimum = U256::from(1_000u64);
         let sub_min = U256::from(999u64);
 
-        vs.register_validator(OWNER, validator, &pk).unwrap();
+        vs.register_validator(validator, &pk).unwrap();
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
         vs.test_seed_authoritative_bonded(validator, sub_min)
             .unwrap();
@@ -307,7 +305,7 @@ fn confirm_validator_ready_enforces_default_min_stake_when_slot_zero_is_unconfig
         let sub_min = DEFAULT_MIN_STAKE - U256::ONE;
 
         // Leave Staking slot 0 (config_min_stake) at 0 so the default fallback applies.
-        vs.register_validator(OWNER, validator, &pk).unwrap();
+        vs.register_validator(validator, &pk).unwrap();
 
         for bonded in [U256::ZERO, sub_min] {
             vs.test_seed_authoritative_bonded(validator, bonded)

@@ -77,9 +77,8 @@ impl Staking<'_> {
         let guard = self.storage.checkpoint_guard()?;
         let mut val_set = ValidatorSet::new(self.storage.clone());
         val_set.register_with_initial_stake(
-            caller,
             validator,
-            (consensus_pubkey, radicle_node_id, Some(bls_signature)),
+            (consensus_pubkey, radicle_node_id, bls_signature),
             (p2p_version, p2p_encoded),
             (new_stake, min_stake),
         )?;

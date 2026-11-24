@@ -24,7 +24,6 @@ use support::{
     assert_selector, evidence_already_processed, register_active_submitter, with_storage,
 };
 
-const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
 const ACCUSED: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 const STAKE_AMOUNT: u64 = 1_000_000_000_000u64;
@@ -80,14 +79,13 @@ fn build_evidence(
 /// as an active validator. Set the epoch counter so epoch-lag passes.
 fn setup(storage: StorageHandle, accused_pubkey: &[u8; 48]) {
     let mut vs = ValidatorSet::new(storage.clone());
-    vs.test_configure_registry(OWNER).unwrap();
+    vs.test_configure_registry().unwrap();
     let mut epoch = vs.epoch_snapshot().unwrap();
     epoch.number = U256::from(ROUND_EPOCH);
     vs.test_set_epoch_snapshot(epoch).unwrap();
 
     vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
-    vs.test_register_validator_without_pop(ACCUSED, accused_pubkey)
-        .unwrap();
+    vs.register_validator(ACCUSED, accused_pubkey).unwrap();
     let staking = Staking::new(storage.clone());
     let stake = U256::from(STAKE_AMOUNT);
     staking.stake_amount.write(&ACCUSED, stake).unwrap();
@@ -246,7 +244,7 @@ fn unregistered_signer_is_rejected() {
     with_storage(|storage| {
         // Do NOT register the accused; only the submitter.
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.test_configure_registry(OWNER).unwrap();
+        vs.test_configure_registry().unwrap();
         let mut epoch = vs.epoch_snapshot().unwrap();
         epoch.number = U256::from(ROUND_EPOCH);
         vs.test_set_epoch_snapshot(epoch).unwrap();
@@ -273,7 +271,7 @@ fn non_active_submitter_is_rejected() {
         let pubkey = pubkey_bytes(&key);
         // Register accused but NOT the submitter (submitter status = 0).
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.test_configure_registry(OWNER).unwrap();
+        vs.test_configure_registry().unwrap();
         let mut epoch = vs.epoch_snapshot().unwrap();
         epoch.number = U256::from(ROUND_EPOCH);
         vs.test_set_epoch_snapshot(epoch).unwrap();

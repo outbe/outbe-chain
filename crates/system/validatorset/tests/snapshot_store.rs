@@ -1,6 +1,6 @@
 //! Integration tests for the V2 `CommitteeSnapshotStore`.
 //!
-//! Layout tests pin the schema slot indices for slot 30 and slots 31..40. Thus
+//! Layout tests pin the schema slot indices for slot 26 and slots 27..=35. Thus
 //! the tests catch schema drift as a wire-format-breaking change. Hash and key
 //! formula tests pin the byte layout. The atomicity tests use
 //! the V2 atomic boundary hook (`activate_boundary_atomic`) to verify that
@@ -53,11 +53,11 @@ fn legacy_active_set_hash(addresses: &[Address]) -> B256 {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Slot stability: slots 31..40 are at the expected indices.
+// 1. Slot stability: slots 27..=35 are at the expected indices.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn committee_snapshot_storage_slots_31_to_40_are_stable() {
+fn committee_snapshot_storage_slots_27_to_35_are_stable() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let vs = ValidatorSet::new(storage);
@@ -67,42 +67,42 @@ fn committee_snapshot_storage_slots_31_to_40_are_stable() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Slot 30 (`finalized_participation_recorded`) does not move.
+// 2. Slot 26 (`finalized_participation_recorded`) does not move.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn validator_set_slot30_finalized_participation_recorded_does_not_move() {
+fn validator_set_slot26_finalized_participation_recorded_does_not_move() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let vs = ValidatorSet::new(storage);
         assert_eq!(
             vs.finalized_participation_recorded.base_slot(),
-            U256::from(30u64),
-            "slot 30 (finalized_participation_recorded) must not move; \
-             V2 snapshot extension starts at slot 31"
+            U256::from(26u64),
+            "slot 26 (finalized_participation_recorded) must not move; \
+             V2 snapshot extension starts at slot 27"
         );
     });
 }
 
 #[test]
-fn validator_operational_key_slots_48_and_49_are_append_only() {
+fn validator_operational_key_slots_43_and_44_are_append_only() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let vs = ValidatorSet::new(storage);
-        assert_eq!(vs.delegate_by_validator_role.base_slot(), U256::from(48u64));
-        assert_eq!(vs.validator_by_role_delegate.base_slot(), U256::from(49u64));
+        assert_eq!(vs.delegate_by_validator_role.base_slot(), U256::from(43u64));
+        assert_eq!(vs.validator_by_role_delegate.base_slot(), U256::from(44u64));
     });
 }
 
 #[test]
-fn radicle_node_id_uses_native_slots_50_and_51() {
+fn radicle_node_id_uses_native_slots_45_and_46() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let vs = ValidatorSet::new(storage);
-        assert_eq!(vs.val_radicle_node_id.base_slot(), U256::from(50u64));
+        assert_eq!(vs.val_radicle_node_id.base_slot(), U256::from(45u64));
         assert_eq!(
             vs.radicle_node_id_to_validator.base_slot(),
-            U256::from(51u64)
+            U256::from(46u64)
         );
     });
 }
@@ -114,7 +114,6 @@ fn clear_committee_snapshot_removes_native_consensus_snapshot() {
         let validator = Address::repeat_byte(0x64);
         let consensus_pubkey = pubkey_filled(0x74);
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(Address::ZERO).unwrap();
         vs.set_config_max_validators(128).unwrap();
         admit_validator(&mut vs, validator, &consensus_pubkey);
         drop(vs);
@@ -131,12 +130,7 @@ fn clear_committee_snapshot_removes_native_consensus_snapshot() {
 
         clear_committee_snapshot(storage.clone(), key).unwrap();
 
-        assert_eq!(read_committee_snapshot(storage.clone(), key).unwrap(), None);
-        let vs = ValidatorSet::new(storage);
-        assert_eq!(
-            vs._reserved_committee_snapshot_slot_40.read().unwrap(),
-            B256::ZERO
-        );
+        assert_eq!(read_committee_snapshot(storage, key).unwrap(), None);
     });
 }
 
@@ -147,10 +141,8 @@ fn shared_test_activation_helper_drives_production_boundary_hook() {
         let validator = Address::repeat_byte(0x65);
         let consensus_pubkey = pubkey_filled(0x75);
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(Address::ZERO).unwrap();
         vs.set_config_max_validators(128).unwrap();
-        vs.register_validator(Address::ZERO, validator, &consensus_pubkey)
-            .unwrap();
+        vs.register_validator(validator, &consensus_pubkey).unwrap();
         let minimum = U256::from(1_000u64);
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
         vs.test_seed_authoritative_bonded(validator, minimum)
@@ -448,15 +440,11 @@ fn boundary_block_writes_both_outgoing_and_incoming_snapshots_atomically() {
         // committee snapshot can represent either one. Then recreate the
         // real outgoing-exit/incoming-join rotation shape.
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner
-            .write(address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"))
-            .unwrap();
         vs.set_config_max_validators(10).unwrap();
         admit_validator(&mut vs, outgoing_addr, &pubkey_filled(0xAA));
         admit_validator(&mut vs, incoming_addr, &pubkey_filled(0xBB));
         vs.activate_validator(outgoing_addr).unwrap();
-        let owner = vs.config_owner.read().unwrap();
-        vs.deactivate_validator(owner, outgoing_addr)
+        vs.deactivate_validator(outgoing_addr)
             .expect("outgoing validator requests exit before freeze");
         drop(vs);
 
@@ -547,17 +535,13 @@ fn outgoing_epoch_snapshot_remains_available_after_reshare_activation() {
     storage.set_block_number(1);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner
-            .write(address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"))
-            .unwrap();
         vs.set_config_max_validators(10).unwrap();
         admit_validator(&mut vs, val_a, &pubkey_filled(0x11));
         admit_validator(&mut vs, val_b, &pubkey_filled(0x22));
         admit_validator(&mut vs, val_c, &pubkey_filled(0x33));
-        let owner = vs.config_owner.read().unwrap();
         vs.activate_validator(val_a).unwrap();
         vs.activate_validator(val_b).unwrap();
-        vs.deactivate_validator(owner, val_a)
+        vs.deactivate_validator(val_a)
             .expect("val_a requests exit before the first freeze");
         drop(vs);
 
@@ -576,7 +560,7 @@ fn outgoing_epoch_snapshot_remains_available_after_reshare_activation() {
         // val_b is still active after the first rotation. Its exit request is
         // visible at the next freeze, so the second boundary may exclude it.
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.deactivate_validator(owner, val_b)
+        vs.deactivate_validator(val_b)
             .expect("val_b requests exit before the second freeze");
         drop(vs);
 
@@ -716,7 +700,7 @@ fn real_dkg_group_public_key(rng: &mut ChaCha20Rng) -> Result<(Vec<PrivateKey>, 
 }
 
 #[test]
-fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() {
+fn committee_snapshot_slot35_bytes_match_commonware_encode_of_real_polynomial() {
     // Use a stable arbitrary seed so the DKG fixture is deterministic.
     let mut rng = ChaCha20Rng::seed_from_u64(277_u64);
     let (keys, encoded_group_pk) = real_dkg_group_public_key(&mut rng).unwrap();
@@ -748,7 +732,6 @@ fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(Address::ZERO).unwrap();
         vs.set_config_max_validators(128).unwrap();
         for entry in &snapshot.committee {
             admit_validator(&mut vs, entry.address, &entry.consensus_pubkey);
@@ -760,10 +743,10 @@ fn committee_snapshot_slot39_bytes_match_commonware_encode_of_real_polynomial() 
             .expect("snapshot must be present after write");
         assert_eq!(
             read_back.vrf_group_public_key_bytes, encoded_group_pk,
-            "slot 39 chunks must round-trip the exact commonware_codec::Encode bytes"
+            "slot 35 chunks must round-trip the exact commonware_codec::Encode bytes"
         );
 
-        // Sanity: slot-38 length equals the actual encoded length.
+        // Sanity: slot-34 length equals the actual encoded length.
         let vs = ValidatorSet::new(storage.clone());
         let stored_len = vs
             .committee_snapshot_vrf_group_public_key_len
@@ -823,9 +806,6 @@ fn boundary_activation_rolls_back_snapshots_on_failure() {
         // intentionally contains `unknown_addr` which is NOT registered, so
         // the validated boundary fails closed before any write commits.
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner
-            .write(address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"))
-            .unwrap();
         vs.set_config_max_validators(10).unwrap();
         admit_validator(&mut vs, known_addr, &pubkey_filled(0x11));
         vs.activate_validator(known_addr).unwrap();
@@ -919,7 +899,6 @@ fn committee_snapshot_prune_ring_retains_recent_and_clears_old_epochs() {
             vrf_public_polynomial_hash: alloy_primitives::B256::ZERO,
         };
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(Address::ZERO).unwrap();
         vs.set_config_max_validators(128).unwrap();
         admit_validator(
             &mut vs,
@@ -974,7 +953,6 @@ fn committee_snapshot_epoch_lookup_rejects_a_newer_colliding_ring_entry() {
         let validator = address!("0x0000000000000000000000000000000000000001");
         let consensus_pubkey = pubkey_filled(0x11);
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(Address::ZERO).unwrap();
         vs.set_config_max_validators(128).unwrap();
         admit_validator(&mut vs, validator, &consensus_pubkey);
         drop(vs);
@@ -1009,11 +987,9 @@ fn committee_snapshot_epoch_lookup_rejects_a_newer_colliding_ring_entry() {
 }
 
 fn admit_validator(vs: &mut ValidatorSet<'_>, validator: Address, consensus_pubkey: &[u8; 48]) {
-    let owner = vs.config_owner.read().unwrap();
     let minimum = U256::from(1_000u64);
     vs.test_seed_authoritative_min_stake(minimum).unwrap();
-    vs.register_validator(owner, validator, consensus_pubkey)
-        .unwrap();
+    vs.register_validator(validator, consensus_pubkey).unwrap();
     vs.test_seed_authoritative_bonded(validator, minimum)
         .unwrap();
     vs.mark_pending(validator).unwrap();

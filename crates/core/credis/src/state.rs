@@ -1,10 +1,10 @@
-//! Storage CRUD, the live lists and the series of the Credis contract.
+//! Storage CRUD, the live lists, the sub-series and the call groups of the Credis contract.
 //!
 //! All functions take a short-lived `&mut CredisContract` (or `&CredisContract`
 //! for reads) constructed via `CredisContract::new(storage)`. They only touch
 //! local storage. The rules that drive them live in CredisFactory.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 
 use outbe_core_common::deadline_queue;
 use outbe_core_common::series_id::SeriesId;
@@ -12,10 +12,11 @@ use outbe_primitives::error::Result;
 use outbe_primitives::storage::dsl::Map;
 use outbe_primitives::storage::indexed_list::{create_indexed, delete_indexed, IndexedList};
 use outbe_system_common::call_bins;
+use outbe_system_common::call_breach::{self, BreachTerms};
 
 use crate::errors::CredisError;
 use crate::precompile::ICredis;
-use crate::schema::{Credis, CredisContract};
+use crate::schema::{Credis, CredisContract, SubSeriesSummary};
 
 impl<'storage> CredisContract<'storage> {
     // ---------------------------------------------------------------------
@@ -26,40 +27,58 @@ impl<'storage> CredisContract<'storage> {
         self.records.exists(credis_id)
     }
 
-    /// Loads a Credis as its series sees it: a live Credis reads its call and call terms
-    /// from the series. Reverts on missing.
+    /// Loads a Credis as its group sees it: a live Credis reads its call and call terms
+    /// from the group. Reverts on missing.
     pub fn load_credis(&self, credis_id: U256) -> Result<Credis> {
         let mut record = self
             .records
             .get(credis_id)?
             .ok_or(CredisError::CredisNotFound)?;
         if !record.is_settled() {
-            let series = record.series_id;
-            record.call_window_seconds = self.series_call_window_seconds.read(&series)?;
-            record.call_threshold_seconds = self.series_call_threshold_seconds.read(&series)?;
+            let group = self.group_of(&record)?;
+            record.call_window_seconds = self.group_call_window_seconds.read(&group)?;
+            record.call_threshold_seconds = self.group_call_threshold_seconds.read(&group)?;
             record.call_notice_period_seconds =
-                self.series_call_notice_period_seconds.read(&series)?;
-            record.called_at = self.series_called_at.read(&series)?;
+                self.group_call_notice_period_seconds.read(&group)?;
+            record.called_at = self.group_called_at.read(&group)?;
         }
         Ok(record)
     }
 
+    /// The call group of the Credis's sub-series.
+    pub fn group_of(&self, record: &Credis) -> Result<B256> {
+        self.sub_series_group
+            .read(&Self::sub_series_key(record.series_id, record.sub_series))
+    }
+
+    /// The entry and call price a sub-series sealed, `None` while it is not open.
+    pub fn sub_series_prices(
+        &self,
+        series_id: SeriesId,
+        sub_series: u8,
+    ) -> Result<Option<(U256, U256)>> {
+        let key = Self::sub_series_key(series_id, sub_series);
+        if self.sub_series_group.read(&key)?.is_zero() {
+            return Ok(None);
+        }
+        Ok(Some((
+            self.sub_series_entry_price_minor.read(&key)?,
+            self.sub_series_call_price_minor.read(&key)?,
+        )))
+    }
+
     /// Records a new Credis, lists it, counts it in its owner's sums, puts it in its
-    /// series, and emits the ERC-721 mint `Transfer`. Returns `true` when this Credis
-    /// opens the series for the first time.
+    /// sub-series and group, and emits the ERC-721 mint `Transfer`. Returns `true` when
+    /// this Credis opens its sub-series.
     pub fn create_credis_record(&mut self, record: &Credis, call_start_day: u32) -> Result<bool> {
         create_indexed(&self.records, record, self.record_indexes(record.owner))?;
-        add_to(
-            &self.owner_principal_minor,
-            record.owner,
-            record.principal_minor,
-        )?;
+        add_to(&self.owner_amount_minor, record.owner, record.amount_minor)?;
         add_to(
             &self.owner_outstanding_minor,
             record.owner,
-            record.outstanding_principal_minor,
+            record.outstanding_amount_minor,
         )?;
-        let newly_opened = self.join_series(record, call_start_day)?;
+        let newly_opened = self.join_group(record, call_start_day)?;
         self.emit(ICredis::Transfer {
             from: Address::ZERO,
             to: record.owner,
@@ -76,21 +95,17 @@ impl<'storage> CredisContract<'storage> {
     }
 
     /// Deletes a Credis, unlists it, takes it out of its owner's sums and emits the ERC-721 burn
-    /// `Transfer`. Its series membership is handled by the caller.
+    /// `Transfer`. Its group membership is handled by the caller.
     pub fn delete_credis_record(&mut self, credis_id: U256) -> Result<()> {
         let record = self
             .records
             .get(credis_id)?
             .ok_or(CredisError::CredisNotFound)?;
-        take_from(
-            &self.owner_principal_minor,
-            record.owner,
-            record.principal_minor,
-        )?;
+        take_from(&self.owner_amount_minor, record.owner, record.amount_minor)?;
         take_from(
             &self.owner_outstanding_minor,
             record.owner,
-            record.outstanding_principal_minor,
+            record.outstanding_amount_minor,
         )?;
         delete_indexed(&self.records, credis_id, |record: &Credis| {
             self.record_indexes(record.owner)
@@ -102,14 +117,17 @@ impl<'storage> CredisContract<'storage> {
         })
     }
 
-    /// Takes repaid principal out of its owner's outstanding sum.
+    /// Takes repaid amount out of its owner's outstanding sum.
     pub fn take_owner_outstanding(&mut self, owner: Address, repaid: U256) -> Result<()> {
         take_from(&self.owner_outstanding_minor, owner, repaid)
     }
 
-    /// Subtracts released or forfeited Gratis from the series's unpaid Gratis total.
-    pub fn take_series_unpaid_gratis(&mut self, series: SeriesId, amount: U256) -> Result<()> {
-        take_from(&self.series_unpaid_gratis_minor, series, amount)
+    pub fn take_outstanding_amount(&mut self, record: &Credis, amount: U256) -> Result<()> {
+        take_from(
+            &self.sub_series_outstanding_amount_minor,
+            Self::sub_series_key(record.series_id, record.sub_series),
+            amount,
+        )
     }
 
     fn record_indexes(&self, owner: Address) -> [IndexedList<'storage, U256>; 1] {
@@ -117,17 +135,6 @@ impl<'storage> CredisContract<'storage> {
             self.owner_ids.list(&owner),
             self.owner_id_position.clone(),
         )]
-    }
-
-    /// Widens the currency's scan terms to cover a newly opened Credis.
-    pub fn widen_scan_terms(&mut self, record: &Credis) -> Result<()> {
-        outbe_system_common::call_breach::widen_scan_terms(
-            &self.max_call_window_seconds,
-            &self.min_call_threshold_seconds,
-            record.reference_currency,
-            record.call_window_seconds,
-            record.call_threshold_seconds,
-        )
     }
 
     // ---------------------------------------------------------------------
@@ -143,119 +150,164 @@ impl<'storage> CredisContract<'storage> {
     }
 
     // ---------------------------------------------------------------------
-    // Series
+    // Sub-series and call groups
     // ---------------------------------------------------------------------
 
-    fn series_index(&self, series: SeriesId) -> IndexedList<'storage, U256> {
+    fn group_index(&self, group: B256) -> IndexedList<'storage, U256> {
         IndexedList::new(
-            self.series_members.list(&series),
-            self.series_member_position.clone(),
+            self.group_members.list(&group),
+            self.group_member_position.clone(),
         )
     }
 
-    /// Puts a Credis in its series. The first member ever opened in the series seals its terms,
-    /// and whenever an uncalled series transitions from 0 live members to 1 it enters the call bin
-    /// of its call price. Returns `true` iff this Credis opened the series for the first time.
-    fn join_series(&mut self, record: &Credis, call_start_day: u32) -> Result<bool> {
-        let series = record.series_id;
-        let was_empty = self.series_member_count(series)? == 0;
-        let newly_opened = !self.series_opened.read(&series)?;
+    /// Returns `true` when this Credis opens its sub-series.
+    fn join_group(&mut self, record: &Credis, call_start_day: u32) -> Result<bool> {
+        let key = Self::sub_series_key(record.series_id, record.sub_series);
+        let mut group = self.sub_series_group.read(&key)?;
+        let newly_opened = group.is_zero();
         if newly_opened {
-            self.series_opened.write(&series, true)?;
-            self.series_issuance_currency
-                .write(&series, record.issuance_currency)?;
-            self.series_currency
-                .write(&series, record.reference_currency)?;
-            self.series_full_day.write(&series, call_start_day)?;
-            self.series_call_anchor_price_minor
-                .write(&series, record.call_anchor_price_minor)?;
-            self.series_call_price_minor
-                .write(&series, record.call_price_minor)?;
-            self.series_policy_rate.write(&series, record.policy_rate)?;
-            self.series_call_window_seconds
-                .write(&series, record.call_window_seconds)?;
-            self.series_call_threshold_seconds
-                .write(&series, record.call_threshold_seconds)?;
-            self.series_call_notice_period_seconds
-                .write(&series, record.call_notice_period_seconds)?;
+            group = call_breach::group_key(
+                call_start_day,
+                record.call_price_minor,
+                record.reference_currency,
+            );
+            self.open_sub_series(key, group, record)?;
+            if self.group_start_day.read(&group)? == 0 {
+                self.seal_group(group, record, call_start_day)?;
+            }
+            self.group_sub_series.list(&group).push(key)?;
         }
-        if was_empty && self.series_called_at.read(&series)? == 0 {
-            let call_price = self.series_call_price_minor.read(&series)?;
-            let currency = self.series_currency.read(&series)?;
-            let bin = call_bins::price_to_bin(call_price)?;
-            call_bins::insert(&CallBins(self, currency), series, bin)?;
+        if self.group_member_count(group)? == 0 && self.group_called_at.read(&group)? == 0 {
+            let bin = call_bins::price_to_bin(self.group_call_price_minor.read(&group)?)?;
+            let currency = self.group_currency.read(&group)?;
+            call_bins::insert(&CallBins(self, currency), group, bin)?;
         }
+        let count = self
+            .sub_series_unsettled_count
+            .read(&key)?
+            .checked_add(1)
+            .ok_or(CredisError::ArithmeticOverflow)?;
+        self.sub_series_unsettled_count.write(&key, count)?;
         add_to(
-            &self.series_unpaid_gratis_minor,
-            series,
-            record.gratis_minor,
+            &self.sub_series_outstanding_amount_minor,
+            key,
+            record.outstanding_amount_minor,
         )?;
-        self.series_index(series).insert(record.credis_id)?;
+        self.group_index(group).insert(record.credis_id)?;
         Ok(newly_opened)
     }
 
-    /// Takes a Credis out of its series. An uncalled series leaves the active queues when its
-    /// last unsettled member leaves. A called series stays in the forfeit queue until its
-    /// settlement deadline, so the close event still fires. Series terms and `series_opened`
-    /// remain in storage.
-    pub fn leave_series(&mut self, series: SeriesId, credis_id: U256) -> Result<()> {
-        self.series_index(series).remove(credis_id)?;
-        if self.series_member_count(series)? == 0 && self.series_called_at.read(&series)? == 0 {
-            self.close_series_queues(series)?;
+    fn open_sub_series(&mut self, key: B256, group: B256, record: &Credis) -> Result<()> {
+        self.sub_series_group.write(&key, group)?;
+        self.sub_series_series_id.write(&key, record.series_id)?;
+        self.sub_series_number.write(&key, record.sub_series)?;
+        self.sub_series_issuance_currency
+            .write(&key, record.issuance_currency)?;
+        self.sub_series_entry_price_minor
+            .write(&key, record.entry_price_minor)?;
+        self.sub_series_call_price_minor
+            .write(&key, record.call_price_minor)
+    }
+
+    fn seal_group(&mut self, group: B256, record: &Credis, call_start_day: u32) -> Result<()> {
+        self.group_currency
+            .write(&group, record.reference_currency)?;
+        self.group_start_day.write(&group, call_start_day)?;
+        self.group_call_price_minor
+            .write(&group, record.call_price_minor)?;
+        self.group_call_window_seconds
+            .write(&group, record.call_window_seconds)?;
+        self.group_call_threshold_seconds
+            .write(&group, record.call_threshold_seconds)?;
+        self.group_call_notice_period_seconds
+            .write(&group, record.call_notice_period_seconds)?;
+        call_breach::widen_scan_terms(
+            &self.max_call_window_seconds,
+            &self.min_call_threshold_seconds,
+            record.reference_currency,
+            record.call_window_seconds,
+            record.call_threshold_seconds,
+        )
+    }
+
+    /// A called group stays in the forfeit queue until its deadline, even when empty.
+    pub fn leave_group(&mut self, record: &Credis) -> Result<()> {
+        let key = Self::sub_series_key(record.series_id, record.sub_series);
+        let group = self.sub_series_group.read(&key)?;
+        self.group_index(group).remove(record.credis_id)?;
+        let count = self
+            .sub_series_unsettled_count
+            .read(&key)?
+            .checked_sub(1)
+            .ok_or(CredisError::ArithmeticOverflow)?;
+        self.sub_series_unsettled_count.write(&key, count)?;
+        if self.group_member_count(group)? == 0 && self.group_called_at.read(&group)? == 0 {
+            let currency = self.group_currency.read(&group)?;
+            call_bins::remove(&CallBins(self, currency), group)?;
         }
         Ok(())
     }
 
-    /// Removes an empty series from its call bin, forfeit queue, and cleanup queue while keeping
-    /// its sealed terms and `series_opened` flag intact.
-    fn close_series_queues(&mut self, series: SeriesId) -> Result<()> {
-        let currency = self.series_currency.read(&series)?;
-        call_bins::remove(&CallBins(self, currency), series)?;
-        deadline_queue::remove(&ForfeitQueue(self), series)?;
-        deadline_queue::remove(&CleanupQueue(self), series)
+    pub fn group_member_count(&self, group: B256) -> Result<u32> {
+        self.group_members.list(&group).len()
     }
 
-    pub fn series_member_count(&self, series: SeriesId) -> Result<u32> {
-        self.series_members.list(&series).len()
-    }
-
-    pub fn series_member(&self, series: SeriesId, index: u32) -> Result<U256> {
-        self.series_members
-            .list(&series)
+    pub fn group_member(&self, group: B256, index: u32) -> Result<U256> {
+        self.group_members
+            .list(&group)
             .get(index)?
             .ok_or_else(|| CredisError::IndexOutOfBounds.into())
     }
 
-    /// Calls every member at once: the series leaves its bin for the forfeit queue, where
-    /// it waits on its settlement deadline as one entry. Returns the deadline.
-    pub fn record_series_called(&mut self, series: SeriesId, now: u64) -> Result<u64> {
-        let currency = self.series_currency.read(&series)?;
-        call_bins::remove(&CallBins(self, currency), series)?;
-        self.series_called_at.write(&series, now)?;
+    pub fn group_sub_series(&self, group: B256) -> Result<Vec<SubSeriesSummary>> {
+        let keys = self.group_sub_series.list(&group).read_all()?;
+        let mut out = Vec::with_capacity(keys.len());
+        for key in keys {
+            out.push(SubSeriesSummary {
+                series_id: self.sub_series_series_id.read(&key)?,
+                sub_series: self.sub_series_number.read(&key)?,
+                issuance_currency: self.sub_series_issuance_currency.read(&key)?,
+                unsettled_count: self.sub_series_unsettled_count.read(&key)?,
+                outstanding_amount_minor: self.sub_series_outstanding_amount_minor.read(&key)?,
+            });
+        }
+        Ok(out)
+    }
+
+    pub fn group_breach_terms(&self, group: B256) -> Result<BreachTerms> {
+        Ok(BreachTerms {
+            call_price: self.group_call_price_minor.read(&group)?,
+            window_seconds: self.group_call_window_seconds.read(&group)?,
+            threshold_seconds: self.group_call_threshold_seconds.read(&group)?,
+            start_day: self.group_start_day.read(&group)?,
+        })
+    }
+
+    pub fn record_group_called(&mut self, group: B256, now: u64) -> Result<u64> {
+        let currency = self.group_currency.read(&group)?;
+        call_bins::remove(&CallBins(self, currency), group)?;
+        self.group_called_at.write(&group, now)?;
         let deadline = outbe_core_common::settlement::settlement_deadline_of(
             now,
-            self.series_call_notice_period_seconds.read(&series)?,
+            self.group_call_notice_period_seconds.read(&group)?,
         );
-        self.series_settlement_deadline.write(&series, deadline)?;
-        deadline_queue::push(&ForfeitQueue(self), series, deadline)?;
+        self.push_called(group, deadline)?;
         Ok(deadline)
     }
 
-    /// Moves a forfeited series from the forfeit queue to the cleanup, which deletes its
-    /// Credis.
-    pub fn hand_to_cleanup(&mut self, series: SeriesId) -> Result<()> {
-        let deadline = self.called_deadline.read(&series)?;
-        deadline_queue::remove(&ForfeitQueue(self), series)?;
-        deadline_queue::push(&CleanupQueue(self), series, deadline)
+    pub fn hand_to_cleanup(&mut self, group: B256) -> Result<()> {
+        let deadline = self.called_deadline.read(&group)?;
+        deadline_queue::remove(&ForfeitQueue(self), group)?;
+        deadline_queue::push(&CleanupQueue(self), group, deadline)
     }
 
-    pub fn push_called(&mut self, series: SeriesId, deadline: u64) -> Result<()> {
-        self.series_settlement_deadline.write(&series, deadline)?;
-        deadline_queue::push(&ForfeitQueue(self), series, deadline)
+    pub fn push_called(&mut self, group: B256, deadline: u64) -> Result<()> {
+        self.group_settlement_deadline.write(&group, deadline)?;
+        deadline_queue::push(&ForfeitQueue(self), group, deadline)
     }
 
-    pub fn remove_called(&mut self, series: SeriesId) -> Result<()> {
-        deadline_queue::remove(&ForfeitQueue(self), series)
+    pub fn remove_called(&mut self, group: B256) -> Result<()> {
+        deadline_queue::remove(&ForfeitQueue(self), group)
     }
 }
 
@@ -283,48 +335,48 @@ fn take_from<K: outbe_primitives::storage::types::StorageKey>(
     sums.write(&key, total)
 }
 
-/// This queue orders called series by the UTC day that contains their settlement deadline.
+/// This queue orders called groups by the UTC day that contains their settlement deadline.
 pub struct ForfeitQueue<'a, 'storage>(pub &'a CredisContract<'storage>);
 
-outbe_core_common::impl_deadline_queue!(ForfeitQueue<SeriesId> {
+outbe_core_common::impl_deadline_queue!(ForfeitQueue<B256> {
     root: forfeit_tree_root,
     mid: forfeit_tree_mid,
     leaf: forfeit_tree_leaf,
     len: forfeit_day_len,
     live: forfeit_day_live,
     at: forfeit_day_at,
-    slot: called_series_slot,
+    slot: called_group_slot,
     deadline: called_deadline,
     sweep_day: forfeit_pass_day,
     cursor: forfeit_cursor,
 });
 
-/// Forfeited series whose Credis wait to be deleted.
+/// Forfeited groups whose Credis wait to be deleted.
 pub struct CleanupQueue<'a, 'storage>(pub &'a CredisContract<'storage>);
 
-outbe_core_common::impl_deadline_queue!(CleanupQueue<SeriesId> {
+outbe_core_common::impl_deadline_queue!(CleanupQueue<B256> {
     root: cleanup_tree_root,
     mid: cleanup_tree_mid,
     leaf: cleanup_tree_leaf,
     len: cleanup_day_len,
     live: cleanup_day_live,
     at: cleanup_day_at,
-    slot: cleanup_series_slot,
+    slot: cleanup_group_slot,
     deadline: cleanup_deadline,
     sweep_day: cleanup_sweep_day,
     cursor: cleanup_cursor,
 });
 
-/// One reference currency's uncalled series, by call price.
+/// One reference currency's uncalled groups, by call price.
 pub struct CallBins<'a, 'storage>(pub &'a CredisContract<'storage>, pub u16);
 
-outbe_system_common::impl_call_bins!(CallBins<SeriesId> {
+outbe_system_common::impl_call_bins!(CallBins<B256> {
     root: call_bin_tree_root,
     mid: call_bin_tree_mid,
     leaf: call_bin_tree_leaf,
     count: call_bin_count,
-    at: call_bin_series,
-    slot: call_series_slot,
+    at: call_bin_groups,
+    slot: call_group_slot,
     cursor: call_bin_cursor,
     failed: call_scan_failed_day,
 });

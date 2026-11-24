@@ -8,4 +8,3 @@ pub mod nod;
 pub mod stablecoin;
 pub(crate) mod support;
 pub mod system_tx;
-pub mod tribute;

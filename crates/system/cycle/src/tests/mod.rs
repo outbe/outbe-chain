@@ -53,18 +53,16 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
             },
             handle,
         );
-        let owner = Address::repeat_byte(0xA0);
         let founder = Address::repeat_byte(0xB0);
         let consensus_key = [0x30; 48];
         let mut validators = ValidatorSet::new(ctx.storage.clone());
-        validators.config_owner.write(owner).unwrap();
         validators.set_config_max_validators(1).unwrap();
         let minimum = U256::from(1_000u64);
         validators
             .test_seed_authoritative_min_stake(minimum)
             .unwrap();
         validators
-            .register_validator(owner, founder, &consensus_key)
+            .register_validator(founder, &consensus_key)
             .unwrap();
         validators
             .test_seed_authoritative_bonded(founder, minimum)

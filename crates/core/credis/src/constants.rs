@@ -6,12 +6,12 @@ pub const TOKEN_NAME: &str = "Credis";
 pub const TOKEN_SYMBOL: &str = "CREDIS";
 pub const TOKEN_DESCRIPTION: &str = concat!(
     "Credis is a soul-bound right on the Outbe network, held by its owner and backed by ",
-    "pledged Gratis. Its owner settles it in the original asset, interest first, and each settlement ",
-    "returns pledged Gratis in proportion to the principal it covers. A called Credis must be ",
+    "pledged Gratis. Its owner settles it in the original asset, fee first, and each settlement ",
+    "returns pledged Gratis in proportion to the amount it covers. A called Credis must be ",
     "settled by its settlement deadline, otherwise it is forfeited."
 );
 
-/// The PROD call price adds 64% to `call_anchor_price_minor`. A sustained breach arms the call.
+/// The PROD call price adds 64% to the entry price. A sustained breach arms the call.
 pub const CALL_RATE_PCT: u16 = 64;
 
 /// Evaluation window for the call, in closed UTC days: the daily scan looks
@@ -36,5 +36,10 @@ pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECONDS_PER_DAY_U32;
 /// `call_notice_period_seconds`.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 
-/// Day count convention for interest accrual: simple, ACT/365.
+/// Oldest policy rate a reservation accepts, in seconds since its source published it.
+pub const MAX_POLICY_RATE_AGE: u32 = 7 * SECONDS_PER_DAY_U32;
+
+pub const SECONDS_PER_HOUR: u64 = 3_600;
+
+/// Day count convention for fee accrual: simple, ACT/365.
 pub const DAYS_PER_YEAR: u64 = 365;

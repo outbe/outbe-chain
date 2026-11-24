@@ -11,20 +11,16 @@ fn an_issuable_entry_keeps_the_call_price_at_any_rate_in_range() {
 
 #[test]
 fn group_key_binds_the_reference_currency() {
-    let issued_at = 1_752_534_000;
+    let call_start_day = 20_250_715;
     let call_price = U256::from(13);
     assert_ne!(
-        crate::identity::group_key(issued_at, call_price, USD).expect("date step"),
-        crate::identity::group_key(issued_at, call_price, EUR).expect("date step"),
+        crate::identity::group_key(call_start_day, call_price, USD),
+        crate::identity::group_key(call_start_day, call_price, EUR),
         "same day and call price in two currencies must not share a group"
     );
     assert_eq!(
-        crate::identity::group_key(issued_at, call_price, USD).expect("date step"),
-        outbe_system_common::call_breach::group_key(
-            outbe_system_common::time::first_full_day(issued_at).expect("date step"),
-            call_price,
-            USD
-        )
+        crate::identity::group_key(call_start_day, call_price, USD),
+        outbe_system_common::call_breach::group_key(call_start_day, call_price, USD)
     );
 }
 
@@ -90,7 +86,8 @@ fn same_day_and_currency_at_two_entries_are_two_groups_with_their_own_terms() {
     let low_entry = U256::from(2_000_000u64);
     let high_entry = U256::from(3_000_000u64);
     let low = item(Address::repeat_byte(0x11), low_entry, USD);
-    let high = item(Address::repeat_byte(0x22), high_entry, USD);
+    let mut high = item(Address::repeat_byte(0x22), high_entry, USD);
+    high.sub_series_id = 1;
     assert_eq!(low.series_id, high.series_id);
     assert_ne!(low.group_key, high.group_key);
 
@@ -102,8 +99,8 @@ fn same_day_and_currency_at_two_entries_are_two_groups_with_their_own_terms() {
 
         let nod = NodContract::new(storage.clone());
         for (body, entry, call_price) in [
-            (&low, low_entry, 7_120_000u64),
-            (&high, high_entry, 10_680_000),
+            (&low, low_entry, 4_560_000u64),
+            (&high, high_entry, 6_840_000),
         ] {
             assert_eq!(body.entry_price_minor(), entry);
             assert_eq!(nod.group_nod_count.read(&body.group_key).unwrap(), 1);
@@ -145,7 +142,7 @@ fn zero_reference_currency_is_rejected_at_issuance() {
 fn a_group_key_that_does_not_match_its_inputs_is_rejected() {
     let mut body = item(Address::repeat_byte(0x66), U256::from(5), EUR);
     let expected = body.group_key;
-    body.group_key = crate::test_support::group_key(body.issued_at, U256::from(5), USD);
+    body.group_key = crate::test_support::group_key(body.series_id.day(), U256::from(5), USD);
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         seed_production_nod_genesis(&storage);

@@ -7,27 +7,27 @@ use alloy_primitives::{keccak256, Address, B256, U256};
 use outbe_primitives::error::Result;
 
 impl ValidatorSet<'_> {
-    /// Registers a new validator in test fixtures directly into
-    /// `WaitingForReadiness` (`PENDING`).
+    /// Feature-gated no-PoP fixture registration helper (`test` / `test-utils`
+    /// only — unavailable in production builds).
+    ///
+    /// Registers `validator_addr` directly into `WaitingForReadiness`
+    /// (`PENDING`) without a BLS proof-of-possession signature.
     #[cfg(any(test, feature = "test-utils"))]
     pub fn register_validator(
         &mut self,
-        caller: Address,
         validator_addr: Address,
         consensus_pubkey: &[u8; 48],
     ) -> Result<()> {
         let radicle_node_id = keccak256(validator_addr.as_slice());
         let bonded = self.read_authoritative_bonded(&validator_addr)?;
         self.register_validator_inner(&super::registration::RegistrationRequest {
-            caller,
             validator: validator_addr,
             consensus_pubkey,
             radicle_node_id,
-            bls_signature: None,
+            proof: super::registration::RegistrationProof::BootstrapWithoutPop,
             p2p: P2pInfo::Unset,
             bonded,
             minimum: U256::ZERO,
-            allow_bootstrap_without_pop: true,
         })
     }
 

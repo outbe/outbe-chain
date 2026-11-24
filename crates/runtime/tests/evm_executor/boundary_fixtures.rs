@@ -19,12 +19,11 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
     StorageHandle::enter(&mut seed_storage, |storage| {
         super::fixtures::seed_cycle_genesis(storage.clone());
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_epoch_length_blocks.write(60).unwrap();
         vs.config_is_initialized.write(true).unwrap();
         register_and_activate_native(&mut vs, active, &active_key);
-        vs.register_validator(OWNER, candidate, &dummy_pubkey(0xB3))
+        vs.register_validator(candidate, &dummy_pubkey(0xB3))
             .unwrap();
         let minimum = U256::from(1_000u64);
         vs.test_seed_authoritative_bonded(candidate, minimum)

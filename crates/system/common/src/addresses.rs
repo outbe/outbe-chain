@@ -17,9 +17,6 @@ pub const PROMIS_ADDRESS: Address = address!("0x00000000000000000000000000000000
 /// `mineCoen`. Carries no persistent storage of its own.
 pub const PROMIS_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000002337");
 
-/// Tribute NFT precompile address.
-pub const TRIBUTE_ADDRESS: Address = address!("0x0000000000000000000000000000000000001101");
-
 /// Nod NFT precompile address.
 pub const NOD_ADDRESS: Address = address!("0x0000000000000000000000000000000000001006");
 
@@ -53,8 +50,8 @@ pub const CREDIS_ADDRESS: Address = address!("0x00000000000000000000000000000000
 /// Credis factory precompile address.
 pub const CREDIS_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001009");
 
-/// Tribute factory precompile address.
-pub const TRIBUTE_FACTORY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001100");
+/// Worldwide Day precompile address: the WWD schedule, its seal and its reads.
+pub const WORLDWIDE_DAY_ADDRESS: Address = address!("0x0000000000000000000000000000000000001018");
 
 /// Agent reward precompile address.
 pub const AGENT_REWARD_ADDRESS: Address = address!("0x000000000000000000000000000000000000100B");
@@ -94,9 +91,6 @@ pub const DESIS_ADDRESS: Address = address!("0x000000000000000000000000000000000
 /// VaultRouter precompile address. Reserve liquidity router: registers
 /// ERC-4626 vaults per asset.
 pub const VAULT_ROUTER_ADDRESS: Address = address!("0x0000000000000000000000000000000000001017");
-
-// 0x0000000000000000000000000000000000001018 is retired; never reassign it.
-// Cutover requires a new genesis or no pending Vote proposals targeting it.
 
 // ---------------------------------------------------------------------------
 // System & infrastructure domain precompiles (0xEE00 range)

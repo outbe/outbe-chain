@@ -46,7 +46,6 @@ interface IValidatorSet {
     error ValidatorDeactivationHeightZero();
     error InactiveValidatorMissingDeactivationHeight(address addr);
     error InactiveCleanupHeightOverflow();
-    error UnauthorizedOwnerOrValidator();
     error ValidatorNotRegistered();
     error CanOnlyDeactivateActiveValidator();
     error ActiveValidatorMissingStakeProjection();
@@ -89,7 +88,6 @@ interface IValidatorSet {
     error ZeroConsensusPublicKey();
     error ZeroRadicleNodeId();
     error RadicleNodeIdAlreadyRegistered();
-    error RegistrationRequiresBlsPop();
     error ConsensusPubkeyAlreadyRegistered();
     error ValidatorAlreadyRegistered();
     error InactiveValidatorMustKeepRadicleNodeId();
@@ -222,9 +220,9 @@ interface IValidatorSet {
     function resolveValidator(uint8 role, address signer) external view returns (address);
     function getRadicleNodeId(address validator) external view returns (bytes32);
     function validatorByRadicleNodeId(bytes32 nodeId) external view returns (address);
-    function setP2pAddress(address validatorAddress, uint8 version, bytes calldata encoded) external;
+    function setP2pAddress(uint8 version, bytes calldata encoded) external;
     function getP2pAddress(address validatorAddress) external view returns (uint8 version, bytes memory encoded);
-    function deactivateValidator(address validatorAddress) external;
+    function deactivateValidator() external;
     /// Stale-join guard: a PENDING joiner confirms on-chain that its node has
     /// caught up to head and may be frozen into the next DKG reshare target.
     /// Caller must be the validator itself and currently PENDING. Until called,

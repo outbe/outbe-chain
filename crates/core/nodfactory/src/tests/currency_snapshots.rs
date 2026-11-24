@@ -224,13 +224,14 @@ fn issuance_erc20_admission_uses_the_quoted_converted_cost() {
                     asset: SETTLEMENT_ASSET_EUR,
                     snapshot_id: quoted.2,
                 },
+                AMOUNT_CAP,
             )
         })
         .unwrap();
     assert!(is_settled(&mut world, nod_id));
-    let paid = paid_event(&world);
-    assert_eq!(paid.asset, SETTLEMENT_ASSET_EUR);
-    assert_eq!(paid.amountMinor, quoted.1);
+    let settled = settled_event(&world);
+    assert_eq!(settled.asset, SETTLEMENT_ASSET_EUR);
+    assert_eq!(settled.amountMinor, quoted.1);
     // The router takes the converted cost directly from the payer.
     let pull = outbe_vaultrouter::test_support::last_deposit_from(&world.provider).unwrap();
     assert_eq!(
@@ -262,6 +263,7 @@ fn settle_rejects_an_asset_with_no_registered_vault() {
                     asset: SETTLEMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },
+                AMOUNT_CAP,
             )
         })
         .unwrap_err();

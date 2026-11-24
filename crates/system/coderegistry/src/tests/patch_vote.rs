@@ -28,12 +28,11 @@ fn setup() -> HashMapStorageProvider {
     provider.set_block_number(10);
     provider.enter(|storage| {
         let mut validators = ValidatorSet::new(storage.clone());
-        validators.config_owner.write(OWNER).unwrap();
         validators.set_config_max_validators(10).unwrap();
         for (i, address) in [A, B, C].into_iter().enumerate() {
             let mut key = [0; 48];
             key[0] = i as u8 + 1;
-            validators.register_validator(OWNER, address, &key).unwrap();
+            validators.register_validator(address, &key).unwrap();
             validators.activate_validator(address).unwrap();
         }
         let mut registry = CodeRegistry::new(storage);
@@ -195,7 +194,7 @@ fn outsiders_pending_and_retained_members_cannot_vote_or_inflate_denominator() {
     let mut provider = setup();
     provider.enter(|storage| {
         let mut validators = ValidatorSet::new(storage);
-        validators.register_validator(OWNER, D, &[4; 48]).unwrap();
+        validators.register_validator(D, &[4; 48]).unwrap();
         validators.activate_validator(D).unwrap();
         validators.jail_validator(D).unwrap();
         assert!(validators.is_consensus_participant(D).unwrap());
@@ -203,9 +202,7 @@ fn outsiders_pending_and_retained_members_cannot_vote_or_inflate_denominator() {
             .validator_lifecycle(D)
             .unwrap()
             .is_active_status());
-        validators
-            .register_validator(OWNER, OWNER, &[5; 48])
-            .unwrap();
+        validators.register_validator(OWNER, &[5; 48]).unwrap();
         validators.mark_pending(OWNER).unwrap();
     });
     let id = create(&mut provider, subject()).unwrap();
@@ -265,7 +262,7 @@ fn pending_joiner_votes_only_after_activation_and_changes_current_quorum() {
         let mut provider = setup();
         provider.enter(|storage| {
             let mut validators = ValidatorSet::new(storage);
-            validators.register_validator(OWNER, D, &[4; 48]).unwrap();
+            validators.register_validator(D, &[4; 48]).unwrap();
             validators.mark_pending(D).unwrap();
         });
         let id = create(&mut provider, subject()).unwrap();
@@ -389,7 +386,7 @@ fn maximum_electorate_has_bounded_cast_and_tally_storage_gas() {
             let mut key = [0; 48];
             key[..2].copy_from_slice(&i.to_be_bytes());
             key[47] = 0x55;
-            validators.register_validator(OWNER, address, &key).unwrap();
+            validators.register_validator(address, &key).unwrap();
             validators.activate_validator(address).unwrap();
             electorate.push(address);
         }

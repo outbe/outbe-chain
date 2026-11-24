@@ -237,7 +237,6 @@ pub(super) const PROPOSER: Address = address!("0x1111111111111111111111111111111
 pub(super) const VOTER_A: Address = address!("0x2222222222222222222222222222222222222222");
 pub(super) const VOTER_B: Address = address!("0x3333333333333333333333333333333333333333");
 pub(super) const PENDING_VOTER: Address = address!("0x4444444444444444444444444444444444444444");
-pub(super) const VALIDATOR_OWNER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
 
 mod bond;
 mod characterization;
@@ -255,22 +254,18 @@ fn dummy_pubkey(seed: u8) -> [u8; 48] {
 
 pub(super) fn register_active_validator(storage: StorageHandle, addr: Address, seed: u8) {
     let mut vs = ValidatorSet::new(storage.clone());
-    vs.config_owner.write(VALIDATOR_OWNER).unwrap();
     vs.set_config_max_validators(100).unwrap();
     let minimum = U256::from(1_000u64);
     vs.test_seed_authoritative_min_stake(minimum).unwrap();
-    vs.register_validator(VALIDATOR_OWNER, addr, &dummy_pubkey(seed))
-        .unwrap();
+    vs.register_validator(addr, &dummy_pubkey(seed)).unwrap();
     vs.test_seed_authoritative_bonded(addr, minimum).unwrap();
     vs.activate_validator_via_boundary_for_test(addr).unwrap();
 }
 
 pub(super) fn register_pending_validator(storage: StorageHandle, addr: Address, seed: u8) {
     let mut vs = ValidatorSet::new(storage.clone());
-    vs.config_owner.write(VALIDATOR_OWNER).unwrap();
     vs.set_config_max_validators(100).unwrap();
-    vs.test_register_validator_without_pop(addr, &dummy_pubkey(seed))
-        .unwrap();
+    vs.register_validator(addr, &dummy_pubkey(seed)).unwrap();
     vs.record_stake_increase(addr, U256::from(1), U256::from(1))
         .unwrap();
     assert!(
@@ -520,7 +515,7 @@ fn get_proposal_uses_active_set_at_read_time() {
         assert_proposal_view(storage.clone(), proposal_id, VoteTally { yes: 2, no: 0 }, 2);
 
         ValidatorSet::new(storage.clone())
-            .deactivate_validator(VALIDATOR_OWNER, VOTER_A)
+            .deactivate_validator(VOTER_A)
             .unwrap();
 
         assert_proposal_view(storage, proposal_id, VoteTally { yes: 1, no: 0 }, 2);
@@ -543,7 +538,7 @@ fn inactive_voter_is_ignored_at_deadline_tally() {
             .unwrap();
 
         ValidatorSet::new(storage.clone())
-            .deactivate_validator(VALIDATOR_OWNER, VOTER_A)
+            .deactivate_validator(VOTER_A)
             .unwrap();
 
         approve_in_order(governance, proposal_id, &[PROPOSER, VOTER_B], current + 2).unwrap();

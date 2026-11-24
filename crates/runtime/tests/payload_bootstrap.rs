@@ -174,17 +174,11 @@ fn active_native_provider(
     funded_user: alloy_primitives::Address,
     genesis_hash: B256,
 ) -> TestProvider {
-    const OWNER: alloy_primitives::Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-
     let mut seed =
         HashMapStorageProvider::new_with_chain_identity(chain_spec.chain().id(), genesis_hash);
     seed.set_block_number(1);
     StorageHandle::enter(&mut seed, |storage| {
         let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        validators
-            .config_owner
-            .write(OWNER)
-            .expect("validator owner seed succeeds");
         validators
             .config_max_validators
             .write(128)
@@ -202,7 +196,7 @@ fn active_native_provider(
             .test_seed_authoritative_min_stake(minimum)
             .expect("min stake seed succeeds");
         validators
-            .register_validator(OWNER, proposer, &TEST_CONSENSUS_PUBLIC_KEY)
+            .register_validator(proposer, &TEST_CONSENSUS_PUBLIC_KEY)
             .expect("proposer registration seed succeeds");
         validators
             .test_seed_authoritative_bonded(proposer, minimum)

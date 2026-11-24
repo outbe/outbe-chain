@@ -13,9 +13,7 @@ outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-system-common.workspace = true
 outbe-emission.workspace = true
 outbe-desis.workspace = true
-outbe-fidelity.workspace = true
-outbe-tribute.workspace = true
-outbe-tributefactory.workspace = true
+outbe-worldwideday.workspace = true
 outbe-nod.workspace = true
 outbe-promislimit.workspace = true
 outbe-oracle.workspace = true
@@ -27,8 +25,6 @@ tracing.workspace = true
 [dev-dependencies]
 outbe-core-common.workspace = true
 outbe-nod = { workspace = true, features = ["test-enclave"] }
-outbe-tribute = { workspace = true, features = ["test-enclave", "test-utils"] }
-outbe-tributefactory = { workspace = true, features = ["test-utils"] }
 k256.workspace = true
 proptest.workspace = true
 trybuild = "1"
@@ -38,7 +34,7 @@ outbe-fidelity = { workspace = true, features = ["test-enclave"] }
 [features]
 default = []
 bench-utils = []
-test-utils = ["outbe-tribute/test-enclave", "outbe-tribute/test-utils", "outbe-tributefactory/test-utils"]
+test-utils = []
 
 [lints]
 workspace = true

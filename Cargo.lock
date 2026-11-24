@@ -7923,9 +7923,8 @@ dependencies = [
  "outbe-promislimit",
  "outbe-rewards",
  "outbe-system-common",
- "outbe-tribute",
- "outbe-tributefactory",
  "outbe-validatorset",
+ "outbe-worldwideday",
  "proptest",
  "thiserror 2.0.21",
  "tracing",
@@ -8421,7 +8420,6 @@ dependencies = [
  "outbe-macros",
  "outbe-primitives",
  "outbe-system-common",
- "outbe-tributefactory",
  "outbe-zk",
  "rand 0.10.2",
  "rand_core 0.10.1",
@@ -8492,8 +8490,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-system-common",
- "outbe-tribute",
- "outbe-tributefactory",
+ "outbe-worldwideday",
  "proptest",
  "thiserror 2.0.21",
  "tracing",
@@ -8506,6 +8503,8 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "ark-bn254",
+ "ark-ff 0.6.0",
  "base64 0.22.1",
  "hex",
  "outbe-core-common",
@@ -8514,6 +8513,7 @@ dependencies = [
  "outbe-primitives",
  "outbe-system-common",
  "outbe-tee",
+ "outbe-zk",
  "postcard",
  "ring",
  "serde",
@@ -8530,10 +8530,14 @@ dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
  "base64 0.22.1",
+ "commonware-codec",
+ "commonware-cryptography",
  "hex",
+ "outbe-agentreward",
  "outbe-core-common",
  "outbe-gratis",
  "outbe-gratisfactory",
+ "outbe-l2registry",
  "outbe-nod",
  "outbe-oracle",
  "outbe-primitives",
@@ -8541,8 +8545,14 @@ dependencies = [
  "outbe-system-common",
  "outbe-tee",
  "outbe-vaultrouter",
+ "outbe-worldwideday",
+ "outbe-zk",
+ "outbe-zk-backend",
+ "rand 0.10.2",
+ "serde_json",
  "thiserror 2.0.21",
  "tracing",
+ "x25519-dalek 2.0.1",
 ]
 
 [[package]]
@@ -8679,10 +8689,6 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
- "ark-bn254",
- "ark-ff 0.6.0",
- "commonware-codec",
- "commonware-cryptography",
  "evm2",
  "hex",
  "outbe-ccaregistry",
@@ -8696,7 +8702,6 @@ dependencies = [
  "outbe-gratisfactory",
  "outbe-intex",
  "outbe-intexfactory",
- "outbe-l2registry",
  "outbe-metadosis",
  "outbe-nod",
  "outbe-nodfactory",
@@ -8707,19 +8712,11 @@ dependencies = [
  "outbe-stablecoin",
  "outbe-stablecoinfactory",
  "outbe-system-common",
- "outbe-tee",
- "outbe-tribute",
- "outbe-tributefactory",
  "outbe-vaultrouter",
- "outbe-zk",
- "outbe-zk-backend",
- "rand 0.10.2",
- "rand 0.8.6",
  "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
- "x25519-dalek 2.0.1",
 ]
 
 [[package]]
@@ -8928,13 +8925,12 @@ dependencies = [
  "outbe-system-common",
  "outbe-tee",
  "outbe-teeregistry",
- "outbe-tribute",
- "outbe-tributefactory",
  "outbe-txpool",
  "outbe-update",
  "outbe-validatorset",
  "outbe-vaultrouter",
  "outbe-vote",
+ "outbe-worldwideday",
  "outbe-zerofee",
  "outbe-zk-backend",
  "postcard",
@@ -9219,82 +9215,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-tribute"
-version = "0.1.0"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-sol-types",
- "ark-bn254",
- "ark-ff 0.6.0",
- "ed25519-dalek 2.2.0",
- "hex",
- "k256 0.13.4",
- "outbe-core-common",
- "outbe-emission",
- "outbe-fidelity",
- "outbe-gratis",
- "outbe-lysis",
- "outbe-macros",
- "outbe-nod",
- "outbe-nodfactory",
- "outbe-oracle",
- "outbe-primitives",
- "outbe-promis",
- "outbe-promislimit",
- "outbe-system-common",
- "outbe-tee",
- "outbe-tribute",
- "outbe-zk",
- "postcard",
- "proptest",
- "ring",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.21",
- "x25519-dalek 2.0.1",
- "zeroize",
-]
-
-[[package]]
-name = "outbe-tributefactory"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "ark-bn254",
- "ark-ff 0.6.0",
- "commonware-codec",
- "commonware-cryptography",
- "commonware-math",
- "ed25519-dalek 2.2.0",
- "hex",
- "outbe-agentreward",
- "outbe-chain-constants",
- "outbe-core-common",
- "outbe-emission",
- "outbe-l2registry",
- "outbe-lysis",
- "outbe-macros",
- "outbe-oracle",
- "outbe-primitives",
- "outbe-rewards",
- "outbe-system-common",
- "outbe-tee",
- "outbe-tribute",
- "outbe-zk",
- "outbe-zk-backend",
- "rand 0.10.2",
- "rand 0.8.6",
- "rand_core 0.10.1",
- "rand_core 0.6.4",
- "serde_json",
- "thiserror 2.0.21",
- "x25519-dalek 2.0.1",
-]
-
-[[package]]
 name = "outbe-txpool"
 version = "0.1.0"
 dependencies = [
@@ -9444,6 +9364,20 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tracing",
+]
+
+[[package]]
+name = "outbe-worldwideday"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "outbe-chain-constants",
+ "outbe-emission",
+ "outbe-macros",
+ "outbe-primitives",
+ "outbe-system-common",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

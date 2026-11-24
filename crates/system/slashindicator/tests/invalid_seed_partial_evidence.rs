@@ -30,7 +30,6 @@ use support::{
     assert_selector, evidence_already_processed, register_active_submitter, with_storage,
 };
 
-const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
 const ROUND_EPOCH: u64 = 3;
 const ROUND_VIEW: u64 = 100;
@@ -83,7 +82,7 @@ fn setup(storage: StorageHandle) -> Fixture {
         .collect();
 
     let mut vs = ValidatorSet::new(storage.clone());
-    vs.test_configure_registry(OWNER).unwrap();
+    vs.test_configure_registry().unwrap();
     let mut epoch = vs.epoch_snapshot().unwrap();
     epoch.number = U256::from(ROUND_EPOCH);
     vs.test_set_epoch_snapshot(epoch).unwrap();
@@ -93,8 +92,7 @@ fn setup(storage: StorageHandle) -> Fixture {
         .unwrap();
     for i in 0..N {
         let addr = validator_addr(i);
-        vs.test_register_validator_without_pop(addr, &pubkeys[i as usize])
-            .unwrap();
+        vs.register_validator(addr, &pubkeys[i as usize]).unwrap();
         let stake = U256::from(1_000_000u64);
         let staking = Staking::new(storage.clone());
         staking.stake_amount.write(&addr, stake).unwrap();

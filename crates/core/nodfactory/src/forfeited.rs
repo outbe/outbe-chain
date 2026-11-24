@@ -1,9 +1,8 @@
 //! Forfeit pass: forfeits the called groups whose notice period lapsed, one credit per
-//! group, and hands their unpaid Nods to the cleanup.
+//! group, and hands their unsettled Nods to the cleanup.
 
 use alloy_primitives::B256;
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
-use outbe_core_common::series_id::SeriesId;
 use outbe_primitives::{
     block::BlockRuntimeContext,
     error::{PassFailure, PrecompileError, Result},
@@ -14,8 +13,8 @@ use outbe_system_common::pass_budget::{PassBudget, WITNESS_BYTES_PER_WRITE};
 
 use outbe_nod::errors::NodError;
 use outbe_nod::index_keys::group_series_key;
+use outbe_nod::schema::NodContract;
 use outbe_nod::state::ForfeitQueue;
-use outbe_nod::{precompile::INod, schema::NodContract};
 
 pub(crate) fn forfeit_through(
     ctx: &BlockRuntimeContext,
@@ -92,8 +91,8 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
 
     fn process_member(&mut self, group: B256, slot: SeriesSlot) -> Result<()> {
         self.nod.group_forfeiting.write(&group, true)?;
-        if let Some(series_id) = self.nod.group_series.list(&group).get(slot.position)? {
-            self.close_series(group, series_id)?;
+        if let Some(sub_series) = self.nod.group_series.list(&group).get(slot.position)? {
+            self.close_series(group, sub_series)?;
         }
         if slot.last {
             self.close_group(group)?;
@@ -112,42 +111,46 @@ impl DeadlineHandler<B256> for NodForfeit<'_, '_> {
 
 impl NodForfeit<'_, '_> {
     /// Adds the series' open load to the group's credit and emits its close, once per series.
-    fn close_series(&mut self, group: B256, series_id: SeriesId) -> Result<()> {
-        let gs_key = group_series_key(group, series_id);
+    fn close_series(&mut self, group: B256, sub_series: B256) -> Result<()> {
+        let gs_key = group_series_key(group, sub_series);
+        let series_id = self.nod.sub_series_series_id.read(&sub_series)?;
         if self.nod.group_series_forfeited.read(&gs_key)? {
             return Ok(());
         }
         let forfeited_count = self.nod.group_series_nod_count.read(&gs_key)?;
-        let forfeited_tribute_count =
-            u32::try_from(self.nod.series_unclaimed_tribute_count.read(&series_id)?)
-                .map_err(|_| NodError::GroupMemberIndexOverflow { group_key: group })?;
-        let forfeited_amount_minor = self.nod.read_series_open_load(group, series_id)?;
+        let forfeited_amount_minor = self.nod.read_series_open_load(group, sub_series)?;
         let total = self
             .nod
             .group_forfeit_load_minor
             .read(&group)?
             .checked_add(forfeited_amount_minor)
-            .ok_or(NodError::GroupUnpaidLoadOverflow { group_key: group })?;
+            .ok_or(NodError::GroupUnsettledLoadOverflow { group_key: group })?;
         self.nod.group_forfeit_load_minor.write(&group, total)?;
-        self.nod.group_series_open_load_ct.bytes(&gs_key).clear()?;
+        self.nod
+            .group_series_unsettled_load_minor_ct
+            .bytes(&gs_key)
+            .clear()?;
         self.nod.group_series_forfeited.write(&gs_key, true)?;
-        self.nod.emit(INod::NodSeriesClosed {
-            seriesId: series_id.into(),
-            issuanceCurrency: self.nod.series_issuance_currency.read(&series_id)?,
-            referenceCurrency: self.nod.series_reference_currency.read(&series_id)?,
-            forfeitedCount: forfeited_count,
-            forfeitedTributeCount: forfeited_tribute_count,
-            forfeitedAmountMinor: forfeited_amount_minor,
-        })
+        crate::runtime::emit_event(
+            self.storage,
+            crate::precompile::INodFactory::NodSeriesClosed {
+                seriesId: series_id.into(),
+                subSeriesId: self.nod.sub_series_number.read(&sub_series)?,
+                issuanceCurrency: self.nod.sub_series_issuance_currency.read(&sub_series)?,
+                referenceCurrency: self.nod.sub_series_reference_currency.read(&sub_series)?,
+                forfeitedCount: forfeited_count,
+                forfeitedAmountMinor: forfeited_amount_minor,
+            },
+        )
     }
 
-    /// Returns the Gratis load of the group's unpaid Nods and unclaimed Tributes in one credit.
-    /// Lysis drew it out of the day limit and only mining converts it, so unmined it goes back.
+    /// Returns the Gratis load of the group's unsettled Nods in one credit. Metadosis drew it
+    /// out of the day limit and only mining converts it, so unmined it goes back.
     fn close_group(&mut self, group: B256) -> Result<()> {
         // A series a failed slot left open keeps the group in the queue so healthy slots commit
         // their close once and the retry reads only the open series.
-        for series_id in self.nod.group_series.list(&group).read_all()? {
-            let gs_key = group_series_key(group, series_id);
+        for sub_series in self.nod.group_series.list(&group).read_all()? {
+            let gs_key = group_series_key(group, sub_series);
             if !self.nod.group_series_forfeited.read(&gs_key)? {
                 return Ok(());
             }
@@ -159,10 +162,11 @@ impl NodForfeit<'_, '_> {
         }
         self.nod.group_forfeit_load_minor.clear(&group)?;
         self.nod.group_forfeiting.clear(&group)?;
-        self.nod.group_open_load_ct.bytes(&group).clear()?;
-        let unpaid = self.nod.group_nod_count.read(&group)?;
-        let unclaimed = self.nod.group_unclaimed_tribute_count.read(&group)?;
-        if unpaid == 0 && unclaimed == 0 {
+        self.nod
+            .group_unsettled_load_minor_ct
+            .bytes(&group)
+            .clear()?;
+        if self.nod.group_nod_count.read(&group)? == 0 {
             // Nothing left to burn. The close events have fired, so the group leaves
             // the forfeit queue without a cleanup entry.
             self.nod.remove_called(group)?;

@@ -15,6 +15,11 @@ outbe-vaultrouter.workspace = true
 outbe-oracle.workspace = true
 outbe-gratisfactory.workspace = true
 outbe-tee.workspace = true
+outbe-agentreward.workspace = true
+outbe-l2registry.workspace = true
+outbe-worldwideday.workspace = true
+outbe-zk.workspace = true
+outbe-zk-backend.workspace = true
 alloy-primitives.workspace = true
 alloy-sol-types.workspace = true
 thiserror.workspace = true
@@ -33,6 +38,11 @@ outbe-gratis = { workspace = true, features = ["test-enclave"] }
 alloy-primitives = { workspace = true, features = ["rand"] }
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
+commonware-codec.workspace = true
+commonware-cryptography.workspace = true
+rand-commonware.workspace = true
+x25519-dalek.workspace = true
+serde_json.workspace = true
 
 [features]
 default = []

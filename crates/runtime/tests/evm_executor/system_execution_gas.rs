@@ -36,7 +36,7 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
         ORACLE_ADDRESS,
         outbe_system_common::addresses::METADOSIS_ADDRESS,
         CYCLE_ADDRESS,
-        outbe_system_common::addresses::TRIBUTE_ADDRESS,
+        outbe_system_common::addresses::WORLDWIDE_DAY_ADDRESS,
     ] {
         db.insert_account_info(
             &address,

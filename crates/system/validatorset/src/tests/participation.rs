@@ -81,7 +81,7 @@ fn test_record_finalized_participation_accepts_historical_validators() {
         // accounting still accepts its retained registry/history record.
         register_validators(vs, &[(val_unbonding, 82)]).unwrap();
         activate_for_test(vs, val_unbonding);
-        vs.deactivate_validator(OWNER, val_unbonding).unwrap();
+        vs.deactivate_validator(val_unbonding).unwrap();
         vs.activate_reshared_set(&[val_active], B256::ZERO).unwrap();
 
         // Sanity: record_participation rejects historical val_unbonding.
@@ -139,7 +139,7 @@ fn test_epoch_reset_includes_exiting() {
         vs.val_missed_blocks.write(&val, 10).unwrap();
         vs.val_missed_votes.write(&val, 5).unwrap();
         vs.val_blocks_proposed.write(&val, 3).unwrap();
-        vs.deactivate_validator(OWNER, val).unwrap();
+        vs.deactivate_validator(val).unwrap();
 
         // Epoch transition should reset counters even for EXITING
         vs.update_epoch(1000, 42).unwrap();
@@ -156,7 +156,6 @@ fn finalized_participation_guard_prune_ring_bounds_growth() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         let v = address!("0x0101010101010101010101010101010101010101");
         register_boundary_active(&mut vs, v, 0x01).unwrap();
@@ -210,7 +209,6 @@ fn seeded_participation_ring(seq: u64, entry: B256, guarded: &[B256]) -> HashMap
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.enter(|storage| {
         let mut vs = ValidatorSet::new(storage);
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(8).unwrap();
         register_boundary_active(&mut vs, RING_ABSENTEE, 0x01).unwrap();
         vs.participation_prune_ring()

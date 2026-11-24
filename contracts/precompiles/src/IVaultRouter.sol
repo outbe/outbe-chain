@@ -32,14 +32,16 @@ interface IVaultRouter {
         uint64 expiresAt;
         uint256 gratisMinor;
         uint256 snapshotId;
+        /// @dev 24-hour VWAP of COEN in `referenceCurrency` at the reservation hour, scale 1e6.
         uint256 entryPriceMinor;
-        uint256 valuationPriceMinor;
         uint256 policyRate;
         uint16 issuanceCurrency;
         uint8 assetDecimals;
         uint16 referenceCurrency;
-        uint256 callAnchorPriceMinor;
         address source;
+        bytes14 seriesId;
+        /// @dev UTC hour of the reservation, 0-23.
+        uint8 subSeries;
     }
 
     error TokenOperationFailed();
@@ -77,8 +79,8 @@ interface IVaultRouter {
     error UnsupportedAssetDecimalsSimple();
     error InvalidAssetCurrency();
     error PledgePriceUnavailable();
-    error PreviousDayVwapUnavailable();
-    error ReferencePairUnavailable();
+    error PolicyRateTooOld();
+    error ReferencePriceUnavailable();
     error AssetVaultsCount();
     error AssetNotRegistered(address asset);
     error CurrencyMismatch(uint16 isoCode);
@@ -263,8 +265,8 @@ interface IVaultRouter {
     ///         router's custody for `credisOwner`, guaranteeing it can later be
     ///         delivered for 15 minutes. Caller must be an active CCA. Only `source`
     ///         may pledge the Gratis collateral for this reservation. The quote fixes the
-    ///         pledge valuation and the Credis call terms: `referenceCurrency`, its previous
-    ///         closed UTC-day VWAP as the call anchor, and the issuance currency's policy rate.
+    ///         pledge valuation and the Credis call terms: `referenceCurrency`, its 24-hour
+    ///         VWAP at the current hour as the entry price, and the issuance currency's policy rate.
     ///         Reverts if the selected vault has a pending removal vault action, even after
     ///         its deadline, until the action is cleared or superseded.
     function reserveStables(
@@ -273,7 +275,7 @@ interface IVaultRouter {
         address asset,
         uint256 amountMinor,
         uint16 referenceCurrency
-    ) external returns (uint256 reservationId);
+    ) external returns (uint256 credisReservationId);
 
     /// @notice Validates `receiver` as the reservation's Credis owner, pays `amountMinor` to
     ///         the recorded CCA to cover COEN delivered to that owner, and

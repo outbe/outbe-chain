@@ -30,15 +30,10 @@ validators:
 # in this yaml.
 keys_dir: ./keys
 
-# Devnet and Testnet explicitly select either `no-attestation-dev` or
-# `dcap-required`. Mainnet accepts only `dcap-required`; there is no fallback.
+# Devnet and Testnet use the explicit no-attestation policy. Mainnet remains
+# unavailable until TDX/SNP attestation is implemented.
 tee:
   mode: no-attestation-dev
-  # mrenclave: "<32-byte hex>"
-  # mrsigner: "<32-byte hex>"
-  # isv_prod_id: 0
-  # minimum_isv_svn: 0
-  # minimum_tcb_evaluation_data_number: 0
 
 # Where the bundle lands on the validator machines. Defaults to wherever this
 # script runs, which is what a single-host trial needs.

@@ -13,14 +13,13 @@ use outbe_genesis_cli::keys::{
     discover_validators, evm_address_from_key_file, radicle_node_id_from_public_key,
 };
 use outbe_genesis_cli::network::{
-    base_profile_path, network_identity, profiles_dir, top_level_keys, validate_config,
-    DEFAULT_CONSENSUS_P2P_PORT, DEFAULT_EPOCH_LENGTH_BLOCKS, DEFAULT_GAS_LIMIT,
-    DEFAULT_PREFUND_COEN_UNITS, SEED_SECTIONS,
+    base_profile_path, profiles_dir, top_level_keys, validate_config, DEFAULT_CONSENSUS_P2P_PORT,
+    DEFAULT_EPOCH_LENGTH_BLOCKS, DEFAULT_GAS_LIMIT, DEFAULT_PREFUND_COEN_UNITS, SEED_SECTIONS,
 };
 use outbe_genesis_cli::seed_codec::{
     address_as_u256, address_bytes, address_pair, asset_address, data_slot, hex32, mapping_key,
     parse_u256, u32_bytes, CREDIS_ADDRESS, CREDIS_PROFILE_SLOT, NOD_ADDRESS, NOD_PROFILE_SLOT,
-    ORACLE_ADDRESS, REWARDS_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
+    ORACLE_ADDRESS, VALIDATOR_SET_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use outbe_genesis_cli::seed_genesis::apply_seed;
 use outbe_genesis_cli::stages::{
@@ -240,37 +239,28 @@ fn config_validation_matrix_and_rejections() {
     assert!(err.to_string().contains("tee.mode"));
 
     for (network, chain_id) in [("devnet", 424242_u64), ("testnet", 54322345_u64)] {
-        for tee_mode in ["dcap-required", "no-attestation-dev"] {
-            let cfg = merge_obj(
-                minimal_config("./keys"),
-                json!({
-                    "network": network,
-                    "chain_id": chain_id,
-                    "tee": {"mode": tee_mode},
-                }),
-            );
-            validate_config(&cfg).expect("canonical attestation matrix");
-        }
+        let cfg = merge_obj(
+            minimal_config("./keys"),
+            json!({
+                "network": network,
+                "chain_id": chain_id,
+                "tee": {"mode": "no-attestation-dev"},
+            }),
+        );
+        validate_config(&cfg).expect("canonical no-attestation matrix");
     }
 
-    let mut mainnet = merge_obj(
+    let mainnet = merge_obj(
         minimal_config("./keys"),
         json!({
             "network": "mainnet",
             "chain_id": 676,
-            "tee": {"mode": "dcap-required"},
+            "tee": {"mode": "no-attestation-dev"},
             "price_feed_rest": "https://prices.outbe.net",
         }),
     );
-    validate_config(&mainnet).expect("attestation-required mainnet");
-    assert_eq!(
-        network_identity(&mainnet).expect("identity"),
-        ("mainnet".to_owned(), 676, "outbe-mainnet-1".to_owned())
-    );
-
-    mainnet["tee"] = json!({"mode": "no-attestation-dev"});
-    let err = validate_config(&mainnet).expect_err("mainnet rejects direct dev");
-    assert!(err.to_string().contains("Mainnet requires"));
+    let err = validate_config(&mainnet).expect_err("mainnet requires future VM attestation");
+    assert!(err.to_string().contains("TDX/SNP attestation"));
 
     let port_collision = merge_obj(minimal_config("./keys"), json!({"rpc_port": 9101}));
     let err = validate_config(&port_collision).expect_err("port collision");
@@ -292,7 +282,7 @@ fn config_validation_matrix_and_rejections() {
     .expect_err("unspecified RPC bind");
     assert!(err.to_string().contains("loopback or private"));
 
-    let dcap_no_measurements = merge_obj(
+    let unsupported_attestation = merge_obj(
         minimal_config("./keys"),
         json!({"tee": {"mode": "dcap-required"}}),
     );
@@ -300,10 +290,10 @@ fn config_validation_matrix_and_rejections() {
         "/nonexistent",
         Path::new("/nonexistent"),
         Path::new("/nonexistent"),
-        &dcap_no_measurements,
+        &unsupported_attestation,
     )
-    .expect_err("dcap without measurements");
-    assert!(err.to_string().contains("mrenclave"));
+    .expect_err("DCAP is not an operator mode");
+    assert!(err.to_string().contains("TDX/SNP attestation"));
 }
 
 #[test]
@@ -523,7 +513,7 @@ fn seed_stage_end_to_end_and_reproducibility() {
         assert_eq!(alloc[addr]["balance"], json!(format!("0x{:x}", 5_000_000)));
     }
     assert_eq!(
-        alloc[VALIDATOR_SET_ADDRESS]["storage"][hex32(20u64)],
+        alloc[VALIDATOR_SET_ADDRESS]["storage"][hex32(16u64)],
         json!(hex32(4u64))
     );
     assert_eq!(
@@ -582,26 +572,6 @@ fn seed_stage_end_to_end_and_reproducibility() {
     let err = apply_seed(&mut g, &json!({"gems": [], "vault_routr": {}}), None, None)
         .expect_err("gems unsupported");
     assert!(err.to_string().contains("gems is no longer supported"));
-
-    // Mainnet profile seed check
-    let mainnet_cfg = merge_obj(
-        minimal_config(&tmp_str),
-        json!({
-            "network": "mainnet",
-            "chain_id": 676,
-            "tee": {"mode": "dcap-required"},
-            "price_feed_rest": "https://prices.outbe.net",
-        }),
-    );
-    let mainnet_seeded = seed_once(tmp.path(), &mainnet_cfg);
-    assert_eq!(mainnet_seeded["config"]["chainId"], json!(676));
-    assert!(mainnet_seeded["alloc"][REWARDS_ADDRESS]
-        .get("storage")
-        .is_none());
-    assert!(!mainnet_seeded["alloc"][VALIDATOR_SET_ADDRESS]["storage"]
-        .as_object()
-        .expect("validator_set")
-        .is_empty());
 
     // Reproducibility and stale timestamp check
     let first_dir = tempfile::tempdir().expect("first");

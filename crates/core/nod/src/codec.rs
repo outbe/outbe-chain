@@ -10,6 +10,7 @@ pub fn canonical_item(body: &NodItemState) -> NodItemBodyV1 {
         group_key: body.group_key,
         issued_at: body.issued_at,
         is_settled: body.is_settled,
+        sub_series_id: body.sub_series_id,
     }
 }
 
@@ -30,7 +31,7 @@ pub fn from_canonical_item(body: NodItemBodyV1) -> NodItemState {
         nod_id: terms.nod_id,
         owner: terms.owner,
         series_id: terms.series_id().unwrap_or_default(),
-        league_id: terms.league_id,
+        sub_series_id: body.sub_series_id,
         issuance_currency: terms.issuance_currency,
         reference_currency: terms.reference_currency,
         encrypted: body.encrypted,
