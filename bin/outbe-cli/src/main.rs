@@ -76,7 +76,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::oracle::OracleCmd,
     },
-    /// Tribute: metadata and day-level reporting.
+    /// Offers: issue a Nod and read the day totals.
     Tribute {
         #[command(subcommand)]
         cmd: commands::tribute::TributeCmd,
@@ -348,17 +348,6 @@ mod tests {
     #[test]
     fn test_cli_parse_oracle_params() {
         let cli = Cli::try_parse_from(["outbe-cli", "oracle", "params"]);
-        assert!(cli.is_ok());
-    }
-
-    #[test]
-    fn test_cli_parse_tribute_show() {
-        let cli = Cli::try_parse_from([
-            "outbe-cli",
-            "tribute",
-            "show",
-            "0x1111111111111111111111111111111111111111111111111111111111111111",
-        ]);
         assert!(cli.is_ok());
     }
 

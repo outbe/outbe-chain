@@ -1,5 +1,7 @@
 //! Encrypted fixtures using the production cryptographic implementation.
-pub use crate::enclave_client::test_enclave::{install, scope, state_key, uninstall, Guard};
+pub use crate::enclave_client::test_enclave::{
+    install, scope, state_key, uninstall, Guard, OFFER_SECRET,
+};
 use crate::{NodIssueParams, NodItemState};
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::{
@@ -39,7 +41,6 @@ pub fn encrypted_fixture(params: &NodIssueParams, chain_id: u64) -> EncryptedNod
             nod_id,
             owner: params.owner,
             emission_day: params.emission_day,
-            league_id: params.league_id,
             entry_price_minor: params.entry_price_minor,
             issuance_currency: params.issuance_currency,
             reference_currency: params.reference_currency,
@@ -49,7 +50,7 @@ pub fn encrypted_fixture(params: &NodIssueParams, chain_id: u64) -> EncryptedNod
 }
 fn encrypt(terms: NodTermsV1, amount: U256) -> EncryptedNodV1 {
     install();
-    crate::nod_encryption::encrypt_nod(&state_key(), terms, amount).unwrap()
+    crate::nod_encryption::encrypt_nod(&state_key(), terms, amount, amount).unwrap()
 }
 /// Test-only plaintext inputs; never accepted by a production writer.
 pub struct NodItemFixture {
@@ -57,7 +58,6 @@ pub struct NodItemFixture {
     pub owner: Address,
     pub gratis_load_minor: U256,
     pub emission_day: u32,
-    pub league_id: u16,
     pub group_key: B256,
     pub issuance_currency: u16,
     pub reference_currency: u16,
@@ -71,7 +71,6 @@ pub fn item(f: NodItemFixture, entry_price_minor: U256) -> NodItemState {
             nod_id: f.nod_id,
             owner: f.owner,
             emission_day: f.emission_day,
-            league_id: f.league_id,
             entry_price_minor,
             issuance_currency: f.issuance_currency,
             reference_currency: f.reference_currency,
@@ -83,7 +82,7 @@ pub fn item(f: NodItemFixture, entry_price_minor: U256) -> NodItemState {
         owner: f.owner,
         encrypted,
         series_id: series_of(f.emission_day, f.issuance_currency, f.reference_currency),
-        league_id: f.league_id,
+        sub_series_id: 0,
         group_key: f.group_key,
         issuance_currency: f.issuance_currency,
         reference_currency: f.reference_currency,
@@ -94,14 +93,17 @@ pub fn item(f: NodItemFixture, entry_price_minor: U256) -> NodItemState {
 /// Creates an unsettled fixture with a group derived from its encrypted terms.
 pub fn unsettled_item(terms: NodTermsV1, amount: U256, issued_at: u64) -> NodItemState {
     assert_eq!(terms.chain_id, 1, "NOD item fixture requires chain 1");
-    let group_key = group_key(issued_at, terms.entry_price_minor, terms.reference_currency);
+    let group_key = group_key(
+        terms.emission_day,
+        terms.entry_price_minor,
+        terms.reference_currency,
+    );
     item(
         NodItemFixture {
             nod_id: terms.nod_id,
             owner: terms.owner,
             gratis_load_minor: amount,
             emission_day: terms.emission_day,
-            league_id: terms.league_id,
             group_key,
             issuance_currency: terms.issuance_currency,
             reference_currency: terms.reference_currency,
@@ -124,7 +126,6 @@ pub fn set_terms(item: &mut NodItemState) {
             nod_id: item.nod_id,
             owner: item.owner,
             emission_day: item.series_id.day(),
-            league_id: item.league_id,
             entry_price_minor: t.entry_price_minor,
             issuance_currency: item.issuance_currency,
             reference_currency: item.reference_currency,
@@ -150,8 +151,7 @@ pub fn sample_item(owner: Address, emission_day: u32) -> NodItemState {
             owner,
             gratis_load_minor: U256::from(11),
             emission_day,
-            league_id: 4,
-            group_key: group_key(1_752_534_000, U256::from(5), 978),
+            group_key: group_key(emission_day, U256::from(5), 978),
             issuance_currency: 840,
             reference_currency: 978,
             issued_at: 1_752_534_000,
@@ -161,10 +161,10 @@ pub fn sample_item(owner: Address, emission_day: u32) -> NodItemState {
 }
 
 /// The group NodFactory puts a Nod in under the production call rate the fixtures seal.
-pub fn group_key(issued_at: u64, entry_price_minor: U256, reference_currency: u16) -> B256 {
+pub fn group_key(emission_day: u32, entry_price_minor: U256, reference_currency: u16) -> B256 {
     group_key_at(
         &crate::config::NodParams::MAINNET,
-        issued_at,
+        emission_day,
         entry_price_minor,
         reference_currency,
     )
@@ -173,16 +173,15 @@ pub fn group_key(issued_at: u64, entry_price_minor: U256, reference_currency: u1
 /// The group NodFactory puts a Nod in under the call rate of `params`.
 pub fn group_key_at(
     params: &crate::config::NodParams,
-    issued_at: u64,
+    emission_day: u32,
     entry_price_minor: U256,
     reference_currency: u16,
 ) -> B256 {
     crate::identity::group_key(
-        issued_at,
+        emission_day,
         outbe_core_common::markup::marked_up(entry_price_minor, params.call_rate).unwrap(),
         reference_currency,
     )
-    .expect("date step")
 }
 
 /// Records `item` as NodFactory issues it: the terms its entry seals and its load.
@@ -202,7 +201,6 @@ pub fn add(
         storage,
         &item,
         sealed_terms(storage, &item, item.entry_price_minor()),
-        crate::api::calculation_amount(&item)?,
     )
 }
 

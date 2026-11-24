@@ -174,7 +174,7 @@ fn subcall_reaches_nod_in_the_same_evm_state() {
     let nod_id = outbe_nod::test_support::nod_id_of(owner, day.value(), 840, 978);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::TESTNET,
-        1_700_000_000,
+        day.value(),
         U256::from(9),
         978,
     );
@@ -185,7 +185,6 @@ fn subcall_reaches_nod_in_the_same_evm_state() {
             owner,
             gratis_load_minor: U256::from(11),
             emission_day: day.value(),
-            league_id: 3,
             group_key,
             issuance_currency: 840,
             reference_currency: 978,

@@ -3,7 +3,7 @@ use outbe_primitives::{
     error::Result,
     storage::{ScopedMutationPurpose, StorageHandle},
 };
-use outbe_tributefactory::worldwide_day::ValidatedWwdAggregate;
+use outbe_worldwideday::ValidatedWwdAggregate;
 
 /// The single production mutation seam. The provider grants an exact
 /// purpose-bound lease. Its checkpoint covers state and EVM events.

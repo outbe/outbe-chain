@@ -6,9 +6,9 @@
 
 use alloy_primitives::{B256, U256};
 use outbe_core_common::confidential_tee::{
-    attestation, consensus_witness_call, derive_resident_state_key, session_witness_call,
-    sign_attestation_tag, verify_response_attestation, verify_signed_domain, ResponseAuthSpec,
-    WitnessResponseTag, WitnessSchema, NOD,
+    attestation, consensus_witness_call, derive_resident_state_key, hash, sign_attestation_tag,
+    verify_response_attestation, verify_signed_domain, ResponseAuthSpec, WitnessResponseTag,
+    WitnessSchema, NOD, OFFER_HKDF_SALT,
 };
 use outbe_core_common::nod_encryption::{
     EncryptedNodGroupLoadV1, EncryptedNodV1, NodQuoteContextV1,
@@ -24,6 +24,7 @@ use crate::nod_encryption::{
     nod_group_load_read_hash, nod_group_load_read_preimage, nod_quote_inputs_hash, nod_read_hash,
     nod_read_preimage, NodGroupLoadOpRequestV1,
 };
+use crate::offer::issue::{IssueNodAtOfferRequestV1, NodAtOfferResultV1, NodAtOfferStatusV1};
 
 const NOD_ATTESTATION: AppErrorDescriptor =
     AppErrorDescriptor::new("nod_attestation", "nod attestation signature invalid");
@@ -90,6 +91,17 @@ pub struct NodQuoteEncryptedV1 {
     pub attestation_tag: Vec<u8>,
 }
 
+/// `NodIssuedAtOfferV1` body. Tag byte is 22.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct NodIssuedAtOfferV1 {
+    /// Outcome of the offer, with its Nod when issued.
+    pub result: NodAtOfferResultV1,
+    /// Canonical commitment over the request.
+    pub inputs_canonical_hash: B256,
+    /// Ed25519 signature. Empty inside the postcard body.
+    pub attestation_tag: Vec<u8>,
+}
+
 macro_rules! nod_schema {
     ($ty:ty, $tag:expr) => {
         impl WitnessSchema for $ty {
@@ -117,6 +129,10 @@ nod_schema!(
 );
 nod_schema!(NodGroupLoadReadV1, WitnessResponseTag::NodGroupLoadReadV1);
 nod_schema!(NodQuoteEncryptedV1, WitnessResponseTag::NodQuoteEncryptedV1);
+nod_schema!(NodIssuedAtOfferV1, WitnessResponseTag::NodIssuedAtOfferV1);
+
+const ISSUE_AT_OFFER_INPUTS: &[u8] = b"outbe/nod/issue-at-offer-inputs/v1";
+const ISSUE_AT_OFFER_RESULT: &[u8] = b"outbe/nod/issue-at-offer-result/v1";
 
 /// Caller-side binding for a group-load witness entry.
 #[derive(Clone, Copy)]
@@ -186,27 +202,86 @@ pub fn encrypt_nod_quote(
     Ok(sealed.encrypted_payment)
 }
 
-/// Seal a group-load total in the installed runtime. Not witness-recorded.
-pub fn seal_group_load(
-    (chain_id, scope): (u64, B256),
-    (sequence, inputs_hash): (u64, B256),
-    load_minor: U256,
-) -> Result<EncryptedNodGroupLoadV1, TransportError> {
-    session_witness_call(
-        CallMeta::session_only("seal_nod_group_load"),
-        move |context| {
-            require_resident_chain(context, chain_id)?;
-            let key = nod_state_key(context)?;
-            nod_encryption::seal_group_load(
-                &key,
-                (chain_id, scope),
-                (sequence, inputs_hash),
-                load_minor,
-            )
-            .map_err(reject)
-        },
+/// Decrypt one offer, price it and encrypt its Nod. Tag 22.
+pub fn issue_nod_at_offer(
+    request: IssueNodAtOfferRequestV1,
+) -> Result<NodAtOfferResultV1, TransportError> {
+    let expected = hash(ISSUE_AT_OFFER_INPUTS, &request).map_err(TransportError::codec)?;
+    let terms_request = request.clone();
+    let issued = recorded(
+        "issue_nod_at_offer_v1",
+        move |context| execute_issue_at_offer(context, &request, expected),
+        move |key, value| auth_issue_at_offer(key, expected, &terms_request, value),
+    )?;
+    Ok(issued.result)
+}
+
+/// What the enclave opened from the canary offer. Session-only, not witness-recorded.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfferCanaryV1 {
+    /// The `creator` field of the decrypted payload.
+    pub creator: String,
+    /// The canonical amount of the decrypted payload, in minor units.
+    pub amount_minor: U256,
+    /// `inputs_canonical_hash` of the one canary offer.
+    pub inputs_canonical_hash: B256,
+    /// Ed25519 signature over the canary result.
+    pub attestation_tag: Vec<u8>,
+}
+
+const OFFER_CANARY_RESULT: &[u8] = b"outbe/nod/offer-canary-result/v1";
+
+/// Open `offer` with the resident offer key of `context` and sign what it holds.
+pub fn open_offer_canary_with(
+    context: &InProcessTeeContext,
+    offer: &crate::offer::protocol::EncryptedTributeOffer,
+) -> Result<OfferCanaryV1, TransportError> {
+    let expected = crate::offer::protocol::inputs_canonical_hash(std::slice::from_ref(offer));
+    let payload = context
+        .with_offer_key_handle(|handle| {
+            let material = crate::offer::OfferKeyMaterial {
+                offer_private_key: handle,
+                salt: &OFFER_HKDF_SALT,
+            };
+            Ok::<_, TransportError>(crate::offer::open_offer(&material, offer).map_err(reject))
+        })
+        .map_err(|err| {
+            TransportError::from(outbe_tee::InProcessDispatchError::Resident(err))
+        })???;
+    let amount_minor =
+        crate::offer::compute::parse_canonical_amount(&payload.amount_base, &payload.amount_micro)
+            .map_err(reject)?
+            .amount_minor;
+    let preimage = attestation(
+        OFFER_CANARY_RESULT,
+        expected,
+        &(payload.creator.as_str(), amount_minor),
     )
-    .ok_or_else(|| TransportError::unavailable(NodHostError::RuntimeMissing))?
+    .map_err(TransportError::codec)?;
+    Ok(OfferCanaryV1 {
+        creator: payload.creator,
+        amount_minor,
+        inputs_canonical_hash: expected,
+        attestation_tag: sign_bytes(context, &preimage),
+    })
+}
+
+/// Verify the signature of a canary result against `expected` inputs.
+pub fn verify_offer_canary(
+    attestation_pub: &[u8; 32],
+    expected: B256,
+    value: &OfferCanaryV1,
+) -> Result<(), TransportError> {
+    verify_signed_domain(
+        &auth_spec(
+            attestation_pub,
+            expected,
+            value.inputs_canonical_hash,
+            &value.attestation_tag,
+        ),
+        OFFER_CANARY_RESULT,
+        &(value.creator.as_str(), value.amount_minor),
+    )
 }
 
 fn recorded<T: WitnessSchema>(
@@ -293,6 +368,86 @@ fn execute_quote(
     };
     auth_quote(&context.attestation_public(), expected, &value)?;
     Ok(value)
+}
+
+fn execute_issue_at_offer(
+    context: &InProcessTeeContext,
+    request: &IssueNodAtOfferRequestV1,
+    expected: B256,
+) -> Result<NodIssuedAtOfferV1, TransportError> {
+    require_resident_chain(context, request.chain_id)?;
+    let key = nod_state_key(context)?;
+    let result = context
+        .with_offer_key_handle(|handle| {
+            let material = crate::offer::OfferKeyMaterial {
+                offer_private_key: handle,
+                salt: &OFFER_HKDF_SALT,
+            };
+            Ok::<_, TransportError>(crate::offer::issue::issue_nod_at_offer(
+                &material,
+                &key,
+                request.chain_id,
+                request,
+            ))
+        })
+        .map_err(|err| TransportError::from(outbe_tee::InProcessDispatchError::Resident(err)))??;
+    let preimage =
+        attestation(ISSUE_AT_OFFER_RESULT, expected, &result).map_err(TransportError::codec)?;
+    let value = NodIssuedAtOfferV1 {
+        result,
+        inputs_canonical_hash: expected,
+        attestation_tag: sign_bytes(context, &preimage),
+    };
+    auth_issue_at_offer(&context.attestation_public(), expected, request, &value)?;
+    Ok(value)
+}
+
+fn auth_issue_at_offer(
+    key: &[u8; 32],
+    expected: B256,
+    request: &IssueNodAtOfferRequestV1,
+    value: &NodIssuedAtOfferV1,
+) -> Result<(), TransportError> {
+    verify_signed_domain(
+        &auth_spec(
+            key,
+            expected,
+            value.inputs_canonical_hash,
+            &value.attestation_tag,
+        ),
+        ISSUE_AT_OFFER_RESULT,
+        &value.result,
+    )?;
+    let issued = matches!(value.result.status, NodAtOfferStatusV1::Issued);
+    let matches = match &value.result.nod {
+        Some(nod) => issued && has_requested_terms(&nod.terms, request),
+        None => !issued,
+    };
+    if matches {
+        return Ok(());
+    }
+    Err(TransportError::UnexpectedResponse)
+}
+
+fn has_requested_terms(
+    terms: &outbe_core_common::nod_encryption::NodTermsV1,
+    request: &IssueNodAtOfferRequestV1,
+) -> bool {
+    (
+        terms.chain_id,
+        terms.owner,
+        terms.emission_day,
+        terms.entry_price_minor,
+        terms.issuance_currency,
+        terms.reference_currency,
+    ) == (
+        request.chain_id,
+        request.offer.owner,
+        request.emission_day,
+        request.entry_price_minor,
+        request.offer.tribute_currency,
+        request.offer.reference_currency,
+    )
 }
 
 fn auth_amount_read(

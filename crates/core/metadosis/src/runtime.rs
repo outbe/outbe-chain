@@ -22,5 +22,5 @@ pub(crate) fn process_ready_candidate(
     if limit_amount.is_zero() {
         return cancel_metadosis(metadosis, emission_day.day, METADOSIS_CANCELED_NO_LIMIT);
     }
-    crate::lysis::execute(metadosis, ctx, emission_day)
+    crate::loads::execute(metadosis, ctx, emission_day)
 }

@@ -237,8 +237,7 @@ async fn run_authority_case(
             .into_rpc(),
     )
     .unwrap();
-    rpc.merge(scheduler.domain_rpc(Arc::clone(&provider), (chain.chain_id, chain.genesis_hash)))
-        .unwrap();
+    rpc.merge(scheduler.domain_rpc()).unwrap();
     let requests = PrivateRequests::new(
         &context,
         ledger.opening(&committee, upgrade_registry_slots_v1(&context)),

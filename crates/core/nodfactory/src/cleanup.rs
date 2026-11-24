@@ -1,4 +1,4 @@
-//! Cleanup sweep: deletes the unpaid Nods of the forfeited groups. It moves no value:
+//! Cleanup sweep: deletes the unsettled Nods of the forfeited groups. It moves no value:
 //! the forfeit already returned their load.
 
 use alloy_primitives::{B256, U256};
@@ -13,7 +13,7 @@ use outbe_primitives::{
 
 use crate::errors::NodFactoryError;
 
-/// Deletes the unpaid Nods of the forfeited groups. Returns the Nods deleted.
+/// Deletes the unsettled Nods of the forfeited groups. Returns the Nods deleted.
 pub fn cleanup(ctx: &BlockRuntimeContext) -> Result<u32> {
     let queue = NodContract::new(ctx.storage.clone());
     let mut cleanup = NodCleanup::new(ctx);
@@ -42,7 +42,7 @@ impl<'a, 's> NodCleanup<'a, 's> {
     }
 }
 
-/// A forfeited group's members are its unpaid Nods.
+/// A forfeited group's members are its unsettled Nods.
 impl DeadlineHandler<B256> for NodCleanup<'_, '_> {
     type Member = U256;
 

@@ -3,7 +3,7 @@ use super::*;
 use outbe_core_common::confidential_tee::{derive_account_keys_message, eip191_hash, Ledger};
 use outbe_primitives::signer::OutbeEvmSigner;
 use outbe_tee::authority::{TeeAuthorityChannel, TeeAuthorityState as State};
-use reth_provider::test_utils::NoopProvider;
+use std::sync::Arc;
 
 fn closed_states() -> [State; 4] {
     [
@@ -23,30 +23,13 @@ async fn private_rpc_revokes_before_work_and_reopens_real_sealed_exports() {
         Arc::clone(&context),
     ));
     let authority = TeeAuthorityChannel::default();
-    let provider: Arc<
-        NoopProvider<reth_chainspec::ChainSpec<OutbeHeader>, outbe_primitives::OutbePrimitives>,
-    > = Arc::new(NoopProvider::new(Arc::new(
-        reth_chainspec::ChainSpec::default(),
-    )));
-    let rpc = OutbeDomainRpcHandler::new(provider, (777, context.manifest().genesis_hash))
+    let rpc = OutbeDomainRpcHandler::new()
         .with_authority_watch(authority.subscribe())
         .into_rpc();
     let signer = OutbeEvmSigner::from_secret_bytes([0x55; 32]).unwrap();
     let owner = signer.address();
     let eph_secret = x25519_dalek::StaticSecret::from([0x33; 32]);
     let eph = B256::from(x25519_dalek::PublicKey::from(&eph_secret).to_bytes());
-    let day = outbe_system_common::time::WorldwideDay::new(20250115);
-    let subject = TributeSourceSubject {
-        checkpoint: outbe_tribute::confidential::TributeSourceCheckpoint {
-            block_number: 1,
-            block_hash: B256::repeat_byte(1),
-            state_root: B256::repeat_byte(2),
-        },
-        chain_id: 777,
-        worldwide_day: day,
-        tribute_count: 1,
-    };
-    let id = WwdEntityId::from_day_and_digest(day, B256::repeat_byte(3));
     for state in closed_states() {
         authority.publish(state);
         for method in ["outbe_deriveKeys", "outbe_deriveGratisKeys"] {
@@ -64,14 +47,6 @@ async fn private_rpc_revokes_before_work_and_reopens_real_sealed_exports() {
                 "{method}: {error}"
             );
         }
-        let error = rpc
-            .call::<_, TributeStateSource>("outbe_getTributeStateSource", (subject, id))
-            .await
-            .unwrap_err();
-        assert!(
-            error.to_string().contains("PrivateExecutionUnavailable"),
-            "{error}"
-        );
         authority.publish(State::Armed {
             enclave_id: B256::repeat_byte(7),
             valid_until: 123,
@@ -105,7 +80,7 @@ async fn private_rpc_revokes_before_work_and_reopens_real_sealed_exports() {
 fn process_authority_port_is_read_live_and_missing_or_dropped_publishers_fail_closed() {
     use outbe_tee::authority::{install_tee_authority_watch, tee_authority_test_guard};
     let _guard = tee_authority_test_guard();
-    let handler = OutbeDomainRpcHandler::new(Arc::new(()), (777, B256::repeat_byte(2)));
+    let handler = OutbeDomainRpcHandler::new();
     assert!(require_private_authority(handler.authority_watch.as_ref()).is_err());
     let authority = TeeAuthorityChannel::default();
     install_tee_authority_watch(authority.subscribe()).unwrap();
@@ -200,9 +175,7 @@ async fn one_door_closes_from_fresh_armed(door: FreshDoor, closed: ClosedAdmissi
     let reader: std::sync::Arc<dyn OutbeRpcStateReader> =
         std::sync::Arc::new(crate::OutbeRuntime::new());
     let upgrade = outbe_rpc::OutbeApiHandler::new(std::sync::Arc::clone(&admission), reader);
-    let domain =
-        OutbeDomainRpcHandler::new(admission, (initial.1.chain_id, initial.1.genesis_hash))
-            .with_authority_watch(channel.subscribe());
+    let domain = OutbeDomainRpcHandler::new().with_authority_watch(channel.subscribe());
     let signer = OutbeEvmSigner::from_secret_bytes([0x55; 32]).unwrap();
     let account = signer.address();
     let eph = B256::from(

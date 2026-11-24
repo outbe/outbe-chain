@@ -7,7 +7,7 @@ use outbe_primitives::{error::Result, storage::StorageHandle};
 use crate::schema::{CallTerms, EffectiveState, NodContract, NodGroupState, NodItemState};
 
 /// Derives the current entitlement state without waiting for sweep cleanup.
-/// Paid entitlements survive expiry; the settlement deadline is inclusive.
+/// Settled entitlements survive expiry; the settlement deadline is inclusive.
 #[must_use]
 pub fn effective_state(
     item: &NodItemState,
@@ -55,7 +55,7 @@ pub fn settlement_deadline(storage: &StorageHandle<'_>, group_key: B256) -> Resu
 
 pub use outbe_core_common::settlement::settlement_deadline_of;
 
-/// The Nod's state as of this block, as `getNod` reports it: an unpaid Nod of a
+/// The Nod's state as of this block, as `getNod` reports it: an unsettled Nod of a
 /// forfeited group reads Forfeited.
 pub fn state_of(storage: &StorageHandle<'_>, item: &NodItemState) -> Result<EffectiveState> {
     let nod = NodContract::new(storage.clone());
@@ -77,46 +77,84 @@ pub use crate::state_api::{LoadedNodGroup, LoadedNodItem};
 /// Inserts a Nod item, increments membership and creates its group if absent atomically.
 /// A new group seals `call_terms`; NodFactory derives them from the live profile.
 /// Records a Nod in its group, opening the group with `call_terms` when it is the first.
-/// `gratis_load_minor` joins the group's unpaid load.
+/// `gratis_load_minor` joins the group's unsettled load.
 pub fn add_nod(
     storage: &StorageHandle<'_>,
     item: &NodItemState,
     call_terms: Option<CallTerms>,
-    gratis_load_minor: U256,
 ) -> Result<()> {
-    crate::state_api::add_item(storage, item, call_terms, gratis_load_minor)
+    crate::state_api::add_item(storage, item, call_terms)
 }
 
-/// Inserts a Nod claimed from a Tribute of a Lysis series into the series' call group.
-/// The group's encrypted open load (`unpaid + unclaimed`) is unchanged because the Tribute's
-/// load stays in the same call group.
-pub fn add_series_nod(
+/// Decrypts one offer, prices it and encrypts its Nod in the enclave.
+pub fn issue_at_offer(
     storage: &StorageHandle<'_>,
-    item: &NodItemState,
-    call_terms: Option<CallTerms>,
+    request: crate::offer::issue::IssueNodAtOfferRequestV1,
+) -> Result<std::result::Result<crate::offer::issue::NodAtOfferResultV1, outbe_tee::TransportError>>
+{
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
+    Ok(crate::enclave_client::issue_nod_at_offer(request))
+}
+
+/// Adds the load, or with `nominal` the nominal, of `nod` to the day sum `previous`
+/// of `scope`.
+pub fn add_to_day_sum(
+    storage: &StorageHandle<'_>,
+    scope: B256,
+    previous: Option<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1>,
+    (nod, nominal): (&outbe_core_common::nod_encryption::EncryptedNodV1, bool),
+) -> Result<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1> {
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
+    let nod = Box::new(nod.clone());
+    let operation = if nominal {
+        crate::nod_encryption::NodGroupLoadOperationV1::AddNodNominal { nod }
+    } else {
+        crate::nod_encryption::NodGroupLoadOperationV1::AddNod { nod }
+    };
+    let request = crate::nod_encryption::NodGroupLoadOpRequestV1 {
+        chain_id: storage.chain_id()?,
+        scope,
+        previous,
+        operation,
+    };
+    crate::enclave_client::apply_group_load_operation(request)
+        .map_err(|err| crate::errors::NodError::AmountReadFailed(err).into())
+}
+
+/// Reads a day sum in the enclave.
+pub fn read_day_sum(
+    storage: &StorageHandle<'_>,
+    record: &outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1,
+) -> Result<U256> {
+    let _enclave_context = outbe_tee::call_context::ContextScope::from_storage(storage)?;
+    crate::enclave_client::read_group_load(record)
+        .map_err(|err| crate::errors::NodError::AmountReadFailed(err).into())
+}
+
+/// The call group sub-series `number` of `series_id` joined with its first Nod.
+pub fn sub_series_group(
+    storage: &StorageHandle<'_>,
     series_id: SeriesId,
-) -> Result<()> {
-    crate::state_api::add_series_item(storage, item, call_terms, series_id)
+    number: u16,
+) -> Result<Option<B256>> {
+    let key = crate::index_keys::sub_series_key(series_id, number);
+    let group_key = NodContract::new(storage.clone())
+        .sub_series_group
+        .read(&key)?;
+    Ok((!group_key.is_zero()).then_some(group_key))
 }
 
-/// A Lysis series `(E, issuance_currency, reference_currency)` and the call group it joins.
-#[derive(Debug, Clone)]
-pub struct LysisSeriesSeal {
-    pub series_id: SeriesId,
-    pub group_key: B256,
-    pub full_day_after_issue: outbe_system_common::time::WorldwideDay,
-    pub issuance_currency: u16,
-    pub reference_currency: u16,
-    pub entry_price_minor: U256,
-    pub call_terms: Option<CallTerms>,
-    pub unclaimed_tribute_count: u64,
-    pub unclaimed_tribute_load: outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1,
-}
-
-/// Seals a Lysis series into its call group with its unclaimed Tributes and their exact load.
-/// Returns `true` when the series had positive unclaimed Tributes and was sealed.
-pub fn seal_lysis_series(storage: &StorageHandle<'_>, seal: LysisSeriesSeal) -> Result<bool> {
-    storage.with_checkpoint(|| NodContract::new(storage.clone()).seal_lysis_series_state(seal))
+/// The entry price sub-series `number` of `series_id` got with its first Nod.
+pub fn sub_series_entry_price(
+    storage: &StorageHandle<'_>,
+    series_id: SeriesId,
+    number: u16,
+) -> Result<Option<U256>> {
+    let key = crate::index_keys::sub_series_key(series_id, number);
+    let price = NodContract::new(storage.clone())
+        .sub_series_entry_price_minor
+        .read(&key)?;
+    Ok((!price.is_zero()).then_some(price))
 }
 
 /// Returns whether `group_key` has been forfeited after its call notice period lapsed.
@@ -132,61 +170,44 @@ pub fn is_group_forfeit_started(storage: &StorageHandle<'_>, group_key: B256) ->
     Ok(nod.group_forfeiting.read(&group_key)? || nod.group_is_forfeited.read(&group_key)?)
 }
 
-/// The call group Lysis sealed `series_id` into, while the series has unclaimed Tributes.
-pub fn series_group(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<Option<B256>> {
-    NodContract::new(storage.clone()).sealed_series_group(series_id)
-}
-
-/// The entry price Lysis sealed on `series_id`, or `U256::ZERO` if none.
-pub fn series_entry_price_minor(storage: &StorageHandle<'_>, series_id: SeriesId) -> Result<U256> {
-    NodContract::new(storage.clone())
-        .series_entry_price_minor
-        .read(&series_id)
-}
-
-/// Takes a cleaned forfeited Tribute off its series and call group, deleting the group
-/// once it holds no Nod and no unclaimed Tribute.
-pub fn record_unclaimed_tribute_cleaned(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-) -> Result<()> {
-    storage.with_checkpoint(|| {
-        NodContract::new(storage.clone()).record_unclaimed_tribute_cleaned_state(series_id)
-    })
-}
-
-/// Permissionless cleanup of an unpaid forfeited Nod (`INod.clean(uint256)`).
+/// Permissionless cleanup of an unsettled forfeited Nod (`INod.clean(uint256)`).
 pub fn clean(storage: &StorageHandle<'_>, nod_id: U256) -> Result<()> {
     crate::state_api::clean_item(storage, nod_id)
 }
 
-/// Removes `load` from the group's unpaid total.
+/// Removes `load` from the group's unsettled total.
 ///
 /// `remove_nod` leaves an unsettled Nod's load on the old group. A storage-only
 /// reissue calls this first, then removes the item and adds it to the new group.
-pub fn take_unpaid_load(storage: &StorageHandle<'_>, group_key: B256, load: U256) -> Result<()> {
-    NodContract::new(storage.clone()).take_unpaid_load(group_key, load)
+pub fn take_unsettled_load(storage: &StorageHandle<'_>, group_key: B256, load: U256) -> Result<()> {
+    NodContract::new(storage.clone()).take_unsettled_load(group_key, load)
 }
 
-/// Removes `load` from both `group_key` and `(group_key, series_id)` open loads.
-pub fn take_series_unpaid_load(
+/// Removes `load` from both `group_key` and `(group_key, sub_series)` open loads.
+pub fn take_series_unsettled_load(
     storage: &StorageHandle<'_>,
     group_key: B256,
-    series_id: SeriesId,
+    sub_series: B256,
     load: U256,
 ) -> Result<()> {
     let mut nod = NodContract::new(storage.clone());
-    nod.take_unpaid_load(group_key, load)?;
-    nod.take_series_unpaid_load(group_key, series_id, load)
+    nod.take_unsettled_load(group_key, load)?;
+    nod.take_series_unsettled_load(group_key, sub_series, load)
 }
 
-/// Removes a loaded Nod item and decrements membership, deleting the group only if empty.
+/// Removes a loaded Nod item and decrements membership. A forfeited group closes with its
+/// last Nod; a group never called stays for [`close_empty_group`].
 pub fn remove_nod(
     storage: &StorageHandle<'_>,
     item: LoadedNodItem,
     group: LoadedNodGroup,
 ) -> Result<()> {
     crate::state_api::remove_item(storage, item, group)
+}
+
+/// Closes `group_key` when it holds no Nod and was never called. Returns whether it did.
+pub fn close_empty_group(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
+    crate::state_api::close_empty_group(storage, group_key)
 }
 
 /// Loads a Nod item while retaining its exact stored state for mutation.
@@ -260,21 +281,4 @@ pub fn encrypt_quote_for_owner(
 /// Decrypts an encrypted group open load via the enclave (used on group forfeiture or test inspection).
 pub fn read_group_open_load(storage: &StorageHandle<'_>, group_key: B256) -> Result<U256> {
     NodContract::new(storage.clone()).read_group_open_load(group_key)
-}
-
-/// Test/fixture helper to seal a series unclaimed load into an `EncryptedNodGroupLoadV1`.
-pub fn seal_series_load(
-    storage: &StorageHandle<'_>,
-    series_id: SeriesId,
-    load_minor: U256,
-) -> Result<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1> {
-    let scope = B256::right_padding_from(series_id.as_bytes());
-    crate::enclave_client::seal_group_load(
-        storage.chain_id()?,
-        scope,
-        0,
-        alloy_primitives::keccak256(series_id.as_bytes()),
-        load_minor,
-    )
-    .map_err(|error| crate::errors::NodError::AmountReadFailed(error).into())
 }

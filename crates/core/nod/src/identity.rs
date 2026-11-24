@@ -3,20 +3,15 @@ use crate::errors::NodError;
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::series_id::SeriesId;
 use outbe_primitives::error::Result;
-use outbe_system_common::time::TimeError;
 
-/// The call group of a Nod issued at `issued_at`: its first full day, its call price and
-/// the currency that price is quoted in.
-pub fn group_key(
-    issued_at: u64,
-    call_price_minor: U256,
-    reference_currency: u16,
-) -> std::result::Result<B256, TimeError> {
-    Ok(outbe_system_common::call_breach::group_key(
-        outbe_system_common::time::first_full_day(issued_at)?,
+/// The call group of a Nod: the day its call count starts, its call price and the
+/// currency that price is quoted in.
+pub fn group_key(call_start_day: u32, call_price_minor: U256, reference_currency: u16) -> B256 {
+    outbe_system_common::call_breach::group_key(
+        call_start_day,
         call_price_minor,
         reference_currency,
-    ))
+    )
 }
 
 /// `keccak256(series_id || owner)`: one Nod per owner and series.

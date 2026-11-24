@@ -10,10 +10,18 @@ pub fn group_nod_key(group_key: B256, index: u32) -> B256 {
     alloy_primitives::keccak256(buf)
 }
 
-/// Storage key for a series parked in `group_key`.
-pub fn group_series_key(group_key: B256, series_id: SeriesId) -> B256 {
-    let mut buf = [0u8; 46];
+/// Storage key, and encrypted-load scope, of sub-series `number` of `series_id`.
+pub fn sub_series_key(series_id: SeriesId, number: u16) -> B256 {
+    let mut buf = [0u8; 16];
+    buf[0..14].copy_from_slice(series_id.as_bytes());
+    buf[14..16].copy_from_slice(&number.to_be_bytes());
+    alloy_primitives::keccak256(buf)
+}
+
+/// Storage key for a sub-series parked in `group_key`.
+pub fn group_series_key(group_key: B256, sub_series: B256) -> B256 {
+    let mut buf = [0u8; 64];
     buf[0..32].copy_from_slice(group_key.as_slice());
-    buf[32..46].copy_from_slice(series_id.as_bytes());
+    buf[32..64].copy_from_slice(sub_series.as_slice());
     alloy_primitives::keccak256(buf)
 }

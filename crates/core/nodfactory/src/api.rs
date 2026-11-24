@@ -7,9 +7,7 @@ use outbe_vaultrouter::settlement::SettlementPayment;
 
 use crate::runtime;
 
-pub use crate::runtime::{
-    issue_tribute_nod_in_series, seal_lysis_series, LysisSeriesInput, MineGratisRequest,
-};
+pub use crate::runtime::MineGratisRequest;
 
 pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Result<U256> {
     runtime::issue_nod(storage, encrypted)
@@ -36,6 +34,7 @@ pub fn settle_nod(
     storage: &StorageHandle<'_>,
     nod_id: U256,
     payment: SettlementPayment,
+    amount_cap_minor: U256,
 ) -> Result<()> {
-    runtime::settle_nod(storage, nod_id, payment)
+    runtime::settle_nod(storage, nod_id, payment, amount_cap_minor)
 }

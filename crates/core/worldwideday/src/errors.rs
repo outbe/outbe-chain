@@ -1,0 +1,110 @@
+use crate::precompile::IWorldwideDay;
+use alloy_primitives::Bytes;
+use alloy_sol_types::SolError;
+use outbe_primitives::error::PrecompileError;
+use outbe_system_common::time::WorldwideDay;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum WwdCallerError {
+    #[error("Metadosis forming window overflow")]
+    FormingWindowOverflow,
+
+    #[error("Metadosis offering window overflow")]
+    OfferingWindowOverflow,
+
+    #[error("timestamp overflows UTC+14 WorldwideDay conversion")]
+    UtcPlus14TimestampOverflow,
+
+    #[error("Metadosis {label} duration overflow")]
+    DurationOverflow { label: &'static str },
+
+    #[error("date step kind {kind} from date key {date_key}")]
+    DateStep { kind: u8, date_key: u32 },
+}
+
+fn revert_with<E: SolError>(error: E) -> PrecompileError {
+    PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
+}
+
+pub fn date_step_error(err: outbe_system_common::time::TimeError) -> PrecompileError {
+    match err.date_step() {
+        Some((kind, date_key)) => WwdCallerError::DateStep { kind, date_key }.into(),
+        None => PrecompileError::Fatal(err.to_string()),
+    }
+}
+
+impl From<WwdCallerError> for PrecompileError {
+    fn from(value: WwdCallerError) -> Self {
+        use IWorldwideDay as I;
+        match value {
+            WwdCallerError::FormingWindowOverflow => revert_with(I::FormingWindowOverflow {}),
+            WwdCallerError::OfferingWindowOverflow => revert_with(I::OfferingWindowOverflow {}),
+            WwdCallerError::UtcPlus14TimestampOverflow => {
+                revert_with(I::UtcPlus14TimestampOverflow {})
+            }
+            WwdCallerError::DurationOverflow { label } => revert_with(I::DurationOverflow {
+                label: label.to_string(),
+            }),
+            WwdCallerError::DateStep { kind, date_key } => revert_with(I::DateStep {
+                kind,
+                dateKey: date_key,
+            }),
+        }
+    }
+}
+
+#[derive(Debug, Error)]
+#[non_exhaustive]
+pub enum WwdStorageCorruptionError {
+    #[error("Metadosis WWD {wwd} already exists with different linked day (expected {expected_day}, found {found_day})")]
+    WwdDayLinkMismatch {
+        wwd: WorldwideDay,
+        expected_day: u32,
+        found_day: u32,
+    },
+
+    #[error("Metadosis EmissionDay {day} already exists with different linked WWD (expected {expected_wwd}, found {found_wwd})")]
+    EmissionDayWwdLinkMismatch {
+        day: u32,
+        expected_wwd: WorldwideDay,
+        found_wwd: WorldwideDay,
+    },
+
+    #[error("Metadosis active WWD cap {max_active_wwds} reached before inserting {wwd}")]
+    ActiveWwdCapReached {
+        max_active_wwds: usize,
+        wwd: WorldwideDay,
+    },
+
+    #[error("Metadosis active WWD population {count} exceeds derived cap {max_active_wwds}")]
+    ActiveWwdPopulationExceedsDerivedCap {
+        count: usize,
+        max_active_wwds: usize,
+    },
+
+    #[error("Metadosis active index points to missing WWD {wwd}")]
+    ActiveIndexPointsToMissingWwd { wwd: WorldwideDay },
+
+    #[error("Metadosis WWD {wwd} has non-monotonic phase boundaries")]
+    WwdNonMonotonicPhaseBoundaries { wwd: WorldwideDay },
+
+    #[error("Metadosis {label} WWD index contains duplicate {value}")]
+    WwdIndexContainsDuplicate {
+        label: &'static str,
+        value: WorldwideDay,
+    },
+
+    #[error("created WWD record disappeared")]
+    CreatedWwdRecordDisappeared,
+
+    #[error("Nod count of WWD {wwd} overflows")]
+    DayNodCountOverflow { wwd: WorldwideDay },
+}
+
+impl From<WwdStorageCorruptionError> for PrecompileError {
+    fn from(value: WwdStorageCorruptionError) -> Self {
+        PrecompileError::Revert(value.to_string())
+    }
+}

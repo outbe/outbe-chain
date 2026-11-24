@@ -396,11 +396,7 @@ async fn in_process_founding_tick_omits_domain_rpc() {
     )
     .unwrap()
     .expect("founding lifecycle module");
-    for method in [
-        "outbe_deriveKeys",
-        "outbe_deriveGratisKeys",
-        "outbe_getTributeStateSource",
-    ] {
+    for method in ["outbe_deriveKeys", "outbe_deriveGratisKeys"] {
         assert!(methods.method(method).is_none(), "{method}");
     }
     assert!(methods.method("eth_chainId").is_some());

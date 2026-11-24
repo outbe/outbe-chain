@@ -76,7 +76,6 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
                 owner: Address::ZERO,
                 gratis_load_minor: U256::ZERO,
                 emission_day: 0,
-                league_id: 0,
                 group_key: B256::ZERO,
                 issuance_currency: 0,
                 reference_currency: 0,
@@ -91,7 +90,6 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
                 owner: Address::repeat_byte(u8::MAX),
                 gratis_load_minor: U256::MAX,
                 emission_day: u32::MAX,
-                league_id: u16::MAX,
                 group_key: B256::repeat_byte(u8::MAX),
                 issuance_currency: u16::MAX,
                 reference_currency: u16::MAX,
@@ -109,7 +107,7 @@ fn canonical_stored_bodies_roundtrip_all_nod_field_boundaries() {
             outbe_nod::api::calculation_amount(&body).unwrap()
         );
         assert_eq!(decoded.series_id, body.series_id);
-        assert_eq!(decoded.league_id, body.league_id);
+        assert_eq!(decoded.sub_series_id, body.sub_series_id);
         assert_eq!(decoded.group_key, body.group_key);
         assert_eq!(decoded.issuance_currency, body.issuance_currency);
         assert_eq!(decoded.reference_currency, body.reference_currency);
@@ -145,7 +143,6 @@ fn nod_body_is_self_contained_and_carries_only_encrypted_amounts() {
     let params = outbe_nod::NodIssueParams {
         owner: Address::repeat_byte(0x81),
         emission_day: 20_261_007,
-        league_id: 4,
         gratis_load_minor: amount,
         entry_price_minor: U256::from(17),
         issuance_currency: 840,
@@ -157,6 +154,7 @@ fn nod_body_is_self_contained_and_carries_only_encrypted_amounts() {
         group_key: B256::repeat_byte(0x74),
         issued_at: 99,
         is_settled: false,
+        sub_series_id: 0,
     };
     let payload = encode_nod_item_v1(&body).unwrap();
     assert!(!payload

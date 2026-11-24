@@ -38,7 +38,6 @@ impl Rail for Nod {
             owner: OWNER,
             gratis_load_minor: U256::from(GRATIS_LOAD),
             emission_day: 20_241_220,
-            league_id: 1,
             entry_price_minor: self.cost * U256::from(1_000),
             issuance_currency,
             reference_currency: 840,
@@ -84,11 +83,12 @@ impl Rail for Nod {
         }
     }
 
-    fn settle_call(self, id: U256, snapshot_id: U256, _cost: U256) -> Bytes {
+    fn settle_call(self, id: U256, snapshot_id: U256, cost: U256) -> Bytes {
         INodFactory::settleNodCall {
             nodId: id,
             asset: ASSET,
             snapshotId: snapshot_id,
+            amountCapMinor: cost,
         }
         .abi_encode()
         .into()
@@ -99,7 +99,8 @@ impl Rail for Nod {
             .evm
             .logs()
             .iter()
-            .filter_map(|log| INodFactory::NodSettled::decode_log_data(&log.data).ok())
+            .filter(|log| log.address == NOD_ADDRESS)
+            .filter_map(|log| INod::NodSettled::decode_log_data(&log.data).ok())
             .collect();
         assert_eq!(settled.len(), 1);
         assert_eq!(settled[0].owner, OWNER);

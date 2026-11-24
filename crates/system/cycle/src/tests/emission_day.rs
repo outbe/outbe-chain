@@ -5,12 +5,12 @@ use outbe_emission::day_emission::emission_limit_of_day;
 use outbe_oracle::schema::OracleContract;
 use outbe_primitives::{error::PrecompileError, storage::MutationPurposeTag};
 use outbe_system_common::address_pair::AddressPair;
-use outbe_system_common::addresses::TRIBUTE_FACTORY_ADDRESS;
+use outbe_system_common::addresses::WORLDWIDE_DAY_ADDRESS;
 use outbe_system_common::time::{
     date_key_to_utc_timestamp, day_number_between, timestamp_to_date_key, WorldwideDay,
     SECONDS_PER_DAY,
 };
-use outbe_tributefactory::TributeFactoryContract;
+use outbe_worldwideday::WorldwideDayContract;
 
 use super::*;
 
@@ -232,7 +232,7 @@ fn wwd_step_runs_once_a_day() {
 
         let anchor = genesis_block(handle.clone(), GENESIS_TS + 60);
         run_cycle_tick(&anchor).unwrap();
-        let factory = TributeFactoryContract::new(handle);
+        let factory = WorldwideDayContract::new(handle);
         assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_101);
         assert_eq!(
             factory.pipeline_wwd.read_all().unwrap(),
@@ -249,7 +249,7 @@ fn wwd_step_runs_once_a_day() {
     storage.enter(|handle| {
         let ts_13h = GENESIS_TS + 13 * 3_600;
         let ctx = dispatch_at(handle.clone(), 2, ts_13h);
-        let factory = TributeFactoryContract::new(ctx.storage.clone());
+        let factory = WorldwideDayContract::new(ctx.storage.clone());
         assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_101);
         assert_eq!(
             factory.pipeline_wwd.read_all().unwrap(),
@@ -274,7 +274,7 @@ fn wwd_step_runs_once_a_day() {
             let ctx = dispatch_at(handle.clone(), block_no, midnight_ts);
             crate::handler::process_agent_rewards(&ctx).unwrap();
             let expected_day = timestamp_to_date_key(midnight_ts);
-            let factory = TributeFactoryContract::new(ctx.storage.clone());
+            let factory = WorldwideDayContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), expected_day);
         });
         block_no += 1;
@@ -296,11 +296,8 @@ fn wwd_step_runs_once_a_day() {
         ] {
             handle.set_block_timestamp(U256::from(ts)).unwrap();
             assert_eq!(
-                outbe_tributefactory::worldwide_day::is_offering_day(
-                    handle.clone(),
-                    WorldwideDay::new(20_240_103)
-                )
-                .unwrap(),
+                outbe_worldwideday::is_offering_day(handle.clone(), WorldwideDay::new(20_240_103))
+                    .unwrap(),
                 expected,
                 "unexpected is_offering_day at ts={ts}"
             );
@@ -312,7 +309,7 @@ fn wwd_step_runs_once_a_day() {
     // - At 13:00 UTC (after WWD 20240103 offering_end = 12:00 UTC and after WWD 20240104 forming_end = 12:00 UTC):
     //   * `is_offering_day(20240103)` is false by block timestamp (`now >= offering_end`).
     //   * `is_day_sealed(20240103)` is still false and 20240103 remains in `pipeline_wwd`.
-    let events_before_intraday = storage.get_events(TRIBUTE_FACTORY_ADDRESS).len();
+    let events_before_intraday = storage.get_events(WORLDWIDE_DAY_ADDRESS).len();
     for hour in 1..=23u64 {
         let ts_hour = GENESIS_TS + 4 * SECONDS_PER_DAY + hour * 3_600;
         storage.set_block_number(block_no);
@@ -320,18 +317,20 @@ fn wwd_step_runs_once_a_day() {
         storage.enter(|handle| {
             let ctx = dispatch_at(handle.clone(), block_no, ts_hour);
             crate::handler::process_agent_rewards(&ctx).unwrap();
-            let factory = TributeFactoryContract::new(ctx.storage.clone());
+            let factory = WorldwideDayContract::new(ctx.storage.clone());
             assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_105);
             if hour == 13 {
-                assert!(!outbe_tributefactory::worldwide_day::is_offering_day(
+                assert!(!outbe_worldwideday::is_offering_day(
                     ctx.storage.clone(),
                     WorldwideDay::new(20_240_103)
                 )
                 .unwrap());
                 assert!(
-                    !outbe_tribute::TributeContract::new(ctx.storage.clone())
-                        .is_day_sealed(WorldwideDay::new(20_240_103))
-                        .unwrap(),
+                    !outbe_worldwideday::is_sealed(
+                        ctx.storage.clone(),
+                        WorldwideDay::new(20_240_103)
+                    )
+                    .unwrap(),
                     "WWD 20240103 must not be sealed at 13:00 UTC; A6 seals at 00:00 UTC"
                 );
                 assert!(
@@ -347,7 +346,7 @@ fn wwd_step_runs_once_a_day() {
         block_no += 1;
     }
     assert_eq!(
-        storage.get_events(TRIBUTE_FACTORY_ADDRESS).len(),
+        storage.get_events(WORLDWIDE_DAY_ADDRESS).len(),
         events_before_intraday,
         "intraday ticks 01:00..=23:00 UTC must not emit duplicate TributeFactory WWD events"
     );
@@ -365,12 +364,12 @@ fn wwd_step_runs_once_a_day() {
         outbe_emission::api::link_wwd(handle, 20_240_108, WorldwideDay::new(20_240_120)).unwrap();
     });
     let ts_day6_00h = GENESIS_TS + 5 * SECONDS_PER_DAY;
-    let factory_events_before_failed_a6 = storage.get_events(TRIBUTE_FACTORY_ADDRESS).len();
+    let factory_events_before_failed_a6 = storage.get_events(WORLDWIDE_DAY_ADDRESS).len();
     storage.set_block_number(block_no);
     storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 8);
     storage.enter(|handle| {
         let ctx = dispatch_at(handle.clone(), block_no, ts_day6_00h);
-        let factory = TributeFactoryContract::new(ctx.storage.clone());
+        let factory = WorldwideDayContract::new(ctx.storage.clone());
         assert_eq!(
             factory.last_wwd_advance_day.read().unwrap(),
             20_240_105,
@@ -417,7 +416,7 @@ fn wwd_step_runs_once_a_day() {
         );
     });
     assert_eq!(
-        storage.get_events(TRIBUTE_FACTORY_ADDRESS).len(),
+        storage.get_events(WORLDWIDE_DAY_ADDRESS).len(),
         factory_events_before_failed_a6,
         "a reverted A6 must emit no TributeFactory event"
     );
@@ -442,7 +441,7 @@ fn wwd_step_runs_once_a_day() {
     storage.enter(|handle| {
         let ctx = dispatch_at(handle.clone(), block_no, ts_day6_01h);
         crate::handler::process_agent_rewards(&ctx).unwrap();
-        let factory = TributeFactoryContract::new(ctx.storage.clone());
+        let factory = WorldwideDayContract::new(ctx.storage.clone());
         assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_106);
         assert!(
             !factory
@@ -452,16 +451,10 @@ fn wwd_step_runs_once_a_day() {
                 .contains(&WorldwideDay::new(20_240_103)),
             "A6 retry at 01:00 UTC must close WWD 20240103"
         );
-        let tribute = outbe_tribute::TributeContract::new(ctx.storage.clone());
-        assert!(tribute
-            .retired_days
-            .read(&WorldwideDay::new(20_240_103))
-            .unwrap());
         assert!(
-            tribute
-                .is_day_sealed(WorldwideDay::new(20_240_103))
+            outbe_worldwideday::is_sealed(ctx.storage.clone(), WorldwideDay::new(20_240_103))
                 .unwrap(),
-            "A6 retry at 01:00 UTC must seal the retired WWD 20240103"
+            "A6 retry at 01:00 UTC must seal WWD 20240103"
         );
         assert!(
             factory
@@ -486,7 +479,7 @@ fn wwd_step_runs_once_a_day() {
     // At 2024-01-07 00:00 UTC, A6 runs with no mutation frame and hits `PrecompileError::Revert(String)`.
     block_no += 1;
     let ts_day7_00h = GENESIS_TS + 6 * SECONDS_PER_DAY;
-    let factory_events_before_text_revert = storage.get_events(TRIBUTE_FACTORY_ADDRESS).len();
+    let factory_events_before_text_revert = storage.get_events(WORLDWIDE_DAY_ADDRESS).len();
     storage.set_block_number(block_no);
     storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 0);
     storage.enter(|handle| {
@@ -503,7 +496,7 @@ fn wwd_step_runs_once_a_day() {
         };
         let ctx = runtime_context(block, handle);
         crate::handler::run_advance_worldwide_days_step(&ctx, 20_240_107).unwrap();
-        let factory = TributeFactoryContract::new(ctx.storage.clone());
+        let factory = WorldwideDayContract::new(ctx.storage.clone());
         assert_eq!(factory.last_wwd_advance_day.read().unwrap(), 20_240_106);
         assert!(factory
             .worldwide_days
@@ -512,7 +505,7 @@ fn wwd_step_runs_once_a_day() {
             .is_none());
     });
     assert_eq!(
-        storage.get_events(TRIBUTE_FACTORY_ADDRESS).len(),
+        storage.get_events(WORLDWIDE_DAY_ADDRESS).len(),
         factory_events_before_text_revert,
         "a text revert of A6 must emit no TributeFactory event"
     );

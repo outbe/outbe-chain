@@ -13,9 +13,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_sol_types::SolCall;
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_runtime::OutbeRuntime;
-use outbe_system_common::addresses::{
-    AGENT_REWARD_ADDRESS, TRIBUTE_FACTORY_ADDRESS, ZEROFEE_ADDRESS,
-};
+use outbe_system_common::addresses::{AGENT_REWARD_ADDRESS, NOD_FACTORY_ADDRESS, ZEROFEE_ADDRESS};
 use outbe_system_common::time::timestamp_to_date_key;
 use outbe_txpool::{
     sponsorship_decision, OutbeTransactionValidator, SponsorshipOutcome, TxPoolZeroFeePolicy,
@@ -183,11 +181,11 @@ fn pool_rejects_true_type4_bootstrap_with_zero_balance() {
 }
 
 #[test]
-fn decision_tribute_elevated_gas_requires_granted_selector() {
+fn decision_issue_nod_elevated_gas_requires_granted_selector() {
     let (_, selector, elevated_limit) = ELEVATED_SPONSORED_GAS
         .iter()
-        .find(|(target, _, _)| *target == TRIBUTE_FACTORY_ADDRESS)
-        .expect("TributeFactory grant");
+        .find(|(target, _, _)| *target == NOD_FACTORY_ADDRESS)
+        .expect("NodFactory grant");
     let unknown = [0xde, 0xad, 0xbe, 0xef];
     assert_ne!(selector, &unknown);
     let runtime = OutbeRuntime::new();
@@ -201,7 +199,7 @@ fn decision_tribute_elevated_gas_requires_granted_selector() {
     ] {
         for gas_limit in [500_000, 500_001, *elevated_limit, *elevated_limit + 1] {
             let mut tx = sponsored_envelope(NON_VALIDATOR_SIGNER, input);
-            tx.call.to = Some(TRIBUTE_FACTORY_ADDRESS);
+            tx.call.to = Some(NOD_FACTORY_ADDRESS);
             tx.call.gas_limit = gas_limit;
             let expected = if gas_limit <= 500_000
                 || (input == selector.as_slice() && gas_limit <= *elevated_limit)
@@ -221,11 +219,11 @@ fn decision_tribute_elevated_gas_requires_granted_selector() {
 }
 
 #[test]
-fn pool_tribute_selector_controls_sponsored_balance_waiver_and_paid_fallback() {
+fn pool_issue_nod_selector_controls_sponsored_balance_waiver_and_paid_fallback() {
     let (_, selector, _) = ELEVATED_SPONSORED_GAS
         .iter()
-        .find(|(target, _, _)| *target == TRIBUTE_FACTORY_ADDRESS)
-        .expect("TributeFactory grant");
+        .find(|(target, _, _)| *target == NOD_FACTORY_ADDRESS)
+        .expect("NodFactory grant");
     let gas_limit = 600_000;
     let funded_balance = U256::from(gas_limit) * U256::from(MIN_PROTOCOL_BASE_FEE);
     for (input, account_balance, sponsored) in [
@@ -242,7 +240,7 @@ fn pool_tribute_selector_controls_sponsored_balance_waiver_and_paid_fallback() {
         ),
     ] {
         let transaction = pooled_tx_with_gas(
-            TRIBUTE_FACTORY_ADDRESS,
+            NOD_FACTORY_ADDRESS,
             input,
             MIN_PROTOCOL_BASE_FEE as u128,
             0,

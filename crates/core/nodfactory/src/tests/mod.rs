@@ -12,7 +12,6 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_system_common::addresses::{NOD_ADDRESS, NOD_FACTORY_ADDRESS};
-use outbe_system_common::time::WorldwideDay;
 use outbe_system_common::units::SCALE_1E6_U64;
 use outbe_vaultrouter::settlement::SettlementPayment;
 
@@ -76,7 +75,6 @@ fn params(owner: Address) -> NodIssueParams {
         owner,
         gratis_load_minor: U256::from(1_000),
         emission_day: 20_241_220,
-        league_id: 1,
         entry_price_minor: U256::from(500_000),
         issuance_currency: 840,
         reference_currency: 840,
@@ -192,6 +190,7 @@ impl World {
                     asset: SETTLEMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },
+                AMOUNT_CAP,
             )
         })
     }
@@ -210,6 +209,14 @@ impl World {
             )),
         );
         self.set_asset_decimals(asset, 6);
+        let cap = Bytes::from(AMOUNT_CAP.to_be_bytes::<32>().to_vec());
+        self.provider.stub_sub_call_at_selector(
+            asset,
+            IERC20::balanceOfCall::SELECTOR,
+            cap.clone(),
+        );
+        self.provider
+            .stub_sub_call_at_selector(asset, IERC20::allowanceCall::SELECTOR, cap);
     }
 
     fn register_reference_currency_assets(&mut self, assets: Vec<Address>) {
@@ -313,12 +320,15 @@ fn dual_currency_params(owner: Address) -> NodIssueParams {
     }
 }
 
-fn paid_event(world: &World) -> INodFactory::NodSettled {
+/// A cap above every quoted cost that the stubbed allowance and balance cover.
+pub(crate) const AMOUNT_CAP: U256 = U256::from_limbs([u64::MAX, u64::MAX, 0, 0]);
+
+fn settled_event(world: &World) -> INod::NodSettled {
     world
         .provider
         .get_ordered_events()
         .iter()
-        .filter_map(|event| INodFactory::NodSettled::decode_log_data(&event.data).ok())
+        .filter_map(|event| INod::NodSettled::decode_log_data(&event.data).ok())
         .last()
         .expect("NodSettled event")
 }
@@ -379,6 +389,7 @@ fn settle_erc20(
                 asset,
                 snapshot_id: snapshot,
             },
+            AMOUNT_CAP,
         )
     })
 }
@@ -388,4 +399,5 @@ mod currency_snapshots;
 mod direct_fx_admission;
 mod issuance;
 mod nod_lifecycle;
-mod paid_entitlement;
+mod offer;
+mod settled_entitlement;

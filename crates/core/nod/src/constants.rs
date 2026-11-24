@@ -16,9 +16,12 @@ pub const TOKEN_DESCRIPTION: &str = concat!(
 /// group on the terms it was issued with. Gem and intex give the same guarantee.
 ///
 /// Call-price markup percent: `call = entry x (100 + CALL_RATE_PCT) / 100`
-/// (256 => +256%, i.e. 3.56x entry). Same shape as credis' 64 and
-/// gem/intex's 128, one rung up the same ladder.
-pub const CALL_RATE_PCT: u16 = 256;
+/// (128 => +128%, i.e. 2.28x entry). Same shape as credis' 64 and
+/// gem/intex's 128.
+pub const CALL_RATE_PCT: u16 = 128;
+
+/// Share of the nominal of an offer that its Nod takes as its Gratis load, in percent.
+pub const LOAD_RATE_PCT: u64 = 32;
 
 /// Trailing window the daily call scan inspects, in whole UTC days.
 pub const CALL_LOOKBACK_DAYS: u32 = 28;
@@ -39,7 +42,7 @@ pub const CALL_WINDOW: u32 = CALL_LOOKBACK_DAYS * SECONDS_PER_DAY_U32;
 pub const CALL_THRESHOLD: u32 = CALL_THRESHOLD_DAYS * SECONDS_PER_DAY_U32;
 
 /// Seconds after `called_at` within which the owner must settle. Once the
-/// period elapses, the CycleTick forfeit sweep forfeits the group's unpaid Nods and
+/// period elapses, the CycleTick forfeit sweep forfeits the group's unsettled Nods and
 /// the cleanup deletes them.
 pub const CALL_NOTICE_PERIOD: u32 = 7 * SECONDS_PER_DAY_U32;
 

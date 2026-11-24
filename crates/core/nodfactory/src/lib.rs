@@ -9,6 +9,7 @@ mod cleanup;
 pub mod errors;
 pub mod forfeited;
 pub mod hooks;
+pub mod offer;
 pub mod precompile;
 pub mod runtime;
 pub mod sol_ext;

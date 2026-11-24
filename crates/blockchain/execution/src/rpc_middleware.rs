@@ -164,7 +164,7 @@ fn classify_method(method: &str) -> Option<HeavyRpcClass> {
         | "eth_getFilterLogs"
         | "eth_getFilterChanges"
         | "eth_getBlockReceipts" => Some(HeavyRpcClass::Call),
-        "eth_getProof" | "outbe_getTributeStateSource" => Some(HeavyRpcClass::Proof),
+        "eth_getProof" => Some(HeavyRpcClass::Proof),
         _ if method.starts_with("debug_")
             || method.starts_with("trace_")
             || method.starts_with("ots_") =>

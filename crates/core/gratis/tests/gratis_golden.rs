@@ -86,10 +86,10 @@ fn canonical_hash_and_attestation_vectors() {
         hex::encode(keccak256(&preimage)),
         "c712ea15201e08c9452b2fca321cbed2315754023a3ce667b46ceb4c6de64c92"
     );
-    let mine_request: outbe_gratis::nod_mine::MineEncryptedNodRequestV1 = serde_json::from_str(r#"{"nod":{"terms":{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"league_id":7,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978},"encryption_binding":"0x3333333333333333333333333333333333333333333333333333333333333333","encrypted_gratis_amount":[65]},"current_balance":[81,82],"modify_auth":{"mac":[51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51],"op_nonce":5},"fidelity":{"op":"Out","timestamp":123,"first_qualified_start":124,"current_blob":[65,66]}}"#).unwrap();
+    let mine_request: outbe_gratis::nod_mine::MineEncryptedNodRequestV1 = serde_json::from_str(r#"{"nod":{"terms":{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978},"encryption_binding":"0x3333333333333333333333333333333333333333333333333333333333333333","encrypted_gratis_amount":[65],"encrypted_nominal_amount":[66]},"current_balance":[81,82],"modify_auth":{"mac":[51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51],"op_nonce":5},"fidelity":{"op":"Out","timestamp":123,"first_qualified_start":124,"current_blob":[65,66]}}"#).unwrap();
     assert_eq!(
         hex::encode(outbe_gratis::nod_mine::inputs_hash(&mine_request).unwrap()),
-        "5b2a54224b14481d7dd879f3b7a37547dcfae32f9190da9bd114d0b6f7ba82f2"
+        "e66620bdb18c3bed4b4f00a9d2c64efcb870fa3cff2d6cf6b3043541bf91f855"
     );
     let mine_result: MineEncryptedNodResultV1 = serde_json::from_str(r#"{"new_balance":[33],"next_op_nonce":5,"fidelity":{"new_blob":[33],"qualified_start_initialized":123,"league":7},"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82],"encrypted_event_amount":[35]}"#).unwrap();
     let mine_preimage = outbe_gratis::nod_mine::result_preimage(&mine_result).unwrap();

@@ -252,7 +252,7 @@ fn resident_attestation_tag_round_trips() {
 
 /// Independent `(variant, discriminant)` table copied from the frozen V1
 /// response golden. A swapped enum discriminant fails `literal`, not `value()`.
-const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 19] = [
+const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 20] = [
     (WitnessResponseTag::GratisOpApplied, 1),
     (WitnessResponseTag::PromisOpApplied, 2),
     (WitnessResponseTag::FidelityLeaguesSnapshotted, 4),
@@ -272,6 +272,7 @@ const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 19] = [
     (WitnessResponseTag::NodGroupLoadOpAppliedV1, 19),
     (WitnessResponseTag::NodGroupLoadReadV1, 20),
     (WitnessResponseTag::NodQuoteEncryptedV1, 21),
+    (WitnessResponseTag::NodIssuedAtOfferV1, 22),
 ];
 
 #[test]

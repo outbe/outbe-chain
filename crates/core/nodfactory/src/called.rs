@@ -219,7 +219,7 @@ pub(crate) fn call_currency(
         budget,
         |group_key, budget| {
             call_pass::call_entry::<NodCallPass>(&ctx.storage, budget, group_key, || {
-                if retire_paid_group(nod, group_key, ctx.block.timestamp)? {
+                if retire_settled_group(nod, group_key, ctx.block.timestamp)? {
                     return Ok(1);
                 }
                 if !call_if_breached(nod, window, group_key, ctx.block.timestamp)? {
@@ -233,14 +233,11 @@ pub(crate) fn call_currency(
     Ok((called, finished))
 }
 
-/// Takes a group every Nod of which is paid out of its bin once its first full day is
-/// under way: a Nod issued at its 00:00:00 still joins it, none after. Returns whether
-/// it did.
-fn retire_paid_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) -> Result<bool> {
-    if nod.group_nod_count.read(&group_key)? != 0
-        || nod.group_unclaimed_tribute_count.read(&group_key)? != 0
-        || nod.group_called_at.read(&group_key)? != 0
-    {
+/// Takes a group every Nod of which is settled out of its bin once the offering of its
+/// emission day ended, and closes it when no Nod is left: no Nod can join it after.
+/// Returns whether it did.
+fn retire_settled_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) -> Result<bool> {
+    if nod.group_nod_count.read(&group_key)? != 0 || nod.group_called_at.read(&group_key)? != 0 {
         return Ok(false);
     }
     let start_day = nod
@@ -248,13 +245,11 @@ fn retire_paid_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) -> Re
         .get(group_key)?
         .ok_or(crate::errors::NodFactoryError::MissingGroupForCall { group_key })?
         .full_day_after_issue;
-    let start_ts = start_day
-        .to_timestamp_utc()
-        .map_err(crate::errors::date_step_error)?;
-    if now <= start_ts {
+    if now < offering_end_of(nod, start_day)? {
         return Ok(false);
     }
     nod.remove_call_bin(group_key)?;
+    outbe_nod::api::close_empty_group(&nod.storage, group_key)?;
     Ok(true)
 }
 
@@ -265,10 +260,7 @@ fn call_if_breached(
     group_key: B256,
     now: u64,
 ) -> Result<bool> {
-    if (nod.group_nod_count.read(&group_key)? == 0
-        && nod.group_unclaimed_tribute_count.read(&group_key)? == 0)
-        || nod.group_called_at.read(&group_key)? != 0
-    {
+    if nod.group_nod_count.read(&group_key)? == 0 || nod.group_called_at.read(&group_key)? != 0 {
         return Ok(false);
     }
     let terms = nod.read_call_terms(group_key)?;
@@ -279,8 +271,26 @@ fn call_if_breached(
     Ok(true)
 }
 
+/// The end of the offering of emission day `day`, whose Nods count their call from its
+/// 00:00. Without a Worldwide Day record it is that 00:00.
+pub(crate) fn offering_end_of(
+    nod: &NodContract<'_>,
+    day: outbe_system_common::time::WorldwideDay,
+) -> Result<u64> {
+    let start_ts = day
+        .to_timestamp_utc()
+        .map_err(crate::errors::date_step_error)?;
+    let wwd = outbe_system_common::time::WorldwideDay::new(
+        outbe_system_common::time::previous_date_key(day.value())
+            .map_err(crate::errors::date_step_error)?,
+    );
+    Ok(outbe_worldwideday::worldwide_day(nod.storage.clone(), wwd)?
+        .filter(|record| record.day == day.value())
+        .map_or(start_ts, |record| record.offering_end))
+}
+
 /// The terms a group is decided on: the ones it sealed, from the group's own first
-/// full day, which a Lysis series takes from its sealing.
+/// full day, 00:00 of its emission day.
 pub(crate) fn breach_terms(
     nod: &NodContract<'_>,
     group_key: B256,
@@ -308,16 +318,21 @@ pub(crate) fn mark_called(
 ) -> Result<()> {
     let deadline = api::settlement_deadline_of(now, notice_period);
     nod.record_group_called(group_key, now, deadline)?;
-    for series_id in nod.group_series.list(&group_key).read_all()? {
-        let issuance_currency = nod.series_issuance_currency.read(&series_id)?;
-        let reference_currency = nod.series_reference_currency.read(&series_id)?;
-        nod.emit(INod::NodSeriesCalled {
-            seriesId: series_id.into(),
-            issuanceCurrency: issuance_currency,
-            referenceCurrency: reference_currency,
-            calledAt: now,
-            settlementDeadline: deadline,
-        })?;
+    for sub_series in nod.group_series.list(&group_key).read_all()? {
+        let series_id = nod.sub_series_series_id.read(&sub_series)?;
+        let issuance_currency = nod.sub_series_issuance_currency.read(&sub_series)?;
+        let reference_currency = nod.sub_series_reference_currency.read(&sub_series)?;
+        crate::runtime::emit_event(
+            &nod.storage,
+            crate::precompile::INodFactory::NodSeriesCalled {
+                seriesId: series_id.into(),
+                subSeriesId: nod.sub_series_number.read(&sub_series)?,
+                issuanceCurrency: issuance_currency,
+                referenceCurrency: reference_currency,
+                calledAt: now,
+                settlementDeadline: deadline,
+            },
+        )?;
     }
     Ok(())
 }

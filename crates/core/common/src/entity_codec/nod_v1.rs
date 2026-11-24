@@ -9,6 +9,7 @@ pub struct NodItemBodyV1 {
     pub group_key: B256,
     pub issued_at: u64,
     pub is_settled: bool,
+    pub sub_series_id: u16,
 }
 pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBodyError> {
     if !body.encrypted.has_valid_encoding() {
@@ -22,7 +23,7 @@ pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBody
     // Field 4 is retired (formerly encrypted_creator_public_key); never reuse tag 4.
     encode_optional_varint_field(5, t.chain_id, &mut out);
     // Field 6 is retired (formerly worldwide_day); never reuse tag 6.
-    encode_optional_varint_field(7, u64::from(t.league_id), &mut out);
+    // Field 7 is retired (formerly league_id); never reuse tag 7.
     encode_bytes_field(8, &t.entry_price_minor.to_be_bytes::<32>(), &mut out);
     encode_optional_varint_field(9, u64::from(t.issuance_currency), &mut out);
     encode_optional_varint_field(10, u64::from(t.reference_currency), &mut out);
@@ -31,6 +32,8 @@ pub fn encode_nod_item_v1(body: &NodItemBodyV1) -> Result<Vec<u8>, CanonicalBody
     encode_optional_varint_field(13, u64::from(body.is_settled), &mut out);
     encode_bytes_field(14, body.encrypted.encryption_binding.as_slice(), &mut out);
     encode_optional_varint_field(15, u64::from(t.emission_day), &mut out);
+    encode_bytes_field(16, &body.encrypted.encrypted_nominal_amount, &mut out);
+    encode_optional_varint_field(17, u64::from(body.sub_series_id), &mut out);
     Ok(out)
 }
 pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyError> {
@@ -39,7 +42,6 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
     let owner = Address::from(fixed_bytes::<20>(required_bytes(&mut f, 2)?, 2)?);
     let encrypted_gratis_amount = required_bytes(&mut f, 3)?.to_vec();
     let chain_id = optional_varint(&mut f, 5)?;
-    let league_id = optional_u16(&mut f, 7)?;
     let entry_price_minor = decode_u256(required_bytes(&mut f, 8)?, 8)?;
     let issuance_currency = optional_u16(&mut f, 9)?;
     let reference_currency = optional_u16(&mut f, 10)?;
@@ -48,6 +50,8 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
     let is_settled = optional_bool(&mut f, 13)?;
     let encryption_binding = B256::from(fixed_bytes::<32>(required_bytes(&mut f, 14)?, 14)?);
     let emission_day = optional_u32(&mut f, 15)?;
+    let encrypted_nominal_amount = required_bytes(&mut f, 16)?.to_vec();
+    let sub_series_id = optional_u16(&mut f, 17)?;
     f.finish()?;
     let body = NodItemBodyV1 {
         encrypted: EncryptedNodV1 {
@@ -56,17 +60,18 @@ pub fn decode_nod_item_v1(bytes: &[u8]) -> Result<NodItemBodyV1, CanonicalBodyEr
                 nod_id,
                 owner,
                 emission_day,
-                league_id,
                 entry_price_minor,
                 issuance_currency,
                 reference_currency,
             },
             encryption_binding,
             encrypted_gratis_amount,
+            encrypted_nominal_amount,
         },
         group_key,
         issued_at,
         is_settled,
+        sub_series_id,
     };
     if encode_nod_item_v1(&body)? != bytes {
         return Err(CanonicalBodyError::NonCanonicalEncoding);

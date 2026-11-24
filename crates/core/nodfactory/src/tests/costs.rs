@@ -25,6 +25,7 @@ fn a_dust_cost_nod_requires_erc20_payment_and_quotes_one_minor_unit() {
                     asset: SETTLEMENT_ASSET,
                     snapshot_id: U256::ZERO,
                 },
+                AMOUNT_CAP,
             )
         })
         .unwrap_err();
@@ -88,4 +89,70 @@ fn a_nod_cost_above_u128_is_quoted_in_full() {
         .enter(|storage| quote_settlement_decrypted(&storage, nod_id, SETTLEMENT_ASSET))
         .unwrap();
     assert_eq!(quote, (840, cost, U256::ZERO));
+}
+
+fn stub_funds(world: &mut World, funds: U256) {
+    let funds = Bytes::from(funds.to_be_bytes::<32>().to_vec());
+    world.provider.stub_sub_call_at_selector(
+        SETTLEMENT_ASSET,
+        IERC20::balanceOfCall::SELECTOR,
+        funds.clone(),
+    );
+    world.provider.stub_sub_call_at_selector(
+        SETTLEMENT_ASSET,
+        IERC20::allowanceCall::SELECTOR,
+        funds,
+    );
+}
+
+fn settle_with_cap(world: &mut World, nod_id: U256, payer: Address, cap: U256) -> PrecompileError {
+    world
+        .enter(|storage| {
+            api::settle_nod(
+                &storage,
+                nod_id,
+                SettlementPayment {
+                    payer,
+                    asset: SETTLEMENT_ASSET,
+                    snapshot_id: U256::ZERO,
+                },
+                cap,
+            )
+        })
+        .unwrap_err()
+}
+
+/// The funds of the payer for `amountCapMinor` are checked before the cost, so a payer with
+/// no funds learns nothing of it. A cost above the cap fails, and the chain takes only the cost.
+#[test]
+fn settle_nod_checks_the_funds_before_the_cost() {
+    let mut world = World::new();
+    let input = params(Address::repeat_byte(0x61));
+    let nod_id = world.issue(&input);
+    world.register_reference_currency_asset(SETTLEMENT_ASSET);
+    let cost = U256::from(cost_of(&input));
+    let missing_funds = PrecompileError::from(SettlementError::InsufficientFunds).to_string();
+
+    stub_funds(&mut world, cost / U256::from(2));
+    for cap in [cost - U256::ONE, cost + U256::ONE] {
+        let error = settle_with_cap(&mut world, nod_id, input.owner, cap);
+        assert_eq!(error.to_string(), missing_funds, "cap {cap}");
+    }
+
+    stub_funds(&mut world, cost * U256::from(2));
+    let error = settle_with_cap(&mut world, nod_id, input.owner, cost - U256::ONE);
+    assert_eq!(
+        error.to_string(),
+        PrecompileError::from(SettlementError::CostAboveCap).to_string()
+    );
+    assert!(outbe_vaultrouter::test_support::last_deposit_from(&world.provider).is_none());
+    assert!(!is_settled(&mut world, nod_id));
+
+    let error = settle_with_cap(&mut world, nod_id, input.owner, cost * U256::from(2));
+    assert_eq!(
+        error.to_string(),
+        outbe_vaultrouter::test_support::unanswered_deposit_from().to_string()
+    );
+    let pull = outbe_vaultrouter::test_support::last_deposit_from(&world.provider).unwrap();
+    assert_eq!((pull.payer, pull.assetsMinor), (input.owner, cost));
 }

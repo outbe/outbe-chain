@@ -11,7 +11,6 @@ production-enclave = [
     "outbe-fidelity/production-enclave",
     "outbe-gratis/production-enclave",
     "outbe-promis/production-enclave",
-    "outbe-tribute/production-enclave",
     "outbe-nod/production-enclave",
 ]
 e2e-test = ["outbe-core-common/e2e-test", "outbe-tee/e2e-test"]
@@ -61,8 +60,7 @@ outbe-staking.workspace = true
 outbe-system-common.workspace = true
 outbe-tee.workspace = true
 outbe-teeregistry = { workspace = true, features = ["tee-attestation-v1"] }
-outbe-tribute.workspace = true
-outbe-tributefactory.workspace = true
+outbe-worldwideday.workspace = true
 outbe-txpool.workspace = true
 outbe-update.workspace = true
 outbe-validatorset.workspace = true
@@ -161,7 +159,6 @@ outbe-gem = { workspace = true, features = ["test-utils"] }
 outbe-metadosis = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-radicle = { workspace = true, features = ["test-utils"] }
-outbe-tribute = { workspace = true, features = ["test-enclave"] }
 outbe-rewards.workspace = true
 outbe-staking.workspace = true
 outbe-slashindicator = { workspace = true, features = ["test-utils"] }
