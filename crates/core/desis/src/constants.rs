@@ -55,6 +55,8 @@ pub const CANCELED_UNPRICED: u8 = 2;
 pub const CANCELED_BELOW_ONE_UNIT: u8 = 3;
 pub const CANCELED_LATE_START: u8 = 4;
 pub const CANCELED_LIMIT_OVERFLOW: u8 = 5;
+/// No target chain is in Auctions, so the day has nobody to auction to.
+pub const CANCELED_NO_TARGETS: u8 = 6;
 
 /// Entries one cross-chain payload array carries: bids per MSG_BIDS_PAGE and winners per
 /// MSG_INTEX_AUCTION_WINNERS; clearing sizes its gas in chunks of the same length. Mirrors

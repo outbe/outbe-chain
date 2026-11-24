@@ -328,6 +328,10 @@ pub struct DesisContract {
     #[attribute(order = 51)]
     pub gate_poll_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
+    /// `chain_key` -> destination gas of the day's COLLECTING_BIDS rounds to that chain.
+    #[attribute(order = 57)]
+    pub clearing_gas: outbe_primitives::storage::dsl::Map<B256, u64>,
+
     /// The outbox to the target chains, see `outbe_intex::outbox`.
     #[attribute(order = 52)]
     pub outbox_head: outbe_primitives::storage::dsl::Map<u32, u32>,

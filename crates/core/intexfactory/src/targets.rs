@@ -58,13 +58,18 @@ pub fn series_target_chains(storage: &StorageHandle<'_>) -> Result<Vec<u32>> {
         .collect())
 }
 
-/// Freezes the chains in Auctions as the chains of `day` and returns them.
-pub fn freeze_day_targets(storage: &StorageHandle<'_>, day: EmissionDate) -> Result<Vec<u32>> {
-    let chains: Vec<u32> = target_chains(storage)?
+/// The chains in Auctions.
+pub fn auction_target_chains(storage: &StorageHandle<'_>) -> Result<Vec<u32>> {
+    Ok(target_chains(storage)?
         .into_iter()
         .filter(|(_, mode)| *mode == TargetMode::Auctions)
         .map(|(chain_id, _)| chain_id)
-        .collect();
+        .collect())
+}
+
+/// Freezes the chains in Auctions as the chains of `day` and returns them.
+pub fn freeze_day_targets(storage: &StorageHandle<'_>, day: EmissionDate) -> Result<Vec<u32>> {
+    let chains = auction_target_chains(storage)?;
     let list = IntexFactoryContract::new(storage.clone())
         .day_targets
         .list(&day);

@@ -103,22 +103,12 @@ pub(crate) fn clearing_run_gas(
     Ok(cost.saturating_mul(3) / 2)
 }
 
-/// The day's frozen target snapshot, read from the OriginRouter registry
-/// (deterministic: frozen at STAGE_START).
+/// The chains the day started on, frozen in IntexFactory at its start.
 pub(super) fn fetch_targets(
     storage: &StorageHandle<'_>,
     emission_day: EmissionDate,
 ) -> Result<Vec<u32>> {
-    let ret = storage.staticcall(
-        ORIGIN_ROUTER_ADDRESS,
-        IOriginRouter::targetsOfCall {
-            emissionDay: emission_day.into(),
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    IOriginRouter::targetsOfCall::abi_decode_returns(&ret)
-        .map_err(|_| DesisError::TargetsOfUndecodable.into())
+    outbe_intexfactory::targets::day_targets(storage, emission_day)
 }
 
 /// Split the snapshot into chains whose intake finalized and chains still missing.
@@ -242,20 +232,24 @@ fn clear_inner(
     // wonBidsCount 0 so their local auction still completes.
     for &chain_id in snapshot {
         let (won_bids_count, won_quantity) = chain_winnings(&result, chain_id);
-        storage.call(
-            ORIGIN_ROUTER_ADDRESS,
-            U256::ZERO,
-            IOriginRouter::sendIntexAuctionResultCall {
-                dstChainId: chain_id,
-                emissionDay: emission_day.into(),
-                wonQuantity: won_quantity,
-                wonBidsCount: won_bids_count,
-                quantity: result.issued_units,
-                clearingRate: u64::from(result.clearing_rate),
-                totalDemand: total_demand,
-            }
-            .abi_encode()
-            .into(),
+        let message = outbe_intex::wire::IntexAuctionResult {
+            emission_day: emission_day.value(),
+            won_quantity,
+            won_bids_count,
+            quantity: result.issued_units,
+            clearing_rate: u64::from(result.clearing_rate),
+            total_demand,
+        };
+        crate::outbox::push_to(
+            &storage,
+            &[chain_id],
+            Label::new(
+                MSG_INTEX_AUCTION_RESULT,
+                emission_day.value(),
+                [won_quantity, won_bids_count, 0],
+            ),
+            outbe_intex::gas::INTEX_AUCTION_RESULT,
+            &outbe_intex::wire::encode_intex_auction_result(&message),
         )?;
     }
 
@@ -267,22 +261,31 @@ fn clear_inner(
         let pages = intex_auction_winners_pages(&result, chain_id)?;
         let total_pages = pages.len() as u16;
         for (page_index, page) in pages.into_iter().enumerate() {
-            storage.call(
-                ORIGIN_ROUTER_ADDRESS,
-                U256::ZERO,
-                IOriginRouter::sendIntexAuctionWinnersCall {
-                    dstChainId: chain_id,
-                    emissionDay: emission_day.into(),
-                    pageIndex: page_index as u16,
-                    totalPages: total_pages,
-                    clearingRate: u64::from(result.clearing_rate),
-                    basis: config.escrow_basis_minor(),
-                    winners: page.winners,
-                    partialIndex: page.partial_index,
-                    partialWon: page.partial_won,
-                }
-                .abi_encode()
-                .into(),
+            let winners_count = page.winners.len();
+            let message = outbe_intex::wire::IntexAuctionWinners {
+                emission_day: emission_day.value(),
+                page_index: page_index as u16,
+                total_pages,
+                clearing_rate: u64::from(result.clearing_rate),
+                basis: config.escrow_basis_minor(),
+                winners: page.winners,
+                partial_index: page.partial_index,
+                partial_won: page.partial_won,
+            };
+            crate::outbox::push_to(
+                &storage,
+                &[chain_id],
+                Label::new(
+                    MSG_INTEX_AUCTION_WINNERS,
+                    emission_day.value(),
+                    [
+                        page_index as u32,
+                        u32::from(total_pages),
+                        winners_count as u32,
+                    ],
+                ),
+                outbe_intex::gas::intex_auction_winners(winners_count),
+                &outbe_intex::wire::encode_intex_auction_winners(&message)?,
             )?;
         }
     }

@@ -1,7 +1,6 @@
 //! Desis runtime: auction lifecycle and clearing algorithm.
 
-use alloy_primitives::{Address, Bytes, B256, U256};
-use alloy_sol_types::SolCall;
+use alloy_primitives::{Address, B256, U256};
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -15,12 +14,12 @@ use outbe_intexfactory::SeriesId;
 use crate::constants::{
     ADVANCE_DAY_BASE_GAS, ADVANCE_FAIL_GAS, ADVANCE_REVEAL_END_GAS, ADVANCE_START_GAS,
     BIDS_FANIN_TIMEOUT_SECS, BID_QUANTITY_FLOOR_BPS, CANCELED_BELOW_ONE_UNIT, CANCELED_LATE_START,
-    CANCELED_NO_LIMIT, CANCELED_UNPRICED, CLEARING_BID_GAS, CLEARING_FIXED_GAS,
-    CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS, CLEARING_PAGE_GAS, COMMIT_WINDOW_SECONDS,
-    IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE, INTEX_ISSUANCE_WINDOW_SECONDS,
-    MAX_BID_PAGES, MAX_INTEX_AUCTION_WINNERS_PAGES, MAX_PAYLOAD_ARRAY_LEN, MAX_TARGET_CHAINS,
-    MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS, RESULT_DELIVERY_MARGIN_SECONDS,
-    REVEAL_WINDOW_SECONDS,
+    CANCELED_NO_LIMIT, CANCELED_NO_TARGETS, CANCELED_UNPRICED, CLEARING_BID_GAS,
+    CLEARING_FIXED_GAS, CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS, CLEARING_PAGE_GAS,
+    COMMIT_WINDOW_SECONDS, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE,
+    INTEX_ISSUANCE_WINDOW_SECONDS, MAX_BID_PAGES, MAX_INTEX_AUCTION_WINNERS_PAGES,
+    MAX_PAYLOAD_ARRAY_LEN, MAX_TARGET_CHAINS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS,
+    RESULT_DELIVERY_MARGIN_SECONDS, REVEAL_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
 use crate::precompile::IDesis;
@@ -28,7 +27,11 @@ use crate::schema::{
     AuctionConfig, AuctionStage, ClearingResult, DesisContract, IntexAuctionBidData,
     ReferenceCurrencyPrice,
 };
-use crate::sol_ext::IOriginRouter;
+use outbe_intex::outbox::Label;
+use outbe_intex::wire::{
+    MSG_INTEX_AUCTION_CANCEL, MSG_INTEX_AUCTION_CLEARING_START, MSG_INTEX_AUCTION_RESULT,
+    MSG_INTEX_AUCTION_START, MSG_INTEX_AUCTION_WINNERS,
+};
 
 // ---------------------------------------------------------------------------
 // Auction lifecycle
@@ -369,48 +372,44 @@ pub(crate) struct IntexAuctionStart<'a> {
     pub(crate) issuance_end: u32,
 }
 
-/// Broadcast AUCTION_STAGE_START with the given schedule.
+/// Puts AUCTION_STAGE_START into the outbox for every chain in Auctions, which become the
+/// chains of the day.
 fn send_intex_auction_start(
     storage: &StorageHandle<'_>,
     start: IntexAuctionStart<'_>,
 ) -> Result<()> {
-    let stage_params = intex_auction_start_params(start)?;
-    // Relay-float-funded: value 0, so the router self-quotes and pays the bridge fee from its float.
-    storage.call(
-        ORIGIN_ROUTER_ADDRESS,
-        U256::ZERO,
-        IOriginRouter::sendIntexAuctionStartCall {
-            params: stage_params,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    Ok(())
+    let message = intex_auction_start_params(start)?;
+    let payload = outbe_intex::wire::encode_intex_auction_start(&message)?;
+    let chains = outbe_intexfactory::targets::freeze_day_targets(storage, start.emission_day)?;
+    crate::outbox::push_to(
+        storage,
+        &chains,
+        Label::new(MSG_INTEX_AUCTION_START, message.emission_day, [0; 3]),
+        outbe_intex::gas::intex_auction_start(message.prices.len()),
+        &payload,
+    )
 }
 
-/// Broadcast AUCTION_CANCEL to every chain the day started on.
+/// Puts AUCTION_CANCEL into the outbox for every chain the day started on.
 fn send_intex_auction_cancel(
     storage: &StorageHandle<'_>,
     emission_day: EmissionDate,
     reason: u8,
 ) -> Result<()> {
-    storage.call(
-        ORIGIN_ROUTER_ADDRESS,
-        U256::ZERO,
-        IOriginRouter::sendIntexAuctionCancelCall {
-            emissionDay: emission_day.into(),
-            reason,
-        }
-        .abi_encode()
-        .into(),
-    )?;
-    Ok(())
+    let chains = outbe_intexfactory::targets::day_targets(storage, emission_day)?;
+    crate::outbox::push_to(
+        storage,
+        &chains,
+        Label::new(MSG_INTEX_AUCTION_CANCEL, emission_day.value(), [0; 3]),
+        outbe_intex::gas::INTEX_AUCTION_CANCEL,
+        &outbe_intex::wire::encode_intex_auction_cancel(emission_day.value(), reason),
+    )
 }
 
 /// The AUCTION_STAGE_START payload. Every condition comes from the stored day config.
 pub(crate) fn intex_auction_start_params(
     start: IntexAuctionStart<'_>,
-) -> Result<IOriginRouter::IntexAuctionStartParams> {
+) -> Result<outbe_intex::wire::IntexAuctionStart> {
     let IntexAuctionStart {
         emission_day,
         config,
@@ -420,25 +419,25 @@ pub(crate) fn intex_auction_start_params(
     } = start;
     let mut prices = Vec::with_capacity(config.reference_prices.len());
     for row in &config.reference_prices {
-        prices.push(IOriginRouter::ReferenceCurrencyPrice {
-            isoCode: row.iso_code,
-            entryPriceMinor: outbe_intexfactory::to_wire_price(row.entry_price_minor)?,
-            callPriceMinor: outbe_intexfactory::to_wire_price(row.call_price_minor)?,
+        prices.push(outbe_intex::wire::ReferenceCurrencyPrice {
+            iso_code: row.iso_code,
+            entry_price_minor: outbe_intexfactory::to_wire_price(row.entry_price_minor)?,
+            call_price_minor: outbe_intexfactory::to_wire_price(row.call_price_minor)?,
         });
     }
-    Ok(IOriginRouter::IntexAuctionStartParams {
-        emissionDay: emission_day.into(),
-        commitEnd: commit_end,
-        revealEnd: reveal_end,
-        issuanceEnd: issuance_end,
-        promisLoadMinor: config.promis_load_minor,
-        minBidRate: config.min_bid_rate,
+    Ok(outbe_intex::wire::IntexAuctionStart {
+        emission_day: emission_day.value(),
+        commit_end,
+        reveal_end,
+        issuance_end,
+        promis_load_minor: config.promis_load_minor,
+        min_bid_rate: config.min_bid_rate,
         prices,
-        callNoticePeriod: config.call_trigger.call_notice_period_seconds,
-        callWindow: config.call_trigger.call_window_seconds,
-        callThreshold: config.call_trigger.call_threshold_seconds,
-        minBidQuantity: config.min_bid_quantity,
-        bidBondMinor: config.bid_bond_minor,
+        call_notice_period: config.call_trigger.call_notice_period_seconds,
+        call_window: config.call_trigger.call_window_seconds,
+        call_threshold: config.call_trigger.call_threshold_seconds,
+        min_bid_quantity: config.min_bid_quantity,
+        bid_bond_minor: config.bid_bond_minor,
     })
 }
 

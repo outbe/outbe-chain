@@ -2,7 +2,7 @@
 
 use alloy_primitives::U256;
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_intex::outbox::{Label, Outcome};
+use outbe_intex::outbox::{Label, Message, Outcome};
 use outbe_intex::wire::{
     MSG_INTEX_AUCTION_CANCEL, MSG_INTEX_AUCTION_CLEARING_START, MSG_INTEX_AUCTION_RESULT,
     MSG_INTEX_AUCTION_START, MSG_INTEX_AUCTION_WINNERS,
@@ -15,6 +15,32 @@ use outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK;
 
 use crate::precompile::IDesis;
 use crate::schema::DesisContract;
+
+pub(crate) fn push(storage: &StorageHandle<'_>, message: Message) -> Result<()> {
+    DesisContract::new(storage.clone()).outbox().push(message)
+}
+
+/// Puts one message of `msg_type` for each of `chains` into the outbox.
+pub(crate) fn push_to(
+    storage: &StorageHandle<'_>,
+    chains: &[u32],
+    label: Label,
+    message_gas: u64,
+    payload: &alloy_primitives::Bytes,
+) -> Result<()> {
+    for &chain_id in chains {
+        push(
+            storage,
+            Message {
+                chain_id,
+                label,
+                message_gas,
+                payload: payload.clone(),
+            },
+        )?;
+    }
+    Ok(())
+}
 
 pub(crate) fn flush(storage: &StorageHandle<'_>) -> Result<()> {
     let now = storage.timestamp()?.saturating_to::<u64>();
