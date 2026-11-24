@@ -139,6 +139,10 @@ pub fn dispatch(
                 targetsOf(c) => view(c, |c| {
                     crate::targets::day_targets(&storage, c.emissionDay.into())
                 }),
+                flush(c) => mutate_void(&storage, c, caller, |_, _| crate::outbox::flush(&storage)),
+                outboxHead(c) => metadata::<IIntexFactory::outboxHeadCall>(|| {
+                    crate::outbox::outbox_head(&storage, c.chainId)
+                }),
             }
         },
     )

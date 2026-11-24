@@ -12,6 +12,7 @@ pub mod constants;
 pub mod errors;
 pub mod gas;
 mod metadata;
+pub mod outbox;
 pub mod precompile;
 pub mod schema;
 pub(crate) mod state;

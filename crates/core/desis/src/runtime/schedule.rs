@@ -466,6 +466,7 @@ fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
                 contract.emit(IDesis::IntexAuctionClearingStartSendFailed {
                     emissionDay: emission_day.into(),
                     dstChainId: chain_id,
+                    failures: 1,
                     errorData: error_data,
                 })?;
             }

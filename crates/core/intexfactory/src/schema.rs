@@ -84,6 +84,31 @@ pub struct IntexFactoryContract {
     /// and the time it may go out again.
     #[attribute(order = 29)]
     pub leg_at: outbe_primitives::storage::dsl::Map<u32, U256>,
+
+    /// The outbox to the target chains, see `outbe_intex::outbox`.
+    #[attribute(order = 30)]
+    pub outbox_head: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 31)]
+    pub outbox_tail: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 32)]
+    pub outbox_meta: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 33)]
+    pub outbox_label: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 34)]
+    pub outbox_payload:
+        outbe_primitives::storage::dsl::Map<u64, outbe_primitives::storage::dsl::Bytes>,
+}
+
+impl<'storage> IntexFactoryContract<'storage> {
+    pub fn outbox(&self) -> outbe_intex::outbox::Outbox<'storage> {
+        outbe_intex::outbox::Outbox {
+            head: self.outbox_head.clone(),
+            tail: self.outbox_tail.clone(),
+            meta: self.outbox_meta.clone(),
+            label: self.outbox_label.clone(),
+            payload: self.outbox_payload.clone(),
+        }
+    }
 }
 
 impl IntexFactoryContract<'_> {

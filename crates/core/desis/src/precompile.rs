@@ -6,7 +6,7 @@
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::SolInterface;
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
-use outbe_primitives::dispatch::{dispatch_call, mutate_void, reject_value, view};
+use outbe_primitives::dispatch::{dispatch_call, metadata, mutate_void, reject_value, view};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -123,6 +123,10 @@ pub fn dispatch(
             supportsInterface(c) => view(c, |c| {
                 let id: [u8; 4] = c.interfaceId.0;
                 Ok(id == ERC165_INTERFACE_ID || id == IDESIS_INTERFACE_ID)
+            }),
+            flush(c) => mutate_void(&storage, c, caller, |_, _| crate::outbox::flush(&storage)),
+            outboxHead(c) => metadata::<IDesis::outboxHeadCall>(|| {
+                crate::outbox::outbox_head(&storage, c.chainId)
             }),
         }
     })

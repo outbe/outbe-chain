@@ -9,6 +9,13 @@ pub const INTEX_NFT1155_ADDRESS: Address = address!("0x8E5041c14D3f0b802E8eFA4e5
 #[cfg(feature = "e2e-test")]
 pub const INTEX_NFT1155_ADDRESS: Address = address!("0x116063CF0558225D808d1C309322d6C3CbfDE343");
 
+/// Intex TargetRouter, the same address on every target chain and on Outbe. CREATE3 proxy under salt
+/// "outbe-intex:TargetRouter:v7.0.0", same deployer and factory.
+#[cfg(not(feature = "e2e-test"))]
+pub const TARGET_ROUTER_ADDRESS: Address = address!("0x426F62D1F01930FEbfd760B10c294dae0eDbd468");
+#[cfg(feature = "e2e-test")]
+pub const TARGET_ROUTER_ADDRESS: Address = address!("0xab400214c9Ec6441951d316e431C25ec39f1dBb0");
+
 /// WCOEN on Outbe. CREATE3 proxy under salt "WCOENv7.0.0", same deployer and factory.
 #[cfg(not(feature = "e2e-test"))]
 pub const WCOEN_ADDRESS: Address = address!("0x3414f55f086Eb224135D9044299E6eBc6E841197");

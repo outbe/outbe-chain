@@ -73,6 +73,16 @@ interface IDesis {
     /// @notice ERC-165 interface support check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 
+    /// @notice Sends the due messages of the outbox to the target chains. Anyone may call it.
+    function flush() external;
+
+    /// @notice The first message of the outbox of `chainId`: its type and day, the messages
+    ///         that wait for that chain, the failed tries of the first one and its next try.
+    function outboxHead(uint32 chainId)
+        external
+        view
+        returns (uint8 msgType, uint32 emissionDay, uint32 pending, uint32 failures, uint64 nextTry);
+
     // --- Events ---
     event DesisLimitSet(uint32 indexed emissionDay, uint256 amountMinor);
     event DesisLimitAllocated(uint32 indexed emissionDay, uint256 amountMinor);
@@ -106,5 +116,41 @@ interface IDesis {
     event IntexAuctionBidsIgnored(
         bytes32 indexed receiveId, uint32 indexed emissionDay, uint32 indexed srcChainId, uint8 reason
     );
-    event IntexAuctionClearingStartSendFailed(uint32 indexed emissionDay, uint32 indexed dstChainId, bytes errorData);
+
+    /// @notice `sendId` is the Hyperlane message id that CrosschainBridge returned.
+    event IntexAuctionStartSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint32 indexed dstChainId);
+    event IntexAuctionCancelSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint32 indexed dstChainId);
+    event IntexAuctionClearingStartSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint32 indexed dstChainId);
+    event IntexAuctionResultSent(
+        bytes32 indexed sendId,
+        uint32 indexed emissionDay,
+        uint32 indexed dstChainId,
+        uint32 wonQuantity,
+        uint32 wonBidsCount
+    );
+    event IntexAuctionWinnersSent(
+        bytes32 indexed sendId,
+        uint32 indexed emissionDay,
+        uint32 indexed dstChainId,
+        uint32 pageIndex,
+        uint32 totalPages,
+        uint32 winnersCount
+    );
+
+    /// @notice A try to send the message failed; `failures` counts the failed tries in a row.
+    event IntexAuctionStartSendFailed(
+        uint32 indexed emissionDay, uint32 indexed dstChainId, uint32 failures, bytes errorData
+    );
+    event IntexAuctionCancelSendFailed(
+        uint32 indexed emissionDay, uint32 indexed dstChainId, uint32 failures, bytes errorData
+    );
+    event IntexAuctionClearingStartSendFailed(
+        uint32 indexed emissionDay, uint32 indexed dstChainId, uint32 failures, bytes errorData
+    );
+    event IntexAuctionResultSendFailed(
+        uint32 indexed emissionDay, uint32 indexed dstChainId, uint32 failures, bytes errorData
+    );
+    event IntexAuctionWinnersSendFailed(
+        uint32 indexed emissionDay, uint32 indexed dstChainId, uint32 pageIndex, uint32 failures, bytes errorData
+    );
 }

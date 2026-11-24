@@ -136,6 +136,16 @@ interface IIntexFactory {
     /// @notice The chains in Auctions that `emissionDay` started on; empty before its start.
     function targetsOf(uint32 emissionDay) external view returns (uint32[] memory);
 
+    /// @notice Sends the due messages of the outbox to the target chains. Anyone may call it.
+    function flush() external;
+
+    /// @notice The first message of the outbox of `chainId`: its type and day, the messages
+    ///         that wait for that chain, the failed tries of the first one and its next try.
+    function outboxHead(uint32 chainId)
+        external
+        view
+        returns (uint8 msgType, uint32 emissionDay, uint32 pending, uint32 failures, uint64 nextTry);
+
     /// @notice The series was force-called. It settles until `settlementDeadline`, inclusive.
     event IntexSeriesCalled(
         bytes14 indexed seriesId,
@@ -169,11 +179,24 @@ interface IIntexFactory {
         uint256 forfeitedAmountMinor
     );
 
-    /// @notice All 8 tries of the series' call notice to `dstChainId` failed, so the factory sends
-    ///         it to that chain no more. A kept message stays in the origin router for anyone to
-    ///         resend. `errorData` is the revert data of the last try. `dstChainId` is 0 when
-    ///         the router refused the whole message and could not name the chains of the day.
-    event IntexSeriesCallNoticeSendFailed(bytes14 indexed seriesId, uint32 indexed dstChainId, bytes errorData);
+    /// @notice `sendId` is the Hyperlane message id that CrosschainBridge returned.
+    event IntexSeriesSent(
+        bytes32 indexed sendId,
+        uint32 indexed emissionDay,
+        uint32 indexed dstChainId,
+        uint32 pageIndex,
+        uint32 totalPages,
+        uint32 seriesCount
+    );
+    event IntexSeriesCallNoticeSent(bytes32 indexed sendId, bytes14 indexed seriesId, uint32 indexed dstChainId);
+
+    /// @notice A try to send the message failed; `failures` counts the failed tries in a row.
+    event IntexSeriesSendFailed(
+        uint32 indexed emissionDay, uint32 indexed dstChainId, uint32 pageIndex, uint32 failures, bytes errorData
+    );
+    event IntexSeriesCallNoticeSendFailed(
+        bytes14 indexed seriesId, uint32 indexed dstChainId, uint32 failures, bytes errorData
+    );
 
     /// @notice `amountMinor` native COEN (18 decimals) of `emissionDay`'s auction proceeds from
     ///         `srcChainId` was burned.

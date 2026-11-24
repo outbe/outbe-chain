@@ -8,6 +8,7 @@ pub mod api;
 mod cleanup;
 pub mod constants;
 pub mod errors;
+pub mod outbox;
 pub mod precompile;
 pub(crate) mod runtime;
 pub mod schema;
@@ -19,5 +20,6 @@ mod tests;
 
 pub use cleanup::run_cleanup;
 pub use errors::DesisError;
+pub use outbox::DesisOutboxModule;
 pub use runtime::{advance_auctions, complete_auctions};
 pub use schema::{AuctionConfig, AuctionStage, ClearingResult, DesisContract, IntexAuctionBidData};

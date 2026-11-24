@@ -470,6 +470,7 @@ impl NoticeSend<'_, '_> {
             IntexSeriesCallNoticeSendFailed {
                 seriesId: series_id,
                 dstChainId: dst_chain_id,
+                failures: u32::from(MAX_CALL_NOTICE_ATTEMPTS),
                 errorData: error_data,
             },
         )
