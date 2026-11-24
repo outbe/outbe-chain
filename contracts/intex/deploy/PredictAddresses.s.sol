@@ -9,7 +9,7 @@ import {console} from "forge-std/console.sol";
 ///      of them as constants, so they have to be known before the deploy rather than read after
 ///      it.
 contract PredictAddresses is BaseScript {
-    string[6] internal PREFIXES =
+    string[5] internal PREFIXES =
         ["IntexAuction", "EscrowAdapter", "TargetRouter", "IntexNFT1155", "IntexNFT1155Bridge"];
 
     /// @dev Env: DEPLOYER_PK, same as the deploy scripts, because the deployer namespaces
