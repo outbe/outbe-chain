@@ -16,17 +16,7 @@ interface IMetadosis {
 
     event MetadosisLimitSet(uint32 indexed emissionDay, uint256 metadosisLimitMinor);
 
-    event MetadosisCompleted(
-        uint32 indexed emissionDay,
-        uint256 tributeNominalTotalMinor,
-        uint256 gratisDemandMinor,
-        uint256 dayGratisLimitMinor,
-        uint256 lysisLimitMinor,
-        uint256 unusedLysisLimitMinor,
-        uint256 lysisAllocationMinor,
-        string status,
-        uint64 blockNumber
-    );
+    event MetadosisCompleted(uint32 indexed emissionDay, uint256 nominalAmountMinor);
 
     event MetadosisCanceled(uint32 indexed emissionDay, uint8 reason);
 

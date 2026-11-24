@@ -46,7 +46,6 @@ pub(crate) fn day_loads(storage: &StorageHandle<'_>, wwd: WorldwideDay) -> Resul
 
 fn record_completion(
     metadosis: &mut MetadosisContract<'_>,
-    ctx: &BlockRuntimeContext<'_>,
     emission_day: &EmissionDay,
     loads: &DayLoads,
     desis_limit: U256,
@@ -67,14 +66,7 @@ fn record_completion(
     complete_metadosis(metadosis, &updated)?;
     metadosis.emit(IMetadosis::MetadosisCompleted {
         emissionDay: emission_day.day,
-        tributeNominalTotalMinor: loads.nominal_minor,
-        gratisDemandMinor: loads.loads_minor,
-        dayGratisLimitMinor: metadosis_limit,
-        lysisLimitMinor: loads.loads_minor,
-        unusedLysisLimitMinor: U256::ZERO,
-        lysisAllocationMinor: loads.loads_minor,
-        status: "COMPLETED".into(),
-        blockNumber: ctx.block.block_number,
+        nominalAmountMinor: loads.nominal_minor,
     })
 }
 
@@ -100,5 +92,5 @@ pub(crate) fn execute(
         loads.nominal_minor,
     )?;
     let desis_limit = apply_desis_limit(ctx.storage.clone(), emission_day.day, &split)?;
-    record_completion(metadosis, ctx, emission_day, &loads, desis_limit)
+    record_completion(metadosis, emission_day, &loads, desis_limit)
 }

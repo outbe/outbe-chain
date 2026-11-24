@@ -445,7 +445,6 @@ fn wwd_without_price_runs_as_empty_day() {
         .collect::<Vec<_>>();
     assert_eq!(completed.len(), 1);
     assert_eq!(completed[0].emissionDay, 20261002);
-    assert_eq!(completed[0].status, "COMPLETED");
 
     let canceled_or_failed = provider
         .get_ordered_events()

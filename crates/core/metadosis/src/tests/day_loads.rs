@@ -132,6 +132,18 @@ fn run(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result
     })
 }
 
+fn metadosis_limit_added(provider: &HashMapStorageProvider) -> U256 {
+    use alloy_sol_types::SolEvent;
+    use outbe_promislimit::{precompile::IPromisLimit, LimitSource};
+    provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| IPromisLimit::PromisLimitAdded::decode_log(event).ok())
+        .filter(|event| event.data.source == LimitSource::MetadosisLimit as u8)
+        .map(|event| event.data.amountMinor)
+        .sum()
+}
+
 fn completed(provider: &HashMapStorageProvider) -> Vec<IMetadosis::MetadosisCompleted> {
     provider
         .get_ordered_events()
@@ -193,13 +205,14 @@ fn metadosis_splits_the_limit_with_the_loads() {
         assert_eq!(events.len(), 1, "nominals {nominals:?}");
         let loads = U256::from(loads_of(nominals));
         assert_eq!(
-            events[0].tributeNominalTotalMinor,
+            events[0].nominalAmountMinor,
             U256::from(nominals.iter().sum::<u64>())
         );
-        assert_eq!(events[0].gratisDemandMinor, loads);
-        assert_eq!(events[0].lysisLimitMinor, loads);
-        assert_eq!(events[0].lysisAllocationMinor, loads);
-        assert_eq!(events[0].unusedLysisLimitMinor, U256::ZERO);
+        assert_eq!(
+            metadosis_limit_added(&provider),
+            U256::from(LIMIT) - loads,
+            "the loads of the day are the Metadosis limit less its Promis Limit add"
+        );
         let record = record(&mut provider);
         assert_eq!(record.metadosis_state, metadosis_state::COMPLETED);
         assert_eq!(U256::from(record.nods), loads);
