@@ -53,6 +53,16 @@ pub struct IntexFactoryContract {
     #[attribute(order = 1)]
     pub mine_seq: outbe_primitives::storage::dsl::Map<B256, u32>,
 
+    /// The target chains that are not Off, each `chain_id | mode << 32`. The genesis seeds it.
+    #[attribute(order = 2)]
+    pub target_chains: outbe_primitives::storage::dsl::List<u64>,
+    /// The chains in Auctions that a day started on.
+    #[attribute(order = 3)]
+    pub day_targets: outbe_primitives::storage::dsl::Map<
+        EmissionDate,
+        outbe_primitives::storage::dsl::List<u32>,
+    >,
+
     // Call notices waiting to be sent after the call slice, in order. Head and tail
     // reset to 0 whenever the queue drains empty.
     #[attribute(order = 24)]

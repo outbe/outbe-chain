@@ -126,6 +126,19 @@ pub fn dispatch(
                 getCallProgress(c) => view(c, |c| {
                     crate::call_progress::call_progress(&storage, c.intexId)
                 }),
+                targetChains(_) => metadata::<IIntexFactory::targetChainsCall>(|| {
+                    let (chain_ids, modes) = crate::targets::target_chains(&storage)?
+                        .into_iter()
+                        .map(|(chain_id, mode)| (chain_id, mode as u8))
+                        .unzip();
+                    Ok(IIntexFactory::targetChainsReturn {
+                        chainIds: chain_ids,
+                        modes,
+                    })
+                }),
+                targetsOf(c) => view(c, |c| {
+                    crate::targets::day_targets(&storage, c.emissionDay.into())
+                }),
             }
         },
     )

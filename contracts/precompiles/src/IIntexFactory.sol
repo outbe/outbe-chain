@@ -130,6 +130,12 @@ interface IIntexFactory {
     ///         `SeriesNotIssued` once the series is Called or Forfeited.
     function getCallProgress(uint256 intexId) external view returns (CallProgress memory);
 
+    /// @notice The target chains that are not Off, with their modes: 1 Series, 2 Auctions.
+    function targetChains() external view returns (uint32[] memory chainIds, uint8[] memory modes);
+
+    /// @notice The chains in Auctions that `emissionDay` started on; empty before its start.
+    function targetsOf(uint32 emissionDay) external view returns (uint32[] memory);
+
     /// @notice The series was force-called. It settles until `settlementDeadline`, inclusive.
     event IntexSeriesCalled(
         bytes14 indexed seriesId,

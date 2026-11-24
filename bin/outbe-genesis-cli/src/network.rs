@@ -32,7 +32,7 @@ pub const MAX_GENESIS_AGE_SECONDS: i64 = 6 * 60 * 60;
 
 const PACKAGED_ASSETS: &str = "share/outbe-genesis";
 
-pub const SEED_SECTIONS: [&str; 14] = [
+pub const SEED_SECTIONS: [&str; 15] = [
     "protocol_constants",
     "balance",
     "staking",
@@ -41,6 +41,7 @@ pub const SEED_SECTIONS: [&str; 14] = [
     "code_registry",
     "oracle",
     "intex_profile",
+    "intex",
     "gem_profile",
     "nod_profile",
     "credis_profile",
