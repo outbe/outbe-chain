@@ -3,7 +3,6 @@ use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_system_common::time::EmissionDate;
 
 use crate::{
-    constants::ORIGIN_ROUTER_ADDRESS,
     run_cleanup,
     runtime::{collect_intex_auction_bids, complete_intex_auction_bids, Inbound},
     AuctionStage, DesisContract, IntexAuctionBidData,
@@ -111,7 +110,6 @@ fn cleanup_tracks_out_of_order_batches_and_done_only_chains_once() {
             .write_stage(DAY, AuctionStage::RevealingBids)
             .unwrap();
         let inbound = |chain| Inbound {
-            caller: ORIGIN_ROUTER_ADDRESS,
             receive_id: alloy_primitives::B256::ZERO,
             emission_day: DAY,
             src_chain_id: chain,

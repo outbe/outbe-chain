@@ -277,10 +277,6 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
             crate::constants::INTEX_NFT1155_ADDRESS,
             alloy_primitives::Bytes::from(vec![0u8; 32]),
         );
-        storage.stub_sub_call_at(
-            crate::constants::ORIGIN_ROUTER_ADDRESS,
-            alloy_primitives::Bytes::from(vec![0u8; 32]),
-        );
         StorageHandle::enter(&mut storage, |s| {
             select_prod_profile(&s);
             seed_issued_at(&s, 7, issued_at);

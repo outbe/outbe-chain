@@ -6,16 +6,16 @@ use outbe_primitives::storage::{
     SubCallOutput,
 };
 
-use crate::constants::ORIGIN_ROUTER_ADDRESS;
+use outbe_system_common::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
 
-/// The inner provider, except that while armed one OriginRouter call fails on this node's
+/// The inner provider, except that while armed one CrosschainBridge call fails on this node's
 /// own database, which no injected storage write can reach.
-pub(super) struct RouterFaultProvider {
+pub(super) struct BridgeFaultProvider {
     inner: HashMapStorageProvider,
     failing: Option<[u8; 4]>,
 }
 
-impl RouterFaultProvider {
+impl BridgeFaultProvider {
     pub(super) fn new(inner: HashMapStorageProvider, selector: [u8; 4]) -> Self {
         Self {
             inner,
@@ -28,7 +28,7 @@ impl RouterFaultProvider {
     }
 }
 
-impl PrecompileStorageProvider for RouterFaultProvider {
+impl PrecompileStorageProvider for BridgeFaultProvider {
     fn chain_id(&self) -> u64 {
         self.inner.chain_id()
     }
@@ -137,13 +137,13 @@ impl PrecompileStorageProvider for RouterFaultProvider {
         &mut self,
         input: SubCallInput,
     ) -> std::result::Result<SubCallOutput, SubCallError> {
-        if input.target == ORIGIN_ROUTER_ADDRESS
+        if input.target == CROSSCHAIN_BRIDGE_ADDRESS
             && self
                 .failing
                 .is_some_and(|selector| input.calldata.starts_with(&selector))
         {
             return Err(SubCallError::DatabaseError(
-                "injected router read failure".into(),
+                "injected bridge read failure".into(),
             ));
         }
         self.inner.sub_call(input)

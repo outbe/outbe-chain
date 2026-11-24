@@ -56,7 +56,7 @@ pub fn receive_local_proceeds(
     let local = u32::try_from(storage.chain_id()?)
         .map_err(|_| IntexFactoryError::UnexpectedProceedsSource(u32::MAX))?;
     require_day_target(storage, emission_day, local)?;
-    storage.call(
+    let returned = storage.call(
         WCOEN_ADDRESS,
         U256::ZERO,
         transferFromCall {
@@ -67,6 +67,11 @@ pub fn receive_local_proceeds(
         .abi_encode()
         .into(),
     )?;
+    if transferFromCall::abi_decode_returns(&returned) != Ok(true) {
+        return Err(outbe_primitives::error::PrecompileError::revert(
+            "WCOEN refused the proceeds transfer",
+        ));
+    }
     burn_wcoen_proceeds(storage, emission_day, page_index, local, amount)
 }
 

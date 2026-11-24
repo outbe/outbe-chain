@@ -1,7 +1,6 @@
 //! One `advance_auctions` run moves every scheduled day that has a due step (OIP-00377).
 use super::*;
 use crate::constants::{ADVANCE_DAY_BASE_GAS, MAX_TARGET_CHAINS};
-use crate::sol_ext::IOriginRouter::{sendIntexAuctionClearingStartCall, sendIntexAuctionStartCall};
 
 /// At `NOW`, the commit window of this day ends.
 const COMMITTING: EmissionDate = EmissionDate::new(20231112);
@@ -97,7 +96,6 @@ fn advance_auctions_moves_each_due_auction() {
         assert_eq!(stage(&s, EMISSION_DAY), AuctionStage::None);
     });
     metered(&mut provider);
-    let calls_before = provider.sub_call_inputs().len();
     StorageHandle::enter(&mut provider, |s| {
         s.with_trigger_budget(ADVANCE_BUDGET, || runtime::schedule_tick(&s, NOW))
             .unwrap();
@@ -111,20 +109,18 @@ fn advance_auctions_moves_each_due_auction() {
         assert_eq!(contract.sched_active_count.read().unwrap(), 4);
         assert_eq!(contract.sched_poll_cursor.read().unwrap(), 0);
     });
-    let sent = &provider.sub_call_inputs()[calls_before..];
-    let starts: Vec<_> = sent
+    let starts: Vec<_> = outbox_of_type(&mut provider, outbe_intex::wire::MSG_INTEX_AUCTION_START)
         .iter()
-        .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-        .filter_map(|input| sendIntexAuctionStartCall::abi_decode(&input.calldata).ok())
-        .map(|call| call.params.emissionDay)
+        .map(|message| message.label.emission_day)
         .collect();
     assert_eq!(starts, vec![EMISSION_DAY.value()]);
-    let collecting: Vec<_> = sent
-        .iter()
-        .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-        .filter_map(|input| sendIntexAuctionClearingStartCall::abi_decode(&input.calldata).ok())
-        .map(|call| (call.emissionDay, call.dstChainId))
-        .collect();
+    let collecting: Vec<_> = outbox_of_type(
+        &mut provider,
+        outbe_intex::wire::MSG_INTEX_AUCTION_CLEARING_START,
+    )
+    .iter()
+    .map(|message| (message.label.emission_day, message.chain_id))
+    .collect();
     assert_eq!(collecting, vec![(REVEALING.value(), SRC_CHAIN)]);
 }
 
@@ -179,14 +175,14 @@ fn the_own_chain_asks_for_the_same_round_gas_as_another_chain() {
         }
         schedule_revealing(&s, PROMIS_LOAD_MINOR);
     });
-    let calls_before = provider.sub_call_inputs().len();
     StorageHandle::enter(&mut provider, |s| runtime::schedule_tick(&s, NOW).unwrap());
-    let asks: Vec<_> = provider.sub_call_inputs()[calls_before..]
-        .iter()
-        .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-        .filter_map(|input| sendIntexAuctionClearingStartCall::abi_decode(&input.calldata).ok())
-        .map(|call| (call.dstChainId, call.gasLimit))
-        .collect();
+    let asks: Vec<_> = outbox_of_type(
+        &mut provider,
+        outbe_intex::wire::MSG_INTEX_AUCTION_CLEARING_START,
+    )
+    .iter()
+    .map(|message| (message.chain_id, message.message_gas))
+    .collect();
     assert_eq!(asks.len(), 2);
     assert_eq!(asks[0].0, own_chain);
     assert_eq!(asks[1].0, OTHER_CHAIN);
@@ -282,42 +278,6 @@ fn a_brief_cancel_of_a_started_day_is_budgeted_as_a_cancel() {
         s.with_trigger_budget(ADVANCE_BUDGET, || runtime::schedule_tick(&s, NOW))
             .unwrap();
         assert_eq!(stage(&s, COMMITTING), AuctionStage::Canceled);
-    });
-}
-
-#[test]
-fn a_cancel_that_cannot_be_sent_fails_the_day_at_its_last_clearing_time() {
-    use crate::constants::{
-        COMMIT_WINDOW_SECONDS, INTEX_ISSUANCE_WINDOW_SECONDS, RESULT_DELIVERY_MARGIN_SECONDS,
-        REVEAL_WINDOW_SECONDS,
-    };
-    let mut provider = fixture_provider(&[SRC_CHAIN]);
-    StorageHandle::enter(&mut provider, |s| {
-        schedule_committing(&s);
-        s.contract::<DesisContract>()
-            .cancel_reason
-            .write(&COMMITTING, crate::constants::CANCELED_NO_LIMIT)
-            .unwrap();
-    });
-    provider.stub_sub_call_revert_at(ORIGIN_ROUTER_ADDRESS, Bytes::new());
-    let last_clearing = ANCHOR - SECONDS_PER_DAY
-        + COMMIT_WINDOW_SECONDS
-        + REVEAL_WINDOW_SECONDS
-        + INTEX_ISSUANCE_WINDOW_SECONDS
-        - RESULT_DELIVERY_MARGIN_SECONDS;
-    StorageHandle::enter(&mut provider, |s| {
-        let limit_before = promis_limit(&s);
-        runtime::schedule_tick(&s, NOW).unwrap();
-        assert_eq!(stage(&s, COMMITTING), AuctionStage::CommittingBids);
-        assert!(is_scheduled(&s, COMMITTING));
-
-        runtime::schedule_tick(&s, last_clearing).unwrap();
-        assert_eq!(stage(&s, COMMITTING), AuctionStage::Failed);
-        assert!(!is_scheduled(&s, COMMITTING));
-        assert_eq!(promis_limit(&s) - limit_before, U256::from(10 * LOAD_MINOR));
-
-        runtime::schedule_tick(&s, last_clearing + 3_600).unwrap();
-        assert_eq!(promis_limit(&s) - limit_before, U256::from(10 * LOAD_MINOR));
     });
 }
 

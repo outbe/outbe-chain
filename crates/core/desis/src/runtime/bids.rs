@@ -298,7 +298,9 @@ pub fn receive_bids_message(
             total_bids,
             ..
         } => complete_intex_auction_bids(storage.clone(), inbound, total_pages, total_bids),
-        BidsMessage::Pause { .. } => pause_bids(&storage, emission_day, src_chain_id, stage),
+        BidsMessage::Pause { .. } => {
+            pause_bids(&storage, receive_id, emission_day, src_chain_id, stage)
+        }
     });
     match applied {
         Err(error) if error.pass_failure() == PassFailure::Skip => {
@@ -312,6 +314,7 @@ pub fn receive_bids_message(
 /// goes again with the gas of its first round, while the intake is still open.
 fn pause_bids(
     storage: &StorageHandle<'_>,
+    receive_id: B256,
     emission_day: EmissionDate,
     src_chain_id: u32,
     stage: AuctionStage,
@@ -323,7 +326,7 @@ fn pause_bids(
         return storage
             .contract::<DesisContract>()
             .emit(IDesis::IntexAuctionBidsIgnored {
-                receiveId: B256::ZERO,
+                receiveId: receive_id,
                 emissionDay: emission_day.into(),
                 srcChainId: src_chain_id,
                 reason: IGNORED_OBSOLETE,

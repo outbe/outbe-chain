@@ -14,6 +14,10 @@ use crate::gas::ica_gas_limit;
 /// The wait after a failed send before the next try of that chain.
 pub const RETRY_SECONDS: u64 = 300;
 
+/// Gas a send must have left before it is tried, so a call of `flush()` with too little gas stops
+/// instead of counting a failed try against a message.
+pub const SEND_GAS_RESERVE: u64 = 1_000_000;
+
 sol! {
     struct Call {
         address to;
@@ -172,6 +176,21 @@ impl Outbox<'_> {
         }
     }
 
+    /// The messages that wait for `chain_id`, first one first.
+    pub fn messages(&self, chain_id: u32) -> Result<Vec<Message>> {
+        let mut messages = Vec::new();
+        for index in self.head.read(&chain_id)?..self.tail.read(&chain_id)? {
+            let key = entry_key(chain_id, index);
+            messages.push(Message {
+                chain_id,
+                label: Label::unpack(self.label.read(&key)?),
+                message_gas: unpack_meta(self.meta.read(&key)?).0,
+                payload: self.payload.bytes(&key).read()?.into(),
+            });
+        }
+        Ok(messages)
+    }
+
     /// The first message of a chain as the views of the modules show it.
     pub fn head_view(&self, chain_id: u32) -> Result<HeadView> {
         let head = self.head_of(chain_id)?;
@@ -222,6 +241,12 @@ impl Outbox<'_> {
         let (message_gas, failures, next_try) = unpack_meta(self.meta.read(&key)?);
         if next_try > now {
             return Ok(Try::Idle);
+        }
+        if storage
+            .gas_remaining()?
+            .is_some_and(|left| left < SEND_GAS_RESERVE)
+        {
+            return Ok(Try::OutOfGas);
         }
         let label = Label::unpack(self.label.read(&key)?);
         let payload: Bytes = self.payload.bytes(&key).read()?.into();
@@ -294,7 +319,12 @@ pub fn run_flush_step(
     flush_call: Bytes,
 ) -> Result<()> {
     match storage.call(module, U256::ZERO, flush_call) {
-        Err(error) if error.pass_failure() == PassFailure::Propagate => Err(error),
+        Err(error)
+            if error.pass_failure() == PassFailure::Propagate
+                || matches!(error, PrecompileError::Fatal(_)) =>
+        {
+            Err(error)
+        }
         Err(error) => {
             tracing::warn!(target: "outbe::intex", %module, %error, "outbox flush skipped");
             Ok(())

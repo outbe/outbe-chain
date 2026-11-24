@@ -100,12 +100,16 @@ fn intex_factory_slot_layout_is_pinned() {
         let f = IntexFactoryContract::new(s.clone());
         let slots = [
             f.mine_seq.base_slot(),
+            f.target_chains.base_slot(),
+            f.day_targets.base_slot(),
             f.notify_head.slot(),
             f.notify_tail.slot(),
             f.notify_at.base_slot(),
-            f.leg_head.slot(),
-            f.leg_tail.slot(),
-            f.leg_at.base_slot(),
+            f.outbox_head.base_slot(),
+            f.outbox_tail.base_slot(),
+            f.outbox_meta.base_slot(),
+            f.outbox_label.base_slot(),
+            f.outbox_payload.base_slot(),
         ];
         for (index, slot) in slots.into_iter().enumerate() {
             assert_eq!(slot, U256::from(index), "field #{index}");
@@ -113,131 +117,44 @@ fn intex_factory_slot_layout_is_pinned() {
     });
 }
 
-fn send_notices_in_block(
-    provider: &mut super::router_fault::RouterFaultProvider,
-) -> outbe_primitives::error::Result<()> {
-    StorageHandle::enter(provider, |s| {
-        let ctx = BlockRuntimeContext::new(
-            BlockContext {
-                block_gas_limit: 0,
-                user_gas_used: 0,
-                block_number: 1,
-                timestamp: ISSUED_AT,
-                chain_id: CHAIN_ID,
-                genesis_hash: alloy_primitives::B256::ZERO,
-                genesis_timestamp: u64::max(ISSUED_AT, 1),
-                proposer: alloy_primitives::Address::ZERO,
-                validators: Vec::new(),
-            },
-            s.clone(),
-        );
-        // The cycle runtime runs each trigger inside its own checkpoint.
-        s.with_checkpoint(|| crate::notify::send_call_notices(&ctx))
-    })
-}
-
 #[test]
-fn a_node_local_failure_inside_the_call_notice_send_fails_the_drain() {
-    use super::router_fault::RouterFaultProvider;
-    use crate::notify::{enqueue_notice, pack_call_notice};
-    use crate::sol_ext::IOriginRouter;
+fn a_node_local_failure_inside_a_flush_send_fails_the_flush_and_keeps_the_message() {
+    use super::bridge_fault::BridgeFaultProvider;
+    use alloy_sol_types::SolCall;
+    use outbe_intex::outbox::{Label, Message};
 
-    let mut provider = RouterFaultProvider::new(
+    let mut provider = BridgeFaultProvider::new(
         factory_provider(),
-        IOriginRouter::sendIntexSeriesCallNoticeCall::SELECTOR,
+        outbe_intex::outbox::callRemoteWithGasLimitCall::SELECTOR,
     );
-    let queued = [
-        pack_call_notice(sid(7), ISSUED_AT),
-        pack_call_notice(sid(8), ISSUED_AT),
-    ];
     StorageHandle::enter(&mut provider, |s| {
-        for day in [7, 8] {
-            outbe_intex::api::create_series(
-                &s,
-                outbe_intex::CreateSeriesParams {
-                    series_id: sid(day),
-                    emission_day: EmissionDate::new(day),
-                    issued_units: 1,
-                    promis_load_minor: 1,
-                    entry_price_minor: U256::from(1u64),
-                    call_price_minor: U256::from(2u64),
-                    call_trigger: prod_trigger(),
-                    issued_at: ISSUED_AT,
-                    issuance_currency: 840,
-                    reference_currency: 840,
-                },
-            )
+        super::seed_series_targets(&s, &[97]);
+        IntexFactoryContract::new(s)
+            .outbox()
+            .push(Message {
+                chain_id: 97,
+                label: Label::new(outbe_intex::wire::MSG_INTEX_SERIES, 7, [0, 1, 1]),
+                message_gas: 1,
+                payload: alloy_primitives::Bytes::from(vec![1u8]),
+            })
             .unwrap();
-        }
-        let factory = IntexFactoryContract::new(s);
-        for entry in queued {
-            enqueue_notice(&factory, entry).unwrap();
-        }
     });
-    let queue = |provider: &mut RouterFaultProvider| {
+    let pending = |provider: &mut BridgeFaultProvider| {
         StorageHandle::enter(provider, |s| {
-            let factory = IntexFactoryContract::new(s);
-            (
-                factory.notify_head.read().unwrap(),
-                factory.notify_tail.read().unwrap(),
-                [0, 1].map(|index| factory.notify_at.read(&index).unwrap()),
-            )
+            IntexFactoryContract::new(s).outbox().len(97).unwrap()
         })
     };
 
-    let result = send_notices_in_block(&mut provider);
+    let failed = StorageHandle::enter(&mut provider, |s| crate::outbox::flush(&s));
     assert!(matches!(
-        result,
+        failed,
         Err(outbe_primitives::error::PrecompileError::SubCall(
             outbe_primitives::storage::SubCallError::DatabaseError(_)
         ))
     ));
-    assert_eq!(queue(&mut provider), (0, 2, queued));
+    assert_eq!(pending(&mut provider), 1);
 
     provider.heal();
-    send_notices_in_block(&mut provider).unwrap();
-    assert_eq!(queue(&mut provider), (0, 0, [U256::ZERO; 2]));
-}
-
-#[test]
-fn a_node_local_failure_inside_a_leg_retry_fails_the_drain_and_counts_no_try() {
-    use super::router_fault::RouterFaultProvider;
-    use crate::notify::{enqueue_leg, KeptLeg};
-    use crate::sol_ext::IOriginRouter;
-
-    let leg = KeptLeg {
-        idx: 3,
-        dst_chain_id: 97,
-        attempts: 1,
-        retry_at: ISSUED_AT,
-    };
-    let mut provider = RouterFaultProvider::new(
-        factory_provider(),
-        IOriginRouter::retryMessageSendCall::SELECTOR,
-    );
-    StorageHandle::enter(&mut provider, |s| {
-        enqueue_leg(&IntexFactoryContract::new(s), leg).unwrap();
-    });
-    let legs = |provider: &mut RouterFaultProvider| {
-        StorageHandle::enter(provider, |s| {
-            let factory = IntexFactoryContract::new(s);
-            (
-                factory.leg_head.read().unwrap(),
-                factory.leg_tail.read().unwrap(),
-                factory.leg_at.read(&0).unwrap(),
-            )
-        })
-    };
-
-    assert!(matches!(
-        send_notices_in_block(&mut provider),
-        Err(outbe_primitives::error::PrecompileError::SubCall(
-            outbe_primitives::storage::SubCallError::DatabaseError(_)
-        ))
-    ));
-    assert_eq!(legs(&mut provider), (0, 1, leg.pack()));
-
-    provider.heal();
-    send_notices_in_block(&mut provider).unwrap();
-    assert_eq!(legs(&mut provider), (0, 0, U256::ZERO));
+    StorageHandle::enter(&mut provider, |s| crate::outbox::flush(&s)).unwrap();
+    assert_eq!(pending(&mut provider), 0);
 }

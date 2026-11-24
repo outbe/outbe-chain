@@ -7,7 +7,7 @@ address constant DESIS = 0x0000000000000000000000000000000000001016;
 /// @title IDesis
 /// @notice Inbound call surface for the Desis runtime precompile.
 ///         The Desis runtime drives the auction schedule from a Metadosis brief.
-///         OriginRouter calls bid ingestion. Clearing runs from the Desis
+///         The ERC-7786 hub delivers the bids. Clearing runs from the Desis
 ///         begin-block gate.
 interface IDesis {
     error InvalidEmissionDay(uint32 emissionDay);
@@ -22,7 +22,6 @@ interface IDesis {
     error PageArrayLengthMismatch();
     error DesisLimitAnchorExceedsU32();
     error MinIntexAuctionBidQuantityScalingOverflow();
-    error TargetsOfUndecodable();
     error TooManyTargets(uint32 emissionDay, uint64 count, uint64 max);
     error PageTotalMismatch();
     error InvalidTotalPages();

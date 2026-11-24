@@ -14,7 +14,7 @@ import {BaseScript} from "./BaseScript.s.sol";
 ///         removes it from the deployer, and reads the roles back. Before that it gives
 ///         `OUTBE_ICA_ROLE` of TargetRouter to the Interchain Account of Outbe on this chain.
 /// @dev Governance is CrosschainBridge on Outbe and its Interchain Account on any other chain. Run it
-///      last: after DeployOrigin or DeployTarget and ConfigureOrigin or ConfigureTarget. After it,
+///      last: after DeployTarget and ConfigureOrigin or ConfigureTarget. After it,
 ///      an upgrade or a configuration change is an `upgradeContracts` vote of Update.
 ///      The script finds each proxy at its CREATE3 address and skips a proxy that is not deployed
 ///      here.
@@ -31,7 +31,8 @@ contract HandOver is BaseScript {
         Create3Factory factory = create3Factory();
         // Read before the broadcast: on a chain other than Outbe this asks the Outbe node.
         address governance = governanceOwner();
-        address outbeIca = outbeIcaAccount();
+        address targetRouter = predictProxy(factory, deployer, "TargetRouter");
+        address outbeIca = targetRouter.code.length == 0 ? address(0) : outbeIcaAccount();
 
         string[5] memory prefixes = intexProxyPrefixes();
         vm.startBroadcast(pk);
@@ -41,7 +42,7 @@ contract HandOver is BaseScript {
                 console.log(string.concat(prefixes[i], ": not deployed here, skipped"));
                 continue;
             }
-            if (keccak256(bytes(prefixes[i])) == keccak256("TargetRouter")) grantOutbeIca(proxy, outbeIca);
+            if (proxy == targetRouter) grantOutbeIca(proxy, outbeIca);
             handOver(deployer, governance, proxy);
             console.log(string.concat(prefixes[i], " handed over:"), proxy);
         }

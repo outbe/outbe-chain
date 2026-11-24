@@ -2,7 +2,7 @@ use alloy_primitives::{address, Address, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_core_common::addresses::WCOEN_ADDRESS;
 use outbe_primitives::addresses::REWARDS_ADDRESS;
-use outbe_primitives::error::Result;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_system_common::addresses::{
     GRATIS_FACTORY_ADDRESS, INTEX_FACTORY_ADDRESS, PROMIS_LIMIT_ADDRESS, STAKING_ADDRESS,
     VOTE_ADDRESS,
@@ -114,7 +114,7 @@ impl PromisLimitContract<'_> {
             return Ok(());
         }
         let guard = self.storage.checkpoint_guard()?;
-        self.storage.call(
+        let returned = self.storage.call(
             WCOEN_ADDRESS,
             U256::ZERO,
             IWCOEN::transferCall {
@@ -124,6 +124,9 @@ impl PromisLimitContract<'_> {
             .abi_encode()
             .into(),
         )?;
+        if IWCOEN::transferCall::abi_decode_returns(&returned) != Ok(true) {
+            return Err(PrecompileError::revert("WCOEN refused the burn transfer"));
+        }
         self.burn_whole_minors(source as u8, Address::ZERO, amount)?;
         guard.commit()
     }

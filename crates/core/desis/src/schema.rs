@@ -329,19 +329,19 @@ pub struct DesisContract {
     pub gate_poll_cursor: outbe_primitives::storage::dsl::Value<u32>,
 
     /// `chain_key` -> destination gas of the day's COLLECTING_BIDS rounds to that chain.
-    #[attribute(order = 57)]
+    #[attribute(order = 58)]
     pub clearing_gas: outbe_primitives::storage::dsl::Map<B256, u64>,
 
     /// The outbox to the target chains, see `outbe_intex::outbox`.
-    #[attribute(order = 52)]
+    #[attribute(order = 59)]
     pub outbox_head: outbe_primitives::storage::dsl::Map<u32, u32>,
-    #[attribute(order = 53)]
+    #[attribute(order = 60)]
     pub outbox_tail: outbe_primitives::storage::dsl::Map<u32, u32>,
-    #[attribute(order = 54)]
+    #[attribute(order = 61)]
     pub outbox_meta: outbe_primitives::storage::dsl::Map<u64, U256>,
-    #[attribute(order = 55)]
+    #[attribute(order = 62)]
     pub outbox_label: outbe_primitives::storage::dsl::Map<u64, U256>,
-    #[attribute(order = 56)]
+    #[attribute(order = 63)]
     pub outbox_payload:
         outbe_primitives::storage::dsl::Map<u64, outbe_primitives::storage::dsl::Bytes>,
 }

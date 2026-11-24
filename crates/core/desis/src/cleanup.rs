@@ -95,6 +95,7 @@ fn cleanup_chain(
         // Nine metadata writes, covered by the conservative 80k header allowance.
         contract.chain_bid_count.clear(&key)?;
         contract.chain_total_pages.clear(&key)?;
+        contract.clearing_gas.clear(&key)?;
         contract.chain_arrived_mask.clear(&key)?;
         contract.bids_completed.clear(&key)?;
         contract.completed_pages.clear(&key)?;

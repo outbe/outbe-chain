@@ -157,6 +157,10 @@ tee:
 #       pair_quote: "840"
 #       peak_price: "1000000"
 
+# intex:                              # target chains of Intex; the list replaces the baseline one
+#   target_chains:
+#     - { chain_id: own, mode: auctions } # own = this network; a mode is series or auctions
+
 # balance:                            # extra native-token balances
 #   "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000000000000000"
 
