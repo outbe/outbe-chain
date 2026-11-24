@@ -8,6 +8,8 @@ use outbe_software_bundle::{sha256_file, verify_and_extract};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_DSTACK_REPO: &str = "https://github.com/Dstack-TEE/dstack.git";
+pub const DEFAULT_TOOLCHAIN_IMAGE: &str = "outbe-project-toolchain-runtime";
+pub const DEFAULT_MKOSI_IMAGE: &str = "dstack-mkosi-build";
 pub const DSTACK_COMMIT: &str = "c88f60e781a62d542e0843b333f18a48d1458b88";
 pub const MANIFEST_NAME: &str = "vm-image-manifest.json";
 const MANIFEST_VERSION: u32 = 1;
@@ -41,6 +43,10 @@ pub const PINNED_PATCHES: &[PinnedFile] = &[
     PinnedFile {
         name: "0003-squashfs-root-mode-0755.patch",
         sha256: "d97dc640ed27e7b9263c481f523f5aafb470d00efac4bd73d4f2137fc155738f",
+    },
+    PinnedFile {
+        name: "0004-repro-build-load-and-env.patch",
+        sha256: "0be7d78b2a8d1103891fbb0c8f074adba5c0ca759fea5e37f97842ec6aaa85fe",
     },
 ];
 
@@ -97,6 +103,9 @@ pub struct VmImageOptions<'a> {
     pub flavors: &'a [Flavor],
     pub dstack_repo: &'a str,
     pub runtime_libs_dir: Option<&'a Path>,
+    pub toolchain_image: &'a str,
+    pub mkosi_image: &'a str,
+    pub cpuset_cpus: Option<&'a str>,
     pub jobs: usize,
     pub check: bool,
 }
@@ -175,7 +184,11 @@ pub fn build(options: &VmImageOptions<'_>) -> Result<VmImageManifest> {
         Some(dir) => dir,
         None => {
             extracted_libs_dir = work.path().join("runtime-libs");
-            extract_runtime_libs_from_toolchain(options.repo_root, &extracted_libs_dir)?;
+            extract_runtime_libs_from_toolchain(
+                options.repo_root,
+                &extracted_libs_dir,
+                options.toolchain_image,
+            )?;
             &extracted_libs_dir
         }
     };
@@ -206,6 +219,8 @@ pub fn build(options: &VmImageOptions<'_>) -> Result<VmImageManifest> {
         options.flavors,
         options.jobs,
         options.check,
+        options.mkosi_image,
+        options.cpuset_cpus,
     )?;
 
     let dstack_version = read_dstack_version(&dstack_src)?;
@@ -357,11 +372,8 @@ fn render_data_mount_unit() -> String {
 fn render_dev_sshd_conf() -> String {
     concat!(
         "# Outbe dev VM SSH access using keys on the unmeasured data disk.\n",
-        "# StrictModes is disabled because /opt/outbe-chain is owned by outbe:outbe (900:900)\n",
-        "# while dev/authorized_keys is owned by root:root.\n",
         "PubkeyAuthentication yes\n",
         "PermitRootLogin prohibit-password\n",
-        "StrictModes no\n",
         "AuthorizedKeysFile /opt/outbe-chain/dev/authorized_keys\n",
     )
     .to_owned()
@@ -385,27 +397,35 @@ pub fn verify_pinned_runtime_libs(libs_dir: &Path) -> Result<Vec<ManifestDigest>
     verify_pinned_set(libs_dir, PINNED_RUNTIME_LIBS, "runtime library")
 }
 
-const TOOLCHAIN_RUNTIME_IMAGE: &str = "outbe-project-toolchain-runtime";
 const TOOLCHAIN_LIB_DIR: &str = "/usr/lib/x86_64-linux-gnu";
+
+fn build_toolchain_docker_args(toolchain_image: &str) -> Vec<&str> {
+    vec![
+        "build",
+        "--load",
+        "--platform",
+        "linux/amd64",
+        "--file",
+        "Dockerfile.project-toolchain",
+        "--target",
+        "toolchain",
+        "--tag",
+        toolchain_image,
+        ".",
+    ]
+}
 
 /// Build or reuse the `toolchain` target of `Dockerfile.project-toolchain` and
 /// copy the three pinned LLVM 18 runtime libraries out of it.
-fn extract_runtime_libs_from_toolchain(repo_root: &Path, dest: &Path) -> Result<()> {
+fn extract_runtime_libs_from_toolchain(
+    repo_root: &Path,
+    dest: &Path,
+    toolchain_image: &str,
+) -> Result<()> {
     fs::create_dir_all(dest)?;
     let build_status = Command::new("docker")
         .current_dir(repo_root)
-        .args([
-            "build",
-            "--platform",
-            "linux/amd64",
-            "--file",
-            "Dockerfile.project-toolchain",
-            "--target",
-            "toolchain",
-            "--tag",
-            TOOLCHAIN_RUNTIME_IMAGE,
-            ".",
-        ])
+        .args(build_toolchain_docker_args(toolchain_image))
         .status()
         .wrap_err("run docker build for Dockerfile.project-toolchain target toolchain")?;
     ensure!(
@@ -418,7 +438,7 @@ fn extract_runtime_libs_from_toolchain(repo_root: &Path, dest: &Path) -> Result<
             "create",
             "--platform",
             "linux/amd64",
-            TOOLCHAIN_RUNTIME_IMAGE,
+            toolchain_image,
             "true",
         ])
         .output()
@@ -519,12 +539,44 @@ fn commit_overlay(dstack_src: &Path) -> Result<String> {
     capture_git_in(dstack_src, &["rev-parse", "HEAD"])
 }
 
+fn build_repro_command(
+    script: &Path,
+    output_dir: &Path,
+    flavors: &[Flavor],
+    jobs: usize,
+    check: bool,
+    mkosi_image: &str,
+    cpuset_cpus: Option<&str>,
+) -> Command {
+    let flavors_env = flavors
+        .iter()
+        .map(|flavor| flavor.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut cmd = Command::new("nice");
+    cmd.args(["-n", "19", "ionice", "-c3"])
+        .arg(script)
+        .env("FLAVORS", flavors_env)
+        .env("JOBS", jobs.to_string())
+        .env("DSTACK_MKOSI_IMAGE", mkosi_image);
+    if let Some(cpuset) = cpuset_cpus {
+        cmd.env("DOCKER_CPUSET_CPUS", cpuset);
+    }
+    if check {
+        cmd.arg("-c");
+    }
+    cmd.arg("-o").arg(output_dir);
+    cmd
+}
+
 fn run_repro_build(
     dstack_src: &Path,
     output_dir: &Path,
     flavors: &[Flavor],
     jobs: usize,
     check: bool,
+    mkosi_image: &str,
+    cpuset_cpus: Option<&str>,
 ) -> Result<()> {
     let script = dstack_src.join("os/mkosi/repro-build/repro-build.sh");
     ensure!(
@@ -532,20 +584,15 @@ fn run_repro_build(
         "dstack repro-build script is missing: {}",
         script.display()
     );
-    let flavors_env = flavors
-        .iter()
-        .map(|flavor| flavor.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-    let mut cmd = Command::new("nice");
-    cmd.args(["-n", "19"])
-        .arg(&script)
-        .env("FLAVORS", flavors_env)
-        .env("JOBS", jobs.to_string());
-    if check {
-        cmd.arg("-c");
-    }
-    cmd.arg("-o").arg(output_dir);
+    let mut cmd = build_repro_command(
+        &script,
+        output_dir,
+        flavors,
+        jobs,
+        check,
+        mkosi_image,
+        cpuset_cpus,
+    );
     let status = cmd.status().wrap_err("run dstack repro-build.sh")?;
     ensure!(
         status.success(),
@@ -662,7 +709,7 @@ mod tests {
         let root = repository_root().unwrap();
         assert_eq!(DSTACK_COMMIT.len(), 40);
         let patches = verify_pinned_patches(&root).unwrap();
-        assert_eq!(patches.len(), 3);
+        assert_eq!(patches.len(), 4);
 
         let compose: serde_json::Value = serde_json::from_slice(
             &fs::read(root.join("deploy/outbe-vm/app-compose.json")).unwrap(),
@@ -768,7 +815,7 @@ mod tests {
             fs::read_to_string(dev_only.join("etc/ssh/sshd_config.d/00-outbe-dev.conf")).unwrap();
         assert!(dev_sshd.contains("PubkeyAuthentication yes"));
         assert!(dev_sshd.contains("PermitRootLogin prohibit-password"));
-        assert!(dev_sshd.contains("StrictModes no"));
+        assert!(!dev_sshd.contains("StrictModes"));
         assert!(dev_sshd.contains("AuthorizedKeysFile /opt/outbe-chain/dev/authorized_keys"));
         let dev_ssh_dropin = fs::read_to_string(
             dev_only.join("usr/lib/systemd/system/ssh.service.d/20-outbe-dev.conf"),
@@ -799,5 +846,32 @@ mod tests {
         }
         let err = verify_pinned_runtime_libs(&bad_libs).unwrap_err();
         assert!(err.to_string().contains("digest mismatch"), "{err}");
+    }
+
+    #[test]
+    fn docker_build_passes_load_and_repro_command_forwards_image_and_cpuset() {
+        let args = build_toolchain_docker_args("outbe-toolchain:custom");
+        assert!(args.contains(&"--load"));
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["--tag", "outbe-toolchain:custom"]));
+
+        let cmd = build_repro_command(
+            Path::new("/tmp/repro-build.sh"),
+            Path::new("/tmp/out"),
+            &[Flavor::Dev],
+            4,
+            false,
+            "outbe-mkosi:custom",
+            Some("0-3"),
+        );
+        let envs: BTreeMap<_, _> = cmd
+            .get_envs()
+            .filter_map(|(k, v)| Some((k.to_str()?, v?.to_str()?)))
+            .collect();
+        assert_eq!(envs.get("FLAVORS"), Some(&"dev"));
+        assert_eq!(envs.get("JOBS"), Some(&"4"));
+        assert_eq!(envs.get("DSTACK_MKOSI_IMAGE"), Some(&"outbe-mkosi:custom"));
+        assert_eq!(envs.get("DOCKER_CPUSET_CPUS"), Some(&"0-3"));
     }
 }

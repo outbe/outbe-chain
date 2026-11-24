@@ -119,6 +119,15 @@ struct VmImageArgs {
     /// Directory containing pinned LLVM 18 runtime libraries (`libc++.so.1`, `libc++abi.so.1`, `libunwind.so.1`).
     #[arg(long)]
     runtime_libs_dir: Option<PathBuf>,
+    /// Docker image tag for the extracted toolchain stage.
+    #[arg(long, default_value = vm_image::DEFAULT_TOOLCHAIN_IMAGE)]
+    toolchain_image: String,
+    /// Docker image tag for dstack's mkosi build container (`DSTACK_MKOSI_IMAGE`).
+    #[arg(long, default_value = vm_image::DEFAULT_MKOSI_IMAGE)]
+    mkosi_image: String,
+    /// Optional CPU set passed to `docker run --cpuset-cpus` (`DOCKER_CPUSET_CPUS`, e.g. `0-3`).
+    #[arg(long)]
+    cpuset_cpus: Option<String>,
     /// Build parallelism passed to dstack's `repro-build.sh` (`JOBS`).
     #[arg(long, default_value_t = 4)]
     jobs: usize,
@@ -310,6 +319,9 @@ fn main() -> Result<()> {
                     flavors: &flavors,
                     dstack_repo: &arguments.dstack_repo,
                     runtime_libs_dir: arguments.runtime_libs_dir.as_deref(),
+                    toolchain_image: &arguments.toolchain_image,
+                    mkosi_image: &arguments.mkosi_image,
+                    cpuset_cpus: arguments.cpuset_cpus.as_deref(),
                     jobs: arguments.jobs,
                     check: arguments.check,
                 })?;
