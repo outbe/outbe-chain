@@ -3,6 +3,6 @@
 pub mod build;
 pub mod config;
 pub mod prepare;
-mod remote;
+pub(crate) mod remote;
 pub mod start;
 pub mod status;

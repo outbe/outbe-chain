@@ -7,18 +7,18 @@ use eyre::{bail, ensure, Context, Result};
 use outbe_software_bundle::sha256_file;
 
 use super::{
-    build::{BuildState, NetworkManifest},
-    config::{Founder, NetworkConfig},
+    build::{BuildState, DeploymentKind, NetworkManifest},
+    config::{Founder, NetworkConfig, Ssh},
 };
 
-pub(super) struct NetworkArtifacts {
-    pub(super) root: PathBuf,
-    pub(super) config: NetworkConfig,
-    pub(super) manifest: NetworkManifest,
+pub(crate) struct NetworkArtifacts {
+    pub(crate) root: PathBuf,
+    pub(crate) config: NetworkConfig,
+    pub(crate) manifest: NetworkManifest,
 }
 
 impl NetworkArtifacts {
-    pub(super) fn load(root: &Path) -> Result<Self> {
+    pub(crate) fn load(root: &Path) -> Result<Self> {
         ensure!(
             root.is_dir(),
             "network artifacts directory does not exist: {}",
@@ -76,19 +76,46 @@ impl NetworkArtifacts {
         for (index, (founder, artifact)) in
             config.founders.iter().zip(&manifest.founders).enumerate()
         {
-            let expected = format!("dist/validator-{index}.tgz");
             ensure!(
                 artifact.index == index
                     && artifact.name == founder.name
-                    && artifact.ssh_host == founder.ssh.host
-                    && artifact.advertise_ip == founder.advertise_ip
-                    && artifact.archive == expected,
+                    && artifact.advertise_ip == founder.advertise_ip,
                 "founder {index} does not match its network manifest"
             );
-            ensure!(
-                artifact.archive_sha256 == sha256_file(&root.join(&expected))?,
-                "founder {index} archive changed after network build"
-            );
+            match manifest.deployment {
+                DeploymentKind::Host => {
+                    let ssh = founder.ssh.as_ref().ok_or_else(|| {
+                        eyre::eyre!("founder {index} is missing ssh configuration")
+                    })?;
+                    let expected = format!("dist/validator-{index}.tgz");
+                    ensure!(
+                        artifact.ssh_host.as_deref() == Some(ssh.host.as_str())
+                            && artifact.archive.as_deref() == Some(expected.as_str()),
+                        "founder {index} does not match its network manifest"
+                    );
+                    let expected_sha = artifact.archive_sha256.as_deref().ok_or_else(|| {
+                        eyre::eyre!("founder {index} manifest is missing archive_sha256")
+                    })?;
+                    ensure!(
+                        expected_sha == sha256_file(&root.join(&expected))?,
+                        "founder {index} archive changed after network build"
+                    );
+                }
+                DeploymentKind::Vm => {
+                    let expected = format!("vm/validator-{index}");
+                    let vm = artifact.vm.as_ref().ok_or_else(|| {
+                        eyre::eyre!("founder {index} manifest is missing vm metadata")
+                    })?;
+                    let resolved = config.resolve_founder_vm(founder)?;
+                    ensure!(
+                        vm.data_tree == expected
+                            && vm.vmm_host == resolved.vmm_host.host
+                            && vm.bridge_ip == resolved.bridge_ip
+                            && root.join(&expected).is_dir(),
+                        "founder {index} VM data tree does not match its network manifest"
+                    );
+                }
+            }
         }
         Ok(Self {
             root: root.to_owned(),
@@ -99,12 +126,12 @@ impl NetworkArtifacts {
 }
 
 #[derive(Clone)]
-pub(super) struct SshOptions {
+pub(crate) struct SshOptions {
     ssh_key: Option<PathBuf>,
 }
 
 impl SshOptions {
-    pub(super) fn new(ssh_key: Option<&Path>) -> Result<Self> {
+    pub(crate) fn new(ssh_key: Option<&Path>) -> Result<Self> {
         if let Some(path) = ssh_key {
             ensure!(path.is_file(), "SSH key does not exist: {}", path.display());
         }
@@ -114,30 +141,73 @@ impl SshOptions {
     }
 
     pub(super) fn capture(&self, founder: &Founder, command: &str) -> Result<String> {
+        self.capture_ssh(founder_ssh(founder)?, &founder.name, command)
+    }
+
+    pub(crate) fn capture_ssh(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
+        Ok(self.capture_ssh_raw(ssh, label, command)?.trim().to_owned())
+    }
+
+    /// Capture stdout from SSH without trimming trailing whitespace or newlines.
+    pub(crate) fn capture_ssh_raw(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
         let mut process = Command::new("ssh");
-        self.ssh_args(&mut process, founder);
+        self.ssh_endpoint_args(&mut process, ssh);
         let output = process.arg(command).output().wrap_err("run ssh")?;
         if !output.status.success() {
             bail!(
-                "SSH command failed on {}: {}",
-                founder.name,
+                "SSH command failed on {label}: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             );
         }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    pub(crate) fn capture_ssh_stdin(
+        &self,
+        ssh: &Ssh,
+        label: &str,
+        command: &str,
+        stdin_bytes: &[u8],
+    ) -> Result<String> {
+        use std::{io::Write, process::Stdio};
+
+        let mut process = Command::new("ssh");
+        self.ssh_endpoint_args(&mut process, ssh);
+        let mut child = process
+            .arg(command)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .wrap_err("spawn ssh")?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(stdin_bytes).wrap_err("write ssh stdin")?;
+        }
+        let output = child.wait_with_output().wrap_err("wait for ssh")?;
+        if !output.status.success() {
+            bail!(
+                "SSH command failed on {label}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
     }
 
     pub(super) fn run(&self, founder: &Founder, command: &str) -> Result<()> {
         let mut process = Command::new("ssh");
-        self.ssh_args(&mut process, founder);
+        self.ssh_args(&mut process, founder)?;
         let status = process.arg(command).status().wrap_err("run ssh")?;
         ensure!(status.success(), "SSH command failed on {}", founder.name);
         Ok(())
     }
 
     pub(super) fn run_quiet(&self, founder: &Founder, command: &str) -> Result<()> {
+        self.run_quiet_ssh(founder_ssh(founder)?, &founder.name, command)
+    }
+
+    pub(crate) fn run_quiet_ssh(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()> {
         let mut process = Command::new("ssh");
-        self.ssh_args(&mut process, founder);
+        self.ssh_endpoint_args(&mut process, ssh);
         let output = process.arg(command).output().wrap_err("run ssh")?;
         if !output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -147,7 +217,7 @@ impl SshOptions {
                 .filter(|value| !value.is_empty())
                 .collect::<Vec<_>>()
                 .join("\n");
-            bail!("SSH command failed on {}:\n{}", founder.name, details);
+            bail!("SSH command failed on {label}:\n{details}");
         }
         Ok(())
     }
@@ -159,8 +229,25 @@ impl SshOptions {
         destination: &str,
         recursive: bool,
     ) -> Result<()> {
+        self.copy_to_ssh(
+            founder_ssh(founder)?,
+            &founder.name,
+            sources,
+            destination,
+            recursive,
+        )
+    }
+
+    pub(crate) fn copy_to_ssh(
+        &self,
+        ssh: &Ssh,
+        label: &str,
+        sources: &[&Path],
+        destination: &str,
+        recursive: bool,
+    ) -> Result<()> {
         let mut process = Command::new("scp");
-        process.args(["-q", "-P", &founder.ssh.port.to_string()]);
+        process.args(["-q", "-P", &ssh.port.to_string()]);
         process.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
         if let Some(ssh_key) = &self.ssh_key {
             process.arg("-i").arg(ssh_key);
@@ -171,22 +258,39 @@ impl SshOptions {
         process.args(sources);
         process.arg(format!(
             "{}@{}:{destination}",
-            founder.ssh.user,
-            scp_host(&founder.ssh.host)
+            ssh.user,
+            scp_host(&ssh.host)
         ));
         let status = process.status().wrap_err("run scp")?;
-        ensure!(status.success(), "SCP failed for {}", founder.name);
+        ensure!(status.success(), "SCP failed for {label}");
         Ok(())
     }
 
-    fn ssh_args(&self, process: &mut Command, founder: &Founder) {
-        process.args(["-p", &founder.ssh.port.to_string()]);
+    fn ssh_args(&self, process: &mut Command, founder: &Founder) -> Result<()> {
+        self.ssh_endpoint_args(process, founder_ssh(founder)?);
+        Ok(())
+    }
+
+    fn ssh_endpoint_args(&self, process: &mut Command, ssh: &Ssh) {
+        process.args(["-p", &ssh.port.to_string()]);
         process.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
         if let Some(ssh_key) = &self.ssh_key {
             process.arg("-i").arg(ssh_key);
         }
-        process.arg(format!("{}@{}", founder.ssh.user, founder.ssh.host));
+        process.arg(format!("{}@{}", ssh.user, ssh.host));
     }
+}
+
+/// Single-quote a string for POSIX shells.
+pub(crate) fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn founder_ssh(founder: &Founder) -> Result<&Ssh> {
+    founder
+        .ssh
+        .as_ref()
+        .ok_or_else(|| eyre::eyre!("founder {} has no host SSH endpoint", founder.name))
 }
 
 fn scp_host(host: &str) -> String {

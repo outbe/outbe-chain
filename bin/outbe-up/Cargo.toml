@@ -10,6 +10,8 @@ name = "outbe-up"
 path = "src/main.rs"
 
 [dependencies]
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
 alloy-primitives = { workspace = true, features = ["std"] }
 alloy-sol-types.workspace = true
 clap.workspace = true

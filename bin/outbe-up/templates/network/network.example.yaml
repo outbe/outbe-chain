@@ -75,3 +75,16 @@ genesis:
   # protocol overrides. Network identity, hosts, keys, and runtime fields are
   # managed by outbe-up and cannot be overridden here.
   overrides: {}
+
+# Optional VM deployment (devnet and testnet only). When present, replace each
+# founder's `ssh` block with a `vm` block (`bridge_ip`, plus optional overrides):
+# vm:
+#   vmm_host:
+#     host: 192.0.2.50
+#     user: ubuntu
+#     port: 22
+#   vcpu: 3
+#   memory_gib: 5
+#   disk_gib: 40
+#   flavor: dev
+#   authorized_keys: ./dev-authorized-keys

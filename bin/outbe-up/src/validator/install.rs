@@ -13,6 +13,22 @@ use crate::{
     validator::{assets, path_text},
 };
 
+pub(crate) const REQUIRED_SECRETS: &[&str] = &[
+    "signing-key.hex",
+    "evm-key.hex",
+    "feeder-key.hex",
+    "hyperlane-key.hex",
+    "reth-p2p-secret.hex",
+    "radicle/keys/radicle",
+];
+
+pub(crate) const CANONICAL_HEX_KEYS: &[&str] = &[
+    "evm-key.hex",
+    "feeder-key.hex",
+    "hyperlane-key.hex",
+    "reth-p2p-secret.hex",
+];
+
 const ENV_KEYS: &[&str] = &[
     "OUTBE_EXTERNAL_IP",
     "OUTBE_RPC_BIND_IP",
@@ -81,7 +97,7 @@ fn validate_local_config(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn read_environment(path: &Path) -> Result<BTreeMap<String, String>> {
+pub(crate) fn read_environment(path: &Path) -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
     let allowed = ENV_KEYS.iter().copied().collect::<BTreeSet<_>>();
     for line in fs::read_to_string(path)?.lines() {
@@ -116,7 +132,7 @@ fn read_environment(path: &Path) -> Result<BTreeMap<String, String>> {
     Ok(values)
 }
 
-fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
+pub(crate) fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
     values["OUTBE_EXTERNAL_IP"]
         .parse::<std::net::Ipv4Addr>()
         .wrap_err("OUTBE_EXTERNAL_IP must be an IPv4 literal")?;
@@ -181,7 +197,7 @@ fn validate_bundle(root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn validate_genesis(root: &Path, expected: &str) -> Result<()> {
+pub(crate) fn validate_genesis(root: &Path, expected: &str) -> Result<()> {
     let genesis: serde_json::Value = serde_json::from_slice(&fs::read(root.join("genesis.json"))?)?;
     let actual = genesis
         .pointer("/config/chainId")
@@ -194,7 +210,7 @@ fn validate_genesis(root: &Path, expected: &str) -> Result<()> {
     Ok(())
 }
 
-fn ensure_outbe_account() -> Result<()> {
+pub(crate) fn ensure_outbe_account() -> Result<()> {
     if !process::command_succeeds("getent", &["group", "outbe"]) {
         process::run("groupadd", &["--system", "outbe"])?;
     }
@@ -216,7 +232,7 @@ fn ensure_outbe_account() -> Result<()> {
     Ok(())
 }
 
-fn numeric_id(flag: &str) -> Result<u32> {
+pub(crate) fn numeric_id(flag: &str) -> Result<u32> {
     process::capture("id", &[flag, "outbe"])?
         .trim()
         .parse()
@@ -266,15 +282,7 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     create_owned_dir(&operator_state, 0o700, 0, 0)?;
     create_owned_dir(&feeder_state, 0o700, uid, gid)?;
     create_owned_dir(&hyperlane_state, 0o700, uid, gid)?;
-    let secrets = [
-        "signing-key.hex",
-        "evm-key.hex",
-        "feeder-key.hex",
-        "hyperlane-key.hex",
-        "reth-p2p-secret.hex",
-        "radicle/keys/radicle",
-    ];
-    for relative in secrets {
+    for relative in REQUIRED_SECRETS {
         let path = keys.join(relative);
         let metadata = fs::symlink_metadata(&path)
             .wrap_err_with(|| format!("required secret is missing: {relative}"))?;
@@ -295,16 +303,24 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
             fs::set_permissions(entry.path(), fs::Permissions::from_mode(0o700))?;
         }
     }
-    for relative in secrets {
+    for relative in REQUIRED_SECRETS {
         fs::set_permissions(keys.join(relative), fs::Permissions::from_mode(0o600))?;
     }
-    canonical_key(&keys.join("evm-key.hex"))?;
-    canonical_key(&keys.join("feeder-key.hex"))?;
-    canonical_key(&keys.join("hyperlane-key.hex"))?;
-    canonical_key(&keys.join("reth-p2p-secret.hex"))?;
+    for relative in CANONICAL_HEX_KEYS {
+        canonical_key(&keys.join(relative))?;
+    }
+    verify_signing_key(root, &keys)?;
+    Ok(())
+}
+
+pub(crate) fn verify_signing_key(bin_dir: &Path, keys_dir: &Path) -> Result<()> {
     process::capture(
-        root.join("outbe-keygen"),
-        &["verify", "--key", path_text(&keys.join("signing-key.hex"))?],
+        bin_dir.join("outbe-keygen"),
+        &[
+            "verify",
+            "--key",
+            path_text(&keys_dir.join("signing-key.hex"))?,
+        ],
     )?;
     Ok(())
 }
@@ -365,13 +381,13 @@ fn install_file(source: &Path, destination: &Path, mode: u32) -> Result<()> {
     Ok(())
 }
 
-fn create_owned_dir(path: &Path, mode: u32, uid: u32, gid: u32) -> Result<()> {
+pub(crate) fn create_owned_dir(path: &Path, mode: u32, uid: u32, gid: u32) -> Result<()> {
     fs::create_dir_all(path)?;
     fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
     process::chown(path, uid, gid)
 }
 
-fn required_file(path: &Path) -> Result<()> {
+pub(crate) fn required_file(path: &Path) -> Result<()> {
     ensure!(path.is_file(), "missing bundle file: {}", path.display());
     Ok(())
 }
@@ -387,7 +403,7 @@ fn required_executable(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn canonical_key(path: &Path) -> Result<()> {
+pub(crate) fn canonical_key(path: &Path) -> Result<()> {
     let value = fs::read_to_string(path)?;
     ensure!(
         value.len() == 64

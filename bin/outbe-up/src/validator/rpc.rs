@@ -9,17 +9,36 @@ use eyre::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::network::{
+    config::Ssh,
+    remote::{shell_quote, SshOptions},
+};
+
 const STAKING: Address = address!("000000000000000000000000000000000000EE02");
-const VALIDATOR_SET: Address = address!("000000000000000000000000000000000000EE00");
-const HYPERLANE_CONTROLLER: Address = address!("000000000000000000000000000000000000EE14");
+pub(crate) const VALIDATOR_SET: Address = address!("000000000000000000000000000000000000EE00");
+pub(crate) const HYPERLANE_CONTROLLER: Address =
+    address!("000000000000000000000000000000000000EE14");
 
 sol!("../../contracts/precompiles/src/IStaking.sol");
 sol!("../../contracts/precompiles/src/IValidatorSet.sol");
 sol!("../../contracts/precompiles/src/IHyperlaneController.sol");
 
+enum RpcTransport {
+    Http {
+        url: String,
+        client: reqwest::Client,
+    },
+    /// Execute `curl` on a remote host over SSH when the RPC endpoint is only reachable from that host.
+    SshCurl {
+        url: String,
+        ssh: Ssh,
+        ssh_options: SshOptions,
+        label: String,
+    },
+}
+
 pub struct RpcClient {
-    url: String,
-    client: reqwest::Client,
+    transport: RpcTransport,
     id: AtomicU64,
 }
 
@@ -107,13 +126,85 @@ struct RpcError {
 impl RpcClient {
     pub fn new(url: impl Into<String>) -> Result<Self> {
         Ok(Self {
-            url: url.into(),
-            client: reqwest::Client::builder()
-                .connect_timeout(Duration::from_secs(5))
-                .timeout(Duration::from_secs(30))
-                .build()?,
+            transport: RpcTransport::Http {
+                url: url.into(),
+                client: reqwest::Client::builder()
+                    .connect_timeout(Duration::from_secs(5))
+                    .timeout(Duration::from_secs(30))
+                    .build()?,
+            },
             id: AtomicU64::new(1),
         })
+    }
+
+    pub(crate) fn via_ssh(
+        url: impl Into<String>,
+        ssh: Ssh,
+        ssh_options: SshOptions,
+        label: impl Into<String>,
+    ) -> Self {
+        Self {
+            transport: RpcTransport::SshCurl {
+                url: url.into(),
+                ssh,
+                ssh_options,
+                label: label.into(),
+            },
+            id: AtomicU64::new(1),
+        }
+    }
+
+    pub async fn nonce(&self, address: Address) -> Result<u64> {
+        parse_hex_u64(
+            &self
+                .call(
+                    "eth_getTransactionCount",
+                    json!([format!("{address:#x}"), "pending"]),
+                )
+                .await?,
+        )
+    }
+
+    pub async fn latest_base_fee(&self) -> Result<U256> {
+        let block = self
+            .call("eth_getBlockByNumber", json!(["latest", false]))
+            .await?;
+        Ok(block
+            .get("baseFeePerGas")
+            .and_then(Value::as_str)
+            .and_then(|hex| U256::from_str_radix(hex.trim_start_matches("0x"), 16).ok())
+            .unwrap_or_else(|| U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE)))
+    }
+
+    pub async fn estimate_gas(
+        &self,
+        from: Address,
+        to: Address,
+        data: &[u8],
+        value: U256,
+    ) -> Result<u64> {
+        let mut call_obj = json!({
+            "from": format!("{from:#x}"),
+            "to": format!("{to:#x}"),
+            "value": format!("{value:#x}"),
+        });
+        if !data.is_empty() {
+            call_obj["data"] = json!(format!("0x{}", hex::encode(data)));
+        }
+        parse_hex_u64(&self.call("eth_estimateGas", json!([call_obj])).await?)
+    }
+
+    pub async fn send_raw_transaction(&self, raw: &[u8]) -> Result<String> {
+        let value = self
+            .call(
+                "eth_sendRawTransaction",
+                json!([format!("0x{}", hex::encode(raw))]),
+            )
+            .await?;
+        value
+            .as_str()
+            .map(ToOwned::to_owned)
+            .ok_or_else(|| eyre::eyre!("eth_sendRawTransaction did not return a hash"))
     }
 
     pub async fn chain_id(&self) -> Result<u64> {
@@ -242,23 +333,46 @@ impl RpcClient {
 
     async fn call_optional(&self, method: &str, params: Value) -> Result<Option<Value>> {
         let id = self.id.fetch_add(1, Ordering::Relaxed);
-        let response: Response = self
-            .client
-            .post(&self.url)
-            .json(&Request {
-                jsonrpc: "2.0",
-                method,
-                params,
-                id,
-            })
-            .send()
-            .await
-            .wrap_err_with(|| format!("failed to contact {}", self.url))?
-            .error_for_status()
-            .wrap_err_with(|| format!("RPC HTTP error from {}", self.url))?
-            .json()
-            .await
-            .wrap_err("invalid JSON-RPC response")?;
+        let request = Request {
+            jsonrpc: "2.0",
+            method,
+            params,
+            id,
+        };
+        let response: Response = match &self.transport {
+            RpcTransport::Http { url, client } => client
+                .post(url)
+                .json(&request)
+                .send()
+                .await
+                .wrap_err_with(|| format!("failed to contact {url}"))?
+                .error_for_status()
+                .wrap_err_with(|| format!("RPC HTTP error from {url}"))?
+                .json()
+                .await
+                .wrap_err("invalid JSON-RPC response")?,
+            RpcTransport::SshCurl {
+                url,
+                ssh,
+                ssh_options,
+                label,
+            } => {
+                let payload = serde_json::to_vec(&request)?;
+                let command = format!(
+                    "curl -fsS --connect-timeout 5 --max-time 30 -H 'content-type: application/json' --data-binary @- {}",
+                    shell_quote(url)
+                );
+                let ssh = ssh.clone();
+                let ssh_options = ssh_options.clone();
+                let label = label.clone();
+                let raw = tokio::task::spawn_blocking(move || {
+                    ssh_options.capture_ssh_stdin(&ssh, &label, &command, &payload)
+                })
+                .await
+                .wrap_err("SSH RPC task panicked")??;
+                serde_json::from_str(&raw).wrap_err("invalid JSON-RPC response")?
+            }
+        };
         ensure!(
             response.id.as_ref() == Some(&Value::from(id)),
             "JSON-RPC response id mismatch"
@@ -272,6 +386,14 @@ impl RpcClient {
         }
         Ok(response.result)
     }
+}
+
+pub(crate) fn encode_set_delegate(role: u8, delegate: Address) -> Vec<u8> {
+    IValidatorSet::setDelegateCall { role, delegate }.abi_encode()
+}
+
+pub(crate) fn encode_set_hyperlane_signer(signer: Address) -> Vec<u8> {
+    IHyperlaneController::setHyperlaneSignerCall { signer }.abi_encode()
 }
 
 fn parse_hex_u64(value: &Value) -> Result<u64> {

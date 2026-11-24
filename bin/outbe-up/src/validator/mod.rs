@@ -18,6 +18,7 @@ pub mod service;
 pub mod snapshot;
 pub mod status;
 pub mod sync;
+pub mod vm_boot;
 pub mod wait;
 
 pub const VALIDATOR_TARGET: &str = "outbe-validator.target";

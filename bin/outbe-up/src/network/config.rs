@@ -32,6 +32,89 @@ pub struct NetworkConfig {
     #[serde(default)]
     pub topology: Topology,
     pub genesis: Genesis,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm: Option<VmNetworkConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct VmNetworkConfig {
+    /// Default VMM host SSH endpoint shared by founders that do not override it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vmm_host: Option<Ssh>,
+    /// VMM home directory on the host (contains `run/vmm.sock`, `image/`, `vm/`).
+    #[serde(default = "default_vm_vmm_home")]
+    pub vmm_home: String,
+    /// Host Linux bridge name attached to VM NICs.
+    #[serde(default = "default_vm_bridge")]
+    pub bridge: String,
+    /// Host dnsmasq DHCP hosts file used for static `mac,ip` reservations.
+    #[serde(default = "default_vm_dhcp_hosts_file")]
+    pub dhcp_hosts_file: PathBuf,
+    /// Host dnsmasq DHCP leases file checked for active IP conflicts.
+    #[serde(default = "default_vm_dhcp_leases_file")]
+    pub dhcp_leases_file: PathBuf,
+    /// Host dnsmasq PID file signaled with SIGHUP after reservation updates.
+    #[serde(default = "default_vm_dhcp_pid_file")]
+    pub dhcp_pid_file: PathBuf,
+    #[serde(default = "default_vm_vcpu")]
+    pub vcpu: u32,
+    #[serde(default = "default_vm_memory_gib")]
+    pub memory_gib: u32,
+    #[serde(default = "default_vm_disk_gib")]
+    pub disk_gib: u32,
+    #[serde(default)]
+    pub flavor: VmFlavor,
+    /// Optional path to an `authorized_keys` file for `dev` VMs, relative to `network.yaml`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorized_keys: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum VmFlavor {
+    #[default]
+    Dev,
+    Prod,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FounderVmConfig {
+    /// Private bridge IPv4 address assigned to this founder VM.
+    pub bridge_ip: Ipv4Addr,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vmm_host: Option<Ssh>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vmm_home: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bridge: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vcpu: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_gib: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_gib: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub flavor: Option<VmFlavor>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub authorized_keys: Option<PathBuf>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ResolvedFounderVm {
+    pub vmm_host: Ssh,
+    pub vmm_home: String,
+    pub bridge: String,
+    pub dhcp_hosts_file: PathBuf,
+    pub dhcp_leases_file: PathBuf,
+    pub dhcp_pid_file: PathBuf,
+    pub bridge_ip: Ipv4Addr,
+    pub vcpu: u32,
+    pub memory_gib: u32,
+    pub disk_gib: u32,
+    pub flavor: VmFlavor,
+    pub authorized_keys: Option<PathBuf>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -64,11 +147,14 @@ impl Network {
 #[serde(deny_unknown_fields)]
 pub struct Founder {
     pub name: String,
-    pub ssh: Ssh,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<Ssh>,
     pub advertise_ip: Ipv4Addr,
     #[serde(default = "loopback")]
     pub rpc_bind_ip: Ipv4Addr,
     pub hyperlane_public_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm: Option<FounderVmConfig>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -95,7 +181,7 @@ impl HyperlaneNetworkConfig {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Ssh {
     pub host: String,
@@ -169,9 +255,43 @@ impl NetworkConfig {
             "at least {MIN_FOUNDERS} founding validators are required"
         );
 
+        if let Some(vm) = &self.vm {
+            ensure!(
+                self.network != Network::Mainnet,
+                "vm deployment is not supported on mainnet"
+            );
+            ensure!(
+                !vm.vmm_home.trim().is_empty(),
+                "vm.vmm_home must not be empty"
+            );
+            ensure!(
+                safe_name(&vm.bridge),
+                "vm.bridge must use letters, digits, `-`, or `_`"
+            );
+            ensure!(
+                vm.dhcp_hosts_file.is_absolute(),
+                "vm.dhcp_hosts_file must be an absolute path"
+            );
+            ensure!(
+                vm.dhcp_leases_file.is_absolute(),
+                "vm.dhcp_leases_file must be an absolute path"
+            );
+            ensure!(
+                vm.dhcp_pid_file.is_absolute(),
+                "vm.dhcp_pid_file must be an absolute path"
+            );
+            ensure!(vm.vcpu > 0, "vm.vcpu must be positive");
+            ensure!(vm.memory_gib > 0, "vm.memory_gib must be positive");
+            ensure!(vm.disk_gib > 0, "vm.disk_gib must be positive");
+            if let Some(ssh) = &vm.vmm_host {
+                validate_ssh(ssh, "vm.vmm_host")?;
+            }
+        }
+
         let mut names = BTreeSet::new();
         let mut ssh_targets = BTreeSet::new();
         let mut advertise_ips = BTreeSet::new();
+        let mut bridge_ips = BTreeSet::new();
         for founder in &self.founders {
             ensure!(
                 safe_name(&founder.name),
@@ -183,27 +303,64 @@ impl NetworkConfig {
                 "duplicate founder name: {}",
                 founder.name
             );
-            ensure!(
-                safe_host(&founder.ssh.host),
-                "invalid SSH host for {}",
-                founder.name
-            );
-            ensure!(
-                safe_user(&founder.ssh.user),
-                "invalid SSH user for {}",
-                founder.name
-            );
-            ensure!(
-                founder.ssh.port > 0,
-                "SSH port must be non-zero for {}",
-                founder.name
-            );
-            ensure!(
-                ssh_targets.insert((&founder.ssh.host, founder.ssh.port)),
-                "duplicate SSH target: {}:{}",
-                founder.ssh.host,
-                founder.ssh.port
-            );
+            if self.vm.is_some() {
+                ensure!(
+                    founder.ssh.is_none(),
+                    "founder {} may not set ssh when top-level vm deployment is enabled",
+                    founder.name
+                );
+                let resolved = self.resolve_founder_vm(founder)?;
+                validate_ssh(&resolved.vmm_host, &founder.name)?;
+                ensure!(
+                    resolved.vcpu > 0,
+                    "vm.vcpu must be positive for {}",
+                    founder.name
+                );
+                ensure!(
+                    resolved.memory_gib > 0,
+                    "vm.memory_gib must be positive for {}",
+                    founder.name
+                );
+                ensure!(
+                    resolved.disk_gib > 0,
+                    "vm.disk_gib must be positive for {}",
+                    founder.name
+                );
+                ensure!(
+                    resolved.bridge_ip.is_private(),
+                    "vm.bridge_ip for {} must be a private IPv4 address",
+                    founder.name
+                );
+                ensure!(
+                    bridge_ips.insert(resolved.bridge_ip),
+                    "duplicate vm.bridge_ip: {}",
+                    resolved.bridge_ip
+                );
+                if resolved.flavor == VmFlavor::Prod {
+                    ensure!(
+                        resolved.authorized_keys.is_none(),
+                        "prod VM flavor does not allow authorized_keys for {}",
+                        founder.name
+                    );
+                }
+            } else {
+                ensure!(
+                    founder.vm.is_none(),
+                    "founder {} sets vm without a top-level vm section",
+                    founder.name
+                );
+                let ssh = founder
+                    .ssh
+                    .as_ref()
+                    .ok_or_else(|| eyre::eyre!("missing ssh configuration for {}", founder.name))?;
+                validate_ssh(ssh, &founder.name)?;
+                ensure!(
+                    ssh_targets.insert((&ssh.host, ssh.port)),
+                    "duplicate SSH target: {}:{}",
+                    ssh.host,
+                    ssh.port
+                );
+            }
             ensure!(
                 advertise_ips.insert(founder.advertise_ip),
                 "duplicate advertise_ip: {}",
@@ -266,6 +423,53 @@ impl NetworkConfig {
 
         Ok(())
     }
+
+    /// Resolve effective VM settings for one founder by merging overrides over network defaults.
+    pub fn resolve_founder_vm(&self, founder: &Founder) -> Result<ResolvedFounderVm> {
+        let defaults = self
+            .vm
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("network config has no vm section"))?;
+        let override_cfg = founder
+            .vm
+            .as_ref()
+            .ok_or_else(|| eyre::eyre!("missing vm settings for founder {}", founder.name))?;
+        let vmm_host = override_cfg
+            .vmm_host
+            .clone()
+            .or_else(|| defaults.vmm_host.clone())
+            .ok_or_else(|| eyre::eyre!("missing vm.vmm_host for founder {}", founder.name))?;
+        Ok(ResolvedFounderVm {
+            vmm_host,
+            vmm_home: override_cfg
+                .vmm_home
+                .clone()
+                .unwrap_or_else(|| defaults.vmm_home.clone()),
+            bridge: override_cfg
+                .bridge
+                .clone()
+                .unwrap_or_else(|| defaults.bridge.clone()),
+            dhcp_hosts_file: defaults.dhcp_hosts_file.clone(),
+            dhcp_leases_file: defaults.dhcp_leases_file.clone(),
+            dhcp_pid_file: defaults.dhcp_pid_file.clone(),
+            bridge_ip: override_cfg.bridge_ip,
+            vcpu: override_cfg.vcpu.unwrap_or(defaults.vcpu),
+            memory_gib: override_cfg.memory_gib.unwrap_or(defaults.memory_gib),
+            disk_gib: override_cfg.disk_gib.unwrap_or(defaults.disk_gib),
+            flavor: override_cfg.flavor.unwrap_or(defaults.flavor),
+            authorized_keys: override_cfg
+                .authorized_keys
+                .clone()
+                .or_else(|| defaults.authorized_keys.clone()),
+        })
+    }
+}
+
+fn validate_ssh(ssh: &Ssh, label: &str) -> Result<()> {
+    ensure!(safe_host(&ssh.host), "invalid SSH host for {label}");
+    ensure!(safe_user(&ssh.user), "invalid SSH user for {label}");
+    ensure!(ssh.port > 0, "SSH port must be non-zero for {label}");
+    Ok(())
 }
 
 pub fn init(path: &Path) -> Result<()> {
@@ -356,6 +560,38 @@ fn default_hyperlane_funding_wei() -> String {
     "1000000000000000000".to_owned()
 }
 
+fn default_vm_vmm_home() -> String {
+    "~/.dstack-vmm".to_owned()
+}
+
+fn default_vm_bridge() -> String {
+    "obr0".to_owned()
+}
+
+fn default_vm_dhcp_hosts_file() -> PathBuf {
+    PathBuf::from("/var/lib/misc/dnsmasq.outbe-mvp.hosts")
+}
+
+pub(crate) fn default_vm_dhcp_leases_file() -> PathBuf {
+    PathBuf::from("/var/lib/misc/dnsmasq.outbe-mvp.leases")
+}
+
+fn default_vm_dhcp_pid_file() -> PathBuf {
+    PathBuf::from("/run/outbe-mvp-dnsmasq.pid")
+}
+
+const fn default_vm_vcpu() -> u32 {
+    3
+}
+
+const fn default_vm_memory_gib() -> u32 {
+    5
+}
+
+const fn default_vm_disk_gib() -> u32 {
+    40
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -414,5 +650,104 @@ genesis:
     fn example_is_valid() {
         let config: NetworkConfig = serde_yaml_ng::from_str(EXAMPLE).unwrap();
         config.validate().unwrap();
+    }
+
+    fn vm_config(network: &str, chain_id: u64) -> NetworkConfig {
+        serde_yaml_ng::from_str(&format!(
+            r#"
+version: 1
+name: vm-devnet
+network: {network}
+chain_id: {chain_id}
+certified_rpc: "http://10.0.0.10:8545"
+vm:
+  vmm_host:
+    host: 192.0.2.50
+  authorized_keys: ./dev.pub
+founders:
+  - name: validator-0
+    advertise_ip: 10.0.0.10
+    rpc_bind_ip: 10.0.0.10
+    hyperlane_public_url: http://192.0.2.50:9000
+    vm:
+      bridge_ip: 10.77.0.10
+  - name: validator-1
+    advertise_ip: 10.0.0.11
+    rpc_bind_ip: 10.0.0.11
+    hyperlane_public_url: http://192.0.2.50:9001
+    vm:
+      bridge_ip: 10.77.0.11
+      vcpu: 4
+      memory_gib: 8
+  - name: validator-2
+    advertise_ip: 10.0.0.12
+    rpc_bind_ip: 10.0.0.12
+    hyperlane_public_url: http://192.0.2.51:9000
+    vm:
+      bridge_ip: 10.77.0.12
+      vmm_host:
+        host: 192.0.2.51
+        user: root
+        port: 2222
+  - name: validator-3
+    advertise_ip: 10.0.0.13
+    rpc_bind_ip: 10.0.0.13
+    hyperlane_public_url: http://192.0.2.51:9001
+    vm:
+      bridge_ip: 10.77.0.13
+hyperlane:
+  origins:
+    - domain: {chain_id}
+      rpc_urls: ["https://rpc.example.invalid"]
+      reorg_period: 0
+topology:
+  use_local_defaults: true
+genesis:
+  prefunded_accounts: {{}}
+"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn vm_config_resolves_defaults_and_overrides() {
+        let config = vm_config("devnet", Network::Devnet.chain_id());
+        config.validate().unwrap();
+
+        let f0 = config.resolve_founder_vm(&config.founders[0]).unwrap();
+        assert_eq!(f0.vmm_host.host, "192.0.2.50");
+        assert_eq!(f0.vcpu, 3);
+        assert_eq!(f0.memory_gib, 5);
+        assert_eq!(f0.disk_gib, 40);
+        assert_eq!(f0.flavor, VmFlavor::Dev);
+        assert_eq!(f0.bridge_ip, Ipv4Addr::new(10, 77, 0, 10));
+        assert_eq!(f0.authorized_keys, Some(PathBuf::from("./dev.pub")));
+
+        let f1 = config.resolve_founder_vm(&config.founders[1]).unwrap();
+        assert_eq!(f1.vcpu, 4);
+        assert_eq!(f1.memory_gib, 8);
+        assert_eq!(f1.disk_gib, 40);
+
+        let f2 = config.resolve_founder_vm(&config.founders[2]).unwrap();
+        assert_eq!(f2.vmm_host.host, "192.0.2.51");
+        assert_eq!(f2.vmm_host.user, "root");
+        assert_eq!(f2.vmm_host.port, 2222);
+    }
+
+    #[test]
+    fn vm_config_rejects_mainnet_and_invalid_combinations() {
+        let mainnet = vm_config("mainnet", Network::Mainnet.chain_id());
+        let err = mainnet.validate().unwrap_err();
+        assert!(err.to_string().contains("mainnet"), "{err}");
+
+        let mut prod_with_keys = vm_config("devnet", Network::Devnet.chain_id());
+        prod_with_keys.vm.as_mut().unwrap().flavor = VmFlavor::Prod;
+        let err = prod_with_keys.validate().unwrap_err();
+        assert!(err.to_string().contains("authorized_keys"), "{err}");
+
+        let mut duplicate_bridge = vm_config("devnet", Network::Devnet.chain_id());
+        duplicate_bridge.founders[1].vm.as_mut().unwrap().bridge_ip = Ipv4Addr::new(10, 77, 0, 10);
+        let err = duplicate_bridge.validate().unwrap_err();
+        assert!(err.to_string().contains("duplicate vm.bridge_ip"), "{err}");
     }
 }

@@ -7,6 +7,7 @@ mod cli;
 mod network;
 mod support;
 mod validator;
+mod vm;
 
 #[tokio::main]
 async fn main() -> Result<()> {

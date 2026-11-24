@@ -25,7 +25,7 @@ use crate::{
     validator::{validator_address, FEEDER_FUNDING_WEI},
 };
 
-use super::config::{Network, NetworkConfig};
+use super::config::{Network, NetworkConfig, VmFlavor};
 
 const MANIFEST_VERSION: u32 = 1;
 
@@ -35,17 +35,27 @@ pub(super) enum BuildState {
     Ready,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum DeploymentKind {
+    #[default]
+    Host,
+    Vm,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
-pub(super) struct NetworkManifest {
+pub(crate) struct NetworkManifest {
     pub(super) version: u32,
     pub(super) state: BuildState,
+    #[serde(default)]
+    pub(crate) deployment: DeploymentKind,
     pub(super) name: String,
     pub(super) network: String,
     pub(super) chain_id: u64,
     pub(super) config_sha256: String,
     pub(super) software: SoftwareIdentity,
     pub(super) genesis: GenesisIdentity,
-    pub(super) founders: Vec<FounderArtifact>,
+    pub(crate) founders: Vec<FounderArtifact>,
     pub(super) joining: JoiningArtifact,
 }
 
@@ -71,16 +81,35 @@ pub(super) struct GenesisIdentity {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
-pub(super) struct FounderArtifact {
-    pub(super) index: usize,
-    pub(super) name: String,
-    pub(super) ssh_host: String,
+pub(crate) struct FounderArtifact {
+    pub(crate) index: usize,
+    pub(crate) name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) ssh_host: Option<String>,
     pub(super) advertise_ip: Ipv4Addr,
     pub(super) validator_address: String,
     pub(super) hyperlane_address: String,
     pub(super) consensus_public_key: String,
-    pub(super) archive: String,
-    pub(super) archive_sha256: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) archive: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) archive_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) vm: Option<FounderVmArtifact>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct FounderVmArtifact {
+    pub(crate) data_tree: String,
+    pub(super) vmm_host: String,
+    pub(super) vmm_user: String,
+    pub(super) vmm_port: u16,
+    pub(super) bridge_ip: Ipv4Addr,
+    pub(super) vcpu: u32,
+    pub(super) memory_gib: u32,
+    pub(crate) disk_gib: u32,
+    pub(super) flavor: VmFlavor,
+    pub(super) has_authorized_keys: bool,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -174,11 +203,33 @@ pub fn run(
         &genesis_config,
     )
     .wrap_err("failed to finalize the genesis TEE policy")?;
-    launch_bundle::render(&genesis_config, &validators, &final_genesis, &keys)
-        .wrap_err("failed to render founder launch bundles")?;
-
-    progress.stage("assembling founder and joining artifacts");
-    let founders = founder_artifacts(staging.path(), &config, &validators)?;
+    let deployment = if config.vm.is_some() {
+        DeploymentKind::Vm
+    } else {
+        DeploymentKind::Host
+    };
+    let founders = match deployment {
+        DeploymentKind::Host => {
+            launch_bundle::render(&genesis_config, &validators, &final_genesis, &keys)
+                .wrap_err("failed to render founder launch bundles")?;
+            progress.stage("assembling founder and joining artifacts");
+            founder_artifacts(staging.path(), &config, &validators)?
+        }
+        DeploymentKind::Vm => {
+            let bootnodes =
+                write_vm_bootnodes(&genesis_config, &validators, &keys, staging.path())?;
+            progress.stage("assembling VM founder data trees and joining artifacts");
+            emit_vm_founder_trees(&VmTreeInputs {
+                staging_root: staging.path(),
+                software_root: software_root.path(),
+                keys_dir: &keys,
+                config_path,
+                config: &config,
+                validators: &validators,
+                bootnodes: &bootnodes,
+            })?
+        }
+    };
     println!("\nHyperlane signers:");
     for founder in &founders {
         println!("  {:<20} {}", founder.name, founder.hyperlane_address);
@@ -194,6 +245,7 @@ pub fn run(
     let manifest = NetworkManifest {
         version: MANIFEST_VERSION,
         state: BuildState::Ready,
+        deployment,
         name: config.name.clone(),
         network: config.network.as_str().to_owned(),
         chain_id: config.chain_id,
@@ -230,10 +282,16 @@ pub fn run(
         "built ready network artifacts at {}",
         output.display()
     ));
-    println!(
-        "Next: outbe-up network prepare --artifacts {}",
-        output.display()
-    );
+    match deployment {
+        DeploymentKind::Host => println!(
+            "Next: outbe-up network prepare --artifacts {}",
+            output.display()
+        ),
+        DeploymentKind::Vm => println!(
+            "Next: outbe-up vm disk --artifacts {} --founder 0 --output validator-0.img",
+            output.display()
+        ),
+    }
     Ok(())
 }
 
@@ -485,20 +543,230 @@ pub(super) fn founder_artifacts(
         .map(|(index, (founder, validator))| {
             let relative = format!("dist/validator-{index}.tgz");
             let archive = root.join(&relative);
+            let ssh = founder.ssh.as_ref().ok_or_else(|| {
+                eyre::eyre!("founder {} is missing ssh configuration", founder.name)
+            })?;
             Ok(FounderArtifact {
                 index,
                 name: founder.name.clone(),
-                ssh_host: founder.ssh.host.clone(),
+                ssh_host: Some(ssh.host.clone()),
                 advertise_ip: founder.advertise_ip,
                 validator_address: required_validator_field(validator, "address")?.to_owned(),
                 hyperlane_address: required_validator_field(validator, "hyperlane_address")?
                     .to_owned(),
                 consensus_public_key: required_validator_field(validator, "public_key")?.to_owned(),
-                archive: relative,
-                archive_sha256: sha256_file(&archive)?,
+                archive: Some(relative),
+                archive_sha256: Some(sha256_file(&archive)?),
+                vm: None,
             })
         })
         .collect()
+}
+
+struct VmTreeInputs<'a> {
+    staging_root: &'a Path,
+    software_root: &'a Path,
+    keys_dir: &'a Path,
+    config_path: &'a Path,
+    config: &'a NetworkConfig,
+    validators: &'a [Value],
+    bootnodes: &'a [String],
+}
+
+fn write_vm_bootnodes(
+    genesis_config: &Value,
+    validators: &[Value],
+    keys_dir: &Path,
+    staging_root: &Path,
+) -> Result<Vec<String>> {
+    let reth_p2p_port = launch_bundle::port_of(genesis_config, "reth_p2p_port")?;
+    let mut enodes = Vec::with_capacity(validators.len());
+    for (index, validator) in validators.iter().enumerate() {
+        let node_id =
+            launch_bundle::ensure_reth_p2p_secret(&keys_dir.join(format!("validator-{index}")))?;
+        let p2p_address = required_validator_field(validator, "p2p_address")?;
+        let host = p2p_address
+            .rsplit_once(':')
+            .map(|(host, _)| host)
+            .unwrap_or(p2p_address);
+        enodes.push(format!(
+            "enode://{node_id}@{}:{reth_p2p_port}",
+            launch_bundle::format_enode_host(host)
+        ));
+    }
+    fs::write(
+        staging_root.join("reth-bootnodes.txt"),
+        format!("{}\n", enodes.join("\n")),
+    )?;
+    Ok(enodes)
+}
+
+fn emit_vm_founder_trees(inputs: &VmTreeInputs<'_>) -> Result<Vec<FounderArtifact>> {
+    let consensus_peers = consensus_peers(inputs.validators)?;
+    let feeder_public_toml = joining_feeder_public_toml(inputs.config, inputs.software_root)?;
+    let crs_source = inputs.software_root.join(".bb-crs/bn254_g1.dat");
+    ensure!(
+        crs_source.is_file(),
+        "software bundle is missing CRS: {}",
+        crs_source.display()
+    );
+    let genesis_source = inputs.staging_root.join("genesis.json");
+    ensure!(
+        genesis_source.is_file(),
+        "final genesis is missing: {}",
+        genesis_source.display()
+    );
+
+    let mut artifacts = Vec::with_capacity(inputs.config.founders.len());
+    for (index, (founder, validator)) in inputs
+        .config
+        .founders
+        .iter()
+        .zip(inputs.validators)
+        .enumerate()
+    {
+        let resolved_vm = inputs.config.resolve_founder_vm(founder)?;
+        let relative = format!("vm/validator-{index}");
+        let tree = inputs.staging_root.join(&relative);
+        fs::create_dir_all(&tree)?;
+        fs::set_permissions(&tree, fs::Permissions::from_mode(0o755))?;
+
+        copy_file_mode(&genesis_source, &tree.join("genesis.json"), 0o644)?;
+        copy_file_mode(&crs_source, &tree.join(".bb-crs/bn254_g1.dat"), 0o644)?;
+
+        let src_keys = inputs.keys_dir.join(format!("validator-{index}"));
+        let dst_keys = tree.join("keys");
+        copy_vm_keys(&src_keys, &dst_keys)?;
+
+        let validator_addr = validator_address(&dst_keys.join("evm-key.hex"))?;
+        let operator = OperatorConfig {
+            version: OPERATOR_CONFIG_VERSION,
+            network: OperatorNetworkConfig {
+                chain_id: inputs.config.chain_id,
+                certified_rpc: inputs.config.certified_rpc.clone(),
+                advertise_ip: founder.advertise_ip,
+                rpc_bind_ip: founder.rpc_bind_ip,
+                bootnodes: inputs.bootnodes.to_vec(),
+                consensus_peers: consensus_peers.clone(),
+                use_local_defaults: inputs.config.topology.use_local_defaults,
+            },
+            feeder: OperatorFeederConfig {
+                public_toml: feeder_public_toml.clone(),
+            },
+            hyperlane: inputs
+                .config
+                .hyperlane
+                .for_public_url(founder.hyperlane_public_url.clone()),
+        };
+        operator.validate()?;
+        operator.write_runtime_config(&tree, validator_addr)?;
+        for name in [
+            "validator.env",
+            "feeder-public.toml",
+            "hyperlane-public.toml",
+        ] {
+            fs::set_permissions(tree.join(name), fs::Permissions::from_mode(0o640))?;
+        }
+
+        let has_authorized_keys = if let Some(configured) = &resolved_vm.authorized_keys {
+            let source = resolve_relative_path(inputs.config_path, configured);
+            ensure!(
+                source.is_file(),
+                "vm.authorized_keys does not exist for {}: {}",
+                founder.name,
+                source.display()
+            );
+            let dev_dir = tree.join("dev");
+            fs::create_dir_all(&dev_dir)?;
+            fs::set_permissions(&dev_dir, fs::Permissions::from_mode(0o700))?;
+            copy_file_mode(&source, &dev_dir.join("authorized_keys"), 0o600)?;
+            true
+        } else {
+            false
+        };
+
+        artifacts.push(FounderArtifact {
+            index,
+            name: founder.name.clone(),
+            ssh_host: None,
+            advertise_ip: founder.advertise_ip,
+            validator_address: required_validator_field(validator, "address")?.to_owned(),
+            hyperlane_address: required_validator_field(validator, "hyperlane_address")?.to_owned(),
+            consensus_public_key: required_validator_field(validator, "public_key")?.to_owned(),
+            archive: None,
+            archive_sha256: None,
+            vm: Some(FounderVmArtifact {
+                data_tree: relative,
+                vmm_host: resolved_vm.vmm_host.host,
+                vmm_user: resolved_vm.vmm_host.user,
+                vmm_port: resolved_vm.vmm_host.port,
+                bridge_ip: resolved_vm.bridge_ip,
+                vcpu: resolved_vm.vcpu,
+                memory_gib: resolved_vm.memory_gib,
+                disk_gib: resolved_vm.disk_gib,
+                flavor: resolved_vm.flavor,
+                has_authorized_keys,
+            }),
+        });
+    }
+    Ok(artifacts)
+}
+
+fn consensus_peers(validators: &[Value]) -> Result<Vec<String>> {
+    validators
+        .iter()
+        .map(|validator| {
+            Ok(format!(
+                "{}@{}",
+                required_validator_field(validator, "public_key")?,
+                required_validator_field(validator, "p2p_address")?
+            ))
+        })
+        .collect()
+}
+
+fn resolve_relative_path(config_path: &Path, configured: &Path) -> PathBuf {
+    if configured.is_absolute() {
+        configured.to_path_buf()
+    } else {
+        config_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join(configured)
+    }
+}
+
+fn copy_file_mode(source: &Path, destination: &Path, mode: u32) -> Result<()> {
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::copy(source, destination)?;
+    fs::set_permissions(destination, fs::Permissions::from_mode(mode))?;
+    Ok(())
+}
+
+fn copy_vm_keys(source: &Path, destination: &Path) -> Result<()> {
+    copy_tree(source, destination)?;
+    fs::set_permissions(destination, fs::Permissions::from_mode(0o700))?;
+    for entry in WalkDir::new(destination).follow_links(false) {
+        let entry = entry?;
+        if entry.file_type().is_dir() {
+            fs::set_permissions(entry.path(), fs::Permissions::from_mode(0o700))?;
+        } else {
+            fs::set_permissions(entry.path(), fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    // Strip trailing whitespace from reth-p2p-secret.hex so it matches canonical hex validation.
+    let p2p_key = destination.join("reth-p2p-secret.hex");
+    if p2p_key.is_file() {
+        let normalized: String = fs::read_to_string(&p2p_key)?
+            .chars()
+            .filter(|ch| !ch.is_whitespace())
+            .collect();
+        fs::write(&p2p_key, normalized.as_bytes())?;
+        fs::set_permissions(&p2p_key, fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(())
 }
 
 pub(super) fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<JoiningArtifact> {
@@ -512,17 +780,7 @@ pub(super) fn build_joining_artifacts(artifacts: &BuildArtifacts<'_>) -> Result<
         .lines()
         .map(ToOwned::to_owned)
         .collect::<Vec<_>>();
-    let peers = artifacts
-        .validators
-        .iter()
-        .map(|validator| {
-            Ok(format!(
-                "{}@{}",
-                required_validator_field(validator, "public_key")?,
-                required_validator_field(validator, "p2p_address")?
-            ))
-        })
-        .collect::<Result<Vec<_>>>()?;
+    let peers = consensus_peers(artifacts.validators)?;
     let operator =
         joining_operator_config(artifacts.config, artifacts.software_root, bootnodes, peers)?;
     let config_path = joining.join("operator-config.example.yaml");
@@ -827,5 +1085,147 @@ mod tests {
         let mut finalized = genesis;
         finalized["config"]["teeAttestationV1"] = json!({});
         assert!(ensure_base_genesis(&finalized, 54_322_345).is_err());
+    }
+
+    #[test]
+    fn vm_founder_trees_pass_vm_boot_verification() {
+        let temp = tempfile::tempdir().unwrap();
+        let software_root = temp.path().join("software");
+        let staging_root = temp.path().join("staging");
+        let keys_dir = staging_root.join("secrets/founder-keys");
+        let fake_bins = temp.path().join("bins");
+        fs::create_dir_all(&staging_root).unwrap();
+        fs::create_dir_all(&fake_bins).unwrap();
+
+        // Stub outbe-keygen for vm_boot::verify_tree_without_mount.
+        let fake_keygen = fake_bins.join("outbe-keygen");
+        fs::write(&fake_keygen, b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&fake_keygen, fs::Permissions::from_mode(0o755)).unwrap();
+
+        // Minimal software assets needed by VM tree emission.
+        let pairs = software_root.join("share/outbe-genesis/profiles/devnet/pairs.toml");
+        fs::create_dir_all(pairs.parent().unwrap()).unwrap();
+        fs::write(
+            &pairs,
+            "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"mock\" }]\n",
+        )
+        .unwrap();
+        let crs = software_root.join(".bb-crs/bn254_g1.dat");
+        fs::create_dir_all(crs.parent().unwrap()).unwrap();
+        fs::write(&crs, b"crs-bytes").unwrap();
+
+        fs::write(
+            staging_root.join("genesis.json"),
+            br#"{"config":{"chainId":424242}}"#,
+        )
+        .unwrap();
+        let auth_keys = temp.path().join("dev.pub");
+        fs::write(
+            &auth_keys,
+            b"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAItest dev@outbe\n",
+        )
+        .unwrap();
+
+        let config_path = temp.path().join("network.yaml");
+        let config: NetworkConfig = serde_yaml_ng::from_str(&format!(
+            r#"
+version: 1
+name: vm-devnet
+network: devnet
+chain_id: 424242
+certified_rpc: "http://10.0.0.10:8545"
+vm:
+  vmm_host:
+    host: 192.0.2.50
+  authorized_keys: ./dev.pub
+founders:
+{}
+hyperlane:
+  gasless: true
+  origins:
+    - domain: 424242
+      rpc_urls: ["https://rpc.example.invalid"]
+      reorg_period: 0
+topology:
+  use_local_defaults: true
+genesis:
+  prefunded_accounts: {{}}
+"#,
+            (0..4)
+                .map(|index| format!(
+                    "  - name: validator-{index}\n    advertise_ip: 10.0.0.{}\n    rpc_bind_ip: 10.0.0.{}\n    hyperlane_public_url: http://192.0.2.50:{}\n    vm:\n      bridge_ip: 10.77.0.{}",
+                    index + 10,
+                    index + 10,
+                    9000 + index,
+                    index + 10,
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))
+        .unwrap();
+        config.validate().unwrap();
+
+        let mut validators = Vec::new();
+        let mut bootnodes = Vec::new();
+        for index in 0..4 {
+            let val_keys = keys_dir.join(format!("validator-{index}"));
+            fs::create_dir_all(val_keys.join("radicle/keys")).unwrap();
+            let key_hex = format!("{:064x}", index + 1);
+            for file in [
+                "signing-key.hex",
+                "evm-key.hex",
+                "feeder-key.hex",
+                "hyperlane-key.hex",
+                "reth-p2p-secret.hex",
+                "radicle/keys/radicle",
+            ] {
+                fs::write(val_keys.join(file), format!("{key_hex}\n")).unwrap();
+            }
+            // Keep canonical hex without trailing newline on EVM/feeder/hyperlane keys.
+            for file in ["evm-key.hex", "feeder-key.hex", "hyperlane-key.hex"] {
+                fs::write(val_keys.join(file), &key_hex).unwrap();
+            }
+            let addr = format!(
+                "{:#x}",
+                validator_address(&val_keys.join("evm-key.hex")).unwrap()
+            );
+            let pubkey = format!("{:096x}", index + 1);
+            let host = format!("10.0.0.{}", index + 10);
+            validators.push(json!({
+                "address": addr,
+                "hyperlane_address": addr,
+                "public_key": pubkey,
+                "p2p_address": format!("{host}:30400"),
+            }));
+            bootnodes.push(format!("enode://{:0128x}@{host}:30303", index + 1));
+        }
+
+        let artifacts = emit_vm_founder_trees(&VmTreeInputs {
+            staging_root: &staging_root,
+            software_root: &software_root,
+            keys_dir: &keys_dir,
+            config_path: &config_path,
+            config: &config,
+            validators: &validators,
+            bootnodes: &bootnodes,
+        })
+        .unwrap();
+        assert_eq!(artifacts.len(), 4);
+
+        for (index, artifact) in artifacts.iter().enumerate() {
+            assert!(artifact.archive.is_none());
+            assert!(artifact.ssh_host.is_none());
+            let vm = artifact.vm.as_ref().unwrap();
+            assert_eq!(vm.data_tree, format!("vm/validator-{index}"));
+            assert!(vm.has_authorized_keys);
+
+            let tree = staging_root.join(&vm.data_tree);
+            assert!(tree.join("dev/authorized_keys").is_file());
+            assert!(!tree.join("outbe-chain").exists());
+            assert!(!tree.join("systemd").exists());
+
+            // Run the real B3 vm-boot verification (non-root, synthetic mount) over each emitted tree.
+            crate::validator::vm_boot::verify_tree_without_mount(&tree, &fake_bins).unwrap();
+        }
     }
 }

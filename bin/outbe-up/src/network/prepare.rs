@@ -8,7 +8,10 @@ use walkdir::WalkDir;
 
 use crate::support::progress::Progress;
 
-use super::remote::{NetworkArtifacts, SshOptions};
+use super::{
+    build::DeploymentKind,
+    remote::{NetworkArtifacts, SshOptions},
+};
 
 const INSTALLER: &str = r#"#!/bin/sh
 set -eu
@@ -57,6 +60,10 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("verifying network artifacts and software bundle");
     let build = NetworkArtifacts::load(artifacts)?;
+    ensure!(
+        build.manifest.deployment == DeploymentKind::Host,
+        "network prepare only supports bare-host deployments; use outbe-up vm disk / vm create for VM deployments"
+    );
     let ssh = SshOptions::new(ssh_key)?;
     let temporary = tempfile::tempdir()?;
     let software = temporary.path().join("software");
@@ -79,7 +86,10 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
     for (index, founder) in build.config.founders.into_iter().enumerate() {
         let ssh = ssh.clone();
         let archive = build.root.join(format!("dist/validator-{index}.tgz"));
-        let archive_sha = build.manifest.founders[index].archive_sha256.clone();
+        let archive_sha = build.manifest.founders[index]
+            .archive_sha256
+            .clone()
+            .ok_or_else(|| eyre::eyre!("founder {index} manifest has no archive_sha256"))?;
         let binaries = software.join("bin");
         let installer = installer.clone();
         let genesis_sha = genesis_sha.clone();

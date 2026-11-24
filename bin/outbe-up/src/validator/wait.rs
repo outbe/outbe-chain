@@ -148,19 +148,43 @@ pub async fn wait_transaction_finalized(
     hash: &str,
     progress: &mut Progress,
 ) -> Result<()> {
+    let _ = wait_transaction_finalized_until(remote, hash, None, progress).await?;
+    Ok(())
+}
+
+/// Wait for `hash` to be finalized, returning `Ok(false)` cooperatively if `deadline` expires.
+pub(crate) async fn wait_transaction_finalized_until(
+    remote: &RpcClient,
+    hash: &str,
+    deadline: Option<Instant>,
+    progress: &mut Progress,
+) -> Result<bool> {
     loop {
+        if deadline.is_some_and(|d| Instant::now() >= d) {
+            return Ok(false);
+        }
         if let Some(block) = remote.transaction_block(hash).await? {
             let finalized = remote.finalized_block().await?.number;
             progress.update(&format!(
                 "transaction {hash} block={block} finalized={finalized}"
             ));
             if finalized >= block {
-                return Ok(());
+                return Ok(true);
             }
         } else {
             progress.update(&format!("waiting for transaction {hash}"));
         }
-        tokio::time::sleep(Duration::from_secs(3)).await;
+        let sleep_for = match deadline {
+            Some(d) => {
+                let remaining = d.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    return Ok(false);
+                }
+                remaining.min(Duration::from_secs(3))
+            }
+            None => Duration::from_secs(3),
+        };
+        tokio::time::sleep(sleep_for).await;
     }
 }
 

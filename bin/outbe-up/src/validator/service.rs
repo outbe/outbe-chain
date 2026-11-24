@@ -12,7 +12,7 @@ use crate::{support::process, validator::rpc::RpcClient};
 
 const RADICLE_SOCKET: &str = "/opt/outbe-chain/keys/radicle/node/outbe-control.sock";
 
-pub fn feeder() -> Result<()> {
+pub fn feeder(bin_dir: Option<&Path>) -> Result<()> {
     let chain_id = required_env("OUTBE_CHAIN_ID")?;
     ensure!(
         chain_id.parse::<u64>().is_ok_and(|value| value > 0),
@@ -57,12 +57,12 @@ pub fn feeder() -> Result<()> {
         content.push('\n');
     }
     process::write_file(&config, content.as_bytes(), 0o600)?;
-    let mut command = Command::new(Path::new(process::ROOT).join("outbe-feeder"));
+    let mut command = Command::new(binary_path(bin_dir, "outbe-feeder"));
     command.args(["--config", &config.to_string_lossy()]);
     Err(command.exec()).wrap_err("failed to exec outbe-feeder")
 }
 
-pub fn hyperlane() -> Result<()> {
+pub fn hyperlane(bin_dir: Option<&Path>) -> Result<()> {
     let chain_id = required_env("OUTBE_CHAIN_ID")?;
     ensure!(
         chain_id.parse::<u64>().is_ok_and(|value| value > 0),
@@ -112,9 +112,15 @@ pub fn hyperlane() -> Result<()> {
         content.push('\n');
     }
     process::write_file(&config, content.as_bytes(), 0o600)?;
-    let mut command = Command::new(root.join("outbe-hyperlane-validator"));
+    let mut command = Command::new(binary_path(bin_dir, "outbe-hyperlane-validator"));
     command.args(["--config", &config.to_string_lossy()]);
     Err(command.exec()).wrap_err("failed to exec outbe-hyperlane-validator")
+}
+
+fn binary_path(bin_dir: Option<&Path>, name: &str) -> PathBuf {
+    bin_dir
+        .unwrap_or_else(|| Path::new(process::ROOT))
+        .join(name)
 }
 
 pub async fn wait_validator_dependencies(timeout: u64) -> Result<()> {
@@ -221,5 +227,24 @@ mod tests {
         .await
         .expect_err("missing process must stop the wait");
         assert!(error.to_string().contains("outbe-chain exited"));
+    }
+
+    #[test]
+    fn binary_path_defaults_to_root_and_honors_override() {
+        assert_eq!(
+            binary_path(None, "outbe-feeder"),
+            PathBuf::from("/opt/outbe-chain/outbe-feeder")
+        );
+        assert_eq!(
+            binary_path(Some(Path::new("/usr/local/bin")), "outbe-feeder"),
+            PathBuf::from("/usr/local/bin/outbe-feeder")
+        );
+        assert_eq!(
+            binary_path(
+                Some(Path::new("/usr/local/bin")),
+                "outbe-hyperlane-validator"
+            ),
+            PathBuf::from("/usr/local/bin/outbe-hyperlane-validator")
+        );
     }
 }
