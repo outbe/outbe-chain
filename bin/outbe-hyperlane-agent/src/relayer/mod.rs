@@ -4,6 +4,7 @@
 // The delivery loop uses these items in a later step.
 #![allow(dead_code)]
 
+pub mod fetch;
 pub mod message;
 
 use std::collections::HashMap;

@@ -9,4 +9,14 @@ pub(crate) enum RelayError {
     /// The origin Mailbox has no `Dispatch` log for a stored leaf.
     #[error("domain {domain} leaf {index}: no Dispatch log with this message id in block {block}")]
     NoDispatch { domain: u32, index: u32, block: u64 },
+    /// An announced storage location is not an `s3+http(s)` location that
+    /// the relayer can read.
+    #[error("storage location {0} is not a readable s3+http(s) location")]
+    BadLocation(String),
+    /// A checkpoint file is not the wanted checkpoint of the validator.
+    #[error("the checkpoint {index} of validator {validator} has other content or another signer")]
+    WrongCheckpoint {
+        validator: alloy_primitives::Address,
+        index: u32,
+    },
 }
