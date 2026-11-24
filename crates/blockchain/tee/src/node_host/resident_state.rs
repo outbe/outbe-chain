@@ -212,8 +212,7 @@ impl ResidentStateStore {
         keys: &ResidentTeeKeys,
         challenge: [u8; 32],
         manifest_authorization_hash: B256,
-        material: &ResidentOfferMaterial,
-        anchor: Option<VerifiedAdmissionAnchorV1>,
+        promoted: (&ResidentOfferMaterial, Option<VerifiedAdmissionAnchorV1>),
     ) -> Result<(), ResidentStateError> {
         let (paths, _lock) = lock_node_host_state(node_data_dir)?;
         if !path_exists(&paths.resident_state)? {
@@ -221,12 +220,7 @@ impl ResidentStateStore {
         }
         let current = read_resident_file(&paths.resident_state)?;
         decode(&current)?;
-        let bytes = encode(
-            keys,
-            challenge,
-            manifest_authorization_hash,
-            Some((material, anchor)),
-        )?;
+        let bytes = encode(keys, challenge, manifest_authorization_hash, Some(promoted))?;
         replace_bytes_atomically(
             &paths.resident_state,
             &paths.resident_state_next,
@@ -641,8 +635,7 @@ mod tests {
             &successor,
             challenge,
             manifest_hash,
-            &material,
-            Some(anchor),
+            (&material, Some(anchor)),
         )
         .unwrap();
 

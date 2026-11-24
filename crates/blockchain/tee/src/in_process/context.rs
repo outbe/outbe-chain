@@ -110,8 +110,7 @@ impl InProcessTeeContext {
             &self.keys,
             self.manifest.initialization_challenge,
             manifest_authorization_hash,
-            &material,
-            anchor,
+            (&material, anchor),
         )?;
         Ok(())
     }
