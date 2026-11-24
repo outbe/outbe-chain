@@ -62,7 +62,6 @@ mod copied_native_dkg_prerequisites {
     type Native = RethFullAdapter<DatabaseEnv, OutbeNode>;
     const FREEZE: u64 = 1;
     const CHANGE: u64 = 2;
-    const OWNER: Address = Address::repeat_byte(0xa0);
     const MEMBERS: [Address; 3] = [
         Address::with_last_byte(0x11),
         Address::with_last_byte(0x22),
@@ -81,7 +80,7 @@ mod copied_native_dkg_prerequisites {
             let mut contract = outbe_validatorset::contract::ValidatorSet::new(storage);
             let minimum = U256::from(1_000u64);
             contract.test_seed_authoritative_min_stake(minimum).unwrap();
-            contract.register_validator(OWNER, address, &bytes).unwrap();
+            contract.register_validator(address, &bytes).unwrap();
             contract
                 .test_seed_authoritative_bonded(address, minimum)
                 .unwrap();
@@ -95,7 +94,6 @@ mod copied_native_dkg_prerequisites {
         let mut contract = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut contract, |storage| {
             let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage);
-            validators.config_owner.write(OWNER).unwrap();
             validators.config_is_initialized.write(true).unwrap();
             validators.set_config_max_validators(128).unwrap();
         });
@@ -106,7 +104,7 @@ mod copied_native_dkg_prerequisites {
         contract.set_block_number(CHANGE);
         StorageHandle::enter(&mut contract, |storage| {
             outbe_validatorset::contract::ValidatorSet::new(storage)
-                .deactivate_validator(OWNER, MEMBERS[0])
+                .deactivate_validator(MEMBERS[0])
                 .unwrap();
         });
         register_active(

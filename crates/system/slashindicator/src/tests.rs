@@ -27,7 +27,6 @@ const CHAIN_ID: u64 = 1;
 
 const VAL_A: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 const VAL_B: Address = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
-const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
 
 /// Runs `f` inside a fresh HashMapStorageProvider context.
@@ -62,7 +61,7 @@ fn register_and_activate_with_pubkey_and_stake(
     stake_amount: U256,
 ) {
     let mut vs = ValidatorSet::new(storage.clone());
-    vs.test_configure_registry(OWNER).unwrap();
+    vs.test_configure_registry().unwrap();
     register_active_fixture(&mut vs, validator, consensus_pubkey, stake_amount);
 
     // Give the validator some stake so slash_stake has an effect
@@ -513,7 +512,7 @@ fn test_evidence_reward() {
         // Register validator with this pubkey
         let validator = VAL_A;
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.test_configure_registry(OWNER).unwrap();
+        vs.test_configure_registry().unwrap();
         register_active_fixture(&mut vs, validator, &pk_bytes, U256::from(1));
         {
             let mut sub_pk = [0u8; 48];
@@ -767,7 +766,7 @@ fn test_conflicting_vote_evidence() {
 
         let validator = VAL_B;
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.test_configure_registry(OWNER).unwrap();
+        vs.test_configure_registry().unwrap();
         register_active_fixture(&mut vs, validator, &pk_bytes, U256::from(1));
         {
             let mut sub_pk = [0u8; 48];
@@ -829,7 +828,7 @@ fn test_conflicting_vote_evidence_reversed_order() {
 
         let validator = VAL_A;
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.test_configure_registry(OWNER).unwrap();
+        vs.test_configure_registry().unwrap();
         register_active_fixture(&mut vs, validator, &pk_bytes, U256::from(1));
         {
             let mut sub_pk = [0u8; 48];
@@ -873,7 +872,7 @@ fn test_conflicting_vote_same_type_fails() {
 
         let validator = VAL_A;
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.test_configure_registry(OWNER).unwrap();
+        vs.test_configure_registry().unwrap();
         register_active_fixture(&mut vs, validator, &pk_bytes, U256::from(1));
         {
             let mut sub_pk = [0u8; 48];
@@ -912,13 +911,11 @@ fn test_full_lifecycle_integration() {
 
         // 1. Setup ValidatorSet config
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
 
         // 2. Register validator
         let pk = [0x42u8; 48];
-        vs.test_register_validator_without_pop(validator, &pk)
-            .unwrap();
+        vs.register_validator(validator, &pk).unwrap();
         assert!(matches!(
             vs.validator_lifecycle(validator).unwrap(),
             ValidatorLifecycle::WaitingForReadiness(_)
@@ -1431,7 +1428,7 @@ fn write_test_committee(storage: &StorageHandle) {
         vrf_public_polynomial_hash: B256::ZERO,
     };
     let mut validators = ValidatorSet::new(storage.clone());
-    validators.test_configure_registry(OWNER).unwrap();
+    validators.test_configure_registry().unwrap();
     let minimum = U256::from(1_000u64);
     validators
         .test_seed_authoritative_min_stake(minimum)
@@ -1439,7 +1436,7 @@ fn write_test_committee(storage: &StorageHandle) {
     for member in &snapshot.committee {
         if !validators.is_validator(member.address).unwrap() {
             validators
-                .register_validator(OWNER, member.address, &member.consensus_pubkey)
+                .register_validator(member.address, &member.consensus_pubkey)
                 .unwrap();
             validators
                 .test_seed_authoritative_bonded(member.address, minimum)
@@ -1449,9 +1446,7 @@ fn write_test_committee(storage: &StorageHandle) {
                 .unwrap();
         }
     }
-    validators
-        .test_seed_committee_ring(OWNER, &snapshot)
-        .unwrap();
+    validators.test_seed_committee_ring(&snapshot).unwrap();
 }
 
 fn build_test_namespace(suffix: &[u8]) -> Vec<u8> {

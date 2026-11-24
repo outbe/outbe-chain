@@ -21,8 +21,6 @@ use outbe_validatorset::test_support::StorageOverrides;
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-const OWNER: Address = Address::repeat_byte(0xA0);
-
 fn valid_consensus_pubkey(seed: u8) -> [u8; 48] {
     let key = bls12381::PrivateKey::from_seed(seed as u64);
     let encoded = key.public_key().encode();
@@ -50,12 +48,11 @@ fn populated_p2p_state(
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
-        vs.config_owner.write(OWNER).unwrap();
         vs.config_is_initialized.write(true).unwrap();
         vs.set_config_max_validators(128).unwrap();
         let minimum = alloy_primitives::U256::from(1_000u64);
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
-        vs.register_validator(OWNER, validator, &valid_consensus_pubkey(11))
+        vs.register_validator(validator, &valid_consensus_pubkey(11))
             .unwrap();
         vs.test_seed_authoritative_bonded(validator, minimum)
             .unwrap();
@@ -79,15 +76,13 @@ fn frozen_target_uses_validator_lifecycle_and_emits_empty_tee_compatibility_list
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
-        vs.config_owner.write(OWNER).unwrap();
         vs.config_is_initialized.write(true).unwrap();
         vs.set_config_max_validators(128).unwrap();
         let minimum = alloy_primitives::U256::from(1_000u64);
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
         for (index, &validator) in validators.iter().enumerate() {
             let consensus_pubkey = valid_consensus_pubkey((index + 1) as u8);
-            vs.register_validator(OWNER, validator, &consensus_pubkey)
-                .unwrap();
+            vs.register_validator(validator, &consensus_pubkey).unwrap();
             vs.test_seed_authoritative_bonded(validator, minimum)
                 .unwrap();
             vs.activate_validator_via_boundary_for_test(validator)
@@ -122,12 +117,11 @@ fn tee_runtime_admission_state(valid_until: u64) -> (TestStateAccess, [u8; 33], 
     provider.set_block_number(9);
     StorageHandle::enter(&mut provider, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.config_is_initialized.write(true).unwrap();
         vs.set_config_max_validators(128).unwrap();
         let minimum = alloy_primitives::U256::from(1_000u64);
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
-        vs.register_validator(OWNER, validator, &valid_consensus_pubkey(0x31))
+        vs.register_validator(validator, &valid_consensus_pubkey(0x31))
             .unwrap();
         vs.test_seed_authoritative_bonded(validator, minimum)
             .unwrap();
@@ -416,7 +410,7 @@ fn test_read_validators_from_state_handles_empty_known_and_invalid_p2p_entries()
     let socket = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)), 30400);
     let encoded = encode_v1(&P2pAddress::Symmetric(socket));
     let known_access = populated_p2p_state(|vs, validator| {
-        vs.set_p2p_address(validator, validator, P2P_ADDRESS_VERSION_V1, &encoded)
+        vs.set_p2p_address(validator, P2P_ADDRESS_VERSION_V1, &encoded)
             .unwrap();
     });
     let known =
@@ -445,21 +439,20 @@ fn test_read_consensus_validators_includes_exiting_with_share() {
 
     StorageHandle::enter(&mut provider, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage);
-        vs.config_owner.write(OWNER).unwrap();
         vs.config_is_initialized.write(true).unwrap();
         vs.set_config_max_validators(128).unwrap();
         let minimum = alloy_primitives::U256::from(1_000u64);
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
-        vs.register_validator(OWNER, active, &valid_consensus_pubkey(1))
+        vs.register_validator(active, &valid_consensus_pubkey(1))
             .unwrap();
-        vs.register_validator(OWNER, exiting, &valid_consensus_pubkey(2))
+        vs.register_validator(exiting, &valid_consensus_pubkey(2))
             .unwrap();
         vs.test_seed_authoritative_bonded(active, minimum).unwrap();
         vs.test_seed_authoritative_bonded(exiting, minimum).unwrap();
         vs.activate_validator_via_boundary_for_test(active).unwrap();
         vs.activate_validator_via_boundary_for_test(exiting)
             .unwrap();
-        vs.deactivate_validator(OWNER, exiting).unwrap();
+        vs.deactivate_validator(exiting).unwrap();
     });
 
     let access = TestStateAccess {

@@ -75,10 +75,6 @@ impl Fixture {
         }
         provider.enter(|storage| {
             let mut validators = ValidatorSet::new(storage.clone());
-            validators
-                .config_owner
-                .write(Address::repeat_byte(99))
-                .unwrap();
             validators.set_config_max_validators(n as u32).unwrap();
             let minimum = U256::from(1_000u64);
             validators
@@ -86,7 +82,7 @@ impl Fixture {
                 .unwrap();
             for member in &committee.committee {
                 validators
-                    .test_register_validator_without_pop(member.address, &member.consensus_pubkey)
+                    .register_validator(member.address, &member.consensus_pubkey)
                     .unwrap();
                 validators
                     .test_seed_authoritative_bonded(member.address, minimum)

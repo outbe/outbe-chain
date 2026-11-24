@@ -88,11 +88,11 @@ fn route(
         getRadicleNodeId(c) => view(c, |c| vs.get_radicle_node_id(c.validator)),
         validatorByRadicleNodeId(c) => view(c, |c| vs.validator_by_radicle_node_id(c.nodeId)),
         setP2pAddress(c) => mutate_void(storage, c, caller, |sender, c| {
-            vs.set_p2p_address(sender, c.validatorAddress, c.version, &c.encoded)
+            vs.set_p2p_address(sender, c.version, &c.encoded)
         }),
         getP2pAddress(c) => view(c, |c| Ok(p2p_view(vs, c.validatorAddress)?.into())),
-        deactivateValidator(c) => mutate_void(storage, c, caller, |sender, c| {
-            vs.deactivate_validator(sender, c.validatorAddress)
+        deactivateValidator(c) => mutate_void(storage, c, caller, |sender, _| {
+            vs.deactivate_validator(sender)
         }),
         confirmValidatorReady(c) => mutate_void(storage, c, caller, |sender, _| {
             vs.confirm_validator_ready(sender)
@@ -200,13 +200,11 @@ mod tests {
 
         StorageHandle::enter(&mut provider, |storage| {
             let mut vs = crate::schema::ValidatorSet::new(storage.clone());
-            vs.config_owner.write(validator).unwrap();
             vs.config_max_validators.write(10).unwrap();
 
             vs.register_with_initial_stake(
                 validator,
-                validator,
-                (&public_key, node_id, Some(&signature)),
+                (&public_key, node_id, &signature),
                 (0, &[]),
                 (U256::from(100_000u64), U256::from(100_000u64)),
             )

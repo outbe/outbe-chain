@@ -29,7 +29,6 @@ use support::{
     assert_selector, evidence_already_processed, register_active_submitter, with_storage,
 };
 
-const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
 const ACCUSED: Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
 /// The test committee: the vote namespaces bind this set. `setup` writes
@@ -81,7 +80,7 @@ fn accused_sk() -> SecretKey {
 
 fn setup(storage: StorageHandle, sk: &SecretKey) {
     let mut vs = ValidatorSet::new(storage.clone());
-    vs.test_configure_registry(OWNER).unwrap();
+    vs.test_configure_registry().unwrap();
     let mut epoch = vs.epoch_snapshot().unwrap();
     epoch.number = U256::from(1u64);
     vs.test_set_epoch_snapshot(epoch).unwrap();
@@ -108,7 +107,7 @@ fn setup(storage: StorageHandle, sk: &SecretKey) {
     let snap = committee_snapshot();
     for member in &snap.committee {
         if !vs.is_validator(member.address).unwrap() {
-            vs.register_validator(OWNER, member.address, &member.consensus_pubkey)
+            vs.register_validator(member.address, &member.consensus_pubkey)
                 .unwrap();
             vs.test_seed_authoritative_bonded(member.address, U256::from(1))
                 .unwrap();
@@ -116,7 +115,7 @@ fn setup(storage: StorageHandle, sk: &SecretKey) {
                 .unwrap();
         }
     }
-    vs.test_seed_committee_ring(OWNER, &snap).unwrap();
+    vs.test_seed_committee_ring(&snap).unwrap();
 }
 
 fn assert_jailed_once(storage: &StorageHandle) {
@@ -382,7 +381,7 @@ fn voluntary_exit_and_unbonding_remain_slashable_in_every_entrypoint() {
                     } else {
                         // A live queued withdrawal and bonded funds must both lose 8%.
                         staking.unstake(ACCUSED, U256::from(200_000)).unwrap();
-                        vs.deactivate_validator(ACCUSED, ACCUSED).unwrap();
+                        vs.deactivate_validator(ACCUSED).unwrap();
                     }
                     assert!(matches!(
                         vs.validator_lifecycle(ACCUSED).unwrap(),
@@ -479,8 +478,7 @@ fn rejoining_preserves_old_epoch_guard_but_allows_new_epoch_felony() {
             ValidatorLifecycle::Active(_)
         ));
         // Restore the retained test committee namespaces after the activation fixture.
-        vs.test_seed_committee_ring(OWNER, &committee_snapshot())
-            .unwrap();
+        vs.test_seed_committee_ring(&committee_snapshot()).unwrap();
         let (a, b, result) = submit_pair(&mut si, 3, 1, 6);
         assert_selector(
             &result.unwrap_err(),
@@ -541,8 +539,7 @@ fn pending_statuses_reject_before_missing_committee_and_preserve_evidence() {
                 }
                 vs.activate_validator_via_boundary_for_test(ACCUSED)
                     .unwrap();
-                vs.test_seed_committee_ring(OWNER, &committee_snapshot())
-                    .unwrap();
+                vs.test_seed_committee_ring(&committee_snapshot()).unwrap();
                 submit_pair(&mut si, method, 1, 5).2.unwrap();
                 assert_jailed_once(&storage);
             });
@@ -610,8 +607,7 @@ fn inactive_status_rejects_without_markers_then_same_evidence_survives_reactivat
                 .storage
                 .increase_balance(STAKING_ADDRESS, U256::from(1_000_000))
                 .unwrap();
-            vs.test_seed_committee_ring(OWNER, &committee_snapshot())
-                .unwrap();
+            vs.test_seed_committee_ring(&committee_snapshot()).unwrap();
             let mut si = SlashIndicator::new(storage.clone());
             submit_pair(&mut si, method, 1, 5).2.unwrap();
             assert_jailed_once(&storage);

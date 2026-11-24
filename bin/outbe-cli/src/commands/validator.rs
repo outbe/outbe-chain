@@ -64,11 +64,8 @@ pub enum ValidatorCmd {
     SetHyperlaneSigner { signer: Address },
     /// Fund a dedicated operational key from the validator account.
     FundOperationalKey { address: Address, amount: U256 },
-    /// Set a validator Commonware P2P address in the on-chain registry
+    /// Set this validator's Commonware P2P address in the on-chain registry
     SetP2p {
-        /// Validator address to update. Defaults to the signer address.
-        #[arg(long)]
-        validator: Option<Address>,
         /// Symmetric socket address, e.g. 10.0.0.1:30400.
         #[arg(long)]
         symmetric: Option<SocketAddr>,
@@ -117,7 +114,6 @@ impl ValidatorCmd {
                 fund_operational_key(client, private_key, address, amount).await
             }
             Self::SetP2p {
-                validator,
                 symmetric,
                 ingress_socket,
                 ingress_dns_host,
@@ -125,7 +121,6 @@ impl ValidatorCmd {
                 egress,
             } => {
                 let options = SetP2pOptions {
-                    validator,
                     symmetric,
                     ingress_socket,
                     ingress_dns_host,
@@ -155,7 +150,6 @@ impl ValidatorDelegateRoleArg {
 }
 
 struct SetP2pOptions {
-    validator: Option<Address>,
     symmetric: Option<SocketAddr>,
     ingress_socket: Option<SocketAddr>,
     ingress_dns_host: Option<String>,
@@ -315,11 +309,8 @@ async fn send_validator_set_tx(
 }
 
 async fn deactivate(client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
-    send_validator_set_tx(client, private_key, |signer| {
-        Ok(IValidatorSet::deactivateValidatorCall {
-            validatorAddress: signer.address(),
-        }
-        .abi_encode())
+    send_validator_set_tx(client, private_key, |_| {
+        Ok(IValidatorSet::deactivateValidatorCall {}.abi_encode())
     })
     .await
 }
@@ -411,8 +402,6 @@ async fn set_p2p(
     private_key: Option<&str>,
     options: SetP2pOptions,
 ) -> Result<()> {
-    let signer = super::require_signer(private_key)?;
-    let validator = options.validator.unwrap_or_else(|| signer.address());
     let address = build_p2p_address(
         options.symmetric,
         options.ingress_socket,
@@ -421,21 +410,14 @@ async fn set_p2p(
         options.egress,
     )?;
     let encoded = encode_v1(&address);
-    let call = IValidatorSet::setP2pAddressCall {
-        validatorAddress: validator,
-        version: P2P_ADDRESS_VERSION_V1,
-        encoded: encoded.into(),
-    };
-    let tx_hash = signer
-        .send_tx(
-            client,
-            abi::VALIDATOR_SET_ADDR,
-            call.abi_encode(),
-            Default::default(),
-        )
-        .await?;
-    println!("Transaction sent: {tx_hash}");
-    Ok(())
+    send_validator_set_tx(client, private_key, |_| {
+        Ok(IValidatorSet::setP2pAddressCall {
+            version: P2P_ADDRESS_VERSION_V1,
+            encoded: encoded.into(),
+        }
+        .abi_encode())
+    })
+    .await
 }
 
 async fn get_p2p(client: &(impl Rpc + Sync), validator: Address) -> Result<()> {
@@ -605,7 +587,6 @@ mod tests {
 
     // --- Mock RPC tests ---
     use crate::rpc::mock::{call_map, recording_send_tx_rpc, MockRpc};
-    use crate::tx::TxSigner;
     use alloy_primitives::U256;
     use alloy_sol_types::{SolCall, SolValue};
     use std::collections::HashMap;
@@ -740,15 +721,57 @@ mod tests {
 
     #[tokio::test]
     async fn test_deactivate_sends_expected_tx() {
-        let signer = TxSigner::new(TEST_KEY).unwrap();
-        let data = IValidatorSet::deactivateValidatorCall {
-            validatorAddress: signer.address(),
+        let data = IValidatorSet::deactivateValidatorCall {}.abi_encode();
+        let mock =
+            recording_send_tx_rpc(TEST_KEY, abi::VALIDATOR_SET_ADDR, data, U256::ZERO).unwrap();
+
+        deactivate(&mock, Some(TEST_KEY)).await.unwrap();
+        mock.assert_done();
+    }
+
+    #[tokio::test]
+    async fn test_set_p2p_sends_expected_tx_and_rejects_validator_flag() {
+        use clap::Parser;
+
+        #[derive(Parser)]
+        struct TestCli {
+            #[command(subcommand)]
+            cmd: ValidatorCmd,
+        }
+
+        assert!(TestCli::try_parse_from([
+            "test",
+            "set-p2p",
+            "--validator",
+            "0x1111111111111111111111111111111111111111",
+            "--symmetric",
+            "10.0.0.1:30400",
+        ])
+        .is_err());
+
+        let sock: SocketAddr = "10.0.0.1:30400".parse().unwrap();
+        let encoded = encode_v1(&P2pAddress::Symmetric(sock));
+        let data = IValidatorSet::setP2pAddressCall {
+            version: P2P_ADDRESS_VERSION_V1,
+            encoded: encoded.into(),
         }
         .abi_encode();
         let mock =
             recording_send_tx_rpc(TEST_KEY, abi::VALIDATOR_SET_ADDR, data, U256::ZERO).unwrap();
 
-        deactivate(&mock, Some(TEST_KEY)).await.unwrap();
+        set_p2p(
+            &mock,
+            Some(TEST_KEY),
+            SetP2pOptions {
+                symmetric: Some(sock),
+                ingress_socket: None,
+                ingress_dns_host: None,
+                ingress_dns_port: None,
+                egress: None,
+            },
+        )
+        .await
+        .unwrap();
         mock.assert_done();
     }
 

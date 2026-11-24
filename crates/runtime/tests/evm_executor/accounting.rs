@@ -137,7 +137,6 @@ fn validate_finalized_metadata_accepts_registered_historical_committee() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 
@@ -180,7 +179,6 @@ fn validate_finalized_metadata_rejects_duplicate_committee_member() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 
@@ -208,7 +206,6 @@ fn validate_finalized_metadata_rejects_unregistered_committee_member() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 
@@ -235,7 +232,6 @@ fn validate_finalized_metadata_rejects_missed_proposer_outside_committee() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 
@@ -265,7 +261,6 @@ fn validate_finalized_metadata_rejects_signer_bitmap_length_mismatch() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 

@@ -226,9 +226,6 @@ impl From<ValidatorSetError> for PrecompileError {
             ValidatorSetError::InactiveCleanupHeightOverflow => PrecompileError::RevertBytes(
                 Bytes::from(IValidatorSet::InactiveCleanupHeightOverflow {}.abi_encode()),
             ),
-            ValidatorSetError::UnauthorizedOwnerOrValidator => PrecompileError::RevertBytes(
-                Bytes::from(IValidatorSet::UnauthorizedOwnerOrValidator {}.abi_encode()),
-            ),
             ValidatorSetError::ValidatorNotRegistered => PrecompileError::RevertBytes(Bytes::from(
                 IValidatorSet::ValidatorNotRegistered {}.abi_encode(),
             )),
@@ -434,9 +431,6 @@ impl From<ValidatorSetError> for PrecompileError {
             )),
             ValidatorSetError::RadicleNodeIdAlreadyRegistered => PrecompileError::RevertBytes(
                 Bytes::from(IValidatorSet::RadicleNodeIdAlreadyRegistered {}.abi_encode()),
-            ),
-            ValidatorSetError::RegistrationRequiresBlsPop => PrecompileError::RevertBytes(
-                Bytes::from(IValidatorSet::RegistrationRequiresBlsPop {}.abi_encode()),
             ),
             ValidatorSetError::ConsensusPubkeyAlreadyRegistered => PrecompileError::RevertBytes(
                 Bytes::from(IValidatorSet::ConsensusPubkeyAlreadyRegistered {}.abi_encode()),

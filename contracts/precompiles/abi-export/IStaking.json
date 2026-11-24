@@ -572,11 +572,6 @@
   },
   {
     "type": "error",
-    "name": "RegistrationRequiresBlsPop",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ReregistrationCooldownHeightOverflow",
     "inputs": []
   },
@@ -662,11 +657,6 @@
   {
     "type": "error",
     "name": "TotalStakeAccountingOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "UnauthorizedOwnerOrValidator",
     "inputs": []
   },
   {

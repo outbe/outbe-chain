@@ -190,7 +190,7 @@ fn tee_lease_sweep_later_failure_rolls_back_whole_sweep() {
     install_validator_lease(&mut provider, deadline);
     provider.enter(|storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.register_validator(OWNER, later, &[8u8; 48]).unwrap();
+        vs.register_validator(later, &[8u8; 48]).unwrap();
         vs.mark_pending(later).unwrap();
         // One 8% burn is 80_000. With the rest of code 44 one minor minus 100_000, the second
         // burn crosses a minor that the escrow does not hold.

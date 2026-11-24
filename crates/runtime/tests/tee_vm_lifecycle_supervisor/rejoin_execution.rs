@@ -365,16 +365,14 @@ impl Ledger {
 
     pub(super) fn seed_validator(&mut self, jailed: bool) {
         self.storage(|storage| {
-            let owner = Address::repeat_byte(0xA0);
             let operator = Signer::address();
             let mut vs = ValidatorSet::new(storage);
-            vs.config_owner.write(owner).unwrap();
             vs.config_is_initialized.write(true).unwrap();
             vs.set_config_max_validators(128).unwrap();
             let minimum = U256::from(1_000);
             vs.test_seed_authoritative_min_stake(minimum).unwrap();
             let public = crate::finality::FinalityCommitteeFixture::new(10).public_keys_min_pk()[0];
-            vs.register_validator(owner, operator, &public).unwrap();
+            vs.register_validator(operator, &public).unwrap();
             vs.test_seed_authoritative_bonded(operator, minimum)
                 .unwrap();
             vs.activate_validator_via_boundary_for_test(operator)

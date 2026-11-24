@@ -170,7 +170,7 @@ fn claim_unbonded_decrements_counter_for_zero_amount_slashed_entries_and_unblock
         seed_staking_balance_u256(storage.clone(), initial_stake + min_stake);
         seed_balance(storage.clone(), validator, 1_000_000);
         ValidatorSet::new(storage.clone())
-            .test_configure_registry(Address::repeat_byte(0xff))
+            .test_configure_registry()
             .unwrap();
         s.stake(
             validator,

@@ -29,7 +29,6 @@ fn boundary_storage(
     storage.set_block_number(11);
     let setup = storage.enter(|storage| {
         let mut vs = ValidatorSet::new(storage);
-        vs.config_owner.write(OWNER)?;
         vs.config_max_validators.write(10)?;
         setup(&mut vs)
     });
@@ -38,7 +37,7 @@ fn boundary_storage(
 
 fn register(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
     let seed = validator.as_slice()[19];
-    vs.register_validator(OWNER, validator, &dummy_consensus_pubkey(seed))
+    vs.register_validator(validator, &dummy_consensus_pubkey(seed))
 }
 
 fn active(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
@@ -67,7 +66,7 @@ fn waiting_for_readiness(vs: &mut ValidatorSet<'_>, validator: Address) -> Resul
 
 fn exiting(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
     active(vs, validator)?;
-    vs.deactivate_validator(OWNER, validator)
+    vs.deactivate_validator(validator)
 }
 
 fn jail_retained(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
@@ -572,7 +571,7 @@ fn included_post_freeze_retained_and_exiting_keep_share_and_flag() -> Result<()>
     storage.enter(|storage| -> Result<()> {
         let mut vs = ValidatorSet::new(storage);
         vs.jail_validator(A)?;
-        vs.deactivate_validator(OWNER, B)?;
+        vs.deactivate_validator(B)?;
         vs.val_has_bls_share.write(&A, true)?;
         vs.val_has_bls_share.write(&B, true)?;
         vs.test_set_pending_set_change(false)

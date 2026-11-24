@@ -523,7 +523,7 @@ fn seed_stage_end_to_end_and_reproducibility() {
         assert_eq!(alloc[addr]["balance"], json!(format!("0x{:x}", 5_000_000)));
     }
     assert_eq!(
-        alloc[VALIDATOR_SET_ADDRESS]["storage"][hex32(20u64)],
+        alloc[VALIDATOR_SET_ADDRESS]["storage"][hex32(16u64)],
         json!(hex32(4u64))
     );
     assert_eq!(

@@ -76,11 +76,9 @@ pub(super) fn configured_storage(block_number: u64, timestamp: u64) -> HashMapSt
     provider.set_beneficiary(VALIDATOR);
     provider.enter(|storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_epoch_length_blocks.write(10).unwrap();
-        vs.register_validator(OWNER, VALIDATOR, &consensus_key)
-            .unwrap();
+        vs.register_validator(VALIDATOR, &consensus_key).unwrap();
         let stake = U256::from(1_000_000u64);
         vs.test_seed_authoritative_min_stake(U256::from(1_000u64))
             .unwrap();

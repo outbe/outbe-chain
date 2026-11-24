@@ -289,10 +289,6 @@ pub fn repository_authority_storage() -> (HashMapStorageProvider, committee::Com
     storage.set_block_number(1);
     storage.enter(|s| {
         let mut validators = ValidatorSet::new(s.clone());
-        validators
-            .config_owner
-            .write(Address::repeat_byte(99))
-            .unwrap();
         validators.set_config_max_validators(4).unwrap();
         let minimum = U256::from(1_000u64);
         validators
@@ -300,7 +296,7 @@ pub fn repository_authority_storage() -> (HashMapStorageProvider, committee::Com
             .unwrap();
         for member in &committee.committee {
             validators
-                .test_register_validator_without_pop(member.address, &member.consensus_pubkey)
+                .register_validator(member.address, &member.consensus_pubkey)
                 .unwrap();
             validators
                 .test_seed_authoritative_bonded(member.address, minimum)
@@ -584,11 +580,9 @@ pub fn fixture() -> (RethSnapshotReader<ApprovalProvider>, String) {
     storage.set_block_number(1);
     storage.enter(|s| {
         let mut vs = ValidatorSet::new(s.clone());
-        vs.config_owner.write(owner).unwrap();
         vs.set_config_max_validators(4).unwrap();
         for (i, voter) in voters.iter().enumerate() {
-            vs.register_validator(owner, *voter, &[i as u8 + 1; 48])
-                .unwrap();
+            vs.register_validator(*voter, &[i as u8 + 1; 48]).unwrap();
             vs.activate_validator(*voter).unwrap();
         }
         let mut repos = CodeRegistry::new(s.clone());

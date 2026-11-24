@@ -59,7 +59,7 @@ pub fn seed_target(sender: Address, active: bool) -> HashMapStorageProvider {
     provider.set_block_number(1);
     provider.enter(|storage| {
         let mut vs = ValidatorSet::new(storage.clone());
-        vs.test_configure_registry(OWNER).unwrap();
+        vs.test_configure_registry().unwrap();
         vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
         let snapshot = CommitteeSnapshot {
             committee: members(sender),
@@ -69,7 +69,7 @@ pub fn seed_target(sender: Address, active: bool) -> HashMapStorageProvider {
         };
         for member in &snapshot.committee {
             if member.address == ACCUSED && !active {
-                vs.test_register_validator_without_pop(member.address, &member.consensus_pubkey)
+                vs.register_validator(member.address, &member.consensus_pubkey)
                     .unwrap();
             } else {
                 vs.test_register_active_validator(
@@ -80,7 +80,7 @@ pub fn seed_target(sender: Address, active: bool) -> HashMapStorageProvider {
                 .unwrap();
             }
         }
-        vs.test_seed_committee_ring(OWNER, &snapshot).unwrap();
+        vs.test_seed_committee_ring(&snapshot).unwrap();
         let staking = Staking::new(storage.clone());
         staking.config_min_stake.write(U256::from(1)).unwrap();
         for member in &snapshot.committee {
