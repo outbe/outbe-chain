@@ -352,8 +352,8 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_tribute_day_totals() {
-        let cli = Cli::try_parse_from(["outbe-cli", "tribute", "day-totals", "20241220"]);
+    fn test_cli_parse_tribute_worldwide_day_totals() {
+        let cli = Cli::try_parse_from(["outbe-cli", "tribute", "worldwide-day-totals", "20241220"]);
         assert!(cli.is_ok());
     }
 

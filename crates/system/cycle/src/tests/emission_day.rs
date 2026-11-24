@@ -326,7 +326,7 @@ fn wwd_step_runs_once_a_day() {
                 )
                 .unwrap());
                 assert!(
-                    !outbe_worldwideday::is_sealed(
+                    !outbe_worldwideday::is_worldwide_day_sealed(
                         ctx.storage.clone(),
                         WorldwideDay::new(20_240_103)
                     )
@@ -452,8 +452,11 @@ fn wwd_step_runs_once_a_day() {
             "A6 retry at 01:00 UTC must close WWD 20240103"
         );
         assert!(
-            outbe_worldwideday::is_sealed(ctx.storage.clone(), WorldwideDay::new(20_240_103))
-                .unwrap(),
+            outbe_worldwideday::is_worldwide_day_sealed(
+                ctx.storage.clone(),
+                WorldwideDay::new(20_240_103)
+            )
+            .unwrap(),
             "A6 retry at 01:00 UTC must seal WWD 20240103"
         );
         assert!(

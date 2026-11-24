@@ -14,7 +14,7 @@ use crate::abi::{
 use crate::errors::TributeError;
 use crate::rpc::Rpc;
 
-type DayTotalsReturn = <IWorldwideDay::dayTotalsCall as SolCall>::Return;
+type WorldwideDayTotalsReturn = <IWorldwideDay::worldwideDayTotalsCall as SolCall>::Return;
 
 fn canonical_amount_base(value: &str) -> std::result::Result<String, TributeError> {
     let parsed = value
@@ -39,7 +39,7 @@ fn canonical_amount_micro(value: &str) -> std::result::Result<String, TributeErr
 #[derive(Subcommand)]
 pub enum TributeCmd {
     /// Show the Nod totals of the Worldwide Day of an emission day
-    DayTotals {
+    WorldwideDayTotals {
         /// Emission day, `YYYYMMDD`
         emission_day: u32,
     },
@@ -100,27 +100,31 @@ pub struct TributeOfferArgs {
 impl TributeCmd {
     pub async fn run(self, client: &(impl Rpc + Sync), private_key: Option<&str>) -> Result<()> {
         match self {
-            Self::DayTotals { emission_day } => day_totals(client, emission_day).await,
+            Self::WorldwideDayTotals { emission_day } => {
+                worldwide_day_totals(client, emission_day).await
+            }
             Self::Offer(args) => offer(client, private_key, *args).await,
         }
     }
 }
 
-async fn fetch_day_totals(
+async fn fetch_worldwide_day_totals(
     client: &(impl Rpc + Sync),
     emission_day: u32,
-) -> Result<DayTotalsReturn> {
-    let call = IWorldwideDay::dayTotalsCall {
+) -> Result<WorldwideDayTotalsReturn> {
+    let call = IWorldwideDay::worldwideDayTotalsCall {
         emissionDay: emission_day,
     };
     let result = client
         .eth_call(WORLDWIDE_DAY_ADDR, &call.abi_encode())
         .await?;
-    Ok(IWorldwideDay::dayTotalsCall::abi_decode_returns(&result)?)
+    Ok(IWorldwideDay::worldwideDayTotalsCall::abi_decode_returns(
+        &result,
+    )?)
 }
 
-async fn day_totals(client: &(impl Rpc + Sync), emission_day: u32) -> Result<()> {
-    let ret = fetch_day_totals(client, emission_day).await?;
+async fn worldwide_day_totals(client: &(impl Rpc + Sync), emission_day: u32) -> Result<()> {
+    let ret = fetch_worldwide_day_totals(client, emission_day).await?;
 
     println!("Emission day:           {}", emission_day);
     println!("Nod Count:              {}", ret.nodCount);
@@ -342,8 +346,8 @@ mod tests {
         .unwrap()
     }
 
-    fn day_totals_mock() -> MockRpc {
-        let day_totals = (
+    fn worldwide_day_totals_mock() -> MockRpc {
+        let worldwide_day_totals = (
             2u32,
             Bytes::from(vec![0x53; 56]),
             Bytes::from(vec![0x54; 56]),
@@ -352,8 +356,11 @@ mod tests {
             .into();
         let mut map = HashMap::new();
         map.insert(
-            (WORLDWIDE_DAY_ADDR, IWorldwideDay::dayTotalsCall::SELECTOR),
-            IWorldwideDay::dayTotalsCall::abi_encode_returns(&day_totals),
+            (
+                WORLDWIDE_DAY_ADDR,
+                IWorldwideDay::worldwideDayTotalsCall::SELECTOR,
+            ),
+            IWorldwideDay::worldwideDayTotalsCall::abi_encode_returns(&worldwide_day_totals),
         );
         MockRpc {
             eth_call_map: Some(call_map(map)),
@@ -362,10 +369,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_fetch_day_totals_returns_expected_values() {
-        let mock = day_totals_mock();
+    async fn test_fetch_worldwide_day_totals_returns_expected_values() {
+        let mock = worldwide_day_totals_mock();
 
-        let result = fetch_day_totals(&mock, 20241220).await.unwrap();
+        let result = fetch_worldwide_day_totals(&mock, 20241220).await.unwrap();
         assert_eq!(result.nodCount, 2);
         assert_eq!(result.encryptedNominal, Bytes::from(vec![0x53; 56]));
         assert_eq!(result.encryptedLoad, Bytes::from(vec![0x54; 56]));

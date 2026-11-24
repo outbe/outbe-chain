@@ -122,7 +122,7 @@ pub fn add_to_day_sum(
 }
 
 /// Reads a day sum in the enclave.
-pub fn read_day_sum(
+pub fn read_worldwide_day_sum(
     storage: &StorageHandle<'_>,
     record: &outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1,
 ) -> Result<U256> {

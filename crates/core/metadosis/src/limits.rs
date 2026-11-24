@@ -202,7 +202,12 @@ mod tests {
                         U256::from(carry as u64),
                     )
                     .unwrap();
-                let split = allocate_day_metadosis_limit(storage.clone(), U256::from(base as u64), U256::from(lysis as u64), U256::from(nominal as u64))
+                let split = allocate_day_metadosis_limit(
+                    storage.clone(),
+                    U256::from(base as u64),
+                    U256::from(lysis as u64),
+                    U256::from(nominal as u64),
+                )
                 .unwrap();
                 assert_eq!(split.desis_limit_minor, U256::from(auction as u64));
                 assert_eq!(
@@ -247,7 +252,8 @@ mod tests {
             let events = provider.get_ordered_events().to_vec();
             let result = StorageHandle::enter(&mut provider, |storage| {
                 storage.with_checkpoint(|| {
-                    let split = allocate_day_metadosis_limit(storage.clone(), base, lysis, nominal)?;
+                    let split =
+                        allocate_day_metadosis_limit(storage.clone(), base, lysis, nominal)?;
                     apply_desis_limit(storage.clone(), 20260101, &split)
                 })
             });
@@ -262,8 +268,8 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             let base = U256::from(u128::MAX) + U256::from(3);
-            let split = allocate_day_metadosis_limit(storage.clone(), base, U256::ONE, U256::MAX)
-            .unwrap();
+            let split =
+                allocate_day_metadosis_limit(storage.clone(), base, U256::ONE, U256::MAX).unwrap();
             assert!(split.desis_limit_minor > U256::from(u128::MAX));
             let day = EmissionDate::new(20260101);
             outbe_desis::api::schedule_auction(storage.clone(), day).unwrap();

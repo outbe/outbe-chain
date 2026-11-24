@@ -26,19 +26,19 @@ pub(crate) fn day_loads(storage: &StorageHandle<'_>, wwd: WorldwideDay) -> Resul
     if wwd.value() == 0 {
         return Ok(DayLoads::default());
     }
-    let totals = outbe_worldwideday::day_totals(storage.clone(), wwd)?;
+    let totals = outbe_worldwideday::worldwide_day_totals(storage.clone(), wwd)?;
     if totals.nod_count == 0 {
         return Ok(DayLoads::default());
     }
     Ok(DayLoads {
-        nominal_minor: outbe_nod::offers::read_day_sum(
+        nominal_minor: outbe_nod::offers::read_worldwide_day_sum(
             storage,
-            outbe_nod::offers::day_nominal_scope(wwd),
+            outbe_nod::offers::worldwide_day_nominal_scope(wwd),
             &totals.encrypted_nominal,
         )?,
-        loads_minor: outbe_nod::offers::read_day_sum(
+        loads_minor: outbe_nod::offers::read_worldwide_day_sum(
             storage,
-            outbe_nod::offers::day_load_scope(wwd),
+            outbe_nod::offers::worldwide_day_load_scope(wwd),
             &totals.encrypted_load,
         )?,
     })

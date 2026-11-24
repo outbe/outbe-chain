@@ -398,7 +398,7 @@ fn assert_real_zk_offer(proof: &[u8]) {
             u64::from(item.sub_series_id),
             (now - now % 3_600 - wwd.offerings_start) / 3_600
         );
-        let totals = outbe_worldwideday::day_totals(storage.clone(), TARGET_WWD).unwrap();
+        let totals = outbe_worldwideday::worldwide_day_totals(storage.clone(), TARGET_WWD).unwrap();
         assert_eq!(totals.nod_count, 1);
         assert!(NodContract::new(storage.clone())
             .has_used_su_hash(su_hash)
@@ -661,7 +661,7 @@ fn issue_nod_at_the_offer_gives_all_terms() {
         assert!(!nominal.is_zero());
         assert_eq!(load, outbe_nod::offer::issue::nod_load_of(nominal));
         assert_eq!(
-            outbe_worldwideday::day_totals(storage.clone(), TARGET_WWD)
+            outbe_worldwideday::worldwide_day_totals(storage.clone(), TARGET_WWD)
                 .unwrap()
                 .nod_count,
             1

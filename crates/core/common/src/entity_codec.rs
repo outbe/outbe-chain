@@ -465,7 +465,11 @@ mod tests {
         ));
         // 4) explicit default scalar on optional field (field 2 = 0 in a Nod group)
         let mut with_explicit_zero = Vec::new();
-        encode_bytes_field(1, B256::repeat_byte(0x44).as_slice(), &mut with_explicit_zero);
+        encode_bytes_field(
+            1,
+            B256::repeat_byte(0x44).as_slice(),
+            &mut with_explicit_zero,
+        );
         encode_varint_field(2, 0, &mut with_explicit_zero);
         assert!(matches!(
             decode_nod_group_v1(&with_explicit_zero),

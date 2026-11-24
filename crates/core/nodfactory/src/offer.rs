@@ -307,7 +307,7 @@ pub(crate) fn record_offer(
 ) -> Result<U256> {
     outbe_nod::offers::mark_offer(storage, (worldwide_day, nod.terms.owner), &claims.su_hashes)?;
     let nod_id = crate::runtime::issue_offer_nod(storage, nod, now, sub_series_id)?;
-    record_day_nod(storage, worldwide_day, nod)?;
+    record_worldwide_day_nod(storage, worldwide_day, nod)?;
     record_agent_reward_activity(storage, now, &claims.wallets, &claims.sras)?;
     Ok(nod_id)
 }
@@ -319,29 +319,35 @@ pub(crate) fn offer_hour(now: u64, offerings_start: u64) -> Result<u16> {
     Ok(u16::try_from(hours).map_err(|_| crate::errors::NodFactoryError::InvalidEncryptedNod)?)
 }
 
-fn record_day_nod(
+fn record_worldwide_day_nod(
     storage: &StorageHandle<'_>,
     wwd: WorldwideDay,
     nod: &EncryptedNodV1,
 ) -> Result<()> {
-    let totals = outbe_worldwideday::day_totals(storage.clone(), wwd)?;
-    use outbe_nod::offers::{day_load_scope, day_nominal_scope, decode_day_sum, encode_day_sum};
+    let totals = outbe_worldwideday::worldwide_day_totals(storage.clone(), wwd)?;
+    use outbe_nod::offers::{
+        decode_worldwide_day_sum, encode_worldwide_day_sum, worldwide_day_load_scope,
+        worldwide_day_nominal_scope,
+    };
     let nominal = nod_api::add_to_day_sum(
         storage,
-        day_nominal_scope(wwd),
-        decode_day_sum(&totals.encrypted_nominal)?,
+        worldwide_day_nominal_scope(wwd),
+        decode_worldwide_day_sum(&totals.encrypted_nominal)?,
         (nod, true),
     )?;
     let load = nod_api::add_to_day_sum(
         storage,
-        day_load_scope(wwd),
-        decode_day_sum(&totals.encrypted_load)?,
+        worldwide_day_load_scope(wwd),
+        decode_worldwide_day_sum(&totals.encrypted_load)?,
         (nod, false),
     )?;
-    outbe_worldwideday::record_day_nod(
+    outbe_worldwideday::record_worldwide_day_nod(
         storage.clone(),
         wwd,
-        (&encode_day_sum(&nominal)?, &encode_day_sum(&load)?),
+        (
+            &encode_worldwide_day_sum(&nominal)?,
+            &encode_worldwide_day_sum(&load)?,
+        ),
     )
 }
 

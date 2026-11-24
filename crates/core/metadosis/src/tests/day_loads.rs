@@ -18,8 +18,11 @@ fn loads_of(nominals: &[u64]) -> u64 {
 }
 
 /// Adds one Nod of nominal `nominal` to the day sums of [`WWD`], as its offer does.
-fn record_day_nod(storage: &StorageHandle<'_>, owner: Address, nominal: u64) {
-    use outbe_nod::offers::{day_load_scope, day_nominal_scope, decode_day_sum, encode_day_sum};
+fn record_worldwide_day_nod(storage: &StorageHandle<'_>, owner: Address, nominal: u64) {
+    use outbe_nod::offers::{
+        decode_worldwide_day_sum, encode_worldwide_day_sum, worldwide_day_load_scope,
+        worldwide_day_nominal_scope,
+    };
     let terms = NodTermsV1 {
         chain_id: CHAIN_ID,
         nod_id: outbe_nod::test_support::nod_id_of(owner, DAY, 840, 840),
@@ -36,16 +39,21 @@ fn record_day_nod(storage: &StorageHandle<'_>, owner: Address, nominal: u64) {
         U256::from(nominal),
     )
     .unwrap();
-    let totals = outbe_worldwideday::day_totals(storage.clone(), WWD).unwrap();
+    let totals = outbe_worldwideday::worldwide_day_totals(storage.clone(), WWD).unwrap();
     let sum = |scope, previous: &[u8], nominal| {
-        let previous = decode_day_sum(previous).unwrap();
+        let previous = decode_worldwide_day_sum(previous).unwrap();
         let record =
             outbe_nod::api::add_to_day_sum(storage, scope, previous, (&nod, nominal)).unwrap();
-        encode_day_sum(&record).unwrap()
+        encode_worldwide_day_sum(&record).unwrap()
     };
-    let nominal_sum = sum(day_nominal_scope(WWD), &totals.encrypted_nominal, true);
-    let load_sum = sum(day_load_scope(WWD), &totals.encrypted_load, false);
-    outbe_worldwideday::record_day_nod(storage.clone(), WWD, (&nominal_sum, &load_sum)).unwrap();
+    let nominal_sum = sum(
+        worldwide_day_nominal_scope(WWD),
+        &totals.encrypted_nominal,
+        true,
+    );
+    let load_sum = sum(worldwide_day_load_scope(WWD), &totals.encrypted_load, false);
+    outbe_worldwideday::record_worldwide_day_nod(storage.clone(), WWD, (&nominal_sum, &load_sum))
+        .unwrap();
 }
 
 /// A pending emission day of limit `limit` whose sealed Worldwide Day issued one Nod of
@@ -99,7 +107,7 @@ fn fixture(limit: u64, nominals: &[u64]) -> HashMapStorageProvider {
                     )?;
                     for (index, &nominal) in nominals.iter().enumerate() {
                         let owner = Address::repeat_byte(u8::try_from(index + 1).unwrap());
-                        record_day_nod(&storage, owner, nominal);
+                        record_worldwide_day_nod(&storage, owner, nominal);
                     }
                     outbe_worldwideday::seal_worldwide_day(storage.clone(), WWD)
                 },
@@ -396,7 +404,7 @@ fn an_unreadable_day_sum_fails_the_day_with_no_credit() {
     let mut provider = fixture(LIMIT, &[NOMINAL]);
     StorageHandle::enter(&mut provider, |storage| {
         WorldwideDayContract::new(storage.clone())
-            .day_load_ct
+            .worldwide_day_load_ct
             .bytes(&WWD)
             .write(&[0xFF; 3])
             .unwrap();
