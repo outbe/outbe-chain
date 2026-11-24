@@ -16,7 +16,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 import {DESIS} from "@precompiles/IDesis.sol";
 import {IIntexFactory, INTEX_FACTORY} from "@precompiles/IIntexFactory.sol";
 import {ITargetRouter} from "./interfaces/ITargetRouter.sol";
-import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
+import {ERC7786Sender} from "../shared/ERC7786Sender.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {TargetInbound} from "./libs/TargetInbound.sol";
@@ -34,12 +34,12 @@ import {
 ///         Outbe over the protocol-agnostic ERC-7786 bridge (the `crosschain` hub). The bridge
 ///         selects the active transport.
 /// @dev UUPS upgradeable behind an ERC1967 proxy. The bridge is an implementation immutable (from
-///      {ERC7786MessengerBase}), so every upgrade must pass the same bridge to the constructor.
+///      {ERC7786Sender}), so every upgrade must pass the same bridge to the constructor.
 ///      All auction/series auction messages are keyed by `emissionDay`. Series messages
 ///      (issuance/mark) are keyed by `seriesId`.
 contract TargetRouter is
     ITargetRouter,
-    ERC7786MessengerBase,
+    ERC7786Sender,
     AccessControlUpgradeable,
     ReentrancyGuardTransient,
     UUPSUpgradeable
@@ -70,7 +70,7 @@ contract TargetRouter is
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address bridge_, uint32 outbeChainId_, address wcoenBridge_) ERC7786MessengerBase(bridge_) {
+    constructor(address bridge_, uint32 outbeChainId_, address wcoenBridge_) ERC7786Sender(bridge_) {
         if (wcoenBridge_ == address(0)) revert ZeroAddress("wcoenBridge");
         OUTBE_CHAIN_ID = outbeChainId_;
         WCOEN_BRIDGE = IERC7786TokenBridge(wcoenBridge_);
@@ -186,33 +186,32 @@ contract TargetRouter is
     // --- Receive ---
     /// @inheritdoc ITargetRouter
     /// @dev nonReentrant guards against re-entry through downstream
-    ///      `intexAuction`/`escrow`/`intexContract` calls. The hash of the message stands for its
-    ///      id in the events of a handler.
+    ///      `intexAuction`/`escrow`/`intexContract` calls.
     function receiveFromOutbe(bytes calldata message) external onlyRole(OUTBE_ICA_ROLE) nonReentrant {
-        _dispatch(OUTBE_CHAIN_ID, keccak256(message), message);
+        _dispatch(message);
     }
 
     /// @dev Dispatch by msgType. A premature message (prerequisite stage not applied) reverts. The
     ///      bridge call reverts with it, and the transport redelivers once the prerequisite lands.
-    function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal override {
-        if (srcChainId != OUTBE_CHAIN_ID) revert UnexpectedSourceChain(srcChainId);
+    function _dispatch(bytes calldata message) private {
+        uint32 srcChainId = OUTBE_CHAIN_ID;
         uint8 msgType = BridgeMsgCodec.readHeader(message);
         BridgeMsgCodec.assertMinLength(message, msgType);
 
         if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_START) {
-            TargetInbound.handleIntexAuctionStart(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexAuctionStart(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_CLEARING_START) {
-            TargetInbound.handleIntexAuctionClearingStart(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexAuctionClearingStart(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_RESULT) {
-            TargetInbound.handleIntexAuctionResult(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexAuctionResult(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_CANCEL) {
-            TargetInbound.handleIntexAuctionCancel(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexAuctionCancel(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_SERIES) {
-            TargetInbound.handleIntexSeries(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexSeries(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS) {
-            TargetInbound.handleIntexAuctionWinners(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexAuctionWinners(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE) {
-            TargetInbound.handleIntexSeriesCallNotice(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexSeriesCallNotice(_ts(), srcChainId, message);
         } else {
             revert BridgeMsgCodec.UnknownMsgType(msgType);
         }
