@@ -216,3 +216,44 @@ fn the_label_and_the_meta_keep_every_field() {
         assert_eq!(messages[0].payload, Bytes::from(vec![9; 100]));
     });
 }
+
+#[test]
+fn gas_that_runs_out_inside_a_message_keeps_the_messages_sent_before_it() {
+    let small = message(97, 1);
+    let big = Message {
+        payload: Bytes::from(vec![7; 30_000]),
+        ..message(97, 2)
+    };
+    let mut alone = provider();
+    accept_sends(&mut alone);
+    StorageHandle::enter(&mut alone, |s| outbox(&s).push(small.clone()).unwrap());
+    alone.set_gas_limit(u64::MAX);
+    alone.enable_production_storage_gas_metering();
+    let one_send = StorageHandle::enter(&mut alone, |s| {
+        assert_eq!(flush(&s, &[97], NOW, 64).len(), 1);
+        s.gas_used().unwrap()
+    });
+
+    let mut storage = provider();
+    accept_sends(&mut storage);
+    StorageHandle::enter(&mut storage, |s| {
+        outbox(&s).push(small).unwrap();
+        outbox(&s).push(big).unwrap();
+    });
+    storage.set_gas_limit(one_send + crate::outbox::SEND_GAS_RESERVE + 1_000);
+    storage.enable_production_storage_gas_metering();
+    let outcomes = StorageHandle::enter(&mut storage, |s| flush(&s, &[97], NOW, 64));
+    assert!(matches!(
+        outcomes.as_slice(),
+        [Outcome::Sent { label, .. }] if label.emission_day == 1
+    ));
+    storage.set_gas_limit(u64::MAX);
+    StorageHandle::enter(&mut storage, |s| {
+        assert_eq!(outbox(&s).len(97).unwrap(), 1);
+        let head = outbox(&s).head_of(97).unwrap().unwrap();
+        assert_eq!(
+            (head.label.emission_day, head.failures, head.next_try),
+            (2, 0, 0)
+        );
+    });
+}

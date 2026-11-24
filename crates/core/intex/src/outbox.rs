@@ -204,7 +204,9 @@ impl Outbox<'_> {
     }
 
     /// Sends the due messages of each chain in order, at most `budget` sends in all. A chain stops
-    /// at its first failed send, which waits [`RETRY_SECONDS`]. A node-local error fails the call.
+    /// at its first failed send, which waits [`RETRY_SECONDS`]. Each message is sent, removed and
+    /// reported as one unit: gas that runs out inside it rolls back only that message and ends the
+    /// call, and the next call resumes it. A node-local error fails the call.
     pub fn flush(
         &self,
         storage: &StorageHandle<'_>,
@@ -215,16 +217,28 @@ impl Outbox<'_> {
     ) -> Result<()> {
         for &chain_id in chains {
             while budget > 0 {
-                let outcome = match self.try_head(storage, chain_id, now)? {
-                    Try::Idle => break,
-                    Try::OutOfGas => return Ok(()),
-                    Try::Done(outcome) => outcome,
-                };
-                budget -= 1;
-                let failed = matches!(outcome, Outcome::Failed { .. });
-                on_outcome(outcome)?;
-                if failed {
-                    break;
+                let step = storage.with_checkpoint(|| {
+                    Ok(match self.try_head(storage, chain_id, now)? {
+                        Try::Idle => Step::Idle,
+                        Try::OutOfGas => Step::OutOfGas,
+                        Try::Done(outcome) => {
+                            let failed = matches!(outcome, Outcome::Failed { .. });
+                            on_outcome(outcome)?;
+                            Step::Done { failed }
+                        }
+                    })
+                });
+                match step {
+                    Ok(Step::Idle) => break,
+                    Ok(Step::OutOfGas) => return Ok(()),
+                    Ok(Step::Done { failed }) => {
+                        budget -= 1;
+                        if failed {
+                            break;
+                        }
+                    }
+                    Err(error) if error.pass_failure() == PassFailure::Stop => return Ok(()),
+                    Err(error) => return Err(error),
                 }
             }
         }
@@ -286,6 +300,12 @@ enum Try {
     Idle,
     OutOfGas,
     Done(Outcome),
+}
+
+enum Step {
+    Idle,
+    OutOfGas,
+    Done { failed: bool },
 }
 
 /// What the `outboxHead` views of the modules return.
