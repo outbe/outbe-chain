@@ -360,7 +360,10 @@ fn each_pool_job_reports_its_rest_and_only_a_nonzero_rest_reaches_the_promis_lim
         if rest == 0 {
             assert!(added.is_empty());
         } else {
-            assert_eq!(added, vec![(15, U256::ONE); 4]);
+            assert_eq!(
+                added,
+                vec![(outbe_promislimit::LimitSource::RewardLimit as u8, U256::ONE); 4]
+            );
         }
     }
 }

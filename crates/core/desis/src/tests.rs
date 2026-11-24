@@ -2194,7 +2194,7 @@ fn overflow_limit_events(logs: &[alloy_primitives::LogData]) -> Vec<U256> {
     ]
 }
 
-/// Amounts that Desis adds back to the Promis Limit with code 14.
+/// Amounts that Desis adds back to the Promis Limit with code 13.
 pub(crate) fn desis_limit_returns(storage: &HashMapStorageProvider) -> Vec<U256> {
     use alloy_sol_types::SolEvent;
     use outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded;
