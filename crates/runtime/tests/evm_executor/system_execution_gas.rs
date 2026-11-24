@@ -485,6 +485,11 @@ fn reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_lane_clea
         .expect("CycleTick should execute after the soft failure")
         .tx_gas_used();
     assert_eq!(cycle_gas, 0);
+    for tx in system_txs {
+        executor
+            .execute_transaction(tx)
+            .expect("outbox system tx should execute after CycleTick");
+    }
     let user_gas = executor
         .execute_transaction(user_tx)
         .expect("user txs must execute after a soft-failed non-critical begin-zone system tx")
@@ -527,9 +532,7 @@ fn execute_critical_cycle_fault(
             bootstrap: BootstrapFixture::StandardForBlock,
         },
     );
-    let cycle_tx = system_txs
-        .pop()
-        .expect("CycleTick system tx should be last in begin prefix");
+    let cycle_tx = fixtures::split_off_cycle_tick(&mut system_txs);
     for tx in system_txs {
         executor
             .execute_transaction(tx)

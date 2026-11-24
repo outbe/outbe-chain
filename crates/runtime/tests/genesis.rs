@@ -465,12 +465,12 @@ fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
     let expected_block1 = [2, 3, 4]
         .into_iter()
         .map(SystemTxStepId::consensus)
-        .chain((0..9).map(SystemTxStepId::begin_block))
+        .chain((0..11).map(SystemTxStepId::begin_block))
         .collect::<Vec<_>>();
     assert_eq!(
         block1, expected_block1,
         "block 1 pins to BoundaryOutcome, TeeBootstrap, \
-         ValidatorLiveness, and the nine begin-block steps; \
+         ValidatorLiveness, and the eleven begin-block steps; \
          CertifiedParentAccounting is absent"
     );
 

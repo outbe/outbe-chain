@@ -268,7 +268,7 @@ mod tests {
             let proposed = executor
                 .begin_block_system_tx_inputs(2, &artifacts)
                 .unwrap();
-            assert_eq!(proposed.len(), 12);
+            assert_eq!(proposed.len(), 14);
             assert!(proposed[0].1.is_some());
             assert!(proposed[1..].iter().all(|(_, summary)| summary.is_none()));
             executor.expected_begin_system_txs = proposed

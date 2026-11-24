@@ -346,8 +346,8 @@ fn assert_height2_finalization_parity(include_user: bool) {
                 .expect("begin-zone system txs must build");
             assert_eq!(
                 begin_system_txs.len(),
-                12,
-                "block 2 base-block begin-zone must carry the twelve mandatory phases",
+                14,
+                "block 2 base-block begin-zone must carry the fourteen mandatory phases",
             );
             for tx in begin_system_txs {
                 builder
