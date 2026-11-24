@@ -129,7 +129,7 @@ fn genesis_consensus_keys_v1(
         preimage[32..].copy_from_slice(&direct_slot(slot));
         keccak256(preimage).0
     };
-    let count = usize::try_from(read(direct_slot(20), "validator_count")?)
+    let count = usize::try_from(read(direct_slot(16), "validator_count")?)
         .map_err(|_| TeeAttestationActivationError::ValidatorCountOverflow)?;
     if count == 0 || count > 256 {
         return Err(TeeAttestationActivationError::ValidatorCountOutOfRange);
@@ -137,25 +137,25 @@ fn genesis_consensus_keys_v1(
     let mut keys = Vec::with_capacity(count);
     for index in 1..=count {
         let address_word = read(
-            mapping_slot(U256::from(index).to_be_bytes(), 17),
+            mapping_slot(U256::from(index).to_be_bytes(), 14),
             "index_to_address",
         )?;
         let address_key = address_word.to_be_bytes::<32>();
         if address_word.is_zero() || address_key[..12] != [0; 12] {
             return Err(TeeAttestationActivationError::InvalidValidatorAddress);
         }
-        if read(mapping_slot(address_key, 8), "validator status")? != U256::from(2_u8)
-            || read(mapping_slot(address_key, 24), "validator BLS-share flag")? != U256::from(1_u8)
+        if read(mapping_slot(address_key, 5), "validator status")? != U256::from(2_u8)
+            || read(mapping_slot(address_key, 20), "validator BLS-share flag")? != U256::from(1_u8)
         {
             return Err(TeeAttestationActivationError::CommitteeMemberNotActiveWithBlsShare);
         }
         let lo = read(
-            mapping_slot(address_key, 5),
+            mapping_slot(address_key, 3),
             "validator consensus key low word",
         )?
         .to_be_bytes::<32>();
         let hi = read(
-            mapping_slot(address_key, 6),
+            mapping_slot(address_key, 4),
             "validator consensus key high word",
         )?
         .to_be_bytes::<32>();
