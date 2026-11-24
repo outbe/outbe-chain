@@ -9,16 +9,27 @@ sol! {
     function transferFrom(address src, address dst, uint256 wad) external returns (bool);
 }
 
+/// What the WCOEN token bridge delivers with `onCrosschainTokensReceived`.
+pub struct CrosschainProceeds<'a> {
+    pub source_domain: u32,
+    pub from: &'a [u8],
+    pub amount: U256,
+    pub extra_data: &'a [u8],
+}
+
 /// The proceeds of one page of winners from TargetRouter of `source_domain`, which the WCOEN token
 /// bridge credited to the factory. They burn with code 43.
 pub fn receive_crosschain_proceeds(
     storage: &StorageHandle<'_>,
     caller: Address,
-    source_domain: u32,
-    from: &[u8],
-    amount: U256,
-    extra_data: &[u8],
+    proceeds: CrosschainProceeds<'_>,
 ) -> Result<()> {
+    let CrosschainProceeds {
+        source_domain,
+        from,
+        amount,
+        extra_data,
+    } = proceeds;
     if caller != WCOEN_BRIDGE_ADDRESS {
         return Err(IntexFactoryError::UnauthorizedProceedsCaller(caller).into());
     }

@@ -1,6 +1,5 @@
 //! The outbox of Desis and its `flush()`, which the begin-block step calls after the Cycle.
 
-use alloy_primitives::U256;
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_intex::outbox::{Label, Message, Outcome};
 use outbe_intex::wire::{
@@ -8,7 +7,7 @@ use outbe_intex::wire::{
     MSG_INTEX_AUCTION_START, MSG_INTEX_AUCTION_WINNERS,
 };
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::{PassFailure, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::DESIS_ADDRESS;
 use outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK;
@@ -175,16 +174,10 @@ pub(crate) fn outbox_head(
     storage: &StorageHandle<'_>,
     chain_id: u32,
 ) -> Result<IDesis::outboxHeadReturn> {
-    let outbox = DesisContract::new(storage.clone()).outbox();
-    let pending = outbox.len(chain_id)?;
-    let head = outbox.head_of(chain_id)?;
-    Ok(IDesis::outboxHeadReturn {
-        msgType: head.map_or(0, |h| h.label.msg_type),
-        emissionDay: head.map_or(0, |h| h.label.emission_day),
-        pending,
-        failures: head.map_or(0, |h| h.failures),
-        nextTry: head.map_or(0, |h| h.next_try),
-    })
+    let head = DesisContract::new(storage.clone())
+        .outbox()
+        .head_view(chain_id)?;
+    Ok(<(u8, u32, u32, u32, u64)>::from(head).into())
 }
 
 /// Begin-block step after the Cycle: sub-calls `flush()`, so Desis is the caller of
@@ -195,14 +188,10 @@ impl outbe_primitives::block::ProtocolModule for DesisOutboxModule {
     const NAME: &'static str = "desis_outbox";
 
     fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-        let call = IDesis::flushCall {}.abi_encode().into();
-        match ctx.storage.call(DESIS_ADDRESS, U256::ZERO, call) {
-            Err(error) if error.pass_failure() == PassFailure::Propagate => Err(error),
-            Err(error) => {
-                tracing::warn!(target: "outbe::desis", %error, "outbox flush skipped");
-                Ok(())
-            }
-            Ok(_) => Ok(()),
-        }
+        outbe_intex::outbox::run_flush_step(
+            &ctx.storage,
+            DESIS_ADDRESS,
+            IDesis::flushCall {}.abi_encode().into(),
+        )
     }
 }

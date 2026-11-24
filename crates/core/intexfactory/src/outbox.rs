@@ -1,11 +1,11 @@
 //! The outbox of IntexFactory and its `flush()`, which the begin-block step calls after the Cycle.
 
-use alloy_primitives::{Bytes, FixedBytes, LogData, B256, U256};
+use alloy_primitives::{Bytes, FixedBytes, LogData, B256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
 use outbe_intex::outbox::{Label, Message, Outcome};
 use outbe_intex::wire::{MSG_INTEX_SERIES, MSG_INTEX_SERIES_CALL_NOTICE};
 use outbe_primitives::block::BlockRuntimeContext;
-use outbe_primitives::error::{PassFailure, Result};
+use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::INTEX_FACTORY_ADDRESS;
 use outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK;
@@ -140,16 +140,10 @@ pub(crate) fn outbox_head(
     storage: &StorageHandle<'_>,
     chain_id: u32,
 ) -> Result<IIntexFactory::outboxHeadReturn> {
-    let outbox = IntexFactoryContract::new(storage.clone()).outbox();
-    let pending = outbox.len(chain_id)?;
-    let head = outbox.head_of(chain_id)?;
-    Ok(IIntexFactory::outboxHeadReturn {
-        msgType: head.map_or(0, |h| h.label.msg_type),
-        emissionDay: head.map_or(0, |h| h.label.emission_day),
-        pending,
-        failures: head.map_or(0, |h| h.failures),
-        nextTry: head.map_or(0, |h| h.next_try),
-    })
+    let head = IntexFactoryContract::new(storage.clone())
+        .outbox()
+        .head_view(chain_id)?;
+    Ok(<(u8, u32, u32, u32, u64)>::from(head).into())
 }
 
 /// Begin-block step after the Cycle: sub-calls `flush()`, so IntexFactory is the caller of
@@ -160,14 +154,10 @@ impl outbe_primitives::block::ProtocolModule for IntexFactoryOutboxModule {
     const NAME: &'static str = "intexfactory_outbox";
 
     fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-        let call = IIntexFactory::flushCall {}.abi_encode().into();
-        match ctx.storage.call(INTEX_FACTORY_ADDRESS, U256::ZERO, call) {
-            Err(error) if error.pass_failure() == PassFailure::Propagate => Err(error),
-            Err(error) => {
-                tracing::warn!(target: "outbe::intexfactory", %error, "outbox flush skipped");
-                Ok(())
-            }
-            Ok(_) => Ok(()),
-        }
+        outbe_intex::outbox::run_flush_step(
+            &ctx.storage,
+            INTEX_FACTORY_ADDRESS,
+            IIntexFactory::flushCall {}.abi_encode().into(),
+        )
     }
 }

@@ -1,7 +1,7 @@
 //! The outbox of a module: its messages to each target chain, sent in order through
 //! `CrosschainBridge.callRemoteWithGasLimit` to `receiveFromOutbe` of TargetRouter.
 
-use alloy_primitives::{Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall};
 use outbe_core_common::addresses::TARGET_ROUTER_ADDRESS;
 use outbe_primitives::error::{PassFailure, PrecompileError, Result};
@@ -172,6 +172,18 @@ impl Outbox<'_> {
         }
     }
 
+    /// The first message of a chain as the views of the modules show it.
+    pub fn head_view(&self, chain_id: u32) -> Result<HeadView> {
+        let head = self.head_of(chain_id)?;
+        Ok(HeadView {
+            msg_type: head.map_or(0, |h| h.label.msg_type),
+            emission_day: head.map_or(0, |h| h.label.emission_day),
+            pending: self.len(chain_id)?,
+            failures: head.map_or(0, |h| h.failures),
+            next_try: head.map_or(0, |h| h.next_try),
+        })
+    }
+
     /// Sends the due messages of each chain in order, at most `budget` sends in all. A chain stops
     /// at its first failed send, which waits [`RETRY_SECONDS`]. A node-local error fails the call.
     pub fn flush(
@@ -184,51 +196,110 @@ impl Outbox<'_> {
     ) -> Result<()> {
         for &chain_id in chains {
             while budget > 0 {
-                let index = self.head.read(&chain_id)?;
-                if index >= self.tail.read(&chain_id)? {
-                    break;
-                }
-                let key = entry_key(chain_id, index);
-                let (message_gas, failures, next_try) = unpack_meta(self.meta.read(&key)?);
-                if next_try > now {
-                    break;
-                }
+                let outcome = match self.try_head(storage, chain_id, now)? {
+                    Try::Idle => break,
+                    Try::OutOfGas => return Ok(()),
+                    Try::Done(outcome) => outcome,
+                };
                 budget -= 1;
-                let label = Label::unpack(self.label.read(&key)?);
-                let payload: Bytes = self.payload.bytes(&key).read()?.into();
-                match storage.with_checkpoint(|| send(storage, chain_id, message_gas, &payload)) {
-                    Ok(message_id) => {
-                        self.pop(chain_id, index)?;
-                        on_outcome(Outcome::Sent {
-                            chain_id,
-                            label,
-                            message_id,
-                            payload,
-                        })?;
-                    }
-                    Err(error) => match error.pass_failure() {
-                        PassFailure::Propagate => return Err(error),
-                        PassFailure::Stop => return Ok(()),
-                        PassFailure::Skip => {
-                            let failures = failures.saturating_add(1);
-                            self.meta.write(
-                                &key,
-                                pack_meta(message_gas, failures, now + RETRY_SECONDS),
-                            )?;
-                            on_outcome(Outcome::Failed {
-                                chain_id,
-                                label,
-                                failures,
-                                payload,
-                                error_data: revert_data(error),
-                            })?;
-                            break;
-                        }
-                    },
+                let failed = matches!(outcome, Outcome::Failed { .. });
+                on_outcome(outcome)?;
+                if failed {
+                    break;
                 }
             }
         }
         Ok(())
+    }
+
+    /// Sends the first message of a chain when it is due.
+    fn try_head(&self, storage: &StorageHandle<'_>, chain_id: u32, now: u64) -> Result<Try> {
+        let index = self.head.read(&chain_id)?;
+        if index >= self.tail.read(&chain_id)? {
+            return Ok(Try::Idle);
+        }
+        let key = entry_key(chain_id, index);
+        let (message_gas, failures, next_try) = unpack_meta(self.meta.read(&key)?);
+        if next_try > now {
+            return Ok(Try::Idle);
+        }
+        let label = Label::unpack(self.label.read(&key)?);
+        let payload: Bytes = self.payload.bytes(&key).read()?.into();
+        let error = match storage.with_checkpoint(|| send(storage, chain_id, message_gas, &payload))
+        {
+            Ok(message_id) => {
+                self.pop(chain_id, index)?;
+                return Ok(Try::Done(Outcome::Sent {
+                    chain_id,
+                    label,
+                    message_id,
+                    payload,
+                }));
+            }
+            Err(error) => error,
+        };
+        match error.pass_failure() {
+            PassFailure::Propagate => Err(error),
+            PassFailure::Stop => Ok(Try::OutOfGas),
+            PassFailure::Skip => {
+                let failures = failures.saturating_add(1);
+                self.meta
+                    .write(&key, pack_meta(message_gas, failures, now + RETRY_SECONDS))?;
+                Ok(Try::Done(Outcome::Failed {
+                    chain_id,
+                    label,
+                    failures,
+                    payload,
+                    error_data: revert_data(error),
+                }))
+            }
+        }
+    }
+}
+
+enum Try {
+    Idle,
+    OutOfGas,
+    Done(Outcome),
+}
+
+/// What the `outboxHead` views of the modules return.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct HeadView {
+    pub msg_type: u8,
+    pub emission_day: u32,
+    pub pending: u32,
+    pub failures: u32,
+    pub next_try: u64,
+}
+
+impl From<HeadView> for (u8, u32, u32, u32, u64) {
+    fn from(head: HeadView) -> Self {
+        (
+            head.msg_type,
+            head.emission_day,
+            head.pending,
+            head.failures,
+            head.next_try,
+        )
+    }
+}
+
+/// The begin-block step of a module: it sub-calls `flush()` of `module`, so the module is the
+/// caller of CrosschainBridge. Only a node-local error fails the block; any other failure leaves
+/// the messages for the next block.
+pub fn run_flush_step(
+    storage: &StorageHandle<'_>,
+    module: Address,
+    flush_call: Bytes,
+) -> Result<()> {
+    match storage.call(module, U256::ZERO, flush_call) {
+        Err(error) if error.pass_failure() == PassFailure::Propagate => Err(error),
+        Err(error) => {
+            tracing::warn!(target: "outbe::intex", %module, %error, "outbox flush skipped");
+            Ok(())
+        }
+        Ok(_) => Ok(()),
     }
 }
 

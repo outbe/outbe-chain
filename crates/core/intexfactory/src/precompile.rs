@@ -120,10 +120,12 @@ pub fn dispatch(
                     runtime::receive_crosschain_proceeds(
                         &storage,
                         sender,
-                        c.sourceDomain,
-                        &c.from,
-                        c.amount,
-                        &c.extraData,
+                        runtime::CrosschainProceeds {
+                            source_domain: c.sourceDomain,
+                            from: &c.from,
+                            amount: c.amount,
+                            extra_data: &c.extraData,
+                        },
                     )?;
                     Ok(alloy_primitives::FixedBytes(
                         IIntexFactory::onCrosschainTokensReceivedCall::SELECTOR,
