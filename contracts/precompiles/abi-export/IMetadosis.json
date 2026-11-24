@@ -177,7 +177,7 @@
   },
   {
     "type": "error",
-    "name": "InvalidLysisLimitSplit",
+    "name": "InvalidMetadosisLimitSplit",
     "inputs": [
       {
         "name": "dayLimit",
@@ -185,7 +185,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "lysisLimitMinor",
+        "name": "nodLoadsMinor",
         "type": "uint256",
         "internalType": "uint256"
       }

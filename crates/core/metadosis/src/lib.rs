@@ -10,7 +10,7 @@
 //! ```
 //!
 //! ```compile_fail
-//! use outbe_metadosis::emission_sink::apply;
+//! use outbe_metadosis::limits::set_metadosis_limit;
 //! ```
 
 pub mod api;
@@ -19,7 +19,6 @@ pub mod bench_support;
 pub mod commands;
 mod commit;
 pub mod constants;
-mod emission_sink;
 pub mod errors;
 mod lifecycle;
 mod limits;

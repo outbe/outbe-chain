@@ -203,7 +203,6 @@ fn metadosis_splits_the_limit_with_the_loads() {
         let record = record(&mut provider);
         assert_eq!(record.metadosis_state, metadosis_state::COMPLETED);
         assert_eq!(U256::from(record.nods), loads);
-        assert_eq!(U256::from(record.lysis_limit), loads);
         let desis = pending_desis_limit(&mut provider);
         assert_eq!(U256::from(record.desis_limit), desis);
         assert_eq!(
@@ -283,7 +282,7 @@ fn loads_above_the_limit_fail_the_metadosis() {
     let record = record(&mut provider);
     assert_eq!(record.metadosis_state, metadosis_state::FAILED);
     assert_eq!(record.nods, u128::from(limit));
-    assert_eq!((record.lysis_limit, record.desis_limit), (0, 0));
+    assert_eq!(record.desis_limit, 0);
     assert_eq!(promis_limit(&mut provider), before);
     StorageHandle::enter(&mut provider, |storage| {
         let desis = outbe_desis::schema::DesisContract::new(storage.clone());
@@ -325,7 +324,6 @@ fn failed_metadosis_returns_the_limit_less_the_loads() {
             storage.clone(),
             DAY,
             outbe_emission::api::MetadosisCompletedAmounts {
-                lysis_limit: U256::ZERO,
                 desis_limit: U256::ZERO,
                 nods: U256::ZERO,
                 promis_limit_added: U256::ZERO,

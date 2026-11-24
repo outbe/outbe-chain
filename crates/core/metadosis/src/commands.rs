@@ -18,7 +18,7 @@ pub fn process_emission_day(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<(
 
 /// Gives Metadosis of `day` its limit, before the Cycle marks the record of `day` Processing.
 pub fn set_metadosis_limit(ctx: &BlockRuntimeContext<'_>, day: u32, amount: U256) -> Result<()> {
-    crate::emission_sink::apply(ctx, day, amount)
+    crate::limits::set_metadosis_limit(ctx, day, amount)
 }
 
 /// Marks Metadosis of `day` as `Failed` (returning its Metadosis limit to `PromisLimit`

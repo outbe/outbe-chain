@@ -9,7 +9,7 @@ use outbe_system_common::time::WorldwideDay;
 use crate::{
     constants::METADOSIS_FAILED_LOADS_ABOVE_LIMIT,
     lifecycle::{complete_metadosis, fail_metadosis},
-    limits::{allocate_day_metadosis_limit, brief_auction, LysisLimitInput},
+    limits::{allocate_day_metadosis_limit, apply_desis_limit},
     precompile::IMetadosis,
     schema::{EmissionDay, MetadosisContract},
 };
@@ -59,7 +59,6 @@ fn record_completion(
         metadosis.storage.clone(),
         emission_day.day,
         outbe_emission::api::MetadosisCompletedAmounts {
-            lysis_limit: loads.loads_minor,
             desis_limit,
             nods: loads.loads_minor,
             promis_limit_added,
@@ -96,13 +95,10 @@ pub(crate) fn execute(
     }
     let split = allocate_day_metadosis_limit(
         ctx.storage.clone(),
-        LysisLimitInput {
-            base_limit,
-            lysis_limit_minor: loads.loads_minor,
-            nominal_total: loads.nominal_minor,
-            unused_lysis_minor: U256::ZERO,
-        },
+        base_limit,
+        loads.loads_minor,
+        loads.nominal_minor,
     )?;
-    let desis_limit = brief_auction(ctx.storage.clone(), emission_day.day, &split)?;
+    let desis_limit = apply_desis_limit(ctx.storage.clone(), emission_day.day, &split)?;
     record_completion(metadosis, ctx, emission_day, &loads, desis_limit)
 }
