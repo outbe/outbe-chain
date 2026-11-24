@@ -786,3 +786,81 @@ fn seeded_scurve_matches_a_curve_that_the_oracle_starts() {
         assert_eq!(seeded_value, value(&mut started), "{days}");
     }
 }
+
+/// Seeding `pso_l2` initializes `AttestersRegistry`, `EnclaveRegistry`, `FsEpochRegistry`,
+/// and `SpendingUnitV2` at their canonical `0x5200..` addresses with `0xef` marker bytecode
+/// and matching storage slots readable by the native precompiles.
+#[test]
+fn seeded_pso_l2_initializes_all_four_native_precompiles() {
+    use outbe_attestersregistry::AttestersRegistryContract;
+    use outbe_enclaveregistry::EnclaveRegistryContract;
+    use outbe_fsepochregistry::FsEpochRegistryContract;
+    use outbe_spendingunitv2::SpendingUnitV2Contract;
+    use outbe_system_common::addresses::{
+        ATTESTERS_REGISTRY_ADDRESS, ENCLAVE_REGISTRY_ADDRESS, FS_EPOCH_REGISTRY_ADDRESS,
+        SPENDING_UNIT_V2_ADDRESS,
+    };
+
+    const ADMIN: Address = Address::repeat_byte(0xAA);
+    const SEED: &str = r#"{
+      "pso_l2": {
+        "admin": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "devnet_admin_register": true
+      }
+    }"#;
+
+    let (_tmp, genesis, _raw) =
+        run_seed_genesis(FIXTURE_GENESIS, SEED, FIXTURE_VALIDATORS_4_PUBLIC_ONLY);
+
+    let mut provider = HashMapStorageProvider::new(512_215);
+    for addr in [
+        ATTESTERS_REGISTRY_ADDRESS,
+        ENCLAVE_REGISTRY_ADDRESS,
+        FS_EPOCH_REGISTRY_ADDRESS,
+        SPENDING_UNIT_V2_ADDRESS,
+    ] {
+        let hex = format!("{:x}", addr);
+        let entry = alloc_entry(&genesis, &hex);
+        assert_eq!(
+            entry.get("code").and_then(Value::as_str),
+            Some(MARKER_BYTECODE_HEX),
+            "PSO L2 precompile {addr} must carry 0xef marker bytecode at genesis"
+        );
+        load_seeded_storage(&mut provider, &genesis, addr);
+    }
+
+    StorageHandle::enter(&mut provider, |storage| {
+        let attesters = AttestersRegistryContract::new(storage.clone());
+        assert_eq!(attesters.admin.read().unwrap(), ADMIN);
+
+        let fs_epoch = FsEpochRegistryContract::new(storage.clone());
+        assert_eq!(fs_epoch.admin.read().unwrap(), ADMIN);
+        assert!(!fs_epoch.anchored.read().unwrap());
+
+        let enclaves = EnclaveRegistryContract::new(storage.clone());
+        assert_eq!(enclaves.admin.read().unwrap(), ADMIN);
+        assert_eq!(
+            enclaves.attesters_registry.read().unwrap(),
+            ATTESTERS_REGISTRY_ADDRESS
+        );
+        assert_eq!(enclaves.retiring_grace.read().unwrap(), 7200);
+        assert_eq!(enclaves.max_schema.read().unwrap(), 6);
+        assert!(enclaves.devnet_admin_register.read().unwrap());
+        assert_eq!(enclaves.min_registration_version.read().unwrap(), 2);
+
+        let su = SpendingUnitV2Contract::new(storage);
+        assert_eq!(su.owner.read().unwrap(), ADMIN);
+        assert_eq!(
+            su.attester_registry.read().unwrap(),
+            ATTESTERS_REGISTRY_ADDRESS
+        );
+        assert_eq!(
+            su.enclave_registry.read().unwrap(),
+            ENCLAVE_REGISTRY_ADDRESS
+        );
+        assert_eq!(
+            su.fs_epoch_registry.read().unwrap(),
+            FS_EPOCH_REGISTRY_ADDRESS
+        );
+    });
+}

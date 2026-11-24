@@ -19,6 +19,7 @@ test-hooks = ["outbe-evm/test-hooks"]
 
 [dependencies]
 outbe-agentreward.workspace = true
+outbe-attestersregistry.workspace = true
 outbe-ccaregistry.workspace = true
 outbe-chain-constants.workspace = true
 outbe-coderegistry.workspace = true
@@ -30,9 +31,11 @@ outbe-crosschainbridge.workspace = true
 outbe-cycle.workspace = true
 outbe-desis.workspace = true
 outbe-emission.workspace = true
+outbe-enclaveregistry.workspace = true
 outbe-engine.workspace = true
 outbe-evm.workspace = true
 outbe-fidelity.workspace = true
+outbe-fsepochregistry.workspace = true
 outbe-gem.workspace = true
 outbe-gemfactory.workspace = true
 outbe-gratis.workspace = true
@@ -54,6 +57,7 @@ outbe-radicle.workspace = true
 outbe-rewards.workspace = true
 outbe-rpc.workspace = true
 outbe-slashindicator.workspace = true
+outbe-spendingunitv2.workspace = true
 outbe-stablecoinfactory.workspace = true
 outbe-stablecoinpolicy.workspace = true
 outbe-staking.workspace = true
