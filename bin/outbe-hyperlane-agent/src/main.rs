@@ -5,20 +5,18 @@
 //! on each origin chain, and proves liveness to the HyperlaneController.
 
 mod abi;
-mod announce;
 mod checkpoint;
 mod client;
 mod config;
 mod daemon;
 mod errors;
 mod http;
-mod liveness;
 mod merkle;
-mod signer;
 mod store;
 mod sync;
 #[cfg(test)]
 mod test_vectors;
+mod validator;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -174,7 +172,7 @@ async fn main() -> Result<()> {
         "starting outbe-hyperlane-agent"
     );
     let poll_interval = Duration::from_secs(config.hyperlane.poll_interval_secs);
-    let liveness = liveness::Liveness::new(
+    let liveness = validator::liveness::Liveness::new(
         config.hyperlane,
         &config.chain,
         EthereumWallet::from(key.clone()),

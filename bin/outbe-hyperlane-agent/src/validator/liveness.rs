@@ -24,8 +24,8 @@ use crate::client::{self, TxSender};
 use crate::config::{ChainConfig, HyperlaneConfig};
 use crate::errors::LivenessError;
 use crate::http::health::ValidatorHealth;
-use crate::signer::DomainSigner;
 use crate::sync::connect;
+use crate::validator::signer::DomainSigner;
 
 /// HyperlaneController precompile address (0xEE14).
 pub const HYPERLANE_CONTROLLER_ADDRESS: Address =

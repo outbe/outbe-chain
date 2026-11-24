@@ -37,10 +37,10 @@ use crate::checkpoint::{Checkpoint, CheckpointWithMessageId, Signed};
 use crate::client::eth_call;
 use crate::config::OriginConfig;
 use crate::errors::{SignerError, StoreError};
-use crate::liveness::HYPERLANE_CONTROLLER_ADDRESS;
 use crate::merkle::IncrementalMerkle;
 use crate::store::{Leaf, Meta, SignedRoot, Store};
 use crate::sync::{wait_next, DomainSync, Origin, Tick, VerifiedBatch};
+use crate::validator::liveness::HYPERLANE_CONTROLLER_ADDRESS;
 
 /// Leaves per backfill transaction.
 const BACKFILL_PAGE: usize = 1000;

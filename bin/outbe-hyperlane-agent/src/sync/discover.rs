@@ -12,7 +12,7 @@ use crate::abi::{IHyperlaneController, IMerkleTreeHook, IValidatorAnnounce};
 use crate::client::eth_call;
 use crate::config::OriginConfig;
 use crate::errors::SyncError;
-use crate::liveness::HYPERLANE_CONTROLLER_ADDRESS;
+use crate::validator::liveness::HYPERLANE_CONTROLLER_ADDRESS;
 
 /// One domain of the HyperlaneController.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

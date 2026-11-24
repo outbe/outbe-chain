@@ -26,8 +26,8 @@ use eyre::Result;
 use tracing::{info, warn};
 
 use crate::errors::StoreError;
-use crate::signer::stored_checkpoint;
 use crate::store::{Meta, Store};
+use crate::validator::signer::stored_checkpoint;
 
 #[derive(Clone)]
 pub struct Bucket {

@@ -13,13 +13,13 @@ use eyre::Result;
 use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 
-use crate::announce::announce;
 use crate::config::OriginConfig;
 use crate::errors::{ConfigError, StoreError};
 use crate::http::health::{Controller, ValidatorHealth};
-use crate::signer::DomainSigner;
 use crate::store::{Meta, Store};
 use crate::sync::{check_origin, controller_domains, ws_wake, ControllerDomain, Origin};
+use crate::validator::announce::announce;
+use crate::validator::signer::DomainSigner;
 
 pub struct Daemon {
     pub origins: Vec<OriginConfig>,
@@ -202,9 +202,9 @@ mod tests {
     use super::*;
     use crate::abi::{IHyperlaneController, IMerkleTreeHook, IValidatorAnnounce, IValidatorSet};
     use crate::checkpoint::{Announcement, Signed};
-    use crate::liveness::{HYPERLANE_CONTROLLER_ADDRESS, VALIDATOR_SET_ADDRESS};
     use crate::sync::connect;
     use crate::sync::tests::serve_json_rpc;
+    use crate::validator::liveness::{HYPERLANE_CONTROLLER_ADDRESS, VALIDATOR_SET_ADDRESS};
 
     const VA: Address = Address::repeat_byte(0xa1);
     const MAILBOX: Address = Address::repeat_byte(0xb2);
@@ -366,7 +366,7 @@ mod tests {
             rpc_endpoint: url.clone(),
             chain_id: 5,
         };
-        let liveness = crate::liveness::Liveness::new(
+        let liveness = crate::validator::liveness::Liveness::new(
             Default::default(),
             &chain,
             wallet,

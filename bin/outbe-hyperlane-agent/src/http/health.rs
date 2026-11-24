@@ -12,8 +12,8 @@ use axum::Router;
 use serde_json::json;
 use tokio::net::TcpListener;
 
-use crate::signer::DomainSigner;
 use crate::store::Store;
+use crate::validator::signer::DomainSigner;
 
 /// The state of the HyperlaneController as the daemon saw it last.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
