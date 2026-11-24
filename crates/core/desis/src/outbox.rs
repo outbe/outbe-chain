@@ -1,8 +1,8 @@
 //! The outbox of Desis and its `flush()`, which the begin-block step calls after the Cycle.
 
 use alloy_sol_types::{SolCall, SolEvent};
-use outbe_intex::outbox::{Label, Message, Outcome};
-use outbe_intex::wire::{
+use outbe_intexfactory::transport::outbox::{Label, Message, Outcome};
+use outbe_intexfactory::transport::wire::{
     MSG_INTEX_AUCTION_CANCEL, MSG_INTEX_AUCTION_CLEARING_START, MSG_INTEX_AUCTION_RESULT,
     MSG_INTEX_AUCTION_START, MSG_INTEX_AUCTION_WINNERS,
 };
@@ -188,7 +188,7 @@ impl outbe_primitives::block::ProtocolModule for DesisOutboxModule {
     const NAME: &'static str = "desis_outbox";
 
     fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-        outbe_intex::outbox::run_flush_step(
+        outbe_intexfactory::transport::outbox::run_flush_step(
             &ctx.storage,
             DESIS_ADDRESS,
             IDesis::flushCall {}.abi_encode().into(),

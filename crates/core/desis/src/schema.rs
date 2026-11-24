@@ -332,7 +332,7 @@ pub struct DesisContract {
     #[attribute(order = 58)]
     pub clearing_gas: outbe_primitives::storage::dsl::Map<B256, u64>,
 
-    /// The outbox to the target chains, see `outbe_intex::outbox`.
+    /// The outbox to the target chains, see `outbe_intexfactory::transport::outbox`.
     #[attribute(order = 59)]
     pub outbox_head: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 60)]
@@ -347,8 +347,8 @@ pub struct DesisContract {
 }
 
 impl<'storage> DesisContract<'storage> {
-    pub fn outbox(&self) -> outbe_intex::outbox::Outbox<'storage> {
-        outbe_intex::outbox::Outbox {
+    pub fn outbox(&self) -> outbe_intexfactory::transport::outbox::Outbox<'storage> {
+        outbe_intexfactory::transport::outbox::Outbox {
             head: self.outbox_head.clone(),
             tail: self.outbox_tail.clone(),
             meta: self.outbox_meta.clone(),

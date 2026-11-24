@@ -7,8 +7,8 @@ use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
 
-use crate::gas::ica_gas_limit;
-use crate::outbox::{
+use crate::transport::gas::ica_gas_limit;
+use crate::transport::outbox::{
     callRemoteWithGasLimitCall, receiveFromOutbeCall, Label, Message, Outbox, Outcome,
     RETRY_SECONDS,
 };
@@ -187,7 +187,7 @@ fn a_chain_outside_the_list_is_not_tried() {
 fn a_flush_with_too_little_gas_stops_without_a_failed_try() {
     let mut storage = provider();
     accept_sends(&mut storage);
-    storage.set_gas_limit(crate::outbox::SEND_GAS_RESERVE - 1);
+    storage.set_gas_limit(crate::transport::outbox::SEND_GAS_RESERVE - 1);
     StorageHandle::enter(&mut storage, |s| {
         outbox(&s).push(message(97, 1)).unwrap();
         assert!(flush(&s, &[97], NOW, 64).is_empty());
@@ -240,7 +240,7 @@ fn gas_that_runs_out_inside_a_message_keeps_the_messages_sent_before_it() {
         outbox(&s).push(small).unwrap();
         outbox(&s).push(big).unwrap();
     });
-    storage.set_gas_limit(one_send + crate::outbox::SEND_GAS_RESERVE + 1_000);
+    storage.set_gas_limit(one_send + crate::transport::outbox::SEND_GAS_RESERVE + 1_000);
     storage.enable_production_storage_gas_metering();
     let outcomes = StorageHandle::enter(&mut storage, |s| flush(&s, &[97], NOW, 64));
     assert!(matches!(

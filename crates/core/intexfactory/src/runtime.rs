@@ -16,8 +16,8 @@ use crate::constants::{INTEX_NFT1155_ADDRESS, MAX_SERIES_PER_MESSAGE};
 use crate::errors::IntexFactoryError;
 use crate::schema::{IntexFactoryContract, IssuanceParams};
 use crate::sol_ext::{IIntexNFT1155, IERC1155};
-use outbe_intex::outbox::Label;
-use outbe_intex::wire::{IntexSeriesPayload as IntexSeriesParams, MSG_INTEX_SERIES};
+use crate::transport::outbox::Label;
+use crate::transport::wire::{IntexSeriesPayload as IntexSeriesParams, MSG_INTEX_SERIES};
 
 /// Emit an IntexFactory event from `INTEX_FACTORY_ADDRESS`.
 pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> Result<()> {
@@ -146,7 +146,7 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
         let total_chunks = u16::try_from(messages.len())
             .map_err(|_| IntexFactoryError::IssuanceChunkCountExceedsU16)?;
         for (chunk_index, series) in messages.into_iter().enumerate() {
-            let payload = outbe_intex::wire::encode_intex_series(
+            let payload = crate::transport::wire::encode_intex_series(
                 emission_day,
                 chunk_index as u16,
                 total_chunks,
@@ -164,7 +164,7 @@ pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Res
                         series.len() as u32,
                     ],
                 ),
-                outbe_intex::gas::intex_series(series.len()),
+                crate::transport::gas::intex_series(series.len()),
                 &payload,
             )?;
         }

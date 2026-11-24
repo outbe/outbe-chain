@@ -7,11 +7,11 @@
 
 use alloy_primitives::{FixedBytes, U256};
 use alloy_sol_types::SolValue;
-use outbe_intex::outbox::Message;
-use outbe_intex::wire::MSG_INTEX_SERIES_CALL_NOTICE;
 use outbe_intex::SeriesId;
 use outbe_intexfactory::notify::{pack_call_notice, send_call_notices};
 use outbe_intexfactory::targets::{pack_target, TargetMode};
+use outbe_intexfactory::transport::outbox::Message;
+use outbe_intexfactory::transport::wire::MSG_INTEX_SERIES_CALL_NOTICE;
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;

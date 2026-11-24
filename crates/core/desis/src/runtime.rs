@@ -27,8 +27,8 @@ use crate::schema::{
     AuctionConfig, AuctionStage, ClearingResult, DesisContract, IntexAuctionBidData,
     ReferenceCurrencyPrice,
 };
-use outbe_intex::outbox::Label;
-use outbe_intex::wire::{
+use outbe_intexfactory::transport::outbox::Label;
+use outbe_intexfactory::transport::wire::{
     MSG_INTEX_AUCTION_CANCEL, MSG_INTEX_AUCTION_CLEARING_START, MSG_INTEX_AUCTION_RESULT,
     MSG_INTEX_AUCTION_START, MSG_INTEX_AUCTION_WINNERS,
 };
@@ -379,13 +379,13 @@ fn send_intex_auction_start(
     start: IntexAuctionStart<'_>,
 ) -> Result<()> {
     let message = intex_auction_start_params(start)?;
-    let payload = outbe_intex::wire::encode_intex_auction_start(&message)?;
+    let payload = outbe_intexfactory::transport::wire::encode_intex_auction_start(&message)?;
     let chains = outbe_intexfactory::targets::freeze_day_targets(storage, start.emission_day)?;
     crate::outbox::push_to(
         storage,
         &chains,
         Label::new(MSG_INTEX_AUCTION_START, message.emission_day, [0; 3]),
-        outbe_intex::gas::intex_auction_start(message.prices.len()),
+        outbe_intexfactory::transport::gas::intex_auction_start(message.prices.len()),
         &payload,
     )
 }
@@ -401,15 +401,18 @@ fn send_intex_auction_cancel(
         storage,
         &chains,
         Label::new(MSG_INTEX_AUCTION_CANCEL, emission_day.value(), [0; 3]),
-        outbe_intex::gas::INTEX_AUCTION_CANCEL,
-        &outbe_intex::wire::encode_intex_auction_cancel(emission_day.value(), reason),
+        outbe_intexfactory::transport::gas::INTEX_AUCTION_CANCEL,
+        &outbe_intexfactory::transport::wire::encode_intex_auction_cancel(
+            emission_day.value(),
+            reason,
+        ),
     )
 }
 
 /// The AUCTION_STAGE_START payload. Every condition comes from the stored day config.
 pub(crate) fn intex_auction_start_params(
     start: IntexAuctionStart<'_>,
-) -> Result<outbe_intex::wire::IntexAuctionStart> {
+) -> Result<outbe_intexfactory::transport::wire::IntexAuctionStart> {
     let IntexAuctionStart {
         emission_day,
         config,
@@ -419,13 +422,15 @@ pub(crate) fn intex_auction_start_params(
     } = start;
     let mut prices = Vec::with_capacity(config.reference_prices.len());
     for row in &config.reference_prices {
-        prices.push(outbe_intex::wire::ReferenceCurrencyPrice {
-            iso_code: row.iso_code,
-            entry_price_minor: outbe_intexfactory::to_wire_price(row.entry_price_minor)?,
-            call_price_minor: outbe_intexfactory::to_wire_price(row.call_price_minor)?,
-        });
+        prices.push(
+            outbe_intexfactory::transport::wire::ReferenceCurrencyPrice {
+                iso_code: row.iso_code,
+                entry_price_minor: outbe_intexfactory::to_wire_price(row.entry_price_minor)?,
+                call_price_minor: outbe_intexfactory::to_wire_price(row.call_price_minor)?,
+            },
+        );
     }
-    Ok(outbe_intex::wire::IntexAuctionStart {
+    Ok(outbe_intexfactory::transport::wire::IntexAuctionStart {
         emission_day: emission_day.value(),
         commit_end,
         reveal_end,

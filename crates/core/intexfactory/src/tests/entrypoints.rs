@@ -120,12 +120,12 @@ fn intex_factory_slot_layout_is_pinned() {
 #[test]
 fn a_node_local_failure_inside_a_flush_send_fails_the_flush_and_keeps_the_message() {
     use super::bridge_fault::BridgeFaultProvider;
+    use crate::transport::outbox::{Label, Message};
     use alloy_sol_types::SolCall;
-    use outbe_intex::outbox::{Label, Message};
 
     let mut provider = BridgeFaultProvider::new(
         factory_provider(),
-        outbe_intex::outbox::callRemoteWithGasLimitCall::SELECTOR,
+        crate::transport::outbox::callRemoteWithGasLimitCall::SELECTOR,
     );
     StorageHandle::enter(&mut provider, |s| {
         super::seed_series_targets(&s, &[97]);
@@ -133,7 +133,7 @@ fn a_node_local_failure_inside_a_flush_send_fails_the_flush_and_keeps_the_messag
             .outbox()
             .push(Message {
                 chain_id: 97,
-                label: Label::new(outbe_intex::wire::MSG_INTEX_SERIES, 7, [0, 1, 1]),
+                label: Label::new(crate::transport::wire::MSG_INTEX_SERIES, 7, [0, 1, 1]),
                 message_gas: 1,
                 payload: alloy_primitives::Bytes::from(vec![1u8]),
             })

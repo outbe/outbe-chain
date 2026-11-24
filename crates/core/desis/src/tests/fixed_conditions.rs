@@ -15,7 +15,7 @@ fn read_config(s: &StorageHandle) -> AuctionConfig {
 }
 
 /// The AUCTION_STAGE_START payload the stored day config gives.
-fn announced(config: &AuctionConfig) -> outbe_intex::wire::IntexAuctionStart {
+fn announced(config: &AuctionConfig) -> outbe_intexfactory::transport::wire::IntexAuctionStart {
     runtime::intex_auction_start_params(runtime::IntexAuctionStart {
         emission_day: EMISSION_DAY,
         config,

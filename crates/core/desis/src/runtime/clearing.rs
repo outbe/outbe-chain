@@ -237,7 +237,7 @@ fn clear_inner(
     // wonBidsCount 0 so their local auction still completes.
     for &chain_id in snapshot {
         let (won_bids_count, won_quantity) = chain_winnings(&result, chain_id);
-        let message = outbe_intex::wire::IntexAuctionResult {
+        let message = outbe_intexfactory::transport::wire::IntexAuctionResult {
             emission_day: emission_day.value(),
             won_quantity,
             won_bids_count,
@@ -253,8 +253,8 @@ fn clear_inner(
                 emission_day.value(),
                 [won_quantity, won_bids_count, 0],
             ),
-            outbe_intex::gas::INTEX_AUCTION_RESULT,
-            &outbe_intex::wire::encode_intex_auction_result(&message),
+            outbe_intexfactory::transport::gas::INTEX_AUCTION_RESULT,
+            &outbe_intexfactory::transport::wire::encode_intex_auction_result(&message),
         )?;
     }
 
@@ -267,7 +267,7 @@ fn clear_inner(
         let total_pages = pages.len() as u16;
         for (page_index, page) in pages.into_iter().enumerate() {
             let winners_count = page.winners.len();
-            let message = outbe_intex::wire::IntexAuctionWinners {
+            let message = outbe_intexfactory::transport::wire::IntexAuctionWinners {
                 emission_day: emission_day.value(),
                 page_index: page_index as u16,
                 total_pages,
@@ -289,8 +289,8 @@ fn clear_inner(
                         winners_count as u32,
                     ],
                 ),
-                outbe_intex::gas::intex_auction_winners(winners_count),
-                &outbe_intex::wire::encode_intex_auction_winners(&message)?,
+                outbe_intexfactory::transport::gas::intex_auction_winners(winners_count),
+                &outbe_intexfactory::transport::wire::encode_intex_auction_winners(&message)?,
             )?;
         }
     }

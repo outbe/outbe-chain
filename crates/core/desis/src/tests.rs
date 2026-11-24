@@ -144,7 +144,9 @@ fn seed_targets_for(storage: &mut HashMapStorageProvider, chains: &[u32], days: 
 }
 
 /// Every message in the outbox of Desis, chain by chain.
-fn outbox_messages(storage: &mut HashMapStorageProvider) -> Vec<outbe_intex::outbox::Message> {
+fn outbox_messages(
+    storage: &mut HashMapStorageProvider,
+) -> Vec<outbe_intexfactory::transport::outbox::Message> {
     StorageHandle::enter(storage, |s| {
         let outbox = s.contract::<DesisContract>().outbox();
         outbe_intexfactory::targets::series_target_chains(&s)
@@ -158,7 +160,7 @@ fn outbox_messages(storage: &mut HashMapStorageProvider) -> Vec<outbe_intex::out
 fn outbox_of_type(
     storage: &mut HashMapStorageProvider,
     msg_type: u8,
-) -> Vec<outbe_intex::outbox::Message> {
+) -> Vec<outbe_intexfactory::transport::outbox::Message> {
     outbox_messages(storage)
         .into_iter()
         .filter(|message| message.label.msg_type == msg_type)
@@ -866,15 +868,22 @@ fn invalid_day_and_anchor_overflow_are_errors_without_business_events() {
 
 /// The reason of every AUCTION_CANCEL in the outbox.
 fn sent_cancels(storage: &mut HashMapStorageProvider) -> Vec<u8> {
-    outbox_of_type(storage, outbe_intex::wire::MSG_INTEX_AUCTION_CANCEL)
-        .into_iter()
-        .map(|message| message.payload[6])
-        .collect()
+    outbox_of_type(
+        storage,
+        outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_CANCEL,
+    )
+    .into_iter()
+    .map(|message| message.payload[6])
+    .collect()
 }
 
 /// Whether a COLLECTING_BIDS round is in the outbox.
 fn sent_clearing_start(storage: &mut HashMapStorageProvider) -> bool {
-    !outbox_of_type(storage, outbe_intex::wire::MSG_INTEX_AUCTION_CLEARING_START).is_empty()
+    !outbox_of_type(
+        storage,
+        outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_CLEARING_START,
+    )
+    .is_empty()
 }
 
 fn stage_of(s: &StorageHandle) -> AuctionStage {
@@ -2235,10 +2244,13 @@ fn a_zero_limit_briefed_with_a_limit_is_cancelled_below_one_unit() {
 
 /// The emission day of every AUCTION_STAGE_START message in the outbox.
 fn sent_starts(storage: &mut HashMapStorageProvider) -> Vec<u32> {
-    outbox_of_type(storage, outbe_intex::wire::MSG_INTEX_AUCTION_START)
-        .into_iter()
-        .map(|message| message.label.emission_day)
-        .collect()
+    outbox_of_type(
+        storage,
+        outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_START,
+    )
+    .into_iter()
+    .map(|message| message.label.emission_day)
+    .collect()
 }
 
 #[test]

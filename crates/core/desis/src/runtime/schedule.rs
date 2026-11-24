@@ -439,18 +439,18 @@ fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
     if targets.len() > MAX_TARGET_CHAINS {
         return Err(DesisError::TooManyTargets(emission_day, targets.len()).into());
     }
-    let payload = outbe_intex::wire::encode_intex_auction_clearing_start(emission_day.value());
+    let payload = outbe_intexfactory::transport::wire::encode_intex_auction_clearing_start(
+        emission_day.value(),
+    );
     let label = Label::new(
         MSG_INTEX_AUCTION_CLEARING_START,
         emission_day.value(),
         [0; 3],
     );
     for chain_id in targets {
-        let gas = outbe_intex::gas::intex_auction_clearing_start(clearing_run_gas(
-            storage,
-            emission_day,
-            chain_id,
-        )?);
+        let gas = outbe_intexfactory::transport::gas::intex_auction_clearing_start(
+            clearing_run_gas(storage, emission_day, chain_id)?,
+        );
         contract
             .clearing_gas
             .write(&DesisContract::chain_key(emission_day, chain_id), gas)?;

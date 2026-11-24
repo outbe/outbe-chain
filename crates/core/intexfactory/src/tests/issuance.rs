@@ -240,7 +240,7 @@ fn coen_iso_wire_price_preserves_the_six_decimal_integer() {
 }
 
 fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
-    let payload = outbe_intex::wire::IntexSeriesPayload {
+    let payload = crate::transport::wire::IntexSeriesPayload {
         seriesId: sid(series).into(),
         emissionDay: day,
         issuedAt: ISSUED_AT,
@@ -258,7 +258,7 @@ fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
     runtime::IssuanceLeg { chain_id, payload }
 }
 
-fn shape(messages: &[(u32, Vec<outbe_intex::wire::IntexSeriesPayload>)]) -> Vec<(u32, usize)> {
+fn shape(messages: &[(u32, Vec<crate::transport::wire::IntexSeriesPayload>)]) -> Vec<(u32, usize)> {
     messages
         .iter()
         .map(|(chain, series)| (*chain, series.len()))

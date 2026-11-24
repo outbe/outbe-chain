@@ -4,7 +4,7 @@ use super::*;
 use alloy_primitives::B256;
 use alloy_sol_types::SolValue;
 use outbe_core_common::addresses::{ERC7786_HUB_ADDRESS, TARGET_ROUTER_ADDRESS};
-use outbe_intex::wire::{
+use outbe_intexfactory::transport::wire::{
     MSG_BIDS_PAGE, MSG_BIDS_PAUSE, MSG_BIDS_TOTALS, MSG_INTEX_AUCTION_CLEARING_START,
     MSG_INTEX_AUCTION_START,
 };

@@ -1,9 +1,9 @@
 //! The outbox of IntexFactory and its `flush()`, which the begin-block step calls after the Cycle.
 
+use crate::transport::outbox::{Label, Message, Outcome};
+use crate::transport::wire::{MSG_INTEX_SERIES, MSG_INTEX_SERIES_CALL_NOTICE};
 use alloy_primitives::{Bytes, FixedBytes, LogData, B256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
-use outbe_intex::outbox::{Label, Message, Outcome};
-use outbe_intex::wire::{MSG_INTEX_SERIES, MSG_INTEX_SERIES_CALL_NOTICE};
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -154,7 +154,7 @@ impl outbe_primitives::block::ProtocolModule for IntexFactoryOutboxModule {
     const NAME: &'static str = "intexfactory_outbox";
 
     fn begin_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-        outbe_intex::outbox::run_flush_step(
+        crate::transport::outbox::run_flush_step(
             &ctx.storage,
             INTEX_FACTORY_ADDRESS,
             IIntexFactory::flushCall {}.abi_encode().into(),

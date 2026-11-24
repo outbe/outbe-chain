@@ -1,6 +1,6 @@
 use super::*;
 use outbe_core_common::addresses::{ERC7786_HUB_ADDRESS, TARGET_ROUTER_ADDRESS};
-use outbe_intex::wire::{decode_bids_message, evm_chain_of, BidsMessage};
+use outbe_intexfactory::transport::wire::{decode_bids_message, evm_chain_of, BidsMessage};
 use outbe_primitives::error::PassFailure;
 
 /// - `Open` while `RevealingBids`/`CollectingBids`.
@@ -337,7 +337,7 @@ fn pause_bids(
         .clearing_gas
         .read(&DesisContract::chain_key(emission_day, src_chain_id))?;
     let gas = if stored == 0 {
-        outbe_intex::gas::INTEX_AUCTION_CLEARING_START
+        outbe_intexfactory::transport::gas::INTEX_AUCTION_CLEARING_START
     } else {
         stored
     };
@@ -350,6 +350,8 @@ fn pause_bids(
             [0; 3],
         ),
         gas,
-        &outbe_intex::wire::encode_intex_auction_clearing_start(emission_day.value()),
+        &outbe_intexfactory::transport::wire::encode_intex_auction_clearing_start(
+            emission_day.value(),
+        ),
     )
 }

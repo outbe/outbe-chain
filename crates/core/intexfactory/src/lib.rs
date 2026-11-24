@@ -18,6 +18,7 @@ pub mod schema;
 pub(crate) mod sol_ext;
 pub(crate) mod state;
 pub mod targets;
+pub mod transport;
 
 pub use api::issue_intex;
 pub use errors::IntexFactoryError;

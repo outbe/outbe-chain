@@ -608,11 +608,11 @@ pub(super) fn accept_auction_batches(
                 ])
             })
             .collect();
-        let mut page = vec![1u8, outbe_intex::wire::MSG_BIDS_PAGE];
+        let mut page = vec![1u8, outbe_intexfactory::transport::wire::MSG_BIDS_PAGE];
         page.extend((day.value(), chain, batch, batches, bidders, packed).abi_encode_params());
         deliver_bids_message(&storage, chain, page);
     }
-    let mut totals = vec![1u8, outbe_intex::wire::MSG_BIDS_TOTALS];
+    let mut totals = vec![1u8, outbe_intexfactory::transport::wire::MSG_BIDS_TOTALS];
     totals.extend_from_slice(&day.value().to_be_bytes());
     totals.extend_from_slice(&chain.to_be_bytes());
     totals.extend_from_slice(&batches.to_be_bytes());
@@ -718,7 +718,10 @@ fn assert_deferred_state(
             .messages(1)
             .unwrap()
             .into_iter()
-            .any(|message| message.label.msg_type == outbe_intex::wire::MSG_INTEX_AUCTION_RESULT);
+            .any(|message| {
+                message.label.msg_type
+                    == outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_RESULT
+            });
         assert!(
             !rolled_back,
             "a rolled-back clearing leaves no result in the outbox"

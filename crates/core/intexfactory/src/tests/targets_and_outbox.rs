@@ -2,10 +2,10 @@
 
 use super::*;
 
+use crate::transport::outbox::{Label, Message};
+use crate::transport::wire::{MSG_INTEX_SERIES, MSG_INTEX_SERIES_CALL_NOTICE};
 use alloy_primitives::{Bytes, FixedBytes, B256};
 use alloy_sol_types::SolEvent;
-use outbe_intex::outbox::{Label, Message};
-use outbe_intex::wire::{MSG_INTEX_SERIES, MSG_INTEX_SERIES_CALL_NOTICE};
 use outbe_system_common::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
 
 use crate::targets::{self, pack_target, TargetMode};
@@ -91,7 +91,7 @@ fn call_notice(ids: &[SeriesId]) -> Message {
         chain_id: 97,
         label: Label::new(MSG_INTEX_SERIES_CALL_NOTICE, 7, [ids.len() as u32, 0, 0]),
         message_gas: 1,
-        payload: outbe_intex::wire::encode_intex_series_call_notice(7, 5, &ids).unwrap(),
+        payload: crate::transport::wire::encode_intex_series_call_notice(7, 5, &ids).unwrap(),
     }
 }
 
@@ -179,7 +179,10 @@ fn an_issued_day_puts_one_series_page_into_the_outbox_for_each_chain() {
                 messages[0].label,
                 Label::new(MSG_INTEX_SERIES, 7, [0, 1, 1])
             );
-            assert_eq!(messages[0].message_gas, outbe_intex::gas::intex_series(1));
+            assert_eq!(
+                messages[0].message_gas,
+                crate::transport::gas::intex_series(1)
+            );
         }
     });
 }

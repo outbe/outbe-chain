@@ -4,9 +4,9 @@
 //! Oracle's finalized per-UTC-day VWAPs. The Cycle daily trigger schedules the closed
 //! day, and every CycleTick walks a slice of it.
 
+use crate::transport::outbox::Label;
+use crate::transport::wire::MSG_INTEX_SERIES_CALL_NOTICE;
 use alloy_primitives::{FixedBytes, U256};
-use outbe_intex::outbox::Label;
-use outbe_intex::wire::MSG_INTEX_SERIES_CALL_NOTICE;
 use outbe_intex::SeriesId;
 use outbe_oracle::call_pass::{self, CallPass};
 use outbe_oracle::call_window::CallWindow;
@@ -192,8 +192,8 @@ pub(crate) fn notify_called(
                 emission_day.value(),
                 [series.len() as u32, 0, 0],
             ),
-            outbe_intex::gas::intex_series_call_notice(series.len()),
-            &outbe_intex::wire::encode_intex_series_call_notice(
+            crate::transport::gas::intex_series_call_notice(series.len()),
+            &crate::transport::wire::encode_intex_series_call_notice(
                 emission_day.value(),
                 called_at,
                 &series,

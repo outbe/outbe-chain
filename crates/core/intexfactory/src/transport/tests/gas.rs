@@ -1,6 +1,6 @@
 //! The destination gas of the messages of Outbe.
 
-use crate::gas::*;
+use crate::transport::gas::*;
 
 #[test]
 fn the_clearing_round_gas_stays_between_its_floor_and_its_cap() {

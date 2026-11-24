@@ -1,8 +1,8 @@
 use super::*;
 
+use crate::transport::wire::evm_chain_of;
 use alloy_sol_types::{sol, SolValue};
 use outbe_core_common::addresses::{TARGET_ROUTER_ADDRESS, WCOEN_ADDRESS, WCOEN_BRIDGE_ADDRESS};
-use outbe_intex::wire::evm_chain_of;
 use outbe_promislimit::{BurnSource, PromisLimitContract};
 
 sol! {

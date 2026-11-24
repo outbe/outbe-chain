@@ -332,7 +332,7 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
                         .flat_map(|chain| outbox.messages(chain).unwrap())
                         .filter(|message| {
                             message.label.msg_type
-                                == outbe_intex::wire::MSG_INTEX_AUCTION_CLEARING_START
+                                == outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_CLEARING_START
                         })
                         .count();
                     assert_eq!(collecting, outbe_desis::constants::MAX_TARGET_CHAINS);

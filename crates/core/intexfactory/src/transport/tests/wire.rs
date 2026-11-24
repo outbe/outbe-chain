@@ -3,7 +3,7 @@
 use alloy_primitives::{hex, Address, FixedBytes, U256};
 use alloy_sol_types::SolValue;
 
-use crate::wire::*;
+use crate::transport::wire::*;
 
 #[test]
 fn intex_auction_start_matches_the_solidity_golden() {

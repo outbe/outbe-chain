@@ -73,7 +73,7 @@ pub struct IntexFactoryContract {
     #[attribute(order = 26)]
     pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
 
-    /// The outbox to the target chains, see `outbe_intex::outbox`.
+    /// The outbox to the target chains, see `crate::transport::outbox`.
     #[attribute(order = 30)]
     pub outbox_head: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 31)]
@@ -88,8 +88,8 @@ pub struct IntexFactoryContract {
 }
 
 impl<'storage> IntexFactoryContract<'storage> {
-    pub fn outbox(&self) -> outbe_intex::outbox::Outbox<'storage> {
-        outbe_intex::outbox::Outbox {
+    pub fn outbox(&self) -> crate::transport::outbox::Outbox<'storage> {
+        crate::transport::outbox::Outbox {
             head: self.outbox_head.clone(),
             tail: self.outbox_tail.clone(),
             meta: self.outbox_meta.clone(),

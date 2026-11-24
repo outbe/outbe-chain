@@ -9,7 +9,7 @@ use outbe_primitives::storage::dsl::{Bytes as StorageBytes, Map};
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::CROSSCHAIN_BRIDGE_ADDRESS;
 
-use crate::gas::ica_gas_limit;
+use crate::transport::gas::ica_gas_limit;
 
 /// The wait after a failed send before the next try of that chain.
 pub const RETRY_SECONDS: u64 = 300;

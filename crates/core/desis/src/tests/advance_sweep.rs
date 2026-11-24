@@ -109,14 +109,17 @@ fn advance_auctions_moves_each_due_auction() {
         assert_eq!(contract.sched_active_count.read().unwrap(), 4);
         assert_eq!(contract.sched_poll_cursor.read().unwrap(), 0);
     });
-    let starts: Vec<_> = outbox_of_type(&mut provider, outbe_intex::wire::MSG_INTEX_AUCTION_START)
-        .iter()
-        .map(|message| message.label.emission_day)
-        .collect();
+    let starts: Vec<_> = outbox_of_type(
+        &mut provider,
+        outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_START,
+    )
+    .iter()
+    .map(|message| message.label.emission_day)
+    .collect();
     assert_eq!(starts, vec![EMISSION_DAY.value()]);
     let collecting: Vec<_> = outbox_of_type(
         &mut provider,
-        outbe_intex::wire::MSG_INTEX_AUCTION_CLEARING_START,
+        outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_CLEARING_START,
     )
     .iter()
     .map(|message| (message.label.emission_day, message.chain_id))
@@ -178,7 +181,7 @@ fn the_own_chain_asks_for_the_same_round_gas_as_another_chain() {
     StorageHandle::enter(&mut provider, |s| runtime::schedule_tick(&s, NOW).unwrap());
     let asks: Vec<_> = outbox_of_type(
         &mut provider,
-        outbe_intex::wire::MSG_INTEX_AUCTION_CLEARING_START,
+        outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_CLEARING_START,
     )
     .iter()
     .map(|message| (message.chain_id, message.message_gas))
