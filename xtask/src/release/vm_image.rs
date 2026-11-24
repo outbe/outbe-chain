@@ -38,6 +38,10 @@ pub const PINNED_PATCHES: &[PinnedFile] = &[
         name: "0002-sev-crate-8-report-version-5.patch",
         sha256: "bdfe6cc672621696f4c20ceddfd51d0528d64abf5172d6ab775b3d6b5a57ae9f",
     },
+    PinnedFile {
+        name: "0003-squashfs-root-mode-0755.patch",
+        sha256: "d97dc640ed27e7b9263c481f523f5aafb470d00efac4bd73d4f2137fc155738f",
+    },
 ];
 
 /// Pinned LLVM 18 runtime libraries missing from the Debian trixie guest image.
@@ -298,14 +302,20 @@ pub fn stage_overlay(
 
     // 7. Dev-only SSH configuration: read authorized_keys from the unmeasured data disk.
     //    Lives under `mkosi.profiles/dev/mkosi.skeleton`, so `prod` never receives it.
+    //    Named `00-outbe-dev.conf` so OpenSSH first-match-wins overrides dstack's `10-*`/`50-*`.
     write_overlay_file(
-        &dev_only.join("etc/ssh/sshd_config.d/20-outbe-dev.conf"),
+        &dev_only.join("etc/ssh/sshd_config.d/00-outbe-dev.conf"),
         &render_dev_sshd_conf(),
         0o644,
     )?;
     write_overlay_file(
         &dev_only.join("usr/lib/systemd/system/ssh.service.d/20-outbe-dev.conf"),
-        "[Unit]\nAfter=outbe-data-mount.service\n",
+        "[Unit]\nAfter=outbe-data-mount.service\nWants=outbe-data-mount.service\n",
+        0o644,
+    )?;
+    write_overlay_file(
+        &dev_only.join("usr/lib/systemd/system-preset/85-dstack-outbe-dev.preset"),
+        "enable ssh.service\n",
         0o644,
     )?;
 
@@ -347,6 +357,11 @@ fn render_data_mount_unit() -> String {
 fn render_dev_sshd_conf() -> String {
     concat!(
         "# Outbe dev VM SSH access using keys on the unmeasured data disk.\n",
+        "# StrictModes is disabled because /opt/outbe-chain is owned by outbe:outbe (900:900)\n",
+        "# while dev/authorized_keys is owned by root:root.\n",
+        "PubkeyAuthentication yes\n",
+        "PermitRootLogin prohibit-password\n",
+        "StrictModes no\n",
         "AuthorizedKeysFile /opt/outbe-chain/dev/authorized_keys\n",
     )
     .to_owned()
@@ -647,7 +662,7 @@ mod tests {
         let root = repository_root().unwrap();
         assert_eq!(DSTACK_COMMIT.len(), 40);
         let patches = verify_pinned_patches(&root).unwrap();
-        assert_eq!(patches.len(), 2);
+        assert_eq!(patches.len(), 3);
 
         let compose: serde_json::Value = serde_json::from_slice(
             &fs::read(root.join("deploy/outbe-vm/app-compose.json")).unwrap(),
@@ -743,12 +758,29 @@ mod tests {
         assert!(mount_unit.contains("mount --bind /dstack/persistent/outbe-chain /opt/outbe-chain"));
         assert!(mount_unit.contains("remount,bind,noexec,nosuid,nodev /opt/outbe-chain"));
 
-        // SSH configuration is strictly in dev profile skeleton, never in common/prod.
+        // SSH configuration and preset are strictly in dev profile skeleton, never in common/prod.
         assert!(!common.join("etc/ssh").exists());
         assert!(!common.join("usr/lib/systemd/system/ssh.service.d").exists());
+        assert!(!common
+            .join("usr/lib/systemd/system-preset/85-dstack-outbe-dev.preset")
+            .exists());
         let dev_sshd =
-            fs::read_to_string(dev_only.join("etc/ssh/sshd_config.d/20-outbe-dev.conf")).unwrap();
+            fs::read_to_string(dev_only.join("etc/ssh/sshd_config.d/00-outbe-dev.conf")).unwrap();
+        assert!(dev_sshd.contains("PubkeyAuthentication yes"));
+        assert!(dev_sshd.contains("PermitRootLogin prohibit-password"));
+        assert!(dev_sshd.contains("StrictModes no"));
         assert!(dev_sshd.contains("AuthorizedKeysFile /opt/outbe-chain/dev/authorized_keys"));
+        let dev_ssh_dropin = fs::read_to_string(
+            dev_only.join("usr/lib/systemd/system/ssh.service.d/20-outbe-dev.conf"),
+        )
+        .unwrap();
+        assert!(dev_ssh_dropin.contains("After=outbe-data-mount.service"));
+        assert!(dev_ssh_dropin.contains("Wants=outbe-data-mount.service"));
+        let dev_ssh_preset = fs::read_to_string(
+            dev_only.join("usr/lib/systemd/system-preset/85-dstack-outbe-dev.preset"),
+        )
+        .unwrap();
+        assert_eq!(dev_ssh_preset, "enable ssh.service\n");
     }
 
     #[test]
