@@ -24,6 +24,7 @@ struct ServiceSpec {
     service_directives: Vec<String>,
     sandbox_directives: Vec<String>,
     limit_nofile: u64,
+    timeout_start_sec: u64,
     wanted_by: &'static str,
 }
 
@@ -63,6 +64,7 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
             ]),
             sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/keys"]),
             limit_nofile: 65_535,
+            timeout_start_sec: 150,
             wanted_by: "outbe-validator.target",
         }),
         render_service(&joining_validator_spec(outbe_up)),
@@ -84,6 +86,7 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
             ]),
             sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/state/feeder"]),
             limit_nofile: 65_535,
+            timeout_start_sec: 150,
             wanted_by: "outbe-validator.target",
         }),
         render_service(&ServiceSpec {
@@ -105,6 +108,7 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
             ]),
             sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/state/hyperlane"]),
             limit_nofile: 65_535,
+            timeout_start_sec: 150,
             wanted_by: "outbe-validator.target",
         }),
         render_target("Outbe validator stack"),
@@ -161,6 +165,7 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             ]),
             sandbox_directives: lines(&[&format!("ReadWritePaths={}", config.base_dir)]),
             limit_nofile: 65_535,
+            timeout_start_sec: 150,
             wanted_by: "outbe-validator.target",
         }),
         render_service(&ServiceSpec {
@@ -183,6 +188,7 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             ]),
             sandbox_directives: lines(&[&format!("ReadWritePaths={}", config.base_dir)]),
             limit_nofile: 65_535,
+            timeout_start_sec: 150,
             wanted_by: "outbe-validator.target",
         }),
         render_target("Outbe validator stack"),
@@ -236,12 +242,13 @@ fn joining_validator_spec(outbe_up: &str) -> ServiceSpec {
             "  --upstream ${OUTBE_CERTIFIED_RPC} \\",
             "  --radicle.control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \\",
             "  --radicle.status-address 127.0.0.1:8876",
-            &format!("ExecStartPost={outbe_up} internal wait-rpc"),
+            &format!("ExecStartPost={outbe_up} internal wait-rpc --timeout 0"),
         ]),
         sandbox_directives: lines(&[
             "ReadWritePaths=/opt/outbe-chain/keys /opt/outbe-chain/validator-0",
         ]),
         limit_nofile: 1_048_576,
+        timeout_start_sec: 0,
         wanted_by: "outbe-validator.target",
     }
 }
@@ -257,6 +264,7 @@ fn founding_service(spec: &FoundingService<'_>) -> ServiceSpec {
         ]),
         sandbox_directives: lines(&[&format!("ReadWritePaths={}", spec.base_dir)]),
         limit_nofile: spec.limit_nofile,
+        timeout_start_sec: 150,
         wanted_by: "outbe-validator.target",
     }
 }
@@ -270,6 +278,7 @@ fn render_service(spec: &ServiceSpec) -> UnitFile {
             ("ACCOUNT", "User=outbe\nGroup=outbe".to_owned()),
             ("SERVICE_DIRECTIVES", join(&spec.service_directives)),
             ("LIMIT_NOFILE", spec.limit_nofile.to_string()),
+            ("TIMEOUT_START_SEC", spec.timeout_start_sec.to_string()),
             ("SANDBOX_DIRECTIVES", join(&spec.sandbox_directives)),
             ("WANTED_BY", spec.wanted_by.to_owned()),
         ],
@@ -328,7 +337,6 @@ mod tests {
         "RestartSec=5",
         "RestartSteps=5",
         "RestartMaxDelaySec=60",
-        "TimeoutStartSec=150",
         "TimeoutStopSec=90",
         "KillMode=mixed",
         "KillSignal=SIGTERM",
@@ -401,9 +409,30 @@ mod tests {
         assert!(validator.contains("${OUTBE_RETH_DISCOVERY_PORT}"));
         assert!(validator.contains("${OUTBE_CONSENSUS_PORT}"));
         assert!(validator.contains("--tee-bootstrap-timeout-secs 300"));
+        assert!(validator.contains("TimeoutStartSec=0"));
+        assert!(validator.contains("internal wait-rpc --timeout 0"));
         assert!(unit(&joining, "outbe-radicle.service").contains("${OUTBE_RADICLE_PORT}"));
         assert!(unit(&founding, "outbe-validator.service")
             .contains("/opt/outbe-chain/validator-2/run-node.sh"));
+        for unit in &founding {
+            if unit.name.ends_with(".service") {
+                assert!(
+                    unit.content.contains("TimeoutStartSec=150"),
+                    "{}",
+                    unit.name
+                );
+            }
+        }
+        for name in [
+            "outbe-radicle.service",
+            "outbe-feeder.service",
+            "outbe-hyperlane-validator.service",
+        ] {
+            assert!(
+                unit(&joining, name).contains("TimeoutStartSec=150"),
+                "{name}"
+            );
+        }
 
         let joining_hyperlane = unit(&joining, "outbe-hyperlane-validator.service");
         let founding_hyperlane = unit(&founding, "outbe-hyperlane-validator.service");

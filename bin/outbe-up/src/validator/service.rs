@@ -159,7 +159,7 @@ where
     F: FnMut() -> Fut,
     Fut: std::future::Future<Output = Result<()>>,
 {
-    let deadline = Instant::now() + Duration::from_secs(timeout);
+    let deadline = (timeout != 0).then(|| Instant::now() + Duration::from_secs(timeout));
     loop {
         let last_error = match tokio::time::timeout(Duration::from_secs(2), probe()).await {
             Ok(Ok(())) => return Ok(()),
@@ -171,7 +171,7 @@ where
                 "outbe-chain exited before {description} became ready: {last_error}; inspect the service journal"
             );
         }
-        if Instant::now() >= deadline {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             bail!("timed out waiting for {description}: {last_error}");
         }
         tokio::time::sleep(Duration::from_millis(250)).await;
@@ -215,11 +215,30 @@ mod tests {
 
     #[tokio::test]
     async fn wait_stops_when_watched_process_has_exited() {
-        let error = wait_for("test RPC", 60, Some(u32::MAX), || async {
+        let error = wait_for("test RPC", 0, Some(u32::MAX), || async {
             Err(eyre::eyre!("RPC unavailable"))
         })
         .await
         .expect_err("missing process must stop the wait");
         assert!(error.to_string().contains("outbe-chain exited"));
+    }
+
+    #[tokio::test]
+    async fn zero_timeout_waits_until_the_probe_is_ready() {
+        let mut attempts = 0;
+        wait_for("test RPC", 0, None, || {
+            attempts += 1;
+            let ready = attempts >= 2;
+            async move {
+                if ready {
+                    Ok(())
+                } else {
+                    Err(eyre::eyre!("RPC unavailable"))
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(attempts, 2);
     }
 }
