@@ -10,10 +10,12 @@ pub mod api;
 pub mod config;
 pub mod constants;
 pub mod errors;
+pub mod gas;
 mod metadata;
 pub mod precompile;
 pub mod schema;
 pub(crate) mod state;
+pub mod wire;
 
 pub use config::IntexParams;
 pub use errors::IntexError;
