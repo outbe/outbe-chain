@@ -46,18 +46,18 @@ impl AgentRewardContract<'_> {
         let count = index.counts.read(&key)?;
         let next_count = count
             .checked_add(1)
-            .ok_or(AgentRewardError::TributeCounterOverflow)?;
+            .ok_or(AgentRewardError::OfferCounterOverflow)?;
         let next_total = index
             .total
             .read(&day)?
             .checked_add(1)
-            .ok_or(AgentRewardError::TributeCounterOverflow)?;
+            .ok_or(AgentRewardError::OfferCounterOverflow)?;
         if count == 0 {
             // First offer for this address+day - add to address list
             let addr_count = index.address_count.read(&day)?;
             let next_addr_count = addr_count
                 .checked_add(1)
-                .ok_or(AgentRewardError::TributeCounterOverflow)?;
+                .ok_or(AgentRewardError::OfferCounterOverflow)?;
             let idx_key = AgentRewardContract::address_index_key(day, addr_count);
             index.addresses.write(&idx_key, address)?;
             index.address_count.write(&day, next_addr_count)?;

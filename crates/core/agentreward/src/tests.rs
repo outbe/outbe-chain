@@ -407,7 +407,7 @@ fn assert_offer_counter_rejected_without_writes(
     })
     .unwrap_err();
     let expected = outbe_primitives::error::PrecompileError::from(
-        crate::errors::AgentRewardError::TributeCounterOverflow,
+        crate::errors::AgentRewardError::OfferCounterOverflow,
     );
     match (error, expected) {
         (

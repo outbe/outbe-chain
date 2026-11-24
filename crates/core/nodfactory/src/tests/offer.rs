@@ -463,7 +463,7 @@ fn assert_real_zk_offer(proof: &[u8]) {
         };
         assert_eq!(
             bytes.as_ref(),
-            outbe_agentreward::precompile::IAgentReward::TributeCounterOverflow {}.abi_encode()
+            outbe_agentreward::precompile::IAgentReward::OfferCounterOverflow {}.abi_encode()
         );
         assert!(nod_api::get_item(&storage, nod_id).unwrap().is_none());
         assert!(!NodContract::new(storage.clone())
