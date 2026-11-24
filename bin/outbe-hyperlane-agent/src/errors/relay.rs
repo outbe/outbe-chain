@@ -19,4 +19,16 @@ pub(crate) enum RelayError {
         validator: alloy_primitives::Address,
         index: u32,
     },
+    /// The destination uses an ISM that the relayer cannot serve.
+    #[error("ISM {ism} has module type {module}: only the message-id multisig ISM is supported")]
+    UnsupportedIsm {
+        ism: alloy_primitives::Address,
+        module: u8,
+    },
+    /// The `process` transaction is in a block but reverted.
+    #[error("process transaction {0} reverted")]
+    Reverted(alloy_primitives::B256),
+    /// The domain of a relayer task is not in the running domains.
+    #[error("domain {0} is not a running domain")]
+    NoChain(u32),
 }

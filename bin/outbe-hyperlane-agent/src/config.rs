@@ -18,8 +18,6 @@ pub struct ValidatorConfig {
     /// Checkpoint HTTP server. The daemon needs it.
     pub server: Option<ServerConfig>,
     /// The relayer role. Without this section the agent only validates.
-    // The delivery loop reads this in a later step.
-    #[allow(dead_code)]
     #[serde(default)]
     pub relayer: RelayerConfig,
     /// Origin chains whose MerkleTreeHook this validator signs.
@@ -29,8 +27,6 @@ pub struct ValidatorConfig {
 
 /// The relayer role: delivers the messages of each `[[origin]]` chain to the
 /// other `[[origin]]` chains.
-// The delivery loop reads the field in a later step.
-#[allow(dead_code)]
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RelayerConfig {
@@ -58,8 +54,6 @@ pub struct OriginConfig {
     pub index_from: Option<u64>,
     /// Length of one turn of the delivery order when this chain is the
     /// destination: each next relayer waits one more turn before it sends.
-    // The delivery loop reads this in a later step.
-    #[allow(dead_code)]
     #[serde(default = "default_relay_turn")]
     pub relay_turn_secs: u64,
 }

@@ -1,11 +1,12 @@
 //! The daemon loop: reads the HyperlaneController domains every poll, runs
 //! one signer per domain, and announces the storage location on each origin
-//! chain.
+//! chain. With the relayer role, it also runs one relayer per domain.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use alloy_network::EthereumWallet;
 use alloy_primitives::Address;
 use alloy_provider::DynProvider;
 use alloy_signer_local::PrivateKeySigner;
@@ -16,8 +17,13 @@ use tracing::{error, info, warn};
 use crate::config::OriginConfig;
 use crate::errors::{ConfigError, StoreError};
 use crate::http::health::{Controller, ValidatorHealth};
+use crate::relayer::deliver::{Chain, Chains};
+use crate::relayer::fetch::Fetcher;
+use crate::relayer::Relayer;
 use crate::store::{Meta, Store};
-use crate::sync::{check_origin, controller_domains, ws_wake, ControllerDomain, Origin};
+use crate::sync::{
+    check_origin, connect, controller_domains, dedup_urls, ws_wake, ControllerDomain, Origin,
+};
 use crate::validator::announce::announce;
 use crate::validator::signer::DomainSigner;
 
@@ -30,6 +36,23 @@ pub struct Daemon {
     pub health: Arc<ValidatorHealth>,
     /// `s3+http(s)://host[:port]/<bucket>`. The domain follows.
     pub location: String,
+    /// The relayer role. `None`: the agent only validates.
+    pub relay: Option<Relay>,
+}
+
+/// What the relayers of all domains share.
+pub struct Relay {
+    pub chains: Chains,
+    pub fetcher: Arc<Fetcher>,
+}
+
+impl Relay {
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            chains: Chains::default(),
+            fetcher: Arc::new(Fetcher::new()?),
+        })
+    }
 }
 
 /// A controller domain that this process started.
@@ -75,6 +98,9 @@ impl Daemon {
             keep
         });
         self.health.retain_domains(listed_has);
+        if let Some(relay) = &self.relay {
+            relay.chains.retain(listed_has);
+        }
         for d in &listed {
             match domains.get_mut(&d.domain) {
                 Some(Domain::Running { hook, .. }) if *hook != d.hook => {
@@ -85,6 +111,9 @@ impl Daemon {
                     error!(domain = d.domain, "{message}");
                     domains.insert(d.domain, Domain::Stopped);
                     self.health.set_error(d.domain, message);
+                    if let Some(relay) = &self.relay {
+                        relay.chains.retain(|domain| domain != d.domain);
+                    }
                 }
                 // The signed history stays valid. Only the announce changes.
                 Some(Domain::Running {
@@ -178,6 +207,29 @@ impl Daemon {
         let mut tasks = JoinSet::new();
         let wake = ws_wake(config, origin.hook, &mut tasks);
         tasks.spawn(signer.clone().run(config.clone(), wake));
+        if let Some(relay) = &self.relay {
+            let providers = dedup_urls(&config.rpc_urls)
+                .iter()
+                .map(|url| connect(url))
+                .collect::<Result<_>>()?;
+            relay.chains.insert(Arc::new(Chain::new(
+                origin.clone(),
+                providers,
+                config.reorg_period,
+                config.relay_turn_secs,
+            )));
+            let relayer = Relayer {
+                origin: origin.clone(),
+                store: self.store.clone(),
+                chains: relay.chains.clone(),
+                fetcher: relay.fetcher.clone(),
+                outbe: outbe.clone(),
+                wallet: EthereumWallet::from(self.key.clone()),
+                validator: self.validator,
+            };
+            // Its own task: a relayer error never stops the signer.
+            tasks.spawn(relayer.run(Duration::from_secs(config.interval_secs)));
+        }
         let announce = self.spawn_announce(origin, config);
         self.health.set_running(signer);
         info!(domain = d.domain, hook = %d.hook, "domain started");
@@ -194,7 +246,6 @@ impl Daemon {
 mod tests {
     use std::sync::Mutex;
 
-    use alloy_network::EthereumWallet;
     use alloy_primitives::{Bytes, B256};
     use alloy_sol_types::{SolCall, SolValue};
     use serde_json::{json, Value};
@@ -317,6 +368,7 @@ mod tests {
             store: store.clone(),
             health: health.clone(),
             location: "s3+http://h:9000/0xb".into(),
+            relay: None,
         };
         let outbe = connect(&url).unwrap();
         let mut domains = HashMap::new();
@@ -438,6 +490,7 @@ mod tests {
             store: store.clone(),
             health: health.clone(),
             location: "s3+http://h:9000/0xb".into(),
+            relay: None,
         };
         let mut domains = HashMap::new();
         daemon

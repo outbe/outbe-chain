@@ -168,7 +168,7 @@ pub fn connect(url: &str) -> Result<DynProvider> {
 }
 
 /// The finalized block of one endpoint.
-async fn finalized_block(provider: &DynProvider, period: ReorgPeriod) -> Result<u64> {
+pub async fn finalized_block(provider: &DynProvider, period: ReorgPeriod) -> Result<u64> {
     match period {
         ReorgPeriod::Blocks(blocks) => {
             Ok(provider.get_block_number().await?.saturating_sub(blocks))

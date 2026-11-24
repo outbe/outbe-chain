@@ -135,8 +135,6 @@ fn encode_relay(row: &RelayRow) -> Vec<u8> {
     v
 }
 
-// The delivery loop uses this in a later step.
-#[allow(dead_code)]
 fn decode_relay(v: &[u8]) -> Result<RelayRow> {
     if v.len() < RELAY_HEADER {
         return Err(StoreError::CorruptRecord("relay").into());
@@ -422,8 +420,6 @@ impl Store {
     }
 
     /// Replaces the relay row of one message (attempt count, drop).
-    // The delivery loop uses this in a later step.
-    #[allow(dead_code)]
     pub fn put_relay(&self, domain: u32, index: u32, row: &RelayRow) -> Result<()> {
         let tx = self.db.tx_mut()?;
         tx.put::<Relay>(key(domain, index), encode_relay(row))?;
@@ -432,8 +428,6 @@ impl Store {
     }
 
     /// Removes the relay row of a delivered message.
-    // The delivery loop uses this in a later step.
-    #[allow(dead_code)]
     pub fn delete_relay(&self, domain: u32, index: u32) -> Result<()> {
         let tx = self.db.tx_mut()?;
         tx.delete::<Relay>(key(domain, index), None)?;
@@ -442,8 +436,6 @@ impl Store {
     }
 
     /// The relay rows of `domain` in index order.
-    // The delivery loop uses this in a later step.
-    #[allow(dead_code)]
     pub fn relay_rows(&self, domain: u32) -> Result<Vec<(u32, RelayRow)>> {
         let tx = self.db.tx()?;
         let mut out = Vec::new();

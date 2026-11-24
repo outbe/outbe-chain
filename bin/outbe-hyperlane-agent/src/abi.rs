@@ -35,4 +35,16 @@ sol! {
         function recipientIsm(address recipient) external view returns (address);
         function process(bytes calldata metadata, bytes calldata message) external payable;
     }
+
+    /// The Hyperlane ISM views that the relayer reads on the destination chain.
+    interface IIsm {
+        function moduleType() external view returns (uint8);
+        /// Routing ISM: the ISM for this message.
+        function route(bytes calldata message) external view returns (address);
+        /// Multisig ISM: the validators and the number of signatures.
+        function validatorsAndThreshold(bytes calldata message)
+            external
+            view
+            returns (address[] memory validators, uint8 threshold);
+    }
 }

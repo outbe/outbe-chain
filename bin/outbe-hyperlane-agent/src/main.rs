@@ -1,8 +1,12 @@
-//! Outbe Hyperlane validator daemon.
+//! Outbe Hyperlane agent: the validator role and the relayer role in one
+//! process.
 //!
-//! Syncs the MerkleTreeHook of each origin chain, signs checkpoints into a
-//! local store, serves them as an S3-compatible bucket, announces the bucket
-//! on each origin chain, and proves liveness to the HyperlaneController.
+//! Validator: syncs the MerkleTreeHook of each origin chain, signs checkpoints
+//! into a local store, serves them as an S3-compatible bucket, announces the
+//! bucket on each origin chain, and proves liveness to the HyperlaneController.
+//!
+//! Relayer (`[relayer] enabled`): delivers the messages of each origin chain
+//! to their destination chains with the signatures of the validators.
 
 mod abi;
 mod checkpoint;
@@ -36,7 +40,7 @@ use crate::store::{Meta, Store};
 #[derive(Parser)]
 #[command(
     name = "outbe-hyperlane-agent",
-    about = "Outbe Hyperlane validator daemon"
+    about = "Outbe Hyperlane agent: validator and relayer"
 )]
 struct Cli {
     /// Path to the TOML configuration file.
@@ -180,6 +184,14 @@ async fn main() -> Result<()> {
         validator,
         health.clone(),
     );
+    let relay = match config.relayer.enabled {
+        true => Some(daemon::Relay::new()?),
+        false => None,
+    };
+    info!(
+        relayer = relay.is_some(),
+        "roles: validator, relayer when enabled"
+    );
     let daemon = daemon::Daemon {
         origins: config.origin,
         poll_interval,
@@ -188,6 +200,7 @@ async fn main() -> Result<()> {
         store,
         health,
         location,
+        relay,
     };
     tokio::select! {
         _ = daemon.run(outbe) => {}
