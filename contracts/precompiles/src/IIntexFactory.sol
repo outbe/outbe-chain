@@ -18,6 +18,9 @@ interface IIntexFactory {
     error InsufficientSettled();
     error InsufficientProofOfWork();
     error NotOriginRouter();
+    error UnauthorizedProceedsCaller(address caller);
+    error UnexpectedProceedsSource(uint32 sourceDomain);
+    error UnauthorizedProceedsSender(bytes from);
     error ForfeitedPromisLoadOverflow();
     error IssuanceChunkCountExceedsU16();
     error PriceExceedsWireType();
@@ -90,6 +93,17 @@ interface IIntexFactory {
     /// @param emissionDay Emission day (yyyymmdd) the proceeds belong to.
     /// @param srcChainId Target chain the proceeds arrived from.
     function burnIntexAuctionProceeds(uint32 emissionDay, uint32 srcChainId) external payable;
+
+    /// @notice The WCOEN token bridge delivers the proceeds of one page of winners from
+    ///         TargetRouter of a chain of the day, with `abi.encode(emissionDay, pageIndex)` in
+    ///         `extraData`. The factory burns the WCOEN into the Promis Limit with code 43.
+    function onCrosschainTokensReceived(uint32 sourceDomain, bytes calldata from, uint256 amount, bytes calldata extraData)
+        external
+        returns (bytes4);
+
+    /// @notice TargetRouter on Outbe hands over the proceeds of one page of winners: the factory
+    ///         takes `amount` WCOEN that the router approved and burns it with code 43.
+    function receiveLocalProceeds(uint32 emissionDay, uint32 pageIndex, uint256 amount) external;
 
     /// @notice One owner's units of a series. `issuedUnits` and `settledUnits` are the
     ///         owner's current balances on this, the origin chain, with Issued units counted
@@ -200,5 +214,7 @@ interface IIntexFactory {
 
     /// @notice `amountMinor` native COEN (18 decimals) of `emissionDay`'s auction proceeds from
     ///         `srcChainId` was burned.
-    event IntexAuctionProceedsBurned(uint32 indexed emissionDay, uint32 indexed srcChainId, uint256 amountMinor);
+    event IntexAuctionProceedsBurned(
+        uint32 indexed emissionDay, uint32 indexed srcChainId, uint32 pageIndex, uint256 amountMinor
+    );
 }

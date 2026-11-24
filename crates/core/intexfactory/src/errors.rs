@@ -28,6 +28,12 @@ pub enum IntexFactoryError {
     InsufficientProofOfWork,
     #[error("caller is not the origin router")]
     NotOriginRouter,
+    #[error("proceeds from an unexpected caller {0}")]
+    UnauthorizedProceedsCaller(alloy_primitives::Address),
+    #[error("proceeds from a chain {0} that the day did not start on")]
+    UnexpectedProceedsSource(u32),
+    #[error("proceeds from a sender other than TargetRouter")]
+    UnauthorizedProceedsSender(alloy_primitives::Bytes),
 
     #[error("forfeited promis load overflow")]
     ForfeitedPromisLoadOverflow,
@@ -110,6 +116,17 @@ impl From<IntexFactoryError> for PrecompileError {
                 revert_with(I::InsufficientProofOfWork {})
             }
             IntexFactoryError::NotOriginRouter => revert_with(I::NotOriginRouter {}),
+            IntexFactoryError::UnauthorizedProceedsCaller(caller) => {
+                revert_with(I::UnauthorizedProceedsCaller { caller })
+            }
+            IntexFactoryError::UnexpectedProceedsSource(source_domain) => {
+                revert_with(I::UnexpectedProceedsSource {
+                    sourceDomain: source_domain,
+                })
+            }
+            IntexFactoryError::UnauthorizedProceedsSender(from) => {
+                revert_with(I::UnauthorizedProceedsSender { from })
+            }
             IntexFactoryError::ForfeitedPromisLoadOverflow => {
                 revert_with(I::ForfeitedPromisLoadOverflow {})
             }

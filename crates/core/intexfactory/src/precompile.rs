@@ -139,6 +139,28 @@ pub fn dispatch(
                 targetsOf(c) => view(c, |c| {
                     crate::targets::day_targets(&storage, c.emissionDay.into())
                 }),
+                onCrosschainTokensReceived(c) => mutate(&storage, c, caller, |sender, c| {
+                    runtime::receive_crosschain_proceeds(
+                        &storage,
+                        sender,
+                        c.sourceDomain,
+                        &c.from,
+                        c.amount,
+                        &c.extraData,
+                    )?;
+                    Ok(alloy_primitives::FixedBytes(
+                        IIntexFactory::onCrosschainTokensReceivedCall::SELECTOR,
+                    ))
+                }),
+                receiveLocalProceeds(c) => mutate_void(&storage, c, caller, |sender, c| {
+                    runtime::receive_local_proceeds(
+                        &storage,
+                        sender,
+                        c.emissionDay,
+                        c.pageIndex,
+                        c.amount,
+                    )
+                }),
                 flush(c) => mutate_void(&storage, c, caller, |_, _| crate::outbox::flush(&storage)),
                 outboxHead(c) => metadata::<IIntexFactory::outboxHeadCall>(|| {
                     crate::outbox::outbox_head(&storage, c.chainId)
