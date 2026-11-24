@@ -76,11 +76,6 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::oracle::OracleCmd,
     },
-    /// Offers: issue a Nod and read the Worldwide Day totals.
-    Offer {
-        #[command(subcommand)]
-        cmd: commands::offer::OfferCmd,
-    },
     /// ZeroFee paymaster: EIP-7702 authorization signing.
     ZeroFee {
         #[command(subcommand)]
@@ -129,7 +124,6 @@ async fn main() -> Result<()> {
         Commands::Chain { cmd } => cmd.run(&client).await,
         Commands::Monitor { cmd } => cmd.run(&client).await,
         Commands::Oracle { cmd } => cmd.run(&client, private_key).await,
-        Commands::Offer { cmd } => cmd.run(&client, private_key).await,
         Commands::ZeroFee { cmd } => cmd.run(&client, private_key).await,
         Commands::Tee { cmd } => cmd.run(&client).await,
         Commands::Vote { cmd } => cmd.run(&client, private_key).await,
@@ -348,12 +342,6 @@ mod tests {
     #[test]
     fn test_cli_parse_oracle_params() {
         let cli = Cli::try_parse_from(["outbe-cli", "oracle", "params"]);
-        assert!(cli.is_ok());
-    }
-
-    #[test]
-    fn test_cli_parse_offer_worldwide_day_totals() {
-        let cli = Cli::try_parse_from(["outbe-cli", "offer", "worldwide-day-totals", "20241220"]);
         assert!(cli.is_ok());
     }
 

@@ -1,7 +1,6 @@
 pub mod chain;
 pub mod epoch;
 pub mod monitor;
-pub mod offer;
 pub mod oracle;
 pub mod rad;
 pub mod radicle;

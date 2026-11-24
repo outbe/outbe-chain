@@ -125,35 +125,6 @@ pub(crate) enum StablecoinError {
     ZeroPolicyAdmin,
 }
 
-/// Errors for the `offer` subcommand.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum OfferError {
-    /// The base amount is not a canonical unsigned 64-bit integer.
-    #[error("amount must be a canonical unsigned u64")]
-    InvalidAmountBase,
-    /// The micro remainder is not a canonical integer below 1,000,000.
-    #[error("amount_micro must be a canonical unsigned u64 below 1000000")]
-    InvalidAmountMicro,
-    /// The on-chain `TeeRegistry` has no bootstrapped offer key.
-    #[error("TeeRegistry is not bootstrapped yet - no offer key to encrypt to")]
-    TeeRegistryNotBootstrapped,
-    /// Encrypting the offer payload failed.
-    #[error("offer encryption failed: {0}")]
-    OfferEncryptionFailed(outbe_core_common::confidential_tee::LocalCryptoError),
-    /// The command-line flag value is not valid hexadecimal.
-    #[error("{flag} is not valid hex: {source}")]
-    InvalidHexFlag {
-        flag: String,
-        source: hex::FromHexError,
-    },
-    /// The decoded `--zk-proof` byte slice is empty.
-    #[error("--zk-proof must not be empty")]
-    EmptyZkProof,
-    /// The decoded 32-byte hex argument has the wrong length.
-    #[error("{flag} must contain exactly 32 bytes, got {actual}")]
-    InvalidHex32Length { flag: String, actual: usize },
-}
-
 /// Errors for the `staking` subcommand.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum StakingError {
