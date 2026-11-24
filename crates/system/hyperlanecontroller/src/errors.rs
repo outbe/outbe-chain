@@ -53,6 +53,9 @@ pub enum HyperlaneControllerError {
     #[error("caller {caller} is not an active validator or its Hyperlane delegate")]
     NotActiveValidator { caller: Address },
 
+    #[error("caller {caller} is not the system transaction")]
+    NotSystemTransaction { caller: Address },
+
     #[error(
         "checkpoint signer {recovered} does not match validator {validator} signer {expected}"
     )]
@@ -172,6 +175,11 @@ impl From<HyperlaneControllerError> for PrecompileError {
             HyperlaneControllerError::NotActiveValidator { caller } => {
                 PrecompileError::RevertBytes(Bytes::from(
                     IHyperlaneController::NotActiveValidator { caller }.abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::NotSystemTransaction { caller } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::NotSystemTransaction { caller }.abi_encode(),
                 ))
             }
             HyperlaneControllerError::SignerMismatch {

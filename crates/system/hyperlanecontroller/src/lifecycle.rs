@@ -21,9 +21,10 @@ fn should_propagate_hyperlane_error(error: &PrecompileError) -> bool {
 }
 
 /// Mirrors the active validator set into the Hyperlane ISMs by sub-calling
-/// the controller's `sync()`. The sub-call uses a child frame, so the
-/// controller, not the system tx, is the `msg.sender` of its `callLocal` and
-/// `callRemote` calls to the owner (`CROSSCHAIN_BRIDGE_ADDRESS`).
+/// the controller's `sync()`. The epoch boundary step is the only caller.
+/// The sub-call uses a child frame, so the controller, not the system tx, is
+/// the `msg.sender` of its `callLocal` and `callRemote` calls to the owner
+/// (`CROSSCHAIN_BRIDGE_ADDRESS`).
 pub fn sync_validators(ctx: &BlockRuntimeContext) -> Result<()> {
     let call = IHyperlaneController::syncCall {}.abi_encode().into();
     if let Err(error) = ctx
@@ -44,7 +45,9 @@ pub fn sync_validators(ctx: &BlockRuntimeContext) -> Result<()> {
 }
 
 /// Every [`LIVENESS_WINDOW_BLOCKS`]: jails validators whose Hyperlane agent
-/// stopped submitting checkpoints, then re-syncs the ISMs.
+/// stopped submitting checkpoints. The ISMs get the new set at the next epoch
+/// boundary, so at most one rotation per epoch is in flight. Hyperlane does
+/// not keep the delivery order of two rotations.
 pub fn run_liveness_window(ctx: &BlockRuntimeContext) -> Result<()> {
     if !ctx
         .block
@@ -62,7 +65,6 @@ pub fn run_liveness_window(ctx: &BlockRuntimeContext) -> Result<()> {
                 ?jailed,
                 "validators jailed for hyperlane liveness"
             );
-            sync_validators(ctx)?;
         }
         Ok(_) => {}
         Err(error) if should_propagate_hyperlane_error(&error) => return Err(error),
