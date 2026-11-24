@@ -168,12 +168,55 @@ pub fn contract_view(_attr: TokenStream, item: TokenStream) -> TokenStream {
 /// The generated dispatch refuses value for every selector missing from that
 /// list. The precompile route table asserts at compile time that the list
 /// agrees with the address's declared value policy. Omitting the const is a
-/// compile error (see `tests/compile_fail/payable_without_selectors.rs`).
+/// compile error:
+///
+/// ```compile_fail,E0425
+/// use alloy_primitives::{Address, U256};
+/// use outbe_macros::{contract_dispatch, contract_payable, contract_public};
+/// use outbe_primitives::error::Result;
+/// use outbe_primitives::storage::StorageHandle;
+///
+/// struct Vault<'storage>(StorageHandle<'storage>);
+///
+/// impl<'storage> Vault<'storage> {
+///     fn new(storage: StorageHandle<'storage>) -> Self {
+///         Self(storage)
+///     }
+/// }
+///
+/// #[contract_dispatch]
+/// impl Vault<'_> {
+///     #[contract_public("fund(uint256)")]
+///     #[contract_payable]
+///     fn _abi_fund(&mut self, _caller: Address, _value: U256, _amount: U256) -> Result<()> {
+///         Ok(())
+///     }
+/// }
+/// # fn main() {}
+/// ```
 #[proc_macro_attribute]
 pub fn contract_payable(_attr: TokenStream, item: TokenStream) -> TokenStream {
     item
 }
 
+/// Generates a typed EVM storage contract layout and `StorageBacked` facade.
+///
+/// Explicit `#[slot(N)]` overrides are checked at compile time so a field can
+/// never overlap a multi-slot storage entry:
+///
+/// ```compile_fail,E0080
+/// use alloy_primitives::U256;
+/// use outbe_macros::contract;
+/// use outbe_primitives::storage::types::StorageArray;
+///
+/// #[contract]
+/// pub struct Overlay {
+///     pub words: StorageArray<U256, 4>,
+///     #[slot(2)]
+///     pub inside: Value<u64>,
+/// }
+/// # fn main() {}
+/// ```
 #[proc_macro_attribute]
 pub fn contract(attr: TokenStream, item: TokenStream) -> TokenStream {
     let config = parse_macro_input!(attr as ContractConfig);
