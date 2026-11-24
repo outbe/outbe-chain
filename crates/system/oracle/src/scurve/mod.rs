@@ -3,7 +3,7 @@
 //! The curve shape comes from Cosmos SDK `x/oracle/algorithm/scurve.go`. The
 //! stored coefficients are quantized to the COEN/840 six-decimal contract.
 //! Every 128-day segment applies the same coefficient table. The next segment
-//! starts from `floor(previous_anchor * 0.92)`, forming one continuous chain.
+//! starts from `floor(previous_anchor * 0.84)`, forming one continuous chain.
 
 mod query;
 mod store;
@@ -26,141 +26,143 @@ pub fn truncate_to_day(timestamp: u64) -> u64 {
 
 /// Precomputed COEN/840 S-curve coefficients at six-decimal scale (128 entries).
 ///
-/// Formula: `coef_i = 1 - alpha * (sigmoid(x_i) - sigmoid_min) / (sigmoid_0 - sigmoid_min)`
-/// Parameters: alpha=0.08, beta=0.08, center=64
+/// Formula: `coef_i = 1 - alpha * (s(i) - s(0)) / (s(127) - s(0))`, where
+/// `s(i) = 1 / (1 + exp(-beta * (i - center)))`.
+/// Parameters: alpha=0.16, beta=0.08, center=64
 ///
-/// Source: `x/oracle/algorithm/scurve.go:precomputedCoefficients`
+/// The Cosmos SDK table in `x/oracle/algorithm/scurve.go` uses alpha=0.08.
+/// This table uses the same formula with alpha=0.16.
 ///
-/// Each value is `floor(original_decimal18 / 10^12)`.
+/// Each value is `floor(coef_i * 10^6)`.
 pub static COEFFICIENTS: [U256; PERIOD] = [
     U256::from_limbs([1_000_000, 0, 0, 0]), // [0] 1.000000000000000000
-    U256::from_limbs([999_960, 0, 0, 0]),   // [1]
-    U256::from_limbs([999_917, 0, 0, 0]),   // [2]
-    U256::from_limbs([999_870, 0, 0, 0]),   // [3]
-    U256::from_limbs([999_820, 0, 0, 0]),   // [4]
-    U256::from_limbs([999_765, 0, 0, 0]),   // [5]
-    U256::from_limbs([999_706, 0, 0, 0]),   // [6]
-    U256::from_limbs([999_642, 0, 0, 0]),   // [7]
-    U256::from_limbs([999_573, 0, 0, 0]),   // [8]
-    U256::from_limbs([999_498, 0, 0, 0]),   // [9]
-    U256::from_limbs([999_418, 0, 0, 0]),   // [10]
-    U256::from_limbs([999_330, 0, 0, 0]),   // [11]
-    U256::from_limbs([999_236, 0, 0, 0]),   // [12]
-    U256::from_limbs([999_134, 0, 0, 0]),   // [13]
-    U256::from_limbs([999_024, 0, 0, 0]),   // [14]
-    U256::from_limbs([998_905, 0, 0, 0]),   // [15]
-    U256::from_limbs([998_776, 0, 0, 0]),   // [16]
-    U256::from_limbs([998_638, 0, 0, 0]),   // [17]
-    U256::from_limbs([998_488, 0, 0, 0]),   // [18]
-    U256::from_limbs([998_326, 0, 0, 0]),   // [19]
-    U256::from_limbs([998_152, 0, 0, 0]),   // [20]
-    U256::from_limbs([997_964, 0, 0, 0]),   // [21]
-    U256::from_limbs([997_762, 0, 0, 0]),   // [22]
-    U256::from_limbs([997_543, 0, 0, 0]),   // [23]
-    U256::from_limbs([997_308, 0, 0, 0]),   // [24]
-    U256::from_limbs([997_055, 0, 0, 0]),   // [25]
-    U256::from_limbs([996_783, 0, 0, 0]),   // [26]
-    U256::from_limbs([996_490, 0, 0, 0]),   // [27]
-    U256::from_limbs([996_175, 0, 0, 0]),   // [28]
-    U256::from_limbs([995_837, 0, 0, 0]),   // [29]
-    U256::from_limbs([995_474, 0, 0, 0]),   // [30]
-    U256::from_limbs([995_085, 0, 0, 0]),   // [31]
-    U256::from_limbs([994_668, 0, 0, 0]),   // [32]
-    U256::from_limbs([994_221, 0, 0, 0]),   // [33]
-    U256::from_limbs([993_744, 0, 0, 0]),   // [34]
-    U256::from_limbs([993_233, 0, 0, 0]),   // [35]
-    U256::from_limbs([992_687, 0, 0, 0]),   // [36]
-    U256::from_limbs([992_105, 0, 0, 0]),   // [37]
-    U256::from_limbs([991_485, 0, 0, 0]),   // [38]
-    U256::from_limbs([990_825, 0, 0, 0]),   // [39]
-    U256::from_limbs([990_124, 0, 0, 0]),   // [40]
-    U256::from_limbs([989_379, 0, 0, 0]),   // [41]
-    U256::from_limbs([988_590, 0, 0, 0]),   // [42]
-    U256::from_limbs([987_756, 0, 0, 0]),   // [43]
-    U256::from_limbs([986_874, 0, 0, 0]),   // [44]
-    U256::from_limbs([985_944, 0, 0, 0]),   // [45]
-    U256::from_limbs([984_965, 0, 0, 0]),   // [46]
-    U256::from_limbs([983_937, 0, 0, 0]),   // [47]
-    U256::from_limbs([982_859, 0, 0, 0]),   // [48]
-    U256::from_limbs([981_731, 0, 0, 0]),   // [49]
-    U256::from_limbs([980_553, 0, 0, 0]),   // [50]
-    U256::from_limbs([979_327, 0, 0, 0]),   // [51]
-    U256::from_limbs([978_053, 0, 0, 0]),   // [52]
-    U256::from_limbs([976_733, 0, 0, 0]),   // [53]
-    U256::from_limbs([975_368, 0, 0, 0]),   // [54]
-    U256::from_limbs([973_961, 0, 0, 0]),   // [55]
-    U256::from_limbs([972_515, 0, 0, 0]),   // [56]
-    U256::from_limbs([971_033, 0, 0, 0]),   // [57]
-    U256::from_limbs([969_517, 0, 0, 0]),   // [58]
-    U256::from_limbs([967_974, 0, 0, 0]),   // [59]
-    U256::from_limbs([966_405, 0, 0, 0]),   // [60]
-    U256::from_limbs([964_817, 0, 0, 0]),   // [61]
-    U256::from_limbs([963_213, 0, 0, 0]),   // [62]
-    U256::from_limbs([961_599, 0, 0, 0]),   // [63]
-    U256::from_limbs([959_980, 0, 0, 0]),   // [64] center
-    U256::from_limbs([958_360, 0, 0, 0]),   // [65]
-    U256::from_limbs([956_746, 0, 0, 0]),   // [66]
-    U256::from_limbs([955_143, 0, 0, 0]),   // [67]
-    U256::from_limbs([953_554, 0, 0, 0]),   // [68]
-    U256::from_limbs([951_986, 0, 0, 0]),   // [69]
-    U256::from_limbs([950_442, 0, 0, 0]),   // [70]
-    U256::from_limbs([948_927, 0, 0, 0]),   // [71]
-    U256::from_limbs([947_444, 0, 0, 0]),   // [72]
-    U256::from_limbs([945_998, 0, 0, 0]),   // [73]
-    U256::from_limbs([944_591, 0, 0, 0]),   // [74]
-    U256::from_limbs([943_227, 0, 0, 0]),   // [75]
-    U256::from_limbs([941_906, 0, 0, 0]),   // [76]
-    U256::from_limbs([940_632, 0, 0, 0]),   // [77]
-    U256::from_limbs([939_406, 0, 0, 0]),   // [78]
-    U256::from_limbs([938_228, 0, 0, 0]),   // [79]
-    U256::from_limbs([937_101, 0, 0, 0]),   // [80]
-    U256::from_limbs([936_022, 0, 0, 0]),   // [81]
-    U256::from_limbs([934_994, 0, 0, 0]),   // [82]
-    U256::from_limbs([934_015, 0, 0, 0]),   // [83]
-    U256::from_limbs([933_085, 0, 0, 0]),   // [84]
-    U256::from_limbs([932_204, 0, 0, 0]),   // [85]
-    U256::from_limbs([931_369, 0, 0, 0]),   // [86]
-    U256::from_limbs([930_580, 0, 0, 0]),   // [87]
-    U256::from_limbs([929_836, 0, 0, 0]),   // [88]
-    U256::from_limbs([929_134, 0, 0, 0]),   // [89]
-    U256::from_limbs([928_474, 0, 0, 0]),   // [90]
-    U256::from_limbs([927_854, 0, 0, 0]),   // [91]
-    U256::from_limbs([927_272, 0, 0, 0]),   // [92]
-    U256::from_limbs([926_727, 0, 0, 0]),   // [93]
-    U256::from_limbs([926_216, 0, 0, 0]),   // [94]
-    U256::from_limbs([925_738, 0, 0, 0]),   // [95]
-    U256::from_limbs([925_291, 0, 0, 0]),   // [96]
-    U256::from_limbs([924_874, 0, 0, 0]),   // [97]
-    U256::from_limbs([924_485, 0, 0, 0]),   // [98]
-    U256::from_limbs([924_122, 0, 0, 0]),   // [99]
-    U256::from_limbs([923_784, 0, 0, 0]),   // [100]
-    U256::from_limbs([923_469, 0, 0, 0]),   // [101]
-    U256::from_limbs([923_176, 0, 0, 0]),   // [102]
-    U256::from_limbs([922_904, 0, 0, 0]),   // [103]
-    U256::from_limbs([922_651, 0, 0, 0]),   // [104]
-    U256::from_limbs([922_416, 0, 0, 0]),   // [105]
-    U256::from_limbs([922_198, 0, 0, 0]),   // [106]
-    U256::from_limbs([921_995, 0, 0, 0]),   // [107]
-    U256::from_limbs([921_807, 0, 0, 0]),   // [108]
-    U256::from_limbs([921_633, 0, 0, 0]),   // [109]
-    U256::from_limbs([921_471, 0, 0, 0]),   // [110]
-    U256::from_limbs([921_322, 0, 0, 0]),   // [111]
-    U256::from_limbs([921_183, 0, 0, 0]),   // [112]
-    U256::from_limbs([921_054, 0, 0, 0]),   // [113]
-    U256::from_limbs([920_935, 0, 0, 0]),   // [114]
-    U256::from_limbs([920_825, 0, 0, 0]),   // [115]
-    U256::from_limbs([920_723, 0, 0, 0]),   // [116]
-    U256::from_limbs([920_629, 0, 0, 0]),   // [117]
-    U256::from_limbs([920_542, 0, 0, 0]),   // [118]
-    U256::from_limbs([920_461, 0, 0, 0]),   // [119]
-    U256::from_limbs([920_386, 0, 0, 0]),   // [120]
-    U256::from_limbs([920_317, 0, 0, 0]),   // [121]
-    U256::from_limbs([920_253, 0, 0, 0]),   // [122]
-    U256::from_limbs([920_194, 0, 0, 0]),   // [123]
-    U256::from_limbs([920_140, 0, 0, 0]),   // [124]
-    U256::from_limbs([920_089, 0, 0, 0]),   // [125]
-    U256::from_limbs([920_043, 0, 0, 0]),   // [126]
-    U256::from_limbs([920_000, 0, 0, 0]),   // [127]
+    U256::from_limbs([999_920, 0, 0, 0]),   // [1]
+    U256::from_limbs([999_834, 0, 0, 0]),   // [2]
+    U256::from_limbs([999_740, 0, 0, 0]),   // [3]
+    U256::from_limbs([999_640, 0, 0, 0]),   // [4]
+    U256::from_limbs([999_530, 0, 0, 0]),   // [5]
+    U256::from_limbs([999_412, 0, 0, 0]),   // [6]
+    U256::from_limbs([999_285, 0, 0, 0]),   // [7]
+    U256::from_limbs([999_146, 0, 0, 0]),   // [8]
+    U256::from_limbs([998_997, 0, 0, 0]),   // [9]
+    U256::from_limbs([998_836, 0, 0, 0]),   // [10]
+    U256::from_limbs([998_661, 0, 0, 0]),   // [11]
+    U256::from_limbs([998_472, 0, 0, 0]),   // [12]
+    U256::from_limbs([998_268, 0, 0, 0]),   // [13]
+    U256::from_limbs([998_048, 0, 0, 0]),   // [14]
+    U256::from_limbs([997_810, 0, 0, 0]),   // [15]
+    U256::from_limbs([997_553, 0, 0, 0]),   // [16]
+    U256::from_limbs([997_276, 0, 0, 0]),   // [17]
+    U256::from_limbs([996_976, 0, 0, 0]),   // [18]
+    U256::from_limbs([996_653, 0, 0, 0]),   // [19]
+    U256::from_limbs([996_305, 0, 0, 0]),   // [20]
+    U256::from_limbs([995_929, 0, 0, 0]),   // [21]
+    U256::from_limbs([995_524, 0, 0, 0]),   // [22]
+    U256::from_limbs([995_087, 0, 0, 0]),   // [23]
+    U256::from_limbs([994_617, 0, 0, 0]),   // [24]
+    U256::from_limbs([994_111, 0, 0, 0]),   // [25]
+    U256::from_limbs([993_566, 0, 0, 0]),   // [26]
+    U256::from_limbs([992_981, 0, 0, 0]),   // [27]
+    U256::from_limbs([992_351, 0, 0, 0]),   // [28]
+    U256::from_limbs([991_675, 0, 0, 0]),   // [29]
+    U256::from_limbs([990_949, 0, 0, 0]),   // [30]
+    U256::from_limbs([990_171, 0, 0, 0]),   // [31]
+    U256::from_limbs([989_337, 0, 0, 0]),   // [32]
+    U256::from_limbs([988_443, 0, 0, 0]),   // [33]
+    U256::from_limbs([987_488, 0, 0, 0]),   // [34]
+    U256::from_limbs([986_466, 0, 0, 0]),   // [35]
+    U256::from_limbs([985_375, 0, 0, 0]),   // [36]
+    U256::from_limbs([984_211, 0, 0, 0]),   // [37]
+    U256::from_limbs([982_970, 0, 0, 0]),   // [38]
+    U256::from_limbs([981_650, 0, 0, 0]),   // [39]
+    U256::from_limbs([980_248, 0, 0, 0]),   // [40]
+    U256::from_limbs([978_759, 0, 0, 0]),   // [41]
+    U256::from_limbs([977_181, 0, 0, 0]),   // [42]
+    U256::from_limbs([975_512, 0, 0, 0]),   // [43]
+    U256::from_limbs([973_748, 0, 0, 0]),   // [44]
+    U256::from_limbs([971_888, 0, 0, 0]),   // [45]
+    U256::from_limbs([969_931, 0, 0, 0]),   // [46]
+    U256::from_limbs([967_874, 0, 0, 0]),   // [47]
+    U256::from_limbs([965_718, 0, 0, 0]),   // [48]
+    U256::from_limbs([963_462, 0, 0, 0]),   // [49]
+    U256::from_limbs([961_107, 0, 0, 0]),   // [50]
+    U256::from_limbs([958_654, 0, 0, 0]),   // [51]
+    U256::from_limbs([956_106, 0, 0, 0]),   // [52]
+    U256::from_limbs([953_466, 0, 0, 0]),   // [53]
+    U256::from_limbs([950_736, 0, 0, 0]),   // [54]
+    U256::from_limbs([947_923, 0, 0, 0]),   // [55]
+    U256::from_limbs([945_030, 0, 0, 0]),   // [56]
+    U256::from_limbs([942_066, 0, 0, 0]),   // [57]
+    U256::from_limbs([939_035, 0, 0, 0]),   // [58]
+    U256::from_limbs([935_948, 0, 0, 0]),   // [59]
+    U256::from_limbs([932_811, 0, 0, 0]),   // [60]
+    U256::from_limbs([929_634, 0, 0, 0]),   // [61]
+    U256::from_limbs([926_426, 0, 0, 0]),   // [62]
+    U256::from_limbs([923_198, 0, 0, 0]),   // [63]
+    U256::from_limbs([919_960, 0, 0, 0]),   // [64] center
+    U256::from_limbs([916_721, 0, 0, 0]),   // [65]
+    U256::from_limbs([913_493, 0, 0, 0]),   // [66]
+    U256::from_limbs([910_286, 0, 0, 0]),   // [67]
+    U256::from_limbs([907_109, 0, 0, 0]),   // [68]
+    U256::from_limbs([903_972, 0, 0, 0]),   // [69]
+    U256::from_limbs([900_884, 0, 0, 0]),   // [70]
+    U256::from_limbs([897_854, 0, 0, 0]),   // [71]
+    U256::from_limbs([894_889, 0, 0, 0]),   // [72]
+    U256::from_limbs([891_997, 0, 0, 0]),   // [73]
+    U256::from_limbs([889_183, 0, 0, 0]),   // [74]
+    U256::from_limbs([886_454, 0, 0, 0]),   // [75]
+    U256::from_limbs([883_813, 0, 0, 0]),   // [76]
+    U256::from_limbs([881_265, 0, 0, 0]),   // [77]
+    U256::from_limbs([878_812, 0, 0, 0]),   // [78]
+    U256::from_limbs([876_457, 0, 0, 0]),   // [79]
+    U256::from_limbs([874_202, 0, 0, 0]),   // [80]
+    U256::from_limbs([872_045, 0, 0, 0]),   // [81]
+    U256::from_limbs([869_989, 0, 0, 0]),   // [82]
+    U256::from_limbs([868_031, 0, 0, 0]),   // [83]
+    U256::from_limbs([866_171, 0, 0, 0]),   // [84]
+    U256::from_limbs([864_408, 0, 0, 0]),   // [85]
+    U256::from_limbs([862_738, 0, 0, 0]),   // [86]
+    U256::from_limbs([861_160, 0, 0, 0]),   // [87]
+    U256::from_limbs([859_672, 0, 0, 0]),   // [88]
+    U256::from_limbs([858_269, 0, 0, 0]),   // [89]
+    U256::from_limbs([856_949, 0, 0, 0]),   // [90]
+    U256::from_limbs([855_709, 0, 0, 0]),   // [91]
+    U256::from_limbs([854_545, 0, 0, 0]),   // [92]
+    U256::from_limbs([853_454, 0, 0, 0]),   // [93]
+    U256::from_limbs([852_432, 0, 0, 0]),   // [94]
+    U256::from_limbs([851_476, 0, 0, 0]),   // [95]
+    U256::from_limbs([850_583, 0, 0, 0]),   // [96]
+    U256::from_limbs([849_748, 0, 0, 0]),   // [97]
+    U256::from_limbs([848_970, 0, 0, 0]),   // [98]
+    U256::from_limbs([848_244, 0, 0, 0]),   // [99]
+    U256::from_limbs([847_568, 0, 0, 0]),   // [100]
+    U256::from_limbs([846_939, 0, 0, 0]),   // [101]
+    U256::from_limbs([846_353, 0, 0, 0]),   // [102]
+    U256::from_limbs([845_809, 0, 0, 0]),   // [103]
+    U256::from_limbs([845_302, 0, 0, 0]),   // [104]
+    U256::from_limbs([844_832, 0, 0, 0]),   // [105]
+    U256::from_limbs([844_396, 0, 0, 0]),   // [106]
+    U256::from_limbs([843_991, 0, 0, 0]),   // [107]
+    U256::from_limbs([843_615, 0, 0, 0]),   // [108]
+    U256::from_limbs([843_266, 0, 0, 0]),   // [109]
+    U256::from_limbs([842_943, 0, 0, 0]),   // [110]
+    U256::from_limbs([842_644, 0, 0, 0]),   // [111]
+    U256::from_limbs([842_366, 0, 0, 0]),   // [112]
+    U256::from_limbs([842_109, 0, 0, 0]),   // [113]
+    U256::from_limbs([841_871, 0, 0, 0]),   // [114]
+    U256::from_limbs([841_651, 0, 0, 0]),   // [115]
+    U256::from_limbs([841_447, 0, 0, 0]),   // [116]
+    U256::from_limbs([841_258, 0, 0, 0]),   // [117]
+    U256::from_limbs([841_084, 0, 0, 0]),   // [118]
+    U256::from_limbs([840_922, 0, 0, 0]),   // [119]
+    U256::from_limbs([840_773, 0, 0, 0]),   // [120]
+    U256::from_limbs([840_635, 0, 0, 0]),   // [121]
+    U256::from_limbs([840_507, 0, 0, 0]),   // [122]
+    U256::from_limbs([840_389, 0, 0, 0]),   // [123]
+    U256::from_limbs([840_280, 0, 0, 0]),   // [124]
+    U256::from_limbs([840_179, 0, 0, 0]),   // [125]
+    U256::from_limbs([840_086, 0, 0, 0]),   // [126]
+    U256::from_limbs([840_000, 0, 0, 0]),   // [127]
 ];
 
 /// Multiplies a value by a scale-6 factor without overflowing `U256`.
@@ -173,7 +175,7 @@ fn mul_scale_1e6(value: U256, factor: U256) -> U256 {
 /// Computes the continuous S-curve value for a peak and absolute day index.
 ///
 /// Each 128-day period starts from the previous period's anchor multiplied by
-/// exactly `0.92` with floor rounding. The coefficient table is then applied
+/// exactly `0.84` with floor rounding. The coefficient table is then applied
 /// at the offset inside that period. This preserves the day-127/day-128
 /// boundary and continues the same chain indefinitely.
 pub fn compute_scurve_value(peak_price: U256, day_index: usize) -> U256 {
@@ -303,7 +305,7 @@ mod tests {
         // Test with a non-round peak price
         let peak = U256::from(18_343_660_000u64); // 18343.66 on the COEN/840 scale
         let val_day1 = compute_scurve_value(peak, 1);
-        // Expected: 18343.66 * 0.999960180425626732 = ~18342.93 (approx)
+        // Expected: 18343.66 * 0.999920 = ~18342.19 (approx)
         // The exact value depends on integer truncation
         assert!(val_day1 < peak);
         assert!(val_day1 > price6(18_342));
@@ -355,8 +357,8 @@ mod tests {
             assert!(store_scurve_entry(oracle, pair, START, price6(500)).unwrap());
 
             assert_eq!(scurve_value(oracle, pair, START).unwrap(), price6(500));
-            assert_eq!(scurve_value(oracle, pair, day(127)).unwrap(), price6(460));
-            assert_eq!(scurve_value(oracle, pair, day(128)).unwrap(), price6(460));
+            assert_eq!(scurve_value(oracle, pair, day(127)).unwrap(), price6(420));
+            assert_eq!(scurve_value(oracle, pair, day(128)).unwrap(), price6(420));
         });
     }
 
@@ -382,9 +384,9 @@ mod tests {
 
             assert!(!store_scurve_entry(oracle, pair, day(10), price6(90)).unwrap());
             assert!(!store_scurve_entry(oracle, pair, START, price6(200)).unwrap());
-            // At day 128 the curve is at 92, so 93 starts a curve below the old peak.
-            assert!(store_scurve_entry(oracle, pair, day(128), price6(93)).unwrap());
-            assert_eq!(curve(oracle, pair).unwrap(), Some((day(128), price6(93))));
+            // At day 128 the curve is at 84, so 85 starts a curve below the old peak.
+            assert!(store_scurve_entry(oracle, pair, day(128), price6(85)).unwrap());
+            assert_eq!(curve(oracle, pair).unwrap(), Some((day(128), price6(85))));
         });
     }
 
