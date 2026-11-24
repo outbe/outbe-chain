@@ -3,7 +3,7 @@
 //! an owner call through the CrosschainBridge precompile (`runtime::call_local`,
 //! `runtime::call_remote`).
 //!
-//! `sync` and begin-block liveness call `set_validators_and_threshold`. The
+//! `sync` calls `set_validators_and_threshold` at the epoch boundary only. The
 //! vote actions in `crosschainbridge` call `enroll_ica_router`, `add_domain` and
 //! `remove_domain`.
 
@@ -108,8 +108,10 @@ impl HyperlaneControllerContract<'_> {
         })
     }
 
-    /// Connects a remote chain (or replaces its ISM) and takes the ownership
-    /// of its ISM. The local domain is fixed at `initialize`.
+    /// Connects a remote chain (or replaces its ISM). One ICA message takes
+    /// the ownership of its ISM and sets the validator set of the local ISM,
+    /// so the new chain gets the same set as the other chains. The local
+    /// domain is fixed at `initialize`.
     pub fn add_domain(
         &mut self,
         domain: u32,
@@ -119,10 +121,27 @@ impl HyperlaneControllerContract<'_> {
     ) -> Result<()> {
         self.require_initialized()?;
         self.require_remote_domain(domain)?;
+        let (validators, threshold) = self.current_validators()?;
+        validate_validators(&validators, threshold)?;
+        let set = IStorageMultisigIsm::setValidatorsAndThresholdCall {
+            _validators: validators,
+            _threshold: threshold,
+        }
+        .abi_encode();
         let storage = self.storage.clone();
         storage.with_checkpoint(|| {
             self.write_domain(domain, ism, hook, validator_announce)?;
-            accept_remote_ism(&self.storage, domain, ism)
+            call_remote(
+                &self.storage,
+                domain,
+                vec![
+                    call(
+                        ism,
+                        IStorageMultisigIsm::acceptOwnershipCall {}.abi_encode(),
+                    ),
+                    call(ism, set),
+                ],
+            )
         })
     }
 
