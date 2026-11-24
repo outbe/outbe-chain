@@ -139,6 +139,14 @@ fn dispatch_attribute_and_payable_return_diagnostics_are_enforced() {
             "impl C { #[contract_public(\"pay()\")] #[contract_payable] fn pay(&mut self, caller: Address, value: U256) -> Result<u64> { Ok(0) } }",
             "#[contract_payable] on `pay` requires return type `Result<()>` (no `mutate_payable` helper yet)",
         ),
+        (
+            "impl C { #[contract_public(\"foo(uint32)\")] fn _abi_foo(&mut self, sender: u32) -> Result<(), ()> { Ok(()) } }",
+            "expected `Address`, found `u32`",
+        ),
+        (
+            "impl C { #[contract_public(\"foo(uint32,uint64)\")] #[contract_view] fn _abi_foo(&mut self, only_one: u32) -> Result<(), ()> { Ok(()) } }",
+            "signature declares 2 ABI argument(s) but method has 1 non-special argument(s)",
+        ),
     ] {
         assert_eq!(dispatch_error(input), expected);
     }

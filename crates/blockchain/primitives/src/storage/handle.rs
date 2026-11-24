@@ -16,7 +16,41 @@ use crate::{
 /// `Rc<RefCell<_>>`. Do not store contract/storage facades beyond that scope.
 ///
 /// `StorageHandle` is invariant in `'storage` because it wraps `&mut` provider
-/// access. It cannot be reborrowed into a shorter independent execution scope.
+/// access. It cannot be reborrowed into a shorter independent execution scope,
+/// escaped as `'static`, or sent across threads:
+///
+/// ```compile_fail,E0597
+/// use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+///
+/// struct Facade<'storage> {
+///     _storage: StorageHandle<'storage>,
+/// }
+///
+/// fn takes_static(_: Facade<'static>) {}
+///
+/// let mut provider = HashMapStorageProvider::new(1);
+/// let handle = StorageHandle::new(&mut provider);
+/// takes_static(Facade { _storage: handle });
+/// ```
+///
+/// ```compile_fail,E0515
+/// use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+///
+/// fn escaped() -> StorageHandle<'static> {
+///     let mut provider = HashMapStorageProvider::new(1);
+///     StorageHandle::new(&mut provider)
+/// }
+/// ```
+///
+/// ```compile_fail,E0277
+/// use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+///
+/// let mut provider = HashMapStorageProvider::new(1);
+/// let handle = StorageHandle::new(&mut provider);
+/// std::thread::spawn(move || {
+///     let _ = handle.chain_id();
+/// });
+/// ```
 #[derive(Clone)]
 pub struct StorageHandle<'storage> {
     pub(crate) inner: Rc<RefCell<&'storage mut dyn PrecompileStorageProvider>>,

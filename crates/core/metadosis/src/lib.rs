@@ -1,16 +1,35 @@
 //! Production Metadosis exposes typed reads and purpose-bound commands, but
-//! keeps raw schema/state/runtime mutation surfaces crate-private.
+//! keeps raw schema/state/runtime/commit mutation surfaces crate-private and
+//! relies on sealed `outbe_primitives::storage` mutation leases/purposes.
 //!
-//! ```compile_fail
+//! ```compile_fail,E0603
 //! use outbe_metadosis::schema::MetadosisContract;
 //! ```
 //!
-//! ```compile_fail
+//! ```compile_fail,E0603
 //! use outbe_metadosis::runtime::process_emission_day;
 //! ```
 //!
-//! ```compile_fail
+//! ```compile_fail,E0603
 //! use outbe_metadosis::emission_sink::apply;
+//! ```
+//!
+//! ```compile_fail,E0603
+//! use outbe_metadosis::commit::commit_transition;
+//! ```
+//!
+//! ```compile_fail,E0432
+//! use outbe_primitives::storage::ScopedMutationLease;
+//! ```
+//!
+//! ```compile_fail,E0277
+//! use outbe_primitives::storage::{MutationPurposeTag, ScopedMutationPurpose};
+//!
+//! struct ForgedPurpose;
+//!
+//! impl ScopedMutationPurpose for ForgedPurpose {
+//!     const TAG: MutationPurposeTag = MutationPurposeTag::CycleLifecycle;
+//! }
 //! ```
 
 pub mod api;

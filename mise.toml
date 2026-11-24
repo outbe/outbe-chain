@@ -91,11 +91,15 @@ description = "Run the default test suite (cargo nextest run + cargo test --doc)
 run = [
   "cargo nextest run --workspace",
   "cargo test --doc --workspace",
+  "cargo test --doc -p outbe-metadosis --features test-utils",
 ]
 
 [tasks.test-doc]
 description = "Run workspace doctests only (nextest skips doctests)"
-run = "cargo test --doc --workspace"
+run = [
+  "cargo test --doc --workspace",
+  "cargo test --doc -p outbe-metadosis --features test-utils",
+]
 
 [tasks.test-consensus]
 description = "Run consensus crate tests via nextest"

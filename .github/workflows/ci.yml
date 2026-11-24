@@ -108,13 +108,6 @@ jobs:
       # (M-24). Run them explicitly so executable doc-examples are covered.
       - name: Doctests
         run: mise run test-doc
-      # trybuild creates nested temporary crates. Running those under llvm-cov
-      # adds no useful runtime coverage and repeatedly rebuilds their crate graphs.
-      - name: Verify compile-time API contracts
-        run: |
-          cargo test --locked --package outbe-macros --test trybuild
-          cargo test --locked --package outbe-primitives --test trybuild
-          cargo test --locked --package outbe-metadosis --features test-utils --test external_mutation_surface
 
   test:
     name: test
