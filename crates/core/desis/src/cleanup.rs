@@ -26,7 +26,9 @@ fn cleanup_page(storage: &StorageHandle<'_>) -> Result<()> {
         units -= CLEANUP_HEADER_UNITS;
         let chains = contract.intake_chain_count.read(&day)?;
         if chains == 0 {
-            finish_day(&contract, day)?;
+            // The clearing gas of up to 16 chains of the day costs one more header.
+            units = units.saturating_sub(CLEANUP_HEADER_UNITS);
+            finish_day(storage, &contract, day)?;
         } else {
             units -= cleanup_chain(&contract, day, chains, units)?;
         }
@@ -54,7 +56,11 @@ fn queued_day(contract: &DesisContract<'_>) -> Result<Option<EmissionDate>> {
     Ok(Some(day))
 }
 
-fn finish_day(contract: &DesisContract<'_>, day: EmissionDate) -> Result<()> {
+fn finish_day(
+    storage: &StorageHandle<'_>,
+    contract: &DesisContract<'_>,
+    day: EmissionDate,
+) -> Result<()> {
     let next = contract.cleanup_next.read(&day)?;
     let tail = contract.cleanup_tail.read()?;
     if (next == 0) != (tail == day.value()) {
@@ -65,6 +71,11 @@ fn finish_day(contract: &DesisContract<'_>, day: EmissionDate) -> Result<()> {
         contract.cleanup_tail.write(0)?;
     }
     contract.cleanup_next.clear(&day)?;
+    for chain in outbe_intexfactory::targets::day_targets(storage, day)? {
+        contract
+            .clearing_gas
+            .clear(&DesisContract::chain_key(day, chain))?;
+    }
     contract.cleanup_pending.write(&day, 2)
 }
 
@@ -95,7 +106,6 @@ fn cleanup_chain(
         // Nine metadata writes, covered by the conservative 80k header allowance.
         contract.chain_bid_count.clear(&key)?;
         contract.chain_total_pages.clear(&key)?;
-        contract.clearing_gas.clear(&key)?;
         contract.chain_arrived_mask.clear(&key)?;
         contract.bids_completed.clear(&key)?;
         contract.completed_pages.clear(&key)?;
