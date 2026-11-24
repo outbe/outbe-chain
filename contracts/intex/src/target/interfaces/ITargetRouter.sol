@@ -3,8 +3,8 @@ pragma solidity 0.8.30;
 
 /// @title ITargetRouter
 /// @author Outbe
-/// @notice Interface for a target-chain router. Relays revealed bids to Outbe and receives auction/series messages
-///         from Outbe over the protocol-agnostic ERC-7786 bridge.
+/// @notice Interface for a target-chain router. Relays revealed bids to Outbe over the protocol-agnostic ERC-7786
+///         bridge and receives auction/series messages from the Interchain Account of Outbe.
 /// @dev Deployed on each target chain behind a UUPS proxy. Inbound delivery arrives via
 ///      {receiveFromOutbe}. The inbound INTEX_AUCTION_CLEARING_START triggers the bids relay,
 ///      and the contract's relay float funds it. Auction messages are keyed by `emissionDay`. Series

@@ -30,9 +30,9 @@ import {
 
 /// @title TargetRouter
 /// @author Outbe
-/// @notice BNB-side router: sends BIDS_BATCH to Outbe and receives auction/series messages from
-///         Outbe over the protocol-agnostic ERC-7786 bridge (the `crosschain` hub). The bridge
-///         selects the active transport.
+/// @notice BNB-side router: sends BIDS_BATCH to Outbe over the protocol-agnostic ERC-7786 bridge (the
+///         `crosschain` hub), which selects the active transport, and receives auction/series messages
+///         from the Interchain Account of Outbe.
 /// @dev UUPS upgradeable behind an ERC1967 proxy. The bridge is an implementation immutable (from
 ///      {ERC7786Sender}), so every upgrade must pass the same bridge to the constructor.
 ///      All auction/series auction messages are keyed by `emissionDay`. Series messages
@@ -197,7 +197,8 @@ contract TargetRouter is
     }
 
     /// @dev Dispatch by msgType. A premature message (prerequisite stage not applied) reverts. The
-    ///      bridge call reverts with it, and the transport redelivers once the prerequisite lands.
+    ///      Interchain Account call reverts with it, and the relayer redelivers once the prerequisite
+    ///      lands.
     function _dispatch(bytes calldata message) private {
         uint32 srcChainId = OUTBE_CHAIN_ID;
         uint8 msgType = BridgeMsgCodec.readHeader(message);

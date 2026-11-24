@@ -50,7 +50,7 @@ library TargetInbound {
     ///      - a day a cancel reached first (conflict)
     ///      - a schedule the day can no longer honour
     ///      - an unknown day state
-    ///      Anything else propagates so the bridge redelivers.
+    ///      Anything else propagates so the relayer redelivers.
     function handleIntexAuctionStart(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
         external
     {
@@ -82,7 +82,7 @@ library TargetInbound {
     ///      - a failed day, which found no result in time
     ///      - a day this chain never opened
     ///      A day whose commit stage is still running propagates. Time alone makes the transition
-    ///      valid, so the bridge redelivers. Only the outbound intexAuctionBidsSendState is caught (parked on failure).
+    ///      valid, so the relayer redelivers. Only the outbound intexAuctionBidsSendState is caught (parked on failure).
     function handleIntexAuctionClearingStart(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
         external
     {
@@ -136,7 +136,7 @@ library TargetInbound {
     ///      - a result the day already holds (same -> duplicate, other -> conflict)
     ///      - a canceled, failed or unknown day
     ///      - a result that fails the auction's permanent sanity bounds
-    ///      A day whose reveal stage has not closed yet (clock skew) propagates so the bridge
+    ///      A day whose reveal stage has not closed yet (clock skew) propagates so the relayer
     ///      redelivers.
     function handleIntexAuctionResult(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
         external
