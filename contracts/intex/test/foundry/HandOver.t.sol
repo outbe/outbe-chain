@@ -11,8 +11,10 @@ import {DeployProxy} from "./helpers/DeployProxy.sol";
 /// @dev A test has no Outbe node, so the harness supplies the Interchain Account of CrosschainBridge.
 contract HandOverHarness is HandOver {
     address public constant GOVERNANCE_ICA = address(uint160(0x1CA));
+    uint32 public askedDomain;
 
-    function _governanceAccount(uint32) internal pure override returns (address) {
+    function _governanceAccount(uint32 domain) internal override returns (address) {
+        askedDomain = domain;
         return GOVERNANCE_ICA;
     }
 }
@@ -47,8 +49,11 @@ contract HandOverTest is Test {
         assertEq(script.governanceOwner(), address(uint160(0x1CA)), "other chain");
     }
 
-    function test_OutbeIca_IsTheInterchainAccountOfOutbe() public {
-        assertEq(script.outbeIcaAccount(), script.GOVERNANCE_ICA());
+    function test_OutbeIca_IsTheInterchainAccountOfOutbeOnThisChainEvenOnOutbe() public {
+        vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid));
+        assertEq(script.governanceOwner(), CROSSCHAIN_BRIDGE, "governance on Outbe");
+        assertEq(script.outbeIcaAccount(), script.GOVERNANCE_ICA(), "the messages come from the account");
+        assertEq(script.askedDomain(), uint32(block.chainid), "the account on this chain");
     }
 
     function test_HandOver_LeavesTheTargetRouterToItsOutbeIcaAndGovernance() public {
