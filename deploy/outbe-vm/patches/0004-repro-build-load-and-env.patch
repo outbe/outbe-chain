@@ -1,10 +1,12 @@
 From: outbe-vm-dev <dev@outbe.network>
-Subject: [PATCH 4/4] Load buildx image and allow configurable tag and cpuset
+Subject: [PATCH 4/4] Load buildx image, allow configurable tag/cpuset, and run at low priority
 
 Pass `--load` to `docker build` so `docker-container` BuildKit drivers
 load the helper image into the local Docker daemon before `docker run`,
-allow overriding the helper image tag via `DSTACK_MKOSI_IMAGE`, and
-support optional `--cpuset-cpus` via `DOCKER_CPUSET_CPUS`.
+allow overriding the helper image tag via `DSTACK_MKOSI_IMAGE`, support
+optional `--cpuset-cpus` via `DOCKER_CPUSET_CPUS`, and wrap the
+container entrypoint in `nice -n 19 ionice -c3` so mkosi runs at low
+CPU and I/O priority inside the container.
 
 --- a/os/mkosi/repro-build/repro-build.sh
 +++ b/os/mkosi/repro-build/repro-build.sh
@@ -34,3 +36,14 @@ support optional `--cpuset-cpus` via `DOCKER_CPUSET_CPUS`.
      -v /dev:/dev \
      -v "$REPO_ROOT:$REPO_ROOT" \
      -v "$BUILD_DIR:$BUILD_DIR" \
+@@ -121,7 +122,9 @@
+     -e GIT_CONFIG_KEY_0=safe.directory \
+     -e GIT_CONFIG_VALUE_0='*' \
+     -w "$REPO_ROOT" \
+-    "$IMAGE"
++    --entrypoint /usr/bin/nice \
++    "$IMAGE" \
++    -n 19 /usr/bin/ionice -c3 /usr/local/bin/dstack-mkosi-entrypoint
+ 
+ if [ "$ACTION" = repro-check ]; then
+     echo "reproducibility check passed; artifacts in $BUILD_DIR/a"

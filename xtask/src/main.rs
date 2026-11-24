@@ -131,7 +131,7 @@ struct VmImageArgs {
     /// Build parallelism passed to dstack's `repro-build.sh` (`JOBS`).
     #[arg(long, default_value_t = 4)]
     jobs: usize,
-    /// Run dstack `repro-check` (build twice and compare byte for byte).
+    /// Run two isolated builds into `<output>/a` and `<output>/b` and compare every flavor artifact byte for byte.
     #[arg(long)]
     check: bool,
 }

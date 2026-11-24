@@ -34,7 +34,7 @@ nice -n 19 ionice -c3 cargo xtask release vm-image \
 ```
 
 Options:
-- Add `--check` to build twice and verify byte-for-byte reproducibility (`repro-check`).
+- Add `--check` to run two isolated builds into `<output>/a` and `<output>/b` and verify byte-for-byte reproducibility across all requested flavors (promotes run `a` to `<output>/out` and records `"reproducible": true` in `vm-image-manifest.json`).
 - Pass `--dstack-repo <path>` to clone from a local dstack mirror instead of GitHub.
 - Pass `--runtime-libs-dir <dir>` for offline builds; by default `xtask` builds the `toolchain` target of `Dockerfile.project-toolchain` with `--load`, extracts the three pinned LLVM 18 runtime libraries (`libc++.so.1`, `libc++abi.so.1`, `libunwind.so.1`), and verifies their SHA-256 digests.
 - Pass `--toolchain-image <tag>`, `--mkosi-image <tag>`, and `--cpuset-cpus <set>` (e.g. `0-3`) when sharing a Docker daemon or isolated `BUILDX_BUILDER` worker.
