@@ -24,3 +24,8 @@ note: required because `handle` is used within this closure
   |                 ^^^^^^
 note: required by a bound in `spawn`
  --> $RUST/std/src/thread/functions.rs
+  |
+  | pub fn spawn<F, T>(f: F) -> JoinHandle<T>
+...
+  |     F: Send + 'static,
+  |        ^^^^ required by this bound in `spawn`
