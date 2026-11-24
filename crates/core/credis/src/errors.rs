@@ -28,16 +28,6 @@ pub enum CredisError {
     DateStep { kind: u8, date_key: u32 },
 }
 
-#[cfg(any(test, feature = "test-utils"))]
-pub(crate) fn date_step_error(
-    err: outbe_system_common::time::TimeError,
-) -> outbe_primitives::error::PrecompileError {
-    match err.date_step() {
-        Some((kind, date_key)) => CredisError::DateStep { kind, date_key }.into(),
-        None => outbe_primitives::error::PrecompileError::Fatal(err.to_string()),
-    }
-}
-
 fn revert_with<E: SolError>(error: E) -> PrecompileError {
     PrecompileError::RevertBytes(Bytes::from(error.abi_encode()))
 }

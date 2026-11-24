@@ -30,33 +30,34 @@ pub struct LiquidityReservation {
     pub gratis_minor: U256,
     #[attribute(order = 7)]
     pub snapshot_id: U256,
+    /// 24-hour COEN/`reference_currency` VWAP at the reservation hour (scale `1e6`).
     #[attribute(order = 8)]
     pub entry_price_minor: U256,
     #[attribute(order = 9)]
-    pub valuation_price_minor: U256,
-    #[attribute(order = 10)]
     pub policy_rate: U256,
-    #[attribute(order = 11)]
+    #[attribute(order = 10)]
     pub issuance_currency: u16,
-    #[attribute(order = 12)]
+    #[attribute(order = 11)]
     pub asset_decimals: u8,
-    #[attribute(order = 13)]
+    #[attribute(order = 12)]
     pub reference_currency: u16,
-    #[attribute(order = 14)]
-    pub call_anchor_price_minor: U256,
-    #[attribute(order = 15)]
+    #[attribute(order = 13)]
     pub source: Address,
-    #[attribute(order = 16)]
+    /// The reservation's UTC day in its currencies.
+    #[attribute(order = 14)]
     pub series_id: outbe_core_common::series_id::SeriesId,
-    #[attribute(order = 17)]
+    /// The reservation's UTC hour, 0-23.
+    #[attribute(order = 15)]
+    pub sub_series: u8,
+    #[attribute(order = 16)]
     pub call_start_day: u32,
-    #[attribute(order = 18)]
+    #[attribute(order = 17)]
     pub call_rate: u16,
-    #[attribute(order = 19)]
+    #[attribute(order = 18)]
     pub call_window_seconds: u32,
-    #[attribute(order = 20)]
+    #[attribute(order = 19)]
     pub call_threshold_seconds: u32,
-    #[attribute(order = 21)]
+    #[attribute(order = 20)]
     pub call_notice_period_seconds: u32,
 }
 
@@ -120,7 +121,7 @@ pub struct VaultRouterContract {
     #[attribute(order = 9)]
     pub reservation_nonce: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// roots 13-34: CCA stables reservations keyed by id. Each record field
+    /// roots 13-33: CCA stables reservations keyed by id. Each record field
     /// hashes its key with a separate root; these roots must not be reused.
     #[attribute(order = 10)]
     pub reservations: outbe_primitives::storage::dsl::Map<U256, LiquidityReservation>,
@@ -171,13 +172,13 @@ impl From<LiquidityReservation> for crate::precompile::IVaultRouter::LiquidityRe
             gratisMinor: r.gratis_minor,
             snapshotId: r.snapshot_id,
             entryPriceMinor: r.entry_price_minor,
-            valuationPriceMinor: r.valuation_price_minor,
             policyRate: r.policy_rate,
             issuanceCurrency: r.issuance_currency,
             assetDecimals: r.asset_decimals,
             referenceCurrency: r.reference_currency,
-            callAnchorPriceMinor: r.call_anchor_price_minor,
             source: r.source,
+            seriesId: r.series_id.into(),
+            subSeries: r.sub_series,
         }
     }
 }

@@ -146,7 +146,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         IVaultRouter::StablecoinTarget::Credis,
     )?;
     // Reserve before pledging. The code below funds the held assets through real ERC20 calls.
-    let closed_day = previous_date_key(timestamp_to_date_key(NOW)).expect("date step");
+    let reservation_day = timestamp_to_date_key(NOW);
     let call_terms = outbe_credis::config::read(&storage)?;
     router.reservations.create(&LiquidityReservation {
         id: U256::ONE,
@@ -159,15 +159,14 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         gratis_minor: U256::from(1_000_000),
         snapshot_id: U256::from(17),
         entry_price_minor: U256::from(2_000_000),
-        valuation_price_minor: U256::from(2_000_000),
         policy_rate: U256::from(43_000),
         issuance_currency: 840,
         asset_decimals: 6,
         reference_currency: 840,
-        call_anchor_price_minor: U256::from(2_000_000),
         source: OWNER,
-        series_id: outbe_core_common::series_id::SeriesId::for_pair(closed_day, 840, 840)
+        series_id: outbe_core_common::series_id::SeriesId::for_pair(reservation_day, 840, 840)
             .expect("series id"),
+        sub_series: outbe_credis::CredisContract::sub_series_of(NOW),
         call_start_day: outbe_system_common::time::first_full_day(NOW).expect("date step"),
         call_rate: call_terms.call_rate,
         call_window_seconds: call_terms.call_window_seconds,
@@ -346,7 +345,7 @@ fn issue_cca_payout(
     outbe_primitives::storage::SubCallOutput,
 )> {
     let issue = ICredisFactory::issueCredisCall {
-        reservationId: U256::ONE,
+        credisReservationId: U256::ONE,
     };
     let out = call!(
         evm,

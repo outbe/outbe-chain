@@ -205,9 +205,9 @@ fn layout_preserves_old_slots_and_appends_pending_maps() {
         );
         assert_eq!(router.reservation_nonce.slot(), U256::from(12));
         assert_eq!(router.reservations.base_slot(), U256::from(13));
-        assert_eq!(router.vault_assets.base_slot(), U256::from(35));
-        assert_eq!(router.vault_actions.base_slot(), U256::from(36));
-        assert_eq!(router.pending_vault_proposals.base_slot(), U256::from(39));
+        assert_eq!(router.vault_assets.base_slot(), U256::from(34));
+        assert_eq!(router.vault_actions.base_slot(), U256::from(35));
+        assert_eq!(router.pending_vault_proposals.base_slot(), U256::from(38));
         assert_eq!(
             storage.sload(VAULT_ROUTER_ADDRESS, U256::ZERO).unwrap(),
             U256::ZERO

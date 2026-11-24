@@ -81,12 +81,12 @@ pub fn issue_credis(
                 issuance_currency: r.issuance_currency,
                 reference_currency: r.reference_currency,
                 policy_rate: r.policy_rate,
-                principal_minor: r.amount_minor,
+                amount_minor: r.amount_minor,
                 entry_price_minor: r.entry_price_minor,
-                call_anchor_price_minor: r.call_anchor_price_minor,
                 gratis_minor: r.gratis_minor,
                 issued_at: now,
                 series_id: r.series_id,
+                sub_series: r.sub_series,
                 call_start_day: r.call_start_day,
                 call_rate: r.call_rate,
                 call_window_seconds: r.call_window_seconds,
@@ -111,13 +111,14 @@ pub fn issue_credis(
                 CREDIS_FACTORY_ADDRESS,
                 alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisSeriesOpened {
                     seriesId: opened.series_id.into(),
+                    subSeries: opened.sub_series,
                     issuanceCurrency: opened.issuance_currency,
                     referenceCurrency: opened.reference_currency,
+                    entryPriceMinor: opened.entry_price_minor,
                     callPriceMinor: opened.call_price_minor,
                     callWindow: u64::from(opened.call_window_seconds),
                     callThreshold: u64::from(opened.call_threshold_seconds),
                     callNoticePeriod: u64::from(opened.call_notice_period_seconds),
-                    policyRate: opened.policy_rate,
                 }),
             )?;
         }
@@ -131,15 +132,16 @@ pub fn issue_credis(
                 referenceCurrency: opened.reference_currency,
                 cca: caller,
                 asset: r.asset,
-                principalMinor: r.amount_minor,
+                amountMinor: r.amount_minor,
                 gratisMinor: r.gratis_minor,
+                policyRate: opened.policy_rate,
             }),
         )?;
         Ok((id, r.amount_minor))
     })
 }
 
-/// What paying `credis_id` off now takes: outstanding principal plus accrued interest.
+/// What paying `credis_id` off now takes: outstanding amount plus accrued fee.
 /// Zero once it is Settled or Forfeited.
 pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<U256> {
     let record = CredisContract::new(storage.clone()).get_credis(credis_id)?;
@@ -147,8 +149,8 @@ pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<
     match effective_state(&record, now)? {
         CredisState::Settled | CredisState::Forfeited => Ok(U256::ZERO),
         CredisState::Issued | CredisState::Called => record
-            .outstanding_principal_minor
-            .checked_add(CredisContract::accrued_interest(&record, now)?)
+            .outstanding_amount_minor
+            .checked_add(CredisContract::accrued_fee(&record, now)?)
             .ok_or_else(|| CredisFactoryError::PayoffOverflow.into()),
     }
 }
@@ -174,7 +176,7 @@ pub fn settle_credis(
             .outstanding_gratis_minor
             .checked_sub(after.outstanding_gratis_minor)
             .ok_or(CredisFactoryError::CollateralIncreased)?;
-        if released != repayment.gratis_released_minor {
+        if released != repayment.unpledged_gratis_minor {
             return Err(CredisFactoryError::CollateralReleaseMismatch.into());
         }
         outbe_vaultrouter::settlement::collect(
@@ -189,14 +191,11 @@ pub fn settle_credis(
         if !released.is_zero() {
             pledges::release_from_credis(&storage, credis_id, released)?;
         }
-        Ok((
-            repayment.principal_settled_minor,
-            repayment.interest_settled_minor,
-        ))
+        Ok((repayment.settled_amount_minor, repayment.settled_fee_minor))
     })
 }
 
-/// Deletes a Credis of a forfeited series.
+/// Deletes a Credis of a forfeited group.
 pub(crate) fn delete_forfeited_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
     burn_forfeited_collateral(storage, credis_id, |_, _| Ok(()))?;
     Ok(())
@@ -224,7 +223,7 @@ fn burn_forfeited_collateral(
         let mut credis = CredisContract::new(storage.clone());
         let before = credis.get_credis(credis_id)?;
         validate(&credis, &before)?;
-        if before.outstanding_principal_minor.is_zero() {
+        if before.outstanding_amount_minor.is_zero() {
             return Err(CredisFactoryError::NothingOutstanding.into());
         }
         let pledged = before.outstanding_gratis_minor;

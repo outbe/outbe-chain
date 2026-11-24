@@ -5,7 +5,7 @@
 //! and later blocks' slices through `slice`, against a seeded finalized daily
 //! series. This series is the only price source the production trigger reads.
 
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 
 use outbe_credis::constants::{CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS};
 use outbe_credis::{CallBins, CredisContract, CredisState};
@@ -35,14 +35,11 @@ fn is_deleted(storage: &StorageHandle<'_>, credis_id: U256) -> bool {
         .unwrap()
 }
 
-fn group_of(
-    storage: &StorageHandle<'_>,
-    credis_id: U256,
-) -> outbe_core_common::series_id::SeriesId {
-    CredisContract::new(storage.clone())
-        .get_credis(credis_id)
+fn group_of(storage: &StorageHandle<'_>, credis_id: U256) -> B256 {
+    let credis = CredisContract::new(storage.clone());
+    credis
+        .group_of(&credis.get_credis(credis_id).unwrap())
         .unwrap()
-        .series_id
 }
 
 /// The `n`th closed day back from the one closed at `at` (0 = the newest).
@@ -64,7 +61,7 @@ fn open_with_series(storage: &StorageHandle<'_>, at: u64, days: u32, price: U256
     credis_id
 }
 
-/// Rewrites the call terms sealed on a Credis's series, the way a switched profile
+/// Rewrites the call terms sealed on a Credis's group, the way a switched profile
 /// would have if the terms were still read live. Widens the currency's
 /// high-water mark alongside, exactly as `issue` does.
 fn reterm(
@@ -79,15 +76,15 @@ fn reterm(
     let window = window_days * SECONDS_PER_DAY_U32;
     let threshold = threshold_days * SECONDS_PER_DAY_U32;
     credis
-        .series_call_window_seconds
+        .group_call_window_seconds
         .write(&group, window)
         .unwrap();
     credis
-        .series_call_threshold_seconds
+        .group_call_threshold_seconds
         .write(&group, threshold)
         .unwrap();
     credis
-        .series_call_notice_period_seconds
+        .group_call_notice_period_seconds
         .write(&group, notice_days * SECONDS_PER_DAY_U32)
         .unwrap();
     outbe_system_common::call_breach::widen_scan_terms(
@@ -606,17 +603,17 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
         let at = CREATED_AT + AFTER_WINDOW;
         let credis_id = open(&storage, 1);
 
-        // Re-point the Credis's series at an unregistered currency, so it prices off a
+        // Re-point the Credis's group at an unregistered currency, so it prices off a
         // series that does not exist, and index it there.
         {
             use outbe_system_common::call_bins;
             let credis = CredisContract::new(storage.clone());
             let record = credis.get_credis(credis_id).unwrap();
-            let group = record.series_id;
+            let group = credis.group_of(&record).unwrap();
             let bin = call_bins::price_to_bin(record.call_price_minor).unwrap();
             call_bins::remove(&CallBins(&credis, REFERENCE_ISO), group).unwrap();
             call_bins::insert(&CallBins(&credis, UNPRICED_ISO), group, bin).unwrap();
-            credis.series_currency.write(&group, UNPRICED_ISO).unwrap();
+            credis.group_currency.write(&group, UNPRICED_ISO).unwrap();
         }
 
         // The seeded reference series is a full breach window, but this Credis is
@@ -713,7 +710,7 @@ fn open_on_fixture_anchor(storage: &StorageHandle<'_>, owner: Address, nonce: u6
     let reservation_id = seed_reservation(storage, owner, owner, pledge_stables());
     let router = outbe_vaultrouter::VaultRouterContract::new(storage.clone());
     let mut reservation = router.reservations.get(reservation_id).unwrap().unwrap();
-    reservation.call_anchor_price_minor = oracle_rate();
+    reservation.entry_price_minor = oracle_rate();
     reservation.series_id = outbe_core_common::series_id::SeriesId::for_pair(
         last_closed_day(now_of(storage)),
         ISSUANCE_ISO,
@@ -737,9 +734,9 @@ fn cursor_of(storage: &StorageHandle<'_>) -> u32 {
     outbe_system_common::call_bins::unpack_cursor(packed).1
 }
 
-fn is_indexed(storage: &StorageHandle<'_>, group: outbe_core_common::series_id::SeriesId) -> bool {
+fn is_indexed(storage: &StorageHandle<'_>, group: B256) -> bool {
     CredisContract::new(storage.clone())
-        .call_series_slot
+        .call_group_slot
         .read(&group)
         .unwrap()
         != 0
@@ -1004,19 +1001,16 @@ fn call_by_hand(storage: &StorageHandle<'_>, ids: &[U256], called_at: u64) {
     }
 }
 
-fn queued_at(storage: &StorageHandle<'_>, group: outbe_core_common::series_id::SeriesId) -> u64 {
+fn queued_at(storage: &StorageHandle<'_>, group: B256) -> u64 {
     CredisContract::new(storage.clone())
-        .called_series_slot
+        .called_group_slot
         .read(&group)
         .unwrap()
 }
 
-fn cleanup_queued_at(
-    storage: &StorageHandle<'_>,
-    group: outbe_core_common::series_id::SeriesId,
-) -> u64 {
+fn cleanup_queued_at(storage: &StorageHandle<'_>, group: B256) -> u64 {
     CredisContract::new(storage.clone())
-        .cleanup_series_slot
+        .cleanup_group_slot
         .read(&group)
         .unwrap()
 }
@@ -1104,7 +1098,7 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
         let outstanding = CredisContract::new(storage.clone())
             .get_credis(credis_id)
             .unwrap()
-            .outstanding_principal_minor;
+            .outstanding_amount_minor;
         (credis_id, outstanding)
     });
     settle_principal(&mut storage, alice(), credis_id, outstanding);
@@ -1313,7 +1307,7 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
         assert_eq!(credis.call_sweep_day.read().unwrap(), day);
         assert_eq!(
             credis
-                .series_member_count(group_of(&storage, ids[0]))
+                .group_member_count(group_of(&storage, ids[0]))
                 .unwrap(),
             2
         );
@@ -1369,7 +1363,7 @@ fn forfeit_block(
 #[test]
 fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
     use alloy_sol_types::SolEvent;
-    use outbe_system_common::addresses::{CREDIS_ADDRESS, GRATIS_ADDRESS};
+    use outbe_system_common::addresses::{CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_ADDRESS};
 
     let lapsed = CREATED_AT + NOTICE + CLOSED_DAY_DELAY;
     let expected = pledge_cost() * U256::from(3u64);
@@ -1380,7 +1374,13 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
     };
 
     let (mut clean, ids) = lapsed_group_of_three();
-    let group = StorageHandle::enter(&mut clean, |storage| group_of(&storage, ids[0]));
+    let (group, series) = StorageHandle::enter(&mut clean, |storage| {
+        let series = CredisContract::new(storage.clone())
+            .get_credis(ids[0])
+            .unwrap()
+            .series_id;
+        (group_of(&storage, ids[0]), series)
+    });
     clean.fail_after_mutation_at(usize::MAX);
     StorageHandle::enter(&mut clean, |storage| {
         assert_eq!(forfeit_block(&storage, lapsed).unwrap(), 1);
@@ -1400,10 +1400,11 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
     });
     let count = |provider: &outbe_primitives::storage::hashmap::HashMapStorageProvider| {
         let credis = provider.get_events(CREDIS_ADDRESS);
-        let groups = credis
+        let groups = provider
+            .get_events(CREDIS_FACTORY_ADDRESS)
             .iter()
             .filter_map(|log| {
-                outbe_credis::precompile::ICredis::CredisSeriesClosed::decode_log_data(log).ok()
+                crate::precompile::ICredisFactory::CredisSeriesClosed::decode_log_data(log).ok()
             })
             .map(|event| {
                 (
@@ -1451,7 +1452,13 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
     assert_eq!(
         count(&clean),
         (
-            vec![(group.into(), ISSUANCE_ISO, REFERENCE_ISO, 3, expected)],
+            vec![(
+                series.into(),
+                ISSUANCE_ISO,
+                REFERENCE_ISO,
+                3,
+                pledge_stables() * U256::from(3u64),
+            )],
             3,
             3,
             3,
@@ -1488,8 +1495,8 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
                     .is_ok_and(|ev| ev.to == Address::ZERO)
             {
                 Some("BurnTransfer")
-            } else if addr == CREDIS_ADDRESS
-                && outbe_credis::precompile::ICredis::CredisSeriesClosed::decode_log_data(data)
+            } else if addr == CREDIS_FACTORY_ADDRESS
+                && crate::precompile::ICredisFactory::CredisSeriesClosed::decode_log_data(data)
                     .is_ok()
             {
                 Some("CredisSeriesClosed")
@@ -1521,7 +1528,7 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
         let credis = CredisContract::new(storage.clone());
         assert!(ids.iter().all(|id| is_deleted(&storage, *id)));
         assert_eq!(credis.credis_count_of(alice()).unwrap(), 0);
-        assert_eq!(credis.series_member_count(group).unwrap(), 0);
+        assert_eq!(credis.group_member_count(group).unwrap(), 0);
         assert_eq!(queued_at(&storage, group), 0);
         assert_eq!(cleanup_queued_at(&storage, group), 0);
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
@@ -1603,5 +1610,200 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
     });
     assert_eq!(count(&next_day_provider), count(&clean));
 
+    teardown();
+}
+
+#[test]
+fn credis_call_runs_on_call_groups() {
+    use crate::precompile::ICredisFactory::CredisSeriesCalled;
+
+    let mut provider = env();
+    let at = CREATED_AT + AFTER_WINDOW;
+    let series = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        bootstrap_for(&storage, bob(), pledge_cost());
+        let first = open_at(
+            &storage,
+            alice(),
+            1,
+            Placement::hour(&storage, 3, oracle_rate()),
+        );
+        let second = open_at(
+            &storage,
+            bob(),
+            1,
+            Placement::hour(&storage, 9, oracle_rate()),
+        );
+        assert_eq!(group_of(&storage, first), group_of(&storage, second));
+
+        advance_to(&storage, at);
+        fill_days(
+            &storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(&storage, at), 1);
+
+        let credis = CredisContract::new(storage.clone());
+        let records = [first, second].map(|id| credis.get_credis(id).unwrap());
+        for (id, record) in [first, second].iter().zip(&records) {
+            assert_eq!(state_of(&storage, *id), CredisState::Called);
+            assert_eq!(record.called_at, at);
+            assert_eq!(outbe_credis::settlement_deadline(record), at + NOTICE);
+        }
+        assert_eq!(records[0].series_id, records[1].series_id);
+        records[0].series_id
+    });
+
+    let called = factory_events::<CredisSeriesCalled>(&provider);
+    assert_eq!(
+        called.iter().map(|ev| ev.subSeries).collect::<Vec<_>>(),
+        vec![3, 9]
+    );
+    for ev in &called {
+        assert_eq!(ev.seriesId, alloy_primitives::FixedBytes::from(series));
+        assert_eq!(ev.issuanceCurrency, ISSUANCE_ISO);
+        assert_eq!(ev.referenceCurrency, REFERENCE_ISO);
+        assert_eq!(ev.calledAt, at);
+        assert_eq!(ev.settlementDeadline, at + NOTICE);
+    }
+    teardown();
+}
+
+#[test]
+fn sub_series_with_the_same_call_terms_are_in_one_call_group() {
+    use crate::precompile::ICredisFactory::CredisSeriesCalled;
+    const GBP: u16 = 826;
+
+    let gbp_asset = Address::repeat_byte(0x99);
+    let mut provider = env();
+    stub_asset(&mut provider, gbp_asset, GBP);
+    let at = CREATED_AT + AFTER_WINDOW;
+    let (usd_series, gbp_series) = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        bootstrap_for(&storage, bob(), pledge_cost());
+        let usd = Placement::hour(&storage, 3, oracle_rate());
+        let gbp = Placement {
+            day: previous_date_key(usd.day).unwrap(),
+            issuance_currency: GBP,
+            asset: gbp_asset,
+            hour: 5,
+            ..usd
+        };
+        let in_usd = open_at(&storage, alice(), 1, usd);
+        let in_gbp = open_at(&storage, bob(), 1, gbp);
+
+        let credis = CredisContract::new(storage.clone());
+        let (usd_record, gbp_record) = (
+            credis.get_credis(in_usd).unwrap(),
+            credis.get_credis(in_gbp).unwrap(),
+        );
+        assert_eq!(gbp_record.issuance_currency, GBP);
+        assert_ne!(usd_record.series_id, gbp_record.series_id);
+        assert_eq!(
+            credis.group_of(&usd_record).unwrap(),
+            credis.group_of(&gbp_record).unwrap()
+        );
+
+        advance_to(&storage, at);
+        fill_days(
+            &storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(&storage, at), 1);
+        for id in [in_usd, in_gbp] {
+            assert_eq!(state_of(&storage, id), CredisState::Called);
+            assert_eq!(credis.get_credis(id).unwrap().called_at, at);
+        }
+        (usd_record.series_id, gbp_record.series_id)
+    });
+
+    let called = factory_events::<CredisSeriesCalled>(&provider);
+    assert_eq!(
+        called
+            .iter()
+            .map(|ev| (ev.seriesId, ev.subSeries, ev.issuanceCurrency))
+            .collect::<Vec<_>>(),
+        vec![
+            (usd_series.into(), 3, ISSUANCE_ISO),
+            (gbp_series.into(), 5, GBP)
+        ]
+    );
+    assert!(called
+        .iter()
+        .all(|ev| ev.calledAt == at && ev.settlementDeadline == at + NOTICE));
+    teardown();
+}
+
+#[test]
+fn sub_series_that_was_not_called_does_not_forfeit() {
+    use crate::precompile::ICredisFactory::{CredisSeriesCalled, CredisSeriesClosed};
+
+    let mut provider = env();
+    let at = CREATED_AT + AFTER_WINDOW;
+    let half = pledge_stables() / U256::from(2u64);
+    let (unsettled, settled, uncalled, series) = StorageHandle::enter(&mut provider, |storage| {
+        for owner in [alice(), bob(), cca()] {
+            bootstrap_for(&storage, owner, pledge_cost());
+        }
+        let low = Placement::hour(&storage, 1, oracle_rate());
+        let high = Placement::hour(
+            &storage,
+            2,
+            oracle_rate() + oracle_rate() / U256::from(2u64),
+        );
+        let unsettled = open_at(&storage, alice(), 1, low);
+        let settled = open_at(&storage, bob(), 1, low);
+        let uncalled = open_at(&storage, cca(), 1, high);
+        assert_ne!(group_of(&storage, unsettled), group_of(&storage, uncalled));
+
+        advance_to(&storage, at);
+        fill_days(
+            &storage,
+            last_closed_day(at),
+            CALL_LOOKBACK_DAYS,
+            above_call(),
+        );
+        assert_eq!(scan(&storage, at), 1);
+        assert_eq!(state_of(&storage, unsettled), CredisState::Called);
+        assert_eq!(state_of(&storage, uncalled), CredisState::Issued);
+        let series = CredisContract::new(storage.clone())
+            .get_credis(uncalled)
+            .unwrap()
+            .series_id;
+        (unsettled, settled, uncalled, series)
+    });
+    settle_principal(&mut provider, alice(), unsettled, half);
+    settle_principal(&mut provider, bob(), settled, pledge_stables());
+
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(lapse(&storage, unsettled), 1);
+        assert!(is_deleted(&storage, unsettled));
+        let credis = CredisContract::new(storage.clone());
+        assert!(credis.get_credis(settled).unwrap().is_settled());
+        let record = credis.get_credis(uncalled).unwrap();
+        assert_eq!(state_of(&storage, uncalled), CredisState::Issued);
+        assert_eq!(record.called_at, 0);
+        assert_eq!(record.outstanding_amount_minor, pledge_stables());
+        assert_eq!(view_pledged(&storage, cca()), pledge_cost());
+    });
+
+    let called = factory_events::<CredisSeriesCalled>(&provider);
+    assert_eq!(
+        called.iter().map(|ev| ev.subSeries).collect::<Vec<_>>(),
+        vec![1]
+    );
+    let closed = factory_events::<CredisSeriesClosed>(&provider);
+    assert_eq!(closed.len(), 1);
+    assert_eq!(
+        closed[0].seriesId,
+        alloy_primitives::FixedBytes::from(series)
+    );
+    assert_eq!(closed[0].subSeries, 1);
+    assert_eq!(closed[0].forfeitedCount, 1);
+    assert_eq!(closed[0].forfeitedAmountMinor, half);
     teardown();
 }

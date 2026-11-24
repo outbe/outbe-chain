@@ -16,7 +16,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "forfeitedPrincipalMinor",
+        "name": "forfeitedAmountMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -89,7 +89,7 @@
     "name": "issueCredis",
     "inputs": [
       {
-        "name": "reservationId",
+        "name": "credisReservationId",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -101,7 +101,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "principalMinor",
+        "name": "amountMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -144,12 +144,12 @@
     ],
     "outputs": [
       {
-        "name": "principalSettledMinor",
+        "name": "settledAmountMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "interestSettledMinor",
+        "name": "settledFeeMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -222,13 +222,105 @@
         "internalType": "address"
       },
       {
-        "name": "principalMinor",
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
         "name": "gratisMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "policyRate",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CredisSeriesCalled",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
+      },
+      {
+        "name": "subSeries",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "calledAt",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      },
+      {
+        "name": "settlementDeadline",
+        "type": "uint64",
+        "indexed": false,
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CredisSeriesClosed",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
+      },
+      {
+        "name": "subSeries",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "forfeitedCount",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "forfeitedAmountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -247,6 +339,12 @@
         "internalType": "bytes14"
       },
       {
+        "name": "subSeries",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
         "name": "issuanceCurrency",
         "type": "uint16",
         "indexed": false,
@@ -257,6 +355,12 @@
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      },
+      {
+        "name": "entryPriceMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       },
       {
         "name": "callPriceMinor",
@@ -281,12 +385,6 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
-      },
-      {
-        "name": "policyRate",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -332,13 +430,13 @@
         "internalType": "uint256"
       },
       {
-        "name": "interestSettledMinor",
+        "name": "settledFeeMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
       },
       {
-        "name": "principalSettledMinor",
+        "name": "settledAmountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -453,7 +551,7 @@
   },
   {
     "type": "error",
-    "name": "PaymentBelowAccruedInterest",
+    "name": "PaymentBelowAccruedFee",
     "inputs": []
   },
   {
