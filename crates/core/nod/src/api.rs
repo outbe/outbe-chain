@@ -98,7 +98,7 @@ pub fn issue_at_offer(
 
 /// Adds the load, or with `nominal` the nominal, of `nod` to the day sum `previous`
 /// of `scope`.
-pub fn add_to_day_sum(
+pub fn add_to_worldwide_day_sum(
     storage: &StorageHandle<'_>,
     scope: B256,
     previous: Option<outbe_core_common::nod_encryption::EncryptedNodGroupLoadV1>,

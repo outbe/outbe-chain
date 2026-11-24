@@ -43,7 +43,8 @@ fn record_worldwide_day_nod(storage: &StorageHandle<'_>, owner: Address, nominal
     let sum = |scope, previous: &[u8], nominal| {
         let previous = decode_worldwide_day_sum(previous).unwrap();
         let record =
-            outbe_nod::api::add_to_day_sum(storage, scope, previous, (&nod, nominal)).unwrap();
+            outbe_nod::api::add_to_worldwide_day_sum(storage, scope, previous, (&nod, nominal))
+                .unwrap();
         encode_worldwide_day_sum(&record).unwrap()
     };
     let nominal_sum = sum(

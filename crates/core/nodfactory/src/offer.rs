@@ -329,13 +329,13 @@ fn record_worldwide_day_nod(
         decode_worldwide_day_sum, encode_worldwide_day_sum, worldwide_day_load_scope,
         worldwide_day_nominal_scope,
     };
-    let nominal = nod_api::add_to_day_sum(
+    let nominal = nod_api::add_to_worldwide_day_sum(
         storage,
         worldwide_day_nominal_scope(wwd),
         decode_worldwide_day_sum(&totals.encrypted_nominal)?,
         (nod, true),
     )?;
-    let load = nod_api::add_to_day_sum(
+    let load = nod_api::add_to_worldwide_day_sum(
         storage,
         worldwide_day_load_scope(wwd),
         decode_worldwide_day_sum(&totals.encrypted_load)?,

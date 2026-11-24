@@ -167,7 +167,7 @@ fn resident_error_message(error: &outbe_tee::resident::TeeCryptoError) -> &'stat
     }
 }
 
-/// Hex decoder failure for a `offer_draft_id`.
+/// Hex decoder failure for an `offer_draft_id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum DraftIdHexError {
     /// A character was not a hex digit.

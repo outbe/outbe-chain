@@ -526,7 +526,7 @@ pub async fn read_finalized_registry_view_v1<R: RegistryRpc + Sync>(
     } else {
         None
     };
-    // `ITeeRegistryV1.offerPublicKey()` (selector `0x1b640a92`) is the
+    // `ITeeRegistryV1.offerPublicKey()` is the
     // canonical V1 Solidity ABI getter for the threshold network encryption key.
     let key_bytes = rpc
         .call_at(

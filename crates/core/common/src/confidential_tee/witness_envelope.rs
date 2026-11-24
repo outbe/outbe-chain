@@ -126,7 +126,7 @@ pub enum WitnessTagError {
         /// Observed tag byte.
         tag: u8,
     },
-    /// Tag is `0`, `3`, or `6`.
+    /// Tag is one of [`NON_RECORDABLE_V1_TAGS`].
     #[error("witness response tag {tag} is not recordable")]
     NonRecordable {
         /// Observed tag byte.
