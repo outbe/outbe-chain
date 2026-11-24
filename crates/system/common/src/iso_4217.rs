@@ -19,6 +19,7 @@ pub const ISO_4217_NUMERIC_CODES: &[u16] = &[
 
 /// Alpha-3 codes positionally aligned with [`ISO_4217_NUMERIC_CODES`], from the
 /// same pinned snapshot.
+#[rustfmt::skip]
 pub const ISO_4217_ALPHA: &[[u8; 3]] = &[
     *b"ALL", *b"DZD", *b"ARS", *b"AUD", *b"BSD", *b"BHD", *b"BDT", *b"AMD", *b"BBD", *b"BMD",
     *b"BTN", *b"BOB", *b"BWP", *b"BZD", *b"SBD", *b"BND", *b"MMK", *b"BIF", *b"KHR", *b"CAD",

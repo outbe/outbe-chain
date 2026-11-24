@@ -221,4 +221,17 @@ markets = [{ provider = "binance" }]
         config.validate().unwrap();
         assert_eq!(config.currency_pairs.len(), 6);
     }
+
+    #[test]
+    fn the_devnet_pairs_file_builds_a_valid_config() {
+        let path = format!(
+            "{}/../outbe-genesis-cli/profiles/devnet/pairs.toml",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let text = std::fs::read_to_string(&path).unwrap();
+        let config =
+            FeederConfig::build(toml::from_str(CHAIN_LOCAL).unwrap(), Some(&text)).unwrap();
+        config.validate().unwrap();
+        assert_eq!(config.currency_pairs.len(), 1);
+    }
 }

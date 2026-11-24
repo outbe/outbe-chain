@@ -10,7 +10,7 @@ use crate::{
     validator::rpc::ConsensusStatus,
 };
 
-use super::remote::{NetworkBuild, SshOptions};
+use super::remote::{NetworkArtifacts, SshOptions};
 
 #[derive(Clone, Debug)]
 pub(super) struct FounderStatus {
@@ -19,6 +19,7 @@ pub(super) struct FounderStatus {
     pub(super) validator: String,
     pub(super) radicle: String,
     pub(super) feeder: String,
+    pub(super) feeder_healthy: Option<bool>,
     pub(super) hyperlane: String,
     pub(super) hyperlane_healthy: Option<bool>,
     pub(super) hyperlane_controller: Option<String>,
@@ -43,7 +44,7 @@ struct RpcResponse {
 pub async fn show(artifacts: &Path, ssh_key: Option<&Path>, watch: bool) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("querying founding validator status");
-    let build = NetworkBuild::load(artifacts)?;
+    let build = NetworkArtifacts::load(artifacts)?;
     let ssh = SshOptions::new(ssh_key)?;
     let statuses = query_all(&build, &ssh).await?;
     if !watch {
@@ -73,7 +74,7 @@ pub async fn show(artifacts: &Path, ssh_key: Option<&Path>, watch: bool) -> Resu
 }
 
 pub(super) async fn query_all(
-    build: &NetworkBuild,
+    build: &NetworkArtifacts,
     ssh: &SshOptions,
 ) -> Result<Vec<FounderStatus>> {
     let mut tasks = JoinSet::new();
@@ -108,6 +109,7 @@ pub(super) fn ready_for_hyperlane_setup(
     peers: usize,
 ) -> bool {
     let services_ready = status.services().into_iter().all(|state| state == "active");
+    let feeder_ready = status.feeder_healthy == Some(true);
     let chain_matches = status.chain_id == Some(chain_id);
     let finality_ready = status.finalized.is_some_and(|height| height > 0);
     let execution_ready = status
@@ -122,6 +124,7 @@ pub(super) fn ready_for_hyperlane_setup(
     [
         status.error.is_none(),
         services_ready,
+        feeder_ready,
         chain_matches,
         finality_ready,
         execution_ready,
@@ -131,7 +134,7 @@ pub(super) fn ready_for_hyperlane_setup(
     .all(|ready| ready)
 }
 
-pub(super) fn render(build: &NetworkBuild, statuses: &[FounderStatus]) -> String {
+pub(super) fn render(build: &NetworkArtifacts, statuses: &[FounderStatus]) -> String {
     let required_peers = build.config.founders.len().saturating_sub(1);
     let healthy_count = statuses
         .iter()
@@ -175,7 +178,7 @@ pub(super) fn render(build: &NetworkBuild, statuses: &[FounderStatus]) -> String
                 short(&status.target),
                 short(&status.validator),
                 short(&status.radicle),
-                short(&status.feeder),
+                short_health(&status.feeder, status.feeder_healthy),
                 short(&status.hyperlane)
             ),
             format!(
@@ -205,6 +208,7 @@ fn query_one(ssh: &SshOptions, founder: &super::config::Founder) -> FounderStatu
             validator: "unknown".into(),
             radicle: "unknown".into(),
             feeder: "unknown".into(),
+            feeder_healthy: None,
             hyperlane: "unknown".into(),
             hyperlane_healthy: None,
             hyperlane_controller: None,
@@ -225,7 +229,7 @@ fn query_one_inner(ssh: &SshOptions, founder: &super::config::Founder) -> Result
         )
     };
     let command = format!(
-        "printf '%s\\n' \"$(systemctl is-active outbe-validator.target 2>/dev/null || true)\" \"$(systemctl is-active outbe-validator.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-radicle.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-feeder.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-hyperlane-validator.service 2>/dev/null || true)\"; (curl -fsS --max-time 3 http://127.0.0.1:9003/status || true) | tr -d '\\n'; printf '\\n'; {}; {}; {}; {}",
+        "printf '%s\\n' \"$(systemctl is-active outbe-validator.target 2>/dev/null || true)\" \"$(systemctl is-active outbe-validator.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-radicle.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-feeder.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-hyperlane-validator.service 2>/dev/null || true)\"; (curl -fsS --max-time 3 http://127.0.0.1:9002/status || true) | tr -d '\\n'; printf '\\n'; (curl -fsS --max-time 3 http://127.0.0.1:9003/status || true) | tr -d '\\n'; printf '\\n'; {}; {}; {}; {}",
         request("eth_chainId", "[]", 1),
         request("eth_getBlockByNumber", "[\"finalized\",false]", 2),
         request("net_peerCount", "[]", 3),
@@ -242,6 +246,10 @@ fn parse_status(name: &str, output: &str) -> FounderStatus {
     let radicle = lines.next().unwrap_or("unknown").to_owned();
     let feeder = lines.next().unwrap_or("unknown").to_owned();
     let hyperlane = lines.next().unwrap_or("unknown").to_owned();
+    let feeder_healthy = lines
+        .next()
+        .and_then(|line| serde_json::from_str::<Value>(line).ok())
+        .and_then(|value| value.get("healthy").and_then(Value::as_bool));
     let hyperlane_status = lines
         .next()
         .and_then(|line| serde_json::from_str::<Value>(line).ok());
@@ -265,6 +273,7 @@ fn parse_status(name: &str, output: &str) -> FounderStatus {
         validator,
         radicle,
         feeder,
+        feeder_healthy,
         hyperlane,
         hyperlane_healthy,
         hyperlane_controller,
@@ -299,6 +308,17 @@ fn short(state: &str) -> &str {
     }
 }
 
+fn short_health(state: &str, healthy: Option<bool>) -> &str {
+    if state != "active" {
+        return short(state);
+    }
+    match healthy {
+        Some(true) => "ok",
+        Some(false) => "bad",
+        None => "?",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,6 +330,7 @@ active
 active
 active
 active
+{"healthy":true}
 {"healthy":true,"controller":"waiting-for-controller"}
 {"result":"0x2a"}
 {"result":{"number":"0x1"}}
@@ -327,9 +348,9 @@ active
         status.finalized = Some(0);
         assert!(!healthy(&status, 42, 3));
         status.finalized = Some(1);
-        status.feeder = "activating".into();
+        status.feeder_healthy = Some(false);
         assert!(!healthy(&status, 42, 3));
-        status.feeder = "active".into();
+        status.feeder_healthy = Some(true);
         let consensus = status.consensus.as_mut().unwrap();
         consensus.enclave.offer_key_ready = false;
         assert!(!healthy(&status, 42, 3));

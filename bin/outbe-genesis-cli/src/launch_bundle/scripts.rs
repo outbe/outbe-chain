@@ -241,7 +241,9 @@ pub fn feeder_config(
         .get("price_provider")
         .and_then(Value::as_str)
         .unwrap_or("mock_http");
-    let mut api_provider = if price_provider == "mock_http" {
+    let mut api_provider = if price_provider == "mock" {
+        String::new()
+    } else if price_provider == "mock_http" {
         let rest = config
             .get("price_feed_rest")
             .and_then(Value::as_str)
@@ -308,8 +310,8 @@ bind_address = \"127.0.0.1:{feeder_health_port}\"\n\
 \n\
 # The feeder only accepts provider names from its built-in list (mock, pyth,\n\
 # chainlink, binance, kraken, okx, gate, huobi, mexc, coinbase, mock_http); an\n\
-# invented name is rejected at startup. `mock_http` uses the configured REST\n\
-# endpoint; exchange providers use live WebSocket market streams.\n\
+# invented name is rejected at startup. `mock` is self-contained, `mock_http`\n\
+# uses the configured REST endpoint and exchange providers use live streams.\n\
 {api_provider}\n"
     ))
 }

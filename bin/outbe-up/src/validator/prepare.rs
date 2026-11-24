@@ -12,7 +12,7 @@ use crate::{
         journal::{self, Journal},
         path_text,
         rpc::RpcClient,
-        validator_address,
+        validator_address, FEEDER_FUNDING_WEI,
     },
 };
 
@@ -145,7 +145,10 @@ fn print_summary(
     certified_rpc: &str,
     hyperlane_funding: U256,
 ) {
-    let funding = minimum_stake + hyperlane_funding + U256::from(1_000_000_000_000_000_000_u64);
+    let funding = minimum_stake
+        + hyperlane_funding
+        + U256::from(FEEDER_FUNDING_WEI)
+        + U256::from(1_000_000_000_000_000_000_u64);
     println!();
     println!("Validator files:");
     println!("  address:          {validator:#x}");
