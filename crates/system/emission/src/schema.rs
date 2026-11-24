@@ -157,15 +157,15 @@ mod tests {
     };
 
     #[test]
-    fn emission_days_map_base_is_slot_zero_and_occupies_six_slots() {
+    fn emission_days_map_base_is_slot_zero_and_occupies_five_slots() {
         let mut provider = HashMapStorageProvider::new(1);
         let contract = EmissionContract::new(StorageHandle::new(&mut provider));
         assert_eq!(contract.emission_days.base_slot(), U256::from(0));
-        assert_eq!(EmissionDay::SLOTS, 6);
+        assert_eq!(EmissionDay::SLOTS, 5);
     }
 
     #[test]
-    fn emission_day_six_slot_packed_layout_round_trips_and_supports_empty_days() {
+    fn emission_day_five_slot_packed_layout_round_trips_and_supports_empty_days() {
         let mut provider = HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
         let contract = EmissionContract::new(storage.clone());
