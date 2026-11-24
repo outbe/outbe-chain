@@ -13,7 +13,10 @@ use crate::targets::{self, pack_target, TargetMode};
 fn register(s: &StorageHandle<'_>, chains: &[(u32, TargetMode)]) {
     let factory = IntexFactoryContract::new(s.clone());
     for &(chain, mode) in chains {
-        factory.target_chains.push(pack_target(chain, mode)).unwrap();
+        factory
+            .target_chains
+            .push(pack_target(chain, mode))
+            .unwrap();
     }
 }
 
@@ -111,7 +114,13 @@ fn a_sent_call_notice_emits_one_event_for_each_series() {
         .get_events(INTEX_FACTORY_ADDRESS)
         .iter()
         .filter_map(|log| IIntexFactory::IntexSeriesCallNoticeSent::decode_log_data(log).ok())
-        .map(|event| (event.sendId, SeriesId::from(event.seriesId), event.dstChainId))
+        .map(|event| {
+            (
+                event.sendId,
+                SeriesId::from(event.seriesId),
+                event.dstChainId,
+            )
+        })
         .collect();
     assert_eq!(
         sent,
@@ -143,7 +152,14 @@ fn a_failed_series_page_emits_its_send_failed_event() {
         .get_events(INTEX_FACTORY_ADDRESS)
         .iter()
         .filter_map(|log| IIntexFactory::IntexSeriesSendFailed::decode_log_data(log).ok())
-        .map(|event| (event.emissionDay, event.dstChainId, event.pageIndex, event.failures))
+        .map(|event| {
+            (
+                event.emissionDay,
+                event.dstChainId,
+                event.pageIndex,
+                event.failures,
+            )
+        })
         .collect();
     assert_eq!(failed, vec![(7, 97, 1, 1)]);
 }
@@ -159,11 +175,11 @@ fn an_issued_day_puts_one_series_page_into_the_outbox_for_each_chain() {
         for chain in [97, 98] {
             let messages = outbox.messages(chain).unwrap();
             assert_eq!(messages.len(), 1);
-            assert_eq!(messages[0].label, Label::new(MSG_INTEX_SERIES, 7, [0, 1, 1]));
             assert_eq!(
-                messages[0].message_gas,
-                outbe_intex::gas::intex_series(1)
+                messages[0].label,
+                Label::new(MSG_INTEX_SERIES, 7, [0, 1, 1])
             );
+            assert_eq!(messages[0].message_gas, outbe_intex::gas::intex_series(1));
         }
     });
 }

@@ -42,9 +42,11 @@ pub fn seed_intex_targets(
         let mode: u64 = match entry.get("mode").and_then(Value::as_str) {
             Some("series") => 1,
             Some("auctions") => 2,
-            other => return Err(GenesisError::validation(format!(
+            other => {
+                return Err(GenesisError::validation(format!(
                 "intex.target_chains: chain {chain_id} has mode {other:?}, not series or auctions"
-            ))),
+            )))
+            }
         };
         if chain_id == 0 || seen.contains(&chain_id) {
             return Err(GenesisError::validation(format!(

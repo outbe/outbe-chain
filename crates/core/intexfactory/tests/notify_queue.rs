@@ -194,7 +194,6 @@ fn an_exactly_full_block_rewinds_the_queue() {
     });
 }
 
-
 #[test]
 fn a_notice_goes_to_every_chain_that_is_not_off() {
     let mut storage = provider();
@@ -233,8 +232,14 @@ fn a_run_of_one_day_and_call_time_rides_one_message_up_to_the_wire_cap() {
         drain(&handle);
         let messages = outbox(&handle, CHAINS[0]);
         assert_eq!(messages.len(), 2);
-        assert_eq!(notice_of(&messages[0]).1, run[..MAX_SERIES_PER_MARK].to_vec());
-        assert_eq!(notice_of(&messages[1]).1, run[MAX_SERIES_PER_MARK..].to_vec());
+        assert_eq!(
+            notice_of(&messages[0]).1,
+            run[..MAX_SERIES_PER_MARK].to_vec()
+        );
+        assert_eq!(
+            notice_of(&messages[1]).1,
+            run[MAX_SERIES_PER_MARK..].to_vec()
+        );
     });
 }
 

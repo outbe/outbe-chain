@@ -532,7 +532,11 @@ pub(super) fn returning_contract(routes: Vec<([u8; 4], Vec<u8>)>) -> Bytecode {
 
 /// Registers `chains` in Auctions in IntexFactory and as the chains of `days`, as the genesis and
 /// a START do.
-pub(super) fn seed_intex_targets(storage: &StorageHandle<'_>, chains: &[u32], days: &[EmissionDate]) {
+pub(super) fn seed_intex_targets(
+    storage: &StorageHandle<'_>,
+    chains: &[u32],
+    days: &[EmissionDate],
+) {
     use outbe_intexfactory::targets::{pack_target, TargetMode};
     let factory = outbe_intexfactory::IntexFactoryContract::new(storage.clone());
     for &chain in chains {
@@ -590,7 +594,9 @@ pub(super) fn accept_auction_batches(
         let indices = (0..64u32).map(|offset| u32::from(batch) * 64 + offset);
         let bidders: Vec<Address> = indices
             .clone()
-            .map(|index| numbered_test_address(0xa3, u64::from(chain) * 16384 + u64::from(index + 1)))
+            .map(|index| {
+                numbered_test_address(0xa3, u64::from(chain) * 16384 + u64::from(index + 1))
+            })
             .collect();
         let packed: Vec<U256> = indices
             .map(|index| {
@@ -713,7 +719,10 @@ fn assert_deferred_state(
             .unwrap()
             .into_iter()
             .any(|message| message.label.msg_type == outbe_intex::wire::MSG_INTEX_AUCTION_RESULT);
-        assert!(!rolled_back, "a rolled-back clearing leaves no result in the outbox");
+        assert!(
+            !rolled_back,
+            "a rolled-back clearing leaves no result in the outbox"
+        );
         let auction = outbe_desis::DesisContract::new(storage);
         let day = EmissionDate::new(20240101);
         assert_eq!(

@@ -342,7 +342,9 @@ fn burn_wcoen_transfers_to_address_zero_and_adds_the_whole_minors() {
         assert_eq!(contract.promis_limit().unwrap(), U256::from(2u64));
         assert_eq!(s.balance(Address::ZERO).unwrap(), rest);
         assert_eq!(
-            contract.burn_rest(BurnSource::IntexAuctionProceeds).unwrap(),
+            contract
+                .burn_rest(BurnSource::IntexAuctionProceeds)
+                .unwrap(),
             U256::ZERO
         );
     });
@@ -355,7 +357,11 @@ fn burn_wcoen_transfers_to_address_zero_and_adds_the_whole_minors() {
     assert_eq!((transfer.dst, transfer.wad), (Address::ZERO, amount));
     assert_eq!(
         promis_limit_logs(&storage),
-        vec![(BurnSource::IntexAuctionProceeds as u8, true, U256::from(2u64))]
+        vec![(
+            BurnSource::IntexAuctionProceeds as u8,
+            true,
+            U256::from(2u64)
+        )]
     );
 }
 

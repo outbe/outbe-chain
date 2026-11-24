@@ -500,10 +500,7 @@ fn accepted_bid_deadlines_retire_within_advance_budget() {
     for batches in [1, 17] {
         let (_, samples, logs, _) = run_prefix_checked(
             (
-                &format!(
-                    "deadline accepted{} bids",
-                    u32::from(batches) * 64
-                ),
+                &format!("deadline accepted{} bids", u32::from(batches) * 64),
                 &[(proposer, dummy_pubkey(0xa2))],
                 (1, timestamp),
             ),
