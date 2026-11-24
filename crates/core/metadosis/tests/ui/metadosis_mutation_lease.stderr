@@ -2,7 +2,9 @@ error[E0432]: unresolved import `outbe_primitives::storage::ScopedMutationLease`
  --> tests/ui/metadosis_mutation_lease.rs:1:5
   |
 1 | use outbe_primitives::storage::ScopedMutationLease;
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no `ScopedMutationLease` in `storage`
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^-------------------
+  |                                |
+  |                                no `ScopedMutationLease` in `storage`
   |
 help: a similar name exists in the module
   |
