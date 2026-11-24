@@ -2,10 +2,18 @@
 
 ## What it is
 
-`outbe-hyperlane-agent` is the Hyperlane validator of an Outbe validator,
-in one process. It replaces three services: the Docker Hyperlane validator
-agent, MinIO and the attester. The sync, signing, announce and checkpoint
-formats are ported from hyperlane-monorepo `agents-v3.0.0` (Apache-2.0, see
+`outbe-hyperlane-agent` is the Hyperlane agent of an Outbe validator, in one
+process. It has two roles:
+
+- **Validator.** It signs the checkpoints of each origin chain. This role
+  replaces three services: the Docker Hyperlane validator agent, MinIO and
+  the attester.
+- **Relayer** (`[relayer] enabled = true`). It delivers the messages to their
+  destination chains. This role replaces the Docker Hyperlane relayer. Every
+  validator runs it. See [Relayer](#relayer).
+
+The sync, signing, announce, checkpoint formats and the delivery flow are
+ported from hyperlane-monorepo `agents-v3.0.0` (Apache-2.0, see
 [`LICENSE-APACHE`](LICENSE-APACHE)). The ported files name their upstream
 source and the changes.
 
@@ -15,10 +23,11 @@ source and the changes.
            HyperlaneController (0x…EE14)
                  │ domains, hooks, ValidatorAnnounce
                  ▼
-  origin RPCs ──► sync + RPC vote ──► sign ──► MDBX store ──► :9000 S3 GET ──► relayer
+  origin RPCs ──► sync + RPC vote ──► sign ──► MDBX store ──► :9000 S3 GET ──► relayers
                                                    │
                                                    ├──► announce (each origin chain)
-                                                   └──► submitCheckpoint (Outbe)
+                                                   ├──► submitCheckpoint (Outbe)
+                                                   └──► relayer role ──► process (destination chains)
 ```
 
 1. **Discovery.** Every `poll_interval_secs`, the daemon reads the domains
@@ -39,13 +48,15 @@ source and the changes.
    to the controller with `submitCheckpoint`. The controller jails validators
    that fall behind the quorum for `MAX_MISSES` liveness windows in a row (see
    [`liveness.rs`](../../crates/system/hyperlanecontroller/src/liveness.rs)).
+8. **Relay.** With the relayer role, the daemon delivers each message to its
+   destination chain. See [Relayer](#relayer).
 
 ## Keys
 
 | Address | Purpose | Binding |
 |---|---|---|
 | `V` | Validator, stake and TEE renewal | Existing validator identity. Set it as `validator_address`. |
-| `H` | Checkpoint signer, announce sender, `submitCheckpoint` sender | `V` calls `ValidatorSet.setDelegate(2, H)`. Set it as `private_key`. |
+| `H` | Checkpoint signer, announce sender, `submitCheckpoint` sender, relayer `process` sender | `V` calls `ValidatorSet.setDelegate(2, H)`. Set it as `private_key`. |
 
 The price feeder uses its own key `P` (`ValidatorSet.setDelegate(1, P)`).
 Use three distinct addresses.
@@ -68,6 +79,7 @@ validator key remains accepted for Hyperlane calls.
 |---|---|
 | Bucket name | The lowercase `0x` address of `H`. |
 | Gas for announce | `H` needs native gas on every origin chain, Outbe included. The announce is a normal transaction. |
+| Gas for the relayer | With the relayer role, `H` pays for each `process` transaction on the destination chain. |
 | Gas for liveness | With `gasless = true`, `submitCheckpoint` on Outbe uses the ZeroFee policy and costs no gas. |
 | One process per `H` | Do not run a second process with `H`. Both processes would use the same nonces. |
 
@@ -103,6 +115,7 @@ matches the code. Unknown fields are errors.
 | `[storage] db_path` | required | Directory of the MDBX store. Never the node database. |
 | `[server] bind_address` | `0.0.0.0:9000` | Address of the S3-compatible read endpoint. |
 | `[server] public_url` | required | `http(s)://host[:port]` that relayers use. No path. The announced location comes from it. |
+| `[relayer] enabled` | `false` | Start the relayer role. Without a `[relayer]` section, the agent only validates. |
 | `[[origin]] domain` | required | Hyperlane domain of the origin chain. One block per domain. |
 | `[[origin]] rpc_urls` | required | HTTP endpoints. Each unique URL has one vote. Duplicates are removed. |
 | `[[origin]] rpc_consensus` | `"majority"` | Votes for a root: `"majority"` = N − floor(N/3), `"quorum"` = ceil(N/2), `"single"` = 1. |
@@ -110,6 +123,7 @@ matches the code. Unknown fields are errors.
 | `[[origin]] interval_secs` | `15` | Sync poll interval. With `ws_url`, the fallback poll. Must be > 0. |
 | `[[origin]] ws_url` | none | WebSocket endpoint. Its events only start the next poll earlier. They verify nothing. |
 | `[[origin]] index_from` | `deployedBlock()` of the hook | First origin block to read. |
+| `[[origin]] relay_turn_secs` | `40` | Relayer: length of one turn of the delivery order when this chain is the destination. |
 
 The configuration has no contract addresses. The daemon reads them from the
 chains:
@@ -185,14 +199,42 @@ While the daemon waits for the controller, `/health` returns 200.
 | `active` | `V` is in the active validator set. `null` before the first read. |
 | `signer_error` | Why `H` is not the accepted checkpoint signer, or `null`. |
 | `miss_count` | `missCount(V)` on the controller. |
+| `relayer.enabled` | The relayer role runs. |
+| `relayer.delivered` | `process` transactions of this relayer that a block included, since the start. |
+| `relayer.last_delivery` | Origin domain, leaf index, destination domain, transaction hash and Unix time of the last one, or `null`. |
 | `submitted`, `failed` | `submitCheckpoint` counters since the start. `submitted` counts only transactions with a successful receipt. A revert or no receipt is a failure. |
 | `last_submit_time` | Unix time of the last successful `submitCheckpoint` receipt. `0` before the first one. |
 | `last_submit_error` | The error of the last failed `submitCheckpoint`, or `null` after a success. |
 | `domains.<id>.leaves` | Stored leaf count. |
 | `domains.<id>.latest_signed_index` | Highest signed index. |
 | `domains.<id>.cursor` | Finalized origin block of the last stored leaf batch. It is `null` before the first leaf. It moves only when new leaves arrive, so it can stay behind the chain head while the domain has no messages. |
+| `domains.<id>.head` | The last final block of the origin chain. `null` before the first read. |
+| `domains.<id>.behind` | Blocks up to `head` that the sync did not read yet. `0` means that the sync is at the head. |
+| `domains.<id>.balance_wei` | Relayer only: native balance of `H` on this chain in wei, as a string. `H` pays the gas of each delivery to this chain. `null` before the first read. |
+| `domains.<id>.relay.cursor` | Relayer only: the next leaf index that the relayer takes in. |
+| `domains.<id>.relay.queue` | Relayer only: messages that are not delivered yet. |
+| `domains.<id>.relay.dropped` | Relayer only: messages after the last delivery attempt. |
 | `domains.<id>.reorg` | The domain halted after a reorg. |
 | `domains.<id>.error` | Domain error, or `null`. |
+
+The `status` command prints `/status` of the running agent as a table:
+
+```text
+$ outbe-hyperlane-agent status
+healthy: true   controller: ready   active: true   misses: 0
+relayer: on   delivered: 12
+
+domain         leaves   signed        head  behind  queue  dropped       balance  state
+54322345         1204     1203       48220       0      0        0       12.5000  ok
+97                388      387    61002113       2      1        0        0.0412  syncing
+```
+
+`balance` is the native balance of `H` on that chain. Add funds before it is
+zero: without gas, the relayer cannot deliver to that chain and the
+validator cannot announce.
+
+It reads `[health] bind_address` from the configuration. Use `--url` for
+another address.
 
 ## Storage
 
@@ -205,7 +247,8 @@ open it.
 | `Leaves` | (domain, index) | Message id, origin block |
 | `Checkpoints` | (domain, index) | Root, 65-byte signature |
 | `Cursor` | domain | Finalized origin block of the last stored leaf batch |
-| `Meta` | (domain, name) | `Announcement`, `Signer`, `ReorgFlag`, `Hook` |
+| `Meta` | (domain, name) | `Announcement`, `Signer`, `ReorgFlag`, `Hook`, `RelayCursor` |
+| `Relay` | (domain, index) | A message that the relayer did not deliver yet: message bytes, first-seen time, attempt count, time of the next attempt, dropped flag |
 
 The `db` commands work only while the daemon is stopped:
 
@@ -272,6 +315,7 @@ is jailed:
 | Sync, sign, backfill | Continue. |
 | Port 9000, announce | Continue. |
 | `submitCheckpoint` | Skipped. The controller would reject it. |
+| Relayer | Sends no transaction. It deletes a message from its queue when another relayer delivers that message. |
 | `/status` | `"active": false`. This is not an error. |
 
 While `V` is active, the daemon sends `submitCheckpoint` for each running
@@ -288,6 +332,56 @@ domain in these two cases:
 When the target index is also the latest index, one transaction does both. The
 daemon never submits index 0. It waits up to 60 seconds for the receipt.
 
+## Relayer
+
+With `[relayer] enabled = true`, the daemon starts one relayer task for each
+domain. The task delivers the messages of that origin chain to the other
+domains of the `HyperlaneController`. A relayer error does not stop the
+validator role.
+
+For each message, the relayer does these steps:
+
+1. **Take in.** The validator sync stores the message id and the block of
+   each leaf. The relayer reads the `Dispatch` log of that block and accepts
+   a message only when the hash of the message is the stored leaf. It writes
+   the message to the `Relay` table.
+2. **Check.** It reads `delivered(id)` on the destination Mailbox at a final
+   block. When the result is true, it deletes the row.
+3. **Wait for the turn.** See the delivery order below.
+4. **Read the ISM.** It reads `recipientIsm(recipient)` and then
+   `validatorsAndThreshold(message)`. Only the message-id multisig ISM is
+   supported, also behind a routing ISM.
+5. **Read the signatures.** It reads `checkpoint_<index>_with_id.json` from
+   the announced location of each ISM validator, its own location included.
+   It needs the threshold of signatures over one root.
+6. **Send.** It sends `process(metadata, message)` to the destination
+   Mailbox. The gas limit is the estimate plus 75,000. `H` pays the gas.
+
+Delivery order. Every validator runs a relayer, so the relayers take turns:
+
+- For each message, the relayer sorts the active validators by
+  `keccak256(message id || validator address)`. Every relayer gets the same
+  order. The order is different for each message.
+- The first validator of the order sends at once.
+- Each next validator waits `relay_turn_secs` more, and sends only when the
+  message is still not delivered.
+- The relayers do not talk to each other. Each one reads `delivered(id)`
+  before it sends.
+
+Example with four validators and `relay_turn_secs = 40`: the first relayer
+sends at 0 s, the second at 40 s, the third at 80 s, the fourth at 120 s.
+When the first relayer works, the others send nothing.
+
+| Rule | Detail |
+|---|---|
+| Gas | `H` needs native gas on every destination chain. |
+| Finality | A row goes away only when `delivered(id)` is true at a final block (`reorg_period` of the destination). A reorg of the destination cannot lose a message. |
+| Retry | A failed attempt follows the upstream schedule: 5 s, 10 s, 30 s, 60 s, then 3 minutes, and longer pauses later. Missing signatures get three fast retries of 2 s. |
+| Dropped | After 66 attempts (about two weeks) the row stays as dropped. `/status` counts it. Anyone can still deliver the message by hand. |
+| One transaction at a time | The relayer sends one `process` transaction for each chain and waits up to 90 seconds for the receipt. |
+| Storage locations | Only `s3+http://` and `s3+https://` locations. No redirect, a 10 second timeout, a 16 KB body. |
+| Payment | The relayer does not check the IGP payment. It delivers every message that the ISM accepts. |
+
 ## Limits
 
 | Limit | Detail |
@@ -295,4 +389,7 @@ daemon never submits index 0. It waits up to 60 seconds for the receipt.
 | First sync memory | Unverified leaves stay in memory until the vote verifies them. Expect about 1 GB per 5M leaves on the first sync. |
 | Outbe `eth_getLogs` | The Outbe RPC rejects ranges above 100,000 blocks. The sync uses at most 100,000 and halves the range after a range error. |
 | `metadata_latest.json` | Not served. The relayer does not read it. |
+| Relayer first run | The relayer takes in the full leaf history: one `delivered` call for each old message. |
+| Relayer gas price | No gas price escalation. A transaction that stays in the pool stops the deliveries to that chain until a block includes it. |
+| Relayer ISM types | Only the message-id multisig ISM and the routing ISM. A message with another ISM is retried and then dropped. |
 | Private key | The key is plaintext in the config file. |
