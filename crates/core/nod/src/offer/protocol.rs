@@ -70,7 +70,7 @@ impl OfferPublicInputs {
     }
 }
 
-/// Recomputed public hashes of a decrypted TributeDraft.
+/// Recomputed public hashes of a decrypted OfferDraft.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OfferZkExpectedHashes {
     /// Poseidon entity hash.

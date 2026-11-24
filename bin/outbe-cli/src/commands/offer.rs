@@ -84,11 +84,11 @@ pub struct IssueNodArgs {
         value_parser = clap::builder::NonEmptyStringValueParser::new(),
     )]
     circuit_version: String,
-    /// Exact 32-byte TributeDraft id (`0x`-hex) used to construct
+    /// Exact 32-byte OfferDraft id (`0x`-hex) used to construct
     /// `nft_hash` and `binding_hash`.
     #[arg(long)]
     tribute_draft_id: String,
-    /// Exact 32-byte SpendingUnit hash (`0x`-hex) included in the TributeDraft.
+    /// Exact 32-byte SpendingUnit hash (`0x`-hex) included in the OfferDraft.
     #[arg(long)]
     su_hash: String,
     /// BLS MinSig signature (compressed G1, 48 bytes, `0x`-hex) over `--zk-merkle-root`

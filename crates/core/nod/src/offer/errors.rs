@@ -69,8 +69,8 @@ pub enum ProcessError {
     /// Canonical sorting of SU IDs failed.
     #[error("invalid canonical su_ids: {0}")]
     InvalidCanonicalSuIds(#[source] outbe_zk::Error),
-    /// Entity hash derivation for TributeDraftClaim failed.
-    #[error("invalid canonical TributeDraft: {0}")]
+    /// Entity hash derivation for OfferDraftClaim failed.
+    #[error("invalid canonical OfferDraft: {0}")]
     InvalidCanonicalOfferDraft(#[source] outbe_zk::Error),
     /// The emission day and currencies spell no series id.
     #[error("offer currencies spell no series id")]

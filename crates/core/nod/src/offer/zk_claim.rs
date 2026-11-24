@@ -1,9 +1,9 @@
-//! Canonical TributeDraft public-input derivation.
+//! Canonical OfferDraft public-input derivation.
 
 use alloy_primitives::B256;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField};
-use outbe_zk::claim::TributeDraftClaim;
+use outbe_zk::claim::OfferDraftClaim;
 use outbe_zk::protocol::entity::Entity as EntityTrait;
 
 use super::compute::CanonicalAmount;
@@ -28,7 +28,7 @@ pub fn derive_expected_hashes(
         .collect::<OfferResult<Vec<_>>>()?;
     let su_ids = outbe_zk::codec::sort_set(&su_ids).map_err(ProcessError::InvalidCanonicalSuIds)?;
 
-    let draft = TributeDraftClaim {
+    let draft = OfferDraftClaim {
         id,
         derived_owner: context.derived_owner,
         worldwide_day: offer.worldwide_day.into(),

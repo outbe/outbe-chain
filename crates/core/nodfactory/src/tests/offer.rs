@@ -8,7 +8,7 @@ use outbe_agentreward::AgentRewardContract;
 use outbe_l2registry::L2RegistryContract;
 use outbe_primitives::storage::{CycleLifecyclePurpose, MutationPurposeTag};
 use outbe_system_common::time::{date_key_to_utc_timestamp, WorldwideDay};
-use outbe_zk::demo_tribute::COMBINED_LEN as DEMO_COMBINED_LEN;
+use outbe_zk::demo_offer::COMBINED_LEN as DEMO_COMBINED_LEN;
 
 use super::*;
 use crate::offer::{issue_nod, IssueNodInput, OfferError};
@@ -359,7 +359,7 @@ fn an_empty_su_hash_list_rejects_before_any_write() {
 #[ignore = "requires the pinned Barretenberg CRS"]
 fn real_zk_offer_issues_its_nod_once_and_rolls_back_failures() {
     let proof = include_bytes!(
-        "../../../../../testing/protocol-benchmarks/fixtures/tribute_demo_tribute_v1.bin"
+        "../../../../../testing/protocol-benchmarks/fixtures/offer_demo_offer_v1.bin"
     );
     assert_real_zk_offer(proof);
 }

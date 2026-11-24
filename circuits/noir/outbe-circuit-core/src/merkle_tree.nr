@@ -6,7 +6,7 @@
 //!
 //! Aztec bakes the domain into a named hasher per tree (`merkle_hash`,
 //! `nullifier_merkle_hash`, ...). Here the domain is a parameter instead, so
-//! one function serves every tree — `EMIT_DOMAIN`, `DEMO_TRIBUTE_DOMAIN`, ...
+//! one function serves every tree — `EMIT_DOMAIN`, `DEMO_OFFER_DOMAIN`, ...
 //! Distinct domains are what keeps the trees separated.
 
 use crate::hash::hash_3;

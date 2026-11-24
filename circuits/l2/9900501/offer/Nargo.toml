@@ -1,5 +1,5 @@
 [package]
-name = "niflheim_tribute"
+name = "niflheim_offer"
 type = "bin"
 authors = ["outbe"]
 compiler_version = ">=1.0.0"

@@ -19,8 +19,8 @@ use base64::Engine;
 use flate2::read::GzDecoder;
 use sha2::{Digest, Sha256};
 
-use outbe_zk::noir::demo_tribute::DemoTribute;
-use outbe_zk::noir::niflheim_tribute::NiflheimTribute;
+use outbe_zk::noir::demo_offer::DemoOffer;
+use outbe_zk::noir::niflheim_offer::NiflheimOffer;
 use outbe_zk::CircuitId;
 use outbe_zk_backend::barretenberg::BarretenbergHandler;
 
@@ -94,8 +94,8 @@ fn print_srs_pins() {
     BarretenbergHandler::init().unwrap();
     let handler = BarretenbergHandler::global();
     let circuits: &[(&str, &str)] = &[
-        ("demo tribute", DemoTribute::BYTECODE_B64),
-        ("niflheim tribute", NiflheimTribute::BYTECODE_B64),
+        ("demo offer", DemoOffer::BYTECODE_B64),
+        ("niflheim offer", NiflheimOffer::BYTECODE_B64),
     ];
     println!("\n--- paste into PINNED_G1_SHA256 ---");
     for (label, b64) in circuits {
@@ -129,8 +129,8 @@ fn print_circuit_complexity() {
     BarretenbergHandler::init().unwrap();
     let handler = BarretenbergHandler::global();
     let circuits: &[(&str, &str)] = &[
-        ("demo tribute", DemoTribute::BYTECODE_B64),
-        ("niflheim tribute", NiflheimTribute::BYTECODE_B64),
+        ("demo offer", DemoOffer::BYTECODE_B64),
+        ("niflheim offer", NiflheimOffer::BYTECODE_B64),
     ];
     println!("\n--- circuit complexity ---");
     println!("| circuit | num_gates | dyadic (2^k) |");

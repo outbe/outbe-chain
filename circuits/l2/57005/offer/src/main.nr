@@ -1,9 +1,9 @@
-// Demo Tribute Circuit.
+// Demo offer Circuit.
 //
 // Composes the same sec.4.2 ownership constraint as `outbe-ownership-circuit`
-// with a Merkle-inclusion check against the perpetual TributeDraft commitment
+// with a Merkle-inclusion check against the perpetual OfferDraft commitment
 // tree (the depth-32 Poseidon2/BN254 IMT defined by `CommitmentWindowBase` in
-// outbe-chain-research). Every inner node prepends `DEMO_TRIBUTE_DOMAIN`; the
+// outbe-chain-research). Every inner node prepends `DEMO_OFFER_DOMAIN`; the
 // leaf is `nft_hash` itself, so the inclusion proof binds the same entity hash
 // checked by the ownership constraint.
 
@@ -12,7 +12,7 @@ use outbe_circuit_core::ownership;
 use std::embedded_curve_ops::EmbeddedCurvePoint;
 
 // Preserve the historical domain bytes so renaming does not change circuit identity.
-global DEMO_TRIBUTE_DOMAIN: Field = 0x4f555442455f46554c4c5f43495243554954; // "OUTBE_FULL_CIRCUIT"
+global DEMO_OFFER_DOMAIN: Field = 0x4f555442455f46554c4c5f43495243554954; // "OUTBE_FULL_CIRCUIT"
 
 pub fn main(
     // Private witness.
@@ -36,7 +36,7 @@ pub fn main(
 
     // Part 2: Merkle inclusion of `nft_hash` against `merkle_root`.
     let computed_merkle_root = merkle_tree::merkle_root_from_indices(
-        DEMO_TRIBUTE_DOMAIN,
+        DEMO_OFFER_DOMAIN,
         nft_hash,
         merkle_path_siblings,
         merkle_path_indices,

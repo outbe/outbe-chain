@@ -1,4 +1,4 @@
-//! Tribute circuit statements, claim hashing, and verifier wire decoding.
+//! Offer circuit statements, claim hashing, and verifier wire decoding.
 //!
 //! Noir sources and frozen artifacts live in the repository `circuits/` tree.
 //! This crate embeds them at build time and does not link the Barretenberg FFI.
@@ -7,7 +7,7 @@
 
 pub mod claim;
 pub mod codec;
-pub mod demo_tribute;
+pub mod demo_offer;
 pub mod error;
 pub mod errors;
 pub mod primitive;
@@ -19,14 +19,14 @@ pub use codec::{FieldElement, FieldEncode};
 pub use errors::Error;
 pub use protocol::zk::CircuitId;
 
-/// Depth of the TributeDraft commitment tree. Matches `demo_tribute` and
-/// `niflheim_tribute`.
+/// Depth of the OfferDraft commitment tree. Matches `demo_offer` and
+/// `niflheim_offer`.
 pub const INCLUSION_DEPTH: usize = 32;
 
-/// One L2 circuit selected by the offerTribute version string.
+/// One L2 circuit selected by the issueNod version string.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct L2CircuitVersion {
-    /// Wire selector (`offerTribute.version`), not an independent package semver.
+    /// Wire selector (`issueNod.version`), not an independent package semver.
     pub version: &'static str,
     /// `keccak256` of the decoded ACIR bytecode.
     pub circuit_hash: [u8; 32],
@@ -34,7 +34,7 @@ pub struct L2CircuitVersion {
     pub vk_hash: [u8; 32],
     /// UltraHonkKeccak verification key.
     pub vk_bytes: &'static [u8],
-    /// Nargo package name with dots, for example `demo.tribute`.
+    /// Nargo package name with dots, for example `demo.offer`.
     pub label: &'static str,
     /// Proof system the key verifies under.
     pub proof_system: &'static str,

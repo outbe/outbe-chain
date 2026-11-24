@@ -13,7 +13,7 @@
 //! EIP-2537 G2 key via STATICCALL on every use, validate it, and never cache it.
 //!
 //! The cross-module surface ([`api`]) verifies the selected chain's BLS signature
-//! over `zkMerkleRoot` for `TributeFactory.offerTribute`, independent of the caller.
+//! over `zkMerkleRoot` for `TributeFactory.issueNod`, independent of the caller.
 //!
 //! [`api::l2_circuits`] uses explicit deployment bindings outside Devnet.
 //! Devnet may use a frozen development binding for unbound L2s without
