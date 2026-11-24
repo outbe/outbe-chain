@@ -36,6 +36,11 @@ bind_address = "0.0.0.0:9000"
 # The http(s)://host[:port] that relayers use. No path.
 public_url = "http://203.0.113.7:9000"
 
+[relayer]
+# Deliver the messages of each [[origin]] chain to the other [[origin]] chains.
+# The key H sends the transactions and pays the gas on each chain.
+enabled = true
+
 # One [[origin]] block for each domain of the HyperlaneController.
 
 [[origin]]
@@ -54,6 +59,10 @@ interval_secs = 15
 # ws_url = "wss://…"
 # Optional. First block to read. Default: deployedBlock() of the hook.
 # index_from = 4782
+# Optional. Relayer: length of one turn when this chain is the destination.
+# The first relayer of a message sends at once. Each next relayer waits one
+# more turn and sends only if the message is still not delivered. Default: 40.
+# relay_turn_secs = 40
 
 [[origin]]
 domain = 97
@@ -73,4 +82,6 @@ rpc_urls = ["https://ethereum-sepolia-rpc.publicnode.com"]
 rpc_consensus = "majority" # majority (default) | quorum | single
 reorg_period = 2
 interval_secs = 15
+# A transaction can wait longer than 40 seconds for a block on this chain.
+relay_turn_secs = 60
 ws_url = "wss://ethereum-sepolia-rpc.publicnode.com"

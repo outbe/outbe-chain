@@ -1,4 +1,4 @@
-//! TOML configuration for the Hyperlane validator daemon.
+//! TOML configuration for the Hyperlane agent.
 
 use eyre::{Context, Result};
 use serde::Deserialize;
@@ -17,9 +17,25 @@ pub struct ValidatorConfig {
     pub storage: Option<StorageConfig>,
     /// Checkpoint HTTP server. The daemon needs it.
     pub server: Option<ServerConfig>,
+    /// The relayer role. Without this section the agent only validates.
+    // The delivery loop reads this in a later step.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub relayer: RelayerConfig,
     /// Origin chains whose MerkleTreeHook this validator signs.
     #[serde(default)]
     pub origin: Vec<OriginConfig>,
+}
+
+/// The relayer role: delivers the messages of each `[[origin]]` chain to the
+/// other `[[origin]]` chains.
+// The delivery loop reads the field in a later step.
+#[allow(dead_code)]
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RelayerConfig {
+    #[serde(default)]
+    pub enabled: bool,
 }
 
 /// One origin chain. Contract addresses come from the HyperlaneController
@@ -40,6 +56,12 @@ pub struct OriginConfig {
     pub ws_url: Option<String>,
     /// First block to read. Default: `deployedBlock()` of the hook.
     pub index_from: Option<u64>,
+    /// Length of one turn of the delivery order when this chain is the
+    /// destination: each next relayer waits one more turn before it sends.
+    // The delivery loop reads this in a later step.
+    #[allow(dead_code)]
+    #[serde(default = "default_relay_turn")]
+    pub relay_turn_secs: u64,
 }
 
 /// Number of `rpc_urls` that must return the same root before the validator
@@ -172,6 +194,9 @@ fn default_poll_interval() -> u64 {
 fn default_origin_interval() -> u64 {
     15
 }
+fn default_relay_turn() -> u64 {
+    40
+}
 
 impl ValidatorConfig {
     pub fn load(path: &str) -> Result<Self> {
@@ -246,6 +271,7 @@ public_url = "http://203.0.113.7:9000"
         assert_eq!(cfg.hyperlane.poll_interval_secs, 30);
         assert!(!cfg.hyperlane.gasless);
         assert!(cfg.health.is_none());
+        assert!(!cfg.relayer.enabled);
         assert_eq!(cfg.storage.unwrap().db_path.to_str(), Some("/tmp/db"));
         assert_eq!(cfg.server.unwrap().bind_address, "0.0.0.0:9000");
     }
@@ -308,6 +334,9 @@ public_url = "http://203.0.113.7:9000"
         assert_eq!(cfg.origin[0].ws_url, None);
         assert_eq!(cfg.origin[1].rpc_urls.len(), 3);
         assert!(cfg.origin.iter().all(|o| o.interval_secs == 15));
+        assert!(cfg.relayer.enabled);
+        let turns: Vec<u64> = cfg.origin.iter().map(|o| o.relay_turn_secs).collect();
+        assert_eq!(turns, [40, 40, 60]);
     }
 
     const ORIGINS: &str = r#"
