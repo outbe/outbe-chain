@@ -1,4 +1,4 @@
-//! Contract ABI surface used by the Hyperlane validator.
+//! Contract ABI surface used by the Hyperlane agent.
 
 use alloy_sol_types::sol;
 
@@ -25,5 +25,14 @@ sol! {
         function latestCheckpoint() external view returns (bytes32 root, uint32 index);
         function mailbox() external view returns (address);
         function deployedBlock() external view returns (uint256);
+    }
+
+    /// Hyperlane Mailbox: dispatches messages on the origin chain and
+    /// processes them on the destination chain.
+    interface IMailbox {
+        event Dispatch(address indexed sender, uint32 indexed destination, bytes32 indexed recipient, bytes message);
+        function delivered(bytes32 messageId) external view returns (bool);
+        function recipientIsm(address recipient) external view returns (address);
+        function process(bytes calldata metadata, bytes calldata message) external payable;
     }
 }

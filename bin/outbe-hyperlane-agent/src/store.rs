@@ -5,8 +5,9 @@
 //! - `Checkpoints`: (domain, index) -> root + 65-byte signature.
 //! - `Cursor`: domain -> last processed finalized origin block.
 //! - `Meta`: (domain, [`Meta`]) -> bytes.
+//! - `Relay`: (domain, index) -> a message that the relayer did not deliver yet.
 //!
-//! Keys of `Leaves`, `Checkpoints` and `Meta` are `domain << 32 | index` as
+//! Keys of `Leaves`, `Checkpoints`, `Meta` and `Relay` are `domain << 32 | index` as
 //! big-endian `u64`, so a cursor walks one domain in index order. The
 //! environment opens in MDBX exclusive mode: a second process cannot open the
 //! same directory.
@@ -54,6 +55,7 @@ table!(Leaves, u64);
 table!(Checkpoints, u64);
 table!(Cursor, u32);
 table!(MetaTable, u64);
+table!(Relay, u64);
 
 #[derive(Debug)]
 struct Tables;
@@ -66,6 +68,7 @@ impl TableSet for Tables {
                 Box::new(Checkpoints),
                 Box::new(Cursor),
                 Box::new(MetaTable),
+                Box::new(Relay),
             ]
             .into_iter(),
         )
@@ -99,6 +102,52 @@ pub enum Meta {
     /// The 20-byte `MerkleTreeHook` address of the stored history. The
     /// checkpoint JSON contains it.
     Hook = 4,
+    /// The next leaf index that the relayer takes in, as a big-endian `u32`.
+    RelayCursor = 5,
+}
+
+/// A message of an origin domain that the relayer did not deliver yet. The
+/// relayer deletes the row after the delivery.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RelayRow {
+    /// Unix seconds when the relayer took the message in. The turns of the
+    /// delivery order count from this time.
+    pub first_seen: u64,
+    /// Delivery attempts that failed.
+    pub attempts: u32,
+    /// Unix seconds of the next attempt.
+    pub next_attempt: u64,
+    /// The relayer stopped the attempts. The row stays for the operator.
+    pub dropped: bool,
+    /// The `message` bytes of the `Dispatch` event.
+    pub message: Vec<u8>,
+}
+
+const RELAY_HEADER: usize = 8 + 4 + 8 + 1;
+
+fn encode_relay(row: &RelayRow) -> Vec<u8> {
+    let mut v = Vec::with_capacity(RELAY_HEADER + row.message.len());
+    v.extend_from_slice(&row.first_seen.to_be_bytes());
+    v.extend_from_slice(&row.attempts.to_be_bytes());
+    v.extend_from_slice(&row.next_attempt.to_be_bytes());
+    v.push(u8::from(row.dropped));
+    v.extend_from_slice(&row.message);
+    v
+}
+
+// The delivery loop uses this in a later step.
+#[allow(dead_code)]
+fn decode_relay(v: &[u8]) -> Result<RelayRow> {
+    if v.len() < RELAY_HEADER {
+        return Err(StoreError::CorruptRecord("relay").into());
+    }
+    Ok(RelayRow {
+        first_seen: u64::from_be_bytes(v[..8].try_into().expect("8 bytes")),
+        attempts: u32::from_be_bytes(v[8..12].try_into().expect("4 bytes")),
+        next_attempt: u64::from_be_bytes(v[12..20].try_into().expect("8 bytes")),
+        dropped: v[20] != 0,
+        message: v[RELAY_HEADER..].to_vec(),
+    })
 }
 
 fn key(domain: u32, index: u32) -> u64 {
@@ -345,6 +394,70 @@ impl Store {
         Ok(())
     }
 
+    /// The next leaf index of `domain` that the relayer takes in.
+    pub fn relay_cursor(&self, domain: u32) -> Result<u32> {
+        match self.meta(domain, Meta::RelayCursor)? {
+            Some(v) => Ok(u32::from_be_bytes(
+                v.as_slice()
+                    .try_into()
+                    .map_err(|_| StoreError::CorruptRecord("relay cursor"))?,
+            )),
+            None => Ok(0),
+        }
+    }
+
+    /// Writes new relay rows and moves the relay cursor to `next` in one
+    /// transaction.
+    pub fn relay_take_in(&self, domain: u32, rows: &[(u32, RelayRow)], next: u32) -> Result<()> {
+        let tx = self.db.tx_mut()?;
+        for (index, row) in rows {
+            tx.put::<Relay>(key(domain, *index), encode_relay(row))?;
+        }
+        tx.put::<MetaTable>(
+            key(domain, Meta::RelayCursor as u32),
+            next.to_be_bytes().to_vec(),
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Replaces the relay row of one message (attempt count, drop).
+    // The delivery loop uses this in a later step.
+    #[allow(dead_code)]
+    pub fn put_relay(&self, domain: u32, index: u32, row: &RelayRow) -> Result<()> {
+        let tx = self.db.tx_mut()?;
+        tx.put::<Relay>(key(domain, index), encode_relay(row))?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Removes the relay row of a delivered message.
+    // The delivery loop uses this in a later step.
+    #[allow(dead_code)]
+    pub fn delete_relay(&self, domain: u32, index: u32) -> Result<()> {
+        let tx = self.db.tx_mut()?;
+        tx.delete::<Relay>(key(domain, index), None)?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// The relay rows of `domain` in index order.
+    // The delivery loop uses this in a later step.
+    #[allow(dead_code)]
+    pub fn relay_rows(&self, domain: u32) -> Result<Vec<(u32, RelayRow)>> {
+        let tx = self.db.tx()?;
+        let mut out = Vec::new();
+        for row in tx.cursor_read::<Relay>()?.walk(Some(key(domain, 0)))? {
+            let (k, v) = row?;
+            let (d, index) = split(k);
+            if d != domain {
+                break;
+            }
+            out.push((index, decode_relay(&v)?));
+        }
+        Ok(out)
+    }
+
     /// Domains that have a cursor or metadata, in ascending order.
     pub fn domains(&self) -> Result<Vec<u32>> {
         let tx = self.db.tx()?;
@@ -554,6 +667,42 @@ mod tests {
             store.meta(4, Meta::Announcement).unwrap().as_deref(),
             Some(&b"a"[..])
         );
+    }
+
+    #[test]
+    fn relay_rows_and_cursor() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        assert_eq!(store.relay_cursor(1).unwrap(), 0);
+        let row = |n: u8| RelayRow {
+            first_seen: 1_000 + u64::from(n),
+            attempts: 0,
+            next_attempt: 0,
+            dropped: false,
+            message: vec![n; 80],
+        };
+        store
+            .relay_take_in(1, &[(4, row(4)), (6, row(6))], 7)
+            .unwrap();
+        store.relay_take_in(2, &[(0, row(9))], 1).unwrap();
+        assert_eq!(store.relay_cursor(1).unwrap(), 7);
+        assert_eq!(store.relay_rows(1).unwrap(), [(4, row(4)), (6, row(6))]);
+
+        // A failed attempt, then a drop: the row stays.
+        let failed = RelayRow {
+            attempts: 66,
+            next_attempt: 2_000,
+            dropped: true,
+            ..row(4)
+        };
+        store.put_relay(1, 4, &failed).unwrap();
+        // A delivery removes the row. Other domains do not change.
+        store.delete_relay(1, 6).unwrap();
+        assert_eq!(store.relay_rows(1).unwrap(), [(4, failed)]);
+        assert_eq!(store.relay_rows(2).unwrap(), [(0, row(9))]);
+        // An empty take-in moves only the cursor.
+        store.relay_take_in(1, &[], 9).unwrap();
+        assert_eq!(store.relay_cursor(1).unwrap(), 9);
     }
 
     #[test]

@@ -61,7 +61,7 @@ fn log_range(start: u64, end: u64, chunk: u64) -> (u64, u64) {
 
 /// True when the RPC rejected a log request because of its size. A rate
 /// limit is not a range error: the next tick reads the same range again.
-fn is_range_error(message: &str) -> bool {
+pub fn is_range_error(message: &str) -> bool {
     let message = message.to_lowercase();
     let rate_limit = ["429", "rate limit", "too many requests"]
         .iter()

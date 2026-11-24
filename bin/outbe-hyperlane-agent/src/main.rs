@@ -12,6 +12,7 @@ mod daemon;
 mod errors;
 mod http;
 mod merkle;
+mod relayer;
 mod store;
 mod sync;
 #[cfg(test)]
