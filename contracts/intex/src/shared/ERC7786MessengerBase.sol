@@ -111,7 +111,11 @@ abstract contract ERC7786MessengerBase is IERC7786Recipient {
     /// @param gasLimit Destination execution gas for the message (0 = let the active gateway use its default).
     /// @return sendId The bridge's send identifier.
     function _send(uint32 dstChainId, bytes memory payload, uint256 gasLimit) internal returns (bytes32) {
-        bytes memory recipient = _remoteMessenger(dstChainId);
+        return _sendTo(_remoteMessenger(dstChainId), payload, gasLimit);
+    }
+
+    /// @dev As {_send}, to `recipient` given as an ERC-7930 address.
+    function _sendTo(bytes memory recipient, bytes memory payload, uint256 gasLimit) internal returns (bytes32) {
         bytes[] memory attributes = _gasAttributes(gasLimit);
         uint256 fee = IGatewayQuote(address(BRIDGE)).quote(recipient, payload, attributes);
 

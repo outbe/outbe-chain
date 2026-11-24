@@ -64,9 +64,6 @@ interface ITargetRouter {
         uint256 indexed idx, uint32 indexed emissionDay, uint32 pageIndex, uint256 amountMinor, bytes errorData
     );
 
-    /// @notice Emitted when an admin sets the token transfer contract and the origin router.
-    event TargetRouterProceedsRouteSet(address tokenBridge, address originRouter);
-
     /// @notice Emitted when an admin sets IntexAuction, the Intex contract and the escrow. Only the new values.
     event TargetRouterDependenciesSet(address intexAuction, address intexContract, address escrow);
 
@@ -109,8 +106,7 @@ interface ITargetRouter {
     /// @param escrow EscrowAdapter contract address.
     function setDependencies(address intexAuction, address intexContract, address escrow) external;
 
-    /// @notice Register (or clear) the matching messenger on `chainId` as an ERC-7930 interoperable address.
-    /// @param chainId Destination/source chainId.
-    /// @param interop ERC-7930 interoperable address (empty to clear).
-    function registerRemoteMessenger(uint32 chainId, bytes calldata interop) external;
+    /// @notice A message of Desis or IntexFactory on Outbe, which the Interchain Account of Outbe on
+    ///         this chain calls. Only the holder of `OUTBE_ICA_ROLE` may call it.
+    function receiveFromOutbe(bytes calldata message) external;
 }

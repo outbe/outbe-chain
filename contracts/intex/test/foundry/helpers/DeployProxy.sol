@@ -59,7 +59,14 @@ library DeployProxy {
     }
 
     function targetRouter(address bridge, address delegate, uint32 outbeChainId) internal returns (TargetRouter) {
-        TargetRouter impl = new TargetRouter(bridge, outbeChainId);
+        return targetRouter(bridge, delegate, outbeChainId, address(0x7E57B12D6E));
+    }
+
+    function targetRouter(address bridge, address delegate, uint32 outbeChainId, address wcoenBridge)
+        internal
+        returns (TargetRouter)
+    {
+        TargetRouter impl = new TargetRouter(bridge, outbeChainId, wcoenBridge);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(TargetRouter.initialize, (delegate)));
         return TargetRouter(payable(address(proxy)));
     }

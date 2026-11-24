@@ -40,7 +40,9 @@ contract OriginRouterV2 is OriginRouter {
 }
 
 contract TargetRouterV2 is TargetRouter {
-    constructor(address lzEndpoint, uint32 outbeEid) TargetRouter(lzEndpoint, outbeEid) {}
+    constructor(address lzEndpoint, uint32 outbeEid, address wcoenBridge)
+        TargetRouter(lzEndpoint, outbeEid, wcoenBridge)
+    {}
 
     function upgradeProbe() external pure returns (uint256) {
         return UPGRADE_PROBE;

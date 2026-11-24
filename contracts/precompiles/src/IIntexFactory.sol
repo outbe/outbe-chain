@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
+/// @dev The IntexFactory precompile. Matches `INTEX_FACTORY_ADDRESS` in crates/system/common/src/addresses.rs.
+address constant INTEX_FACTORY = 0x0000000000000000000000000000000000001015;
+
 /// @title IIntexFactory
 /// @notice User-facing call surface for the IntexFactory runtime precompile:
 ///         settlement, Promis mining, and auction proceeds intake. Issuance is
@@ -97,9 +100,12 @@ interface IIntexFactory {
     /// @notice The WCOEN token bridge delivers the proceeds of one page of winners from
     ///         TargetRouter of a chain of the day, with `abi.encode(emissionDay, pageIndex)` in
     ///         `extraData`. The factory burns the WCOEN into the Promis Limit with code 43.
-    function onCrosschainTokensReceived(uint32 sourceDomain, bytes calldata from, uint256 amount, bytes calldata extraData)
-        external
-        returns (bytes4);
+    function onCrosschainTokensReceived(
+        uint32 sourceDomain,
+        bytes calldata from,
+        uint256 amount,
+        bytes calldata extraData
+    ) external returns (bytes4);
 
     /// @notice TargetRouter on Outbe hands over the proceeds of one page of winners: the factory
     ///         takes `amount` WCOEN that the router approved and burns it with code 43.

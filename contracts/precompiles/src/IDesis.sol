@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
+/// @dev The Desis precompile. Matches `DESIS_ADDRESS` in crates/system/common/src/addresses.rs.
+address constant DESIS = 0x0000000000000000000000000000000000001016;
+
 /// @title IDesis
 /// @notice Inbound call surface for the Desis runtime precompile.
 ///         The Desis runtime drives the auction schedule from a Metadosis brief.
@@ -75,9 +78,7 @@ interface IDesis {
 
     /// @notice Takes BIDS_PAGE, BIDS_TOTALS and BIDS_PAUSE of TargetRouter from the ERC-7786 hub.
     ///         Reverts only for a caller other than the hub and for a day before its reveal.
-    function receiveMessage(bytes32 receiveId, bytes calldata sender, bytes calldata payload)
-        external
-        returns (bytes4);
+    function receiveMessage(bytes32 receiveId, bytes calldata sender, bytes calldata payload) external returns (bytes4);
 
     /// @notice Sends the due messages of the outbox to the target chains. Anyone may call it.
     function flush() external;

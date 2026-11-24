@@ -16,7 +16,7 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 /// @author Outbe
 /// @notice Prepares an upgrade of every intex proxy on every chain of the stack (see
 ///         UpgradeProposal). Each implementation gets the immutables of the live proxy: the
-///         bridge hub, the bridged NFT and the Outbe chain id.
+///         bridge hub, the bridged NFT, the Outbe chain id and the WCOEN token bridge.
 /// @dev Env: the UpgradeProposal ones, CREATE3_FACTORY_ADDRESS and CONTRACT_SALT (optional). The
 ///      upgrade authority is DEFAULT_ADMIN_ROLE.
 contract PrepareUpgrade is BaseScript, UpgradeProposal {
@@ -39,7 +39,8 @@ contract PrepareUpgrade is BaseScript, UpgradeProposal {
             return address(new IntexNFT1155Bridge(address(bridge.token()), address(bridge.BRIDGE())));
         }
         TargetRouter router = TargetRouter(payable(proxy));
-        return address(new TargetRouter(address(router.BRIDGE()), router.OUTBE_CHAIN_ID()));
+        return
+            address(new TargetRouter(address(router.BRIDGE()), router.OUTBE_CHAIN_ID(), address(router.WCOEN_BRIDGE())));
     }
 
     function _deployerOwns(address proxy, address deployer) internal view override returns (bool) {

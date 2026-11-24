@@ -5,23 +5,26 @@ import {console} from "forge-std/console.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {CROSSCHAIN_BRIDGE, ICrosschainBridge} from "@precompiles/ICrosschainBridge.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {BaseScript} from "./BaseScript.s.sol";
 
 /// @title HandOver
 /// @author Outbe
 /// @notice Gives `DEFAULT_ADMIN_ROLE` of every intex proxy on this chain to governance,
-///         removes it from the deployer, and reads the roles back.
+///         removes it from the deployer, and reads the roles back. Before that it gives
+///         `OUTBE_ICA_ROLE` of TargetRouter to the Interchain Account of Outbe on this chain.
 /// @dev Governance is CrosschainBridge on Outbe and its Interchain Account on any other chain. Run it
 ///      last: after DeployOrigin or DeployTarget and ConfigureOrigin or ConfigureTarget. After it,
 ///      an upgrade or a configuration change is an `upgradeContracts` vote of Update.
 ///      The script finds each proxy at its CREATE3 address and skips a proxy that is not deployed
 ///      here: Outbe has the OriginRouter and the target proxies, a remote target has the target
 ///      proxies only.
-///      Env: DEPLOYER_PK (the current admin), CREATE3_FACTORY_ADDRESS, OUTBE_CHAIN_ID, and
-///      on another chain OUTBE_RPC_URL (to read the Interchain Account from the Outbe node).
+///      Env: DEPLOYER_PK (the current admin), CREATE3_FACTORY_ADDRESS, OUTBE_CHAIN_ID and
+///      OUTBE_RPC_URL (to read the Interchain Account from the Outbe node).
 contract HandOver is BaseScript {
     error DomainTooLarge(uint256 chainId);
     error NotHandedOver(address proxy);
+    error OutbeIcaNotGranted(address proxy);
 
     function run() external {
         uint256 pk = vm.envUint("DEPLOYER_PK");
@@ -29,6 +32,7 @@ contract HandOver is BaseScript {
         Create3Factory factory = create3Factory();
         // Read before the broadcast: on a chain other than Outbe this asks the Outbe node.
         address governance = governanceOwner();
+        address outbeIca = outbeIcaAccount();
 
         string[6] memory prefixes = intexProxyPrefixes();
         vm.startBroadcast(pk);
@@ -38,6 +42,7 @@ contract HandOver is BaseScript {
                 console.log(string.concat(prefixes[i], ": not deployed here, skipped"));
                 continue;
             }
+            if (keccak256(bytes(prefixes[i])) == keccak256("TargetRouter")) grantOutbeIca(proxy, outbeIca);
             handOver(deployer, governance, proxy);
             console.log(string.concat(prefixes[i], " handed over:"), proxy);
         }
@@ -50,6 +55,20 @@ contract HandOver is BaseScript {
         if (block.chainid == vm.envUint("OUTBE_CHAIN_ID")) return CROSSCHAIN_BRIDGE;
         if (block.chainid > type(uint32).max) revert DomainTooLarge(block.chainid);
         return _governanceAccount(uint32(block.chainid));
+    }
+
+    /// @dev The Interchain Account of Outbe on this chain; on Outbe it is not CrosschainBridge.
+    function outbeIcaAccount() public returns (address) {
+        if (block.chainid > type(uint32).max) revert DomainTooLarge(block.chainid);
+        return _governanceAccount(uint32(block.chainid));
+    }
+
+    /// @dev Requires an active broadcast from the admin of `router`.
+    function grantOutbeIca(address router, address outbeIca) public {
+        bytes32 role = TargetRouter(payable(router)).OUTBE_ICA_ROLE();
+        IAccessControl c = IAccessControl(router);
+        if (!c.hasRole(role, outbeIca)) c.grantRole(role, outbeIca);
+        if (!c.hasRole(role, outbeIca)) revert OutbeIcaNotGranted(router);
     }
 
     /// @dev Requires an active broadcast from `deployer`. A second run on a handed-over proxy is a
