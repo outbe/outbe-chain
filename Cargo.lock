@@ -8355,7 +8355,6 @@ dependencies = [
  "outbe-system-common",
  "serde_json",
  "thiserror 2.0.21",
- "tracing",
 ]
 
 [[package]]
