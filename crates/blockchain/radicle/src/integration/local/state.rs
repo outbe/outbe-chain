@@ -238,8 +238,9 @@ pub(super) fn decode_authority(
     for _ in 0..count {
         let address = Address::from(input.array::<20>()?);
         let consensus_pubkey = input.array::<48>()?;
-        let key = bls12381::PublicKey::decode(consensus_pubkey.as_slice())
-            .map_err(|_| Error::Protocol)?;
+        let key =
+            bls12381::PublicKey::decode(commonware_codec::Copying(consensus_pubkey.as_slice()))
+                .map_err(|_| Error::Protocol)?;
         if previous.as_ref().is_some_and(|old| old >= &key)
             || committee
                 .iter()

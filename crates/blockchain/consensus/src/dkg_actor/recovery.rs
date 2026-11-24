@@ -510,15 +510,15 @@ fn take_retry_snapshot_field<'a>(
 
 fn decode_exact<T, E>(
     bytes: &[u8],
-    decode: impl FnOnce(&mut &[u8]) -> std::result::Result<T, E>,
+    decode: impl FnOnce(&mut commonware_codec::Copying<'_>) -> std::result::Result<T, E>,
     field: &str,
 ) -> Result<T>
 where
     E: std::fmt::Display,
 {
-    let mut reader = bytes;
+    let mut reader = commonware_codec::Copying(bytes);
     let value = decode(&mut reader).map_err(|error| DkgError::invalid_retry_field(field, error))?;
-    if !reader.is_empty() {
+    if !reader.0.is_empty() {
         return Err(DkgError::TrailingRetryFieldBytes {
             field: field.to_owned(),
         }

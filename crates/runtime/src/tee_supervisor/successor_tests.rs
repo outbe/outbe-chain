@@ -78,7 +78,7 @@ async fn supervisor_publishes_finalized_successor_only_once() {
     let host_key = NodeHostIdentityKey::create_new(&host_key_path).unwrap();
     let committee = FinalityCommitteeFixture::new(10);
     let (old, descriptor) = source_for_promotion(&host_key, &committee);
-    outbe_tee::node_host::ResidentStateStore::load_or_create(
+    let _ = outbe_tee::node_host::ResidentStateStore::load_or_create(
         root.path(),
         &old.authorization_witness().unwrap(),
     )
@@ -574,7 +574,7 @@ fn complete_cold_recovery_updates_global_context_identity_and_anchor() {
     let host_key = NodeHostIdentityKey::create_new(&host.join(NODE_HOST_IDENTITY_KEY_V1)).unwrap();
     let committee = FinalityCommitteeFixture::new(10);
     let (old, descriptor) = source_for_promotion(&host_key, &committee);
-    outbe_tee::node_host::ResidentStateStore::load_or_create(
+    let _ = outbe_tee::node_host::ResidentStateStore::load_or_create(
         root.path(),
         &old.authorization_witness().unwrap(),
     )

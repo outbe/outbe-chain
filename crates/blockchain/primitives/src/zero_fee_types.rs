@@ -272,7 +272,7 @@ pub struct BootstrapTransactionView<'a> {
     pub tx_chain_id: Option<u64>,
     /// Chain ID of the block being validated.
     pub network_chain_id: u64,
-    /// Outer transaction nonce before REVM increments the sender.
+    /// Outer transaction nonce before EVM (evm2) increments the sender.
     pub nonce: u64,
     /// Call fields of the outer transaction.
     pub call: TransactionCallFields<'a>,

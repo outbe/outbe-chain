@@ -96,13 +96,10 @@ impl StorageKey for WwdEntityId {
 }
 
 pub fn derive_poseidon_digest(owner: Address, worldwide_day: WorldwideDay) -> B256 {
-    let digest = Poseidon2::<Fr>::new()
-        .hash(&[
-            Fr::from_be_bytes_mod_order(owner.as_slice()),
-            Fr::from(worldwide_day.value()),
-        ])
-        // PoseidonError is Infallible, so this boundary cannot fail.
-        .unwrap();
+    let digest = Poseidon2::<Fr>::new().hash(&[
+        Fr::from_be_bytes_mod_order(owner.as_slice()),
+        Fr::from(worldwide_day.value()),
+    ]);
     let encoded = digest.into_bigint().to_bytes_be();
     let mut bytes = [0u8; 32];
     bytes[32 - encoded.len()..].copy_from_slice(&encoded);

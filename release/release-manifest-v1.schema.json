@@ -356,7 +356,8 @@
           "$ref": "#/$defs/provenance"
         },
         "rust_toolchain": {
-          "const": "1.96.0"
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
+          "type": "string"
         },
         "source_date_epoch": {
           "minimum": 0,

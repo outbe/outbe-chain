@@ -1,16 +1,14 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, convert::Infallible};
 
-use alloy_evm::block::StateDB;
-use alloy_primitives::{map::AddressMap, Address, Log, LogData, B256, U256};
-use revm::{
-    context::journaled_state::JournalCheckpoint,
-    database::Database,
-    state::{Account, AccountInfo, Bytecode, EvmStorage, EvmStorageSlot},
+use alloy_primitives::{map::AddressMap, Address, Log, LogData, B256, KECCAK256_EMPTY, U256};
+use evm2::evm::{
+    AccountChangeRef, BlockStateAccumulator, DynDatabase, StateChangeSink, StateChangeSource,
+    StorageChange,
 };
 
 use crate::block::BlockContext;
 use crate::error::{PrimitivesStorageError, Result};
-use crate::storage::PrecompileStorageProvider;
+use crate::storage::{AccountInfo, Bytecode, PrecompileStorageProvider, StateCheckpoint};
 #[cfg(feature = "test-utils")]
 use crate::storage::{MutationEntitlements, MutationPurposeTag};
 
@@ -28,22 +26,23 @@ pub fn arm_next_direct_scoped_frame_budget(purpose: MutationPurposeTag, count: u
     NEXT_DIRECT_FRAME_BUDGET.with(|slot| slot.set(Some((purpose, count))));
 }
 
-/// Storage provider for block-level hooks, wrapping a mutable [`StateDB`].
+/// Storage provider for block-level hooks, wrapping a mutable evm2 database
+/// that implements [`DynDatabase`] and [`StateChangeSink`].
 ///
 /// Reads go directly to the provided database.
 /// Writes accumulate in a pending [`HashMap`].
 /// [`DirectStorageProvider::flush`] commits them to the underlying state.
 ///
 /// The provider tracks all state mutations (storage writes and balance
-/// transfers). Callers can then retrieve the complete [`EvmState`] change set
-/// via [`DirectStorageProvider::take_committed_changes`] to notify reth's
-/// parallel state root task.
+/// transfers) in a [`BlockStateAccumulator`]. Callers can retrieve the complete
+/// accumulated change set via [`DirectStorageProvider::take_committed_changes`]
+/// to notify reth's parallel state root task.
 ///
 /// This is the block-hook counterpart to `outbe_evm::CtxStorageProvider`,
-/// which requires `EvmInternals` (only available inside a precompile call).
+/// which operates inside a transaction precompile call.
 /// Block-level hooks such as `apply_pre_execution_changes()` can use any
-/// mutable database that supports reads plus `commit()`.
-pub struct DirectStorageProvider<'a, DB: StateDB> {
+/// mutable database that supports reads plus [`StateChangeSink`].
+pub struct DirectStorageProvider<'a, DB: DynDatabase + StateChangeSink<Error = Infallible>> {
     state: &'a mut DB,
     /// Pending storage writes: address -> (slot -> new_value).
     pending: HashMap<Address, HashMap<U256, U256>>,
@@ -51,7 +50,7 @@ pub struct DirectStorageProvider<'a, DB: StateDB> {
     pending_accounts: AddressMap<AccountInfo>,
     /// Accumulated state changes committed by `flush()`.
     /// Used to notify reth's state root hook after all hooks complete.
-    committed_changes: AddressMap<Account>,
+    committed_changes: BlockStateAccumulator,
     /// Events emitted by block-level hooks. They are not journaled into EVM
     /// receipts. The provider collects them so the executor can log them via
     /// tracing for observability.
@@ -74,7 +73,7 @@ struct DirectSnapshot {
     events: Vec<Log>,
 }
 
-impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
+impl<'a, DB: DynDatabase + StateChangeSink<Error = Infallible>> DirectStorageProvider<'a, DB> {
     /// Creates a new provider wrapping the given state and block context.
     pub fn new(state: &'a mut DB, ctx: BlockContext) -> Self {
         #[cfg(feature = "test-utils")]
@@ -87,7 +86,7 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
             state,
             pending: HashMap::new(),
             pending_accounts: AddressMap::default(),
-            committed_changes: AddressMap::default(),
+            committed_changes: BlockStateAccumulator::new(),
             events: Vec::new(),
             snapshots: Vec::new(),
             ctx,
@@ -113,24 +112,32 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
         self.scoped_mutation_entitlements = MutationEntitlements::repeated(purpose, count);
     }
 
-    fn effective_account_info(&mut self, address: Address) -> Result<AccountInfo>
-    where
-        <DB as Database>::Error: std::fmt::Display,
-    {
+    fn effective_account_info(&mut self, address: Address) -> Result<AccountInfo> {
         if let Some(info) = self.pending_accounts.get(&address) {
             return Ok(info.clone());
         }
 
-        self.state
-            .basic(address)
-            .map_err(|e| {
-                PrimitivesStorageError::BasicRead {
-                    address,
-                    reason: e.to_string(),
-                }
-                .into()
-            })
-            .map(|info| info.unwrap_or_default())
+        let mut info = self
+            .state
+            .get_account(&address)
+            .map_err(|e| PrimitivesStorageError::BasicRead {
+                address,
+                reason: e.to_string(),
+            })?
+            .unwrap_or_default();
+        if info.code.is_none() {
+            info.code = if info.code_hash == KECCAK256_EMPTY {
+                Some(Bytecode::default())
+            } else {
+                Some(self.state.get_code_by_hash(&info.code_hash).map_err(|e| {
+                    PrimitivesStorageError::BasicRead {
+                        address,
+                        reason: e.to_string(),
+                    }
+                })?)
+            };
+        }
+        Ok(info)
     }
 
     /// Returns all events emitted by block-level hooks.
@@ -141,16 +148,16 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
         std::mem::take(&mut self.events)
     }
 
-    /// Commits all pending writes accumulated via [`sstore`](Self::sstore) to
-    /// the underlying [`State<DB>`].
+    /// Commits all pending writes accumulated via [`sstore`](Self::sstore) and
+    /// account mutations to the underlying database.
     ///
     /// Call it after the contract logic completes, so that writes are visible
     /// to later steps of block processing.
     ///
     /// # Errors
     ///
-    /// Returns [`crate::error::PrecompileError::Storage`] if reading the original slot value
-    /// from the database fails.
+    /// Returns [`crate::error::PrecompileError::Storage`] if reading the original account
+    /// or slot value from the database fails.
     pub fn flush(&mut self) -> Result<()> {
         if self.pending.is_empty() && self.pending_accounts.is_empty() {
             return Ok(());
@@ -168,90 +175,77 @@ impl<'a, DB: StateDB> DirectStorageProvider<'a, DB> {
             writes.entry(*addr).or_default();
         }
 
-        let mut changes: AddressMap<Account> =
-            AddressMap::with_capacity_and_hasher(writes.len(), Default::default());
+        let mut batch = BlockStateAccumulator::new();
 
         for (addr, slots) in writes {
             // Load existing account info so the commit does not accidentally
             // wipe the nonce / balance / code of the contract.
-            let info = match pending_accounts.get(&addr) {
-                Some(info) => info.clone(),
-                None => self
-                    .state
-                    .basic(addr)
+            let original_account =
+                self.state
+                    .get_account(&addr)
                     .map_err(|e| PrimitivesStorageError::BasicRead {
                         address: addr,
                         reason: e.to_string(),
-                    })?
-                    .unwrap_or_default(),
+                    })?;
+            let current_info = match pending_accounts.get(&addr) {
+                Some(info) => info.clone(),
+                None => original_account.clone().unwrap_or_default(),
             };
 
-            // Build the EvmStorage map, reading the original slot value for
-            // each write so that the journal can produce correct reverts.
-            let mut storage = EvmStorage::default();
+            if let Some(code) = current_info.code.as_ref() {
+                if current_info.code_hash != KECCAK256_EMPTY {
+                    let Ok(()) =
+                        StateChangeSink::bytecode(&mut batch, current_info.code_hash, code);
+                }
+            }
+
+            let Ok(()) = StateChangeSink::account(
+                &mut batch,
+                AccountChangeRef {
+                    address: addr,
+                    original: original_account.as_ref(),
+                    current: Some(&current_info),
+                    created: false,
+                    selfdestructed: false,
+                },
+            );
+
             for (key, new_value) in slots {
-                let original = self.state.storage(addr, key).map_err(|e| {
+                let original = self.state.get_storage(&addr, &key).map_err(|e| {
                     PrimitivesStorageError::StorageSlotRead {
                         address: addr,
                         key,
                         reason: e.to_string(),
                     }
                 })?;
-                storage.insert(
-                    key,
-                    EvmStorageSlot::new_changed(
+                let Ok(()) = StateChangeSink::storage(
+                    &mut batch,
+                    StorageChange {
+                        address: addr,
+                        key,
                         original,
-                        new_value,
-                        revm::state::TransactionId::ZERO,
-                    ),
+                        current: new_value,
+                    },
                 );
             }
-
-            let mut account = Account::from(info);
-            account.storage = storage;
-            account.mark_touch();
-
-            changes.insert(addr, account);
         }
 
-        // Track for state root hook notification.
-        self.merge_into_committed(&changes);
-        self.state.commit(changes);
+        // Track for state root hook notification and apply to backing state.
+        let Ok(()) = batch.visit(&mut self.committed_changes);
+        let Ok(()) = batch.visit(self.state);
         Ok(())
     }
 
     /// Returns all accumulated state changes from `flush()`. The caller uses
     /// them to notify reth's parallel state root task via the `OnStateHook`.
     /// Call this after `flush()`.
-    pub fn take_committed_changes(&mut self) -> AddressMap<Account> {
+    pub fn take_committed_changes(&mut self) -> BlockStateAccumulator {
         std::mem::take(&mut self.committed_changes)
-    }
-
-    /// Merge account changes into the accumulated committed_changes,
-    /// combining storage slots when the same address appears multiple times.
-    fn merge_into_committed(&mut self, changes: &AddressMap<Account>) {
-        for (addr, account) in changes {
-            match self.committed_changes.entry(*addr) {
-                revm::primitives::map::hash_map::Entry::Vacant(e) => {
-                    e.insert(account.clone());
-                }
-                revm::primitives::map::hash_map::Entry::Occupied(mut e) => {
-                    let existing = e.get_mut();
-                    // Merge storage: new slots override existing
-                    for (key, slot) in &account.storage {
-                        existing.storage.insert(*key, slot.clone());
-                    }
-                    // Update account info to latest
-                    existing.info = account.info.clone();
-                }
-            }
-        }
     }
 }
 
-impl<DB: StateDB> PrecompileStorageProvider for DirectStorageProvider<'_, DB>
-where
-    <DB as Database>::Error: std::fmt::Display,
+impl<DB: DynDatabase + StateChangeSink<Error = Infallible>> PrecompileStorageProvider
+    for DirectStorageProvider<'_, DB>
 {
     #[cfg(feature = "test-utils")]
     fn begin_scoped_mutation_frame(
@@ -343,16 +337,16 @@ where
     }
 
     fn canonical_block_hash(&mut self, number: u64) -> Result<Option<B256>> {
-        // Reth's `StateProviderDatabase::block_hash` returns the canonical
+        // Reth's `StateProviderDatabase::get_block_hash` returns the canonical
         // hash for any in-window block and `B256::ZERO` otherwise. Map ZERO
         // to `None` so callers see a clean "unknown" signal.
-        let hash =
-            self.state
-                .block_hash(number)
-                .map_err(|e| PrimitivesStorageError::BlockHashRead {
-                    number,
-                    reason: e.to_string(),
-                })?;
+        let hash = self
+            .state
+            .get_block_hash(&U256::from(number))
+            .map_err(|e| PrimitivesStorageError::BlockHashRead {
+                number,
+                reason: e.to_string(),
+            })?;
         Ok((!hash.is_zero()).then_some(hash))
     }
 
@@ -373,7 +367,7 @@ where
         if let Some(value) = self.pending.get(&address).and_then(|s| s.get(&key)) {
             return Ok(*value);
         }
-        self.state.storage(address, key).map_err(|e| {
+        self.state.get_storage(&address, &key).map_err(|e| {
             PrimitivesStorageError::StorageSlotRead {
                 address,
                 key,
@@ -429,25 +423,21 @@ where
         false
     }
 
-    fn checkpoint(&mut self) -> JournalCheckpoint {
+    fn checkpoint(&mut self) -> StateCheckpoint {
         let idx = self.snapshots.len();
         self.snapshots.push(DirectSnapshot {
             pending: self.pending.clone(),
             pending_accounts: self.pending_accounts.clone(),
             events: self.events.clone(),
         });
-        JournalCheckpoint {
-            log_i: 0,
-            journal_i: idx,
-            selfdestructed_i: 0,
-        }
+        StateCheckpoint::new(idx, 0)
     }
 
-    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+    fn checkpoint_commit(&mut self, checkpoint: StateCheckpoint) -> Result<()> {
         super::pop_snapshot_lifo(&mut self.snapshots, checkpoint)
     }
 
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+    fn checkpoint_revert(&mut self, checkpoint: StateCheckpoint) -> Result<()> {
         if let Some(snapshot) = super::drain_snapshots_from(&mut self.snapshots, checkpoint)? {
             self.pending = snapshot.pending;
             self.pending_accounts = snapshot.pending_accounts;
@@ -535,7 +525,7 @@ where
 #[cfg(all(test, feature = "test-utils"))]
 mod scoped_frame_tests {
     use alloy_primitives::{address, Address, B256, U256};
-    use revm::database::{CacheDB, EmptyDB};
+    use evm2::evm::{CacheDB, EmptyDB};
 
     use super::*;
     use crate::error::PrecompileError;

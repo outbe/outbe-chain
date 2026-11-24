@@ -57,7 +57,7 @@ impl<F: FinalizedSource> ReplayAuthority<'_, F> {
     ) -> Result<(Epoch, FC, FB)>
     where
         FC: Certificates<BlockDigest = Digest, Commitment = Digest, Scheme = HybridScheme<MinSig>>,
-        FB: Blocks<Block = ConsensusBlock>,
+        FB: Blocks<Block = std::sync::Arc<ConsensusBlock>>,
     {
         let mut archives = ReplayProgress::new(archives.certificates, archives.blocks);
         let ReplayWindow {
@@ -118,7 +118,7 @@ impl<F: FinalizedSource> ReplayAuthority<'_, F> {
         blocks: &FB,
     ) -> Result<()>
     where
-        FB: Blocks<Block = ConsensusBlock>,
+        FB: Blocks<Block = std::sync::Arc<ConsensusBlock>>,
     {
         let epocher = self.epocher;
         use outbe_primitives::reshare_artifact::ConsensusHeaderArtifact as CHA;
@@ -161,7 +161,7 @@ impl<F: FinalizedSource> ReplayAuthority<'_, F> {
         found_successor: bool,
     ) -> Result<Option<RetainedReplayBlock>>
     where
-        FB: Blocks<Block = ConsensusBlock>,
+        FB: Blocks<Block = std::sync::Arc<ConsensusBlock>>,
     {
         let local = blocks
             .get(Identifier::Index(height.get()))
@@ -210,13 +210,13 @@ impl<F: FinalizedSource> ReplayAuthority<'_, F> {
     }
 }
 enum RetainedReplayBlock {
-    Local(ConsensusBlock),
+    Local(std::sync::Arc<ConsensusBlock>),
     Fetched(Box<AncestorFinalityProof>),
 }
 impl RetainedReplayBlock {
     fn block(&self) -> &ConsensusBlock {
         match self {
-            Self::Local(block) => block,
+            Self::Local(block) => block.as_ref(),
             Self::Fetched(proof) => proof.target(),
         }
     }
@@ -224,7 +224,7 @@ impl RetainedReplayBlock {
 impl<FC, FB> ReplayProgress<FC, FB>
 where
     FC: Certificates<BlockDigest = Digest, Commitment = Digest, Scheme = HybridScheme<MinSig>>,
-    FB: Blocks<Block = ConsensusBlock>,
+    FB: Blocks<Block = std::sync::Arc<ConsensusBlock>>,
 {
     async fn reconcile_certificate(
         mut self,
@@ -257,7 +257,7 @@ where
             None => {
                 self.certificates = self
                     .certificates
-                    .put(height, digest, certified.finalization.clone())
+                    .put(height, digest, &certified.finalization)
                     .await
                     .map_err(|error| {
                         FollowError::repair_replay_finalization(height.get(), error)
@@ -305,7 +305,7 @@ where
             None => {
                 self.blocks = self
                     .blocks
-                    .put(block.clone())
+                    .put(block.digest(), &std::sync::Arc::new(block.clone()))
                     .await
                     .map_err(FollowError::repair_replay_block)?;
                 self.wrote_blocks = true;

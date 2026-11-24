@@ -162,17 +162,7 @@ pub(super) async fn maybe_run_validator_bootstrap_follow<E, N: StackNodeAccess>(
     inputs: ValidatorBootstrapFollowInputs<'_, N>,
 ) -> Result<bool>
 where
-    E: BufferPooler
-        + Clock
-        + CryptoRng
-        + Network
-        + Resolver
-        + Spawner
-        + Storage
-        + Metrics
-        + Send
-        + Sync
-        + 'static,
+    E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     use outbe_primitives::consensus::ConsensusOperatingMode;
     use reth_ethereum::storage::BlockIdReader as _;

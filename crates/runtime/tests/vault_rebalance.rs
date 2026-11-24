@@ -23,16 +23,16 @@
 
 use alloy_primitives::{keccak256, Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolError, SolEvent};
+use evm2::{
+    bytecode::Bytecode,
+    evm::{AccountInfo, CacheDB, EmptyDB},
+};
 use outbe_evm::test_support::{seed_storage, EvmWorld};
 use outbe_primitives::storage::{SubCallOutput, SubCallStatus};
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_vaultrouter::precompile::IVaultRouter;
 use outbe_vaultrouter::schema::VaultActionData;
 use outbe_vaultrouter::VaultRouterContract;
-use revm::{
-    database::{CacheDB, EmptyDB},
-    state::{AccountInfo, Bytecode},
-};
 
 /// The bonded CCA caller.
 const CCA: Address = Address::new([0x11; 20]);
@@ -88,9 +88,9 @@ fn seeded_db(register_from: bool, register_to: bool, asset_reverts: bool) -> Cac
     } else {
         &ALWAYS_ONE
     };
-    database.insert_account_info(ASSET, code_account(asset_code));
-    database.insert_account_info(VAULT_FROM, vault_account(ASSET));
-    database.insert_account_info(VAULT_TO, vault_account(ASSET));
+    database.insert_account_info(&ASSET, code_account(asset_code));
+    database.insert_account_info(&VAULT_FROM, vault_account(ASSET));
+    database.insert_account_info(&VAULT_TO, vault_account(ASSET));
 
     seed_storage(&mut database, 1, CCA, |storage| {
         storage
@@ -154,6 +154,138 @@ fn rebalance_moves_stablecoins_between_two_vaults_through_real_frames() {
     // Same asset prices 1:1: the router pulled exactly `AMOUNT`.
     let amount_to = IVaultRouter::rebalanceCall::abi_decode_returns(&result.returndata).unwrap();
     assert_eq!(amount_to, U256::from(AMOUNT));
+}
+
+/// Wave 5 N2 seam invariant: end-to-end EVM transaction where a Solidity-style caller
+/// contract stores sentinel words in EVM memory, invokes `IVaultRouter.rebalance` (which
+/// executes four nested EVM `sub_call`s that write into child memory), and reads back its
+/// own memory after return — proving `evm2` precompile `sub_call` never clobbers caller memory.
+#[test]
+fn caller_memory_is_preserved_across_outbe_precompile_subcall() {
+    use alloy_consensus::TxLegacy;
+    use alloy_primitives::TxKind;
+    use evm2::{env::BlockEnvExt, ethereum::TxEnvelope, SpecId};
+    use outbe_evm::OutbeEvmFactory;
+    use reth_ethereum::evm::EthEvmEnv;
+    use reth_primitives_traits::Recovered;
+
+    const EOA: Address = Address::new([0x99; 20]);
+    let sentinels: [[u8; 32]; 4] = [[0x11; 32], [0x22; 32], [0x33; 32], [0x44; 32]];
+    let post_ret_sentinel: [u8; 32] = [0x55; 32];
+
+    // Build caller contract bytecode deployed at bonded `CCA`:
+    // 1. MSTORE four 32-byte sentinels at 0x00, 0x20, 0x40, 0x60 and one above ret window at 0x220.
+    // 2. CALLDATACOPY(0x100, 0x00, CALLDATASIZE).
+    // 3. CALL(GAS, VAULT_ROUTER_ADDRESS, 0, 0x100, CALLDATASIZE, 0x200, 0x20).
+    // 4. MSTORE(0x80, call_status); MSTORE(0xa0, MLOAD(0x200)); MSTORE(0xc0, MLOAD(0x220)).
+    // 5. RETURN(0x00, 0xe0).
+    let mut caller_code = Vec::new();
+    for (idx, word) in sentinels.iter().enumerate() {
+        caller_code.push(0x7f); // PUSH32
+        caller_code.extend_from_slice(word);
+        caller_code.extend_from_slice(&[0x60, (idx as u8) * 0x20, 0x52]); // PUSH1 offset; MSTORE
+    }
+    caller_code.push(0x7f); // PUSH32 post_ret_sentinel
+    caller_code.extend_from_slice(&post_ret_sentinel);
+    caller_code.extend_from_slice(&[0x61, 0x02, 0x20, 0x52]); // PUSH2 0x0220; MSTORE
+    caller_code.extend_from_slice(&[
+        0x36, // CALLDATASIZE
+        0x60, 0x00, // PUSH1 0x00 (calldata offset)
+        0x61, 0x01, 0x00, // PUSH2 0x0100 (dest memory offset)
+        0x37, // CALLDATACOPY
+        0x60, 0x20, // retSize = 0x20
+        0x61, 0x02, 0x00, // retOffset = 0x0200
+        0x36, // argsSize = CALLDATASIZE
+        0x61, 0x01, 0x00, // argsOffset = 0x0100
+        0x60, 0x00, // value = 0
+        0x73, // PUSH20 VAULT_ROUTER_ADDRESS
+    ]);
+    caller_code.extend_from_slice(VAULT_ROUTER_ADDRESS.as_slice());
+    caller_code.extend_from_slice(&[
+        0x5a, // GAS
+        0xf1, // CALL
+        0x60, 0x80, // PUSH1 0x80
+        0x52, // MSTORE call_status
+        0x61, 0x02, 0x00, // PUSH2 0x0200
+        0x51, // MLOAD amount_to
+        0x60, 0xa0, // PUSH1 0xa0
+        0x52, // MSTORE amount_to
+        0x61, 0x02, 0x20, // PUSH2 0x0220
+        0x51, // MLOAD post_ret_sentinel
+        0x60, 0xc0, // PUSH1 0xc0
+        0x52, // MSTORE post_ret_sentinel
+        0x60, 0xe0, // PUSH1 0xe0 (224 bytes)
+        0x60, 0x00, // PUSH1 0x00
+        0xf3, // RETURN
+    ]);
+
+    let mut db = seeded_db(true, true, false);
+    db.insert_account_info(&CCA, code_account(&caller_code));
+    db.insert_account_info(
+        &EOA,
+        AccountInfo {
+            balance: U256::from(10_000_000_000_000u64),
+            ..Default::default()
+        },
+    );
+
+    let env = EthEvmEnv::new(
+        SpecId::PRAGUE,
+        BlockEnvExt {
+            number: U256::from(1u64),
+            timestamp: U256::from(1u64),
+            gas_limit: U256::from(30_000_000u64),
+            ..Default::default()
+        },
+        outbe_primitives::chain::CHAIN_ID,
+    );
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(outbe_primitives::chain::CHAIN_ID),
+            nonce: 0,
+            gas_price: 0,
+            gas_limit: 5_000_000,
+            to: TxKind::Call(CCA),
+            value: U256::ZERO,
+            input: rebalance_calldata(U256::from(AMOUNT), U256::MAX),
+        }),
+        EOA,
+    );
+
+    let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
+        .create_evm(&mut db, env);
+    let result = evm
+        .transact(&tx)
+        .expect("top-level transaction calling VaultRouter must execute")
+        .commit();
+    assert!(result.is_success(), "expected success, got {result:?}");
+    assert_eq!(result.output.len(), 0xe0, "caller must return 7 ABI words");
+
+    for (idx, expected) in sentinels.iter().enumerate() {
+        let start = idx * 32;
+        assert_eq!(
+            &result.output[start..start + 32],
+            expected,
+            "caller memory word {idx} at offset {start:#x} was corrupted by Outbe precompile sub-call"
+        );
+    }
+    assert_eq!(
+        &result.output[0xc0..0xe0],
+        &post_ret_sentinel,
+        "caller memory sentinel above retSize (0x220) was overwritten by Outbe precompile sub-call"
+    );
+    let call_status = U256::from_be_slice(&result.output[0x80..0xa0]);
+    let amount_to = U256::from_be_slice(&result.output[0xa0..0xc0]);
+    assert_eq!(
+        call_status,
+        U256::from(1u64),
+        "inner VaultRouter CALL must succeed"
+    );
+    assert_eq!(
+        amount_to,
+        U256::from(AMOUNT),
+        "nested sub-calls must return rebalanced amount"
+    );
 }
 
 #[test]
@@ -293,10 +425,9 @@ fn approval_token() -> AccountInfo {
 
 fn vault_action_db(fail: bool, kind: u8) -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(ASSET, approval_token());
-    db.insert_account_info(VAULT_FROM, approval_vault());
-    db.insert_account_storage(ASSET, U256::from(2), U256::from(u8::from(fail)))
-        .unwrap();
+    db.insert_account_info(&ASSET, approval_token());
+    db.insert_account_info(&VAULT_FROM, approval_vault());
+    db.insert_account_storage(&ASSET, &U256::from(2), &U256::from(u8::from(fail)));
     seed_storage(&mut db, 1, CCA, |storage| {
         let router = VaultRouterContract::new(storage.clone());
         router
@@ -338,10 +469,9 @@ fn vault_action_world(fail: bool, kind: u8) -> EvmWorld {
 
 fn pending_removal_world() -> EvmWorld {
     let mut db = vault_action_db(false, 2);
-    db.insert_account_info(VAULT_FROM, stateful_vault());
-    db.insert_account_info(VAULT_TO, stateful_vault());
-    db.insert_account_storage(VAULT_FROM, U256::ZERO, U256::from(AMOUNT))
-        .unwrap();
+    db.insert_account_info(&VAULT_FROM, stateful_vault());
+    db.insert_account_info(&VAULT_TO, stateful_vault());
+    db.insert_account_storage(&VAULT_FROM, &U256::ZERO, &U256::from(AMOUNT));
     seed_storage(&mut db, 1, CCA, |storage| {
         storage
             .increase_balance(

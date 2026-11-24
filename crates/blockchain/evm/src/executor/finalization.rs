@@ -13,21 +13,13 @@ use crate::{
     system_tx::CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX,
 };
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    E::Error: std::fmt::Display,
-{
+impl OutbeBlockExecutor<'_> {
     /// Resolves the accounted-parent artifact for the given Phase 1 metadata.
     pub fn accounted_parent_artifact_for_metadata(
         &self,
         metadata: &CertifiedParentAccountingMetadata,
     ) -> Result<AccountedParentArtifact, BlockExecutionError> {
-        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+        let block_number = self.block_number();
         resolve_accounted_parent_artifact(ParentArtifactLookup {
             provider: self.accounted_parent_artifact_provider.as_deref(),
             hint: self.parent_artifact_hint,
@@ -53,11 +45,6 @@ where
     }
 
     /// Pre-execution verification of the block's late-finalize credits.
-    ///
-    /// Verifies the inclusion window (`1 <= block_number - fb_number <= K`) and
-    /// the BLS aggregate proof once, caching the verified signer indices so
-    /// [`crate::finalization::late_credits::run_late_finalize_credits`] does not
-    /// repeat the BLS pairing.
     pub fn verify_late_finalize_credits_in_preexec(
         &mut self,
         block_number: u64,
@@ -74,33 +61,23 @@ where
             return Ok(());
         }
 
-        let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+        let timestamp = outbe_primitives::time::timestamp_secs(self.block_timestamp_u256())
             .map_err(ExecutorValidationError::from)?;
         let proposer = self
             .begin_zone_proposer(block_number)?
-            .unwrap_or_else(|| self.inner.evm.block().beneficiary());
+            .unwrap_or_else(|| self.block_beneficiary());
         let ctx = self.block_context(block_number, timestamp, proposer);
-        let host = std::sync::Arc::clone(&self.runtime_host);
+        let host = Arc::clone(&self.runtime_host);
         let verified_batches = verify_late_finalize_credits_batches(
             host.as_ref(),
-            self.inner.evm.db_mut(),
+            self.inner.evm_mut().overlay_db_mut(),
             ctx,
             artifact,
         )?;
         self.verified_late_credit_signers = Some(Arc::new(verified_batches));
         Ok(())
     }
-}
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + ZeroFeeCfgAccess,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    E::Error: std::fmt::Display,
-{
     /// V2 Phase 1 preflight for `BlockHeightRegime::SteadyState` (`block_number >= 2`).
     pub fn verify_phase1_in_preexec(
         &mut self,
@@ -109,9 +86,7 @@ where
     ) -> Result<(), BlockExecutionError> {
         let regime = BlockHeightRegime::for_block(block_number);
         if !regime.has_parent_finalization_accounting() {
-            if regime.is_genesis_bootstrap()
-                && self.inner.evm.block().prevrandao() != Some(B256::ZERO)
-            {
+            if regime.is_genesis_bootstrap() && self.block_prevrandao() != Some(B256::ZERO) {
                 return Err(ExecutorValidationError::GenesisChildPrevrandaoMustBeZero.into());
             }
             return Ok(());
@@ -135,19 +110,19 @@ where
 
         let metadata = CertifiedParentAccountingMetadata::decode(payload.as_ref())
             .map_err(ExecutorValidationError::block_artifacts)?;
-        let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+        let timestamp = outbe_primitives::time::timestamp_secs(self.block_timestamp_u256())
             .map_err(ExecutorValidationError::from)?;
         let proposer = self
             .begin_zone_proposer(block_number)?
-            .unwrap_or_else(|| self.inner.evm.block().beneficiary());
+            .unwrap_or_else(|| self.block_beneficiary());
         let block_context = self.block_context(block_number, timestamp, proposer);
-        let prevrandao = self.inner.evm.block().prevrandao();
+        let prevrandao = self.block_prevrandao();
         let parent_hash = self.parent_hash;
 
-        let host = std::sync::Arc::clone(&self.runtime_host);
+        let host = Arc::clone(&self.runtime_host);
         let vrf_proof_hash = verify_phase1_certificate(
             host.as_ref(),
-            self.inner.evm.db_mut(),
+            self.inner.evm_mut().overlay_db_mut(),
             Phase1VerifyInput {
                 block_context,
                 parent_hash,
@@ -192,7 +167,7 @@ where
             .map_err(ExecutorValidationError::phase1_commit_encode_input)?;
         let proposer = self
             .begin_zone_proposer(block_number)?
-            .unwrap_or_else(|| self.inner.evm.block().beneficiary());
+            .unwrap_or_else(|| self.block_beneficiary());
 
         let Some((cached_tx_hash, _signed_gas_limit)) =
             resolve_phase1_witness(Phase1WitnessLookup {
@@ -201,7 +176,7 @@ where
                 evm_signer: self.evm_signer.as_ref(),
                 calldata: &calldata,
                 proposer,
-                chain_id: self.inner.evm.chain_id(),
+                chain_id: self.chain_id,
                 block_number,
             })?
         else {
@@ -213,7 +188,7 @@ where
             finalized_summary: Some(finalized_summary),
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
             verified_late_credit_signers: None,
-            block_gas_limit: self.inner.evm.block().gas_limit(),
+            block_gas_limit: self.block_gas_limit(),
             user_gas_used: 0,
         };
         let output = self.execute_preexec_phase1_call(phase_context, calldata)?;
@@ -226,9 +201,13 @@ where
         &mut self,
         phase_context: PreloadedSystemTxContext,
         calldata: Bytes,
-    ) -> Result<EthTxResult<E::HaltReason, reth_ethereum::TxType>, BlockExecutionError> {
+    ) -> Result<
+        EthTransactionResultWithState<OutbeEvmTypes, alloy_consensus::TxType>,
+        BlockExecutionError,
+    > {
         let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
-            self.inner.evm.transact_system_call(
+            transact_outbe_system_call(
+                self.inner.evm_mut(),
                 outbe_primitives::addresses::SYSTEM_ADDRESS,
                 outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
                 calldata,
@@ -248,10 +227,10 @@ where
             tracing::error!(target: "outbe::executor", %err, "critical begin-zone phase did not succeed; failing block");
             return Err(err.into());
         }
-        Ok(EthTxResult {
+        Ok(EthTransactionResultWithState::new(
             result,
-            blob_gas_used: 0,
-            tx_type: alloy_consensus::TxType::Legacy,
-        })
+            alloy_consensus::TxType::Legacy,
+            0,
+        ))
     }
 }

@@ -678,7 +678,7 @@ async fn cancel_required_retries_cold_prepare_and_verifies_the_second_intent() {
     let (root, host_key) = host_tree();
     let committee = FinalityCommitteeFixture::new(4);
     let (live, descriptor) = source_for_promotion(&host_key, &committee);
-    outbe_tee::node_host::ResidentStateStore::load_or_create(
+    let _ = outbe_tee::node_host::ResidentStateStore::load_or_create(
         root.path(),
         &live.authorization_witness().unwrap(),
     )

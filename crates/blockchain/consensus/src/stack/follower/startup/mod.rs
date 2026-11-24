@@ -11,31 +11,11 @@ use commonware_storage::archive::immutable;
 use services::{FollowerConnection, FollowerStackServices};
 
 pub trait FollowerRuntime:
-    BufferPooler
-    + Clock
-    + CryptoRng
-    + Network
-    + Resolver
-    + Spawner
-    + Storage
-    + Metrics
-    + Send
-    + Sync
-    + 'static
+    Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static
 {
 }
 impl<E> FollowerRuntime for E where
-    E: BufferPooler
-        + Clock
-        + CryptoRng
-        + Network
-        + Resolver
-        + Spawner
-        + Storage
-        + Metrics
-        + Send
-        + Sync
-        + 'static
+    E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static
 {
 }
 
@@ -50,7 +30,7 @@ struct StartupChainState {
 }
 struct FollowerArchives<E: FollowerRuntime> {
     finalizations_archive: immutable::Archive<E, Digest, Finalization>,
-    blocks_archive: immutable::Archive<E, Digest, ConsensusBlock>,
+    blocks_archive: immutable::Archive<E, Digest, Arc<ConsensusBlock>>,
     page_cache: CacheRef,
     partition_prefix: String,
 }
@@ -161,8 +141,7 @@ fn read_startup_chain_state(node: &impl StackNodeAccess) -> Result<StartupChainS
 }
 async fn initialize_archives<E: FollowerRuntime>(ctx: &E) -> Result<FollowerArchives<E>> {
     // -- 2. Page cache + marshal archives (mirrors run_consensus_stack) ---
-    let page_cache = CacheRef::from_pooler(
-        ctx,
+    let page_cache = CacheRef::new(
         nonzero_u16(4096, "page cache page size")?,
         nonzero_usize(config::PAGE_CACHE_SIZE / 4096, "PAGE_CACHE_SIZE / 4096")?,
     );
@@ -315,7 +294,9 @@ async fn inspect_archive_anchor<E: FollowerRuntime>(
                 crate::errors::FollowerStackError::MissingArchivedFollowerBlockRecord(
                     preselected_anchor_height,
                 ),
-            )?,
+            )?
+            .as_ref()
+            .clone(),
         )
     };
 
@@ -363,7 +344,11 @@ async fn initialize_marshal<E: FollowerRuntime>(
             )?,
         )
         .await;
-    let last_consensus_finalized = map_marshal_init_height(last_consensus_finalized_opt.height());
+    let last_consensus_finalized = map_marshal_init_height(
+        last_consensus_finalized_opt
+            .processed()
+            .map(commonware_consensus::marshal::core::Processed::height),
+    );
     Ok(InitializedMarshal {
         actor: marshal_actor,
         mailbox: marshal_mailbox,

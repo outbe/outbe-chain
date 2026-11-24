@@ -8,7 +8,6 @@
 use super::*;
 use alloy_consensus::TxEip1559;
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-use alloy_evm::block::BlockExecutor;
 use alloy_primitives::{Bytes, TxKind, B256, U256};
 use alloy_sol_types::SolCall;
 use outbe_evm::config::OutbeEvmConfig;
@@ -23,10 +22,7 @@ use outbe_system_common::addresses::{
 };
 use outbe_tee::witness::{decode_witness_payload_v1, EnclaveWitnessEntryV1};
 use reth_ethereum::TransactionSigned;
-use reth_evm::ConfigureEvm;
 use reth_primitives_traits::Recovered;
-use revm::database::states::bundle_state::BundleRetention;
-use revm::Database;
 
 const USER_TXS: usize = 4;
 const MINT_MINOR: u64 = 1_000_000;
@@ -146,7 +142,7 @@ fn two_blocks_record_every_domain_across_three_witness_modes() {
     let user_h1 = calls_at(0, 1);
     let user_h2 = calls_at(USER_TXS as u64, 2);
 
-    let asset_bytecode = revm::state::Bytecode::new_raw(Bytes::from_static(&[
+    let asset_bytecode = Bytecode::new_legacy(Bytes::from_static(&[
         0x5f, 0x35, 0x60, 0xe0, 0x1c, 0x63, 0x31, 0x3c, 0xe5, 0x67, 0x14, 0x60, 0x17, 0x57, 0x61,
         0x03, 0x48, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3, 0x5b, 0x60, 0x06, 0x5f, 0x52, 0x60, 0x20,
         0x5f, 0xf3,
@@ -180,7 +176,7 @@ fn two_blocks_record_every_domain_across_three_witness_modes() {
         uninstall_domain_standins();
         // An empty account loses its storage at the end of the block. Marker
         // code keeps the seeded ciphertext and the vault registry across H1.
-        let marker = revm::state::Bytecode::new_legacy(Bytes::from_static(&[0xef]));
+        let marker = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
         for address in [
             outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
             GRATIS_ADDRESS,
@@ -188,26 +184,26 @@ fn two_blocks_record_every_domain_across_three_witness_modes() {
             FIDELITY_ADDRESS,
             EMISSION_ADDRESS,
         ] {
-            state.database.insert_account_info(
-                address,
-                revm::state::AccountInfo {
+            state.insert_account_info(
+                &address,
+                AccountInfo {
                     code_hash: marker.hash_slow(),
                     code: Some(marker.clone()),
                     ..Default::default()
                 },
             );
         }
-        state.database.insert_account_info(
-            settlement_asset,
-            revm::state::AccountInfo {
+        state.insert_account_info(
+            &settlement_asset,
+            AccountInfo {
                 code_hash: asset_bytecode.hash_slow(),
                 code: Some(asset_bytecode.clone()),
                 ..Default::default()
             },
         );
-        state.database.insert_account_info(
-            user_sender,
-            revm::state::AccountInfo {
+        state.insert_account_info(
+            &user_sender,
+            AccountInfo {
                 balance: U256::from(1_000_000_000_000_000u64),
                 ..Default::default()
             },
@@ -243,7 +239,7 @@ fn two_blocks_record_every_domain_across_three_witness_modes() {
     let begin_h1 = begin_for(2, parent_hash);
     let begin_h2 = begin_for(3, h2_parent);
 
-    let run_height = |mut state: _,
+    let run_height = |mut state: CacheDB<EmptyDB>,
                       block_number: u64,
                       begin: &Vec<Recovered<TransactionSigned>>,
                       user_txs: &[Recovered<TransactionSigned>],
@@ -281,18 +277,18 @@ fn two_blocks_record_every_domain_across_three_witness_modes() {
         }
         executor.apply_end_block_phase().unwrap();
         if !is_verifier {
-            executor.prepare_final_header_artifacts(0).unwrap();
+            finalize_executor_header_artifacts(&mut executor, 0).unwrap();
         }
         let extra = executor.final_extra_data.clone();
-        let (evm, result) = executor.finish().unwrap();
-        drop(evm);
-        state.merge_transitions(BundleRetention::Reverts);
+        let output = executor.finish().unwrap();
+        state.commit_source(&BundleSource(&output.state));
         let nonce = state
-            .basic(user_sender)
+            .get_account(&user_sender)
             .expect("user account")
             .map(|info| info.nonce)
             .unwrap_or(0);
-        let statuses: Vec<bool> = result
+        let statuses: Vec<bool> = output
+            .result
             .receipts
             .iter()
             .map(|receipt| receipt.status())
@@ -306,10 +302,10 @@ fn two_blocks_record_every_domain_across_three_witness_modes() {
         }
         assert_domain_witness(&extra, begin.len(), block_number);
         let matched = (
-            result.receipts,
-            result.gas_used,
+            output.result.receipts,
+            output.result.gas_used,
             extra,
-            post_state_root(&state.bundle_state),
+            post_state_root(&output.state),
         );
         (state, matched, nonce)
     };

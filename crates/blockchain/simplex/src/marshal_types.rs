@@ -41,7 +41,7 @@ pub type MarshalActor<E> = marshal::core::Actor<
     Variant,
     HybridSchemeProvider<MinSig>,
     commonware_storage::archive::immutable::Archive<E, Digest, Finalization>,
-    commonware_storage::archive::immutable::Archive<E, Digest, ConsensusBlock>,
+    commonware_storage::archive::immutable::Archive<E, Digest, std::sync::Arc<ConsensusBlock>>,
     crate::epoch_registry::FollowerEpocher,
     Sequential,
     Exact,
@@ -51,8 +51,8 @@ pub type MarshalActor<E> = marshal::core::Actor<
 pub type FollowMarshalActor<E> = MarshalActor<E>;
 
 /// Broadcast engine for block dissemination.
-pub type BroadcastEngine<E, D> =
-    commonware_broadcast::buffered::Engine<E, bls12381::PublicKey, ConsensusBlock, D>;
+pub type BroadcastEngine<E, D, B, T = Sequential> =
+    commonware_broadcast::buffered::Engine<E, bls12381::PublicKey, ConsensusBlock, D, B, T>;
 
 /// Broadcast mailbox for block dissemination.
 pub type BroadcastMailbox =

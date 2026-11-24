@@ -12,17 +12,7 @@ pub fn run_consensus_stack<E, N: ExecutionNodeBackend>(
     services: ConsensusStackServices,
 ) -> impl Future<Output = Result<()>> + Send
 where
-    E: BufferPooler
-        + Clock
-        + CryptoRng
-        + Network
-        + Resolver
-        + Spawner
-        + Storage
-        + Metrics
-        + Send
-        + Sync
-        + 'static,
+    E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     let application = services.application_drain.clone();
     async move {
@@ -42,17 +32,7 @@ async fn run_consensus_stack_inner<E, N: ExecutionNodeBackend>(
     services: ConsensusStackServices,
 ) -> Result<()>
 where
-    E: BufferPooler
-        + Clock
-        + CryptoRng
-        + Network
-        + Resolver
-        + Spawner
-        + Storage
-        + Metrics
-        + Send
-        + Sync
-        + 'static,
+    E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     let ConsensusStackServices {
         application_drain,
@@ -229,8 +209,7 @@ where
     // formation. Local execution height 0 alone is not sufficient for a fresh
     // datadir joining an already-running network.
     // -- 5b. Pre-compute page cache (shared across marshal + epochs) -----
-    let page_cache = CacheRef::from_pooler(
-        &ctx,
+    let page_cache = CacheRef::new(
         nonzero_u16(4096, "page cache page size")?,
         nonzero_usize(config::PAGE_CACHE_SIZE / 4096, "PAGE_CACHE_SIZE / 4096")?,
     );
@@ -477,8 +456,10 @@ where
             mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
             deque_size: config::BROADCAST_DEQUE_SIZE,
             peer_provider: oracle.clone(),
+            blocker: oracle.clone(),
             priority: true,
             codec_config: (),
+            strategy: commonware_parallel::Sequential,
         },
     );
 
@@ -490,8 +471,8 @@ where
             peer_provider: oracle.clone(),
             blocker: oracle.clone(),
             mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
-            timeout: std::time::Duration::from_secs(2),
-            fetch_retry_timeout: std::time::Duration::from_millis(100),
+            fetch_timeout: commonware_utils::NZDuration!(std::time::Duration::from_secs(2)),
+            fetch_retry_delay: std::time::Duration::from_millis(100),
             priority_requests: false,
             priority_responses: false,
         },

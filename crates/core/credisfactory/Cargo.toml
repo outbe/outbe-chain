@@ -36,7 +36,6 @@ outbe-ccaregistry.workspace = true
 outbe-credis = { workspace = true, features = ["test-utils"] }
 outbe-gratisfactory.workspace = true
 eyre.workspace = true
-revm.workspace = true
 alloy-primitives.workspace = true
 
 [lints]

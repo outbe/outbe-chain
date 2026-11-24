@@ -1,9 +1,13 @@
 use alloy_primitives::{address, b256, keccak256, Address, Log, B256, U256};
 use alloy_sol_types::{SolCall, SolError, SolEvent};
+use evm2::evm::{CacheDB, DynDatabase, EmptyDB};
 use outbe_primitives::{
     block::BlockContext,
     error::PrecompileError,
-    storage::{direct::DirectStorageProvider, hashmap::HashMapStorageProvider, StorageHandle},
+    storage::{
+        direct::DirectStorageProvider, hashmap::HashMapStorageProvider, AccountInfo, Bytecode,
+        StorageHandle,
+    },
 };
 use outbe_stablecoin::precompile::IStablecoin;
 use outbe_stablecoin::schema::OPERATIONAL_ROLES;
@@ -14,11 +18,6 @@ use outbe_system_common::stablecoin::{
 use outbe_system_common::{
     addresses::{STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE},
     stablecoin_fork::{STABLECOIN_LIST_PAGE_CAP, STABLECOIN_V1_SCHEMA_VERSION},
-};
-use revm::{
-    database::{CacheDB, EmptyDB},
-    state::{AccountInfo, Bytecode},
-    Database,
 };
 
 use crate::{
@@ -492,7 +491,7 @@ fn approved_execution_flushes_marker_storage_and_preserves_forced_balance() {
     let native_balance = U256::from(777u64);
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(
-        token,
+        &token,
         AccountInfo {
             balance: native_balance,
             ..Default::default()
@@ -529,20 +528,30 @@ fn approved_execution_flushes_marker_storage_and_preserves_forced_balance() {
 
     provider.flush().unwrap();
     let changes = provider.take_committed_changes();
-    let token_change = changes.get(&token).expect("token state/code change");
-    assert_eq!(token_change.info.balance, native_balance);
+    let token_change = changes
+        .accounts()
+        .find(|(addr, _)| *addr == token)
+        .and_then(|(_, delta)| delta.current.as_ref())
+        .expect("token state/code change");
+    assert_eq!(token_change.balance, native_balance);
+    let emitted_code = changes
+        .code()
+        .find(|(hash, _)| **hash == token_change.code_hash)
+        .map(|(_, code)| code)
+        .expect("marker");
     assert_eq!(
-        token_change
-            .info
-            .code
-            .as_ref()
-            .expect("marker")
-            .original_bytes()
-            .as_ref(),
+        emitted_code.original_bytes().as_ref(),
         STABLECOIN_MARKER_CODE
     );
-    assert!(!token_change.storage.is_empty());
-    assert!(changes.contains_key(&STABLECOIN_FACTORY_ADDRESS));
+    assert!(changes.storage().any(|(key, _)| key.address() == token));
+    assert!(
+        changes
+            .accounts()
+            .any(|(addr, _)| addr == STABLECOIN_FACTORY_ADDRESS)
+            || changes
+                .storage()
+                .any(|(key, _)| key.address() == STABLECOIN_FACTORY_ADDRESS)
+    );
     let events = provider.take_events();
     assert_eq!(events.len(), 7);
     assert!(events[..6].iter().all(|event| event.address == token
@@ -550,10 +559,13 @@ fn approved_execution_flushes_marker_storage_and_preserves_forced_balance() {
     assert_eq!(events[6].address, STABLECOIN_FACTORY_ADDRESS);
     drop(provider);
 
-    let persisted = db.basic(token).unwrap().expect("persisted token account");
+    let persisted = db
+        .get_account(&token)
+        .unwrap()
+        .expect("persisted token account");
     assert_eq!(persisted.balance, native_balance);
     assert_eq!(
-        db.code_by_hash(persisted.code_hash)
+        db.get_code_by_hash(&persisted.code_hash)
             .unwrap()
             .original_bytes()
             .as_ref(),

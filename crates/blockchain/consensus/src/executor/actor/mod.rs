@@ -184,6 +184,7 @@ where
                 let height = Height::new(h);
                 match marshal.get_block(height).await {
                     Some(block) => {
+                        let block = block.inner().clone();
                         let digest = crate::digest::Digest(block.block_hash());
                         match self.handle_finalize_inner(height, digest, block).await {
                             Ok(()) => {

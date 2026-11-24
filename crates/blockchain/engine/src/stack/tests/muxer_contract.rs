@@ -31,8 +31,7 @@ const LINK: Link = Link {
     jitter: Duration::from_millis(0),
     success_rate: commonware_utils::Probability::new(1, 1).unwrap(),
 };
-const CAPACITY: usize = 4;
-const TEST_QUOTA: Quota = Quota::per_second(NonZeroU32::MAX);
+const TEST_QUOTA: Quota = Quota::per_second(NonZeroU32::new(1_000).unwrap());
 /// p2p::Channel namespace for these tests. Type alias = `u64`.
 const PHYSICAL_CHANNEL: Channel = 0;
 /// Sub-channel id used in the test, modelling an epoch sub-channel id in
@@ -81,24 +80,16 @@ fn same_epoch_routes_are_reacquired_only_after_old_receivers_drop() {
             .register(PHYSICAL_CHANNEL, TEST_QUOTA)
             .await
             .unwrap();
-        let (vote_muxer, mut vote_mux) = Muxer::new(
-            context.child("vote_mux"),
-            vote_sender,
-            vote_receiver,
-            CAPACITY,
-        );
+        let (vote_muxer, mut vote_mux) =
+            Muxer::new(context.child("vote_mux"), vote_sender, vote_receiver);
         vote_muxer.start();
 
         let (cert_sender, cert_receiver) = control
             .register(PHYSICAL_CHANNEL + 1, TEST_QUOTA)
             .await
             .unwrap();
-        let (cert_muxer, mut cert_mux) = Muxer::new(
-            context.child("cert_mux"),
-            cert_sender,
-            cert_receiver,
-            CAPACITY,
-        );
+        let (cert_muxer, mut cert_mux) =
+            Muxer::new(context.child("cert_mux"), cert_sender, cert_receiver);
         cert_muxer.start();
 
         let (res_sender, res_receiver) = control
@@ -106,7 +97,7 @@ fn same_epoch_routes_are_reacquired_only_after_old_receivers_drop() {
             .await
             .unwrap();
         let (res_muxer, mut res_mux) =
-            Muxer::new(context.child("res_mux"), res_sender, res_receiver, CAPACITY);
+            Muxer::new(context.child("res_mux"), res_sender, res_receiver);
         res_muxer.start();
 
         let epoch = Epoch::new(EPOCH_SUBCHANNEL);
@@ -162,8 +153,7 @@ fn mux_drops_messages_to_unregistered_subchannel() {
             .register(PHYSICAL_CHANNEL, TEST_QUOTA)
             .await
             .unwrap();
-        let (s_mux, mut s_handle) =
-            Muxer::new(context.child("sender_mux"), s_sender, s_receiver, CAPACITY);
+        let (s_mux, mut s_handle) = Muxer::new(context.child("sender_mux"), s_sender, s_receiver);
         s_mux.start();
 
         // Receiver peer: register the physical channel and a control sub-channel,
@@ -173,12 +163,7 @@ fn mux_drops_messages_to_unregistered_subchannel() {
             .register(PHYSICAL_CHANNEL, TEST_QUOTA)
             .await
             .unwrap();
-        let (r_mux, mut r_handle) = Muxer::new(
-            context.child("receiver_mux"),
-            r_sender,
-            r_receiver,
-            CAPACITY,
-        );
+        let (r_mux, mut r_handle) = Muxer::new(context.child("receiver_mux"), r_sender, r_receiver);
         r_mux.start();
 
         link_bidirectional(&mut oracle, pk_sender.clone(), pk_receiver.clone()).await;
@@ -260,8 +245,7 @@ fn mux_with_backup_captures_unrouted_message_but_does_not_replay() {
             .register(PHYSICAL_CHANNEL, TEST_QUOTA)
             .await
             .unwrap();
-        let (s_mux, mut s_handle) =
-            Muxer::new(context.child("sender_mux"), s_sender, s_receiver, CAPACITY);
+        let (s_mux, mut s_handle) = Muxer::new(context.child("sender_mux"), s_sender, s_receiver);
         s_mux.start();
 
         let (r_sender, r_receiver) = oracle
@@ -269,14 +253,10 @@ fn mux_with_backup_captures_unrouted_message_but_does_not_replay() {
             .register(PHYSICAL_CHANNEL, TEST_QUOTA)
             .await
             .unwrap();
-        let (r_mux, mut r_handle, mut backup_rx) = Muxer::builder(
-            context.child("receiver_mux"),
-            r_sender,
-            r_receiver,
-            CAPACITY,
-        )
-        .with_backup()
-        .build();
+        let (r_mux, mut r_handle, mut backup_rx) =
+            Muxer::builder(context.child("receiver_mux"), r_sender, r_receiver)
+                .with_backup()
+                .build();
         r_mux.start();
 
         link_bidirectional(&mut oracle, pk_sender.clone(), pk_receiver.clone()).await;

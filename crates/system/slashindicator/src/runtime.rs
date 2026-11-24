@@ -169,8 +169,10 @@ impl SlashIndicator<'_> {
             .ok_or(SlashIndicatorError::MissingCommitteeSnapshotForEpoch { epoch })?;
         let mut keys = Vec::with_capacity(snapshot.committee.len());
         for entry in &snapshot.committee {
-            let pk = bls12381::PublicKey::read(&mut entry.consensus_pubkey.as_slice())
-                .map_err(|_| SlashIndicatorError::InvalidCommitteePubkeyInSnapshot)?;
+            let pk = bls12381::PublicKey::read(&mut commonware_codec::Copying(
+                entry.consensus_pubkey.as_slice(),
+            ))
+            .map_err(|_| SlashIndicatorError::InvalidCommitteePubkeyInSnapshot)?;
             keys.push(pk);
         }
         Ok(Set::from_iter_dedup(keys))

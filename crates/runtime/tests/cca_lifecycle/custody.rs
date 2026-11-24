@@ -5,7 +5,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     let mut db = CacheDB::new(EmptyDB::default());
     let initial = BOND_REQUIREMENT * U256::from(2);
     db.insert_account_info(
-        CCA,
+        &CCA,
         AccountInfo {
             balance: initial,
             ..Default::default()
@@ -15,7 +15,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
     let code = Bytecode::new_raw(Bytes::from_static(&[0xef]));
     for address in [CCA_REGISTRY_ADDRESS, AGENT_REWARD_ADDRESS] {
         db.insert_account_info(
-            address,
+            &address,
             AccountInfo {
                 code_hash: code.hash_slow(),
                 code: Some(code.clone()),
@@ -41,7 +41,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         NOW
     )
     .is_success());
-    assert_eq!(db.cache.accounts[&CCA].info.balance, initial);
+    assert_eq!(balance(&db, CCA), initial);
     assert!(tx(
         &mut db,
         BOND_REQUIREMENT - U256::ONE,
@@ -69,21 +69,15 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         NOW,
     );
     assert!(bonded.is_success());
-    assert_eq!(bonded.logs().len(), 1);
-    let log = &bonded.logs()[0];
+    assert_eq!(bonded.logs.len(), 1);
+    let log = &bonded.logs[0];
     assert_eq!(log.address, CCA_REGISTRY_ADDRESS);
     let event = ICcaRegistry::Bonded::decode_log(log).unwrap().data;
     assert_eq!(event.cca, CCA);
     assert_eq!(event.amountMinor, U256::ONE);
     assert_eq!(event.state, ICcaRegistry::State::Active);
-    assert_eq!(
-        db.cache.accounts[&CCA].info.balance,
-        initial - BOND_REQUIREMENT
-    );
-    assert_eq!(
-        db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
-        BOND_REQUIREMENT
-    );
+    assert_eq!(balance(&db, CCA), initial - BOND_REQUIREMENT);
+    assert_eq!(balance(&db, CCA_REGISTRY_ADDRESS), BOND_REQUIREMENT);
     // Malformed and nonpayable funded calls refund value and preserve registration.
     for data in [
         vec![],
@@ -91,10 +85,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         ICcaRegistry::unbondCall {}.abi_encode(),
     ] {
         assert!(!tx(&mut db, U256::ONE, data, NOW).is_success());
-        assert_eq!(
-            db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
-            BOND_REQUIREMENT
-        );
+        assert_eq!(balance(&db, CCA_REGISTRY_ADDRESS), BOND_REQUIREMENT);
     }
     with_storage(&mut db, |s| {
         api::credis_issued(&s, CCA, 20231115, U256::from(100)).unwrap();
@@ -153,16 +144,10 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
             U256::from(1000)
         )
     });
-    assert_eq!(
-        db.cache.accounts[&AGENT_REWARD_ADDRESS].info.balance,
-        U256::ZERO
-    );
+    assert_eq!(balance(&db, AGENT_REWARD_ADDRESS), U256::ZERO);
     // Claim cases use a fixed balance independent of the pool split.
     let reward = U256::from(320);
-    assert_eq!(
-        db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
-        BOND_REQUIREMENT
-    );
+    assert_eq!(balance(&db, CCA_REGISTRY_ADDRESS), BOND_REQUIREMENT);
     assert!(tx(
         &mut db,
         U256::ZERO,
@@ -227,7 +212,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         } else {
             let removed = tx_to(&mut db, target, U256::ZERO, data, claim_time);
             assert!(!removed.is_success());
-            assert!(removed.logs().is_empty());
+            assert!(removed.logs.is_empty());
         }
         assert_eq!(snapshot(&mut db), before);
     }
@@ -288,10 +273,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
                 BOND_REQUIREMENT
             );
         });
-        assert_eq!(
-            db.cache.accounts[&CCA].info.balance,
-            initial - BOND_REQUIREMENT
-        );
+        assert_eq!(balance(&db, CCA), initial - BOND_REQUIREMENT);
     }
     with_storage(&mut db, |storage| {
         assert_eq!(
@@ -302,10 +284,7 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         )
     });
     assert!(claim_reward(&mut db, claim(U256::ZERO), claim_time).is_err());
-    assert_eq!(
-        db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
-        BOND_REQUIREMENT
-    );
+    assert_eq!(balance(&db, CCA_REGISTRY_ADDRESS), BOND_REQUIREMENT);
     assert!(!tx(
         &mut db,
         U256::ZERO,
@@ -320,11 +299,8 @@ fn evm_bond_rewards_and_exit_preserve_custody_and_history() {
         NOW + UNBOND_COOLDOWN_SECONDS
     )
     .is_success());
-    assert_eq!(
-        db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
-        U256::ZERO
-    );
-    assert_eq!(db.cache.accounts[&CCA].info.balance, initial);
+    assert_eq!(balance(&db, CCA_REGISTRY_ADDRESS), U256::ZERO);
+    assert_eq!(balance(&db, CCA), initial);
     with_storage(&mut db, |s| {
         let record = api::get_cca(&s, CCA).unwrap();
         assert_eq!(record.state as u8, ICcaRegistry::State::Deregistered as u8);
@@ -347,7 +323,7 @@ fn bond_past_128_active_ccas_accepts_value_and_updates_the_set() {
     let mut db = CacheDB::new(EmptyDB::default());
     let code = Bytecode::new_raw(Bytes::from_static(&[0xef]));
     db.insert_account_info(
-        CCA_REGISTRY_ADDRESS,
+        &CCA_REGISTRY_ADDRESS,
         AccountInfo {
             code_hash: code.hash_slow(),
             code: Some(code),
@@ -355,7 +331,7 @@ fn bond_past_128_active_ccas_accepts_value_and_updates_the_set() {
         },
     );
     db.insert_account_info(
-        CCA,
+        &CCA,
         AccountInfo {
             balance: BOND_REQUIREMENT,
             ..Default::default()
@@ -371,8 +347,8 @@ fn bond_past_128_active_ccas_accepts_value_and_updates_the_set() {
         }
         assert_eq!(CcaContract::new(storage).active.len().unwrap(), 128);
     });
-    let registry_before = db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance;
-    let caller_before = db.cache.accounts[&CCA].info.balance;
+    let registry_before = balance(&db, CCA_REGISTRY_ADDRESS);
+    let caller_before = balance(&db, CCA);
     let outcome = tx(
         &mut db,
         BOND_REQUIREMENT,
@@ -383,13 +359,10 @@ fn bond_past_128_active_ccas_accepts_value_and_updates_the_set() {
         NOW,
     );
     assert!(outcome.is_success());
-    assert_eq!(outcome.logs().len(), 1);
+    assert_eq!(outcome.logs.len(), 1);
+    assert_eq!(balance(&db, CCA), caller_before - BOND_REQUIREMENT);
     assert_eq!(
-        db.cache.accounts[&CCA].info.balance,
-        caller_before - BOND_REQUIREMENT
-    );
-    assert_eq!(
-        db.cache.accounts[&CCA_REGISTRY_ADDRESS].info.balance,
+        balance(&db, CCA_REGISTRY_ADDRESS),
         registry_before + BOND_REQUIREMENT
     );
     with_storage(&mut db, |storage| {

@@ -10,7 +10,7 @@ fn issued_at_on_protocol_floor(second_of_day: u64) -> u64 {
 
 type NodBlockObservation = (
     B256,
-    revm::database::BundleState,
+    BundleState,
     Vec<Receipt>,
     U256,
     U256,
@@ -57,7 +57,7 @@ fn assert_group_mutation_receipts(receipts: &[Receipt], expected_count: usize) {
 fn execute_nod_block(
     fixture: &NodBodyFixture,
     expected_validator_body: bool,
-) -> Result<NodBlockObservation, alloy_evm::block::BlockExecutionError> {
+) -> Result<NodBlockObservation, BlockExecutionError> {
     outbe_chain_constants::initialize(None).unwrap();
     let proposer = fixture.proposer;
 
@@ -143,17 +143,17 @@ fn execute_nod_block(
     signed_body.extend(end_txs);
     let receipts = executor.receipts().to_vec();
     assert_group_mutation_receipts(&receipts, signed_body.len());
-    executor
-        .prepare_final_header_artifacts(0)
+    fixtures_execution::finalize_executor_header_artifacts(&mut executor, 0)
         .expect("final extra_data should encode");
-    let (evm, block_result) = executor.finish().expect("block finish must succeed");
-    drop(evm);
-    let bundle = state.bundle_state.clone();
+    let output = executor.finish().expect("block finish must succeed");
+    let block_result = output.result;
+    let bundle = output.state;
+    state.commit_source(&BundleSource(&bundle));
     let root = post_state_root(&bundle);
     let proposer_balance = signer_balance(&mut state, proposer);
     let rewards_balance = signer_balance(&mut state, REWARDS_ADDRESS);
 
-    Ok::<_, alloy_evm::block::BlockExecutionError>((
+    Ok::<_, BlockExecutionError>((
         root,
         bundle,
         receipts,
@@ -294,17 +294,9 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
                 })
             })
             .expect("body mint execution must succeed");
-        let root = post_state_root(&state.bundle_state);
         let proposer_balance = signer_balance(&mut state, proposer);
         let rewards_balance = signer_balance(&mut state, REWARDS_ADDRESS);
-        (
-            changes,
-            events,
-            root,
-            state.bundle_state,
-            proposer_balance,
-            rewards_balance,
-        )
+        (changes, events, proposer_balance, rewards_balance)
     };
 
     let proposer_result = run();
@@ -341,7 +333,7 @@ struct NodBodyFixture {
     group_key: B256,
     item: NodItemState,
 }
-type SeededNodParent = (State<CacheDB<EmptyDBTyped<ProviderError>>>, B256);
+type SeededNodParent = (CacheDB<EmptyDB>, B256);
 fn arm_direct_process_ready_budget() {
     outbe_primitives::storage::direct::arm_next_direct_scoped_frame_budget(
         outbe_primitives::storage::MutationPurposeTag::CycleLifecycle,
@@ -419,7 +411,7 @@ struct WitnessedForfeitBlock {
 }
 
 struct ForfeitBlockSetup {
-    state: State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    state: CacheDB<EmptyDB>,
     config: OutbeEvmConfig,
     begin: Vec<reth_primitives_traits::Recovered<reth_ethereum::TransactionSigned>>,
     parent_metadata: CertifiedParentAccountingMetadata,
@@ -531,7 +523,7 @@ fn execute_witnessed_forfeit_block(
         None => {
             executor.apply_end_block_phase().unwrap();
             let end_txs = executor.take_staged_end_block_txs();
-            executor.prepare_final_header_artifacts(0).unwrap();
+            fixtures_execution::finalize_executor_header_artifacts(&mut executor, 0).unwrap();
             end_txs
         }
         Some(proposed) => {
@@ -541,16 +533,14 @@ fn execute_witnessed_forfeit_block(
             proposed.end_txs.clone()
         }
     };
-    let extra_data = executor.final_extra_data.clone();
-    let (evm, result) = executor.finish().unwrap();
-    drop(evm);
-    let mut state = setup.state;
-    state.merge_transitions(revm::database::states::bundle_state::BundleRetention::Reverts);
+    let extra_data = executor.final_extra_data().clone();
+    let output = executor.finish().unwrap();
+    let result = output.result;
     WitnessedForfeitBlock {
         extra_data,
         end_txs,
         receipts: result.receipts,
-        root: post_state_root(&state.bundle_state),
+        root: post_state_root(&output.state),
     }
 }
 
@@ -569,15 +559,18 @@ fn trace_witnessed_forfeit_block(
         let mut executor = setup.config.create_executor(evm, execution);
         super::with_phase1_verify_disabled(|| executor.apply_pre_execution_changes().unwrap());
     }
-    let evm = setup
+    let mut evm = setup
         .config
         .evm_with_env(&mut setup.state, test_evm_env(2, REWARDS_ADDRESS));
-    let mut tracer = alloy_evm::tracing::TxTracer::new(evm);
     for tx in setup.begin.iter().chain(&proposed.end_txs) {
-        let traced = tracer
-            .trace(setup.config.tx_env(tx))
-            .expect("the traced transaction replays its witness");
-        assert!(traced.result.is_success());
+        let traced = evm
+            .transact_with_inspector(
+                &tx_env(&setup.config, tx),
+                &mut evm2::inspector::NoopInspector::default(),
+            )
+            .expect("the traced transaction replays its witness")
+            .commit();
+        assert!(traced.is_success());
     }
     outbe_evm::executor::witness::clear_detached_trace_witness();
 }

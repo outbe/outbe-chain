@@ -1,15 +1,15 @@
 //! Behavioral registration and enumeration contract for existing exact routes.
 
-use alloy_evm::{eth::EthEvmContext, precompiles::PrecompilesMap, revm::handler::EthPrecompiles};
 use alloy_primitives::{Address, B256};
+use evm2::{
+    evm::{precompile::PrecompileProvider as _, PrewarmSet},
+    SpecId,
+};
 use outbe_evm::precompiles::{
-    extend_outbe_precompiles, OutbePrecompileExecutionContext, OutbePrecompileRuntime,
+    OutbePrecompileExecutionContext, OutbePrecompileProvider, OutbePrecompileRuntime,
 };
 use outbe_runtime::precompiles::outbe_exact_precompile_addresses;
 use outbe_system_common::addresses::*;
-use revm::{
-    database_interface::EmptyDB, handler::PrecompileProvider, primitives::hardfork::SpecId,
-};
 
 fn expected_exact_addresses() -> [Address; 38] {
     [
@@ -54,16 +54,13 @@ fn expected_exact_addresses() -> [Address; 38] {
     ]
 }
 
-fn build_extended_precompiles() -> PrecompilesMap {
+fn build_extended_precompiles() -> OutbePrecompileProvider {
     let spec = SpecId::default();
-    let mut precompiles = PrecompilesMap::from_static(EthPrecompiles::new(spec).precompiles);
-    extend_outbe_precompiles::<EmptyDB>(
-        &mut precompiles,
+    OutbePrecompileProvider::new(
         OutbePrecompileExecutionContext::new(spec, B256::ZERO),
         OutbePrecompileRuntime::new(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
-    );
-    precompiles
+    )
 }
 
 #[test]
@@ -75,41 +72,34 @@ fn exact_enumeration_contains_every_characterized_route() {
 }
 
 #[test]
-fn ctx_dispatch_hook_is_installed_for_exact_routes() {
+fn provider_contains_ethereum_and_outbe_routes_while_warm_set_remains_ethereum_only() {
     let precompiles = build_extended_precompiles();
-    assert!(
-        precompiles.has_ctx_dispatch_hook(),
-        "extend_outbe_precompiles must install the exact-route dispatch hook"
-    );
-}
-
-#[test]
-fn warm_and_contains_behavior_remains_ethereum_only() {
-    let precompiles = build_extended_precompiles();
-    let warm: Vec<Address> =
-        <PrecompilesMap as PrecompileProvider<EthEvmContext<EmptyDB>>>::warm_addresses(
-            &precompiles,
-        )
-        .iter()
-        .copied()
-        .collect();
+    let mut warm = PrewarmSet::default();
+    precompiles.warm_addresses(&mut warm);
+    let eth_addresses = precompiles.addresses();
 
     for suffix in 1u8..=10 {
         let ethereum = Address::with_last_byte(suffix);
-        assert!(<PrecompilesMap as PrecompileProvider<
-            EthEvmContext<EmptyDB>,
-        >>::contains(&precompiles, &ethereum,));
-        assert!(warm.contains(&ethereum));
+        assert!(precompiles.contains(&ethereum));
+        assert!(eth_addresses.contains(&ethereum));
+        assert!(
+            warm.is_warm(&ethereum),
+            "Ethereum precompile {ethereum} must be in the warm set"
+        );
     }
     for outbe in expected_exact_addresses() {
         assert!(
-            !<PrecompilesMap as PrecompileProvider<EthEvmContext<EmptyDB>>>::contains(
-                &precompiles,
-                &outbe,
-            ),
-            "current contains() intentionally omits ctx-hook address {outbe}"
+            precompiles.contains(&outbe),
+            "provider must contain registered Outbe route {outbe}"
         );
-        assert!(!warm.contains(&outbe));
+        assert!(
+            !eth_addresses.contains(&outbe),
+            "Ethereum precompile enumeration must not include Outbe route {outbe}"
+        );
+        assert!(
+            !warm.is_warm(&outbe),
+            "warm set must remain Ethereum-only and exclude Outbe route {outbe}"
+        );
     }
 }
 
@@ -132,9 +122,9 @@ fn exact_routes_have_no_duplicates() {
 }
 
 #[test]
-fn unregistered_address_returns_none() {
+fn unregistered_address_is_not_contained() {
     let precompiles = build_extended_precompiles();
-    assert!(precompiles.get(&Address::repeat_byte(0xfe)).is_none());
+    assert!(!precompiles.contains(&Address::repeat_byte(0xfe)));
 }
 
 /// Every sponsored target must remain an exact Outbe route. Otherwise a free
@@ -184,5 +174,5 @@ fn sponsored_whitelist_excludes_validator_entrypoints() {
 fn removed_hash_address_is_unregistered() {
     let address = alloy_primitives::address!("000000000000000000000000000000000000ee07");
     assert!(!outbe_exact_precompile_addresses().contains(&address));
-    assert!(build_extended_precompiles().get(&address).is_none());
+    assert!(!build_extended_precompiles().contains(&address));
 }

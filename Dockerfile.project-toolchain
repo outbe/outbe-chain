@@ -3,7 +3,7 @@
 # Canonical local build environment for the single Outbe Linux/SGX version pin.
 # Registry publication of this toolchain remains a separate delivery concern.
 
-FROM rust:1.96.0-bookworm@sha256:64d9b7f60e3abb08d477cad983d0a3743acc53a19369ba4482510184c9c807e5 AS rust
+FROM rust:1.100.0-bookworm@sha256:198cd28b4ba92b20fe849d5d8b119ace1bd28423d9e82e9c4de5ee1300d453a0 AS rust
 
 # Hash the release/apt inputs against the pin before any apt-get. The Rust
 # image already has python3. apt-base's first apt-get update copies the stamp
@@ -128,7 +128,7 @@ RUN test -f /opt/outbe/toolchain/apt-inputs-verified && \
     dpkg --audit && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* && \
     rustup component add rustfmt clippy rust-src \
-      --toolchain 1.96.0-x86_64-unknown-linux-gnu
+      --toolchain 1.100.0-x86_64-unknown-linux-gnu
 
 # outbe-zk compiles the in-tree Noir circuits from build.rs, so these tools are
 # part of the production ELF compiler surface rather than CI-only helpers. Keep
@@ -149,7 +149,7 @@ RUN tar -xzf /tmp/nargo.tar.gz -C /usr/local/bin && \
 
 COPY release/dcap-native-qvl-v1.json /opt/outbe/toolchain/dcap-native-qvl-v1.json
 
-RUN test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.96.0" && \
+RUN test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.100.0" && \
     /opt/outbe/toolchain/verify-toolchain-in-container.sh \
       verify-qvl \
       --manifest /opt/outbe/toolchain/dcap-native-qvl-v1.json \
@@ -189,7 +189,7 @@ ENV MISE_DATA_DIR=/opt/mise/data \
 # job and /workspace the local `docker run -v` convention - neither of the latter
 # two exists at build time, so declare all three up front.
 ENV MISE_TRUSTED_CONFIG_PATHS=/opt/outbe:/__w:/workspace
-# rustup owns the toolchain (asserted above as exactly 1.96.0). mise must not
+# rustup owns the toolchain (asserted above as exactly 1.100.0). mise must not
 # install a second Rust that would shadow it through the shim directory.
 ENV MISE_DISABLE_TOOLS=rust
 # Cargo's own bin directory precedes the mise shims: a `cargo:`-backend tool is
@@ -268,7 +268,7 @@ RUN mise --cd /opt/outbe/ci install cargo:cargo-binstall && \
     done && \
     cargo auditable --version >/dev/null && \
     cargo llvm-cov --version >/dev/null && \
-    test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.96.0" && \
+    test "$(rustc --version | cut -d' ' -f1-2)" = "rustc 1.100.0" && \
     test -f /usr/include/sgx_dcap_quoteverify.h
 
 WORKDIR /workspace

@@ -39,16 +39,9 @@ fn evm_config_binds_factory_to_canonical_chain_spec_genesis() {
     let expected = chain_spec.genesis_hash();
     let config = OutbeEvmConfig::new(chain_spec.clone(), crate::host::stub_host());
 
+    assert_eq!(config.evm_factory.genesis_hash(), expected);
     assert_eq!(
-        config.inner.executor_factory.evm_factory().genesis_hash(),
-        expected
-    );
-    assert_eq!(
-        config
-            .inner
-            .executor_factory
-            .evm_factory()
-            .genesis_timestamp(),
+        config.evm_factory.genesis_timestamp(),
         chain_spec.genesis_timestamp()
     );
 
@@ -198,9 +191,8 @@ fn context_for_next_block_preserves_valid_consensus_header_artifact() {
 #[test]
 fn context_for_next_block_rejects_malformed_or_unsupported_oart_before_execution() {
     use crate::errors::SystemTxExpectationError;
-    use alloy_evm::block::BlockExecutor as _;
-    use reth_evm::execute::BlockBuilder as _;
-    use revm::database::State;
+    use evm2::evm::EmptyDB;
+    use reth_evm::execute::{BlockBuilder as _, BlockExecutor as _};
 
     let config = OutbeEvmConfig::new(test_chain_spec(), crate::host::stub_host());
     let parent = test_parent();
@@ -225,9 +217,8 @@ fn context_for_next_block_rejects_malformed_or_unsupported_oart_before_execution
             "malformed or unsupported OART must retain its decode error: {extra_data:?}"
         );
 
-        let mut state = State::builder().with_bundle_update().build();
         let mut builder = config
-            .builder_for_next_block(&mut state, &parent, attrs)
+            .builder_for_next_block(EmptyDB::default(), &parent, attrs)
             .unwrap();
         let error = builder
             .apply_pre_execution_changes()
@@ -239,22 +230,14 @@ fn context_for_next_block_rejects_malformed_or_unsupported_oart_before_execution
             "{error}"
         );
         assert!(builder.executor().receipts().is_empty());
-        drop(builder);
-        assert!(state.bundle_state.state.is_empty());
-        assert!(state
-            .transition_state
-            .as_ref()
-            .unwrap()
-            .transitions
-            .is_empty());
+        let state = builder.into_executor().into_state();
+        assert!(state.state.is_empty());
     }
 }
 
 /// `sanitize_next_block_extra_data` must PRESERVE a non-empty
 /// `late_finalize_credits` artifact (while it resets `execution_summary` and
-/// `timestamp_millis_part`, which the payload builder recomputes). Otherwise,
-/// the sanitizer would silently drop the proposer-packed late credits before
-/// sealing.
+/// `timestamp_millis_part`, which the payload builder recomputes).
 #[test]
 fn sanitizer_preserves_late_credits() {
     let config = OutbeEvmConfig::new(test_chain_spec(), crate::host::stub_host());

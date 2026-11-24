@@ -3,7 +3,7 @@
 use std::{future::Future, path::PathBuf, sync::Arc};
 
 use alloy_primitives::B256;
-use commonware_runtime::{BufferPooler, Clock, Metrics, Network, Resolver, Spawner, Storage};
+use commonware_runtime::{Clock, Metrics, Network, Resolver, Spawner, Storage};
 use outbe_consensus::{
     block::ConsensusBlock,
     execution_port::{
@@ -212,7 +212,7 @@ impl ExecutionNodeBackend for RethExecutionBackend {
     }
 
     fn load_p2p_secret_key(&self, path: PathBuf) -> eyre::Result<[u8; 32]> {
-        Ok(self.0.config.network.secret_key(path)?.secret_bytes())
+        Ok(self.0.config.network.secret_key(path)?.to_secret_bytes())
     }
 
     async fn collect_genesis_peer_evidence(&self) -> GenesisPeerEvidence {
@@ -266,17 +266,7 @@ pub fn run_consensus_with_execution<E>(
     mut services: outbe_consensus::stack::ConsensusStackServices,
 ) -> impl Future<Output = eyre::Result<()>> + Send
 where
-    E: BufferPooler
-        + Clock
-        + CryptoRng
-        + Network
-        + Resolver
-        + Spawner
-        + Storage
-        + Metrics
-        + Send
-        + Sync
-        + 'static,
+    E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     let backend = node.into();
     services.finalized_execution_barrier = backend.finalized_execution_barrier();

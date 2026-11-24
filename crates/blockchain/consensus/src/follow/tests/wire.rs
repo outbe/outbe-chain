@@ -50,7 +50,7 @@ fn finalized_delivery_wire_format_round_trips() {
 
     // Decode the marshal's way: certificate first (with its cfg), block from
     // the remaining bytes.
-    let mut buf: &[u8] = &wire;
+    let mut buf = commonware_codec::Copying(wire.as_slice());
     let decoded_fin = Finalization::<HybridScheme<MinSig>, Digest>::read_cfg(&mut buf, &cert_cfg)
         .expect("finalization must decode from the delivery prefix");
     let decoded_block = ConsensusBlock::read_cfg(&mut buf, &())
@@ -66,7 +66,7 @@ fn finalized_delivery_wire_format_round_trips() {
         "decoded block digest must match the served block"
     );
     assert!(
-        buf.is_empty(),
+        buf.0.is_empty(),
         "the delivery buffer must be fully consumed (cert ++ block, nothing trailing)"
     );
 }
@@ -125,10 +125,10 @@ fn served_finalization_round_trips_to_verified_certified_block() {
     let block_bytes = hex::decode(block_hex.trim_start_matches("0x")).unwrap();
     let decoded_fin = decode_public_finalization(&fin_bytes, crate::bls::MAX_COMMITTEE_MEMBERS)
         .expect("client must decode the served finalization within MAX_COMMITTEE_MEMBERS");
-    let mut block_reader: &[u8] = &block_bytes;
+    let mut block_reader = commonware_codec::Copying(block_bytes.as_slice());
     let decoded_block = ConsensusBlock::read_cfg(&mut block_reader, &())
         .expect("client must decode the served block");
-    assert!(block_reader.is_empty(), "no trailing bytes after block");
+    assert!(block_reader.0.is_empty(), "no trailing bytes after block");
     assert_eq!(decoded_block.number(), 4);
     assert_eq!(decoded_block.digest(), block.digest());
     assert_eq!(decoded_fin.proposal.payload, decoded_block.digest());

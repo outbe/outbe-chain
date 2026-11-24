@@ -1,11 +1,8 @@
 //! Phase 1 (`CertifiedParentAccounting`) verification, witness resolution, and settlement.
 
 use alloy_consensus::Transaction as _;
-use alloy_evm::{
-    block::{BlockExecutionError, StateDB},
-    RecoveredTx,
-};
 use alloy_primitives::{Address, Bytes, B256};
+use evm2::evm::{DynDatabase, StateChangeSink};
 use outbe_primitives::committee_snapshot::committee_snapshot_key;
 use outbe_primitives::proof::verify_v2_proof;
 use outbe_primitives::{
@@ -16,7 +13,9 @@ use outbe_primitives::{
     system_tx::{build_unsigned_system_tx, validate_phase1_witness_against},
 };
 use reth_ethereum::TransactionSigned;
+use reth_evm::{BlockExecutionError, RecoveredTx};
 use reth_primitives_traits::Recovered;
+use std::convert::Infallible;
 
 use crate::{
     errors::{ExecutorStorageError, ExecutorValidationError},
@@ -53,7 +52,7 @@ pub trait AccountedParentArtifactProvider: Send + Sync {
         &self,
         block_number: u64,
         block_hash: B256,
-    ) -> Result<Option<AccountedParentArtifact>, reth_evm::execute::ProviderError>;
+    ) -> Result<Option<AccountedParentArtifact>, reth_provider::ProviderError>;
 }
 
 /// `CertifiedParentAccounting` system tx body: apply the immediate parent's
@@ -100,7 +99,7 @@ pub(crate) fn resolve_accounted_parent_artifact(
             metadata.finalized_block_hash,
         ) {
             Ok(Some(resolved)) => return Ok(resolved),
-            Ok(None) | Err(reth_evm::execute::ProviderError::HeaderNotFound(_)) => {}
+            Ok(None) | Err(reth_provider::ProviderError::HeaderNotFound(_)) => {}
             Err(error) => {
                 return Err(BlockExecutionError::other(
                     ExecutorStorageError::read_accounted_parent_artifact(error),
@@ -150,8 +149,7 @@ pub(crate) fn verify_phase1_certificate<DB>(
     input: Phase1VerifyInput<'_>,
 ) -> Result<B256, BlockExecutionError>
 where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
+    DB: DynDatabase + StateChangeSink<Error = Infallible>,
 {
     let Phase1VerifyInput {
         block_context,

@@ -1,12 +1,12 @@
 //! Typed errors for the Outbe block executor, block builder, and system transaction builder.
 
 use super::TeeAttestationActivationError;
-use alloy_evm::block::{BlockExecutionError, BlockValidationError};
 use alloy_primitives::{Address, B256};
 use core::fmt::{Debug, Display};
 use outbe_primitives::{
     error::PrecompileError, reshare_artifact::ExecutionSummaryArtifact, system_tx::SysTxSelector,
 };
+use reth_evm::{BlockExecutionError, BlockValidationError};
 
 /// Node-local storage and body-read errors in the block executor and builder.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]

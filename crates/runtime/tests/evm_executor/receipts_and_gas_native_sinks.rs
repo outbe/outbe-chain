@@ -8,12 +8,10 @@ use super::receipts_and_gas_support::*;
 use super::*;
 use alloy_consensus::{TxEip4844, TxLegacy};
 use alloy_eips::eip4844::{DATA_GAS_PER_BLOB, VERSIONED_HASH_VERSION_KZG};
-use alloy_evm::block::{BlockExecutionError, CommitChanges};
 use outbe_evm::errors::BurnedFeeSettlementError;
 use outbe_primitives::{error::PrecompileError, storage::direct::DirectStorageProvider};
 use outbe_promislimit::PromisLimitContract;
 use outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS;
-use revm::context_interface::block::BlobExcessGasAndPrice;
 use std::sync::Mutex;
 
 fn cancun_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
@@ -34,10 +32,10 @@ fn cancun_chain_spec() -> Arc<ChainSpec<OutbeHeader>> {
     Arc::new(spec.map_header(OutbeHeader::new))
 }
 
-fn seed_promis_limit_marker(db: &mut CacheDB<EmptyDBTyped<ProviderError>>) {
+fn seed_promis_limit_marker(db: &mut CacheDB<EmptyDB>) {
     let marker_code = Bytecode::new_legacy([0xef].into());
     db.insert_account_info(
-        PROMIS_LIMIT_ADDRESS,
+        &PROMIS_LIMIT_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code),
@@ -62,52 +60,50 @@ fn base_fee_is_burned_tip_reaches_rewards_and_promis_limit_receives_burned_fee()
     let sender = recovered.signer();
     let sender_before = U256::from(1_000_000u64);
 
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    seed_promis_limit_marker(&mut db);
-    db.insert_account_info(
-        sender,
+    let mut state = CacheDB::new(EmptyDB::default());
+    seed_promis_limit_marker(&mut state);
+    state.insert_account_info(
+        &sender,
         AccountInfo {
             balance: sender_before,
             ..Default::default()
         },
     );
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-    let evm_env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+    let evm_env = EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::from(1u64),
-            gas_limit: 30_000_000,
-            basefee: MIN_PROTOCOL_BASE_FEE,
+            gas_limit: U256::from(30_000_000_u64),
+            basefee: U256::from(MIN_PROTOCOL_BASE_FEE),
             beneficiary: REWARDS_ADDRESS,
             timestamp: U256::from(1u64),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
     let evm = config.evm_with_env(&mut state, evm_env);
     let mut ctx = execution_ctx(Some(1), Bytes::new());
     ctx.execute_outbe_block_hooks = false;
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         fixtures::executor_inputs_from_ctx(&ctx, None, false),
     );
     executor
         .execute_transaction(recovered)
         .expect("priority-fee tx should execute");
     let gas_used = U256::from(executor.receipts()[0].cumulative_gas_used);
-    let (_evm, _result) = executor.finish().expect("executor finish should succeed");
+    let output = executor.finish().expect("executor finish should succeed");
+    state.commit_source(&BundleSource(&output.state));
 
     let base = U256::from(MIN_PROTOCOL_BASE_FEE);
     // max_fee = 2 x base and tip = base, so the effective price is 2 x base.
     let tip = U256::from(tx.max_priority_fee_per_gas().unwrap_or_default());
     let burned = base * gas_used;
-    let balance = |state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>, account: Address| {
+    let balance = |state: &mut CacheDB<EmptyDB>, account: Address| {
         state
-            .basic(account)
+            .get_account(&account)
             .expect("account read")
             .map(|info| info.balance)
             .unwrap_or_default()
@@ -283,11 +279,11 @@ fn scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees() {
         PromisLimitContract::new(storage).count_base_fees(old_rest)
     })
     .unwrap();
-    let mut db = cache_db_from_storage(seed_storage);
-    seed_promis_limit_marker(&mut db);
+    let mut state = cache_db_from_storage(seed_storage);
+    seed_promis_limit_marker(&mut state);
     let revert_bytecode = Bytecode::new_legacy([0x60, 0x00, 0x60, 0x00, 0xfd].into());
-    db.insert_account_info(
-        reverting_target,
+    state.insert_account_info(
+        &reverting_target,
         AccountInfo {
             code_hash: revert_bytecode.hash_slow(),
             code: Some(revert_bytecode),
@@ -295,8 +291,8 @@ fn scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees() {
         },
     );
     for sender in [sender_1, sender_2, sender_3, sender_4] {
-        db.insert_account_info(
-            sender,
+        state.insert_account_info(
+            &sender,
             AccountInfo {
                 balance: initial_balance,
                 ..Default::default()
@@ -304,28 +300,25 @@ fn scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees() {
         );
     }
 
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-    let evm_env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+    let evm_env = EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::from(1u64),
-            gas_limit: 30_000_000,
-            basefee: base_fee,
+            gas_limit: U256::from(30_000_000_u64),
+            basefee: U256::from(base_fee),
             beneficiary: REWARDS_ADDRESS,
             timestamp: U256::from(1u64),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
     let evm = config.evm_with_env(&mut state, evm_env);
     let mut ctx = execution_ctx(Some(4), Bytes::new());
     ctx.execute_outbe_block_hooks = false;
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         fixtures::executor_inputs_from_ctx(&ctx, None, false),
     );
 
@@ -333,8 +326,9 @@ fn scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees() {
         ($account:expr) => {
             executor
                 .evm_mut()
-                .db_mut()
-                .basic($account)
+                .state_mut()
+                .overlay_db_mut()
+                .get_account(&$account)
                 .expect("account read")
                 .map(|info| info.balance)
                 .unwrap_or_default()
@@ -380,7 +374,7 @@ fn scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees() {
 
     let s4_before = read_bal!(sender_4);
     let declined = executor
-        .execute_transaction_with_commit_condition(tx_4, |_| CommitChanges::No)
+        .execute_transaction_with_commit_condition(tx_4, |_, _| CommitChanges::No)
         .expect("declined tx 4 should not error");
     assert!(
         declined.is_none(),
@@ -403,7 +397,8 @@ fn scenario_a_paid_reverted_and_declined_txs_settle_burned_base_fees() {
     assert!(executor.receipts()[1].success);
     assert!(!executor.receipts()[2].success);
 
-    let (_evm, _result) = executor.finish().expect("executor finish should succeed");
+    let output = executor.finish().expect("executor finish should succeed");
+    state.commit_source(&BundleSource(&output.state));
 
     // Independent per-tx oracle sum plus pre-existing old_rest.
     let total_burned = burned_1 + burned_2 + burned_3 + burned_4;
@@ -479,42 +474,36 @@ fn scenario_b_eip4844_blob_tx_settles_base_and_blob_fees() {
     assert_eq!(blob_tx.tx().blob_gas_used(), Some(DATA_GAS_PER_BLOB));
 
     let initial_balance = U256::from(100_000_000_000_000_000u64);
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    seed_promis_limit_marker(&mut db);
-    db.insert_account_info(
-        sender,
+    let mut state = CacheDB::new(EmptyDB::default());
+    seed_promis_limit_marker(&mut state);
+    state.insert_account_info(
+        &sender,
         AccountInfo {
             balance: initial_balance,
             ..Default::default()
         },
     );
 
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-    let evm_env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::CANCUN),
-        block_env: BlockEnv {
+    let evm_env = EthEvmEnv::new(
+        SpecId::CANCUN,
+        BlockEnvExt {
             number: U256::from(1u64),
-            gas_limit: 30_000_000,
-            basefee: base_fee,
+            gas_limit: U256::from(30_000_000_u64),
+            basefee: U256::from(base_fee),
             beneficiary: REWARDS_ADDRESS,
             timestamp: U256::from(1u64),
-            blob_excess_gas_and_price: Some(BlobExcessGasAndPrice {
-                excess_blob_gas: DATA_GAS_PER_BLOB * 3,
-                blob_gasprice,
-            }),
+            blob_basefee: U256::from(blob_gasprice),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
     let evm = config.evm_with_env(&mut state, evm_env);
     let mut ctx = execution_ctx(Some(1), Bytes::new());
     ctx.execute_outbe_block_hooks = false;
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         fixtures::executor_inputs_from_ctx(&ctx, None, false),
     );
 
@@ -522,16 +511,17 @@ fn scenario_b_eip4844_blob_tx_settles_base_and_blob_fees() {
         .execute_transaction(blob_tx)
         .expect("EIP-4844 blob tx should execute under Cancun")
         .tx_gas_used();
-    let (_evm, result) = executor.finish().expect("executor finish should succeed");
-    assert_eq!(result.blob_gas_used, DATA_GAS_PER_BLOB);
+    let output = executor.finish().expect("executor finish should succeed");
+    state.commit_source(&BundleSource(&output.state));
+    assert_eq!(output.result.blob_gas_used, DATA_GAS_PER_BLOB);
 
     let sender_after = state
-        .basic(sender)
+        .get_account(&sender)
         .expect("sender read")
         .map(|info| info.balance)
         .unwrap_or_default();
     let rewards_after = state
-        .basic(REWARDS_ADDRESS)
+        .get_account(&REWARDS_ADDRESS)
         .expect("rewards read")
         .map(|info| info.balance)
         .unwrap_or_default();
@@ -597,11 +587,11 @@ fn scenario_c_protocol_fee_waiver_burns_zero_under_nonzero_basefee() {
     })
     .expect("test genesis state must be seeded");
 
-    let mut db = cache_db_from_storage(seed_storage);
-    seed_promis_limit_marker(&mut db);
+    let mut state = cache_db_from_storage(seed_storage);
+    seed_promis_limit_marker(&mut state);
     let marker_code = Bytecode::new_legacy([0xef].into());
-    db.insert_account_info(
-        ORACLE_ADDRESS,
+    state.insert_account_info(
+        &ORACLE_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code),
@@ -609,28 +599,25 @@ fn scenario_c_protocol_fee_waiver_burns_zero_under_nonzero_basefee() {
         },
     );
 
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-    let evm_env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+    let evm_env = EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::from(1u64),
-            gas_limit: 30_000_000,
-            basefee: 100_000_000_000,
+            gas_limit: U256::from(30_000_000_u64),
+            basefee: U256::from(100_000_000_000_u64),
             beneficiary: REWARDS_ADDRESS,
             timestamp: U256::from(1u64),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
     let evm = config.evm_with_env(&mut state, evm_env);
     let mut ctx = execution_ctx(Some(1), Bytes::new());
     ctx.execute_outbe_block_hooks = false;
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         fixtures::executor_inputs_from_ctx(&ctx, None, false),
     );
 
@@ -641,7 +628,8 @@ fn scenario_c_protocol_fee_waiver_burns_zero_under_nonzero_basefee() {
     assert!(executor.receipts()[0].success);
     assert_eq!(executor.current_block_burned_fees, U256::ZERO);
 
-    let (_evm, _result) = executor.finish().expect("executor finish should succeed");
+    let output = executor.finish().expect("executor finish should succeed");
+    state.commit_source(&BundleSource(&output.state));
 
     let read_ctx = BlockContext {
         block_gas_limit: 0,
@@ -694,38 +682,35 @@ fn scenario_d_base_fee_count_overflow_fails_the_block_with_typed_error() {
     })
     .unwrap();
 
-    let mut db = cache_db_from_storage(seed_storage);
-    seed_promis_limit_marker(&mut db);
-    db.insert_account_info(
-        sender,
+    let mut state = cache_db_from_storage(seed_storage);
+    seed_promis_limit_marker(&mut state);
+    state.insert_account_info(
+        &sender,
         AccountInfo {
             balance: U256::from(100_000_000_000_000_000u64),
             ..Default::default()
         },
     );
 
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-    let evm_env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+    let evm_env = EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::from(1u64),
-            gas_limit: 30_000_000,
-            basefee: base_fee,
+            gas_limit: U256::from(30_000_000_u64),
+            basefee: U256::from(base_fee),
             beneficiary: REWARDS_ADDRESS,
             timestamp: U256::from(1u64),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
     let evm = config.evm_with_env(&mut state, evm_env);
     let mut ctx = execution_ctx(Some(1), Bytes::new());
     ctx.execute_outbe_block_hooks = false;
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         fixtures::executor_inputs_from_ctx(&ctx, None, false),
     );
 
@@ -754,8 +739,8 @@ fn scenario_d_base_fee_count_overflow_fails_the_block_with_typed_error() {
     };
 
     let prep_err = executor
-        .prepare_final_header_artifacts(0)
-        .expect_err("overflow in prepare_final_header_artifacts must fail the block");
+        .settle_block_burned_fees()
+        .expect_err("overflow in settle_block_burned_fees must fail the block");
     assert_overflow_fails_block(&prep_err);
 
     // Settlement failed before setting burned_fees_settled, so finish() fails the same way.
@@ -802,57 +787,59 @@ fn scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity() 
         let mut db = cache_db_from_storage(seed_storage);
         seed_promis_limit_marker(&mut db);
         db.insert_account_info(
-            sender,
+            &sender,
             AccountInfo {
                 balance: U256::from(100_000_000_000_000_000u64),
                 ..Default::default()
             },
         );
-        State::builder()
-            .with_database(db)
-            .with_bundle_update()
-            .build()
+        db
     };
-    let make_env = || EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
-            number: U256::from(1u64),
-            gas_limit: 30_000_000,
-            basefee: base_fee,
-            beneficiary: REWARDS_ADDRESS,
-            timestamp: U256::from(1u64),
-            ..Default::default()
-        },
+    let make_env = || {
+        EthEvmEnv::new(
+            SpecId::SHANGHAI,
+            BlockEnvExt {
+                number: U256::from(1u64),
+                gas_limit: U256::from(30_000_000_u64),
+                basefee: U256::from(base_fee),
+                beneficiary: REWARDS_ADDRESS,
+                timestamp: U256::from(1u64),
+                ..Default::default()
+            },
+            CHAIN_ID,
+        )
     };
 
-    // 1. Proposer path: attach OnStateHook, execute tx, call prepare_final_header_artifacts,
-    // detach hook (as payload_builder.rs:216-220 does), then call finish().
+    // 1. Proposer path: attach state hook, execute tx, finalize header artifacts (settling burned
+    // fees before state-root freeze), detach hook, then call finish().
     let mut proposer_state = make_state();
     let hook_promis_storage_updates: Arc<Mutex<Vec<(U256, U256)>>> =
         Arc::new(Mutex::new(Vec::new()));
     let hook_capture = Arc::clone(&hook_promis_storage_updates);
-    proposer_state.set_state_hook(Some(Box::new(move |evm_state: revm::state::EvmState| {
-        if let Some(account) = evm_state.get(&PROMIS_LIMIT_ADDRESS) {
-            for (slot, val) in &account.storage {
-                if val.is_changed() {
-                    hook_capture
-                        .lock()
-                        .unwrap()
-                        .push((*slot, val.present_value()));
-                }
-            }
-        }
-    })));
 
-    let proposer_result = {
+    let proposer_output = {
         let evm = config.evm_with_env(&mut proposer_state, make_env());
         let mut ctx = execution_ctx(Some(1), Bytes::new());
         ctx.execute_outbe_block_hooks = false;
         let mut proposer_executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+            chain_spec.clone(),
+            None,
             fixtures::executor_inputs_from_ctx(&ctx, None, false),
+        );
+        assert!(
+            proposer_executor.set_state_hook(move |update: evm2::block::StateUpdate| {
+                if let Some(account) = update.account(&PROMIS_LIMIT_ADDRESS) {
+                    for (slot, val) in &account.storage {
+                        if val.present_value != val.previous_or_original_value {
+                            hook_capture
+                                .lock()
+                                .unwrap()
+                                .push((*slot, val.present_value));
+                        }
+                    }
+                }
+            })
         );
         proposer_executor
             .execute_transaction(tx.clone())
@@ -863,44 +850,46 @@ fn scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity() 
         );
 
         proposer_executor
-            .prepare_final_header_artifacts(0)
-            .expect("prepare_final_header_artifacts should settle burned fees");
-        // Detach state hook before finish(), mirroring payload_builder.rs:220.
-        proposer_executor.evm_mut().db_mut().set_state_hook(None);
+            .settle_block_burned_fees()
+            .expect("settle_block_burned_fees should settle burned fees before state-root freeze");
+        finalize_executor_header_artifacts(&mut proposer_executor, 0)
+            .expect("finalize_executor_header_artifacts should encode final header");
+        // Detach state hook before finish(), mirroring payload_builder pre-freeze detach.
+        proposer_executor.set_state_hook(|_| {});
 
         let captured = hook_promis_storage_updates.lock().unwrap().clone();
         assert_eq!(
             captured,
             vec![(U256::from(2u64), expected_count)],
-            "OnStateHook must observe the base fee count slot write before hook detach"
+            "state hook must observe the base fee count slot write before hook detach"
         );
 
-        let (_evm, result) = proposer_executor
+        proposer_executor
             .finish()
-            .expect("proposer finish should succeed idempotently");
-        result
+            .expect("proposer finish should succeed idempotently")
     };
-    proposer_state.merge_transitions(BundleRetention::Reverts);
+    proposer_state.commit_source(&BundleSource(&proposer_output.state));
 
-    // 2. Validator path: execute tx and call finish() directly without prepare_final_header_artifacts.
+    // 2. Validator path: execute tx and call finish() directly without pre-freeze settlement.
     let mut validator_state = make_state();
-    let validator_result = {
+    let validator_output = {
         let evm = config.evm_with_env(&mut validator_state, make_env());
         let mut ctx = execution_ctx(Some(1), Bytes::new());
         ctx.execute_outbe_block_hooks = false;
         let mut validator_executor = OutbeBlockExecutor::new(
             EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+            chain_spec.clone(),
+            None,
             fixtures::executor_inputs_from_ctx(&ctx, None, false),
         );
         validator_executor
             .execute_transaction(tx)
             .expect("validator tx should execute");
-        let (_evm, result) = validator_executor
+        validator_executor
             .finish()
-            .expect("validator finish should succeed");
-        result
+            .expect("validator finish should succeed")
     };
-    validator_state.merge_transitions(BundleRetention::Reverts);
+    validator_state.commit_source(&BundleSource(&validator_output.state));
 
     // Verify idempotence (credited exactly once on proposer and identical on validator).
     for state in [&mut proposer_state, &mut validator_state] {
@@ -926,12 +915,14 @@ fn scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity() 
     }
 
     // Verify exact receipts_root and state_root parity between proposer and validator paths.
-    let proposer_receipt_blooms: Vec<_> = proposer_result
+    let proposer_receipt_blooms: Vec<_> = proposer_output
+        .result
         .receipts
         .iter()
         .map(alloy_consensus::TxReceipt::with_bloom_ref)
         .collect();
-    let validator_receipt_blooms: Vec<_> = validator_result
+    let validator_receipt_blooms: Vec<_> = validator_output
+        .result
         .receipts
         .iter()
         .map(alloy_consensus::TxReceipt::with_bloom_ref)
@@ -942,8 +933,8 @@ fn scenario_e_proposer_state_hook_pre_freeze_idempotence_and_validator_parity() 
         "proposer and validator must produce identical receipts_root"
     );
     assert_eq!(
-        post_state_root(&proposer_state.bundle_state),
-        post_state_root(&validator_state.bundle_state),
+        post_state_root(&proposer_output.state),
+        post_state_root(&validator_output.state),
         "proposer (prepare + finish) and validator (finish only) must produce identical state_root"
     );
 }

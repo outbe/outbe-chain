@@ -8,7 +8,7 @@ pub(crate) fn load_reth_p2p_node_host_signer(
     let reth_p2p_secret = network
         .secret_key(default_secret_path)
         .wrap_err("failed to load persistent Reth P2P identity for TEE")?;
-    let signing = k256::ecdsa::SigningKey::from_slice(reth_p2p_secret.secret_bytes().as_slice())
+    let signing = k256::ecdsa::SigningKey::from_slice(reth_p2p_secret.to_secret_bytes().as_slice())
         .map_err(|error| LaunchError::InvalidRethP2pSigningKey {
             details: crate::errors::display_error(error),
         })?;

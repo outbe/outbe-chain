@@ -25,17 +25,7 @@ pub(super) async fn prepare_tee<E, N: StackNodeAccess>(
     startup: TeeStartup<'_, E, N>,
 ) -> Result<()>
 where
-    E: BufferPooler
-        + Clock
-        + CryptoRng
-        + Network
-        + Resolver
-        + Spawner
-        + Storage
-        + Metrics
-        + Send
-        + Sync
-        + 'static,
+    E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     let TeeStartup {
         args,

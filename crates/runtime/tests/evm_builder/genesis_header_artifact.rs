@@ -1,15 +1,15 @@
 use super::harness::*;
 
 use alloy_primitives::{Bytes, B256};
+use evm2::evm::{CacheDB, EmptyDB};
 use outbe_primitives::tee_genesis_v1::NO_ATTESTATION_DEV_CHAIN_ID;
-use reth_ethereum::{chainspec::MAINNET, evm::revm::db::State};
+use reth_ethereum::chainspec::MAINNET;
 use reth_evm::{
-    execute::{BlockBuilder, Executor, ProviderError},
+    execute::{BlockBuilder, Executor},
     ConfigureEvm,
 };
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{HashedPostStateProvider, StateRootProvider};
-use revm::{database::CacheDB, database_interface::EmptyDBTyped};
 
 /// Regression test: header artifact (DKG boundary) must be present during
 /// state-root computation on the proposer, not attached after. The bridge
@@ -93,19 +93,15 @@ fn genesis_block_with_header_artifact_reexecutes_deterministically() {
     let provider = DeterministicEmptyStateProvider;
 
     // Proposer path: build block (executor sees artifact via extra_data).
-    let mut proposer_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut proposer_db = CacheDB::new(EmptyDB::default());
     seed_active_validators(&mut proposer_db, &active_set);
     assert_seeded_validators(&mut proposer_db, &active_set);
-    let mut proposer_state = State::builder()
-        .with_database(proposer_db)
-        .with_bundle_update()
-        .build();
 
     let mut attrs = next_block_attrs(encoded);
     attrs.inner.gas_limit = outbe_primitives::system_tx::protocol_block_gas_limit(1);
     attrs.pending_tee_bootstrap = Some(genesis_dev_tee_bootstrap(committee_set_hash));
     let mut builder = config
-        .builder_for_next_block(&mut proposer_state, &parent, attrs.clone())
+        .builder_for_next_block(&mut proposer_db, &parent, attrs.clone())
         .expect("builder must be created");
     builder
         .apply_pre_execution_changes()
@@ -155,19 +151,15 @@ fn genesis_block_with_header_artifact_reexecutes_deterministically() {
     );
 
     // Validator path: re-execute the built block.
-    let mut validator_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut validator_db = CacheDB::new(EmptyDB::default());
     seed_active_validators(&mut validator_db, &active_set);
-    let validator_state = State::builder()
-        .with_database(validator_db)
-        .with_bundle_update()
-        .build();
-    let mut validator_executor = config.batch_executor(validator_state);
+    let mut validator_executor = config.batch_executor(validator_db);
     validator_executor
         .execute_one(&built_block)
         .expect("validator path must re-execute the built block");
 
-    let validator_state = validator_executor.into_state();
-    let reexecuted_hashed_state = provider.hashed_post_state(&validator_state.bundle_state);
+    let validator_bundle = validator_executor.into_state();
+    let reexecuted_hashed_state = provider.hashed_post_state(&validator_bundle);
     let (reexecuted_root, _) = provider
         .state_root_with_updates(reexecuted_hashed_state.unwrap())
         .expect("re-executed state root must be computed");
@@ -190,13 +182,9 @@ fn genesis_block_with_header_artifact_reexecutes_deterministically() {
     assert_ne!(wrong_receipt_hash, built_hash);
 
     let receipt_config = config.clone();
-    let mut receipt_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut receipt_db = CacheDB::new(EmptyDB::default());
     seed_active_validators(&mut receipt_db, &active_set);
-    let receipt_state = State::builder()
-        .with_database(receipt_db)
-        .with_bundle_update()
-        .build();
-    let mut receipt_executor = receipt_config.batch_executor(receipt_state);
+    let mut receipt_executor = receipt_config.batch_executor(receipt_db);
     let receipt_result = receipt_executor
         .execute_one(&wrong_receipt_block)
         .expect("wrong receipt root is checked after successful execution");
@@ -223,18 +211,14 @@ fn genesis_block_with_header_artifact_reexecutes_deterministically() {
     assert_ne!(wrong_state_hash, built_hash);
 
     let state_config = config.clone();
-    let mut state_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut state_db = CacheDB::new(EmptyDB::default());
     seed_active_validators(&mut state_db, &active_set);
-    let state = State::builder()
-        .with_database(state_db)
-        .with_bundle_update()
-        .build();
-    let mut state_executor = state_config.batch_executor(state);
+    let mut state_executor = state_config.batch_executor(state_db);
     state_executor
         .execute_one(&wrong_state_block)
         .expect("wrong state root is checked after successful execution");
-    let state = state_executor.into_state();
-    let reexecuted_hashed_state = provider.hashed_post_state(&state.bundle_state);
+    let state_bundle = state_executor.into_state();
+    let reexecuted_hashed_state = provider.hashed_post_state(&state_bundle);
     let (actual_state_root, _) = provider
         .state_root_with_updates(reexecuted_hashed_state.unwrap())
         .expect("state root must be computed at Reth's validation seam");

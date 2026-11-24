@@ -70,7 +70,9 @@ impl CohortState {
             return Err(CohortError::CohortInteriorTruncated);
         }
         let active = interior[HEADER_LEN..sold_start]
-            .chunks_exact(ACTIVE_ENTRY_LEN)
+            .as_chunks::<ACTIVE_ENTRY_LEN>()
+            .0
+            .iter()
             .map(|chunk| {
                 (
                     U256::from_be_slice(&chunk[..32]),
@@ -79,7 +81,9 @@ impl CohortState {
             })
             .collect();
         let sold = interior[sold_start..need]
-            .chunks_exact(SOLD_ENTRY_LEN)
+            .as_chunks::<SOLD_ENTRY_LEN>()
+            .0
+            .iter()
             .map(|chunk| {
                 (
                     U256::from_be_slice(&chunk[..32]),

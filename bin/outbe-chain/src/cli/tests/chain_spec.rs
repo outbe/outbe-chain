@@ -144,3 +144,139 @@ fn reth_mainnet_alias_is_not_outbe_mainnet_676() {
         "{rendered}"
     );
 }
+
+/// Verifies that Outbe's `ConsensusArgs` flags (`--upstream`, `--testnet.unix-time-offset-secs`)
+/// do not collide with Reth v2.11.0 RPC/IPC flags (`--http*`, `--ipcdisable`, `--ipcpath`,
+/// `--auth-ipc.path`) and that `--chain` validates a real `tee_genesis::run` genesis through
+/// `OutbeChainSpecParser`.
+#[test]
+fn node_cli_flag_matrix_parses_http_upstream_time_offset_and_ipc_settings() {
+    install_cli_defaults_for_test();
+    type OutbeCli = reth_ethereum::cli::interface::Cli<
+        super::OutbeChainSpecParser,
+        outbe_consensus::args::ConsensusArgs,
+        super::OutbeRpcModuleValidator,
+    >;
+
+    let temp = tempfile::tempdir().expect("tempdir for IPC path check");
+    let genesis_path = temp.path().join("genesis.json");
+    crate::tee_genesis::run(&[
+        "outbe-chain".into(),
+        "tee".into(),
+        "genesis".into(),
+        "--input".into(),
+        concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/assets/native-genesis.json"
+        )
+        .into(),
+        "--output".into(),
+        genesis_path.to_str().expect("utf8 genesis path").into(),
+        "--mode".into(),
+        "no-attestation-dev".into(),
+    ])
+    .expect("generate valid Outbe genesis fixture");
+    let genesis_str = genesis_path.to_str().expect("utf8 genesis path");
+    let custom_ipc = temp.path().join("outbe-seam.ipc");
+    let custom_ipc_str = custom_ipc.to_str().expect("utf8 ipc path");
+    let custom_auth_ipc = temp.path().join("outbe-auth.ipc");
+    let custom_auth_ipc_str = custom_auth_ipc.to_str().expect("utf8 auth ipc path");
+
+    struct Case<'a> {
+        http: bool,
+        upstream: Option<&'a str>,
+        time_offset: Option<i64>,
+        ipc_disable: bool,
+        ipc_path: Option<&'a str>,
+        auth_ipc_path: Option<&'a str>,
+    }
+
+    let cases = [
+        Case {
+            http: false,
+            upstream: None,
+            time_offset: None,
+            ipc_disable: false,
+            ipc_path: Some(custom_ipc_str),
+            auth_ipc_path: None,
+        },
+        Case {
+            http: true,
+            upstream: Some("http://127.0.0.1:18545"),
+            time_offset: Some(60),
+            ipc_disable: true,
+            ipc_path: None,
+            auth_ipc_path: Some(custom_auth_ipc_str),
+        },
+        Case {
+            http: true,
+            upstream: None,
+            time_offset: Some(-30),
+            ipc_disable: false,
+            ipc_path: Some(custom_ipc_str),
+            auth_ipc_path: Some(custom_auth_ipc_str),
+        },
+        Case {
+            http: false,
+            upstream: Some("http://127.0.0.1:28545"),
+            time_offset: None,
+            ipc_disable: true,
+            ipc_path: None,
+            auth_ipc_path: None,
+        },
+    ];
+
+    for case in cases {
+        let mut argv: Vec<String> = vec![
+            "outbe-chain".into(),
+            "node".into(),
+            "--chain".into(),
+            genesis_str.into(),
+        ];
+        if case.http {
+            argv.extend([
+                "--http".into(),
+                "--http.addr".into(),
+                "127.0.0.1".into(),
+                "--http.port".into(),
+                "0".into(),
+                "--http.api".into(),
+                "eth,net,web3,outbe".into(),
+            ]);
+        }
+        if let Some(upstream) = case.upstream {
+            argv.extend(["--upstream".into(), upstream.into()]);
+        }
+        if let Some(offset) = case.time_offset {
+            argv.push(format!("--testnet.unix-time-offset-secs={offset}"));
+        }
+        if case.ipc_disable {
+            argv.push("--ipcdisable".into());
+        }
+        if let Some(ipc) = case.ipc_path {
+            argv.extend(["--ipcpath".into(), ipc.into()]);
+        }
+        if let Some(auth_ipc) = case.auth_ipc_path {
+            argv.extend(["--auth-ipc.path".into(), auth_ipc.into()]);
+        }
+
+        let cli = <OutbeCli as clap::Parser>::try_parse_from(&argv)
+            .unwrap_or_else(|err| panic!("flag matrix {:?} failed to parse: {err}", argv));
+        let reth_ethereum::cli::interface::Commands::Node(node) = cli.command else {
+            panic!("expected node command");
+        };
+        assert_eq!(node.rpc.http, case.http);
+        assert_eq!(node.ext.upstream.as_deref(), case.upstream);
+        assert_eq!(node.ext.testnet_unix_time_offset_secs, case.time_offset);
+        assert_eq!(node.rpc.ipcdisable, case.ipc_disable);
+        if let Some(expected_ipc) = case.ipc_path {
+            assert_eq!(node.rpc.ipcpath, expected_ipc);
+        }
+        if let Some(expected_auth_ipc) = case.auth_ipc_path {
+            assert_eq!(node.rpc.auth_ipc_path(), expected_auth_ipc);
+        } else {
+            let default_rpc = reth_ethereum::node::core::args::RpcServerArgs::default();
+            assert_eq!(node.rpc.auth_ipc_path(), default_rpc.auth_ipc_path());
+        }
+    }
+}

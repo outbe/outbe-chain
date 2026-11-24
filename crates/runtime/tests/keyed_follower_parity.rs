@@ -7,15 +7,20 @@ use alloy_consensus::{
     Header, Sealable as _, SignableTransaction as _, Transaction as _, TxEip1559, TxReceipt as _,
 };
 use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-use alloy_evm::block::BlockExecutor as _;
-use alloy_evm::eth::EthBlockExecutionCtx;
-use alloy_evm::{Evm as _, RecoveredTx as _};
 use alloy_primitives::{
     address, keccak256, logs_bloom, Address, Bytes, Signature, TxKind, B256, U256,
 };
 use alloy_sol_types::SolCall;
+use evm2::{
+    block::{BundleSource, BundleState},
+    bytecode::Bytecode,
+    env::BlockEnvExt,
+    evm::{AccountInfo, CacheDB, Database as _, EmptyDB},
+    SpecId,
+};
 use outbe_evm::config::{OutbeBlockExecutionCtx, OutbeEvmConfig};
 use outbe_evm::executor::*;
+use outbe_evm::factory::OutbeEvmTypes;
 use outbe_evm::signer::{OutbeEvmSigner, SharedOutbeEvmSigner};
 use outbe_evm::system_tx::SystemTx;
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
@@ -32,17 +37,11 @@ use outbe_system_common::addresses::{
     UPDATE_ADDRESS, VOTE_ADDRESS,
 };
 use reth_ethereum::chainspec::{ChainSpec, MAINNET};
-use reth_ethereum::evm::revm::db::State;
+use reth_ethereum::evm::{EthBlockExecutionCtx, EthEvmEnv};
 use reth_ethereum::{Receipt, TransactionSigned};
-use reth_evm::execute::ProviderError;
-use reth_evm::{ConfigureEvm as _, EvmEnv};
+use reth_evm::execute::{BlockExecutionError, BlockExecutor as _};
+use reth_evm::{BlockExecutorFactory as _, RecoveredTx as _};
 use reth_primitives_traits::{Recovered, SealedHeader, SignedTransaction as _};
-use revm::context::{BlockEnv, CfgEnv};
-use revm::database::states::bundle_state::BundleRetention;
-use revm::database::{CacheDB, Database as _};
-use revm::database_interface::EmptyDBTyped;
-use revm::primitives::hardfork::SpecId;
-use revm::state::{AccountInfo, Bytecode};
 use std::sync::Arc;
 
 #[allow(dead_code, unused_imports, clippy::all)]
@@ -85,7 +84,7 @@ const DOMAIN_TAGS: [u8; 5] = [1, 2, 5, 10, 21];
 const OFFER: &[u8] = b"executor-nod-quote-group-signature-v1!";
 
 type Signed = Recovered<TransactionSigned>;
-type ExecState = revm::database::State<CacheDB<EmptyDBTyped<ProviderError>>>;
+type ExecState = CacheDB<EmptyDB>;
 
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 struct HeightSeal {
@@ -360,8 +359,8 @@ fn seeded_state(prepared: &Prepared) -> ExecState {
     uninstall_domain_standins();
     let marker = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
     for address in marker_accounts() {
-        state.database.insert_account_info(
-            address,
+        state.insert_account_info(
+            &address,
             AccountInfo {
                 code_hash: marker.hash_slow(),
                 code: Some(marker.clone()),
@@ -369,16 +368,16 @@ fn seeded_state(prepared: &Prepared) -> ExecState {
             },
         );
     }
-    state.database.insert_account_info(
-        prepared.settlement_asset,
+    state.insert_account_info(
+        &prepared.settlement_asset,
         AccountInfo {
             code_hash: prepared.asset_bytecode.hash_slow(),
             code: Some(prepared.asset_bytecode.clone()),
             ..Default::default()
         },
     );
-    state.database.insert_account_info(
-        prepared.user_sender,
+    state.insert_account_info(
+        &prepared.user_sender,
         AccountInfo {
             balance: U256::from(1_000_000_000_000_000u64),
             ..Default::default()
@@ -679,7 +678,7 @@ fn resident_context(
     context
 }
 fn asset_bytecode() -> Bytecode {
-    Bytecode::new_raw(Bytes::from_static(&[
+    Bytecode::new_legacy(Bytes::from_static(&[
         0x5f, 0x35, 0x60, 0xe0, 0x1c, 0x63, 0x31, 0x3c, 0xe5, 0x67, 0x14, 0x60, 0x17, 0x57, 0x61,
         0x03, 0x48, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3, 0x5b, 0x60, 0x06, 0x5f, 0x52, 0x60, 0x20,
         0x5f, 0xf3,

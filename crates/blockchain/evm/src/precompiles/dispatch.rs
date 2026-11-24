@@ -1,29 +1,27 @@
 //! Executes an admitted call and settles its gas and typed outcome.
 use super::{
     call_authority::{precompile_mutation_entitlements, PrecompileMutationCall},
-    outcome::map_outbe_precompile_result_with_refund,
+    outcome::map_outbe_precompile_result,
     routes,
-    value_policy::{classify_boundary_value, BoundaryValue},
+    value_policy::{classify_boundary_value, BoundaryCallValue, BoundaryValue},
     ExecutionAbortBridge,
 };
 use crate::{
+    factory::OutbeEvmTypes,
     gas::SubcallGasMeter,
     storage::{CtxStorageProvider, CtxStorageProviderConfig, ReentrancyStack},
     tee_attestation_activation::TeeAttestationChainSpecStateV1,
 };
-use alloy_evm::eth::EthEvmContext;
 use alloy_primitives::{Bytes, B256, U256};
-use core::fmt::Debug;
-use outbe_primitives::error::{PrecompileError, Result as DomainResult};
+use evm2::{
+    interpreter::{GasTracker, Message, MessageKind},
+    precompiles::{PrecompileError as EvmPrecompileError, PrecompileHalt, PrecompileResult},
+    Evm, SpecId,
+};
 use outbe_primitives::{
     addresses::OUTBE_SYSTEM_TX_ADDRESS,
+    error::{PrecompileError, Result as DomainResult},
     storage::{gas::PRECOMPILE_BASE_GAS, StorageHandle},
-};
-use revm::{
-    handler::precompile_output_to_interpreter_result,
-    interpreter::{CallInputs, CallScheme, InterpreterResult},
-    primitives::hardfork::SpecId,
-    Database,
 };
 
 /// Executor-owned runtime authorities carried into one Outbe dispatch.
@@ -36,9 +34,9 @@ pub(super) struct OutbeDispatchRuntime<'a> {
     pub(super) host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
 }
 
-/// Captures the frame and consensus inputs before borrowing the context for storage.
+/// Captures the frame and consensus inputs before borrowing the EVM for storage.
 struct DispatchCall<'a> {
-    inputs: &'a CallInputs,
+    message: &'a Message<OutbeEvmTypes>,
     route: routes::Route,
     host: std::sync::Arc<dyn crate::EvmRuntimeHost>,
     data: Bytes,
@@ -76,9 +74,9 @@ impl DispatchOutcome {
         } else if depth_after != entry_depth {
             PrecompileError::Fatal("precompile subcall unwound with dirty journal depth".into())
         } else {
-            PrecompileError::Halt(revm::precompile::PrecompileHalt::other_static(
+            PrecompileError::Halt(PrecompileHalt::Other(std::borrow::Cow::Borrowed(
                 "precompile dispatch panicked",
-            ))
+            )))
         };
         Self {
             result: Err(error),
@@ -88,44 +86,40 @@ impl DispatchOutcome {
     }
 }
 
-/// Dispatch one outbe precompile call with full context access.
-pub(super) fn outbe_ctx_dispatch<DB>(
-    ctx: &mut EthEvmContext<DB>,
-    inputs: &CallInputs,
+/// Dispatch one outbe precompile call with full safe access to [`evm2::Evm`].
+pub(super) fn outbe_ctx_dispatch(
+    evm: &mut Evm<'_, OutbeEvmTypes>,
+    message: &Message<OutbeEvmTypes>,
+    gas: &mut GasTracker,
     runtime: OutbeDispatchRuntime<'_>,
-) -> Result<Option<InterpreterResult>, crate::errors::OutbePrecompileFatalError>
-where
-    DB: Database + Debug,
-    DB::Error: Debug,
-{
-    use revm::context_interface::{Block as _, ContextTr, JournalTr as _};
+) -> Option<PrecompileResult> {
+    let route = routes::resolve(runtime.host.as_ref(), &message.code_address)?;
+    let block_number = evm.block().number.saturating_to::<u64>();
+    let chain_id = evm.version().chain_id;
+    // Materialize the exact calldata safely via `evm.message_input(message)` (Reth #28413)
+    // before choosing the consensus gas charge.
+    let data = Bytes::copy_from_slice(evm.message_input(message));
+    let entry_depth = evm.ext().native_frame_depth;
+    let prev_call_depth = evm.ext().current_call_depth;
+    evm.ext_mut().current_call_depth = message.depth;
 
-    let Some(route) = routes::resolve(runtime.host.as_ref(), &inputs.bytecode_address) else {
-        return Ok(None);
-    };
-    let block_number = ctx.block().number().saturating_to::<u64>();
-    let chain_id = ctx.cfg().chain_id;
-    // Materialize the exact calldata before choosing the consensus gas charge.
-    // SharedBuffer and top-level Bytes calls must pay the same activation charge.
-    let data: Bytes = inputs.input.bytes_local(ctx.local());
-    let entry_depth = ctx.journal().depth();
-    // Every provider and storage guard must unwind before inspecting the journal.
+    // Every provider and storage guard must unwind before inspecting native frame depth.
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         #[cfg(test)]
         PANIC_WITH_NATIVE_FRAME.with(|armed| {
             if armed.replace(false) {
-                ctx.journal_mut().checkpoint();
+                evm.ext_mut().native_frame_depth += 1;
                 panic!("secret native frame panic");
             }
         });
         let base_gas = route
             .base_gas(runtime.host.as_ref(), data.as_ref())
             .max(PRECOMPILE_BASE_GAS);
-        let timestamp = match outbe_primitives::time::timestamp_secs(ctx.block().timestamp()) {
+        let timestamp = match outbe_primitives::time::timestamp_secs(evm.block().timestamp) {
             Ok(timestamp) => timestamp,
             Err(error) => {
                 return DispatchOutcome {
-                    result: Err(if inputs.gas_limit < base_gas {
+                    result: Err(if message.gas_limit < base_gas {
                         PrecompileError::OutOfGas
                     } else {
                         error.into()
@@ -136,7 +130,7 @@ where
             }
         };
         let call = DispatchCall {
-            inputs,
+            message,
             route,
             host: std::sync::Arc::clone(&runtime.host),
             data,
@@ -145,14 +139,14 @@ where
             timestamp,
             base_gas,
         };
-        call.execute(ctx, &runtime)
+        call.execute(evm, &runtime)
     }))
     .unwrap_or_else(|_| {
-        let depth_after = ctx.journal().depth();
+        let depth_after = evm.ext().native_frame_depth;
         tracing::error!(
             target: "outbe::precompile",
-            address = ?inputs.bytecode_address,
-            caller = ?inputs.caller,
+            address = ?message.code_address,
+            caller = ?message.caller,
             block_number,
             entry_depth,
             depth_after,
@@ -160,31 +154,29 @@ where
         );
         DispatchOutcome::panicked(&runtime, entry_depth, depth_after)
     });
+    evm.ext_mut().current_call_depth = prev_call_depth;
+
     // A domain-local catch must not hide a leaked native frame on its success path.
-    let depth_after = ctx.journal().depth();
+    let depth_after = evm.ext().native_frame_depth;
     let outcome = if depth_after != entry_depth {
         DispatchOutcome::panicked(&runtime, entry_depth, depth_after)
     } else {
         outcome
     };
-    Ok(Some(translate_outcome(
-        outcome,
-        &runtime,
-        inputs.gas_limit,
-    )?))
+    Some(translate_outcome(outcome, &runtime, gas))
 }
 
 impl DispatchCall<'_> {
     fn check_frame(&self) -> DomainResult<()> {
-        if self.inputs.gas_limit < self.base_gas {
+        if self.message.gas_limit < self.base_gas {
             return Err(PrecompileError::OutOfGas);
         }
         // Borrowed-code frames cannot use precompile storage with an inherited
         // caller: that would allow caller-authenticated actions on its behalf.
-        // Match the opcode scheme, including self-referential borrowed frames.
+        // Match the opcode kind, including self-referential borrowed frames.
         if matches!(
-            self.inputs.scheme,
-            CallScheme::DelegateCall | CallScheme::CallCode
+            self.message.kind,
+            MessageKind::DelegateCall | MessageKind::CallCode
         ) {
             return Err(crate::errors::OutbePrecompileDispatchError::DelegatedCallFrame.into());
         }
@@ -192,11 +184,12 @@ impl DispatchCall<'_> {
     }
 
     fn admit_value(&self) -> DomainResult<CallAdmission> {
-        let address = self.inputs.bytecode_address;
-        let caller = self.inputs.caller;
+        let address = self.message.code_address;
+        let caller = self.message.caller;
+        let boundary_value = BoundaryCallValue::from_message(self.message);
         let value = match classify_boundary_value(
             self.route.value_policy(self.host.as_ref()),
-            &self.inputs.value,
+            &boundary_value,
         ) {
             BoundaryValue::Credited(v) => v,
             BoundaryValue::Rejected(reason) => {
@@ -222,10 +215,10 @@ impl DispatchCall<'_> {
         cycle_active_utc_day: Option<u32>,
     ) -> PrecompileMutationCall<'a> {
         PrecompileMutationCall {
-            address: self.inputs.bytecode_address,
+            address: self.message.code_address,
             data: self.data.as_ref(),
-            caller: self.inputs.caller,
-            is_static: self.inputs.is_static,
+            caller: self.message.caller,
+            is_static: self.message.is_static(),
             value: admission.value,
             chain_id: self.chain_id,
             block_number: self.block_number,
@@ -239,17 +232,15 @@ impl DispatchCall<'_> {
         runtime: &OutbeDispatchRuntime<'_>,
         admission: &CallAdmission,
     ) -> CtxStorageProviderConfig {
-        let address = self.inputs.bytecode_address;
+        let address = self.message.code_address;
         CtxStorageProviderConfig {
-            is_static: self.inputs.is_static,
+            is_static: self.message.is_static(),
             self_address: address,
             reentrancy_stack: ReentrancyStack,
             spec: runtime.spec,
             genesis_hash: runtime.genesis_hash,
             genesis_timestamp: 0,
-
             abort_bridge: runtime.abort_bridge.clone(),
-
             scoped_mutation_entitlements: precompile_mutation_entitlements(
                 self.host.as_ref(),
                 self.mutation_call(admission, None),
@@ -258,39 +249,35 @@ impl DispatchCall<'_> {
         .with_genesis_timestamp(runtime.genesis_timestamp)
     }
 
-    fn execute<DB>(
+    fn execute(
         &self,
-        ctx: &mut EthEvmContext<DB>,
+        evm: &mut Evm<'_, OutbeEvmTypes>,
         runtime: &OutbeDispatchRuntime<'_>,
-    ) -> DispatchOutcome
-    where
-        DB: Database + Debug,
-        DB::Error: Debug,
-    {
+    ) -> DispatchOutcome {
         let mut actual_gas = self.base_gas;
         let mut refund = 0;
         // Keep admission failures typed and retain the guard through execution
-        // and gas settlement. Reporting and REVM translation happen afterwards.
+        // and gas settlement. Reporting and EVM translation happen afterwards.
         let result = (|| -> DomainResult<Bytes> {
             self.check_frame()?;
-            let address = self.inputs.bytecode_address;
+            let address = self.message.code_address;
             let Some(_reentrancy) = ReentrancyStack::try_enter(address) else {
                 return Err(crate::errors::OutbePrecompileDispatchError::ReentrancyDenied.into());
             };
             let admission = self.admit_value()?;
-            let gas_budget = self.inputs.gas_limit - self.base_gas;
+            let gas_budget = self.message.gas_limit - self.base_gas;
             let gas_meter = SubcallGasMeter::new(gas_budget);
             let base_gas = self.base_gas;
             tracing::debug!(
                 target: "outbe::precompile::gas",
                 ?address,
-                gas_limit = self.inputs.gas_limit,
+                gas_limit = self.message.gas_limit,
                 base_gas,
                 gas_budget,
                 "precompile dispatch entry"
             );
             let mut provider = CtxStorageProvider::new(
-                ctx,
+                evm,
                 gas_meter,
                 self.provider_config(runtime, &admission),
                 std::sync::Arc::clone(&self.host),
@@ -332,16 +319,12 @@ impl DispatchCall<'_> {
         }
     }
 
-    fn dispatch_with_provider<DB>(
+    fn dispatch_with_provider(
         &self,
-        provider: &mut CtxStorageProvider<'_, DB>,
+        provider: &mut CtxStorageProvider<'_, '_>,
         runtime: &OutbeDispatchRuntime<'_>,
         admission: &CallAdmission,
-    ) -> DomainResult<Bytes>
-    where
-        DB: Database + Debug,
-        DB::Error: Debug,
-    {
+    ) -> DomainResult<Bytes> {
         if admission.protocol_cycle_call {
             let active_utc_day = {
                 let storage = StorageHandle::new(provider);
@@ -357,11 +340,11 @@ impl DispatchCall<'_> {
             ));
         }
         let storage = StorageHandle::new(provider);
-        if self.inputs.bytecode_address == OUTBE_SYSTEM_TX_ADDRESS {
+        if self.message.code_address == OUTBE_SYSTEM_TX_ADDRESS {
             self.host.dispatch_system_tx(
                 storage,
                 self.data.as_ref(),
-                self.inputs.caller,
+                self.message.caller,
                 admission.value,
                 runtime.tee_attestation_v1,
             )
@@ -370,9 +353,9 @@ impl DispatchCall<'_> {
                 self.host.as_ref(),
                 storage,
                 routes::RouteCall {
-                    callee: self.inputs.bytecode_address,
+                    callee: self.message.code_address,
                     data: self.data.as_ref(),
-                    caller: self.inputs.caller,
+                    caller: self.message.caller,
                     value: admission.value,
                 },
             )
@@ -383,20 +366,34 @@ impl DispatchCall<'_> {
 fn translate_outcome(
     outcome: DispatchOutcome,
     runtime: &OutbeDispatchRuntime<'_>,
-    gas_limit: u64,
-) -> Result<InterpreterResult, crate::errors::OutbePrecompileFatalError> {
+    gas: &mut GasTracker,
+) -> PrecompileResult {
     if let Err(error) = &outcome.result {
         runtime.abort_bridge.observe(error);
     }
-    match map_outbe_precompile_result_with_refund(
-        outcome.result,
-        outcome.actual_gas,
-        outcome.refund,
-    ) {
-        Ok(output) => Ok(precompile_output_to_interpreter_result(output, gas_limit)),
-        // `map_outbe_precompile_result` returns `Err` only as a revm `Fatal`.
-        // Provider `SubCall`, `Unsupported`, and every outbe variant without an explicit
-        // arm reach this fatal string channel.
-        Err(other) => Err(crate::errors::OutbePrecompileFatalError::from_revm(other)),
+    match map_outbe_precompile_result(outcome.result) {
+        Ok(output) => {
+            if gas.try_spend(outcome.actual_gas).is_err() {
+                gas.spend_all();
+                Err(EvmPrecompileError::Halt(PrecompileHalt::OutOfGas))
+            } else {
+                gas.record_refund(outcome.refund);
+                Ok(output)
+            }
+        }
+        Err(EvmPrecompileError::Revert(bytes)) => {
+            if gas.try_spend(outcome.actual_gas).is_err() {
+                gas.spend_all();
+                Err(EvmPrecompileError::Halt(PrecompileHalt::OutOfGas))
+            } else {
+                Err(EvmPrecompileError::Revert(bytes))
+            }
+        }
+        Err(EvmPrecompileError::Halt(halt)) => {
+            gas.spend_all();
+            Err(EvmPrecompileError::Halt(halt))
+        }
+        // Fatal and Database errors MUST NEVER be swallowed into a Revert or Halt.
+        Err(fatal @ (EvmPrecompileError::Fatal(_) | EvmPrecompileError::Database(_))) => Err(fatal),
     }
 }

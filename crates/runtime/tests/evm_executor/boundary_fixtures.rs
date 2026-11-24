@@ -3,7 +3,7 @@ use outbe_primitives::system_tx::SystemTxStepId;
 pub(super) fn state_with_active_and_registered_candidate(
     active: Address,
     candidate: Address,
-) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+) -> CacheDB<EmptyDB> {
     state_with_active_and_registered_candidate_seeded(active, candidate, |_| {})
 }
 
@@ -11,7 +11,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
     active: Address,
     candidate: Address,
     seed_extra: impl FnOnce(StorageHandle),
-) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+) -> CacheDB<EmptyDB> {
     let chain_spec = test_chain_spec();
     let mut seed_storage =
         HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
@@ -60,7 +60,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
     let mut db = cache_db_from_storage(seed_storage);
     let marker_code = Bytecode::new_legacy([0xef].into());
     db.insert_account_info(
-        outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
+        &outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code.clone()),
@@ -68,7 +68,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         },
     );
     db.insert_account_info(
-        outbe_system_common::addresses::ORACLE_ADDRESS,
+        &outbe_system_common::addresses::ORACLE_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code.clone()),
@@ -76,7 +76,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         },
     );
     db.insert_account_info(
-        outbe_system_common::addresses::METADOSIS_ADDRESS,
+        &outbe_system_common::addresses::METADOSIS_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code.clone()),
@@ -84,7 +84,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         },
     );
     db.insert_account_info(
-        outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
+        &outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code.clone()),
@@ -102,10 +102,7 @@ pub(super) fn state_with_active_and_registered_candidate_seeded(
         ],
         &marker_code,
     );
-    State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build()
+    db
 }
 
 pub(super) fn begin_system_tx_steps(

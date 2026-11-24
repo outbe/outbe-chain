@@ -35,7 +35,7 @@
       "rust-src",
       "rustfmt"
     ],
-    "version": "1.96.0"
+    "version": "1.100.0"
   },
   "schema_version": 1,
   "system_packages": {

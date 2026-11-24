@@ -7,12 +7,9 @@
 //! log.
 
 use alloy_primitives::{Address, LogData, B256, U256};
-use revm::{
-    context::journaled_state::JournalCheckpoint,
-    state::{AccountInfo, Bytecode},
-};
 
 use crate::error::{PrecompileError, Result};
+use crate::storage::{AccountInfo, Bytecode, StateCheckpoint};
 
 /// Trait for reading storage values - abstracts over Reth's `StateProvider`.
 ///
@@ -216,19 +213,15 @@ impl<R: StorageReader> super::PrecompileStorageProvider for ReadOnlyStorageProvi
         true
     }
 
-    fn checkpoint(&mut self) -> JournalCheckpoint {
-        JournalCheckpoint {
-            journal_i: 0,
-            log_i: 0,
-            selfdestructed_i: 0,
-        }
+    fn checkpoint(&mut self) -> StateCheckpoint {
+        StateCheckpoint::new(0, 0)
     }
 
-    fn checkpoint_commit(&mut self, _checkpoint: JournalCheckpoint) -> Result<()> {
+    fn checkpoint_commit(&mut self, _checkpoint: StateCheckpoint) -> Result<()> {
         Ok(())
     }
 
-    fn checkpoint_revert(&mut self, _checkpoint: JournalCheckpoint) -> Result<()> {
+    fn checkpoint_revert(&mut self, _checkpoint: StateCheckpoint) -> Result<()> {
         Ok(())
     }
 

@@ -8,14 +8,22 @@
 //! `DirectStorageProvider`, and reads go through `OutbeEvmFactory`. Provider-level
 //! coverage of the same resolution lives with the registry.
 
-use alloy_evm::{Evm as _, EvmFactory as _};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_consensus::TxLegacy;
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::{sol, SolCall, SolError};
 use commonware_codec::Encode;
 use commonware_cryptography::bls12381::primitives::{
     ops::{self, sign_message},
     variant::MinSig,
 };
+use evm2::{
+    bytecode::Bytecode,
+    env::BlockEnvExt,
+    ethereum::TxEnvelope,
+    evm::{AccountInfo, CacheDB, Database, EmptyDB},
+    SpecId, TxResult,
+};
+use outbe_evm::factory::OutbeEvmTypes;
 use outbe_l2registry::{
     api::ZK_MERKLE_ROOT_NAMESPACE, precompile::IL2Registry, public_key, schema::L2RegistryContract,
 };
@@ -25,17 +33,8 @@ use outbe_primitives::{
     storage::{direct::DirectStorageProvider, StorageHandle},
 };
 use outbe_system_common::addresses::{L2_REGISTRY_ADDRESS, NOD_FACTORY_ADDRESS};
-use reth_ethereum::evm::primitives::EvmEnv;
-use revm::{
-    context::{
-        result::{ExecutionResult, Output, ResultAndState},
-        BlockEnv, CfgEnv, TxEnv,
-    },
-    database::{CacheDB, EmptyDB},
-    primitives::{hardfork::SpecId, TxKind},
-    state::{AccountInfo, Bytecode},
-    Database,
-};
+use reth_ethereum::evm::EthEvmEnv;
+use reth_primitives_traits::Recovered;
 
 sol! {
     /// Settlement-side getter: 256 bytes of EIP-2537 G2.
@@ -142,14 +141,17 @@ fn insert_code(db: &mut CacheDB<EmptyDB>, address: Address, code: Bytes) {
         code: Some(code),
         ..Default::default()
     };
-    db.insert_account_info(address, info);
+    db.insert_account_info(&address, info);
 }
 
 /// Seeds the 256-byte key into the inbox's own storage slots 0..8.
 fn store_key(db: &mut CacheDB<EmptyDB>, address: Address, key: &[u8; 256]) {
-    for (slot, word) in key.chunks_exact(32).enumerate() {
-        db.insert_account_storage(address, U256::from(slot as u64), U256::from_be_slice(word))
-            .expect("inbox key slots seed");
+    for (slot, word) in key.as_chunks::<32>().0.iter().enumerate() {
+        db.insert_account_storage(
+            &address,
+            &U256::from(slot as u64),
+            &U256::from_be_slice(word),
+        );
     }
 }
 
@@ -158,7 +160,7 @@ fn store_key(db: &mut CacheDB<EmptyDB>, address: Address, key: &[u8; 256]) {
 fn database(key: &[u8; 256]) -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(
-        CALLER,
+        &CALLER,
         AccountInfo {
             balance: U256::from(1_000_000_000u64),
             ..Default::default()
@@ -171,7 +173,7 @@ fn database(key: &[u8; 256]) -> CacheDB<EmptyDB> {
             code: Some(marker.clone()),
             ..Default::default()
         };
-        db.insert_account_info(address, info);
+        db.insert_account_info(&address, info);
     }
     insert_code(&mut db, INBOX, inbox_code(&[]));
     store_key(&mut db, INBOX, key);
@@ -215,63 +217,64 @@ fn register(db: &mut CacheDB<EmptyDB>, chain_id: u64, l1_address: Address, publi
 }
 
 /// Executes and commits a transaction, preserving effects for subsequent reads.
-fn call(db: &mut CacheDB<EmptyDB>, to: Address, calldata: Bytes) -> ExecutionResult {
+fn call(db: &mut CacheDB<EmptyDB>, to: Address, calldata: Bytes) -> TxResult<OutbeEvmTypes> {
     let nonce = db
-        .basic(CALLER)
+        .get_account(&CALLER)
         .expect("the caller account loads")
         .map_or(0, |info| info.nonce);
-    let env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-        block_env: BlockEnv {
+    let env = EthEvmEnv::new(
+        SpecId::PRAGUE,
+        BlockEnvExt {
             timestamp: U256::from(NOW),
-            gas_limit: 30_000_000,
+            gas_limit: U256::from(30_000_000_u64),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
 
     let factory = outbe_evm::factory::OutbeEvmFactory::new(std::sync::Arc::new(
         outbe_runtime::OutbeRuntime::new(),
     ));
     let mut evm = factory.create_evm(&mut *db, env);
-    let ResultAndState { result, state } = evm
-        .transact_raw(
-            TxEnv::builder()
-                .caller(CALLER)
-                .nonce(nonce)
-                .kind(TxKind::Call(to))
-                .value(U256::ZERO)
-                .data(calldata)
-                .gas_limit(GAS_LIMIT)
-                .build()
-                .expect("the transaction builds"),
-        )
-        .expect("contract failure must be a transaction result, not a provider error");
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(CHAIN_ID),
+            nonce,
+            gas_price: 0,
+            gas_limit: GAS_LIMIT,
+            to: TxKind::Call(to),
+            value: U256::ZERO,
+            input: calldata,
+        }),
+        CALLER,
+    );
+    let detached = evm
+        .transact(&tx)
+        .expect("contract failure must be a transaction result, not a provider error")
+        .detach();
     drop(evm);
-    revm::DatabaseCommit::commit(db, state);
-    result
+    db.commit_pending(&detached.pending_state);
+    detached.result
 }
 
-fn get_network(db: &mut CacheDB<EmptyDB>, chain_id: u64) -> ExecutionResult {
+fn get_network(db: &mut CacheDB<EmptyDB>, chain_id: u64) -> TxResult<OutbeEvmTypes> {
     let calldata = IL2Registry::getNetworkCall { chainId: chain_id }.abi_encode();
     call(db, L2_REGISTRY_ADDRESS, calldata.into())
 }
 
 /// The decoded `getNetwork` answer. Panics when the call did not succeed.
 fn network_of(db: &mut CacheDB<EmptyDB>, chain_id: u64) -> IL2Registry::getNetworkReturn {
-    match get_network(db, chain_id) {
-        ExecutionResult::Success {
-            output: Output::Call(bytes),
-            ..
-        } => IL2Registry::getNetworkCall::abi_decode_returns(&bytes).expect("the answer decodes"),
-        other => panic!("expected a successful getNetwork, got {other:?}"),
-    }
+    let result = get_network(db, chain_id);
+    assert!(
+        result.is_success(),
+        "expected a successful getNetwork, got {result:?}"
+    );
+    IL2Registry::getNetworkCall::abi_decode_returns(&result.output).expect("the answer decodes")
 }
 
 /// Sends an offer for `chain_id` signed by `key`, with no ZK proof, so the
 /// call stops at the first gate after the key signature is accepted.
-fn offer(db: &mut CacheDB<EmptyDB>, chain_id: u64, key: &NetworkKey) -> ExecutionResult {
+fn offer(db: &mut CacheDB<EmptyDB>, chain_id: u64, key: &NetworkKey) -> TxResult<OutbeEvmTypes> {
     let calldata = INodFactory::issueNodCall {
         cipherText: Bytes::new(),
         nonce: Bytes::new(),
@@ -290,11 +293,8 @@ fn offer(db: &mut CacheDB<EmptyDB>, chain_id: u64, key: &NetworkKey) -> Executio
 }
 
 /// Return the exact revert payload, including an empty child revert.
-fn revert_data(outcome: &ExecutionResult) -> Option<Vec<u8>> {
-    match outcome {
-        ExecutionResult::Revert { output, .. } => Some(output.to_vec()),
-        _ => None,
-    }
+fn revert_data(outcome: &TxResult<OutbeEvmTypes>) -> Option<Vec<u8>> {
+    outcome.is_revert().then(|| outcome.output.to_vec())
 }
 
 #[test]
@@ -398,12 +398,12 @@ fn unresolvable_inbox_keys_fail_closed() {
 
         let outcome = get_network(&mut db, chain_id);
         assert!(
-            matches!(outcome, ExecutionResult::Revert { .. }),
+            outcome.is_revert(),
             "getNetwork must fail closed for {l1_address}: {outcome:?}"
         );
         assert_eq!(revert_data(&outcome).as_deref(), reason);
         let offered = offer(&mut db, chain_id, &key);
-        assert!(matches!(offered, ExecutionResult::Revert { .. }));
+        assert!(offered.is_revert());
         assert_eq!(revert_data(&offered).as_deref(), reason);
     }
 }
@@ -418,19 +418,16 @@ fn inbox_cannot_write_its_own_state_through_the_resolver() {
 
     let outcome = get_network(&mut db, L2_CHAIN_ID);
     assert!(
-        matches!(outcome, ExecutionResult::Revert { .. }),
+        outcome.is_revert(),
         "a getter that writes storage must revert, not resolve a key: {outcome:?}"
     );
     assert_eq!(
-        db.storage(WRITER, U256::from(WRITTEN_SLOT)).unwrap(),
+        db.get_storage(&WRITER, &U256::from(WRITTEN_SLOT)).unwrap(),
         U256::ZERO
     );
-    assert!(matches!(
-        offer(&mut db, L2_CHAIN_ID, &key),
-        ExecutionResult::Revert { .. }
-    ));
+    assert!(offer(&mut db, L2_CHAIN_ID, &key).is_revert());
     assert_eq!(
-        db.storage(WRITER, U256::from(WRITTEN_SLOT)).unwrap(),
+        db.get_storage(&WRITER, &U256::from(WRITTEN_SLOT)).unwrap(),
         U256::ZERO
     );
 
@@ -442,7 +439,7 @@ fn inbox_cannot_write_its_own_state_through_the_resolver() {
     )
     .is_success());
     assert_eq!(
-        db.storage(WRITER, U256::from(WRITTEN_SLOT)).unwrap(),
+        db.get_storage(&WRITER, &U256::from(WRITTEN_SLOT)).unwrap(),
         U256::from(WRITTEN_VALUE)
     );
 }

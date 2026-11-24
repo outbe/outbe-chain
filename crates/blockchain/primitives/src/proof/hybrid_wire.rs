@@ -13,8 +13,8 @@
 //!
 //! The decoder rejects an empty signer set and a missing or truncated proof.
 
-use bytes::{Buf, BufMut};
-use commonware_codec::{Encode, EncodeSize, Error, FixedSize, Read, ReadExt, Write};
+use bytes::BufMut;
+use commonware_codec::{Buf, Encode, EncodeSize, Error, FixedSize, Read, ReadExt, Write};
 use commonware_consensus::{simplex::scheme::bls12381_threshold::vrf::Seed, types::Round};
 use commonware_cryptography::bls12381::{
     self,

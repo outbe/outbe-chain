@@ -6,28 +6,27 @@ use std::{
 use outbe_evm::OutbeEvmConfig;
 use outbe_primitives::{
     block::BlockHeightRegime, runtime_audit_v1::OTHER_PAYLOAD_EXECUTION_FAILURE, OutbeBuiltPayload,
-    OutbeHeader, OutbePayloadAttributes, OutbePrimitives, OutbeTxEnvelope,
+    OutbeHeader, OutbePayloadAttributes, OutbePrimitives, OutbeReceipt, OutbeTxEnvelope,
 };
 use reth_basic_payload_builder::{
     is_better_payload, BuildArguments, BuildOutcome, MissingPayloadBehaviour, PayloadBuilder,
     PayloadConfig,
 };
-use reth_chainspec::{ChainSpec, ChainSpecProvider};
+use reth_chainspec::{ChainSpec, ChainSpecProvider, EthChainSpec};
 use reth_errors::BlockExecutionError;
 use reth_ethereum_payload_builder::EthereumBuilderConfig;
 use reth_evm::{
-    execute::{BlockBuilder, BlockBuilderOutcome},
-    ConfigureEvm, Evm,
+    database::StateProviderDatabase,
+    execute::{BlockBuilder, BlockBuilderOutcome, BlockExecutionOutput},
+    ConfigureEvm, EvmEnv as _, OnStateHook as _,
 };
 use reth_payload_primitives::PayloadBuilderError;
 use reth_primitives_traits::AlloyBlockHeader as _;
-use reth_revm::{database::StateProviderDatabase, db::State};
 use reth_storage_api::{StateProvider, StateProviderFactory};
 use reth_transaction_pool::{
     BestTransactions, BestTransactionsAttributes, PoolTransaction, TransactionPool,
     ValidPoolTransaction,
 };
-use revm::context_interface::Block as _;
 use tracing::{debug, warn};
 
 mod execution;
@@ -117,7 +116,7 @@ type PayloadStateRoot = (alloy_primitives::B256, reth_trie::updates::TrieUpdates
 
 /// Keep preparation errors fatal, but recover a failed parallel root synchronously.
 fn finish_payload_with_state_root<B, P, F, E>(
-    mut builder: B,
+    builder: B,
     state_provider: P,
     state_root: F,
     payload_id: alloy_rpc_types_engine::PayloadId,
@@ -125,21 +124,22 @@ fn finish_payload_with_state_root<B, P, F, E>(
 where
     B: BlockBuilder<Primitives = OutbePrimitives>,
     P: StateProvider,
-    F: FnOnce(&mut B) -> Result<Option<Result<PayloadStateRoot, E>>, PayloadBuilderError>,
+    F: FnOnce(&BlockExecutionOutput<OutbeReceipt>) -> Option<Result<PayloadStateRoot, E>>,
     E: std::fmt::Display,
 {
     measure_payload_state_root(|| {
-        let state_root = match state_root(&mut builder)? {
-            Some(Ok(root)) => Some(root),
-            Some(Err(err)) => {
-                warn!(target: "payload_builder", id=%payload_id, %err, "sparse trie failed, falling back to sync state root");
-                record_payload_sparse_trie_fallback();
-                None
-            }
-            None => None,
-        };
         builder
-            .finish(state_provider, state_root)
+            .finish_with_state_root(state_provider, |output| {
+                Ok(match state_root(output) {
+                    Some(Ok(root)) => Some(root),
+                    Some(Err(err)) => {
+                        warn!(target: "payload_builder", id=%payload_id, %err, "sparse trie failed, falling back to sync state root");
+                        record_payload_sparse_trie_fallback();
+                        None
+                    }
+                    None => None,
+                })
+            })
             .map_err(PayloadBuilderError::evm)
     })
 }
@@ -252,12 +252,9 @@ where
         } = config;
 
         let state_provider = self.provider.state_by_block_hash(parent_header.hash())?;
-        let state =
-            StateProviderDatabase::new(reth_storage_api::EvmStateProviderAdapter(&state_provider));
-        let mut db = State::builder()
-            .with_database(cached_reads.as_db_mut(state))
-            .with_bundle_update()
-            .build();
+        let evm_state_provider = reth_storage_api::EvmStateProviderAdapter(&state_provider);
+        let state = StateProviderDatabase::new(&evm_state_provider);
+        let cached_db = cached_reads.as_db_mut(state);
 
         let chain_spec = self.provider.chain_spec();
         let block_number = parent_header.number().saturating_add(1);
@@ -270,7 +267,7 @@ where
             preparation::prepare(&self.evm_config, &context)?;
         let mut builder = self
             .evm_config
-            .builder_for_next_block(&mut db, &parent_header, env)
+            .builder_for_next_block(cached_db, &parent_header, env)
             .map_err(PayloadBuilderError::other)?;
         debug!(
             target: "payload_builder",
@@ -281,22 +278,22 @@ where
             "building Outbe payload"
         );
 
-        let block_gas_limit = builder.evm_mut().block().gas_limit();
-        let base_fee = builder.evm_mut().block().basefee();
-        let mut best_txs = best_txs(BestTransactionsAttributes::new(
-            base_fee,
-            builder
-                .evm_mut()
-                .block()
-                .blob_gasprice()
-                .map(|gasprice| gasprice as u64),
-        ));
-        if let Some(handle) = state_root_handle.as_mut() {
-            builder
-                .evm_mut()
-                .db_mut()
-                .set_state_hook(Some(Box::new(handle.take_state_hook())));
-        }
+        let block_gas_limit = builder
+            .evm_env()
+            .block_env()
+            .gas_limit
+            .saturating_to::<u64>();
+        let base_fee = builder.evm_env().block_base_fee();
+        let blob_fee = chain_spec
+            .blob_params_at_timestamp(attributes.inner().timestamp)
+            .map(|_| builder.evm_env().block_blob_base_fee());
+        let mut best_txs = best_txs(BestTransactionsAttributes::new(base_fee, blob_fee));
+        let use_state_root_task = if let Some(handle) = state_root_handle.as_mut() {
+            let mut hook = handle.take_state_hook();
+            builder.set_state_hook(move |state| hook.on_state(state))
+        } else {
+            false
+        };
 
         preparation::apply_pre_execution_changes(&mut builder)?;
         let system_txs = preparation::SystemTransactions::build(
@@ -342,27 +339,19 @@ where
         let outcome = finish_payload_with_state_root(
             builder,
             state_provider.as_ref(),
-            |builder| {
-                let Some(mut handle) = state_root_handle else {
-                    return Ok(None);
-                };
-                // Deliver all EVM state changes before the parallel root is frozen.
-                builder
-                    .executor_mut()
-                    .prepare_final_header_artifacts(attributes.timestamp_millis_part())
-                    .map_err(PayloadBuilderError::evm)?;
-                builder.evm_mut().db_mut().set_state_hook(None);
-                Ok(Some(handle.state_root().map(|outcome| {
+            |_| {
+                let mut handle = state_root_handle.filter(|_| use_state_root_task)?;
+                Some(handle.state_root().map(|outcome| {
                     (
                         outcome.state_root,
                         Arc::unwrap_or_clone(outcome.trie_updates),
                     )
-                })))
+                }))
             },
             payload_id,
         )?;
 
-        let payload = finalization::into_payload(outcome, &mut db, state, &context)?;
+        let payload = finalization::into_payload(outcome, state, &context)?;
         Ok(BuildOutcome::Better {
             payload,
             cached_reads,

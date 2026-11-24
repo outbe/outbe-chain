@@ -399,7 +399,7 @@ mod copied_native_dkg_prerequisites {
         }
         let (output, share) = players
             .remove(0)
-            .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
+            .finalize::<N3f1>(
                 &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                 dkg_logs,
                 &Sequential,

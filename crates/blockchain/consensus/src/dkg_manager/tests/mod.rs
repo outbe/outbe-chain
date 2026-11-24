@@ -66,7 +66,9 @@ fn phase0_spike_follower_rebuilds_verifier_from_boundary_and_verifies_finalizati
         NonZeroU32::new(crate::bls::MAX_VALIDATORS).unwrap(),
         ModeVersion::v0(),
     );
-    let recovered = Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut &body[..], &cfg).unwrap();
+    let recovered =
+        Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut commonware_codec::Copying(body), &cfg)
+            .unwrap();
     let recovered_participants = recovered.players().clone();
     let recovered_polynomial = recovered.public().clone();
     assert_eq!(
@@ -191,7 +193,7 @@ fn run_round(
     let mut logs = BTreeMap::new();
     let mut signed_logs = BTreeMap::new();
     for dealer in dealers {
-        let signed_log: SignedDealerLog<MinSig, bls12381::PrivateKey> = dealer.finalize::<N3f1>();
+        let signed_log: SignedDealerLog<MinSig, bls12381::PublicKey> = dealer.finalize::<N3f1>();
         let encoded = Bytes::from(signed_log.encode());
         if let Some((pk, log)) = signed_log.check(&info) {
             signed_logs.insert(pk.clone(), encoded);
@@ -207,7 +209,7 @@ fn run_round(
             dkg_logs.record(dealer, log);
         }
         let (player_output, share) = player
-            .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
+            .finalize::<N3f1>(
                 &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                 dkg_logs,
                 &Sequential,
@@ -592,13 +594,12 @@ fn full_output_outcome_detects_reshare_log_subset_divergence() {
     for (dealer, log) in reshare_logs.clone() {
         all_logs.record(dealer, log);
     }
-    let all_output =
-        observe::<MinSig, bls12381::PublicKey, N3f1, commonware_cryptography::bls12381::Batch>(
-            &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
-            all_logs,
-            &Sequential,
-        )
-        .unwrap();
+    let all_output = observe::<MinSig, bls12381::PublicKey, N3f1>(
+        &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+        all_logs,
+        &Sequential,
+    )
+    .unwrap();
     let mut subset_logs = reshare_logs.clone();
     let removed = subset_logs.keys().next().cloned().unwrap();
     subset_logs.remove(&removed);
@@ -606,13 +607,12 @@ fn full_output_outcome_detects_reshare_log_subset_divergence() {
     for (dealer, log) in subset_logs {
         subset_dkg_logs.record(dealer, log);
     }
-    let subset_output =
-        observe::<MinSig, bls12381::PublicKey, N3f1, commonware_cryptography::bls12381::Batch>(
-            &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
-            subset_dkg_logs,
-            &Sequential,
-        )
-        .unwrap();
+    let subset_output = observe::<MinSig, bls12381::PublicKey, N3f1>(
+        &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+        subset_dkg_logs,
+        &Sequential,
+    )
+    .unwrap();
 
     assert_eq!(
         all_output.public().public(),
@@ -704,20 +704,19 @@ fn finalized_dealer_logs_reconstruct_canonical_output() {
     for (dealer, log) in logs {
         observed_logs.record(dealer, log);
     }
-    let observed =
-        observe::<MinSig, bls12381::PublicKey, N3f1, commonware_cryptography::bls12381::Batch>(
-            &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
-            observed_logs,
-            &Sequential,
-        )
-        .unwrap();
+    let observed = observe::<MinSig, bls12381::PublicKey, N3f1>(
+        &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+        observed_logs,
+        &Sequential,
+    )
+    .unwrap();
     assert_eq!(expected_output, observed);
 
     let finalized_order: Vec<Bytes> = signed_logs.values().rev().cloned().collect();
     let mut canonical_logs = BTreeMap::new();
     for bytes in finalized_order.iter().take(3) {
-        let mut reader = bytes.as_ref();
-        let signed_log = SignedDealerLog::<MinSig, bls12381::PrivateKey>::read_cfg(
+        let mut reader = commonware_codec::Copying(bytes.as_ref());
+        let signed_log = SignedDealerLog::<MinSig, bls12381::PublicKey>::read_cfg(
             &mut reader,
             &NonZeroU32::new(keys.len() as u32).unwrap(),
         )
@@ -729,13 +728,12 @@ fn finalized_dealer_logs_reconstruct_canonical_output() {
     for (dealer, log) in canonical_logs {
         canonical_dkg_logs.record(dealer, log);
     }
-    let expected_canonical =
-        observe::<MinSig, bls12381::PublicKey, N3f1, commonware_cryptography::bls12381::Batch>(
-            &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
-            canonical_dkg_logs,
-            &Sequential,
-        )
-        .unwrap();
+    let expected_canonical = observe::<MinSig, bls12381::PublicKey, N3f1>(
+        &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
+        canonical_dkg_logs,
+        &Sequential,
+    )
+    .unwrap();
 
     let manager = Mailbox::new();
     manager

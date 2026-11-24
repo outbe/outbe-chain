@@ -56,13 +56,12 @@ fn active_lifecycle_proposer_and_replay_match_receipts_roots_and_header_artifact
         executor
             .apply_end_block_phase()
             .expect("end-block phase executes");
-        executor
-            .prepare_final_header_artifacts(0)
+        fixtures_execution::finalize_executor_header_artifacts(&mut executor, 0)
             .expect("final header artifacts encode");
-        let final_extra_data = executor.final_extra_data.clone();
-        let (evm, result) = executor.finish().expect("active block finishes");
-        drop(evm);
-        let state_root = post_state_root(&state.bundle_state);
+        let final_extra_data = executor.final_extra_data().clone();
+        let output = executor.finish().expect("active block finishes");
+        let result = output.result;
+        let state_root = post_state_root(&output.state);
 
         (
             result.receipts,
@@ -255,7 +254,8 @@ fn proposer_validator_same_state_root() {
             .iter()
             .map(|r| r.cumulative_gas_used)
             .collect();
-        drop(executor);
+        let bundle = executor.into_state();
+        state.commit_source(&BundleSource(&bundle));
 
         // Read the recorded live-credit voters + the settled fee-share balances.
         let read_ctx = BlockContext {

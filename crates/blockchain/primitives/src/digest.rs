@@ -4,8 +4,8 @@
 //! so block hashes can be used as consensus payloads.
 
 use alloy_primitives::B256;
-use bytes::{Buf, BufMut};
-use commonware_codec::{FixedSize, Read, ReadExt as _, Write};
+use bytes::BufMut;
+use commonware_codec::{Buf, FixedSize, Read, ReadExt as _, Write};
 use commonware_cryptography::Digest as CwDigest;
 use commonware_utils::{Array, Span};
 use std::fmt;

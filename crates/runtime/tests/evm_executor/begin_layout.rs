@@ -92,15 +92,12 @@ impl Scenario {
         }
     }
 
-    fn resolve(&self) -> Result<BeginInputs, alloy_evm::block::BlockExecutionError> {
+    fn resolve(&self) -> Result<BeginInputs, BlockExecutionError> {
         let config = OutbeEvmConfig::new(
             test_chain_spec(),
             std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
         );
-        let mut state = State::builder()
-            .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-            .with_bundle_update()
-            .build();
+        let mut state = CacheDB::new(EmptyDB::default());
         let evm = config.evm_with_env(&mut state, test_evm_env(self.height, REWARDS_ADDRESS));
         let mut ctx = execution_ctx(None, encode_outbe_block_artifacts(&self.artifacts).unwrap());
         ctx.inner.parent_hash = self.parent;

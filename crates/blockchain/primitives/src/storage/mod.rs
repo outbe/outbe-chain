@@ -11,8 +11,12 @@ pub mod readonly;
 pub mod scoped_mutation;
 pub mod types;
 
+pub use evm2::{
+    bytecode::Bytecode,
+    evm::{AccountInfo, StateCheckpoint},
+    interpreter::InstrStop,
+};
 pub use handle::StorageHandle;
-pub use revm::state::{AccountInfo, Bytecode};
 pub use scoped_mutation::{
     scoped_block_binding, scoped_command_binding, CycleLifecyclePurpose, MutationEntitlements,
     MutationPurposeTag, ScopedMutationPurpose,
@@ -20,7 +24,6 @@ pub use scoped_mutation::{
 pub use types::{Mapping, Slot, Storable, StorableType, StorageKey, StorageOps};
 
 use alloy_primitives::{Address, Bytes, LogData, B256, U256};
-use revm::{context::journaled_state::JournalCheckpoint, context::result::HaltReason};
 
 use crate::error::Result;
 
@@ -130,9 +133,9 @@ pub enum SubCallError {
     /// Child frame attempted state mutation under STATICCALL.
     #[error("state change during static call")]
     StateChangeDuringStaticCall,
-    /// Child frame halted with a revm halt reason.
+    /// Child frame halted with an evm2 stop reason.
     #[error("evm halt: {0:?}")]
-    EvmHalt(HaltReason),
+    EvmHalt(InstrStop),
 }
 
 /// RAII guard for atomic state mutation batching.
@@ -141,14 +144,11 @@ pub enum SubCallError {
 /// unless [`CheckpointGuard::commit`] was called.
 pub struct CheckpointGuard<'storage> {
     storage: StorageHandle<'storage>,
-    checkpoint: Option<revm::context::journaled_state::JournalCheckpoint>,
+    checkpoint: Option<StateCheckpoint>,
 }
 
 impl<'storage> CheckpointGuard<'storage> {
-    pub(crate) fn new(
-        storage: StorageHandle<'storage>,
-        checkpoint: revm::context::journaled_state::JournalCheckpoint,
-    ) -> Self {
+    pub(crate) fn new(storage: StorageHandle<'storage>, checkpoint: StateCheckpoint) -> Self {
         Self {
             storage,
             checkpoint: Some(checkpoint),
@@ -163,9 +163,11 @@ impl<'storage> CheckpointGuard<'storage> {
     }
 
     pub fn revert(mut self) -> Result<()> {
-        if let Some(checkpoint) = self.checkpoint {
-            self.storage.checkpoint_revert(checkpoint)?;
-            self.checkpoint = None;
+        if let Some(checkpoint) = self.checkpoint.take() {
+            if let Err(err) = self.storage.checkpoint_revert(checkpoint.clone()) {
+                self.checkpoint = Some(checkpoint);
+                return Err(err);
+            }
         }
         Ok(())
     }
@@ -173,11 +175,12 @@ impl<'storage> CheckpointGuard<'storage> {
 
 impl Drop for CheckpointGuard<'_> {
     fn drop(&mut self) {
-        if let Some((checkpoint, Err(error))) = self
-            .checkpoint
-            .take()
-            .map(|checkpoint| (checkpoint, self.storage.checkpoint_revert(checkpoint)))
-        {
+        if let Some((checkpoint, Err(error))) = self.checkpoint.take().map(|checkpoint| {
+            (
+                checkpoint.clone(),
+                self.storage.checkpoint_revert(checkpoint),
+            )
+        }) {
             tracing::warn!(
                 target: "outbe::storage",
                 ?checkpoint,
@@ -190,16 +193,13 @@ impl Drop for CheckpointGuard<'_> {
 
 pub(crate) fn pop_snapshot_lifo<T>(
     snapshots: &mut Vec<T>,
-    checkpoint: JournalCheckpoint,
+    checkpoint: StateCheckpoint,
 ) -> Result<()> {
     let expected = snapshots.len().checked_sub(1);
-    if checkpoint.log_i != 0
-        || checkpoint.selfdestructed_i != 0
-        || expected != Some(checkpoint.journal_i)
-    {
+    if checkpoint.logs_len() != 0 || expected != Some(checkpoint.journal_len()) {
         return Err(crate::error::PrimitivesStorageError::CheckpointOutOfOrder {
             expected,
-            actual: checkpoint.journal_i,
+            actual: checkpoint.journal_len(),
         }
         .into());
     }
@@ -209,21 +209,18 @@ pub(crate) fn pop_snapshot_lifo<T>(
 
 pub(crate) fn drain_snapshots_from<T>(
     snapshots: &mut Vec<T>,
-    checkpoint: JournalCheckpoint,
+    checkpoint: StateCheckpoint,
 ) -> Result<Option<T>> {
-    if checkpoint.log_i != 0
-        || checkpoint.selfdestructed_i != 0
-        || checkpoint.journal_i >= snapshots.len()
-    {
+    if checkpoint.logs_len() != 0 || checkpoint.journal_len() >= snapshots.len() {
         return Err(
             crate::error::PrimitivesStorageError::InvalidCheckpointRevert {
-                checkpoint: checkpoint.journal_i,
+                checkpoint: checkpoint.journal_len(),
                 depth: snapshots.len(),
             }
             .into(),
         );
     }
-    Ok(snapshots.drain(checkpoint.journal_i..).next())
+    Ok(snapshots.drain(checkpoint.journal_len()..).next())
 }
 
 /// Typed facade that can be constructed from explicit runtime storage.
@@ -412,13 +409,13 @@ pub trait PrecompileStorageProvider {
     fn is_static(&self) -> bool;
 
     /// Creates a new journal checkpoint.
-    fn checkpoint(&mut self) -> JournalCheckpoint;
+    fn checkpoint(&mut self) -> StateCheckpoint;
 
     /// Commits the identified top-of-stack checkpoint in strict LIFO order.
-    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) -> Result<()>;
+    fn checkpoint_commit(&mut self, checkpoint: StateCheckpoint) -> Result<()>;
 
     /// Reverts all state changes back to the given checkpoint.
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) -> Result<()>;
+    fn checkpoint_revert(&mut self, checkpoint: StateCheckpoint) -> Result<()>;
 
     /// Transfers native token balance from one address to another.
     ///

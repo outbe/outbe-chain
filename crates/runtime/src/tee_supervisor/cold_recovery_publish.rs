@@ -13,7 +13,7 @@ fn planted_cold() -> (
     let (root, host_key) = host_tree();
     let committee = FinalityCommitteeFixture::new(6);
     let (old, descriptor) = source_for_promotion(&host_key, &committee);
-    outbe_tee::node_host::ResidentStateStore::load_or_create(
+    let _ = outbe_tee::node_host::ResidentStateStore::load_or_create(
         root.path(),
         &old.authorization_witness().unwrap(),
     )

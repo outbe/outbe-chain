@@ -1,7 +1,14 @@
-use alloy_evm::{Evm as _, EvmFactory as _};
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_consensus::TxLegacy;
+use alloy_primitives::{Address, Bytes, TxKind, U256};
 use alloy_sol_types::SolCall;
-use outbe_evm::{sub_call, OutbeEvmFactory};
+use evm2::{
+    bytecode::Bytecode,
+    env::BlockEnvExt,
+    ethereum::TxEnvelope,
+    evm::{AccountInfo, CacheDB, EmptyDB},
+    NoopInspector, SpecId,
+};
+use outbe_evm::{factory::OutbeEvmTypes, sub_call, test_support::EvmWorld, OutbeEvmFactory};
 use outbe_primitives::{
     block::BlockContext,
     storage::{
@@ -17,34 +24,23 @@ use outbe_system_common::addresses::{
     STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE,
 };
 use outbe_system_common::stablecoin::{predict_stablecoin, StablecoinCreatePayload};
-use reth_ethereum::evm::primitives::EvmEnv;
-use revm::{
-    context::{
-        result::{ExecutionResult, Output},
-        BlockEnv, CfgEnv, TxEnv,
-    },
-    database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
-    primitives::{hardfork::SpecId, TxKind},
-    state::{AccountInfo, Bytecode},
-    Context,
-};
+use reth_ethereum::evm::EthEvmEnv;
+use reth_primitives_traits::Recovered;
 
 const CHAIN_ID: u64 = 1;
 const CALLER: Address = Address::new([0xc0; 20]);
 const ISSUER: Address = Address::new([0x44; 20]);
 const GAS_LIMIT: u64 = 1_000_000;
 
-fn test_env() -> EvmEnv {
-    EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-        block_env: BlockEnv {
-            gas_limit: 30_000_000,
+fn test_env() -> EthEvmEnv<OutbeEvmTypes> {
+    EthEvmEnv::new(
+        SpecId::PRAGUE,
+        BlockEnvExt {
+            gas_limit: U256::from(30_000_000_u64),
             ..Default::default()
         },
-    }
+        CHAIN_ID,
+    )
 }
 
 fn funded_account() -> AccountInfo {
@@ -56,7 +52,7 @@ fn funded_account() -> AccountInfo {
 
 fn seed_registered_tokens(definitions: &[(&str, &str)]) -> (CacheDB<EmptyDB>, Vec<Address>) {
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(CALLER, funded_account());
+    db.insert_account_info(&CALLER, funded_account());
 
     let mut initializations = Vec::with_capacity(definitions.len());
     for (index, (name, ticker)) in definitions.iter().enumerate() {
@@ -79,7 +75,7 @@ fn seed_registered_tokens(definitions: &[(&str, &str)]) -> (CacheDB<EmptyDB>, Ve
         .unwrap();
         let marker = Bytecode::new_raw(Bytes::from_static(&STABLECOIN_MARKER_CODE));
         db.insert_account_info(
-            token,
+            &token,
             AccountInfo {
                 code_hash: marker.hash_slow(),
                 code: Some(marker),
@@ -155,24 +151,25 @@ fn top_level_calls_route_by_actual_stablecoin_callee_and_keep_instances_isolated
         .create_evm(db, test_env());
 
     for (token, expected) in tokens.into_iter().zip(["EXUSD", "SCD"]) {
-        let tx = TxEnv::builder()
-            .caller(CALLER)
-            .nonce(0)
-            .kind(TxKind::Call(token))
-            .data(symbol_calldata())
-            .gas_limit(GAS_LIMIT)
-            .build()
-            .unwrap();
-        let result = evm.transact_raw(tx).unwrap();
-        let ExecutionResult::Success {
-            output: Output::Call(output),
-            ..
-        } = result.result
-        else {
-            panic!("stablecoin symbol call did not succeed");
-        };
+        let tx = Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                chain_id: Some(CHAIN_ID),
+                nonce: 0,
+                gas_price: 0,
+                gas_limit: GAS_LIMIT,
+                to: TxKind::Call(token),
+                value: U256::ZERO,
+                input: symbol_calldata(),
+            }),
+            CALLER,
+        );
+        let result = evm.transact(&tx).unwrap().discard();
+        assert!(
+            result.is_success(),
+            "stablecoin symbol call did not succeed: {result:?}"
+        );
         assert_eq!(
-            IStablecoin::symbolCall::abi_decode_returns(&output).unwrap(),
+            IStablecoin::symbolCall::abi_decode_returns(&result.output).unwrap(),
             expected
         );
     }
@@ -182,10 +179,11 @@ fn top_level_calls_route_by_actual_stablecoin_callee_and_keep_instances_isolated
 fn nested_staticcall_uses_the_same_authenticated_dynamic_route() {
     let (db, tokens) = seed_registered_tokens(&[("Example Dollar", "EXUSD")]);
     let token = tokens[0];
-    let mut ctx = Context::mainnet().with_db(db);
+    let host = std::sync::Arc::new(outbe_runtime::OutbeRuntime::new());
+    let mut world = EvmWorld::new(db, host.clone());
 
     let result = sub_call::run_with_host(
-        &mut ctx,
+        &mut world.evm,
         outbe_evm::test_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: token,
@@ -194,7 +192,7 @@ fn nested_staticcall_uses_the_same_authenticated_dynamic_route() {
             gas_limit: GAS_LIMIT,
             is_static: true,
         },
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+        host,
     )
     .unwrap();
 
@@ -209,7 +207,8 @@ fn nested_staticcall_uses_the_same_authenticated_dynamic_route() {
 fn nested_static_mutation_halts_without_committing_an_event() {
     let (db, tokens) = seed_registered_tokens(&[("Example Dollar", "EXUSD")]);
     let token = tokens[0];
-    let mut ctx = Context::mainnet().with_db(db);
+    let host = std::sync::Arc::new(outbe_runtime::OutbeRuntime::new());
+    let mut world = EvmWorld::new(db, host.clone());
     let spender = Address::repeat_byte(0x77);
     let calldata = IStablecoin::approveCall {
         spender,
@@ -218,7 +217,7 @@ fn nested_static_mutation_halts_without_committing_an_event() {
     .abi_encode();
 
     let result = sub_call::run_with_host(
-        &mut ctx,
+        &mut world.evm,
         outbe_evm::test_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: token,
@@ -227,18 +226,18 @@ fn nested_static_mutation_halts_without_committing_an_event() {
             gas_limit: GAS_LIMIT,
             is_static: true,
         },
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+        host.clone(),
     )
     .unwrap();
 
     assert!(matches!(result.status, SubCallStatus::Halt(_)));
     assert!(
-        ctx.journaled_state.logs.is_empty(),
+        world.logs().is_empty(),
         "static denial must not commit an Approval event to the EVM journal"
     );
 
     let allowance = sub_call::run_with_host(
-        &mut ctx,
+        &mut world.evm,
         outbe_evm::test_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: token,
@@ -252,7 +251,7 @@ fn nested_static_mutation_halts_without_committing_an_event() {
             gas_limit: GAS_LIMIT,
             is_static: true,
         },
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+        host,
     )
     .unwrap();
     assert!(matches!(allowance.status, SubCallStatus::Success));
@@ -266,10 +265,11 @@ fn nested_static_mutation_halts_without_committing_an_event() {
 fn nested_call_with_insufficient_gas_halts_out_of_gas() {
     let (db, tokens) = seed_registered_tokens(&[("Example Dollar", "EXUSD")]);
     let token = tokens[0];
-    let mut ctx = Context::mainnet().with_db(db);
+    let host = std::sync::Arc::new(outbe_runtime::OutbeRuntime::new());
+    let mut world = EvmWorld::new(db, host.clone());
 
     let result = sub_call::run_with_host(
-        &mut ctx,
+        &mut world.evm,
         outbe_evm::test_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: token,
@@ -278,7 +278,7 @@ fn nested_call_with_insufficient_gas_halts_out_of_gas() {
             gas_limit: 1,
             is_static: true,
         },
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+        host,
     )
     .unwrap();
 
@@ -292,13 +292,13 @@ fn nested_call_with_insufficient_gas_halts_out_of_gas() {
 fn unregistered_class_member_reverts_without_executing_installed_bytecode() {
     let unknown = class_address(0xfe);
     let mut db = CacheDB::new(EmptyDB::default());
-    db.insert_account_info(CALLER, funded_account());
+    db.insert_account_info(&CALLER, funded_account());
 
     // This runtime would return success if the reserved address ever fell
     // through to ordinary EVM bytecode.
     let bytecode = Bytecode::new_raw(Bytes::from_static(&[0x00]));
     db.insert_account_info(
-        unknown,
+        &unknown,
         AccountInfo {
             code_hash: bytecode.hash_slow(),
             code: Some(bytecode),
@@ -306,18 +306,23 @@ fn unregistered_class_member_reverts_without_executing_installed_bytecode() {
         },
     );
 
-    let tx = TxEnv::builder()
-        .caller(CALLER)
-        .nonce(0)
-        .kind(TxKind::Call(unknown))
-        .gas_limit(GAS_LIMIT)
-        .build()
-        .unwrap();
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(CHAIN_ID),
+            nonce: 0,
+            gas_price: 0,
+            gas_limit: GAS_LIMIT,
+            to: TxKind::Call(unknown),
+            value: U256::ZERO,
+            input: Bytes::new(),
+        }),
+        CALLER,
+    );
     let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
         .create_evm(db, test_env());
-    let result = evm.transact_raw(tx).unwrap();
+    let result = evm.transact(&tx).unwrap().commit();
 
-    assert!(matches!(result.result, ExecutionResult::Revert { .. }));
+    assert!(result.is_revert(), "{result:?}");
 }
 
 #[test]
@@ -334,7 +339,7 @@ fn immediate_delegation_to_native_class_executes_empty_code_regardless_of_issuan
             if !registered {
                 let marker = Bytecode::new_raw(Bytes::from_static(&STABLECOIN_MARKER_CODE));
                 db.insert_account_info(
-                    target,
+                    &target,
                     AccountInfo {
                         code_hash: marker.hash_slow(),
                         code: Some(marker),
@@ -344,7 +349,7 @@ fn immediate_delegation_to_native_class_executes_empty_code_regardless_of_issuan
             }
             let delegation = Bytecode::new_eip7702(target);
             db.insert_account_info(
-                recipient,
+                &recipient,
                 AccountInfo {
                     nonce: 2,
                     balance: U256::from(1),
@@ -356,32 +361,45 @@ fn immediate_delegation_to_native_class_executes_empty_code_regardless_of_issuan
             let mut evm =
                 OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
                     .create_evm(db, test_env());
-            evm.set_inspector_enabled(inspect);
-            let outcome = evm
-                .transact_raw(
-                    TxEnv::builder()
-                        .caller(CALLER)
-                        .kind(TxKind::Call(recipient))
-                        .data(symbol_calldata())
-                        .value(U256::from(10))
-                        .gas_limit(GAS_LIMIT)
-                        .build()
-                        .unwrap(),
-                )
-                .unwrap();
+            let tx = Recovered::new_unchecked(
+                TxEnvelope::Legacy(TxLegacy {
+                    chain_id: Some(CHAIN_ID),
+                    nonce: 0,
+                    gas_price: 0,
+                    gas_limit: GAS_LIMIT,
+                    to: TxKind::Call(recipient),
+                    value: U256::from(10),
+                    input: symbol_calldata(),
+                }),
+                CALLER,
+            );
+            let outcome = if inspect {
+                evm.transact_with_inspector(&tx, &mut NoopInspector::default())
+                    .unwrap()
+                    .detach()
+            } else {
+                evm.transact(&tx).unwrap().detach()
+            };
             assert!(
-                matches!(&outcome.result, ExecutionResult::Success {output:Output::Call(data), ..} if data.is_empty()),
+                outcome.result.is_success() && outcome.result.output.is_empty(),
                 "native delegate must not execute marker or symbol ABI: {:?}",
                 outcome.result
             );
-            assert_eq!(outcome.state[&recipient].info.balance, U256::from(11));
-            assert_eq!(outcome.state[&recipient].info.nonce, 2);
-            assert_eq!(
-                outcome.state[&recipient].info.code_hash,
-                delegation.hash_slow()
+            let recipient_info = outcome
+                .pending_state
+                .account_changes_for(&recipient)
+                .and_then(|acc| acc.current)
+                .expect("recipient modified");
+            assert_eq!(recipient_info.balance, U256::from(11));
+            assert_eq!(recipient_info.nonce, 2);
+            assert_eq!(recipient_info.code_hash, delegation.hash_slow());
+            assert!(
+                outcome
+                    .pending_state
+                    .account_changes_for(&target)
+                    .is_none_or(|acc| !acc.touched && !acc.is_changed()),
+                "native delegate target must not be touched"
             );
-            assert_eq!(outcome.state[&target].info.balance, U256::ZERO);
-            assert!(!outcome.state[&target].is_touched());
         }
     }
 }

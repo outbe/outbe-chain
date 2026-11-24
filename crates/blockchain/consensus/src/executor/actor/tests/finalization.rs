@@ -107,7 +107,10 @@ fn finalized_syncing_delivery_acks_and_heartbeat_repeats_fcu() {
 
         let (ack, waiter) = Exact::handle();
         actor
-            .handle_marshal_update(Update::Block(block.into(), ack))
+            .handle_marshal_update(Update::Block(
+                crate::test_fixtures::digested_block(block),
+                ack,
+            ))
             .await
             .expect("finalized Syncing delivery must process without a fatal error");
         waiter
@@ -142,7 +145,10 @@ fn canonical_genesis_anchor_is_acknowledged_without_execution() {
 
         let (ack, waiter) = Exact::handle();
         actor
-            .handle_marshal_update(Update::Block(block.into(), ack))
+            .handle_marshal_update(Update::Block(
+                crate::test_fixtures::digested_block(block),
+                ack,
+            ))
             .await
             .expect("canonical genesis anchor must be accepted");
         waiter
@@ -181,7 +187,10 @@ fn recovered_canonical_block_is_acknowledged_without_reexecution() {
 
         let (ack, waiter) = Exact::handle();
         actor
-            .handle_marshal_update(Update::Block(block.into(), ack))
+            .handle_marshal_update(Update::Block(
+                crate::test_fixtures::digested_block(block),
+                ack,
+            ))
             .await
             .expect("exact recovered canonical block must be idempotently accepted");
         waiter
@@ -219,7 +228,10 @@ fn recovered_height_with_conflicting_hash_still_fails_closed() {
 
         let (ack, waiter) = Exact::handle();
         let result = actor
-            .handle_marshal_update(Update::Block(conflicting.into(), ack))
+            .handle_marshal_update(Update::Block(
+                crate::test_fixtures::digested_block(conflicting),
+                ack,
+            ))
             .await;
         assert!(result.is_err(), "same-height conflicting block must fail");
         assert!(
@@ -260,7 +272,10 @@ fn conflicting_genesis_anchor_fails_without_acknowledging_marshal() {
 
         let (ack, waiter) = Exact::handle();
         let result = actor
-            .handle_marshal_update(Update::Block(conflicting.into(), ack))
+            .handle_marshal_update(Update::Block(
+                crate::test_fixtures::digested_block(conflicting),
+                ack,
+            ))
             .await;
 
         assert!(result.is_err(), "a conflicting genesis anchor must fail");
@@ -334,7 +349,10 @@ fn marshal_ack_waits_for_native_execution_commit_barrier() {
         let mut waiter = Box::pin(waiter);
         let actor_task = context.child("actor_task").spawn(move |_ctx| async move {
             actor
-                .handle_marshal_update(Update::Block(block.into(), ack))
+                .handle_marshal_update(Update::Block(
+                    crate::test_fixtures::digested_block(block),
+                    ack,
+                ))
                 .await
         });
 
@@ -396,7 +414,10 @@ fn rejected_finalized_block_fails_fast_without_acknowledging_marshal() {
 
         let (ack, waiter) = Exact::handle();
         let result = actor
-            .handle_marshal_update(Update::Block(block.into(), ack))
+            .handle_marshal_update(Update::Block(
+                crate::test_fixtures::digested_block(block),
+                ack,
+            ))
             .await;
 
         // Fail-fast: a fatal error propagates (node will shut down deterministically).

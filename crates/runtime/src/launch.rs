@@ -608,7 +608,7 @@ mod bls_load_tests {
     }
 
     #[tokio::test]
-    async fn corrupt_bls_with_upstream_fails_before_tee_prepare() {
+    async fn corrupt_bls_fails_before_tee_prepare_with_and_without_upstream() {
         use std::sync::atomic::Ordering;
         let root = tempfile::tempdir().unwrap();
         let hex_path = root.path().join("signing-key.hex");
@@ -648,22 +648,24 @@ mod bls_load_tests {
                 })
             }),
         ];
-        for (path, preserved) in cases {
-            let args = validator_args(path, true);
-            assert!(args.upstream.is_some());
-            let error = match prepare_after_validator_bls(
-                &config,
-                &args,
-                root.path().to_path_buf(),
-                &policy,
-                &tokio_util::sync::CancellationToken::new(),
-            )
-            .await
-            {
-                Err(error) => error,
-                Ok(_) => panic!("corrupt BLS must fail on the launch route"),
-            };
-            assert!(preserved(&error), "{error:?}");
+        for has_upstream in [false, true] {
+            for (path, preserved) in cases {
+                let args = validator_args(path, has_upstream);
+                assert_eq!(args.upstream.is_some(), has_upstream);
+                let error = match prepare_after_validator_bls(
+                    &config,
+                    &args,
+                    root.path().to_path_buf(),
+                    &policy,
+                    &tokio_util::sync::CancellationToken::new(),
+                )
+                .await
+                {
+                    Err(error) => error,
+                    Ok(_) => panic!("corrupt BLS must fail on the launch route"),
+                };
+                assert!(preserved(&error), "{error:?}");
+            }
         }
         assert_eq!(tee::PREPARE_ENTRIES.load(Ordering::SeqCst), prepared);
         assert_eq!(tee::REGISTER_ENCLAVE_SENDS.load(Ordering::SeqCst), sent);

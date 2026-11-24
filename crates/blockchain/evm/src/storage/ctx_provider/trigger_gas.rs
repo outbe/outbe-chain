@@ -1,12 +1,9 @@
 //! Gas admission and scope state for the context-backed storage provider.
 
-use super::{
-    CtxStorageProvider, Debug, PrecompileError, PrecompileStorageProvider, Result, SubCallError,
-};
+use super::{CtxStorageProvider, PrecompileError, PrecompileStorageProvider, Result, SubCallError};
 use outbe_primitives::storage::gas::{TriggerBudget, TriggerScopeError};
-use revm::Database;
 
-impl<DB: Database + Debug> CtxStorageProvider<'_, DB> {
+impl CtxStorageProvider<'_, '_> {
     pub(super) fn charge(&mut self, cost: u64) -> Result<()> {
         if self.trigger_budget.is_some() {
             self.trigger_budget_status()?;

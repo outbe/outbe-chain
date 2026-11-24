@@ -459,8 +459,8 @@ pub(crate) fn assert_begin_prefix_gas<E>(
     check: BeginPrefixCheck<'_>,
 ) -> u64
 where
-    E: alloy_evm::block::BlockExecutor<Transaction = TransactionSigned, Receipt = Receipt>,
-    E::Evm: reth_ethereum::evm::primitives::Evm<Tx = revm::context::TxEnv>,
+    E: reth_evm::execute::BlockExecutor<Transaction = TransactionSigned, Receipt = Receipt>,
+    <E::Evm as reth_evm::Evm>::Transaction: reth_evm::FromRecoveredTx<TransactionSigned>,
 {
     let mut visible_system_gas_used = 0u64;
     for tx in system_txs {
@@ -482,6 +482,24 @@ where
         }
     }
     visible_system_gas_used
+}
+
+/// Mirrors `OutbeBlockBuilder::finalize_header_artifacts`: encodes execution-produced
+/// header fields into `executor.final_extra_data` before `executor.finish()` settles
+/// burned fees and validates final artifacts.
+pub(crate) fn finalize_executor_header_artifacts(
+    executor: &mut OutbeBlockExecutor<'_>,
+    timestamp_millis_part: u64,
+) -> Result<(), BlockExecutionError> {
+    let enclave_witness = executor.final_enclave_witness_bytes()?;
+    let extra = outbe_evm::builder::encode_final_header_artifacts(
+        executor.final_extra_data().as_ref(),
+        executor.current_execution_summary(),
+        timestamp_millis_part,
+        enclave_witness,
+    )?;
+    executor.set_final_extra_data(extra);
+    Ok(())
 }
 
 /// Successful block-one fixtures include the mandatory boundary as well as OST3.

@@ -60,7 +60,7 @@ impl CeremonyState {
             // Do not leave an elapsed timer permanently ready in the biased
             // select: after sealing, the actor must keep receiving dealer logs.
             self.ack_collection_deadline = None;
-            let signed_log: SignedDealerLog<MinSig, bls12381::PrivateKey> = d.finalize::<N3f1>();
+            let signed_log: SignedDealerLog<MinSig, bls12381::PublicKey> = d.finalize::<N3f1>();
 
             info!(
                 acks = self.roles.acked_players.len(),
@@ -216,7 +216,7 @@ impl CeremonyState {
         let (output, share) = self
             .roles
             .player
-            .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
+            .finalize::<N3f1>(
                 &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
                 finalize_logs,
                 &Sequential,

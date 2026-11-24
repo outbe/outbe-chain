@@ -42,7 +42,7 @@ fn restart_replay_suffix_rejects_conflicting_preannounces() {
             .by_height
             .lock()
             .unwrap()
-            .insert(height, records[&height].block.clone());
+            .insert(height, Arc::new(records[&height].block.clone()));
     }
 
     let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
@@ -276,7 +276,7 @@ fn restart_repairs_both_durable_archive_crash_cuts() {
     let blocks = DurableCrashBlocks {
         durable: Arc::new(std::sync::Mutex::new(BTreeMap::from([(
             9,
-            records[&9].block.clone(),
+            Arc::new(records[&9].block.clone()),
         )]))),
         ..Default::default()
     };

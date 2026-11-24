@@ -33,7 +33,7 @@ use crate::errors::EpochSubchannelError;
 use commonware_consensus::types::Epoch;
 use commonware_p2p::{
     utils::mux::{Error as MuxError, MuxHandle, SubReceiver, SubSender},
-    Receiver as P2pReceiver, Sender as P2pSender,
+    Sender as P2pSender,
 };
 use commonware_runtime::Clock;
 use eyre::{Result, WrapErr as _};
@@ -48,15 +48,14 @@ use std::time::Duration;
 /// message to the Mux, which removes the route. As long as the
 /// stash is held, the new epoch's sub-channel keeps draining the
 /// physical channel into its buffered SubReceiver mailbox.
-pub struct EpochSubchannels<S, R>
+pub struct EpochSubchannels<S>
 where
     S: P2pSender,
-    R: P2pReceiver<PublicKey = S::PublicKey>,
 {
     pub epoch: Epoch,
-    pub vote: (SubSender<S>, SubReceiver<R>),
-    pub cert: (SubSender<S>, SubReceiver<R>),
-    pub res: (SubSender<S>, SubReceiver<R>),
+    pub vote: (SubSender<S>, SubReceiver<S::PublicKey>),
+    pub cert: (SubSender<S>, SubReceiver<S::PublicKey>),
+    pub res: (SubSender<S>, SubReceiver<S::PublicKey>),
 }
 
 /// Register vote / cert / res sub-channels for `epoch` on the three
@@ -67,15 +66,14 @@ where
 /// an `EpochSubchannels`. Any underlying Mux error
 /// (`AlreadyRegistered`, closed Mux) becomes a wrapped `eyre` error
 /// that the function propagates.
-pub async fn register_epoch_subchannels<S, R>(
+pub async fn register_epoch_subchannels<S>(
     epoch: Epoch,
-    vote_mux: &mut MuxHandle<S, R>,
-    cert_mux: &mut MuxHandle<S, R>,
-    res_mux: &mut MuxHandle<S, R>,
-) -> Result<EpochSubchannels<S, R>>
+    vote_mux: &mut MuxHandle<S>,
+    cert_mux: &mut MuxHandle<S>,
+    res_mux: &mut MuxHandle<S>,
+) -> Result<EpochSubchannels<S>>
 where
     S: P2pSender,
-    R: P2pReceiver<PublicKey = S::PublicKey>,
 {
     try_register_epoch_subchannels(epoch, vote_mux, cert_mux, res_mux)
         .await
@@ -97,10 +95,10 @@ pub struct SubchannelRetryPolicy {
 }
 
 /// Exclusive borrowed routes for one vote/cert/res registration attempt.
-pub struct EpochMuxHandles<'a, S: P2pSender, R: P2pReceiver<PublicKey = S::PublicKey>> {
-    pub vote: &'a mut MuxHandle<S, R>,
-    pub cert: &'a mut MuxHandle<S, R>,
-    pub res: &'a mut MuxHandle<S, R>,
+pub struct EpochMuxHandles<'a, S: P2pSender> {
+    pub vote: &'a mut MuxHandle<S>,
+    pub cert: &'a mut MuxHandle<S>,
+    pub res: &'a mut MuxHandle<S>,
 }
 
 /// Reacquire the three routes for an engine replacement in the same epoch.
@@ -112,15 +110,14 @@ pub struct EpochMuxHandles<'a, S: P2pSender, R: P2pReceiver<PublicKey = S::Publi
 /// receivers: a successful registration can happen only after the Mux has
 /// processed the old receiver's `Deregister` control message. Any closed Mux or
 /// bounded local timeout is fatal to the caller.
-pub async fn reacquire_epoch_subchannels<S, R, C>(
+pub async fn reacquire_epoch_subchannels<S, C>(
     epoch: Epoch,
     clock: &C,
     policy: SubchannelRetryPolicy,
-    muxes: EpochMuxHandles<'_, S, R>,
-) -> Result<EpochSubchannels<S, R>>
+    muxes: EpochMuxHandles<'_, S>,
+) -> Result<EpochSubchannels<S>>
 where
     S: P2pSender,
-    R: P2pReceiver<PublicKey = S::PublicKey>,
     C: Clock,
 {
     let SubchannelRetryPolicy {
@@ -167,15 +164,14 @@ where
     }
 }
 
-async fn try_register_epoch_subchannels<S, R>(
+async fn try_register_epoch_subchannels<S>(
     epoch: Epoch,
-    vote_mux: &mut MuxHandle<S, R>,
-    cert_mux: &mut MuxHandle<S, R>,
-    res_mux: &mut MuxHandle<S, R>,
-) -> std::result::Result<EpochSubchannels<S, R>, (&'static str, MuxError)>
+    vote_mux: &mut MuxHandle<S>,
+    cert_mux: &mut MuxHandle<S>,
+    res_mux: &mut MuxHandle<S>,
+) -> std::result::Result<EpochSubchannels<S>, (&'static str, MuxError)>
 where
     S: P2pSender,
-    R: P2pReceiver<PublicKey = S::PublicKey>,
 {
     let vote = vote_mux
         .register(epoch.get())
@@ -222,16 +218,15 @@ where
 ///   the Muxes) and surface the error.
 /// * `None`: genesis bootstrap or restart. There was no prior DKG
 ///   completion to pre-register from. Register fresh.
-pub async fn take_or_register_current<S, R>(
+pub async fn take_or_register_current<S>(
     epoch: Epoch,
-    stash: &mut Option<EpochSubchannels<S, R>>,
-    vote_mux: &mut MuxHandle<S, R>,
-    cert_mux: &mut MuxHandle<S, R>,
-    res_mux: &mut MuxHandle<S, R>,
-) -> Result<EpochSubchannels<S, R>>
+    stash: &mut Option<EpochSubchannels<S>>,
+    vote_mux: &mut MuxHandle<S>,
+    cert_mux: &mut MuxHandle<S>,
+    res_mux: &mut MuxHandle<S>,
+) -> Result<EpochSubchannels<S>>
 where
     S: P2pSender,
-    R: P2pReceiver<PublicKey = S::PublicKey>,
 {
     match stash.take() {
         Some(s) if s.epoch == epoch => Ok(s),
@@ -256,17 +251,14 @@ mod tests {
     use super::*;
     use commonware_cryptography::{bls12381, Signer as _};
     use commonware_p2p::{
-        simulated::{Config as SimConfig, Network, Receiver as SimReceiver, Sender as SimSender},
+        simulated::{Config as SimConfig, Network, Sender as SimSender},
         utils::mux::Muxer,
     };
     use commonware_runtime::{deterministic, Quota, Runner as _, Spawner as _, Supervisor as _};
     use commonware_utils::{NZUsize, NZU32};
     use std::num::NonZeroUsize;
 
-    type TestMux = MuxHandle<
-        SimSender<bls12381::PublicKey, deterministic::Context>,
-        SimReceiver<bls12381::PublicKey>,
-    >;
+    type TestMux = MuxHandle<SimSender<bls12381::PublicKey, deterministic::Context>>;
 
     async fn setup_test_muxes(ctx: &deterministic::Context) -> (TestMux, TestMux, TestMux) {
         let (network, oracle) = Network::new(
@@ -287,11 +279,11 @@ mod tests {
         let (certs_tx, certs_rx) = control.register(1, quota).await.unwrap();
         let (res_tx, res_rx) = control.register(2, quota).await.unwrap();
 
-        let (vote_muxer, vote_mux) = Muxer::new(ctx.child("vote_mux"), votes_tx, votes_rx, 16);
+        let (vote_muxer, vote_mux) = Muxer::new(ctx.child("vote_mux"), votes_tx, votes_rx);
         vote_muxer.start();
-        let (cert_muxer, cert_mux) = Muxer::new(ctx.child("cert_mux"), certs_tx, certs_rx, 16);
+        let (cert_muxer, cert_mux) = Muxer::new(ctx.child("cert_mux"), certs_tx, certs_rx);
         cert_muxer.start();
-        let (res_muxer, res_mux) = Muxer::new(ctx.child("res_mux"), res_tx, res_rx, 16);
+        let (res_muxer, res_mux) = Muxer::new(ctx.child("res_mux"), res_tx, res_rx);
         res_muxer.start();
 
         (vote_mux, cert_mux, res_mux)

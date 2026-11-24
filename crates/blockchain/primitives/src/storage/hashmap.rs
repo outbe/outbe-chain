@@ -6,9 +6,7 @@
 //! Transient operations and `enclave_upgrade_id` do not charge the storage meter.
 
 use alloy_primitives::{Address, Bytes, Log, LogData, B256, U256};
-use revm::context::journaled_state::JournalCheckpoint;
-use revm::context_interface::cfg::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
-use revm::state::{AccountInfo, Bytecode};
+use evm2::interpreter::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 
 mod trigger_gas;
@@ -18,8 +16,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{PrecompileError, PrimitivesStorageError, Result};
 use crate::storage::{
-    MutationEntitlements, MutationPurposeTag, PrecompileStorageProvider, StorageHandle,
-    SubCallError, SubCallInput, SubCallOutput, SubCallStatus,
+    AccountInfo, Bytecode, MutationEntitlements, MutationPurposeTag, PrecompileStorageProvider,
+    StateCheckpoint, StorageHandle, SubCallError, SubCallInput, SubCallOutput, SubCallStatus,
 };
 
 #[cfg(feature = "bench-utils")]
@@ -598,7 +596,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
     fn sload(&mut self, address: Address, key: U256) -> Result<U256> {
         if self.meter_storage_gas {
-            self.deduct_gas(WARM_STORAGE_READ_COST)?;
+            self.deduct_gas(u64::from(WARM_STORAGE_READ_COST))?;
             self.metered_storage_reads = self.metered_storage_reads.saturating_add(1);
         }
         let value = self
@@ -634,7 +632,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
 
     fn sstore(&mut self, address: Address, key: U256, value: U256) -> Result<()> {
         if self.meter_storage_gas {
-            self.deduct_gas(SSTORE_RESET)?;
+            self.deduct_gas(u64::from(SSTORE_RESET))?;
             self.metered_storage_writes = self.metered_storage_writes.saturating_add(1);
         }
         self.before_mutation(address)?;
@@ -712,7 +710,7 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
         self.is_static
     }
 
-    fn checkpoint(&mut self) -> JournalCheckpoint {
+    fn checkpoint(&mut self) -> StateCheckpoint {
         let idx = self.snapshots.len();
         self.snapshots.push(Snapshot {
             transient: self.trigger_budget.as_ref().map(|_| self.transient.clone()),
@@ -724,18 +722,14 @@ impl PrecompileStorageProvider for HashMapStorageProvider {
             #[cfg(feature = "bench-utils")]
             storage_trace_len: self.storage_trace.len(),
         });
-        JournalCheckpoint {
-            log_i: 0,
-            journal_i: idx,
-            selfdestructed_i: 0,
-        }
+        StateCheckpoint::new(idx, 0)
     }
 
-    fn checkpoint_commit(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+    fn checkpoint_commit(&mut self, checkpoint: StateCheckpoint) -> Result<()> {
         super::pop_snapshot_lifo(&mut self.snapshots, checkpoint)
     }
 
-    fn checkpoint_revert(&mut self, checkpoint: JournalCheckpoint) -> Result<()> {
+    fn checkpoint_revert(&mut self, checkpoint: StateCheckpoint) -> Result<()> {
         if let Some(snapshot) = super::drain_snapshots_from(&mut self.snapshots, checkpoint)? {
             if let Some(transient) = snapshot.transient {
                 self.transient = transient;
@@ -927,7 +921,7 @@ mod scoped_mutation_frame_tests {
             storage::direct::DirectStorageProvider,
         };
         use alloy_primitives::{Address, U256};
-        use revm::database::{CacheDB, EmptyDB};
+        use evm2::evm::{CacheDB, EmptyDB};
 
         let sender = Address::repeat_byte(0xAA);
         let recipient = Address::repeat_byte(0xBB);

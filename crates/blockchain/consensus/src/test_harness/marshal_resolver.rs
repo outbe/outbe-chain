@@ -31,7 +31,7 @@ impl Resolver for NoopMarshalResolver {
         Feedback::Ok
     }
 
-    fn fetch_all<F>(&mut self, _keys: Vec<F>) -> Feedback
+    fn fetch_all<F>(&mut self, _keys: impl IntoIterator<Item = F>) -> Feedback
     where
         F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
     {
@@ -57,7 +57,10 @@ impl TargetedResolver for NoopMarshalResolver {
         Feedback::Ok
     }
 
-    fn fetch_all_targeted<F>(&mut self, _keys: Vec<(F, NonEmptyVec<Self::PublicKey>)>) -> Feedback
+    fn fetch_all_targeted<F>(
+        &mut self,
+        _keys: impl IntoIterator<Item = (F, NonEmptyVec<Self::PublicKey>)>,
+    ) -> Feedback
     where
         F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
     {

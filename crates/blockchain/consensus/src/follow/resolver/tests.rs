@@ -3,6 +3,8 @@ use commonware_codec::{DecodeExt as _, Encode as _};
 
 #[test]
 fn opaque_key_preserves_height_binding_and_codec() {
+    use commonware_consensus::types::{Round, View};
+
     let key = Key::Block(Digest::ZERO);
     let a = BoundKey::new(
         key,
@@ -16,14 +18,52 @@ fn opaque_key_preserves_height_binding_and_codec() {
             height: Height::new(7),
         }),
     );
+    let untrusted_no_round = BoundKey::new(
+        key,
+        &Annotation::Untrusted {
+            height: Height::new(7),
+            round: None,
+        },
+    );
+    let untrusted_with_round = BoundKey::new(
+        key,
+        &Annotation::Untrusted {
+            height: Height::new(7),
+            round: Some(Round::new(Epoch::new(0), View::new(9))),
+        },
+    );
     let other = BoundKey::new(
         key,
         &Annotation::Certified {
             height: Height::new(8),
         },
     );
+    let untrusted_other = BoundKey::new(
+        key,
+        &Annotation::Untrusted {
+            height: Height::new(8),
+            round: None,
+        },
+    );
+    let by_round = BoundKey::new(
+        key,
+        &Annotation::Finalized(handler::Finalized::ByRound {
+            round: Round::new(Epoch::new(0), View::new(9)),
+        }),
+    );
+    let notarization = BoundKey::new(
+        key,
+        &Annotation::Notarization {
+            round: Round::new(Epoch::new(0), View::new(9)),
+        },
+    );
     assert_eq!(a, b);
+    assert_eq!(a, untrusted_no_round);
+    assert_eq!(a, untrusted_with_round);
     assert_ne!(a, other);
+    assert_eq!(other, untrusted_other);
+    assert_eq!(by_round.height, None);
+    assert_eq!(notarization.height, None);
     assert_eq!(BoundKey::decode(a.encode()).unwrap(), a);
 }
 
@@ -332,7 +372,12 @@ fn marshal_delivery_closed_for_both_kinds_is_observed() {
 
 #[test]
 fn delivery_relay_preserves_verdicts_and_cancels_original_receiver() {
-    for outcome in [Some(true), Some(false), None] {
+    for outcome in [
+        Some(Outcome::Resolved(Resolution::Complete)),
+        Some(Outcome::Ignored),
+        Some(Outcome::Invalid),
+        None,
+    ] {
         let recorder = DebuggingRecorder::new();
         let snapshotter = recorder.snapshotter();
         metrics::with_local_recorder(&recorder, || {
@@ -351,7 +396,7 @@ fn delivery_relay_preserves_verdicts_and_cancels_original_receiver() {
                     handle.await.unwrap();
                     assert!(original.is_closed());
                 }
-                let expected = if outcome == Some(false) {
+                let expected = if outcome == Some(Outcome::Invalid) {
                     BTreeMap::from([(("block".to_string(), "delivery_rejected".to_string()), 1)])
                 } else {
                     BTreeMap::new()
@@ -470,12 +515,12 @@ impl Consumer for BundleConsumer {
     type Key = ResolverKey;
     type Value = Bytes;
     type Subscriber = Annotation;
-    type Outcome = bool;
+    type Outcome = Outcome;
     fn deliver(
         &mut self,
         delivery: Delivery<ResolverKey, Annotation>,
         _: Bytes,
-    ) -> oneshot::Receiver<bool> {
+    ) -> oneshot::Receiver<Outcome> {
         let accepted = !self.reject_ancestor || !matches!(delivery.key, Key::Block(_));
         let (annotation, _) = delivery.subscribers.into_iter().next().unwrap();
         self.deliveries
@@ -483,7 +528,13 @@ impl Consumer for BundleConsumer {
             .unwrap()
             .push((delivery.key, annotation));
         let (sender, receiver) = oneshot::channel();
-        sender.send(accepted).unwrap();
+        sender
+            .send(if accepted {
+                Outcome::Resolved(Resolution::Complete)
+            } else {
+                Outcome::Invalid
+            })
+            .unwrap();
         receiver
     }
 }

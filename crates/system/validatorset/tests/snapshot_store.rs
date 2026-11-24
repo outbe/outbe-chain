@@ -24,7 +24,7 @@ use outbe_validatorset::{
 use commonware_cryptography::bls12381::dkg::feldman_desmedt::{Dealer, Info, Logs, Player, Reveal};
 use commonware_cryptography::bls12381::primitives::sharing::Mode;
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
-use commonware_cryptography::bls12381::{Batch, PrivateKey, PublicKey};
+use commonware_cryptography::bls12381::{PrivateKey, PublicKey};
 use commonware_cryptography::Signer as _;
 use commonware_math::algebra::Random;
 use commonware_parallel::Sequential;
@@ -709,7 +709,7 @@ fn real_dkg_group_public_key(rng: &mut ChaCha20Rng) -> Result<(Vec<PrivateKey>, 
     }
     let (output, _share) = players
         .remove(0)
-        .finalize::<N3f1, Batch>(&mut *rng, dkg_logs, &Sequential)
+        .finalize::<N3f1>(&mut *rng, dkg_logs, &Sequential)
         .map_err(|error| format!("DKG finalize: {error:?}"))?;
     let encoded_group_pk = commonware_codec::Encode::encode(output.public()).to_vec();
     Ok((keys, encoded_group_pk))
