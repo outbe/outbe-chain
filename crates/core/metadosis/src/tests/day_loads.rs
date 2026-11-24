@@ -18,8 +18,11 @@ fn loads_of(nominals: &[u64]) -> u64 {
 }
 
 /// Adds one Nod of nominal `nominal` to the day sums of [`WWD`], as its offer does.
-fn record_day_nod(storage: &StorageHandle<'_>, owner: Address, nominal: u64) {
-    use outbe_nod::offers::{day_load_scope, day_nominal_scope, decode_day_sum, encode_day_sum};
+fn record_worldwide_day_nod(storage: &StorageHandle<'_>, owner: Address, nominal: u64) {
+    use outbe_nod::offers::{
+        decode_worldwide_day_sum, encode_worldwide_day_sum, worldwide_day_load_scope,
+        worldwide_day_nominal_scope,
+    };
     let terms = NodTermsV1 {
         chain_id: CHAIN_ID,
         nod_id: outbe_nod::test_support::nod_id_of(owner, DAY, 840, 840),
@@ -36,16 +39,22 @@ fn record_day_nod(storage: &StorageHandle<'_>, owner: Address, nominal: u64) {
         U256::from(nominal),
     )
     .unwrap();
-    let totals = outbe_worldwideday::day_totals(storage.clone(), WWD).unwrap();
+    let totals = outbe_worldwideday::worldwide_day_totals(storage.clone(), WWD).unwrap();
     let sum = |scope, previous: &[u8], nominal| {
-        let previous = decode_day_sum(previous).unwrap();
+        let previous = decode_worldwide_day_sum(previous).unwrap();
         let record =
-            outbe_nod::api::add_to_day_sum(storage, scope, previous, (&nod, nominal)).unwrap();
-        encode_day_sum(&record).unwrap()
+            outbe_nod::api::add_to_worldwide_day_sum(storage, scope, previous, (&nod, nominal))
+                .unwrap();
+        encode_worldwide_day_sum(&record).unwrap()
     };
-    let nominal_sum = sum(day_nominal_scope(WWD), &totals.encrypted_nominal, true);
-    let load_sum = sum(day_load_scope(WWD), &totals.encrypted_load, false);
-    outbe_worldwideday::record_day_nod(storage.clone(), WWD, (&nominal_sum, &load_sum)).unwrap();
+    let nominal_sum = sum(
+        worldwide_day_nominal_scope(WWD),
+        &totals.encrypted_nominal,
+        true,
+    );
+    let load_sum = sum(worldwide_day_load_scope(WWD), &totals.encrypted_load, false);
+    outbe_worldwideday::record_worldwide_day_nod(storage.clone(), WWD, (&nominal_sum, &load_sum))
+        .unwrap();
 }
 
 /// A pending emission day of limit `limit` whose sealed Worldwide Day issued one Nod of
@@ -99,7 +108,7 @@ fn fixture(limit: u64, nominals: &[u64]) -> HashMapStorageProvider {
                     )?;
                     for (index, &nominal) in nominals.iter().enumerate() {
                         let owner = Address::repeat_byte(u8::try_from(index + 1).unwrap());
-                        record_day_nod(&storage, owner, nominal);
+                        record_worldwide_day_nod(&storage, owner, nominal);
                     }
                     outbe_worldwideday::seal_worldwide_day(storage.clone(), WWD)
                 },
@@ -130,6 +139,18 @@ fn run(provider: &mut HashMapStorageProvider) -> outbe_primitives::error::Result
     StorageHandle::enter(provider, |storage| {
         crate::commands::process_emission_day(&block_at(storage), DAY)
     })
+}
+
+fn metadosis_limit_added(provider: &HashMapStorageProvider) -> U256 {
+    use alloy_sol_types::SolEvent;
+    use outbe_promislimit::{precompile::IPromisLimit, LimitSource};
+    provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| IPromisLimit::PromisLimitAdded::decode_log(event).ok())
+        .filter(|event| event.data.source == LimitSource::MetadosisLimit as u8)
+        .map(|event| event.data.amountMinor)
+        .sum()
 }
 
 fn completed(provider: &HashMapStorageProvider) -> Vec<IMetadosis::MetadosisCompleted> {
@@ -193,17 +214,17 @@ fn metadosis_splits_the_limit_with_the_loads() {
         assert_eq!(events.len(), 1, "nominals {nominals:?}");
         let loads = U256::from(loads_of(nominals));
         assert_eq!(
-            events[0].tributeNominalTotalMinor,
+            events[0].nominalAmountMinor,
             U256::from(nominals.iter().sum::<u64>())
         );
-        assert_eq!(events[0].gratisDemandMinor, loads);
-        assert_eq!(events[0].lysisLimitMinor, loads);
-        assert_eq!(events[0].lysisAllocationMinor, loads);
-        assert_eq!(events[0].unusedLysisLimitMinor, U256::ZERO);
+        assert_eq!(
+            metadosis_limit_added(&provider),
+            U256::from(LIMIT) - loads,
+            "the loads of the day are the Metadosis limit less its Promis Limit add"
+        );
         let record = record(&mut provider);
         assert_eq!(record.metadosis_state, metadosis_state::COMPLETED);
         assert_eq!(U256::from(record.nods), loads);
-        assert_eq!(U256::from(record.lysis_limit), loads);
         let desis = pending_desis_limit(&mut provider);
         assert_eq!(U256::from(record.desis_limit), desis);
         assert_eq!(
@@ -283,7 +304,7 @@ fn loads_above_the_limit_fail_the_metadosis() {
     let record = record(&mut provider);
     assert_eq!(record.metadosis_state, metadosis_state::FAILED);
     assert_eq!(record.nods, u128::from(limit));
-    assert_eq!((record.lysis_limit, record.desis_limit), (0, 0));
+    assert_eq!(record.desis_limit, 0);
     assert_eq!(promis_limit(&mut provider), before);
     StorageHandle::enter(&mut provider, |storage| {
         let desis = outbe_desis::schema::DesisContract::new(storage.clone());
@@ -325,7 +346,6 @@ fn failed_metadosis_returns_the_limit_less_the_loads() {
             storage.clone(),
             DAY,
             outbe_emission::api::MetadosisCompletedAmounts {
-                lysis_limit: U256::ZERO,
                 desis_limit: U256::ZERO,
                 nods: U256::ZERO,
                 promis_limit_added: U256::ZERO,
@@ -385,7 +405,7 @@ fn an_unreadable_day_sum_fails_the_day_with_no_credit() {
     let mut provider = fixture(LIMIT, &[NOMINAL]);
     StorageHandle::enter(&mut provider, |storage| {
         WorldwideDayContract::new(storage.clone())
-            .day_load_ct
+            .worldwide_day_load_ct
             .bytes(&WWD)
             .write(&[0xFF; 3])
             .unwrap();

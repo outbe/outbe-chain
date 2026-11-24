@@ -92,7 +92,7 @@ fn status_rpc() -> MockRpc {
             NodeEnclaveBindingV1View::default().abi_encode(),
         ),
         (
-            ITeeRegistry::tributeOfferPublicKeyCall::SELECTOR,
+            ITeeRegistry::offerPublicKeyCall::SELECTOR,
             U256::from(7).abi_encode(),
         ),
         (

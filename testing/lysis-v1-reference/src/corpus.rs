@@ -21,19 +21,19 @@ pub(crate) struct CorpusInput {
     pub(crate) worldwide_day: u32,
     pub(crate) logical_evaluation_time: u64,
     pub(crate) lysis_limit_minor: String,
-    pub(crate) tributes: Vec<CorpusTribute>,
+    pub(crate) offers: Vec<CorpusOffer>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct CorpusTribute {
-    pub(crate) tribute_id: String,
+pub(crate) struct CorpusOffer {
+    pub(crate) offer_id: String,
     pub(crate) owner: String,
     pub(crate) worldwide_day: u32,
     pub(crate) issuance_currency: u16,
     pub(crate) nominal: String,
     pub(crate) reference_currency: u16,
-    pub(crate) tribute_price: String,
+    pub(crate) offer_price: String,
     pub(crate) f1: Option<u16>,
     pub(crate) f2: Option<u16>,
     pub(crate) entry_price: Option<String>,

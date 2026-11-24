@@ -265,7 +265,7 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> Result<MomentsFp> {
 ///   The caller must normalize the shares. The caller must absorb integer-division
 ///   truncation before this call.
 /// - `p`: population counts per FI group
-/// - `nt`: total tribute count
+/// - `nt`: total offer count
 /// - `f_fp`: target fraction in fixed-point (SCALE-based)
 /// - `fmax_fp`: maximum fraction in fixed-point (SCALE-based)
 ///
@@ -284,7 +284,7 @@ fn compute_moments_fp(y_fp: &[U256], tau: &[U256]) -> Result<MomentsFp> {
 /// Returns `PrecompileError::Revert` if `y_fp` and `p` have different lengths.
 /// Returns `PrecompileError::Revert` if a fixed-point arithmetic operation or
 /// signed-int conversion overflows.
-pub fn calc_fraction_distribution_fp(
+pub fn compute_fraction_distribution_fp(
     y_fp: &[U256],
     p: &[u64],
     nt: usize,

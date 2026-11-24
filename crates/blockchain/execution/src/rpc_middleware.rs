@@ -56,7 +56,7 @@ pub struct OutbeRpcProtectionConfig {
     pub max_response_size_bytes: u32,
     /// Fail-fast concurrency permits for heavy EVM call/log methods.
     pub call_permits: usize,
-    /// Fail-fast concurrency permits for state/tribute proof methods.
+    /// Fail-fast concurrency permits for state proof methods.
     pub proof_permits: usize,
     /// Fail-fast concurrency permits for debug/trace/ots methods.
     pub trace_permits: usize,

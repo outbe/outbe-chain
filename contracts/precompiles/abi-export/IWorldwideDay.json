@@ -14,40 +14,6 @@
   },
   {
     "type": "function",
-    "name": "dayTotals",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "nodCount",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "encryptedNominal",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "encryptedLoad",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "isSealed",
-        "type": "bool",
-        "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "getWorldwideDay",
     "inputs": [
       {
@@ -81,6 +47,40 @@
         "name": "offeringEnd",
         "type": "uint64",
         "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "worldwideDayTotals",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "nodCount",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "encryptedNominal",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "encryptedLoad",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "isSealed",
+        "type": "bool",
+        "internalType": "bool"
       }
     ],
     "stateMutability": "view"

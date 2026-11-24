@@ -673,7 +673,7 @@ mod canary {
             resident_fixture::activate(&resident);
             assert_ne!(
                 resident.network_encryption_public().expect("offer key"),
-                TRIBUTE_OFFER_PUB
+                OFFER_PUB
             );
             let status = TeeEnclaveHealthChannel::default();
             let shutdown = CancellationToken::new();
@@ -757,7 +757,7 @@ mod canary {
         .await
     }
 
-    const TRIBUTE_OFFER_PUB: [u8; 32] = [0x11; 32];
+    const OFFER_PUB: [u8; 32] = [0x11; 32];
 
     std::thread_local! {
         static PROBE_RESIDENT: std::cell::RefCell<
@@ -790,7 +790,7 @@ mod canary {
             match request {
                 EnclaveRequest::GetPublicKeys => Ok(EnclaveResponse::PublicKeys {
                     offer_key_ready: true,
-                    recipient_x25519_pub: TRIBUTE_OFFER_PUB,
+                    recipient_x25519_pub: OFFER_PUB,
                     attestation_pub: self.key.verifying_key().to_bytes(),
                     noise_static_pub: [0x0C; 32],
                     tee_bls_pub: Vec::new(),

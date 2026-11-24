@@ -147,7 +147,7 @@ fn yaml_parser_scalars_lists_and_nesting() {
         parse("balance:\n  \"0xAb\": \"10\"\n")["balance"],
         json!({"0xAb": "10"})
     );
-    assert_eq!(parse("tributes: []\n"), json!({"tributes": []}));
+    assert_eq!(parse("offers: []\n"), json!({"offers": []}));
 
     assert!(!parse_error("a:\n\tb: 1\n").is_empty());
     assert!(parse_error("a: 1\na: 2\n").contains("duplicate"));

@@ -4,14 +4,9 @@
 use alloy_primitives::{hex, Address, B256, U256};
 use outbe_core_common::confidential_tee::{
     decrypt_fidelity_cohorts, decrypt_gratis_balance, decrypt_nod_for_owner,
-    decrypt_nod_nominal_for_owner, decrypt_promis_balance, decrypt_tribute_for_owner,
-    LocalCryptoError,
+    decrypt_nod_nominal_for_owner, decrypt_promis_balance, LocalCryptoError,
 };
-use outbe_core_common::wwd_entity_id::WwdEntityId;
-use outbe_core_common::{
-    nod_encryption::{EncryptedNodV1, NodTermsV1},
-    tribute_encryption::{EncryptedTributeV2, TributeAmountsV2, TributeContextV2},
-};
+use outbe_core_common::nod_encryption::{EncryptedNodV1, NodTermsV1};
 use outbe_system_common::time::WorldwideDay;
 
 const FIDELITY_BLOB: &str = "01020304050607084649443231313131313131313131313131313131313131313131313131313131313131316f227d375d26e7d0c69faf0aa386d6b2f7e739b4de99fc0828f54a8b22d4e223";
@@ -21,10 +16,6 @@ const NOD_CONTEXT_DIGEST: &str = "b09e597ba7d0c3f500971679c335da4fec642cad4f3a5f
 const NOD_AMOUNT_BLOB: &str = "0000000000000001e49a4a79c30f2f7fdb34b16e286f66b81d1258a7c3dead888ea07880c8080d7f6bed38808fb49611b17a1224b7748b0d";
 const NOD_NOMINAL_BLOB: &str = "000000000000000159f9bcc390542bace5ab522b5a6fbbcbe1a50f0870618bc327a3c53c8deda06d547dd59c1f3960ce825fca6f04188687";
 const NOD_WRONG_NONCE_DOMAIN_BLOB: &str = "0000000000000001fba976114a9798d9106c080ee3ba9a1b2c146b31d46a2fcbc35758963fe72c0aed54c67d9ec4366fca285d20d393228e";
-const TRIBUTE_CONTEXT_DIGEST: &str =
-    "79d19e3d69598d12698496e748a6ddef52b72392b6722778db2de3c2ef493d8a";
-const TRIBUTE_AMOUNT_BLOB: &str = "000000000000000179a55ad0e1010fe5e34697e51f7cd2437e3825a0b0fd20c9095ca5186559021c48a5068d2190e57034954031961c1261d83647abd7ca0081e6c6d3f80aa4dcde6ef60e38fb95d1696d93c830a06309f3";
-const TRIBUTE_WRONG_NONCE_DOMAIN_BLOB: &str = "0000000000000001ba08d886d9013e403c4668ff1ddad52207e01f20700ba87fbb3f49751b47325443f62a6997f16843e213f5e0ce6a52dc508fde6afd0c84511998055fb26ae1f70db5ce08a32f5cfc5217bdd630937bc0";
 
 fn fixed_nod() -> EncryptedNodV1 {
     let day = WorldwideDay::new(20_260_824);
@@ -51,28 +42,6 @@ fn fixed_nod() -> EncryptedNodV1 {
         hex::decode(NOD_CONTEXT_DIGEST).unwrap().as_slice()
     );
     nod
-}
-
-fn fixed_tribute() -> EncryptedTributeV2 {
-    let day = WorldwideDay::new(20_260_824);
-    let tribute = EncryptedTributeV2 {
-        context: TributeContextV2 {
-            chain_id: 31_337,
-            tribute_id: WwdEntityId::from_day_and_digest(day, B256::repeat_byte(0xcd)),
-            owner: Address::repeat_byte(0x53),
-            worldwide_day: day,
-            issuance_currency: 978,
-            reference_currency: 840,
-            tribute_price_minor: U256::from(7_654_321u64),
-            offer_input_hash: B256::repeat_byte(0xb6),
-        },
-        encrypted_amounts: hex::decode(TRIBUTE_AMOUNT_BLOB).unwrap(),
-    };
-    assert_eq!(
-        tribute.context.digest().as_slice(),
-        hex::decode(TRIBUTE_CONTEXT_DIGEST).unwrap().as_slice()
-    );
-    tribute
 }
 
 #[test]
@@ -133,7 +102,7 @@ fn owner_local_views_reject_wrong_context_and_tampered_tag() {
 }
 
 #[test]
-fn fixed_nod_and_tribute_ciphertexts_open_exact_amounts() {
+fn fixed_nod_ciphertexts_open_exact_amounts() {
     let view_key = [0x11; 32];
     assert_eq!(
         decrypt_nod_for_owner(&view_key, &fixed_nod()).unwrap(),
@@ -142,13 +111,6 @@ fn fixed_nod_and_tribute_ciphertexts_open_exact_amounts() {
     assert_eq!(
         decrypt_nod_nominal_for_owner(&view_key, &fixed_nod()).unwrap(),
         U256::from(3_086_419_753u64)
-    );
-    assert_eq!(
-        decrypt_tribute_for_owner(&view_key, &fixed_tribute()).unwrap(),
-        TributeAmountsV2 {
-            issuance_amount_minor: U256::from(123_456_789u64),
-            nominal_amount_minor: U256::from(9_876_543_210u64),
-        }
     );
 }
 
@@ -180,34 +142,6 @@ fn nod_rejects_wrong_owner_context_and_nonce_domain() {
     );
 }
 
-#[test]
-fn tribute_rejects_wrong_owner_context_and_nonce_domain() {
-    let view_key = [0x11; 32];
-    let tribute = fixed_tribute();
-    assert_eq!(
-        decrypt_tribute_for_owner(&[0x12; 32], &tribute).unwrap_err(),
-        "Tribute amount decryption failed"
-    );
-    let mut wrong_context = tribute.clone();
-    wrong_context.context.owner = Address::repeat_byte(0x54);
-    assert_eq!(
-        decrypt_tribute_for_owner(&view_key, &wrong_context).unwrap_err(),
-        "Tribute amount decryption failed"
-    );
-    let mut wrong_offer = tribute.clone();
-    wrong_offer.context.offer_input_hash = B256::repeat_byte(0xb7);
-    assert_eq!(
-        decrypt_tribute_for_owner(&view_key, &wrong_offer).unwrap_err(),
-        "Tribute amount decryption failed"
-    );
-    let mut wrong_domain = tribute;
-    wrong_domain.encrypted_amounts = hex::decode(TRIBUTE_WRONG_NONCE_DOMAIN_BLOB).unwrap();
-    assert_eq!(
-        decrypt_tribute_for_owner(&view_key, &wrong_domain).unwrap_err(),
-        "Tribute amount decryption failed"
-    );
-}
-
 struct MalformedCiphertextCase<T> {
     amount_blob: fn(&mut T) -> &mut Vec<u8>,
     invalid_encoding: &'static str,
@@ -220,16 +154,6 @@ impl MalformedCiphertextCase<EncryptedNodV1> {
             amount_blob: |value| &mut value.encrypted_gratis_amount,
             invalid_encoding: "invalid encrypted NOD encoding",
             decryption_failed: "NOD amount decryption failed",
-        }
-    }
-}
-
-impl MalformedCiphertextCase<EncryptedTributeV2> {
-    fn tribute() -> Self {
-        Self {
-            amount_blob: |value| &mut value.encrypted_amounts,
-            invalid_encoding: "invalid encrypted Tribute encoding",
-            decryption_failed: "Tribute amount decryption failed",
         }
     }
 }
@@ -270,16 +194,5 @@ fn nod_rejects_malformed_length_version_and_tag() {
         &nod,
         |value| decrypt_nod_for_owner(&view_key, value),
         MalformedCiphertextCase::nod(),
-    );
-}
-
-#[test]
-fn tribute_rejects_malformed_length_version_and_tag() {
-    let view_key = [0x11; 32];
-    let tribute = fixed_tribute();
-    assert_malformed_ciphertext_cases(
-        &tribute,
-        |value| decrypt_tribute_for_owner(&view_key, value),
-        MalformedCiphertextCase::tribute(),
     );
 }

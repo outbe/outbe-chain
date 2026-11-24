@@ -7,13 +7,13 @@ pub mod payload;
 pub mod protocol;
 pub mod zk_claim;
 
-use outbe_core_common::confidential_tee::ecdhe_tribute_offer_decrypt;
+use outbe_core_common::confidential_tee::ecdhe_offer_decrypt;
 use outbe_tee::resident::OfferKeyHandle;
 use zeroize::Zeroizing;
 
 use errors::{OfferResult, PayloadError, ProcessError};
-use payload::TributeInputPayload;
-use protocol::EncryptedTributeOffer;
+use payload::OfferInputPayload;
+use protocol::EncryptedOffer;
 
 /// The resident offer key and the HKDF salt an offer is sealed with.
 pub struct OfferKeyMaterial<'a> {
@@ -24,10 +24,10 @@ pub struct OfferKeyMaterial<'a> {
 /// Decrypt and validate the confidential payload of `offer`.
 pub fn open_offer(
     key: &OfferKeyMaterial<'_>,
-    offer: &EncryptedTributeOffer,
-) -> OfferResult<TributeInputPayload> {
+    offer: &EncryptedOffer,
+) -> OfferResult<OfferInputPayload> {
     let plaintext = Zeroizing::new(
-        ecdhe_tribute_offer_decrypt(
+        ecdhe_offer_decrypt(
             key.offer_private_key,
             key.salt,
             &offer.ephemeral_pubkey.to_be_bytes::<32>(),
@@ -36,8 +36,8 @@ pub fn open_offer(
         )
         .map_err(ProcessError::DecryptionFailed)?,
     );
-    let payload: TributeInputPayload =
-        serde_json::from_slice(&plaintext).map_err(PayloadError::InvalidEncryptedTributePayload)?;
+    let payload: OfferInputPayload =
+        serde_json::from_slice(&plaintext).map_err(PayloadError::InvalidEncryptedOfferPayload)?;
     payload::validate(&payload)?;
     Ok(payload)
 }

@@ -101,7 +101,7 @@ impl Ledger {
         ledger.storage(|state| {
             let mut registry = TeeRegistry::new(state);
             registry.install_initial_policy_v1(&policy).unwrap();
-            registry.tribute_offer_public_key.write(public).unwrap();
+            registry.offer_public_key.write(public).unwrap();
         });
         ledger.advance(h.chain.at.timestamp, None);
         ledger

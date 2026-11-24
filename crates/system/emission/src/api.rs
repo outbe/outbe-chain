@@ -19,7 +19,6 @@ pub struct EmissionDayProjection {
     pub emission_limit: u128,
     pub emission_limit_minor: U256,
     pub metadosis_limit: u128,
-    pub lysis_limit: u128,
     pub desis_limit: u128,
     pub validators: u128,
     pub waa: u128,
@@ -40,7 +39,6 @@ impl From<EmissionDay> for EmissionDayProjection {
             emission_limit: record.emission_limit,
             emission_limit_minor: U256::from(record.emission_limit),
             metadosis_limit: record.metadosis_limit,
-            lysis_limit: record.lysis_limit,
             desis_limit: record.desis_limit,
             validators: record.validators,
             waa: record.waa,
@@ -231,7 +229,6 @@ pub fn record_failed_day_allocation(
     let limit_u128 = to_u128_checked(emission_limit)?;
     record.emission_limit = limit_u128;
     record.metadosis_limit = 0;
-    record.lysis_limit = 0;
     record.desis_limit = 0;
     record.validators = 0;
     record.waa = 0;
@@ -248,17 +245,16 @@ pub fn record_failed_day_allocation(
     Ok(record)
 }
 
-/// Settlement amounts produced when Metadosis completes Lysis and Desis for an `EmissionDay`.
+/// Settlement amounts produced when Metadosis completes an `EmissionDay`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MetadosisCompletedAmounts {
-    pub lysis_limit: U256,
     pub desis_limit: U256,
     pub nods: U256,
     pub promis_limit_added: U256,
 }
 
-/// Marks Metadosis of `day` as `Completed` after Lysis and Desis briefing, recording
-/// `lysis_limit`, `desis_limit`, `nods`, and the unused Metadosis / Lysis portion credited to `PromisLimit`.
+/// Marks Metadosis of `day` as `Completed` after the Desis brief, recording `desis_limit`,
+/// `nods` (the loads of the Nods), and the part of the Metadosis limit added to `PromisLimit`.
 pub fn record_metadosis_completed(
     storage: StorageHandle<'_>,
     day: u32,
@@ -277,7 +273,6 @@ pub fn record_metadosis_completed(
         }
         .into());
     }
-    record.lysis_limit = to_u128_checked(amounts.lysis_limit)?;
     record.desis_limit = to_u128_checked(amounts.desis_limit)?;
     record.nods = to_u128_checked(amounts.nods)?;
     let added = to_u128_checked(amounts.promis_limit_added)?;
@@ -305,7 +300,6 @@ pub fn record_metadosis_canceled(storage: StorageHandle<'_>, day: u32) -> Result
         }
         .into());
     }
-    record.lysis_limit = 0;
     record.desis_limit = 0;
     record.nods = 0;
     record.metadosis_state = metadosis_state::CANCELLED;
@@ -338,7 +332,6 @@ pub fn record_metadosis_failed(
         .map_err(|_| EmissionError::AmountOverflow)?;
     let rest = record.metadosis_limit - nods;
     let returned = U256::from(rest);
-    record.lysis_limit = 0;
     record.desis_limit = 0;
     record.nods = nods;
     record.promis_limit = record
@@ -557,7 +550,6 @@ mod tests {
             storage.clone(),
             day,
             MetadosisCompletedAmounts {
-                lysis_limit: U256::ZERO,
                 desis_limit: U256::ZERO,
                 nods: U256::ZERO,
                 promis_limit_added: U256::from(840u64),
@@ -710,7 +702,6 @@ mod tests {
                     storage.clone(),
                     day,
                     MetadosisCompletedAmounts {
-                        lysis_limit: U256::ZERO,
                         desis_limit: U256::ZERO,
                         nods: U256::ZERO,
                         promis_limit_added: U256::from(60u64),

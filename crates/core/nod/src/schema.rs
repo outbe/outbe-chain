@@ -28,8 +28,7 @@ pub struct NodIssueParams {
     pub gratis_load_minor: U256,
     pub entry_price_minor: U256,
     pub issuance_currency: u16,
-    /// Reference currency (ISO 4217 numeric) propagated from the originating
-    /// Tribute. Used for off-chain pricing references on the Nod.
+    /// Reference currency (ISO 4217 numeric) of the offer that issued the Nod.
     pub reference_currency: u16,
 }
 

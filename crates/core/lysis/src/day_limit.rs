@@ -1,6 +1,6 @@
 use alloy_primitives::U256;
 
-/// Share of the priced Tribute nominal that Lysis may load, in percent.
+/// Share of the priced Offer nominal that Lysis may load, in percent.
 pub const SYMBOLIC_RATE: u64 = 32;
 
 /// Returns `(demand, lysis_limit)`, or `None` on overflow.

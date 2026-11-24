@@ -1,4 +1,4 @@
-// Tribute claim circuit — chain 9900501 (Niflheim), claim `tribute`, version 1.0.0.
+// Offer claim circuit — chain 9900501 (Niflheim), claim `offer`, version 1.0.0.
 //
 // This is pso-zk-circuits' `full_proof` 1.0.0, the circuit Niflheim wallets
 // prove with, registered under the key L1 verifies with. Self-contained by
@@ -9,7 +9,7 @@
 // `expected_merkle_root` → `merkle_root`, which the claim ABI fixes; a
 // parameter name is ABI only and does not move the ACIR or the key.
 //
-// The inclusion path is over the perpetual TributeDraft commitment tree: a
+// The inclusion path is over the perpetual OfferDraft commitment tree: a
 // depth-32 Poseidon2/BN254 IMT whose inner nodes are `Poseidon2(left, right)`
 // with no domain separator. The leaf IS `nft_hash`.
 

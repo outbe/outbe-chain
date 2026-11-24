@@ -122,7 +122,7 @@ fn fresh_candidate(source: &InProcessTeeContext) -> Arc<InProcessTeeContext> {
     let keys = outbe_tee::resident::ResidentTeeKeys::generate().unwrap();
     let mut manifest = source.manifest().clone();
     manifest.initialization_challenge = B256::random().0;
-    manifest.recipient_x25519 = keys.tribute_offer_public();
+    manifest.recipient_x25519 = keys.recipient_public();
     manifest.attestation_ed25519 = keys.attestation_pub();
     manifest.noise_responder_x25519 = keys.noise_public();
     Arc::new(

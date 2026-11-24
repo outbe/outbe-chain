@@ -39,7 +39,7 @@ pub use handler::BarretenbergHandler;
 pub use srs::set_srs_path;
 
 /// The largest CRS capacity that the canonical circuits require.
-/// Ownership, Demo Tribute, and Niflheim tribute use a `2^16` proving domain.
+/// Ownership, Demo offer, and Niflheim offer use a `2^16` proving domain.
 /// Their SRS requires `2^16 + 1` G1 points.
 /// Emit mint and Paynote spend use a `2^14` domain. PayNote merge uses a `2^15` domain.
 pub const CANONICAL_SRS_POINTS: u32 = (1 << 16) + 1;
@@ -115,7 +115,7 @@ pub struct Barretenberg {
 #[allow(clippy::derivable_impls)] // manual impl documents the security-critical disable_zk = false default
 impl Default for Barretenberg {
     fn default() -> Self {
-        // Ownership and Demo Tribute witnesses contain a secret key.
+        // Ownership and Demo offer witnesses contain a secret key.
         // Keep zero knowledge enabled to protect this key.
         // `disable_zk = true` is faster but does not provide zero knowledge.
         // Use it only for statements that contain public inputs and no secrets.

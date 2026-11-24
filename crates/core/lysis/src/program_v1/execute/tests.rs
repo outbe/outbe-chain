@@ -1,23 +1,23 @@
 use super::*;
 
 #[test]
-fn nod_action_preserves_source_tribute() {
+fn nod_action_preserves_source_offer() {
     let owner = alloy_primitives::Address::repeat_byte(0x42);
     let day = WorldwideDay::new(0x01020304);
     let source_id = derive_poseidon_entity_id(owner, day);
-    let source = TributeInputV1 {
-        tribute_id: source_id,
+    let source = OfferInputV1 {
+        offer_id: source_id,
         owner,
         worldwide_day: day,
         issuance_currency: 840,
         nominal_amount_minor: SCALE,
         reference_currency: 978,
-        tribute_price_minor: U256::ZERO,
+        offer_price_minor: U256::ZERO,
     };
     let mut execution = prepare(day, vec![source], vec![1], SCALE).unwrap();
     let pending = execution.quote_next().unwrap();
     let action = execution.commit_next(pending, SCALE, 1, true).unwrap();
-    assert_eq!(action.source_tribute_id, source_id);
+    assert_eq!(action.source_offer_id, source_id);
     assert_eq!(
         source_id.to_u256(),
         U256::from_str_radix(
@@ -37,20 +37,20 @@ fn gratis_load_preserves_fraction_math_and_full_precision() {
         (1000, 2_000_000, 2000),
     ] {
         assert_eq!(
-            calculate_gratis_load(U256::from(nominal), U256::from(fraction), 0).unwrap(),
+            compute_gratis_load(U256::from(nominal), U256::from(fraction), 0).unwrap(),
             U256::from(expected)
         );
     }
     assert_eq!(
-        calculate_gratis_load(U256::MAX / SCALE, SCALE, 0).unwrap(),
+        compute_gratis_load(U256::MAX / SCALE, SCALE, 0).unwrap(),
         U256::MAX / SCALE
     );
     assert!(matches!(
-        calculate_gratis_load(U256::MAX, SCALE, 0),
+        compute_gratis_load(U256::MAX, SCALE, 0),
         Err(ProgramErrorV1::Arithmetic { .. })
     ));
     assert!(matches!(
-        calculate_gratis_load(U256::ZERO, SCALE, 7),
+        compute_gratis_load(U256::ZERO, SCALE, 7),
         Err(ProgramErrorV1::ZeroGratisLoad { ordinal: 7 })
     ));
 }
@@ -58,22 +58,22 @@ fn gratis_load_preserves_fraction_math_and_full_precision() {
 #[test]
 fn frozen_budget_boundaries_and_remaining_accounting() {
     let day = WorldwideDay::new(20_260_724);
-    let tributes = [1_u8, 2].map(|seed| {
+    let offers = [1_u8, 2].map(|seed| {
         let owner = alloy_primitives::Address::repeat_byte(seed);
-        TributeInputV1 {
-            tribute_id: derive_poseidon_entity_id(owner, day),
+        OfferInputV1 {
+            offer_id: derive_poseidon_entity_id(owner, day),
             owner,
             worldwide_day: day,
             issuance_currency: 840,
             nominal_amount_minor: U256::from(1_000_000),
             reference_currency: 840,
-            tribute_price_minor: U256::ZERO,
+            offer_price_minor: U256::ZERO,
         }
     });
     for budget in [1_u64, 2, 1024, 1_025_023] {
-        let mut tributes = tributes.to_vec();
-        tributes.sort_by_key(|tribute| tribute.tribute_id);
-        let mut execution = prepare(day, tributes, vec![1, 1], U256::from(budget)).unwrap();
+        let mut offers = offers.to_vec();
+        offers.sort_by_key(|offer| offer.offer_id);
+        let mut execution = prepare(day, offers, vec![1, 1], U256::from(budget)).unwrap();
         let fractions = execution.fractions.clone();
         let load = U256::from(1_000_000) * fractions[&1] / SCALE;
         if load.is_zero() {

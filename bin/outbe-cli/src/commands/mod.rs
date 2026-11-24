@@ -10,7 +10,6 @@ pub mod stablecoin;
 pub mod stake_identity;
 pub mod staking;
 pub mod tee;
-pub mod tribute;
 pub mod validator;
 pub mod vote;
 pub mod zerofee;

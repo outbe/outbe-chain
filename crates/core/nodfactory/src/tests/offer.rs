@@ -8,7 +8,7 @@ use outbe_agentreward::AgentRewardContract;
 use outbe_l2registry::L2RegistryContract;
 use outbe_primitives::storage::{CycleLifecyclePurpose, MutationPurposeTag};
 use outbe_system_common::time::{date_key_to_utc_timestamp, WorldwideDay};
-use outbe_zk::demo_tribute::COMBINED_LEN as DEMO_COMBINED_LEN;
+use outbe_zk::demo_offer::COMBINED_LEN as DEMO_COMBINED_LEN;
 
 use super::*;
 use crate::offer::{issue_nod, IssueNodInput, OfferError};
@@ -305,7 +305,7 @@ fn sealed_offer(
     use x25519_dalek::{PublicKey, StaticSecret};
     let payload = serde_json::to_vec(&serde_json::json!({
         "creator": format!("{owner:#x}"),
-        "tribute_draft_id": format!("{:#x}", B256::with_last_byte(0x11)),
+        "offer_draft_id": format!("{:#x}", B256::with_last_byte(0x11)),
         "amount_base": amount_base,
         "amount_micro": amount_micro,
         "su_hashes": su_hashes.iter().map(|hash| format!("{hash:#x}")).collect::<Vec<_>>(),
@@ -316,7 +316,7 @@ fn sealed_offer(
     let offer_key =
         PublicKey::from(&StaticSecret::from(outbe_nod::test_support::OFFER_SECRET)).to_bytes();
     let (cipher, nonce, ephemeral) =
-        outbe_core_common::confidential_tee::encrypt_tribute_offer(&offer_key, &payload).unwrap();
+        outbe_core_common::confidential_tee::encrypt_offer(&offer_key, &payload).unwrap();
     (
         Bytes::from(cipher),
         Bytes::from(nonce.to_vec()),
@@ -359,7 +359,7 @@ fn an_empty_su_hash_list_rejects_before_any_write() {
 #[ignore = "requires the pinned Barretenberg CRS"]
 fn real_zk_offer_issues_its_nod_once_and_rolls_back_failures() {
     let proof = include_bytes!(
-        "../../../../../testing/protocol-benchmarks/fixtures/tribute_demo_tribute_v1.bin"
+        "../../../../../testing/protocol-benchmarks/fixtures/offer_demo_offer_v1.bin"
     );
     assert_real_zk_offer(proof);
 }
@@ -398,7 +398,7 @@ fn assert_real_zk_offer(proof: &[u8]) {
             u64::from(item.sub_series_id),
             (now - now % 3_600 - wwd.offerings_start) / 3_600
         );
-        let totals = outbe_worldwideday::day_totals(storage.clone(), TARGET_WWD).unwrap();
+        let totals = outbe_worldwideday::worldwide_day_totals(storage.clone(), TARGET_WWD).unwrap();
         assert_eq!(totals.nod_count, 1);
         assert!(NodContract::new(storage.clone())
             .has_used_su_hash(su_hash)
@@ -437,14 +437,14 @@ fn assert_real_zk_offer(proof: &[u8]) {
 
     // An SRA counter overflow after every other write rolls the offer back too.
     let reward_day = WorldwideDay::new(OFFER_DAY);
-    let count_key = AgentRewardContract::tribute_count_key(reward_day, REWARD_SRA);
+    let count_key = AgentRewardContract::offer_count_key(reward_day, REWARD_SRA);
     let index_key = AgentRewardContract::address_index_key(reward_day, 0);
     StorageHandle::enter(&mut provider, |storage| {
         let rewards = AgentRewardContract::new(storage);
         rewards.sra_addresses.write(&index_key, REWARD_SRA).unwrap();
         rewards.sra_address_count.write(&reward_day, 1).unwrap();
         rewards
-            .sra_tribute_counts
+            .sra_offer_counts
             .write(&count_key, u64::MAX)
             .unwrap();
         rewards
@@ -463,7 +463,7 @@ fn assert_real_zk_offer(proof: &[u8]) {
         };
         assert_eq!(
             bytes.as_ref(),
-            outbe_agentreward::precompile::IAgentReward::TributeCounterOverflow {}.abi_encode()
+            outbe_agentreward::precompile::IAgentReward::OfferCounterOverflow {}.abi_encode()
         );
         assert!(nod_api::get_item(&storage, nod_id).unwrap().is_none());
         assert!(!NodContract::new(storage.clone())
@@ -499,8 +499,8 @@ fn offer_of(owner: Address, issuance_currency: u16, amount: (&str, &str)) -> Iss
     }
 }
 
-fn zk_context() -> outbe_nod::offer::protocol::TributeZkContext {
-    outbe_nod::offer::protocol::TributeZkContext {
+fn zk_context() -> outbe_nod::offer::protocol::OfferZkContext {
+    outbe_nod::offer::protocol::OfferZkContext {
         derived_owner: B256::ZERO,
         chain_id: HOST_CHAIN_ID,
         l2_chain_id: L2_CHAIN_ID,
@@ -566,7 +566,7 @@ fn at_offer_hour(storage: &StorageHandle<'_>, (hour, minutes): (u64, u64), rate:
 }
 
 fn reference_vwap(storage: &StorageHandle<'_>) -> U256 {
-    outbe_oracle::api::tribute_pricing_inputs(storage.clone(), 840, 840)
+    outbe_oracle::api::offer_pricing_inputs(storage.clone(), 840, 840)
         .unwrap()
         .unwrap()
         .reference_vwap_minor
@@ -661,7 +661,7 @@ fn issue_nod_at_the_offer_gives_all_terms() {
         assert!(!nominal.is_zero());
         assert_eq!(load, outbe_nod::offer::issue::nod_load_of(nominal));
         assert_eq!(
-            outbe_worldwideday::day_totals(storage.clone(), TARGET_WWD)
+            outbe_worldwideday::worldwide_day_totals(storage.clone(), TARGET_WWD)
                 .unwrap()
                 .nod_count,
             1

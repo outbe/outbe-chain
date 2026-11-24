@@ -530,8 +530,8 @@ mod metrics_tests {
 
     fn offer_batch(key: &metrics::Key, name: &str) -> bool {
         key.name() == name
-            && key.labels().any(|item| {
-                item.key() == "request" && item.value() == "process_tribute_offer_batch"
-            })
+            && key
+                .labels()
+                .any(|item| item.key() == "request" && item.value() == "open_offer")
     }
 }

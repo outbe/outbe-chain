@@ -344,6 +344,11 @@
   },
   {
     "type": "error",
+    "name": "OfferCounterOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "PoolTotalMismatch",
     "inputs": []
   },
@@ -366,11 +371,6 @@
   {
     "type": "error",
     "name": "RewardDeadlineOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "TributeCounterOverflow",
     "inputs": []
   },
   {

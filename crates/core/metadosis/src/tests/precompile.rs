@@ -149,7 +149,7 @@ fn worldwide_day_reads_have_no_get_prefix() {
         assert!(active.is_empty());
         let totals = worldwide_day_dispatch(
             storage.clone(),
-            &IWorldwideDay::dayTotalsCall {
+            &IWorldwideDay::worldwideDayTotalsCall {
                 emissionDay: 20261014,
             }
             .abi_encode(),
@@ -157,7 +157,7 @@ fn worldwide_day_reads_have_no_get_prefix() {
             U256::ZERO,
         )
         .unwrap();
-        let totals = IWorldwideDay::dayTotalsCall::abi_decode_returns(&totals).unwrap();
+        let totals = IWorldwideDay::worldwideDayTotalsCall::abi_decode_returns(&totals).unwrap();
         assert_eq!(totals.nodCount, 0);
 
         let day = U256::from(20261014u32).to_be_bytes::<32>();

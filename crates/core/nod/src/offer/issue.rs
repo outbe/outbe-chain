@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::compute::{compute_nominal, parse_canonical_amount};
 use super::errors::{display_text, OfferError, OfferResult, ProcessError};
-use super::protocol::{EncryptedTributeOffer, TributeZkExpectedHashes};
+use super::protocol::{EncryptedOffer, OfferZkExpectedHashes};
 use super::zk_claim::derive_expected_hashes;
 use super::{open_offer, OfferKeyMaterial};
 use crate::constants::LOAD_RATE_PCT;
@@ -20,7 +20,7 @@ use outbe_core_common::confidential_tee::ComputeError;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IssueNodAtOfferRequestV1 {
     pub chain_id: u64,
-    pub offer: EncryptedTributeOffer,
+    pub offer: EncryptedOffer,
     /// Emission day of the series, `YYYYMMDD`.
     pub emission_day: u32,
     /// 24-hour VWAP of the reference currency at the offer hour.
@@ -46,7 +46,7 @@ pub struct NodAtOfferResultV1 {
     pub su_hashes: Vec<String>,
     pub wallet_addresses: Vec<String>,
     pub sra_addresses: Vec<String>,
-    pub zk_expected_hashes: Option<TributeZkExpectedHashes>,
+    pub zk_expected_hashes: Option<OfferZkExpectedHashes>,
 }
 
 impl NodAtOfferResultV1 {
@@ -130,7 +130,7 @@ fn issue(
     }
     let series_id = SeriesId::for_pair(
         request.emission_day,
-        offer.tribute_currency,
+        offer.issuance_currency,
         offer.reference_currency,
     )
     .map_err(|_| ProcessError::InvalidSeries)?;
@@ -140,7 +140,7 @@ fn issue(
         owner,
         emission_day: request.emission_day,
         entry_price_minor: request.entry_price_minor,
-        issuance_currency: offer.tribute_currency,
+        issuance_currency: offer.issuance_currency,
         reference_currency: offer.reference_currency,
     };
     let nod = crate::nod_encryption::encrypt_nod(nod_state_key, terms, load, nominal)

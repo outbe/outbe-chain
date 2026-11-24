@@ -229,10 +229,10 @@ interface ITeeRegistryV1 {
     );
 
     function isBootstrapped() external view returns (bool);
-    function tributeOfferPublicKey() external view returns (uint256);
+    function offerPublicKey() external view returns (uint256);
     function policyHash() external view returns (uint256);
     function keyEpoch() external view returns (uint256);
-    function tributeOfferEpoch() external view returns (uint256);
+    function offerEpoch() external view returns (uint256);
     function activePolicyV1() external view returns (bytes memory);
     function stagedSuccessorPolicyV1() external view returns (bool exists, uint256 proposalId, bytes memory policy);
     function enclaveUpgradeV1()

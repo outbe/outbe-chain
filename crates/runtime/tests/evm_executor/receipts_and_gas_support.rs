@@ -75,8 +75,8 @@ pub(super) fn seed_dense_agent_recipients(
     for n in 0..address_count {
         let waa = numbered_test_address(0x10, n);
         let sra = numbered_test_address(0x11, n);
-        agent.increment_waa_tribute(prev_day.into(), waa)?;
-        agent.increment_sra_tribute(prev_day.into(), sra)?;
+        agent.increment_waa_offer(prev_day.into(), waa)?;
+        agent.increment_sra_offer(prev_day.into(), sra)?;
     }
     assert_eq!(
         agent.get_all_waa_counts(prev_day.into()).unwrap().len(),

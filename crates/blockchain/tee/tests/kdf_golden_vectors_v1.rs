@@ -27,7 +27,7 @@ fn production_identity_key_derivation_vectors() {
     ] {
         let keys = ResidentTeeKeys::from_seed(identity_seed).unwrap();
         assert_eq!(hex::encode(keys.noise_public()), noise);
-        assert_eq!(hex::encode(keys.tribute_offer_public()), recipient);
+        assert_eq!(hex::encode(keys.recipient_public()), recipient);
         assert_eq!(hex::encode(keys.attestation_pub()), attestation);
         assert_eq!(hex::encode(keys.dkg_enc_public()), dkg_enc);
         assert_eq!(hex::encode(keys.tee_bls_public_bytes()), bls);

@@ -65,7 +65,7 @@ fn pipeline_cap_and_historical_close() {
                 let mut factory = WorldwideDayContract::new(storage.clone());
                 crate::close_worldwide_day(&mut factory, filled)?;
                 assert!(!factory.pipeline_wwd.read_all()?.contains(&filled));
-                assert!(crate::is_sealed(storage.clone(), filled)?);
+                assert!(crate::is_worldwide_day_sealed(storage.clone(), filled)?);
 
                 assert!(crate::open_worldwide_day(
                     &mut factory,
@@ -73,7 +73,7 @@ fn pipeline_cap_and_historical_close() {
                     hist_schedule
                 )?);
                 assert!(factory.pipeline_wwd.read_all()?.contains(&hist_wwd));
-                assert!(!crate::is_sealed(storage.clone(), hist_wwd)?);
+                assert!(!crate::is_worldwide_day_sealed(storage.clone(), hist_wwd)?);
                 assert_eq!(
                     crate::emission_day_of(storage.clone(), hist_wwd)?,
                     Some(outbe_system_common::time::EmissionDate::new(
@@ -82,7 +82,7 @@ fn pipeline_cap_and_historical_close() {
                 );
                 crate::close_worldwide_day(&mut factory, hist_wwd)?;
                 assert!(!factory.pipeline_wwd.read_all()?.contains(&hist_wwd));
-                assert!(crate::is_sealed(storage.clone(), hist_wwd)?);
+                assert!(crate::is_worldwide_day_sealed(storage.clone(), hist_wwd)?);
                 Ok(())
             })
             .unwrap();
@@ -172,7 +172,7 @@ fn the_offering_window_closes_at_its_end_before_the_seal() {
         storage
             .set_block_timestamp(U256::from(schedule.offering_end))
             .unwrap();
-        assert!(!crate::is_sealed(storage.clone(), wwd).unwrap());
+        assert!(!crate::is_worldwide_day_sealed(storage.clone(), wwd).unwrap());
         assert!(!crate::is_offering_day(storage.clone(), wwd).unwrap());
     });
 }

@@ -8,7 +8,7 @@
 //!
 //! This core declares only the [`Entity`] and [`Owned`] traits. The
 //! concrete entity types (Solidity-mirroring `SpendingUnit`,
-//! `TributeDraft`, …) live in consumer crates (e.g. `outbe-integration`),
+//! `OfferDraft`, …) live in consumer crates (e.g. `outbe-integration`),
 //! where `#[derive(Entity)]` generates these impls from `#[outbe(...)]`
 //! field roles.
 

@@ -23,10 +23,12 @@ use crate::precompile::INodFactory;
 use outbe_vaultrouter::settlement::{self, Currencies, SettlementCost, SettlementPayment};
 
 /// Issues an authenticated encrypted Nod through the block-scoped body lifecycle.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn issue_nod(storage: &StorageHandle<'_>, encrypted: &EncryptedNodV1) -> Result<U256> {
     issue_nod_at(storage, encrypted, storage.now_secs()?)
 }
 
+#[cfg(any(test, feature = "test-utils"))]
 pub(crate) fn issue_nod_at(
     storage: &StorageHandle<'_>,
     encrypted: &EncryptedNodV1,

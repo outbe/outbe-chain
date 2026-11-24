@@ -145,7 +145,7 @@ pub fn resident_context(seed: u8, binding: NetworkBindingV1) -> InProcessTeeCont
         node_id: NodeIdV1 { reth_p2p_public },
         initialization_challenge: [3; 32],
         node_host_noise_x25519: [4; 32],
-        recipient_x25519: keys.tribute_offer_public(),
+        recipient_x25519: keys.recipient_public(),
         attestation_ed25519: keys.attestation_pub(),
         noise_responder_x25519: keys.noise_public(),
     };

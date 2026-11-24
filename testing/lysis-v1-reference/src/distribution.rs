@@ -6,23 +6,20 @@ use serde_json::{json, Value};
 
 use crate::{
     arithmetic::{decimal, fp_root, scale, to_i256, trunc_signed_div, wrap_u256},
-    corpus::CorpusTribute,
+    corpus::CorpusOffer,
     failure::ReferenceFailure,
 };
 
-fn fallback_tau(group_count: usize, tribute_count: usize) -> Result<BigUint, ReferenceFailure> {
+fn fallback_tau(group_count: usize, offer_count: usize) -> Result<BigUint, ReferenceFailure> {
     let unit = scale();
     let group_scaled = wrap_u256(BigUint::from(group_count) * &unit);
-    let tribute_scaled = wrap_u256(BigUint::from(tribute_count) * &unit);
+    let offer_scaled = wrap_u256(BigUint::from(offer_count) * &unit);
     let group_root = fp_root(&group_scaled, 5)?;
-    let tribute_root = fp_root(&tribute_scaled, 10)?;
-    Ok(wrap_u256(group_root * tribute_root) / unit)
+    let offer_root = fp_root(&offer_scaled, 10)?;
+    Ok(wrap_u256(group_root * offer_root) / unit)
 }
 
-fn policy_tau(
-    populations: &[usize],
-    tribute_count: usize,
-) -> Result<Vec<BigUint>, ReferenceFailure> {
+fn policy_tau(populations: &[usize], offer_count: usize) -> Result<Vec<BigUint>, ReferenceFailure> {
     let unit = scale();
     let group_count = populations.len();
     let mut tau = vec![BigUint::zero(); group_count + 1];
@@ -36,12 +33,12 @@ fn policy_tau(
             let previous_root = fp_root(&wrap_u256(BigUint::from(previous) * &unit), 10)?;
             let divisor = current_root.min(previous_root);
             if divisor.is_zero() {
-                fallback_tau(group_count, tribute_count)?
+                fallback_tau(group_count, offer_count)?
             } else {
                 wrap_u256(numerator * &unit) / divisor
             }
         } else {
-            fallback_tau(group_count, tribute_count)?
+            fallback_tau(group_count, offer_count)?
         };
     }
     let mut middle_sum = BigUint::zero();
@@ -152,7 +149,7 @@ fn cap_to_target(
 pub(crate) fn distribution(
     shares: &[BigUint],
     populations: &[usize],
-    tribute_count: usize,
+    offer_count: usize,
     target_fraction: &BigUint,
     maximum_fraction: &BigUint,
 ) -> Result<Vec<BigUint>, ReferenceFailure> {
@@ -164,7 +161,7 @@ pub(crate) fn distribution(
         return Ok(vec![target_fraction.clone()]);
     }
 
-    let masses = masses(&policy_tau(populations, tribute_count)?, &unit);
+    let masses = masses(&policy_tau(populations, offer_count)?, &unit);
     let cumulative = cumulative_shares(shares, &unit);
     let (expected, variance) = moments(&masses, &cumulative, &unit);
     let fraction_ratio = if maximum_fraction.is_zero() {
@@ -191,24 +188,24 @@ pub(crate) fn distribution(
 }
 
 pub(crate) fn fraction_table(
-    tributes: &[CorpusTribute],
+    offers: &[CorpusOffer],
     total_nominal: &BigUint,
     allocation: &BigUint,
 ) -> Result<Vec<Value>, ReferenceFailure> {
-    Ok(fraction_table_with_projection(tributes, total_nominal, allocation)?.0)
+    Ok(fraction_table_with_projection(offers, total_nominal, allocation)?.0)
 }
 
 pub(crate) fn fraction_table_with_projection(
-    tributes: &[CorpusTribute],
+    offers: &[CorpusOffer],
     total_nominal: &BigUint,
     allocation: &BigUint,
 ) -> Result<(Vec<Value>, BigUint, BigUint), ReferenceFailure> {
     let unit = scale();
     let mut groups = BTreeMap::<u16, Vec<usize>>::new();
-    for (ordinal, tribute) in tributes.iter().enumerate() {
+    for (ordinal, offer) in offers.iter().enumerate() {
         groups
             .entry(
-                tribute.f1.ok_or_else(|| {
+                offer.f1.ok_or_else(|| {
                     ReferenceFailure::ordinal("FIDELITY_FIRST_UNAVAILABLE", ordinal)
                 })?,
             )
@@ -221,7 +218,7 @@ pub(crate) fn fraction_table_with_projection(
     for ordinals in groups.values() {
         let mut group_nominal = BigUint::zero();
         for ordinal in ordinals {
-            group_nominal = wrap_u256(group_nominal + decimal(&tributes[*ordinal].nominal)?);
+            group_nominal = wrap_u256(group_nominal + decimal(&offers[*ordinal].nominal)?);
         }
         shares.push(wrap_u256(&group_nominal * &unit) / total_nominal);
         populations.push(ordinals.len());
@@ -241,7 +238,7 @@ pub(crate) fn fraction_table_with_projection(
     // The distribution prioritizes its first group: highest league first.
     shares.reverse();
     populations.reverse();
-    let mut fractions = distribution(&shares, &populations, tributes.len(), &target, &maximum)?;
+    let mut fractions = distribution(&shares, &populations, offers.len(), &target, &maximum)?;
     // Restore ascending league order for projection and the public table.
     fractions.reverse();
     shares.reverse();

@@ -127,32 +127,6 @@ impl TxSigner {
         client.eth_send_raw_transaction(&raw_tx).await
     }
 
-    /// Build, sign, and send a transaction with an explicit gas limit, skipping
-    /// `eth_estimateGas`. Useful when the call decrypts inside the enclave during
-    /// execution and `eth_estimateGas` cannot faithfully simulate that path.
-    pub async fn send_tx_with_gas(
-        &self,
-        client: &(impl Rpc + Sync),
-        to: Address,
-        data: Vec<u8>,
-        value: U256,
-        gas_limit: u64,
-    ) -> Result<String> {
-        let chain_id = client.eth_chain_id().await?;
-        let nonce = client.eth_get_transaction_count(self.address).await?;
-        let gas_price = buffered_gas_price(latest_base_fee(client).await?);
-        let raw_tx = self.sign_legacy_tx(LegacyTx {
-            nonce,
-            gas_price,
-            gas_limit,
-            to,
-            value,
-            data: &data,
-            chain_id,
-        })?;
-        client.eth_send_raw_transaction(&raw_tx).await
-    }
-
     fn sign_legacy_tx(&self, tx: LegacyTx<'_>) -> Result<Vec<u8>> {
         // EIP-155: hash [nonce, gasPrice, gasLimit, to, value, data, chainId, 0, 0]
         let mut unsigned = Vec::new();

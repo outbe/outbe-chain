@@ -1,4 +1,4 @@
-//! TributeDraft claim folded into the circuit's `nft_hash`.
+//! OfferDraft claim folded into the circuit's `nft_hash`.
 //!
 //! Field order matches the former `#[derive(Entity)]` preimage: id is the seed,
 //! then owner, day, currency, base, atto, and the sorted `su_ids` set.
@@ -15,7 +15,7 @@ use crate::Fr;
 use alloy_primitives::B256;
 #[cfg(feature = "alloy")]
 #[derive(Clone, Debug)]
-pub struct TributeDraftClaim {
+pub struct OfferDraftClaim {
     pub id: B256,
     pub derived_owner: B256,
     pub worldwide_day: u64,
@@ -26,7 +26,7 @@ pub struct TributeDraftClaim {
 }
 
 #[cfg(feature = "alloy")]
-impl Entity for TributeDraftClaim {
+impl Entity for OfferDraftClaim {
     fn id_seed(&self) -> Result<Fr, Error> {
         self.id.to_field()
     }
@@ -47,7 +47,7 @@ impl Entity for TributeDraftClaim {
 }
 
 #[cfg(feature = "alloy")]
-impl Owned for TributeDraftClaim {
+impl Owned for OfferDraftClaim {
     fn owner(&self) -> Result<Fr, Error> {
         self.derived_owner.to_field()
     }
