@@ -12,7 +12,7 @@
 //! This backend sends the solved witness, committed bytecode, and verification key (VK) to `circuit_prove`.
 //! [`CircuitId`] supplies the bytecode and VK.
 //! For verification, this backend derives the public inputs from the claim and calls `circuit_verify`.
-//! The pinned `barretenberg-rs` version is `5.0.0-nightly.20260522`.
+//! The pinned `barretenberg-rs` version is `6.0.0`.
 //! This version matches the `bb` version that writes the committed VKs with `-t evm-no-zk`.
 
 use barretenberg_rs::generated_types::{CircuitInput, ProofSystemSettings};

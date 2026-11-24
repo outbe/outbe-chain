@@ -14,7 +14,7 @@ chain_id = 57005
 [[l2_chain.versions]]
 selector = "1.1.0"
 circuits = [
-  { path = "tribute", vk_hash = "4f1e294540876d22e858ef46f62918a46fed2913898cc5cbe097b8abe3921e21" },
+  { path = "tribute", vk_hash = "fdf9a32867af91ba7f0a382a58b6c46e9a8843546febd67852c6a1a74f596f92" },
 ]
 
 [[l2_chain]]
@@ -23,7 +23,7 @@ chain_id = 9900501
 [[l2_chain.versions]]
 selector = "1.0.0"
 circuits = [
-  { path = "tribute", vk_hash = "7ec39936f08a1f5bb5675249be8c2ee3a31811a604e2785ab31b670eaaa2e7f9" },
+  { path = "tribute", vk_hash = "90c6f573aac337f2e885018d78dbb4f297572f87dd93e10fb597f6abd970eabd" },
 ]
 
 # L1 frozen releases. Artifacts live at
@@ -35,12 +35,12 @@ circuits = [
 module = "paynote"
 label = "outbe.paynote"
 versions = [
-  { version = "1.3.0", status = "active" },
+  { version = "1.4.0", status = "active" },
 ]
 
 [[circuit]]
 module = "paynote_merge"
 label = "outbe.paynote.merge"
 versions = [
-  { version = "1.0.1", status = "active" },
+  { version = "1.1.0", status = "active" },
 ]

@@ -14,10 +14,10 @@
 //! Packable, to_be_bytes), take the real dependency instead of growing a
 //! parallel copy:
 //!   protocol_types = { git = "https://github.com/AztecProtocol/aztec-packages",
-//!                      tag = "v5.1.0",
+//!                      tag = "<tag>",
 //!                      directory = "noir-projects/noir-protocol-circuits/crates/types" }
-//! v5.1.0 is the tag whose pinned noir submodule is exactly 1.0.0-beta.22, our
-//! `mise.toml` pin. It also needs a third git origin allowed in `deny.toml`.
+//! Pick the tag whose pinned noir submodule matches the nargo pin in
+//! `mise.toml`. It also needs a third git origin allowed in `deny.toml`.
 
 /// Upstream calls this `MAX_ETH_ADDRESS_BIT_SIZE` (types/src/constants.nr).
 pub global MAX_ETH_ADDRESS_BIT_SIZE: u32 = 160;
