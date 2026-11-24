@@ -1,4 +1,4 @@
-//! Typed errors for `outbe-hyperlane-validator`.
+//! Typed errors for `outbe-hyperlane-agent`.
 //!
 //! Each submodule defines the error type of one validator part.
 

@@ -87,7 +87,7 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
             wanted_by: "outbe-validator.target",
         }),
         render_service(&ServiceSpec {
-            name: "outbe-hyperlane-validator.service",
+            name: "outbe-hyperlane-agent.service",
             description: "Outbe Hyperlane validator",
             unit_directives: lines(&[
                 "After=outbe-validator.service",
@@ -96,7 +96,7 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
             ]),
             service_directives: lines(&[
                 "EnvironmentFile=/opt/outbe-chain/validator.env",
-                "RuntimeDirectory=outbe-hyperlane-validator",
+                "RuntimeDirectory=outbe-hyperlane-agent",
                 "RuntimeDirectoryMode=0700",
                 "Environment=STATE_DIRECTORY=/opt/outbe-chain/state/hyperlane",
                 "Environment=OUTBE_HYPERLANE_WAIT_FOR_ACTIVE=1",
@@ -164,7 +164,7 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             wanted_by: "outbe-validator.target",
         }),
         render_service(&ServiceSpec {
-            name: "outbe-hyperlane-validator.service",
+            name: "outbe-hyperlane-agent.service",
             description: "Outbe Hyperlane validator",
             unit_directives: lines(&[
                 "After=network-online.target outbe-validator.service",
@@ -173,7 +173,7 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
             ]),
             service_directives: lines(&[
                 &format!("WorkingDirectory={validator_dir}"),
-                "RuntimeDirectory=outbe-hyperlane-validator",
+                "RuntimeDirectory=outbe-hyperlane-agent",
                 "RuntimeDirectoryMode=0700",
                 &format!(
                     "Environment=STATE_DIRECTORY={}/state/hyperlane",
@@ -287,10 +287,10 @@ fn render_target(description: &str) -> UnitFile {
                     "Wants=outbe-radicle.service",
                     "Wants=outbe-validator.service",
                     "Wants=outbe-feeder.service",
-                    "Wants=outbe-hyperlane-validator.service",
+                    "Wants=outbe-hyperlane-agent.service",
                     "After=outbe-radicle.service",
                     "After=outbe-validator.service outbe-feeder.service",
-                    "After=outbe-hyperlane-validator.service",
+                    "After=outbe-hyperlane-agent.service",
                 ])),
             ),
         ],
@@ -349,7 +349,7 @@ mod tests {
             "outbe-radicle.service",
             "outbe-validator.service",
             "outbe-feeder.service",
-            "outbe-hyperlane-validator.service",
+            "outbe-hyperlane-agent.service",
         ] {
             let joining = unit(&joining, name);
             let founding = unit(&founding, name);
@@ -399,8 +399,8 @@ mod tests {
         assert!(unit(&founding, "outbe-validator.service")
             .contains("/opt/outbe-chain/validator-2/run-node.sh"));
 
-        let joining_hyperlane = unit(&joining, "outbe-hyperlane-validator.service");
-        let founding_hyperlane = unit(&founding, "outbe-hyperlane-validator.service");
+        let joining_hyperlane = unit(&joining, "outbe-hyperlane-agent.service");
+        let founding_hyperlane = unit(&founding, "outbe-hyperlane-agent.service");
         assert!(joining_hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE=1"));
         assert!(!founding_hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE"));
         for hyperlane in [joining_hyperlane, founding_hyperlane] {

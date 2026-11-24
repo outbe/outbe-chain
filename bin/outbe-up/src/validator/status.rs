@@ -19,7 +19,7 @@ use crate::{
 const VALIDATOR_SERVICE: &str = "outbe-validator.service";
 const RADICLE_SERVICE: &str = "outbe-radicle.service";
 const FEEDER_SERVICE: &str = "outbe-feeder.service";
-const HYPERLANE_SERVICE: &str = "outbe-hyperlane-validator.service";
+const HYPERLANE_SERVICE: &str = "outbe-hyperlane-agent.service";
 const STATUS_POLL_TIMEOUT: Duration = Duration::from_secs(5);
 
 struct StatusSnapshot<'a> {

@@ -1,8 +1,8 @@
-# outbe-hyperlane-validator
+# outbe-hyperlane-agent
 
 ## What it is
 
-`outbe-hyperlane-validator` is the Hyperlane validator of an Outbe validator,
+`outbe-hyperlane-agent` is the Hyperlane validator of an Outbe validator,
 in one process. It replaces three services: the Docker Hyperlane validator
 agent, MinIO and the attester. The sync, signing, announce and checkpoint
 formats are ported from hyperlane-monorepo `agents-v3.0.0` (Apache-2.0, see
@@ -74,19 +74,19 @@ validator key remains accepted for Hyperlane calls.
 ## Quick start
 
 ```bash
-cargo build --release -p outbe-hyperlane-validator
-cp bin/outbe-hyperlane-validator/hyperlane-validator.example.toml hyperlane-validator.toml
+cargo build --release -p outbe-hyperlane-agent
+cp bin/outbe-hyperlane-agent/hyperlane-agent.example.toml hyperlane-agent.toml
 # Set private_key, validator_address, public_url and db_path.
-./target/release/outbe-hyperlane-validator --config hyperlane-validator.toml
+./target/release/outbe-hyperlane-agent --config hyperlane-agent.toml
 ```
 
-Without `--config`, the binary reads `hyperlane-validator.toml` in the
+Without `--config`, the binary reads `hyperlane-agent.toml` in the
 current directory. Set the log level with `RUST_LOG` (default
-`outbe_hyperlane_validator=info`).
+`outbe_hyperlane_agent=info`).
 
 ## Configuration
 
-[`hyperlane-validator.example.toml`](hyperlane-validator.example.toml) is a
+[`hyperlane-agent.example.toml`](hyperlane-agent.example.toml) is a
 complete testnet example. A unit test parses and validates it, so it always
 matches the code. Unknown fields are errors.
 

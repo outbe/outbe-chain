@@ -30,7 +30,7 @@ fn minimal_config(keys_dir: &str) -> Value {
         "keys_dir": keys_dir,
         "crs_path": crs_path,
         "tee": {"mode": "no-attestation-dev"},
-        "hyperlane_binary": "/opt/outbe-chain/outbe-hyperlane-validator",
+        "hyperlane_binary": "/opt/outbe-chain/outbe-hyperlane-agent",
         "hyperlane_signer_funding_wei": "1000000000000000000",
         "hyperlane_public_urls": [
             "http://10.0.0.1:9000",

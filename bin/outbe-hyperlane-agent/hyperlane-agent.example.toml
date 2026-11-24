@@ -1,5 +1,5 @@
-# outbe-hyperlane-validator: example configuration for the Outbe testnet.
-# Copy this file to hyperlane-validator.toml and replace the placeholders.
+# outbe-hyperlane-agent: example configuration for the Outbe testnet.
+# Copy this file to hyperlane-agent.toml and replace the placeholders.
 # The configuration has no contract addresses: the daemon reads them from the
 # HyperlaneController and the origin chains. Unknown fields are errors.
 

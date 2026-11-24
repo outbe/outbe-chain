@@ -45,7 +45,7 @@ mod tests {
             .any(|(name, _)| name == "outbe-validator.service"));
         assert!(units
             .iter()
-            .any(|(name, _)| name == "outbe-hyperlane-validator.service"));
+            .any(|(name, _)| name == "outbe-hyperlane-agent.service"));
         assert!(units
             .iter()
             .all(|(name, _)| name != "outbe-full-node.service"));

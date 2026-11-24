@@ -71,7 +71,7 @@ members = [
     "bin/outbe-keygen",
     "bin/outbe-cli",
     "bin/outbe-feeder",
-    "bin/outbe-hyperlane-validator",
+    "bin/outbe-hyperlane-agent",
     "bin/outbe-radicle",
     # testing
     "testing/lysis-v1-reference",
@@ -157,7 +157,7 @@ default-members = [
     "bin/outbe-keygen",
     "bin/outbe-cli",
     "bin/outbe-feeder",
-    "bin/outbe-hyperlane-validator",
+    "bin/outbe-hyperlane-agent",
     "bin/outbe-radicle",
     # zk
     "crates/zk/poseidon",

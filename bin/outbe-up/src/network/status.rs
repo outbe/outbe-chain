@@ -229,7 +229,7 @@ fn query_one_inner(ssh: &SshOptions, founder: &super::config::Founder) -> Result
         )
     };
     let command = format!(
-        "printf '%s\\n' \"$(systemctl is-active outbe-validator.target 2>/dev/null || true)\" \"$(systemctl is-active outbe-validator.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-radicle.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-feeder.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-hyperlane-validator.service 2>/dev/null || true)\"; (curl -fsS --max-time 3 http://127.0.0.1:9002/status || true) | tr -d '\\n'; printf '\\n'; (curl -fsS --max-time 3 http://127.0.0.1:9003/status || true) | tr -d '\\n'; printf '\\n'; {}; {}; {}; {}",
+        "printf '%s\\n' \"$(systemctl is-active outbe-validator.target 2>/dev/null || true)\" \"$(systemctl is-active outbe-validator.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-radicle.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-feeder.service 2>/dev/null || true)\" \"$(systemctl is-active outbe-hyperlane-agent.service 2>/dev/null || true)\"; (curl -fsS --max-time 3 http://127.0.0.1:9002/status || true) | tr -d '\\n'; printf '\\n'; (curl -fsS --max-time 3 http://127.0.0.1:9003/status || true) | tr -d '\\n'; printf '\\n'; {}; {}; {}; {}",
         request("eth_chainId", "[]", 1),
         request("eth_getBlockByNumber", "[\"finalized\",false]", 2),
         request("net_peerCount", "[]", 3),

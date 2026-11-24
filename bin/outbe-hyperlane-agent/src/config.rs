@@ -300,7 +300,7 @@ public_url = "http://203.0.113.7:9000"
     #[test]
     fn example_config_parses_and_validates() {
         let cfg: ValidatorConfig =
-            toml::from_str(include_str!("../hyperlane-validator.example.toml")).unwrap();
+            toml::from_str(include_str!("../hyperlane-agent.example.toml")).unwrap();
         cfg.validate().unwrap();
         let domains: Vec<u32> = cfg.origin.iter().map(|o| o.domain).collect();
         assert_eq!(domains, [54322345, 97, 11155111]);

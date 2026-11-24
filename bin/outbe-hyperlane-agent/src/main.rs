@@ -36,12 +36,12 @@ use crate::store::{Meta, Store};
 
 #[derive(Parser)]
 #[command(
-    name = "outbe-hyperlane-validator",
+    name = "outbe-hyperlane-agent",
     about = "Outbe Hyperlane validator daemon"
 )]
 struct Cli {
     /// Path to the TOML configuration file.
-    #[arg(short, long, global = true, default_value = "hyperlane-validator.toml")]
+    #[arg(short, long, global = true, default_value = "hyperlane-agent.toml")]
     config: String,
     /// Without a command, run the daemon.
     #[command(subcommand)]
@@ -119,7 +119,7 @@ async fn main() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "outbe_hyperlane_validator=info".into()),
+                .unwrap_or_else(|_| "outbe_hyperlane_agent=info".into()),
         )
         .init();
 
@@ -171,7 +171,7 @@ async fn main() -> Result<()> {
         validator = %validator,
         signer = %key.address(),
         location,
-        "starting outbe-hyperlane-validator"
+        "starting outbe-hyperlane-agent"
     );
     let poll_interval = Duration::from_secs(config.hyperlane.poll_interval_secs);
     let liveness = liveness::Liveness::new(
