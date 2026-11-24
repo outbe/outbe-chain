@@ -277,7 +277,7 @@ fn deterministic_onboarding_is_exact_and_rejects_nonce_recipient_or_context_chan
         enclave_id: B256::repeat_byte(0x25),
         binding_id: B256::repeat_byte(0x26),
         policy_hash: B256::repeat_byte(0x27),
-        recipient_x25519: recipient.tribute_offer_public(),
+        recipient_x25519: recipient.recipient_public(),
         network_encryption_public: group.public(),
         key_epoch: 3,
         network_encryption_epoch: 4,
@@ -331,7 +331,7 @@ fn stage0_onboarding_and_v2_sealing_known_answers() {
         public: crypto_ops::x25519_public(&[0x11; 32]),
         group_sig: Zeroizing::new(vec![0x44; 48]),
         key_epoch: 1,
-        tribute_offer_epoch: 2,
+        offer_epoch: 2,
     };
     let context = DcapOnboardingContextV1 {
         chain_id: [0x11; 32],
@@ -541,8 +541,8 @@ fn envelope_scope_cannot_extend_hkdf_extract_input_lengths() {
 fn resident_offer_identity_is_deterministic_and_material_is_chain_bound() {
     let a = ResidentTeeKeys::from_seed([0x43; 32]).unwrap();
     let b = ResidentTeeKeys::from_seed([0x43; 32]).unwrap();
-    assert_eq!(a.tribute_offer_public(), b.tribute_offer_public());
-    assert_eq!(a.tribute_offer_secret, b.tribute_offer_secret);
+    assert_eq!(a.recipient_public(), b.recipient_public());
+    assert_eq!(a.recipient_secret, b.recipient_secret);
     let make = |chain| {
         ResidentOfferMaterial::for_test(b"same group signature".to_vec(), chain, 3, 4).unwrap()
     };

@@ -121,12 +121,9 @@ fn decrypt_canary(requester: &dyn EnclaveRequester, offer_pub: &[u8; 32]) -> Can
 }
 
 fn note_offer_open(started: Instant, error: Option<&outbe_tee::TransportError>) {
-    outbe_tee::metrics::record_request_duration("process_tribute_offer_batch", started.elapsed());
+    outbe_tee::metrics::record_request_duration("open_offer", started.elapsed());
     if let Some(error) = error {
-        outbe_tee::metrics::record_request_error(
-            "process_tribute_offer_batch",
-            error.metric_class(),
-        );
+        outbe_tee::metrics::record_request_error("open_offer", error.metric_class());
     }
 }
 

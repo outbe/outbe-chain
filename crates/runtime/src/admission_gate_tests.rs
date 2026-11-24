@@ -341,7 +341,7 @@ async fn live_admission_invariant_failure_closes_authority_with_typed_error_and_
     let mut storage = outbe_primitives::storage::hashmap::HashMapStorageProvider::new(676);
     outbe_primitives::storage::StorageHandle::enter(&mut storage, |storage| {
         outbe_teeregistry::TeeRegistry::new(storage)
-            .tribute_offer_public_key
+            .offer_public_key
             .write(alloy_primitives::B256::repeat_byte(0xEE))
             .unwrap();
     });

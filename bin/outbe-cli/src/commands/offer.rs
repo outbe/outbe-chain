@@ -185,10 +185,10 @@ async fn issue_nod(
         let r = client
             .eth_call(
                 TEE_REGISTRY_ADDR,
-                &ITeeRegistry::tributeOfferPublicKeyCall {}.abi_encode(),
+                &ITeeRegistry::offerPublicKeyCall {}.abi_encode(),
             )
             .await?;
-        ITeeRegistry::tributeOfferPublicKeyCall::abi_decode_returns(&r)?
+        ITeeRegistry::offerPublicKeyCall::abi_decode_returns(&r)?
     };
     let offer_pub: [u8; 32] = offer_pub_u256.to_be_bytes();
     println!("offer key (DKG-derived): 0x{}", hex::encode(offer_pub));

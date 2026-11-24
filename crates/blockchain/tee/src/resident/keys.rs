@@ -25,7 +25,7 @@ pub const TEE_OFFER_MESSAGE: &[u8] = b"outbe/tee/offer/v1";
 pub struct ResidentTeeKeys {
     pub(crate) identity_seed: Zeroizing<[u8; 32]>,
     pub(crate) noise_private: Zeroizing<[u8; 32]>,
-    pub(crate) tribute_offer_secret: Zeroizing<[u8; 32]>,
+    pub(crate) recipient_secret: Zeroizing<[u8; 32]>,
     pub(crate) dkg_enc_secret: Zeroizing<[u8; 32]>,
     pub(crate) tee_bls_key: bls12381::PrivateKey,
     attestation_signing: ed25519_dalek::SigningKey,
@@ -48,7 +48,7 @@ impl ResidentTeeKeys {
 
     pub(crate) fn new_with_identity_seed(seed: Zeroizing<[u8; 32]>) -> Result<Self> {
         let noise_private = derive(seed.as_ref(), b"", b"outbe/tee/noise-static/v1")?;
-        let tribute_offer_secret = derive(seed.as_ref(), b"", b"outbe/tee/recipient-x25519/v1")?;
+        let recipient_secret = derive(seed.as_ref(), b"", b"outbe/tee/recipient-x25519/v1")?;
         let attestation = derive(seed.as_ref(), b"", b"outbe/tee/attestation-ed25519/v1")?;
         let dkg_enc_secret = derive(seed.as_ref(), b"", b"outbe/tee/dkg-enc/v1")?;
         let bls_seed = derive(seed.as_ref(), b"", b"outbe/tee/dkg-bls-seed/v1")?;
@@ -66,7 +66,7 @@ impl ResidentTeeKeys {
         Ok(Self {
             identity_seed: seed,
             noise_private,
-            tribute_offer_secret,
+            recipient_secret,
             dkg_enc_secret,
             tee_bls_key: tee_bls_key.ok_or(TeeCryptoError::ZeroBlsScalar)?,
             attestation_signing: ed25519_dalek::SigningKey::from_bytes(&attestation),
@@ -81,8 +81,8 @@ impl ResidentTeeKeys {
     pub fn noise_public(&self) -> [u8; 32] {
         x25519_public(&self.noise_private)
     }
-    pub fn tribute_offer_public(&self) -> [u8; 32] {
-        x25519_public(&self.tribute_offer_secret)
+    pub fn recipient_public(&self) -> [u8; 32] {
+        x25519_public(&self.recipient_secret)
     }
     pub fn dkg_enc_public(&self) -> [u8; 32] {
         x25519_public(&self.dkg_enc_secret)
@@ -109,7 +109,7 @@ pub struct ResidentOfferMaterial {
     pub(crate) public: [u8; 32],
     pub(crate) group_sig: Zeroizing<Vec<u8>>,
     pub(crate) key_epoch: u64,
-    pub(crate) tribute_offer_epoch: u64,
+    pub(crate) offer_epoch: u64,
 }
 
 impl std::fmt::Debug for ResidentOfferMaterial {
@@ -123,19 +123,19 @@ impl ResidentOfferMaterial {
         group_sig: Zeroizing<Vec<u8>>,
         chain_id: B256,
         key_epoch: u64,
-        tribute_offer_epoch: u64,
+        offer_epoch: u64,
     ) -> Result<Self> {
-        let mut info = b"outbe/tribute/v1/".to_vec();
-        info.extend_from_slice(tribute_offer_epoch.to_string().as_bytes());
+        let mut info = b"outbe/offer/v1/".to_vec();
+        info.extend_from_slice(offer_epoch.to_string().as_bytes());
         let seed = derive(chain_id.as_slice(), &group_sig, &info)?;
-        let secret = derive(seed.as_ref(), b"", b"outbe/tribute/offer-x25519/v1")?;
+        let secret = derive(seed.as_ref(), b"", b"outbe/offer/x25519/v1")?;
         let public = x25519_public(&secret);
         Ok(Self {
             secret: OfferKeyHandle(StateKeyHandle(secret)),
             public,
             group_sig,
             key_epoch,
-            tribute_offer_epoch,
+            offer_epoch,
         })
     }
 
@@ -145,8 +145,8 @@ impl ResidentOfferMaterial {
     pub fn key_epoch(&self) -> u64 {
         self.key_epoch
     }
-    pub fn tribute_offer_epoch(&self) -> u64 {
-        self.tribute_offer_epoch
+    pub fn offer_epoch(&self) -> u64 {
+        self.offer_epoch
     }
     pub fn offer_key_handle(&self) -> &OfferKeyHandle {
         &self.secret
@@ -171,13 +171,8 @@ impl ResidentOfferMaterial {
         group_sig: Vec<u8>,
         chain_id: B256,
         key_epoch: u64,
-        tribute_offer_epoch: u64,
+        offer_epoch: u64,
     ) -> Result<Self> {
-        Self::from_group_signature(
-            Zeroizing::new(group_sig),
-            chain_id,
-            key_epoch,
-            tribute_offer_epoch,
-        )
+        Self::from_group_signature(Zeroizing::new(group_sig), chain_id, key_epoch, offer_epoch)
     }
 }

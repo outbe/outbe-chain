@@ -420,7 +420,7 @@ fn active_rejoin_delivers_offer_and_revokes_previous_identity() {
         signed.with_verdict(up_to_date_verdict_until(NOW + 20_000)),
         |_, registry| {
             registry
-                .tribute_offer_public_key
+                .offer_public_key
                 .write(B256::from(OFFER_PUBLIC))
                 .unwrap();
         },

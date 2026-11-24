@@ -24,7 +24,7 @@ pub struct GratisKeysSealed {
 #[rpc(server, namespace = "outbe")]
 pub trait OutbeDomainApi {
     /// Derive the account's confidential view + modify keys for `ledger` (`Gratis`,
-    /// `Promis`, `Fidelity`, `Tribute`, or `Nod`) inside the enclave and return them
+    /// `Promis`, `Fidelity`, or `Nod`) inside the enclave and return them
     /// sealed to `ephemeralPubkey` (a client X25519 public key). This is off-chain key
     /// delivery. It never touches consensus state.
     #[method(name = "deriveKeys")]

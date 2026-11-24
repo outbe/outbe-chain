@@ -42,14 +42,14 @@ fn transition_evidence(
 fn install_offer_key(registry: &mut TeeRegistry<'_>, policy: &TeePolicyV1) {
     registry
         .write_bootstrap(&TeeBootstrapData {
-            tribute_offer_public_key: B256::from(OFFER_PUBLIC),
+            offer_public_key: B256::from(OFFER_PUBLIC),
             policy_hash: policy.policy_hash().unwrap(),
             key_epoch: 0,
-            tribute_offer_epoch: 0,
+            offer_epoch: 0,
             dkg_transcript_hash: B256::repeat_byte(0xb2),
             committee_snapshot_block: 1,
             committee_snapshot_hash: B256::repeat_byte(0xb3),
-            tribute_offer_group_public_key: vec![0xb4; 96].into(),
+            offer_group_public_key: vec![0xb4; 96].into(),
         })
         .unwrap();
 }

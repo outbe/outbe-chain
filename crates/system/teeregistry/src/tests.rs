@@ -9,14 +9,14 @@ const CHAIN_ID: u64 = 1;
 
 fn sample_data() -> TeeBootstrapData {
     TeeBootstrapData {
-        tribute_offer_public_key: B256::repeat_byte(0xAA),
+        offer_public_key: B256::repeat_byte(0xAA),
         policy_hash: B256::repeat_byte(0xBB),
         key_epoch: 0,
-        tribute_offer_epoch: 0,
+        offer_epoch: 0,
         dkg_transcript_hash: B256::repeat_byte(0xCC),
         committee_snapshot_block: 1,
         committee_snapshot_hash: B256::repeat_byte(0xDD),
-        tribute_offer_group_public_key: alloy_primitives::Bytes::from(vec![0xEE; 96]),
+        offer_group_public_key: alloy_primitives::Bytes::from(vec![0xEE; 96]),
     }
 }
 
@@ -37,13 +37,10 @@ fn bootstrap_writes_and_reads_back() {
         reg.write_bootstrap(&data).unwrap();
 
         assert!(reg.is_bootstrapped().unwrap());
-        assert_eq!(
-            reg.offer_public_key().unwrap(),
-            data.tribute_offer_public_key
-        );
+        assert_eq!(reg.offer_public_key().unwrap(), data.offer_public_key);
         assert_eq!(reg.policy_hash().unwrap(), data.policy_hash);
         assert_eq!(reg.key_epoch().unwrap(), data.key_epoch);
-        assert_eq!(reg.tribute_offer_epoch().unwrap(), data.tribute_offer_epoch);
+        assert_eq!(reg.offer_epoch().unwrap(), data.offer_epoch);
         assert_eq!(reg.group_public_key_len.read().unwrap(), 96);
         for index in 0..3 {
             assert_eq!(

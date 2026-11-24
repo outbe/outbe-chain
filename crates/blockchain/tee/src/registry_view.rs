@@ -526,12 +526,12 @@ pub async fn read_finalized_registry_view_v1<R: RegistryRpc + Sync>(
     } else {
         None
     };
-    // `ITeeRegistryV1.tributeOfferPublicKey()` (selector `0x1b640a92`) is the
+    // `ITeeRegistryV1.offerPublicKey()` (selector `0x1b640a92`) is the
     // canonical V1 Solidity ABI getter for the threshold network encryption key.
     let key_bytes = rpc
         .call_at(
             TEE_REGISTRY_ADDRESS,
-            &ITeeRegistryV1::tributeOfferPublicKeyCall {}.abi_encode(),
+            &ITeeRegistryV1::offerPublicKeyCall {}.abi_encode(),
             &tag,
         )
         .await
@@ -539,10 +539,12 @@ pub async fn read_finalized_registry_view_v1<R: RegistryRpc + Sync>(
             context: "read finalized network encryption public key",
             source,
         })?;
-    let key_word = ITeeRegistryV1::tributeOfferPublicKeyCall::abi_decode_returns(&key_bytes)
-        .map_err(|source| RegistryError::AbiDecode {
-            context: "decode finalized network encryption public key",
-            source,
+    let key_word =
+        ITeeRegistryV1::offerPublicKeyCall::abi_decode_returns(&key_bytes).map_err(|source| {
+            RegistryError::AbiDecode {
+                context: "decode finalized network encryption public key",
+                source,
+            }
         })?;
     let network_encryption_public_key = B256::from(key_word.to_be_bytes::<32>());
     if network_encryption_public_key.is_zero() {
@@ -669,10 +671,10 @@ mod tests {
                     ITeeRegistryV1::nodeHostEnclaveBindingCall::abi_encode_returns(&self.binding),
                 );
             }
-            if data.starts_with(&ITeeRegistryV1::tributeOfferPublicKeyCall::SELECTOR) {
-                return Ok(
-                    ITeeRegistryV1::tributeOfferPublicKeyCall::abi_encode_returns(&U256::from(7)),
-                );
+            if data.starts_with(&ITeeRegistryV1::offerPublicKeyCall::SELECTOR) {
+                return Ok(ITeeRegistryV1::offerPublicKeyCall::abi_encode_returns(
+                    &U256::from(7),
+                ));
             }
             Err(RegistryError::UnexpectedRegistryCall)
         }

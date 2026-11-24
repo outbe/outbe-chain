@@ -298,7 +298,7 @@ fn revert_data(outcome: &TxResult<OutbeEvmTypes>) -> Option<Vec<u8>> {
 }
 
 #[test]
-fn unset_key_resolves_from_the_inbox_and_gates_tribute() {
+fn unset_key_resolves_from_the_inbox_and_gates_the_offer() {
     let key = network_key(1);
     let rotated = network_key(2);
     let stranger = network_key(3);

@@ -9,16 +9,16 @@ use crate::{errors::TeeRegistryError, schema::TeeRegistry};
 /// calling [`TeeRegistry::write_bootstrap`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TeeBootstrapData {
-    pub tribute_offer_public_key: B256,
+    pub offer_public_key: B256,
     pub policy_hash: B256,
     pub key_epoch: u64,
-    pub tribute_offer_epoch: u64,
+    pub offer_epoch: u64,
     pub dkg_transcript_hash: B256,
     pub committee_snapshot_block: u64,
     pub committee_snapshot_hash: B256,
     /// Encoded DKG group public key (constant term) of the bootstrapping committee,
     /// stored chunked on-chain as part of the founding bootstrap record.
-    pub tribute_offer_group_public_key: alloy_primitives::Bytes,
+    pub offer_group_public_key: alloy_primitives::Bytes,
 }
 
 impl TeeRegistry<'_> {
@@ -27,9 +27,9 @@ impl TeeRegistry<'_> {
         self.bootstrapped.read()
     }
 
-    /// The tribute offer public key clients encrypt to (zero until bootstrap).
+    /// The offer public key clients encrypt to (zero until bootstrap).
     pub fn offer_public_key(&self) -> Result<B256> {
-        self.tribute_offer_public_key.read()
+        self.offer_public_key.read()
     }
 
     /// Current TEE key epoch committed by OST3 and later canonical lifecycle
@@ -38,12 +38,12 @@ impl TeeRegistry<'_> {
         self.key_epoch.read()
     }
 
-    /// The current tribute-offer epoch (slot 4). The enclave derives the resident
+    /// The current offer epoch (slot 4). The enclave derives the resident
     /// offer key for this epoch from `group_sig`. The value is `0` until an
     /// offer-key rotation advances it. The one-time ingestion of registry
     /// onboarding binds this epoch.
-    pub fn tribute_offer_epoch(&self) -> Result<u64> {
-        self.tribute_offer_epoch.read()
+    pub fn offer_epoch(&self) -> Result<u64> {
+        self.offer_epoch.read()
     }
 
     /// The policy hash committed by the mandatory block-1 OST3 payload. The active
@@ -79,17 +79,16 @@ impl TeeRegistry<'_> {
             return Err(TeeRegistryError::AlreadyBootstrapped.into());
         }
 
-        self.tribute_offer_public_key
-            .write(data.tribute_offer_public_key)?;
+        self.offer_public_key.write(data.offer_public_key)?;
         self.policy_hash.write(data.policy_hash)?;
         self.key_epoch.write(data.key_epoch)?;
-        self.tribute_offer_epoch.write(data.tribute_offer_epoch)?;
+        self.offer_epoch.write(data.offer_epoch)?;
         self.dkg_transcript_hash.write(data.dkg_transcript_hash)?;
         self.committee_snapshot_block
             .write(data.committee_snapshot_block)?;
         self.committee_snapshot_hash
             .write(data.committee_snapshot_hash)?;
-        self.set_group_public_key(&data.tribute_offer_group_public_key)?;
+        self.set_group_public_key(&data.offer_group_public_key)?;
 
         self.bootstrapped.write(true)?;
         Ok(())
