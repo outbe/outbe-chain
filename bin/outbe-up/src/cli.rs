@@ -56,6 +56,9 @@ enum NetworkCommand {
         artifacts: PathBuf,
         #[arg(long)]
         ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null` to ignore system SSH config).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
     },
     /// Start every founder and wait for finalized consensus.
     Start {
@@ -63,6 +66,9 @@ enum NetworkCommand {
         artifacts: PathBuf,
         #[arg(long)]
         ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null` to ignore system SSH config).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
         #[arg(long, default_value_t = 600)]
         timeout: u64,
     },
@@ -72,6 +78,9 @@ enum NetworkCommand {
         artifacts: PathBuf,
         #[arg(long)]
         ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null` to ignore system SSH config).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
         #[arg(long)]
         watch: bool,
     },
@@ -140,7 +149,7 @@ enum VmCommand {
         /// Local guest OS image directory produced by `cargo xtask release vm-image`.
         #[arg(long)]
         image_dir: PathBuf,
-        /// Optional VMM image name (defaults to `--image-dir` directory name).
+        /// Optional VMM image name (defaults to digest-qualified `outbe-vm-<flavor>-<hash16>`).
         #[arg(long)]
         image_name: Option<String>,
         /// Optional directory containing pre-built `validator-N.img` raw disks.
@@ -148,6 +157,9 @@ enum VmCommand {
         disks_dir: Option<PathBuf>,
         #[arg(long)]
         ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null` to ignore system SSH config).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
         /// Disable confidential computing (non-TEE QEMU VM).
         #[arg(long)]
         no_tee: bool,
@@ -158,6 +170,9 @@ enum VmCommand {
         artifacts: PathBuf,
         #[arg(long)]
         ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null` to ignore system SSH config).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
         /// Allow creating the dnsmasq hosts file when it does not yet exist.
         #[arg(long)]
         create: bool,
@@ -168,6 +183,9 @@ enum VmCommand {
         artifacts: PathBuf,
         #[arg(long)]
         ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null` to ignore system SSH config).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
         #[arg(long, default_value_t = 600)]
         timeout: u64,
     },
@@ -177,6 +195,9 @@ enum VmCommand {
         artifacts: PathBuf,
         #[arg(long)]
         ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null` to ignore system SSH config).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
     },
     /// Stop and remove only the founder VMs recorded in `vm-state.json`, leaving images intact.
     Remove {
@@ -184,6 +205,9 @@ enum VmCommand {
         artifacts: PathBuf,
         #[arg(long)]
         ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null` to ignore system SSH config).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
     },
     /// Show the VMM and consensus status of every recorded founder VM.
     Status {
@@ -191,6 +215,9 @@ enum VmCommand {
         artifacts: PathBuf,
         #[arg(long)]
         ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null` to ignore system SSH config).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
         #[arg(long)]
         watch: bool,
     },
@@ -236,17 +263,24 @@ impl Cli {
                     output,
                     keys_dir,
                 } => network::build::run(&software_bundle, &config, &output, keys_dir.as_deref()),
-                NetworkCommand::Prepare { artifacts, ssh_key } => {
-                    network::prepare::run(&artifacts, ssh_key.as_deref()).await
+                NetworkCommand::Prepare {
+                    artifacts,
+                    ssh_key,
+                    ssh_config,
+                } => {
+                    network::prepare::run(&artifacts, ssh_key.as_deref(), ssh_config.as_deref())
+                        .await
                 }
                 NetworkCommand::Start {
                     artifacts,
                     ssh_key,
+                    ssh_config,
                     timeout,
                 } => {
                     network::start::run(
                         &artifacts,
                         ssh_key.as_deref(),
+                        ssh_config.as_deref(),
                         std::time::Duration::from_secs(timeout),
                     )
                     .await
@@ -254,8 +288,17 @@ impl Cli {
                 NetworkCommand::Status {
                     artifacts,
                     ssh_key,
+                    ssh_config,
                     watch,
-                } => network::status::show(&artifacts, ssh_key.as_deref(), watch).await,
+                } => {
+                    network::status::show(
+                        &artifacts,
+                        ssh_key.as_deref(),
+                        ssh_config.as_deref(),
+                        watch,
+                    )
+                    .await
+                }
             },
             Command::Validator(args) => match args.command {
                 ValidatorCommand::ConfigExample { output } => match output {
@@ -287,6 +330,7 @@ impl Cli {
                     image_name,
                     disks_dir,
                     ssh_key,
+                    ssh_config,
                     no_tee,
                 } => {
                     vm::lifecycle::create(vm::lifecycle::CreateOptions {
@@ -295,6 +339,7 @@ impl Cli {
                         image_name: image_name.as_deref(),
                         disks_dir: disks_dir.as_deref(),
                         ssh_key: ssh_key.as_deref(),
+                        ssh_config: ssh_config.as_deref(),
                         no_tee,
                     })
                     .await
@@ -302,31 +347,57 @@ impl Cli {
                 VmCommand::HostReserve {
                     artifacts,
                     ssh_key,
+                    ssh_config,
                     create,
-                } => vm::lifecycle::host_reserve(&artifacts, ssh_key.as_deref(), create),
+                } => vm::lifecycle::host_reserve(
+                    &artifacts,
+                    ssh_key.as_deref(),
+                    ssh_config.as_deref(),
+                    create,
+                ),
                 VmCommand::Start {
                     artifacts,
                     ssh_key,
+                    ssh_config,
                     timeout,
                 } => {
                     vm::lifecycle::start(
                         &artifacts,
                         ssh_key.as_deref(),
+                        ssh_config.as_deref(),
                         std::time::Duration::from_secs(timeout),
                     )
                     .await
                 }
-                VmCommand::Stop { artifacts, ssh_key } => {
-                    vm::lifecycle::stop(&artifacts, ssh_key.as_deref()).await
+                VmCommand::Stop {
+                    artifacts,
+                    ssh_key,
+                    ssh_config,
+                } => {
+                    vm::lifecycle::stop(&artifacts, ssh_key.as_deref(), ssh_config.as_deref()).await
                 }
-                VmCommand::Remove { artifacts, ssh_key } => {
-                    vm::lifecycle::remove(&artifacts, ssh_key.as_deref()).await
+                VmCommand::Remove {
+                    artifacts,
+                    ssh_key,
+                    ssh_config,
+                } => {
+                    vm::lifecycle::remove(&artifacts, ssh_key.as_deref(), ssh_config.as_deref())
+                        .await
                 }
                 VmCommand::Status {
                     artifacts,
                     ssh_key,
+                    ssh_config,
                     watch,
-                } => vm::lifecycle::status(&artifacts, ssh_key.as_deref(), watch).await,
+                } => {
+                    vm::lifecycle::status(
+                        &artifacts,
+                        ssh_key.as_deref(),
+                        ssh_config.as_deref(),
+                        watch,
+                    )
+                    .await
+                }
             },
             Command::Internal(args) => match args.command {
                 InternalCommand::Feeder(args) => {
@@ -401,6 +472,8 @@ mod tests {
             "network-final",
             "--ssh-key",
             "operator-key",
+            "--ssh-config",
+            "/dev/null",
         ])
         .is_ok());
         assert!(Cli::try_parse_from([
@@ -540,6 +613,8 @@ mod tests {
             "disks",
             "--ssh-key",
             "op.key",
+            "--ssh-config",
+            "/dev/null",
             "--no-tee",
         ])
         .is_ok());

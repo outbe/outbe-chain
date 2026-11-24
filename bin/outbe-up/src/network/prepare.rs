@@ -56,7 +56,11 @@ as_root "$base/validator-${index}/preflight.sh"
 as_root "$base/validator-${index}/install-systemd.sh" --prepare-only
 "#;
 
-pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
+pub async fn run(
+    artifacts: &Path,
+    ssh_key: Option<&Path>,
+    ssh_config: Option<&Path>,
+) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("verifying network artifacts and software bundle");
     let build = NetworkArtifacts::load(artifacts)?;
@@ -64,7 +68,7 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
         build.manifest.deployment == DeploymentKind::Host,
         "network prepare only supports bare-host deployments; use outbe-up vm disk / vm create for VM deployments"
     );
-    let ssh = SshOptions::new(ssh_key)?;
+    let ssh = SshOptions::new(ssh_key, ssh_config)?;
     let temporary = tempfile::tempdir()?;
     let software = temporary.path().join("software");
     fs::create_dir(&software)?;

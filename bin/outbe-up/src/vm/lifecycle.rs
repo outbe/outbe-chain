@@ -52,6 +52,7 @@ pub struct CreateOptions<'a> {
     pub image_name: Option<&'a str>,
     pub disks_dir: Option<&'a Path>,
     pub ssh_key: Option<&'a Path>,
+    pub ssh_config: Option<&'a Path>,
     pub no_tee: bool,
 }
 
@@ -117,7 +118,7 @@ pub async fn create(options: CreateOptions<'_>) -> Result<()> {
     let mut state =
         load_or_init_create_state(options.artifacts, &build, &image_name, &os_image_hash)?;
 
-    let ssh_options = SshOptions::new(options.ssh_key)?;
+    let ssh_options = SshOptions::new(options.ssh_key, options.ssh_config)?;
 
     // Build map of already-journaled (vm_name -> vm_id) so resuming skips its own VMs.
     let resumed_ids: BTreeMap<String, String> = state
@@ -364,14 +365,19 @@ pub async fn create(options: CreateOptions<'_>) -> Result<()> {
     Ok(())
 }
 
-pub fn host_reserve(artifacts: &Path, ssh_key: Option<&Path>, create: bool) -> Result<()> {
+pub fn host_reserve(
+    artifacts: &Path,
+    ssh_key: Option<&Path>,
+    ssh_config: Option<&Path>,
+    create: bool,
+) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("loading VM deployment state");
     let build = NetworkArtifacts::load(artifacts)?;
     ensure_vm_deployment(&build)?;
     let state = VmState::load(artifacts)?;
     state.ensure_complete_for_artifacts(&build)?;
-    let ssh_options = SshOptions::new(ssh_key)?;
+    let ssh_options = SshOptions::new(ssh_key, ssh_config)?;
 
     let grouped = group_dnsmasq_entries(&state);
 
@@ -424,14 +430,19 @@ pub fn host_reserve(artifacts: &Path, ssh_key: Option<&Path>, create: bool) -> R
     Ok(())
 }
 
-pub async fn start(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) -> Result<()> {
+pub async fn start(
+    artifacts: &Path,
+    ssh_key: Option<&Path>,
+    ssh_config: Option<&Path>,
+    timeout: Duration,
+) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("loading VM deployment state");
     let build = NetworkArtifacts::load(artifacts)?;
     ensure_vm_deployment(&build)?;
     let state = VmState::load(artifacts)?;
     state.ensure_complete_for_artifacts(&build)?;
-    let ssh_options = SshOptions::new(ssh_key)?;
+    let ssh_options = SshOptions::new(ssh_key, ssh_config)?;
 
     progress.stage(&format!(
         "starting {} VMs concurrently",
@@ -560,14 +571,18 @@ pub async fn start(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) 
     }
 }
 
-pub async fn stop(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
+pub async fn stop(
+    artifacts: &Path,
+    ssh_key: Option<&Path>,
+    ssh_config: Option<&Path>,
+) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("loading VM deployment state");
     let build = NetworkArtifacts::load(artifacts)?;
     ensure_vm_deployment(&build)?;
     let state = VmState::load(artifacts)?;
     state.ensure_matches_network(&build)?;
-    let ssh_options = SshOptions::new(ssh_key)?;
+    let ssh_options = SshOptions::new(ssh_key, ssh_config)?;
 
     progress.stage(&format!("stopping {} recorded VMs", state.founders.len()));
     let mut tasks = JoinSet::new();
@@ -592,7 +607,11 @@ pub async fn stop(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-pub async fn remove(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
+pub async fn remove(
+    artifacts: &Path,
+    ssh_key: Option<&Path>,
+    ssh_config: Option<&Path>,
+) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("loading VM deployment state");
     let build = NetworkArtifacts::load(artifacts)?;
@@ -600,7 +619,7 @@ pub async fn remove(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
     let state = VmState::load(artifacts)?;
     // Allow removing partial states left by an interrupted `vm create`.
     state.ensure_matches_network(&build)?;
-    let ssh_options = SshOptions::new(ssh_key)?;
+    let ssh_options = SshOptions::new(ssh_key, ssh_config)?;
 
     progress.stage(&format!(
         "stopping and removing {} recorded VMs (leaving guest images intact)",
@@ -639,14 +658,19 @@ pub async fn remove(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-pub async fn status(artifacts: &Path, ssh_key: Option<&Path>, watch: bool) -> Result<()> {
+pub async fn status(
+    artifacts: &Path,
+    ssh_key: Option<&Path>,
+    ssh_config: Option<&Path>,
+    watch: bool,
+) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("querying VM founder status");
     let build = NetworkArtifacts::load(artifacts)?;
     ensure_vm_deployment(&build)?;
     let state = VmState::load(artifacts)?;
     state.ensure_complete_for_artifacts(&build)?;
-    let ssh_options = SshOptions::new(ssh_key)?;
+    let ssh_options = SshOptions::new(ssh_key, ssh_config)?;
 
     let statuses = query_all(&build, &state, &ssh_options).await?;
     if !watch {
@@ -1353,13 +1377,10 @@ fn ensure_remote_image(
         "remote mktemp -d returned an empty path"
     );
 
-    let mut entries = Vec::new();
-    for entry in fs::read_dir(local_image_dir)? {
-        entries.push(entry?.path());
-    }
-    let refs: Vec<&Path> = entries.iter().map(PathBuf::as_path).collect();
-    let scp_dest = format!("{}/", stage_dir.trim_end_matches('/'));
-    if let Err(err) = ssh_options.copy_to_ssh(ssh, host, &refs, &scp_dest, true) {
+    let extract_cmd = format!("tar --sparse -xzf - -C {}", shell_quote(&stage_dir));
+    if let Err(err) = ssh_options.stream_stdin_to_ssh(ssh, host, &extract_cmd, |sink| {
+        stream_sparse_tar_gz(local_image_dir, ".", sink)
+    }) {
         let _ =
             ssh_options.run_quiet_ssh(ssh, host, &format!("rm -rf {}", shell_quote(&stage_dir)));
         return Err(err);
@@ -1368,6 +1389,138 @@ fn ensure_remote_image(
     let publish_cmd = build_image_publish_command(vmm_home, image_name, &stage_dir, local_digest);
     ssh_options.run_quiet_ssh(ssh, host, &publish_cmd)?;
     Ok(())
+}
+
+/// Build the remote shell command that extracts a sparse raw disk, verifies its raw SHA-256,
+/// converts it to qcow2, resizes to `disk_gib`, and atomically publishes `hda.img`.
+fn build_disk_upload_and_convert_command(
+    vmm_home: &str,
+    vm_id: &str,
+    filename: &str,
+    expected_sha256: &str,
+    disk_gib: u32,
+) -> String {
+    let vm_dir_expr = remote_vmm_path(vmm_home, &format!("vm/{vm_id}"));
+    let qcow2_expr = remote_vmm_path(vmm_home, &format!("vm/{vm_id}/hda.img"));
+    let filename_quoted = shell_quote(filename);
+    let expected_quoted = shell_quote(expected_sha256);
+    format!(
+        "set -e; \
+         mkdir -p {vm_dir_expr}; \
+         tmp_dir=$(mktemp -d {vm_dir_expr}/.hda-upload.XXXXXX); \
+         trap 'rm -rf \"$tmp_dir\"' EXIT; \
+         tar --sparse -xzf - -C \"$tmp_dir\"; \
+         raw=\"$tmp_dir\"/{filename_quoted}; \
+         if [ ! -f \"$raw\" ]; then echo 'uploaded raw disk missing' >&2; exit 1; fi; \
+         actual=$(sha256sum \"$raw\" | awk '{{print $1}}'); \
+         if [ \"$actual\" != {expected_quoted} ]; then echo \"uploaded raw disk checksum mismatch: $actual\" >&2; exit 1; fi; \
+         qcow2_tmp=\"$tmp_dir/hda.img\"; \
+         qemu-img convert -f raw -O qcow2 \"$raw\" \"$qcow2_tmp\"; \
+         rm -f \"$raw\"; \
+         qemu-img resize -f qcow2 \"$qcow2_tmp\" {disk_gib}G; \
+         mv -f \"$qcow2_tmp\" {qcow2_expr}"
+    )
+}
+
+/// Stream `tar --sparse -czf - -C <base_dir> <entry>` into `sink` without reading holes.
+fn stream_sparse_tar_gz(base_dir: &Path, entry: &str, sink: &mut dyn std::io::Write) -> Result<()> {
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("tar")
+        .args(["--sparse", "-czf", "-", "-C"])
+        .arg(base_dir)
+        .arg(entry)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .wrap_err("spawn local tar --sparse -czf")?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| eyre::eyre!("tar stdout unavailable"))?;
+    let copy_result = std::io::copy(&mut stdout, sink);
+    let output = child.wait_with_output().wrap_err("wait for local tar")?;
+    if !output.status.success() {
+        bail!(
+            "local tar --sparse failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    copy_result.wrap_err("stream compressed sparse tar to SSH")?;
+    Ok(())
+}
+
+/// Hash the logical bytes of a sparse file using `SEEK_DATA`/`SEEK_HOLE` to skip reading holes.
+fn sha256_sparse_file(path: &Path) -> Result<String> {
+    use std::io::{Read, Seek, SeekFrom};
+
+    use rustix::fs::SeekFrom as RustixSeekFrom;
+
+    let mut file =
+        fs::File::open(path).wrap_err_with(|| format!("open sparse file: {}", path.display()))?;
+    let file_len = file.metadata()?.len();
+    let mut hasher = Sha256::new();
+    let zero_chunk = [0_u8; 64 * 1024];
+    let mut read_buf = vec![0_u8; 64 * 1024];
+
+    let feed_zeros = |hasher: &mut Sha256, mut count: u64| {
+        while count > 0 {
+            let step = (count as usize).min(zero_chunk.len());
+            hasher.update(&zero_chunk[..step]);
+            count -= step as u64;
+        }
+    };
+
+    let mut pos: u64 = 0;
+    while pos < file_len {
+        let data_start = match rustix::fs::seek(&file, RustixSeekFrom::Data(pos)) {
+            Ok(offset) => offset,
+            Err(rustix::io::Errno::NXIO) => {
+                // Remaining bytes through EOF are a hole.
+                feed_zeros(&mut hasher, file_len - pos);
+                break;
+            }
+            Err(rustix::io::Errno::INVAL | rustix::io::Errno::OPNOTSUPP) => {
+                // Filesystem does not support SEEK_DATA; fall back to linear read.
+                file.seek(SeekFrom::Start(pos))?;
+                let mut remaining = file_len - pos;
+                while remaining > 0 {
+                    let want = (remaining as usize).min(read_buf.len());
+                    let read = file.read(&mut read_buf[..want])?;
+                    if read == 0 {
+                        break;
+                    }
+                    hasher.update(&read_buf[..read]);
+                    remaining -= read as u64;
+                }
+                break;
+            }
+            Err(err) => return Err(err).wrap_err("SEEK_DATA on sparse disk"),
+        };
+
+        if data_start > pos {
+            feed_zeros(&mut hasher, data_start - pos);
+        }
+
+        let data_end = match rustix::fs::seek(&file, RustixSeekFrom::Hole(data_start)) {
+            Ok(offset) => offset.min(file_len),
+            Err(rustix::io::Errno::NXIO) => file_len,
+            Err(err) => return Err(err).wrap_err("SEEK_HOLE on sparse disk"),
+        };
+
+        file.seek(SeekFrom::Start(data_start))?;
+        let mut remaining = data_end - data_start;
+        while remaining > 0 {
+            let want = (remaining as usize).min(read_buf.len());
+            let read = file.read(&mut read_buf[..want])?;
+            ensure!(read > 0, "unexpected EOF while hashing sparse disk");
+            hasher.update(&read_buf[..read]);
+            remaining -= read as u64;
+        }
+        pos = data_end;
+    }
+
+    Ok(hex::encode(hasher.finalize()))
 }
 
 fn upload_and_convert_disk(
@@ -1379,18 +1532,27 @@ fn upload_and_convert_disk(
     local_raw_disk: &Path,
     disk_gib: u32,
 ) -> Result<()> {
-    let vm_dir_expr = remote_vmm_path(vmm_home, &format!("vm/{vm_id}"));
-    let raw_expr = remote_vmm_path(vmm_home, &format!("vm/{vm_id}/hda.raw"));
-    let qcow2_expr = remote_vmm_path(vmm_home, &format!("vm/{vm_id}/hda.img"));
-    ssh_options.run_quiet_ssh(ssh, label, &format!("mkdir -p {vm_dir_expr}"))?;
-
-    let scp_dest = format!("{}/vm/{vm_id}/hda.raw", vmm_home.trim_end_matches('/'));
-    ssh_options.copy_to_ssh(ssh, label, &[local_raw_disk], &scp_dest, false)?;
-
-    let convert_cmd = format!(
-        "qemu-img convert -f raw -O qcow2 {raw_expr} {qcow2_expr} && rm -f {raw_expr} && qemu-img resize -f qcow2 {qcow2_expr} {disk_gib}G"
+    let parent = local_raw_disk.parent().unwrap_or_else(|| Path::new("."));
+    let filename = local_raw_disk
+        .file_name()
+        .and_then(|s| s.to_str())
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "disk path has no UTF-8 filename: {}",
+                local_raw_disk.display()
+            )
+        })?;
+    let expected_sha256 = sha256_sparse_file(local_raw_disk)?;
+    let cmd = build_disk_upload_and_convert_command(
+        vmm_home,
+        vm_id,
+        filename,
+        &expected_sha256,
+        disk_gib,
     );
-    ssh_options.run_quiet_ssh(ssh, label, &convert_cmd)?;
+    ssh_options.stream_stdin_to_ssh(ssh, label, &cmd, |sink| {
+        stream_sparse_tar_gz(parent, filename, sink)
+    })?;
     Ok(())
 }
 
@@ -1980,6 +2142,171 @@ mod tests {
         assert_eq!(
             run_with_deadline(fast_deadline, fast).await.unwrap(),
             Some(42)
+        );
+    }
+
+    #[test]
+    fn sha256_sparse_file_matches_logical_zero_filled_sha256() {
+        use std::{
+            io::{Seek, SeekFrom, Write},
+            process::Command,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sparse.img");
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&path)
+            .unwrap();
+        let logical_size: u64 = 16 * 1024 * 1024;
+        file.set_len(logical_size).unwrap();
+        file.write_all(b"header-bytes-at-zero").unwrap();
+        file.seek(SeekFrom::Start(8 * 1024 * 1024)).unwrap();
+        file.write_all(b"middle-extent-payload").unwrap();
+        file.seek(SeekFrom::Start(logical_size - 16)).unwrap();
+        file.write_all(b"tail-16-bytes!!!").unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        let fast_hash = sha256_sparse_file(&path).unwrap();
+        let out = Command::new("sha256sum").arg(&path).output().unwrap();
+        assert!(out.status.success());
+        let expected = String::from_utf8(out.stdout)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_owned();
+        assert_eq!(fast_hash, expected);
+    }
+
+    #[test]
+    fn sparse_disk_stream_and_verify_executes_locally() {
+        use std::{
+            io::{Seek, SeekFrom, Write},
+            os::unix::fs::PermissionsExt,
+            process::{Command, Stdio},
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let shim_dir = dir.path().join("bin");
+        fs::create_dir_all(&shim_dir).unwrap();
+        let qemu_log = dir.path().join("qemu-img.log");
+        let qemu_shim = shim_dir.join("qemu-img");
+        // Shim records calls and copies raw->qcow2 on `convert`.
+        fs::write(
+            &qemu_shim,
+            format!(
+                "#!/bin/sh\nset -e\necho \"$*\" >> {}\nif [ \"$1\" = \"convert\" ]; then cp --sparse=always \"$6\" \"$7\"; fi\n",
+                shell_quote(&qemu_log.to_string_lossy())
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&qemu_shim, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let path_env = format!(
+            "{}:{}",
+            shim_dir.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+
+        // Create a 32 MiB sparse raw disk with only a few bytes of actual data.
+        let src_disk = dir.path().join("validator-0.img");
+        let mut file = fs::OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&src_disk)
+            .unwrap();
+        let logical_size: u64 = 32 * 1024 * 1024;
+        file.set_len(logical_size).unwrap();
+        file.write_all(b"outbe-gpt-header").unwrap();
+        file.seek(SeekFrom::Start(16 * 1024 * 1024)).unwrap();
+        file.write_all(b"outbe-ext4-data").unwrap();
+        file.sync_all().unwrap();
+        drop(file);
+
+        let expected_sha = sha256_sparse_file(&src_disk).unwrap();
+
+        // Compress sparse stream into memory to confirm wire size is tiny compared to 32 MiB.
+        let mut wire_bytes = Vec::new();
+        stream_sparse_tar_gz(dir.path(), "validator-0.img", &mut wire_bytes).unwrap();
+        assert!(
+            wire_bytes.len() < 64 * 1024,
+            "compressed sparse stream should be tiny, got {} bytes",
+            wire_bytes.len()
+        );
+
+        let vmm_home = dir.path().join("vmm");
+        let cmd = build_disk_upload_and_convert_command(
+            vmm_home.to_str().unwrap(),
+            UUID_0,
+            "validator-0.img",
+            &expected_sha,
+            40,
+        );
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(&cmd)
+            .env("PATH", &path_env)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child.stdin.take().unwrap().write_all(&wire_bytes).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(
+            out.status.success(),
+            "disk upload/convert failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let published = vmm_home.join(format!("vm/{UUID_0}/hda.img"));
+        assert!(published.is_file());
+        let log = fs::read_to_string(&qemu_log).unwrap();
+        assert!(log.contains("convert -f raw -O qcow2"));
+        assert!(log.contains("resize -f qcow2"));
+        assert!(log.contains("40G"));
+
+        // Mismatched SHA-256 fails closed BEFORE invoking qemu-img.
+        let bad_log = dir.path().join("qemu-img-bad.log");
+        fs::write(
+            &qemu_shim,
+            format!(
+                "#!/bin/sh\necho \"$*\" >> {}\n",
+                shell_quote(&bad_log.to_string_lossy())
+            ),
+        )
+        .unwrap();
+        let bad_cmd = build_disk_upload_and_convert_command(
+            vmm_home.to_str().unwrap(),
+            UUID_1,
+            "validator-0.img",
+            &"0".repeat(64),
+            40,
+        );
+        let mut bad_child = Command::new("sh")
+            .arg("-c")
+            .arg(&bad_cmd)
+            .env("PATH", &path_env)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        bad_child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&wire_bytes)
+            .unwrap();
+        let bad_out = bad_child.wait_with_output().unwrap();
+        assert!(!bad_out.status.success(), "bad checksum must fail closed");
+        assert!(
+            !bad_log.exists(),
+            "qemu-img must not run when raw checksum mismatches"
         );
     }
 }

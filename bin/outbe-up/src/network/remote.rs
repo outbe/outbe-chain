@@ -128,15 +128,25 @@ impl NetworkArtifacts {
 #[derive(Clone)]
 pub(crate) struct SshOptions {
     ssh_key: Option<PathBuf>,
+    ssh_config: Option<PathBuf>,
 }
 
 impl SshOptions {
-    pub(crate) fn new(ssh_key: Option<&Path>) -> Result<Self> {
+    pub(crate) fn new(ssh_key: Option<&Path>, ssh_config: Option<&Path>) -> Result<Self> {
         if let Some(path) = ssh_key {
             ensure!(path.is_file(), "SSH key does not exist: {}", path.display());
         }
+        if let Some(path) = ssh_config {
+            // Allow `/dev/null` (a character device, not a regular file).
+            ensure!(
+                path.exists(),
+                "SSH config does not exist: {}",
+                path.display()
+            );
+        }
         Ok(Self {
             ssh_key: ssh_key.map(Path::to_owned),
+            ssh_config: ssh_config.map(Path::to_owned),
         })
     }
 
@@ -238,6 +248,57 @@ impl SshOptions {
         )
     }
 
+    /// Spawn an SSH command and stream arbitrary bytes into its stdin via `writer`.
+    pub(crate) fn stream_stdin_to_ssh<F>(
+        &self,
+        ssh: &Ssh,
+        label: &str,
+        command: &str,
+        writer: F,
+    ) -> Result<String>
+    where
+        F: FnOnce(&mut dyn std::io::Write) -> Result<()>,
+    {
+        use std::process::Stdio;
+
+        let mut process = Command::new("ssh");
+        self.ssh_endpoint_args(&mut process, ssh);
+        let mut child = process
+            .arg(command)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .wrap_err("spawn ssh")?;
+        let write_result = if let Some(mut stdin) = child.stdin.take() {
+            writer(&mut stdin)
+        } else {
+            Ok(())
+        };
+        let output = child.wait_with_output().wrap_err("wait for ssh")?;
+        if let Err(err) = write_result {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            if stderr.trim().is_empty() {
+                return Err(err);
+            }
+            bail!(
+                "streaming to SSH on {label} failed ({err:#}): {}",
+                stderr.trim()
+            );
+        }
+        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let details = [stdout.trim(), stderr.trim()]
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            bail!("SSH command failed on {label}:\n{details}");
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
     pub(crate) fn copy_to_ssh(
         &self,
         ssh: &Ssh,
@@ -247,11 +308,7 @@ impl SshOptions {
         recursive: bool,
     ) -> Result<()> {
         let mut process = Command::new("scp");
-        process.args(["-q", "-P", &ssh.port.to_string()]);
-        process.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
-        if let Some(ssh_key) = &self.ssh_key {
-            process.arg("-i").arg(ssh_key);
-        }
+        self.scp_endpoint_args(&mut process, ssh);
         if recursive {
             process.arg("-r");
         }
@@ -272,12 +329,27 @@ impl SshOptions {
     }
 
     fn ssh_endpoint_args(&self, process: &mut Command, ssh: &Ssh) {
+        if let Some(ssh_config) = &self.ssh_config {
+            process.arg("-F").arg(ssh_config);
+        }
         process.args(["-p", &ssh.port.to_string()]);
         process.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
         if let Some(ssh_key) = &self.ssh_key {
             process.arg("-i").arg(ssh_key);
         }
         process.arg(format!("{}@{}", ssh.user, ssh.host));
+    }
+
+    fn scp_endpoint_args(&self, process: &mut Command, ssh: &Ssh) {
+        process.arg("-q");
+        if let Some(ssh_config) = &self.ssh_config {
+            process.arg("-F").arg(ssh_config);
+        }
+        process.args(["-P", &ssh.port.to_string()]);
+        process.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
+        if let Some(ssh_key) = &self.ssh_key {
+            process.arg("-i").arg(ssh_key);
+        }
     }
 }
 
@@ -298,5 +370,50 @@ fn scp_host(host: &str) -> String {
         format!("[{host}]")
     } else {
         host.to_owned()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ssh_options_passes_dash_f_only_when_configured() {
+        let endpoint = Ssh {
+            host: "192.0.2.50".into(),
+            user: "ubuntu".into(),
+            port: 2222,
+        };
+
+        // Default leaves `-F` unset.
+        let default_opts = SshOptions::new(None, None).unwrap();
+        let mut ssh_cmd = Command::new("ssh");
+        default_opts.ssh_endpoint_args(&mut ssh_cmd, &endpoint);
+        let ssh_args: Vec<_> = ssh_cmd.get_args().collect();
+        assert!(!ssh_args.contains(&std::ffi::OsStr::new("-F")));
+
+        let mut scp_cmd = Command::new("scp");
+        default_opts.scp_endpoint_args(&mut scp_cmd, &endpoint);
+        let scp_args: Vec<_> = scp_cmd.get_args().collect();
+        assert!(!scp_args.contains(&std::ffi::OsStr::new("-F")));
+
+        // Explicit `--ssh-config /dev/null` is accepted and passes `-F /dev/null`.
+        let null_opts = SshOptions::new(None, Some(Path::new("/dev/null"))).unwrap();
+        let mut ssh_cmd = Command::new("ssh");
+        null_opts.ssh_endpoint_args(&mut ssh_cmd, &endpoint);
+        let ssh_args: Vec<_> = ssh_cmd.get_args().collect();
+        assert!(ssh_args.windows(2).any(|w| {
+            w[0] == std::ffi::OsStr::new("-F") && w[1] == std::ffi::OsStr::new("/dev/null")
+        }));
+
+        let mut scp_cmd = Command::new("scp");
+        null_opts.scp_endpoint_args(&mut scp_cmd, &endpoint);
+        let scp_args: Vec<_> = scp_cmd.get_args().collect();
+        assert!(scp_args.windows(2).any(|w| {
+            w[0] == std::ffi::OsStr::new("-F") && w[1] == std::ffi::OsStr::new("/dev/null")
+        }));
+
+        // Missing config path fails closed.
+        assert!(SshOptions::new(None, Some(Path::new("/nonexistent/outbe-ssh-config"))).is_err());
     }
 }

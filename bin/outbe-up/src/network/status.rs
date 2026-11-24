@@ -41,11 +41,16 @@ struct RpcResponse {
     result: Option<Value>,
 }
 
-pub async fn show(artifacts: &Path, ssh_key: Option<&Path>, watch: bool) -> Result<()> {
+pub async fn show(
+    artifacts: &Path,
+    ssh_key: Option<&Path>,
+    ssh_config: Option<&Path>,
+    watch: bool,
+) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("querying founding validator status");
     let build = NetworkArtifacts::load(artifacts)?;
-    let ssh = SshOptions::new(ssh_key)?;
+    let ssh = SshOptions::new(ssh_key, ssh_config)?;
     let statuses = query_all(&build, &ssh).await?;
     if !watch {
         progress.done(&format!("queried {} founding validators", statuses.len()));

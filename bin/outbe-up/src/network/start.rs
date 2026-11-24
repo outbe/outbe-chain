@@ -13,11 +13,16 @@ use super::{
     status::{healthy, query_all, ready_for_hyperlane_setup, render, FounderStatus},
 };
 
-pub async fn run(artifacts: &Path, ssh_key: Option<&Path>, timeout: Duration) -> Result<()> {
+pub async fn run(
+    artifacts: &Path,
+    ssh_key: Option<&Path>,
+    ssh_config: Option<&Path>,
+    timeout: Duration,
+) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("verifying network artifacts and SSH targets");
     let build = NetworkArtifacts::load(artifacts)?;
-    let ssh = SshOptions::new(ssh_key)?;
+    let ssh = SshOptions::new(ssh_key, ssh_config)?;
     start_founders(&build, &ssh, &mut progress).await?;
     wait_until_ready(&build, &ssh, timeout, &mut progress).await
 }
