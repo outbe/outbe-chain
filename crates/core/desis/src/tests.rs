@@ -1726,7 +1726,7 @@ fn schedule_derives_min_bid_qty_from_prior_clearing() {
     });
 }
 
-// --- Origin gate (OriginRouter-only entries) ---
+// --- Bid intake gate ---
 
 #[test]
 fn process_bids_in_non_revealing_stage_fails() {
