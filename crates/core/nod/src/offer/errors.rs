@@ -20,10 +20,10 @@ pub enum PayloadError {
     #[error("failed to parse decrypted payload: {0}")]
     ParseDecryptedPayload(#[source] serde_json::Error),
     /// Deserializing the encrypted offer payload failed.
-    #[error("invalid encrypted Tribute payload: {0}")]
+    #[error("invalid encrypted offer payload: {0}")]
     InvalidEncryptedOfferPayload(#[source] serde_json::Error),
-    /// The `tribute_draft_id` field is empty.
-    #[error("tribute_draft_id is required")]
+    /// The `offer_draft_id` field is empty.
+    #[error("offer_draft_id is required")]
     DraftIdRequired,
     /// The `creator` field is empty.
     #[error("creator is required")]
@@ -57,9 +57,6 @@ pub enum ProcessError {
         /// Day whose VWAP was missing.
         worldwide_day: WorldwideDay,
     },
-    /// Encrypting the issued Nod failed.
-    #[error("Tribute encryption failed: {0}")]
-    OfferEncryptionFailed(#[source] TeeError),
     /// A ZK claim hex field is invalid.
     #[error("{what} must be 0x-prefixed 32-byte hex")]
     InvalidB256Hex {

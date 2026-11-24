@@ -130,7 +130,7 @@ fn issue(
     }
     let series_id = SeriesId::for_pair(
         request.emission_day,
-        offer.tribute_currency,
+        offer.issuance_currency,
         offer.reference_currency,
     )
     .map_err(|_| ProcessError::InvalidSeries)?;
@@ -140,7 +140,7 @@ fn issue(
         owner,
         emission_day: request.emission_day,
         entry_price_minor: request.entry_price_minor,
-        issuance_currency: offer.tribute_currency,
+        issuance_currency: offer.issuance_currency,
         reference_currency: offer.reference_currency,
     };
     let nod = crate::nod_encryption::encrypt_nod(nod_state_key, terms, load, nominal)

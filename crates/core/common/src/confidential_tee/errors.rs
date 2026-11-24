@@ -167,7 +167,7 @@ fn resident_error_message(error: &outbe_tee::resident::TeeCryptoError) -> &'stat
     }
 }
 
-/// Hex decoder failure for a `tribute_draft_id`.
+/// Hex decoder failure for a `offer_draft_id`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum DraftIdHexError {
     /// A character was not a hex digit.
@@ -189,8 +189,8 @@ pub enum DraftIdHexError {
 /// Error from canonical amount parsing and nominal math shared by offer payloads.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum ComputeError {
-    /// The `tribute_draft_id` hex string failed hex decoding.
-    #[error("invalid tribute_draft_id hex: {draft_id}")]
+    /// The `offer_draft_id` hex string failed hex decoding.
+    #[error("invalid offer_draft_id hex: {draft_id}")]
     InvalidDraftIdHex {
         /// Caller text that failed decoding, including any `0x` prefix.
         draft_id: String,
@@ -198,8 +198,8 @@ pub enum ComputeError {
         #[source]
         source: DraftIdHexError,
     },
-    /// The decoded `tribute_draft_id` length is not 32 bytes.
-    #[error("tribute_draft_id must be 32 bytes, got {len}")]
+    /// The decoded `offer_draft_id` length is not 32 bytes.
+    #[error("offer_draft_id must be 32 bytes, got {len}")]
     DraftIdLength { len: usize },
     /// The issuance WorldwideDay VWAP is zero.
     #[error("issuance WorldwideDay VWAP is zero")]
@@ -330,7 +330,7 @@ impl LocalCryptoError {
     }
 }
 
-/// Decode a 32-byte `tribute_draft_id`. An optional `0x` prefix is accepted.
+/// Decode a 32-byte `offer_draft_id`. An optional `0x` prefix is accepted.
 ///
 /// The decoded bytes are validated and then discarded by token-id derivation.
 /// A malformed id still fails this function.

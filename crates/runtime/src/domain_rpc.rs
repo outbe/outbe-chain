@@ -348,7 +348,6 @@ mod tests {
             Ledger::Gratis,
             Ledger::Promis,
             Ledger::Fidelity,
-            Ledger::Tribute,
             Ledger::Nod,
         ] {
             let prehash = eip191_hash(&derive_account_keys_message(
@@ -432,12 +431,7 @@ mod tests {
             jsonrpsee::types::error::INTERNAL_ERROR_CODE
         );
 
-        for target_ledger in [
-            Ledger::Promis,
-            Ledger::Fidelity,
-            Ledger::Tribute,
-            Ledger::Nod,
-        ] {
+        for target_ledger in [Ledger::Promis, Ledger::Fidelity, Ledger::Nod] {
             let err = handler
                 .derive_keys_checked(
                     target_ledger,
@@ -453,18 +447,18 @@ mod tests {
                 .contains(&format!("does not control account {owner}")));
         }
 
-        let tribute_prehash = eip191_hash(&derive_account_keys_message(
-            Ledger::Tribute,
+        let fidelity_prehash = eip191_hash(&derive_account_keys_message(
+            Ledger::Fidelity,
             owner,
             ephemeral_pubkey,
         ));
-        let tribute_sig = signer.sign_hash(&tribute_prehash).expect("sign tribute");
+        let fidelity_sig = signer.sign_hash(&fidelity_prehash).expect("sign fidelity");
         let cross_err = handler
             .derive_keys_checked(
                 Ledger::Nod,
                 owner,
                 ephemeral_pubkey,
-                Bytes::copy_from_slice(&tribute_sig),
+                Bytes::copy_from_slice(&fidelity_sig),
             )
             .await
             .unwrap_err();

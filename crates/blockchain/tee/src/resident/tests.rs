@@ -369,17 +369,17 @@ fn stage0_onboarding_and_v2_sealing_known_answers() {
 }
 
 #[test]
-fn offer_handle_opens_frozen_tribute_offer_and_rejects_wrong_domain() {
+fn offer_handle_opens_frozen_offer_and_rejects_wrong_domain() {
     let key = OfferKeyHandle::for_test([0x22; 32]);
-    let salt = b"outbe/tribute/offer-salt/v1\0\0\0\0\0";
-    let info = b"tribute-factory-encryption";
+    let salt = b"outbe/offer/salt/v1\0\0\0\0\0\0\0\0\0\0\0\0\0";
+    let info = b"outbe/offer/encryption/v1";
     let peer = hex!("7b0d47d93427f8311160781c7c733fd89f88970aef490d8aa0ee19a4cb8a1b14");
-    // Independent Node.js crypto vector for X25519, HKDF-SHA256 and ChaCha20-Poly1305.
-    let ciphertext = hex!("458849d1d74bc1f6e4ec719b1e39f38e12dd67749a9568cd1a196c5536");
+    // Independent Python cryptography 41.0.7 vector for X25519, HKDF-SHA256 and ChaCha20-Poly1305.
+    let ciphertext = hex!("4fa4c1adee7f8931cc160559b9a8c1233092299e9b6f191baf9219f3");
     let plaintext = key
         .ecdhe_decrypt(salt, info, &peer, &[0x44; 12], &ciphertext)
         .unwrap();
-    assert_eq!(plaintext.as_slice(), b"tribute-offer");
+    assert_eq!(plaintext.as_slice(), b"frozen-offer");
     assert!(key
         .ecdhe_decrypt(salt, b"wrong domain", &peer, &[0x44; 12], &ciphertext)
         .is_err());

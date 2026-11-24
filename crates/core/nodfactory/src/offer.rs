@@ -252,7 +252,7 @@ pub(crate) fn offer_request(
             nonce: input.nonce.to_vec(),
             ephemeral_pubkey: input.ephemeral_pubkey,
             worldwide_day: input.worldwide_day,
-            tribute_currency: input.issuance_currency,
+            issuance_currency: input.issuance_currency,
             reference_currency: input.reference_currency,
             issuance_wwd_vwap_minor: pricing.issuance_vwap_minor,
             reference_wwd_vwap_minor: pricing.reference_vwap_minor,

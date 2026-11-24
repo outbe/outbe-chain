@@ -87,7 +87,7 @@ pub struct IssueNodArgs {
     /// Exact 32-byte OfferDraft id (`0x`-hex) used to construct
     /// `nft_hash` and `binding_hash`.
     #[arg(long)]
-    tribute_draft_id: String,
+    offer_draft_id: String,
     /// Exact 32-byte SpendingUnit hash (`0x`-hex) included in the OfferDraft.
     #[arg(long)]
     su_hash: String,
@@ -157,7 +157,7 @@ async fn issue_nod(
         zk_proof,
         l2_chain_id,
         circuit_version,
-        tribute_draft_id,
+        offer_draft_id,
         su_hash,
         signature,
     } = args;
@@ -165,7 +165,7 @@ async fn issue_nod(
     let creator = signer.address();
     let zk_merkle_root = decode_hex_bytes(&zk_merkle_root, "--zk-merkle-root")?;
     let signature = decode_hex_bytes(&signature, "--signature")?;
-    let tribute_draft_id = offer_hex32(&tribute_draft_id, "--tribute-draft-id")?;
+    let offer_draft_id = offer_hex32(&offer_draft_id, "--offer-draft-id")?;
     let su_hash = offer_hex32(&su_hash, "--su-hash")?;
 
     // 1. Read the DKG-derived offer public key from the TeeRegistry (0xEE0A).
@@ -201,7 +201,7 @@ async fn issue_nod(
     // (it denominates the rights' entry and call prices), not the pricing key.
     let payload = serde_json::json!({
         "creator": format!("{creator:?}"),
-        "tribute_draft_id": tribute_draft_id,
+        "offer_draft_id": offer_draft_id,
         "amount_base": amount_base,
         "amount_micro": amount_micro,
         "su_hashes": [su_hash],
@@ -399,7 +399,7 @@ mod tests {
         "0x01",
         "--signature",
         "0x01",
-        "--tribute-draft-id",
+        "--offer-draft-id",
         "0x1111111111111111111111111111111111111111111111111111111111111111",
         "--su-hash",
         "0x2222222222222222222222222222222222222222222222222222222222222222",
@@ -425,7 +425,7 @@ mod tests {
             "--zk-proof",
             "--zk-merkle-root",
             "--signature",
-            "--tribute-draft-id",
+            "--offer-draft-id",
             "--su-hash",
             "--l2-chain-id",
         ] {

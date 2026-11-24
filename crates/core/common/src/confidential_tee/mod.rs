@@ -18,7 +18,7 @@ pub use confidential::{
     AccountKeyDerivation, BalanceTransition, Domain, EnvelopeCipherSpec, Ledger,
     ModifyAuthorization, ModifyDomain, ModifyOperation, OperationTag, SlotCipher, SlotCipherDomain,
     FIDELITY, FIDELITY_COHORT_ENVELOPE, FIELD_BALANCE, GRATIS, GRATIS_BALANCE_ENVELOPE, NOD,
-    PROMIS, PROMIS_BALANCE_ENVELOPE, TRIBUTE,
+    PROMIS, PROMIS_BALANCE_ENVELOPE,
 };
 pub use crypto::{
     chacha20poly1305_decrypt, chacha20poly1305_encrypt, ecdhe_offer_decrypt, hkdf_sha256,

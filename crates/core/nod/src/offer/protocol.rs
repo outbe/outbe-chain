@@ -16,11 +16,11 @@ pub struct EncryptedOffer {
     pub ephemeral_pubkey: U256,
     /// ABI `worldwideDay`: UTC+14 day key (`YYYYMMDD`).
     pub worldwide_day: WorldwideDay,
-    /// ABI `tributeCurrency`: ISO 4217 code the tribute amount is denominated in.
-    pub tribute_currency: u16,
+    /// ABI `issuanceCurrency`: ISO 4217 code the offer amount is denominated in.
+    pub issuance_currency: u16,
     /// ABI `referenceCurrency`: ISO 4217 reference currency code.
     pub reference_currency: u16,
-    /// Exact WorldwideDay VWAP for `COEN/<tribute_currency>`, scale 1e6.
+    /// Exact WorldwideDay VWAP for `COEN/<issuance_currency>`, scale 1e6.
     pub issuance_wwd_vwap_minor: U256,
     /// Exact WorldwideDay VWAP for `COEN/<reference_currency>`, scale 1e6.
     pub reference_wwd_vwap_minor: U256,
@@ -92,7 +92,7 @@ pub fn inputs_canonical_hash(offers: &[EncryptedOffer]) -> B256 {
         buf.extend_from_slice(&offer.nonce);
         buf.extend_from_slice(&offer.ephemeral_pubkey.to_be_bytes::<32>());
         buf.extend_from_slice(&offer.worldwide_day.value().to_be_bytes());
-        buf.extend_from_slice(&offer.tribute_currency.to_be_bytes());
+        buf.extend_from_slice(&offer.issuance_currency.to_be_bytes());
         buf.extend_from_slice(&offer.reference_currency.to_be_bytes());
         buf.extend_from_slice(&offer.issuance_wwd_vwap_minor.to_be_bytes::<32>());
         buf.extend_from_slice(&offer.reference_wwd_vwap_minor.to_be_bytes::<32>());

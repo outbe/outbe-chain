@@ -10,7 +10,7 @@ pub struct OfferInputPayload {
     /// L2 creator address, hex.
     pub creator: String,
     /// 32-byte draft id, hex.
-    pub tribute_draft_id: String,
+    pub offer_draft_id: String,
     /// Whole units.
     pub amount_base: String,
     /// Fractional remainder in micro-units (0..999999). One whole unit is 10^6.
@@ -34,7 +34,7 @@ pub fn parse_and_validate(plaintext: &[u8]) -> OfferResult<OfferInputPayload> {
 }
 
 pub fn validate(payload: &OfferInputPayload) -> OfferResult<()> {
-    if payload.tribute_draft_id.is_empty() {
+    if payload.offer_draft_id.is_empty() {
         return Err(PayloadError::DraftIdRequired.into());
     }
     if payload.creator.is_empty() {

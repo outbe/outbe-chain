@@ -305,7 +305,7 @@ fn sealed_offer(
     use x25519_dalek::{PublicKey, StaticSecret};
     let payload = serde_json::to_vec(&serde_json::json!({
         "creator": format!("{owner:#x}"),
-        "tribute_draft_id": format!("{:#x}", B256::with_last_byte(0x11)),
+        "offer_draft_id": format!("{:#x}", B256::with_last_byte(0x11)),
         "amount_base": amount_base,
         "amount_micro": amount_micro,
         "su_hashes": su_hashes.iter().map(|hash| format!("{hash:#x}")).collect::<Vec<_>>(),

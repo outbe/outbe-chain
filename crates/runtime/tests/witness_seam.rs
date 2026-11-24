@@ -283,7 +283,7 @@ fn offer_request(chain_id: u64) -> IssueNodAtOfferRequestV1 {
             nonce: vec![0; 12],
             ephemeral_pubkey: U256::ZERO,
             worldwide_day: outbe_system_common::time::WorldwideDay::new(20_250_115),
-            tribute_currency: 840,
+            issuance_currency: 840,
             reference_currency: 840,
             issuance_wwd_vwap_minor: U256::from(1_000_000u64),
             reference_wwd_vwap_minor: U256::from(1_000_000u64),

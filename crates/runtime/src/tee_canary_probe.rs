@@ -101,7 +101,7 @@ fn encrypted_canary_offer(offer_pub: &[u8; 32]) -> Result<EncryptedOffer, Canary
         nonce: CANARY_NONCE.to_vec(),
         ephemeral_pubkey: U256::from_be_bytes(eph_pub),
         worldwide_day: WorldwideDay::new(CANARY_DAY),
-        tribute_currency: CANARY_CURRENCY,
+        issuance_currency: CANARY_CURRENCY,
         reference_currency: CANARY_CURRENCY,
         issuance_wwd_vwap_minor: U256::from(CANARY_PRICE_MINOR),
         reference_wwd_vwap_minor: U256::from(CANARY_PRICE_MINOR),
@@ -237,7 +237,7 @@ mod tests {
     #[test]
     fn canary_offer_names_no_currency() {
         let offer = offer();
-        assert_eq!(offer.tribute_currency, 999);
+        assert_eq!(offer.issuance_currency, 999);
         assert_eq!(offer.reference_currency, 999);
     }
 

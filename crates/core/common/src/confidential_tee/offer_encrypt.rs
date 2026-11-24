@@ -6,11 +6,11 @@ use super::errors::{map_offer_encrypt, LocalCryptoError};
 
 /// Protocol-fixed 32-byte HKDF-SHA256 salt for offer ECDHE.
 ///
-/// Value: ASCII `"outbe/tribute/offer-salt/v1"`, zero-padded to 32 bytes.
-pub const OFFER_HKDF_SALT: [u8; 32] = *b"outbe/tribute/offer-salt/v1\0\0\0\0\0";
+/// Value: ASCII `"outbe/offer/salt/v1"`, zero-padded to 32 bytes.
+pub const OFFER_HKDF_SALT: [u8; 32] = *b"outbe/offer/salt/v1\0\0\0\0\0\0\0\0\0\0\0\0\0";
 
 /// HKDF info string binding the derived key to the offer domain.
-pub const OFFER_HKDF_INFO: &[u8] = b"tribute-factory-encryption";
+pub const OFFER_HKDF_INFO: &[u8] = b"outbe/offer/encryption/v1";
 
 /// `(cipher_text, nonce, ephemeral_pub)` produced by [`encrypt_offer`].
 pub type EncryptedOfferParts = (Vec<u8>, [u8; 12], [u8; 32]);
@@ -51,7 +51,7 @@ pub fn canary_offer_json(worldwide_day: u32) -> String {
     format!(
         r#"{{
     "creator": "canary",
-    "tribute_draft_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "offer_draft_id": "0x1111111111111111111111111111111111111111111111111111111111111111",
     "worldwide_day": {worldwide_day},
     "currency": 999,
     "amount_base": "100",

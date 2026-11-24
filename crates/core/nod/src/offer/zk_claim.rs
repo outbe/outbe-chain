@@ -20,7 +20,7 @@ pub fn derive_expected_hashes(
         return Ok(None);
     };
 
-    let id = parse_b256(&payload.tribute_draft_id, "tribute_draft_id")?;
+    let id = parse_b256(&payload.offer_draft_id, "offer_draft_id")?;
     let su_ids = payload
         .su_hashes
         .iter()
@@ -32,7 +32,7 @@ pub fn derive_expected_hashes(
         id,
         derived_owner: context.derived_owner,
         worldwide_day: offer.worldwide_day.into(),
-        currency: offer.tribute_currency,
+        currency: offer.issuance_currency,
         base: amount.base,
         atto: amount.micro,
         su_ids,

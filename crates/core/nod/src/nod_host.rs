@@ -445,7 +445,7 @@ fn has_requested_terms(
         request.offer.owner,
         request.emission_day,
         request.entry_price_minor,
-        request.offer.tribute_currency,
+        request.offer.issuance_currency,
         request.offer.reference_currency,
     )
 }
