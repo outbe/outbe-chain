@@ -3,6 +3,7 @@
 mod advance_sweep;
 mod clearing_cleanup;
 mod deadline_cleanup;
+mod hub_and_outbox;
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};

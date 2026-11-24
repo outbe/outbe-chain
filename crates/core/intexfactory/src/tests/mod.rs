@@ -298,6 +298,7 @@ mod mining_sequence;
 mod proceeds;
 mod scans;
 mod settlement;
+mod targets_and_outbox;
 
 // --- // --- Shared across the test modules ---
 const PAIR_ID: u32 = 1;

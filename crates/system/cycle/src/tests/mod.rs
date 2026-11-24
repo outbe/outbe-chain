@@ -76,16 +76,16 @@ pub(super) fn cycle_storage_for(chain_id: u64) -> HashMapStorageProvider {
             .unwrap();
         outbe_oracle::api::register_pair(ctx.storage.clone(), outbe_oracle::api::DAY_TYPE_PAIR)
             .unwrap();
+        // One target chain in auctions, as the genesis gives it.
+        outbe_intexfactory::IntexFactoryContract::new(ctx.storage.clone())
+            .target_chains
+            .push(outbe_intexfactory::targets::pack_target(
+                97,
+                outbe_intexfactory::targets::TargetMode::Auctions,
+            ))
+            .unwrap();
     });
     storage.enable_scoped_mutation_frames(MutationPurposeTag::CycleLifecycle, 4);
-    // This synthetic router accepts outbound messages and has no target chains.
-    // Send callers ignore returndata; views receive the real targetsOf ABI shape.
-    // Other addresses remain unsupported, so infrastructure failures still surface.
-    use alloy_sol_types::SolValue;
-    storage.stub_sub_call_at(
-        outbe_desis::constants::ORIGIN_ROUTER_ADDRESS,
-        (Vec::<u32>::new(),).abi_encode_params().into(),
-    );
     storage.enable_production_storage_gas_metering();
     storage.set_gas_limit(10_000_000_000);
     storage

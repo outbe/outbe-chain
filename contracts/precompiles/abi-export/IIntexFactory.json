@@ -1,21 +1,10 @@
 [
   {
     "type": "function",
-    "name": "burnIntexAuctionProceeds",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "srcChainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
+    "name": "flush",
+    "inputs": [],
     "outputs": [],
-    "stateMutability": "payable"
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -124,6 +113,79 @@
   },
   {
     "type": "function",
+    "name": "onCrosschainTokensReceived",
+    "inputs": [
+      {
+        "name": "srcChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "from",
+        "type": "bytes",
+        "internalType": "bytes"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "extraData",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes4",
+        "internalType": "bytes4"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "outboxHead",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "msgType",
+        "type": "uint8",
+        "internalType": "uint8"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "pending",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "failures",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "nextTry",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "ownerBalances",
     "inputs": [
       {
@@ -227,6 +289,29 @@
   },
   {
     "type": "function",
+    "name": "receiveLocalProceeds",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "pageIndex",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "settleIntex",
     "inputs": [
       {
@@ -264,6 +349,43 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "targetChains",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "chainIds",
+        "type": "uint32[]",
+        "internalType": "uint32[]"
+      },
+      {
+        "name": "modes",
+        "type": "uint8[]",
+        "internalType": "uint8[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "targetsOf",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint32[]",
+        "internalType": "uint32[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
     "type": "event",
     "name": "IntexAuctionProceedsBurned",
     "inputs": [
@@ -277,6 +399,12 @@
         "name": "srcChainId",
         "type": "uint32",
         "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "pageIndex",
+        "type": "uint32",
+        "indexed": false,
         "internalType": "uint32"
       },
       {
@@ -305,10 +433,41 @@
         "internalType": "uint32"
       },
       {
+        "name": "failures",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
         "name": "errorData",
         "type": "bytes",
         "indexed": false,
         "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexSeriesCallNoticeSent",
+    "inputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
       }
     ],
     "anonymous": false
@@ -461,6 +620,86 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "IntexSeriesSendFailed",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "pageIndex",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "failures",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "errorData",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "IntexSeriesSent",
+    "inputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "indexed": true,
+        "internalType": "bytes32"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "dstChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "pageIndex",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "totalPages",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "seriesCount",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "DateStep",
     "inputs": [
@@ -523,11 +762,6 @@
   },
   {
     "type": "error",
-    "name": "NotOriginRouter",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "OwnerUnitsExceedU32",
     "inputs": []
   },
@@ -539,11 +773,6 @@
   {
     "type": "error",
     "name": "PromisOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "RouterAnsweredNoLegs",
     "inputs": []
   },
   {
@@ -565,6 +794,39 @@
     "type": "error",
     "name": "SettlementDeadlinePassed",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedProceedsCaller",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedProceedsSender",
+    "inputs": [
+      {
+        "name": "from",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnexpectedProceedsSource",
+    "inputs": [
+      {
+        "name": "srcChainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
   },
   {
     "type": "error",

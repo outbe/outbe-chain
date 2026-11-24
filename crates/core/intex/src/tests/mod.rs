@@ -13,13 +13,16 @@ use crate::precompile::{dispatch, IIntex};
 use crate::schema::{CreateSeriesParams, IntexCallTrigger, IntexState, SeriesId};
 use crate::IntexContract;
 
+mod gas;
 mod group_index;
 mod layout;
+mod outbox;
 mod precompile;
 mod series;
 mod series_id;
 mod settled;
 mod units;
+mod wire;
 
 const CHAIN_ID: u64 = 1;
 
