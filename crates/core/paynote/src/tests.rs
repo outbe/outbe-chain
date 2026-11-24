@@ -460,14 +460,14 @@ fn a_failure_after_the_nullifier_is_booked_rolls_the_whole_spend_back() {
 
 #[test]
 fn full_width_u256_spend_round_trip() {
-    assert_eq!(Paynote::VERSION, "1.3.0");
+    assert_eq!(Paynote::VERSION, "1.4.0");
     assert_eq!(
         Paynote::CIRCUIT_HASH,
-        alloy_primitives::hex!("0f2fbbc17ec830fb42c8206f216cde1b2452e8b8bc276bbe27a07e87ba1263a4")
+        alloy_primitives::hex!("e7216d1f70288b290aaa27e894100c47d48d8562a1d77a720061898c6bdf25a3")
     );
     assert_eq!(
         Paynote::VK_HASH,
-        alloy_primitives::hex!("cd7b395e59588bf2ec2b0bdc47352db055520a6551ae6b76e75c9dd0cacd5c42")
+        alloy_primitives::hex!("53c1f38158245aceab7897f5c4aabb4e41e8199a0569f52a9b9d43f7d2a3d6fd")
     );
 
     let note_amount = (U256::from(1) << 200) + U256::from(100);
@@ -492,14 +492,14 @@ fn full_width_u256_spend_round_trip() {
 fn the_merge_circuit_is_pinned() {
     use outbe_zk::paynote_merge::PaynoteMerge;
     assert_eq!(PaynoteMerge::LABEL, "outbe.paynote.merge");
-    assert_eq!(PaynoteMerge::VERSION, "1.0.1");
+    assert_eq!(PaynoteMerge::VERSION, "1.1.0");
     assert_eq!(
         PaynoteMerge::CIRCUIT_HASH,
-        alloy_primitives::hex!("ae7946ee03305d92f06957c9abbb877eaed1d29667c23a8ba413d70224d67fe2")
+        alloy_primitives::hex!("ca97d3c1caffb3377304787e26791bea5ec5f46e1595d897caeb66d59a14b502")
     );
     assert_eq!(
         PaynoteMerge::VK_HASH,
-        alloy_primitives::hex!("c8c627470cfa8f26a44f3049232d5160d0b967f1150a28b2e4bf6cdb2f007175")
+        alloy_primitives::hex!("1d4914bd70dcb46009d6cc2ac64271f80f01a8e0711ce71c2f62766fdccaa24c")
     );
 }
 

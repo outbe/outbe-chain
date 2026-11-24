@@ -135,18 +135,18 @@ RUN test -f /opt/outbe/toolchain/apt-inputs-verified && \
 # part of the production ELF compiler surface rather than CI-only helpers. Keep
 # both archives content-addressed and install them before the release builder
 # forks from this stage.
-ADD --checksum=sha256:384c4fc800905b213e26aabd738a96a4a85b1a76ffc27fb19aeb6d33494a787b \
-    https://github.com/noir-lang/noir/releases/download/v1.0.0-beta.22/nargo-x86_64-unknown-linux-gnu.tar.gz \
+ADD --checksum=sha256:a62f5b44a6db8ca8f0c20f841aa788ea56776e5aaf2ebd672c02dcf397901264 \
+    https://github.com/noir-lang/noir/releases/download/v1.0.0/noir-x86_64-unknown-linux-gnu.tar.gz \
     /tmp/nargo.tar.gz
-ADD --checksum=sha256:d207ec90fbfa2fba24d7a47b7a75892ee052b7984252b866a4a0c1b5296e1571 \
-    https://github.com/AztecProtocol/barretenberg/releases/download/v5.0.0-nightly.20260522/barretenberg-amd64-linux.tar.gz \
+ADD --checksum=sha256:6a310ede6457cf47e6dcf11f8d6b59dd709328c272a70c03afb1417c5a798b67 \
+    https://github.com/AztecProtocol/barretenberg/releases/download/v6.0.0/barretenberg-amd64-linux.tar.gz \
     /tmp/barretenberg.tar.gz
 RUN tar -xzf /tmp/nargo.tar.gz -C /usr/local/bin && \
     tar -xzf /tmp/barretenberg.tar.gz -C /usr/local/bin && \
     chmod 0755 /usr/local/bin/nargo /usr/local/bin/bb && \
     rm /tmp/nargo.tar.gz /tmp/barretenberg.tar.gz && \
-    test "$(nargo --version | sed -n 's/^nargo version = //p')" = "1.0.0-beta.22" && \
-    test "$(bb --version | sed -n '1p')" = "5.0.0-nightly.20260522"
+    test "$(nargo --version | sed -n 's/^nargo version = //p')" = "1.0.0" && \
+    test "$(bb --version | sed -n '1p')" = "6.0.0"
 
 COPY release/dcap-native-qvl-v1.json /opt/outbe/toolchain/dcap-native-qvl-v1.json
 

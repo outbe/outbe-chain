@@ -1,6 +1,6 @@
 //! Poseidon2 constants for the BN254 field.
 //!
-//! These values exactly match Noir's `bn254_blackbox_solver::poseidon2_constants` at tag v1.0.0-beta.22.
+//! These values exactly match Noir's `bn254_blackbox_solver::poseidon2_constants` at tag v1.0.0.
 //! Noir's in-circuit `poseidon2` permutation uses the same constants.
 //! Only the field type wrapper differs, to use ark `Fr`.
 //! Do not edit the hexadecimal values.

@@ -56,7 +56,7 @@ fn main(
 
     // `<=` above rules out the mod-2^256 subtraction wrap.
     let remaining = note_amount - spend_amount;
-    let creates_change = !remaining.is_zero_integer();
+    let creates_change = !remaining.unsafe_is_zero_integer();
     assert((change_commitment != 0) == creates_change);
     if creates_change {
         let next_key = change_key(note_spend_key, computed_nullifier);

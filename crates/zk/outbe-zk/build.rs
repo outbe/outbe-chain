@@ -753,7 +753,7 @@ fn abi_field_count(ty: &Value) -> usize {
     }
 }
 
-/// UltraKeccakZK, bb 5.0.0-nightly.20260522 (U256Codec, no round padding).
+/// UltraKeccakZK, bb 6.0.0 (U256Codec, no round padding).
 /// Upstream at 87aa5283d5b0cab6632ed49fdd25f6548d2ba91f:
 /// barretenberg/cpp/src/barretenberg/{honk/proof_length.hpp,flavor/flavor.hpp}.
 fn proof_words(vk: &[u8], public_input_count: usize, proof_system: &str) -> usize {
@@ -1163,8 +1163,8 @@ fn rust_type(ty: &Value, module: &str) -> String {
     }
 }
 
-const NARGO_VERSION: &str = "1.0.0-beta.22";
-const BB_VERSION: &str = "5.0.0-nightly.20260522";
+const NARGO_VERSION: &str = "1.0.0";
+const BB_VERSION: &str = "6.0.0";
 
 enum VkMode {
     Fixed([u8; 32]),
