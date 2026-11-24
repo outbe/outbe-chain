@@ -243,7 +243,7 @@ impl Outbox<'_> {
             return Ok(Try::Idle);
         }
         if storage
-            .gas_remaining()?
+            .metered_gas_remaining()?
             .is_some_and(|left| left < SEND_GAS_RESERVE)
         {
             return Ok(Try::OutOfGas);

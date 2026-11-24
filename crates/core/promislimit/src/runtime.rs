@@ -12,6 +12,7 @@ use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
 use crate::{errors::PromisLimitError, precompile::IPromisLimit, schema::PromisLimitContract};
 
 sol! {
+    #[derive(Debug)]
     interface IWCOEN {
         function transfer(address dst, uint256 wad) external returns (bool);
     }
