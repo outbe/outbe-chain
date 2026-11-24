@@ -382,11 +382,10 @@ fn finalized_vote_pages_select_only_the_network_repository() {
         storage.set_block_number(1);
         storage.enter(|s| {
             let mut validators = ValidatorSet::new(s.clone());
-            validators.config_owner.write(voters[0]).unwrap();
             validators.set_config_max_validators(4).unwrap();
             for (index, voter) in voters.iter().enumerate() {
                 validators
-                    .register_validator(voters[0], *voter, &[index as u8 + 1; 48])
+                    .register_validator(*voter, &[index as u8 + 1; 48])
                     .unwrap();
                 validators.activate_validator(*voter).unwrap();
             }

@@ -31,7 +31,6 @@ const PROPOSER: Address = address!("0x1111111111111111111111111111111111111111")
 const VOTER_A: Address = address!("0x2222222222222222222222222222222222222222");
 const VOTER_B: Address = address!("0x3333333333333333333333333333333333333333");
 const VOTER_C: Address = address!("0x4444444444444444444444444444444444444444");
-const VALIDATOR_OWNER: Address = address!("0xffffffffffffffffffffffffffffffffffffffff");
 
 const V1_2: ProtocolVersion = encode_protocol_version(1, 2);
 const V1_3: ProtocolVersion = encode_protocol_version(1, 3);
@@ -48,14 +47,12 @@ fn dummy_pubkey(seed: u8) -> [u8; 48] {
 
 fn register_active_validator(storage: StorageHandle, addr: Address, seed: u8) {
     let mut vs = ValidatorSet::new(storage.clone());
-    if vs.config_owner.read().unwrap().is_zero() {
-        vs.config_owner.write(VALIDATOR_OWNER).unwrap();
+    if vs.config_max_validators.read().unwrap() == 0 {
         vs.set_config_max_validators(100).unwrap();
     }
     let minimum = U256::from(1_000u64);
     vs.test_seed_authoritative_min_stake(minimum).unwrap();
-    vs.register_validator(VALIDATOR_OWNER, addr, &dummy_pubkey(seed))
-        .unwrap();
+    vs.register_validator(addr, &dummy_pubkey(seed)).unwrap();
     vs.test_seed_authoritative_bonded(addr, minimum).unwrap();
     vs.activate_validator_via_boundary_for_test(addr).unwrap();
 }

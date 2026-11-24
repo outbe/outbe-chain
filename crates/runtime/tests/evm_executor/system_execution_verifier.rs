@@ -147,7 +147,7 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
                 .set_code(address, Bytecode::new_legacy(Bytes::from_static(&[0xef])))?;
         }
         let mut vs = ValidatorSet::new(ctx.storage.clone());
-        vs.test_configure_registry(OWNER)?;
+        vs.test_configure_registry()?;
         vs.test_seed_authoritative_min_stake(U256::from(1_000u64))?;
         for (index, validator) in order.into_iter().enumerate() {
             vs.test_register_active_validator(
@@ -157,7 +157,7 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
             )?;
         }
         for validator in order {
-            vs.deactivate_validator(OWNER, validator)?;
+            vs.deactivate_validator(validator)?;
         }
         vs.test_activate_validated_boundary_set(&[], B256::ZERO, 7)?;
         let staking = Staking::new(ctx.storage.clone());

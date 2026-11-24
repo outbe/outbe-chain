@@ -23,7 +23,7 @@ fn outcome_text<T: std::fmt::Debug>(result: Result<T>) -> String {
 /// A PENDING validator that confirmed readiness.
 fn admitted(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
     let seed = validator.as_slice()[19];
-    vs.register_validator(OWNER, validator, &dummy_consensus_pubkey(seed))?;
+    vs.register_validator(validator, &dummy_consensus_pubkey(seed))?;
     vs.mark_pending(validator)?;
     confirm_ready(vs, validator, seed);
     Ok(())

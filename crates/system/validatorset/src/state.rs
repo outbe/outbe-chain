@@ -18,7 +18,7 @@
 //!   committee hash itself, even when they share the same `(epoch, hash)`
 //!   inputs.
 //!
-//! A snapshot record spans slots 31..=40, slot 44, and slot 47
+//! A snapshot record spans slots 27..=35, slot 39, and slot 42
 //! (see [`schema::ValidatorSet`](crate::schema::ValidatorSet)).
 //! Writes are field-by-field and end with the `exists` flag.
 //! A partial write from a rolled-back checkpoint is not readable.
@@ -339,7 +339,7 @@ fn read_vrf_group_public_key(vs: &ValidatorSet<'_>, snapshot_key: B256) -> Resul
     Ok(vrf_group_public_key_bytes)
 }
 
-/// Read the committee snapshot for `epoch` via the prune ring (slot 44), WITHOUT
+/// Read the committee snapshot for `epoch` via the prune ring (slot 39), WITHOUT
 /// needing the `committee_set_hash`.
 ///
 /// The ring maps `epoch % COMMITTEE_SNAPSHOT_RETAIN_EPOCHS -> snapshot_key`. For

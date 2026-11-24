@@ -256,11 +256,13 @@ fn founder_radicle_bindings_are_complete_unique_and_bidirectional() {
     let terms = ValidatorSeedTerms {
         epoch_length_blocks: 300,
         epoch_start_timestamp: 1,
-        min_stake: U256::from(1),
-        validator_stake: U256::from(1),
     };
     let mut storage = StorageBuilder::new();
     seed_validator_set(&mut storage, &validators, &json!({}), terms).expect("seed_validator_set");
+    assert_eq!(storage.entries[&hex32(0u64)], hex32(128u64));
+    assert_eq!(storage.entries[&hex32(1u64)], hex32(300u64));
+    assert_eq!(storage.entries[&hex32(2u64)], hex32(1u64));
+    assert_eq!(storage.entries[&hex32(16u64)], hex32(2u64));
 
     for validator in &validators {
         let addr_str = validator["address"].as_str().expect("addr");
@@ -268,21 +270,20 @@ fn founder_radicle_bindings_are_complete_unique_and_bidirectional() {
         let node_id =
             hex::decode(validator["radicle_node_id"].as_str().expect("node_id")).expect("hex");
         assert_eq!(
-            storage.entries[&mapping_key(&address, 50)],
+            storage.entries[&mapping_key(&address, 45)],
             format!("0x{}", hex::encode(&node_id))
         );
         assert_eq!(
-            storage.entries[&mapping_key(&node_id, 51)],
+            storage.entries[&mapping_key(&node_id, 46)],
             hex32(address_as_u256(addr_str).expect("u256"))
         );
-        assert!(!storage.entries.contains_key(&mapping_key(&address, 7)));
         let feeder = validator["feeder_address"].as_str().expect("feeder");
         let feeder_bytes = address_bytes(feeder).expect("feeder bytes");
         assert_eq!(
             storage.entries[&hex32(outbe_genesis_cli::seed_codec::nested_mapping_key(
                 &address,
                 &[1],
-                48,
+                43,
             ))],
             hex32(address_as_u256(feeder).expect("feeder u256"))
         );
@@ -290,7 +291,7 @@ fn founder_radicle_bindings_are_complete_unique_and_bidirectional() {
             storage.entries[&hex32(outbe_genesis_cli::seed_codec::nested_mapping_key(
                 &[1],
                 &feeder_bytes,
-                49,
+                44,
             ))],
             hex32(address_as_u256(addr_str).expect("validator u256"))
         );
@@ -338,4 +339,13 @@ fn founder_radicle_bindings_are_complete_unique_and_bidirectional() {
     let err = seed_validator_set(&mut StorageBuilder::new(), &zero, &json!({}), terms)
         .expect_err("zero node_id");
     assert!(err.to_string().contains("must not be zero"));
+
+    let with_owner = json!({"owner": "0x1111111111111111111111111111111111111111"});
+    let err = seed_validator_set(&mut StorageBuilder::new(), &validators, &with_owner, terms)
+        .expect_err("validator_set.owner must be rejected");
+    assert!(
+        err.to_string()
+            .contains("unknown validator_set key `owner`"),
+        "unexpected error: {err}"
+    );
 }

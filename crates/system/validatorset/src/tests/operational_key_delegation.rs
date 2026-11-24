@@ -139,7 +139,7 @@ fn operational_delegate_cannot_later_register_as_a_validator() {
             vs.set_delegate(VALIDATOR_A, role, DELEGATE).unwrap();
 
             let err = vs
-                .register_validator(OWNER, DELEGATE, &dummy_consensus_pubkey(2))
+                .register_validator(DELEGATE, &dummy_consensus_pubkey(2))
                 .unwrap_err();
             assert!(
                 matches!(err, PrecompileError::RevertBytes(bytes) if bytes.len() >= 4 && bytes[..4] == I::ValidatorAlreadyOperationalDelegate::SELECTOR)

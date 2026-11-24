@@ -28,7 +28,6 @@ interface IStaking {
     error ClaimableAmountOverflow();
 
     // Transitive ValidatorSetError reverts reachable from Staking entrypoints.
-    error UnauthorizedOwnerOrValidator();
     error ValidatorAlreadyOperationalDelegate();
     error ConsensusPubkeyWrongLength();
     error ConsensusPubkeyConversionFailed();
@@ -37,7 +36,6 @@ interface IStaking {
     error InvalidBlsPublicKey();
     error InvalidBlsSignature();
     error InvalidBlsRegistrationSignature();
-    error RegistrationRequiresBlsPop();
     error UnsupportedP2pAddressVersion(uint8 version);
     error P2pAddressPayloadTooLong(uint64 max_len);
     error InvalidP2pAddress(string reason);

@@ -444,7 +444,7 @@ mod equivocation {
         provider.set_block_number(1);
         provider.enter(|storage| {
             let mut vs = ValidatorSet::new(storage.clone());
-            vs.test_configure_registry(OWNER).unwrap();
+            vs.test_configure_registry().unwrap();
             vs.set_config_max_validators(256).unwrap();
             vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
             let snapshot = CommitteeSnapshot {
@@ -461,7 +461,7 @@ mod equivocation {
                 )
                 .unwrap();
             }
-            vs.test_seed_committee_ring(OWNER, &snapshot).unwrap();
+            vs.test_seed_committee_ring(&snapshot).unwrap();
             assert_eq!(vs.validator_count().unwrap(), 256);
             let mut staking = Staking::new(storage.clone());
             staking.config_min_stake.write(U256::from(1)).unwrap();

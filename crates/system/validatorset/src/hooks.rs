@@ -100,7 +100,7 @@ pub fn record_finalized_participation(
     vs.record_finalized_participation(voters, absent)?;
     vs.finalized_participation_recorded.write(&fb_hash, true)?;
 
-    // Prune ring: bound the guard (slot 30) to the last
+    // Prune ring: bound the guard (slot 26) to the last
     // FINALIZED_PARTICIPATION_RETAIN finalized blocks. A finalized block older than
     // the K-block late-finalize window can never be replayed. Clearing the guard
     // flag of the block RETAIN records ago therefore reclaims its slot. This does
@@ -113,8 +113,8 @@ pub fn record_finalized_participation(
 }
 
 impl<'storage> ValidatorSet<'storage> {
-    /// The prune ring of the participation guard: the ring entries (slot 45)
-    /// and the write cursor (slot 46). The hook and the tests use this
+    /// The prune ring of the participation guard: the ring entries (slot 40)
+    /// and the write cursor (slot 41). The hook and the tests use this
     /// binding.
     pub(crate) fn participation_prune_ring(&self) -> FinalizedGuardRing<'_, 'storage> {
         FinalizedGuardRing {
@@ -124,7 +124,7 @@ impl<'storage> ValidatorSet<'storage> {
     }
 }
 
-/// Number of recent finalized blocks whose participation guard (slot 30) stays
+/// Number of recent finalized blocks whose participation guard (slot 26) stays
 /// live. The replay horizon is the K-block late-finalize window, so retaining the
 /// last `FINALIZED_PARTICIPATION_RETAIN` blocks is generous.
 /// [`record_finalized_participation`] prunes older guard flags. Changing it is a

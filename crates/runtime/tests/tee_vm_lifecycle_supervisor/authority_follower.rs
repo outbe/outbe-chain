@@ -60,10 +60,9 @@ pub(super) fn seed_execution_committee(
         };
     }
     ledger.storage(|storage| {
-        let owner = Address::repeat_byte(0xa0);
         let mut validators = ValidatorSet::new(storage.clone());
         validators.config_is_initialized.write(true).unwrap();
-        validators.test_configure_registry(owner).unwrap();
+        validators.test_configure_registry().unwrap();
         validators.config_epoch_length_blocks.write(60).unwrap();
         let minimum = U256::from(1_000);
         validators
@@ -74,7 +73,7 @@ pub(super) fn seed_execution_committee(
         for (index, member) in snapshot.committee.iter().enumerate() {
             let address = member.address;
             validators
-                .register_validator(owner, address, &member.consensus_pubkey)
+                .register_validator(address, &member.consensus_pubkey)
                 .unwrap();
             // A pending resident reaches lease expiry without entering the active-set jail sweep.
             if address != resident || active_resident {

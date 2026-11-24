@@ -243,8 +243,7 @@ pub(super) fn test_register_waiting(
     validator: Address,
     pubkey: &[u8; 48],
 ) {
-    vs.test_register_validator_without_pop(validator, pubkey)
-        .unwrap();
+    vs.register_validator(validator, pubkey).unwrap();
 }
 
 fn test_register_active_with_stake(
@@ -286,13 +285,12 @@ pub(crate) fn seed_registered_active_validator(
     pk: &[u8; 48],
 ) {
     let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-    vs.config_owner.write(OWNER).unwrap();
     vs.set_config_max_validators(128).unwrap();
     vs.config_epoch_length_blocks.write(60).unwrap();
     vs.config_is_initialized.write(true).unwrap();
     let minimum = U256::from(1_000u64);
     vs.test_seed_authoritative_min_stake(minimum).unwrap();
-    vs.register_validator(OWNER, validator, pk).unwrap();
+    vs.register_validator(validator, pk).unwrap();
     vs.test_seed_authoritative_bonded(validator, minimum)
         .unwrap();
     let staking = outbe_staking::contract::Staking::new(storage.clone());
@@ -332,7 +330,7 @@ pub(crate) fn register_and_activate_native(
         .test_seed_authoritative_min_stake(minimum)
         .unwrap();
     validators
-        .register_validator(OWNER, validator, consensus_key)
+        .register_validator(validator, consensus_key)
         .unwrap();
     validators
         .test_seed_authoritative_bonded(validator, minimum)
@@ -495,7 +493,6 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
     StorageHandle::enter(&mut seed_storage, |storage| {
         seed_cycle_genesis(storage.clone());
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(outbe_validatorset::runtime::CONSENSUS_VALIDATOR_BOUND)
             .unwrap();
         vs.config_epoch_length_blocks.write(60).unwrap();

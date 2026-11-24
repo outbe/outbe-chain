@@ -38,7 +38,7 @@ fn test_activate_deactivate() {
             .unwrap();
         assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::ACTIVE);
 
-        vs.deactivate_validator(OWNER, val_addr).unwrap();
+        vs.deactivate_validator(val_addr).unwrap();
         // In the new lifecycle, deactivation transitions to EXITING (not INACTIVE)
         assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::EXITING);
 
@@ -48,27 +48,36 @@ fn test_activate_deactivate() {
 }
 
 #[test]
-fn deactivation_rejection_reasons_preserve_validator_state() {
+fn only_the_validator_can_deactivate_itself() {
     let validator = address!("0x4444444444444444444444444444444444444444");
+    let peer = address!("0x5555555555555555555555555555555555555555");
     let outsider = address!("0x9999999999999999999999999999999999999999");
     with_vs_configured(10, |vs| {
-        register_validators(vs, &[(validator, 4)]).unwrap();
+        register_validators(vs, &[(validator, 4), (peer, 5)]).unwrap();
         activate_staked_for_test(vs, validator);
+        activate_staked_for_test(vs, peer);
+        vs.pending_set_change.write(false).unwrap();
         let active = vs.validator_state(validator).unwrap();
-        let pending = vs.pending_set_change.read().unwrap();
+        let peer_active = vs.validator_state(peer).unwrap();
+
         assert!(matches!(
-            vs.deactivate_validator(outsider, validator),
+            vs.deactivate_validator(outsider),
             Err(PrecompileError::RevertBytes(bytes))
-                if bytes.len() >= 4 && bytes[..4] == I::UnauthorizedOwnerOrValidator::SELECTOR
+                if bytes.len() >= 4 && bytes[..4] == I::ValidatorNotRegistered::SELECTOR
         ));
         assert_eq!(vs.validator_state(validator).unwrap(), active);
-        assert_eq!(vs.pending_set_change.read().unwrap(), pending);
+        assert_eq!(vs.validator_state(peer).unwrap(), peer_active);
+        assert!(!vs.pending_set_change.read().unwrap());
 
-        vs.deactivate_validator(validator, validator).unwrap();
+        vs.deactivate_validator(validator).unwrap();
         let exiting = vs.validator_state(validator).unwrap();
+        assert_eq!(vs.val_status.read(&validator).unwrap(), status::EXITING);
+        assert_eq!(vs.validator_state(peer).unwrap(), peer_active);
         let pending = vs.pending_set_change.read().unwrap();
+        assert!(pending);
+
         assert!(matches!(
-            vs.deactivate_validator(validator, validator),
+            vs.deactivate_validator(validator),
             Err(PrecompileError::RevertBytes(bytes))
                 if bytes.len() >= 4 && bytes[..4] == I::CanOnlyDeactivateActiveValidator::SELECTOR
         ));
@@ -100,12 +109,9 @@ fn test_force_exit() {
 // ---------------------------------------------------------------------------
 #[test]
 fn test_forced_exit_preserves_staking_lifecycle() {
-    use alloy_primitives::U256;
     let val_addr = address!("0x3333333333333333333333333333333333333333");
 
     with_vs_configured(10, |vs| {
-        vs.config_min_stake.write(U256::from(1000u64)).unwrap();
-
         register_boundary_active(vs, val_addr, 0x33).unwrap();
 
         vs.force_exit_validator(val_addr).unwrap();
@@ -457,7 +463,7 @@ fn test_reregistration_cooldown_gates_then_allows() {
     let logs_before_cleanup = storage.get_ordered_events().len();
     at_height(&mut storage, 500, |vs| {
         let err = vs
-            .register_validator(OWNER, val, &dummy_consensus_pubkey(0xDD))
+            .register_validator(val, &dummy_consensus_pubkey(0xDD))
             .unwrap_err();
         match err {
             PrecompileError::RevertBytes(bytes) => {
@@ -493,12 +499,12 @@ fn test_reregistration_no_cooldown_configured() {
         // cooldown = 0 (default)
         assert_eq!(vs.config_reregistration_cooldown.read().unwrap(), 0);
 
-        vs.register_validator(OWNER, val, &pk).unwrap();
+        vs.register_validator(val, &pk).unwrap();
         make_inactive_for_test(vs, val);
 
         // Re-register immediately - should succeed (no cooldown)
         let pk_new = dummy_consensus_pubkey(0xBB);
-        vs.register_validator(OWNER, val, &pk_new).unwrap();
+        vs.register_validator(val, &pk_new).unwrap();
         assert_eq!(vs.val_status.read(&val).unwrap(), status::PENDING);
     });
 }
@@ -523,7 +529,7 @@ fn test_stale_join_guard_resets_on_restake() {
         // Promotion clears the flag. Demote back to REGISTERED, then re-PENDING.
         vs.activate_reshared_set(&[pend], B256::ZERO).unwrap();
         // Force back to REGISTERED to simulate a churn that returns it to PENDING.
-        vs.deactivate_validator(OWNER, pend).unwrap();
+        vs.deactivate_validator(pend).unwrap();
         vs.activate_reshared_set(&[], B256::ZERO).unwrap(); // EXITING->UNBONDING
                                                             // A fresh registration+stake cycle starts unconfirmed.
         let pend2 = address!("0x4444444444444444444444444444444444444444");
@@ -561,7 +567,7 @@ impl ForceExitStart {
             }
             Self::Unbonding => {
                 activate_for_test(vs, val);
-                vs.deactivate_validator(OWNER, val)?;
+                vs.deactivate_validator(val)?;
                 vs.activate_reshared_set(&[], B256::ZERO)?;
             }
             Self::Inactive => make_inactive_for_test(vs, val),

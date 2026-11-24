@@ -203,12 +203,11 @@ fn db_with_registered_validator(validator: Address) -> CacheDB<EmptyDB> {
     seed.set_block_number(1);
     StorageHandle::enter(&mut seed, |storage| {
         let mut validators = ValidatorSet::new(storage);
-        validators.config_owner.write(Address::ZERO).unwrap();
         validators.set_config_max_validators(100).unwrap();
         let mut consensus_pubkey = [0u8; 48];
         consensus_pubkey[..20].copy_from_slice(validator.as_slice());
         validators
-            .test_register_validator_without_pop(validator, &consensus_pubkey)
+            .register_validator(validator, &consensus_pubkey)
             .unwrap();
     });
 

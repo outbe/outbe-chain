@@ -27,20 +27,16 @@ const VOTER_B: Address = address!("0x3333333333333333333333333333333333333333");
 const VALID_UNTIL: u64 = 1_700_000_000;
 
 fn setup_validators(storage: StorageHandle) {
-    let owner = address!("0xffffffffffffffffffffffffffffffffffffffff");
     let minimum = U256::from(1_000u64);
     for (addr, seed) in [(PROPOSER, 1u8), (VOTER_A, 2), (VOTER_B, 3)] {
         let mut validator_set = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        validator_set.config_owner.write(owner).unwrap();
         validator_set.set_config_max_validators(100).unwrap();
         validator_set
             .test_seed_authoritative_min_stake(minimum)
             .unwrap();
         let mut public_key = [0u8; 48];
         public_key[0] = seed;
-        validator_set
-            .register_validator(owner, addr, &public_key)
-            .unwrap();
+        validator_set.register_validator(addr, &public_key).unwrap();
         validator_set
             .test_seed_authoritative_bonded(addr, minimum)
             .unwrap();

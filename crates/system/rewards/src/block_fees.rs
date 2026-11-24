@@ -408,9 +408,7 @@ mod tests {
             validators
                 .test_seed_authoritative_min_stake(minimum)
                 .unwrap();
-            validators
-                .register_validator(Address::ZERO, V0, &CONSENSUS_KEY)
-                .unwrap();
+            validators.register_validator(V0, &CONSENSUS_KEY).unwrap();
             validators
                 .test_seed_authoritative_bonded(V0, minimum)
                 .unwrap();

@@ -143,10 +143,10 @@ fn window_close_records_miss_for_absent_committee_voter_only() {
         {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             let minimum = U256::from(1_000u64);
-            vs.register_validator(OWNER, V0, &[0xB0; 48]).unwrap();
+            vs.register_validator(V0, &[0xB0; 48]).unwrap();
             vs.test_seed_authoritative_bonded(V0, minimum).unwrap();
             vs.activate_validator_via_boundary_for_test(V0).unwrap();
-            vs.register_validator(OWNER, V1, &[0xB1; 48]).unwrap();
+            vs.register_validator(V1, &[0xB1; 48]).unwrap();
             vs.test_seed_authoritative_bonded(V1, minimum).unwrap();
             vs.activate_validator_via_boundary_for_test(V1).unwrap();
         }
@@ -229,8 +229,7 @@ fn window_close_absentee_pass_is_deterministic_and_correct() {
                 let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
                 let minimum = U256::from(1_000u64);
                 for (i, a) in members.iter().enumerate() {
-                    vs.test_register_validator_without_pop(*a, &[0xC0u8 + i as u8; 48])
-                        .unwrap();
+                    vs.register_validator(*a, &[0xC0u8 + i as u8; 48]).unwrap();
                     vs.test_seed_authoritative_bonded(*a, minimum).unwrap();
                     vs.activate_validator_via_boundary_for_test(*a).unwrap();
                 }
@@ -324,10 +323,10 @@ fn window_close_miss_survives_epoch_boundary_reset() {
         {
             let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
             let minimum = U256::from(1_000u64);
-            vs.register_validator(OWNER, A, &[0xE0; 48]).unwrap();
+            vs.register_validator(A, &[0xE0; 48]).unwrap();
             vs.test_seed_authoritative_bonded(A, minimum).unwrap();
             vs.activate_validator_via_boundary_for_test(A).unwrap();
-            vs.register_validator(OWNER, B, &[0xE1; 48]).unwrap();
+            vs.register_validator(B, &[0xE1; 48]).unwrap();
             vs.test_seed_authoritative_bonded(B, minimum).unwrap();
             vs.activate_validator_via_boundary_for_test(B).unwrap();
         }

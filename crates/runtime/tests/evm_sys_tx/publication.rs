@@ -65,7 +65,6 @@ fn publication_fixture(size: usize, maximum_descriptor: bool) -> PublicationFixt
     };
     provider.enter(|storage| {
         let mut validators = ValidatorSet::new(storage.clone());
-        validators.config_owner.write(OWNER).unwrap();
         validators.set_config_max_validators(size as u32).unwrap();
         let minimum = U256::from(1_000u64);
         validators
@@ -73,7 +72,7 @@ fn publication_fixture(size: usize, maximum_descriptor: bool) -> PublicationFixt
             .unwrap();
         for member in &committee.committee {
             validators
-                .test_register_validator_without_pop(member.address, &member.consensus_pubkey)
+                .register_validator(member.address, &member.consensus_pubkey)
                 .unwrap();
             validators
                 .test_seed_authoritative_bonded(member.address, minimum)

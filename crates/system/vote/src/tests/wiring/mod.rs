@@ -25,7 +25,6 @@ use crate::schema::{BondState, ProposalStatus, Vote};
 mod factory;
 mod vaultrouter;
 
-const VALIDATOR_OWNER: Address = Address::repeat_byte(0xff);
 const VALIDATOR_A: Address = Address::repeat_byte(0xa1);
 const VALIDATOR_B: Address = Address::repeat_byte(0xa2);
 const VALIDATOR_C: Address = Address::repeat_byte(0xa3);
@@ -91,7 +90,6 @@ fn context(issuer: Address) -> VoteTargetContext {
 
 fn register_active_validator(storage: StorageHandle<'_>, validator: Address, seed: u8) {
     let mut validator_set = ValidatorSet::new(storage);
-    validator_set.config_owner.write(VALIDATOR_OWNER).unwrap();
     validator_set.set_config_max_validators(100).unwrap();
     let mut public_key = [0u8; 48];
     public_key[0] = seed;
@@ -100,7 +98,7 @@ fn register_active_validator(storage: StorageHandle<'_>, validator: Address, see
         .test_seed_authoritative_min_stake(minimum)
         .unwrap();
     validator_set
-        .register_validator(VALIDATOR_OWNER, validator, &public_key)
+        .register_validator(validator, &public_key)
         .unwrap();
     validator_set
         .test_seed_authoritative_bonded(validator, minimum)

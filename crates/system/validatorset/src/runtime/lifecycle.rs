@@ -50,12 +50,8 @@ impl ValidatorSet<'_> {
     /// Deactivates a validator. The validator transitions to EXITING and awaits a
     /// DKG reshare that excludes it.
     ///
-    /// The caller must be the config owner or the validator itself.
-    pub fn deactivate_validator(&mut self, caller: Address, addr: Address) -> Result<()> {
-        let owner = self.config_owner.read()?;
-        if caller != owner && caller != addr {
-            return Err(ValidatorSetError::UnauthorizedOwnerOrValidator.into());
-        }
+    /// The transaction sender is the validator itself.
+    pub fn deactivate_validator(&mut self, addr: Address) -> Result<()> {
         let before = self.validator_state(addr)?;
         let active = match before.lifecycle().clone() {
             ValidatorLifecycle::Active(active) => active,
@@ -87,16 +83,12 @@ impl ValidatorSet<'_> {
             wall_clock: iso8601_now(),
             block_number: height,
             validator: format!("{addr:?}"),
-            caller: format!("{caller:?}"),
-            self_initiated: caller == addr,
         });
 
         info!(
             target: "outbe::validatorset",
             event = "validator_deactivated",
             validator = %addr,
-            %caller,
-            self_initiated = (caller == addr),
             block_number = height,
             "validator transitioned ACTIVE -> EXITING (voluntary deactivation)",
         );

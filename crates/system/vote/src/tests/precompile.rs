@@ -426,7 +426,7 @@ fn recast_requires_current_eligibility_without_removing_the_old_ballot() {
         let id = create_update_proposal(&mut vote, PROPOSER, 100).unwrap();
         vote.cast_vote_approve(id, VOTER_A, true, 100).unwrap();
         outbe_validatorset::contract::ValidatorSet::new(storage.clone())
-            .deactivate_validator(super::VALIDATOR_OWNER, VOTER_A)
+            .deactivate_validator(VOTER_A)
             .unwrap();
         assert_reverts_with(
             dispatch(
