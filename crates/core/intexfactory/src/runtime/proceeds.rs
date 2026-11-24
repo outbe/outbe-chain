@@ -1,36 +1,9 @@
 use super::*;
-use crate::constants::ORIGIN_ROUTER_ADDRESS;
 
 use alloy_sol_types::{sol, SolValue};
 use outbe_core_common::addresses::{TARGET_ROUTER_ADDRESS, WCOEN_ADDRESS, WCOEN_BRIDGE_ADDRESS};
 use outbe_intex::wire::evm_chain_of;
 use outbe_promislimit::{BurnSource, PromisLimitContract};
-
-/// Burns the proceeds into the Promis Limit; COEN below one minor stays as the rest of code 43.
-pub fn burn_intex_auction_proceeds(
-    storage: &StorageHandle<'_>,
-    caller: Address,
-    emission_day: EmissionDate,
-    src_chain_id: u32,
-    amount: U256,
-) -> Result<()> {
-    if caller != ORIGIN_ROUTER_ADDRESS {
-        return Err(IntexFactoryError::NotOriginRouter.into());
-    }
-    if amount.is_zero() {
-        return Err(IntexFactoryError::ZeroAmount.into());
-    }
-    PromisLimitContract::new(storage.clone()).burn(BurnSource::IntexAuctionProceeds, amount)?;
-    emit_event(
-        storage,
-        crate::precompile::IIntexFactory::IntexAuctionProceedsBurned {
-            emissionDay: emission_day.value(),
-            srcChainId: src_chain_id,
-            pageIndex: 0,
-            amountMinor: amount,
-        },
-    )
-}
 
 sol! {
     function transferFrom(address src, address dst, uint256 wad) external returns (bool);

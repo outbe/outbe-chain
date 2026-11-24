@@ -1,5 +1,3 @@
-pub use outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS;
-
 /// Minimum-bid-quantity floor: 4% of the prior series' issued count (basis points).
 pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 
@@ -9,7 +7,7 @@ pub const BID_QUANTITY_FLOOR_BPS: u32 = 400;
 /// same UTC day as the dispatch.
 pub const BIDS_FANIN_TIMEOUT_SECS: u64 = 8 * 3600;
 
-/// Mirrors `OriginRouter.MAX_TARGETS`. The work budgets of Desis are measured with this many
+/// Mirrors `outbe_intexfactory::targets::MAX_TARGET_CHAINS`. The work budgets of Desis are measured with this many
 /// targets, so a longer snapshot fails the day instead of the run.
 pub const MAX_TARGET_CHAINS: usize = 16;
 

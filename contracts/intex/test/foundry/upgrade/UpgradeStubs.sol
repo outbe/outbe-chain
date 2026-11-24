@@ -4,7 +4,6 @@ pragma solidity 0.8.30;
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
-import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 
@@ -26,14 +25,6 @@ contract IntexAuctionV2 is IntexAuction {
 }
 
 contract EscrowAdapterV2 is EscrowAdapter {
-    function upgradeProbe() external pure returns (uint256) {
-        return UPGRADE_PROBE;
-    }
-}
-
-contract OriginRouterV2 is OriginRouter {
-    constructor(address bridge_) OriginRouter(bridge_) {}
-
     function upgradeProbe() external pure returns (uint256) {
         return UPGRADE_PROBE;
     }

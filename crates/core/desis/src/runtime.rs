@@ -18,7 +18,7 @@ use crate::constants::{
     CLEARING_FIXED_GAS, CLEARING_HISTORY_DAYS, CLEARING_MIN_BIDS, CLEARING_PAGE_GAS,
     COMMIT_WINDOW_SECONDS, IGNORED_CONFLICT, IGNORED_NOT_FOUND, IGNORED_OBSOLETE,
     INTEX_ISSUANCE_WINDOW_SECONDS, MAX_BID_PAGES, MAX_INTEX_AUCTION_WINNERS_PAGES,
-    MAX_PAYLOAD_ARRAY_LEN, MAX_TARGET_CHAINS, MIN_COMMIT_WINDOW_SECONDS, ORIGIN_ROUTER_ADDRESS,
+    MAX_PAYLOAD_ARRAY_LEN, MAX_TARGET_CHAINS, MIN_COMMIT_WINDOW_SECONDS,
     RESULT_DELIVERY_MARGIN_SECONDS, REVEAL_WINDOW_SECONDS,
 };
 use crate::errors::DesisError;
@@ -448,9 +448,9 @@ mod schedule;
 
 #[cfg(test)]
 pub(crate) use algorithm::rate_lock;
-pub use bids::{
-    collect_intex_auction_bids, complete_intex_auction_bids, receive_bids_message, Inbound,
-};
+pub use bids::receive_bids_message;
+#[cfg(test)]
+pub(crate) use bids::{collect_intex_auction_bids, complete_intex_auction_bids, Inbound};
 pub use clearing::complete_auctions;
 #[cfg(test)]
 pub(crate) use clearing::force_clear;

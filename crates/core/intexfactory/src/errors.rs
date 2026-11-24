@@ -26,8 +26,6 @@ pub enum IntexFactoryError {
     InsufficientSettled,
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
-    #[error("caller is not the origin router")]
-    NotOriginRouter,
     #[error("proceeds from an unexpected caller {0}")]
     UnauthorizedProceedsCaller(alloy_primitives::Address),
     #[error("proceeds from a chain {0} that the day did not start on")]
@@ -58,9 +56,6 @@ pub enum IntexFactoryError {
 
     #[error("NFT balanceOf undecodable")]
     NftBalanceOfUndecodable,
-
-    #[error("the router answered no legs")]
-    RouterAnsweredNoLegs,
 
     #[error("promis overflow")]
     PromisOverflow,
@@ -115,7 +110,6 @@ impl From<IntexFactoryError> for PrecompileError {
             IntexFactoryError::InsufficientProofOfWork => {
                 revert_with(I::InsufficientProofOfWork {})
             }
-            IntexFactoryError::NotOriginRouter => revert_with(I::NotOriginRouter {}),
             IntexFactoryError::UnauthorizedProceedsCaller(caller) => {
                 revert_with(I::UnauthorizedProceedsCaller { caller })
             }
@@ -141,7 +135,6 @@ impl From<IntexFactoryError> for PrecompileError {
             IntexFactoryError::NftBalanceOfUndecodable => {
                 revert_with(I::NftBalanceOfUndecodable {})
             }
-            IntexFactoryError::RouterAnsweredNoLegs => revert_with(I::RouterAnsweredNoLegs {}),
             IntexFactoryError::PromisOverflow => revert_with(I::PromisOverflow {}),
             IntexFactoryError::MiningSequenceOverflow => revert_with(I::MiningSequenceOverflow {}),
             IntexFactoryError::MinedUnitsExceedSeries => revert_with(I::MinedUnitsExceedSeries {}),

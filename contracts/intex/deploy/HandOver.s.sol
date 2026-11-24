@@ -17,8 +17,7 @@ import {BaseScript} from "./BaseScript.s.sol";
 ///      last: after DeployOrigin or DeployTarget and ConfigureOrigin or ConfigureTarget. After it,
 ///      an upgrade or a configuration change is an `upgradeContracts` vote of Update.
 ///      The script finds each proxy at its CREATE3 address and skips a proxy that is not deployed
-///      here: Outbe has the OriginRouter and the target proxies, a remote target has the target
-///      proxies only.
+///      here.
 ///      Env: DEPLOYER_PK (the current admin), CREATE3_FACTORY_ADDRESS, OUTBE_CHAIN_ID and
 ///      OUTBE_RPC_URL (to read the Interchain Account from the Outbe node).
 contract HandOver is BaseScript {
@@ -34,7 +33,7 @@ contract HandOver is BaseScript {
         address governance = governanceOwner();
         address outbeIca = outbeIcaAccount();
 
-        string[6] memory prefixes = intexProxyPrefixes();
+        string[5] memory prefixes = intexProxyPrefixes();
         vm.startBroadcast(pk);
         for (uint256 i = 0; i < prefixes.length; i++) {
             address proxy = predictProxy(factory, deployer, prefixes[i]);

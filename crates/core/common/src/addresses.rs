@@ -35,10 +35,3 @@ pub const WCOEN_ADDRESS: Address = address!("0x5C8E0466cCD1f66A85f167Fa3ec75E5F4
 pub const WCOEN_BRIDGE_ADDRESS: Address = address!("0xDEb9bA2f46395D03c6ff51b4A2c4898930ED170b");
 #[cfg(feature = "e2e-test")]
 pub const WCOEN_BRIDGE_ADDRESS: Address = address!("0x189b63A6583Ffd67082D15456F0fACD0CBb2B631");
-
-/// Intex OriginRouter: the auction's outbound ERC-7786 sends and target-chain
-/// registry. CREATE3 proxy under salt "outbe-intex:OriginRouter:v7.0.0", same deployer and factory.
-#[cfg(not(feature = "e2e-test"))]
-pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x62C1EFaCBfB20a864342B61A6dEC6f4d80729D18");
-#[cfg(feature = "e2e-test")]
-pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x78639251937A333daee04233867A199E314D7Bbb");

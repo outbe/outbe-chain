@@ -20,7 +20,6 @@ interface IIntexFactory {
     error UnitsExceedBalance();
     error InsufficientSettled();
     error InsufficientProofOfWork();
-    error NotOriginRouter();
     error UnauthorizedProceedsCaller(address caller);
     error UnexpectedProceedsSource(uint32 sourceDomain);
     error UnauthorizedProceedsSender(bytes from);
@@ -32,7 +31,6 @@ interface IIntexFactory {
     error SettledUnitsExceedU32();
     error NftBalanceExceedsU32();
     error NftBalanceOfUndecodable();
-    error RouterAnsweredNoLegs();
     error PromisOverflow();
     error MiningSequenceOverflow();
     error MinedUnitsExceedSeries();
@@ -90,12 +88,6 @@ interface IIntexFactory {
 
     /// @notice Leading zero bytes `minePromis` requires of the work hash.
     function powDifficulty() external view returns (uint8);
-
-    /// @notice Burn auction proceeds (native COEN, sent as msg.value) and credit them to the
-    ///         Promis limit pool in whole protocol units. Callable only by the OriginRouter.
-    /// @param emissionDay Emission day (yyyymmdd) the proceeds belong to.
-    /// @param srcChainId Target chain the proceeds arrived from.
-    function burnIntexAuctionProceeds(uint32 emissionDay, uint32 srcChainId) external payable;
 
     /// @notice The WCOEN token bridge delivers the proceeds of one page of winners from
     ///         TargetRouter of a chain of the day, with `abi.encode(emissionDay, pageIndex)` in

@@ -10,7 +10,6 @@ import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 
 /// @title PrepareUpgrade
 /// @author Outbe
@@ -22,7 +21,7 @@ import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 contract PrepareUpgrade is BaseScript, UpgradeProposal {
     function _proxies(address deployer) internal view override returns (address[] memory proxies) {
         Create3Factory factory = create3Factory();
-        string[6] memory prefixes = intexProxyPrefixes();
+        string[5] memory prefixes = intexProxyPrefixes();
         proxies = new address[](prefixes.length);
         for (uint256 i = 0; i < prefixes.length; i++) {
             proxies[i] = predictProxy(factory, deployer, prefixes[i]);
@@ -30,11 +29,10 @@ contract PrepareUpgrade is BaseScript, UpgradeProposal {
     }
 
     function _newImplementation(uint256 index, address proxy) internal override returns (address) {
-        if (index == 0) return address(new OriginRouter(address(OriginRouter(payable(proxy)).BRIDGE())));
-        if (index == 1) return address(new IntexNFT1155());
-        if (index == 2) return address(new EscrowAdapter());
-        if (index == 3) return address(new IntexAuction());
-        if (index == 4) {
+        if (index == 0) return address(new IntexNFT1155());
+        if (index == 1) return address(new EscrowAdapter());
+        if (index == 2) return address(new IntexAuction());
+        if (index == 3) {
             IntexNFT1155Bridge bridge = IntexNFT1155Bridge(payable(proxy));
             return address(new IntexNFT1155Bridge(address(bridge.token()), address(bridge.BRIDGE())));
         }

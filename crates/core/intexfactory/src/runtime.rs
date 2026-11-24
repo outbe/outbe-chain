@@ -348,6 +348,4 @@ pub use mining::{mine_promis, MiningProof};
 pub use pricing::quote_settlement;
 #[cfg(test)]
 pub(crate) use pricing::settlement_units;
-pub use proceeds::{
-    burn_intex_auction_proceeds, receive_crosschain_proceeds, receive_local_proceeds,
-};
+pub use proceeds::{receive_crosschain_proceeds, receive_local_proceeds};

@@ -2,7 +2,7 @@
 //!
 //! Routing only: decode -> runtime -> encode. The settle calls / `minePromis` name the
 //! owner they act for, so `caller = msg.sender` only binds the payment.
-//! None accept value, except `burnIntexAuctionProceeds`, which burns auction proceeds.
+//! None accept value.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolInterface};
@@ -10,8 +10,7 @@ use outbe_vaultrouter::settlement::SettlementPayment;
 
 use outbe_intex::SeriesId;
 use outbe_primitives::dispatch::{
-    dispatch_call, metadata, mutate, mutate_void, mutate_void_payable, reject_value_unless_payable,
-    view, PayableCallContext,
+    dispatch_call, metadata, mutate, mutate_void, reject_value, view,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -21,7 +20,7 @@ use crate::runtime;
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
 /// without flipping the route fails the build.
-pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[IIntexFactory::burnIntexAuctionProceedsCall::SELECTOR];
+pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
 #[allow(clippy::too_many_arguments)]
 mod abi {
@@ -38,9 +37,7 @@ pub fn dispatch(
     caller: Address,
     value: U256,
 ) -> Result<Bytes> {
-    // IntexFactory is a payable route, so the boundary credits value to this
-    // address. Every selector the module has not published refuses it here.
-    reject_value_unless_payable(data, PAYABLE_SELECTORS, &value)?;
+    reject_value(&value)?;
     dispatch_call(
         data,
         IIntexFactory::IIntexFactoryCalls::abi_decode,
@@ -100,26 +97,6 @@ pub fn dispatch(
                 powDifficulty(_) => metadata::<IIntexFactory::powDifficultyCall>(|| {
                     Ok(outbe_core_common::pow::POW_DIFFICULTY)
                 }),
-                // The only payable selector: burns auction proceeds (msg.value)
-                // into the Promis limit pool.
-                burnIntexAuctionProceeds(c) => mutate_void_payable(
-                    &storage,
-                    c,
-                    PayableCallContext {
-                        selectors: PAYABLE_SELECTORS,
-                        sender: caller,
-                        value,
-                    },
-                    |sender, c, val| {
-                        runtime::burn_intex_auction_proceeds(
-                            &storage,
-                            sender,
-                            c.emissionDay.into(),
-                            c.srcChainId,
-                            val,
-                        )
-                    },
-                ),
                 ownerBalances(c) => view(c, |c| {
                     runtime::owner_balances(&storage, series_of(&storage, c.intexId)?, c.owner)
                 }),

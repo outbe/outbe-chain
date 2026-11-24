@@ -1,8 +1,7 @@
 use std::time::Instant;
 
-use alloy_primitives::{Bytes, U256};
+use alloy_primitives::U256;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS;
 use outbe_intexfactory::{bench_support::IssuanceLeg, IssuanceParams};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_system_common::time::EmissionDate;
@@ -82,7 +81,7 @@ fn params(index: usize) -> IssuanceParams {
         },
         issuance_currency: 840,
         reference_currency: 840,
-        snapshot_chains: vec![1],
+        target_chains: vec![1],
     }
 }
 
@@ -90,7 +89,6 @@ fn new_provider() -> HashMapStorageProvider {
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
     provider.set_block_number(1);
     provider.set_timestamp(U256::from(T_NOW));
-    provider.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, Bytes::from(vec![0_u8; 32]));
     provider
 }
 

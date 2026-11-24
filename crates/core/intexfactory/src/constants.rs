@@ -1,7 +1,7 @@
 //! IntexFactory constants: external contract addresses called via `storage.call`, and
 //! the caps and timings of the cross-chain sends. The series terms live in Intex.
 
-pub use outbe_core_common::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS};
+pub use outbe_core_common::addresses::INTEX_NFT1155_ADDRESS;
 
 /// Series one ISSUANCE_INSTRUCTIONS message may carry. Mirrors `MAX_SERIES_PER_ISSUANCE`.
 pub const MAX_SERIES_PER_MESSAGE: usize = 16;

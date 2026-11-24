@@ -41,32 +41,6 @@ interface IDesis {
         Failed
     }
 
-    // --- Bid ingestion (from OriginRouter) ---
-    /// @notice Accept a relayed bid batch from a target chain. A day's batches may arrive in any
-    ///         order over the unordered bridge. The receiver collects all `totalPages` (by
-    ///         `pageIndex`) before finalizing.
-    function collectIntexAuctionBids(
-        bytes32 receiveId,
-        uint32 emissionDay,
-        uint32 srcChainId,
-        uint16 pageIndex,
-        uint16 totalPages,
-        address[] calldata bidders,
-        uint256[] calldata packedBids
-    ) external;
-
-    /// @notice Per-chain completeness marker: the source relayed `totalPages`/`totalBids` for
-    ///         this day. The gate clears the auction once every snapshot chain has reported (or
-    ///         the fan-in deadline passes).
-    function completeIntexAuctionBids(
-        bytes32 receiveId,
-        uint32 emissionDay,
-        uint32 srcChainId,
-        uint16 totalPages,
-        uint32 totalBids
-    ) external;
-
-    // --- Views ---
     function auctionStage(uint32 emissionDay) external view returns (AuctionStage);
     function intexAuctionBidsCount(uint32 emissionDay) external view returns (uint256);
     function chainIntexAuctionBidsCount(uint32 emissionDay, uint32 srcChainId) external view returns (uint256);

@@ -3,7 +3,6 @@ use std::time::Instant;
 
 use alloy_primitives::Address;
 use evm2::interpreter::gas::{SSTORE_RESET, WARM_STORAGE_READ_COST};
-use outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS;
 use outbe_primitives::storage::hashmap::{
     HashMapStorageProvider, StorageTraceKind, StorageTraceOperation,
 };
@@ -191,7 +190,6 @@ fn module_name(address: Address) -> &'static str {
         NOD_ADDRESS => "nod",
         NOD_FACTORY_ADDRESS => "nod_factory",
         ORACLE_ADDRESS => "oracle",
-        ORIGIN_ROUTER_ADDRESS => "origin_router",
         PROMIS_ADDRESS => "promis",
         PROMIS_FACTORY_ADDRESS => "promis_factory",
         STABLECOIN_FACTORY_ADDRESS => "stablecoin_factory",

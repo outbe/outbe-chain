@@ -1,6 +1,7 @@
 //! ABI dispatch for the Desis precompile at `DESIS_ADDRESS`.
 //!
-//! OriginRouter submits bids through this ABI. The Cycle `complete_auctions` hook owns clearing.
+//! The ERC-7786 hub delivers the bids through `receiveMessage`. The Cycle `complete_auctions` hook
+//! owns clearing.
 //! The runtime owns the protocol logic.
 
 use alloy_primitives::{Address, Bytes, U256};
@@ -20,7 +21,7 @@ use crate::schema::IntexAuctionBidData;
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-/// `type(IDesis).interfaceId` that `OriginRouter.wire` probes.
+/// `type(IDesis).interfaceId`.
 pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = {
     let selectors = abi::IDesis::IDesisCalls::SELECTORS;
     let mut id = [0u8; 4];
@@ -56,34 +57,6 @@ pub fn dispatch(
     dispatch_call(data, IDesis::IDesisCalls::abi_decode, |call| {
         use IDesis::IDesisCalls::*;
         match call {
-            collectIntexAuctionBids(c) => mutate_void(&storage, c, caller, |sender, c| {
-                let bids = bids_from_sol_arrays(&c.bidders, &c.packedBids)?;
-                runtime::collect_intex_auction_bids(
-                    storage.clone(),
-                    runtime::Inbound {
-                        caller: sender,
-                        receive_id: c.receiveId,
-                        emission_day: c.emissionDay.into(),
-                        src_chain_id: c.srcChainId,
-                    },
-                    c.pageIndex,
-                    c.totalPages,
-                    bids,
-                )
-            }),
-            completeIntexAuctionBids(c) => mutate_void(&storage, c, caller, |sender, c| {
-                runtime::complete_intex_auction_bids(
-                    storage.clone(),
-                    runtime::Inbound {
-                        caller: sender,
-                        receive_id: c.receiveId,
-                        emission_day: c.emissionDay.into(),
-                        src_chain_id: c.srcChainId,
-                    },
-                    c.totalPages,
-                    c.totalBids,
-                )
-            }),
             auctionStage(c) => view(c, |c| {
                 use crate::schema::DesisContract;
                 let contract = storage.contract::<DesisContract>();

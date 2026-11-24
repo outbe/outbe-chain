@@ -2,7 +2,6 @@ use super::*;
 use outbe_core_common::addresses::{ERC7786_HUB_ADDRESS, TARGET_ROUTER_ADDRESS};
 use outbe_intex::wire::{decode_bids_message, evm_chain_of, BidsMessage};
 use outbe_primitives::error::PassFailure;
-use outbe_system_common::addresses::DESIS_ADDRESS;
 
 /// - `Open` while `RevealingBids`/`CollectingBids`.
 /// - `Closed` once the day ended, and `UnknownDay` for a day that has not started. Both are acknowledged,
@@ -35,10 +34,9 @@ fn ignored_reason(stage: AuctionStage) -> Result<Option<u8>> {
     })
 }
 
-/// Where an inbound bid message comes from: the relaying caller, the day and the source chain.
+/// Where an inbound bid message comes from: its id, the day and the source chain.
 #[derive(Clone, Copy)]
 pub struct Inbound {
-    pub caller: Address,
     pub receive_id: B256,
     pub emission_day: EmissionDate,
     pub src_chain_id: u32,
@@ -72,12 +70,10 @@ pub fn collect_intex_auction_bids(
     bids: Vec<IntexAuctionBidData>,
 ) -> Result<()> {
     let Inbound {
-        caller,
         emission_day,
         src_chain_id,
         ..
     } = inbound;
-    require_origin_router(caller)?;
     require_nonzero_emission_day(emission_day)?;
     check_page_shape(page_index, total_pages, &bids)?;
     let mut contract = storage.contract::<DesisContract>();
@@ -133,12 +129,10 @@ pub fn complete_intex_auction_bids(
     total_bids: u32,
 ) -> Result<()> {
     let Inbound {
-        caller,
         emission_day,
         src_chain_id,
         ..
     } = inbound;
-    require_origin_router(caller)?;
     require_nonzero_emission_day(emission_day)?;
     if total_pages == 0 || total_pages > MAX_BID_PAGES {
         return Err(DesisError::InvalidTotalPages.into());
@@ -231,13 +225,6 @@ fn try_complete_intex_auction_bids(
     })
 }
 
-fn require_origin_router(caller: Address) -> Result<()> {
-    if caller != ORIGIN_ROUTER_ADDRESS && caller != DESIS_ADDRESS {
-        return Err(DesisError::UnauthorizedOrigin(caller).into());
-    }
-    Ok(())
-}
-
 fn require_nonzero_emission_day(emission_day: EmissionDate) -> Result<()> {
     if emission_day.value() == 0 {
         return Err(DesisError::InvalidEmissionDay(emission_day).into());
@@ -288,7 +275,6 @@ pub fn receive_bids_message(
     let stage = contract.read_stage(emission_day)?;
     intake_state(stage)?;
     let inbound = Inbound {
-        caller: DESIS_ADDRESS,
         receive_id,
         emission_day,
         src_chain_id,
