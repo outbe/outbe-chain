@@ -31,12 +31,13 @@ use crate::{
         disk,
         state::{
             check_dnsmasq_ip_conflicts, check_dnsmasq_lease_conflicts, dnsmasq_entry,
-            merge_dnsmasq_hosts, missing_dnsmasq_entries, VmFounderPhase, VmFounderState, VmState,
-            DNSMASQ_RESERVATIONS_FILENAME, VM_STATE_VERSION,
+            merge_dnsmasq_hosts, missing_dnsmasq_entries, strip_dnsmasq_network_block,
+            VmFounderPhase, VmFounderState, VmState, DNSMASQ_RESERVATIONS_FILENAME,
+            VM_STATE_VERSION,
         },
         vmm::{
-            calc_app_id, extract_primary_mac, remote_vmm_path, CreateVmRequest, NetworkingConfig,
-            StatusRequest, VmInfo, VmmClient, APP_COMPOSE_JSON,
+            calc_app_id, extract_primary_mac, remote_vmm_path, CreateVmRequest, GetInfoResponse,
+            NetworkingConfig, StatusRequest, VmInfo, VmmClient, APP_COMPOSE_JSON,
         },
     },
 };
@@ -430,11 +431,77 @@ pub fn host_reserve(
     Ok(())
 }
 
+/// Remove only this network's managed dnsmasq reservation block and reload dnsmasq.
+///
+/// Works from `network.yaml` / `network-manifest.json` alone so it can run after `vm remove`
+/// has cleared `vm-state.json`.
+pub fn host_release(
+    artifacts: &Path,
+    ssh_key: Option<&Path>,
+    ssh_config: Option<&Path>,
+) -> Result<()> {
+    let mut progress = Progress::new();
+    progress.stage("loading VM network artifacts");
+    let build = NetworkArtifacts::load(artifacts)?;
+    ensure_vm_deployment(&build)?;
+    let ssh_options = SshOptions::new(ssh_key, ssh_config)?;
+
+    let mut targets: BTreeMap<(String, u16, String, PathBuf, PathBuf), Ssh> = BTreeMap::new();
+    for founder in &build.config.founders {
+        let resolved = build.config.resolve_founder_vm(founder)?;
+        let key = (
+            resolved.vmm_host.host.clone(),
+            resolved.vmm_host.port,
+            resolved.vmm_host.user.clone(),
+            resolved.dhcp_hosts_file.clone(),
+            resolved.dhcp_pid_file.clone(),
+        );
+        targets.entry(key).or_insert(resolved.vmm_host);
+    }
+
+    let mut updated_hosts = 0usize;
+    for ((host, _port, _user, hosts_file, pid_file), ssh) in targets {
+        progress.stage(&format!(
+            "releasing {} reservations in {} on {host}",
+            build.config.name,
+            hosts_file.display()
+        ));
+        let Some(existing) = read_remote_file_privileged(&ssh_options, &ssh, &host, &hosts_file)?
+        else {
+            continue;
+        };
+        let stripped = strip_dnsmasq_network_block(&existing, &build.config.name);
+        if stripped == existing {
+            continue;
+        }
+        let expected_sha256 = sha256_hex(existing.as_bytes());
+        let write_cmd = build_host_reserve_write_command(
+            &hosts_file,
+            &pid_file,
+            Path::new(DEFAULT_DNSMASQ_LOCK_FILE),
+            Some(&expected_sha256),
+        );
+        ssh_options
+            .capture_ssh_stdin(&ssh, &host, &write_cmd, stripped.as_bytes())
+            .wrap_err_with(|| {
+                format!("release reservations in {} on {host}", hosts_file.display())
+            })?;
+        updated_hosts += 1;
+    }
+
+    progress.done(&format!(
+        "released DHCP reservations for network `{}` on {updated_hosts} host(s)",
+        build.config.name
+    ));
+    Ok(())
+}
+
 pub async fn start(
     artifacts: &Path,
     ssh_key: Option<&Path>,
     ssh_config: Option<&Path>,
     timeout: Duration,
+    max_lag: u64,
 ) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("loading VM deployment state");
@@ -486,6 +553,7 @@ pub async fn start(
                     &ssh_options,
                     timeout,
                     &last_statuses,
+                    max_lag,
                     "finalized consensus"
                 )
             );
@@ -511,6 +579,7 @@ pub async fn start(
                         &ssh_options,
                         timeout,
                         &last_statuses,
+                        max_lag,
                         "Hyperlane setup"
                     )
                 );
@@ -519,18 +588,20 @@ pub async fn start(
             progress.stage("verifying Hyperlane signer registrations");
             continue;
         }
+        let assessments = assess_founders_lag(&statuses, max_lag);
         if hyperlane_configured
             && statuses.iter().all(|status| {
                 vm_ready_for_hyperlane(status, build.config.chain_id, required_peers)
                     && status.hyperlane_registered == Some(true)
             })
+            && assessments.iter().all(|assessment| !assessment.lagging)
         {
             progress.done(&format!(
                 "VM network {} finalized with {} founding validators",
                 build.config.name,
                 statuses.len()
             ));
-            println!("\n{}", render_status(&build, &statuses));
+            println!("\n{}", render_status(&build, &statuses, max_lag));
             return Ok(());
         }
         if Instant::now() >= std_deadline {
@@ -542,8 +613,9 @@ pub async fn start(
                     &ssh_options,
                     timeout,
                     &statuses,
+                    max_lag,
                     if hyperlane_configured {
-                        "Hyperlane signer verification"
+                        "Hyperlane signer verification and consensus catchup"
                     } else {
                         "finalized consensus"
                     }
@@ -552,10 +624,12 @@ pub async fn start(
         }
         let ready = statuses
             .iter()
-            .filter(|status| {
+            .zip(&assessments)
+            .filter(|(status, assessment)| {
                 if hyperlane_configured {
                     vm_ready_for_hyperlane(status, build.config.chain_id, required_peers)
                         && status.hyperlane_registered == Some(true)
+                        && !assessment.lagging
                 } else {
                     vm_ready_for_hyperlane(status, build.config.chain_id, required_peers)
                 }
@@ -611,6 +685,8 @@ pub async fn remove(
     artifacts: &Path,
     ssh_key: Option<&Path>,
     ssh_config: Option<&Path>,
+    release_reservations: bool,
+    timeout: Duration,
 ) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("loading VM deployment state");
@@ -645,6 +721,53 @@ pub async fn remove(
     while let Some(result) = tasks.join_next().await {
         result.wrap_err("VM remove task panicked")??;
     }
+
+    // RemoveVm is asynchronous in dstack-vmm; poll GetInfo until every VM is gone before
+    // deleting vm-state.json so an operator can safely re-run `vm create` or retry `vm remove`.
+    progress.stage("waiting for asynchronous VMM removal to complete");
+    let deadline = Instant::now() + timeout;
+    loop {
+        let mut remaining_vms = Vec::new();
+        for founder in &state.founders {
+            let client = VmmClient::new(
+                founder.vmm_host.clone(),
+                ssh_options.clone(),
+                founder.vmm_home.clone(),
+                &founder.name,
+            );
+            let vm_id = founder.vm_id.clone();
+            let info = tokio::task::spawn_blocking(move || client.get_info(&vm_id))
+                .await
+                .wrap_err("VM remove poll task panicked")??;
+            if !vm_is_gone(&info) {
+                let status = info
+                    .info
+                    .map(|i| i.status)
+                    .unwrap_or_else(|| "unknown".to_owned());
+                remaining_vms.push(format!("{} ({}: {status})", founder.name, founder.vm_id));
+            }
+        }
+        if remaining_vms.is_empty() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            bail!(
+                "VMs did not finish removing within {} seconds (keeping vm-state.json for retry): {}",
+                timeout.as_secs(),
+                remaining_vms.join(", ")
+            );
+        }
+        progress.update(&format!(
+            "waiting for {} VM(s) to finish removing",
+            remaining_vms.len()
+        ));
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            continue;
+        }
+        tokio::time::sleep(left.min(Duration::from_secs(2))).await;
+    }
+
     let state_path = VmState::path(artifacts);
     if state_path.exists() {
         fs::remove_file(&state_path)
@@ -655,6 +778,18 @@ pub async fn remove(
         state.founders.len(),
         state_path.display()
     ));
+
+    if release_reservations {
+        host_release(artifacts, ssh_key, ssh_config)?;
+    } else {
+        println!(
+            "Note: managed dnsmasq reservations (`# outbe-up:{}:begin..end`) are left in place \
+             (leases expire in {}). To release them now:\n  outbe-up vm host-release --artifacts {}",
+            state.network_name,
+            crate::vm::state::DNSMASQ_LEASE_DURATION,
+            artifacts.display()
+        );
+    }
     Ok(())
 }
 
@@ -663,6 +798,7 @@ pub async fn status(
     ssh_key: Option<&Path>,
     ssh_config: Option<&Path>,
     watch: bool,
+    max_lag: u64,
 ) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("querying VM founder status");
@@ -675,13 +811,37 @@ pub async fn status(
     let statuses = query_all(&build, &state, &ssh_options).await?;
     if !watch {
         progress.done(&format!("queried {} VM founders", statuses.len()));
-        println!("\n{}", render_status(&build, &statuses));
+        println!("\n{}", render_status(&build, &statuses, max_lag));
+        let assessments = assess_founders_lag(&statuses, max_lag);
+        let unhealthy: Vec<String> = statuses
+            .iter()
+            .zip(&assessments)
+            .filter_map(|(status, assessment)| {
+                if !status.vmm_running || status.error.is_some() || status.finalized.is_none() {
+                    Some(format!("{}: unreachable/not-running", status.name))
+                } else if assessment.lagging {
+                    Some(format!(
+                        "{}: {}",
+                        status.name,
+                        assessment.reasons.join(", ")
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if !unhealthy.is_empty() {
+            bail!(
+                "VM network has unreachable or lagging founder(s): {}",
+                unhealthy.join("; ")
+            );
+        }
         return Ok(());
     }
 
     progress.done(&format!("connected to {} VM founders", statuses.len()));
     let display = WatchDisplay::new();
-    display.render(&render_status(&build, &statuses));
+    display.render(&render_status(&build, &statuses, max_lag));
     let interrupt = tokio::signal::ctrl_c();
     tokio::pin!(interrupt);
     loop {
@@ -695,8 +855,13 @@ pub async fn status(
         display.render(&render_status(
             &build,
             &query_all(&build, &state, &ssh_options).await?,
+            max_lag,
         ));
     }
+}
+
+fn vm_is_gone(resp: &GetInfoResponse) -> bool {
+    !resp.found || resp.info.is_none()
 }
 
 /// Run an async operation bounded by `deadline`, returning `Ok(None)` if the deadline expires.
@@ -716,12 +881,13 @@ fn build_timeout_report(
     ssh_options: &SshOptions,
     timeout: Duration,
     statuses: &[VmFounderStatus],
+    max_lag: u64,
     stage: &str,
 ) -> String {
     let mut report = format!(
         "VM network did not finish {stage} within {} seconds:\n{}\n",
         timeout.as_secs(),
-        render_status(build, statuses)
+        render_status(build, statuses, max_lag)
     );
     for founder in &state.founders {
         let client = VmmClient::new(
@@ -947,13 +1113,72 @@ async fn configure_hyperlane_vms(
     Ok(true)
 }
 
-fn render_status(build: &NetworkArtifacts, statuses: &[VmFounderStatus]) -> String {
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct FounderLagAssessment {
+    lag: Option<u64>,
+    lagging: bool,
+    reasons: Vec<String>,
+}
+
+/// Compare each founder's finalized height and `vrfMaterialVersion` against the cohort.
+fn assess_founders_lag(statuses: &[VmFounderStatus], max_lag: u64) -> Vec<FounderLagAssessment> {
+    let highest_finalized = statuses.iter().filter_map(|s| s.finalized).max();
+
+    // Determine majority `vrfMaterialVersion` across founders reporting consensus status.
+    let mut vrf_counts: BTreeMap<u64, usize> = BTreeMap::new();
+    let mut vrf_total = 0usize;
+    for status in statuses {
+        if let Some(c) = &status.consensus {
+            *vrf_counts.entry(c.vrf_material_version).or_insert(0) += 1;
+            vrf_total += 1;
+        }
+    }
+    let majority_vrf = vrf_counts
+        .into_iter()
+        .find(|(_, count)| *count * 2 > vrf_total)
+        .map(|(version, _)| version);
+
+    statuses
+        .iter()
+        .map(|status| {
+            let lag = match (highest_finalized, status.finalized) {
+                (Some(max_h), Some(h)) => Some(max_h.saturating_sub(h)),
+                _ => None,
+            };
+            let mut reasons = Vec::new();
+            if let Some(delta) = lag {
+                if delta > max_lag {
+                    reasons.push(format!("lag {delta} > {max_lag}"));
+                }
+            }
+            if let (Some(majority), Some(c)) = (majority_vrf, &status.consensus) {
+                if c.vrf_material_version != majority {
+                    reasons.push(format!(
+                        "vrf {} != majority {majority}",
+                        c.vrf_material_version
+                    ));
+                }
+            }
+            let lagging = !reasons.is_empty();
+            FounderLagAssessment {
+                lag,
+                lagging,
+                reasons,
+            }
+        })
+        .collect()
+}
+
+fn render_status(build: &NetworkArtifacts, statuses: &[VmFounderStatus], max_lag: u64) -> String {
     let required_peers = build.config.founders.len().saturating_sub(1);
+    let assessments = assess_founders_lag(statuses, max_lag);
     let ready_count = statuses
         .iter()
-        .filter(|status| {
+        .zip(&assessments)
+        .filter(|(status, assessment)| {
             vm_ready_for_hyperlane(status, build.config.chain_id, required_peers)
                 && status.hyperlane_registered == Some(true)
+                && !assessment.lagging
         })
         .count();
     let mut output = format!(
@@ -963,12 +1188,15 @@ fn render_status(build: &NetworkArtifacts, statuses: &[VmFounderStatus]) -> Stri
         statuses.len()
     );
     output.push_str(
-        "Founder              VMM       Bridge IP        MAC                Finalized  Exec  HL   Consensus\n",
+        "Founder              VMM       Bridge IP        MAC                Finalized (Lag)  Exec  HL   Consensus\n",
     );
-    for status in statuses {
-        let finalized = status
-            .finalized
-            .map_or_else(|| "?".to_owned(), |n| n.to_string());
+    for (status, assessment) in statuses.iter().zip(&assessments) {
+        let finalized = match (status.finalized, assessment.lag) {
+            (Some(n), Some(0)) => format!("{n} (0)"),
+            (Some(n), Some(lag)) => format!("{n} (-{lag})"),
+            (Some(n), None) => n.to_string(),
+            (None, _) => "?".to_owned(),
+        };
         let exec = status
             .execution_peers
             .map_or_else(|| "?".to_owned(), |n| n.to_string());
@@ -977,14 +1205,15 @@ fn render_status(build: &NetworkArtifacts, statuses: &[VmFounderStatus]) -> Stri
             Some(false) => "wait",
             None => "?",
         };
-        let consensus = status.consensus.as_ref().map_or_else(
+        let mut consensus = status.consensus.as_ref().map_or_else(
             || "unavailable".to_owned(),
             |c| {
                 format!(
-                    "{} peers={} shares={} tee={}",
+                    "{} peers={} shares={} vrf={} tee={}",
                     c.mode,
                     c.connected_peers,
                     if c.has_threshold_shares { "yes" } else { "no" },
+                    c.vrf_material_version,
                     if c.resident_ready() {
                         "ready"
                     } else {
@@ -993,8 +1222,11 @@ fn render_status(build: &NetworkArtifacts, statuses: &[VmFounderStatus]) -> Stri
                 )
             },
         );
+        if assessment.lagging {
+            consensus.push_str(&format!(" [LAGGING: {}]", assessment.reasons.join(", ")));
+        }
         output.push_str(&format!(
-            "{:<20} {:<9} {:<16} {:<18} {:<10} {:<5} {:<4} {}\n",
+            "{:<20} {:<9} {:<16} {:<18} {:<16} {:<5} {:<4} {}\n",
             status.name,
             status.vmm_status,
             status.bridge_ip,
@@ -1726,7 +1958,7 @@ mod tests {
             after.starts_with(foreign),
             "foreign lines must survive byte-for-byte"
         );
-        assert!(after.contains("52:54:00:aa:bb:01,10.77.0.10"));
+        assert!(after.contains("52:54:00:aa:bb:01,10.77.0.10,10m"));
         assert_eq!(fs::read_to_string(&hup_marker).unwrap().trim(), "HUP");
 
         // 3) File changed between read and write -> CAS rejects and leaves file untouched.
@@ -2308,5 +2540,189 @@ mod tests {
             !bad_log.exists(),
             "qemu-img must not run when raw checksum mismatches"
         );
+    }
+
+    #[test]
+    fn host_release_shell_command_strips_only_our_block_and_preserves_foreign() {
+        use std::{
+            io::Write,
+            os::unix::fs::PermissionsExt,
+            process::{Command, Stdio},
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let shim_dir = dir.path().join("bin");
+        fs::create_dir_all(&shim_dir).unwrap();
+        let sudo_shim = shim_dir.join("sudo");
+        fs::write(
+            &sudo_shim,
+            "#!/bin/sh\nif [ \"$1\" = \"-n\" ]; then shift; fi\nexec \"$@\"\n",
+        )
+        .unwrap();
+        fs::set_permissions(&sudo_shim, fs::Permissions::from_mode(0o755)).unwrap();
+        let path_env = format!(
+            "{}:{}",
+            shim_dir.display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+
+        let hosts = dir.path().join("dnsmasq.hosts");
+        let pid = dir.path().join("dnsmasq.pid");
+        let lock = dir.path().join("lock/dnsmasq.lock");
+        let hup_marker = dir.path().join("hup.received");
+
+        let foreign = "# other network\n52:54:00:de:ad:01,10.77.0.2\n";
+        let ours = vec![("52:54:00:aa:bb:01".to_owned(), Ipv4Addr::new(10, 77, 0, 10))];
+        let initial = merge_dnsmasq_hosts(foreign, &ours, "vm-devnet").unwrap();
+        fs::write(&hosts, &initial).unwrap();
+
+        let mut dummy_dnsmasq = Command::new("sh")
+            .arg("-c")
+            .arg(format!(
+                "trap 'echo HUP > {}; kill $spid 2>/dev/null || true; exit 0' HUP; sleep 15 & spid=$!; wait $spid",
+                shell_quote(&hup_marker.to_string_lossy())
+            ))
+            .spawn()
+            .unwrap();
+        fs::write(&pid, format!("{}\n", dummy_dnsmasq.id())).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+
+        // Read with generated privileged read command, strip only our block, write under lock+CAS.
+        let read_cmd = build_privileged_read_command(&hosts);
+        let read_out = Command::new("sh")
+            .arg("-c")
+            .arg(&read_cmd)
+            .env("PATH", &path_env)
+            .output()
+            .unwrap();
+        assert!(read_out.status.success());
+        let existing = parse_sentinel_read(&String::from_utf8(read_out.stdout).unwrap(), &hosts)
+            .unwrap()
+            .unwrap();
+        let stripped = strip_dnsmasq_network_block(&existing, "vm-devnet");
+        assert_eq!(stripped, foreign);
+
+        let write_cmd = build_host_reserve_write_command(
+            &hosts,
+            &pid,
+            &lock,
+            Some(&sha256_hex(existing.as_bytes())),
+        );
+        let mut child = Command::new("sh")
+            .arg("-c")
+            .arg(&write_cmd)
+            .env("PATH", &path_env)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stripped.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(
+            out.status.success(),
+            "host-release write failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let _ = dummy_dnsmasq.wait();
+        assert_eq!(fs::read_to_string(&hosts).unwrap(), foreign);
+        assert_eq!(fs::read_to_string(&hup_marker).unwrap().trim(), "HUP");
+    }
+
+    #[test]
+    fn lag_assessment_flags_hardware_lagging_founder_and_majority_vrf() {
+        let mk = |name: &str, finalized: u64, vrf: u64| VmFounderStatus {
+            name: name.into(),
+            vm_id: UUID_0.into(),
+            bridge_ip: Ipv4Addr::new(10, 77, 0, 10),
+            mac: "52:54:00:aa:bb:01".into(),
+            vmm_status: "running".into(),
+            vmm_running: true,
+            chain_id: Some(424_242),
+            finalized: Some(finalized),
+            execution_peers: Some(3),
+            consensus: Some(ConsensusStatus {
+                connected_peers: 3,
+                has_threshold_shares: true,
+                last_finalized_block: finalized,
+                vrf_material_version: vrf,
+                next_planned_activation_height: 0,
+                is_validator: true,
+                mode: "signer".into(),
+                enclave: crate::validator::rpc::EnclaveHealth {
+                    state: "ready".into(),
+                    ready: true,
+                    offer_key_ready: true,
+                },
+            }),
+            hyperlane_registered: Some(true),
+            error: None,
+        };
+
+        // Hardware run 2 shape: founder 0 stuck at 1200 with vrf=0 while 1..3 are at 1360 with vrf=1.
+        let statuses = vec![
+            mk("validator-0", 1200, 0),
+            mk("validator-1", 1360, 1),
+            mk("validator-2", 1360, 1),
+            mk("validator-3", 1360, 1),
+        ];
+        let assessed = assess_founders_lag(&statuses, 20);
+        assert_eq!(assessed[0].lag, Some(160));
+        assert!(assessed[0].lagging);
+        assert!(assessed[0].reasons.iter().any(|r| r.contains("lag 160")));
+        assert!(assessed[0]
+            .reasons
+            .iter()
+            .any(|r| r.contains("vrf 0 != majority 1")));
+        for item in &assessed[1..] {
+            assert_eq!(item.lag, Some(0));
+            assert!(!item.lagging);
+        }
+
+        // VRF-only mismatch is flagged even when finalized heights match.
+        let vrf_only = vec![
+            mk("validator-0", 1360, 0),
+            mk("validator-1", 1360, 1),
+            mk("validator-2", 1360, 1),
+            mk("validator-3", 1360, 1),
+        ];
+        let assessed_vrf = assess_founders_lag(&vrf_only, 20);
+        assert!(assessed_vrf[0].lagging);
+        assert!(!assessed_vrf[1].lagging);
+
+        // Healthy cohort within max_lag with unanimous VRF is not flagged.
+        let healthy = vec![
+            mk("validator-0", 1355, 1),
+            mk("validator-1", 1360, 1),
+            mk("validator-2", 1360, 1),
+            mk("validator-3", 1360, 1),
+        ];
+        let assessed_ok = assess_founders_lag(&healthy, 20);
+        assert!(assessed_ok.iter().all(|a| !a.lagging));
+    }
+
+    #[test]
+    fn vm_is_gone_distinguishes_removing_from_removed() {
+        let removing = GetInfoResponse {
+            found: true,
+            info: Some(VmInfo {
+                id: UUID_0.into(),
+                name: "vm-devnet-validator-0".into(),
+                status: "removing".into(),
+                ..VmInfo::default()
+            }),
+        };
+        assert!(!vm_is_gone(&removing));
+
+        let removed = GetInfoResponse {
+            found: false,
+            info: None,
+        };
+        assert!(vm_is_gone(&removed));
     }
 }

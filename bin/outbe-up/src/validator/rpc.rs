@@ -58,6 +58,8 @@ pub struct ConsensusStatus {
     #[serde(default)]
     pub last_finalized_block: u64,
     #[serde(default)]
+    pub vrf_material_version: u64,
+    #[serde(default)]
     pub next_planned_activation_height: u64,
     #[serde(default)]
     pub is_validator: bool,
@@ -419,10 +421,11 @@ mod tests {
     #[test]
     fn resident_readiness_requires_live_key_and_validator_mode() {
         let status: ConsensusStatus = serde_json::from_value(json!({
-            "isValidator": true, "mode": "upstreamBootstrap",
+            "isValidator": true, "mode": "upstreamBootstrap", "vrfMaterialVersion": 2,
             "enclave": {"state": "ready", "ready": true, "offerKeyReady": true}
         }))
         .unwrap();
+        assert_eq!(status.vrf_material_version, 2);
         assert!(status.resident_ready());
         let mut status = status;
         status.enclave.offer_key_ready = false;

@@ -22,6 +22,9 @@ use crate::{
 pub(crate) const VM_STATE_VERSION: u32 = 1;
 pub(crate) const VM_STATE_FILENAME: &str = "vm-state.json";
 pub(crate) const DNSMASQ_RESERVATIONS_FILENAME: &str = "dnsmasq-reservations.txt";
+/// Finite DHCP lease duration written into managed dnsmasq reservations so
+/// removed VMs do not leave permanent stale leases on shared bridges.
+pub(crate) const DNSMASQ_LEASE_DURATION: &str = "10m";
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -172,9 +175,13 @@ impl VmState {
     }
 }
 
-/// Format one dnsmasq `--dhcp-hostsfile` reservation line (`mac,ip`).
+/// Format one dnsmasq `--dhcp-hostsfile` reservation line (`mac,ip,<lease>`).
 pub(crate) fn dnsmasq_entry(mac: &str, ip: Ipv4Addr) -> String {
-    format!("{},{}", mac.to_ascii_lowercase(), ip)
+    format!(
+        "{},{},{DNSMASQ_LEASE_DURATION}",
+        mac.to_ascii_lowercase(),
+        ip
+    )
 }
 
 /// Refuse when any requested bridge IP appears in a non-comment line outside our managed block.
@@ -219,8 +226,12 @@ pub(crate) fn check_dnsmasq_ip_conflicts(
             }
             let our_mac_lc = our_mac.to_ascii_lowercase();
             let exact_own_line = !our_mac_lc.is_empty()
-                && fields.len() == 2
-                && first_field_lc.as_deref() == Some(our_mac_lc.as_str());
+                && (fields.len() == 2 || fields.len() == 3)
+                && first_field_lc.as_deref() == Some(our_mac_lc.as_str())
+                && fields
+                    .get(1)
+                    .and_then(|field| field.parse::<Ipv4Addr>().ok())
+                    == Some(*our_ip);
             if !exact_own_line {
                 bail!(
                     "bridge IP {our_ip} conflicts with existing dnsmasq hosts line {}: `{stripped}`",
@@ -365,6 +376,38 @@ pub(crate) fn merge_dnsmasq_hosts(
     }
 }
 
+/// Remove only this network's managed `# outbe-up:<network>:begin..end` block from a shared
+/// dnsmasq hosts file, preserving all foreign entries verbatim.
+pub(crate) fn strip_dnsmasq_network_block(existing: &str, network_name: &str) -> String {
+    let begin = format!("# outbe-up:{network_name}:begin");
+    let end = format!("# outbe-up:{network_name}:end");
+    let mut kept = Vec::new();
+    let mut inside_ours = false;
+    for line in existing.lines() {
+        let trimmed = line.trim();
+        if trimmed == begin {
+            inside_ours = true;
+            continue;
+        }
+        if trimmed == end {
+            inside_ours = false;
+            continue;
+        }
+        if inside_ours {
+            continue;
+        }
+        kept.push(line.to_owned());
+    }
+    while kept.last().is_some_and(|line| line.trim().is_empty()) {
+        kept.pop();
+    }
+    if kept.is_empty() {
+        String::new()
+    } else {
+        format!("{}\n", kept.join("\n"))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,8 +480,8 @@ mod tests {
         let merged = merge_dnsmasq_hosts(foreign, &ours, "vm-devnet").unwrap();
         assert!(merged.contains("52:54:00:de:ad:01,10.77.0.2"));
         assert!(merged.contains("52:54:00:de:ad:02,10.77.0.3"));
-        assert!(merged.contains("52:54:00:aa:bb:01,10.77.0.10"));
-        assert!(merged.contains("52:54:00:aa:bb:02,10.77.0.11"));
+        assert!(merged.contains("52:54:00:aa:bb:01,10.77.0.10,10m"));
+        assert!(merged.contains("52:54:00:aa:bb:02,10.77.0.11,10m"));
         assert!(missing_dnsmasq_entries(&merged, &ours).is_empty());
 
         // Re-running with the same entries is byte-identical.
@@ -449,8 +492,13 @@ mod tests {
         let updated = vec![("52:54:00:aa:bb:01".to_owned(), Ipv4Addr::new(10, 77, 0, 20))];
         let merged_updated = merge_dnsmasq_hosts(&merged, &updated, "vm-devnet").unwrap();
         assert!(merged_updated.contains("52:54:00:de:ad:01,10.77.0.2"));
-        assert!(merged_updated.contains("52:54:00:aa:bb:01,10.77.0.20"));
+        assert!(merged_updated.contains("52:54:00:aa:bb:01,10.77.0.20,10m"));
         assert!(!merged_updated.contains("52:54:00:aa:bb:02,10.77.0.11"));
+
+        // Stripping removes only our managed block and preserves foreign entries verbatim.
+        let stripped = strip_dnsmasq_network_block(&merged_updated, "vm-devnet");
+        assert_eq!(stripped, foreign);
+        assert_eq!(strip_dnsmasq_network_block(&stripped, "vm-devnet"), foreign);
     }
 
     #[test]

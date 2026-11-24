@@ -177,6 +177,16 @@ enum VmCommand {
         #[arg(long)]
         create: bool,
     },
+    /// Remove only this network's managed dnsmasq reservations and reload dnsmasq.
+    HostRelease {
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null` to ignore system SSH config).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
+    },
     /// Start recorded founder VMs, wait for finalized consensus, and configure Hyperlane.
     Start {
         #[arg(long)]
@@ -188,6 +198,9 @@ enum VmCommand {
         ssh_config: Option<PathBuf>,
         #[arg(long, default_value_t = 600)]
         timeout: u64,
+        /// Maximum allowed finalized-block lag to the highest founder before flagging lagging.
+        #[arg(long, default_value_t = 20)]
+        max_lag: u64,
     },
     /// Stop only the founder VMs recorded in `vm-state.json`.
     Stop {
@@ -208,6 +221,12 @@ enum VmCommand {
         /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null` to ignore system SSH config).
         #[arg(long)]
         ssh_config: Option<PathBuf>,
+        /// Also release this network's managed dnsmasq reservations after VMs are removed.
+        #[arg(long)]
+        release_reservations: bool,
+        /// Maximum seconds to wait for asynchronous VMM removal to complete.
+        #[arg(long, default_value_t = 120)]
+        timeout: u64,
     },
     /// Show the VMM and consensus status of every recorded founder VM.
     Status {
@@ -220,6 +239,9 @@ enum VmCommand {
         ssh_config: Option<PathBuf>,
         #[arg(long)]
         watch: bool,
+        /// Maximum allowed finalized-block lag to the highest founder before flagging lagging.
+        #[arg(long, default_value_t = 20)]
+        max_lag: u64,
     },
 }
 
@@ -355,17 +377,28 @@ impl Cli {
                     ssh_config.as_deref(),
                     create,
                 ),
+                VmCommand::HostRelease {
+                    artifacts,
+                    ssh_key,
+                    ssh_config,
+                } => vm::lifecycle::host_release(
+                    &artifacts,
+                    ssh_key.as_deref(),
+                    ssh_config.as_deref(),
+                ),
                 VmCommand::Start {
                     artifacts,
                     ssh_key,
                     ssh_config,
                     timeout,
+                    max_lag,
                 } => {
                     vm::lifecycle::start(
                         &artifacts,
                         ssh_key.as_deref(),
                         ssh_config.as_deref(),
                         std::time::Duration::from_secs(timeout),
+                        max_lag,
                     )
                     .await
                 }
@@ -380,21 +413,31 @@ impl Cli {
                     artifacts,
                     ssh_key,
                     ssh_config,
+                    release_reservations,
+                    timeout,
                 } => {
-                    vm::lifecycle::remove(&artifacts, ssh_key.as_deref(), ssh_config.as_deref())
-                        .await
+                    vm::lifecycle::remove(
+                        &artifacts,
+                        ssh_key.as_deref(),
+                        ssh_config.as_deref(),
+                        release_reservations,
+                        std::time::Duration::from_secs(timeout),
+                    )
+                    .await
                 }
                 VmCommand::Status {
                     artifacts,
                     ssh_key,
                     ssh_config,
                     watch,
+                    max_lag,
                 } => {
                     vm::lifecycle::status(
                         &artifacts,
                         ssh_key.as_deref(),
                         ssh_config.as_deref(),
                         watch,
+                        max_lag,
                     )
                     .await
                 }
@@ -630,21 +673,40 @@ mod tests {
         assert!(Cli::try_parse_from([
             "outbe-up",
             "vm",
+            "host-release",
+            "--artifacts",
+            "net-artifacts",
+            "--ssh-config",
+            "/dev/null",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "vm",
             "start",
             "--artifacts",
             "net-artifacts",
             "--timeout",
             "900",
+            "--max-lag",
+            "20",
         ])
         .is_ok());
         assert!(
             Cli::try_parse_from(["outbe-up", "vm", "stop", "--artifacts", "net-artifacts",])
                 .is_ok()
         );
-        assert!(
-            Cli::try_parse_from(["outbe-up", "vm", "remove", "--artifacts", "net-artifacts",])
-                .is_ok()
-        );
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "vm",
+            "remove",
+            "--artifacts",
+            "net-artifacts",
+            "--release-reservations",
+            "--timeout",
+            "180",
+        ])
+        .is_ok());
         assert!(Cli::try_parse_from([
             "outbe-up",
             "vm",
