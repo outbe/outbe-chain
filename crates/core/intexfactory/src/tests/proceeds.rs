@@ -66,12 +66,12 @@ fn receive(
     source: u32,
     from: Address,
 ) -> outbe_primitives::error::Result<()> {
-    let (from, extra_data, amount, source_domain) = crosschain(amount, source, from);
+    let (from, extra_data, amount, src_chain_id) = crosschain(amount, source, from);
     runtime::receive_crosschain_proceeds(
         s,
         caller,
         runtime::CrosschainProceeds {
-            source_domain,
+            src_chain_id,
             from: &from,
             amount,
             extra_data: &extra_data,
@@ -278,7 +278,7 @@ fn the_token_hook_answers_its_selector() {
     let amount = UNITS_PER_PROTOCOL_MINOR;
     let (from, extra_data, _, _) = crosschain(amount, SOURCE, TARGET_ROUTER_ADDRESS);
     let data = IIntexFactory::onCrosschainTokensReceivedCall {
-        sourceDomain: SOURCE,
+        srcChainId: SOURCE,
         from: from.into(),
         amount,
         extraData: extra_data.into(),

@@ -21,7 +21,7 @@ interface IIntexFactory {
     error InsufficientSettled();
     error InsufficientProofOfWork();
     error UnauthorizedProceedsCaller(address caller);
-    error UnexpectedProceedsSource(uint32 sourceDomain);
+    error UnexpectedProceedsSource(uint32 srcChainId);
     error UnauthorizedProceedsSender(bytes from);
     error ForfeitedPromisLoadOverflow();
     error IssuanceChunkCountExceedsU16();
@@ -89,11 +89,11 @@ interface IIntexFactory {
     /// @notice Leading zero bytes `minePromis` requires of the work hash.
     function powDifficulty() external view returns (uint8);
 
-    /// @notice The WCOEN token bridge delivers the proceeds of one page of winners from
+    /// @notice The ERC20Router of WCOEN delivers the proceeds of one page of winners from
     ///         TargetRouter of a chain of the day, with `abi.encode(emissionDay, pageIndex)` in
     ///         `extraData`. The factory burns the WCOEN into the Promis Limit with code 43.
     function onCrosschainTokensReceived(
-        uint32 sourceDomain,
+        uint32 srcChainId,
         bytes calldata from,
         uint256 amount,
         bytes calldata extraData

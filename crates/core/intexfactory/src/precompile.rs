@@ -121,7 +121,7 @@ pub fn dispatch(
                         &storage,
                         sender,
                         runtime::CrosschainProceeds {
-                            source_domain: c.sourceDomain,
+                            src_chain_id: c.srcChainId,
                             from: &c.from,
                             amount: c.amount,
                             extra_data: &c.extraData,

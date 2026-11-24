@@ -56,9 +56,9 @@ contract TargetRouter is
     ///         only accepted source.
     uint32 public immutable OUTBE_CHAIN_ID;
 
-    /// @notice The WCOEN token bridge, which carries the proceeds to Outbe. CREATE3 puts it at the
-    ///         same address on every chain.
-    IERC7786TokenBridge public immutable WCOEN_BRIDGE;
+    /// @dev The ERC20Router of WCOEN, which carries the proceeds to Outbe. CREATE3 puts it at the
+    ///      same address on every chain.
+    IERC7786TokenBridge private immutable ERC20_ROUTER;
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetRouter")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant _STORAGE_SLOT = 0x69b6aeeb915a7ddfacf9fc7eeda850d126d37a2c760f56ea4c74fddcae77ba00;
@@ -70,10 +70,10 @@ contract TargetRouter is
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address bridge_, uint32 outbeChainId_, address wcoenBridge_) ERC7786Sender(bridge_) {
-        if (wcoenBridge_ == address(0)) revert ZeroAddress("wcoenBridge");
+    constructor(address bridge_, uint32 outbeChainId_, address erc20Router_) ERC7786Sender(bridge_) {
+        if (erc20Router_ == address(0)) revert ZeroAddress("erc20Router");
         OUTBE_CHAIN_ID = outbeChainId_;
-        WCOEN_BRIDGE = IERC7786TokenBridge(wcoenBridge_);
+        ERC20_ROUTER = IERC7786TokenBridge(erc20Router_);
         _disableInitializers();
     }
 
@@ -103,6 +103,11 @@ contract TargetRouter is
     /// @notice EscrowAdapter contract that refund instructions are forwarded to for finalization.
     function escrow() external view returns (IEscrowAdapter) {
         return _ts().escrow;
+    }
+
+    /// @notice The ERC20Router of WCOEN that carries the proceeds to Outbe.
+    function erc20Router() external view returns (IERC7786TokenBridge) {
+        return ERC20_ROUTER;
     }
 
     /// @notice Parked proceeds route by enqueue index.
@@ -410,7 +415,7 @@ contract TargetRouter is
     /// @dev The WCOEN the escrow paid out for the day; the token bridge carries only its own token.
     function _proceedsToken(uint32 emissionDay) private view returns (IERC20 token) {
         token = _ts().escrow.dayIntexAuctionAsset(emissionDay);
-        IERC20 bridgeToken = WCOEN_BRIDGE.token();
+        IERC20 bridgeToken = ERC20_ROUTER.token();
         if (token != bridgeToken) revert ProceedsTokenNotBridged(address(token), address(bridgeToken));
     }
 
@@ -423,11 +428,11 @@ contract TargetRouter is
     /// @dev The token bridge carries the WCOEN with the day and the page, and the relay float pays its fee.
     function _bridgeProceeds(uint32 emissionDay, uint16 pageIndex, uint128 amount) private returns (bytes32 sendId) {
         bytes memory extraData = abi.encode(emissionDay, uint32(pageIndex));
-        _proceedsToken(emissionDay).forceApprove(address(WCOEN_BRIDGE), amount);
+        _proceedsToken(emissionDay).forceApprove(address(ERC20_ROUTER), amount);
         uint256 fee =
-            WCOEN_BRIDGE.quoteSend(OUTBE_CHAIN_ID, INTEX_FACTORY, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
+            ERC20_ROUTER.quoteSend(OUTBE_CHAIN_ID, INTEX_FACTORY, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
         // slither-disable-next-line arbitrary-send-eth
-        sendId = WCOEN_BRIDGE.sendAndCall{value: fee}(
+        sendId = ERC20_ROUTER.sendAndCall{value: fee}(
             OUTBE_CHAIN_ID, INTEX_FACTORY, amount, extraData, IntexGas.PROCEEDS_COMPOSE
         );
     }

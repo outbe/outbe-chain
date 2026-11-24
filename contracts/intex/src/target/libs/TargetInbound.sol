@@ -264,7 +264,7 @@ library TargetInbound {
     }
 
     /// @notice Decode one ISSUANCE_INSTRUCTIONS chunk and create the series it names.
-    /// @dev The handler acknowledges these cases without effect (`MessageIgnored`):
+    /// @dev The handler acknowledges these cases without effect (`IntexAuctionMessageIgnored`):
     ///      - a repeated chunk
     ///      - a chunk whose header disagrees with the day's run
     ///      - a series whose stored params differ from the chunk's
@@ -384,7 +384,7 @@ library TargetInbound {
     }
 
     function _ignoreMessage(uint8 msgType, uint32 emissionDay, uint8 reason) private {
-        emit ITargetRouter.MessageIgnored(msgType, emissionDay, reason);
+        emit ITargetRouter.IntexAuctionMessageIgnored(msgType, emissionDay, reason);
     }
 
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.

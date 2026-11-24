@@ -40,7 +40,7 @@ interface ITargetRouter {
     /// @notice Emitted when a whole message of Outbe arrives and the router does nothing with it.
     ///         The delivery transaction also holds the Hyperlane `ProcessId` of the message.
     /// @param reason One of the `InboundReason` codes.
-    event MessageIgnored(uint8 indexed msgType, uint32 indexed emissionDay, uint8 reason);
+    event IntexAuctionMessageIgnored(uint8 indexed msgType, uint32 indexed emissionDay, uint8 reason);
 
     /// @notice Emitted once the last page of a day's Intex series from `srcChainId` is applied on this chain.
     event IntexSeriesAllReceived(uint32 indexed emissionDay, uint32 indexed srcChainId, uint32 totalPages);

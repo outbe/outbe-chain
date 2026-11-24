@@ -113,9 +113,9 @@ impl From<IntexFactoryError> for PrecompileError {
             IntexFactoryError::UnauthorizedProceedsCaller(caller) => {
                 revert_with(I::UnauthorizedProceedsCaller { caller })
             }
-            IntexFactoryError::UnexpectedProceedsSource(source_domain) => {
+            IntexFactoryError::UnexpectedProceedsSource(src_chain_id) => {
                 revert_with(I::UnexpectedProceedsSource {
-                    sourceDomain: source_domain,
+                    srcChainId: src_chain_id,
                 })
             }
             IntexFactoryError::UnauthorizedProceedsSender(from) => {

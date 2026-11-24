@@ -11,13 +11,13 @@ sol! {
 
 /// What the WCOEN token bridge delivers with `onCrosschainTokensReceived`.
 pub struct CrosschainProceeds<'a> {
-    pub source_domain: u32,
+    pub src_chain_id: u32,
     pub from: &'a [u8],
     pub amount: U256,
     pub extra_data: &'a [u8],
 }
 
-/// The proceeds of one page of winners from TargetRouter of `source_domain`, which the WCOEN token
+/// The proceeds of one page of winners from TargetRouter of `src_chain_id`, which the WCOEN token
 /// bridge credited to the factory. They burn with code 43.
 pub fn receive_crosschain_proceeds(
     storage: &StorageHandle<'_>,
@@ -25,7 +25,7 @@ pub fn receive_crosschain_proceeds(
     proceeds: CrosschainProceeds<'_>,
 ) -> Result<()> {
     let CrosschainProceeds {
-        source_domain,
+        src_chain_id,
         from,
         amount,
         extra_data,
@@ -34,12 +34,12 @@ pub fn receive_crosschain_proceeds(
         return Err(IntexFactoryError::UnauthorizedProceedsCaller(caller).into());
     }
     let (emission_day, page_index) = <(u32, u32)>::abi_decode_params(extra_data)
-        .map_err(|_| IntexFactoryError::UnexpectedProceedsSource(source_domain))?;
-    require_day_target(storage, emission_day, source_domain)?;
-    if evm_chain_of(from, TARGET_ROUTER_ADDRESS) != Some(source_domain) {
+        .map_err(|_| IntexFactoryError::UnexpectedProceedsSource(src_chain_id))?;
+    require_day_target(storage, emission_day, src_chain_id)?;
+    if evm_chain_of(from, TARGET_ROUTER_ADDRESS) != Some(src_chain_id) {
         return Err(IntexFactoryError::UnauthorizedProceedsSender(from.to_vec().into()).into());
     }
-    burn_wcoen_proceeds(storage, emission_day, page_index, source_domain, amount)
+    burn_wcoen_proceeds(storage, emission_day, page_index, src_chain_id, amount)
 }
 
 /// The proceeds of one page of winners that TargetRouter on Outbe approved to the factory.
