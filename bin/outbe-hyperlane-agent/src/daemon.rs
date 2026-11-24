@@ -226,6 +226,7 @@ impl Daemon {
                 outbe: outbe.clone(),
                 wallet: EthereumWallet::from(self.key.clone()),
                 validator: self.validator,
+                health: self.health.clone(),
             };
             // Its own task: a relayer error never stops the signer.
             tasks.spawn(relayer.run(Duration::from_secs(config.interval_secs)));

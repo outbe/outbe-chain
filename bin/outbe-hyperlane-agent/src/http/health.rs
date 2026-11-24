@@ -1,7 +1,7 @@
 //! Health and status HTTP server: `GET /health`, `GET /status`.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::extract::State as AxumState;
@@ -41,6 +41,10 @@ struct State {
     /// The error of the last failed `submitCheckpoint`. A success clears it.
     submit_error: Option<String>,
     domains: BTreeMap<u32, DomainHealth>,
+    /// The last message that this relayer delivered.
+    last_delivery: Option<serde_json::Value>,
+    /// Native balance of `H` on each chain, in wei.
+    balances: BTreeMap<u32, alloy_primitives::U256>,
 }
 
 pub struct ValidatorHealth {
@@ -49,6 +53,10 @@ pub struct ValidatorHealth {
     pub last_submit_time: AtomicU64,
     /// Consecutive liveness misses recorded on-chain for this validator.
     pub miss_count: AtomicU64,
+    /// The relayer role runs.
+    relayer: AtomicBool,
+    /// `process` transactions of this relayer that a block included.
+    delivered: AtomicU64,
     store: Arc<Store>,
     state: Mutex<State>,
 }
@@ -60,6 +68,8 @@ impl ValidatorHealth {
             failed: AtomicU64::new(0),
             last_submit_time: AtomicU64::new(0),
             miss_count: AtomicU64::new(0),
+            relayer: AtomicBool::new(false),
+            delivered: AtomicU64::new(0),
             store,
             state: Mutex::default(),
         }
@@ -78,6 +88,33 @@ impl ValidatorHealth {
     pub fn record_failure(&self, error: String) {
         self.failed.fetch_add(1, Ordering::Relaxed);
         self.state().submit_error = Some(redact_urls(&error));
+    }
+
+    pub fn set_relayer(&self, enabled: bool) {
+        self.relayer.store(enabled, Ordering::Relaxed);
+    }
+
+    /// Records a `process` transaction of this relayer that a block included.
+    pub fn record_delivery(
+        &self,
+        origin: u32,
+        index: u32,
+        destination: u32,
+        tx: alloy_primitives::B256,
+    ) {
+        self.delivered.fetch_add(1, Ordering::Relaxed);
+        self.state().last_delivery = Some(json!({
+            "origin": origin,
+            "index": index,
+            "destination": destination,
+            "tx": tx,
+            "time": unix_now(),
+        }));
+    }
+
+    /// Records the native balance of `H` on the chain of `domain`.
+    pub fn set_balance(&self, domain: u32, wei: alloy_primitives::U256) {
+        self.state().balances.insert(domain, wei);
     }
 
     pub fn set_signer_error(&self, error: Option<String>) {
@@ -116,7 +153,9 @@ impl ValidatorHealth {
 
     /// Removes the domains that the controller does not list.
     pub fn retain_domains(&self, keep: impl Fn(u32) -> bool) {
-        self.state().domains.retain(|d, _| keep(*d));
+        let mut state = self.state();
+        state.domains.retain(|d, _| keep(*d));
+        state.balances.retain(|d, _| keep(*d));
     }
 
     /// The signer of a started domain, also after a stop.
@@ -151,7 +190,8 @@ impl ValidatorHealth {
     }
 
     pub fn status_json(&self) -> serde_json::Value {
-        let (controller, active, signer_error, submit_error, domains) = {
+        let relayer = self.relayer.load(Ordering::Relaxed);
+        let (controller, active, signer_error, submit_error, last_delivery, balances, domains) = {
             let state = self.state();
             let domains: Vec<_> = state
                 .domains
@@ -163,6 +203,8 @@ impl ValidatorHealth {
                 state.active,
                 state.signer_error.clone(),
                 state.submit_error.clone(),
+                state.last_delivery.clone(),
+                state.balances.clone(),
                 domains,
             )
         };
@@ -175,13 +217,31 @@ impl ValidatorHealth {
                     })
                 });
                 let store = &self.store;
-                let value = json!({
+                let progress = signer.as_ref().and_then(|s| s.progress());
+                let mut value = json!({
                     "leaves": store.leaf_count(domain).ok(),
                     "latest_signed_index": store.latest_checkpoint_index(domain).ok().flatten(),
                     "cursor": store.cursor(domain).ok().flatten(),
+                    // The last final block of the origin chain and the blocks
+                    // that the sync did not read yet.
+                    "head": progress.map(|(head, _)| head),
+                    "behind": progress.map(|(_, behind)| behind),
                     "reorg": signer.is_some_and(|s| s.halted()),
                     "error": error,
                 });
+                if relayer {
+                    let rows = store.relay_rows(domain).unwrap_or_default();
+                    let dropped = rows.iter().filter(|(_, row)| row.dropped).count();
+                    // A string: the value does not fit a JSON number.
+                    value["balance_wei"] = json!(balances.get(&domain).map(|wei| wei.to_string()));
+                    value["relay"] = json!({
+                        // The next leaf that the relayer takes in.
+                        "cursor": store.relay_cursor(domain).ok(),
+                        // Messages on the way, and messages after the last attempt.
+                        "queue": rows.len() - dropped,
+                        "dropped": dropped,
+                    });
+                }
                 (domain.to_string(), value)
             })
             .collect();
@@ -199,6 +259,11 @@ impl ValidatorHealth {
             "failed": self.failed.load(Ordering::Relaxed),
             "last_submit_time": self.last_submit_time.load(Ordering::Relaxed),
             "last_submit_error": submit_error,
+            "relayer": {
+                "enabled": relayer,
+                "delivered": self.delivered.load(Ordering::Relaxed),
+                "last_delivery": last_delivery,
+            },
             "domains": domains,
         })
     }

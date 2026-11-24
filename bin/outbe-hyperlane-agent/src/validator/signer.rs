@@ -18,7 +18,7 @@
 //! another key is signed again. Here only the signature may differ, the value
 //! must be the same.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -56,6 +56,10 @@ pub struct DomainSigner {
     halted: AtomicBool,
     /// The sync rewinds again and again. See [`DomainSync::stalled`].
     stalled: AtomicBool,
+    /// The last final block of the origin chain and the last block that the
+    /// sync read. See [`DomainSync::progress`].
+    head: AtomicU64,
+    scanned: AtomicU64,
     /// Wakes the backfill worker after a commit or a halt.
     wake: Notify,
 }
@@ -70,6 +74,8 @@ impl DomainSigner {
             key,
             halted: AtomicBool::new(halted),
             stalled: AtomicBool::new(false),
+            head: AtomicU64::new(0),
+            scanned: AtomicU64::new(0),
             wake: Notify::new(),
         })
     }
@@ -94,6 +100,14 @@ impl DomainSigner {
 
     pub fn stalled(&self) -> bool {
         self.stalled.load(Ordering::Relaxed)
+    }
+
+    /// The last final block of the origin chain and the number of blocks
+    /// that the sync did not read yet. `None` before the first read.
+    pub fn progress(&self) -> Option<(u64, u64)> {
+        let head = self.head.load(Ordering::Relaxed);
+        let scanned = self.scanned.load(Ordering::Relaxed);
+        (head > 0).then(|| (head, head.saturating_sub(scanned)))
     }
 
     /// Syncs, signs and backfills the domain until a reorg halts it. A domain
@@ -121,6 +135,9 @@ impl DomainSigner {
             if let Some(s) = &mut sync {
                 let tick = s.tick().await;
                 self.stalled.store(s.stalled(), Ordering::Relaxed);
+                let (head, scanned) = s.progress();
+                self.head.store(head, Ordering::Relaxed);
+                self.scanned.store(scanned, Ordering::Relaxed);
                 match tick {
                     Ok(Tick::Batch(batch)) => {
                         if let Err(error) = self.commit(&batch).await {

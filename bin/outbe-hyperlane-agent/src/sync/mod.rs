@@ -221,6 +221,8 @@ pub struct DomainSync {
     cursor: u64,
     /// The last block that the log reads covered.
     scanned: u64,
+    /// The last final block that the log source returned.
+    head: u64,
     chunk: u64,
     /// Compares replayed leaves with the stored leaves.
     store: Arc<Store>,
@@ -261,6 +263,7 @@ impl DomainSync {
             pending: Vec::new(),
             cursor,
             scanned: cursor,
+            head: 0,
             chunk: MAX_LOG_RANGE,
             store,
             waiting: 0,
@@ -277,6 +280,12 @@ impl DomainSync {
     /// reorg below the stored cursor gives this: the replay does not see it.
     pub fn stalled(&self) -> bool {
         self.rewinds >= MAX_REWINDS
+    }
+
+    /// The last final block of the origin chain and the last block that the
+    /// sync read, for the status. The head is 0 before the first read.
+    pub fn progress(&self) -> (u64, u64) {
+        (self.head, self.scanned)
     }
 
     fn rotate_source(&mut self) {
@@ -419,6 +428,7 @@ impl DomainSync {
     async fn read_leaves(&mut self) -> Result<()> {
         let source = self.endpoints[self.source].clone();
         let finalized = finalized_block(&source, self.period).await?;
+        self.head = finalized;
         let mut start = self.scanned + 1;
         while start <= finalized {
             let (from, to) = log_range(start, finalized, self.chunk);

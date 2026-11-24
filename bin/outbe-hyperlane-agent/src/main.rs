@@ -17,6 +17,7 @@ mod errors;
 mod http;
 mod merkle;
 mod relayer;
+mod status;
 mod store;
 mod sync;
 #[cfg(test)]
@@ -57,6 +58,13 @@ enum Command {
     /// first: the store opens in exclusive mode.
     #[command(subcommand)]
     Db(DbCommand),
+    /// Print the state of the running agent: the sync of each domain and the
+    /// relayer queue. It reads `/status` of the health server.
+    Status {
+        /// Default: the `[health] bind_address` of the configuration on this host.
+        #[arg(long)]
+        url: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -128,8 +136,14 @@ async fn main() -> Result<()> {
 
     let cli = Cli::parse();
     let config = ValidatorConfig::load(&cli.config)?;
-    if let Some(Command::Db(command)) = cli.command {
-        return run_db(&config, command);
+    match cli.command {
+        Some(Command::Db(command)) => return run_db(&config, command),
+        Some(Command::Status { url }) => {
+            let bind = config.health.as_ref().map(|h| h.bind_address.as_str());
+            let url = url.unwrap_or_else(|| status::local_url(bind.unwrap_or("0.0.0.0:9003")));
+            return status::run(&url).await;
+        }
+        None => {}
     }
     config.validate()?;
     warn!("private key loaded from plaintext config - use an encrypted keystore in production");
@@ -188,10 +202,8 @@ async fn main() -> Result<()> {
         true => Some(daemon::Relay::new()?),
         false => None,
     };
-    info!(
-        relayer = relay.is_some(),
-        "roles: validator, relayer when enabled"
-    );
+    health.set_relayer(relay.is_some());
+    info!(relayer = relay.is_some(), "relayer role");
     let daemon = daemon::Daemon {
         origins: config.origin,
         poll_interval,

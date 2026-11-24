@@ -22,6 +22,7 @@ use tracing::{debug, error, info, warn};
 use crate::abi::{IMailbox, IValidatorSet};
 use crate::client::eth_call;
 use crate::errors::RelayError;
+use crate::http::health::ValidatorHealth;
 use crate::store::{RelayRow, Store};
 use crate::sync::{finalized_block, is_range_error, Origin, MAX_LOG_RANGE};
 use crate::validator::liveness::VALIDATOR_SET_ADDRESS;
@@ -172,6 +173,7 @@ pub struct Relayer {
     /// Validator `V`: the place of this relayer in the delivery order. It
     /// sends only while `V` is an active validator.
     pub validator: Address,
+    pub health: Arc<ValidatorHealth>,
 }
 
 impl Relayer {
@@ -194,6 +196,12 @@ impl Relayer {
     async fn tick(&self, take_in: &mut TakeIn, now: u64) -> Result<()> {
         let domain = self.origin.domain;
         let chain = self.chains.get(domain).ok_or(RelayError::NoChain(domain))?;
+        // The operator sees in the status when `H` has no gas on this chain.
+        let signer = self.wallet.default_signer().address();
+        match chain.provider().get_balance(signer).await {
+            Ok(wei) => self.health.set_balance(domain, wei),
+            Err(error) => debug!(domain, %error, "balance read failed"),
+        }
         take_in.tick(chain.provider(), now).await?;
         let rows = self.store.relay_rows(domain)?;
         if rows
@@ -342,6 +350,8 @@ impl Relayer {
         let metadata = metadata(self.origin.hook, root, index, &signatures);
         match process(&dest, &self.wallet, metadata, &row.message).await {
             Ok(Some(hash)) => {
+                self.health
+                    .record_delivery(self.origin.domain, index, message.destination, hash);
                 info!(domain = self.origin.domain, index, %id, destination = message.destination, %hash, "message delivered; waiting for a final block");
                 Ok(Outcome::Wait)
             }
@@ -487,6 +497,8 @@ mod tests {
                 "eth_blockNumber" => json!("0x64"),
                 "eth_chainId" => json!("0x61"),
                 "eth_getTransactionCount" => json!("0x0"),
+                // 1.5 native tokens.
+                "eth_getBalance" => json!("0x14d1120d7b160000"),
                 "eth_gasPrice" | "eth_maxPriorityFeePerGas" => json!("0x3b9aca00"),
                 "eth_feeHistory" => json!({
                     "oldestBlock": "0x63",
@@ -631,6 +643,8 @@ mod tests {
                 40,
             )));
         }
+        let health = Arc::new(ValidatorHealth::new(store.clone()));
+        health.set_relayer(true);
         let relayer = |validator| Relayer {
             origin: origin(5, MAILBOX),
             store: store.clone(),
@@ -639,6 +653,7 @@ mod tests {
             outbe: connect(&url).unwrap(),
             wallet: EthereumWallet::from(keys[0].clone()),
             validator,
+            health: health.clone(),
         };
         let mut take_in = TakeIn::new(origin(5, MAILBOX), store.clone());
 
@@ -672,6 +687,14 @@ mod tests {
         }
         // The row stays until the delivery is in a final block.
         assert_eq!(store.relay_rows(5).unwrap().len(), 1);
+        let status = health.status_json();
+        assert_eq!(status["relayer"]["delivered"], 1);
+        assert_eq!(status["relayer"]["last_delivery"]["destination"], 97);
+        assert_eq!(
+            status["domains"],
+            json!({}),
+            "no started domain in this test"
+        );
 
         // The next tick sees the final delivery: the row goes away. The
         // second relayer does not send a transaction after its wait.
