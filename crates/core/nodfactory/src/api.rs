@@ -1,6 +1,7 @@
 //! Cross-module NodFactory API.
 
 use alloy_primitives::{Address, Bytes, U256};
+#[cfg(any(test, feature = "test-utils"))]
 use outbe_core_common::nod_encryption::EncryptedNodV1;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_vaultrouter::settlement::SettlementPayment;
