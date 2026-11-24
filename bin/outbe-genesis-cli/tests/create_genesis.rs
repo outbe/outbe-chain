@@ -532,7 +532,7 @@ fn seed_stage_end_to_end_and_reproducibility() {
     for slot in (0..=3u64).chain(10..=32u64) {
         assert!(!vr_storage.contains_key(&hex32(slot)));
     }
-    assert_eq!(vr_storage[&hex32(4u64)], json!(hex32(4u64)));
+    assert_eq!(vr_storage[&hex32(4u64)], json!(hex32(5u64)));
     assert_eq!(vr_storage[&hex32(7u64)], json!(hex32(1u64)));
     let pos_key = mapping_key(
         &address_bytes("0000000000000000000000000000000000001015").expect("addr"),

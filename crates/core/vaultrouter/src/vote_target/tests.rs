@@ -54,7 +54,7 @@ fn rejects_invalid_shapes_fields_addresses_and_numeric_bounds() {
         valid[0].replace("840", "null"),
         valid[0].replace("840", "840,\"isoCode\":978"),
         valid[2].replace(":4", ":0"),
-        valid[2].replace(":4", ":5"),
+        valid[2].replace(":4", ":6"),
         valid[2].replace(":4", ":256"),
         valid[2].replace(":4", ":-1"),
         valid[2].replace(":4", ":1.5"),

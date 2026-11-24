@@ -28,3 +28,26 @@ pub fn hash_multi<let N: u32>(domain: Field, inputs: [Field; N]) -> Field {
     }
     state
 }
+
+/// Big-endian ASCII tag, limited to 31 bytes to avoid field reduction.
+pub fn ascii_field<let N: u32>(value: str<N>) -> Field {
+    assert(N <= 31);
+    let mut field = 0;
+    for byte in value.as_bytes() {
+        assert(byte < 128);
+        field = field * 256 + byte as Field;
+    }
+    field
+}
+
+#[test]
+fn ascii_field_matches_big_endian_tags() {
+    assert_eq(ascii_field(""), 0);
+    assert_eq(ascii_field("OUTBE_PAYNOTE"), 0x4f555442455f5041594e4f5445);
+    assert_eq(ascii_field("OWNER_SERIAL"), 0x4f574e45525f53455249414c);
+}
+
+#[test(should_fail)]
+fn ascii_field_rejects_overlong_tags() {
+    let _ = ascii_field("01234567890123456789012345678901");
+}

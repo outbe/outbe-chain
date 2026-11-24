@@ -10,6 +10,8 @@ pub mod codec;
 pub mod demo_tribute;
 pub mod error;
 pub mod errors;
+pub mod paynote;
+pub mod paynote_merge;
 pub mod primitive;
 pub mod protocol;
 pub mod wire;
@@ -58,8 +60,8 @@ pub fn l2_circuits(chain_id: u64) -> &'static [L2CircuitVersion] {
 
 /// Shipped circuit whose bytecode hash matches, if any.
 ///
-/// Emit and paynote hashes are absent: the verifier precompile returns zero
-/// for them. This is not an L2 chain binding.
+/// Only L2 circuits are listed. L1 circuits such as paynote are absent, so the
+/// verifier precompile returns zero for them. This is not an L2 chain binding.
 pub fn circuit_by_hash(circuit_hash: &[u8; 32]) -> Option<&'static L2CircuitVersion> {
     noir::L2_CIRCUITS_REGISTRY
         .iter()

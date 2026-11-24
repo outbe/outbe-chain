@@ -15,7 +15,7 @@
 use alloy_primitives::Address;
 use outbe_system_common::addresses::*;
 
-pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 35] = [
+pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 36] = [
     GRATIS_ADDRESS,
     GRATIS_FACTORY_ADDRESS,
     CREDIS_ADDRESS,
@@ -51,4 +51,7 @@ pub const OUTBE_RUNTIME_MARKER_ADDRESSES: [Address; 35] = [
     UPDATE_ADDRESS,
     VOTE_ADDRESS,
     ZKPROOF_VERIFY_ADDRESS,
+    // PayNote pool. All data live in its storage, and it is not genesis-seeded,
+    // so this marker is its only EIP-161 preservation path.
+    PAYNOTE_ADDRESS,
 ];

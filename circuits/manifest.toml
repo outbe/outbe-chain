@@ -25,3 +25,22 @@ selector = "1.0.0"
 circuits = [
   { path = "tribute", vk_hash = "7ec39936f08a1f5bb5675249be8c2ee3a31811a604e2785ab31b670eaaa2e7f9" },
 ]
+
+# L1 frozen releases. Artifacts live at
+# `resources/circuits/<module>/<version>/{bytecode.b64, circuit.vk, abi.json}`
+# and are immutable once committed. build.rs generates the Rust types for the
+# latest active version of each module without invoking nargo or bb.
+
+[[circuit]]
+module = "paynote"
+label = "outbe.paynote"
+versions = [
+  { version = "1.3.0", status = "active" },
+]
+
+[[circuit]]
+module = "paynote_merge"
+label = "outbe.paynote.merge"
+versions = [
+  { version = "1.0.1", status = "active" },
+]
