@@ -148,6 +148,22 @@ pub enum RpcInternalError {
     /// Reading the finalized state failed.
     #[error("failed to read finalized state: {0}")]
     FinalizedStateReadFailed(String),
+    /// Reading the block number or canonical header for a requested schedule block failed.
+    #[error("failed to read TEE renewal schedule block {hash}: {reason}")]
+    ScheduleBlockLookupFailed {
+        /// Caller-requested block hash.
+        hash: alloy_primitives::B256,
+        /// Underlying provider error message.
+        reason: String,
+    },
+    /// Reading historical state for a requested schedule block failed.
+    #[error("failed to read TEE renewal schedule state for block {hash}: {reason}")]
+    ScheduleStateReadFailed {
+        /// Target finalized block hash.
+        hash: alloy_primitives::B256,
+        /// Underlying provider error message.
+        reason: String,
+    },
     /// The finalized epoch number does not fit in `u64`.
     #[error("finalized epoch number exceeds u64")]
     FinalizedEpochNumberExceedsU64,
@@ -205,6 +221,28 @@ impl RpcInternalError {
     pub fn finalized_state_read_failed(error: impl std::fmt::Display) -> Self {
         Self::FinalizedStateReadFailed(error.to_string())
     }
+
+    /// Creates [`RpcInternalError::ScheduleBlockLookupFailed`] from a block hash and error.
+    pub fn schedule_block_lookup_failed(
+        hash: alloy_primitives::B256,
+        error: impl std::fmt::Display,
+    ) -> Self {
+        Self::ScheduleBlockLookupFailed {
+            hash,
+            reason: error.to_string(),
+        }
+    }
+
+    /// Creates [`RpcInternalError::ScheduleStateReadFailed`] from a block hash and error.
+    pub fn schedule_state_read_failed(
+        hash: alloy_primitives::B256,
+        error: impl std::fmt::Display,
+    ) -> Self {
+        Self::ScheduleStateReadFailed {
+            hash,
+            reason: error.to_string(),
+        }
+    }
 }
 
 /// Typed invalid-parameter errors returned by Outbe JSON-RPC methods.
@@ -217,6 +255,18 @@ pub enum RpcInvalidParamsError {
         height: u64,
         /// Node's latest advertised finalized block height.
         finalized: u64,
+    },
+    /// The requested TEE renewal schedule block hash is unknown.
+    #[error("unknown TEE renewal schedule block hash {hash}")]
+    UnknownScheduleBlockHash {
+        /// Caller-requested block hash.
+        hash: alloy_primitives::B256,
+    },
+    /// The requested TEE renewal schedule block hash is not canonical.
+    #[error("non-canonical TEE renewal schedule block hash {hash}")]
+    NonCanonicalScheduleBlockHash {
+        /// Caller-requested block hash.
+        hash: alloy_primitives::B256,
     },
 }
 

@@ -537,6 +537,60 @@ async fn test_rpc_client_outbe_no_param_wrappers_send_exact_bodies() {
     );
 }
 
+#[tokio::test]
+async fn test_rpc_client_tee_renewal_schedule_v1_sends_exact_checkpoint_hash_param() {
+    let checkpoint_hash = alloy_primitives::B256::repeat_byte(0x7a);
+    let schedule = TeeRenewalScheduleV1 {
+        finalized_height: 120,
+        finalized_hash: checkpoint_hash,
+        finalized_timestamp: 1_000,
+        epoch_number: 2,
+        epoch_start_height: 100,
+        epoch_length_blocks: 100,
+        next_freeze_height: 180,
+        planned_activation_height: 200,
+        dkg_prepare_window_blocks: 20,
+        minimum_block_time_millis: 2_000,
+    };
+    let response = json!({"jsonrpc": "2.0", "result": schedule, "id": 1}).to_string();
+    let (url, body_rx) = serve_rpc_once("200 OK", response).await;
+    let client = RpcClient::new(&url).expect("rpc client");
+
+    let observed = client
+        .outbe_tee_renewal_schedule_v1(checkpoint_hash)
+        .await
+        .unwrap();
+
+    assert_eq!(observed, schedule);
+    let body: Value = serde_json::from_str(&body_rx.await.unwrap()).unwrap();
+    assert_eq!(
+        body,
+        json!({
+            "jsonrpc": "2.0",
+            "method": "outbe_teeRenewalScheduleV1",
+            "params": [checkpoint_hash],
+            "id": 1,
+        })
+    );
+}
+
+#[tokio::test]
+async fn test_recording_rpc_tee_renewal_schedule_v1_fails_closed_unsupported() {
+    let recording = mock::RecordingRpc::new(Vec::new());
+    let err = recording
+        .outbe_tee_renewal_schedule_v1(alloy_primitives::B256::repeat_byte(0x55))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(
+            err.downcast_ref::<RpcError>(),
+            Some(RpcError::TeeRenewalScheduleUnsupported)
+        ),
+        "unexpected error: {err}"
+    );
+    recording.assert_done();
+}
+
 async fn assert_block_number_rpc_error(status: &str, response_body: &str, expected_msg: &str) {
     let (url, _body_rx) = serve_rpc_once(status, response_body).await;
     let client = RpcClient::new(&url).expect("rpc client");

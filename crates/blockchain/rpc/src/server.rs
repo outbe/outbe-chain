@@ -389,9 +389,12 @@ where
             .await
     }
 
-    async fn tee_renewal_schedule_v1(&self) -> RpcResult<TeeRenewalScheduleV1> {
+    async fn tee_renewal_schedule_v1(
+        &self,
+        checkpoint_hash: Option<B256>,
+    ) -> RpcResult<TeeRenewalScheduleV1> {
         tee::TeeRpc::new(&*self.provider, self.chain_identity, self.reader.as_ref())
-            .renewal_schedule(self.tee_renewal_schedule)
+            .renewal_schedule(self.tee_renewal_schedule, checkpoint_hash)
     }
 
     async fn get_stake(&self, address: Address) -> RpcResult<U256> {

@@ -307,7 +307,10 @@ pub trait OutbeApi {
 
     /// Exact finalized epoch/freeze schedule for host-side TEE renewal alerts.
     #[method(name = "teeRenewalScheduleV1")]
-    async fn tee_renewal_schedule_v1(&self) -> jsonrpsee::core::RpcResult<TeeRenewalScheduleV1>;
+    async fn tee_renewal_schedule_v1(
+        &self,
+        checkpoint_hash: Option<B256>,
+    ) -> jsonrpsee::core::RpcResult<TeeRenewalScheduleV1>;
 
     /// Returns the stake amount for a validator address.
     #[method(name = "getStake")]

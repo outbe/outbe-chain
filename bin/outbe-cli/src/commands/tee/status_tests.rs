@@ -542,3 +542,127 @@ fn error_chain_has_hex_source(error: &(dyn std::error::Error + 'static)) -> bool
     error.downcast_ref::<hex::FromHexError>().is_some()
         || error.source().is_some_and(error_chain_has_hex_source)
 }
+
+#[tokio::test]
+async fn status_forwards_exact_finalized_hash_and_skips_schedule_on_malformed_header() {
+    use std::sync::{Arc, Mutex};
+
+    struct TrackingStatusRpc {
+        inner: MockRpc,
+        schedule_hashes: Arc<Mutex<Vec<B256>>>,
+    }
+
+    impl crate::rpc::Rpc for TrackingStatusRpc {
+        async fn eth_call_at(
+            &self,
+            to: Address,
+            data: &[u8],
+            block_tag: &str,
+        ) -> eyre::Result<Vec<u8>> {
+            self.inner.eth_call_at(to, data, block_tag).await
+        }
+        async fn eth_call(&self, to: Address, data: &[u8]) -> eyre::Result<Vec<u8>> {
+            self.inner.eth_call(to, data).await
+        }
+        async fn eth_block_number(&self) -> eyre::Result<u64> {
+            self.inner.eth_block_number().await
+        }
+        async fn eth_chain_id(&self) -> eyre::Result<u64> {
+            self.inner.eth_chain_id().await
+        }
+        async fn eth_gas_price(&self) -> eyre::Result<U256> {
+            self.inner.eth_gas_price().await
+        }
+        async fn eth_get_transaction_count(&self, address: Address) -> eyre::Result<u64> {
+            self.inner.eth_get_transaction_count(address).await
+        }
+        async fn eth_estimate_gas(
+            &self,
+            from: Address,
+            to: Address,
+            data: &[u8],
+            value: U256,
+        ) -> eyre::Result<u64> {
+            self.inner.eth_estimate_gas(from, to, data, value).await
+        }
+        async fn eth_send_raw_transaction(&self, raw_tx: &[u8]) -> eyre::Result<String> {
+            self.inner.eth_send_raw_transaction(raw_tx).await
+        }
+        async fn eth_get_balance(&self, address: Address) -> eyre::Result<U256> {
+            self.inner.eth_get_balance(address).await
+        }
+        async fn net_peer_count(&self) -> eyre::Result<u64> {
+            self.inner.net_peer_count().await
+        }
+        async fn outbe_consensus_status(&self) -> eyre::Result<serde_json::Value> {
+            self.inner.outbe_consensus_status().await
+        }
+        async fn outbe_get_epoch_info(&self) -> eyre::Result<serde_json::Value> {
+            self.inner.outbe_get_epoch_info().await
+        }
+        async fn outbe_tee_renewal_schedule_v1(
+            &self,
+            checkpoint_hash: B256,
+        ) -> eyre::Result<TeeRenewalScheduleV1> {
+            self.schedule_hashes.lock().unwrap().push(checkpoint_hash);
+            self.inner
+                .outbe_tee_renewal_schedule_v1(checkpoint_hash)
+                .await
+        }
+        async fn eth_get_block_by_number(&self, block: u64) -> eyre::Result<serde_json::Value> {
+            self.inner.eth_get_block_by_number(block).await
+        }
+        async fn eth_get_latest_block(&self) -> eyre::Result<serde_json::Value> {
+            self.inner.eth_get_latest_block().await
+        }
+        async fn eth_get_finalized_block(&self) -> eyre::Result<serde_json::Value> {
+            self.inner.eth_get_finalized_block().await
+        }
+        async fn outbe_get_vrf_seed(&self) -> eyre::Result<serde_json::Value> {
+            self.inner.outbe_get_vrf_seed().await
+        }
+        async fn outbe_get_emission_info(&self) -> eyre::Result<serde_json::Value> {
+            self.inner.outbe_get_emission_info().await
+        }
+        async fn outbe_get_slash_config(&self) -> eyre::Result<serde_json::Value> {
+            self.inner.outbe_get_slash_config().await
+        }
+        async fn eth_get_logs(
+            &self,
+            address: Address,
+            topics: &[Option<String>],
+            from_block: &str,
+            to_block: &str,
+        ) -> eyre::Result<Vec<serde_json::Value>> {
+            self.inner
+                .eth_get_logs(address, topics, from_block, to_block)
+                .await
+        }
+    }
+
+    let hashes = Arc::new(Mutex::new(Vec::new()));
+    let rpc = TrackingStatusRpc {
+        inner: status_rpc(),
+        schedule_hashes: Arc::clone(&hashes),
+    };
+    let status = read_status(&rpc, &status_args()).await.unwrap();
+    assert_eq!(status["schedule"]["finalizedHeight"], 120);
+    assert_eq!(*hashes.lock().unwrap(), vec![B256::repeat_byte(1)]);
+
+    let malformed_hashes = Arc::new(Mutex::new(Vec::new()));
+    let mut bad_inner = status_rpc();
+    bad_inner.finalized_block = Ok(json!({
+        "number": "0x78",
+        "timestamp": "0x3e8",
+        "stateRoot": B256::repeat_byte(6),
+    }));
+    let bad_rpc = TrackingStatusRpc {
+        inner: bad_inner,
+        schedule_hashes: Arc::clone(&malformed_hashes),
+    };
+    assert!(read_status(&bad_rpc, &status_args()).await.is_err());
+    assert!(
+        malformed_hashes.lock().unwrap().is_empty(),
+        "malformed finalized header must fail before requesting schedule"
+    );
+}

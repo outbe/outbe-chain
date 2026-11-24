@@ -44,6 +44,7 @@ pub trait FinalizedStateRpc: ChainRpc {
 pub trait RegistryRpc: FinalizedStateRpc {
     fn tee_renewal_schedule_v1(
         &self,
+        finalized_hash: B256,
     ) -> impl Future<Output = Result<TeeRenewalScheduleV1, Self::Error>> + Send;
 }
 
@@ -453,14 +454,6 @@ pub async fn read_finalized_registry_view_v1<R: RegistryRpc + Sync>(
     rpc: &R,
     selector: &NodeBindingSelectorV1,
 ) -> Result<FinalizedRegistryChainViewV1, RegistryError<R::Error>> {
-    let schedule = rpc
-        .tee_renewal_schedule_v1()
-        .await
-        .map_err(|source| RegistryError::Rpc {
-            context: "read exact finalized TEE renewal schedule",
-            source,
-        })?
-        .validate()?;
     let finalized = rpc
         .finalized_block()
         .await
@@ -472,6 +465,14 @@ pub async fn read_finalized_registry_view_v1<R: RegistryRpc + Sync>(
     let timestamp = json_hex_u64(&finalized, "timestamp")?;
     let hash = json_b256(&finalized, "hash")?;
     let state_root = json_b256(&finalized, "stateRoot")?;
+    let schedule = rpc
+        .tee_renewal_schedule_v1(hash)
+        .await
+        .map_err(|source| RegistryError::Rpc {
+            context: "read exact finalized TEE renewal schedule",
+            source,
+        })?
+        .validate()?;
     if number != schedule.finalized_height
         || timestamp != schedule.finalized_timestamp
         || hash != schedule.finalized_hash
@@ -679,7 +680,10 @@ mod tests {
     }
 
     impl RegistryRpc for MockRegistryRpc {
-        async fn tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1, Self::Error> {
+        async fn tee_renewal_schedule_v1(
+            &self,
+            _finalized_hash: B256,
+        ) -> Result<TeeRenewalScheduleV1, Self::Error> {
             Ok(self.schedule)
         }
     }
@@ -826,6 +830,157 @@ mod tests {
                 .policy
                 .attestation_mode,
             AttestationMode::DcapRequired
+        );
+    }
+
+    #[tokio::test]
+    async fn registry_view_reads_finalized_header_first_and_skips_schedule_on_malformed_header() {
+        use std::sync::{Arc, Mutex};
+
+        type RecordedCalls = Arc<Mutex<Vec<(&'static str, Option<B256>)>>>;
+
+        struct OrderingRpc {
+            inner: MockRegistryRpc,
+            finalized_override: Option<serde_json::Value>,
+            schedule_override: Option<TeeRenewalScheduleV1>,
+            calls: RecordedCalls,
+        }
+
+        impl ChainRpc for OrderingRpc {
+            type Error = RegistryError;
+
+            async fn chain_id(&self) -> Result<u64, Self::Error> {
+                self.calls.lock().unwrap().push(("chain_id", None));
+                self.inner.chain_id().await
+            }
+        }
+
+        impl FinalizedStateRpc for OrderingRpc {
+            async fn finalized_block(&self) -> Result<serde_json::Value, Self::Error> {
+                self.calls.lock().unwrap().push(("finalized_block", None));
+                match &self.finalized_override {
+                    Some(value) => Ok(value.clone()),
+                    None => self.inner.finalized_block().await,
+                }
+            }
+
+            async fn call_at(
+                &self,
+                to: Address,
+                data: &[u8],
+                block_tag: &str,
+            ) -> Result<Vec<u8>, Self::Error> {
+                self.calls.lock().unwrap().push(("call_at", None));
+                self.inner.call_at(to, data, block_tag).await
+            }
+        }
+
+        impl RegistryRpc for OrderingRpc {
+            async fn tee_renewal_schedule_v1(
+                &self,
+                finalized_hash: B256,
+            ) -> Result<TeeRenewalScheduleV1, Self::Error> {
+                self.calls
+                    .lock()
+                    .unwrap()
+                    .push(("tee_renewal_schedule_v1", Some(finalized_hash)));
+                Ok(self.schedule_override.unwrap_or(self.inner.schedule))
+            }
+        }
+
+        let selector = NodeBindingSelectorV1::NodeHost([2; 33]);
+
+        // 1. Header-first order and exact finalized hash forwarding.
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let rpc = OrderingRpc {
+            inner: registry_rpc(true, AttestationMode::NoAttestationDev),
+            finalized_override: None,
+            schedule_override: None,
+            calls: Arc::clone(&calls),
+        };
+        let expected_hash = rpc.inner.schedule.finalized_hash;
+        let view = read_finalized_registry_view_v1(&rpc, &selector)
+            .await
+            .unwrap();
+        assert_eq!(view.schedule.finalized_hash, expected_hash);
+        let recorded = calls.lock().unwrap().clone();
+        assert_eq!(recorded[0], ("finalized_block", None));
+        assert_eq!(
+            recorded[1],
+            ("tee_renewal_schedule_v1", Some(expected_hash))
+        );
+
+        // 2. Malformed finalized header fails BEFORE any schedule request (I8).
+        let malformed_calls = Arc::new(Mutex::new(Vec::new()));
+        let malformed_rpc = OrderingRpc {
+            inner: registry_rpc(true, AttestationMode::NoAttestationDev),
+            finalized_override: Some(serde_json::json!({
+                "number": "0x78",
+                "timestamp": "0x3e8",
+                "stateRoot": format!("{:#x}", B256::repeat_byte(0x71)),
+            })),
+            schedule_override: None,
+            calls: Arc::clone(&malformed_calls),
+        };
+        let err = read_finalized_registry_view_v1(&malformed_rpc, &selector)
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            RegistryError::FinalizedBlockMissingField("hash")
+        ));
+        assert_eq!(
+            *malformed_calls.lock().unwrap(),
+            vec![("finalized_block", None)]
+        );
+
+        // 3. Exact 3-field schedule-vs-header mismatch checks remain enforced (I5).
+        for bad_schedule in [rpc.inner.schedule, rpc.inner.schedule, rpc.inner.schedule]
+            .into_iter()
+            .enumerate()
+            .map(|(idx, mut s)| {
+                match idx {
+                    0 => s.finalized_height += 1,
+                    1 => s.finalized_hash = B256::repeat_byte(0xfe),
+                    _ => s.finalized_timestamp += 1,
+                }
+                s
+            })
+        {
+            let mismatch_rpc = OrderingRpc {
+                inner: registry_rpc(true, AttestationMode::NoAttestationDev),
+                finalized_override: None,
+                schedule_override: Some(bad_schedule),
+                calls: Arc::new(Mutex::new(Vec::new())),
+            };
+            let err = read_finalized_registry_view_v1(&mismatch_rpc, &selector)
+                .await
+                .unwrap_err();
+            assert!(matches!(
+                err,
+                RegistryError::FinalizedScheduleDisagreesWithBlock
+            ));
+        }
+
+        // 4. Independent views select their own finalized header without global pinning (I7).
+        let mut second_inner = registry_rpc(true, AttestationMode::NoAttestationDev);
+        second_inner.schedule.finalized_height = 121;
+        second_inner.schedule.finalized_hash = B256::repeat_byte(0x88);
+        second_inner.schedule.finalized_timestamp = 1_002;
+        let second_calls = Arc::new(Mutex::new(Vec::new()));
+        let second_rpc = OrderingRpc {
+            inner: second_inner,
+            finalized_override: None,
+            schedule_override: None,
+            calls: Arc::clone(&second_calls),
+        };
+        let second_view = read_finalized_registry_view_v1(&second_rpc, &selector)
+            .await
+            .unwrap();
+        assert_eq!(second_view.schedule.finalized_hash, B256::repeat_byte(0x88));
+        assert_eq!(
+            second_calls.lock().unwrap()[1],
+            ("tee_renewal_schedule_v1", Some(B256::repeat_byte(0x88)))
         );
     }
 }
