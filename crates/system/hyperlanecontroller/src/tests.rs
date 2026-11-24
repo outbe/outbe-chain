@@ -914,39 +914,136 @@ mod liveness {
         });
     }
 
-    /// Four validators: the reference is the third-highest settled index, so
-    /// one inflated submission cannot move it, and the verdict ignores fresh
-    /// ones.
+    const ROOT_A: B256 = B256::repeat_byte(0xa1);
+    const ROOT_B: B256 = B256::repeat_byte(0xb2);
+
+    /// Stores the vote `root` at `index` under the `validator_domain_key`
+    /// `key`.
+    fn write_vote(
+        c: &HyperlaneControllerContract<'_>,
+        key: B256,
+        index: u32,
+        root: B256,
+    ) -> Result<(), PrecompileError> {
+        c.vote_index.write(&key, index)?;
+        c.vote_root.write(&key, root)
+    }
+
+    /// Activates v(2), v(3), v(4). With the fixture validator, the active set
+    /// has four validators and the threshold is three.
+    fn four_validators(storage: StorageHandle<'_>) {
+        for (i, addr) in [v(2), v(3), v(4)].into_iter().enumerate() {
+            activate(storage.clone(), addr, i as u8 + 2).unwrap();
+        }
+    }
+
+    fn four() -> [Address; 4] {
+        [FIXTURE_VALIDATOR, v(2), v(3), v(4)]
+    }
+
     #[test]
-    fn reference_index_is_quorum_based_and_grace_gated() {
+    fn a_checkpoint_at_the_target_index_is_a_vote_and_a_new_root_replaces_it() {
+        let mut p = liveness_provider();
+        p.set_block_number(100);
+        StorageHandle::enter(&mut p, |storage| {
+            let two = checkpoint_2();
+            let submit = submit_call(LOCAL, &two, 2);
+            let mut c = HyperlaneControllerContract::new(storage.clone());
+            let key = validator_domain_key(FIXTURE_VALIDATOR, LOCAL);
+
+            // No target: the checkpoint is only the latest index.
+            dispatch(storage.clone(), &submit, FIXTURE_VALIDATOR, U256::ZERO).unwrap();
+            assert_eq!(c.vote_index.read(&key).unwrap(), 0);
+
+            // Index 2 is the target now: the same checkpoint is a vote.
+            c.target_index.write(&LOCAL, 2).unwrap();
+            dispatch(storage.clone(), &submit, FIXTURE_VALIDATOR, U256::ZERO).unwrap();
+            let view: Bytes = IHyperlaneController::targetVoteCall {
+                validator: FIXTURE_VALIDATOR,
+                domain: LOCAL,
+            }
+            .abi_encode()
+            .into();
+            let ret = dispatch(storage.clone(), &view, stranger(), U256::ZERO).unwrap();
+            let vote = IHyperlaneController::targetVoteCall::abi_decode_returns(&ret).unwrap();
+            assert_eq!((vote.index, vote.root), (2, two.root));
+
+            // The same vote again changes nothing.
+            let repeat = dispatch(storage, &submit, FIXTURE_VALIDATOR, U256::ZERO).unwrap_err();
+            assert_eq!(
+                revert_selector(repeat),
+                IHyperlaneController::StaleIndex::SELECTOR
+            );
+
+            // Another root at the target replaces the vote. An index that is
+            // not the target and not newer is stale.
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 2, ROOT_B)
+                .unwrap();
+            assert_eq!(c.vote_root.read(&key).unwrap(), ROOT_B);
+            assert!(c
+                .record_submission(FIXTURE_VALIDATOR, LOCAL, 1, ROOT_B)
+                .is_err());
+
+            // A newer index at the target is the vote and the latest index.
+            c.target_index.write(&LOCAL, 9).unwrap();
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 9, ROOT_A)
+                .unwrap();
+            assert_eq!(c.submitted_index.read(&key).unwrap(), 9);
+            assert_eq!(c.vote_index.read(&key).unwrap(), 9);
+            assert_eq!(c.vote_root.read(&key).unwrap(), ROOT_A);
+        });
+    }
+
+    /// Four validators. The target is the third-highest settled index, so one
+    /// inflated submission cannot move it. A validator is on time only when
+    /// its root at the target equals the root of the quorum.
+    #[test]
+    fn target_is_quorum_based_and_only_the_anchor_root_is_on_time() {
         let mut p = liveness_provider();
         StorageHandle::enter(&mut p, |storage| {
-            for (i, addr) in [v(2), v(3), v(4)].into_iter().enumerate() {
-                activate(storage.clone(), addr, i as u8 + 2).unwrap();
-            }
+            four_validators(storage.clone());
             let c = HyperlaneControllerContract::new(storage);
             let old = 1_000 - GRACE_BLOCKS;
             write_submission(&c, validator_domain_key(FIXTURE_VALIDATOR, LOCAL), 500, old).unwrap();
             write_submission(&c, validator_domain_key(v(2), LOCAL), 498, old).unwrap();
             write_submission(&c, validator_domain_key(v(3), LOCAL), 120, old).unwrap();
             write_submission(&c, validator_domain_key(v(4), LOCAL), 999_999, old).unwrap();
-            for addr in [FIXTURE_VALIDATOR, v(2), v(3), v(4)] {
-                write_submission(&c, validator_domain_key(addr, SEPOLIA), 10, old).unwrap();
+            // SEPOLIA: fresh submissions do not make a target.
+            for addr in four() {
+                write_submission(&c, validator_domain_key(addr, SEPOLIA), 10, 999).unwrap();
             }
         });
         p.set_block_number(1_000);
         StorageHandle::enter(&mut p, |storage| {
             let mut c = HyperlaneControllerContract::new(storage);
+            // The first verdict has no target: no miss. It sets the target.
+            assert!(c.check_liveness().unwrap().is_empty());
+            for addr in four() {
+                assert_eq!(c.miss_count.read(&addr).unwrap(), 0);
+            }
+            assert_eq!(c.target_index.read(&LOCAL).unwrap(), 498);
+            assert_eq!(c.target_index.read(&SEPOLIA).unwrap(), 0);
+
+            // Three validators sign ROOT_A at the target. v(3) signs ROOT_B.
+            for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
+                write_vote(&c, validator_domain_key(addr, LOCAL), 498, ROOT_A).unwrap();
+            }
+            write_vote(&c, validator_domain_key(v(3), LOCAL), 498, ROOT_B).unwrap();
             assert!(c.check_liveness().unwrap().is_empty());
             assert_eq!(c.miss_count.read(&v(3)).unwrap(), 1);
             for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
                 assert_eq!(c.miss_count.read(&addr).unwrap(), 0);
             }
-            // v(3) closes the gap with a fresh submission. It is not part of the
-            // reference yet, but v(3) itself is no longer behind.
-            write_submission(&c, validator_domain_key(v(3), LOCAL), 600, 999).unwrap();
+
+            // v(3) replaces its vote. The vote of v(4) is for another index:
+            // its inflated latest index does not help.
+            write_vote(&c, validator_domain_key(v(3), LOCAL), 498, ROOT_A).unwrap();
+            write_vote(&c, validator_domain_key(v(4), LOCAL), 999_999, ROOT_A).unwrap();
             assert!(c.check_liveness().unwrap().is_empty());
             assert_eq!(c.miss_count.read(&v(3)).unwrap(), 0);
+            assert_eq!(c.miss_count.read(&v(4)).unwrap(), 1);
+            // The target never decreases and did not move.
+            assert_eq!(c.target_index.read(&LOCAL).unwrap(), 498);
         });
     }
 
@@ -954,13 +1051,15 @@ mod liveness {
     fn newcomer_is_stamped_and_evaluated_from_the_next_boundary() {
         let mut p = liveness_provider();
         StorageHandle::enter(&mut p, |storage| {
-            for (i, addr) in [v(2), v(3), v(4)].into_iter().enumerate() {
-                activate(storage.clone(), addr, i as u8 + 2).unwrap();
-            }
+            four_validators(storage.clone());
             let c = HyperlaneControllerContract::new(storage);
-            for addr in [FIXTURE_VALIDATOR, v(2), v(3)] {
-                write_submission(&c, validator_domain_key(addr, LOCAL), 50, 100).unwrap();
-                write_submission(&c, validator_domain_key(addr, SEPOLIA), 50, 100).unwrap();
+            for domain in [LOCAL, SEPOLIA] {
+                c.target_index.write(&domain, 50).unwrap();
+                for addr in [FIXTURE_VALIDATOR, v(2), v(3)] {
+                    let key = validator_domain_key(addr, domain);
+                    write_submission(&c, key, 50, 100).unwrap();
+                    write_vote(&c, key, 50, ROOT_A).unwrap();
+                }
             }
         });
         p.set_block_number(1_000);
@@ -984,30 +1083,40 @@ mod liveness {
     }
 
     #[test]
-    fn idle_bridge_and_below_quorum_data_produce_no_misses() {
+    fn no_target_and_no_quorum_root_produce_no_misses() {
         let mut p = liveness_provider();
         StorageHandle::enter(&mut p, |storage| {
-            for (i, addr) in [v(2), v(3), v(4)].into_iter().enumerate() {
-                activate(storage.clone(), addr, i as u8 + 2).unwrap();
-            }
+            four_validators(storage.clone());
             let c = HyperlaneControllerContract::new(storage);
-            // Only two settled submissions: below the threshold of three,
-            // so there is no reference and nobody can be behind.
             write_submission(&c, validator_domain_key(FIXTURE_VALIDATOR, LOCAL), 500, 100).unwrap();
             write_submission(&c, validator_domain_key(v(2), LOCAL), 500, 100).unwrap();
             write_submission(&c, validator_domain_key(v(3), LOCAL), 1, 100).unwrap();
             write_submission(&c, validator_domain_key(v(4), LOCAL), 1, 100).unwrap();
-            for addr in [FIXTURE_VALIDATOR, v(2), v(3), v(4)] {
+            for addr in four() {
                 write_submission(&c, validator_domain_key(addr, SEPOLIA), 0, 100).unwrap();
             }
         });
         p.set_block_number(1_000);
         StorageHandle::enter(&mut p, |storage| {
             let mut c = HyperlaneControllerContract::new(storage);
-            // Reference for LOCAL is the third highest: 1. Everyone is at or
-            // above it. SEPOLIA never moved. No misses.
+            // LOCAL: the third-highest index is 1. SEPOLIA never moved, so it
+            // has no target.
             assert!(c.check_liveness().unwrap().is_empty());
-            for addr in [FIXTURE_VALIDATOR, v(2), v(3), v(4)] {
+            assert_eq!(c.target_index.read(&LOCAL).unwrap(), 1);
+            assert_eq!(c.target_index.read(&SEPOLIA).unwrap(), 0);
+
+            // Two roots with two votes each: no root has three votes, so
+            // there is no anchor and no verdict.
+            for (addr, root) in [
+                (FIXTURE_VALIDATOR, ROOT_A),
+                (v(2), ROOT_A),
+                (v(3), ROOT_B),
+                (v(4), ROOT_B),
+            ] {
+                write_vote(&c, validator_domain_key(addr, LOCAL), 1, root).unwrap();
+            }
+            assert!(c.check_liveness().unwrap().is_empty());
+            for addr in four() {
                 assert_eq!(c.miss_count.read(&addr).unwrap(), 0);
             }
         });
@@ -1017,16 +1126,20 @@ mod liveness {
     fn consecutive_misses_jail_and_sync_drops_the_validator() {
         let mut p = liveness_provider();
         StorageHandle::enter(&mut p, |storage| {
-            for (i, addr) in [v(2), v(3), v(4)].into_iter().enumerate() {
-                activate(storage.clone(), addr, i as u8 + 2).unwrap();
-            }
+            four_validators(storage.clone());
             let c = HyperlaneControllerContract::new(storage);
+            c.target_index.write(&LOCAL, 500).unwrap();
+            c.target_index.write(&SEPOLIA, 5).unwrap();
             for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
                 write_submission(&c, validator_domain_key(addr, LOCAL), 500, 100).unwrap();
-                write_submission(&c, validator_domain_key(addr, SEPOLIA), 5, 100).unwrap();
+                write_vote(&c, validator_domain_key(addr, LOCAL), 500, ROOT_A).unwrap();
             }
+            // v(3) never signs the LOCAL target.
             write_submission(&c, validator_domain_key(v(3), LOCAL), 7, 100).unwrap();
-            write_submission(&c, validator_domain_key(v(3), SEPOLIA), 5, 100).unwrap();
+            for addr in four() {
+                write_submission(&c, validator_domain_key(addr, SEPOLIA), 5, 100).unwrap();
+                write_vote(&c, validator_domain_key(addr, SEPOLIA), 5, ROOT_B).unwrap();
+            }
         });
         let mut jailed = Vec::new();
         for boundary in 1..=MAX_MISSES {
@@ -1054,6 +1167,24 @@ mod liveness {
             assert!(!active.contains(&v(3)));
             let c = HyperlaneControllerContract::new(storage);
             assert_eq!(c.miss_count.read(&v(3)).unwrap(), 0);
+        });
+    }
+
+    #[test]
+    fn removing_a_domain_clears_its_liveness_state() {
+        let mut p = liveness_provider();
+        StorageHandle::enter(&mut p, |storage| {
+            let mut c = HyperlaneControllerContract::new(storage);
+            let key = validator_domain_key(FIXTURE_VALIDATOR, SEPOLIA);
+            c.target_index.write(&SEPOLIA, 5).unwrap();
+            write_submission(&c, key, 5, 100).unwrap();
+            write_vote(&c, key, 5, ROOT_A).unwrap();
+            c.remove_domain(SEPOLIA).unwrap();
+            assert_eq!(c.target_index.read(&SEPOLIA).unwrap(), 0);
+            assert_eq!(c.submitted_index.read(&key).unwrap(), 0);
+            assert_eq!(c.submitted_block.read(&key).unwrap(), 0);
+            assert_eq!(c.vote_index.read(&key).unwrap(), 0);
+            assert_eq!(c.vote_root.read(&key).unwrap(), B256::ZERO);
         });
     }
 
