@@ -25,9 +25,9 @@ fn a_winners_page_pays_the_settlement_and_the_proceeds_only_with_winners() {
 }
 
 #[test]
-fn the_ica_limit_covers_the_forwarded_share_and_the_account() {
+fn the_ica_limit_covers_both_forwarded_shares_and_the_account() {
     let message = 6_300_000;
     let limit = ica_gas_limit(message);
-    assert_eq!(limit, message + 100_000 + ICA_OVERHEAD);
-    assert!((limit - ICA_OVERHEAD) * 63 / 64 >= message);
+    assert_eq!(limit, message + 100_000 + 101_588 + ICA_OVERHEAD);
+    assert!((limit - ICA_OVERHEAD) * 63 / 64 * 63 / 64 >= message);
 }
