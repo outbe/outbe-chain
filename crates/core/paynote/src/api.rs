@@ -20,10 +20,11 @@ pub use crate::runtime::PayNoteClaim;
 pub use crate::context::{intex_holding_target, settlement_context, SettlementDomain};
 
 /// Verify a `outbe.paynote@1.3.0` spend proof, nullify the note, append any
-/// change commitment, and return the validated claim.
+/// change commitment, route `claim.spend_amount` of `claim.asset` from the pool
+/// into the asset's reserve vault, and return the validated claim.
 ///
-/// **Moves no tokens.** PayNote owns the tree, the nullifier set and the root
-/// window. The caller decides what `claim.spend_amount` of `claim.asset` buys
+/// PayNote owns the tree, the nullifier set, the root window and the pooled
+/// tokens. The caller decides what `claim.spend_amount` of `claim.asset` buys
 /// and must require `claim.context` to equal the settlement statement it
 /// recomputes with [`settlement_context`].
 ///
@@ -37,8 +38,9 @@ pub use crate::context::{intex_holding_target, settlement_context, SettlementDom
 /// - the root is outside the acceptance window.
 /// - the nullifier is already spent.
 /// - the proof fails verification.
+/// - the vault routing fails.
 ///
-/// The nullifier write and the change append are one rollback unit with the
+/// The nullifier write, the change append and the vault routing are one rollback unit with the
 /// caller's own effects.
 pub fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNoteClaim> {
     runtime::consume(storage, proof)

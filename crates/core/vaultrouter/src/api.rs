@@ -52,6 +52,19 @@ pub fn reference_currency_assets(
         .map_err(|_| VaultRouterError::RouterCallUndecodable("referenceCurrencyAssets").into())
 }
 
+/// `assetVaultsCount`: how many reserve vaults are registered for `asset`.
+/// Read-only, so this uses a staticcall.
+pub fn asset_vaults_count(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
+    let ret = storage.staticcall(
+        VAULT_ROUTER_ADDRESS,
+        IVaultRouter::assetVaultsCountCall { asset }
+            .abi_encode()
+            .into(),
+    )?;
+    IVaultRouter::assetVaultsCountCall::abi_decode_returns(&ret)
+        .map_err(|_| VaultRouterError::RouterCallUndecodable("assetVaultsCount").into())
+}
+
 /// Direct storage read of a reservation. Same-process precompiles use this
 /// rather than a staticcall so tests sharing the provider can seed and inspect
 /// holds without routing through the EVM stub.

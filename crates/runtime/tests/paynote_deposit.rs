@@ -1,15 +1,15 @@
 //! EVM-level integration test for `IPayNote.deposit`.
 //!
 //! The paynote crate's own tests cover only `deposit`'s pre-mutation guards,
-//! because its body runs a real `VaultRouter.depositFrom` sub-call that an
-//! in-memory storage provider cannot serve. This test drives the precompile
-//! through the real EVM. VaultRouter runs its own stablecoin-source gating and
-//! vault lookup. The ERC20 and ERC4626 counterparties are the stateful
-//! `FactorySettlement` fixture.
+//! because its body moves real ERC20 balances that an in-memory storage
+//! provider cannot model. This test drives the precompile through the real EVM.
+//! The ERC20 counterparty is the stateful `FactorySettlement` fixture.
 //!
 //! What this pins that unit tests cannot:
-//!   * `PAYNOTE_ADDRESS` must be a registered `PayNoteDeposit` stablecoin source.
+//!   * the deposited tokens land in the pool at `PAYNOTE_ADDRESS`, not in the
+//!     vault. A spend routes them into the vault later.
 //!   * the asset must have a registered reserve vault.
+//!   * the pool must receive exactly the deposited amount.
 //!   * a revert anywhere in that chain rolls the tree back atomically.
 //!   * the appended leaf is the runtime-derived commitment, readable through
 //!     the public view ABI.
@@ -23,7 +23,7 @@ use outbe_paynote::precompile::IPayNote;
 use outbe_paynote::Field;
 use outbe_primitives::chain::CHAIN_ID;
 use outbe_primitives::storage::{SubCallOutput, SubCallStatus};
-use outbe_system_common::addresses::{PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS};
+use outbe_system_common::addresses::PAYNOTE_ADDRESS;
 use outbe_vaultrouter::precompile::IVaultRouter::StablecoinSource;
 use outbe_vaultrouter::test_support::{register_source, register_vault};
 use outbe_zk::codec::field_to_b256;
@@ -54,11 +54,9 @@ fn expected_commitment(asset: Address, amount: U256) -> B256 {
     field_to_b256(&note_commitment(CHAIN_ID, serial(), asset, amount).unwrap()).unwrap()
 }
 
-/// `ALICE` holds and has approved both assets to the router, and the router has
-/// approved the vault, as a live deployment would. The asset has a vault unless
-/// `register_asset_vault` is false, and PayNote is a `PayNoteDeposit` source
-/// unless `authorize_paynote` is false.
-fn world(register_asset_vault: bool, authorize_paynote: bool) -> EvmWorld {
+/// `ALICE` holds and has approved both assets to the pool. `ASSET` has a vault
+/// and PayNote is a `PayNoteDeposit` source, as a live deployment would have.
+fn world() -> EvmWorld {
     let mut db = CacheDB::new(EmptyDB::default());
     let code = runtime_code(include_str!(
         "../../../testing/fixtures/evm/FactorySettlement.hex"
@@ -67,12 +65,8 @@ fn world(register_asset_vault: bool, authorize_paynote: bool) -> EvmWorld {
         install_code(&mut db, address, &code);
     }
     seed_storage(&mut db, TIMESTAMP, ALICE, |storage| {
-        if register_asset_vault {
-            register_vault(&storage, ASSET, VAULT, 840).unwrap();
-        }
-        if authorize_paynote {
-            register_source(&storage, PAYNOTE_ADDRESS, StablecoinSource::PayNoteDeposit).unwrap();
-        }
+        register_vault(&storage, ASSET, VAULT, 840).unwrap();
+        register_source(&storage, PAYNOTE_ADDRESS, StablecoinSource::PayNoteDeposit).unwrap();
     });
     let mut world =
         EvmWorld::new(db, std::sync::Arc::new(outbe_runtime::OutbeRuntime::new())).at(TIMESTAMP);
@@ -89,19 +83,11 @@ fn world(register_asset_vault: bool, authorize_paynote: bool) -> EvmWorld {
             ALICE,
             asset,
             IFixture::approveCall {
-                spender: VAULT_ROUTER_ADDRESS,
+                spender: PAYNOTE_ADDRESS,
                 amount: U256::MAX,
             },
         );
     }
-    world.ok(
-        VAULT_ROUTER_ADDRESS,
-        ASSET,
-        IFixture::approveCall {
-            spender: VAULT,
-            amount: U256::MAX,
-        },
-    );
     world
 }
 
@@ -118,13 +104,14 @@ fn leaf_count(world: &mut EvmWorld) -> u64 {
     world.view(ALICE, PAYNOTE_ADDRESS, IPayNote::leafCountCall {})
 }
 
-/// `[alice, vault]` balances of `ASSET`.
-fn balances(world: &mut EvmWorld) -> [U256; 2] {
-    [ALICE, VAULT].map(|account| world.view(ALICE, ASSET, IFixture::balanceOfCall { account }))
+/// `[alice, pool, vault]` balances of `asset`.
+fn balances(world: &mut EvmWorld, asset: Address) -> [U256; 3] {
+    [ALICE, PAYNOTE_ADDRESS, VAULT]
+        .map(|account| world.view(ALICE, asset, IFixture::balanceOfCall { account }))
 }
 
-/// A revert anywhere in the router chain must roll the whole deposit back. It
-/// must not leave a commitment behind for value that never reached a vault.
+/// A revert anywhere in the deposit must roll it back. It must not leave a
+/// commitment behind for value the pool never received.
 fn assert_pristine(world: &mut EvmWorld) {
     assert_eq!(leaf_count(world), 0);
     assert_eq!(
@@ -141,10 +128,10 @@ fn assert_reverted(out: &SubCallOutput) {
 }
 
 #[test]
-fn deposit_routes_full_width_amount_into_the_vault_and_appends_the_derived_commitment() {
-    let mut world = world(true, true);
+fn deposit_holds_full_width_amount_in_the_pool_and_appends_the_derived_commitment() {
+    let mut world = world();
     let amount = (U256::from(1) << 200) + U256::from(DEPOSIT_AMOUNT);
-    let [alice_before, vault_before] = balances(&mut world);
+    let [alice_before, pool_before, vault_before] = balances(&mut world, ASSET);
 
     let out = deposit(&mut world, ASSET, amount);
     assert!(
@@ -154,9 +141,10 @@ fn deposit_routes_full_width_amount_into_the_vault_and_appends_the_derived_commi
         alloy_primitives::hex::encode(&out.returndata),
     );
 
+    // The pool keeps custody. Only a spend routes value into the vault.
     assert_eq!(
-        balances(&mut world),
-        [alice_before - amount, vault_before + amount]
+        balances(&mut world, ASSET),
+        [alice_before - amount, pool_before + amount, vault_before]
     );
     assert_eq!(leaf_count(&mut world), 1);
     // The leaf is the commitment the runtime derived from the asset and amount
@@ -174,28 +162,21 @@ fn deposit_routes_full_width_amount_into_the_vault_and_appends_the_derived_commi
 }
 
 #[test]
-fn deposit_reverts_and_leaves_no_leaf_when_paynote_is_not_a_stablecoin_source() {
-    let mut world = world(true, false);
-    let before = balances(&mut world);
-    assert_reverted(&deposit(&mut world, ASSET, U256::from(DEPOSIT_AMOUNT)));
-    assert_eq!(balances(&mut world), before);
-    assert_pristine(&mut world);
-}
-
-#[test]
 fn deposit_reverts_and_leaves_no_leaf_when_the_asset_has_no_vault() {
-    let mut world = world(true, true);
+    let mut world = world();
+    let before = balances(&mut world, UNREGISTERED_ASSET);
     assert_reverted(&deposit(
         &mut world,
         UNREGISTERED_ASSET,
         U256::from(DEPOSIT_AMOUNT),
     ));
+    assert_eq!(balances(&mut world, UNREGISTERED_ASSET), before);
     assert_pristine(&mut world);
 }
 
 #[test]
 fn a_token_that_delivers_less_than_the_amount_deposits_nothing() {
-    let mut world = world(true, true);
+    let mut world = world();
     // Fixture mode 9: fee-on-transfer, one unit short.
     world.ok(
         ALICE,
@@ -206,15 +187,15 @@ fn a_token_that_delivers_less_than_the_amount_deposits_nothing() {
             reentry: Default::default(),
         },
     );
-    let before = balances(&mut world);
+    let before = balances(&mut world, ASSET);
     assert_reverted(&deposit(&mut world, ASSET, U256::from(DEPOSIT_AMOUNT)));
-    assert_eq!(balances(&mut world), before);
+    assert_eq!(balances(&mut world, ASSET), before);
     assert_pristine(&mut world);
 }
 
 #[test]
 fn a_duplicate_leaf_reverts_but_a_differing_amount_under_the_same_serial_appends() {
-    let mut world = world(true, true);
+    let mut world = world();
     let amount = U256::from(DEPOSIT_AMOUNT);
     assert!(matches!(
         deposit(&mut world, ASSET, amount).status,

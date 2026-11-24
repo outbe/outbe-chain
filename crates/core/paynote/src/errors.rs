@@ -30,6 +30,15 @@ pub enum PayNoteError {
     TreeFull,
     #[error("PayNote commitment already exists")]
     CommitmentExists,
+    #[error("PayNote asset has no reserve vault")]
+    AssetVaultMissing,
+    /// An ERC20 call returned something other than empty data or `true`.
+    #[error("PayNote asset token call failed")]
+    TokenCallFailed,
+    /// The pool did not receive exactly the deposited amount, e.g. a
+    /// fee-on-transfer token. The note would be unbacked.
+    #[error("PayNote asset transfer amount mismatch")]
+    TransferAmountMismatch,
     /// Fatal: the Poseidon2 sponge is total over field elements. Thus a failure
     /// here means the hasher itself is misconfigured, not bad user input.
     #[error("PayNote Poseidon2 hashing failed")]

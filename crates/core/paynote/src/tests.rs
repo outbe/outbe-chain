@@ -7,9 +7,11 @@
 //! the in-circuit ones and proving would fail. That failure is what pins the
 //! mirror.
 //!
-//! `deposit` performs ERC20 and VaultRouter sub-calls, which the in-memory
-//! storage provider cannot serve. Thus these tests cover only its pre-mutation
-//! guards. The full path belongs in an EVM-level integration test.
+//! `deposit` performs VaultRouter and ERC20 sub-calls whose token state the
+//! in-memory storage provider cannot model. Thus these tests cover only its
+//! pre-mutation guards. The full custody path lives in the EVM-level
+//! `crates/runtime/tests/paynote_deposit.rs`. Spends run against stubbed
+//! sub-calls (see [`seed_pool`]), which pins the calls they issue.
 
 mod merge;
 
@@ -381,6 +383,59 @@ fn partial_spend_appends_exactly_the_circuit_derived_change() {
         reference.append(public.change_commitment).unwrap();
         assert_eq!(paynote.current_root.read().unwrap(), b256(reference.root()));
     });
+}
+
+#[test]
+fn a_spend_routes_exactly_the_spent_amount_into_the_vault() {
+    use crate::sol_ext::IERC20;
+    use outbe_system_common::addresses::{PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS};
+    use outbe_vaultrouter::precompile::IVaultRouter;
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let (proof, _, tree) = prove_spend(CHAIN_ID, USDC, 100, 40);
+    seed_pool(&mut provider, CHAIN_ID, tree.leaves());
+    provider.enter(|storage| runtime::consume(&storage, &proof).unwrap());
+
+    // The pool approves the router for the spent amount only, and the router
+    // pulls it from the pool. The 60 of change stays in the pool.
+    let calls: Vec<_> = provider
+        .sub_call_inputs()
+        .iter()
+        .map(|input| (input.target, input.calldata.clone()))
+        .collect();
+    let approve = IERC20::approveCall {
+        spender: VAULT_ROUTER_ADDRESS,
+        amount: U256::from(40),
+    };
+    let route = IVaultRouter::depositFromCall {
+        payer: PAYNOTE_ADDRESS,
+        asset: USDC,
+        assetsMinor: U256::from(40),
+    };
+    assert_eq!(
+        calls,
+        [
+            (USDC, approve.abi_encode().into()),
+            (VAULT_ROUTER_ADDRESS, route.abi_encode().into()),
+        ]
+    );
+}
+
+#[test]
+fn a_failed_vault_routing_leaves_the_note_unspent() {
+    use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
+
+    let (proof, public, tree) = prove_spend(CHAIN_ID, USDC, 100, 40);
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    seed_pool(&mut provider, CHAIN_ID, tree.leaves());
+    provider.stub_sub_call_revert_at(VAULT_ROUTER_ADDRESS, Default::default());
+    let before = provider.storage.clone();
+
+    let result = provider.enter(|storage| runtime::consume(&storage, &proof));
+    assert!(result.is_err(), "{result:?}");
+    assert_eq!(provider.storage, before);
+    assert!(provider.get_ordered_events().is_empty());
+    assert_unspent(&mut provider, &public);
 }
 
 fn assert_unspent(provider: &mut HashMapStorageProvider, public: &PublicInputs) {
