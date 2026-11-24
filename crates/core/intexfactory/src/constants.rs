@@ -3,17 +3,6 @@
 
 pub use outbe_core_common::addresses::{INTEX_NFT1155_ADDRESS, ORIGIN_ROUTER_ADDRESS};
 
-/// Tries a call notice gets for each target chain. The first send is try 1.
-pub const MAX_CALL_NOTICE_ATTEMPTS: u8 = 8;
-
-/// Pause before a refused notice is sent again, so the 8 sends span about 35 minutes
-/// of a router outage.
-pub const NOTICE_RETRY_SECONDS: u64 = 300;
-
-/// Consecutive wholly refused runs that end a block's send: a router that refuses every
-/// send would otherwise spend the whole budget on calls that cannot land.
-pub const MAX_REFUSED_RUNS_PER_BLOCK: u32 = 3;
-
 /// Series one ISSUANCE_INSTRUCTIONS message may carry. Mirrors `MAX_SERIES_PER_ISSUANCE`.
 pub const MAX_SERIES_PER_MESSAGE: usize = 16;
 

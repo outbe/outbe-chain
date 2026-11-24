@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Bytes, FixedBytes, LogData, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolValue};
-use outbe_intex::outbox::{Label, Outcome};
+use outbe_intex::outbox::{Label, Message, Outcome};
 use outbe_intex::wire::{MSG_INTEX_SERIES, MSG_INTEX_SERIES_CALL_NOTICE};
 use outbe_primitives::block::BlockRuntimeContext;
 use outbe_primitives::error::{PassFailure, Result};
@@ -12,6 +12,26 @@ use outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK;
 
 use crate::precompile::IIntexFactory;
 use crate::schema::IntexFactoryContract;
+
+/// Puts one message for each of `chains` into the outbox.
+pub(crate) fn push_to(
+    storage: &StorageHandle<'_>,
+    chains: &[u32],
+    label: Label,
+    message_gas: u64,
+    payload: &Bytes,
+) -> Result<()> {
+    let outbox = IntexFactoryContract::new(storage.clone()).outbox();
+    for &chain_id in chains {
+        outbox.push(Message {
+            chain_id,
+            label,
+            message_gas,
+            payload: payload.clone(),
+        })?;
+    }
+    Ok(())
+}
 
 pub(crate) fn flush(storage: &StorageHandle<'_>) -> Result<()> {
     let now = storage.timestamp()?.saturating_to::<u64>();

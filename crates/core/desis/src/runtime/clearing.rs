@@ -221,7 +221,12 @@ fn clear_inner(
 
     if result.issued_units != 0 {
         let mut legs = Vec::new();
-        for group in issuance_groups(&result, &config, emission_day, snapshot)? {
+        for group in issuance_groups(
+            &result,
+            &config,
+            emission_day,
+            &outbe_intexfactory::targets::series_target_chains(&storage)?,
+        )? {
             legs.extend(outbe_intexfactory::api::issue_intex(&storage, group)?);
         }
 
@@ -359,7 +364,7 @@ pub(crate) fn issuance_groups(
     result: &ClearingResult,
     config: &AuctionConfig,
     emission_day: EmissionDate,
-    snapshot: &[u32],
+    target_chains: &[u32],
 ) -> Result<Vec<IssuanceParams>> {
     let mut groups: Vec<IssuanceParams> = Vec::new();
     for (i, &(issuance_currency, reference_currency)) in result.winner_currencies.iter().enumerate()
@@ -389,7 +394,7 @@ pub(crate) fn issuance_groups(
                     call_trigger: config.call_trigger,
                     issuance_currency,
                     reference_currency,
-                    snapshot_chains: snapshot.to_vec(),
+                    target_chains: target_chains.to_vec(),
                 });
                 groups.len() - 1
             }

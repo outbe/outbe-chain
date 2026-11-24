@@ -40,8 +40,8 @@ pub struct IssuanceParams {
     pub call_trigger: IntexCallTrigger,
     pub issuance_currency: u16,
     pub reference_currency: u16,
-    /// Every target chain of the day's snapshot. Each one creates the series.
-    pub snapshot_chains: Vec<u32>,
+    /// Every target chain that is not Off. Each one creates the series.
+    pub target_chains: Vec<u32>,
 }
 
 /// EVM storage layout: settlement bookkeeping (mine_seq), the call notice outbox and
@@ -69,21 +69,9 @@ pub struct IntexFactoryContract {
     pub notify_head: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 25)]
     pub notify_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> a Called series' word packed with its call time, the router calls
-    /// it was refused, and the time it may go out again.
+    /// Queue index -> a Called series' word packed with its call time.
     #[attribute(order = 26)]
     pub notify_at: outbe_primitives::storage::dsl::Map<u32, U256>,
-
-    // Call notice legs the router kept for one chain each, retried in order. Head and tail
-    // reset to 0 whenever the queue drains empty.
-    #[attribute(order = 27)]
-    pub leg_head: outbe_primitives::storage::dsl::Value<u32>,
-    #[attribute(order = 28)]
-    pub leg_tail: outbe_primitives::storage::dsl::Value<u32>,
-    /// Queue index -> the router's kept message index packed with its chain, its failed tries
-    /// and the time it may go out again.
-    #[attribute(order = 29)]
-    pub leg_at: outbe_primitives::storage::dsl::Map<u32, U256>,
 
     /// The outbox to the target chains, see `outbe_intex::outbox`.
     #[attribute(order = 30)]
