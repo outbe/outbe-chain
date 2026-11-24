@@ -4,12 +4,13 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {CROSSCHAIN_BRIDGE} from "@precompiles/ICrosschainBridge.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
+import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {HandOver} from "../../deploy/HandOver.s.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 
 /// @dev A test has no Outbe node, so the harness supplies the Interchain Account of CrosschainBridge.
 contract HandOverHarness is HandOver {
-    address internal constant GOVERNANCE_ICA = address(uint160(0x1CA));
+    address public constant GOVERNANCE_ICA = address(uint160(0x1CA));
 
     function _governanceAccount(uint32) internal pure override returns (address) {
         return GOVERNANCE_ICA;
@@ -44,5 +45,23 @@ contract HandOverTest is Test {
 
         vm.setEnv("OUTBE_CHAIN_ID", vm.toString(block.chainid + 1));
         assertEq(script.governanceOwner(), address(uint160(0x1CA)), "other chain");
+    }
+
+    function test_OutbeIca_IsTheInterchainAccountOfOutbe() public {
+        assertEq(script.outbeIcaAccount(), script.GOVERNANCE_ICA());
+    }
+
+    function test_HandOver_LeavesTheTargetRouterToItsOutbeIcaAndGovernance() public {
+        TargetRouter router = DeployProxy.targetRouter(address(0xB41D6E), address(script), 1);
+        address ica = script.outbeIcaAccount();
+
+        script.grantOutbeIca(address(router), ica);
+        script.grantOutbeIca(address(router), ica);
+        script.handOver(address(script), GOVERNANCE, address(router));
+
+        assertTrue(router.hasRole(router.OUTBE_ICA_ROLE(), ica), "the ICA of Outbe takes the messages");
+        assertTrue(router.hasRole(router.DEFAULT_ADMIN_ROLE(), GOVERNANCE), "governance is admin");
+        assertFalse(router.hasRole(router.DEFAULT_ADMIN_ROLE(), address(script)), "deployer is not admin");
+        assertFalse(router.hasRole(router.OUTBE_ICA_ROLE(), address(script)), "deployer takes no messages");
     }
 }

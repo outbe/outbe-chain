@@ -4,23 +4,15 @@ pragma solidity 0.8.30;
 import {Test, Vm} from "forge-std/Test.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {BaseScript} from "../../../deploy/BaseScript.s.sol";
 import {ConfigureOrigin} from "../../../deploy/ConfigureOrigin.s.sol";
 import {ConfigureTarget} from "../../../deploy/ConfigureTarget.s.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {MockDesis} from "../../mocks/MockDesis.sol";
 import {MockTheCompact} from "../../mocks/MockTheCompact.sol";
 import {MockWCOEN} from "../../mocks/MockWCOEN.sol";
-
-/// @dev A test has no Outbe node, and MockDesis answers the interface check itself.
-contract ConfigureOriginHarness is ConfigureOrigin {
-    function _mirrorDesisInterface(address) internal override {}
-}
 
 abstract contract ConfigureTest is Test {
     address internal constant GOVERNANCE = address(0x60F);
@@ -43,32 +35,23 @@ abstract contract ConfigureTest is Test {
 }
 
 contract ConfigureOriginTest is ConfigureTest {
-    ConfigureOriginHarness internal script;
+    ConfigureOrigin internal script;
     address internal deployer;
     ConfigureOrigin.Origin internal o;
 
     function setUp() public {
-        script = new ConfigureOriginHarness();
+        script = new ConfigureOrigin();
         deployer = address(script);
         o = ConfigureOrigin.Origin({
-            router: address(DeployProxy.originRouter(BRIDGE, deployer)),
             nft: address(DeployProxy.intexNFT1155(deployer, makeAddr("bridger"))),
-            desis: address(new MockDesis()),
             intexFactory: makeAddr("intexFactory"),
-            gemFactory: makeAddr("gemFactory"),
-            system: makeAddr("system")
+            gemFactory: makeAddr("gemFactory")
         });
     }
 
-    function test_Configure_WiresTheRouterAndGrantsEveryRole() public {
+    function test_Configure_GrantsTheBurnerRoleToBothFactories() public {
         script.configure(deployer, o);
 
-        OriginRouter router = OriginRouter(payable(o.router));
-        assertEq(router.desis(), o.desis);
-        assertEq(router.intexFactory(), o.intexFactory);
-        assertTrue(router.hasRole(router.DESIS_ROLE(), o.system));
-        assertTrue(router.hasRole(router.INTEX_FACTORY_ROLE(), o.system));
-        assertTrue(router.hasRole(router.INTEX_FACTORY_ROLE(), o.desis));
         IntexNFT1155 nft = IntexNFT1155(o.nft);
         assertTrue(nft.hasRole(nft.BURNER_ROLE(), o.intexFactory));
         assertTrue(nft.hasRole(nft.BURNER_ROLE(), o.gemFactory));
@@ -78,7 +61,7 @@ contract ConfigureOriginTest is ConfigureTest {
         script.configure(deployer, o);
 
         IntexNFT1155 nft = IntexNFT1155(o.nft);
-        address[3] memory callers = [o.system, o.desis, o.intexFactory];
+        address[2] memory callers = [o.intexFactory, o.gemFactory];
         for (uint256 i = 0; i < callers.length; i++) {
             assertFalse(nft.hasRole(nft.ROUTER_ROLE(), callers[i]));
             assertFalse(nft.hasRole(nft.BRIDGE_ROLE(), callers[i]));
@@ -93,18 +76,18 @@ contract ConfigureOriginTest is ConfigureTest {
         _assertNoWrites(vm.stopAndReturnStateDiff());
     }
 
-    function test_Configure_RewiresAChangedFactory() public {
+    function test_Configure_GrantsAChangedFactory() public {
         script.configure(deployer, o);
         o.intexFactory = makeAddr("newIntexFactory");
 
         script.configure(deployer, o);
 
-        assertEq(OriginRouter(payable(o.router)).intexFactory(), o.intexFactory);
+        IntexNFT1155 nft = IntexNFT1155(o.nft);
+        assertTrue(nft.hasRole(nft.BURNER_ROLE(), o.intexFactory));
     }
 
     function test_Configure_HandedOverAndWired_IsANoop() public {
         script.configure(deployer, o);
-        _handOver(o.router, deployer);
         _handOver(o.nft, deployer);
 
         script.configure(deployer, o);
@@ -119,10 +102,10 @@ contract ConfigureOriginTest is ConfigureTest {
         script.configure(deployer, o);
     }
 
-    function test_RevertWhen_TheRouterIsNotDeployed() public {
-        o.router = makeAddr("nothing");
+    function test_RevertWhen_TheNftIsNotDeployed() public {
+        o.nft = makeAddr("nothing");
 
-        vm.expectRevert(abi.encodeWithSelector(BaseScript.NotDeployed.selector, o.router));
+        vm.expectRevert(abi.encodeWithSelector(BaseScript.NotDeployed.selector, o.nft));
         script.configure(deployer, o);
     }
 }
