@@ -167,7 +167,12 @@ where
     /// backlog of in-flight fetches and never leaves a gap unhinted.
     async fn pull_to(&mut self, tip: Height) {
         // Marshal's processed floor (genesis anchor = height 0 on a fresh node).
-        let processed = self.config.marshal.get_processed_height().await;
+        let processed = self
+            .config
+            .marshal
+            .get_processed()
+            .await
+            .map(commonware_consensus::marshal::core::Processed::height);
         let ceiling = self.config.epocher.supported_ceiling();
         record_follower_heights(processed.map(Height::get), ceiling.map(Height::get));
         let (range, clamped) = hint_range(processed, tip, ceiling);

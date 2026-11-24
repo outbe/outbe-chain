@@ -373,9 +373,9 @@ impl FinalizedSource for UpstreamRpcClient {
         let mut ancestors = Vec::with_capacity(proof.ancestor_blocks_hex.len());
         for encoded in proof.ancestor_blocks_hex {
             let bytes = alloy_primitives::hex::decode(encoded.trim_start_matches("0x")).ok()?;
-            let mut input = bytes.as_slice();
+            let mut input = commonware_codec::Copying(bytes.as_slice());
             let block = ConsensusBlock::read_cfg(&mut input, &()).ok()?;
-            if !input.is_empty() {
+            if !input.0.is_empty() {
                 return None;
             }
             ancestors.push(block);
@@ -411,9 +411,9 @@ impl FinalizedSource for UpstreamRpcClient {
                 }
             },
         };
-        let mut input = bytes.as_ref();
+        let mut input = commonware_codec::Copying(bytes.as_ref());
         let block = ConsensusBlock::read_cfg(&mut input, &()).ok()?;
-        (input.is_empty() && block.number() == height.get()).then_some(block)
+        (input.0.is_empty() && block.number() == height.get()).then_some(block)
     }
 
     fn get_finalization(

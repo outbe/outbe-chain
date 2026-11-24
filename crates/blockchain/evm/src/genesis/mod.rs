@@ -3,13 +3,13 @@
 //! Isolates all Block-0 (`BlockHeightRegime::Genesis`) execution invariants and
 //! canonical genesis validator-set state verification behind a single module boundary.
 
-use alloy_evm::block::BlockExecutionError;
 use alloy_primitives::Address;
 use outbe_primitives::{
     addresses::REWARDS_ADDRESS, block::BlockHeightRegime, consensus::GenesisValidators,
     error::Result as OutbeResult, reshare_artifact::OutbeBlockArtifacts, storage::StorageHandle,
 };
 use outbe_tee::witness::BlockWitnessFault;
+use reth_evm::BlockExecutionError;
 
 use crate::{errors::ExecutorValidationError, executor::witness::witness_fault_to_block_error};
 

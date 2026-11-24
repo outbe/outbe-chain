@@ -92,16 +92,16 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
                 )
                 .unwrap();
             });
-        state.database.insert_account_info(
-            Address(*user.signer()),
+        state.insert_account_info(
+            &Address(*user.signer()),
             AccountInfo {
                 balance: U256::from(10u64).pow(U256::from(18)),
                 ..Default::default()
             },
         );
         let marker_code = Bytecode::new_legacy([0xef].into());
-        state.database.insert_account_info(
-            GEM_FACTORY_ADDRESS,
+        state.insert_account_info(
+            &GEM_FACTORY_ADDRESS,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code),
@@ -133,31 +133,34 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
             ctx.expected_begin_system_txs = signed_body.clone();
         }
         let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
-        evm_env.block_env.timestamp = U256::from(block_ts);
-        let evm = config.evm_with_env(&mut state, evm_env);
-        let mut executor = config.create_executor(evm, ctx);
-        super::with_phase1_verify_disabled(|| {
-            executor.apply_pre_execution_changes().unwrap();
-        });
-        for (index, tx) in signed_body.clone().into_iter().enumerate() {
-            executor
-                .execute_transaction(tx)
-                .unwrap_or_else(|error| panic!("system transaction {index} failed: {error}"));
-        }
-        executor.execute_transaction(user.clone()).unwrap();
-        executor.apply_end_block_phase().unwrap();
-        if !replay {
-            executor.prepare_final_header_artifacts(0).unwrap();
-            header_extra_data = executor.final_extra_data().clone();
-        }
-        let artifact = decode_outbe_block_artifacts(executor.final_extra_data().as_ref())
-            .unwrap()
-            .execution_summary;
-        let (evm, result) = executor.finish().expect("Gem block header must validate");
-        drop(evm);
-        state.merge_transitions(BundleRetention::Reverts);
-        assert!(state
-            .bundle_state
+        evm_env.block.timestamp = U256::from(block_ts);
+        let (artifact, output) = {
+            let evm = config.evm_with_env(&mut state, evm_env);
+            let mut executor = config.create_executor(evm, ctx);
+            super::with_phase1_verify_disabled(|| {
+                executor.apply_pre_execution_changes().unwrap();
+            });
+            for (index, tx) in signed_body.clone().into_iter().enumerate() {
+                executor
+                    .execute_transaction(tx)
+                    .unwrap_or_else(|error| panic!("system transaction {index} failed: {error}"));
+            }
+            executor.execute_transaction(user.clone()).unwrap();
+            executor.apply_end_block_phase().unwrap();
+            if !replay {
+                fixtures_execution::finalize_executor_header_artifacts(&mut executor, 0).unwrap();
+                header_extra_data = executor.final_extra_data().clone();
+            }
+            let artifact = decode_outbe_block_artifacts(executor.final_extra_data().as_ref())
+                .unwrap()
+                .execution_summary;
+            let output = executor.finish().expect("Gem block header must validate");
+            (artifact, output)
+        };
+        let result = output.result;
+        state.commit_source(&BundleSource(&output.state));
+        assert!(output
+            .state
             .state()
             .contains_key(&outbe_system_common::addresses::GEM_ADDRESS));
         assert_eq!(result.receipts.len(), signed_body.len() + 1 + 5);
@@ -202,7 +205,7 @@ fn proposer_and_validator_state_matches_after_a_gem_issue() {
         });
         drop(provider);
         observations.push((
-            post_state_root(&state.bundle_state),
+            post_state_root(&output.state),
             artifact,
             result.receipts,
             result.gas_used,
@@ -248,29 +251,26 @@ fn finish_uses_final_extra_data_setter_for_summary_validation() {
     );
     let expected_fee = U256::from(1_234u64);
 
-    let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-    let evm_env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+    let mut state = CacheDB::new(EmptyDB::default());
+    let evm_env = EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::from(1u64),
-            gas_limit: 30_000_000,
-            basefee: 1_000_000_000,
+            gas_limit: U256::from(30_000_000_u64),
+            basefee: U256::from(1_000_000_000_u64),
             beneficiary: OWNER,
             timestamp: U256::from(1u64),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
     let evm = config.evm_with_env(&mut state, evm_env);
     let mut ctx = execution_ctx(Some(0), Bytes::new());
     ctx.execute_outbe_block_hooks = false;
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         fixtures::executor_inputs_from_ctx(&ctx, None, true),
     );
     executor.current_block_validator_fees = expected_fee;
@@ -293,24 +293,19 @@ fn finish_uses_final_extra_data_setter_for_summary_validation() {
         .expect("final extra_data summary must validate through finish()");
 
     // Genesis block (number == 0) is exempt from execution-summary validation even without extra_data.
-    let db_genesis = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    let mut state_genesis = State::builder()
-        .with_database(db_genesis)
-        .with_bundle_update()
-        .build();
-    let evm_env_genesis = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+    let mut state_genesis = CacheDB::new(EmptyDB::default());
+    let evm_env_genesis = EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::ZERO,
-            gas_limit: 30_000_000,
-            basefee: 1_000_000_000,
+            gas_limit: U256::from(30_000_000_u64),
+            basefee: U256::from(1_000_000_000_u64),
             beneficiary: OWNER,
             timestamp: U256::from(1u64),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
     let evm_genesis = config.evm_with_env(&mut state_genesis, evm_env_genesis);
     let genesis_executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(
@@ -319,6 +314,8 @@ fn finish_uses_final_extra_data_setter_for_summary_validation() {
             &chain_spec,
             &receipt_builder,
         ),
+        chain_spec.clone(),
+        None,
         fixtures::executor_inputs_from_ctx(&ctx, None, true),
     );
     genesis_executor
@@ -334,29 +331,26 @@ fn finish_without_final_extra_data_setter_rejects_missing_summary() {
         chain_spec.clone(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
-    let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-    let evm_env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+    let mut state = CacheDB::new(EmptyDB::default());
+    let evm_env = EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::from(1u64),
-            gas_limit: 30_000_000,
-            basefee: 1_000_000_000,
+            gas_limit: U256::from(30_000_000_u64),
+            basefee: U256::from(1_000_000_000_u64),
             beneficiary: OWNER,
             timestamp: U256::from(1u64),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
     let evm = config.evm_with_env(&mut state, evm_env.clone());
     let mut ctx = execution_ctx(Some(0), Bytes::new());
     ctx.execute_outbe_block_hooks = false;
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         fixtures::executor_inputs_from_ctx(&ctx, None, true),
     );
 
@@ -371,11 +365,7 @@ fn finish_without_final_extra_data_setter_rejects_missing_summary() {
     );
 
     // Deliberately non-zero mismatched validator_fee_sum must also fail finish().
-    let db_mismatch = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    let mut state_mismatch = State::builder()
-        .with_database(db_mismatch)
-        .with_bundle_update()
-        .build();
+    let mut state_mismatch = CacheDB::new(EmptyDB::default());
     let evm_mismatch = config.evm_with_env(&mut state_mismatch, evm_env);
     let mut mismatch_executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(
@@ -384,6 +374,8 @@ fn finish_without_final_extra_data_setter_rejects_missing_summary() {
             &chain_spec,
             &receipt_builder,
         ),
+        chain_spec.clone(),
+        None,
         fixtures::executor_inputs_from_ctx(&ctx, None, true),
     );
     mismatch_executor.current_block_validator_fees = U256::from(1_000u64);
@@ -419,24 +411,19 @@ fn finish_rejects_non_artifact_header_before_post_execution() {
         test_chain_spec(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
-    let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-    let evm_env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+    let mut state = CacheDB::new(EmptyDB::default());
+    let evm_env = EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::from(1u64),
-            gas_limit: 30_000_000,
-            basefee: 1_000_000_000,
+            gas_limit: U256::from(30_000_000_u64),
+            basefee: U256::from(1_000_000_000_u64),
             beneficiary: OWNER,
             timestamp: U256::from(1u64),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
     let evm = config.evm_with_env(&mut state, evm_env);
     let mut ctx = execution_ctx(Some(0), Bytes::from_static(b"reth/vtest/macos"));
     ctx.execute_outbe_block_hooks = false;

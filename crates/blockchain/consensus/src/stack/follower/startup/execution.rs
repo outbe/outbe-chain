@@ -368,7 +368,12 @@ impl<N: StackNodeAccess> FinalityObserver<N> {
         let Some(readiness) = self.bootstrap.as_ref() else {
             return Ok(());
         };
-        let Some(processed) = self.observer_mailbox.get_processed_height().await else {
+        let Some(processed) = self
+            .observer_mailbox
+            .get_processed()
+            .await
+            .map(commonware_consensus::marshal::core::Processed::height)
+        else {
             return Ok(());
         };
         if processed.get() >= self.initial_upstream_tip
@@ -430,8 +435,9 @@ async fn verify_finality_observer_quiesced(
     }
     if let Some(height) = last_persisted.filter(|height| *height > 0) {
         let processed = observer_mailbox
-            .get_processed_height()
+            .get_processed()
             .await
+            .map(commonware_consensus::marshal::core::Processed::height)
             .ok_or(crate::errors::FollowerStackError::MarshalUnavailableBeforeDrainCompleted)?;
         if processed.get() < height {
             return Err(
@@ -445,3 +451,7 @@ async fn verify_finality_observer_quiesced(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "execution_tests.rs"]
+mod processed_absent_tests;

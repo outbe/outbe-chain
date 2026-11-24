@@ -78,7 +78,11 @@ async fn supervisor_publishes_finalized_successor_only_once() {
     let host_key = NodeHostIdentityKey::create_new(&host_key_path).unwrap();
     let committee = FinalityCommitteeFixture::new(10);
     let (old, descriptor) = source_for_promotion(&host_key, &committee);
-    seed_resident_state(root.path(), &old);
+    let _ = outbe_tee::node_host::ResidentStateStore::load_or_create(
+        root.path(),
+        &old.authorization_witness().unwrap(),
+    )
+    .unwrap();
     let candidate = fresh_candidate(&old, descriptor.clone()).unwrap();
     let attempt = admit_successor(&old, &candidate, &committee);
     let admitted = candidate.admission_anchor().unwrap().unwrap();
@@ -174,15 +178,6 @@ pub(super) fn source_for_promotion(
     old.activate_for_test(ResidentOfferMaterial::for_test(vec![7; 96], chain_id, 0, 0).unwrap())
         .unwrap();
     (old, descriptor)
-}
-
-/// The resident state file a running node keeps in its data directory, which promotion replaces.
-pub(super) fn seed_resident_state(node_data_dir: &std::path::Path, source: &InProcessTeeContext) {
-    outbe_tee::node_host::ResidentStateStore::load_or_create(
-        node_data_dir,
-        &source.authorization_witness().unwrap(),
-    )
-    .unwrap();
 }
 
 pub(super) fn admit_successor(
@@ -579,7 +574,11 @@ fn complete_cold_recovery_updates_global_context_identity_and_anchor() {
     let host_key = NodeHostIdentityKey::create_new(&host.join(NODE_HOST_IDENTITY_KEY_V1)).unwrap();
     let committee = FinalityCommitteeFixture::new(10);
     let (old, descriptor) = source_for_promotion(&host_key, &committee);
-    seed_resident_state(root.path(), &old);
+    let _ = outbe_tee::node_host::ResidentStateStore::load_or_create(
+        root.path(),
+        &old.authorization_witness().unwrap(),
+    )
+    .unwrap();
     let candidate = fresh_candidate(&old, descriptor.clone()).unwrap();
     let attempt = admit_successor(&old, &candidate, &committee);
     write_cold_marker(root.path()).unwrap();

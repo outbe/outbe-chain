@@ -17,18 +17,28 @@ impl commonware_consensus::marshal::core::Buffer<crate::marshal_types::Variant>
 {
     type PublicKey = commonware_cryptography::bls12381::PublicKey;
 
-    async fn find_by_digest(&self, _digest: Digest) -> Option<Arc<ConsensusBlock>> {
+    async fn find_by_digest(
+        &self,
+        _digest: Digest,
+    ) -> Option<commonware_cryptography::Digested<ConsensusBlock>> {
         None
     }
 
-    async fn find_by_commitment(&self, _commitment: Digest) -> Option<Arc<ConsensusBlock>> {
+    async fn find_by_commitment(
+        &self,
+        _commitment: Digest,
+    ) -> Option<commonware_cryptography::Digested<ConsensusBlock>> {
         None
     }
 
     fn subscribe_by_digest(
         &self,
         _digest: Digest,
-    ) -> Option<commonware_utils::channel::oneshot::Receiver<Arc<ConsensusBlock>>> {
+    ) -> Option<
+        commonware_utils::channel::oneshot::Receiver<
+            commonware_cryptography::Digested<ConsensusBlock>,
+        >,
+    > {
         let (_tx, rx) = commonware_utils::channel::oneshot::channel();
         Some(rx)
     }
@@ -36,17 +46,19 @@ impl commonware_consensus::marshal::core::Buffer<crate::marshal_types::Variant>
     fn subscribe_by_commitment(
         &self,
         _commitment: Digest,
-    ) -> Option<commonware_utils::channel::oneshot::Receiver<Arc<ConsensusBlock>>> {
+    ) -> Option<
+        commonware_utils::channel::oneshot::Receiver<
+            commonware_cryptography::Digested<ConsensusBlock>,
+        >,
+    > {
         let (_tx, rx) = commonware_utils::channel::oneshot::channel();
         Some(rx)
     }
 
-    fn retire(&self, _update: commonware_consensus::marshal::core::Retirement<Digest>) {}
-
     fn send(
         &self,
         _round: commonware_consensus::types::Round,
-        _block: Arc<ConsensusBlock>,
+        _block: commonware_cryptography::Digested<ConsensusBlock>,
         _recipients: commonware_p2p::Recipients<Self::PublicKey>,
     ) {
     }
@@ -89,7 +101,7 @@ impl commonware_resolver::Resolver for NoopBackfillResolver {
         commonware_actor::Feedback::Ok
     }
 
-    fn fetch_all<F>(&mut self, _keys: Vec<F>) -> commonware_actor::Feedback
+    fn fetch_all<F>(&mut self, _keys: impl IntoIterator<Item = F>) -> commonware_actor::Feedback
     where
         F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
     {
@@ -117,7 +129,7 @@ impl commonware_resolver::TargetedResolver for NoopBackfillResolver {
 
     fn fetch_all_targeted<F>(
         &mut self,
-        _keys: Vec<(F, commonware_utils::vec::NonEmptyVec<Self::PublicKey>)>,
+        _keys: impl IntoIterator<Item = (F, commonware_utils::vec::NonEmptyVec<Self::PublicKey>)>,
     ) -> commonware_actor::Feedback
     where
         F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
@@ -151,8 +163,7 @@ async fn start_empty_marshal(
 
     use crate::hybrid::HybridSchemeProvider;
 
-    let page_cache = CacheRef::from_pooler(
-        &context,
+    let page_cache = CacheRef::new(
         NonZeroU16::new(1024).expect("non-zero page size"),
         NonZeroUsize::new(10).expect("non-zero cache size"),
     );
@@ -182,7 +193,9 @@ async fn start_empty_marshal(
         commonware_consensus::marshal::Config {
             provider: HybridSchemeProvider::<MinSig>::new(),
             epocher: crate::follow::FollowerEpocher::new(10_000, 0),
-            start: commonware_consensus::marshal::Start::Genesis(backfill_genesis_block()),
+            start: commonware_consensus::marshal::Start::Genesis(
+                crate::test_fixtures::digested_block(backfill_genesis_block()),
+            ),
             partition_prefix,
             mailbox_size: NonZeroUsize::new(32).expect("non-zero mailbox size"),
             view_retention: commonware_consensus::types::ViewDelta::new(10_000),

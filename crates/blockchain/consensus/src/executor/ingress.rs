@@ -225,8 +225,8 @@ impl commonware_consensus::Reporter for Mailbox {
             commonware_consensus::marshal::Update::Block(block, _) => {
                 tracing::debug!(
                     activity_kind = "block",
-                    height = block.number(),
-                    digest = %block.block_hash(),
+                    height = block.inner().number(),
+                    digest = %block.inner().block_hash(),
                     "marshal report received"
                 );
             }

@@ -155,6 +155,7 @@ async fn verify_decision_case(
             .get_verified(round)
             .await
             .unwrap()
+            .inner()
             .digest(),
         block.digest()
     );
@@ -391,7 +392,7 @@ fn live_executor_retries_execution_while_candidate_storage_remains_independent()
                     if status == PayloadStatusEnum::Valid {
                         assert!(receiver.try_recv().is_err(), "SYNCING is not a verdict");
                         assert_eq!(
-                            marshal.get_verified(round).await.unwrap().digest(),
+                            marshal.get_verified(round).await.unwrap().inner().digest(),
                             block.digest(),
                             "candidate storage must proceed while execution is pending"
                         );
@@ -481,6 +482,7 @@ fn cancellation_while_resolving_parent_preserves_available_candidate() {
                         .get_verified(round)
                         .await
                         .unwrap()
+                        .inner()
                         .digest(),
                     block.digest()
                 );
@@ -497,7 +499,13 @@ fn cancellation_while_resolving_parent_preserves_available_candidate() {
             "restart must recover the exact durable candidate without a verification verdict"
         );
         assert_eq!(
-            fixture.marshal.get_verified(round).await.unwrap().digest(),
+            fixture
+                .marshal
+                .get_verified(round)
+                .await
+                .unwrap()
+                .inner()
+                .digest(),
             digest
         );
     });

@@ -241,6 +241,6 @@ mod tests {
             matches!(cause, Some(StakingError::StakeAccountingUnderflow { validator: actual }) if *actual == validator)
         );
         assert!(!error.is_node_local());
-        assert!(error.into_precompile_result(0).is_err());
+        assert!(error.into_precompile_result().is_err());
     }
 }

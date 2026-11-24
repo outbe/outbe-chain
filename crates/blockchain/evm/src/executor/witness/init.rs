@@ -8,7 +8,7 @@ use outbe_tee::witness::{
 };
 use std::sync::{Arc, Mutex};
 
-impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
+impl OutbeBlockExecutor<'_> {
     pub fn final_enclave_witness_bytes(&mut self) -> Result<Option<Bytes>, BlockExecutionError> {
         if let Some(cached) = self.frozen_enclave_witness.as_ref() {
             return Ok(Some(cached.clone()));
@@ -49,14 +49,7 @@ impl<'a, Evm> OutbeBlockExecutor<'a, Evm> {
     }
 }
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv> + ZeroFeeCfgAccess,
-    E::Error: std::fmt::Display,
-{
+impl OutbeBlockExecutor<'_> {
     pub fn resolve_leader_attestation_pub(
         &mut self,
         block_number: u64,
@@ -97,7 +90,10 @@ where
             leader_attestation_pub,
             tape,
         ))));
-        self.inner.evm.set_witness_state(self.witness_state.clone());
+        self.inner
+            .evm_mut()
+            .ext_mut()
+            .set_attached_witness_state(self.witness_state.clone());
         self.body_tx_index = 0;
         self.frozen_enclave_witness = None;
         Ok(())
@@ -108,11 +104,11 @@ where
         block_number: u64,
         proposer: Address,
     ) -> Result<Option<[u8; 32]>, BlockExecutionError> {
-        let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+        let timestamp = outbe_primitives::time::timestamp_secs(self.block_timestamp_u256())
             .map_err(crate::errors::ExecutorValidationError::from)?;
         let ctx = self.block_context(block_number, timestamp, proposer);
         let host = self.runtime_host.clone();
-        let db = self.inner.evm.db_mut();
+        let db = self.inner.evm_mut().overlay_db_mut();
         let mut provider = DirectStorageProvider::new(db, ctx);
         let storage = StorageHandle::new(&mut provider);
         host.proposer_attestation(storage, proposer)

@@ -259,7 +259,7 @@ impl DealerOnlyState {
     fn read_message(
         &self,
         from: &bls12381::PublicKey,
-        buf: &mut impl bytes::Buf,
+        buf: &mut impl commonware_codec::Buf,
     ) -> Option<DkgMessage> {
         read_ceremony_message(from, buf, &self.wire_cfg, &DEALER_ONLY_DIAGNOSTICS)
     }

@@ -100,9 +100,9 @@ async fn own_basefee_replacement_retries_underpriced_and_ignores_queued_siblings
 #[tokio::test]
 async fn a_shared_key_foreign_transaction_defers_evidence_until_the_committed_nonce(
 ) -> eyre::Result<()> {
-    use revm::{
-        database::{states::StateChangeset, Database as _},
-        state::AccountInfo,
+    use evm2::{
+        block::bundle_state::StateChangeset,
+        evm::{AccountInfo, Database as _},
     };
     let signer = Arc::new(OutbeEvmSigner::from_secret_bytes([1; 32])?);
     let seeded = seed(signer.address());
@@ -157,7 +157,7 @@ async fn a_shared_key_foreign_transaction_defers_evidence_until_the_committed_no
     assert_eq!(occupied[0].nonce(), 0);
     let mut state =
         support::execute_envelope(&seeded, foreign.clone(), signer.address(), initial_account);
-    let committed = state.basic(signer.address())?.unwrap();
+    let committed = state.get_account(&signer.address())?.unwrap();
     assert_eq!(committed.nonce, 1);
     support::commit_changes(
         &node,

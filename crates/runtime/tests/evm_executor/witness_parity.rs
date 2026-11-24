@@ -83,15 +83,13 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     };
     use alloy_consensus::TxEip1559;
     use alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE;
-    use alloy_evm::{block::BlockExecutor, tracing::TxTracer, Evm as _};
     use alloy_primitives::TxKind;
     use alloy_sol_types::SolCall;
     use outbe_evm::config::OutbeEvmConfig;
     use outbe_nodfactory::precompile::INodFactory;
     use outbe_system_common::addresses::{NOD_FACTORY_ADDRESS, REWARDS_ADDRESS};
-    use reth_evm::ConfigureEvm;
+    use reth_evm::BlockExecutor as _;
     use reth_primitives_traits::SignedTransaction as _;
-    use revm::database::states::bundle_state::BundleRetention;
 
     outbe_chain_constants::initialize(None).unwrap();
     let _ = outbe_consensus::proof::init_consensus_chain_id(CHAIN_ID);
@@ -139,7 +137,7 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
         .unwrap();
 
     // Minimal EVM contract returning 6 on `decimals()` (0x313ce567) and 840 on `isoCode()`.
-    let asset_bytecode = revm::state::Bytecode::new_raw(alloy_primitives::Bytes::from_static(&[
+    let asset_bytecode = Bytecode::new_legacy(alloy_primitives::Bytes::from_static(&[
         0x5f, 0x35, 0x60, 0xe0, 0x1c, 0x63, 0x31, 0x3c, 0xe5, 0x67, 0x14, 0x60, 0x17, 0x57, 0x61,
         0x03, 0x48, 0x5f, 0x52, 0x60, 0x20, 0x5f, 0xf3, 0x5b, 0x60, 0x06, 0x5f, 0x52, 0x60, 0x20,
         0x5f, 0xf3,
@@ -173,17 +171,17 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
                     .unwrap();
             });
         outbe_nod::test_support::uninstall();
-        state.database.insert_account_info(
-            settlement_asset,
-            revm::state::AccountInfo {
+        state.insert_account_info(
+            &settlement_asset,
+            AccountInfo {
                 code_hash: asset_bytecode.hash_slow(),
                 code: Some(asset_bytecode.clone()),
                 ..Default::default()
             },
         );
-        state.database.insert_account_info(
-            user_sender,
-            revm::state::AccountInfo {
+        state.insert_account_info(
+            &user_sender,
+            AccountInfo {
                 balance: U256::from(10_000_000u64),
                 ..Default::default()
             },
@@ -234,14 +232,17 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
         executor.execute_transaction(user_tx.clone()).unwrap();
         executor.apply_end_block_phase().unwrap();
         if !is_verifier {
-            executor.prepare_final_header_artifacts(0).unwrap();
+            finalize_executor_header_artifacts(&mut executor, 0).unwrap();
         }
         let final_extra_data = executor.final_extra_data.clone();
-        let (evm, result) = executor.finish().unwrap();
-        drop(evm);
-        state.merge_transitions(BundleRetention::Reverts);
-        let root = post_state_root(&state.bundle_state);
-        (result.receipts, result.gas_used, final_extra_data, root)
+        let output = executor.finish().unwrap();
+        let root = post_state_root(&output.state);
+        (
+            output.result.receipts,
+            output.result.gas_used,
+            final_extra_data,
+            root,
+        )
     };
 
     // 1. ProposerRecord
@@ -276,7 +277,7 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
     let verifier_replay_out = run_block_in_mode(true, proposer_out.2.clone());
     assert_eq!(proposer_out, verifier_replay_out);
 
-    // 4. Real TxTracer + transact_commit replay of begin-zone system txs + enclave user tx,
+    // 4. Real inspector replay of begin-zone system txs + enclave user tx,
     // followed by same-thread eth_call isolation check.
     let mut trace_state = build_seeded_state();
     {
@@ -296,29 +297,56 @@ fn executor_three_mode_parity_and_tx_tracer_detached_replay_isolation() {
         // Dropped without finish(), mirroring Reth Trace::apply_pre_execution_changes.
     }
     {
-        let trace_evm = config.evm_with_env(&mut trace_state, test_evm_env(2, REWARDS_ADDRESS));
-        let mut tracer = TxTracer::new(trace_evm);
-        for tx in begin
-            .iter()
-            .cloned()
-            .chain(std::iter::once(user_tx.clone()))
+        let mut block_state = evm2::evm::BlockStateAccumulator::default();
         {
-            let tx_env = config.tx_env(&tx);
-            let trace_out = tracer.trace(tx_env).expect("TxTracer replay must succeed");
-            assert!(
-                trace_out.result.is_success(),
-                "traced transaction must succeed under detached witness replay"
-            );
+            let mut trace_evm =
+                config.evm_with_env(&mut trace_state, test_evm_env(2, REWARDS_ADDRESS));
+            let mut inspector = evm2::inspector::NoopInspector::default();
+            for tx in begin
+                .iter()
+                .cloned()
+                .chain(std::iter::once(user_tx.clone()))
+            {
+                let tx_env = tx_env(&config, &tx);
+                let trace_out = trace_evm
+                    .transact_with_inspector(&tx_env, &mut inspector)
+                    .expect("inspector replay must succeed")
+                    .commit_to(&mut block_state);
+                assert!(
+                    trace_out.is_success(),
+                    "traced transaction must succeed under detached witness replay"
+                );
+            }
         }
+        trace_state.commit_source(&block_state);
     }
     // Subsequent eth_call on the same thread and same block must NOT match stale detached trace
     // witness (must enter RpcDirect and return PrivateExecutionUnavailable, not TapeInvalid).
     {
         let mut call_evm = config.evm_with_env(&mut trace_state, test_evm_env(2, REWARDS_ADDRESS));
-        let mut call_tx_env = config.tx_env(&user_tx);
-        call_tx_env.nonce = 1;
+        let call_tx = user_signer
+            .sign_eip1559(TxEip1559 {
+                chain_id: CHAIN_ID,
+                nonce: 1,
+                gas_limit: 200_000,
+                max_fee_per_gas: MIN_PROTOCOL_BASE_FEE as u128,
+                max_priority_fee_per_gas: 0,
+                to: TxKind::Call(NOD_FACTORY_ADDRESS),
+                value: U256::ZERO,
+                input: INodFactory::quoteSettlementCall {
+                    nodId: nod_id,
+                    asset: settlement_asset,
+                }
+                .abi_encode()
+                .into(),
+                access_list: Default::default(),
+            })
+            .unwrap()
+            .try_into_recovered()
+            .unwrap();
+        let call_tx_env = tx_env(&config, &call_tx);
         let err = call_evm
-            .transact_raw(call_tx_env)
+            .transact(&call_tx_env)
             .expect_err("keyless eth_call to private precompile must fail in RpcDirect");
         assert!(
             err.to_string().contains("PrivateExecutionUnavailable"),

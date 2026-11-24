@@ -77,6 +77,8 @@ impl core::fmt::Display for TimeError {
     }
 }
 
+impl core::error::Error for TimeError {}
+
 /// Returns the linear UTC day index (`timestamp / SECONDS_PER_DAY`) for a unix timestamp.
 pub const fn utc_day_from_timestamp(timestamp: u64) -> u64 {
     timestamp / SECONDS_PER_DAY

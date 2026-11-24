@@ -17,7 +17,7 @@
 
 use ark_ff::PrimeField;
 
-use crate::{PoseidonError, PoseidonHasher};
+use crate::PoseidonHasher;
 
 mod constants;
 pub use constants::Poseidon2Config;
@@ -119,8 +119,8 @@ impl<F: PrimeField> Poseidon2<F> {
 
         // Apply the internal (partial) rounds, with the S-box on element 0 only.
         let p_end = rf_first + cfg.rounds_p as usize;
-        for r in rf_first..p_end {
-            state[0] += cfg.round_constant[r][0];
+        for round_constant in &cfg.round_constant[rf_first..p_end] {
+            state[0] += round_constant[0];
             state[0] = Self::single_box(state[0]);
             self.internal_m_multiplication(&mut state);
         }
@@ -178,10 +178,8 @@ impl Default for Poseidon2<ark_bn254::Fr> {
 
 impl<F: PrimeField> PoseidonHasher<F> for Poseidon2<F> {
     /// This method hashes `inputs` with the Poseidon2 sponge.
-    /// The sponge cannot fail, so the method always returns `Ok`.
-    /// The `Result` type preserves the shared protocol hasher trait.
-    fn hash(&mut self, inputs: &[F]) -> Result<F, PoseidonError> {
-        Ok(self.sponge(inputs))
+    fn hash(&mut self, inputs: &[F]) -> F {
+        self.sponge(inputs)
     }
 }
 
@@ -216,15 +214,13 @@ mod tests {
     #[test]
     fn hash_kat_from_noir() {
         let mut hasher = Poseidon2::<Fr>::new();
-        let h2 = hasher.hash(&[Fr::from(1u64), Fr::from(2u64)]).unwrap();
+        let h2 = hasher.hash(&[Fr::from(1u64), Fr::from(2u64)]);
         assert_eq!(
             h2,
             MontFp!("0x038682aa1cb5ae4e0a3f13da432a95c77c5c111f6f030faf9cad641ce1ed7383"),
             "hash_2 must match noir"
         );
-        let h3 = hasher
-            .hash(&[Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)])
-            .unwrap();
+        let h3 = hasher.hash(&[Fr::from(1u64), Fr::from(2u64), Fr::from(3u64)]);
         assert_eq!(
             h3,
             MontFp!("0x16f5da1a6b40e7d71bcdf29687e7908cdf74da44c09058fe36a0a99e269c6972"),

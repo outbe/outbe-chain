@@ -32,6 +32,10 @@ impl Receiver for NoDkgTraffic {
     type PublicKey = bls12381::PublicKey;
     type Error = Infallible;
 
+    fn capacity(&self) -> std::num::NonZeroUsize {
+        NZUsize!(64)
+    }
+
     async fn recv(&mut self) -> std::result::Result<Message<Self::PublicKey>, Self::Error> {
         panic!("material recovery must not start DKG traffic")
     }

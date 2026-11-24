@@ -148,11 +148,12 @@ mod tests {
         commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
             |context| async move {
                 let cfg = lookup::Config::local(
-                    PrivateKey::from_seed(1),
+                    crate::stack::sake_cups_v1_upgrader(PrivateKey::from_seed(1)),
                     b"admission-regression",
                     "127.0.0.1:30400".parse().unwrap(),
                     commonware_utils::NZUsize!(32),
                     1024,
+                    crate::stack::P2P_MAILBOX_SIZE,
                 );
                 let (network, mut oracle) = lookup::Network::new(context.child("network"), cfg);
                 let canonical = AddressableTrackedPeers::new(peers(1), peers(5));
@@ -192,11 +193,12 @@ mod tests {
         commonware_runtime::deterministic::Runner::timed(Duration::from_secs(30)).start(
             |context| async move {
                 let cfg = lookup::Config::local(
-                    PrivateKey::from_seed(1),
+                    crate::stack::sake_cups_v1_upgrader(PrivateKey::from_seed(1)),
                     b"admission-removal",
                     "127.0.0.1:30400".parse().unwrap(),
                     commonware_utils::NZUsize!(32),
                     1024,
+                    crate::stack::P2P_MAILBOX_SIZE,
                 );
                 let (network, mut oracle) = lookup::Network::new(context.child("network"), cfg);
                 let canonical = AddressableTrackedPeers::new(peers(1), peers(5));

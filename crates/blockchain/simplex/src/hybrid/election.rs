@@ -120,6 +120,8 @@ pub struct HybridRandomElector<V: Variant> {
 const SEED_ROUND_WINDOW: u64 = u8::MAX as u64;
 
 impl<V: Variant> elector::Elector<HybridScheme<V>> for HybridRandomElector<V> {
+    type Mode = elector::Dynamic;
+
     fn terms(&self) -> elector::Terms {
         elector::Terms::rotating()
     }

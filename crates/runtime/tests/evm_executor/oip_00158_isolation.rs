@@ -1,8 +1,7 @@
 //! Real signed executor transactions and detached historical replay.
 use super::*;
-use alloy_evm::tracing::TxTracer;
+use evm2::evm::DynDatabase;
 use outbe_evm::executor::witness::clear_detached_trace_witness;
-use revm::context_interface::{ContextTr, JournalTr};
 
 mod cycle;
 mod host;
@@ -13,7 +12,11 @@ use host::{Failure, IsolationHost};
 const PROBE: Address = Address::repeat_byte(0x91);
 const BLOCK: u64 = 2;
 const PARENT: B256 = B256::repeat_byte(0x93);
-type TestState = State<CacheDB<EmptyDBTyped<ProviderError>>>;
+type TestState = CacheDB<EmptyDB>;
+
+fn storage_slot<DB: DynDatabase>(db: &mut CacheDB<DB>, addr: Address, slot: U256) -> U256 {
+    evm2::evm::Database::get_storage(db, &addr, &slot).unwrap()
+}
 
 fn config(failure: Failure) -> OutbeEvmConfig {
     outbe_chain_constants::initialize(None).unwrap();
@@ -34,15 +37,15 @@ fn seeded(seed: impl FnOnce(StorageHandle<'_>)) -> TestState {
                 .unwrap();
             seed(storage);
         });
-    state.database.insert_account_info(
-        proposer,
+    state.insert_account_info(
+        &proposer,
         AccountInfo {
             balance: U256::from(1_000_000_000u64),
             ..Default::default()
         },
     );
-    state.database.insert_account_info(
-        PROBE,
+    state.insert_account_info(
+        &PROBE,
         AccountInfo {
             nonce: 1,
             ..Default::default()

@@ -15,7 +15,7 @@ pub(crate) struct StoreFaultInjection {
 #[cfg(test)]
 fn consume_fault(counter: &AtomicUsize) -> bool {
     counter
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
             current.checked_sub(1)
         })
         .is_ok()

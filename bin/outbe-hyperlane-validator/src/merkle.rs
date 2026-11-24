@@ -54,12 +54,12 @@ impl IncrementalMerkle {
         self.count += 1;
         let mut node = leaf;
         let mut size = self.count;
-        for i in 0..TREE_DEPTH {
+        for branch_node in &mut self.branch {
             if size & 1 == 1 {
-                self.branch[i] = node;
+                *branch_node = node;
                 return;
             }
-            node = hash_concat(self.branch[i], node);
+            node = hash_concat(*branch_node, node);
             size /= 2;
         }
     }

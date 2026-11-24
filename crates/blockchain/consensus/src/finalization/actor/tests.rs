@@ -235,8 +235,7 @@ async fn pending_marshal(
     use commonware_runtime::buffer::paged::CacheRef;
     use commonware_runtime::Supervisor as _;
 
-    let cache = CacheRef::from_pooler(
-        context,
+    let cache = CacheRef::new(
         NonZeroU16::new(1024).unwrap(),
         NonZeroUsize::new(10).unwrap(),
     );
@@ -260,9 +259,9 @@ async fn pending_marshal(
         marshal::Config {
             provider: crate::hybrid::HybridSchemeProvider::new(),
             epocher: crate::follow::FollowerEpocher::new(100, 10),
-            start: marshal::Start::Genesis(ConsensusBlock::from_sealed(SealedBlock::seal_slow(
-                genesis,
-            ))),
+            start: marshal::Start::Genesis(crate::test_fixtures::digested_block(
+                ConsensusBlock::from_sealed(SealedBlock::seal_slow(genesis)),
+            )),
             partition_prefix: "divergence-alarm".into(),
             mailbox_size: NonZeroUsize::new(64).unwrap(),
             view_retention: ViewDelta::new(100),
@@ -1065,7 +1064,6 @@ mod sparse_c1_tests {
         system_tx::{SystemTx, CONSENSUS_PARENT_ACCOUNTING_STEP_INDEX},
     };
     use std::num::{NonZeroU16, NonZeroU64, NonZeroUsize};
-    use std::sync::Arc;
 
     #[derive(Clone, Default)]
     struct AckingMarshalReporter;
@@ -1087,34 +1085,46 @@ mod sparse_c1_tests {
     impl commonware_consensus::marshal::core::Buffer<crate::marshal_types::Variant> for NoopBuffer {
         type PublicKey = bls12381::PublicKey;
 
-        async fn find_by_digest(&self, _digest: Digest) -> Option<Arc<ConsensusBlock>> {
+        async fn find_by_digest(
+            &self,
+            _digest: Digest,
+        ) -> Option<commonware_cryptography::Digested<ConsensusBlock>> {
             None
         }
 
-        async fn find_by_commitment(&self, _commitment: Digest) -> Option<Arc<ConsensusBlock>> {
+        async fn find_by_commitment(
+            &self,
+            _commitment: Digest,
+        ) -> Option<commonware_cryptography::Digested<ConsensusBlock>> {
             None
         }
 
         fn subscribe_by_digest(
             &self,
             _digest: Digest,
-        ) -> Option<commonware_utils::channel::oneshot::Receiver<Arc<ConsensusBlock>>> {
+        ) -> Option<
+            commonware_utils::channel::oneshot::Receiver<
+                commonware_cryptography::Digested<ConsensusBlock>,
+            >,
+        > {
             None
         }
 
         fn subscribe_by_commitment(
             &self,
             _commitment: Digest,
-        ) -> Option<commonware_utils::channel::oneshot::Receiver<Arc<ConsensusBlock>>> {
+        ) -> Option<
+            commonware_utils::channel::oneshot::Receiver<
+                commonware_cryptography::Digested<ConsensusBlock>,
+            >,
+        > {
             None
         }
-
-        fn retire(&self, _update: commonware_consensus::marshal::core::Retirement<Digest>) {}
 
         fn send(
             &self,
             _round: Round,
-            _block: Arc<ConsensusBlock>,
+            _block: commonware_cryptography::Digested<ConsensusBlock>,
             _recipients: commonware_p2p::Recipients<Self::PublicKey>,
         ) {
         }
@@ -1294,8 +1304,7 @@ mod sparse_c1_tests {
         prefix: &str,
         schemes: SchemeProvider,
     ) -> LiveMarshalFixture {
-        let cache = commonware_runtime::buffer::paged::CacheRef::from_pooler(
-            context,
+        let cache = commonware_runtime::buffer::paged::CacheRef::new(
             NonZeroU16::new(1024).unwrap(),
             NonZeroUsize::new(10).unwrap(),
         );
@@ -1319,9 +1328,11 @@ mod sparse_c1_tests {
             commonware_consensus::marshal::Config {
                 provider: schemes,
                 epocher: crate::follow::FollowerEpocher::new(10_000, 0),
-                start: commonware_consensus::marshal::Start::Genesis(ConsensusBlock::from_sealed(
-                    SealedBlock::seal_slow(genesis),
-                )),
+                start: commonware_consensus::marshal::Start::Genesis(
+                    crate::test_fixtures::digested_block(ConsensusBlock::from_sealed(
+                        SealedBlock::seal_slow(genesis),
+                    )),
+                ),
                 partition_prefix: prefix.into(),
                 mailbox_size: NonZeroUsize::new(64).unwrap(),
                 view_retention: commonware_consensus::types::ViewDelta::new(10_000),
@@ -1351,6 +1362,14 @@ mod sparse_c1_tests {
             mailbox,
             _resolver_handler: resolver_handler,
             _handle: handle,
+        }
+    }
+
+    impl LiveMarshalFixture {
+        async fn verified(&self, round: Round, block: ConsensusBlock) -> bool {
+            self.mailbox
+                .verified(round, crate::test_fixtures::digested_block(block))
+                .await
         }
     }
 
@@ -1447,19 +1466,16 @@ mod sparse_c1_tests {
             // Put all blocks in Marshal, but ONLY direct F for h183 (h181 & h182 lack direct F).
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181.clone())
                     .await
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(14)), b182.clone())
                     .await
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(17)), b183.clone())
                     .await
             );
@@ -1670,7 +1686,6 @@ mod sparse_c1_tests {
             // Only b182 + F(182) exist initially; b181 is missing.
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(14)), b182.clone())
                     .await
             );
@@ -1720,7 +1735,6 @@ mod sparse_c1_tests {
             // Now deliver b181 into Marshal; the bounded retry completes the chain.
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181.clone())
                     .await
             );
@@ -1790,7 +1804,6 @@ mod sparse_c1_tests {
             context.sleep(Duration::from_millis(20)).await;
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181.clone())
                     .await
             );
@@ -1818,7 +1831,6 @@ mod sparse_c1_tests {
             let b181 = make_block_with_parent(181, 181, b180.digest().0);
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181.clone())
                     .await
             );
@@ -1892,7 +1904,6 @@ mod sparse_c1_tests {
 
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(14)), b182.clone())
                     .await
             );
@@ -2027,7 +2038,6 @@ mod sparse_c1_tests {
             // a later finalization delivery.
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(14)), b182.clone())
                     .await
             );
@@ -2035,7 +2045,6 @@ mod sparse_c1_tests {
             wait_for_marshal_finalization(&context, &marshal.mailbox, Height::new(182)).await;
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181.clone())
                     .await
             );
@@ -2065,7 +2074,6 @@ mod sparse_c1_tests {
             let b181 = make_block_with_parent(181, 181, b180.digest().0);
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(1), View::new(2)), b181.clone())
                     .await
             );
@@ -2144,13 +2152,11 @@ mod sparse_c1_tests {
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181_wrong.clone())
                     .await
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(14)), b182.clone())
                     .await
             );
@@ -2348,7 +2354,6 @@ mod sparse_c1_tests {
                 start_live_marshal(&context, "same-hash-live-retry", schemes.clone()).await;
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(1)), block.clone())
                     .await
             );
@@ -2553,13 +2558,11 @@ mod sparse_c1_tests {
             let b182 = make_block_with_parent(182, 182, b181.digest().0);
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181.clone())
                     .await
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(12)), b182.clone())
                     .await
             );
@@ -2623,7 +2626,6 @@ mod sparse_c1_tests {
             let b181 = make_block_with_parent(181, 181, b180.digest().0);
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(1), View::new(1)), b181.clone())
                     .await
             );
@@ -2820,7 +2822,6 @@ mod sparse_c1_tests {
             let b181 = make_block_with_parent(181, 181, b180.digest().0);
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181.clone())
                     .await
             );
@@ -2960,7 +2961,6 @@ mod sparse_c1_tests {
             let b1 = make_block_with_parent(1, 1, genesis_hash);
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(1), View::new(2)), b1.clone())
                     .await
             );
@@ -3060,19 +3060,16 @@ mod sparse_c1_tests {
 
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181.clone())
                     .await
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(12)), b182.clone())
                     .await
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(1), View::new(1)), b183.clone())
                     .await
             );
@@ -3155,7 +3152,6 @@ mod sparse_c1_tests {
             let b181 = make_block_with_parent(181, 181, b180.digest().0);
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181.clone())
                     .await
             );
@@ -3261,7 +3257,6 @@ mod sparse_c1_tests {
             let b1 = make_block_with_parent(101, 101, b0.digest().0);
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b1.clone())
                     .await
             );
@@ -3276,7 +3271,6 @@ mod sparse_c1_tests {
                 );
                 assert!(
                     marshal
-                        .mailbox
                         .verified(
                             Round::new(Epoch::new(0), View::new(10 + offset)),
                             child.clone()
@@ -3396,13 +3390,11 @@ mod sparse_c1_tests {
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181.clone())
                     .await
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(12)), b182.clone())
                     .await
             );
@@ -3489,7 +3481,6 @@ mod sparse_c1_tests {
             // Put sibling F at height 181, while Tip(182, epoch 1) extends b181_branch!
             assert!(
                 marshal
-                    .mailbox
                     .verified(
                         Round::new(Epoch::new(0), View::new(11)),
                         b181_sibling.clone()
@@ -3500,7 +3491,6 @@ mod sparse_c1_tests {
             let _ = marshal.mailbox.report(Activity::Finalization(f181_sibling));
             assert!(
                 marshal
-                    .mailbox
                     .verified(
                         Round::new(Epoch::new(0), View::new(12)),
                         b181_branch.clone()
@@ -3509,7 +3499,6 @@ mod sparse_c1_tests {
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(1), View::new(1)), b182.clone())
                     .await
             );
@@ -3581,13 +3570,11 @@ mod sparse_c1_tests {
             // Sibling notarized block at height 181 (no F), plus canonical branch 181 -> 182.
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(10)), b181_sibling)
                     .await
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(
                         Round::new(Epoch::new(0), View::new(11)),
                         b181_branch.clone()
@@ -3596,7 +3583,6 @@ mod sparse_c1_tests {
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(1), View::new(1)), b182.clone())
                     .await
             );
@@ -3658,7 +3644,6 @@ mod sparse_c1_tests {
             let b1 = make_block_with_parent(1, 1, b0.digest().0);
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(1)), b1.clone())
                     .await
             );
@@ -3673,7 +3658,6 @@ mod sparse_c1_tests {
                 let child = epoch0.block_with_parent_witness(parent, h - 1, h - 2, proof_kind);
                 assert!(
                     marshal
-                        .mailbox
                         .verified(Round::new(Epoch::new(0), View::new(h)), child.clone())
                         .await
                 );
@@ -3764,7 +3748,6 @@ mod sparse_c1_tests {
                 let b1 = make_block_with_parent(1, 1, b0.digest().0);
                 assert!(
                     marshal
-                        .mailbox
                         .verified(Round::new(Epoch::new(0), View::new(1)), b1.clone())
                         .await
                 );
@@ -3779,7 +3762,6 @@ mod sparse_c1_tests {
                     );
                     assert!(
                         marshal
-                            .mailbox
                             .verified(Round::new(Epoch::new(0), View::new(h)), child.clone())
                             .await
                     );
@@ -3857,7 +3839,6 @@ mod sparse_c1_tests {
             let b1 = make_block_with_parent(1, 1, b0.digest().0);
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(1)), b1.clone())
                     .await
             );
@@ -3872,7 +3853,6 @@ mod sparse_c1_tests {
                 );
                 assert!(
                     marshal
-                        .mailbox
                         .verified(Round::new(Epoch::new(0), View::new(h)), child.clone())
                         .await
                 );
@@ -3958,7 +3938,6 @@ mod sparse_c1_tests {
             let mut marshal_a = start_live_marshal(&context, "n2-direct", schemes.clone()).await;
             assert!(
                 marshal_a
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181.clone())
                     .await
             );
@@ -3996,13 +3975,11 @@ mod sparse_c1_tests {
             let mut marshal_b = start_live_marshal(&context, "n2-embedded", schemes.clone()).await;
             assert!(
                 marshal_b
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181.clone())
                     .await
             );
             assert!(
                 marshal_b
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(12)), b182.clone())
                     .await
             );
@@ -4166,19 +4143,16 @@ mod sparse_c1_tests {
 
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(11)), b181.clone())
                     .await
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(0), View::new(12)), b182.clone())
                     .await
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(1), View::new(1)), b183.clone())
                     .await
             );
@@ -4298,13 +4272,11 @@ mod sparse_c1_tests {
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(1), View::new(2)), b181.clone())
                     .await
             );
             assert!(
                 marshal
-                    .mailbox
                     .verified(Round::new(Epoch::new(2), View::new(1)), b182.clone())
                     .await
             );
@@ -4421,7 +4393,6 @@ mod sparse_c1_tests {
 
                 assert!(
                     marshal
-                        .mailbox
                         .verified(Round::new(Epoch::new(0), View::new(1)), block.clone())
                         .await
                 );

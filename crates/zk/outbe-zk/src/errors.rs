@@ -41,12 +41,6 @@ pub enum Error {
     Merkle(String),
 }
 
-impl From<outbe_poseidon::Error> for Error {
-    fn from(error: outbe_poseidon::Error) -> Self {
-        Self::Hash(error.to_string())
-    }
-}
-
 /// Typed reasons for [`Error::Identity`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 pub enum IdentityError {

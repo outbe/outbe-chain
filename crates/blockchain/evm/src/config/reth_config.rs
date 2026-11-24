@@ -1,35 +1,58 @@
+use crate::builder::OutbeBlockBuilder;
 use crate::executor::{
     BlockExecutionDependencies, BlockExecutionIdentity, BlockExecutorInputs, BlockSystemPlan,
-    ParentAccountingInputs,
+    OutbeBlockExecutor, ParentAccountingInputs,
 };
-use crate::{builder::OutbeBlockBuilder, executor::OutbeBlockExecutor};
+use crate::factory::{OutbeEvm, OutbeEvmTypes};
 
-use alloy_evm::{
-    eth::{EthBlockExecutionCtx, NextEvmEnvAttributes},
-    EvmEnv,
-};
-use alloy_primitives::Bytes;
+use alloy_consensus::{BlockHeader as _, Header};
+use alloy_eips::eip7840::BlobParams;
+use alloy_primitives::{Bytes, U256};
+use evm2::env::{BlockEnv, BlockEnvExt};
 use outbe_primitives::{OutbeBlock, OutbeExecutionData, OutbeHeader, OutbePrimitives};
 use reth_ethereum::{
     chainspec::EthChainSpec,
     evm::{
-        primitives::{Database, EvmEnvFor, ExecutionCtxFor, InspectorFor},
-        revm::{db::State, primitives::hardfork::SpecId},
+        spec_id_by_timestamp_and_block_number, EthBlockExecutionCtx, EthBlockExecutor, EthEvmEnv,
     },
     node::api::{ConfigureEngineEvm, ConfigureEvm, ExecutableTxIterator},
     TransactionSigned,
 };
-use reth_evm::{execute::BlockBuilder, EvmFor};
-use reth_primitives_traits::{
-    AlloyBlockHeader as _, Recovered, SealedBlock, SealedHeader, SignedTransaction as _,
-};
-
-use std::convert::Infallible;
+use reth_evm::{execute::BlockBuilder, EvmEnvFor, ExecutionCtxFor};
+use reth_primitives_traits::{Recovered, SealedBlock, SealedHeader, SignedTransaction as _};
+use std::{convert::Infallible, sync::Arc};
 
 use super::{
     system_tx_expectations_for_block, OutbeBlockAssembler, OutbeBlockExecutionCtx, OutbeEvmConfig,
     OutbeNextBlockEnvAttributes,
 };
+
+fn block_env_with_blob_params<H: alloy_consensus::BlockHeader>(
+    header: &H,
+    blob_params: Option<BlobParams>,
+) -> BlockEnv {
+    let blob_basefee = header
+        .excess_blob_gas()
+        .zip(blob_params)
+        .map(|(excess_blob_gas, params)| U256::from(params.calc_blob_fee(excess_blob_gas)))
+        .unwrap_or_default();
+    BlockEnvExt {
+        number: U256::from(header.number()),
+        beneficiary: header.beneficiary(),
+        timestamp: U256::from(header.timestamp()),
+        gas_limit: U256::from(header.gas_limit()),
+        basefee: U256::from(header.base_fee_per_gas().unwrap_or_default()),
+        difficulty: header.difficulty(),
+        prevrandao: header
+            .mix_hash()
+            .map(|hash| U256::from_be_bytes(hash.0))
+            .unwrap_or_default(),
+        blob_basefee,
+        slot_num: U256::from(header.slot_number().unwrap_or_default()),
+        ext: (),
+        _non_exhaustive: (),
+    }
+}
 
 // ---------------------------------------------------------------------------
 // ConfigureEvm
@@ -52,14 +75,20 @@ impl ConfigureEvm for OutbeEvmConfig {
         &self.block_assembler
     }
 
-    fn evm_env(&self, header: &OutbeHeader) -> Result<EvmEnv<SpecId>, Self::Error> {
-        Ok(EvmEnv::for_eth_block(
-            header,
-            self.inner.chain_spec(),
-            self.inner.chain_spec().chain().id(),
-            self.inner
-                .chain_spec()
-                .blob_params_at_timestamp(header.timestamp()),
+    fn evm_env(&self, header: &OutbeHeader) -> Result<EthEvmEnv<OutbeEvmTypes>, Self::Error> {
+        let spec = spec_id_by_timestamp_and_block_number(
+            self.chain_spec.as_ref(),
+            header.timestamp(),
+            header.number(),
+        );
+        let blob_params = self
+            .chain_spec
+            .as_ref()
+            .blob_params_at_timestamp(header.timestamp());
+        Ok(self.evm_env_from_base_spec(
+            spec,
+            block_env_with_blob_params(header, blob_params),
+            blob_params,
         ))
     }
 
@@ -67,32 +96,49 @@ impl ConfigureEvm for OutbeEvmConfig {
         &self,
         parent: &OutbeHeader,
         attributes: &OutbeNextBlockEnvAttributes,
-    ) -> Result<EvmEnv<SpecId>, Self::Error> {
-        Ok(EvmEnv::for_eth_next_block(
-            parent,
-            NextEvmEnvAttributes {
-                timestamp: attributes.inner.timestamp,
-                suggested_fee_recipient: attributes.inner.suggested_fee_recipient,
-                prev_randao: attributes.inner.prev_randao,
-                gas_limit: attributes.inner.gas_limit,
-                slot_number: attributes.inner.slot_number,
-            },
-            self.inner
-                .chain_spec()
-                .next_block_base_fee(parent, attributes.inner.timestamp)
-                .unwrap_or_default(),
-            self.inner.chain_spec(),
-            self.inner.chain_spec().chain().id(),
-            self.inner
-                .chain_spec()
-                .blob_params_at_timestamp(attributes.inner.timestamp),
+    ) -> Result<EthEvmEnv<OutbeEvmTypes>, Self::Error> {
+        let base_fee = self
+            .chain_spec
+            .as_ref()
+            .next_block_base_fee(parent, attributes.inner.timestamp)
+            .unwrap_or_default();
+        let blob_params = self
+            .chain_spec
+            .as_ref()
+            .blob_params_at_timestamp(attributes.inner.timestamp);
+        let header = Header {
+            beneficiary: attributes.inner.suggested_fee_recipient,
+            timestamp: attributes.inner.timestamp,
+            number: parent.number() + 1,
+            gas_limit: attributes.inner.gas_limit,
+            base_fee_per_gas: Some(base_fee),
+            mix_hash: attributes.inner.prev_randao,
+            slot_number: attributes.inner.slot_number,
+            excess_blob_gas: parent
+                .inner
+                .maybe_next_block_excess_blob_gas(blob_params)
+                .or_else(|| blob_params.map(|_| 0)),
+            ..Default::default()
+        };
+        let spec = spec_id_by_timestamp_and_block_number(
+            self.chain_spec.as_ref(),
+            header.timestamp,
+            header.number,
+        );
+        Ok(self.evm_env_from_base_spec(
+            spec,
+            block_env_with_blob_params(&header, blob_params),
+            blob_params,
         ))
     }
 
     fn context_for_block<'a>(
         &self,
         block: &'a SealedBlock<OutbeBlock>,
-    ) -> Result<OutbeBlockExecutionCtx<'a>, Self::Error> {
+    ) -> Result<OutbeBlockExecutionCtx<'a>, Self::Error>
+    where
+        Self: 'a,
+    {
         let (expected_begin_system_txs, system_layout_error, recovered_proposer) =
             system_tx_expectations_for_block(block, &self.runtime_host.block_order());
 
@@ -118,18 +164,8 @@ impl ConfigureEvm for OutbeEvmConfig {
             parent_consensus_metadata: None,
             proposer_evm_address: recovered_proposer,
             execute_outbe_block_hooks: true,
-            // Validator path: body[0] arrives through `expected_begin_system_txs`.
             prebuilt_phase1_tx: None,
-            // Validator path: the parent block is sealed and in MDBX by the
-            // time the executor runs (validation happens after import). So
-            // `sealed_header_by_hash` resolves the artifact via the provider
-            // (lookup ladder step 2 in `RethAccountedParentArtifactProvider`).
-            // The FCU-Valid -> MDBX-commit race is a proposer-side window only.
-            // Validators do not need the in-memory `parent_artifact_hint`
-            // fallback here.
             parent_artifact_hint: None,
-            // Validator path: a `TeeBootstrap` in the body is read via
-            // `expected_begin_system_txs`, not injected here.
             pending_tee_bootstrap: None,
             execution_read_budget: None,
         })
@@ -177,82 +213,65 @@ impl ConfigureEvm for OutbeEvmConfig {
     }
 
     #[allow(refining_impl_trait)]
-    fn create_block_builder<'a, DB, I>(
+    fn create_block_builder<'a>(
         &'a self,
-        evm: EvmFor<Self, &'a mut State<DB>, I>,
+        mut evm: OutbeEvm<'a>,
+        evm_env: EthEvmEnv<OutbeEvmTypes>,
         parent: &'a SealedHeader<OutbeHeader>,
         ctx: OutbeBlockExecutionCtx<'a>,
-    ) -> impl BlockBuilder<
-        Primitives = Self::Primitives,
-        Executor = OutbeBlockExecutor<'a, EvmFor<Self, &'a mut State<DB>, I>>,
-    >
+    ) -> impl BlockBuilder<Primitives = Self::Primitives, Executor = OutbeBlockExecutor<'a>>
     where
-        DB: Database,
-        I: InspectorFor<Self, &'a mut State<DB>> + 'a,
+        Self: 'a,
     {
-        use alloy_evm::eth::EthBlockExecutor;
+        evm.ext_mut().set_owned_by_executor(true);
+        let withdrawals = ctx.inner.withdrawals.as_deref().map(<[_]>::to_vec);
+        let mut inner_ctx = ctx.inner.clone();
+        inner_ctx.withdrawals = None;
 
-        let expected_begin_system_txs = ctx.expected_begin_system_txs.clone();
-        let system_layout_error = ctx.system_layout_error.clone();
-        let parent_consensus_metadata = ctx.parent_consensus_metadata.clone();
-        let proposer_evm_address = ctx.proposer_evm_address;
-        let execute_outbe_block_hooks = ctx.execute_outbe_block_hooks;
-        let parent_hash = ctx.inner.parent_hash;
-        let prebuilt_phase1_tx = ctx.prebuilt_phase1_tx.clone();
-        let parent_artifact_hint = ctx.parent_artifact_hint;
         let system_plan = BlockSystemPlan {
-            expected_begin_system_txs,
-            system_layout_error,
-            proposer_evm_address,
-            execute_outbe_block_hooks,
-            prebuilt_phase1_tx,
+            expected_begin_system_txs: ctx.expected_begin_system_txs.clone(),
+            system_layout_error: ctx.system_layout_error.clone(),
+            proposer_evm_address: ctx.proposer_evm_address,
+            execute_outbe_block_hooks: ctx.execute_outbe_block_hooks,
+            prebuilt_phase1_tx: ctx.prebuilt_phase1_tx.clone(),
             pending_tee_bootstrap: ctx.pending_tee_bootstrap.clone(),
         };
 
-        OutbeBlockBuilder::new(
-            {
-                let inner = EthBlockExecutor::new(
-                    evm,
-                    ctx.inner.clone(),
-                    self.inner.chain_spec(),
-                    self.inner.executor_factory.receipt_builder(),
-                );
-                let bridge = self.bridge.clone();
-                let block_extra_data = ctx.inner.extra_data.clone();
-                let accounted_parent_artifact_provider =
-                    self.accounted_parent_artifact_provider.clone();
-                let validate_execution_summary = false;
-                let block_hash = None;
-                let evm_signer = self.evm_signer.clone();
-                OutbeBlockExecutor::new(
-                    inner,
-                    BlockExecutorInputs {
-                        identity: BlockExecutionIdentity {
-                            block_extra_data,
-                            validate_execution_summary,
-                            block_hash,
-                            block_state_root: None,
-                            parent_hash,
-                        },
-                        system_plan,
-                        parent_accounting: ParentAccountingInputs {
-                            accounted_parent_artifact_provider,
-                            parent_consensus_metadata,
-                            parent_artifact_hint,
-                        },
-                        dependencies: BlockExecutionDependencies {
-                            bridge,
-                            evm_signer,
-                            runtime_host: std::sync::Arc::clone(&self.runtime_host),
-                        },
-                    },
-                )
+        let inner = EthBlockExecutor::new(
+            evm,
+            inner_ctx,
+            self.chain_spec.as_ref(),
+            &self.receipt_builder,
+        );
+        let executor = OutbeBlockExecutor::new(
+            inner,
+            Arc::clone(&self.chain_spec),
+            withdrawals,
+            BlockExecutorInputs {
+                identity: BlockExecutionIdentity {
+                    block_extra_data: ctx.inner.extra_data.clone(),
+                    validate_execution_summary: false,
+                    block_hash: None,
+                    block_state_root: None,
+                    parent_hash: ctx.inner.parent_hash,
+                },
+                system_plan,
+                parent_accounting: ParentAccountingInputs {
+                    accounted_parent_artifact_provider: self
+                        .accounted_parent_artifact_provider
+                        .clone(),
+                    parent_consensus_metadata: ctx.parent_consensus_metadata.clone(),
+                    parent_artifact_hint: ctx.parent_artifact_hint,
+                },
+                dependencies: BlockExecutionDependencies {
+                    bridge: self.bridge.clone(),
+                    evm_signer: self.evm_signer.clone(),
+                    runtime_host: Arc::clone(&self.runtime_host),
+                },
             },
-            ctx,
-            self.bridge.clone(),
-            self.block_assembler(),
-            parent,
-        )
+        );
+        OutbeBlockBuilder::new(executor, evm_env, ctx, self.block_assembler(), parent)
+            .with_bridge(self.bridge.clone())
     }
 }
 

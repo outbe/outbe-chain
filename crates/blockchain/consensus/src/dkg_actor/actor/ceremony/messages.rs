@@ -4,7 +4,7 @@ impl CeremonyState {
     pub(in crate::dkg_actor::actor) fn read_message(
         &self,
         from: &bls12381::PublicKey,
-        buf: &mut impl bytes::Buf,
+        buf: &mut impl commonware_codec::Buf,
     ) -> Option<DkgMessage> {
         read_ceremony_message(from, buf, &self.wire_cfg, &PARTICIPANT_DIAGNOSTICS)
     }
@@ -131,7 +131,7 @@ impl CeremonyState {
     fn handle_finalized_log(
         &mut self,
         from: bls12381::PublicKey,
-        signed_log: SignedDealerLog<MinSig, bls12381::PrivateKey>,
+        signed_log: SignedDealerLog<MinSig, bls12381::PublicKey>,
         progress_tx: &Option<mpsc::UnboundedSender<DkgProgress>>,
     ) -> MessageOutcome {
         if self.chain_finalized_mode {

@@ -5,7 +5,6 @@ use crate::{
     finalization::parent_cert_store::FinalizedParentCertStore,
     marshal_types::{Finalization, MarshalMailbox},
 };
-use commonware_codec::Encode as _;
 
 pub async fn finalization_bytes_for_height(
     mailbox: &MarshalMailbox,
@@ -16,9 +15,9 @@ pub async fn finalization_bytes_for_height(
     let block = mailbox.get_block(&digest).await?;
     let finalization = match mailbox.get_finalization(height).await {
         Some(local) => Some(local),
-        None => match same_block_finalization(parent_store, height, &block, digest) {
+        None => match same_block_finalization(parent_store, height, block.inner(), digest) {
             Some(retained) => Some(retained),
-            None => child_finalization(mailbox, height, &block).await,
+            None => child_finalization(mailbox, height, block.inner()).await,
         },
     };
     Some(outbe_primitives::consensus::FinalizedBlockBytes {
@@ -53,5 +52,5 @@ async fn child_finalization(
     let next = Height::new(height.get().checked_add(1)?);
     let (_, child_digest) = mailbox.get_info(next).await?;
     let child = mailbox.get_block(&child_digest).await?;
-    crate::follow::upstream::parent_finalization_from_child(block, &child)
+    crate::follow::upstream::parent_finalization_from_child(block, child.inner())
 }

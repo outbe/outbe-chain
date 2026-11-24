@@ -1,57 +1,71 @@
 //! Wide block timestamps revert before a precompile admits value or mutates state.
 
-use alloy_evm::precompiles::PrecompilesMap;
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{Revert, SolError};
-use outbe_evm::precompiles::{
-    extend_outbe_precompiles, OutbePrecompileExecutionContext, OutbePrecompileRuntime,
+use evm2::{
+    bytecode::Bytecode,
+    env::BlockEnvExt,
+    evm::{precompile::PrecompileProvider as _, CacheDB, EmptyDB},
+    interpreter::{GasTracker, Message, MessageExt, MessageKind},
+    precompiles::{PrecompileError as EvmPrecompileError, PrecompileHalt},
+    SpecId,
 };
-use outbe_evm::EvmRuntimeHost;
+use outbe_evm::{
+    factory::{OutbeEvm, OutbeEvmTypes},
+    precompiles::{
+        OutbePrecompileExecutionContext, OutbePrecompileProvider, OutbePrecompileRuntime,
+    },
+    EvmRuntimeHost, OutbeEvmFactory,
+};
 use outbe_primitives::{storage::gas::PRECOMPILE_BASE_GAS, system_tx::SystemTx};
 use outbe_system_common::addresses::{
     GRATIS_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS,
 };
-use revm::{
-    context_interface::JournalTr,
-    database::{CacheDB, EmptyDB},
-    handler::{EthPrecompiles, MainContext as _, PrecompileProvider},
-    interpreter::{CallInput, CallInputs, CallScheme, CallValue, InstructionResult},
-    primitives::hardfork::SpecId,
-    state::Bytecode,
-    Context,
-};
+use reth_ethereum::evm::EthEvmEnv;
 use std::sync::Arc;
 
 fn host() -> Arc<outbe_runtime::OutbeRuntime> {
     Arc::new(outbe_runtime::OutbeRuntime::new())
 }
 
-fn precompiles() -> PrecompilesMap {
-    let mut precompiles =
-        PrecompilesMap::from_static(EthPrecompiles::new(SpecId::PRAGUE).precompiles);
-    extend_outbe_precompiles::<CacheDB<EmptyDB>>(
-        &mut precompiles,
+fn precompiles() -> OutbePrecompileProvider {
+    OutbePrecompileProvider::new(
         OutbePrecompileExecutionContext::new(SpecId::PRAGUE, B256::ZERO),
         OutbePrecompileRuntime::new(),
         host(),
-    );
-    precompiles
+    )
 }
 
-fn inputs(address: Address, value: U256, gas_limit: u64, data: Bytes) -> CallInputs {
-    CallInputs {
-        input: CallInput::Bytes(data),
-        return_memory_offset: 0..0,
+fn evm_with_timestamp(timestamp: U256) -> OutbeEvm<'static> {
+    let env = EthEvmEnv::new(
+        SpecId::PRAGUE,
+        BlockEnvExt {
+            number: U256::from(1),
+            timestamp,
+            ..Default::default()
+        },
+        1,
+    );
+    OutbeEvmFactory::new(host()).create_evm(CacheDB::new(EmptyDB::default()), env)
+}
+
+fn message(address: Address, value: U256, gas_limit: u64, data: Bytes) -> Message<OutbeEvmTypes> {
+    MessageExt {
+        kind: MessageKind::Call,
+        depth: 0,
         gas_limit,
         reservoir: 0,
-        bytecode_address: address,
-        known_bytecode: (B256::ZERO, Bytecode::default()),
-        target_address: address,
+        destination: address,
+        call_target: address,
         caller: SYSTEM_ADDRESS,
-        value: CallValue::Transfer(value),
-        scheme: CallScheme::Call,
-        is_static: false,
-        charged_new_account_state_gas: false,
+        input: data.into(),
+        value,
+        code: Bytecode::default(),
+        code_address: address,
+        caller_is_static: false,
+        salt: B256::ZERO,
+        ext: (),
+        _non_exhaustive: (),
     }
 }
 
@@ -64,39 +78,55 @@ fn wide_timestamp_dispatch_reverts_before_value_admission_or_mutation_authority(
             (STAKING_ADDRESS, U256::from(7), Bytes::new()),
             (OUTBE_SYSTEM_TX_ADDRESS, U256::ZERO, cycle_data.clone()),
         ] {
-            let mut ctx = Context::mainnet().with_db(CacheDB::<EmptyDB>::default());
-            ctx.block.timestamp = timestamp;
-            ctx.block.number = U256::from(1);
-            let journal_before = ctx.journaled_state.inner.clone();
+            let mut evm = evm_with_timestamp(timestamp);
             let runtime = host();
             let base_gas = runtime
                 .precompile_base_gas(&address, data.as_ref())
                 .max(PRECOMPILE_BASE_GAS);
-            let call = inputs(address, value, base_gas + 100_000, data);
-            let output = precompiles().run(&mut ctx, &call).unwrap().unwrap();
-            assert_eq!(output.result, InstructionResult::Revert);
-            assert_eq!(
-                output.output.as_ref(),
-                Revert::from("timestamp exceeds u64").abi_encode()
+            let gas_limit = base_gas + 100_000;
+            let call = message(address, value, gas_limit, data);
+            let mut gas = GasTracker::new(gas_limit);
+            let output = precompiles()
+                .execute(&mut evm, &call, &mut gas)
+                .expect("registered route");
+            assert!(
+                matches!(
+                    output,
+                    Err(EvmPrecompileError::Revert(ref bytes))
+                        if bytes.as_ref() == Revert::from("timestamp exceeds u64").abi_encode()
+                ),
+                "expected timestamp revert, got {output:?}"
             );
-            assert_eq!(output.gas.remaining(), call.gas_limit - base_gas);
-            assert_eq!(ctx.journaled_state.inner, journal_before);
-            assert!(ctx.journaled_state.logs().is_empty());
-            assert!(ctx.journaled_state.database.cache.accounts.is_empty());
+            assert_eq!(gas.remaining(), gas_limit - base_gas);
+            assert!(evm.logs().is_empty());
+            assert!(evm.state().journal().is_empty());
+            assert_eq!(evm.state().loaded_accounts().count(), 0);
         }
     }
 }
 
 #[test]
 fn wide_timestamp_dispatch_preserves_out_of_gas_and_unknown_routes() {
-    for (address, gas_limit, expected) in [
-        (GRATIS_ADDRESS, 0, Some(InstructionResult::PrecompileOOG)),
-        (Address::ZERO, 100_000, None),
-    ] {
-        let mut ctx = Context::mainnet().with_db(CacheDB::<EmptyDB>::default());
-        ctx.block.timestamp = U256::MAX;
-        let call = inputs(address, U256::ZERO, gas_limit, Bytes::new());
-        let output = precompiles().run(&mut ctx, &call).unwrap();
-        assert_eq!(output.map(|output| output.result), expected);
+    for (address, gas_limit, expect_oog) in
+        [(GRATIS_ADDRESS, 0, true), (Address::ZERO, 100_000, false)]
+    {
+        let mut evm = evm_with_timestamp(U256::MAX);
+        let call = message(address, U256::ZERO, gas_limit, Bytes::new());
+        let mut gas = GasTracker::new(gas_limit);
+        let output = precompiles().execute(&mut evm, &call, &mut gas);
+        if expect_oog {
+            assert!(
+                matches!(
+                    output,
+                    Some(Err(EvmPrecompileError::Halt(PrecompileHalt::OutOfGas)))
+                ),
+                "expected OutOfGas halt, got {output:?}"
+            );
+        } else {
+            assert!(
+                output.is_none(),
+                "expected None for unknown route, got {output:?}"
+            );
+        }
     }
 }

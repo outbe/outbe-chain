@@ -21,7 +21,7 @@ alloy-sol-types.workspace = true
 [dev-dependencies]
 outbe-zerofee = { path = ".", features = ["test-utils"] }
 proptest.workspace = true
-revm.workspace = true
+evm2 = { workspace = true, features = ["std"] }
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 

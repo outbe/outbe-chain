@@ -491,7 +491,7 @@ fn build_reshare_parity_fixture() -> ReshareParityFixture {
             dkg_logs.record(dealer, log);
         }
         let (out, share) = player
-            .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
+            .finalize::<N3f1>(
                 &mut ChaCha20Rng::from_seed([0x20 + idx as u8; 32]),
                 dkg_logs,
                 &Sequential,
@@ -587,13 +587,15 @@ static RESHARE_PARITY_FIXTURE: std::sync::LazyLock<ReshareParityFixture> =
     std::sync::LazyLock::new(build_reshare_parity_fixture);
 
 /// Consensus-scheme + serialization boundary parity test for
-/// `commonware-cryptography` (currently pinned at `tag = "v2026.9.0"`,
-/// rev `d476a2361ce6840d2b9d0aa6fb30a924429046d4` in workspace `Cargo.toml`).
+/// `commonware-cryptography` (currently pinned at `tag = "v2026.11.0"`,
+/// rev `2a4fd93e2253748188ebcb17fe6ce9e4d7eff7bc` in workspace `Cargo.toml`).
 ///
-/// Any `cargo update` that bumps `commonware-*` is a consensus-boundary change
-/// and requires an explicit boundary review of `observe` selection, transcript
-/// encoding, and `Output` serialization. Never blindly regenerate the golden
-/// digests below inside a dependency bump commit.
+/// The frozen digests below were originally recorded at `v2026.9.0` and
+/// re-confirmed byte-identical under `v2026.11.0`. Any `cargo update` that
+/// bumps `commonware-*` is a consensus-boundary change and requires an explicit
+/// boundary review of `observe` selection, transcript encoding, and `Output`
+/// serialization. Never blindly regenerate the golden digests below inside a
+/// dependency bump commit.
 #[test]
 fn commonware_dkg_reconstruction_parity() {
     use alloy_primitives::b256;
@@ -609,7 +611,8 @@ fn commonware_dkg_reconstruction_parity() {
     );
 
     // Frozen input digest of the 1 signed-but-garbage log (dealer 0) + 3 valid
-    // logs (dealers 1..=3) under `commonware-cryptography` v2026.9.0.
+    // logs (dealers 1..=3), originally frozen at `v2026.9.0` and verified
+    // unchanged under `commonware-cryptography` v2026.11.0.
     let mut input_transcript = Vec::new();
     let (_, ref garbage_0) = fixture.garbage_signed_bytes[0];
     input_transcript.extend_from_slice(garbage_0);
@@ -671,7 +674,7 @@ fn commonware_dkg_reconstruction_parity() {
             b256!("becc574895bad0fd82be053ebb8f6a257db584a7450ba4526d2e9d31dcb752cf"),
             b256!("0f49395b3b8ea6c8d832c7db9ceaff48c6b9524976eadec05d92f176f2f6fa99"),
         ),
-        "frozen v2026.9.0 digests changed"
+        "frozen DKG wire digests (v2026.9.0 baseline, verified on v2026.11.0) changed"
     );
 }
 

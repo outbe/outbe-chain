@@ -181,8 +181,7 @@ async fn start_marshal_node(
         .await
         .expect("register broadcast channel");
 
-    let page_cache = CacheRef::from_pooler(
-        context,
+    let page_cache = CacheRef::new(
         NonZeroU16::new(1024).expect("non-zero page size"),
         NonZeroUsize::new(10).expect("non-zero cache size"),
     );
@@ -211,7 +210,9 @@ async fn start_marshal_node(
         marshal::Config {
             provider: scheme_provider,
             epocher: crate::follow::FollowerEpocher::new(10_000, 0),
-            start: Start::Genesis(consensus_block_with_number(0x00, 0)),
+            start: Start::Genesis(crate::test_fixtures::digested_block(
+                consensus_block_with_number(0x00, 0),
+            )),
             partition_prefix,
             mailbox_size: NonZeroUsize::new(32).expect("non-zero mailbox size"),
             view_retention: ViewDelta::new(10_000),
@@ -237,8 +238,10 @@ async fn start_marshal_node(
                 .expect("non-zero engine mailbox size"),
             deque_size: crate::config::BROADCAST_DEQUE_SIZE,
             peer_provider: oracle.manager(),
+            blocker: control.clone(),
             priority: true,
             codec_config: (),
+            strategy: Sequential,
         },
     );
     broadcast_engine.start(broadcast_channel);
@@ -254,8 +257,8 @@ async fn start_marshal_node(
             mailbox_size: NonZeroUsize::new(crate::config::ENGINE_MAILBOX_SIZE)
                 .expect("non-zero engine mailbox size"),
 
-            timeout: Duration::from_secs(2),
-            fetch_retry_timeout: Duration::from_millis(100),
+            fetch_timeout: commonware_utils::NZDuration!(Duration::from_secs(2)),
+            fetch_retry_delay: Duration::from_millis(100),
             priority_requests: false,
             priority_responses: false,
         },
@@ -374,7 +377,10 @@ fn node_b_fetches_block_from_node_a_via_recipients_one_resolver() {
         // can be found by commitment. Node A also receives the matching
         // notarization, so its resolver serve-side can answer a
         // `Notarized { round }` request.
-        let _ = node_a.mailbox.verified(round, block.clone()).await;
+        let _ = node_a
+            .mailbox
+            .verified(round, crate::test_fixtures::digested_block(block.clone()))
+            .await;
 
         let proposal = Proposal::new(round, View::zero(), want_digest);
         let notarization = make_notarization(&fixture, proposal);
@@ -396,11 +402,15 @@ fn node_b_fetches_block_from_node_a_via_recipients_one_resolver() {
         };
 
         assert_eq!(
-            received.digest(),
+            received.inner().digest(),
             want_digest,
             "block fetched over the real P2P resolver must match node A's block digest"
         );
-        assert_eq!(received.number(), 5, "fetched block height must match");
+        assert_eq!(
+            received.inner().number(),
+            5,
+            "fetched block height must match"
+        );
     });
 }
 
@@ -518,7 +528,10 @@ fn node_b_rejects_foreign_notarization_with_wrong_subject_vrf() {
 
         let _ = node_a
             .mailbox
-            .verified(good_round, good_block.clone())
+            .verified(
+                good_round,
+                crate::test_fixtures::digested_block(good_block.clone()),
+            )
             .await;
 
         let good_proposal = Proposal::new(good_round, View::zero(), good_digest);
@@ -538,7 +551,7 @@ fn node_b_rejects_foreign_notarization_with_wrong_subject_vrf() {
             },
         };
         assert_eq!(
-            control.digest(),
+            control.inner().digest(),
             good_digest,
             "control fetch must deliver node A's correctly-notarized block"
         );
@@ -563,7 +576,13 @@ fn node_b_rejects_foreign_notarization_with_wrong_subject_vrf() {
 
         // Node A holds the real block under `bad_digest` so its serve-side can
         // find and serve it for the forged notarization's carried payload.
-        let _ = node_a.mailbox.verified(bad_round, bad_block.clone()).await;
+        let _ = node_a
+            .mailbox
+            .verified(
+                bad_round,
+                crate::test_fixtures::digested_block(bad_block.clone()),
+            )
+            .await;
 
         let carried_proposal = Proposal::new(bad_round, View::zero(), bad_digest);
         let mut forged_notarization = make_notarization(&fixture, carried_proposal);
@@ -581,8 +600,8 @@ fn node_b_rejects_foreign_notarization_with_wrong_subject_vrf() {
                         "node B delivered a block (digest {:?}, number {}) for a forged \
                          notarization; the forged certificate must be rejected and no block \
                          delivered under the requested digest",
-                        block.digest(),
-                        block.number(),
+                        block.inner().digest(),
+                        block.inner().number(),
                     ),
                     Err(_) => panic!(
                         "forged subscription channel closed unexpectedly; expected it to stay \

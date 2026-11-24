@@ -595,8 +595,9 @@ fn accepted_bid_deadlines_retire_with_reverting_router_within_advance_budget() {
 fn calibration_desis_cleanup_max_page_and_four_headers() {
     use outbe_evm::gas::SubcallGasMeter;
     use outbe_evm::storage::CtxStorageProvider;
-    use revm::{handler::MainContext as _, Context};
     let proposer = test_evm_signer().address();
+    let host: Arc<dyn outbe_evm::EvmRuntimeHost> = Arc::new(outbe_runtime::OutbeRuntime::new());
+    let factory = outbe_evm::OutbeEvmFactory::new(Arc::clone(&host));
     for chains in [0, 1, 4] {
         let mut state =
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xa2))], |storage| {
@@ -614,17 +615,13 @@ fn calibration_desis_cleanup_max_page_and_four_headers() {
                     queue_accepted_cleanup(storage, chains);
                 }
             });
-        let mut ctx = Context::mainnet()
-            .with_db(&mut state)
-            .modify_cfg_chained(|cfg| {
-                cfg.chain_id = CHAIN_ID;
-                cfg.set_spec_and_mainnet_gas_params(SpecId::PRAGUE);
-            });
+        let env = EthEvmEnv::new(SpecId::PRAGUE, Default::default(), CHAIN_ID);
+        let mut evm = factory.create_evm(&mut state, env);
         let mut provider = CtxStorageProvider::new(
-            &mut ctx,
+            &mut evm,
             SubcallGasMeter::new(10_000_000),
             cleanup_storage_config(),
-            std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+            std::sync::Arc::clone(&host),
         );
         StorageHandle::enter(&mut provider, |storage| {
             assert_cleanup_page(storage, chains)

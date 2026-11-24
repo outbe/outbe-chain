@@ -21,8 +21,7 @@ use crate::{
 async fn pending_marshal(
     context: &deterministic::Context,
 ) -> (FollowMarshalActor<deterministic::Context>, MarshalMailbox) {
-    let cache = CacheRef::from_pooler(
-        context,
+    let cache = CacheRef::new(
         NonZeroU16::new(1024).unwrap(),
         NonZeroUsize::new(10).unwrap(),
     );
@@ -46,9 +45,9 @@ async fn pending_marshal(
         marshal::Config {
             provider: HybridSchemeProvider::new(),
             epocher: FollowerEpocher::new(100, 10),
-            start: marshal::Start::Genesis(ConsensusBlock::from_sealed(SealedBlock::seal_slow(
-                genesis,
-            ))),
+            start: marshal::Start::Genesis(crate::test_fixtures::digested_block(
+                ConsensusBlock::from_sealed(SealedBlock::seal_slow(genesis)),
+            )),
             partition_prefix: "driver-test".into(),
             mailbox_size: NonZeroUsize::new(32).unwrap(),
             view_retention: ViewDelta::new(100),
@@ -436,6 +435,116 @@ fn first_poll_failure_is_unreachable_and_all_poll_labels_are_closed() {
             );
             handle.abort();
             assert!(handle.await.is_err());
+        });
+    });
+}
+
+#[test]
+fn driver_pull_to_advances_from_processed_absent_floor_to_block() {
+    use crate::test_fixtures::marshal::{start_processed_absent_marshal, wait_until_bounded};
+    use commonware_consensus::marshal::core::Processed;
+    use commonware_utils::Acknowledgement as _;
+    use std::collections::BTreeSet;
+
+    let recorder = DebuggingRecorder::new();
+    let snapshotter = recorder.snapshotter();
+    metrics::with_local_recorder(&recorder, || {
+        deterministic::Runner::default().start(|context| async move {
+            let fixture = start_processed_absent_marshal(&context, "driver-absent-floor", 5).await;
+
+            let mut driver = Driver::new(
+                context.child("driver"),
+                Config {
+                    marshal: fixture.mailbox.clone(),
+                    tip: Tip {
+                        pending: false,
+                        calls: Arc::new(AtomicUsize::new(0)),
+                    },
+                    epocher: FollowerEpocher::new(100, 10),
+                },
+            );
+
+            // Consumer path under Processed::Absent(4): pull_to must read floor height 4 and
+            // emit hints strictly for heights 5..=7 rather than stalling or resetting to genesis.
+            fixture.hinted_heights.lock().unwrap().clear();
+            driver.pull_to(Height::new(7)).await;
+            wait_until_bounded(&context, 200, "hints for heights 5..=7", || async {
+                let heights: BTreeSet<u64> = fixture
+                    .hinted_heights
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .copied()
+                    .collect();
+                heights.contains(&6) && heights.contains(&7)
+            })
+            .await;
+            let hinted_under_absent: BTreeSet<u64> =
+                fixture.hinted_heights.lock().unwrap().drain(..).collect();
+            // Height 5 is already verified/finalized locally so Marshal skips fetching 5 and
+            // forwards gap-repair hints for 6..=7, never regressing to 1..=4.
+            assert!(
+                hinted_under_absent.iter().all(|&h| (5..=7).contains(&h)),
+                "hints under Processed::Absent(4) must stay within 5..=7, got {hinted_under_absent:?}"
+            );
+            assert!(
+                hinted_under_absent.contains(&6) && hinted_under_absent.contains(&7),
+                "hints under Processed::Absent(4) must cover missing heights 6..=7, got {hinted_under_absent:?}"
+            );
+            let snap_absent = telemetry(&snapshotter);
+            assert_eq!(
+                snap_absent["outbe_follower_processed_height:"],
+                DebugValue::Gauge(4.0.into())
+            );
+            assert_eq!(
+                snap_absent["outbe_follower_rounds_total:result=pulled"],
+                DebugValue::Counter(1)
+            );
+
+            // Acknowledge block 5 -> Processed::Block(5), then pull_to(7) advances floor to 5
+            // and re-hints strictly within 6..=7.
+            wait_until_bounded(&context, 200, "held block 5 delivery", || async {
+                !fixture.held.lock().unwrap().is_empty()
+            })
+            .await;
+            for (height, ack) in fixture.held.lock().unwrap().drain(..) {
+                assert_eq!(height, 5);
+                ack.acknowledge();
+            }
+            wait_until_bounded(&context, 200, "Processed::Block(5)", || async {
+                fixture.mailbox.get_processed().await == Some(Processed::Block(Height::new(5)))
+            })
+            .await;
+            fixture.hinted_heights.lock().unwrap().clear();
+            driver.pull_to(Height::new(7)).await;
+            wait_until_bounded(&context, 200, "hints for heights 6..=7", || async {
+                let heights: BTreeSet<u64> = fixture
+                    .hinted_heights
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .copied()
+                    .collect();
+                heights.contains(&6) && heights.contains(&7)
+            })
+            .await;
+            let hinted_under_block: BTreeSet<u64> =
+                fixture.hinted_heights.lock().unwrap().drain(..).collect();
+            assert_eq!(
+                hinted_under_block,
+                BTreeSet::from([6, 7]),
+                "hints under Processed::Block(5) with tip 7 must be exactly 6..=7"
+            );
+            let snap_block = telemetry(&snapshotter);
+            assert_eq!(
+                snap_block["outbe_follower_processed_height:"],
+                DebugValue::Gauge(5.0.into())
+            );
+            assert_eq!(
+                snap_block["outbe_follower_rounds_total:result=pulled"],
+                DebugValue::Counter(1),
+                "DebuggingRecorder snapshots drain counters; the second pull_to(7) must record 1 fresh pull"
+            );
         });
     });
 }

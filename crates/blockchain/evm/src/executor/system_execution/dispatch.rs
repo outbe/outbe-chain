@@ -15,24 +15,14 @@ struct ReservedSystemReceiptContext {
     block_number: u64,
 }
 
-impl<E> OutbeBlockExecutor<'_, E> {
+impl OutbeBlockExecutor<'_> {
     pub fn advance_system_tx_step(&mut self, input: &SystemTx) -> Result<(), BlockExecutionError> {
         self.fsm
             .on_system_tx(input)
             .map_err(crate::errors::ExecutorValidationError::from)?;
         Ok(())
     }
-}
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + ZeroFeeCfgAccess,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    E::Error: std::fmt::Display,
-{
     pub fn execute_reserved_system_tx<R, F>(
         &mut self,
         recovered: R,
@@ -40,15 +30,15 @@ where
     ) -> Result<Option<GasOutput>, BlockExecutionError>
     where
         R: RecoveredTx<TransactionSigned>,
-        F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
+        F: FnOnce(&TxResult<OutbeEvmTypes>, TxStateChanges<'_>) -> CommitChanges,
     {
         use crate::errors::ExecutorValidationError;
 
-        outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+        outbe_primitives::time::timestamp_secs(self.block_timestamp_u256())
             .map_err(ExecutorValidationError::from)?;
         let tx = recovered.tx();
         let signer = *recovered.signer();
-        let block_number = self.inner.evm.block().number().saturating_to::<u64>();
+        let block_number = self.block_number();
         let block_artifacts = self.ensure_decoded_block_artifacts()?;
 
         if self.consume_preexecuted_phase1_witness(tx)? {
@@ -67,7 +57,7 @@ where
             finalized_summary,
             canonical_vrf_proof_hash: self.verified_phase1_vrf_proof_hash.unwrap_or(B256::ZERO),
             verified_late_credit_signers: self.verified_late_credit_signers.clone(),
-            block_gas_limit: self.inner.evm.block().gas_limit(),
+            block_gas_limit: self.block_gas_limit(),
             user_gas_used: 0,
         };
         let output = self.invoke_reserved_system_call(
@@ -81,15 +71,20 @@ where
             input,
             block_number,
         };
-        if !output.result.result.is_success() {
-            if !f(&output).should_commit() {
+        if !output.result().result.is_success() {
+            if !f(
+                &output.result().result,
+                output.result().pending_state.changes(),
+            )
+            .should_commit()
+            {
                 self.check_no_witness_fault()?;
                 return Ok(None);
             }
             self.check_no_witness_fault()?;
             return self.commit_reserved_failure_receipt(
                 tx,
-                &output.result.result,
+                &output.result().result,
                 receipt_context,
             );
         }
@@ -114,9 +109,13 @@ where
         body_index: usize,
         expected_phase: &'static str,
         phase_context: PreloadedSystemTxContext,
-    ) -> Result<EthTxResult<E::HaltReason, reth_ethereum::TxType>, BlockExecutionError> {
+    ) -> Result<
+        EthTransactionResultWithState<OutbeEvmTypes, alloy_consensus::TxType>,
+        BlockExecutionError,
+    > {
         let transact_outcome = with_preloaded_system_tx_context(phase_context, || {
-            self.inner.evm.transact_system_call(
+            transact_outbe_system_call(
+                self.inner.evm_mut(),
                 outbe_primitives::addresses::SYSTEM_ADDRESS,
                 outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
                 tx.input().clone(),
@@ -131,23 +130,24 @@ where
             }
             BlockExecutionError::other(error)
         })?;
-        Ok(EthTxResult {
-            result,
-            blob_gas_used: 0,
-            tx_type: tx.tx_type(),
-        })
+        Ok(EthTransactionResultWithState::new(result, tx.tx_type(), 0))
     }
 
     fn commit_reserved_success_receipt<F>(
         &mut self,
-        output: EthTxResult<E::HaltReason, reth_ethereum::TxType>,
+        output: EthTransactionResultWithState<OutbeEvmTypes, alloy_consensus::TxType>,
         input: &SystemTx,
         f: F,
     ) -> Result<Option<GasOutput>, BlockExecutionError>
     where
-        F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
+        F: FnOnce(&TxResult<OutbeEvmTypes>, TxStateChanges<'_>) -> CommitChanges,
     {
-        if !f(&output).should_commit() {
+        if !f(
+            &output.result().result,
+            output.result().pending_state.changes(),
+        )
+        .should_commit()
+        {
             return Ok(None);
         }
         let gas_output = self.commit_system_transaction(output)?;
@@ -158,7 +158,7 @@ where
     fn commit_reserved_failure_receipt(
         &mut self,
         tx: &TransactionSigned,
-        result: &ExecutionResult<HaltReason>,
+        result: &TxResult<OutbeEvmTypes>,
         context: ReservedSystemReceiptContext,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
         let ReservedSystemReceiptContext {
@@ -203,7 +203,7 @@ where
             code,
             reason,
             internal_gas_used: result.tx_gas_used(),
-            internal_gross_gas_used: result.gas().total_gas_spent(),
+            internal_gross_gas_used: result.total_gas_spent,
         })?;
         self.advance_system_tx_step(&input)?;
         Ok(Some(gas_output))
@@ -254,7 +254,7 @@ where
 
         let proposer = self
             .begin_zone_proposer(block_number)?
-            .unwrap_or_else(|| self.inner.evm.block().beneficiary());
+            .unwrap_or_else(|| self.block_beneficiary());
         if signer != proposer {
             return Err(
                 crate::errors::ExecutorValidationError::SystemTxSignerMismatch {
@@ -287,15 +287,11 @@ where
         let ordinal = body_index.try_into().map_err(|_| -> BlockExecutionError {
             ExecutorValidationError::SystemTxBodyIndexExceedsU8 { body_index }.into()
         })?;
-        let unsigned = build_unsigned_system_tx(
-            ordinal,
-            block_number,
-            self.inner.evm.chain_id(),
-            tx.input().clone(),
-        )
-        .map_err(|error| -> BlockExecutionError {
-            ExecutorValidationError::build_expected_system_tx(body_index, error).into()
-        })?;
+        let unsigned =
+            build_unsigned_system_tx(ordinal, block_number, self.chain_id, tx.input().clone())
+                .map_err(|error| -> BlockExecutionError {
+                    ExecutorValidationError::build_expected_system_tx(body_index, error).into()
+                })?;
         if tx.signature_hash() != unsigned.signature_hash() {
             return Err(ExecutorValidationError::SystemTxSignatureHashMismatch {
                 body_index,

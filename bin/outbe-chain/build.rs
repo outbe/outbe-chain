@@ -20,7 +20,7 @@
 //! the actual profile name in the output path.
 #![allow(missing_docs)]
 
-use std::{env, error::Error};
+use std::{env, error::Error, ffi::OsStr, path::Path};
 use vergen::{Build, Cargo, Emitter};
 use vergen_git2::Git2;
 
@@ -49,13 +49,18 @@ fn main() -> Result<(), Box<dyn Error>> {
     let version_suffix = if is_dirty || not_on_tag { "-dev" } else { "" };
 
     // Cargo collapses custom release-like profiles back to "release" in the
-    // `PROFILE` env var. `OUT_DIR` is `target/<profile>/build/<pkg-hash>/out`.
-    // Its fourth-from-last segment keeps the real profile name (e.g. "maxperf").
-    // reth-node-core and kona-node use the same convention.
+    // `PROFILE` env var. Locate the `build` directory ancestor in `OUT_DIR`
+    // (supporting both legacy `target/<profile>/build/<pkg-hash>/out` and
+    // Cargo 1.100+ Build-Dir Layout v2 `target/<profile>/build/<pkg>/<hash>/out`)
+    // and read its parent directory name (e.g. "debug", "release", "maxperf").
     let out_dir = env::var("OUT_DIR")?;
-    let profile = out_dir
-        .rsplit(std::path::MAIN_SEPARATOR)
-        .nth(3)
+    let profile = Path::new(&out_dir)
+        .ancestors()
+        .skip(2)
+        .find(|p| p.file_name() == Some(OsStr::new("build")))
+        .and_then(Path::parent)
+        .and_then(Path::file_name)
+        .and_then(OsStr::to_str)
         .unwrap_or("unknown");
 
     println!("cargo:rustc-env=OUTBE_BUILD_PROFILE={profile}");

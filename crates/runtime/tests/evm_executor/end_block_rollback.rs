@@ -49,8 +49,13 @@ fn begin_block_system_tx_rejection_preserves_logs_and_begin_receipt_accounting()
             .unwrap();
     }
     let fsm_before = executor.fsm.clone();
-    let block_gas_limit = executor.inner.evm.block().gas_limit();
-    executor.inner.cumulative_tx_gas_used = block_gas_limit;
+    let block_gas_limit = executor
+        .inner
+        .evm()
+        .block()
+        .gas_limit
+        .saturating_to::<u64>();
+    executor.inner.inner.cumulative_gas_used = block_gas_limit;
     assert!(
         outbe_evm::factory::with_forced_outbe_system_call_revert(|| {
             executor.execute_transaction(cycle_tx)
@@ -59,7 +64,7 @@ fn begin_block_system_tx_rejection_preserves_logs_and_begin_receipt_accounting()
     );
     assert!(executor.receipts().is_empty());
     assert_eq!(executor.fsm, fsm_before);
-    assert_eq!(executor.inner.cumulative_tx_gas_used, block_gas_limit);
+    assert_eq!(executor.inner.inner.cumulative_gas_used, block_gas_limit);
     assert_eq!(executor.system_tx_execution_gas, 0);
 }
 
@@ -116,9 +121,9 @@ fn end_block_soft_failure_receipt_preserves_cleanup_budget_and_continues_block()
     assert_eq!(executor.receipts().len(), 5);
     assert!(executor.receipts().iter().all(|r| !r.success));
     assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
-    executor.prepare_final_header_artifacts(0).unwrap();
-    let (_, result) = executor.finish().unwrap();
-    assert_eq!(result.receipts.len(), 5);
+    fixtures_execution::finalize_executor_header_artifacts(&mut executor, 0).unwrap();
+    let output = executor.finish().unwrap();
+    assert_eq!(output.result.receipts.len(), 5);
 }
 
 #[test]
@@ -292,15 +297,17 @@ fn end_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_earli
     assert!(executor.receipts()[0].success);
     assert!(!executor.receipts()[1].success);
     assert!(executor.receipts()[2..].iter().all(|r| r.success));
-    drop(executor);
+    fixtures_execution::finalize_executor_header_artifacts(&mut executor, 0).unwrap();
+    let output = executor.finish().unwrap();
+    state.commit_source(&BundleSource(&output.state));
 
     assert_eq!(
-        state.storage(preserved_addr, preserved_slot).unwrap(),
+        state.get_storage(&preserved_addr, &preserved_slot).unwrap(),
         preserved_val,
         "earlier committed state must be preserved across soft-fail EndBlock revert"
     );
     assert_eq!(
-        state.storage(dirty_addr, dirty_slot).unwrap(),
+        state.get_storage(&dirty_addr, &dirty_slot).unwrap(),
         U256::ZERO,
         "dirty storage write inside reverted OSGM must be rolled back"
     );
@@ -328,8 +335,8 @@ fn end_block_out_of_gas_emits_zero_gas_failure_receipts_and_continues_block() {
     let mut executor = config.create_executor(evm, ctx);
 
     let user_gas_before = 42_000u64;
-    executor.inner.cumulative_tx_gas_used = user_gas_before;
-    executor.inner.block_regular_gas_used = user_gas_before;
+    executor.inner.inner.cumulative_gas_used = user_gas_before;
+    executor.inner.inner.block_regular_gas_used = user_gas_before;
 
     for input in [
         SystemTx::EndBlock { step_index: 0 },
@@ -362,13 +369,12 @@ fn end_block_out_of_gas_emits_zero_gas_failure_receipts_and_continues_block() {
         );
         assert_eq!(receipt.logs.len(), 1);
     }
-    assert_eq!(executor.inner.cumulative_tx_gas_used, user_gas_before);
+    assert_eq!(executor.inner.inner.cumulative_gas_used, user_gas_before);
 
-    executor
-        .prepare_final_header_artifacts(0)
+    fixtures_execution::finalize_executor_header_artifacts(&mut executor, 0)
         .expect("header artifact preparation should succeed after EndBlock OOG");
-    let (_, result) = executor
+    let output = executor
         .finish()
         .expect("block must finish cleanly after EndBlock OOG");
-    assert_eq!(result.gas_used, user_gas_before);
+    assert_eq!(output.result.gas_used, user_gas_before);
 }

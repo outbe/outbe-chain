@@ -55,7 +55,13 @@ fn staged_publication_releases_the_digest_before_persistence_and_flushes_without
         assert!(restarted.certify(round, digest).await.await.unwrap());
         assert!(restarted.certify(round, digest).await.await.unwrap());
         assert_eq!(
-            fixture.marshal.get_verified(round).await.unwrap().digest(),
+            fixture
+                .marshal
+                .get_verified(round)
+                .await
+                .unwrap()
+                .inner()
+                .digest(),
             digest
         );
     });
@@ -129,7 +135,10 @@ fn persisted_round_guard_withholds_before_parent_resolution_or_engine_work() {
             assert!(
                 fixture
                     .marshal
-                    .verified(round, consensus_block_with_number(0x34, 7))
+                    .verified(
+                        round,
+                        crate::test_fixtures::digested_block(consensus_block_with_number(0x34, 7))
+                    )
                     .await
             );
         });
@@ -163,7 +172,13 @@ fn staged_candidate_is_recoverable_after_certification_and_an_unclean_restart() 
         // A new registry has no gate: the exact durable recovery path must work.
         assert!(fixture.app.certify(round, digest).await.await.unwrap());
         assert_eq!(
-            fixture.marshal.get_verified(round).await.unwrap().digest(),
+            fixture
+                .marshal
+                .get_verified(round)
+                .await
+                .unwrap()
+                .inner()
+                .digest(),
             digest
         );
     });

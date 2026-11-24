@@ -6,24 +6,16 @@ mod paid;
 mod sponsorship;
 mod waiver;
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + ZeroFeeCfgAccess,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    E::Error: std::fmt::Display,
-{
+impl OutbeBlockExecutor<'_> {
     pub fn route_user_transaction<R, F>(
         &mut self,
-        tx_env: TxEnv,
+        tx_env: Recovered<TxEnvelope>,
         recovered: R,
         f: F,
     ) -> Result<Option<GasOutput>, BlockExecutionError>
     where
         R: RecoveredTx<TransactionSigned>,
-        F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
+        F: FnOnce(&TxResult<OutbeEvmTypes>, TxStateChanges<'_>) -> CommitChanges,
     {
         let ctx = self.fee_route_context()?;
         let tx = recovered.tx();
@@ -87,7 +79,7 @@ where
                 .into(),
             );
         }
-        let block_gas_limit = self.inner.evm.block().gas_limit();
+        let block_gas_limit = self.block_gas_limit();
         let available = block_gas_limit.saturating_sub(self.accounted_block_gas());
         if gas_limit > available {
             return Err(
@@ -109,7 +101,7 @@ where
         error: outbe_primitives::zero_fee_types::ZeroFeePolicyError,
         candidate: Option<outbe_primitives::zero_fee_types::ZeroFeeCandidate>,
     ) -> Result<Option<GasOutput>, BlockExecutionError> {
-        let block_gas_limit = self.inner.evm.block().gas_limit();
+        let block_gas_limit = self.block_gas_limit();
         let used = self.accounted_block_gas();
         let available = block_gas_limit.saturating_sub(used);
         if Self::SOFT_FAILURE_GAS > available {
@@ -128,19 +120,13 @@ where
             error.code(),
             error.to_string(),
         );
-        Ok(Some(GasOutput::new(Self::SOFT_FAILURE_GAS)))
+        Ok(Some(GasOutput::from(Self::SOFT_FAILURE_GAS)))
     }
-}
 
-impl<E: Evm> OutbeBlockExecutor<'_, E> {
     pub fn fee_route_context(&self) -> Result<BlockContext, BlockExecutionError> {
-        let timestamp = outbe_primitives::time::timestamp_secs(self.inner.evm.block().timestamp())
+        let timestamp = outbe_primitives::time::timestamp_secs(self.block_timestamp_u256())
             .map_err(crate::errors::ExecutorValidationError::from)?;
-        Ok(self.block_context(
-            self.inner.evm.block().number().saturating_to::<u64>(),
-            timestamp,
-            self.inner.evm.block().beneficiary(),
-        ))
+        Ok(self.block_context(self.block_number(), timestamp, self.block_beneficiary()))
     }
 }
 
@@ -160,9 +146,9 @@ mod tests {
                     .with_max_soft_failures_per_block(4),
                 Address::ZERO,
             );
-            let limit = executor.inner.evm.block().gas_limit();
+            let limit = executor.block_gas_limit();
             let used = limit - 20_999;
-            executor.inner.cumulative_tx_gas_used = used;
+            executor.inner.inner.cumulative_gas_used = used;
             assert!(matches!(
                 executor.include_zero_fee_soft_failure(
                     &tx,
@@ -178,9 +164,9 @@ mod tests {
             ));
             assert_eq!(executor.zero_fee_soft_failures, 0);
             assert!(executor.zero_fee_hook_soft_failures.is_empty());
-            assert!(executor.inner.receipts.is_empty());
+            assert!(executor.inner.inner.receipts.is_empty());
             assert_eq!(executor.gas_accounting(), (used, 0, 0));
-            executor.inner.cumulative_tx_gas_used = limit - 21_000;
+            executor.inner.inner.cumulative_gas_used = limit - 21_000;
             assert!(executor
                 .include_zero_fee_soft_failure(
                     &tx,
@@ -192,7 +178,7 @@ mod tests {
             assert_eq!(executor.zero_fee_soft_failures, 1);
             assert_eq!(executor.zero_fee_hook_soft_failures.get(&3), Some(&1));
             assert_eq!(executor.gas_accounting(), (limit, 21_000, 21_000));
-            let receipt = &executor.inner.receipts[0];
+            let receipt = &executor.inner.inner.receipts[0];
             assert!(!receipt.success);
             assert_eq!(receipt.cumulative_gas_used, limit);
             assert_eq!(receipt.logs.len(), 1);

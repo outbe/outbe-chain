@@ -477,7 +477,7 @@ fn wire_level_certificate_without_mandatory_vrf_does_not_decode() {
     let mut cert_bytes =
         proof_envelope_bytes(&cert, parent_hash, ParentParticipationProof::Finalization);
     cert_bytes.truncate(cert_bytes.len() - 56);
-    let mut reader = cert_bytes.as_slice();
+    let mut reader = commonware_codec::Copying(cert_bytes.as_slice());
     Finalization::<HybridScheme<MinSig>, Sha256Digest>::read_cfg(
         &mut reader,
         &snapshot.committee.len(),

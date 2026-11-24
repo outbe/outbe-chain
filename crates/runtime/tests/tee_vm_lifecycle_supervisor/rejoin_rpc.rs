@@ -7,14 +7,15 @@ use crate::{
 };
 use alloy_primitives::{keccak256, Address, Bytes, B256, U256};
 use commonware_codec::Encode as _;
+use evm2::TxResult;
 use jsonrpsee::{types::ErrorObjectOwned, Methods, RpcModule};
 use outbe_consensus::block::ConsensusBlock;
+use outbe_evm::factory::OutbeEvmTypes;
 use outbe_tee::{
     finalized_admission::FinalizedAdmissionWitnessV1,
     lifecycle::{LifecycleCheckpointV1, ServiceTxKindV1, ServiceTxRecordV1, ServiceTxStateV1},
 };
 use reth_primitives_traits::SealedBlock;
-use revm::context::result::ExecutionResult;
 use serde_json::{json, Value};
 use std::{collections::HashMap, path::PathBuf, sync::Mutex};
 
@@ -75,7 +76,7 @@ impl RejoinChain {
         &mut self,
         timestamp: u64,
         raw: Option<&[u8]>,
-    ) -> Option<ExecutionResult> {
+    ) -> Option<TxResult<OutbeEvmTypes>> {
         let result = self.latest.advance(timestamp, raw);
         self.push_header();
         if let Some((raw, result)) = raw.zip(result.as_ref()) {
@@ -325,9 +326,9 @@ pub(super) fn methods(chain: std::sync::Arc<Mutex<RejoinChain>>) -> Methods {
     module.into()
 }
 
-fn receipt(at: LifecycleCheckpointV1, tx: B256, result: &ExecutionResult) -> Value {
+fn receipt(at: LifecycleCheckpointV1, tx: B256, result: &TxResult<OutbeEvmTypes>) -> Value {
     let logs: Vec<_> = result
-        .logs()
+        .logs
         .iter()
         .map(|log| {
             json!({

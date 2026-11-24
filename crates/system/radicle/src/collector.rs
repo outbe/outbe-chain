@@ -386,7 +386,7 @@ fn initial_content(
 }
 
 fn participant(material: &RepositorySigningMaterial, index: usize) -> Result<bls12381::PublicKey> {
-    Ok(bls12381::PublicKey::decode(
+    Ok(bls12381::PublicKey::decode(commonware_codec::Copying(
         material
             .authority()
             .committee()
@@ -395,7 +395,7 @@ fn participant(material: &RepositorySigningMaterial, index: usize) -> Result<bls
             .ok_or("collector participant out of bounds")?
             .consensus_pubkey
             .as_slice(),
-    )?)
+    ))?)
 }
 
 pub(crate) struct Worker {

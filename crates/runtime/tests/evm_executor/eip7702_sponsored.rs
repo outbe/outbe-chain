@@ -20,17 +20,15 @@ fn eip7702_sponsored_tx_burns_quota_and_emits_event() {
     let signer = Address::from(*recovered.signer());
 
     let initial_balance = U256::from(1u64);
-    let mut state = State::builder()
-        .with_database(cache_db_with_paymaster_account(signer, initial_balance))
-        .with_bundle_update()
-        .build();
+    let mut state = cache_db_with_paymaster_account(signer, initial_balance);
 
     let before = signer_balance(&mut state, signer);
     assert_eq!(before, initial_balance);
 
-    {
+    let output = {
         let evm = config.evm_with_env(&mut state, pectra_evm_env(1));
-        let ctx = execution_ctx(Some(1), Bytes::new());
+        let mut ctx = execution_ctx(Some(1), Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
         let mut executor = config.create_executor(evm, ctx);
 
         executor
@@ -60,8 +58,9 @@ fn eip7702_sponsored_tx_burns_quota_and_emits_event() {
             signer.as_slice(),
             "signer indexed in topic[1]"
         );
-    }
-    state.merge_transitions(BundleRetention::Reverts);
+        executor.into_state()
+    };
+    state.commit_source(&BundleSource(&output));
 
     // Balance must be exactly what we put in, with no fee debit. This
     // is the consensus-visible guarantee the README promises.
@@ -97,20 +96,20 @@ fn eip7702_delegation_to_non_paymaster_falls_through_to_fee_path() {
         .expect("test-signature must recover");
     let signer = Address::from(*recovered.signer());
 
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut state = CacheDB::new(EmptyDB::default());
     let marker = Bytecode::new_legacy([0xef].into());
-    db.insert_account_info(
-        AGENT_REWARD_ADDRESS,
+    state.insert_account_info(
+        &AGENT_REWARD_ADDRESS,
         AccountInfo {
             code_hash: marker.hash_slow(),
-            code: Some(marker.clone()),
+            code: Some(marker),
             ..Default::default()
         },
     );
     // Delegate to ORACLE_ADDRESS, NOT ZEROFEE_ADDRESS.
     let foreign_delegation = Bytecode::new_eip7702(ORACLE_ADDRESS);
-    db.insert_account_info(
-        signer,
+    state.insert_account_info(
+        &signer,
         AccountInfo {
             balance: U256::from(2_000_000u64),
             code_hash: foreign_delegation.hash_slow(),
@@ -118,23 +117,13 @@ fn eip7702_delegation_to_non_paymaster_falls_through_to_fee_path() {
             ..Default::default()
         },
     );
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
 
-    {
+    let output = {
         let evm = config.evm_with_env(&mut state, pectra_evm_env(1));
-        let ctx = execution_ctx(Some(1), Bytes::new());
+        let mut ctx = execution_ctx(Some(1), Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
         let mut executor = config.create_executor(evm, ctx);
 
-        // The tx is shaped like a sponsored envelope (priority_fee=0,
-        // small gas). But signer's code points to ORACLE, so
-        // the pre-fee hook leaves it to the normal path. The normal
-        // path requires balance to cover `gas_limit * max_fee_per_gas`.
-        // 2 COEN (2_000_000 unit) covers it at the protocol fee floor,
-        // so this succeeds. The key assertion is that the executor emits NO
-        // SponsorshipAuthorized log and the counter stays at 0.
         executor
             .execute_transaction(recovered)
             .expect("non-sponsored tx should still execute through normal fee path");
@@ -150,8 +139,9 @@ fn eip7702_delegation_to_non_paymaster_falls_through_to_fee_path() {
             !has_event,
             "non-sponsored tx must NOT emit SponsorshipAuthorized"
         );
-    }
-    state.merge_transitions(BundleRetention::Reverts);
+        executor.into_state()
+    };
+    state.commit_source(&BundleSource(&output));
 
     // Counter must remain at 0. Delegation to a foreign address burns
     // no quota.
@@ -172,14 +162,12 @@ fn eip7702_sponsored_tx_accepts_fresh_zero_balance_signer() {
         .expect("test-signature must recover");
     let signer = Address::from(*recovered.signer());
 
-    let mut state = State::builder()
-        .with_database(cache_db_with_paymaster_account(signer, U256::ZERO))
-        .with_bundle_update()
-        .build();
+    let mut state = cache_db_with_paymaster_account(signer, U256::ZERO);
 
-    {
+    let output = {
         let evm = config.evm_with_env(&mut state, pectra_evm_env(1));
-        let ctx = execution_ctx(Some(1), Bytes::new());
+        let mut ctx = execution_ctx(Some(1), Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
         let mut executor = config.create_executor(evm, ctx);
 
         executor
@@ -201,8 +189,9 @@ fn eip7702_sponsored_tx_accepts_fresh_zero_balance_signer() {
             &sponsorship_log.topics()[1].as_slice()[12..],
             signer.as_slice()
         );
-    }
-    state.merge_transitions(BundleRetention::Reverts);
+        executor.into_state()
+    };
+    state.commit_source(&BundleSource(&output));
 
     assert_eq!(signer_balance(&mut state, signer), U256::ZERO);
     let counter = zerofee_counter_for(&mut state, signer);
@@ -235,26 +224,21 @@ fn eip7702_ninth_sponsored_tx_soft_fails_with_code_110() {
     const TODAY: u32 = 20_260_401;
     let initial_balance = U256::from(1u64);
 
-    let mut db = cache_db_with_paymaster_account(signer, initial_balance);
+    let mut state = cache_db_with_paymaster_account(signer, initial_balance);
     // Seed the counter to the full daily limit for TODAY.
-    db.insert_account_storage(
-        ZEROFEE_ADDRESS,
-        zerofee_counter_slot(signer),
-        U256::from(outbe_zerofee::pack_counter(
+    state.insert_account_storage(
+        &ZEROFEE_ADDRESS,
+        &zerofee_counter_slot(signer),
+        &U256::from(outbe_zerofee::pack_counter(
             TODAY,
             outbe_zerofee::FREE_TX_DAILY_LIMIT,
         )),
-    )
-    .expect("seed counter storage");
+    );
 
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-
-    {
+    let output = {
         let evm = config.evm_with_env(&mut state, pectra_evm_env(1));
-        let ctx = execution_ctx(Some(1), Bytes::new());
+        let mut ctx = execution_ctx(Some(1), Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
         let mut executor = config.create_executor(evm, ctx);
 
         executor
@@ -286,14 +270,13 @@ fn eip7702_ninth_sponsored_tx_soft_fails_with_code_110() {
                 .any(|l| l.address == ZEROFEE_ADDRESS && l.topics().first() == Some(&sig_hash)),
             "rejected tx must not emit SponsorshipAuthorized"
         );
-    }
+        executor.into_state()
+    };
+    state.commit_source(&BundleSource(&output));
     // Counter must stay at exactly the limit, with no 9th increment.
-    // Read LIVE storage (not bundle_state): the rejected tx makes no
-    // counter change, so the seeded value only exists in the base
-    // state, not in the post-execution change set.
     let slot = zerofee_counter_slot(signer);
     let packed = state
-        .storage(ZEROFEE_ADDRESS, slot)
+        .get_storage(&ZEROFEE_ADDRESS, &slot)
         .expect("counter storage read")
         .saturating_to::<u64>();
     let (day, count) = outbe_zerofee::unpack_counter(packed);
@@ -308,14 +291,10 @@ fn eip7702_ninth_sponsored_tx_soft_fails_with_code_110() {
 }
 /// F1 executor-level proof: the delegation probe's `code_by_hash`
 /// fallback branch is the production steady-state path. For an
-/// account whose code was set in a PRIOR block, revm's
-/// `State::basic()` returns `info.code == None` (only `code_hash`),
+/// account whose code was set in a PRIOR block,
+/// `Database::get_account()` returns `info.code == None` (only `code_hash`),
 /// so the pre-fee hook must resolve the delegation via
-/// `db.code_by_hash(code_hash)`. The other integration tests insert
-/// `code: Some(..)` and therefore only exercise the `maybe_code`
-/// arm. This test forces the fallback by registering the delegation
-/// bytecode in the contracts cache while leaving the account's
-/// `code` field `None`.
+/// `db.get_code_by_hash(&code_hash)`.
 #[test]
 fn eip7702_delegation_detected_via_code_by_hash_fallback() {
     let config = OutbeEvmConfig::new(
@@ -328,18 +307,12 @@ fn eip7702_delegation_detected_via_code_by_hash_fallback() {
     let signer = Address::from(*recovered.signer());
 
     let initial_balance = U256::from(1u64);
-    let mut db = cache_db_with_paymaster_account(signer, initial_balance);
+    let mut state = cache_db_with_paymaster_account(signer, initial_balance);
 
-    // Recreate the signer account in the STEADY-STATE shape:
-    // `code == None`, `code_hash` set, and the delegation bytecode
-    // registered in the contracts cache (reachable only via
-    // code_by_hash). The first insert (code: Some) registers the
-    // contract. The second (code: None) replaces the account entry
-    // while leaving the contract in the cache.
     let delegation = Bytecode::new_eip7702(ZEROFEE_ADDRESS);
     let delegation_hash = delegation.hash_slow();
-    db.insert_account_info(
-        signer,
+    state.insert_account_info(
+        &signer,
         AccountInfo {
             balance: initial_balance,
             code_hash: delegation_hash,
@@ -347,8 +320,8 @@ fn eip7702_delegation_detected_via_code_by_hash_fallback() {
             ..Default::default()
         },
     );
-    db.insert_account_info(
-        signer,
+    state.insert_account_info(
+        &signer,
         AccountInfo {
             balance: initial_balance,
             code_hash: delegation_hash,
@@ -357,15 +330,10 @@ fn eip7702_delegation_detected_via_code_by_hash_fallback() {
         },
     );
 
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-
-    // Sanity: basic() really returns code == None for this account,
+    // Sanity: get_account() really returns code == None for this account,
     // so the test genuinely exercises the fallback branch.
     let basic = state
-        .basic(signer)
+        .get_account(&signer)
         .expect("basic read")
         .expect("signer account exists");
     assert!(
@@ -373,9 +341,10 @@ fn eip7702_delegation_detected_via_code_by_hash_fallback() {
         "test precondition: signer.code must be None to exercise code_by_hash fallback"
     );
 
-    {
+    let output = {
         let evm = config.evm_with_env(&mut state, pectra_evm_env(1));
-        let ctx = execution_ctx(Some(1), Bytes::new());
+        let mut ctx = execution_ctx(Some(1), Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
         let mut executor = config.create_executor(evm, ctx);
 
         executor
@@ -396,8 +365,9 @@ fn eip7702_delegation_detected_via_code_by_hash_fallback() {
                 .any(|l| l.address == ZEROFEE_ADDRESS && l.topics().first() == Some(&sig_hash)),
             "sponsored path must emit SponsorshipAuthorized"
         );
-    }
-    state.merge_transitions(BundleRetention::Reverts);
+        executor.into_state()
+    };
+    state.commit_source(&BundleSource(&output));
 
     // Counter bumped to 1 and no fee debited. This confirms that the
     // fallback branch actually routed into the sponsored path.
@@ -410,21 +380,13 @@ fn eip7702_delegation_detected_via_code_by_hash_fallback() {
     assert_eq!(signer_balance(&mut state, signer), initial_balance);
 }
 /// Additive-delegation guarantee: a delegated account that sets a tip
-/// (`priority_fee > 0`) is NOT requesting sponsorship. Its tx must
-/// run through the normal fee path (balance debited, no quota burn,
-/// no SponsorshipAuthorized event), exactly as if the account were
-/// not delegated. This lets a signer keep transacting and
-/// paying after the daily free quota is exhausted. Without the fix,
-/// the executor soft-failed every non-free-envelope tx from a
-/// delegated account, jailing it into free-only mode.
+/// (`priority_fee > 0`) is NOT requesting sponsorship.
 #[test]
 fn eip7702_delegated_account_with_priority_fee_pays_normally() {
     let config = OutbeEvmConfig::new(
         test_chain_spec(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
-    // Same target/calldata as the sponsored happy path, but with a
-    // non-zero priority fee - the "I am paying" signal.
     let paying_tx: reth_ethereum::TransactionSigned = TxEip1559 {
         chain_id: CHAIN_ID,
         nonce: 0,
@@ -443,17 +405,13 @@ fn eip7702_delegated_account_with_priority_fee_pays_normally() {
         .expect("test-signature must recover");
     let signer = Address::from(*recovered.signer());
 
-    // Delegated to ZEROFEE, funded with 1 COEN so the normal fee
-    // path has balance to debit.
     let initial_balance = U256::from(3_000_000u64);
-    let mut state = State::builder()
-        .with_database(cache_db_with_paymaster_account(signer, initial_balance))
-        .with_bundle_update()
-        .build();
+    let mut state = cache_db_with_paymaster_account(signer, initial_balance);
 
-    {
+    let output = {
         let evm = config.evm_with_env(&mut state, pectra_evm_env(1));
-        let ctx = execution_ctx(Some(1), Bytes::new());
+        let mut ctx = execution_ctx(Some(1), Bytes::new());
+        ctx.execute_outbe_block_hooks = false;
         let mut executor = config.create_executor(evm, ctx);
 
         executor
@@ -466,7 +424,6 @@ fn eip7702_delegated_account_with_priority_fee_pays_normally() {
             receipts[0].success,
             "paying delegated tx must succeed as a normal tx"
         );
-        // No SponsorshipAuthorized event. This was not a sponsored tx.
         let sig_hash = SponsorshipAuthorized::SIGNATURE_HASH;
         assert!(
             !receipts[0]
@@ -475,8 +432,9 @@ fn eip7702_delegated_account_with_priority_fee_pays_normally() {
                 .any(|l| l.address == ZEROFEE_ADDRESS && l.topics().first() == Some(&sig_hash)),
             "paying tx must NOT emit SponsorshipAuthorized"
         );
-    }
-    state.merge_transitions(BundleRetention::Reverts);
+        executor.into_state()
+    };
+    state.commit_source(&BundleSource(&output));
 
     // Fee WAS debited (normal path), and the daily quota counter was
     // NOT touched. The tx never entered the sponsorship branch.

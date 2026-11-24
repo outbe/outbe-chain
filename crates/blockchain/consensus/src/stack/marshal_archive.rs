@@ -60,23 +60,26 @@ pub struct MarshalStart<ES> {
     pub epocher: ES,
     pub genesis: crate::block::ConsensusBlock,
 }
+pub type OutbeMarshalConfig<ES> = commonware_consensus::marshal::Config<
+    HybridSchemeProvider<MinSig>,
+    ES,
+    commonware_parallel::Sequential,
+    crate::block::ConsensusBlock,
+    commonware_cryptography::Digested<crate::block::ConsensusBlock>,
+>;
+
 pub fn marshal_config<ES: commonware_consensus::types::Epocher>(
     provider: HybridSchemeProvider<MinSig>,
     start: MarshalStart<ES>,
     settings: MarshalSettings<'_>,
-) -> Result<
-    commonware_consensus::marshal::Config<
-        HybridSchemeProvider<MinSig>,
-        ES,
-        commonware_parallel::Sequential,
-        crate::block::ConsensusBlock,
-        crate::block::ConsensusBlock,
-    >,
-> {
+) -> Result<OutbeMarshalConfig<ES>> {
+    let genesis_digest = start.genesis.digest();
     Ok(commonware_consensus::marshal::Config {
         provider,
         epocher: start.epocher,
-        start: commonware_consensus::marshal::Start::Genesis(start.genesis),
+        start: commonware_consensus::marshal::Start::Genesis(
+            commonware_cryptography::Digested::precomputed(start.genesis, genesis_digest),
+        ),
         partition_prefix: settings.partition_prefix.to_owned(),
         mailbox_size: nonzero_usize(config::ENGINE_MAILBOX_SIZE, "ENGINE_MAILBOX_SIZE")?,
         view_retention: ViewDelta::new(settings.view_retention_timeout),
@@ -102,9 +105,8 @@ mod tests {
 
     #[test]
     fn production_archives_preserve_partition_names_and_storage_settings() {
-        deterministic::Runner::default().start(|ctx| async move {
-            let cache = CacheRef::from_pooler(
-                &ctx,
+        deterministic::Runner::default().start(|_ctx| async move {
+            let cache = CacheRef::new(
                 NonZeroU16::new(4096).unwrap(),
                 NonZeroUsize::new(4).unwrap(),
             );

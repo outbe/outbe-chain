@@ -1,5 +1,6 @@
 use super::super::value_policy::{
-    classify_boundary_value, BoundaryValue::Credited, BoundaryValue::Rejected,
+    classify_boundary_value, BoundaryCallValue as CallValue, BoundaryValue::Credited,
+    BoundaryValue::Rejected,
 };
 use crate::precompiles::routes::{self, ValuePolicy};
 use alloy_primitives::{address, Address, Bytes, B256, U256};
@@ -14,7 +15,6 @@ use outbe_primitives::{
     storage::{MutationEntitlements, StorageHandle},
     system_tx_context::SystemTxExecutionContext,
 };
-use revm::interpreter::CallValue;
 
 const PAYABLE_ROUTE_A: Address = address!("0x000000000000000000000000000000000000EE81");
 const PAYABLE_ROUTE_B: Address = address!("0x000000000000000000000000000000000000EE82");

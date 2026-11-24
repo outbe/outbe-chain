@@ -83,8 +83,7 @@ async fn with_application(
 ) {
     use commonware_consensus::marshal::{self, Start};
     use commonware_runtime::buffer::paged::CacheRef;
-    let page_cache = CacheRef::from_pooler(
-        &context,
+    let page_cache = CacheRef::new(
         NonZeroU16::new(1024).unwrap(),
         NonZeroUsize::new(10).unwrap(),
     );
@@ -107,7 +106,9 @@ async fn with_application(
         marshal::Config {
             provider: HybridSchemeProvider::<MinSig>::new(),
             epocher: crate::follow::FollowerEpocher::new(10_000, 0),
-            start: Start::Genesis(crate::test_fixtures::block_with_number(0)),
+            start: Start::Genesis(crate::test_fixtures::digested_block(
+                crate::test_fixtures::block_with_number(0),
+            )),
             partition_prefix: "verify-telemetry".into(),
             page_cache,
             prunable_items_per_section: items_per_section,

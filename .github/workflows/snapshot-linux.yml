@@ -51,7 +51,7 @@ jobs:
             -e MISE_GITHUB_TOKEN \
             -e SOURCE_DATE_EPOCH=0 -e CARGO_INCREMENTAL=0 \
             -e CARGO_BUILD_JOBS=2 -e CARGO_PROFILE_TEST_DEBUG=0 \
-            ghcr.io/outbe/project-toolchain-ci@sha256:5c9735727039b9dbf31dce5b151f00f9925ff0906b1a6652d2cde5c5b73b2745 \
+            ghcr.io/outbe/project-toolchain-ci@sha256:53a15e0f8121aaae68bcf2eac3bbf09554f730d59de01fc41fb3d14be99f7a0e \
             bash -lc '
               set -euo pipefail
               git config --global --add safe.directory /workspace

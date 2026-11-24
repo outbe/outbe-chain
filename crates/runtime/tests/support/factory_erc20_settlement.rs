@@ -5,6 +5,7 @@ use std::fmt::Debug;
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolEvent};
+use evm2::evm::{CacheDB, EmptyDB};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_oracle::test_support::seed_trailing_vwap_window;
 use outbe_primitives::storage::{StorageHandle, SubCallOutput, SubCallStatus};
@@ -13,7 +14,6 @@ use outbe_vaultrouter::{
     precompile::IVaultRouter::{self, StablecoinSource},
     test_support::{register_source, register_vault},
 };
-use revm::database::{CacheDB, EmptyDB};
 
 sol! {
     interface IEurFixture {

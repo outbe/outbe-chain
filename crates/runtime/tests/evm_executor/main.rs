@@ -2,13 +2,18 @@ use alloy_consensus::{
     SignableTransaction as _, Transaction as _, TxEip1559, TxEip7702, TxReceipt as _,
 };
 use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, eip2718::Encodable2718, eip7702::Authorization};
-use alloy_evm::block::{BlockExecutionError, BlockValidationError, CommitChanges};
-use alloy_evm::eth::{EthBlockExecutionCtx, EthBlockExecutor};
-use alloy_evm::{Evm as _, RecoveredTx as _};
 use alloy_primitives::{
     address, keccak256, logs_bloom, Address, Bytes, Log, Signature, TxKind, B256, U256,
 };
 use alloy_sol_types::{SolCall, SolEvent};
+use evm2::{
+    block::{BundleSource, BundleState},
+    bytecode::Bytecode,
+    env::BlockEnvExt,
+    evm::{AccountInfo, CacheDB, Database, EmptyDB},
+    interpreter::InstrStop,
+    SpecId, TxResult,
+};
 use fixtures::{
     begin_system_txs_for_test, block_one_execution_ctx, boundary_with, boundary_with_epoch,
     cache_db_from_storage, dummy_pubkey, execution_ctx, execution_ctx_with_tee_bootstrap,
@@ -33,6 +38,7 @@ use outbe_evm::executor::{
 };
 use outbe_evm::{
     config::{OutbeBlockExecutionCtx, OutbeEvmConfig},
+    factory::OutbeEvmTypes,
     signer::{OutbeEvmSigner, SharedOutbeEvmSigner},
     system_tx::{
         build_unsigned_system_tx, is_reserved_system_tx, system_tx_intrinsic_gas, SystemTx,
@@ -72,21 +78,22 @@ use outbe_vote::{
     schema::{BondState, ProposalStatus, Vote},
 };
 use reth_ethereum::chainspec::{ChainSpec, ChainSpecBuilder, MAINNET};
-use reth_ethereum::evm::revm::db::State;
+use reth_ethereum::evm::{EthBlockExecutionCtx, EthBlockExecutor, EthEvmEnv};
+use reth_ethereum::provider::ProviderError;
 use reth_ethereum::{Receipt, TransactionSigned};
-use reth_evm::{block::BlockExecutor, execute::ProviderError, ConfigureEvm, EvmEnv};
+use reth_evm::execute::{BlockExecutionError, BlockExecutor, BlockValidationError, CommitChanges};
+use reth_evm::{BlockExecutorFactory as _, RecoveredTx as _};
 use reth_primitives_traits::{Recovered, SignedTransaction as _};
-use revm::context::result::{ExecutionResult, HaltReason, InvalidTransaction, OutOfGasError};
-use revm::context_interface::Block as _;
-use revm::{
-    context::{BlockEnv, CfgEnv, TxEnv},
-    database::states::bundle_state::BundleRetention,
-    database::{CacheDB, Database},
-    database_interface::EmptyDBTyped,
-    primitives::hardfork::SpecId,
-    state::{AccountInfo, Bytecode},
-};
 use std::sync::Arc;
+
+use fixtures_execution::finalize_executor_header_artifacts;
+
+fn tx_env(
+    config: &OutbeEvmConfig,
+    tx: &Recovered<TransactionSigned>,
+) -> Recovered<evm2::ethereum::TxEnvelope> {
+    reth_evm::ConfigureEvm::tx_env(config, tx.clone())
+}
 
 mod accounting;
 mod begin_layout;
@@ -136,12 +143,9 @@ fn executor_context_uses_canonical_chain_identity() {
         chain_spec.clone(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
-    let mut state = State::builder()
-        .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-        .with_bundle_update()
-        .build();
+    let mut state = CacheDB::new(EmptyDB::default());
     let mut env = test_evm_env(7, REWARDS_ADDRESS);
-    env.cfg_env.chain_id = CHAIN_ID + 1;
+    env.version.chain_id = CHAIN_ID + 1;
     let evm = config.evm_with_env(&mut state, env);
     let executor = config.create_executor(evm, execution_ctx(Some(7), Bytes::new()));
     let proposer = Address::repeat_byte(0x42);

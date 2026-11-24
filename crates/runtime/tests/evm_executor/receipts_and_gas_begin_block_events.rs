@@ -204,7 +204,6 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
         }),
         "Phase 1 proposer slashing must emit receipt-visible ProposerFelony"
     );
-    drop(executor);
 
     let read_ctx = BlockContext {
         block_gas_limit: 0,
@@ -217,8 +216,10 @@ fn apply_pre_execution_changes_emits_phase1_slashing_logs_in_system_receipt() {
         proposer,
         validators: vec![proposer, absent],
     };
-    let mut provider =
-        outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
+    let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+        executor.evm_mut().state_mut().overlay_db_mut(),
+        read_ctx,
+    );
     StorageHandle::enter(&mut provider, |storage| {
         let si = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
         // The inclusion-window close (N+K) now counts the voter miss, not CPA. Block 2's CPA
@@ -580,22 +581,19 @@ fn automatic_retirement_unbonding_started_is_published_in_staking_system_receipt
 }
 
 fn execute_begin_block_system_tx(
-    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    state: &mut CacheDB<EmptyDB>,
     block_number: u64,
     timestamp: u64,
     proposer: Address,
     input: SystemTx,
 ) -> Receipt {
-    use alloy_evm::Evm as _;
-    use revm::DatabaseCommit;
-
     let mut evm_env = test_evm_env(block_number, REWARDS_ADDRESS);
-    evm_env.block_env.timestamp = U256::from(timestamp);
+    evm_env.block.timestamp = U256::from(timestamp);
     let config = OutbeEvmConfig::new(
         test_chain_spec(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
-    let result = {
+    let outcome = {
         let mut evm = config.evm_with_env(&mut *state, evm_env);
         outbe_evm::executor::with_preloaded_system_tx_context(
             outbe_evm::executor::PreloadedSystemTxContext {
@@ -607,7 +605,8 @@ fn execute_begin_block_system_tx(
                 user_gas_used: 0,
             },
             || {
-                evm.transact_system_call(
+                outbe_evm::factory::transact_outbe_system_call(
+                    &mut evm,
                     outbe_primitives::addresses::SYSTEM_ADDRESS,
                     OUTBE_SYSTEM_TX_ADDRESS,
                     input.encode().expect("begin-block system tx encodes"),
@@ -617,11 +616,11 @@ fn execute_begin_block_system_tx(
         .expect("begin-block system call")
     };
     assert!(
-        result.result.is_success(),
+        outcome.result.is_success(),
         "begin-block system call must succeed"
     );
-    let logs = result.result.into_logs();
-    state.commit(result.state);
+    let logs = outcome.result.logs;
+    state.commit_pending(&outcome.pending_state);
     Receipt {
         tx_type: alloy_consensus::TxType::Legacy,
         success: true,

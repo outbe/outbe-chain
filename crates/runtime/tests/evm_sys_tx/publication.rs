@@ -214,14 +214,14 @@ fn publication_system_dispatch_requires_system_caller_and_current_quorum_atomica
 /// Every measured batch runs through the real system-call EVM. The independent
 /// HashMap meter must match its gross charge and changed storage exactly.
 fn measure_publication_batch(fixture: &mut PublicationFixture, batch: PublicationBatch) -> u64 {
-    use alloy_evm::{Evm as _, EvmEnv, EvmFactory as _};
-    use outbe_primitives::storage::{gas::PRECOMPILE_BASE_GAS, PrecompileStorageProvider as _};
-    use revm::{
-        context::{BlockEnv, CfgEnv},
-        database::{CacheDB, EmptyDB},
-        primitives::hardfork::SpecId,
-        state::AccountInfo,
+    use evm2::{
+        env::BlockEnvExt,
+        evm::{AccountInfo, CacheDB, EmptyDB},
+        SpecId,
     };
+    use outbe_evm::factory::transact_outbe_system_call;
+    use outbe_primitives::storage::{gas::PRECOMPILE_BASE_GAS, PrecompileStorageProvider as _};
+    use reth_ethereum::evm::EthEvmEnv;
 
     let input = SystemTx::Consensus {
         step_index: CONSENSUS_RADICLE_PUBLICATION_STEP_INDEX,
@@ -233,47 +233,46 @@ fn measure_publication_batch(fixture: &mut PublicationFixture, batch: Publicatio
     for (&(address, slot), &value) in &fixture.provider.storage {
         // Retain storage-only seeded accounts under EIP-161, as genesis does.
         db.insert_account_info(
-            address,
+            &address,
             AccountInfo {
                 nonce: 1,
                 ..Default::default()
             },
         );
-        db.insert_account_storage(address, slot, value).unwrap();
+        db.insert_account_storage(&address, &slot, &value);
     }
-    db.cache.block_hashes.insert(
-        U256::from(batch.body.finalized_anchor_height),
-        batch.body.finalized_anchor_hash,
+    db.insert_block_hash(
+        &U256::from(batch.body.finalized_anchor_height),
+        &batch.body.finalized_anchor_hash,
     );
     let factory = outbe_evm::factory::OutbeEvmFactory::new(std::sync::Arc::new(
         outbe_runtime::OutbeRuntime::new(),
     ))
     .with_genesis_hash(fixture.provider.genesis_hash())
     .with_genesis_timestamp(fixture.provider.genesis_timestamp());
-    let env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(2026)
-            .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-        block_env: BlockEnv {
+    let env = EthEvmEnv::new(
+        SpecId::PRAGUE,
+        BlockEnvExt {
             number: U256::from(fixture.provider.block_number()),
-            gas_limit: 32_000_000,
+            gas_limit: U256::from(32_000_000_u64),
             ..Default::default()
         },
-    };
+        2026,
+    );
     let mut evm = factory.create_evm(db, env);
-    let output = evm
-        .transact_system_call(
-            SYSTEM_ADDRESS,
-            outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
-            input.clone(),
-        )
-        .unwrap();
+    let output = transact_outbe_system_call(
+        &mut evm,
+        SYSTEM_ADDRESS,
+        outbe_primitives::addresses::OUTBE_SYSTEM_TX_ADDRESS,
+        input.clone(),
+    )
+    .unwrap();
     assert!(
         output.result.is_success(),
         "publication EVM failure: {:?}",
         output.result
     );
-    let gross = output.result.gas().total_gas_spent();
+    let gross = output.result.total_gas_spent;
 
     fixture
         .provider
@@ -286,15 +285,15 @@ fn measure_publication_batch(fixture: &mut PublicationFixture, batch: Publicatio
     assert_eq!(fixture.provider.gas_used(), reads * 100 + writes * 5000);
     assert_eq!(gross, fixture.provider.gas_used() + PRECOMPILE_BASE_GAS);
     assert_eq!(fixture.provider.gas_refunded(), 0);
-    for (address, account) in output.state {
-        for (slot, value) in account.storage {
-            if value.is_changed() {
+    for account in output.pending_state.account_changes() {
+        for (&slot, change) in &account.storage.slots {
+            if change.value.current != change.value.original {
                 assert_eq!(
-                    value.present_value(),
+                    change.value.current,
                     fixture
                         .provider
                         .storage
-                        .get(&(address, slot))
+                        .get(&(account.address, slot))
                         .copied()
                         .unwrap_or_default()
                 );

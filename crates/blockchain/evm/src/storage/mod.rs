@@ -1,19 +1,14 @@
 //! Storage providers backing the outbe sub-call mechanism.
 //!
 //! Houses [`CtxStorageProvider`], the [`PrecompileStorageProvider`] impl that
-//! the sub-call driver uses
-//! to expose journaled access against an [`alloy_evm::eth::EthEvmContext`].
+//! exposes journaled access and sub-call execution against an
+//! [`evm2::Evm`].
 //!
-//!
-//! [`CtxStorageProvider`] owns a `&'a mut EthEvmContext<DB>` field so that
-//! `sub_call(input)` can pass the same
-//! `&mut ctx` to `sub_call::run_frame`, then settles against its parent meter.
-//! The public standalone `sub_call::run_with_host` is used by direct-driver callers.
-//! The outer dispatch path
-//! borrows `CtxStorageProvider` through
-//! [`outbe_primitives::storage::StorageHandle::with_provider`]. That method uses
-//! `Rc<RefCell<&mut dyn PrecompileStorageProvider>>` and releases the inner
-//! borrow as soon as the scope ends.
+//! [`CtxStorageProvider`] owns a `&'a mut evm2::Evm<'evm, OutbeEvmTypes>` field so that
+//! `sub_call(input)` can pass the same `&mut evm` to `sub_call::run_frame`, then settles
+//! against its parent meter. The public standalone `sub_call::run_with_host` is used by
+//! direct-driver callers. The outer dispatch path borrows `CtxStorageProvider` through
+//! [`outbe_primitives::storage::StorageHandle`].
 
 pub mod ctx_provider;
 

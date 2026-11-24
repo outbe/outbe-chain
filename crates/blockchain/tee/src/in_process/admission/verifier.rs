@@ -8,9 +8,9 @@ use crate::{
     },
 };
 use alloy_consensus::{BlockHeader as _, Sealable as _};
-use alloy_primitives::{B256, U256};
+use alloy_primitives::{bytes::Buf as _, B256, U256};
 use alloy_rlp::Decodable as _;
-use commonware_codec::ReadExt as _;
+use commonware_codec::{Copying, ReadExt as _};
 use commonware_consensus::types::Epoch;
 use commonware_cryptography::bls12381;
 use commonware_utils::ordered::Set;
@@ -61,10 +61,10 @@ impl FinalizedAdmissionVerifierV1 {
             .genesis_consensus_keys
             .iter()
             .map(|encoded| {
-                let mut input = encoded.as_slice();
+                let mut input = Copying(encoded.as_slice());
                 let key = bls12381::PublicKey::read(&mut input)
                     .map_err(FinalizedAdmissionError::GenesisConsensusKey)?;
-                if !input.is_empty() {
+                if input.has_remaining() {
                     return Err(FinalizedAdmissionError::GenesisConsensusKeyTrailingBytes.into());
                 }
                 Ok(key)

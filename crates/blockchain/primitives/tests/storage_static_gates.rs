@@ -10,9 +10,8 @@
 use alloy_primitives::{address, Address, LogData, U256};
 use outbe_primitives::{
     error::PrecompileError,
-    storage::{hashmap::HashMapStorageProvider, StorageHandle},
+    storage::{hashmap::HashMapStorageProvider, Bytecode, StorageHandle},
 };
-use revm::state::Bytecode;
 
 fn provider() -> HashMapStorageProvider {
     let mut p = HashMapStorageProvider::new(1);

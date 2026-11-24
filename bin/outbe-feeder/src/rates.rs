@@ -13,11 +13,58 @@ use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
 use alloy_primitives::U256;
-use eyre::{bail, ensure, eyre, Result};
-use outbe_system_common::time::{date_key_to_utc_timestamp, timestamp_to_date_key};
+use outbe_system_common::time::{date_key_to_utc_timestamp, timestamp_to_date_key, TimeError};
 use serde::Deserialize;
 use serde_json::Value;
+use thiserror::Error;
 use tracing::warn;
+
+/// Errors returned when reading or parsing policy rates.
+#[derive(Debug, Error)]
+enum RateError {
+    #[error("HTTP request failed")]
+    Http(#[from] reqwest::Error),
+    #[error("invalid JSON response")]
+    Json(#[from] serde_json::Error),
+    #[error("invalid integer field")]
+    ParseInt(#[from] std::num::ParseIntError),
+    #[error("invalid time {timestamp}")]
+    InvalidTimestamp {
+        timestamp: u64,
+        #[source]
+        source: TimeError,
+    },
+    #[error("no rows in response")]
+    NoRows,
+    #[error("bad CSV row {0:?}")]
+    BadRow(String),
+    #[error("missing field {0}")]
+    MissingField(&'static str),
+    #[error("no rate in response")]
+    NoRate,
+    #[error("a fixed rate has no source")]
+    FixedRateHasNoSource,
+    #[error("expected a string or a number, found {0}")]
+    UnexpectedJsonValue(Value),
+    #[error("bad date {0:?}")]
+    BadDate(String),
+    #[error("bad month in {0:?}")]
+    BadMonth(String),
+    #[error("bad calendar date {year}-{month}-{day}")]
+    InvalidCalendarDate { year: u32, month: u32, day: u32 },
+    #[error("calendar date {year}-{month}-{day} out of range")]
+    DateOutOfRange {
+        year: u32,
+        month: u32,
+        day: u32,
+        #[source]
+        source: TimeError,
+    },
+    #[error("bad rate {0:?}")]
+    BadRate(String),
+    #[error("rate {0:?} is too large")]
+    RateOverflow(String),
+}
 
 /// The feeder asks a source again after this time.
 const REFRESH_SECS: u64 = 10 * 60;
@@ -171,14 +218,22 @@ fn entries(providers: &[RateProviderConfig]) -> Vec<(u16, &RateProviderConfig)> 
 
 /// The fixed rate of `entry`, published at 00:00 UTC of the day of
 /// `block_time`.
-fn fixed(entry: &RateProviderConfig, block_time: u64) -> Result<(U256, u64)> {
-    let day = date_key_to_utc_timestamp(timestamp_to_date_key(block_time))
-        .map_err(|_| eyre!("invalid time {block_time}"))?;
+fn fixed(entry: &RateProviderConfig, block_time: u64) -> Result<(U256, u64), RateError> {
+    let day = date_key_to_utc_timestamp(timestamp_to_date_key(block_time)).map_err(|source| {
+        RateError::InvalidTimestamp {
+            timestamp: block_time,
+            source,
+        }
+    })?;
     Ok((percent_to_1e6(&entry.rate)?, day))
 }
 
 /// Reads the rate of `entry` and its publication time from its source.
-async fn read(http: &reqwest::Client, entry: &RateProviderConfig, now: u64) -> Result<(U256, u64)> {
+async fn read(
+    http: &reqwest::Client,
+    entry: &RateProviderConfig,
+    now: u64,
+) -> Result<(U256, u64), RateError> {
     let from = timestamp_to_date_key(now.saturating_sub(HISTORY_DAYS * 86_400));
     let (year, month, day) = (from / 10_000, from / 100 % 100, from % 100);
     let url = match entry.kind {
@@ -204,8 +259,8 @@ async fn read(http: &reqwest::Client, entry: &RateProviderConfig, now: u64) -> R
 
 /// The rate at scale 1e6 and its publication time from the answer `body` of
 /// a source of `kind`.
-fn parse(kind: RateKind, body: &str) -> Result<(U256, u64)> {
-    let json = || serde_json::from_str::<Value>(body).map_err(|error| eyre!("not JSON: {error}"));
+fn parse(kind: RateKind, body: &str) -> Result<(U256, u64), RateError> {
+    let json = || serde_json::from_str::<Value>(body).map_err(RateError::Json);
     let (rate, date) = match kind {
         RateKind::Nyfed => {
             let json = json()?;
@@ -227,17 +282,21 @@ fn parse(kind: RateKind, body: &str) -> Result<(U256, u64)> {
                 .lines()
                 .map(str::trim)
                 .rfind(|line| !line.is_empty())
-                .ok_or_else(|| eyre!("no rows"))?;
+                .ok_or(RateError::NoRows)?;
             let (date, rate) = row
                 .split_once(',')
-                .ok_or_else(|| eyre!("bad row {row:?}"))?;
+                .ok_or_else(|| RateError::BadRow(row.to_owned()))?;
             let mut parts = date.split_whitespace();
-            let mut part = || parts.next().ok_or_else(|| eyre!("bad date {date:?}"));
+            let mut part = || {
+                parts
+                    .next()
+                    .ok_or_else(|| RateError::BadDate(date.to_owned()))
+            };
             let (day, month, year) = (part()?, part()?, part()?);
             let month = MONTHS
                 .iter()
                 .position(|name| name.eq_ignore_ascii_case(month))
-                .ok_or_else(|| eyre!("bad month in {date:?}"))?;
+                .ok_or_else(|| RateError::BadMonth(date.to_owned()))?;
             (
                 rate.to_owned(),
                 day_start(year.parse()?, month as u32 + 1, day.parse()?)?,
@@ -249,14 +308,14 @@ fn parse(kind: RateKind, body: &str) -> Result<(U256, u64)> {
             let values = &json["RESULTSET"][0]["VALUES"];
             let rates = values["VALUES"]
                 .as_array()
-                .ok_or_else(|| eyre!("no VALUES"))?;
+                .ok_or(RateError::MissingField("VALUES"))?;
             let dates = values["SURVEY_DATES"]
                 .as_array()
-                .ok_or_else(|| eyre!("no SURVEY_DATES"))?;
+                .ok_or(RateError::MissingField("SURVEY_DATES"))?;
             let index = rates
                 .iter()
                 .rposition(|rate| !rate.is_null())
-                .ok_or_else(|| eyre!("no rate"))?;
+                .ok_or(RateError::NoRate)?;
             let date: u32 = text(dates.get(index).unwrap_or(&Value::Null))?.parse()?;
             (
                 text(&rates[index])?,
@@ -277,62 +336,70 @@ fn parse(kind: RateKind, body: &str) -> Result<(U256, u64)> {
             let row = json["records"]
                 .as_array()
                 .and_then(|rows| rows.iter().find(|row| row["productCode"] == "DR001"))
-                .ok_or_else(|| eyre!("no DR001 row"))?;
+                .ok_or(RateError::MissingField("DR001"))?;
             (
                 text(&row["weightedRate"])?,
                 iso_date(&format!("20{}", text(&row["date"])?))?,
             )
         }
-        RateKind::Fixed => bail!("a fixed rate has no source"),
+        RateKind::Fixed => return Err(RateError::FixedRateHasNoSource),
     };
     Ok((percent_to_1e6(&rate)?, date))
 }
 
 /// A JSON string or number as text. A number keeps the digits of the source.
-fn text(value: &Value) -> Result<String> {
+fn text(value: &Value) -> Result<String, RateError> {
     match value {
         Value::String(text) => Ok(text.clone()),
         Value::Number(number) => Ok(number.to_string()),
-        other => bail!("expected a string or a number, found {other}"),
+        other => Err(RateError::UnexpectedJsonValue(other.clone())),
     }
 }
 
 /// 00:00 UTC of the date `YYYY-MM-DD`, in Unix seconds.
-fn iso_date(date: &str) -> Result<u64> {
+fn iso_date(date: &str) -> Result<u64, RateError> {
     let mut parts = date.split('-').map(str::parse::<u32>);
-    let mut part = || parts.next().ok_or_else(|| eyre!("bad date {date:?}"));
+    let mut part = || {
+        parts
+            .next()
+            .ok_or_else(|| RateError::BadDate(date.to_owned()))
+    };
     day_start(part()??, part()??, part()??)
 }
 
 /// 00:00 UTC of a calendar date, in Unix seconds.
-fn day_start(year: u32, month: u32, day: u32) -> Result<u64> {
-    ensure!(
-        (1970..=9999).contains(&year) && (1..=12).contains(&month) && (1..=31).contains(&day),
-        "bad date {year}-{month}-{day}"
-    );
-    date_key_to_utc_timestamp(year * 10_000 + month * 100 + day)
-        .map_err(|_| eyre!("bad date {year}-{month}-{day}"))
+fn day_start(year: u32, month: u32, day: u32) -> Result<u64, RateError> {
+    if !((1970..=9999).contains(&year) && (1..=12).contains(&month) && (1..=31).contains(&day)) {
+        return Err(RateError::InvalidCalendarDate { year, month, day });
+    }
+    date_key_to_utc_timestamp(year * 10_000 + month * 100 + day).map_err(|source| {
+        RateError::DateOutOfRange {
+            year,
+            month,
+            day,
+            source,
+        }
+    })
 }
 
 /// A rate in percent, for example `3.9832`, as an annual rate at scale 1e6.
 /// The digits after the fourth decimal are cut. A rate below zero is zero.
-fn percent_to_1e6(percent: &str) -> Result<U256> {
+fn percent_to_1e6(percent: &str) -> Result<U256, RateError> {
     let percent = percent.trim();
     if percent.starts_with('-') {
         return Ok(U256::ZERO);
     }
     let (whole, fraction) = percent.split_once('.').unwrap_or((percent, ""));
-    ensure!(
-        !whole.is_empty() && fraction.bytes().all(|digit| digit.is_ascii_digit()),
-        "bad rate {percent:?}"
-    );
-    let whole: u64 = whole.parse().map_err(|_| eyre!("bad rate {percent:?}"))?;
+    if whole.is_empty() || !fraction.bytes().all(|digit| digit.is_ascii_digit()) {
+        return Err(RateError::BadRate(percent.to_owned()));
+    }
+    let whole: u64 = whole.parse()?;
     let fraction: u64 = format!("{:0<4.4}", fraction).parse()?;
     whole
         .checked_mul(PERCENT_1E6)
         .and_then(|rate| rate.checked_add(fraction))
         .map(U256::from)
-        .ok_or_else(|| eyre!("rate {percent:?} is too large"))
+        .ok_or_else(|| RateError::RateOverflow(percent.to_owned()))
 }
 
 #[cfg(test)]

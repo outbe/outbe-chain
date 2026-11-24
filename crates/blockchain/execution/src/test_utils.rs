@@ -226,7 +226,7 @@ impl<R: StorageReadObserver, B: BlockHashReader + Clone + Send + Sync + 'static>
 {
     fn hashed_post_state(
         &self,
-        bundle_state: &revm::database::BundleState,
+        bundle_state: &reth_evm::BundleState,
     ) -> ProviderResult<HashedPostState> {
         Ok(HashedPostState::from_bundle_state::<KeccakKeyHasher>(
             bundle_state.state(),

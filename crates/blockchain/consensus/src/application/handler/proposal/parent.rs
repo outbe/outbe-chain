@@ -103,7 +103,7 @@ impl ApplicationShared {
                 .timeout(PROPOSE_RESOLUTION_TIMEOUT, block_future)
                 .await
             {
-                Ok(Ok(block)) => (*block).clone(),
+                Ok(Ok(block)) => block.inner().clone(),
                 Ok(Err(_)) => {
                     return Err(ApplicationError::ResolveParentFailed(parent_digest.0).into());
                 }

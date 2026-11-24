@@ -341,20 +341,22 @@ impl AccountedParentArtifactProvider for HeaderNotFoundArtifactProvider {
 /// caller drives the `OutbeBlockExecutor::new(...)` construction inline
 /// because its return type references the opaque concrete `Evm` produced
 /// by `OutbeEvmConfig::evm_with_env`.
-fn hint_test_env(block_number: u64, parent_hash: B256) -> (EvmEnv, EthBlockExecutionCtx<'static>) {
-    let env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+fn hint_test_env(
+    block_number: u64,
+    parent_hash: B256,
+) -> (EthEvmEnv<OutbeEvmTypes>, EthBlockExecutionCtx<'static>) {
+    let env = EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::from(block_number),
-            gas_limit: 30_000_000,
-            basefee: 1_000_000_000,
+            gas_limit: U256::from(30_000_000_u64),
+            basefee: U256::from(1_000_000_000_u64),
             beneficiary: REWARDS_ADDRESS,
             timestamp: U256::from(block_number),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
     let ctx = EthBlockExecutionCtx {
         parent_hash,
         parent_beacon_block_root: None,
@@ -378,10 +380,7 @@ fn hint_accepted_when_metadata_matches_parent() {
         chain_spec.clone(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
-    let mut state = State::builder()
-        .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-        .with_bundle_update()
-        .build();
+    let mut state = CacheDB::new(EmptyDB::default());
 
     let block_number = 42u64;
     let parent_hash = B256::repeat_byte(0xA0);
@@ -390,6 +389,8 @@ fn hint_accepted_when_metadata_matches_parent() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         {
             let mut inputs = fixtures::empty_executor_inputs(parent_hash);
             inputs.parent_accounting.parent_artifact_hint = Some(hint);
@@ -419,10 +420,7 @@ fn provider_header_not_found_uses_matching_parent_hint() {
         chain_spec.clone(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
-    let mut state = State::builder()
-        .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-        .with_bundle_update()
-        .build();
+    let mut state = CacheDB::new(EmptyDB::default());
 
     let block_number = 42u64;
     let parent_hash = B256::repeat_byte(0xA0);
@@ -431,6 +429,8 @@ fn provider_header_not_found_uses_matching_parent_hint() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         {
             let mut inputs = fixtures::empty_executor_inputs(parent_hash);
             inputs.parent_accounting.accounted_parent_artifact_provider =
@@ -462,10 +462,7 @@ fn hint_rejected_when_metadata_hash_mismatch() {
         chain_spec.clone(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
-    let mut state = State::builder()
-        .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-        .with_bundle_update()
-        .build();
+    let mut state = CacheDB::new(EmptyDB::default());
 
     let block_number = 42u64;
     let parent_hash = B256::repeat_byte(0xA0);
@@ -476,6 +473,8 @@ fn hint_rejected_when_metadata_hash_mismatch() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         {
             let mut inputs = fixtures::empty_executor_inputs(parent_hash);
             inputs.parent_accounting.parent_artifact_hint = Some(hint_test_artifact());
@@ -506,10 +505,7 @@ fn hint_rejected_when_metadata_number_mismatch() {
         chain_spec.clone(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
-    let mut state = State::builder()
-        .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-        .with_bundle_update()
-        .build();
+    let mut state = CacheDB::new(EmptyDB::default());
 
     let block_number = 42u64;
     let parent_hash = B256::repeat_byte(0xA0);
@@ -518,6 +514,8 @@ fn hint_rejected_when_metadata_number_mismatch() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         {
             let mut inputs = fixtures::empty_executor_inputs(parent_hash);
             inputs.parent_accounting.parent_artifact_hint = Some(hint_test_artifact());
@@ -550,10 +548,7 @@ fn no_provider_no_hint_returns_missing_artifact_error() {
         chain_spec.clone(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
-    let mut state = State::builder()
-        .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-        .with_bundle_update()
-        .build();
+    let mut state = CacheDB::new(EmptyDB::default());
 
     let block_number = 42u64;
     let parent_hash = B256::repeat_byte(0xA0);
@@ -562,6 +557,8 @@ fn no_provider_no_hint_returns_missing_artifact_error() {
     let evm = config.evm_with_env(&mut state, evm_env);
     let executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, inner_ctx, &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         fixtures::empty_executor_inputs(parent_hash),
     );
 
@@ -587,7 +584,7 @@ fn genesis_child_rejects_nonzero_prev_randao_without_parent_proof() {
     )
     .with_evm_signer(signer);
     let mut env = test_evm_env(1, REWARDS_ADDRESS);
-    env.block_env.prevrandao = Some(B256::repeat_byte(0x42));
+    env.block.prevrandao = U256::from_be_bytes(B256::repeat_byte(0x42).0);
     let evm = config.evm_with_env(&mut state, env);
     let mut executor = config.create_executor(evm, block_one_execution_ctx(Some(0), Bytes::new()));
     let error = executor
