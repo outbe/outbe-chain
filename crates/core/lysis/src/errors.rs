@@ -71,8 +71,8 @@ pub enum ProgramErrorV1 {
     #[error("Lysis V1 WorldwideDay mismatch at {ordinal}")]
     WorldwideDayMismatch { ordinal: usize },
 
-    #[error("Lysis V1 invalid Tribute identity at {ordinal}")]
-    InvalidTributeIdentity { ordinal: usize },
+    #[error("Lysis V1 invalid Offer identity at {ordinal}")]
+    InvalidOfferIdentity { ordinal: usize },
 
     #[error("Lysis V1 total nominal overflow at {ordinal}")]
     TotalNominalOverflow { ordinal: usize },
