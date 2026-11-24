@@ -12,6 +12,23 @@ use crate::seed_codec::parse_u64;
 
 use super::{port_of, quote, DEFAULT_MAX_VALIDATORS};
 
+/// Render the Reth setting required when multiple validators share a public IP.
+pub fn reth_config(config: &Value) -> Result<String, GenesisError> {
+    let shared_public_ip = match config.get("reth_shared_public_ip") {
+        Some(Value::Bool(value)) => *value,
+        Some(_) => {
+            return Err(GenesisError::validation(
+                "reth_shared_public_ip must be a boolean",
+            ));
+        }
+        None => false,
+    };
+    let incoming_ip_throttle = if shared_public_ip { "1s" } else { "30s" };
+    Ok(format!(
+        "[peers]\nincoming_ip_throttle_duration = \"{incoming_ip_throttle}\"\n"
+    ))
+}
+
 /// Render `run-radicle.sh` for a validator.
 pub fn radicle_script(
     config: &Value,
@@ -134,6 +151,7 @@ export RUST_MIN_STACK=\"${{RUST_MIN_STACK:-16777216}}\"\n\
 \n\
 exec {q_binary} node \\\n\
   --validator \\\n\
+  --config {q_reth_config} \\\n\
   --chain {q_genesis} \\\n\
   --datadir \"$DATA\" \\\n\
   --engine.persistence-threshold 0 \\\n\
@@ -163,6 +181,7 @@ exec {q_binary} node \\\n\
         q_data = quote(&format!("{validator_dir}/data")),
         q_logs = quote(&format!("{validator_dir}/logs")),
         q_binary = quote(binary),
+        q_reth_config = quote(&format!("{validator_dir}/reth.toml")),
         q_genesis = quote(&format!("{base_dir}/genesis.json")),
         q_consensus = quote(&format!("{validator_dir}/consensus")),
         q_radicle_sock = quote(&format!("{radicle_home}/node/outbe-control.sock")),

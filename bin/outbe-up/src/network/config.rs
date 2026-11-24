@@ -176,6 +176,13 @@ pub struct Genesis {
 }
 
 impl NetworkConfig {
+    pub fn has_shared_validator_machine(&self) -> bool {
+        let mut machines = BTreeSet::new();
+        self.founders
+            .iter()
+            .any(|founder| !machines.insert(founder.machine.as_str()))
+    }
+
     pub fn read(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path)
             .wrap_err_with(|| format!("read network config: {}", path.display()))?;
@@ -573,5 +580,20 @@ genesis:
         assert_eq!(founders[3].offset, 1);
         assert_eq!(founders[0].ports.rpc_public, Some(8545));
         assert_eq!(founders[1].ports.rpc_public, None);
+    }
+
+    #[test]
+    fn detects_shared_validator_machines() {
+        let mut config: NetworkConfig = serde_yaml_ng::from_str(EXAMPLE).unwrap();
+        assert!(config.has_shared_validator_machine());
+
+        let machine = config.machines.values().next().unwrap().clone();
+        for (index, founder) in config.founders.iter_mut().enumerate() {
+            founder.machine = format!("host-{index}");
+            config
+                .machines
+                .insert(founder.machine.clone(), machine.clone());
+        }
+        assert!(!config.has_shared_validator_machine());
     }
 }

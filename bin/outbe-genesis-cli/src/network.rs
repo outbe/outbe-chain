@@ -52,10 +52,11 @@ pub const SEED_SECTIONS: [&str; 15] = [
 
 pub const TEE_KEYS: [&str; 1] = ["mode"];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 44] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 45] = [
     "network",
     "validators",
     "validator_runtime",
+    "reth_shared_public_ip",
     "keys_dir",
     "chain_id",
     "tee",
@@ -195,6 +196,14 @@ pub fn validate_config(config: &Value) -> Result<(), GenesisError> {
     }
     validate_founders(obj)?;
     validate_validator_runtime(config, obj)?;
+    if obj
+        .get("reth_shared_public_ip")
+        .is_some_and(|value| !value.is_boolean())
+    {
+        return Err(GenesisError::validation(
+            "reth_shared_public_ip must be a boolean",
+        ));
+    }
     validate_tee(config, obj)?;
     rpc_bind_ip(config, "127.0.0.1")?;
     validate_ports(obj)

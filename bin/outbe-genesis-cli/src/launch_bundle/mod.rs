@@ -20,7 +20,7 @@ pub use self::dist::{build_distribution, deploy_markdown};
 pub use self::scripts::{
     feeder_config, feeder_pairs, feeder_pairs_file, feeder_pairs_settings, feeder_pairs_table,
     feeder_script, hyperlane_public_config, hyperlane_script, hyperlane_setup_script, node_script,
-    radicle_script,
+    radicle_script, reth_config,
 };
 pub use self::systemd::{caddy_install_script, caddyfile, preflight_script, write_systemd_units};
 
@@ -272,6 +272,9 @@ fn write_validator_scripts(
     .map_err(|err| GenesisError::io(&feeder_path, err))?;
     fs::set_permissions(&feeder_path, fs::Permissions::from_mode(0o600))
         .map_err(|err| GenesisError::io(&feeder_path, err))?;
+    let reth_path = directory.join("reth.toml");
+    fs::write(&reth_path, reth_config(&runtime_config)?)
+        .map_err(|err| GenesisError::io(&reth_path, err))?;
     let pairs_path = directory.join("pairs.toml");
     fs::write(&pairs_path, feeder_pairs(&runtime_config)?)
         .map_err(|err| GenesisError::io(&pairs_path, err))?;

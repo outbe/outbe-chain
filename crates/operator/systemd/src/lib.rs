@@ -211,6 +211,7 @@ fn joining_validator_spec(outbe_up: &str) -> ServiceSpec {
             "Environment=RUST_MIN_STACK=16777216",
             &format!("ExecStartPre={outbe_up} internal wait-validator-dependencies"),
             "ExecStart=/opt/outbe-chain/outbe-chain node \\",
+            "  --config /opt/outbe-chain/reth.toml \\",
             "  --chain /opt/outbe-chain/genesis.json \\",
             "  --datadir /opt/outbe-chain/validator-0/data \\",
             "  --engine.persistence-threshold 0 \\",
@@ -407,6 +408,7 @@ mod tests {
         assert!(validator.contains("radicle.control-socket"));
         assert!(validator.contains("${OUTBE_RETH_P2P_PORT}"));
         assert!(validator.contains("${OUTBE_RETH_DISCOVERY_PORT}"));
+        assert!(validator.contains("--config /opt/outbe-chain/reth.toml"));
         assert!(validator.contains("${OUTBE_CONSENSUS_PORT}"));
         assert!(validator.contains("--tee-bootstrap-timeout-secs 300"));
         assert!(validator.contains("TimeoutStartSec=0"));

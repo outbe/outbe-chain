@@ -193,6 +193,11 @@ impl OperatorConfig {
         write_private(
             &root.join("hyperlane-public.toml"),
             self.hyperlane.public_toml()?.as_bytes(),
+        )?;
+        let throttle = self.network.reth_incoming_ip_throttle_duration();
+        write_private(
+            &root.join("reth.toml"),
+            format!("[peers]\nincoming_ip_throttle_duration = \"{throttle}\"\n").as_bytes(),
         )
     }
 
@@ -375,6 +380,19 @@ impl NetworkConfig {
     pub fn local_rpc_url(&self) -> String {
         format!("http://{}:8545", self.rpc_bind_ip)
     }
+
+    fn reth_incoming_ip_throttle_duration(&self) -> &'static str {
+        let mut public_ips = BTreeSet::new();
+        for bootnode in &self.bootnodes {
+            let Some(ip) = bootnode_ipv4(bootnode) else {
+                continue;
+            };
+            if ip == self.advertise_ip || !public_ips.insert(ip) {
+                return "1s";
+            }
+        }
+        "30s"
+    }
 }
 
 const fn default_rpc_bind_ip() -> Ipv4Addr {
@@ -438,6 +456,12 @@ fn valid_consensus_peer(value: &str) -> bool {
         && port.parse::<u16>().is_ok_and(|port| port > 0)
 }
 
+fn bootnode_ipv4(value: &str) -> Option<Ipv4Addr> {
+    let (_, address) = value.rsplit_once('@')?;
+    let (host, _) = address.rsplit_once(':')?;
+    host.parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -477,6 +501,39 @@ hyperlane:
             assert_eq!(config.network.rpc_bind_ip, Ipv4Addr::LOCALHOST);
             assert_eq!(config.network.ports.reth_p2p, 30_303);
             assert_eq!(config.network.ports.consensus, 30_400);
+            let root = tempfile::tempdir().unwrap();
+            config
+                .write_runtime_config(root.path(), Address::ZERO)
+                .unwrap();
+            assert_eq!(
+                fs::read_to_string(root.path().join("reth.toml")).unwrap(),
+                "[peers]\nincoming_ip_throttle_duration = \"30s\"\n"
+            );
         }
+    }
+
+    #[test]
+    fn relaxes_reth_ip_throttle_only_for_shared_public_ips() {
+        let mut network = NetworkConfig {
+            chain_id: 424_242,
+            certified_rpc: "https://rpc.example".into(),
+            advertise_ip: Ipv4Addr::new(192, 0, 2, 10),
+            rpc_bind_ip: Ipv4Addr::LOCALHOST,
+            ports: NetworkPorts::default(),
+            bootnodes: vec![
+                "enode://a@192.0.2.1:30303".into(),
+                "enode://b@192.0.2.2:30303".into(),
+            ],
+            consensus_peers: vec![],
+            use_local_defaults: false,
+        };
+        assert_eq!(network.reth_incoming_ip_throttle_duration(), "30s");
+
+        network.bootnodes.push("enode://c@192.0.2.1:30304".into());
+        assert_eq!(network.reth_incoming_ip_throttle_duration(), "1s");
+
+        network.bootnodes.truncate(1);
+        network.advertise_ip = Ipv4Addr::new(192, 0, 2, 1);
+        assert_eq!(network.reth_incoming_ip_throttle_duration(), "1s");
     }
 }

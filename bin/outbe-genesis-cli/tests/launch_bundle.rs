@@ -157,6 +157,10 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
             );
         }
         assert!(directory.join("reth-bootnodes.txt").is_file());
+        assert_eq!(
+            fs::read_to_string(directory.join("reth.toml")).expect("reth config"),
+            "[peers]\nincoming_ip_throttle_duration = \"30s\"\n"
+        );
         for name in [
             "run-radicle.sh",
             "run-node.sh",
@@ -491,6 +495,7 @@ fn caddy_systemd_units_and_resident_tee() {
 fn per_validator_runtime_configures_nat_ports_and_private_rpc() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let runtime = json!({
+        "reth_shared_public_ip": true,
         "validator_runtime": [
             {
                 "rpc_bind_ip": "10.77.0.11",
@@ -527,6 +532,11 @@ fn per_validator_runtime_configures_nat_ports_and_private_rpc() {
     assert!(node.contains("--http.addr 10.77.0.12 --http.port 8545"));
     assert!(node.contains("--port 30304"));
     assert!(node.contains("--discovery.v5.port 31304"));
+    assert!(node.contains("--config"));
+    assert_eq!(
+        fs::read_to_string(output.join("validator-1/reth.toml")).expect("reth config"),
+        "[peers]\nincoming_ip_throttle_duration = \"1s\"\n"
+    );
     let radicle = fs::read_to_string(output.join("validator-1/run-radicle.sh")).expect("radicle");
     assert!(radicle.contains("--listen 0.0.0.0:8777"));
     assert!(radicle.contains("--advertise 10.0.0.2:8777"));

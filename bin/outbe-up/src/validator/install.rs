@@ -34,9 +34,11 @@ pub fn run() -> Result<()> {
     let env_path = root.join("validator.env");
     let feeder = root.join("feeder-public.toml");
     let hyperlane = root.join("hyperlane-public.toml");
+    let reth = root.join("reth.toml");
     validate_local_config(&env_path)?;
     validate_local_config(&feeder)?;
     validate_local_config(&hyperlane)?;
+    validate_local_config(&reth)?;
     let environment = read_environment(&env_path)?;
     validate_environment(&environment)?;
     validate_bundle(root)?;
@@ -51,9 +53,11 @@ pub fn run() -> Result<()> {
     process::chown(&env_path, 0, gid)?;
     process::chown(&feeder, 0, gid)?;
     process::chown(&hyperlane, 0, gid)?;
+    process::chown(&reth, 0, gid)?;
     fs::set_permissions(&env_path, fs::Permissions::from_mode(0o640))?;
     fs::set_permissions(&feeder, fs::Permissions::from_mode(0o640))?;
     fs::set_permissions(&hyperlane, fs::Permissions::from_mode(0o640))?;
+    fs::set_permissions(&reth, fs::Permissions::from_mode(0o640))?;
     install_units(root)?;
     process::systemctl(&["daemon-reload"])?;
     Ok(())

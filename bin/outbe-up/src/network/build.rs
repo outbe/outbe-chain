@@ -437,6 +437,10 @@ pub(super) fn genesis_cli_config(
         ("chain_id", json!(config.chain_id)),
         ("validators", Value::Array(validators)),
         ("validator_runtime", Value::Array(validator_runtime)),
+        (
+            "reth_shared_public_ip",
+            json!(config.has_shared_validator_machine()),
+        ),
         ("keys_dir", json!(keys)),
         (
             "base_profile",
@@ -824,6 +828,7 @@ mod tests {
         assert_eq!(value["validators"][1], "203.0.113.10:30401");
         assert_eq!(value["validator_runtime"][1]["rpc_bind_ip"], "10.77.0.12");
         assert_eq!(value["validator_runtime"][1]["reth_p2p_port"], 30304);
+        assert_eq!(value["reth_shared_public_ip"], true);
         let mappings = firewall_mappings(&founders);
         assert_eq!(
             mappings
