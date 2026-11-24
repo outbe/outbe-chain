@@ -43,7 +43,7 @@ outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
 outbe-zk-backend.workspace = true
 rand.workspace = true
 rand-commonware.workspace = true
-revm.workspace = true
+evm2 = { workspace = true, features = ["std"] }
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true

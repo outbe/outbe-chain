@@ -189,6 +189,7 @@ where
     ) -> eyre::Result<()> {
         match update {
             commonware_consensus::marshal::Update::Block(block, ack) => {
+                let block = block.inner();
                 let height = Height::new(block.number());
                 let digest = Digest(block.block_hash());
                 self.verification.get_mut().observe_finalized_height(height);

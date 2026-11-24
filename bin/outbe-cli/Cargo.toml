@@ -58,7 +58,6 @@ tempfile.workspace = true
 [dev-dependencies]
 ed25519-dalek.workspace = true
 reth-node-core.workspace = true
-secp256k1 = { workspace = true, features = ["global-context"] }
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-rpc = { workspace = true, features = ["test-support"] }
 outbe-tee = { workspace = true, features = ["test-utils"] }

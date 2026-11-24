@@ -2,6 +2,7 @@
 
 use alloy_primitives::{b256, Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall};
+use evm2::bytecode::Bytecode;
 use outbe_evm::EvmRuntimeHost;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
@@ -15,7 +16,6 @@ use outbe_system_common::addresses::{
     STABLECOIN_POLICY_REGISTRY_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS,
 };
 use outbe_system_common::stablecoin::StablecoinCreatePayload;
-use revm::state::Bytecode;
 
 sol! {
     interface ITeeRegistryRouteTest {

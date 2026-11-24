@@ -1,45 +1,43 @@
 //! User-controlled call envelopes must settle inside the EVM, so the next
 //! transaction can execute even when a precompile rejects the current call.
-use alloy_evm::{Evm as _, EvmFactory as _};
-use alloy_primitives::{keccak256, Address, Bytes, U256};
+use alloy_consensus::TxLegacy;
+use alloy_primitives::{keccak256, Address, Bytes, TxKind, U256};
 use alloy_sol_types::SolCall;
+use evm2::{
+    bytecode::Bytecode,
+    env::BlockEnvExt,
+    ethereum::TxEnvelope,
+    evm::{AccountInfo, CacheDB, EmptyDB},
+    SpecId, TxResult,
+};
 use outbe_ccaregistry::precompile::ICcaRegistry;
-use outbe_evm::OutbeEvmFactory;
+use outbe_evm::{factory::OutbeEvmTypes, OutbeEvmFactory};
 use outbe_primitives::{storage::gas::PRECOMPILE_BASE_GAS, system_tx::SystemTx};
 use outbe_system_common::addresses::{
     CCA_REGISTRY_ADDRESS, OUTBE_SYSTEM_TX_ADDRESS, STAKING_ADDRESS, SYSTEM_ADDRESS,
 };
-use reth_ethereum::evm::primitives::EvmEnv;
-use revm::{
-    context::{
-        result::{ExecutionResult, Output},
-        BlockEnv, CfgEnv, TxEnv,
-    },
-    database::{CacheDB, EmptyDB},
-    primitives::{hardfork::SpecId, TxKind},
-    state::{AccountInfo, Bytecode},
-};
+use reth_ethereum::evm::EthEvmEnv;
+use reth_primitives_traits::Recovered;
 
 const SENDER: Address = Address::repeat_byte(0xc0);
 const PROXY: Address = Address::repeat_byte(0xab);
 
-fn env() -> EvmEnv {
-    EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(1)
-            .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-        block_env: BlockEnv {
+fn env() -> EthEvmEnv<OutbeEvmTypes> {
+    EthEvmEnv::new(
+        SpecId::PRAGUE,
+        BlockEnvExt {
             number: U256::from(1),
-            gas_limit: 30_000_000,
+            gas_limit: U256::from(30_000_000_u64),
             ..Default::default()
         },
-    }
+        1,
+    )
 }
 
 fn funded_db() -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
     db.insert_account_info(
-        SENDER,
+        &SENDER,
         AccountInfo {
             balance: U256::from(10_u64.pow(18)),
             ..Default::default()
@@ -51,7 +49,7 @@ fn funded_db() -> CacheDB<EmptyDB> {
 fn funded_system_db() -> CacheDB<EmptyDB> {
     let mut db = funded_db();
     db.insert_account_info(
-        SYSTEM_ADDRESS,
+        &SYSTEM_ADDRESS,
         AccountInfo {
             balance: U256::from(10_u64.pow(18)),
             ..Default::default()
@@ -63,7 +61,7 @@ fn funded_system_db() -> CacheDB<EmptyDB> {
 fn install(db: &mut CacheDB<EmptyDB>, address: Address, bytes: Bytes) {
     let code = Bytecode::new_raw(bytes);
     db.insert_account_info(
-        address,
+        &address,
         AccountInfo {
             code_hash: code.hash_slow(),
             code: Some(code),
@@ -98,23 +96,27 @@ fn transact_from(
     to: Address,
     data: Bytes,
     gas: u64,
-) -> ExecutionResult {
+) -> TxResult<OutbeEvmTypes> {
     let mut evm = OutbeEvmFactory::new(std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()))
         .create_evm(db, env());
-    let tx = TxEnv::builder()
-        .caller(caller)
-        .nonce(0)
-        .kind(TxKind::Call(to))
-        .data(data)
-        .gas_limit(gas)
-        .build()
-        .unwrap();
-    evm.transact_raw(tx)
+    let tx = Recovered::new_unchecked(
+        TxEnvelope::Legacy(TxLegacy {
+            chain_id: Some(1),
+            nonce: 0,
+            gas_price: 0,
+            gas_limit: gas,
+            to: TxKind::Call(to),
+            value: U256::ZERO,
+            input: data,
+        }),
+        caller,
+    );
+    evm.transact(&tx)
         .expect("a caller rejection must not abort EVM execution")
-        .result
+        .commit()
 }
 
-fn transact(db: CacheDB<EmptyDB>, to: Address, data: Bytes, gas: u64) -> ExecutionResult {
+fn transact(db: CacheDB<EmptyDB>, to: Address, data: Bytes, gas: u64) -> TxResult<OutbeEvmTypes> {
     transact_from(db, SENDER, to, data, gas)
 }
 
@@ -137,10 +139,7 @@ fn user_cycle_bytes_do_not_abort_direct_or_contract_calls() {
             data.clone(),
             intrinsic + PRECOMPILE_BASE_GAS + spare,
         );
-        assert!(
-            matches!(result, ExecutionResult::Revert { .. }),
-            "{result:?}"
-        );
+        assert!(result.is_revert(), "{result:?}");
 
         let mut db = funded_db();
         install(
@@ -149,13 +148,8 @@ fn user_cycle_bytes_do_not_abort_direct_or_contract_calls() {
             proxy(STAKING_ADDRESS, 0xf1, (PRECOMPILE_BASE_GAS + spare) as u32),
         );
         let result = transact(db, PROXY, data.clone(), 100_000);
-        let ExecutionResult::Success {
-            output: Output::Call(output),
-            ..
-        } = result
-        else {
-            panic!("{result:?}")
-        };
+        assert!(result.is_success(), "{result:?}");
+        let output = &result.output;
         assert_eq!(U256::from_be_slice(&output[..32]), U256::ZERO);
         assert!(
             output.len() > 32,
@@ -180,7 +174,7 @@ fn cycle_probe_requires_both_system_callee_and_system_caller() {
             intrinsic + PRECOMPILE_BASE_GAS + spare,
         );
         assert!(
-            matches!(user_at_system_address, ExecutionResult::Revert { .. }),
+            user_at_system_address.is_revert(),
             "{user_at_system_address:?}"
         );
 
@@ -192,7 +186,7 @@ fn cycle_probe_requires_both_system_callee_and_system_caller() {
             intrinsic + PRECOMPILE_BASE_GAS + spare,
         );
         assert!(
-            matches!(system_at_user_precompile, ExecutionResult::Revert { .. }),
+            system_at_user_precompile.is_revert(),
             "{system_at_user_precompile:?}"
         );
     }
@@ -213,7 +207,7 @@ fn system_cycle_probe_out_of_gas_is_an_evm_halt() {
         data,
         intrinsic + PRECOMPILE_BASE_GAS + 50,
     );
-    assert!(matches!(result, ExecutionResult::Halt { .. }), "{result:?}");
+    assert!(result.is_halt(), "{result:?}");
 }
 
 #[test]
@@ -231,7 +225,8 @@ fn former_debug_address_does_not_invoke_a_calldata_selected_contract() {
     data[63] = 1;
     let result = transact(db, former_debug, data.into(), 100_000);
     assert!(
-        matches!(result, ExecutionResult::Success { output: Output::Call(ref bytes), .. } if bytes.is_empty())
+        result.is_success() && result.output.is_empty(),
+        "{result:?}"
     );
 }
 
@@ -245,21 +240,19 @@ fn caller_domain_error_keeps_its_selector_in_direct_and_child_calls() {
     .into();
     let expected = &keccak256("NotRegistered()")[..4];
     let direct = transact(funded_db(), CCA_REGISTRY_ADDRESS, calldata.clone(), 100_000);
-    let ExecutionResult::Revert { output, .. } = direct else {
-        panic!("expected a caller rejection, got {direct:?}")
-    };
-    assert_eq!(output.as_ref(), expected);
+    assert!(
+        direct.is_revert(),
+        "expected a caller rejection, got {direct:?}"
+    );
+    assert_eq!(direct.output.as_ref(), expected);
 
     let mut db = funded_db();
     install(&mut db, PROXY, proxy(CCA_REGISTRY_ADDRESS, 0xf1, 50_000));
     let child = transact(db, PROXY, calldata, 100_000);
-    let ExecutionResult::Success {
-        output: Output::Call(output),
-        ..
-    } = child
-    else {
-        panic!("the proxy must catch the child rejection, got {child:?}")
-    };
-    assert_eq!(U256::from_be_slice(&output[..32]), U256::ZERO);
-    assert_eq!(&output[32..], expected);
+    assert!(
+        child.is_success(),
+        "the proxy must catch the child rejection, got {child:?}"
+    );
+    assert_eq!(U256::from_be_slice(&child.output[..32]), U256::ZERO);
+    assert_eq!(&child.output[32..], expected);
 }

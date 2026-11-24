@@ -375,10 +375,16 @@ fn pool_admits_delegated_sponsored_tx_even_when_daily_quota_is_exhausted() {
 
 mod equivocation {
     use super::*;
-    use alloy_evm::{block::BlockExecutor as _, eth::EthBlockExecutionCtx};
     use commonware_codec::{DecodeExt as _, Encode as _};
     use commonware_cryptography::{bls12381, Signer as _};
     use commonware_utils::ordered::Set;
+    use evm2::{
+        block::BundleSource,
+        bytecode::Bytecode,
+        env::BlockEnvExt,
+        evm::{AccountInfo, CacheDB, Database as _, EmptyDB},
+        SpecId,
+    };
     use outbe_evm::config::{OutbeBlockExecutionCtx, OutbeEvmConfig};
     use outbe_primitives::block::BlockContext;
     use outbe_primitives::storage::direct::DirectStorageProvider;
@@ -391,14 +397,8 @@ mod equivocation {
         ValidatorLifecycle,
     };
     use outbe_zerofee::MAX_ZERO_FEE_SLASH_EQUIVOCATION_GAS_LIMIT as GAS_LIMIT;
-    use reth_evm::{ConfigureEvm as _, EvmEnv};
-    use revm::{
-        context::{BlockEnv, CfgEnv},
-        database::{CacheDB, Database as _, State},
-        database_interface::EmptyDBTyped,
-        primitives::hardfork::SpecId,
-        state::{AccountInfo, Bytecode},
-    };
+    use reth_ethereum::evm::{EthBlockExecutionCtx, EthEvmEnv};
+    use reth_evm::{execute::BlockExecutor as _, BlockExecutorFactory};
 
     const ACCUSED: Address = Address::repeat_byte(0xaa);
     const OWNER: Address = Address::repeat_byte(0xbb);
@@ -431,11 +431,12 @@ mod equivocation {
     }
 
     fn committee() -> Set<bls12381::PublicKey> {
-        Set::from_iter_dedup(
-            members().iter().map(|entry| {
-                bls12381::PublicKey::decode(entry.consensus_pubkey.as_slice()).unwrap()
-            }),
-        )
+        Set::from_iter_dedup(members().iter().map(|entry| {
+            bls12381::PublicKey::decode(commonware_codec::Copying(
+                entry.consensus_pubkey.as_slice(),
+            ))
+            .unwrap()
+        }))
     }
 
     fn seed(exiting: bool) -> HashMapStorageProvider {
@@ -610,12 +611,12 @@ mod equivocation {
         }
     }
 
-    type TestState = State<CacheDB<EmptyDBTyped<reth_evm::execute::ProviderError>>>;
+    type TestState = CacheDB<EmptyDB>;
 
     fn assert_post_state(state: &mut TestState, exiting: bool) {
         for index in 0..6 {
             let account = state
-                .basic(reporter(index).address())
+                .get_account(&reporter(index).address())
                 .unwrap()
                 .unwrap_or_default();
             assert_eq!(account.balance, U256::ZERO);
@@ -666,7 +667,7 @@ mod equivocation {
         {
             let seeded = seed(exiting);
             assert_pool_admission(&seeded, kind);
-            let mut db = CacheDB::<EmptyDBTyped<reth_evm::execute::ProviderError>>::default();
+            let mut db = CacheDB::new(EmptyDB::default());
             // Seeded precompiles must survive EIP-161 touched-account cleanup.
             let marker = Bytecode::new_legacy([0xef].into());
             let system_account = AccountInfo {
@@ -675,43 +676,37 @@ mod equivocation {
                 ..Default::default()
             };
             for address in seeded.storage.keys().map(|(address, _)| *address) {
-                db.insert_account_info(address, system_account.clone());
+                db.insert_account_info(&address, system_account.clone());
             }
             for ((address, slot), value) in seeded.storage {
-                db.insert_account_storage(address, slot, value).unwrap();
+                db.insert_account_storage(&address, &slot, &value);
             }
             db.insert_account_info(
-                STAKING_ADDRESS,
+                &STAKING_ADDRESS,
                 AccountInfo {
                     balance: U256::from(256 * 64 * AMOUNT),
                     ..system_account.clone()
                 },
             );
-            db.insert_account_info(SLASH_INDICATOR_ADDRESS, system_account);
-            let mut state = State::builder()
-                .with_database(db)
-                .with_bundle_update()
-                .build();
+            db.insert_account_info(&SLASH_INDICATOR_ADDRESS, system_account);
             let chain = Arc::new(
                 reth_chainspec::ChainSpecBuilder::mainnet()
                     .build()
                     .map_header(outbe_primitives::OutbeHeader::new),
             );
             let config = OutbeEvmConfig::new(chain, Arc::new(OutbeRuntime::new()));
-            let env = EvmEnv {
-                cfg_env: CfgEnv::new()
-                    .with_chain_id(CHAIN_ID)
-                    .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-                block_env: BlockEnv {
+            let env = EthEvmEnv::new(
+                SpecId::SHANGHAI,
+                BlockEnvExt {
                     number: U256::from(1),
                     timestamp: U256::from(1),
-                    gas_limit: 30_000_000,
-                    basefee: MIN_PROTOCOL_BASE_FEE,
+                    gas_limit: U256::from(30_000_000_u64),
+                    basefee: U256::from(MIN_PROTOCOL_BASE_FEE),
                     beneficiary: OWNER,
                     ..Default::default()
                 },
-            };
-            let evm = config.evm_with_env(&mut state, env);
+                CHAIN_ID,
+            );
             let ctx = OutbeBlockExecutionCtx {
                 inner: EthBlockExecutionCtx {
                     parent_hash: B256::ZERO,
@@ -735,7 +730,8 @@ mod equivocation {
                 pending_tee_bootstrap: None,
                 execution_read_budget: None,
             };
-            {
+            let output = {
+                let evm = config.evm_with_env(&mut db, env);
                 let mut executor = config.create_executor(evm, ctx);
                 executor
                     .execute_transaction(
@@ -789,16 +785,18 @@ mod equivocation {
                     .unwrap_err();
                 assert!(matches!(
                     error,
-                    alloy_evm::block::BlockExecutionError::Validation(
-                        alloy_evm::block::BlockValidationError::InvalidTx { .. }
+                    reth_evm::execute::BlockExecutionError::Validation(
+                        reth_evm::execute::BlockValidationError::InvalidTx { .. }
                     )
                 ));
                 assert!(error
                     .to_string()
                     .contains("zero-fee soft-failure cap (4) exceeded"));
                 assert_eq!(executor.receipts(), before);
-            }
-            assert_post_state(&mut state, exiting);
+                executor.into_state()
+            };
+            db.commit_source(&BundleSource(&output));
+            assert_post_state(&mut db, exiting);
         }
     }
 }

@@ -7,18 +7,14 @@ pub(super) type Channel<E> = (
     lookup::Sender<bls12381::PublicKey, E>,
     lookup::Receiver<bls12381::PublicKey>,
 );
-pub(super) type ChannelMux<E> = commonware_p2p::utils::mux::MuxHandle<
-    lookup::Sender<bls12381::PublicKey, E>,
-    lookup::Receiver<bls12381::PublicKey>,
->;
+pub(super) type ChannelMux<E> =
+    commonware_p2p::utils::mux::MuxHandle<lookup::Sender<bls12381::PublicKey, E>>;
 pub(super) type Subchannel<E> = (
     commonware_p2p::utils::mux::SubSender<lookup::Sender<bls12381::PublicKey, E>>,
-    commonware_p2p::utils::mux::SubReceiver<lookup::Receiver<bls12381::PublicKey>>,
+    commonware_p2p::utils::mux::SubReceiver<bls12381::PublicKey>,
 );
-pub(super) type EpochSubchannels<E> = crate::epoch_subchannels::EpochSubchannels<
-    lookup::Sender<bls12381::PublicKey, E>,
-    lookup::Receiver<bls12381::PublicKey>,
->;
+pub(super) type EpochSubchannels<E> =
+    crate::epoch_subchannels::EpochSubchannels<lookup::Sender<bls12381::PublicKey, E>>;
 pub(super) type VoteBackupRx = commonware_utils::channel::mpsc::Receiver<(
     u64,
     (bls12381::PublicKey, commonware_runtime::IoBuf),
@@ -30,8 +26,25 @@ pub fn radicle_channel_config() -> (u64, u32) {
     )
 }
 
-/// Muxer mailbox size for sub-channel buffering.
-const MUXER_MAILBOX: usize = 1024;
+/// Default internal actor mailbox capacity for Commonware authenticated lookup networks.
+///
+/// Preserves the pre-v2026.11.0 `lookup::Config` capacity (`1000`).
+pub const P2P_MAILBOX_SIZE: NonZeroUsize = commonware_utils::NZUsize!(1000);
+
+/// Build the Commonware SAKE V1 + CUPS V1 stream upgrader over ChaCha20Poly1305.
+pub fn sake_cups_v1_upgrader(
+    signer: bls12381::PrivateKey,
+) -> commonware_stream::SakeCups<bls12381::PrivateKey, commonware_cryptography::ChaCha20Poly1305> {
+    commonware_stream::cups::Cups::<_, commonware_cryptography::ChaCha20Poly1305>::new(
+        commonware_stream::sake::Sake {
+            signer,
+            synchrony_bound: Duration::from_secs(5),
+            max_handshake_age: Duration::from_secs(10),
+            version: commonware_stream::sake::Version::V1,
+        },
+        commonware_stream::cups::Version::V1,
+    )
+}
 
 pub(super) struct StartupTransport<E: Clock> {
     pub(super) network_handle: commonware_runtime::Handle<()>,
@@ -70,17 +83,7 @@ pub(super) async fn start_transport<E>(
     )>,
 ) -> Result<Option<StartupTransport<E>>>
 where
-    E: BufferPooler
-        + Clock
-        + CryptoRng
-        + Network
-        + Resolver
-        + Spawner
-        + Storage
-        + Metrics
-        + Send
-        + Sync
-        + 'static,
+    E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     let TransportAdmission {
         protocol,
@@ -92,21 +95,24 @@ where
     let p2p_namespace = commonware_utils::union_unique(&config::outbe_app_namespace(), b"_P2P");
     // Cover the full registered validator set plus a local non-validator identity.
     let max_peers_per_set = NonZeroUsize::new(crate::bls::MAX_VALIDATORS as usize + 1).unwrap();
+    let upgrader = sake_cups_v1_upgrader(signing_key.clone());
     let network_cfg = if args.use_local_defaults {
         lookup::Config::local(
-            signing_key.clone(),
+            upgrader,
             &p2p_namespace,
             args.listen_address,
             max_peers_per_set,
             config::MAX_P2P_MESSAGE_SIZE,
+            P2P_MAILBOX_SIZE,
         )
     } else {
         lookup::Config::recommended(
-            signing_key.clone(),
+            upgrader,
             &p2p_namespace,
             args.listen_address,
             max_peers_per_set,
             config::MAX_P2P_MESSAGE_SIZE,
+            P2P_MAILBOX_SIZE,
         )
     };
 
@@ -199,30 +205,19 @@ where
     // The Muxers split consensus channels by epoch. Each engine restart
     // gets fresh sub-channels, which prevents message interference.
     let (vote_muxer, vote_mux, vote_backup_rx) =
-        Muxer::builder(ctx.child("vote_mux"), votes.0, votes.1, MUXER_MAILBOX)
+        Muxer::builder(ctx.child("vote_mux"), votes.0, votes.1)
             .with_backup()
             .build();
     vote_muxer.start();
 
-    let (cert_muxer, cert_mux) = Muxer::new(
-        ctx.child("cert_mux"),
-        certificates.0,
-        certificates.1,
-        MUXER_MAILBOX,
-    );
+    let (cert_muxer, cert_mux) = Muxer::new(ctx.child("cert_mux"), certificates.0, certificates.1);
     cert_muxer.start();
 
-    let (res_muxer, res_mux) =
-        Muxer::new(ctx.child("res_mux"), resolver.0, resolver.1, MUXER_MAILBOX);
+    let (res_muxer, res_mux) = Muxer::new(ctx.child("res_mux"), resolver.0, resolver.1);
     res_muxer.start();
 
     // DKG channel muxed by reshare round.
-    let (dkg_muxer, dkg_mux) = Muxer::new(
-        ctx.child("dkg_mux"),
-        dkg_channel.0,
-        dkg_channel.1,
-        MUXER_MAILBOX,
-    );
+    let (dkg_muxer, dkg_mux) = Muxer::new(ctx.child("dkg_mux"), dkg_channel.0, dkg_channel.1);
     dkg_muxer.start();
 
     // Mux the TEE DKG + TEE bootstrap channels by round, as `dkg_mux` does.
@@ -231,12 +226,12 @@ where
     // permanent offer key through onboarding / key transfer, not through a
     // later TEE reshare. The value is `None` when neither a resident context is configured.
     let mut tee_dkg_mux = tee_dkg_channel.take().map(|ch| {
-        let (muxer, handle) = Muxer::new(ctx.child("tee_dkg_mux"), ch.0, ch.1, MUXER_MAILBOX);
+        let (muxer, handle) = Muxer::new(ctx.child("tee_dkg_mux"), ch.0, ch.1);
         muxer.start();
         handle
     });
     let mut tee_bootstrap_mux = tee_bootstrap_channel.take().map(|ch| {
-        let (muxer, handle) = Muxer::new(ctx.child("tee_boot_mux"), ch.0, ch.1, MUXER_MAILBOX);
+        let (muxer, handle) = Muxer::new(ctx.child("tee_boot_mux"), ch.0, ch.1);
         muxer.start();
         handle
     });

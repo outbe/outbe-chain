@@ -173,7 +173,6 @@ fn boundary_activation_allows_registered_next_epoch_proposer() {
 
     assert_eq!(executor.receipts().len(), 12);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
-    drop(executor);
 
     let read_ctx = BlockContext {
         block_gas_limit: 0,
@@ -186,8 +185,10 @@ fn boundary_activation_allows_registered_next_epoch_proposer() {
         proposer,
         validators: vec![proposer],
     };
-    let mut provider =
-        outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
+    let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+        executor.evm_mut().state_mut().overlay_db_mut(),
+        read_ctx,
+    );
     StorageHandle::enter(&mut provider, |storage| {
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
         assert!(vs.is_consensus_participant(proposer)?);
@@ -274,7 +275,7 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
     )
     .with_evm_signer(signer.clone());
     let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
-    evm_env.block_env.basefee = 0;
+    evm_env.block.basefee = U256::ZERO;
     let evm = config.evm_with_env(&mut state, evm_env);
     let mut ctx = execution_ctx(Some(1), extra_data.clone());
     ctx.inner.parent_hash = parent_hash;
@@ -345,7 +346,6 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
     // 13 begin-zone receipts + 1 user (deactivate) tx.
     assert_eq!(executor.receipts().len(), 14);
     assert!(executor.receipts()[13].success);
-    drop(executor);
 
     let read_ctx = BlockContext {
         block_gas_limit: 0,
@@ -358,8 +358,10 @@ fn full_begin_phases_then_user_tx_observes_boundary_activation() {
         proposer,
         validators: vec![proposer, joining],
     };
-    let mut provider =
-        outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
+    let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+        executor.evm_mut().state_mut().overlay_db_mut(),
+        read_ctx,
+    );
     StorageHandle::enter(&mut provider, |storage| {
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
         let record = vs
@@ -522,7 +524,6 @@ fn oracle_slash_window_runs_after_boundary_activation() {
         "oracle slash events are emitted directly on the OracleSlash receipt, not CycleTick"
     );
     assert_eq!(visible_system_gas_used, 0);
-    drop(executor);
 
     let read_ctx = BlockContext {
         block_gas_limit: 0,
@@ -535,8 +536,10 @@ fn oracle_slash_window_runs_after_boundary_activation() {
         proposer,
         validators: vec![old_active, proposer],
     };
-    let mut provider =
-        outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
+    let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+        executor.evm_mut().state_mut().overlay_db_mut(),
+        read_ctx,
+    );
     StorageHandle::enter(&mut provider, |storage| {
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
         assert!(vs.is_consensus_participant(proposer)?);

@@ -116,12 +116,9 @@ fn non_empty_withdrawal_rejects_before_any_state_write() {
     const DAO_BALANCE: u128 = 37;
     const WITHDRAWAL_TARGET: Address = address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB");
 
-    fn account_balance(
-        state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
-        address: Address,
-    ) -> U256 {
+    fn account_balance(state: &mut CacheDB<EmptyDB>, address: Address) -> U256 {
         state
-            .basic(address)
+            .get_account(&address)
             .expect("post-execution balance is readable")
             .map_or(U256::ZERO, |account| account.balance)
     }
@@ -132,18 +129,17 @@ fn non_empty_withdrawal_rejects_before_any_state_write() {
             chain_spec.clone(),
             std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
         );
-        let evm_env = EvmEnv {
-            cfg_env: CfgEnv::new()
-                .with_chain_id(chain_spec.chain().id())
-                .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-            block_env: BlockEnv {
+        let evm_env = EthEvmEnv::new(
+            SpecId::SHANGHAI,
+            BlockEnvExt {
                 number: U256::ZERO,
-                gas_limit: 30_000_000,
+                gas_limit: U256::from(30_000_000_u64),
                 beneficiary: REWARDS_ADDRESS,
                 timestamp: U256::ZERO,
                 ..Default::default()
             },
-        };
+            chain_spec.chain().id(),
+        );
         let evm = config.evm_with_env(&mut state, evm_env);
         let mut ctx = execution_ctx(Some(0), Bytes::new());
         ctx.execute_outbe_block_hooks = false;
@@ -170,7 +166,7 @@ fn non_empty_withdrawal_rejects_before_any_state_write() {
         assert_eq!(
             account_balance(
                 &mut state,
-                alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0]
+                evm2::block::ethereum::dao_fork::DAO_HARDFORK_ACCOUNTS[0]
             ),
             U256::from(DAO_BALANCE),
             "validation must precede the DAO drain"
@@ -178,7 +174,7 @@ fn non_empty_withdrawal_rejects_before_any_state_write() {
         assert_eq!(
             account_balance(
                 &mut state,
-                alloy_evm::eth::dao_fork::DAO_HARDFORK_BENEFICIARY
+                evm2::block::ethereum::dao_fork::DAO_HARDFORK_BENEFICIARY
             ),
             U256::ZERO,
             "validation must precede any beneficiary credit"
@@ -239,27 +235,21 @@ mod withdrawal_compatibility {
         }
     }
 
-    fn fixture_state() -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
-        let mut database = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    fn fixture_state() -> CacheDB<EmptyDB> {
+        let mut database = CacheDB::new(EmptyDB::default());
         database.insert_account_info(
-            alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
+            &evm2::block::ethereum::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
             AccountInfo {
                 balance: U256::from(DAO_BALANCE),
                 ..Default::default()
             },
         );
-        State::builder()
-            .with_database(database)
-            .with_bundle_update()
-            .build()
+        database
     }
 
-    fn balance(
-        state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
-        address: Address,
-    ) -> eyre::Result<U256> {
+    fn balance(state: &mut CacheDB<EmptyDB>, address: Address) -> eyre::Result<U256> {
         Ok(state
-            .basic(address)?
+            .get_account(&address)?
             .map_or(U256::ZERO, |account| account.balance))
     }
 
@@ -267,7 +257,7 @@ mod withdrawal_compatibility {
         case: &Case,
         withdrawals: Option<Vec<alloy_eips::eip4895::Withdrawal>>,
     ) -> eyre::Result<(
-        alloy_evm::block::BlockExecutionResult<Receipt>,
+        reth_ethereum::provider::BlockExecutionResult<Receipt>,
         B256,
         U256,
         U256,
@@ -278,50 +268,58 @@ mod withdrawal_compatibility {
             case.chain_spec.clone(),
             std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
         );
-        let evm_env = EvmEnv {
-            cfg_env: CfgEnv::new()
-                .with_chain_id(case.chain_spec.chain().id())
-                .with_spec_and_mainnet_gas_params(case.spec_id),
-            block_env: BlockEnv {
+        let evm_env = EthEvmEnv::new(
+            case.spec_id,
+            BlockEnvExt {
                 number: U256::ZERO,
-                gas_limit: 30_000_000,
+                gas_limit: U256::from(30_000_000_u64),
                 beneficiary: REWARDS_ADDRESS,
                 timestamp: U256::ZERO,
                 ..Default::default()
             },
+            case.chain_spec.chain().id(),
+        );
+        let output = {
+            let evm = config.evm_with_env(&mut state, evm_env);
+            let mut ctx = execution_ctx(Some(1), Bytes::new());
+            ctx.inner.parent_beacon_block_root = Some(B256::ZERO);
+            ctx.execute_outbe_block_hooks = false;
+            ctx.inner.withdrawals = withdrawals.clone().map(std::borrow::Cow::Owned);
+
+            let mut executor = config.create_executor(evm, ctx);
+            executor.apply_pre_execution_changes()?;
+            executor.inner.inner.receipts = vec![fixture_receipt(case.include_deposit)];
+            executor.inner.inner.cumulative_gas_used = CUMULATIVE_TX_GAS;
+            executor.inner.inner.block_regular_gas_used = REGULAR_GAS;
+            executor.inner.inner.block_state_gas_used = STATE_GAS;
+            executor.inner.inner.blob_gas_used = 5;
+            executor.validate_execution_summary = false;
+            executor.finish()?
         };
-        let evm = config.evm_with_env(&mut state, evm_env);
-        let mut ctx = execution_ctx(Some(1), Bytes::new());
-        ctx.execute_outbe_block_hooks = false;
-        ctx.inner.withdrawals = withdrawals.clone().map(std::borrow::Cow::Owned);
-
-        let mut executor = config.create_executor(evm, ctx);
-        executor.inner.receipts = vec![fixture_receipt(case.include_deposit)];
-        executor.inner.cumulative_tx_gas_used = CUMULATIVE_TX_GAS;
-        executor.inner.block_regular_gas_used = REGULAR_GAS;
-        executor.inner.block_state_gas_used = STATE_GAS;
-        executor.inner.blob_gas_used = 5;
-        executor.validate_execution_summary = false;
-        let (evm, result) = executor.finish()?;
-        drop(evm);
-
-        observe_finished_state(&mut state, result)
+        state.commit_source(&BundleSource(&output.state));
+        observe_finished_state(&mut state, &output.state, output.result)
     }
+
     fn observe_finished_state(
-        state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
-        result: alloy_evm::block::BlockExecutionResult<Receipt>,
+        state: &mut CacheDB<EmptyDB>,
+        bundle: &BundleState,
+        result: reth_ethereum::provider::BlockExecutionResult<Receipt>,
     ) -> eyre::Result<(
-        alloy_evm::block::BlockExecutionResult<Receipt>,
+        reth_ethereum::provider::BlockExecutionResult<Receipt>,
         B256,
         U256,
         U256,
         U256,
     )> {
-        let root = post_state_root(&state.bundle_state);
-        let dao_source_balance =
-            balance(state, alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0])?;
-        let dao_beneficiary_balance =
-            balance(state, alloy_evm::eth::dao_fork::DAO_HARDFORK_BENEFICIARY)?;
+        let root = post_state_root(bundle);
+        let dao_source_balance = balance(
+            state,
+            evm2::block::ethereum::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
+        )?;
+        let dao_beneficiary_balance = balance(
+            state,
+            evm2::block::ethereum::dao_fork::DAO_HARDFORK_BENEFICIARY,
+        )?;
         let withdrawal_balance = balance(
             state,
             address!("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
@@ -336,10 +334,7 @@ mod withdrawal_compatibility {
     }
 }
 
-fn unsupported_withdrawal_state() -> (
-    Arc<ChainSpec<OutbeHeader>>,
-    State<CacheDB<EmptyDBTyped<ProviderError>>>,
-) {
+fn unsupported_withdrawal_state() -> (Arc<ChainSpec<OutbeHeader>>, CacheDB<EmptyDB>) {
     const DAO_BALANCE: u128 = 37;
     let mut spec = ChainSpecBuilder::from(&*MAINNET)
         .shanghai_activated()
@@ -347,17 +342,13 @@ fn unsupported_withdrawal_state() -> (
     spec.chain = CHAIN_ID.into();
     spec.genesis.config.chain_id = CHAIN_ID;
     let chain_spec = Arc::new(spec.map_header(OutbeHeader::new));
-    let mut database = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut database = CacheDB::new(EmptyDB::default());
     database.insert_account_info(
-        alloy_evm::eth::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
+        &evm2::block::ethereum::dao_fork::DAO_HARDFORK_ACCOUNTS[0],
         AccountInfo {
             balance: U256::from(DAO_BALANCE),
             ..Default::default()
         },
     );
-    let state = State::builder()
-        .with_database(database)
-        .with_bundle_update()
-        .build();
-    (chain_spec, state)
+    (chain_spec, database)
 }

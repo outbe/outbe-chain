@@ -82,7 +82,7 @@ pub(super) const DEALER_ONLY_DIAGNOSTICS: WireDiagnostics = WireDiagnostics {
 
 pub(super) fn read_ceremony_message(
     from: &bls12381::PublicKey,
-    buf: &mut impl bytes::Buf,
+    buf: &mut impl commonware_codec::Buf,
     wire_cfg: &DkgWireConfig,
     diagnostics: &WireDiagnostics,
 ) -> Option<DkgMessage> {
@@ -156,7 +156,7 @@ pub(super) struct CeremonyState {
     roles: RecoveredRoles,
     finalized_logs: BTreeMap<bls12381::PublicKey, DealerLog<MinSig, bls12381::PublicKey>>,
     signed_finalized_logs:
-        BTreeMap<bls12381::PublicKey, SignedDealerLog<MinSig, bls12381::PrivateKey>>,
+        BTreeMap<bls12381::PublicKey, SignedDealerLog<MinSig, bls12381::PublicKey>>,
     invalid_dealers: BTreeSet<bls12381::PublicKey>,
     chain_finalized_mode: bool,
     pub(super) deadline: SystemTime,

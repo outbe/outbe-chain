@@ -7,8 +7,8 @@
 // `END_BLOCK_ORDER` is NodFactory, GemFactory, IntexFactory, CredisFactory,
 // and GemCleanup.
 
-use alloy_evm::{block::CommitChanges, Evm as _, RecoveredTx};
 use alloy_primitives::{Address, Bytes, U256};
+use evm2::evm::{AccountInfo, CacheDB, EmptyDB};
 use outbe_primitives::consensus_metadata::CertifiedParentAccountingMetadata;
 use outbe_primitives::reshare_artifact::{
     decode_outbe_block_artifacts, encode_outbe_block_artifacts, ConsensusHeaderArtifact,
@@ -16,16 +16,12 @@ use outbe_primitives::reshare_artifact::{
 };
 use outbe_primitives::tee_genesis_v1::NO_ATTESTATION_DEV_CHAIN_ID;
 use outbe_primitives::OutbeHeader;
-use reth_ethereum::{
-    evm::revm::db::State,
-    primitives::{Header, SealedHeader},
-};
+use reth_ethereum::primitives::{Header, SealedHeader};
 use reth_evm::{
-    execute::{BlockBuilder, Executor, ProviderError},
-    ConfigureEvm,
+    execute::{BlockBuilder, CommitChanges, Executor},
+    ConfigureEvm, RecoveredTx,
 };
 use reth_provider::{HashedPostStateProvider, StateRootProvider};
-use revm::{database::CacheDB, database_interface::EmptyDBTyped, state::AccountInfo};
 
 use super::harness::*;
 
@@ -102,12 +98,8 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
     );
     let config = test_config(bridge);
     let provider = DeterministicEmptyStateProvider;
-    let mut proposer_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut proposer_db = CacheDB::new(EmptyDB::default());
     seed_active_validators(&mut proposer_db, &[GENESIS_OWNER]);
-    let mut proposer_state = State::builder()
-        .with_database(proposer_db)
-        .with_bundle_update()
-        .build();
 
     let mut attrs = next_block_attrs(Bytes::new());
     let metadata = CertifiedParentAccountingMetadata {
@@ -139,7 +131,7 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
         .build_begin_system_txs(
             2,
             NO_ATTESTATION_DEV_CHAIN_ID,
-            evm_env.block_env.gas_limit,
+            evm_env.block.gas_limit.saturating_to::<u64>(),
             parent.hash(),
             &ctx.inner.extra_data,
             ctx.parent_consensus_metadata.clone(),
@@ -149,8 +141,8 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
         )
         .expect("complete block-2 begin prefix must build");
     let begin_len = begin.len();
-    let evm = config.evm_with_env(&mut proposer_state, evm_env);
-    let mut builder = config.create_block_builder(evm, &parent, ctx);
+    let evm = config.evm_with_env(&mut proposer_db, evm_env.clone());
+    let mut builder = config.create_block_builder(evm, evm_env, &parent, ctx);
     outbe_evm::executor::with_phase1_verify_disabled(|| builder.apply_pre_execution_changes())
         .expect("Phase 1 must be pre-executed before witness validation");
     builder
@@ -158,7 +150,7 @@ fn builder_keeps_preexecuted_phase1_witness_in_block_body() {
         .force_preexecuted_phase1_witness_for_test(phase1_hash);
 
     let gas_used = builder
-        .execute_transaction_with_commit_condition(phase1.clone(), |_| CommitChanges::Yes)
+        .execute_transaction_with_commit_condition(phase1.clone(), |_, _| CommitChanges::Yes)
         .expect("pre-executed Phase 1 witness must validate");
 
     assert!(
@@ -216,12 +208,8 @@ fn builder_finish_rejects_block_2_without_end_block_phase() {
     );
     let config = test_config(bridge);
     let provider = DeterministicEmptyStateProvider;
-    let mut proposer_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut proposer_db = CacheDB::new(EmptyDB::default());
     seed_active_validators(&mut proposer_db, &[GENESIS_OWNER]);
-    let mut proposer_state = State::builder()
-        .with_database(proposer_db)
-        .with_bundle_update()
-        .build();
 
     let mut attrs = next_block_attrs(Bytes::new());
     let metadata = CertifiedParentAccountingMetadata {
@@ -241,7 +229,7 @@ fn builder_finish_rejects_block_2_without_end_block_phase() {
         .build_begin_system_txs(
             2,
             NO_ATTESTATION_DEV_CHAIN_ID,
-            evm_env.block_env.gas_limit,
+            evm_env.block.gas_limit.saturating_to::<u64>(),
             parent.hash(),
             &ctx.inner.extra_data,
             ctx.parent_consensus_metadata.clone(),
@@ -250,8 +238,8 @@ fn builder_finish_rejects_block_2_without_end_block_phase() {
             None,
         )
         .expect("complete block-2 begin prefix must build");
-    let evm = config.evm_with_env(&mut proposer_state, evm_env);
-    let mut builder = config.create_block_builder(evm, &parent, ctx);
+    let evm = config.evm_with_env(&mut proposer_db, evm_env.clone());
+    let mut builder = config.create_block_builder(evm, evm_env, &parent, ctx);
     outbe_evm::executor::with_phase1_verify_disabled(|| builder.apply_pre_execution_changes())
         .expect("Phase 1 must be pre-executed");
     for tx in begin {
@@ -310,10 +298,10 @@ fn assert_height2_finalization_parity(include_user: bool) {
     .into_signed(Signature::test_signature())
     .into();
     let user = user.try_into_recovered().unwrap();
-    let seed_user = |db: &mut CacheDB<EmptyDBTyped<ProviderError>>| {
+    let seed_user = |db: &mut CacheDB<EmptyDB>| {
         if include_user {
             db.insert_account_info(
-                user.signer(),
+                &user.signer(),
                 AccountInfo {
                     balance: U256::from(100_000_000_000_000_000_000u128),
                     ..Default::default()
@@ -332,17 +320,13 @@ fn assert_height2_finalization_parity(include_user: bool) {
     attrs.parent_consensus_metadata = Some(metadata.clone());
 
     let build = |prepare_root: bool| {
-        let mut proposer_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+        let mut proposer_db = CacheDB::new(EmptyDB::default());
         seed_active_validators(&mut proposer_db, &active_set);
         seed_user(&mut proposer_db);
         assert_seeded_validators(&mut proposer_db, &active_set);
-        let mut proposer_state = State::builder()
-            .with_database(proposer_db)
-            .with_bundle_update()
-            .build();
         outbe_evm::executor::with_phase1_verify_disabled(|| {
             let mut builder = config
-                .builder_for_next_block(&mut proposer_state, &parent, attrs.clone())
+                .builder_for_next_block(&mut proposer_db, &parent, attrs.clone())
                 .expect("builder must be created");
             builder
                 .apply_pre_execution_changes()
@@ -374,22 +358,15 @@ fn assert_height2_finalization_parity(include_user: bool) {
                 builder.execute_transaction(user.clone()).unwrap();
             }
             builder.executor_mut().apply_end_block_phase().unwrap();
-            let precomputed = if prepare_root {
-                builder
-                    .executor_mut()
-                    .prepare_final_header_artifacts(0)
-                    .unwrap();
-                let db = builder.evm_mut().db_mut();
-                db.merge_transitions(
-                    revm::database::states::bundle_state::BundleRetention::Reverts,
-                );
-                let hashed = provider.hashed_post_state(&db.bundle_state).unwrap();
-                Some(provider.state_root_with_updates(hashed).unwrap())
-            } else {
-                None
-            };
             builder
-                .finish(&provider, precomputed)
+                .finish_with_state_root(&provider, |output| {
+                    if prepare_root {
+                        let hashed = provider.hashed_post_state(&output.state).unwrap();
+                        Ok(Some(provider.state_root_with_updates(hashed).unwrap()))
+                    } else {
+                        Ok(None)
+                    }
+                })
                 .expect("proposer path must build a block")
         })
     };
@@ -425,15 +402,11 @@ fn assert_height2_finalization_parity(include_user: bool) {
         "proposer finish must inject execution summary into final header extra_data",
     );
 
-    let mut validator_db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+    let mut validator_db = CacheDB::new(EmptyDB::default());
     seed_active_validators(&mut validator_db, &active_set);
     seed_user(&mut validator_db);
-    let validator_state = State::builder()
-        .with_database(validator_db)
-        .with_bundle_update()
-        .build();
-    let validator_state = outbe_evm::executor::with_phase1_verify_disabled(|| {
-        let mut validator_executor = config.batch_executor(validator_state);
+    let validator_bundle = outbe_evm::executor::with_phase1_verify_disabled(|| {
+        let mut validator_executor = config.batch_executor(validator_db);
         let replay = validator_executor
             .execute_one(&built_block)
             .expect("validator path must re-execute the built block");
@@ -442,7 +415,7 @@ fn assert_height2_finalization_parity(include_user: bool) {
         validator_executor.into_state()
     });
 
-    let reexecuted_hashed_state = provider.hashed_post_state(&validator_state.bundle_state);
+    let reexecuted_hashed_state = provider.hashed_post_state(&validator_bundle);
     let (reexecuted_root, _) = provider
         .state_root_with_updates(reexecuted_hashed_state.unwrap())
         .expect("re-executed state root must be computed");

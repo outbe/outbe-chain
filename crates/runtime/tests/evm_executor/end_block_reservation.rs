@@ -13,7 +13,7 @@ fn header_preparation_does_not_run_post_execution_or_enter_end_block_phase() {
     let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
     let mut executor = config.create_executor(evm, execution_ctx(None, Bytes::new()));
     assert_eq!(executor.fsm.stage(), BlockExecutionStage::MidBlock);
-    executor.prepare_final_header_artifacts(0).unwrap();
+    finalize_executor_header_artifacts(&mut executor, 0).unwrap();
     assert_eq!(executor.fsm.stage(), BlockExecutionStage::MidBlock);
     assert!(executor.ethereum_post_execution_requests.is_none());
     assert!(executor.receipts().is_empty());
@@ -33,14 +33,14 @@ fn genesis_with_hooks_completes_empty_begin_and_end_phases() {
     executor.apply_pre_execution_changes().unwrap();
     assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
     executor.apply_end_block_phase().unwrap();
-    executor.prepare_final_header_artifacts(0).unwrap();
+    finalize_executor_header_artifacts(&mut executor, 0).unwrap();
     assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
     assert!(executor.receipts().is_empty());
-    executor.prepare_final_header_artifacts(0).unwrap();
-    assert_eq!(executor.inner.cumulative_tx_gas_used, 0);
-    let (_, result) = executor.finish().unwrap();
-    assert_eq!(result.gas_used, 0);
-    assert!(result.receipts.is_empty());
+    finalize_executor_header_artifacts(&mut executor, 0).unwrap();
+    assert_eq!(executor.inner.inner.cumulative_gas_used, 0);
+    let output = executor.finish().unwrap();
+    assert_eq!(output.result.gas_used, 0);
+    assert!(output.result.receipts.is_empty());
 }
 
 #[test]
@@ -59,9 +59,9 @@ fn reservation_admission_is_atomic_for_paid_and_synthetic_routes() {
             let mut ctx = execution_ctx(None, Bytes::new());
             ctx.proposer_evm_address = Some(signer.address());
             let mut executor = config.create_executor(evm, ctx);
-            let block_gas_limit = executor.inner.evm.block().gas_limit();
+            let block_gas_limit = executor.evm().block().gas_limit.saturating_to::<u64>();
             let used = block_gas_limit - tx.gas_limit() + 1;
-            executor.inner.cumulative_tx_gas_used = used;
+            executor.inner.inner.cumulative_gas_used = used;
             let err = executor.execute_transaction(tx.clone()).unwrap_err();
             assert!(matches!(
                 err,
@@ -70,9 +70,9 @@ fn reservation_admission_is_atomic_for_paid_and_synthetic_routes() {
                 )
             ));
             assert!(executor.receipts().is_empty());
-            assert_eq!(executor.inner.cumulative_tx_gas_used, used);
-            assert_eq!(executor.inner.block_regular_gas_used, 0);
-            assert_eq!(executor.inner.block_state_gas_used, 0);
+            assert_eq!(executor.inner.inner.cumulative_gas_used, used);
+            assert_eq!(executor.inner.inner.block_regular_gas_used, 0);
+            assert_eq!(executor.inner.inner.block_state_gas_used, 0);
             assert_eq!(executor.zero_fee_soft_failures, 0);
             assert_eq!(executor.sponsored_gas_used, 0);
             assert_eq!(executor.current_block_validator_fees, U256::ZERO);
@@ -81,10 +81,9 @@ fn reservation_admission_is_atomic_for_paid_and_synthetic_routes() {
             assert!(executor.witness_state.is_none());
             assert_eq!(
                 executor
-                    .inner
-                    .evm
-                    .db_mut()
-                    .basic(tx.signer())
+                    .evm_mut()
+                    .state_mut()
+                    .account_info_untracked(&tx.signer())
                     .unwrap()
                     .unwrap()
                     .nonce,
@@ -126,12 +125,12 @@ fn exact_capacity_commits_actual_gas_then_captures_end_phase_capacity() {
         ctx.execute_outbe_block_hooks = false;
         ctx.proposer_evm_address = Some(signer.address());
         let mut executor = config.create_executor(evm, ctx);
-        let block_gas_limit = executor.inner.evm.block().gas_limit();
+        let block_gas_limit = executor.evm().block().gas_limit.saturating_to::<u64>();
         let used = block_gas_limit - tx.gas_limit();
-        executor.inner.cumulative_tx_gas_used = used;
+        executor.inner.inner.cumulative_gas_used = used;
         executor.execute_transaction(tx.clone()).unwrap();
         let actual_gas = used + 21_000;
-        assert_eq!(executor.inner.cumulative_tx_gas_used, actual_gas);
+        assert_eq!(executor.inner.inner.cumulative_gas_used, actual_gas);
         let receipts = executor.receipts().len();
         let body_index = executor.body_tx_index;
         executor.apply_end_block_phase().unwrap();
@@ -153,21 +152,19 @@ fn end_phase_uses_authoritative_counters_from_standalone_mid_block() {
             std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
         )
         .with_evm_signer(signer.clone());
-        let mut state = State::builder()
-            .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-            .with_bundle_update()
-            .build();
+        let mut state = CacheDB::new(EmptyDB::default());
         let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
         let mut ctx = execution_ctx(None, Bytes::new());
         ctx.execute_outbe_block_hooks = hooks;
         ctx.proposer_evm_address = Some(signer.address());
         let mut executor = config.create_executor(evm, ctx);
         assert_eq!(executor.fsm.stage(), BlockExecutionStage::MidBlock);
-        executor.inner.cumulative_tx_gas_used = 18_000_000;
+        executor.inner.inner.cumulative_gas_used = 18_000_000;
         executor.apply_end_block_phase().unwrap();
         assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
         assert_eq!(executor.receipts().len(), 5);
-        executor.inner.cumulative_tx_gas_used = executor.inner.evm.block().gas_limit() + 1;
+        executor.inner.inner.cumulative_gas_used =
+            executor.evm().block().gas_limit.saturating_to::<u64>() + 1;
         assert!(executor.finish().is_err());
     }
 }
@@ -180,21 +177,18 @@ fn eip8037_reservation_preserves_regular_cap_and_full_state_admission() {
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     )
     .with_evm_signer(signer.clone());
-    let mut state = State::builder()
-        .with_database(CacheDB::<EmptyDBTyped<ProviderError>>::default())
-        .with_bundle_update()
-        .build();
+    let mut state = CacheDB::new(EmptyDB::default());
     let mut env = test_evm_env(2, REWARDS_ADDRESS);
-    env.cfg_env.enable_amsterdam_eip8037 = true;
-    env.cfg_env.tx_gas_limit_cap = Some(16_000_000);
+    env.version.features.insert(evm2::EvmFeatures::EIP8037);
+    env.version.tx_gas_limit_cap = 16_000_000;
     let evm = config.evm_with_env(&mut state, env);
     let mut ctx = execution_ctx(None, Bytes::new());
     ctx.execute_outbe_block_hooks = false;
     ctx.proposer_evm_address = Some(signer.address());
     let mut executor = config.create_executor(evm, ctx);
     assert_eq!(executor.tx_gas_limit_cap(), 16_000_000);
-    executor.inner.block_regular_gas_used = 1;
-    executor.inner.block_state_gas_used = 18_000_000;
+    executor.inner.inner.block_regular_gas_used = 1;
+    executor.inner.inner.block_state_gas_used = 18_000_000;
     assert_eq!(executor.accounted_block_gas(), 18_000_000);
     executor.apply_end_block_phase().unwrap();
     assert_eq!(executor.fsm.stage(), BlockExecutionStage::Completed);
@@ -272,8 +266,8 @@ fn end_block_parity_proposer_vs_verifier_across_regimes() {
             }
             assert_eq!(verifier_exec.receipts(), proposer_exec.receipts());
             assert_eq!(
-                verifier_exec.inner.cumulative_tx_gas_used,
-                proposer_exec.inner.cumulative_tx_gas_used
+                verifier_exec.inner.inner.cumulative_gas_used,
+                proposer_exec.inner.inner.cumulative_gas_used
             );
             assert_eq!(verifier_exec.fsm.stage(), proposer_exec.fsm.stage());
         }
@@ -487,7 +481,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
     executor.execute_transaction(nod_tx).unwrap();
     {
         let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
-            executor.inner.evm.db_mut(),
+            executor.evm_mut().state_mut().overlay_db_mut(),
             read_ctx.clone(),
         );
         StorageHandle::enter(&mut provider, |storage| {
@@ -512,7 +506,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
     assert_eq!(executor.fsm.end_cursor(), 2);
     {
         let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
-            executor.inner.evm.db_mut(),
+            executor.evm_mut().state_mut().overlay_db_mut(),
             read_ctx.clone(),
         );
         StorageHandle::enter(&mut provider, |storage| {
@@ -553,7 +547,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
         .all(|r| r.success && r.cumulative_gas_used == 0));
     {
         let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
-            executor.inner.evm.db_mut(),
+            executor.evm_mut().state_mut().overlay_db_mut(),
             read_ctx,
         );
         StorageHandle::enter(&mut provider, |storage| {
@@ -597,19 +591,16 @@ fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapsho
     // gas refund (`refunded() > 0`), so `tx_gas_used() < total_gas_spent()`.
     let refund_code =
         Bytecode::new_legacy(Bytes::from_static(&[0x60, 0x00, 0x60, 0x00, 0x55, 0x00]));
-    let seed_refund_contract = |state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>| {
-        state.database.insert_account_info(
-            refund_contract,
+    let seed_refund_contract = |state: &mut CacheDB<EmptyDB>| {
+        state.insert_account_info(
+            &refund_contract,
             AccountInfo {
                 code_hash: refund_code.hash_slow(),
                 code: Some(refund_code.clone()),
                 ..Default::default()
             },
         );
-        state
-            .database
-            .insert_account_storage(refund_contract, U256::ZERO, U256::from(1))
-            .unwrap();
+        state.insert_account_storage(&refund_contract, &U256::ZERO, &U256::from(1));
     };
     let refund_tx = TxEip1559 {
         chain_id: CHAIN_ID,
@@ -642,9 +633,9 @@ fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapsho
         ctx.execute_outbe_block_hooks = false;
         ctx.proposer_evm_address = Some(proposer);
         let mut executor = config.create_executor(evm, ctx);
-        let block_gas_limit = executor.inner.evm.block().gas_limit();
+        let block_gas_limit = executor.evm().block().gas_limit.saturating_to::<u64>();
         if full_block {
-            executor.inner.cumulative_tx_gas_used = block_gas_limit - tx.gas_limit();
+            executor.inner.inner.cumulative_gas_used = block_gas_limit - tx.gas_limit();
         }
         let gas_output = executor.execute_transaction(tx.clone()).unwrap();
         let expected_user_gas = executor.accounted_block_gas();
@@ -667,7 +658,7 @@ fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapsho
         assert_end_block_contexts(&observed, block_gas_limit, expected_user_gas);
         drop(executor);
 
-        // Also verify detached TxTracer replay freezes MidBlock user_gas_used across EndBlock txs.
+        // Also verify detached inspector replay freezes MidBlock user_gas_used across EndBlock txs.
         let mut trace_state = state_with_active_proposer_and_funded_account(proposer, tx.signer());
         if expect_refund {
             seed_refund_contract(&mut trace_state);
@@ -682,26 +673,29 @@ fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapsho
             super::with_phase1_verify_disabled(|| {
                 temp_executor.apply_pre_execution_changes().unwrap();
             });
+            let bundle = temp_executor.into_state();
+            trace_state.commit_source(&BundleSource(&bundle));
         }
         if full_block {
             outbe_evm::executor::witness::record_detached_trace_user_gas(
                 block_gas_limit - tx.gas_limit(),
             );
         }
-        let trace_evm = config.evm_with_env(&mut trace_state, test_evm_env(2, REWARDS_ADDRESS));
-        let mut tracer = alloy_evm::tracing::TxTracer::new(trace_evm);
-        let user_tx_env = config.tx_env(&tx);
-        let traced_user = tracer.trace(user_tx_env).unwrap();
-        assert!(traced_user.result.is_success());
+        let mut trace_evm = config.evm_with_env(&mut trace_state, test_evm_env(2, REWARDS_ADDRESS));
+        let user_tx_env = tx_env(&config, &tx);
+        let traced_user = trace_evm
+            .transact_with_inspector(&user_tx_env, &mut evm2::inspector::NoopInspector::default())
+            .unwrap()
+            .commit();
+        assert!(traced_user.is_success());
         if expect_refund {
-            let traced_gas = traced_user.result.gas();
             assert!(
-                traced_gas.tx_gas_used() < traced_gas.total_gas_spent(),
+                traced_user.tx_gas_used() < traced_user.total_gas_spent,
                 "post-refund tx_gas_used ({}) must be strictly less than gross total_gas_spent ({})",
-                traced_gas.tx_gas_used(),
-                traced_gas.total_gas_spent()
+                traced_user.tx_gas_used(),
+                traced_user.total_gas_spent
             );
-            assert_eq!(gas_output.tx_gas_used(), traced_gas.tx_gas_used());
+            assert_eq!(gas_output.tx_gas_used(), traced_user.tx_gas_used());
         }
         let _ = outbe_evm::executor::take_observed_runtime_block_contexts();
         for input in [
@@ -714,15 +708,33 @@ fn end_block_modules_and_detached_trace_observe_exact_mid_block_user_gas_snapsho
             let end_tx = config
                 .build_end_system_tx(2, CHAIN_ID, proposer, input)
                 .unwrap();
-            assert!(tracer
-                .trace(config.tx_env(&end_tx))
+            assert!(trace_evm
+                .transact_with_inspector(
+                    &tx_env(&config, &end_tx),
+                    &mut evm2::inspector::NoopInspector::default(),
+                )
                 .unwrap()
-                .result
+                .commit()
                 .is_success());
         }
         let traced_observed = outbe_evm::executor::take_observed_runtime_block_contexts();
         assert_eq!(traced_observed.len(), 5);
         assert_end_block_contexts(&traced_observed, block_gas_limit, expected_user_gas);
+        if expect_refund {
+            for observed_ctx in &traced_observed {
+                assert_eq!(
+                    observed_ctx.user_gas_used,
+                    traced_user.tx_gas_used(),
+                    "detached trace must record post-refund net tx_gas_used for EndBlock contexts"
+                );
+                assert!(
+                    observed_ctx.user_gas_used < traced_user.total_gas_spent,
+                    "detached trace must not record gross pre-refund total_gas_spent ({} vs {})",
+                    observed_ctx.user_gas_used,
+                    traced_user.total_gas_spent
+                );
+            }
+        }
         outbe_evm::executor::witness::clear_detached_trace_witness();
     }
 }

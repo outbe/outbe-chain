@@ -292,7 +292,7 @@ async fn status_reth_writer_discovery_secret_selects_the_libsecp256k1_public_key
     let secret = reth_node_core::args::NetworkArgs::default()
         .secret_key(path.clone())
         .unwrap();
-    let public = secret.public_key(secp256k1::SECP256K1).serialize();
+    let public = secret.public_key().serialize();
     let raw = std::fs::read(&path).unwrap();
     assert_eq!(raw.len(), 64);
     assert!(!raw.contains(&b'\n'));

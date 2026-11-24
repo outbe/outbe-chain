@@ -106,6 +106,7 @@ reth-trie.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
+url = { workspace = true, optional = true }
 x25519-dalek.workspace = true
 
 [dev-dependencies]
@@ -126,12 +127,11 @@ reth-e2e-test-utils.workspace = true
 reth-ethereum-payload-builder.workspace = true
 reth-node-api.workspace = true
 reth-payload-primitives.workspace = true
-reth-revm.workspace = true
 reth-storage-api.workspace = true
 reth-tasks.workspace = true
 reth-tracing.workspace = true
 reth-transaction-pool = { workspace = true, features = ["test-utils"] }
-alloy-evm.workspace = true
+evm2 = { workspace = true, features = ["std", "block"] }
 commonware-codec.workspace = true
 commonware-p2p.workspace = true
 commonware-parallel.workspace = true
@@ -151,7 +151,6 @@ outbe-nodfactory = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
-revm.workspace = true
 outbe-teeregistry.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }
 outbe-evm = { workspace = true, features = ["test-hooks", "test-utils"] }
@@ -188,6 +187,10 @@ tokio.workspace = true
 reth-chain-state.workspace = true
 reth-provider = { workspace = true, features = ["test-utils"] }
 tempfile.workspace = true
+
+[package.metadata.cargo-machete]
+# Transitive security floor for RUSTSEC-2026-0592 (url >= 2.5.9).
+ignored = ["url"]
 
 [lints]
 workspace = true

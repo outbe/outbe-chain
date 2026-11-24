@@ -297,7 +297,7 @@ fn tribute_offer_key_not_recoverable_by_host_from_sealed_partials() {
         .flatten()
         .filter(|(_, blob)| {
             let bytes = blob.to_wire_bytes();
-            PartialSignature::<Variant>::read(&mut bytes.as_slice()).is_ok()
+            PartialSignature::<Variant>::read(&mut Copying(bytes.as_slice())).is_ok()
         })
         .count();
     assert!(

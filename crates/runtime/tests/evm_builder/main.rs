@@ -3,3 +3,4 @@
 mod genesis_header_artifact;
 mod harness;
 mod schedule_replay;
+mod seam_h1_h2;

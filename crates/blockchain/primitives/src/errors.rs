@@ -1,6 +1,14 @@
+use std::borrow::Cow;
+
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{Revert, SolError};
-use revm::precompile::{PrecompileHalt, PrecompileOutput, PrecompileResult};
+use evm2::{
+    interpreter::InstrStop,
+    precompiles::{
+        PrecompileError as EvmPrecompileError, PrecompileHalt,
+        PrecompileResult as EvmPrecompileResult,
+    },
+};
 
 use crate::storage::SubCallError;
 
@@ -45,7 +53,7 @@ pub enum PrecompileError {
     /// A provider sub-call failed.
     #[error("sub-call error: {0}")]
     SubCall(SubCallError),
-    /// Execution halted deterministically through the revm precompile result.
+    /// Execution halted deterministically through the evm2 precompile result.
     #[error("execution halted: {0:?}")]
     Halt(PrecompileHalt),
 
@@ -599,15 +607,19 @@ impl From<SubCallError> for PrecompileError {
             SubCallError::StaticContextViolation | SubCallError::StateChangeDuringStaticCall => {
                 Self::WriteProtection
             }
-            SubCallError::EvmHalt(revm::context::result::HaltReason::OutOfGas(_)) => Self::OutOfGas,
+            SubCallError::EvmHalt(stop) if stop.is_fatal() => {
+                Self::SubCall(SubCallError::EvmHalt(stop))
+            }
+            SubCallError::EvmHalt(stop) if stop.is_out_of_gas() => Self::OutOfGas,
             SubCallError::EvmHalt(
-                revm::context::result::HaltReason::StateChangeDuringStaticCall
-                | revm::context::result::HaltReason::CallNotAllowedInsideStatic,
+                InstrStop::StateChangeDuringStaticCall | InstrStop::CallNotAllowedInsideStatic,
             ) => Self::WriteProtection,
             error @ (SubCallError::DepthLimitExceeded
             | SubCallError::InvalidTarget
             | SubCallError::NotActivated
-            | SubCallError::EvmHalt(_)) => Self::Halt(PrecompileHalt::other(error.to_string())),
+            | SubCallError::EvmHalt(_)) => {
+                Self::Halt(PrecompileHalt::Other(Cow::Owned(error.to_string())))
+            }
             error @ (SubCallError::NotAvailable
             | SubCallError::ProviderBorrowed
             | SubCallError::DatabaseError(_)
@@ -642,43 +654,38 @@ impl PrecompileError {
         Self::BodyReadCorruption(message.into())
     }
 
-    /// Convert domain errors into a precompile result.
-    /// Execution failures return Revert or Halt, and infrastructure failures return Fatal.
-    pub fn into_precompile_result(self, gas: u64) -> PrecompileResult {
+    /// Convert domain errors into an evm2 precompile error.
+    /// Execution failures return Revert or Halt, and infrastructure failures return Fatal
+    /// while retaining the typed `PrecompileError` (including `#[source]` causes).
+    pub fn into_precompile_error(self) -> EvmPrecompileError {
         match self {
-            Self::OutOfGas => Ok(PrecompileOutput::halt(PrecompileHalt::OutOfGas, 0)),
-            Self::WriteProtection => Ok(PrecompileOutput::halt(
-                PrecompileHalt::other_static("state change during static call"),
-                0,
+            Self::OutOfGas => EvmPrecompileError::Halt(PrecompileHalt::OutOfGas),
+            Self::WriteProtection => EvmPrecompileError::Halt(PrecompileHalt::Other(
+                Cow::Borrowed("state change during static call"),
             )),
-            Self::Halt(reason) => Ok(PrecompileOutput::halt(reason, 0)),
-            Self::Revert(message) => Ok(PrecompileOutput::revert(
-                gas,
-                Revert::from(message).abi_encode().into(),
-                0,
-            )),
-            error @ Self::BodyReadCorruption(_) => Ok(PrecompileOutput::revert(
-                gas,
-                Revert::from(error.to_string()).abi_encode().into(),
-                0,
-            )),
-            Self::RevertBytes(bytes) => Ok(PrecompileOutput::revert(gas, bytes, 0)),
-            Self::SubCall(error) => Err(revm::precompile::PrecompileError::Fatal(format!(
-                "sub-call error: {error:?}"
-            ))),
-            error @ (Self::TriggerBudgetExceeded { .. } | Self::TriggerScope(_)) => {
-                Err(revm::precompile::PrecompileError::Fatal(error.to_string()))
+            Self::Halt(reason) => EvmPrecompileError::Halt(reason),
+            Self::Revert(message) => {
+                EvmPrecompileError::Revert(Revert::from(message).abi_encode().into())
             }
-            Self::Unsupported => Err(revm::precompile::PrecompileError::Fatal(
-                "precompile reported Unsupported".into(),
-            )),
-            error @ (Self::Storage(_)
+            error @ Self::BodyReadCorruption(_) => {
+                EvmPrecompileError::Revert(Revert::from(error.to_string()).abi_encode().into())
+            }
+            Self::RevertBytes(bytes) => EvmPrecompileError::Revert(bytes),
+            error @ (Self::SubCall(_)
+            | Self::TriggerBudgetExceeded { .. }
+            | Self::TriggerScope(_)
+            | Self::Unsupported
+            | Self::Storage(_)
             | Self::Fatal(_)
             | Self::FatalWithCause(_)
-            | Self::EnclaveUnavailable(_)) => {
-                Err(revm::precompile::PrecompileError::Fatal(error.to_string()))
-            }
+            | Self::EnclaveUnavailable(_)) => EvmPrecompileError::fatal(error),
         }
+    }
+
+    /// Convert domain errors into an evm2 precompile result.
+    /// Execution failures return Revert or Halt, and infrastructure failures return Fatal.
+    pub fn into_precompile_result(self) -> EvmPrecompileResult {
+        Err(self.into_precompile_error())
     }
 }
 
@@ -700,6 +707,7 @@ impl PrecompileError {
             Self::Storage(_)
             | Self::EnclaveUnavailable(_)
             | Self::SubCall(SubCallError::DatabaseError(_)) => true,
+            Self::SubCall(SubCallError::EvmHalt(stop)) if stop.is_fatal() => true,
             Self::OutOfGas
             | Self::TriggerBudgetExceeded { .. }
             | Self::TriggerScope(_)
@@ -780,7 +788,8 @@ mod tests {
             }
         ));
         assert_eq!(error.pass_failure(), PassFailure::Propagate);
-        assert!(error.into_precompile_result(100).is_err());
+        let evm_error = error.into_precompile_result().unwrap_err();
+        assert!(evm_error.is_fatal());
     }
 
     #[test]
@@ -835,6 +844,70 @@ mod tests {
             assert_eq!(error.is_node_local(), node_local, "{error}");
             assert_eq!(error.pass_failure(), failure, "{error}");
         }
+    }
+
+    #[test]
+    fn subcall_evm_halt_mapping_classifies_oog_static_fatal_and_other_halts() {
+        use evm2::{
+            interpreter::InstrStop,
+            precompiles::{PrecompileError as EvmPrecompileError, PrecompileHalt},
+        };
+
+        for oog in [
+            InstrStop::OutOfGas,
+            InstrStop::MemoryOOG,
+            InstrStop::MemoryLimitOOG,
+            InstrStop::PrecompileOOG,
+            InstrStop::InvalidOperandOOG,
+            InstrStop::ReentrancySentryOOG,
+        ] {
+            let err = PrecompileError::from(SubCallError::EvmHalt(oog));
+            assert!(matches!(err, PrecompileError::OutOfGas), "{oog:?}");
+            assert!(!err.is_node_local());
+            let evm_err = err.into_precompile_error();
+            assert!(!evm_err.is_fatal());
+            assert!(evm_err.is_oog());
+        }
+
+        for static_halt in [
+            InstrStop::StateChangeDuringStaticCall,
+            InstrStop::CallNotAllowedInsideStatic,
+        ] {
+            let err = PrecompileError::from(SubCallError::EvmHalt(static_halt));
+            assert!(
+                matches!(err, PrecompileError::WriteProtection),
+                "{static_halt:?}"
+            );
+            assert!(!err.is_node_local());
+            let evm_err = err.into_precompile_error();
+            assert!(!evm_err.is_fatal());
+            assert!(matches!(
+                evm_err,
+                EvmPrecompileError::Halt(PrecompileHalt::Other(_))
+            ));
+        }
+
+        let fatal = PrecompileError::from(SubCallError::EvmHalt(InstrStop::FatalExternalError));
+        assert!(matches!(
+            fatal,
+            PrecompileError::SubCall(SubCallError::EvmHalt(InstrStop::FatalExternalError))
+        ));
+        assert!(fatal.is_node_local());
+        assert_eq!(fatal.pass_failure(), PassFailure::Propagate);
+        assert!(fatal.into_precompile_error().is_fatal());
+
+        let other = PrecompileError::from(SubCallError::EvmHalt(InstrStop::InvalidJump));
+        assert!(matches!(
+            other,
+            PrecompileError::Halt(PrecompileHalt::Other(_))
+        ));
+        assert!(!other.is_node_local());
+        let evm_other = other.into_precompile_error();
+        assert!(!evm_other.is_fatal());
+        assert!(matches!(
+            evm_other,
+            EvmPrecompileError::Halt(PrecompileHalt::Other(_))
+        ));
     }
 
     #[test]

@@ -151,11 +151,7 @@ fn run_seeded_round(
             dkg_logs.record(pk.clone(), log.clone());
         }
         let (output, _share) = player
-            .finalize::<commonware_utils::N3f1, commonware_cryptography::bls12381::Batch>(
-                &mut *rng,
-                dkg_logs,
-                &Sequential,
-            )
+            .finalize::<commonware_utils::N3f1>(&mut *rng, dkg_logs, &Sequential)
             .unwrap();
         outputs.push(output);
     }

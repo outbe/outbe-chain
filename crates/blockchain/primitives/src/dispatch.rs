@@ -18,7 +18,7 @@ pub fn ensure_mutation_allowed(storage: &StorageHandle<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Precompile call output (matches revm::precompile::PrecompileOutput shape).
+/// Precompile call output carrying returned bytes and gas used.
 pub struct PrecompileOutput {
     pub bytes: Bytes,
     pub gas_used: u64,

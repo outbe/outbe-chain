@@ -4,9 +4,7 @@ use super::*;
 const ACTIVE_COUNT: usize = 128;
 const DEADLINE: u64 = 2;
 
-fn prepare_expiring_committee(
-    proposer: Address,
-) -> (State<CacheDB<EmptyDBTyped<ProviderError>>>, Vec<Address>) {
+fn prepare_expiring_committee(proposer: Address) -> (CacheDB<EmptyDB>, Vec<Address>) {
     let mut validators = Vec::with_capacity(ACTIVE_COUNT);
     validators.push((proposer, dummy_pubkey(0x80)));
     for index in 1..ACTIVE_COUNT {
@@ -75,7 +73,7 @@ pub(super) fn run() {
     let proposer = signer.address();
     let (mut state, addresses) = prepare_expiring_committee(proposer);
     let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
-    evm_env.block_env.timestamp = U256::from(DEADLINE);
+    evm_env.block.timestamp = U256::from(DEADLINE);
     let config = OutbeEvmConfig::new(
         test_chain_spec(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
@@ -182,7 +180,7 @@ fn hyperlane_liveness_gross_work_grows_with_domain_population() {
             },
         );
         let mut env = test_evm_env(150, REWARDS_ADDRESS);
-        env.block_env.timestamp = U256::from(2);
+        env.block.timestamp = U256::from(2);
         let config = OutbeEvmConfig::new(
             test_chain_spec(),
             std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),

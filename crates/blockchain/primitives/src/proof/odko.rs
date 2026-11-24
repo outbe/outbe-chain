@@ -8,7 +8,8 @@
 use std::{fmt, num::NonZeroU32};
 
 use alloy_primitives::{Bytes, B256};
-use commonware_codec::Read as _;
+use bytes::Buf as _;
+use commonware_codec::{Copying, Read as _};
 use commonware_consensus::types::Epoch;
 use commonware_cryptography::bls12381::{
     self,
@@ -93,8 +94,8 @@ impl OdkoOutcome {
             is_full_dkg,
             declared,
         } = decode_header(bytes)?;
-        let mut reader = &bytes[HEADER_LEN..];
-        let actual = reader.len() as u64;
+        let mut reader = Copying(&bytes[HEADER_LEN..]);
+        let actual = reader.remaining() as u64;
         if declared != actual {
             return Err(OdkoDecodeError::LengthMismatch { declared, actual });
         }
@@ -103,7 +104,7 @@ impl OdkoOutcome {
         let output =
             Output::<MinSig, bls12381::PublicKey>::read_cfg(&mut reader, &(max, ModeVersion::v0()))
                 .map_err(OdkoDecodeError::invalid_output)?;
-        if !reader.is_empty() {
+        if reader.has_remaining() {
             return Err(OdkoDecodeError::TrailingOutputBytes);
         }
         Ok(Self {

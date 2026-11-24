@@ -1,10 +1,10 @@
 //! Gas model for Outbe stateful precompiles.
 //!
 //! This file prices storage access for a stateful precompile.
-//! A read uses the revm warm read cost
-//! [`WARM_STORAGE_READ_COST`](revm::context_interface::cfg::gas::WARM_STORAGE_READ_COST).
-//! A write uses the revm reset cost
-//! [`SSTORE_RESET`](revm::context_interface::cfg::gas::SSTORE_RESET).
+//! A read uses the evm2 warm read cost
+//! [`WARM_STORAGE_READ_COST`](evm2::interpreter::gas::WARM_STORAGE_READ_COST).
+//! A write uses the evm2 reset cost
+//! [`SSTORE_RESET`](evm2::interpreter::gas::SSTORE_RESET).
 //! These two costs do not change when the block base fee changes.
 //! A precompile storage access is not an EIP-2929 access.
 //! This file has no warm/cold split and no SSTORE refund.

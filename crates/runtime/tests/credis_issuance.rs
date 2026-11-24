@@ -1,6 +1,7 @@
 //! Real issuance against a direct Gratis pledge with stateful ERC-20/vault calls.
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
+use evm2::evm::{AccountInfo, CacheDB, EmptyDB};
 use outbe_credisfactory::precompile::ICredisFactory;
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_gratis::enclave_client::test_enclave;
@@ -28,11 +29,6 @@ use outbe_vaultrouter::{
     test_support::{register_source, register_target},
     LiquidityReservation, VaultRouterContract,
 };
-use revm::{
-    context_interface::JournalTr,
-    database::{CacheDB, EmptyDB},
-    state::AccountInfo,
-};
 
 sol! {
     interface IFixture {
@@ -52,7 +48,7 @@ const NOW: u64 = 1_700_000_000;
 
 macro_rules! call {
     ($evm:expr, $caller:expr, $target:expr, $value:expr, $call:expr) => {{
-        $evm.ctx.journaled_state.load_account($caller)?;
+        $evm.evm.state_mut().account(&$caller)?;
         $evm.run(
             $caller,
             SubCallInput {
@@ -116,7 +112,7 @@ fn issuance_database() -> eyre::Result<(CacheDB<EmptyDB>, U256)> {
     }
     let stake = U256::from(10).pow(U256::from(18));
     db.insert_account_info(
-        CCA,
+        &CCA,
         AccountInfo {
             balance: stake * U256::from(2),
             ..Default::default()
@@ -437,7 +433,9 @@ fn retry_issuance_and_cancel_expired(
     if failure == 5 {
         pledge_reservation(evm, key)?;
     }
-    evm.ctx.block.timestamp = U256::from(NOW + if failure == 8 { 901 } else { 900 });
+    let mut block = *evm.evm.block();
+    block.timestamp = U256::from(NOW + if failure == 8 { 901 } else { 900 });
+    evm.evm.set_block(block);
     let retry = call!(evm, CCA, CREDIS_FACTORY_ADDRESS, stake, issue);
     assert_eq!(
         matches!(retry.status, SubCallStatus::Success),
@@ -470,8 +468,6 @@ fn retry_issuance_and_cancel_expired(
             SubCallStatus::Success
         ));
         let cancelled: Vec<_> = evm
-            .ctx
-            .journaled_state
             .logs()
             .iter()
             .filter_map(|log| IGratisFactory::GratisPledgeCanceled::decode_log_data(&log.data).ok())
@@ -506,7 +502,7 @@ fn assert_payment_rollback(
             mode: U256::from(mode)
         }
     );
-    let logs = evm.ctx.journaled_state.logs().len();
+    let logs = evm.logs().len();
     let payment = call!(
         evm,
         CCA,
@@ -529,7 +525,7 @@ fn assert_payment_rollback(
             payment.returndata
         );
     }
-    assert_eq!(evm.ctx.journaled_state.logs().len(), logs);
+    assert_eq!(evm.logs().len(), logs);
     assert_payment_credis_and_pledge_unchanged(evm, observation)?;
     assert_payment_token_balances(evm)?;
     call!(
@@ -608,21 +604,11 @@ fn assert_issuance_native_balances(
     stake: U256,
 ) -> eyre::Result<()> {
     assert_eq!(
-        evm.ctx
-            .journaled_state
-            .load_account(ACCOUNT)
-            .unwrap()
-            .info
-            .balance,
+        evm.evm.state_mut().account(&ACCOUNT).unwrap().balance(),
         if failure == 0 { stake } else { U256::ZERO }
     );
     assert_eq!(
-        evm.ctx
-            .journaled_state
-            .load_account(CCA)
-            .unwrap()
-            .info
-            .balance,
+        evm.evm.state_mut().account(&CCA).unwrap().balance(),
         if failure == 0 {
             stake
         } else {
@@ -635,8 +621,6 @@ fn assert_issuance_native_balances(
 
 fn assert_issuance_payout_events(evm: &EvmWorld, failure: u64) -> eyre::Result<()> {
     let payouts: Vec<_> = evm
-        .ctx
-        .journaled_state
         .logs()
         .iter()
         .filter_map(|log| IVaultRouter::ReservationReleased::decode_log_data(&log.data).ok())

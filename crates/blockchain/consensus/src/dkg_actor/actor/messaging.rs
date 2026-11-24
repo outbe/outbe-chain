@@ -64,7 +64,7 @@ fn send_dkg_message(
 pub(super) fn send_finalized_log(
     sender: &mut impl P2pSender<PublicKey = bls12381::PublicKey>,
     ceremony_id: DkgCeremonyId,
-    signed_log: SignedDealerLog<MinSig, bls12381::PrivateKey>,
+    signed_log: SignedDealerLog<MinSig, bls12381::PublicKey>,
 ) -> bool {
     send_dkg_message(
         sender,
@@ -106,7 +106,7 @@ pub(super) fn should_retry_share_distribution(
 
 pub(super) fn should_retry_finalized_log_gossip(
     chain_finalized_mode: bool,
-    signed_logs: &BTreeMap<bls12381::PublicKey, SignedDealerLog<MinSig, bls12381::PrivateKey>>,
+    signed_logs: &BTreeMap<bls12381::PublicKey, SignedDealerLog<MinSig, bls12381::PublicKey>>,
 ) -> bool {
     !chain_finalized_mode && !signed_logs.is_empty()
 }
@@ -133,24 +133,24 @@ pub(super) async fn sleep_until_optional(
 pub(super) fn decode_signed_dealer_log(
     bytes: &Bytes,
     max_players: &NonZeroU32,
-) -> Result<SignedDealerLog<MinSig, bls12381::PrivateKey>> {
-    let mut reader = bytes.as_ref();
+) -> Result<SignedDealerLog<MinSig, bls12381::PublicKey>> {
+    let mut reader = commonware_codec::Copying(bytes.as_ref());
     let signed_log =
-        SignedDealerLog::<MinSig, bls12381::PrivateKey>::read_cfg(&mut reader, max_players)
+        SignedDealerLog::<MinSig, bls12381::PublicKey>::read_cfg(&mut reader, max_players)
             .map_err(crate::errors::DkgError::invalid_signed_dealer_log_encoding)?;
-    if !reader.is_empty() {
+    if !reader.0.is_empty() {
         return Err(crate::errors::DkgError::TrailingSignedDealerLogBytes.into());
     }
     Ok(signed_log)
 }
 
 pub(super) fn record_and_store_signed_dealer_log(
-    signed_log: SignedDealerLog<MinSig, bls12381::PrivateKey>,
+    signed_log: SignedDealerLog<MinSig, bls12381::PublicKey>,
     info: &Info<MinSig, bls12381::PublicKey>,
     finalized_logs: &mut BTreeMap<bls12381::PublicKey, DealerLog<MinSig, bls12381::PublicKey>>,
     signed_finalized_logs: &mut BTreeMap<
         bls12381::PublicKey,
-        SignedDealerLog<MinSig, bls12381::PrivateKey>,
+        SignedDealerLog<MinSig, bls12381::PublicKey>,
     >,
     source: &'static str,
 ) -> Option<bls12381::PublicKey> {
@@ -162,7 +162,7 @@ pub(super) fn record_and_store_signed_dealer_log(
 }
 
 pub(super) fn record_signed_dealer_log(
-    signed_log: SignedDealerLog<MinSig, bls12381::PrivateKey>,
+    signed_log: SignedDealerLog<MinSig, bls12381::PublicKey>,
     info: &Info<MinSig, bls12381::PublicKey>,
     finalized_logs: &mut BTreeMap<bls12381::PublicKey, DealerLog<MinSig, bls12381::PublicKey>>,
     source: &'static str,
@@ -211,18 +211,13 @@ pub(crate) fn chain_finalized_reconstructable_with_rng(
     for (dealer_pk, log) in finalized_logs {
         logs.record(dealer_pk.clone(), log.clone());
     }
-    observe::<MinSig, bls12381::PublicKey, N3f1, commonware_cryptography::bls12381::Batch>(
-        rng,
-        logs,
-        &Sequential,
-    )
-    .is_ok()
+    observe::<MinSig, bls12381::PublicKey, N3f1>(rng, logs, &Sequential).is_ok()
 }
 
 pub(super) async fn gossip_finalized_logs(
     sender: &mut impl P2pSender<PublicKey = bls12381::PublicKey>,
     ceremony_id: DkgCeremonyId,
-    signed_logs: &BTreeMap<bls12381::PublicKey, SignedDealerLog<MinSig, bls12381::PrivateKey>>,
+    signed_logs: &BTreeMap<bls12381::PublicKey, SignedDealerLog<MinSig, bls12381::PublicKey>>,
 ) {
     for (dealer, signed_log) in signed_logs {
         if !send_finalized_log(sender, ceremony_id, signed_log.clone()) {

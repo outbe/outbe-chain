@@ -101,10 +101,12 @@ pub fn evidence(kind: Kind) -> VerifiedEquivocationEvidence {
     let sender = OutbeEvmSigner::from_secret_bytes([1; 32])
         .unwrap()
         .address();
-    let committee =
-        Set::from_iter_dedup(members(sender).iter().map(|member| {
-            bls12381::PublicKey::decode(member.consensus_pubkey.as_slice()).unwrap()
-        }));
+    let committee = Set::from_iter_dedup(members(sender).iter().map(|member| {
+        bls12381::PublicKey::decode(commonware_codec::Copying(
+            member.consensus_pubkey.as_slice(),
+        ))
+        .unwrap()
+    }));
     let notarize = outbe_primitives::proof::notarize_namespace(&committee);
     let finalize = outbe_primitives::proof::finalize_namespace(&committee);
     let nullify = outbe_primitives::proof::nullify_namespace(&committee);
@@ -233,7 +235,7 @@ pub async fn launch_configured(
 
 /// Publishes contract fixture transitions through the real provider's state writer.
 pub fn publish(node: &OutbeFullNode, seeded: &HashMapStorageProvider) -> eyre::Result<()> {
-    use revm::database::states::{PlainStorageChangeset, StateChangeset};
+    use evm2::block::bundle_state::{PlainStorageChangeset, StateChangeset};
     let mut accounts = std::collections::BTreeMap::<Address, Vec<(U256, U256)>>::new();
     for (&(address, slot), &value) in &seeded.storage {
         accounts.entry(address).or_default().push((slot, value));
@@ -338,7 +340,7 @@ pub fn advance_block(
 /// Reth can read hashed state directly, so publish both state representations.
 pub fn commit_changes(
     node: &OutbeFullNode,
-    changes: revm::database::states::StateChangeset,
+    changes: evm2::block::bundle_state::StateChangeset,
 ) -> eyre::Result<()> {
     use alloy_primitives::keccak256;
     use reth_provider::{DBProvider as _, DatabaseProviderFactory as _, StateWriter as _};

@@ -31,6 +31,7 @@ commonware-broadcast.workspace = true
 commonware-consensus.workspace = true
 commonware-cryptography.workspace = true
 commonware-p2p.workspace = true
+commonware-stream.workspace = true
 commonware-runtime.workspace = true
 commonware-storage.workspace = true
 commonware-codec.workspace = true
@@ -38,7 +39,7 @@ commonware-utils.workspace = true
 commonware-math.workspace = true
 commonware-parallel.workspace = true
 commonware-macros.workspace = true
-commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.9.0" }
+commonware-resolver.workspace = true
 
 # Reth
 reth-ethereum = { workspace = true, features = ["node", "node-api", "storage-api", "network", "provider"] }
@@ -78,7 +79,6 @@ reth-provider = { workspace = true, features = ["test-utils"] }
 reth-primitives-traits.workspace = true
 outbe-primitives = { workspace = true, features = ["test-utils"] }
 outbe-consensus = { workspace = true, features = ["test-utils"] }
-commonware-resolver = { git = "https://github.com/commonwarexyz/monorepo", tag = "v2026.9.0" }
 tempfile.workspace = true
 tracing-subscriber = { version = "0.3", features = ["fmt"] }
 metrics-util = "0.20"

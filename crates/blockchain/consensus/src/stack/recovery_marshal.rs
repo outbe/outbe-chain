@@ -8,6 +8,7 @@ use commonware_consensus::{
 };
 use commonware_cryptography::bls12381::primitives::variant::MinSig;
 use commonware_cryptography::certificate::Verifier as _;
+use commonware_cryptography::Digested;
 use commonware_p2p::Recipients;
 use commonware_parallel::Sequential;
 use commonware_runtime::buffer::paged::CacheRef;
@@ -20,28 +21,31 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
 struct EmptyMarshalBuffer {
-    pending_digest_subscribers: Arc<Mutex<Vec<oneshot::Sender<Arc<ConsensusBlock>>>>>,
-    pending_commitment_subscribers: Arc<Mutex<Vec<oneshot::Sender<Arc<ConsensusBlock>>>>>,
+    pending_digest_subscribers: Arc<Mutex<Vec<oneshot::Sender<Digested<ConsensusBlock>>>>>,
+    pending_commitment_subscribers: Arc<Mutex<Vec<oneshot::Sender<Digested<ConsensusBlock>>>>>,
 }
 
 impl marshal::core::Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
     type PublicKey = commonware_cryptography::bls12381::PublicKey;
 
-    async fn find_by_digest(&self, _digest: crate::digest::Digest) -> Option<Arc<ConsensusBlock>> {
+    async fn find_by_digest(
+        &self,
+        _digest: crate::digest::Digest,
+    ) -> Option<Digested<ConsensusBlock>> {
         None
     }
 
     async fn find_by_commitment(
         &self,
         _commitment: crate::digest::Digest,
-    ) -> Option<Arc<ConsensusBlock>> {
+    ) -> Option<Digested<ConsensusBlock>> {
         None
     }
 
     fn subscribe_by_digest(
         &self,
         _digest: crate::digest::Digest,
-    ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
+    ) -> Option<oneshot::Receiver<Digested<ConsensusBlock>>> {
         let (tx, rx) = oneshot::channel();
         self.pending_digest_subscribers.lock().unwrap().push(tx);
         Some(rx)
@@ -50,18 +54,16 @@ impl marshal::core::Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer
     fn subscribe_by_commitment(
         &self,
         _commitment: crate::digest::Digest,
-    ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
+    ) -> Option<oneshot::Receiver<Digested<ConsensusBlock>>> {
         let (tx, rx) = oneshot::channel();
         self.pending_commitment_subscribers.lock().unwrap().push(tx);
         Some(rx)
     }
 
-    fn retire(&self, _update: marshal::core::Retirement<crate::digest::Digest>) {}
-
     fn send(
         &self,
         _round: commonware_consensus::types::Round,
-        _block: Arc<ConsensusBlock>,
+        _block: Digested<ConsensusBlock>,
         _recipients: Recipients<Self::PublicKey>,
     ) {
     }
@@ -84,8 +86,7 @@ where
         + 'static,
 {
     assert!(!partition_prefix.is_empty());
-    let page_cache = CacheRef::from_pooler(
-        &context,
+    let page_cache = CacheRef::new(
         NonZeroU16::new(1024).unwrap(),
         NonZeroUsize::new(10).unwrap(),
     );
@@ -143,6 +144,7 @@ where
     .await
     .unwrap();
 
+    let genesis_digest = commonware_cryptography::Digestible::digest(&genesis);
     let (actor, mailbox, _) = marshal::core::Actor::init(
         context.child("recovery_marshal"),
         finalizations_archive,
@@ -150,7 +152,7 @@ where
         marshal::Config {
             provider,
             epocher: crate::follow::FollowerEpocher::new(10_000, 0),
-            start: Start::Genesis(genesis),
+            start: Start::Genesis(Digested::precomputed(genesis, genesis_digest)),
             partition_prefix,
             mailbox_size: NonZeroUsize::new(32).unwrap(),
             view_retention: ViewDelta::new(10_000),
@@ -210,7 +212,7 @@ impl Resolver for NoopMarshalResolver {
         Feedback::Ok
     }
 
-    fn fetch_all<F>(&mut self, _keys: Vec<F>) -> Feedback
+    fn fetch_all<F>(&mut self, _keys: impl IntoIterator<Item = F>) -> Feedback
     where
         F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
     {
@@ -236,7 +238,10 @@ impl TargetedResolver for NoopMarshalResolver {
         Feedback::Ok
     }
 
-    fn fetch_all_targeted<F>(&mut self, _keys: Vec<(F, NonEmptyVec<Self::PublicKey>)>) -> Feedback
+    fn fetch_all_targeted<F>(
+        &mut self,
+        _keys: impl IntoIterator<Item = (F, NonEmptyVec<Self::PublicKey>)>,
+    ) -> Feedback
     where
         F: Into<commonware_resolver::Fetch<Self::Key, Self::Subscriber>> + Send,
     {

@@ -23,7 +23,7 @@ fn user_panic_rolls_back_burns_full_gas_and_detached_replay_matches() {
     assert!(!receipt.success);
     assert!(receipt.logs.is_empty());
     assert_eq!(receipt.cumulative_gas_used, 150_000);
-    assert_eq!(executor.inner.evm.ctx().journal().depth(), 0);
+    assert!(executor.evm().state().journal().is_empty());
     let second_gas = executor
         .execute_transaction(second.clone())
         .unwrap()
@@ -34,40 +34,50 @@ fn user_panic_rolls_back_burns_full_gas_and_detached_replay_matches() {
         150_000 + second_gas
     );
     executor.apply_end_block_phase().unwrap();
-    executor.prepare_final_header_artifacts(0).unwrap();
-    let (evm, result) = executor.finish().unwrap();
-    drop(evm);
-    assert_eq!(result.receipts.len(), prefix_len + 2 + 5);
-    assert_eq!(state.storage(PROBE, U256::ZERO).unwrap(), U256::ZERO);
-    assert_eq!(state.storage(PROBE, U256::ONE).unwrap(), U256::ONE);
+    finalize_executor_header_artifacts(&mut executor, 0).unwrap();
+    let output = executor.finish().unwrap();
+    state.commit_source(&BundleSource(&output.state));
+    assert_eq!(output.result.receipts.len(), prefix_len + 2 + 5);
+    assert_eq!(storage_slot(&mut state, PROBE, U256::ZERO), U256::ZERO);
+    assert_eq!(storage_slot(&mut state, PROBE, U256::ONE), U256::ONE);
 
     let mut replay = seeded(|_| {});
     trace_state(&config, &mut replay, prefix_len + 2);
-    let mut tracer =
-        TxTracer::new(config.evm_with_env(&mut replay, test_evm_env(BLOCK, REWARDS_ADDRESS)));
+    let mut trace_evm = config.evm_with_env(&mut replay, test_evm_env(BLOCK, REWARDS_ADDRESS));
+    let mut inspector = evm2::inspector::NoopInspector::default();
     for tx in begin {
-        assert!(tracer
-            .trace(config.tx_env(&tx))
+        assert!(trace_evm
+            .transact_with_inspector(&tx_env(&config, &tx), &mut inspector)
             .unwrap()
-            .result
+            .commit()
             .is_success());
     }
-    let traced = tracer.trace(config.tx_env(&first)).unwrap();
-    assert!(matches!(
-        traced.result,
-        ExecutionResult::Halt {
-            reason: HaltReason::PrecompileError,
-            ..
-        }
-    ));
-    assert_eq!(traced.result.tx_gas_used(), first_gas);
-    assert!(traced.result.logs().is_empty());
-    let traced = tracer.trace(config.tx_env(&second)).unwrap();
-    assert!(traced.result.is_success());
-    assert_eq!(traced.result.tx_gas_used(), second_gas);
-    drop(tracer);
-    assert_eq!(replay.storage(PROBE, U256::ZERO).unwrap(), U256::ZERO);
-    assert_eq!(replay.storage(PROBE, U256::ONE).unwrap(), U256::ONE);
+    let traced = trace_evm
+        .transact_with_inspector(&tx_env(&config, &first), &mut inspector)
+        .unwrap()
+        .commit();
+    assert!(
+        matches!(traced.stop, evm2::interpreter::InstrStop::PrecompileError),
+        "expected PrecompileError halt, got {:?}",
+        traced.stop
+    );
+    assert_eq!(traced.tx_gas_used(), first_gas);
+    assert!(traced.logs.is_empty());
+    let traced = trace_evm
+        .transact_with_inspector(&tx_env(&config, &second), &mut inspector)
+        .unwrap()
+        .commit();
+    assert!(traced.is_success());
+    assert_eq!(traced.tx_gas_used(), second_gas);
+    assert_eq!(
+        storage_slot(trace_evm.state_mut().overlay_db_mut(), PROBE, U256::ZERO),
+        U256::ZERO
+    );
+    assert_eq!(
+        storage_slot(trace_evm.state_mut().overlay_db_mut(), PROBE, U256::ONE),
+        U256::ONE
+    );
+    drop(trace_evm);
     clear_detached_trace_witness();
 }
 
@@ -111,14 +121,14 @@ fn bytecode_catches_panicking_child_and_commits_recovery_marker() {
         .unwrap();
     assert!(executor.receipts()[prefix_len + 1].success);
     assert!(executor.receipts()[prefix_len + 1].logs.is_empty());
-    assert_eq!(executor.inner.evm.ctx().journal().depth(), 0);
+    assert!(executor.evm().state().journal().is_empty());
 
     executor.apply_end_block_phase().unwrap();
-    executor.prepare_final_header_artifacts(0).unwrap();
-    let (evm, _) = executor.finish().unwrap();
-    drop(evm);
-    assert_eq!(state.storage(catcher, U256::ZERO).unwrap(), U256::ONE);
-    assert_eq!(state.storage(catcher, U256::ONE).unwrap(), U256::ZERO);
-    assert_eq!(state.storage(catcher, U256::from(2)).unwrap(), U256::ONE);
-    assert_eq!(state.storage(PROBE, U256::ZERO).unwrap(), U256::ZERO);
+    finalize_executor_header_artifacts(&mut executor, 0).unwrap();
+    let output = executor.finish().unwrap();
+    state.commit_source(&BundleSource(&output.state));
+    assert_eq!(storage_slot(&mut state, catcher, U256::ZERO), U256::ONE);
+    assert_eq!(storage_slot(&mut state, catcher, U256::ONE), U256::ZERO);
+    assert_eq!(storage_slot(&mut state, catcher, U256::from(2)), U256::ONE);
+    assert_eq!(storage_slot(&mut state, PROBE, U256::ZERO), U256::ZERO);
 }

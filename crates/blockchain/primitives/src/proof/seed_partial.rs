@@ -25,7 +25,7 @@
 use std::num::NonZeroU32;
 
 use bytes::Bytes;
-use commonware_codec::{DecodeExt, Encode, Read as _};
+use commonware_codec::{Copying, DecodeExt, Encode, Read as _};
 use commonware_consensus::types::{Epoch, Round, View};
 use commonware_cryptography::bls12381::primitives::{
     ops::verify_message,
@@ -162,7 +162,7 @@ pub fn verify_seed_partial_against_commitment(
     // Cap must cover any real committee. It matches the DKG decode bound.
     let max = NonZeroU32::new(crate::validators::MAX_VALIDATORS)?;
     let cfg = (max, ModeVersion::v0());
-    let sharing = Sharing::<MinSig>::read_cfg(&mut &commitment_bytes[..], &cfg).ok()?;
+    let sharing = Sharing::<MinSig>::read_cfg(&mut Copying(commitment_bytes), &cfg).ok()?;
 
     // PK_i = polynomial evaluated at the signer's index.
     let pk_i = sharing

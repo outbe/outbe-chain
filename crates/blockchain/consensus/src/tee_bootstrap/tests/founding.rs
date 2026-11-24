@@ -118,6 +118,9 @@ struct Inbox(tokio::sync::mpsc::UnboundedReceiver<Message<bls12381::PublicKey>>)
 impl Receiver for Inbox {
     type Error = Infallible;
     type PublicKey = bls12381::PublicKey;
+    fn capacity(&self) -> std::num::NonZeroUsize {
+        commonware_utils::NZUsize!(64)
+    }
     async fn recv(&mut self) -> Result<Message<Self::PublicKey>, Self::Error> {
         Ok(self.0.recv().await.unwrap())
     }

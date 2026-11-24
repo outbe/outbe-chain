@@ -18,12 +18,14 @@ use alloy_primitives::U256;
 use commonware_actor::Feedback;
 use commonware_consensus::types::{Epoch, Height, Round};
 use commonware_consensus::{
-    marshal::Update,
+    marshal::{core::Processed, Update},
     simplex::types::{Activity, Finalization, Finalize, Proposal},
     types::View,
     Reporter,
 };
-use commonware_cryptography::{bls12381, bls12381::primitives::variant::MinSig, Signer as _};
+use commonware_cryptography::{
+    bls12381, bls12381::primitives::variant::MinSig, Digested, Signer as _,
+};
 use commonware_parallel::Sequential;
 use commonware_runtime::{tokio as commonware_tokio, Runner as _, Supervisor as _};
 use commonware_utils::TryCollect as _;
@@ -321,8 +323,9 @@ impl Reporter for LimitedAck {
     type Activity = outbe_consensus::marshal_types::MarshalUpdate;
     fn report(&mut self, update: Self::Activity) -> Feedback {
         if let Update::Block(block, ack) = update {
-            self.delivered.lock().unwrap().push(block.number());
-            if block.number() <= self.through {
+            let number = block.inner().number();
+            self.delivered.lock().unwrap().push(number);
+            if number <= self.through {
                 ack.acknowledge();
             } else {
                 self.held.lock().unwrap().push(ack);
@@ -381,9 +384,9 @@ async fn archive_stage_reached(
     target: u64,
 ) -> bool {
     if mailbox
-        .get_processed_height()
+        .get_processed()
         .await
-        .map(|height| height.get())
+        .map(|processed| processed.height().get())
         != Some(acknowledge_through)
     {
         return false;
@@ -518,12 +521,7 @@ impl DiskFixture {
             .await;
             let executor = executor.start(mailbox.clone(), Height::new(target));
             tokio::time::timeout(Duration::from_secs(10), async {
-                while mailbox
-                    .get_processed_height()
-                    .await
-                    .map(|height| height.get())
-                    != Some(target)
-                {
+                while mailbox.get_processed().await != Some(Processed::Block(Height::new(target))) {
                     tokio::task::yield_now().await;
                 }
             })
@@ -623,7 +621,15 @@ impl DiskFixture {
             )
             .await;
             for (block, certificate) in entries {
-                assert!(mailbox.verified(certificate.proposal.round, block).await);
+                let digest = block.digest();
+                assert!(
+                    mailbox
+                        .verified(
+                            certificate.proposal.round,
+                            Digested::precomputed(block, digest)
+                        )
+                        .await
+                );
                 let _ = mailbox.report(Activity::Finalization(certificate));
             }
             wait_for_archive_stage(
@@ -645,11 +651,17 @@ impl DiskFixture {
                 .get_block(Height::new(target))
                 .await
                 .unwrap()
+                .inner()
                 .block_hash();
             assert_eq!(archived_hash, expected_hash);
             assert_eq!(recovered.digest, Digest(archived_hash));
+            let processed = mailbox.get_processed().await.unwrap();
+            assert_eq!(
+                processed,
+                Processed::Block(Height::new(acknowledge_through))
+            );
             let observation = Observation {
-                processed: mailbox.get_processed_height().await.unwrap().get(),
+                processed: processed.height().get(),
                 hash: archived_hash,
                 recovered,
                 delivered: reporter_keepalive.delivered.lock().unwrap().clone(),
@@ -728,4 +740,79 @@ fn copied_marshal_archives_processed_forkchoice_and_native_state_reopen_at_h_the
         );
         assert_eq!(inventory(fixture.root.path()), donor_before);
     }
+}
+
+#[test]
+fn native_marshal_reports_processed_absent_at_floor_then_block_after_ack() {
+    let fixture = DiskFixture::new(H);
+    let recipient = tempfile::tempdir().unwrap();
+    let provider = fixture.provider.clone();
+    let floor_height = H + 1;
+    let floor_block = fixture.blocks[floor_height as usize].clone();
+    let floor_cert = fixture.certificates[(floor_height - 1) as usize].clone();
+    let config = commonware_tokio::Config::default()
+        .with_worker_threads(1)
+        .with_max_blocking_threads(1)
+        .with_catch_panics(true)
+        .with_storage_directory(recipient.path().join("marshal"));
+    commonware_tokio::Runner::new(config).start(move |context| async move {
+        let held = Arc::new(StdMutex::new(vec![]));
+        let reporter = LimitedAck {
+            through: H,
+            held: held.clone(),
+            delivered: Arc::new(StdMutex::new(vec![])),
+        };
+        let (mailbox, resolver, actor) = marshal::start_recovery_marshal_in_partition(
+            context.child("marshal_floor"),
+            provider,
+            reporter,
+            PREFIX.into(),
+            genesis_block(),
+        )
+        .await;
+        // Cache the floor block at H+1, then install the floor so height H is marked
+        // processed without storing block H while H+1 awaits application acknowledgement.
+        let digest = floor_block.digest();
+        assert!(
+            mailbox
+                .verified(
+                    floor_cert.proposal.round,
+                    Digested::precomputed(floor_block, digest),
+                )
+                .await
+        );
+        mailbox.set_floor(floor_cert);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while mailbox.get_processed().await != Some(Processed::Absent(Height::new(H)))
+                || held.lock().unwrap().is_empty()
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("floor at H+1 must report Processed::Absent(H)");
+        assert!(mailbox.get_block(Height::new(H)).await.is_none());
+
+        // Acknowledging the floor block at H+1 transitions to Processed::Block(H+1).
+        let pending_acks: Vec<_> = held.lock().unwrap().drain(..).collect();
+        for ack in pending_acks {
+            ack.acknowledge();
+        }
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while mailbox.get_processed().await != Some(Processed::Block(Height::new(floor_height)))
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("acknowledging floor block H+1 must report Processed::Block(H+1)");
+        assert!(mailbox.get_block(Height::new(floor_height)).await.is_some());
+
+        drop(resolver);
+        tokio::time::timeout(Duration::from_secs(10), actor)
+            .await
+            .unwrap()
+            .unwrap();
+        drop(mailbox);
+    });
 }

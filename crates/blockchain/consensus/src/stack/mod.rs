@@ -35,8 +35,7 @@ use commonware_cryptography::{
 };
 use commonware_p2p::{authenticated::lookup, utils::mux::Muxer, Address, AddressableManager};
 use commonware_runtime::{
-    buffer::paged::CacheRef, BufferPooler, Clock, Metrics, Network, Quota, Resolver, Spawner,
-    Storage,
+    buffer::paged::CacheRef, Clock, Metrics, Network, Quota, Resolver, Spawner, Storage,
 };
 use commonware_utils::{ordered::Map, TryCollect as _, NZU32};
 use eyre::{Result, WrapErr};
@@ -119,6 +118,7 @@ use dkg::handoff::{
 };
 pub use dkg::persistence::migrate_dkg_keys_if_needed;
 pub use epoch::run::run_consensus_stack;
+pub use epoch::transport::{sake_cups_v1_upgrader, P2P_MAILBOX_SIZE};
 pub use services::{
     ConsensusExecutionServices, ConsensusRadicleServices, ConsensusShutdownServices,
     ConsensusStackServices,

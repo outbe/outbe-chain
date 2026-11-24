@@ -330,7 +330,7 @@ fn restarted_player_finalizes_with_a_private_share() {
         logs.record(dealer, log);
     }
     let (output, _private_share) = restarted_player
-        .finalize::<N3f1, commonware_cryptography::bls12381::Batch>(
+        .finalize::<N3f1>(
             &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             logs,
             &Sequential,

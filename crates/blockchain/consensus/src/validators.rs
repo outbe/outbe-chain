@@ -340,13 +340,13 @@ fn read_validator_set_from_state(
             continue;
         }
         // Read full 48-byte BLS MinPk pubkey (stored across two slots by ValidatorSet).
-        let pk =
-            bls12381::PublicKey::read(&mut record.consensus_pubkey.as_slice()).map_err(|e| {
-                ValidatorsError::InvalidBlsPubkey {
-                    validator: record.validator_address,
-                    error: format!("{e}"),
-                }
-            })?;
+        let pk = bls12381::PublicKey::read(&mut commonware_codec::Copying(
+            record.consensus_pubkey.as_slice(),
+        ))
+        .map_err(|e| ValidatorsError::InvalidBlsPubkey {
+            validator: record.validator_address,
+            error: format!("{e}"),
+        })?;
 
         public_keys.push(pk);
         addresses.push(record.validator_address);

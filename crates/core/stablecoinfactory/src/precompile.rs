@@ -2,7 +2,7 @@ use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolInterface;
 use outbe_primitives::dispatch::{dispatch_call, view};
 use outbe_primitives::error::{PrecompileError, Result};
-use outbe_primitives::storage::StorageHandle;
+use outbe_primitives::storage::{Bytecode, StorageHandle};
 use outbe_system_common::addresses::{STABLECOIN_ADDRESS_PREFIX, STABLECOIN_MARKER_CODE};
 use outbe_system_common::stablecoin::stablecoin_address;
 
@@ -132,7 +132,7 @@ pub fn stablecoin_class_dispatch(
         // Reserving the address class must not make native value unspendable at
         // an address the Factory never issued. An externally owned account
         // whose address happens to fall in the prefix must still receive plain
-        // transfers. This uses only revm's ordinary CALL balance semantics. It
+        // transfers. This uses only evm2's ordinary CALL balance semantics. It
         // invokes no token ABI and falls through to no account bytecode.
         if plain_native_transfer {
             return Ok(Bytes::new());
@@ -187,7 +187,7 @@ pub fn authenticate_registered_stablecoin(
         let marker = info
             .code
             .as_ref()
-            .map(revm::state::Bytecode::original_bytes)
+            .map(Bytecode::original_bytes)
             .unwrap_or_default();
         if marker.as_ref() != STABLECOIN_MARKER_CODE {
             return Err(PrecompileRouteError::StablecoinMarkerCodeMismatch { token }.into());

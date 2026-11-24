@@ -4,8 +4,8 @@ use crate::{
     protocol::{EnclaveRequest, EnclaveResponse, ParticipantAnnounce},
     tee_dkg::EnclaveChannel,
 };
-use alloy_primitives::B256;
-use commonware_codec::{Encode as _, ReadExt as _};
+use alloy_primitives::{bytes::Buf as _, B256};
+use commonware_codec::{Copying, Encode as _, ReadExt as _};
 use commonware_cryptography::{bls12381, Signer as _, Verifier as _};
 use outbe_primitives::tee_attestation_v1::*;
 use std::collections::{BTreeMap, BTreeSet};
@@ -74,9 +74,9 @@ impl InProcessTeeContext {
         let mut keys = BTreeMap::new();
         let mut seen = BTreeSet::new();
         for p in participants {
-            let mut pk_bytes = p.bls_pub.as_slice();
+            let mut pk_bytes = Copying(p.bls_pub.as_slice());
             let pk = bls12381::PublicKey::read(&mut pk_bytes)?;
-            let mut sig_bytes = p.enc_sig.as_slice();
+            let mut sig_bytes = Copying(p.enc_sig.as_slice());
             let sig = <bls12381::PrivateKey as commonware_cryptography::Signer>::Signature::read(
                 &mut sig_bytes,
             )?;
@@ -89,7 +89,7 @@ impl InProcessTeeContext {
             )?;
             let context_matches =
                 (p.ceremony_id, p.round, p.participant_set_hash) == (id, round, hash);
-            let canonical = pk_bytes.is_empty() && sig_bytes.is_empty();
+            let canonical = !pk_bytes.has_remaining() && !sig_bytes.has_remaining();
             if !canonical
                 || !context_matches
                 || !pk.verify(DKG_PARTICIPANT_ANNOUNCE_DOMAIN_V1, digest.as_slice(), &sig)

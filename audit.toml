@@ -1,7 +1,9 @@
 # cargo-audit configuration. Mirrors the advisory ignores in deny.toml.
 #
-# All entries are transitive deps pulled in by upstream crates (reth v2.8.1 /
-# commonware / heartwood) and cannot be upgraded away without upstream changes.
+# All entries are transitive deps pulled in by upstream crates (reth v2.11.0 /
+# commonware v2026.11.0 / heartwood) and cannot be upgraded away without
+# upstream changes (`commonware-storage` still pins `zstd 0.13` / `zstd-safe 7`,
+# while Reth v2.11.0 is already on `zstd 0.14.3`).
 # Revisit when upstreams bump the affected dependencies.
 [advisories]
 ignore = [

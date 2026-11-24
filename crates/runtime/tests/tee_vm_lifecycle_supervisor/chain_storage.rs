@@ -1,11 +1,11 @@
 //! Import a recovered block and its resulting state into a real provider database.
 use alloy_primitives::{keccak256, B256};
+use evm2::block::bundle_state::StateChangeset;
 use outbe_primitives::{OutbeBlock, OutbeHeader, OutbePrimitives};
 use reth_chainspec::ChainSpec;
 use reth_primitives_traits::RecoveredBlock;
 use reth_provider::{providers::ProviderNodeTypes, BlockWriter, ChainStateBlockWriter};
 use reth_trie::{HashedPostState, HashedStorage};
-use revm::database::states::StateChangeset;
 
 pub(super) fn seed_recovered_anchor<N>(
     provider: &reth_provider::providers::BlockchainProvider<N>,
@@ -15,10 +15,10 @@ pub(super) fn seed_recovered_anchor<N>(
 where
     N: ProviderNodeTypes<ChainSpec = ChainSpec<OutbeHeader>, Primitives = OutbePrimitives>,
 {
+    use evm2::block::BundleState;
     use reth_primitives_traits::SealedHeader;
     use reth_provider::{CanonChainTracker, ExecutionOutcome};
     use reth_storage_api::{DBProvider, DatabaseProviderFactory, StateProviderFactory, TrieWriter};
-    use revm::database::BundleState;
 
     let first = blocks.first().unwrap().header.inner.number;
     let anchor = SealedHeader::seal_slow(blocks.last().unwrap().header.clone());

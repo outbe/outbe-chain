@@ -9,17 +9,7 @@ use std::sync::{
 
 impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
-    E: BufferPooler
-        + Clock
-        + CryptoRng
-        + Network
-        + Resolver
-        + Spawner
-        + Storage
-        + Metrics
-        + Send
-        + Sync
-        + 'static,
+    E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     pub(super) fn publish_repository_material(&self) {
         if let Some(publisher) = &self.repository_material_publisher {

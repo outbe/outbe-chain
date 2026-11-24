@@ -96,7 +96,7 @@ fn execute_height(
     let (begin, users) = txs;
     let number = input.number;
     let mut env = test_evm_env(number, REWARDS_ADDRESS);
-    env.block_env.prevrandao = Some(input.randao);
+    env.block.prevrandao = U256::from_be_bytes(input.randao.0);
     let evm = prepared.config.evm_with_env(&mut *state, env);
     let extra = input
         .bootstrap
@@ -124,15 +124,16 @@ fn execute_height(
             .unwrap_or_else(|error| panic!("tx at {number}: {error}"));
     }
     executor.apply_end_block_phase().unwrap();
-    executor.prepare_final_header_artifacts(0).unwrap();
-    let end = executor
+    fixtures_execution::finalize_executor_header_artifacts(&mut executor, 0).unwrap();
+    let end: Vec<_> = executor
         .take_staged_end_block_txs()
         .into_iter()
-        .map(Recovered::into_inner);
-    let extra = executor.final_extra_data.clone();
-    let (evm, result) = executor.finish().unwrap();
-    drop(evm);
-    state.merge_transitions(BundleRetention::Reverts);
+        .map(Recovered::into_inner)
+        .collect();
+    let extra = executor.final_extra_data().clone();
+    let output = executor.finish().unwrap();
+    state.commit_source(&BundleSource(&output.state));
+    let result = output.result;
     let receipts = result.receipts;
     assert!(
         receipts

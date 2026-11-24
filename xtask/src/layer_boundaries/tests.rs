@@ -217,7 +217,6 @@ fn local_path_inspector_allows_blockchain_and_pinned_vendors_and_rejects_exclude
     for rel in [
         "crates/blockchain/radicle",
         "crates/blockchain/primitives",
-        "vendor/alloy-evm",
         "vendor/heartwood/crates/radicle",
         "vendor/heartwood/crates/radicle-crypto",
         "vendor/heartwood/crates/radicle-git-metadata",
@@ -233,7 +232,6 @@ fn local_path_inspector_allows_blockchain_and_pinned_vendors_and_rejects_exclude
             "manifest_path": root.join("crates/blockchain/radicle/Cargo.toml"),
             "dependencies": [
                 { "name": "outbe-primitives", "kind": null, "path": root.join("crates/blockchain/primitives") },
-                { "name": "alloy-evm", "kind": null, "path": root.join("vendor/alloy-evm") },
                 { "name": "radicle", "kind": null, "path": root.join("vendor/heartwood/crates/radicle") },
                 { "name": "radicle-crypto", "kind": null, "path": root.join("vendor/heartwood/crates/radicle-crypto") },
                 { "name": "radicle-git-metadata", "kind": "dev", "path": root.join("vendor/heartwood/crates/radicle-git-metadata") }

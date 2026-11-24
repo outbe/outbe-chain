@@ -31,7 +31,7 @@ fn system_panic_criticality_preserves_state_and_soft_steps_advance() {
                 assert!(error.to_string().contains("299"), "{error}");
                 assert_eq!(executor.receipts().len(), before);
                 assert_eq!(executor.fsm, fsm);
-                assert_eq!(executor.inner.cumulative_tx_gas_used, 0);
+                assert_eq!(executor.inner.inner.cumulative_gas_used, 0);
                 break;
             }
             outcome.unwrap();
@@ -66,13 +66,21 @@ fn system_panic_criticality_preserves_state_and_soft_steps_advance() {
                 executor.fsm.stage(),
                 outbe_primitives::system_tx::BlockExecutionStage::Completed
             );
-            executor.prepare_final_header_artifacts(0).unwrap();
-            let (evm, _) = executor.finish().unwrap();
-            drop(evm);
+            finalize_executor_header_artifacts(&mut executor, 0).unwrap();
+            let output = executor.finish().unwrap();
+            state.commit_source(&BundleSource(&output.state));
         } else {
+            assert_eq!(
+                storage_slot(
+                    executor.evm_mut().state_mut().overlay_db_mut(),
+                    PROBE,
+                    U256::ZERO
+                ),
+                U256::ZERO
+            );
             drop(executor);
         }
-        assert_eq!(state.storage(PROBE, U256::ZERO).unwrap(), U256::ZERO);
+        assert_eq!(storage_slot(&mut state, PROBE, U256::ZERO), U256::ZERO);
     }
 }
 
@@ -161,16 +169,19 @@ fn propose_end_oog_block(config: &OutbeEvmConfig) -> ProposedEndOogBlock {
     let ends = executor.take_staged_end_block_txs();
     assert_eq!(ends.len(), 5);
     assert!(ends.iter().all(|tx| tx.tx().gas_limit() == 0));
-    executor.prepare_final_header_artifacts(0).unwrap();
+    finalize_executor_header_artifacts(&mut executor, 0).unwrap();
     let final_extra_data = executor.final_extra_data.clone();
-    let (evm, result) = executor.finish().unwrap();
-    drop(evm);
+    let output = executor.finish().unwrap();
+    let result = output.result;
+    state.commit_source(&BundleSource(&output.state));
     assert_eq!(result.gas_used, 0);
     for slot in 0..32 {
-        assert_eq!(state.storage(PROBE, U256::from(slot)).unwrap(), U256::ZERO);
+        assert_eq!(
+            storage_slot(&mut state, PROBE, U256::from(slot)),
+            U256::ZERO
+        );
     }
-    state.merge_transitions(BundleRetention::Reverts);
-    let state_root = post_state_root(&state.bundle_state);
+    let state_root = post_state_root(&output.state);
     ProposedEndOogBlock {
         begin,
         ends,
@@ -201,16 +212,19 @@ fn validate_end_oog_block(proposed: &ProposedEndOogBlock) {
     for tx in proposed.begin.iter().chain(proposed.ends.iter()).cloned() {
         validator.execute_transaction(tx).unwrap();
     }
-    let (evm, result) = validator.finish().unwrap();
-    drop(evm);
+    let output = validator.finish().unwrap();
+    let result = output.result;
+    state.commit_source(&BundleSource(&output.state));
     failure(&result.receipts[proposed.begin.len()], 202);
     assert_eq!(result.receipts, proposed.receipts);
     assert_eq!(result.gas_used, 0);
     for slot in 0..32 {
-        assert_eq!(state.storage(PROBE, U256::from(slot)).unwrap(), U256::ZERO);
+        assert_eq!(
+            storage_slot(&mut state, PROBE, U256::from(slot)),
+            U256::ZERO
+        );
     }
-    state.merge_transitions(BundleRetention::Reverts);
-    assert_eq!(post_state_root(&state.bundle_state), proposed.state_root);
+    assert_eq!(post_state_root(&output.state), proposed.state_root);
 }
 
 #[test]
@@ -225,16 +239,16 @@ fn tight_step_gas_rolls_back_and_detached_replay_uses_reserved_system_call() {
         &mut replay,
         proposed.begin.len() + proposed.ends.len(),
     );
-    let mut tracer =
-        TxTracer::new(config.evm_with_env(&mut replay, test_evm_env(BLOCK, REWARDS_ADDRESS)));
+    let mut trace_evm = config.evm_with_env(&mut replay, test_evm_env(BLOCK, REWARDS_ADDRESS));
+    let mut inspector = evm2::inspector::NoopInspector::default();
     for tx in proposed.begin {
-        assert!(tracer
-            .trace(config.tx_env(&tx))
+        assert!(trace_evm
+            .transact_with_inspector(&tx_env(&config, &tx), &mut inspector)
             .unwrap()
-            .result
+            .commit()
             .is_success());
     }
-    let tx_env = config.tx_env(&proposed.ends[0]);
+    let tx_env = tx_env(&config, &proposed.ends[0]);
     let matched = match_detached_trace_tx(
         &EvmTransactWitnessInput {
             attached_state: None,
@@ -244,33 +258,44 @@ fn tight_step_gas_rolls_back_and_detached_replay_uses_reserved_system_call() {
             block_number: BLOCK,
             block_timestamp: TEST_BLOCK_TIMESTAMP_BASE + BLOCK,
         },
-        &tx_env,
+        tx_env.tx(),
     )
     .expect("historical system transaction must match detached replay");
     assert!(matches!(
         matched.action,
         DetachedTraceTxAction::ReservedSystemCall { .. }
     ));
-    let traced = tracer.trace(tx_env).unwrap();
-    assert!(matches!(
-        traced.result,
-        ExecutionResult::Halt {
-            reason: HaltReason::OutOfGas(_),
-            ..
-        }
-    ));
-    assert_eq!(traced.result.tx_gas_used(), 60_000);
-    assert!(traced.result.logs().is_empty());
+    let traced = trace_evm
+        .transact_with_inspector(&tx_env, &mut inspector)
+        .unwrap()
+        .commit();
+    assert!(
+        matches!(
+            traced.stop,
+            evm2::interpreter::InstrStop::OutOfGas | evm2::interpreter::InstrStop::PrecompileOOG
+        ),
+        "expected OutOfGas/PrecompileOOG halt, got {:?}",
+        traced.stop
+    );
+    assert_eq!(traced.tx_gas_used(), 60_000);
+    assert!(traced.logs.is_empty());
     for tx in proposed.ends.into_iter().skip(1) {
-        assert!(tracer
-            .trace(config.tx_env(&tx))
+        assert!(trace_evm
+            .transact_with_inspector(&crate::tx_env(&config, &tx), &mut inspector)
             .unwrap()
-            .result
+            .commit()
             .is_success());
     }
-    drop(tracer);
     for slot in 0..32 {
-        assert_eq!(replay.storage(PROBE, U256::from(slot)).unwrap(), U256::ZERO);
+        assert_eq!(
+            storage_slot(
+                trace_evm.state_mut().overlay_db_mut(),
+                PROBE,
+                U256::from(slot)
+            ),
+            U256::ZERO
+        );
     }
+    drop(trace_evm);
     clear_detached_trace_witness();
 }

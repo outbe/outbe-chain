@@ -126,11 +126,7 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
     } else {
         [healthy, corrupt]
     };
-    let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
+    let mut state = CacheDB::new(EmptyDB::default());
     let setup = BlockContext {
         block_gas_limit: 0,
         user_gas_used: 0,
@@ -148,7 +144,7 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
             STAKING_ADDRESS,
         ] {
             ctx.storage
-                .set_code(address, Bytecode::new_raw(Bytes::from_static(&[0xef])))?;
+                .set_code(address, Bytecode::new_legacy(Bytes::from_static(&[0xef])))?;
         }
         let mut vs = ValidatorSet::new(ctx.storage.clone());
         vs.test_configure_registry(OWNER)?;
@@ -270,11 +266,7 @@ fn assert_corrupt_unbonding_hook_rollback(corrupt_first: bool) {
 
 #[test]
 fn begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes() {
-    let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
+    let mut state = CacheDB::new(EmptyDB::default());
     let ctx = BlockContext {
         block_gas_limit: 0,
         user_gas_used: 0,
@@ -289,7 +281,7 @@ fn begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes() {
     let address = address!("0x1111111111111111111111111111111111111111");
     let slot = U256::from(0x46u64);
     let value = U256::from(0x193u64);
-    let marker = Bytecode::new_raw(Bytes::from_static(&[0xef]));
+    let marker = Bytecode::new_legacy(Bytes::from_static(&[0xef]));
     let marker_hash = marker.hash_slow();
 
     let err = super::run_atomic_storage_hooks(&mut state, ctx, |hook_ctx| {
@@ -303,12 +295,14 @@ fn begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes() {
     .expect_err("late hook failure must abort the whole hook batch");
 
     assert!(err.to_string().contains("oracle hook failed"));
-    assert_eq!(state.storage(address, slot).unwrap(), U256::ZERO);
+    assert_eq!(
+        evm2::evm::Database::get_storage(&mut state, &address, &slot).unwrap(),
+        U256::ZERO
+    );
     assert!(
-        state
-            .basic(address)
+        evm2::evm::Database::get_account(&mut state, &address)
             .unwrap()
-            .is_none_or(|info| info.is_empty_code_hash()),
+            .is_none_or(|info| info.code_hash == alloy_primitives::KECCAK256_EMPTY),
         "failed hook batch must not persist code"
     );
 
@@ -330,26 +324,33 @@ fn begin_block_hook_batch_rolls_back_code_and_reports_committed_code_changes() {
     })
     .expect("successful hook batch must flush state");
 
-    let account = changes
-        .get(&address)
+    let (_, account) = changes
+        .accounts()
+        .find(|(addr, _)| *addr == address)
         .expect("successful batch must report changed account");
-    assert_eq!(account.info.code_hash, marker_hash);
-    assert_eq!(account.info.code, Some(marker));
-    let changed_slot = account
-        .storage
-        .get(&slot)
+    let account_info = account
+        .current
+        .as_ref()
+        .expect("successful batch must report account info");
+    assert_eq!(account_info.code_hash, marker_hash);
+    assert_eq!(
+        changes
+            .code()
+            .find(|(h, _)| **h == marker_hash)
+            .map(|(_, c)| c),
+        Some(&marker)
+    );
+    let (_, changed_slot) = changes
+        .storage()
+        .find(|(key, _)| *key == evm2::StorageKey::new(address, slot))
         .expect("successful batch must report changed slot");
-    assert_eq!(changed_slot.present_value(), value);
+    assert_eq!(changed_slot.current, value);
     assert!(events.is_empty());
 }
 
 #[test]
 fn hook_readiness_error_keeps_its_type_across_the_executor_boundary() {
-    let db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
+    let mut state = CacheDB::new(EmptyDB::default());
     let ctx = BlockContext {
         block_gas_limit: 0,
         user_gas_used: 0,
@@ -393,6 +394,8 @@ fn begin_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_ear
     let ctx = block_one_execution_ctx(Some(3), Bytes::new());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         fixtures::executor_inputs_with_bootstrap(&ctx, Some(signer.clone()), true),
     );
 
@@ -458,11 +461,11 @@ fn begin_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_ear
             .tx_gas_used();
         assert_eq!(gas, 0);
     }
-    drop(executor);
 
     // Verify dirty storage slot was rolled back while earlier ValidatorLiveness state persisted.
+    let overlay = executor.evm_mut().state_mut().overlay_db_mut();
     assert_eq!(
-        state.storage(dirty_addr, dirty_slot).unwrap(),
+        evm2::evm::Database::get_storage(overlay, &dirty_addr, &dirty_slot).unwrap(),
         U256::ZERO,
         "dirty storage write inside reverted soft-fail OSOS must be rolled back"
     );
@@ -478,7 +481,7 @@ fn begin_block_soft_fail_rolls_back_dirty_storage_writes_and_logs_preserving_ear
         validators: vec![proposer],
     };
     let mut provider =
-        outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
+        outbe_primitives::storage::direct::DirectStorageProvider::new(overlay, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
         let vs = outbe_validatorset::contract::ValidatorSet::new(storage);
         let record = vs
@@ -518,32 +521,27 @@ fn executor_rejects_user_tx_to_reserved_system_address() {
         .try_into_recovered()
         .expect("reserved-address tx signer should recover");
 
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
-    db.insert_account_info(
-        reserved_tx.signer(),
+    let mut state = CacheDB::new(EmptyDB::default());
+    state.insert_account_info(
+        &reserved_tx.signer(),
         AccountInfo {
             balance: U256::from(1_000_000u64),
             ..Default::default()
         },
     );
 
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
-    let evm_env = EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+    let evm_env = EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::from(1u64),
-            gas_limit: 30_000_000,
-            basefee: 1_000_000_000,
+            gas_limit: U256::from(30_000_000_u64),
+            basefee: U256::from(1_000_000_000_u64),
             beneficiary: OWNER,
             timestamp: U256::from(1u64),
             ..Default::default()
         },
-    };
+        CHAIN_ID,
+    );
     let evm = config.evm_with_env(&mut state, evm_env);
     let ctx = execution_ctx(Some(1), Bytes::new());
     let mut executor = config.create_executor(evm, ctx);

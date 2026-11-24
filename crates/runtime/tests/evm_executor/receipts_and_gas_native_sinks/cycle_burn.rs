@@ -22,8 +22,8 @@ fn the_daily_cycle_tick_burns_the_burn_addresses_and_adds_the_base_fee_count() {
         (Address::ZERO, MINOR * U256::from(3) + U256::from(5)),
         (DEAD_ADDRESS, MINOR),
     ] {
-        state.insert_account(
-            account,
+        state.insert_account_info(
+            &account,
             AccountInfo {
                 balance,
                 ..Default::default()
@@ -33,7 +33,7 @@ fn the_daily_cycle_tick_burns_the_burn_addresses_and_adds_the_base_fee_count() {
     let mut evm_env = test_evm_env(1, REWARDS_ADDRESS);
     let block_timestamp = GENESIS_TS + SECONDS_PER_DAY + 60;
     let tee_bootstrap = sample_tee_bootstrap_payload_at(1, block_timestamp);
-    evm_env.block_env.timestamp = U256::from(block_timestamp);
+    evm_env.block.timestamp = U256::from(block_timestamp);
     let config = OutbeEvmConfig::new(
         test_chain_spec_with_genesis_timestamp(GENESIS_TS),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
@@ -85,7 +85,8 @@ fn the_daily_cycle_tick_burns_the_burn_addresses_and_adds_the_base_fee_count() {
         proposer: REWARDS_ADDRESS,
         validators: vec![REWARDS_ADDRESS],
     };
-    let mut provider = DirectStorageProvider::new(executor.evm_mut().db_mut(), read_ctx);
+    let mut provider =
+        DirectStorageProvider::new(executor.evm_mut().state_mut().overlay_db_mut(), read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(storage.balance(Address::ZERO).unwrap(), U256::from(5));
         assert_eq!(storage.balance(DEAD_ADDRESS).unwrap(), U256::ZERO);

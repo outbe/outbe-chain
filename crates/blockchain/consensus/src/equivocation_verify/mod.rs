@@ -180,7 +180,11 @@ struct Vote {
     payload: Vec<u8>,
 }
 
-fn read_vote(bytes: &mut &[u8], kind: EquivocationKind, first: bool) -> Result<Vote, VerifyError> {
+fn read_vote(
+    bytes: &mut commonware_codec::Copying<'_>,
+    kind: EquivocationKind,
+    first: bool,
+) -> Result<Vote, VerifyError> {
     let (round, attestation, payload) = match kind {
         EquivocationKind::ConflictingNotarize => {
             let v = Notarize::<HybridScheme<MinSig>, Digest>::read(bytes)?;
@@ -211,7 +215,7 @@ fn read_vote(bytes: &mut &[u8], kind: EquivocationKind, first: bool) -> Result<V
 }
 
 fn verify(raw: &RawEquivocationEvidence) -> Result<VerifiedEquivocationEvidence, VerifyError> {
-    let mut bytes = raw.bytes.as_slice();
+    let mut bytes = commonware_codec::Copying(raw.bytes.as_slice());
     let first = read_vote(&mut bytes, raw.kind, true)?;
     let second = read_vote(&mut bytes, raw.kind, false)?;
     let same_context = (
@@ -222,7 +226,7 @@ fn verify(raw: &RawEquivocationEvidence) -> Result<VerifiedEquivocationEvidence,
     ) == (second.round, raw.epoch, raw.signer, raw.signer);
     let same_proposal =
         raw.kind != EquivocationKind::NullifyFinalize && first.payload == second.payload;
-    if !bytes.is_empty() || !same_context || same_proposal {
+    if !bytes.0.is_empty() || !same_context || same_proposal {
         return Err(VerifyError::InconsistentEvidence);
     }
     let pk = raw
@@ -292,13 +296,13 @@ pub(crate) fn unpack_verified_equivocation_evidence(
         if block.len() <= 144 || block[..48] != evidence.accused_pubkey {
             return Err(VerifyError::InconsistentEvidence);
         }
-        let mut bytes = &block[144..];
+        let mut bytes = commonware_codec::Copying(&block[144..]);
         let round = if evidence.kind == EquivocationKind::NullifyFinalize && first {
             Round::read(&mut bytes)?
         } else {
             Proposal::<Digest>::read(&mut bytes)?.round
         };
-        if !bytes.is_empty() || round.epoch().get() != evidence.epoch {
+        if !bytes.0.is_empty() || round.epoch().get() != evidence.epoch {
             return Err(VerifyError::InconsistentEvidence);
         }
         rounds.push(round);

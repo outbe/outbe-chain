@@ -277,13 +277,13 @@ impl Certificates for MemoryCertificates {
         self,
         height: Height,
         _digest: Self::BlockDigest,
-        finalization: crate::marshal_types::Finalization,
+        finalization: &crate::marshal_types::Finalization,
     ) -> Result<Self, Self::Error> {
         self.by_height
             .lock()
             .unwrap()
             .entry(height.get())
-            .or_insert(finalization);
+            .or_insert_with(|| finalization.clone());
         Ok(self)
     }
 
@@ -330,19 +330,19 @@ impl Certificates for MemoryCertificates {
 #[derive(Clone, Debug, Default)]
 struct MemoryBlocks {
     _drop_trace: Option<replay_api::ArchiveDropTrace>,
-    by_height: Arc<std::sync::Mutex<BTreeMap<u64, crate::block::ConsensusBlock>>>,
+    by_height: Arc<std::sync::Mutex<BTreeMap<u64, Arc<crate::block::ConsensusBlock>>>>,
 }
 
 impl Blocks for MemoryBlocks {
-    type Block = crate::block::ConsensusBlock;
+    type Block = Arc<crate::block::ConsensusBlock>;
     type Error = Infallible;
 
-    async fn put(self, block: Self::Block) -> Result<Self, Self::Error> {
+    async fn put(self, _digest: Digest, block: &Self::Block) -> Result<Self, Self::Error> {
         self.by_height
             .lock()
             .unwrap()
             .entry(block.height().get())
-            .or_insert(block);
+            .or_insert_with(|| Arc::clone(block));
         Ok(self)
     }
 
@@ -407,19 +407,21 @@ impl Blocks for MemoryBlocks {
 
 #[derive(Clone, Debug, Default)]
 struct DurableCrashBlocks {
-    durable: Arc<std::sync::Mutex<BTreeMap<u64, crate::block::ConsensusBlock>>>,
-    buffered: BTreeMap<u64, crate::block::ConsensusBlock>,
+    durable: Arc<std::sync::Mutex<BTreeMap<u64, Arc<crate::block::ConsensusBlock>>>>,
+    buffered: BTreeMap<u64, Arc<crate::block::ConsensusBlock>>,
     fail_next_sync: bool,
 }
 
 impl Blocks for DurableCrashBlocks {
-    type Block = crate::block::ConsensusBlock;
+    type Block = Arc<crate::block::ConsensusBlock>;
     type Error = std::io::Error;
 
-    async fn put(mut self, block: Self::Block) -> Result<Self, Self::Error> {
+    async fn put(mut self, _digest: Digest, block: &Self::Block) -> Result<Self, Self::Error> {
         let height = block.height().get();
         if !self.durable.lock().unwrap().contains_key(&height) {
-            self.buffered.entry(height).or_insert(block);
+            self.buffered
+                .entry(height)
+                .or_insert_with(|| Arc::clone(block));
         }
         Ok(self)
     }

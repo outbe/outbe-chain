@@ -156,7 +156,12 @@ fn certify_waits_for_the_exact_candidate_without_a_local_verify() {
         let mut fixture = CertificationFixture::open(&context, "certification-exact").await;
         let round = Round::new(Epoch::new(0), View::new(2));
         let other = consensus_block_with_number(0x11, 7);
-        assert!(fixture.marshal.verified(round, other).await);
+        assert!(
+            fixture
+                .marshal
+                .verified(round, crate::test_fixtures::digested_block(other))
+                .await
+        );
         let block = consensus_block_with_number(0x12, 7);
         let digest = block.digest();
 
@@ -166,7 +171,12 @@ fn certify_waits_for_the_exact_candidate_without_a_local_verify() {
             certification.try_recv(),
             Err(tokio::sync::oneshot::error::TryRecvError::Empty)
         ));
-        assert!(fixture.marshal.verified(round, block).await);
+        assert!(
+            fixture
+                .marshal
+                .verified(round, crate::test_fixtures::digested_block(block))
+                .await
+        );
         assert!(certification.await.expect("durable candidate must certify"));
     });
 }
@@ -195,7 +205,12 @@ fn cancelled_certification_does_not_poison_later_recovery() {
         let cancelled = fixture.app.certify(round, digest).await;
         drop(cancelled);
         context.sleep(Duration::from_millis(50)).await;
-        assert!(fixture.marshal.verified(round, block).await);
+        assert!(
+            fixture
+                .marshal
+                .verified(round, crate::test_fixtures::digested_block(block))
+                .await
+        );
         assert!(fixture.app.certify(round, digest).await.await.unwrap());
     });
 }
@@ -229,7 +244,7 @@ fn certified_candidate_survives_an_unclean_restart() {
             )
             .await
             .expect("certified block must survive a crash");
-        assert_eq!(block.digest(), digest);
+        assert_eq!(block.inner().digest(), digest);
         assert!(fixture.app.certify(round, digest).await.await.unwrap());
     });
 }

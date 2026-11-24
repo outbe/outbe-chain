@@ -135,26 +135,25 @@ pub fn test_evm_signer() -> Arc<OutbeEvmSigner> {
     Arc::new(OutbeEvmSigner::from_secret_bytes([1u8; 32]).unwrap())
 }
 
-pub fn test_evm_env(block_number: u64, beneficiary: Address) -> EvmEnv {
-    EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(CHAIN_ID)
-            .with_spec_and_mainnet_gas_params(SpecId::SHANGHAI),
-        block_env: BlockEnv {
+pub fn test_evm_env(block_number: u64, beneficiary: Address) -> EthEvmEnv<OutbeEvmTypes> {
+    EthEvmEnv::new(
+        SpecId::SHANGHAI,
+        BlockEnvExt {
             number: U256::from(block_number),
-            gas_limit: outbe_primitives::system_tx::protocol_block_gas_limit(block_number),
-            basefee: MIN_PROTOCOL_BASE_FEE,
+            gas_limit: U256::from(outbe_primitives::system_tx::protocol_block_gas_limit(
+                block_number,
+            )),
+            basefee: U256::from(MIN_PROTOCOL_BASE_FEE),
             beneficiary,
             timestamp: U256::from(TEST_BLOCK_TIMESTAMP_BASE.saturating_add(block_number)),
             ..Default::default()
         },
-    }
+        CHAIN_ID,
+    )
 }
 
-pub(crate) fn cache_db_from_storage(
-    seed_storage: HashMapStorageProvider,
-) -> CacheDB<EmptyDBTyped<ProviderError>> {
-    let mut db = CacheDB::<EmptyDBTyped<ProviderError>>::default();
+pub(crate) fn cache_db_from_storage(seed_storage: HashMapStorageProvider) -> CacheDB<EmptyDB> {
+    let mut db = CacheDB::new(EmptyDB::default());
     let mut addresses: Vec<Address> = seed_storage
         .storage
         .keys()
@@ -168,7 +167,7 @@ pub(crate) fn cache_db_from_storage(
     for address in addresses {
         let balance = seed_storage.get_balance(address);
         db.insert_account_info(
-            address,
+            &address,
             AccountInfo {
                 balance,
                 ..Default::default()
@@ -176,14 +175,13 @@ pub(crate) fn cache_db_from_storage(
         );
     }
     for ((address, slot), value) in seed_storage.storage {
-        db.insert_account_storage(address, slot, value)
-            .expect("seed storage insert should succeed");
+        db.insert_account_storage(&address, &slot, &value);
     }
     db
 }
 
 /// Independent trie-root projection of the executed test bundle.
-pub fn post_state_root(state: &revm::database::BundleState) -> B256 {
+pub fn post_state_root(state: &BundleState) -> B256 {
     use reth_trie::{test_utils::state_root_prehashed, HashedPostState, KeccakKeyHasher};
 
     let sorted = HashedPostState::from_bundle_state::<KeccakKeyHasher>(state.state()).into_sorted();
@@ -203,12 +201,9 @@ pub fn post_state_root(state: &revm::database::BundleState) -> B256 {
     state_root_prehashed(accounts)
 }
 
-pub(crate) fn signer_balance(
-    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
-    addr: Address,
-) -> U256 {
+pub(crate) fn signer_balance(state: &mut CacheDB<EmptyDB>, addr: Address) -> U256 {
     state
-        .basic(addr)
+        .get_account(&addr)
         .expect("signer account read should succeed")
         .map(|a| a.balance)
         .unwrap_or_default()
@@ -383,15 +378,11 @@ pub fn seed_valid_tee_nodes(storage: StorageHandle<'_>, addresses: &[Address]) {
     }
 }
 
-pub(super) fn state_with_active_proposer(
-    proposer: Address,
-) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+pub(super) fn state_with_active_proposer(proposer: Address) -> CacheDB<EmptyDB> {
     state_with_active_proposer_fixture(proposer)
 }
 
-fn state_with_active_proposer_fixture(
-    proposer: Address,
-) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+fn state_with_active_proposer_fixture(proposer: Address) -> CacheDB<EmptyDB> {
     let chain_spec = test_chain_spec();
     let mut seed_storage =
         HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
@@ -411,7 +402,7 @@ fn state_with_active_proposer_fixture(
         CYCLE_ADDRESS,
     ] {
         db.insert_account_info(
-            address,
+            &address,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code.clone()),
@@ -419,23 +410,20 @@ fn state_with_active_proposer_fixture(
             },
         );
     }
-    State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build()
+    db
 }
 
 pub fn state_with_active_proposer_and_funded_account(
     proposer: Address,
     funded: Address,
-) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+) -> CacheDB<EmptyDB> {
     state_with_active_proposer_and_funded_account_fixture(proposer, funded)
 }
 
 pub(super) fn state_with_active_proposer_and_funded_account_fixture(
     proposer: Address,
     funded: Address,
-) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+) -> CacheDB<EmptyDB> {
     let chain_spec = test_chain_spec();
     let mut seed_storage =
         HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
@@ -455,7 +443,7 @@ pub(super) fn state_with_active_proposer_and_funded_account_fixture(
         outbe_primitives::addresses::TEE_REGISTRY_ADDRESS,
     ] {
         db.insert_account_info(
-            address,
+            &address,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code.clone()),
@@ -464,23 +452,20 @@ pub(super) fn state_with_active_proposer_and_funded_account_fixture(
         );
     }
     db.insert_account_info(
-        funded,
+        &funded,
         AccountInfo {
             balance: U256::from(1_000_000u64),
             ..Default::default()
         },
     );
 
-    State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build()
+    db
 }
 
 pub fn state_with_active_validators_seeded(
     validators: &[(Address, [u8; 48])],
     seed_extra: impl FnOnce(StorageHandle),
-) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+) -> CacheDB<EmptyDB> {
     state_with_active_validators_seeded_at_block(validators, 0, seed_extra)
 }
 
@@ -488,7 +473,7 @@ pub(super) fn state_with_active_validators_seeded_at_block(
     validators: &[(Address, [u8; 48])],
     block_number: u64,
     seed_extra: impl FnOnce(StorageHandle),
-) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+) -> CacheDB<EmptyDB> {
     state_with_active_validators_seeded_at_block_with_cycle_frames(
         validators,
         block_number,
@@ -502,7 +487,7 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
     block_number: u64,
     cycle_frames: u8,
     seed_extra: impl FnOnce(StorageHandle),
-) -> State<CacheDB<EmptyDBTyped<ProviderError>>> {
+) -> CacheDB<EmptyDB> {
     let chain_spec = test_chain_spec();
     let mut seed_storage =
         HashMapStorageProvider::new_with_chain_identity(CHAIN_ID, chain_spec.genesis_hash());
@@ -587,7 +572,7 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
     let marker_code = Bytecode::new_legacy([0xef].into());
     for (address, balance) in marker_addresses.into_iter().zip(seeded_balances) {
         db.insert_account_info(
-            address,
+            &address,
             AccountInfo {
                 code_hash: marker_code.hash_slow(),
                 code: Some(marker_code.clone()),
@@ -597,8 +582,5 @@ pub(super) fn state_with_active_validators_seeded_at_block_with_cycle_frames(
         );
     }
 
-    State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build()
+    db
 }

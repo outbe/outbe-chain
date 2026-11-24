@@ -121,7 +121,12 @@ impl ProposalPublication {
             },
         );
         // Enqueue before publishing the gate to concurrent certification.
-        marshal.verified_deferred(round, block, ack);
+        let digest_val = commonware_cryptography::Digestible::digest(block.as_ref());
+        marshal.verified_deferred(
+            round,
+            commonware_cryptography::Digested::precomputed(block, digest_val),
+            ack,
+        );
         drop(state);
         (self.observe)(durable);
     }
@@ -142,7 +147,15 @@ impl ProposalPublication {
             .get_mut(&candidate)
             .and_then(|entry| entry.staged.take());
         match staged {
-            Some(Staged { block, ack }) => marshal.proposed(round, block, recipients, ack),
+            Some(Staged { block, ack }) => {
+                let digest_val = commonware_cryptography::Digestible::digest(block.as_ref());
+                marshal.proposed(
+                    round,
+                    commonware_cryptography::Digested::precomputed(block, digest_val),
+                    recipients,
+                    ack,
+                )
+            }
             None => marshal.forward(round, digest, recipients),
         }
     }
@@ -161,7 +174,12 @@ impl ProposalPublication {
             (entry.staged.take(), entry.durable.clone())
         };
         if let Some(Staged { block, ack }) = staged {
-            marshal.verified_deferred(round, block, ack);
+            let digest_val = commonware_cryptography::Digestible::digest(block.as_ref());
+            marshal.verified_deferred(
+                round,
+                commonware_cryptography::Digested::precomputed(block, digest_val),
+                ack,
+            );
         }
         Some(durable)
     }

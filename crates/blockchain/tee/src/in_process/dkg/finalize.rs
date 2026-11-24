@@ -1,5 +1,6 @@
 use super::secret_partial::SecretPartial;
 use super::*;
+use alloy_primitives::bytes::Buf as _;
 use commonware_cryptography::Secret;
 
 impl DkgSession {
@@ -42,12 +43,12 @@ impl DkgSession {
         for blob_bytes in sealed_for_me {
             let blob = share_cipher::decode(blob_bytes)?;
             let plaintext = decrypt_share(&self.enc_secret, &blob)?;
-            let mut reader: &[u8] = plaintext.as_ref();
+            let mut reader = Copying(plaintext.as_ref());
             let partial = SecretPartial::new(
                 PartialSignature::<Variant>::read(&mut reader)
                     .map_err(|e| dkg_err(DkgOperation::DecodeOfferPartial, e))?,
             );
-            if !reader.is_empty() {
+            if reader.has_remaining() {
                 return Err(DkgError::TrailingBytes.into());
             }
             threshold::verify_message::<Variant>(

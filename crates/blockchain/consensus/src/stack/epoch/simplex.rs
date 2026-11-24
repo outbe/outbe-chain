@@ -67,17 +67,7 @@ pub(crate) fn epoch_partition(epoch: Epoch, signer_enabled: bool) -> String {
 
 impl<E, N: StackNodeAccess> EpochSupervisor<E, N>
 where
-    E: BufferPooler
-        + Clock
-        + CryptoRng
-        + Network
-        + Resolver
-        + Spawner
-        + Storage
-        + Metrics
-        + Send
-        + Sync
-        + 'static,
+    E: Clock + CryptoRng + Network + Resolver + Spawner + Storage + Metrics + Send + Sync + 'static,
 {
     pub(super) async fn start_engine(
         &mut self,
@@ -204,15 +194,16 @@ where
         );
 
         // Combine OutbeReporter + marshal mailbox as a joint Simplex reporter.
-        // Both receive Activity events including Finalization:
-        // - OutbeReporter: bridge/VRF processing AND
-        // `Activity::Certification` -> CertifiedParentProofStore.
+        // Both receive Activity events including Certification and Finalization:
+        // - OutbeReporter: bridge/VRF processing AND persistent
+        //   `Activity::Certification` -> CertifiedParentProofStore.
         // - Marshal: finalized block delivery -> executor -> ack -> recovery truth.
-        //   Marshal forwards only Notarization and Finalization. Every other
-        //   activity, including Certification, returns `Feedback::Ok`
-        //   (monorepo `consensus/src/marshal/core/mailbox.rs:996-1008`).
-        //   `Reporters::from((outbe, marshal))` runs both via `futures::join!`,
-        //   and Outbe is the sole persistent consumer of Certification.
+        //   Marshal forwards Notarization, Finalization, and Certification
+        //   (recording certified block/parent commitments in in-memory `certified`,
+        //   not persisted). Via `Reporters::from((outbe, marshal))` (`combine()`),
+        //   marshal can therefore return `Backoff`/`Closed` on `Certification`,
+        //   while raw votes (e.g. `Activity::Finalize`) still return `Feedback::Ok`.
+        //   Outbe remains the sole persistent consumer of Certification.
         let combined_reporter = Reporters::from((outbe_reporter, self.marshal_mailbox.clone()));
 
         // -- d. Resolve the Simplex genesis floor -------------------------
@@ -266,7 +257,8 @@ where
             view_retention: ViewDelta::new(u64::from(config::ACTIVITY_TIMEOUT)),
             skip: commonware_consensus::simplex::SkipPolicy::Disabled,
             track_historical_votes: true,
-            fetch_timeout: config::DEFAULT_PEER_RESPONSE_TIMEOUT,
+            fetch_timeout: commonware_utils::NZDuration!(config::DEFAULT_PEER_RESPONSE_TIMEOUT),
+            fetch_retry_delay: std::time::Duration::from_millis(100),
         };
 
         // -- f. Start engine ---------------------------------------------

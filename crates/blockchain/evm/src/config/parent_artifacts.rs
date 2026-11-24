@@ -47,7 +47,7 @@ impl AccountedParentArtifactProvider for BridgeAccountedParentArtifactProvider {
         &self,
         block_number: u64,
         block_hash: B256,
-    ) -> Result<Option<AccountedParentArtifact>, reth_evm::execute::ProviderError> {
+    ) -> Result<Option<AccountedParentArtifact>, reth_provider::ProviderError> {
         Ok(cached_accounted_parent_artifact(
             &self.summary_cache,
             block_number,
@@ -115,7 +115,7 @@ where
         &self,
         block_number: u64,
         block_hash: B256,
-    ) -> Result<Option<AccountedParentArtifact>, reth_evm::execute::ProviderError> {
+    ) -> Result<Option<AccountedParentArtifact>, reth_provider::ProviderError> {
         // (1) Cache hit - exact `(block_number, block_hash)` only.
         if let Some(cached) = self.cached_artifact(block_number, block_hash) {
             return Ok(Some(cached));
@@ -134,14 +134,14 @@ where
                 // a protocol violation. Reject it loudly rather than silently
                 // use a wrong block. This is NOT a visibility miss.
                 if sealed.header().number() != block_number {
-                    return Err(reth_evm::execute::ProviderError::HeaderNotFound(
+                    return Err(reth_provider::ProviderError::HeaderNotFound(
                         block_hash.into(),
                     ));
                 }
                 return Ok(decode_accounted_parent_artifact(sealed.header()));
             }
             Ok(None) => {}
-            Err(reth_evm::execute::ProviderError::HeaderNotFound(_)) => {}
+            Err(reth_provider::ProviderError::HeaderNotFound(_)) => {}
             Err(error) => return Err(error),
         }
 
@@ -158,7 +158,7 @@ where
                 }
             }
             Ok(None) => {}
-            Err(reth_evm::execute::ProviderError::HeaderNotFound(_)) => {}
+            Err(reth_provider::ProviderError::HeaderNotFound(_)) => {}
             Err(error) => return Err(error),
         }
 

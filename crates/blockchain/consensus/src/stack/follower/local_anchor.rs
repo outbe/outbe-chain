@@ -34,7 +34,7 @@ pub struct LocalFinalizedHistory<'a, C, B, H> {
 impl<C, B, H> LocalFinalizedHistory<'_, C, B, H>
 where
     C: Certificates<BlockDigest = Digest, Commitment = Digest, Scheme = HybridScheme<MinSig>>,
-    B: Blocks<Block = ConsensusBlock>,
+    B: Blocks<Block = std::sync::Arc<ConsensusBlock>>,
     H: Fn(u64) -> Result<Option<B256>>,
 {
     pub async fn restore(self) -> Result<Option<RestoredCommittee>> {

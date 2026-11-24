@@ -4,7 +4,7 @@
 //! begin-block precompile execution so the BLS pairing is performed once per
 //! block and reused when the precompile executes.
 
-use alloy_evm::block::{BlockExecutionError, StateDB};
+use evm2::evm::{DynDatabase, StateChangeSink};
 use outbe_primitives::committee_snapshot::committee_snapshot_key;
 use outbe_primitives::proof::verify_late_finalize_proof;
 use outbe_primitives::{
@@ -14,6 +14,8 @@ use outbe_primitives::{
     reshare_artifact::{LateFinalizeCreditsArtifact, PerBlockCredit},
     storage::StorageHandle,
 };
+use reth_evm::BlockExecutionError;
+use std::convert::Infallible;
 
 use crate::{
     errors::{BeginBlockPrecompileError, ExecutorValidationError},
@@ -164,8 +166,7 @@ pub(crate) fn verify_late_finalize_credits_batches<DB>(
     artifact: &LateFinalizeCreditsArtifact,
 ) -> Result<Vec<Vec<usize>>, BlockExecutionError>
 where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
+    DB: DynDatabase + StateChangeSink<Error = Infallible>,
 {
     let mut verified_batches = Vec::with_capacity(artifact.batches.len());
     for credit in &artifact.batches {
@@ -186,8 +187,7 @@ fn verify_single_late_credit_batch<DB>(
     credit: &PerBlockCredit,
 ) -> Result<Vec<usize>, BlockExecutionError>
 where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
+    DB: DynDatabase + StateChangeSink<Error = Infallible>,
 {
     let block_number = block_context.block_number;
     validate_inclusion_window(block_number, credit.fb_number)

@@ -39,7 +39,7 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
         outbe_system_common::addresses::TRIBUTE_ADDRESS,
     ] {
         db.insert_account_info(
-            address,
+            &address,
             AccountInfo {
                 code_hash: marker.hash_slow(),
                 code: Some(marker.clone()),
@@ -47,17 +47,14 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
             },
         );
     }
-    let mut state = State::builder()
-        .with_database(db)
-        .with_bundle_update()
-        .build();
+    let mut state = db;
     let config = OutbeEvmConfig::new(
         spec,
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     )
     .with_evm_signer(signer);
     let mut env = test_evm_env(1, REWARDS_ADDRESS);
-    env.block_env.timestamp = U256::from(block_ts);
+    env.block.timestamp = U256::from(block_ts);
     let bootstrap = sample_tee_bootstrap_payload_at(1, block_ts);
     let begin = begin_system_txs_for_test(
         &config,
@@ -87,12 +84,13 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
             break;
         }
     }
-    drop(executor);
+    let block1_state = executor.into_state();
+    state.commit_source(&BundleSource(&block1_state));
 
     // Call passes now run in the end zone, which starts at block 2.
     // Isolate that suffix after the delayed block-1 CycleTick initialized genesis.
     let mut env = test_evm_env(2, REWARDS_ADDRESS);
-    env.block_env.timestamp = U256::from(block_ts + 1);
+    env.block.timestamp = U256::from(block_ts + 1);
     let evm = config.evm_with_env(&mut state, env);
     let mut execution = execution_ctx(Some(2), Bytes::new());
     execution.proposer_evm_address = Some(proposer);
@@ -100,7 +98,8 @@ fn delayed_first_cycle_tick_starts_all_fresh_passes_at_chainspec_genesis() {
     executor.apply_end_block_phase().unwrap();
     assert_eq!(executor.receipts().len(), 5);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
-    drop(executor);
+    let block2_state = executor.into_state();
+    state.commit_source(&BundleSource(&block2_state));
 
     let block = BlockContext {
         block_gas_limit: 0,
@@ -242,6 +241,8 @@ fn phase1_preexec_failure_must_consume_body0_or_abort() {
     ctx.parent_consensus_metadata = Some(metadata.clone());
     let mut executor = OutbeBlockExecutor::new(
         EthBlockExecutor::new(evm, ctx.inner.clone(), &chain_spec, &receipt_builder),
+        chain_spec.clone(),
+        None,
         {
             let mut inputs = fixtures::executor_inputs_from_ctx(&ctx, Some(signer.clone()), false);
             inputs.identity.parent_hash = parent_hash;
@@ -363,8 +364,8 @@ fn reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_lane_clea
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |storage| {
             seed_valid_tee_nodes(storage, &[proposer]);
         });
-    state.database.insert_account_info(
-        Address::from(*user_tx.signer()),
+    state.insert_account_info(
+        &Address::from(*user_tx.signer()),
         AccountInfo {
             balance: U256::from(1_000_000u64),
             ..Default::default()
@@ -447,12 +448,15 @@ fn reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_lane_clea
         expected_code_topic,
         "GAS-11: system revert soft-failure receipt must use OutbeFailure code 201"
     );
-    let expected_reason = concat!(
-        "system tx oracle_slash did not succeed at body_index=9: ",
-        "Revert { gas: ResultGas { total_gas_spent: 42000, state_gas_spent: 0, ",
-        "refunded: 0, floor_gas: 0 }, logs: [], output: ",
-        "0x666f72636564204f757462652073797374656d2d63616c6c20726576657274 }"
-    );
+    let expected_revert = evm2::TxResultExt::<()> {
+        status: false,
+        total_gas_spent: 42_000,
+        stop: evm2::interpreter::InstrStop::Revert,
+        output: Bytes::from_static(b"forced Outbe system-call revert"),
+        ..Default::default()
+    };
+    let expected_reason =
+        format!("system tx oracle_slash did not succeed at body_index=9: {expected_revert:?}");
     let mut expected_log_data = vec![0u8; 64];
     expected_log_data[31] = 32;
     expected_log_data[32..64]
@@ -486,7 +490,7 @@ fn reverted_noncritical_begin_zone_system_tx_soft_fails_and_keeps_user_lane_clea
         .expect("user txs must execute after a soft-failed non-critical begin-zone system tx")
         .tx_gas_used();
     assert_eq!(
-        executor.inner.cumulative_tx_gas_used, user_gas,
+        executor.inner.inner.cumulative_gas_used, user_gas,
         "GAS-11: soft-failed system tx must contribute 0 gas to cumulative block gas"
     );
 }
@@ -498,10 +502,7 @@ enum CriticalCycleFault {
 
 fn execute_critical_cycle_fault(
     fault: CriticalCycleFault,
-) -> (
-    Result<(), alloy_evm::block::BlockExecutionError>,
-    Vec<Receipt>,
-) {
+) -> (Result<(), BlockExecutionError>, Vec<Receipt>) {
     let signer = test_evm_signer();
     let proposer = signer.address();
     let mut state = state_with_active_proposer(proposer);
@@ -651,7 +652,7 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
             block_two_execution_ctx(None, Bytes::new(), proposer, parent_hash);
         execution.parent_artifact_hint.as_mut().unwrap().timestamp = block_timestamp - 30;
         let mut evm_env = test_evm_env(2, REWARDS_ADDRESS);
-        evm_env.block_env.timestamp = U256::from(block_timestamp);
+        evm_env.block.timestamp = U256::from(block_timestamp);
         let config = OutbeEvmConfig::new(
             test_chain_spec_with_genesis_timestamp(GENESIS_TS),
             std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
@@ -685,7 +686,6 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
                 .execute_transaction(tx)
                 .expect("stale reward price must not fail the block");
         }
-        drop(executor);
 
         let read_ctx = BlockContext {
             block_gas_limit: 0,
@@ -698,8 +698,10 @@ fn stale_oracle_cycle_credits_validator_reward_and_allows_later_feeder_vote() {
             proposer,
             validators: vec![proposer],
         };
-        let mut provider =
-            outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read_ctx);
+        let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+            executor.evm_mut().state_mut().overlay_db_mut(),
+            read_ctx,
+        );
         StorageHandle::enter(&mut provider, |storage| {
             let cycle = outbe_cycle::schema::Cycle::new(storage.clone());
             let oracle = outbe_oracle::schema::OracleContract::new(storage.clone());

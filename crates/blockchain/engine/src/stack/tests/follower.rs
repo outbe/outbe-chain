@@ -80,7 +80,13 @@ fn follower_shutdown_keeps_certificate_available_until_observer_drains() {
         let clock = context.child("proof_ready");
         let shutdown = context.child("shutdown");
         let (mut mailbox, _resolver, actor) = start_recovery_marshal(context, provider).await;
-        let _ = mailbox.verified(round, block).await;
+        let digest = block.digest();
+        let _ = mailbox
+            .verified(
+                round,
+                commonware_cryptography::Digested::precomputed(block, digest),
+            )
+            .await;
         let _ = mailbox.report(Activity::Finalization(finalization));
         recover_application_finalized_round(clock, mailbox.clone(), 17)
             .await
@@ -170,7 +176,12 @@ fn follower_shutdown_drains_real_delivery_and_reopens_exact_persisted_proof() {
         let shutdown = context.child("shutdown");
         let (mut mailbox, _resolver, actor) =
             start_recovery_marshal_with_reporter(context, provider, reporter).await;
-        let _ = mailbox.verified(round, block.clone()).await;
+        let _ = mailbox
+            .verified(
+                round,
+                commonware_cryptography::Digested::precomputed(block.clone(), block.digest()),
+            )
+            .await;
         let _ = mailbox.report(Activity::Finalization(finalization));
         let accepted_ack = loop {
             let message = tokio::time::timeout(Duration::from_secs(5), deliveries.next())
@@ -179,11 +190,11 @@ fn follower_shutdown_drains_real_delivery_and_reopens_exact_persisted_proof() {
                 .unwrap();
             if let outbe_consensus::executor::ingress::Message::MarshalUpdate(update) = message {
                 if let Update::Block(delivered, ack) = *update {
-                    if delivered.number() == 0 {
+                    if delivered.inner().number() == 0 {
                         ack.acknowledge();
                         continue;
                     }
-                    assert_eq!(delivered.block_hash(), block.block_hash());
+                    assert_eq!(delivered.inner().block_hash(), block.block_hash());
                     break ack;
                 }
             }
@@ -212,7 +223,12 @@ fn follower_shutdown_drains_real_delivery_and_reopens_exact_persisted_proof() {
         };
         drain.finish(execution, observer).await.unwrap();
         wait.await.unwrap();
-        assert_eq!(mailbox.get_processed_height().await, Some(Height::new(1)));
+        assert_eq!(
+            mailbox.get_processed().await,
+            Some(commonware_consensus::marshal::core::Processed::Block(
+                Height::new(1)
+            ))
+        );
         shutdown
             .stop(0, Some(Duration::from_secs(5)))
             .await
@@ -262,7 +278,12 @@ fn finalization_drainer_skips_closed_replies_and_answers_live_requests() {
         let drainer_ctx = context.child("drainer_parent");
         let shutdown = context.child("shutdown");
         let (mut mailbox, _resolver, actor) = start_recovery_marshal(context, provider).await;
-        let _ = mailbox.verified(round, block.clone()).await;
+        let _ = mailbox
+            .verified(
+                round,
+                commonware_cryptography::Digested::precomputed(block.clone(), block.digest()),
+            )
+            .await;
         let _ = mailbox.report(Activity::Finalization(finalization.clone()));
         recover_application_finalized_round(clock, mailbox.clone(), 17)
             .await
@@ -302,6 +323,98 @@ fn finalization_drainer_skips_closed_replies_and_answers_live_requests() {
 
         let _ = cancel_tx.send(true);
         drainer.await.unwrap();
+        shutdown
+            .stop(0, Some(Duration::from_secs(5)))
+            .await
+            .unwrap();
+        actor.await.unwrap();
+    });
+}
+
+#[test]
+fn follower_marshal_floor_reports_processed_absent_then_block_after_ack() {
+    use commonware_consensus::marshal::core::Processed;
+    use futures::StreamExt as _;
+
+    commonware_runtime::tokio::Runner::default().start(|context| async move {
+        let floor_block = recovery_block(5);
+        let round = Round::new(Epoch::new(0), View::new(5));
+        let (provider, finalization) = recovery_finalization_fixture(&floor_block, round);
+        let (tx, mut deliveries) = futures::channel::mpsc::unbounded();
+        let reporter = outbe_consensus::executor::Mailbox::from_sender(tx);
+        let shutdown = context.child("shutdown");
+        let (mailbox, _resolver, actor) =
+            start_recovery_marshal_with_reporter(context, provider, reporter).await;
+
+        // Acknowledge genesis (height 0) before advancing the floor to height 5.
+        loop {
+            let message = tokio::time::timeout(Duration::from_secs(5), deliveries.next())
+                .await
+                .unwrap()
+                .unwrap();
+            if let outbe_consensus::executor::ingress::Message::MarshalUpdate(update) = message {
+                if let Update::Block(delivered, ack) = *update {
+                    assert_eq!(delivered.inner().number(), 0);
+                    ack.acknowledge();
+                    break;
+                }
+            }
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while mailbox.get_processed().await != Some(Processed::Block(Height::zero())) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("genesis ack must report Processed::Block(0)");
+
+        // Supply the floor block at height 5 so Marshal can install the floor locally
+        // (without storing block 4), then advance the floor to height 5.
+        assert!(
+            mailbox
+                .verified(
+                    round,
+                    commonware_cryptography::Digested::precomputed(
+                        floor_block.clone(),
+                        floor_block.digest(),
+                    ),
+                )
+                .await
+        );
+        mailbox.set_floor(finalization);
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while mailbox.get_processed().await != Some(Processed::Absent(Height::new(4))) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("follower marshal floor at 5 must report Processed::Absent(4)");
+        assert!(mailbox.get_block(Height::new(4)).await.is_none());
+
+        // Delivering and acknowledging height 5 advances to Processed::Block(5).
+        loop {
+            let message = tokio::time::timeout(Duration::from_secs(5), deliveries.next())
+                .await
+                .unwrap()
+                .unwrap();
+            if let outbe_consensus::executor::ingress::Message::MarshalUpdate(update) = message {
+                if let Update::Block(delivered, ack) = *update {
+                    ack.acknowledge();
+                    if delivered.inner().number() == 5 {
+                        assert_eq!(delivered.inner().block_hash(), floor_block.block_hash());
+                        break;
+                    }
+                }
+            }
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while mailbox.get_processed().await != Some(Processed::Block(Height::new(5))) {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("acknowledging height 5 must report Processed::Block(5)");
+
         shutdown
             .stop(0, Some(Duration::from_secs(5)))
             .await

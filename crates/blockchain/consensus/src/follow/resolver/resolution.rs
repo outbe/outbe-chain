@@ -54,7 +54,7 @@ impl<F: FinalizedSource, L: LocalBlockSource> FetchResolution<F, L> {
         fetch: Fetch<ResolverKey, Annotation>,
         mut handler: C,
     ) where
-        C: Consumer<Key = ResolverKey, Value = Bytes, Subscriber = Annotation, Outcome = bool>,
+        C: Consumer<Key = ResolverKey, Value = Bytes, Subscriber = Annotation, Outcome = Outcome>,
     {
         let Fetch {
             key,
@@ -82,7 +82,7 @@ impl<F: FinalizedSource, L: LocalBlockSource> FetchResolution<F, L> {
         handler: &mut C,
     ) -> Option<Fetched>
     where
-        C: Consumer<Key = ResolverKey, Value = Bytes, Subscriber = Annotation, Outcome = bool>,
+        C: Consumer<Key = ResolverKey, Value = Bytes, Subscriber = Annotation, Outcome = Outcome>,
     {
         match request.key {
             Key::Block(commitment) => self
@@ -132,7 +132,7 @@ impl<F: FinalizedSource, L: LocalBlockSource> FetchResolution<F, L> {
         handler: &mut C,
     ) -> Option<Fetched>
     where
-        C: Consumer<Key = ResolverKey, Value = Bytes, Subscriber = Annotation, Outcome = bool>,
+        C: Consumer<Key = ResolverKey, Value = Bytes, Subscriber = Annotation, Outcome = Outcome>,
     {
         let key: ResolverKey = Key::Finalized { height };
         let Some(proof) = self.upstream.get_finality_proof(height).await else {
@@ -169,7 +169,7 @@ async fn deliver_finalized<C>(
     handler: &mut C,
 ) -> Option<Fetched>
 where
-    C: Consumer<Key = ResolverKey, Value = Bytes, Subscriber = Annotation, Outcome = bool>,
+    C: Consumer<Key = ResolverKey, Value = Bytes, Subscriber = Annotation, Outcome = Outcome>,
 {
     let certified = &proof.certified;
     let mut buf = Vec::with_capacity(anchor_size);
@@ -242,7 +242,7 @@ struct MarshalDelivery<'a, C> {
 }
 impl<C> MarshalDelivery<'_, C>
 where
-    C: Consumer<Key = ResolverKey, Value = Bytes, Subscriber = Annotation, Outcome = bool>,
+    C: Consumer<Key = ResolverKey, Value = Bytes, Subscriber = Annotation, Outcome = Outcome>,
 {
     async fn at_height(&mut self, key: ResolverKey, height: Height, value: Bytes) -> bool {
         let delivery = Delivery {
@@ -252,7 +252,10 @@ where
                 self.span.clone(),
             )),
         };
-        let accepted = matches!(self.handler.deliver(delivery, value).await, Ok(true));
+        let accepted = matches!(
+            self.handler.deliver(delivery, value).await,
+            Ok(Outcome::Resolved(Resolution::Complete) | Outcome::Ignored)
+        );
         if !accepted {
             record_resolver_failure(
                 FollowerResolverKind::Finalized,
@@ -275,10 +278,13 @@ pub(super) fn record_failure(key: &ResolverKey, reason: FollowerResolverFailureR
 
 async fn acknowledged(
     key: &ResolverKey,
-    response: oneshot::Receiver<bool>,
-) -> Result<bool, oneshot::error::RecvError> {
+    response: oneshot::Receiver<Outcome>,
+) -> Result<Outcome, oneshot::error::RecvError> {
     let result = response.await;
-    if !matches!(result, Ok(true)) {
+    if !matches!(
+        result,
+        Ok(Outcome::Resolved(Resolution::Complete) | Outcome::Ignored)
+    ) {
         record_failure(key, FollowerResolverFailureReason::DeliveryRejected);
     }
     result
@@ -287,15 +293,15 @@ async fn acknowledged(
 // Preserve opaque's verdict and cancellation semantics while observing the ack.
 pub(super) async fn relay_delivery(
     key: ResolverKey,
-    response: oneshot::Receiver<bool>,
-    mut sender: oneshot::Sender<bool>,
+    response: oneshot::Receiver<Outcome>,
+    mut sender: oneshot::Sender<Outcome>,
 ) {
     tokio::select! {
         biased;
         _ = sender.closed() => {},
         result = acknowledged(&key, response) => {
-            if let Ok(accepted) = result {
-                let _ = sender.send(accepted);
+            if let Ok(outcome) = result {
+                let _ = sender.send(outcome);
             }
         }
     }

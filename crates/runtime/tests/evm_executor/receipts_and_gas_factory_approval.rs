@@ -4,7 +4,7 @@ use super::*;
 const CREATION_BLOCK: u64 = 7;
 const HOOK_EVENTS_GAS: u64 = 0;
 struct ApprovedProposalFixture {
-    state: State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    state: CacheDB<EmptyDB>,
     issuer: Address,
     validators: [(Address, [u8; 48]); 3],
     expected: ApprovedFactoryExpected,
@@ -103,21 +103,16 @@ fn assert_committed_factory_order(receipt_logs: &[alloy_primitives::Log]) {
     );
 }
 
-fn assert_token_marker(
-    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
-    expected_token: Address,
-) {
-    let token_account = state
-        .basic(expected_token)
+fn assert_token_marker(state: &mut CacheDB<EmptyDB>, expected_token: Address) {
+    let token_account = evm2::evm::Database::get_account(state, &expected_token)
         .expect("token account read")
         .expect("created token account");
+    let code = token_account.code.clone().unwrap_or_else(|| {
+        evm2::evm::Database::get_code_by_hash(state, &token_account.code_hash)
+            .expect("created token marker code")
+    });
     assert_eq!(
-        token_account
-            .code
-            .as_ref()
-            .expect("created token marker")
-            .original_bytes()
-            .as_ref(),
+        code.original_bytes().as_ref(),
         outbe_system_common::addresses::STABLECOIN_MARKER_CODE
     );
 }
@@ -188,20 +183,17 @@ pub(super) fn run() {
 }
 
 fn execute_vote_system_tx(
-    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    state: &mut CacheDB<EmptyDB>,
     block_number: u64,
     proposer: Address,
 ) -> Receipt {
-    use alloy_evm::Evm as _;
-    use revm::DatabaseCommit;
-
     let mut evm_env = test_evm_env(block_number, REWARDS_ADDRESS);
-    evm_env.block_env.timestamp = U256::from(1_700_000_000u64);
+    evm_env.block.timestamp = U256::from(1_700_000_000u64);
     let config = OutbeEvmConfig::new(
         test_chain_spec(),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     );
-    let result = {
+    let outcome = {
         let mut evm = config.evm_with_env(&mut *state, evm_env);
         outbe_evm::executor::with_preloaded_system_tx_context(
             outbe_evm::executor::PreloadedSystemTxContext {
@@ -213,7 +205,8 @@ fn execute_vote_system_tx(
                 user_gas_used: 0,
             },
             || {
-                evm.transact_system_call(
+                outbe_evm::factory::transact_outbe_system_call(
+                    &mut evm,
                     outbe_primitives::addresses::SYSTEM_ADDRESS,
                     OUTBE_SYSTEM_TX_ADDRESS,
                     SystemTx::BeginBlock { step_index: 0 }.encode().unwrap(),
@@ -222,9 +215,9 @@ fn execute_vote_system_tx(
         )
         .expect("Vote system call")
     };
-    assert!(result.result.is_success(), "Vote system call must succeed");
-    let logs = result.result.into_logs();
-    state.commit(result.state);
+    assert!(outcome.result.is_success(), "Vote system call must succeed");
+    let logs = outcome.result.logs;
+    state.commit_pending(&outcome.pending_state);
     Receipt {
         tx_type: alloy_consensus::TxType::Legacy,
         success: true,

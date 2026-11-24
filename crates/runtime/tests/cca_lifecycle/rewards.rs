@@ -40,10 +40,10 @@ fn a_validator_claim_transaction_issues_the_gem_and_an_empty_pool_is_a_no_op() {
     let result = claim_tx(&mut db, RewardPool::Validator, U256::ZERO);
     assert!(result.is_success(), "{result:?}");
     assert_eq!(
-        IAgentReward::claimRewardCall::abi_decode_returns(result.output().unwrap()).unwrap(),
+        IAgentReward::claimRewardCall::abi_decode_returns(&result.output).unwrap(),
         U256::ZERO
     );
-    assert!(result.logs().is_empty());
+    assert!(result.logs.is_empty());
 }
 #[test]
 fn expired_reward_transactions_return_unrelated_and_zero_accounts_to_the_real_promis_limit() {
@@ -97,7 +97,7 @@ fn expired_reward_transactions_return_unrelated_and_zero_accounts_to_the_real_pr
             let deadline = NOW + REWARD_BALANCE_IDLE_SECONDS;
             assert_eq!(balance_deadline(&mut db, account, pool), deadline);
             let limit_before = promis_limit(&mut db);
-            let caller_balance = db.cache.accounts[&CCA].info.balance;
+            let caller_balance = balance(&db, CCA);
             let data = expiration_call(account, pool);
             let early = tx_to(
                 &mut db,
@@ -106,12 +106,12 @@ fn expired_reward_transactions_return_unrelated_and_zero_accounts_to_the_real_pr
                 data.clone(),
                 deadline - 1,
             );
-            assert!(matches!(early, ExecutionResult::Revert { .. }), "{early:?}");
+            assert!(early.is_revert(), "{early:?}");
             assert_eq!(
-                early.output().unwrap().as_ref(),
+                early.output.as_ref(),
                 IAgentReward::RewardBalanceNotExpired { deadline }.abi_encode()
             );
-            assert!(early.logs().is_empty());
+            assert!(early.logs.is_empty());
             assert_eq!(balance_deadline(&mut db, account, pool), deadline);
             assert_eq!(promis_limit(&mut db), limit_before);
 
@@ -132,21 +132,19 @@ fn expired_reward_transactions_return_unrelated_and_zero_accounts_to_the_real_pr
             assert!(returned.is_success(), "{returned:?}");
             let amount = REWARD + U256::ONE;
             assert_eq!(
-                IAgentReward::returnExpiredRewardCall::abi_decode_returns(
-                    returned.output().unwrap()
-                )
-                .unwrap(),
+                IAgentReward::returnExpiredRewardCall::abi_decode_returns(&returned.output)
+                    .unwrap(),
                 amount
             );
-            assert_eq!(returned.logs().len(), 2);
-            let added = &returned.logs()[0];
+            assert_eq!(returned.logs.len(), 2);
+            let added = &returned.logs[0];
             assert_eq!(added.address, PROMIS_LIMIT_ADDRESS);
             let added = IPromisLimit::PromisLimitAdded::decode_log(added)
                 .unwrap()
                 .data;
             assert_eq!(added.source, 32);
             assert_eq!(added.amountMinor, amount);
-            let log = &returned.logs()[1];
+            let log = &returned.logs[1];
             assert_eq!(log.address, AGENT_REWARD_ADDRESS);
             assert_eq!(log.data.topics().len(), 3);
             assert_eq!(
@@ -190,15 +188,9 @@ fn expired_reward_transactions_return_unrelated_and_zero_accounts_to_the_real_pr
                     U256::from(7)
                 );
             });
-            assert_eq!(db.cache.accounts[&CCA].info.balance, caller_balance);
-            assert_eq!(
-                db.cache.accounts[&AGENT_REWARD_ADDRESS].info.balance,
-                U256::ZERO
-            );
-            assert_eq!(
-                db.cache.accounts[&PROMIS_LIMIT_ADDRESS].info.balance,
-                U256::ZERO
-            );
+            assert_eq!(balance(&db, CCA), caller_balance);
+            assert_eq!(balance(&db, AGENT_REWARD_ADDRESS), U256::ZERO);
+            assert_eq!(balance(&db, PROMIS_LIMIT_ADDRESS), U256::ZERO);
             let repeated = tx_to(
                 &mut db,
                 AGENT_REWARD_ADDRESS,
@@ -208,13 +200,11 @@ fn expired_reward_transactions_return_unrelated_and_zero_accounts_to_the_real_pr
             );
             assert!(repeated.is_success(), "{repeated:?}");
             assert_eq!(
-                IAgentReward::returnExpiredRewardCall::abi_decode_returns(
-                    repeated.output().unwrap()
-                )
-                .unwrap(),
+                IAgentReward::returnExpiredRewardCall::abi_decode_returns(&repeated.output)
+                    .unwrap(),
                 U256::ZERO
             );
-            assert!(repeated.logs().is_empty());
+            assert!(repeated.logs.is_empty());
             assert_eq!(promis_limit(&mut db), limit_before + amount);
 
             with_storage_at(&mut db, deadline + 1, |storage| {
@@ -231,12 +221,12 @@ fn expired_reward_transactions_return_unrelated_and_zero_accounts_to_the_real_pr
                 data,
                 deadline + 1,
             );
-            assert!(matches!(stale, ExecutionResult::Revert { .. }));
+            assert!(stale.is_revert());
             assert_eq!(
-                stale.output().unwrap().as_ref(),
+                stale.output.as_ref(),
                 IAgentReward::RewardBalanceNotExpired { deadline: renewed }.abi_encode()
             );
-            assert!(stale.logs().is_empty());
+            assert!(stale.logs.is_empty());
             assert_eq!(promis_limit(&mut db), limit_before + amount);
         }
     }
@@ -273,15 +263,12 @@ fn expired_claim_transactions_revert_at_and_after_the_deadline_without_issuing_g
                 .abi_encode(),
                 now,
             );
-            assert!(
-                matches!(result, ExecutionResult::Revert { .. }),
-                "{result:?}"
-            );
+            assert!(result.is_revert(), "{result:?}");
             assert_eq!(
-                result.output().unwrap().as_ref(),
+                result.output.as_ref(),
                 IAgentReward::ClaimDeadlinePassed { deadline }.abi_encode()
             );
-            assert!(result.logs().is_empty());
+            assert!(result.logs.is_empty());
             assert_eq!(snapshot(&mut db), before);
         }
     }
@@ -289,7 +276,7 @@ fn expired_claim_transactions_revert_at_and_after_the_deadline_without_issuing_g
 #[test]
 fn expired_reward_transactions_reject_value_static_writes_invalid_pools_and_roll_back_out_of_gas() {
     let mut db = reward_world();
-    db.cache.accounts.get_mut(&CCA).unwrap().info.balance = U256::from(10);
+    set_balance(&mut db, CCA, U256::from(10));
     credit(&mut db, RewardPool::Waa, REWARD);
     let deadline = NOW + REWARD_BALANCE_IDLE_SECONDS;
     let data = expiration_call(CCA, RewardPool::Waa);
@@ -301,8 +288,8 @@ fn expired_reward_transactions_reject_value_static_writes_invalid_pools_and_roll
         deadline,
     );
     assert!(!funded.is_success());
-    assert!(funded.logs().is_empty());
-    assert_eq!(db.cache.accounts[&CCA].info.balance, U256::from(10));
+    assert!(funded.logs.is_empty());
+    assert_eq!(balance(&db, CCA), U256::from(10));
 
     let proxy = static_reward_proxy(&mut db);
     let view = tx_to(
@@ -317,7 +304,7 @@ fn expired_reward_transactions_reject_value_static_writes_invalid_pools_and_roll
         deadline,
     );
     assert!(view.is_success(), "{view:?}");
-    let output = view.output().unwrap();
+    let output = &view.output;
     assert_eq!(U256::from_be_slice(&output[..32]), U256::ONE);
     assert_eq!(
         IAgentReward::getPoolBalanceDeadlineCall::abi_decode_returns(&output[32..]).unwrap(),
@@ -325,11 +312,8 @@ fn expired_reward_transactions_reject_value_static_writes_invalid_pools_and_roll
     );
     let blocked = tx_to(&mut db, proxy, U256::ZERO, data.clone(), deadline);
     assert!(blocked.is_success(), "{blocked:?}");
-    assert_eq!(
-        U256::from_be_slice(&blocked.output().unwrap()[..32]),
-        U256::ZERO
-    );
-    assert!(blocked.logs().is_empty());
+    assert_eq!(U256::from_be_slice(&blocked.output[..32]), U256::ZERO);
+    assert!(blocked.logs.is_empty());
     assert_eq!(balance_deadline(&mut db, CCA, RewardPool::Waa), deadline);
     assert_eq!(promis_limit(&mut db), U256::ZERO);
 
@@ -346,12 +330,12 @@ fn expired_reward_transactions_reject_value_static_writes_invalid_pools_and_roll
         .abi_encode(),
     ] {
         let result = tx_to(&mut db, AGENT_REWARD_ADDRESS, U256::ZERO, data, deadline);
-        assert!(matches!(result, ExecutionResult::Revert { .. }));
+        assert!(result.is_revert());
         assert_eq!(
-            result.output().unwrap().as_ref(),
+            result.output.as_ref(),
             IAgentReward::UnknownRewardPool { value: 4 }.abi_encode()
         );
-        assert!(result.logs().is_empty());
+        assert!(result.logs.is_empty());
     }
 
     let mut successful_db = db.clone();
@@ -373,8 +357,8 @@ fn expired_reward_transactions_reject_value_static_writes_invalid_pools_and_roll
         success.tx_gas_used() - 1,
     )
     .unwrap();
-    assert!(matches!(failed, ExecutionResult::Halt { .. }), "{failed:?}");
-    assert!(failed.logs().is_empty());
+    assert!(failed.is_halt(), "{failed:?}");
+    assert!(failed.logs.is_empty());
     assert_eq!(promis_limit(&mut db), U256::ZERO);
     assert_eq!(balance_deadline(&mut db, CCA, RewardPool::Waa), deadline);
     with_storage(&mut db, |storage| {

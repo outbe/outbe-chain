@@ -28,7 +28,7 @@ fn restart_authenticates_and_pairs_archive_suffix_across_epoch_boundary() {
             .by_height
             .lock()
             .unwrap()
-            .insert(height, record.block.clone());
+            .insert(height, Arc::new(record.block.clone()));
     }
 
     futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
@@ -85,7 +85,7 @@ fn restart_recovers_preannounce_before_suffix_lower_bound() {
         .by_height
         .lock()
         .unwrap()
-        .insert(9, records[&9].block.clone());
+        .insert(9, Arc::new(records[&9].block.clone()));
 
     futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
         replay_authority(&chain, &source, &epocher),
@@ -135,12 +135,12 @@ fn restart_repairs_both_archive_halves_from_authenticated_suffix() {
         .by_height
         .lock()
         .unwrap()
-        .insert(10, records[&10].block.clone());
+        .insert(10, Arc::new(records[&10].block.clone()));
     blocks
         .by_height
         .lock()
         .unwrap()
-        .insert(11, records[&11].block.clone());
+        .insert(11, Arc::new(records[&11].block.clone()));
 
     futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
         replay_authority(&chain, &source, &epocher),
@@ -219,7 +219,7 @@ fn restart_authenticates_multiple_epochs_in_one_replay_suffix() {
             .by_height
             .lock()
             .unwrap()
-            .insert(height, record.block.clone());
+            .insert(height, Arc::new(record.block.clone()));
     }
 
     futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
@@ -265,7 +265,7 @@ fn restart_replay_suffix_rejects_missing_upstream_height() {
         .by_height
         .lock()
         .unwrap()
-        .insert(9, records[&9].block.clone());
+        .insert(9, Arc::new(records[&9].block.clone()));
 
     let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
         replay_authority(&chain, &source, &epocher),
@@ -310,7 +310,7 @@ fn restart_replay_suffix_rejects_local_block_conflict() {
         .by_height
         .lock()
         .unwrap()
-        .insert(9, certified_block(&c0, e0, 9, vec![0xFF]).block);
+        .insert(9, Arc::new(certified_block(&c0, e0, 9, vec![0xFF]).block));
 
     let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
         replay_authority(&chain, &source, &epocher),
@@ -370,7 +370,7 @@ fn restart_replay_suffix_accepts_distinct_valid_quorum_for_same_proposal() {
         .by_height
         .lock()
         .unwrap()
-        .insert(9, records[&9].block.clone());
+        .insert(9, Arc::new(records[&9].block.clone()));
 
     futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
         replay_authority(&chain, &source, &epocher),
@@ -428,7 +428,7 @@ fn restart_replay_suffix_rejects_invalid_local_certificate_for_same_proposal() {
         .by_height
         .lock()
         .unwrap()
-        .insert(9, records[&9].block.clone());
+        .insert(9, Arc::new(records[&9].block.clone()));
 
     let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
         replay_authority(&chain, &source, &epocher),
@@ -512,7 +512,7 @@ fn restart_replay_suffix_rejects_local_finalization_conflict() {
             .by_height
             .lock()
             .unwrap()
-            .insert(9, records[&9].block.clone());
+            .insert(9, Arc::new(records[&9].block.clone()));
 
         let error = futures::executor::block_on(engine::authenticate_and_reconcile_replay_suffix(
             replay_authority(&chain, &source, &epocher),

@@ -167,7 +167,7 @@ fn a_called_gem_settles_at_its_deadline_and_is_refused_a_second_later() {
         called_at: Some(TIMESTAMP),
     };
     let (mut world, deadline) = World::build(called, OWNER, true, 840);
-    world.evm.ctx.block.timestamp = U256::from(deadline);
+    world.evm = world.evm.at(deadline);
     assert_eq!(gem_state(&mut world), outbe_gem::GemState::Called as u8);
     let out = world.settle();
     world.succeeds(out);
@@ -176,7 +176,7 @@ fn a_called_gem_settles_at_its_deadline_and_is_refused_a_second_later() {
     assert_eq!(gem_state(&mut world), outbe_gem::GemState::Settled as u8);
 
     let (mut world, deadline) = World::build(called, OWNER, true, 840);
-    world.evm.ctx.block.timestamp = U256::from(deadline + 1);
+    world.evm = world.evm.at(deadline + 1);
     let balances = world.balances();
     let allowances = world.allowances();
     let logs = world.evm.logs().to_vec();

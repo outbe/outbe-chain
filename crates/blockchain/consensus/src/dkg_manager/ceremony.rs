@@ -33,7 +33,6 @@ use commonware_cryptography::bls12381::{
     self,
     dkg::feldman_desmedt::{observe, DealerLog, Info, Logs, Output, SignedDealerLog},
     primitives::variant::MinSig,
-    Batch,
 };
 use commonware_parallel::Sequential;
 use commonware_utils::{
@@ -115,13 +114,13 @@ impl DkgCeremony {
     /// Decode and cryptographically verify a signed dealer log against this
     /// ceremony's `info` and committee. Pure (crypto check, no state change).
     pub fn verify_dealer_log(&self, bytes: &[u8]) -> Result<VerifiedDealerLog> {
-        let mut reader = bytes;
-        let signed_log = SignedDealerLog::<MinSig, bls12381::PrivateKey>::read_cfg(
+        let mut reader = commonware_codec::Copying(bytes);
+        let signed_log = SignedDealerLog::<MinSig, bls12381::PublicKey>::read_cfg(
             &mut reader,
             &self.max_players,
         )
         .wrap_err("failed decoding signed dealer log")?;
-        if !reader.is_empty() {
+        if !reader.0.is_empty() {
             return Err(DkgError::TrailingSignedDealerLogBytes.into());
         }
 
@@ -252,7 +251,7 @@ pub(crate) fn try_reconstruct_with_rng(
     for (dealer, log) in finalized_dealer_logs.clone() {
         logs.record(dealer, log);
     }
-    observe::<MinSig, bls12381::PublicKey, N3f1, Batch>(rng, logs, &Sequential)
+    observe::<MinSig, bls12381::PublicKey, N3f1>(rng, logs, &Sequential)
         .map_err(|error| DkgError::reconstruct(error).into())
 }
 

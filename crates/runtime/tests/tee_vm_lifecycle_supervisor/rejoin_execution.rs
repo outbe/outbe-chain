@@ -1,13 +1,20 @@
 //! Small canonical execution ledger for the signed rejoin transactions.
 use super::{execution_committee::Committee, proof, Harness, Signer, TEST_CHAIN_ID};
 use alloy_consensus::{
-    transaction::RlpEcdsaDecodableTx, Header, Receipt, ReceiptEnvelope, TxEip1559,
+    transaction::RlpEcdsaDecodableTx, Header, Receipt, ReceiptEnvelope, TxEip1559, TxLegacy,
 };
-use alloy_evm::{Evm as _, EvmFactory as _};
 use alloy_primitives::{Address, Bytes, TxKind, B256, U256};
 use alloy_sol_types::{SolCall as _, SolEvent as _};
-use outbe_evm::tee_attestation_activation::{
-    TeeAttestationActivationV1, TeeAttestationChainSpecStateV1,
+use evm2::{
+    block::bundle_state::{PlainStorageChangeset, StateChangeset},
+    env::BlockEnvExt,
+    ethereum::TxEnvelope,
+    evm::{AccountInfo, CacheDB, EmptyDB},
+    SpecId, TxResult,
+};
+use outbe_evm::{
+    factory::OutbeEvmTypes,
+    tee_attestation_activation::{TeeAttestationActivationV1, TeeAttestationChainSpecStateV1},
 };
 use outbe_primitives::{
     addresses::TEE_REGISTRY_ADDRESS,
@@ -24,14 +31,8 @@ use outbe_tee::{
 };
 use outbe_teeregistry::TeeRegistry;
 use outbe_validatorset::contract::ValidatorSet;
-use reth_evm::EvmEnv;
-use reth_primitives_traits::{SealedBlock, SignedTransaction as _};
-use revm::{
-    context::{result::ExecutionResult, BlockEnv, CfgEnv},
-    database::{CacheDB, EmptyDB},
-    primitives::hardfork::SpecId,
-    state::AccountInfo,
-};
+use reth_ethereum::evm::EthEvmEnv;
+use reth_primitives_traits::{Recovered, SealedBlock, SignedTransaction as _};
 
 const GAS_LIMIT: u64 = 30_000_000;
 const BASE_FEE: u64 = 1;
@@ -75,12 +76,28 @@ impl Ledger {
             block: Default::default(),
         };
         ledger.db.insert_account_info(
-            Signer::address(),
+            &Signer::address(),
             AccountInfo {
                 balance: U256::from(10_u64.pow(17)),
                 ..Default::default()
             },
         );
+        // Preserve native precompile accounts under EIP-161, as genesis does.
+        let marker = evm2::bytecode::Bytecode::new_legacy(Bytes::from_static(&[0xef]));
+        for address in [
+            TEE_REGISTRY_ADDRESS,
+            outbe_primitives::addresses::VALIDATOR_SET_ADDRESS,
+            outbe_system_common::addresses::STAKING_ADDRESS,
+        ] {
+            ledger.db.insert_account_info(
+                &address,
+                AccountInfo {
+                    code_hash: marker.hash_slow(),
+                    code: Some(marker.clone()),
+                    ..Default::default()
+                },
+            );
+        }
         ledger.storage(|state| {
             let mut registry = TeeRegistry::new(state);
             registry.install_initial_policy_v1(&policy).unwrap();
@@ -90,17 +107,29 @@ impl Ledger {
         ledger
     }
 
-    pub(super) fn advance(&mut self, timestamp: u64, tx: Option<&[u8]>) -> Option<ExecutionResult> {
+    pub(super) fn advance(
+        &mut self,
+        timestamp: u64,
+        tx: Option<&[u8]>,
+    ) -> Option<TxResult<OutbeEvmTypes>> {
         let parent = self.tip.hash;
         self.tip.height += 1;
         self.tip.timestamp = timestamp;
         let executed = tx.map(|raw| {
             let signed = TxEip1559::rlp_decode_signed(&mut &raw[1..]).unwrap();
+            let evm_tx = Recovered::new_unchecked(
+                evm2::ethereum::TxEnvelope::Eip1559(signed.tx().clone()),
+                Signer::address(),
+            );
             let tx = reth_ethereum::TransactionSigned::from(signed);
             let recovered = tx.clone().try_into_recovered().unwrap();
             assert_eq!(recovered.signer(), Signer::address());
-            let mut evm = self.evm.create_evm(&mut self.db, env(self.tip));
-            let result = evm.transact_commit(recovered).unwrap();
+            let detached = {
+                let mut evm = self.evm.create_evm(&mut self.db, env(self.tip));
+                evm.transact(&evm_tx).unwrap().detach()
+            };
+            self.db.commit_pending(&detached.pending_state);
+            let result = detached.result;
             assert!(result.is_success(), "{result:?}");
             (tx, result)
         });
@@ -121,7 +150,7 @@ impl Ledger {
             let receipt = Receipt {
                 status: result.is_success().into(),
                 cumulative_gas_used: header.gas_used,
-                logs: result.logs().to_vec(),
+                logs: result.logs.clone(),
             }
             .with_bloom();
             header.logs_bloom = receipt.logs_bloom;
@@ -160,28 +189,31 @@ impl Ledger {
         result
     }
 
-    pub(super) fn snapshot(
-        &self,
-    ) -> (
-        outbe_primitives::OutbeBlock,
-        revm::database::states::StateChangeset,
-    ) {
-        use revm::database::states::{PlainStorageChangeset, StateChangeset};
+    pub(super) fn snapshot(&self) -> (outbe_primitives::OutbeBlock, StateChangeset) {
         let mut state = StateChangeset::default();
-        for (&address, account) in &self.db.cache.accounts {
-            let Some(info) = account.info() else {
-                continue;
+        let mut addresses: std::collections::BTreeSet<Address> =
+            self.db.cache.accounts.keys().copied().collect();
+        addresses.extend(self.db.cache.storage.keys().copied());
+        for address in addresses {
+            let storage = self.db.cache.storage.get(&address);
+            let info = match self.db.cache.accounts.get(&address) {
+                Some(Some(info)) => info.clone(),
+                Some(None) => continue,
+                None if storage.is_some() => AccountInfo::default(),
+                None => continue,
             };
             state.accounts.push((address, Some(info)));
-            state.storage.push(PlainStorageChangeset {
-                address,
-                wipe_storage: false,
-                storage: account
-                    .storage
-                    .iter()
-                    .map(|(&slot, &value)| (slot, value))
-                    .collect(),
-            });
+            if let Some(storage) = storage {
+                state.storage.push(PlainStorageChangeset {
+                    address,
+                    wipe_storage: false,
+                    storage: storage
+                        .slots
+                        .iter()
+                        .map(|(&slot, &value)| (slot, value))
+                        .collect(),
+                });
+            }
         }
         state.contracts = self
             .db
@@ -194,7 +226,10 @@ impl Ledger {
     }
 
     pub(super) fn nonce_and_balance(&self) -> (u64, U256) {
-        let info = &self.db.cache.accounts[&Signer::address()].info;
+        let info = self
+            .db
+            .account_info(&Signer::address())
+            .expect("signer account present");
         (info.nonce, info.balance)
     }
 
@@ -230,28 +265,30 @@ impl Ledger {
 
     pub(super) fn call(&self, to: Address, data: Bytes) -> Option<Bytes> {
         let mut evm = self.evm.create_evm(self.db.clone(), env(self.tip));
-        let tx = revm::context::TxEnv::builder()
-            .caller(Signer::address())
-            .nonce(self.nonce_and_balance().0)
-            .chain_id(Some(self.tip.chain_id))
-            .kind(TxKind::Call(to))
-            .gas_limit(500_000)
-            .gas_price(u128::from(BASE_FEE))
-            .data(data)
-            .build()
-            .unwrap();
-        let result = evm.transact_raw(tx).unwrap().result;
-        result.is_success().then(|| result.into_output().unwrap())
+        let tx = Recovered::new_unchecked(
+            TxEnvelope::Legacy(TxLegacy {
+                chain_id: Some(self.tip.chain_id),
+                nonce: self.nonce_and_balance().0,
+                gas_price: u128::from(BASE_FEE),
+                gas_limit: 500_000,
+                to: TxKind::Call(to),
+                value: U256::ZERO,
+                input: data,
+            }),
+            Signer::address(),
+        );
+        let result = evm.transact(&tx).unwrap().discard();
+        result.is_success().then_some(result.output)
     }
 
     pub(super) fn proof(
         &self,
-        executed: &ExecutionResult,
+        executed: &TxResult<OutbeEvmTypes>,
         committee: &Committee,
     ) -> LifecycleOnboardingProofV1 {
         use outbe_primitives::tee_registry_abi_v1::ITeeRegistryV1;
         let artifact = executed
-            .logs()
+            .logs
             .iter()
             .filter(|log| log.address == TEE_REGISTRY_ADDRESS)
             .find_map(|log| {
@@ -278,21 +315,26 @@ impl Ledger {
         let (root, account_nodes) =
             state_proof::account_mpt_with_proofs(&trie_accounts(&self.db).collect::<Vec<_>>());
         assert_eq!(root, self.tip.state_root);
-        let db_account = &self.db.cache.accounts[&TEE_REGISTRY_ADDRESS];
+        let db_storage = self.db.cache.storage.get(&TEE_REGISTRY_ADDRESS);
         let mut storage_keys: Vec<_> = slots.map(|slot| U256::from_be_bytes(slot.0)).into();
-        storage_keys.extend(
-            db_account
-                .storage
-                .keys()
-                .filter(|slot| !storage_keys_contains(&slots, **slot))
-                .copied(),
-        );
+        if let Some(storage) = db_storage {
+            storage_keys.extend(
+                storage
+                    .slots
+                    .keys()
+                    .filter(|slot| !storage_keys_contains(&slots, **slot))
+                    .copied(),
+            );
+        }
         let storage: Vec<_> = storage_keys
             .iter()
             .map(|slot| {
                 (
                     *slot,
-                    db_account.storage.get(slot).copied().unwrap_or_default(),
+                    db_storage
+                        .and_then(|s| s.slots.get(slot))
+                        .copied()
+                        .unwrap_or_default(),
                 )
             })
             .collect();
@@ -364,19 +406,18 @@ pub(super) fn sign_unjail(nonce: u64) -> Bytes {
         .into()
 }
 
-fn env(at: LifecycleCheckpointV1) -> EvmEnv<SpecId> {
-    EvmEnv {
-        cfg_env: CfgEnv::new()
-            .with_chain_id(at.chain_id)
-            .with_spec_and_mainnet_gas_params(SpecId::PRAGUE),
-        block_env: BlockEnv {
+fn env(at: LifecycleCheckpointV1) -> EthEvmEnv<OutbeEvmTypes> {
+    EthEvmEnv::new(
+        SpecId::PRAGUE,
+        BlockEnvExt {
             number: U256::from(at.height),
             timestamp: U256::from(at.timestamp),
-            gas_limit: GAS_LIMIT,
-            basefee: BASE_FEE,
+            gas_limit: U256::from(GAS_LIMIT),
+            basefee: U256::from(BASE_FEE),
             ..Default::default()
         },
-    }
+        at.chain_id,
+    )
 }
 
 fn state_root(db: &CacheDB<EmptyDB>) -> B256 {
@@ -391,15 +432,26 @@ fn trie_accounts(
     db: &CacheDB<EmptyDB>,
 ) -> impl Iterator<Item = (Address, alloy_trie::TrieAccount)> + '_ {
     use alloy_trie::root::storage_root_unhashed;
-    db.cache.accounts.iter().filter_map(|(&address, account)| {
-        let info = account.info()?;
-        if info.is_empty() && account.storage.values().all(U256::is_zero) {
+    let mut addresses: std::collections::BTreeSet<Address> =
+        db.cache.accounts.keys().copied().collect();
+    addresses.extend(db.cache.storage.keys().copied());
+    addresses.into_iter().filter_map(|address| {
+        let storage = db.cache.storage.get(&address);
+        let info = match db.cache.accounts.get(&address) {
+            Some(Some(info)) => info.clone(),
+            Some(None) => return None,
+            None if storage.is_some() => AccountInfo::default(),
+            None => return None,
+        };
+        let storage_empty = storage.is_none_or(|s| s.slots.values().all(U256::is_zero));
+        if info.is_empty() && storage_empty {
             return None;
         }
-        let storage_root =
-            storage_root_unhashed(account.storage.iter().filter_map(|(slot, &value)| {
+        let storage_root = storage_root_unhashed(storage.into_iter().flat_map(|s| {
+            s.slots.iter().filter_map(|(slot, &value)| {
                 (!value.is_zero()).then_some((B256::from(slot.to_be_bytes::<32>()), value))
-            }));
+            })
+        }));
         Some((
             address,
             alloy_trie::TrieAccount {

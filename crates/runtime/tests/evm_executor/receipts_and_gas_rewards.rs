@@ -163,8 +163,8 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
     // Match production's EIP-161 preservation for the Promis Limit. The
     // generic validator fixture does not install this native precompile marker.
     let marker_code = Bytecode::new_legacy([0xef].into());
-    state.database.insert_account_info(
-        outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS,
+    state.insert_account_info(
+        &outbe_system_common::addresses::PROMIS_LIMIT_ADDRESS,
         AccountInfo {
             code_hash: marker_code.hash_slow(),
             code: Some(marker_code),
@@ -177,7 +177,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
     )
     .with_evm_signer(signer);
     let mut env = test_evm_env(block_number, REWARDS_ADDRESS);
-    env.block_env.prevrandao = Some(verified.prev_randao);
+    env.block.prevrandao = U256::from_be_bytes(verified.prev_randao.0);
     let evm = config.evm_with_env(&mut state, env);
     let ctx = fixtures::parent_accounting_context(fixtures::ParentAccountingFixture {
         parent_hash,
@@ -249,7 +249,6 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
             .expect_err("invalid configuration must reject mandatory LateFinalizeCredits");
         assert_late_credit_failure(&error, invalid_slash_percent);
         assert_eq!(executor.receipts(), before_late.as_slice());
-        drop(executor);
 
         let read = BlockContext {
             block_gas_limit: 0,
@@ -262,8 +261,10 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
             proposer,
             validators: vec![],
         };
-        let mut provider =
-            outbe_primitives::storage::direct::DirectStorageProvider::new(&mut state, read);
+        let mut provider = outbe_primitives::storage::direct::DirectStorageProvider::new(
+            executor.evm_mut().state_mut().overlay_db_mut(),
+            read,
+        );
         StorageHandle::enter(&mut provider, |storage| {
             let si = outbe_slashindicator::contract::SlashIndicator::new(storage.clone());
             assert_eq!(si.voter_miss_count.read(&absent)?, 0);
@@ -393,7 +394,7 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
         // Read immediately after LateFinalizeCredits: later system transactions
         // can add their own amounts to the Promis Limit.
         let mut provider = super::DirectStorageProvider::new(
-            executor.evm_mut().db_mut(),
+            executor.evm_mut().state_mut().overlay_db_mut(),
             BlockContext {
                 block_gas_limit: 0,
                 user_gas_used: 0,
@@ -438,9 +439,8 @@ fn assert_real_cpa_and_block_fee_transfer(invalid_slash_percent: bool, fail_shar
             ),
         "Rewards and shared-burn logs must not leak into CycleTick or other system receipts"
     );
-    drop(executor);
     let mut provider = super::DirectStorageProvider::new(
-        &mut state,
+        executor.evm_mut().state_mut().overlay_db_mut(),
         BlockContext {
             block_gas_limit: 0,
             user_gas_used: 0,
@@ -485,16 +485,13 @@ fn assert_late_credit_failure(error: &BlockExecutionError, invalid_slash_percent
     let message = error.to_string();
     if !invalid_slash_percent {
         assert!(
-            matches!(error, alloy_evm::block::BlockExecutionError::Internal(_)),
+            matches!(error, BlockExecutionError::Internal(_)),
             "{message}"
         );
         assert!(message.contains("promis limit overflow"), "{message}");
         return;
     }
-    assert!(matches!(
-        error,
-        alloy_evm::block::BlockExecutionError::Validation(_)
-    ));
+    assert!(matches!(error, BlockExecutionError::Validation(_)));
     assert!(
         message.contains("critical system tx late_finalize_credits did not succeed"),
         "{message}"

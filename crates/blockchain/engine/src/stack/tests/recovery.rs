@@ -32,7 +32,13 @@ fn recover_application_finalized_round_reads_round_from_marshal_archive() {
         let (mut marshal_mailbox, resolver_keepalive, actor_handle) =
             start_recovery_marshal(context, provider).await;
 
-        let _ = marshal_mailbox.verified(round, block).await;
+        let digest = block.digest();
+        let _ = marshal_mailbox
+            .verified(
+                round,
+                commonware_cryptography::Digested::precomputed(block, digest),
+            )
+            .await;
         // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
         let _ = marshal_mailbox.report(Activity::Finalization(finalization));
 

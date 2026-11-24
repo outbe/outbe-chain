@@ -34,7 +34,6 @@ use commonware_cryptography::{
             sharing::{Mode, Sharing},
             variant::MinSig,
         },
-        Batch,
     },
     Signer as _,
 };
@@ -275,7 +274,7 @@ pub(crate) fn dkg_runtime_artifacts() -> (
     }
     let (output, _share) = players
         .remove(0)
-        .finalize::<N3f1, Batch>(
+        .finalize::<N3f1>(
             &mut rand_core_commonware::UnwrapErr(rand_commonware::rngs::SysRng),
             dkg_logs,
             &Sequential,
@@ -284,6 +283,13 @@ pub(crate) fn dkg_runtime_artifacts() -> (
     let polynomial = output.public().clone();
 
     (keys, participants, output, polynomial, first_log.unwrap())
+}
+
+pub(crate) fn digested_block(
+    block: ConsensusBlock,
+) -> commonware_cryptography::Digested<ConsensusBlock> {
+    let digest = commonware_cryptography::Digestible::digest(&block);
+    commonware_cryptography::Digested::precomputed(block, digest)
 }
 
 // ---- Promoted from application::handler test module (shared system-tx fixtures) ----

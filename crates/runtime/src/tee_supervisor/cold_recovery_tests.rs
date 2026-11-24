@@ -3,7 +3,7 @@ use super::super::boundary_artifact::boundary_extra;
 use super::super::founding_http::{
     bind_manifest, devnet_resident, registry_module, scripted, RpcCalls,
 };
-use super::tests::{admit_successor, seed_resident_state, source_for_promotion};
+use super::tests::{admit_successor, source_for_promotion};
 use super::*;
 use crate::admission::TeeLeaseGuardGateV1;
 use crate::admission_authority::live::{LiveTeeError, LiveTeeRuntimeV1, LiveTeeSnapshotV1};
@@ -678,7 +678,11 @@ async fn cancel_required_retries_cold_prepare_and_verifies_the_second_intent() {
     let (root, host_key) = host_tree();
     let committee = FinalityCommitteeFixture::new(4);
     let (live, descriptor) = source_for_promotion(&host_key, &committee);
-    seed_resident_state(root.path(), &live);
+    let _ = outbe_tee::node_host::ResidentStateStore::load_or_create(
+        root.path(),
+        &live.authorization_witness().unwrap(),
+    )
+    .unwrap();
     let manifest = live.manifest();
     let chain_id = u64::try_from(U256::from_be_bytes(manifest.chain_id)).unwrap();
     let predecessor = no_attestation_dev_policy_v1(chain_id, manifest.genesis_hash).unwrap();

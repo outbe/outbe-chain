@@ -137,8 +137,10 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogWriter {
 
 #[derive(Clone, Default)]
 struct EmptyMarshalBuffer {
-    pending_digest_subscribers: Arc<StdMutex<Vec<oneshot::Sender<Arc<ConsensusBlock>>>>>,
-    pending_commitment_subscribers: Arc<StdMutex<Vec<oneshot::Sender<Arc<ConsensusBlock>>>>>,
+    pending_digest_subscribers:
+        Arc<StdMutex<Vec<oneshot::Sender<commonware_cryptography::Digested<ConsensusBlock>>>>>,
+    pending_commitment_subscribers:
+        Arc<StdMutex<Vec<oneshot::Sender<commonware_cryptography::Digested<ConsensusBlock>>>>>,
 }
 
 impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
@@ -146,11 +148,17 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
     // `V::Block`) and added `type PublicKey`.
     type PublicKey = bls12381::PublicKey;
 
-    async fn find_by_digest(&self, _digest: Digest) -> Option<Arc<ConsensusBlock>> {
+    async fn find_by_digest(
+        &self,
+        _digest: Digest,
+    ) -> Option<commonware_cryptography::Digested<ConsensusBlock>> {
         None
     }
 
-    async fn find_by_commitment(&self, _commitment: Digest) -> Option<Arc<ConsensusBlock>> {
+    async fn find_by_commitment(
+        &self,
+        _commitment: Digest,
+    ) -> Option<commonware_cryptography::Digested<ConsensusBlock>> {
         None
     }
 
@@ -161,7 +169,7 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
     fn subscribe_by_digest(
         &self,
         _digest: Digest,
-    ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
+    ) -> Option<oneshot::Receiver<commonware_cryptography::Digested<ConsensusBlock>>> {
         let (tx, rx) = oneshot::channel();
         self.pending_digest_subscribers
             .lock()
@@ -173,7 +181,7 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
     fn subscribe_by_commitment(
         &self,
         _commitment: Digest,
-    ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
+    ) -> Option<oneshot::Receiver<commonware_cryptography::Digested<ConsensusBlock>>> {
         let (tx, rx) = oneshot::channel();
         self.pending_commitment_subscribers
             .lock()
@@ -182,13 +190,10 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
         Some(rx)
     }
 
-    // Retiring unavailable data is a no-op for this empty test buffer.
-    fn retire(&self, _update: commonware_consensus::marshal::core::Retirement<Digest>) {}
-
     fn send(
         &self,
         _round: Round,
-        _block: Arc<ConsensusBlock>,
+        _block: commonware_cryptography::Digested<ConsensusBlock>,
         _recipients: Recipients<Self::PublicKey>,
     ) {
     }
@@ -196,7 +201,7 @@ impl Buffer<crate::marshal_types::Variant> for EmptyMarshalBuffer {
 
 /// Marshal buffer that records every `send` (the wire-broadcast hook).
 ///
-/// commonware 2026.9.0 routes `marshal.forward(round, commitment, recipients)`
+/// commonware 2026.11.0 routes `marshal.forward(round, commitment, recipients)`
 /// to `buffer.send(round, block, recipients)`, whereas `marshal.verified(..)`
 /// only caches locally. Recording `send` lets a test prove the broadcast
 /// actually fired (DEFECT-A: the proposer kept the block only in its local cache).
@@ -209,14 +214,17 @@ struct RecordingMarshalBuffer {
 }
 
 impl RecordingMarshalBuffer {
-    fn lookup(&self, digest: Digest) -> Option<Arc<ConsensusBlock>> {
+    fn lookup(&self, digest: Digest) -> Option<commonware_cryptography::Digested<ConsensusBlock>> {
         self.available
             .as_ref()
             .filter(|block| block.digest() == digest)
-            .cloned()
+            .map(|block| commonware_cryptography::Digested::precomputed(block.clone(), digest))
     }
 
-    fn subscription(&self, digest: Digest) -> oneshot::Receiver<Arc<ConsensusBlock>> {
+    fn subscription(
+        &self,
+        digest: Digest,
+    ) -> oneshot::Receiver<commonware_cryptography::Digested<ConsensusBlock>> {
         let (tx, rx) = oneshot::channel();
         if let Some(block) = self.lookup(digest) {
             let _ = tx.send(block);
@@ -228,40 +236,48 @@ impl RecordingMarshalBuffer {
 impl Buffer<crate::marshal_types::Variant> for RecordingMarshalBuffer {
     type PublicKey = bls12381::PublicKey;
 
-    async fn find_by_digest(&self, digest: Digest) -> Option<Arc<ConsensusBlock>> {
+    async fn find_by_digest(
+        &self,
+        digest: Digest,
+    ) -> Option<commonware_cryptography::Digested<ConsensusBlock>> {
         self.lookup(digest)
     }
 
-    async fn find_by_commitment(&self, commitment: Digest) -> Option<Arc<ConsensusBlock>> {
+    async fn find_by_commitment(
+        &self,
+        commitment: Digest,
+    ) -> Option<commonware_cryptography::Digested<ConsensusBlock>> {
         self.lookup(commitment)
     }
 
     fn subscribe_by_digest(
         &self,
         digest: Digest,
-    ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
+    ) -> Option<oneshot::Receiver<commonware_cryptography::Digested<ConsensusBlock>>> {
         Some(self.subscription(digest))
     }
 
     fn subscribe_by_commitment(
         &self,
         commitment: Digest,
-    ) -> Option<oneshot::Receiver<Arc<ConsensusBlock>>> {
+    ) -> Option<oneshot::Receiver<commonware_cryptography::Digested<ConsensusBlock>>> {
         Some(self.subscription(commitment))
     }
-
-    fn retire(&self, _update: commonware_consensus::marshal::core::Retirement<Digest>) {}
 
     fn send(
         &self,
         round: Round,
-        block: Arc<ConsensusBlock>,
+        block: commonware_cryptography::Digested<ConsensusBlock>,
         recipients: Recipients<Self::PublicKey>,
     ) {
         self.sends
             .lock()
             .expect("recording buffer sends mutex must not be poisoned")
-            .push((round, block.digest(), matches!(recipients, Recipients::All)));
+            .push((
+                round,
+                block.inner().digest(),
+                matches!(recipients, Recipients::All),
+            ));
     }
 }
 
@@ -332,8 +348,7 @@ async fn start_marshal_in_partition<B>(
 where
     B: Buffer<crate::marshal_types::Variant, PublicKey = bls12381::PublicKey>,
 {
-    let page_cache = CacheRef::from_pooler(
-        &context,
+    let page_cache = CacheRef::new(
         NonZeroU16::new(1024).expect("non-zero page size"),
         NonZeroUsize::new(10).expect("non-zero cache size"),
     );
@@ -364,7 +379,9 @@ where
             // 2026.5.0: the floor/genesis anchor is now an explicit `Start`.
             // A fresh epoch starts from the height-0 genesis block (the actor
             // asserts the anchor height is zero).
-            start: Start::Genesis(consensus_block_with_number(0x00, 0)),
+            start: Start::Genesis(crate::test_fixtures::digested_block(
+                consensus_block_with_number(0x00, 0),
+            )),
             partition_prefix,
             // `mailbox_size` is now `NonZeroUsize`.
             mailbox_size: NonZeroUsize::new(32).expect("non-zero mailbox size"),
@@ -582,7 +599,9 @@ fn relay_broadcast_forwards_proposed_block_directly_to_all_peers() {
             let round = Round::new(Epoch::new(0), View::new(1));
             let block = consensus_block_with_number(0xAB, 7);
             let digest = block.digest();
-            let _durable = marshal_mailbox.verified(round, block).await;
+            let _durable = marshal_mailbox
+                .verified(round, crate::test_fixtures::digested_block(block))
+                .await;
 
             // Relay::broadcast must forward DIRECTLY to marshal (no app-mailbox hop).
             let (mut app, _app_rx) = crate::application::actor::OutbeApplication::new(
@@ -665,7 +684,9 @@ fn forward_without_prior_proposed_is_safe_noop() {
 
             // proposed() THEN forward() -> a send is recorded (marshal alive; no-op above
             // was the no-prior-proposed fallback, not a dead actor).
-            let _durable = marshal_mailbox.verified(round, block).await;
+            let _durable = marshal_mailbox
+                .verified(round, crate::test_fixtures::digested_block(block))
+                .await;
             let _ = app.broadcast(
                 digest,
                 commonware_consensus::simplex::Plan::Propose { round },
@@ -712,7 +733,10 @@ fn epoch_boundary_parent_uses_finalized_round_for_exact_proof_key() {
             let parent_block = consensus_block_with_number(0x42, 120);
             let parent_digest = parent_block.digest();
             let _ = marshal_mailbox
-                .verified(finalized_round, parent_block.clone())
+                .verified(
+                    finalized_round,
+                    crate::test_fixtures::digested_block(parent_block.clone()),
+                )
                 .await;
 
             {
@@ -1206,7 +1230,9 @@ fn consensus_metadata_verify_accepts_canonical_marshal_mapping() {
             )
             .await;
 
-            let _ = marshal_mailbox.verified(round, block).await;
+            let _ = marshal_mailbox
+                .verified(round, crate::test_fixtures::digested_block(block))
+                .await;
             let mut reporter = marshal_mailbox.clone();
             // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
             let _ = reporter.report(Activity::Finalization(finalization));
@@ -1279,7 +1305,9 @@ fn parent_proof_recovered_from_marshal_archive_on_selection_miss() {
             // and report its finalization, so `get_finalization(height)` returns it.
             // This is the post-restart state where the in-process selection store
             // is empty but marshal still holds the parent.
-            let _ = marshal_mailbox.verified(round, block.clone()).await;
+            let _ = marshal_mailbox
+                .verified(round, crate::test_fixtures::digested_block(block.clone()))
+                .await;
             let mut reporter = marshal_mailbox.clone();
             let _ = reporter.report(Activity::Finalization(finalization));
             let info = wait_for_marshal_info(&clock, &marshal_mailbox, digest).await;
@@ -1369,7 +1397,10 @@ fn parent_proof_selector_recovers_from_marshal_after_empty_store_restart() {
             // post-restart ApplicationShared below has a fresh empty
             // FinalizedParentCertStore via finalizer_test_shared(...).
             let _ = marshal_mailbox
-                .verified(finalized_round, parent_block.clone())
+                .verified(
+                    finalized_round,
+                    crate::test_fixtures::digested_block(parent_block.clone()),
+                )
                 .await;
             let mut reporter = marshal_mailbox.clone();
             let _ = reporter.report(Activity::Finalization(finalization));
@@ -1438,7 +1469,9 @@ fn consensus_metadata_verify_rejects_inflated_finalized_number() {
             )
             .await;
 
-            let _ = marshal_mailbox.verified(round, block).await;
+            let _ = marshal_mailbox
+                .verified(round, crate::test_fixtures::digested_block(block))
+                .await;
             let mut reporter = marshal_mailbox.clone();
             // 2026.5.0: `Reporter::report` is SYNC and returns `Feedback`.
             let _ = reporter.report(Activity::Finalization(finalization));

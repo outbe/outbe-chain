@@ -5,7 +5,7 @@
 //! `SubCallInput`. Asserts that the driver:
 //! 1. Builds a borrowed-ctx Evm (`Evm<&mut EthEvmContext<DB>, ...>`),
 //! 2. Loads the target's bytecode through the journal,
-//! 3. Runs the frame loop to completion via revm's canonical
+//! 3. Runs the frame loop to completion via evm2's canonical
 //!    `frame_init` / `frame_run` / `frame_return_result` pattern,
 //! 4. Returns `SubCallOutput { status: Success, returndata, ... }` with
 //!    the bytes produced by the child contract's `RETURN` opcode.
@@ -23,15 +23,16 @@
 //! ```
 
 use alloy_primitives::{Address, Bytes, U256};
-use outbe_evm::sub_call;
-use outbe_primitives::storage::{SubCallInput, SubCallStatus};
-use revm::{
-    database::{CacheDB, EmptyDB},
-    handler::MainContext as _,
-    primitives::hardfork::SpecId,
-    state::{AccountInfo, Bytecode},
-    Context,
+use evm2::{
+    bytecode::Bytecode,
+    evm::{AccountInfo, CacheDB, EmptyDB},
+    SpecId,
 };
+use outbe_evm::{
+    sub_call,
+    test_support::{EvmCtx, EvmWorld},
+};
+use outbe_primitives::storage::{SubCallInput, SubCallStatus};
 
 const TARGET: Address = Address::new([0xAB; 20]);
 const CALLER: Address = Address::new([0xC0; 20]);
@@ -47,7 +48,7 @@ const RETURN_ONE_BYTECODE: &[u8] = &[
     0xF3, // RETURN
 ];
 
-fn build_ctx_with_bytecode() -> alloy_evm::eth::EthEvmContext<CacheDB<EmptyDB>> {
+fn build_evm_with_bytecode(host: std::sync::Arc<outbe_runtime::OutbeRuntime>) -> EvmCtx {
     let mut db = CacheDB::new(EmptyDB::default());
     let code = Bytecode::new_raw(Bytes::from_static(RETURN_ONE_BYTECODE));
     let info = AccountInfo {
@@ -57,16 +58,17 @@ fn build_ctx_with_bytecode() -> alloy_evm::eth::EthEvmContext<CacheDB<EmptyDB>> 
         code: Some(code),
         ..Default::default()
     };
-    db.insert_account_info(TARGET, info);
-    Context::mainnet().with_db(db)
+    db.insert_account_info(&TARGET, info);
+    EvmWorld::new(db, host).evm
 }
 
 #[test]
 fn staticcall_returns_contract_returndata() {
-    let mut ctx = build_ctx_with_bytecode();
+    let host = std::sync::Arc::new(outbe_runtime::OutbeRuntime::new());
+    let mut evm = build_evm_with_bytecode(host.clone());
 
     let result = sub_call::run_with_host(
-        &mut ctx,
+        &mut evm,
         outbe_evm::test_support::fresh_environment(CALLER, SpecId::PRAGUE),
         SubCallInput {
             target: TARGET,
@@ -75,7 +77,7 @@ fn staticcall_returns_contract_returndata() {
             gas_limit: 1_000_000,
             is_static: true,
         },
-        std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
+        host,
     )
     .expect("sub_call should not return a fatal error");
 

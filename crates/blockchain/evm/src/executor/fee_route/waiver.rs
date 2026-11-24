@@ -1,7 +1,8 @@
 //! Protocol fee waivers, bootstrap admission and delegation lookup.
 
 use super::*;
-use revm::state::AccountInfo;
+use alloy_primitives::KECCAK256_EMPTY;
+use evm2::evm::AccountInfo;
 
 pub fn bootstrap_fee_waiver_authorized(
     policy: &dyn crate::UserTxFeePolicy,
@@ -26,25 +27,37 @@ pub fn bootstrap_fee_waiver_authorized(
     })
 }
 
-#[allow(private_bounds)]
-impl<DB, E> OutbeBlockExecutor<'_, E>
-where
-    DB: StateDB,
-    DB::Error: std::fmt::Display,
-    E: Evm<DB = DB, Tx = TxEnv, HaltReason = HaltReason> + ZeroFeeCfgAccess,
-    E::Spec: Into<revm::primitives::hardfork::SpecId>,
-    E::Error: std::fmt::Display,
-{
+fn zero_envelope_fees(tx: &mut TxEnvelope) {
+    match tx {
+        TxEnvelope::Legacy(tx) => tx.gas_price = 0,
+        TxEnvelope::Eip2930(tx) => tx.gas_price = 0,
+        TxEnvelope::Eip1559(tx) => {
+            tx.max_fee_per_gas = 0;
+            tx.max_priority_fee_per_gas = 0;
+        }
+        TxEnvelope::Eip4844(tx) => {
+            let inner: &mut alloy_consensus::TxEip4844 = tx.as_mut();
+            inner.max_fee_per_gas = 0;
+            inner.max_priority_fee_per_gas = 0;
+        }
+        TxEnvelope::Eip7702(tx) => {
+            tx.max_fee_per_gas = 0;
+            tx.max_priority_fee_per_gas = 0;
+        }
+    }
+}
+
+impl OutbeBlockExecutor<'_> {
     pub fn execute_protocol_fee_waiver<R, F>(
         &mut self,
         candidate: outbe_primitives::zero_fee_types::ZeroFeeCandidate,
-        tx_env: TxEnv,
+        tx_env: Recovered<TxEnvelope>,
         recovered: R,
         f: F,
     ) -> Result<Option<GasOutput>, BlockExecutionError>
     where
         R: RecoveredTx<TransactionSigned>,
-        F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
+        F: FnOnce(&TxResult<OutbeEvmTypes>, TxStateChanges<'_>) -> CommitChanges,
     {
         // Release the storage borrow before mutating receipt/cap state.
         let ctx = self.fee_route_context()?;
@@ -54,7 +67,7 @@ where
                 recovered.tx(),
                 candidate.signer,
             );
-            let db = self.inner.evm.db_mut();
+            let db = self.inner.evm_mut().overlay_db_mut();
             let mut provider = DirectStorageProvider::new(db, ctx);
             let storage = StorageHandle::new(&mut provider);
             host.user_fee_policy()
@@ -71,25 +84,22 @@ where
     /// exit, including an execution error or a declined commit.
     pub fn execute_without_user_fee<R, F>(
         &mut self,
-        mut tx_env: TxEnv,
+        tx_env: Recovered<TxEnvelope>,
         recovered: R,
         f: F,
     ) -> Result<Option<GasOutput>, BlockExecutionError>
     where
         R: RecoveredTx<TransactionSigned>,
-        F: FnOnce(&EthTxResult<E::HaltReason, reth_ethereum::TxType>) -> CommitChanges,
+        F: FnOnce(&TxResult<OutbeEvmTypes>, TxStateChanges<'_>) -> CommitChanges,
     {
-        let snapshot = self.inner.evm.enable_zero_fee_overrides();
-        tx_env.gas_price = 0;
-        tx_env.gas_priority_fee = Some(0);
-        let result = self.inner.execute_transaction_with_commit_condition(
-            WithTxEnv {
-                tx_env,
-                tx: Arc::new(recovered),
-            },
-            f,
-        );
-        self.inner.evm.restore_zero_fee_overrides(snapshot);
+        let snapshot = self.inner.evm_mut().enable_zero_fee_overrides();
+        let (mut envelope, signer) = tx_env.into_parts();
+        zero_envelope_fees(&mut envelope);
+        let zeroed_tx_env = Recovered::new_unchecked(envelope, signer);
+        let result = self
+            .inner
+            .execute_transaction_with_commit_condition((zeroed_tx_env, recovered), f);
+        self.inner.evm_mut().restore_zero_fee_overrides(snapshot);
         result
     }
 
@@ -98,7 +108,7 @@ where
         signer: Address,
         ctx: BlockContext,
     ) -> Result<AccountInfo, BlockExecutionError> {
-        let db = self.inner.evm.db_mut();
+        let db = self.inner.evm_mut().overlay_db_mut();
         let mut provider = DirectStorageProvider::new(db, ctx);
         let storage = StorageHandle::new(&mut provider);
         storage
@@ -120,15 +130,15 @@ where
         if let Some(code) = account.code {
             return Ok(code.eip7702_address());
         }
-        if account.code_hash == revm::primitives::KECCAK_EMPTY {
+        if account.code_hash == KECCAK256_EMPTY {
             return Ok(None);
         }
-        // basic() can omit bytecode for an account unchanged since a prior
+        // Account info can omit bytecode for an account unchanged since a prior
         // block. Fetch it by hash before deciding whether it is delegated.
         self.inner
-            .evm
-            .db_mut()
-            .code_by_hash(account.code_hash)
+            .evm_mut()
+            .overlay_db_mut()
+            .get_code_by_hash(&account.code_hash)
             .map(|code| code.eip7702_address())
             .map_err(|error| {
                 BlockExecutionError::other(

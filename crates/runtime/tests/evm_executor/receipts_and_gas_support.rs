@@ -193,7 +193,7 @@ pub(super) struct ApprovedFactoryExpected {
     pub(super) token: Address,
 }
 pub(super) fn assert_approved_factory_state(
-    state: &mut State<CacheDB<EmptyDBTyped<ProviderError>>>,
+    state: &mut CacheDB<EmptyDB>,
     block_context: BlockContext,
     expected: ApprovedFactoryExpected,
 ) -> eyre::Result<()> {
@@ -243,7 +243,7 @@ pub(super) const GENESIS: u64 = 1_704_067_200;
 pub(super) const POPULATION: usize = 256;
 pub(super) const RELAY: Address = Address::repeat_byte(0xc7);
 pub(super) type Calibration = (Vec<(String, u64)>, Vec<(u32, u64)>, Vec<Log>, Option<B256>);
-pub(crate) type CalibrationState = State<CacheDB<EmptyDBTyped<ProviderError>>>;
+pub(crate) type CalibrationState = CacheDB<EmptyDB>;
 
 pub(super) fn committee(proposer: Address) -> Vec<(Address, [u8; 48])> {
     (0..POPULATION)
@@ -311,34 +311,32 @@ pub(super) fn run_prefix_checked(
             }
             seed(storage);
         });
-    let mut accounts = revm::state::EvmState::default();
     if verify_deferred {
-        let mut funded: revm::state::Account = AccountInfo {
-            balance: U256::from(10).pow(U256::from(24)),
-            ..Default::default()
-        }
-        .into();
-        funded.mark_touch();
-        accounts.insert(user_tx.signer(), funded);
+        state.insert_account_info(
+            &user_tx.signer(),
+            AccountInfo {
+                balance: U256::from(10).pow(U256::from(24)),
+                ..Default::default()
+            },
+        );
     }
     for (address, code) in contracts {
-        let mut account: revm::state::Account = AccountInfo {
-            code_hash: code.hash_slow(),
-            code: Some(code),
-            ..Default::default()
-        }
-        .into();
-        account.mark_touch();
-        accounts.insert(address, account);
+        state.insert_account_info(
+            &address,
+            AccountInfo {
+                code_hash: code.hash_slow(),
+                code: Some(code),
+                ..Default::default()
+            },
+        );
     }
-    revm::DatabaseCommit::commit(&mut state, accounts);
     let config = OutbeEvmConfig::new(
         test_chain_spec_with_genesis_timestamp(GENESIS),
         std::sync::Arc::new(outbe_runtime::OutbeRuntime::new()),
     )
     .with_evm_signer(signer);
     let mut env = test_evm_env(block, REWARDS_ADDRESS);
-    env.block_env.timestamp = U256::from(timestamp);
+    env.block.timestamp = U256::from(timestamp);
     let parent_hash = B256::repeat_byte(0x91);
     let metadata = (block > 1).then(|| {
         let mut metadata = metadata_with(
@@ -455,7 +453,9 @@ pub(super) fn run_prefix_checked(
         assert!(executor.receipts().last().unwrap().success);
         assert_eq!(executor.system_tx_gross_gas, gross_before);
     }
+    let bundle = std::mem::take(&mut executor.inner.inner.block_state).into_bundle();
     drop(executor);
+    state.commit_source(&BundleSource(&bundle));
     verify_state(&mut state, &logs);
     let root = if verify_deferred {
         let read_ctx = BlockContext {
@@ -469,7 +469,7 @@ pub(super) fn run_prefix_checked(
             proposer,
             validators: vec![proposer],
         };
-        Some(assert_deferred_state(&mut state, &logs, read_ctx))
+        Some(assert_deferred_state(&mut state, &bundle, &logs, read_ctx))
     } else {
         None
     };
@@ -660,6 +660,7 @@ fn assert_deferred_task_logs(
 
 fn assert_deferred_state(
     state: &mut CalibrationState,
+    bundle: &evm2::block::bundle_state::BundleState,
     logs: &[Log],
     read_ctx: BlockContext,
 ) -> B256 {
@@ -728,6 +729,5 @@ fn assert_deferred_state(
             }
         }
     });
-    state.merge_transitions(BundleRetention::Reverts);
-    fixtures::post_state_root(&state.bundle_state)
+    fixtures::post_state_root(bundle)
 }

@@ -230,7 +230,7 @@ fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
         )
         .unwrap();
     }
-    assert!(OutbeBlockExecutor::<()>::check_witness_commit_allowed_with(
+    assert!(OutbeBlockExecutor::check_witness_commit_allowed_with(
         Some(&proposer_state),
         2,
         &base_extra,
@@ -287,7 +287,7 @@ fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
         )
         .unwrap();
     }
-    assert!(OutbeBlockExecutor::<()>::check_witness_commit_allowed_with(
+    assert!(OutbeBlockExecutor::check_witness_commit_allowed_with(
         Some(&verifier_enclave_state),
         2,
         &base_extra,
@@ -328,7 +328,7 @@ fn proposer_record_verifier_with_enclave_and_verifier_replay_roundtrip() {
                 if outcome.as_slice() == U256::from(99).to_be_bytes::<32>()
         ));
     }
-    assert!(OutbeBlockExecutor::<()>::check_witness_commit_allowed_with(
+    assert!(OutbeBlockExecutor::check_witness_commit_allowed_with(
         Some(&replay_state),
         2,
         &base_extra,
@@ -362,12 +362,7 @@ fn user_candidate_exceeding_witness_budget_sets_budget_deferred_and_rolls_back()
         );
     }
     assert!(
-        !OutbeBlockExecutor::<()>::check_witness_commit_allowed_with(
-            Some(&state),
-            0,
-            &base_extra,
-            true,
-        ),
+        !OutbeBlockExecutor::check_witness_commit_allowed_with(Some(&state), 0, &base_extra, true,),
         "oversized user candidate must be denied commit"
     );
     let guard = state.lock().unwrap();
@@ -406,12 +401,7 @@ fn verifier_unconsumed_tx_witness_entries_latch_tape_invalid_on_commit_check() {
         tape,
     )));
     assert!(
-        !OutbeBlockExecutor::<()>::check_witness_commit_allowed_with(
-            Some(&state),
-            0,
-            &base_extra,
-            false,
-        ),
+        !OutbeBlockExecutor::check_witness_commit_allowed_with(Some(&state), 0, &base_extra, false,),
         "unconsumed witness entry at tx_index=0 must reject commit"
     );
     assert_eq!(
