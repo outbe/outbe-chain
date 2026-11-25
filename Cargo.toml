@@ -7,6 +7,7 @@ members = [
     "crates/operator/vm-image",
     "crates/operator/remote",
     "crates/operator/node-role",
+    "crates/operator/vm",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/primitives",
@@ -96,6 +97,7 @@ default-members = [
     "crates/operator/vm-image",
     "crates/operator/remote",
     "crates/operator/node-role",
+    "crates/operator/vm",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/primitives",
@@ -206,6 +208,7 @@ outbe-software-bundle = { path = "crates/operator/software-bundle" }
 outbe-operator-vm-image = { path = "crates/operator/vm-image" }
 outbe-operator-remote = { path = "crates/operator/remote" }
 outbe-operator-node-role = { path = "crates/operator/node-role" }
+outbe-operator-vm = { path = "crates/operator/vm" }
 # Internal - blockchain
 outbe-macros = { path = "crates/blockchain/macros" }
 outbe-primitives = { path = "crates/blockchain/primitives" }

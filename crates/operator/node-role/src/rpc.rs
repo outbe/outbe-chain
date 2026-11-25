@@ -6,19 +6,25 @@ use std::{
 };
 
 use alloy_primitives::{address, Address, U256};
-use alloy_sol_types::{sol, SolCall};
+use alloy_sol_types::SolCall;
 use eyre::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+mod bindings {
+    use alloy_sol_types::sol;
+
+    sol!("../../../contracts/precompiles/src/IStaking.sol");
+    sol!("../../../contracts/precompiles/src/IValidatorSet.sol");
+    sol!("../../../contracts/precompiles/src/IHyperlaneController.sol");
+}
+
+use bindings::{IHyperlaneController, IStaking, IValidatorSet};
 
 const STAKING: Address = address!("000000000000000000000000000000000000EE02");
 pub(crate) const VALIDATOR_SET: Address = address!("000000000000000000000000000000000000EE00");
 pub(crate) const HYPERLANE_CONTROLLER: Address =
     address!("000000000000000000000000000000000000EE14");
-
-sol!("../../../contracts/precompiles/src/IStaking.sol");
-sol!("../../../contracts/precompiles/src/IValidatorSet.sol");
-sol!("../../../contracts/precompiles/src/IHyperlaneController.sol");
 
 /// Transport that posts a JSON-RPC request payload and returns the raw JSON response text.
 pub trait JsonRpcTransport: Send + Sync {
@@ -125,7 +131,7 @@ struct RpcError {
 }
 
 impl RpcClient {
-    pub fn new(url: impl Into<String>) -> Result<Self> {
+    pub(crate) fn new(url: impl Into<String>) -> Result<Self> {
         Ok(Self {
             transport: RpcTransport::Http {
                 url: url.into(),

@@ -106,7 +106,7 @@ pub enum FinalityTag {
 }
 
 impl OperatorConfig {
-    pub fn read(path: &Path) -> Result<(Self, String)> {
+    pub(crate) fn read(path: &Path) -> Result<(Self, String)> {
         let raw = std::fs::read_to_string(path)
             .wrap_err_with(|| format!("failed to read operator config: {}", path.display()))?;
         let config: Self = serde_yaml_ng::from_str(&raw)
@@ -223,7 +223,7 @@ impl OperatorConfig {
 }
 
 impl HyperlaneConfig {
-    pub fn public_toml(&self) -> Result<String> {
+    pub(crate) fn public_toml(&self) -> Result<String> {
         #[derive(Serialize)]
         struct HyperlaneSection {
             poll_interval_secs: u64,
@@ -436,7 +436,7 @@ pub fn validate_hyperlane_public_toml(
 }
 
 impl NetworkConfig {
-    pub fn local_rpc_url(&self) -> String {
+    pub(crate) fn local_rpc_url(&self) -> String {
         format!("http://{}:8545", self.rpc_bind_ip)
     }
 }

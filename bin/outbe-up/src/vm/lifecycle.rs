@@ -11,15 +11,31 @@ use std::{
 
 use alloy_primitives::U256;
 use eyre::{bail, ensure, Context, Result};
-use sha2::{Digest, Sha256};
-use tokio::task::JoinSet;
-
 use outbe_operator_node_role::{
     hyperlane::{ensure_setup_via_rpc, SetupState},
     progress::{Progress, WatchDisplay},
     rpc::ConsensusStatus,
     validator_address,
 };
+use outbe_operator_vm::{
+    disk::{build_disk_upload_and_convert_command, sha256_sparse_file, stream_sparse_tar_gz},
+    dnsmasq::{
+        build_host_reserve_write_command, build_privileged_read_command,
+        check_dnsmasq_ip_conflicts, check_dnsmasq_lease_conflicts, dnsmasq_entry,
+        merge_dnsmasq_hosts, missing_dnsmasq_entries, parse_sentinel_read, sha256_hex,
+        strip_dnsmasq_network_block, DEFAULT_DNSMASQ_LOCK_FILE, DNSMASQ_LEASE_DURATION,
+        DNSMASQ_RESERVATIONS_FILENAME,
+    },
+    image::{
+        build_image_publish_command, build_remote_image_check_command, decide_remote_image_action,
+        validate_image_dir, RemoteImageAction,
+    },
+    vmm::{
+        calc_app_id, extract_primary_mac, remote_vmm_path, CreateVmRequest, GetInfoResponse,
+        NetworkingConfig, StatusRequest, VmInfo, VmmClient, VmmTransport, APP_COMPOSE_JSON,
+    },
+};
+use tokio::task::JoinSet;
 
 use crate::{
     network::{
@@ -30,23 +46,45 @@ use crate::{
     },
     vm::{
         disk,
-        state::{
-            check_dnsmasq_ip_conflicts, check_dnsmasq_lease_conflicts, dnsmasq_entry,
-            merge_dnsmasq_hosts, missing_dnsmasq_entries, strip_dnsmasq_network_block,
-            VmFounderPhase, VmFounderState, VmState, DNSMASQ_RESERVATIONS_FILENAME,
-            VM_STATE_VERSION,
-        },
-        vmm::{
-            calc_app_id, extract_primary_mac, remote_vmm_path, CreateVmRequest, GetInfoResponse,
-            NetworkingConfig, StatusRequest, VmInfo, VmmClient, APP_COMPOSE_JSON,
-        },
+        state::{VmFounderPhase, VmFounderState, VmState, VM_STATE_VERSION},
     },
 };
 
 const SERIAL_LOG_TAIL_LINES: usize = 40;
-const PRESENT_SENTINEL: &str = "OUTBE_UP_PRESENT";
-const MISSING_SENTINEL: &str = "OUTBE_UP_MISSING";
-const DEFAULT_DNSMASQ_LOCK_FILE: &str = "/run/outbe-up/dnsmasq.lock";
+
+#[derive(Clone)]
+struct SshVmmTransport {
+    ssh: Ssh,
+    ssh_options: SshOptions,
+    label: String,
+}
+
+impl VmmTransport for SshVmmTransport {
+    fn capture(&self, command: &str) -> Result<String> {
+        self.ssh_options
+            .capture_ssh(&self.ssh, &self.label, command)
+    }
+
+    fn capture_stdin(&self, command: &str, stdin_bytes: &[u8]) -> Result<String> {
+        self.ssh_options
+            .capture_ssh_stdin(&self.ssh, &self.label, command, stdin_bytes)
+    }
+}
+
+fn ssh_vmm_client(
+    ssh: Ssh,
+    ssh_options: SshOptions,
+    vmm_home: impl Into<String>,
+    label: impl Into<String>,
+) -> VmmClient<SshVmmTransport> {
+    let label = label.into();
+    let transport = SshVmmTransport {
+        ssh,
+        ssh_options,
+        label: label.clone(),
+    };
+    VmmClient::new(transport, vmm_home, label)
+}
 
 pub struct CreateOptions<'a> {
     pub artifacts: &'a Path,
@@ -72,12 +110,6 @@ struct VmFounderStatus {
     consensus: Option<ConsensusStatus>,
     hyperlane_registered: Option<bool>,
     error: Option<String>,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-enum RemoteImageAction {
-    Upload,
-    Reuse,
 }
 
 pub async fn create(options: CreateOptions<'_>) -> Result<()> {
@@ -138,7 +170,7 @@ pub async fn create(options: CreateOptions<'_>) -> Result<()> {
     // Preflight: refuse name collisions, missing resumed VMs, and bridge IP conflicts BEFORE CreateVm.
     progress.stage("checking VMM hosts for existing VM names and bridge IP conflicts");
     for ((host, _port, _user, vmm_home), ssh) in &unique_hosts {
-        let client = VmmClient::new(ssh.clone(), ssh_options.clone(), vmm_home.clone(), host);
+        let client = ssh_vmm_client(ssh.clone(), ssh_options.clone(), vmm_home.clone(), host);
         let existing = client.status(&StatusRequest {
             brief: true,
             ..StatusRequest::default()
@@ -216,7 +248,7 @@ pub async fn create(options: CreateOptions<'_>) -> Result<()> {
             }
         }
 
-        let client = VmmClient::new(
+        let client = ssh_vmm_client(
             resolved.vmm_host.clone(),
             ssh_options.clone(),
             resolved.vmm_home.clone(),
@@ -520,7 +552,7 @@ pub async fn start(
     for founder in state.founders.clone() {
         let ssh_options = ssh_options.clone();
         tasks.spawn_blocking(move || {
-            let client = VmmClient::new(
+            let client = ssh_vmm_client(
                 founder.vmm_host,
                 ssh_options,
                 founder.vmm_home,
@@ -664,7 +696,7 @@ pub async fn stop(
     for founder in state.founders.clone() {
         let ssh_options = ssh_options.clone();
         tasks.spawn_blocking(move || {
-            let client = VmmClient::new(
+            let client = ssh_vmm_client(
                 founder.vmm_host,
                 ssh_options,
                 founder.vmm_home,
@@ -706,7 +738,7 @@ pub async fn remove(
     for founder in state.founders.clone() {
         let ssh_options = ssh_options.clone();
         tasks.spawn_blocking(move || {
-            let client = VmmClient::new(
+            let client = ssh_vmm_client(
                 founder.vmm_host,
                 ssh_options,
                 founder.vmm_home,
@@ -730,7 +762,7 @@ pub async fn remove(
     loop {
         let mut remaining_vms = Vec::new();
         for founder in &state.founders {
-            let client = VmmClient::new(
+            let client = ssh_vmm_client(
                 founder.vmm_host.clone(),
                 ssh_options.clone(),
                 founder.vmm_home.clone(),
@@ -787,7 +819,7 @@ pub async fn remove(
             "Note: managed dnsmasq reservations (`# outbe-up:{}:begin..end`) are left in place \
              (leases expire in {}). To release them now:\n  outbe-up vm host-release --artifacts {}",
             state.network_name,
-            crate::vm::state::DNSMASQ_LEASE_DURATION,
+            DNSMASQ_LEASE_DURATION,
             artifacts.display()
         );
     }
@@ -891,7 +923,7 @@ fn build_timeout_report(
         render_status(build, statuses, max_lag)
     );
     for founder in &state.founders {
-        let client = VmmClient::new(
+        let client = ssh_vmm_client(
             founder.vmm_host.clone(),
             ssh_options.clone(),
             founder.vmm_home.clone(),
@@ -947,7 +979,7 @@ async fn query_one(
     validator_key: PathBuf,
     hyperlane_key: PathBuf,
 ) -> VmFounderStatus {
-    let vmm_client = VmmClient::new(
+    let vmm_client = ssh_vmm_client(
         founder.vmm_host.clone(),
         ssh_options.clone(),
         founder.vmm_home.clone(),
@@ -1287,51 +1319,6 @@ fn load_or_init_create_state(
     Ok(existing)
 }
 
-fn validate_image_dir(
-    image_dir: &Path,
-    image_name: Option<&str>,
-    flavor_label: &str,
-) -> Result<(String, String)> {
-    ensure!(
-        image_dir.is_dir(),
-        "guest image directory does not exist: {}",
-        image_dir.display()
-    );
-    let metadata_path = image_dir.join("metadata.json");
-    ensure!(
-        metadata_path.is_file(),
-        "guest image directory is missing metadata.json: {}",
-        metadata_path.display()
-    );
-    let digest_path = image_dir.join("digest.txt");
-    ensure!(
-        digest_path.is_file(),
-        "guest image directory is missing digest.txt: {}",
-        digest_path.display()
-    );
-    let digest = fs::read_to_string(&digest_path)
-        .wrap_err_with(|| format!("read {}", digest_path.display()))?
-        .trim()
-        .to_ascii_lowercase();
-    ensure!(
-        digest.len() >= 16 && digest.bytes().all(|b| b.is_ascii_hexdigit()),
-        "digest.txt must contain at least 16 hex characters"
-    );
-
-    let name = match image_name {
-        Some(explicit) => explicit.to_owned(),
-        None => format!("outbe-vm-{flavor_label}-{}", &digest[..16]),
-    };
-    ensure!(
-        !name.is_empty()
-            && name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.')),
-        "invalid guest image name: {name}"
-    );
-    Ok((name, digest))
-}
-
 fn founder_vm_name(network_name: &str, founder_name: &str) -> String {
     format!("{network_name}-{founder_name}")
 }
@@ -1432,144 +1419,6 @@ fn read_remote_file_privileged(
     parse_sentinel_read(&raw, path)
 }
 
-fn build_privileged_read_command(path: &Path) -> String {
-    let quoted = shell_quote(&path.to_string_lossy());
-    let inner = format!(
-        "if [ -e {quoted} ]; then printf '{PRESENT_SENTINEL}\\n' && cat {quoted}; else printf '{MISSING_SENTINEL}\\n'; fi"
-    );
-    format!(
-        "if [ \"$(id -u)\" -eq 0 ]; then sh -ec {script}; else sudo -n sh -ec {script}; fi",
-        script = shell_quote(&inner)
-    )
-}
-
-fn parse_sentinel_read(raw: &str, path: &Path) -> Result<Option<String>> {
-    if let Some(rest) = raw.strip_prefix(PRESENT_SENTINEL) {
-        let body = rest.strip_prefix('\n').unwrap_or(rest);
-        return Ok(Some(body.to_owned()));
-    }
-    if raw.trim() == MISSING_SENTINEL {
-        return Ok(None);
-    }
-    bail!(
-        "unexpected remote read response for {} (refusing to assume empty)",
-        path.display()
-    );
-}
-
-fn build_host_reserve_write_command(
-    hosts_file: &Path,
-    pid_file: &Path,
-    lock_file: &Path,
-    expected_sha256: Option<&str>,
-) -> String {
-    let hosts_quoted = shell_quote(&hosts_file.to_string_lossy());
-    let lock_quoted = shell_quote(&lock_file.to_string_lossy());
-    let lock_dir_quoted = shell_quote(
-        &lock_file
-            .parent()
-            .unwrap_or_else(|| Path::new("/run/outbe-up"))
-            .to_string_lossy(),
-    );
-    let tmp_template = shell_quote(&format!("{}.outbe-up.XXXXXX", hosts_file.display()));
-    let pid_quoted = shell_quote(&pid_file.to_string_lossy());
-
-    let cas_check = match expected_sha256 {
-        Some(expected) => {
-            let expected_quoted = shell_quote(expected);
-            format!(
-                "if [ ! -e {hosts_quoted} ]; then echo 'hosts file disappeared during update' >&2; exit 1; fi; \
-                 actual=$(sha256sum {hosts_quoted} | awk '{{print $1}}'); \
-                 if [ \"$actual\" != {expected_quoted} ]; then echo 'hosts file changed concurrently; retry' >&2; exit 1; fi"
-            )
-        }
-        None => format!(
-            "if [ -e {hosts_quoted} ]; then echo 'hosts file was created concurrently; retry' >&2; exit 1; fi"
-        ),
-    };
-
-    let inner = format!(
-        "uid=$(id -u); gid=$(id -g); \
-         if [ -L {lock_dir_quoted} ]; then echo 'lock directory must not be a symlink' >&2; exit 1; fi; \
-         if [ ! -e {lock_dir_quoted} ]; then install -d -m 0700 -o \"$uid\" -g \"$gid\" {lock_dir_quoted}; fi; \
-         if [ ! -d {lock_dir_quoted} ] || [ -L {lock_dir_quoted} ]; then echo 'lock directory is not a directory' >&2; exit 1; fi; \
-         if [ \"$(stat -c '%u %a' {lock_dir_quoted})\" != \"$uid 700\" ]; then echo 'lock directory has unsafe owner or permissions' >&2; exit 1; fi; \
-         if [ -e {lock_quoted} ] || [ -L {lock_quoted} ]; then \
-           if [ ! -f {lock_quoted} ] || [ -L {lock_quoted} ] || [ \"$(stat -c '%u' {lock_quoted})\" != \"$uid\" ]; then \
-             echo 'lock entry must be a regular file owned by current uid' >&2; exit 1; \
-           fi; \
-         fi; \
-         exec 9>>{lock_quoted}; flock -x 9; \
-         {cas_check}; \
-         tmp=$(mktemp {tmp_template}); \
-         trap 'rm -f \"$tmp\"' EXIT; \
-         cat > \"$tmp\"; \
-         chmod 0644 \"$tmp\"; \
-         mv -f \"$tmp\" {hosts_quoted}; \
-         trap - EXIT; \
-         if [ -f {pid_quoted} ]; then kill -HUP \"$(cat {pid_quoted})\"; else echo 'dnsmasq pid file missing: '{pid_quoted} >&2; exit 1; fi"
-    );
-
-    format!(
-        "if [ \"$(id -u)\" -eq 0 ]; then sh -ec {script}; else sudo -n sh -ec {script}; fi",
-        script = shell_quote(&inner)
-    )
-}
-
-fn decide_remote_image_action(
-    remote_state: Option<&str>,
-    local_digest: &str,
-    image_name: &str,
-) -> Result<RemoteImageAction> {
-    match remote_state {
-        None => Ok(RemoteImageAction::Upload),
-        Some(remote_digest) => {
-            let trimmed = remote_digest.trim().to_ascii_lowercase();
-            if trimmed == local_digest {
-                Ok(RemoteImageAction::Reuse)
-            } else {
-                bail!(
-                    "refusing to replace existing guest image `{image_name}`: remote digest `{trimmed}` does not match local `{local_digest}`"
-                );
-            }
-        }
-    }
-}
-
-fn build_image_publish_command(
-    vmm_home: &str,
-    image_name: &str,
-    stage_dir: &str,
-    expected_digest: &str,
-) -> String {
-    let remote_dir_expr = remote_vmm_path(vmm_home, &format!("image/{image_name}"));
-    let remote_digest_expr = remote_vmm_path(vmm_home, &format!("image/{image_name}/digest.txt"));
-    let lock_expr = remote_vmm_path(vmm_home, &format!("image/.{image_name}.lock"));
-    let stage_quoted = shell_quote(stage_dir);
-    let expected_quoted = shell_quote(expected_digest);
-
-    format!(
-        "uid=$(id -u); \
-         if [ -e {lock_expr} ] || [ -L {lock_expr} ]; then \
-           if [ ! -f {lock_expr} ] || [ -L {lock_expr} ] || [ \"$(stat -c '%u' {lock_expr})\" != \"$uid\" ]; then \
-             echo 'image lock must be a regular file owned by current uid' >&2; exit 1; \
-           fi; \
-         fi; \
-         exec 9>>{lock_expr}; flock -x 9; \
-         if [ -e {remote_dir_expr} ]; then \
-           rm -rf {stage_quoted}; \
-           if [ ! -f {remote_digest_expr} ]; then echo 'existing image is missing digest.txt' >&2; exit 1; fi; \
-           actual=$(tr -d ' \\t\\r\\n' < {remote_digest_expr} | tr 'A-F' 'a-f'); \
-           if [ \"$actual\" != {expected_quoted} ]; then echo \"existing image digest mismatch: $actual\" >&2; exit 1; fi; \
-         else \
-           mv -T {stage_quoted} {remote_dir_expr}; \
-         fi; \
-         if [ ! -f {remote_digest_expr} ]; then echo 'published image is missing digest.txt' >&2; exit 1; fi; \
-         final=$(tr -d ' \\t\\r\\n' < {remote_digest_expr} | tr 'A-F' 'a-f'); \
-         if [ \"$final\" != {expected_quoted} ]; then echo \"published image digest mismatch: $final\" >&2; exit 1; fi"
-    )
-}
-
 fn ensure_remote_image(
     ssh_options: &SshOptions,
     ssh: &Ssh,
@@ -1579,11 +1428,7 @@ fn ensure_remote_image(
     local_digest: &str,
     local_image_dir: &Path,
 ) -> Result<()> {
-    let remote_dir_expr = remote_vmm_path(vmm_home, &format!("image/{image_name}"));
-    let remote_digest_expr = remote_vmm_path(vmm_home, &format!("image/{image_name}/digest.txt"));
-    let check_cmd = format!(
-        "if [ ! -e {remote_dir_expr} ]; then printf '{MISSING_SENTINEL}\\n'; else printf '{PRESENT_SENTINEL}\\n' && cat {remote_digest_expr}; fi"
-    );
+    let check_cmd = build_remote_image_check_command(vmm_home, image_name);
     let raw = ssh_options
         .capture_ssh_raw(ssh, host, &check_cmd)
         .wrap_err_with(|| format!("check remote image `{image_name}` on {host}"))?;
@@ -1622,138 +1467,6 @@ fn ensure_remote_image(
     let publish_cmd = build_image_publish_command(vmm_home, image_name, &stage_dir, local_digest);
     ssh_options.run_quiet_ssh(ssh, host, &publish_cmd)?;
     Ok(())
-}
-
-/// Build the remote shell command that extracts a sparse raw disk, verifies its raw SHA-256,
-/// converts it to qcow2, resizes to `disk_gib`, and atomically publishes `hda.img`.
-fn build_disk_upload_and_convert_command(
-    vmm_home: &str,
-    vm_id: &str,
-    filename: &str,
-    expected_sha256: &str,
-    disk_gib: u32,
-) -> String {
-    let vm_dir_expr = remote_vmm_path(vmm_home, &format!("vm/{vm_id}"));
-    let qcow2_expr = remote_vmm_path(vmm_home, &format!("vm/{vm_id}/hda.img"));
-    let filename_quoted = shell_quote(filename);
-    let expected_quoted = shell_quote(expected_sha256);
-    format!(
-        "set -e; \
-         mkdir -p {vm_dir_expr}; \
-         tmp_dir=$(mktemp -d {vm_dir_expr}/.hda-upload.XXXXXX); \
-         trap 'rm -rf \"$tmp_dir\"' EXIT; \
-         tar --sparse -xzf - -C \"$tmp_dir\"; \
-         raw=\"$tmp_dir\"/{filename_quoted}; \
-         if [ ! -f \"$raw\" ]; then echo 'uploaded raw disk missing' >&2; exit 1; fi; \
-         actual=$(sha256sum \"$raw\" | awk '{{print $1}}'); \
-         if [ \"$actual\" != {expected_quoted} ]; then echo \"uploaded raw disk checksum mismatch: $actual\" >&2; exit 1; fi; \
-         qcow2_tmp=\"$tmp_dir/hda.img\"; \
-         qemu-img convert -f raw -O qcow2 \"$raw\" \"$qcow2_tmp\"; \
-         rm -f \"$raw\"; \
-         qemu-img resize -f qcow2 \"$qcow2_tmp\" {disk_gib}G; \
-         mv -f \"$qcow2_tmp\" {qcow2_expr}"
-    )
-}
-
-/// Stream `tar --sparse -czf - -C <base_dir> <entry>` into `sink` without reading holes.
-fn stream_sparse_tar_gz(base_dir: &Path, entry: &str, sink: &mut dyn std::io::Write) -> Result<()> {
-    use std::process::{Command, Stdio};
-
-    let mut child = Command::new("tar")
-        .args(["--sparse", "-czf", "-", "-C"])
-        .arg(base_dir)
-        .arg(entry)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .wrap_err("spawn local tar --sparse -czf")?;
-    let mut stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| eyre::eyre!("tar stdout unavailable"))?;
-    let copy_result = std::io::copy(&mut stdout, sink);
-    let output = child.wait_with_output().wrap_err("wait for local tar")?;
-    if !output.status.success() {
-        bail!(
-            "local tar --sparse failed: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        );
-    }
-    copy_result.wrap_err("stream compressed sparse tar to SSH")?;
-    Ok(())
-}
-
-/// Hash the logical bytes of a sparse file using `SEEK_DATA`/`SEEK_HOLE` to skip reading holes.
-fn sha256_sparse_file(path: &Path) -> Result<String> {
-    use std::io::{Read, Seek, SeekFrom};
-
-    use rustix::fs::SeekFrom as RustixSeekFrom;
-
-    let mut file =
-        fs::File::open(path).wrap_err_with(|| format!("open sparse file: {}", path.display()))?;
-    let file_len = file.metadata()?.len();
-    let mut hasher = Sha256::new();
-    let zero_chunk = [0_u8; 64 * 1024];
-    let mut read_buf = vec![0_u8; 64 * 1024];
-
-    let feed_zeros = |hasher: &mut Sha256, mut count: u64| {
-        while count > 0 {
-            let step = (count as usize).min(zero_chunk.len());
-            hasher.update(&zero_chunk[..step]);
-            count -= step as u64;
-        }
-    };
-
-    let mut pos: u64 = 0;
-    while pos < file_len {
-        let data_start = match rustix::fs::seek(&file, RustixSeekFrom::Data(pos)) {
-            Ok(offset) => offset,
-            Err(rustix::io::Errno::NXIO) => {
-                // Remaining bytes through EOF are a hole.
-                feed_zeros(&mut hasher, file_len - pos);
-                break;
-            }
-            Err(rustix::io::Errno::INVAL | rustix::io::Errno::OPNOTSUPP) => {
-                // Filesystem does not support SEEK_DATA; fall back to linear read.
-                file.seek(SeekFrom::Start(pos))?;
-                let mut remaining = file_len - pos;
-                while remaining > 0 {
-                    let want = (remaining as usize).min(read_buf.len());
-                    let read = file.read(&mut read_buf[..want])?;
-                    if read == 0 {
-                        break;
-                    }
-                    hasher.update(&read_buf[..read]);
-                    remaining -= read as u64;
-                }
-                break;
-            }
-            Err(err) => return Err(err).wrap_err("SEEK_DATA on sparse disk"),
-        };
-
-        if data_start > pos {
-            feed_zeros(&mut hasher, data_start - pos);
-        }
-
-        let data_end = match rustix::fs::seek(&file, RustixSeekFrom::Hole(data_start)) {
-            Ok(offset) => offset.min(file_len),
-            Err(rustix::io::Errno::NXIO) => file_len,
-            Err(err) => return Err(err).wrap_err("SEEK_HOLE on sparse disk"),
-        };
-
-        file.seek(SeekFrom::Start(data_start))?;
-        let mut remaining = data_end - data_start;
-        while remaining > 0 {
-            let want = (remaining as usize).min(read_buf.len());
-            let read = file.read(&mut read_buf[..want])?;
-            ensure!(read > 0, "unexpected EOF while hashing sparse disk");
-            hasher.update(&read_buf[..read]);
-            remaining -= read as u64;
-        }
-        pos = data_end;
-    }
-
-    Ok(hex::encode(hasher.finalize()))
 }
 
 fn upload_and_convert_disk(
@@ -1849,10 +1562,6 @@ fn report_dnsmasq_status(
     Ok(())
 }
 
-fn sha256_hex(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1860,305 +1569,6 @@ mod tests {
     const UUID_0: &str = "550e8400-e29b-41d4-a716-446655440000";
     const UUID_1: &str = "550e8400-e29b-41d4-a716-446655440001";
     const UUID_FOREIGN: &str = "550e8400-e29b-41d4-a716-446655440099";
-
-    #[test]
-    fn host_reserve_shell_commands_execute_cas_and_fail_closed() {
-        use std::{
-            io::Write,
-            os::unix::fs::PermissionsExt,
-            process::{Command, Stdio},
-        };
-
-        let dir = tempfile::tempdir().unwrap();
-        let shim_dir = dir.path().join("bin");
-        fs::create_dir_all(&shim_dir).unwrap();
-
-        // Inert sudo shim strips `-n` and execs the command as the current test user.
-        let sudo_shim = shim_dir.join("sudo");
-        fs::write(
-            &sudo_shim,
-            "#!/bin/sh\nif [ \"$1\" = \"-n\" ]; then shift; fi\nexec \"$@\"\n",
-        )
-        .unwrap();
-        fs::set_permissions(&sudo_shim, fs::Permissions::from_mode(0o755)).unwrap();
-
-        let path_env = format!(
-            "{}:{}",
-            shim_dir.display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
-
-        let hosts = dir.path().join("dnsmasq.hosts");
-        let pid = dir.path().join("dnsmasq.pid");
-        let lock = dir.path().join("lock/outbe-up-dnsmasq.lock");
-        let hup_marker = dir.path().join("hup.received");
-        let foreign = "# other network\n52:54:00:de:ad:01,10.77.0.2\n";
-        fs::write(&hosts, foreign).unwrap();
-
-        // Spawn a real dummy process to receive the real SIGHUP from `kill -HUP` and exit promptly.
-        let mut dummy_dnsmasq = Command::new("sh")
-            .arg("-c")
-            .arg(format!(
-                "trap 'echo HUP > {}; kill $spid 2>/dev/null || true; exit 0' HUP; sleep 15 & spid=$!; wait $spid",
-                shell_quote(&hup_marker.to_string_lossy())
-            ))
-            .spawn()
-            .unwrap();
-        fs::write(&pid, format!("{}\n", dummy_dnsmasq.id())).unwrap();
-        std::thread::sleep(Duration::from_millis(50));
-
-        // 1) Execute generated read command on a newline-terminated file; exact bytes match sha256sum.
-        let read_cmd = build_privileged_read_command(&hosts);
-        let read_out = Command::new("sh")
-            .arg("-c")
-            .arg(&read_cmd)
-            .env("PATH", &path_env)
-            .output()
-            .unwrap();
-        assert!(
-            read_out.status.success(),
-            "read failed: {}",
-            String::from_utf8_lossy(&read_out.stderr)
-        );
-        let raw_stdout = String::from_utf8(read_out.stdout).unwrap();
-        let existing = parse_sentinel_read(&raw_stdout, &hosts).unwrap().unwrap();
-        assert_eq!(
-            existing, foreign,
-            "exact trailing newline must be preserved"
-        );
-        let expected_sha = sha256_hex(existing.as_bytes());
-
-        // 2) Execute generated write command with unchanged file -> succeeds, foreign lines survive.
-        let ours = vec![("52:54:00:aa:bb:01".to_owned(), Ipv4Addr::new(10, 77, 0, 10))];
-        let merged = merge_dnsmasq_hosts(&existing, &ours, "vm-devnet").unwrap();
-        let write_cmd = build_host_reserve_write_command(&hosts, &pid, &lock, Some(&expected_sha));
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(&write_cmd)
-            .env("PATH", &path_env)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(merged.as_bytes())
-            .unwrap();
-        let write_out = child.wait_with_output().unwrap();
-        assert!(
-            write_out.status.success(),
-            "write failed: {}",
-            String::from_utf8_lossy(&write_out.stderr)
-        );
-        let _ = dummy_dnsmasq.wait();
-        let after = fs::read_to_string(&hosts).unwrap();
-        assert!(
-            after.starts_with(foreign),
-            "foreign lines must survive byte-for-byte"
-        );
-        assert!(after.contains("52:54:00:aa:bb:01,10.77.0.10,10m"));
-        assert_eq!(fs::read_to_string(&hup_marker).unwrap().trim(), "HUP");
-
-        // 3) File changed between read and write -> CAS rejects and leaves file untouched.
-        let concurrent = format!("{after}52:54:00:fe:ed:99,10.77.0.99\n");
-        fs::write(&hosts, &concurrent).unwrap();
-        let mut stale_child = Command::new("sh")
-            .arg("-c")
-            .arg(&write_cmd)
-            .env("PATH", &path_env)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        stale_child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(merged.as_bytes())
-            .unwrap();
-        let stale_out = stale_child.wait_with_output().unwrap();
-        assert!(!stale_out.status.success(), "stale CAS write must fail");
-        assert_eq!(
-            fs::read_to_string(&hosts).unwrap(),
-            concurrent,
-            "failed CAS write must leave hosts file untouched"
-        );
-
-        // 4) Unreadable hosts file fails closed (skip only if test runs as root uid 0).
-        if rustix::process::getuid().as_raw() != 0 {
-            let unreadable = dir.path().join("unreadable.hosts");
-            fs::write(&unreadable, "52:54:00:de:ad:01,10.77.0.2\n").unwrap();
-            fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o000)).unwrap();
-            let unreadable_cmd = build_privileged_read_command(&unreadable);
-            let unreadable_out = Command::new("sh")
-                .arg("-c")
-                .arg(&unreadable_cmd)
-                .env("PATH", &path_env)
-                .output()
-                .unwrap();
-            fs::set_permissions(&unreadable, fs::Permissions::from_mode(0o644)).unwrap();
-            assert!(
-                !unreadable_out.status.success(),
-                "unreadable file must fail closed"
-            );
-        }
-
-        // Helper to run a write command with a 2-second timeout so a FIFO hang fails promptly.
-        let run_write_bounded = |cmd: &str| -> std::process::ExitStatus {
-            let mut proc = Command::new("sh")
-                .arg("-c")
-                .arg(cmd)
-                .env("PATH", &path_env)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .unwrap();
-            let _ = proc.stdin.take().unwrap().write_all(merged.as_bytes());
-            let deadline = Instant::now() + Duration::from_secs(2);
-            loop {
-                if let Some(status) = proc.try_wait().unwrap() {
-                    return status;
-                }
-                if Instant::now() >= deadline {
-                    let _ = proc.kill();
-                    let _ = proc.wait();
-                    panic!("write command hung past 2s deadline (likely opened a FIFO)");
-                }
-                std::thread::sleep(Duration::from_millis(20));
-            }
-        };
-
-        // 5) Pre-created FIFO at the lock path must fail promptly without hanging.
-        let fifo_lock_dir = dir.path().join("fifo-lock");
-        fs::create_dir_all(&fifo_lock_dir).unwrap();
-        fs::set_permissions(&fifo_lock_dir, fs::Permissions::from_mode(0o700)).unwrap();
-        let fifo_lock = fifo_lock_dir.join("dnsmasq.lock");
-        assert!(Command::new("mkfifo")
-            .arg(&fifo_lock)
-            .status()
-            .unwrap()
-            .success());
-        let fifo_cmd = build_host_reserve_write_command(
-            &hosts,
-            &pid,
-            &fifo_lock,
-            Some(&sha256_hex(concurrent.as_bytes())),
-        );
-        assert!(
-            !run_write_bounded(&fifo_cmd).success(),
-            "FIFO at lock path must be refused promptly"
-        );
-
-        // 6) Foreign-type entry (directory and symlink) at the lock path must be refused.
-        let dir_lock_parent = dir.path().join("dir-lock");
-        fs::create_dir_all(&dir_lock_parent).unwrap();
-        fs::set_permissions(&dir_lock_parent, fs::Permissions::from_mode(0o700)).unwrap();
-        let dir_lock = dir_lock_parent.join("dnsmasq.lock");
-        fs::create_dir_all(&dir_lock).unwrap();
-        let dir_lock_cmd = build_host_reserve_write_command(
-            &hosts,
-            &pid,
-            &dir_lock,
-            Some(&sha256_hex(concurrent.as_bytes())),
-        );
-        assert!(
-            !run_write_bounded(&dir_lock_cmd).success(),
-            "directory at lock path must be refused"
-        );
-
-        // 7) Lock directory with group/other permission bits (0755) must be refused.
-        let loose_lock_dir = dir.path().join("loose-lock");
-        fs::create_dir_all(&loose_lock_dir).unwrap();
-        fs::set_permissions(&loose_lock_dir, fs::Permissions::from_mode(0o755)).unwrap();
-        let loose_lock = loose_lock_dir.join("dnsmasq.lock");
-        let loose_cmd = build_host_reserve_write_command(
-            &hosts,
-            &pid,
-            &loose_lock,
-            Some(&sha256_hex(concurrent.as_bytes())),
-        );
-        assert!(
-            !run_write_bounded(&loose_cmd).success(),
-            "lock directory with non-0700 mode must be refused"
-        );
-    }
-
-    #[test]
-    fn image_publish_command_handles_normal_and_competitor_race() {
-        use std::process::Command;
-
-        let dir = tempfile::tempdir().unwrap();
-        let vmm_home = dir.path().to_str().unwrap();
-        let image_root = dir.path().join("image");
-        fs::create_dir_all(&image_root).unwrap();
-        let image_name = "outbe-vm-dev-0123456789abcdef";
-        let digest = "0123456789abcdef".repeat(4);
-
-        // 1) Normal publication via `mv -T` + post-publish digest verification.
-        let stage1 = image_root.join(".stage1");
-        fs::create_dir_all(&stage1).unwrap();
-        fs::write(stage1.join("digest.txt"), format!("{digest}\n")).unwrap();
-        fs::write(stage1.join("metadata.json"), "{}").unwrap();
-
-        let cmd1 =
-            build_image_publish_command(vmm_home, image_name, stage1.to_str().unwrap(), &digest);
-        let out1 = Command::new("sh").arg("-c").arg(&cmd1).output().unwrap();
-        assert!(
-            out1.status.success(),
-            "normal publish failed: {}",
-            String::from_utf8_lossy(&out1.stderr)
-        );
-        let published = image_root.join(image_name);
-        assert!(published.join("digest.txt").is_file());
-        assert!(!stage1.exists());
-
-        // 2) Competitor published first with SAME digest -> cleans stage dir, no nesting, succeeds.
-        let stage2 = image_root.join(".stage2");
-        fs::create_dir_all(&stage2).unwrap();
-        fs::write(stage2.join("digest.txt"), format!("{digest}\n")).unwrap();
-        let cmd2 =
-            build_image_publish_command(vmm_home, image_name, stage2.to_str().unwrap(), &digest);
-        let out2 = Command::new("sh").arg("-c").arg(&cmd2).output().unwrap();
-        assert!(
-            out2.status.success(),
-            "same-digest competitor race should reuse cleanly: {}",
-            String::from_utf8_lossy(&out2.stderr)
-        );
-        assert!(!stage2.exists());
-        assert!(
-            !published.join(".stage2").exists(),
-            "must never nest into target dir"
-        );
-
-        // 3) Competitor published first with DIFFERENT digest -> cleans stage dir, refuses, keeps target.
-        let other_digest = "f".repeat(64);
-        let stage3 = image_root.join(".stage3");
-        fs::create_dir_all(&stage3).unwrap();
-        fs::write(stage3.join("digest.txt"), format!("{other_digest}\n")).unwrap();
-        let cmd3 = build_image_publish_command(
-            vmm_home,
-            image_name,
-            stage3.to_str().unwrap(),
-            &other_digest,
-        );
-        let out3 = Command::new("sh").arg("-c").arg(&cmd3).output().unwrap();
-        assert!(
-            !out3.status.success(),
-            "different-digest competitor must fail"
-        );
-        assert!(!stage3.exists());
-        assert_eq!(
-            fs::read_to_string(published.join("digest.txt"))
-                .unwrap()
-                .trim(),
-            digest
-        );
-    }
 
     #[test]
     fn verify_resumed_founders_rejects_missing_or_renamed_vm() {
@@ -2245,33 +1655,6 @@ mod tests {
         assert_eq!(removed_ids, vec![UUID_0.to_owned()]);
         assert!(err.to_string().contains(UUID_0), "{err}");
         assert!(state.founders.is_empty());
-    }
-
-    #[test]
-    fn digest_qualified_image_name_reuses_match_and_refuses_mismatch() {
-        let dir = tempfile::tempdir().unwrap();
-        let image = dir.path().join("dstack-dev-0.6.3");
-        fs::create_dir_all(&image).unwrap();
-        assert!(validate_image_dir(&image, None, "dev").is_err());
-
-        fs::write(image.join("metadata.json"), "{}").unwrap();
-        let digest = "0123456789abcdef".repeat(4);
-        fs::write(image.join("digest.txt"), format!("{digest}\n")).unwrap();
-
-        let (name, parsed_digest) = validate_image_dir(&image, None, "dev").unwrap();
-        assert_eq!(name, "outbe-vm-dev-0123456789abcdef");
-        assert_eq!(parsed_digest, digest);
-
-        assert_eq!(
-            decide_remote_image_action(None, &digest, &name).unwrap(),
-            RemoteImageAction::Upload
-        );
-        assert_eq!(
-            decide_remote_image_action(Some(&digest), &digest, &name).unwrap(),
-            RemoteImageAction::Reuse
-        );
-        let err = decide_remote_image_action(Some(&"f".repeat(64)), &digest, &name).unwrap_err();
-        assert!(err.to_string().contains("refusing to replace"), "{err}");
     }
 
     #[test]
@@ -2376,263 +1759,6 @@ mod tests {
             run_with_deadline(fast_deadline, fast).await.unwrap(),
             Some(42)
         );
-    }
-
-    #[test]
-    fn sha256_sparse_file_matches_logical_zero_filled_sha256() {
-        use std::{
-            io::{Seek, SeekFrom, Write},
-            process::Command,
-        };
-
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("sparse.img");
-        let mut file = fs::OpenOptions::new()
-            .create_new(true)
-            .read(true)
-            .write(true)
-            .open(&path)
-            .unwrap();
-        let logical_size: u64 = 16 * 1024 * 1024;
-        file.set_len(logical_size).unwrap();
-        file.write_all(b"header-bytes-at-zero").unwrap();
-        file.seek(SeekFrom::Start(8 * 1024 * 1024)).unwrap();
-        file.write_all(b"middle-extent-payload").unwrap();
-        file.seek(SeekFrom::Start(logical_size - 16)).unwrap();
-        file.write_all(b"tail-16-bytes!!!").unwrap();
-        file.sync_all().unwrap();
-        drop(file);
-
-        let fast_hash = sha256_sparse_file(&path).unwrap();
-        let out = Command::new("sha256sum").arg(&path).output().unwrap();
-        assert!(out.status.success());
-        let expected = String::from_utf8(out.stdout)
-            .unwrap()
-            .split_whitespace()
-            .next()
-            .unwrap()
-            .to_owned();
-        assert_eq!(fast_hash, expected);
-    }
-
-    #[test]
-    fn sparse_disk_stream_and_verify_executes_locally() {
-        use std::{
-            io::{Seek, SeekFrom, Write},
-            os::unix::fs::PermissionsExt,
-            process::{Command, Stdio},
-        };
-
-        let dir = tempfile::tempdir().unwrap();
-        let shim_dir = dir.path().join("bin");
-        fs::create_dir_all(&shim_dir).unwrap();
-        let qemu_log = dir.path().join("qemu-img.log");
-        let qemu_shim = shim_dir.join("qemu-img");
-        // Shim records calls and copies raw->qcow2 on `convert`.
-        fs::write(
-            &qemu_shim,
-            format!(
-                "#!/bin/sh\nset -e\necho \"$*\" >> {}\nif [ \"$1\" = \"convert\" ]; then cp --sparse=always \"$6\" \"$7\"; fi\n",
-                shell_quote(&qemu_log.to_string_lossy())
-            ),
-        )
-        .unwrap();
-        fs::set_permissions(&qemu_shim, fs::Permissions::from_mode(0o755)).unwrap();
-
-        let path_env = format!(
-            "{}:{}",
-            shim_dir.display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
-
-        // Create a 32 MiB sparse raw disk with only a few bytes of actual data.
-        let src_disk = dir.path().join("validator-0.img");
-        let mut file = fs::OpenOptions::new()
-            .create_new(true)
-            .read(true)
-            .write(true)
-            .open(&src_disk)
-            .unwrap();
-        let logical_size: u64 = 32 * 1024 * 1024;
-        file.set_len(logical_size).unwrap();
-        file.write_all(b"outbe-gpt-header").unwrap();
-        file.seek(SeekFrom::Start(16 * 1024 * 1024)).unwrap();
-        file.write_all(b"outbe-ext4-data").unwrap();
-        file.sync_all().unwrap();
-        drop(file);
-
-        let expected_sha = sha256_sparse_file(&src_disk).unwrap();
-
-        // Compress sparse stream into memory to confirm wire size is tiny compared to 32 MiB.
-        let mut wire_bytes = Vec::new();
-        stream_sparse_tar_gz(dir.path(), "validator-0.img", &mut wire_bytes).unwrap();
-        assert!(
-            wire_bytes.len() < 64 * 1024,
-            "compressed sparse stream should be tiny, got {} bytes",
-            wire_bytes.len()
-        );
-
-        let vmm_home = dir.path().join("vmm");
-        let cmd = build_disk_upload_and_convert_command(
-            vmm_home.to_str().unwrap(),
-            UUID_0,
-            "validator-0.img",
-            &expected_sha,
-            40,
-        );
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(&cmd)
-            .env("PATH", &path_env)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child.stdin.take().unwrap().write_all(&wire_bytes).unwrap();
-        let out = child.wait_with_output().unwrap();
-        assert!(
-            out.status.success(),
-            "disk upload/convert failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let published = vmm_home.join(format!("vm/{UUID_0}/hda.img"));
-        assert!(published.is_file());
-        let log = fs::read_to_string(&qemu_log).unwrap();
-        assert!(log.contains("convert -f raw -O qcow2"));
-        assert!(log.contains("resize -f qcow2"));
-        assert!(log.contains("40G"));
-
-        // Mismatched SHA-256 fails closed BEFORE invoking qemu-img.
-        let bad_log = dir.path().join("qemu-img-bad.log");
-        fs::write(
-            &qemu_shim,
-            format!(
-                "#!/bin/sh\necho \"$*\" >> {}\n",
-                shell_quote(&bad_log.to_string_lossy())
-            ),
-        )
-        .unwrap();
-        let bad_cmd = build_disk_upload_and_convert_command(
-            vmm_home.to_str().unwrap(),
-            UUID_1,
-            "validator-0.img",
-            &"0".repeat(64),
-            40,
-        );
-        let mut bad_child = Command::new("sh")
-            .arg("-c")
-            .arg(&bad_cmd)
-            .env("PATH", &path_env)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        bad_child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(&wire_bytes)
-            .unwrap();
-        let bad_out = bad_child.wait_with_output().unwrap();
-        assert!(!bad_out.status.success(), "bad checksum must fail closed");
-        assert!(
-            !bad_log.exists(),
-            "qemu-img must not run when raw checksum mismatches"
-        );
-    }
-
-    #[test]
-    fn host_release_shell_command_strips_only_our_block_and_preserves_foreign() {
-        use std::{
-            io::Write,
-            os::unix::fs::PermissionsExt,
-            process::{Command, Stdio},
-        };
-
-        let dir = tempfile::tempdir().unwrap();
-        let shim_dir = dir.path().join("bin");
-        fs::create_dir_all(&shim_dir).unwrap();
-        let sudo_shim = shim_dir.join("sudo");
-        fs::write(
-            &sudo_shim,
-            "#!/bin/sh\nif [ \"$1\" = \"-n\" ]; then shift; fi\nexec \"$@\"\n",
-        )
-        .unwrap();
-        fs::set_permissions(&sudo_shim, fs::Permissions::from_mode(0o755)).unwrap();
-        let path_env = format!(
-            "{}:{}",
-            shim_dir.display(),
-            std::env::var("PATH").unwrap_or_default()
-        );
-
-        let hosts = dir.path().join("dnsmasq.hosts");
-        let pid = dir.path().join("dnsmasq.pid");
-        let lock = dir.path().join("lock/dnsmasq.lock");
-        let hup_marker = dir.path().join("hup.received");
-
-        let foreign = "# other network\n52:54:00:de:ad:01,10.77.0.2\n";
-        let ours = vec![("52:54:00:aa:bb:01".to_owned(), Ipv4Addr::new(10, 77, 0, 10))];
-        let initial = merge_dnsmasq_hosts(foreign, &ours, "vm-devnet").unwrap();
-        fs::write(&hosts, &initial).unwrap();
-
-        let mut dummy_dnsmasq = Command::new("sh")
-            .arg("-c")
-            .arg(format!(
-                "trap 'echo HUP > {}; kill $spid 2>/dev/null || true; exit 0' HUP; sleep 15 & spid=$!; wait $spid",
-                shell_quote(&hup_marker.to_string_lossy())
-            ))
-            .spawn()
-            .unwrap();
-        fs::write(&pid, format!("{}\n", dummy_dnsmasq.id())).unwrap();
-        std::thread::sleep(Duration::from_millis(50));
-
-        // Read with generated privileged read command, strip only our block, write under lock+CAS.
-        let read_cmd = build_privileged_read_command(&hosts);
-        let read_out = Command::new("sh")
-            .arg("-c")
-            .arg(&read_cmd)
-            .env("PATH", &path_env)
-            .output()
-            .unwrap();
-        assert!(read_out.status.success());
-        let existing = parse_sentinel_read(&String::from_utf8(read_out.stdout).unwrap(), &hosts)
-            .unwrap()
-            .unwrap();
-        let stripped = strip_dnsmasq_network_block(&existing, "vm-devnet");
-        assert_eq!(stripped, foreign);
-
-        let write_cmd = build_host_reserve_write_command(
-            &hosts,
-            &pid,
-            &lock,
-            Some(&sha256_hex(existing.as_bytes())),
-        );
-        let mut child = Command::new("sh")
-            .arg("-c")
-            .arg(&write_cmd)
-            .env("PATH", &path_env)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(stripped.as_bytes())
-            .unwrap();
-        let out = child.wait_with_output().unwrap();
-        assert!(
-            out.status.success(),
-            "host-release write failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let _ = dummy_dnsmasq.wait();
-        assert_eq!(fs::read_to_string(&hosts).unwrap(), foreign);
-        assert_eq!(fs::read_to_string(&hup_marker).unwrap().trim(), "HUP");
     }
 
     #[test]

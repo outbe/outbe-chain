@@ -8594,6 +8594,21 @@ name = "outbe-operator-systemd"
 version = "0.1.0"
 
 [[package]]
+name = "outbe-operator-vm"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "hex",
+ "outbe-software-bundle",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "walkdir",
+]
+
+[[package]]
 name = "outbe-operator-vm-image"
 version = "0.1.0"
 dependencies = [
@@ -9298,12 +9313,11 @@ dependencies = [
  "outbe-genesis-cli",
  "outbe-operator-node-role",
  "outbe-operator-remote",
+ "outbe-operator-vm",
  "outbe-primitives",
  "outbe-software-bundle",
- "rustix",
  "serde",
  "serde_json",
- "sha2 0.10.9",
  "tempfile",
  "tokio",
  "toml 0.8.23",

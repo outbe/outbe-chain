@@ -54,7 +54,7 @@ impl OperatorManifest {
         Ok(manifest)
     }
 
-    pub fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         ensure!(
             self.version == MANIFEST_VERSION,
             "unsupported operator manifest version {}",

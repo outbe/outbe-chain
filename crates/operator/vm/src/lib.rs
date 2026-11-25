@@ -1,0 +1,13 @@
+//! Outbe VM disk creation, dstack VMM client, guest image staging, and host network helpers.
+
+mod container;
+pub mod disk;
+pub mod dnsmasq;
+pub mod image;
+pub mod nat;
+pub mod vmm;
+
+/// Single-quote a string for POSIX shells.
+pub(crate) fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}

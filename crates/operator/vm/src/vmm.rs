@@ -1,4 +1,4 @@
-//! Typed dstack VMM pRPC client over SSH Unix-socket transport.
+//! Typed dstack VMM pRPC client over a pluggable command transport.
 
 use std::collections::BTreeMap;
 
@@ -6,136 +6,131 @@ use eyre::{bail, ensure, Context, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::network::{
-    config::Ssh,
-    remote::{shell_quote, SshOptions},
-};
+use crate::shell_quote;
 
 /// Embedded `app-compose.json` for `key_provider: none`, no-KMS, no-gateway Outbe VMs.
-pub(crate) const APP_COMPOSE_JSON: &str =
-    include_str!("../../../../deploy/outbe-vm/app-compose.json");
+pub const APP_COMPOSE_JSON: &str = include_str!("../../../../deploy/outbe-vm/app-compose.json");
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct CreateVmRequest {
-    pub(crate) name: String,
-    pub(crate) image: String,
-    pub(crate) compose_file: String,
-    pub(crate) vcpu: u32,
+pub struct CreateVmRequest {
+    pub name: String,
+    pub image: String,
+    pub compose_file: String,
+    pub vcpu: u32,
     /// Memory in MiB (dstack VMM expects MB).
-    pub(crate) memory: u32,
+    pub memory: u32,
     /// Disk size in GiB (dstack VMM expects GB).
-    pub(crate) disk_size: u32,
-    pub(crate) ports: Vec<PortMapping>,
+    pub disk_size: u32,
+    pub ports: Vec<PortMapping>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) app_id: Option<String>,
-    pub(crate) user_config: String,
-    pub(crate) hugepages: bool,
-    pub(crate) pin_numa: bool,
-    pub(crate) stopped: bool,
-    pub(crate) no_tee: bool,
+    pub app_id: Option<String>,
+    pub user_config: String,
+    pub hugepages: bool,
+    pub pin_numa: bool,
+    pub stopped: bool,
+    pub no_tee: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) networking: Option<NetworkingConfig>,
-    pub(crate) annotations: BTreeMap<String, String>,
+    pub networking: Option<NetworkingConfig>,
+    pub annotations: BTreeMap<String, String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct NetworkingConfig {
-    pub(crate) mode: String,
+pub struct NetworkingConfig {
+    pub mode: String,
     #[serde(skip_serializing_if = "String::is_empty")]
-    pub(crate) bridge_name: String,
+    pub bridge_name: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub(crate) struct PortMapping {
-    pub(crate) protocol: String,
-    pub(crate) host_port: u32,
-    pub(crate) vm_port: u32,
-    pub(crate) host_address: String,
+pub struct PortMapping {
+    pub protocol: String,
+    pub host_port: u32,
+    pub vm_port: u32,
+    pub host_address: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) struct IdMessage {
-    pub(crate) id: String,
+struct IdMessage {
+    id: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
-pub(crate) struct StatusRequest {
-    pub(crate) ids: Vec<String>,
-    pub(crate) brief: bool,
-    pub(crate) keyword: String,
-    pub(crate) page: u32,
-    pub(crate) page_size: u32,
-    pub(crate) status: String,
+pub struct StatusRequest {
+    pub ids: Vec<String>,
+    pub brief: bool,
+    pub keyword: String,
+    pub page: u32,
+    pub page_size: u32,
+    pub status: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-pub(crate) struct StatusResponse {
+pub struct StatusResponse {
     #[serde(default)]
-    pub(crate) vms: Vec<VmInfo>,
+    pub vms: Vec<VmInfo>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-pub(crate) struct GetInfoResponse {
+pub struct GetInfoResponse {
     #[serde(default)]
-    pub(crate) found: bool,
+    pub found: bool,
     #[serde(default)]
-    pub(crate) info: Option<VmInfo>,
+    pub info: Option<VmInfo>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-pub(crate) struct VmInfo {
+pub struct VmInfo {
     #[serde(default)]
-    pub(crate) id: String,
+    pub id: String,
     #[serde(default)]
-    pub(crate) name: String,
+    pub name: String,
     #[serde(default)]
-    pub(crate) status: String,
+    pub status: String,
     #[serde(default)]
-    pub(crate) boot_error: String,
+    pub boot_error: String,
     #[serde(default)]
-    pub(crate) interfaces: Vec<NetworkInterfaceStatus>,
+    pub interfaces: Vec<NetworkInterfaceStatus>,
     #[serde(default)]
-    pub(crate) running: bool,
+    pub running: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
-pub(crate) struct NetworkInterfaceStatus {
+pub struct NetworkInterfaceStatus {
     #[serde(default)]
-    pub(crate) mode: String,
+    pub mode: String,
     #[serde(default)]
-    pub(crate) mac: String,
+    pub mac: String,
+}
+
+/// Command transport used by `VmmClient` to reach the dstack VMM Unix socket and serial logs.
+pub trait VmmTransport {
+    fn capture(&self, command: &str) -> Result<String>;
+    fn capture_stdin(&self, command: &str, stdin_bytes: &[u8]) -> Result<String>;
 }
 
 #[derive(Clone)]
-pub(crate) struct VmmClient {
-    ssh: Ssh,
-    ssh_options: SshOptions,
+pub struct VmmClient<T> {
+    transport: T,
     vmm_home: String,
     label: String,
 }
 
-impl VmmClient {
-    pub(crate) fn new(
-        ssh: Ssh,
-        ssh_options: SshOptions,
-        vmm_home: impl Into<String>,
-        label: impl Into<String>,
-    ) -> Self {
+impl<T: VmmTransport> VmmClient<T> {
+    pub fn new(transport: T, vmm_home: impl Into<String>, label: impl Into<String>) -> Self {
         Self {
-            ssh,
-            ssh_options,
+            transport,
             vmm_home: vmm_home.into(),
             label: label.into(),
         }
     }
 
-    pub(crate) fn create_vm(&self, request: &CreateVmRequest) -> Result<String> {
+    pub fn create_vm(&self, request: &CreateVmRequest) -> Result<String> {
         let response: IdMessage = self.prpc_call("CreateVm", request)?;
         validate_vm_id(&response.id)?;
         Ok(response.id)
     }
 
-    pub(crate) fn start_vm(&self, vm_id: &str) -> Result<()> {
+    pub fn start_vm(&self, vm_id: &str) -> Result<()> {
         validate_vm_id(vm_id)?;
         let _: serde_json::Value = self.prpc_call(
             "StartVm",
@@ -146,7 +141,7 @@ impl VmmClient {
         Ok(())
     }
 
-    pub(crate) fn stop_vm(&self, vm_id: &str) -> Result<()> {
+    pub fn stop_vm(&self, vm_id: &str) -> Result<()> {
         validate_vm_id(vm_id)?;
         let _: serde_json::Value = self.prpc_call(
             "StopVm",
@@ -157,7 +152,7 @@ impl VmmClient {
         Ok(())
     }
 
-    pub(crate) fn remove_vm(&self, vm_id: &str) -> Result<()> {
+    pub fn remove_vm(&self, vm_id: &str) -> Result<()> {
         validate_vm_id(vm_id)?;
         let _: serde_json::Value = self.prpc_call(
             "RemoveVm",
@@ -168,7 +163,7 @@ impl VmmClient {
         Ok(())
     }
 
-    pub(crate) fn status(&self, request: &StatusRequest) -> Result<StatusResponse> {
+    pub fn status(&self, request: &StatusRequest) -> Result<StatusResponse> {
         let response: StatusResponse = self.prpc_call("Status", request)?;
         for vm in &response.vms {
             if !vm.id.is_empty() {
@@ -178,7 +173,7 @@ impl VmmClient {
         Ok(response)
     }
 
-    pub(crate) fn get_info(&self, vm_id: &str) -> Result<GetInfoResponse> {
+    pub fn get_info(&self, vm_id: &str) -> Result<GetInfoResponse> {
         validate_vm_id(vm_id)?;
         let response: GetInfoResponse = self.prpc_call(
             "GetInfo",
@@ -195,10 +190,9 @@ impl VmmClient {
     }
 
     /// Read the tail of the VM serial log from `<vmm_home>/vm/<vm_id>/serial.log`.
-    pub(crate) fn serial_log_tail(&self, vm_id: &str, lines: usize) -> Result<String> {
+    pub fn serial_log_tail(&self, vm_id: &str, lines: usize) -> Result<String> {
         let command = build_serial_log_command(&self.vmm_home, vm_id, lines)?;
-        self.ssh_options
-            .capture_ssh(&self.ssh, &self.label, &command)
+        self.transport.capture(&command)
     }
 
     fn prpc_call<Req: Serialize, Resp: DeserializeOwned>(
@@ -213,8 +207,8 @@ impl VmmClient {
             shell_quote(&format!("http://localhost/prpc/{method}?json"))
         );
         let raw = self
-            .ssh_options
-            .capture_ssh_stdin(&self.ssh, &self.label, &command, &payload)
+            .transport
+            .capture_stdin(&command, &payload)
             .wrap_err_with(|| format!("VMM pRPC {method} failed on {}", self.label))?;
         let body = parse_curl_http_response(method, &raw)?;
         if body.trim().is_empty() {
@@ -227,7 +221,7 @@ impl VmmClient {
 }
 
 /// Validate that `vm_id` is a canonical 36-character UUID (`8-4-4-4-12` hex).
-pub(crate) fn validate_vm_id(vm_id: &str) -> Result<()> {
+pub fn validate_vm_id(vm_id: &str) -> Result<()> {
     let bytes = vm_id.as_bytes();
     let valid = bytes.len() == 36
         && bytes.iter().enumerate().all(|(idx, byte)| {
@@ -242,11 +236,7 @@ pub(crate) fn validate_vm_id(vm_id: &str) -> Result<()> {
 }
 
 /// Build the remote shell command to read the serial log tail safely.
-pub(crate) fn build_serial_log_command(
-    vmm_home: &str,
-    vm_id: &str,
-    lines: usize,
-) -> Result<String> {
+fn build_serial_log_command(vmm_home: &str, vm_id: &str, lines: usize) -> Result<String> {
     validate_vm_id(vm_id)?;
     let log_expr = remote_vmm_path(vmm_home, &format!("vm/{vm_id}/serial.log"));
     let sock_expr = remote_vmm_path(vmm_home, "run/vmm.sock");
@@ -272,7 +262,7 @@ fn percent_encode_query_component(value: &str) -> String {
 }
 
 /// Build a shell expression for `<vmm_home>/<relative>`, expanding a leading `~/`.
-pub(crate) fn remote_vmm_path(vmm_home: &str, relative: &str) -> String {
+pub fn remote_vmm_path(vmm_home: &str, relative: &str) -> String {
     let trimmed_home = vmm_home.trim_end_matches('/');
     let trimmed_rel = relative.trim_start_matches('/');
     let joined = if trimmed_rel.is_empty() {
@@ -290,13 +280,13 @@ pub(crate) fn remote_vmm_path(vmm_home: &str, relative: &str) -> String {
 }
 
 /// Compute the dstack `app_id` (first 40 lowercase hex chars of SHA-256 of `compose_file`).
-pub(crate) fn calc_app_id(compose_file: &str) -> String {
+pub fn calc_app_id(compose_file: &str) -> String {
     let digest = Sha256::digest(compose_file.as_bytes());
     hex::encode(digest)[..40].to_owned()
 }
 
 /// Extract the primary NIC MAC address from VMM `VmInfo`.
-pub(crate) fn extract_primary_mac(info: &VmInfo) -> Result<String> {
+pub fn extract_primary_mac(info: &VmInfo) -> Result<String> {
     let selected = info
         .interfaces
         .iter()
@@ -313,7 +303,7 @@ pub(crate) fn extract_primary_mac(info: &VmInfo) -> Result<String> {
 }
 
 /// Validate and lowercase a colon-separated 6-octet MAC address.
-pub(crate) fn normalize_mac(raw: &str) -> Result<String> {
+fn normalize_mac(raw: &str) -> Result<String> {
     let trimmed = raw.trim().to_ascii_lowercase();
     let octets: Vec<&str> = trimmed.split(':').collect();
     ensure!(
