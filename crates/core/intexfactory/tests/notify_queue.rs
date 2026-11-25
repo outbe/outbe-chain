@@ -74,6 +74,9 @@ fn record_on(handle: &StorageHandle<'_>, series_id: SeriesId, emission_day: Emis
 /// The chains that get the series and their call notices.
 const CHAINS: [u32; 2] = [97, 11_155_111];
 
+/// The one-series runs a block sends: each one is a message to each chain.
+const RUNS_PER_BLOCK: u32 = SWEEP_WRITES_PER_BLOCK / CHAINS.len() as u32;
+
 /// A provider whose registry holds `CHAINS` in Series.
 fn provider() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
@@ -138,13 +141,13 @@ fn queue_bounds(handle: &StorageHandle<'_>) -> (u32, u32) {
 fn a_backlog_drains_one_block_worth_at_a_time() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        let queued = SWEEP_WRITES_PER_BLOCK + 5;
+        let queued = RUNS_PER_BLOCK + 5;
         seed(&handle, queued);
 
         drain(&handle);
         assert_eq!(
             queue_bounds(&handle),
-            (SWEEP_WRITES_PER_BLOCK, queued),
+            (RUNS_PER_BLOCK, queued),
             "one block spends its budget and leaves the rest queued"
         );
 
@@ -188,7 +191,7 @@ fn an_empty_queue_is_a_noop() {
 fn an_exactly_full_block_rewinds_the_queue() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
-        seed(&handle, SWEEP_WRITES_PER_BLOCK);
+        seed(&handle, RUNS_PER_BLOCK);
         drain(&handle);
         assert_eq!(queue_bounds(&handle), (0, 0));
     });

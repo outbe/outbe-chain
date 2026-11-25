@@ -47,6 +47,12 @@ pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
     let factory = IntexFactoryContract::new(ctx.storage.clone());
     let head = factory.notify_head.read()?;
     let tail = factory.notify_tail.read()?;
+    if head >= tail {
+        return Ok(());
+    }
+    let chains = crate::targets::series_target_chains(&ctx.storage)?
+        .len()
+        .max(1);
     let mut budget = PassBudget::per_block();
     let mut index = head;
     while index < tail && !budget.spent() {
@@ -57,7 +63,10 @@ pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
             index += 1;
             continue;
         };
-        let run_cap = (budget.writes_left() as usize).saturating_mul(MAX_SERIES_PER_MARK);
+        // Each batch of the run is one outbox message to each chain.
+        let run_cap = (budget.writes_left() as usize / chains)
+            .max(1)
+            .saturating_mul(MAX_SERIES_PER_MARK);
         let mut run = vec![first_id];
         let mut next = index + 1;
         while next < tail && run.len() < run_cap {
@@ -70,10 +79,13 @@ pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
             run.push(id);
             next += 1;
         }
+        let messages = run.len().div_ceil(MAX_SERIES_PER_MARK) * chains;
+        if !budget.admit_writes(messages as u32) {
+            break;
+        }
         for slot in index..next {
             factory.notify_at.clear(&slot)?;
         }
-        budget.admit_writes(run.len().div_ceil(MAX_SERIES_PER_MARK) as u32);
         crate::called::notify_called(&ctx.storage, emission_day, called_at, &run)?;
         index = next;
     }
