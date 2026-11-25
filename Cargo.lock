@@ -8552,6 +8552,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-operator-remote"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "serde",
+ "tokio",
+]
+
+[[package]]
 name = "outbe-operator-systemd"
 version = "0.1.0"
 
@@ -9263,6 +9272,7 @@ dependencies = [
  "indicatif",
  "k256 0.13.4",
  "outbe-genesis-cli",
+ "outbe-operator-remote",
  "outbe-operator-systemd",
  "outbe-primitives",
  "outbe-snapshot",

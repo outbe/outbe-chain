@@ -10,7 +10,7 @@ use crate::{
     validator::rpc::ConsensusStatus,
 };
 
-use super::remote::{NetworkArtifacts, SshOptions};
+use super::remote::{capture_founder, NetworkArtifacts, SshOptions};
 
 #[derive(Clone, Debug)]
 pub(super) struct FounderStatus {
@@ -249,7 +249,7 @@ fn query_one_inner(ssh: &SshOptions, founder: &super::config::Founder) -> Result
         request("net_peerCount", "[]", 3),
         request("outbe_consensusStatus", "[]", 4),
     );
-    let output = ssh.capture(founder, &command)?;
+    let output = capture_founder(ssh, founder, &command)?;
     Ok(parse_status(&founder.name, &output))
 }
 

@@ -1,4 +1,6 @@
 use std::{
+    future::Future,
+    pin::Pin,
     sync::atomic::{AtomicU64, Ordering},
     time::Duration,
 };
@@ -9,11 +11,6 @@ use eyre::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::network::{
-    config::Ssh,
-    remote::{shell_quote, SshOptions},
-};
-
 const STAKING: Address = address!("000000000000000000000000000000000000EE02");
 pub(crate) const VALIDATOR_SET: Address = address!("000000000000000000000000000000000000EE00");
 pub(crate) const HYPERLANE_CONTROLLER: Address =
@@ -23,18 +20,20 @@ sol!("../../contracts/precompiles/src/IStaking.sol");
 sol!("../../contracts/precompiles/src/IValidatorSet.sol");
 sol!("../../contracts/precompiles/src/IHyperlaneController.sol");
 
+/// Transport that posts a JSON-RPC request payload and returns the raw JSON response text.
+pub trait JsonRpcTransport: Send + Sync {
+    fn post_json<'a>(
+        &'a self,
+        payload: Vec<u8>,
+    ) -> Pin<Box<dyn Future<Output = Result<String>> + Send + 'a>>;
+}
+
 enum RpcTransport {
     Http {
         url: String,
         client: reqwest::Client,
     },
-    /// Execute `curl` on a remote host over SSH when the RPC endpoint is only reachable from that host.
-    SshCurl {
-        url: String,
-        ssh: Ssh,
-        ssh_options: SshOptions,
-        label: String,
-    },
+    Custom(Box<dyn JsonRpcTransport>),
 }
 
 pub struct RpcClient {
@@ -139,19 +138,9 @@ impl RpcClient {
         })
     }
 
-    pub(crate) fn via_ssh(
-        url: impl Into<String>,
-        ssh: Ssh,
-        ssh_options: SshOptions,
-        label: impl Into<String>,
-    ) -> Self {
+    pub fn with_transport(transport: Box<dyn JsonRpcTransport>) -> Self {
         Self {
-            transport: RpcTransport::SshCurl {
-                url: url.into(),
-                ssh,
-                ssh_options,
-                label: label.into(),
-            },
+            transport: RpcTransport::Custom(transport),
             id: AtomicU64::new(1),
         }
     }
@@ -353,25 +342,9 @@ impl RpcClient {
                 .json()
                 .await
                 .wrap_err("invalid JSON-RPC response")?,
-            RpcTransport::SshCurl {
-                url,
-                ssh,
-                ssh_options,
-                label,
-            } => {
+            RpcTransport::Custom(transport) => {
                 let payload = serde_json::to_vec(&request)?;
-                let command = format!(
-                    "curl -fsS --connect-timeout 5 --max-time 30 -H 'content-type: application/json' --data-binary @- {}",
-                    shell_quote(url)
-                );
-                let ssh = ssh.clone();
-                let ssh_options = ssh_options.clone();
-                let label = label.clone();
-                let raw = tokio::task::spawn_blocking(move || {
-                    ssh_options.capture_ssh_stdin(&ssh, &label, &command, &payload)
-                })
-                .await
-                .wrap_err("SSH RPC task panicked")??;
+                let raw = transport.post_json(payload).await?;
                 serde_json::from_str(&raw).wrap_err("invalid JSON-RPC response")?
             }
         };

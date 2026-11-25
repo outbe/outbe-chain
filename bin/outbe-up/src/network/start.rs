@@ -9,7 +9,7 @@ use tokio::task::JoinSet;
 use crate::support::progress::Progress;
 
 use super::{
-    remote::{NetworkArtifacts, SshOptions},
+    remote::{capture_founder, run_quiet_founder, NetworkArtifacts, SshOptions},
     status::{healthy, query_all, ready_for_hyperlane_setup, render, FounderStatus},
 };
 
@@ -40,7 +40,8 @@ async fn start_founders(
     for founder in build.config.founders.clone() {
         let ssh = ssh.clone();
         tasks.spawn_blocking(move || {
-            ssh.run_quiet(
+            run_quiet_founder(
+                &ssh,
                 &founder,
                 "if [ \"$(id -u)\" -eq 0 ]; then systemctl enable --now outbe-validator.target; else sudo -n systemctl enable --now outbe-validator.target; fi",
             )
@@ -121,12 +122,12 @@ fn fail_if_service_failed(
         .iter()
         .find(|founder| founder.name == failed.name)
         .expect("status belongs to configured founder");
-    let logs = ssh
-        .capture(
-            founder,
-            "journalctl --no-pager -n 30 -u outbe-radicle.service -u outbe-feeder.service -u outbe-hyperlane-validator.service -u outbe-validator.service",
-        )
-        .unwrap_or_else(|error| format!("could not read journal: {error}"));
+    let logs = capture_founder(
+        ssh,
+        founder,
+        "journalctl --no-pager -n 30 -u outbe-radicle.service -u outbe-feeder.service -u outbe-hyperlane-validator.service -u outbe-validator.service",
+    )
+    .unwrap_or_else(|error| format!("could not read journal: {error}"));
     bail!("{} failed during network start:\n{logs}", failed.name);
 }
 
@@ -161,7 +162,8 @@ async fn configure_hyperlane(
         let ssh = ssh.clone();
         tasks.spawn_blocking(move || {
             let script = format!("/opt/outbe-chain/validator-{index}/configure-hyperlane.sh");
-            ssh.run_quiet(
+            run_quiet_founder(
+                &ssh,
                 &founder,
                 &format!("if [ \"$(id -u)\" -eq 0 ]; then {script}; else sudo -n {script}; fi"),
             )

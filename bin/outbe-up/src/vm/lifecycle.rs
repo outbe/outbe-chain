@@ -18,13 +18,13 @@ use crate::{
     network::{
         build::DeploymentKind,
         config::{Ssh, VmFlavor},
-        remote::{shell_quote, NetworkArtifacts, SshOptions},
+        remote::{rpc_client_via_ssh, shell_quote, NetworkArtifacts, SshOptions},
         status::rpc_ready_for_hyperlane,
     },
     support::progress::{Progress, WatchDisplay},
     validator::{
         hyperlane::{ensure_setup_via_rpc, SetupState},
-        rpc::{ConsensusStatus, RpcClient},
+        rpc::ConsensusStatus,
         validator_address,
     },
     vm::{
@@ -993,7 +993,7 @@ async fn query_one(
         };
     }
 
-    let rpc = RpcClient::via_ssh(
+    let rpc = rpc_client_via_ssh(
         format!("http://{}:8545", founder.bridge_ip),
         founder.vmm_host.clone(),
         ssh_options,
@@ -1080,7 +1080,7 @@ async fn configure_hyperlane_vms(
         } else {
             SetupState::default()
         };
-        let rpc = RpcClient::via_ssh(
+        let rpc = rpc_client_via_ssh(
             format!("http://{}:8545", founder.bridge_ip),
             founder.vmm_host.clone(),
             ssh_options.clone(),

@@ -20,6 +20,7 @@ hex.workspace = true
 indicatif.workspace = true
 k256.workspace = true
 outbe-snapshot.workspace = true
+outbe-operator-remote.workspace = true
 outbe-operator-systemd.workspace = true
 outbe-software-bundle.workspace = true
 outbe-genesis-cli.workspace = true

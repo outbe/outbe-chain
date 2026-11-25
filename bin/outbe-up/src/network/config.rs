@@ -10,6 +10,8 @@ use std::{
 
 use alloy_primitives::{Address, U256};
 use eyre::{ensure, Context, Result};
+use outbe_operator_remote::validate_ssh;
+pub use outbe_operator_remote::Ssh;
 use serde::{Deserialize, Serialize};
 
 use crate::support::progress::Progress;
@@ -204,16 +206,6 @@ impl HyperlaneNetworkConfig {
             origins: self.origins.clone(),
         }
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Ssh {
-    pub host: String,
-    #[serde(default = "default_ssh_user")]
-    pub user: String,
-    #[serde(default = "default_ssh_port")]
-    pub port: u16,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -589,13 +581,6 @@ impl NetworkConfig {
     }
 }
 
-fn validate_ssh(ssh: &Ssh, label: &str) -> Result<()> {
-    ensure!(safe_host(&ssh.host), "invalid SSH host for {label}");
-    ensure!(safe_user(&ssh.user), "invalid SSH user for {label}");
-    ensure!(ssh.port > 0, "SSH port must be non-zero for {label}");
-    Ok(())
-}
-
 pub fn init(path: &Path) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("writing network configuration example");
@@ -650,30 +635,8 @@ fn safe_name(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
-fn safe_host(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b':' | b'-' | b'_'))
-}
-
-fn safe_user(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-}
-
 const fn loopback() -> Ipv4Addr {
     Ipv4Addr::LOCALHOST
-}
-
-fn default_ssh_user() -> String {
-    "ubuntu".to_owned()
-}
-
-const fn default_ssh_port() -> u16 {
-    22
 }
 
 const fn default_hyperlane_poll_interval() -> u64 {

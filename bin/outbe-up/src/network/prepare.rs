@@ -10,7 +10,10 @@ use crate::support::progress::Progress;
 
 use super::{
     build::DeploymentKind,
-    remote::{NetworkArtifacts, SshOptions},
+    remote::{
+        capture_founder, copy_to_founder, run_founder, run_quiet_founder, NetworkArtifacts,
+        SshOptions,
+    },
 };
 
 const INSTALLER: &str = r#"#!/bin/sh
@@ -153,7 +156,8 @@ fn prepare_founder(input: PrepareFounder<'_>) -> Result<()> {
                 input.founder.rpc_bind_ip,
             )
         };
-    let remote = input.ssh.capture(
+    let remote = capture_founder(
+        input.ssh,
         input.founder,
         &format!(
             "set -eu; test \"$(uname -s)\" = Linux; test \"$(uname -m)\" = x86_64; \
@@ -181,16 +185,16 @@ mktemp -d /tmp/outbe-network.XXXXXX",
     );
     let remote_quoted = quote(&remote);
     let result = (|| {
-        input
-            .ssh
-            .copy_to(input.founder, &[input.binaries], &remote, true)?;
-        input.ssh.copy_to(
+        copy_to_founder(input.ssh, input.founder, &[input.binaries], &remote, true)?;
+        copy_to_founder(
+            input.ssh,
             input.founder,
             &[input.archive, input.installer],
             &remote,
             false,
         )?;
-        input.ssh.run_quiet(
+        run_quiet_founder(
+            input.ssh,
             input.founder,
             &format!(
                 "cd {remote_quoted} && sh install-founder.sh {} {} {}",
@@ -198,9 +202,11 @@ mktemp -d /tmp/outbe-network.XXXXXX",
             ),
         )
     })();
-    let cleanup = input
-        .ssh
-        .run(input.founder, &format!("rm -rf -- {remote_quoted}"));
+    let cleanup = run_founder(
+        input.ssh,
+        input.founder,
+        &format!("rm -rf -- {remote_quoted}"),
+    );
     result?;
     cleanup?;
     Ok(())
