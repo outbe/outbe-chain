@@ -350,11 +350,14 @@ impl Liveness {
         }
         let report = IHyperlaneController::EpochReport {
             latestIndex: latest,
-            notServing: not_serving,
-            notDelivered: not_delivered,
+            notServing: not_serving.clone(),
+            notDelivered: not_delivered.clone(),
         };
         self.submit(provider, domain, index, &checkpoint, report)
-            .await
+            .await?;
+        self.health
+            .set_report(domain, round, &not_serving, &not_delivered);
+        Ok(())
     }
 
     /// The two lists of the report for the target checkpoint that this

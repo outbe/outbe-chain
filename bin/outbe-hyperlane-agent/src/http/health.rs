@@ -48,6 +48,9 @@ struct State {
     /// Why the relayer stopped the deliveries of a domain. The validator
     /// role of that domain continues.
     relay_errors: BTreeMap<u32, String>,
+    /// The last report that the controller accepted from this validator,
+    /// for each domain.
+    reports: BTreeMap<u32, serde_json::Value>,
 }
 
 pub struct ValidatorHealth {
@@ -119,6 +122,23 @@ impl ValidatorHealth {
         self.state().relay_errors.insert(domain, error);
     }
 
+    /// Records the report of `round` that the controller accepted for
+    /// `domain`: the validators that this agent named.
+    pub fn set_report(
+        &self,
+        domain: u32,
+        round: u64,
+        not_serving: &[alloy_primitives::Address],
+        not_delivered: &[alloy_primitives::Address],
+    ) {
+        let report = json!({
+            "round": round,
+            "not_serving": not_serving,
+            "not_delivered": not_delivered,
+        });
+        self.state().reports.insert(domain, report);
+    }
+
     pub fn set_signer_error(&self, error: Option<String>) {
         self.state().signer_error = error;
     }
@@ -159,6 +179,7 @@ impl ValidatorHealth {
         state.domains.retain(|d, _| keep(*d));
         state.balances.retain(|d, _| keep(*d));
         state.relay_errors.retain(|d, _| keep(*d));
+        state.reports.retain(|d, _| keep(*d));
     }
 
     /// The signer of a started domain, also after a stop.
@@ -202,6 +223,7 @@ impl ValidatorHealth {
             last_delivery,
             balances,
             relay_errors,
+            reports,
             domains,
         ) = {
             let state = self.state();
@@ -218,6 +240,7 @@ impl ValidatorHealth {
                 state.last_delivery.clone(),
                 state.balances.clone(),
                 state.relay_errors.clone(),
+                state.reports.clone(),
                 domains,
             )
         };
@@ -258,6 +281,9 @@ impl ValidatorHealth {
                         // Why the relayer stopped the deliveries of the domain.
                         "error": relay_errors.get(&domain),
                     });
+                    // The last liveness report of this validator: its round
+                    // and the validators that it named.
+                    value["report"] = json!(reports.get(&domain));
                 }
                 (domain.to_string(), value)
             })

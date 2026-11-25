@@ -211,12 +211,13 @@ While the daemon waits for the controller, `/health` returns 200.
 | `domains.<id>.cursor` | Finalized origin block of the last stored leaf batch. It is `null` before the first leaf. It moves only when new leaves arrive, so it can stay behind the chain head while the domain has no messages. |
 | `domains.<id>.head` | The last final block of the origin chain. `null` before the first read. |
 | `domains.<id>.behind` | Blocks up to `head` that the sync did not read yet. `0` means that the sync is at the head. |
-| `domains.<id>.balance_wei` | Relayer only: native balance of `H` on this chain in wei, as a string. `H` pays the gas of each delivery to this chain. `null` before the first read. |
-| `domains.<id>.relay.cursor` | Relayer only: the next new leaf index that the relayer takes in. `null` before the relayer starts on the domain. |
-| `domains.<id>.relay.backlog` | Relayer only: older leaves below this index wait for the take-in. `0` means that the history is done. |
-| `domains.<id>.relay.queue` | Relayer only: messages that are not delivered yet. |
-| `domains.<id>.relay.dropped` | Relayer only: messages after the last delivery attempt, and messages that can never be delivered. |
-| `domains.<id>.relay.error` | Relayer only: why the relayer stopped the deliveries of this domain, or `null`. |
+| `domains.<id>.balance_wei` | native balance of `H` on this chain in wei, as a string. `H` pays the gas of each delivery to this chain. `null` before the first read. |
+| `domains.<id>.relay.cursor` | the next new leaf index that the relayer takes in. `null` before the relayer starts on the domain. |
+| `domains.<id>.relay.backlog` | older leaves below this index wait for the take-in. `0` means that the history is done. |
+| `domains.<id>.relay.queue` | messages that are not delivered yet. |
+| `domains.<id>.relay.dropped` | messages after the last delivery attempt, and messages that can never be delivered. |
+| `domains.<id>.relay.error` | why the relayer stopped the deliveries of this domain, or `null`. |
+| `domains.<id>.report` | The last liveness report of this validator that the controller accepted: `round`, and the validators that it named in `not_serving` and `not_delivered`. `null` before the first one in this process. |
 | `domains.<id>.reorg` | The domain halted after a reorg. |
 | `domains.<id>.error` | Domain error, or `null`. |
 
