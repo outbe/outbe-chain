@@ -742,8 +742,15 @@ pub(crate) async fn deploy_with_exec(
         host_staged.insert(hkey.clone(), map);
     }
 
-    let expected_names: BTreeSet<&str> =
+    let mut expected_names: BTreeSet<&str> =
         desired_members.iter().map(|m| m.vm_name.as_str()).collect();
+    for extra in state
+        .members
+        .iter()
+        .filter(|m| m.role != MemberRole::Founder)
+    {
+        expected_names.insert(extra.vm_name.as_str());
+    }
     let mut blockers = Vec::new();
     let mut plans: Vec<(&DesiredMember, VmClassification)> =
         Vec::with_capacity(desired_members.len());
@@ -1107,7 +1114,7 @@ pub(crate) async fn start_with_exec(
         st.ensure_matches_network(&build)?;
     }
 
-    let desired_members = build_desired_members(&build, state.as_ref(), None, None, None)?;
+    let desired_members = build_all_desired_members(&build, state.as_ref(), None, None, None)?;
     let unique_hosts = collect_unique_hosts(&desired_members);
 
     // 1. Verify pinned `outbe-up` on every unique host.
@@ -1239,7 +1246,11 @@ pub(crate) async fn start_with_exec(
         options.min_finalized_blocks, READY_CONSECUTIVE_SAMPLES
     ));
     let deadline = Instant::now() + options.timeout;
-    let required_peers = live_targets.len().saturating_sub(1);
+    let required_peers = live_targets
+        .iter()
+        .filter(|(m, _)| m.role != MemberRole::FullNode)
+        .count()
+        .saturating_sub(1);
     let mut baseline_b: Option<u64> = None;
     let mut consecutive_ready: u32 = 0;
 
@@ -1336,7 +1347,14 @@ pub(crate) async fn stop_with_exec(
     ensure_vm_deployment(&build)?;
 
     let outbe_up_sha256 = resolve_bundled_outbe_up_sha256(&build.root)?;
-    let desired_members = build_desired_members(&build, None, None, None, None)?;
+    let state = {
+        let lock = NetworkVmState::lock(options.artifacts)?;
+        NetworkVmState::load_optional_locked(&lock, options.artifacts)?
+    };
+    if let Some(st) = &state {
+        st.ensure_matches_network(&build)?;
+    }
+    let desired_members = build_all_desired_members(&build, state.as_ref(), None, None, None)?;
     let unique_hosts = collect_unique_hosts(&desired_members);
     let tag_prefix =
         network_owner_tag_prefix(&build.config.name, &build.manifest.genesis.final_sha256);
@@ -1445,6 +1463,8 @@ pub(crate) struct VmMemberStatus {
     pub(crate) no_tee: bool,
     pub(crate) chain_id: Option<u64>,
     pub(crate) finalized: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) finalized_hash: Option<String>,
     pub(crate) execution_peers: Option<u64>,
     pub(crate) consensus_mode: Option<String>,
     pub(crate) consensus_peers: Option<u64>,
@@ -1513,7 +1533,7 @@ pub(crate) async fn status_with_exec(
         st.ensure_matches_network(&build)?;
     }
 
-    let desired_members = build_desired_members(&build, state.as_ref(), None, None, None)?;
+    let desired_members = build_all_desired_members(&build, state.as_ref(), None, None, None)?;
     let unique_hosts = collect_unique_hosts(&desired_members);
     let mut host_bins: BTreeMap<String, RemoteOutbeUp> = BTreeMap::new();
     for (hkey, host) in &unique_hosts {
@@ -1533,7 +1553,11 @@ pub(crate) async fn status_with_exec(
     let assessments = assess_members_lag(&statuses, options.max_lag);
 
     if options.json {
-        let required_peers = desired_members.len().saturating_sub(1);
+        let required_peers = desired_members
+            .iter()
+            .filter(|m| m.role != MemberRole::FullNode)
+            .count()
+            .saturating_sub(1);
         let healthy_count = statuses
             .iter()
             .zip(&assessments)
@@ -1658,7 +1682,7 @@ pub(crate) async fn remove_with_exec(
         st.ensure_matches_network(&build)?;
     }
 
-    let desired_members = build_desired_members(&build, state.as_ref(), None, None, None)?;
+    let desired_members = build_all_desired_members(&build, state.as_ref(), None, None, None)?;
     let unique_hosts = collect_unique_hosts(&desired_members);
     let tag_prefix =
         network_owner_tag_prefix(&build.config.name, &build.manifest.genesis.final_sha256);
@@ -2065,6 +2089,55 @@ fn build_desired_members(
     Ok(out)
 }
 
+/// Build desired members for all roles: founders from `network.yaml` plus any added
+/// `joining-validator` and `full-node` members recorded in `network-vm-state.json`.
+fn build_all_desired_members(
+    build: &NetworkArtifacts,
+    state: Option<&NetworkVmState>,
+    no_tee_override: Option<bool>,
+    image_name: Option<&str>,
+    image_hash: Option<&str>,
+) -> Result<Vec<DesiredMember>> {
+    let mut out = build_desired_members(build, state, no_tee_override, image_name, image_hash)?;
+    if let Some(st) = state {
+        for m in &st.members {
+            if m.role == MemberRole::Founder
+                || out.iter().any(|existing| existing.vm_name == m.vm_name)
+            {
+                continue;
+            }
+            let eff_image_name = if !st.image_name.is_empty() && st.image_hash == m.image_hash {
+                Some(st.image_name.clone())
+            } else {
+                None
+            };
+            let eff_image_hash = (!m.image_hash.is_empty()).then(|| m.image_hash.clone());
+            out.push(DesiredMember {
+                index: m.index,
+                role: m.role,
+                name: m.name.clone(),
+                vm_name: m.vm_name.clone(),
+                owner_tag: m.owner_tag.clone(),
+                vmm_host: m.vmm_host.clone(),
+                vmm_home: m.vmm_home.clone(),
+                bridge: m.bridge.clone(),
+                service_ip: m.service_ip,
+                advertise_ip: m.advertise_ip,
+                port_offset: m.port_offset,
+                vcpu: m.vcpu,
+                memory_gib: m.memory_gib,
+                disk_gib: m.disk_gib,
+                flavor: m.flavor,
+                no_tee: m.no_tee,
+                image_name: eff_image_name,
+                image_hash: eff_image_hash,
+                recorded_disk_sha256: m.disk_source_sha256.clone(),
+            });
+        }
+    }
+    Ok(out)
+}
+
 fn fetch_host_vms(
     exec: &dyn HostExec,
     ssh: &Ssh,
@@ -2372,6 +2445,7 @@ impl PublishContext {
             members.iter().map(|m| m.vmm_host.host.as_str()).collect();
         let peer_sources: Vec<String> = members
             .iter()
+            .filter(|m| m.role != MemberRole::FullNode)
             .map(|m| format!("{}/32", m.advertise_ip))
             .collect::<BTreeSet<_>>()
             .into_iter()
@@ -2383,6 +2457,9 @@ impl PublishContext {
     }
 
     fn requires_published_ports(&self, member: &DesiredMember) -> bool {
+        if member.role == MemberRole::FullNode {
+            return false;
+        }
         self.multi_host || member.port_offset > 0 || member.advertise_ip != member.service_ip
     }
 
@@ -2526,6 +2603,7 @@ fn format_failed_host_checks(checks: &[(String, RemoteHostCheckOutput)]) -> Stri
 struct BatchedRpcResult {
     chain_id: Option<u64>,
     finalized: Option<u64>,
+    finalized_hash: Option<String>,
     execution_peers: Option<u64>,
     consensus: Option<ConsensusStatus>,
 }
@@ -2572,6 +2650,10 @@ fn query_vm_rpc_batch(
             1 => out.chain_id = parse_hex_u64(result),
             2 => {
                 out.finalized = result.get("number").and_then(parse_hex_u64);
+                out.finalized_hash = result
+                    .get("hash")
+                    .and_then(Value::as_str)
+                    .map(ToOwned::to_owned);
             }
             3 => out.execution_peers = parse_hex_u64(result),
             4 => {
@@ -2581,6 +2663,37 @@ fn query_vm_rpc_batch(
         }
     }
     Ok(out)
+}
+
+/// Fetch the canonical block hash at `height` from a VM's service IP over SSH ControlMaster.
+fn query_vm_block_hash(
+    exec: &dyn HostExec,
+    ssh: &Ssh,
+    label: &str,
+    service_ip: Ipv4Addr,
+    height: u64,
+) -> Result<String> {
+    let url = format!("http://{service_ip}:8545");
+    let req = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_getBlockByNumber",
+        "params": [format!("0x{height:x}"), false]
+    });
+    let payload = serde_json::to_vec(&req)?;
+    let cmd = format!(
+        "curl -fsS --connect-timeout 5 --max-time 30 -H 'content-type: application/json' --data-binary @- {}",
+        shell_quote(&url)
+    );
+    let raw = exec.capture_stdin(ssh, label, &cmd, &payload)?;
+    let resp: Value = serde_json::from_str(&raw)
+        .wrap_err_with(|| format!("parse block hash JSON-RPC response from {url}"))?;
+    resp.pointer("/result/hash")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+        .ok_or_else(|| {
+            eyre::eyre!("VM {label} ({service_ip}) returned no block hash for height {height}")
+        })
 }
 
 fn parse_hex_u64(value: &Value) -> Option<u64> {
@@ -2692,6 +2805,7 @@ fn build_member_status(
             no_tee: member.no_tee,
             chain_id: None,
             finalized: None,
+            finalized_hash: None,
             execution_peers: None,
             consensus_mode: None,
             consensus_peers: None,
@@ -2731,6 +2845,7 @@ fn build_member_status(
             no_tee: effective_no_tee,
             chain_id: None,
             finalized: None,
+            finalized_hash: None,
             execution_peers: None,
             consensus_mode: None,
             consensus_peers: None,
@@ -2779,6 +2894,7 @@ fn build_member_status(
         no_tee: effective_no_tee,
         chain_id: rpc.chain_id,
         finalized: rpc.finalized,
+        finalized_hash: rpc.finalized_hash,
         execution_peers: rpc.execution_peers,
         consensus_mode: rpc.consensus.as_ref().map(|c| c.mode.clone()),
         consensus_peers: rpc.consensus.as_ref().map(|c| c.connected_peers),
@@ -2800,6 +2916,10 @@ pub(crate) fn member_node_ready(
     }
     if status.chain_id != Some(chain_id) || status.finalized.is_none() {
         return false;
+    }
+    if status.role == MemberRole::FullNode {
+        // Keyless full nodes sync from upstream/bootnodes without validator signing keys or TEE.
+        return true;
     }
     if status.execution_peers.unwrap_or(0) < required_peers as u64 {
         return false;
@@ -2858,9 +2978,10 @@ pub(crate) fn evaluate_network_readiness(
         return false;
     }
 
-    // All members must agree on a common `vrf_material_version`.
+    // All validator members must agree on a common `vrf_material_version`.
     let versions: BTreeSet<u64> = statuses
         .iter()
+        .filter(|s| s.role != MemberRole::FullNode)
         .filter_map(|s| s.vrf_material_version)
         .collect();
     versions.len() == 1
@@ -2873,8 +2994,10 @@ pub(crate) fn assess_members_lag(
     let highest_finalized = statuses.iter().filter_map(|s| s.finalized).max();
     let mut vrf_counts: BTreeMap<u64, usize> = BTreeMap::new();
     for s in statuses {
-        if let Some(v) = s.vrf_material_version {
-            *vrf_counts.entry(v).or_insert(0) += 1;
+        if s.role != MemberRole::FullNode {
+            if let Some(v) = s.vrf_material_version {
+                *vrf_counts.entry(v).or_insert(0) += 1;
+            }
         }
     }
     let majority_vrf = vrf_counts
@@ -2896,9 +3019,11 @@ pub(crate) fn assess_members_lag(
                 }
                 _ => None,
             };
-            if let (Some(maj), Some(mine)) = (majority_vrf, s.vrf_material_version) {
-                if mine != maj {
-                    reasons.push(format!("vrf_material_version={mine} (majority={maj})"));
+            if s.role != MemberRole::FullNode {
+                if let (Some(maj), Some(mine)) = (majority_vrf, s.vrf_material_version) {
+                    if mine != maj {
+                        reasons.push(format!("vrf_material_version={mine} (majority={maj})"));
+                    }
                 }
             }
             MemberLagAssessment {
@@ -2928,7 +3053,11 @@ fn render_vm_status(
     ));
     for (s, a) in statuses.iter().zip(&assessments) {
         let class_str = format!("{:?}", s.classification).to_ascii_lowercase();
-        let mode = s.consensus_mode.as_deref().unwrap_or("-");
+        let mode = if s.role == MemberRole::FullNode {
+            s.consensus_mode.as_deref().unwrap_or("full-node")
+        } else {
+            s.consensus_mode.as_deref().unwrap_or("-")
+        };
         let finalized = s
             .finalized
             .map(|h| h.to_string())
@@ -2937,11 +3066,16 @@ fn render_vm_status(
             .lag
             .map(|d| d.to_string())
             .unwrap_or_else(|| "-".to_owned());
-        let vrf = s
-            .vrf_material_version
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "-".to_owned());
-        let tee = if s.no_tee {
+        let vrf = if s.role == MemberRole::FullNode {
+            "-".to_owned()
+        } else {
+            s.vrf_material_version
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "-".to_owned())
+        };
+        let tee = if s.role == MemberRole::FullNode {
+            "n/a(keyless)".to_owned()
+        } else if s.no_tee {
             "skip(no-tee)".to_owned()
         } else {
             s.tee_ready
@@ -3048,6 +3182,15 @@ fn shell_quote_tilde_path(path: &str) -> String {
         shell_quote(path)
     }
 }
+
+#[path = "vm_members.rs"]
+mod members;
+
+pub use members::{add_full_node, add_validator, AddFullNodeOptions, AddValidatorOptions};
+#[cfg(test)]
+pub(crate) use members::{
+    add_full_node_with_exec, add_validator_with_exec, ensure_local_member_keys, JoinChainDriver,
+};
 
 #[cfg(test)]
 #[path = "vm_tests.rs"]

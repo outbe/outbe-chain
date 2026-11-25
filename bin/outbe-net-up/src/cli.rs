@@ -1,4 +1,4 @@
-use std::{path::PathBuf, time::Duration};
+use std::{net::Ipv4Addr, path::PathBuf, time::Duration};
 
 use clap::{ArgGroup, Args, Parser, Subcommand};
 use eyre::{bail, Result};
@@ -148,6 +148,141 @@ enum NetworkCommand {
         force: bool,
         #[arg(long, default_value_t = 120)]
         timeout: u64,
+    },
+    /// Add a joining validator VM to a running VM network and drive it through DKG activation.
+    #[command(group(
+        ArgGroup::new("join_image_source")
+            .args(["image_archive", "image_url"])
+            .multiple(false)
+    ))]
+    AddValidator {
+        #[arg(long)]
+        artifacts: PathBuf,
+        /// Unique member name (e.g. `validator-joiner-0`; VM name becomes `<network>-<name>`).
+        #[arg(long)]
+        name: String,
+        /// Target VMM host SSH hostname or IP.
+        #[arg(long)]
+        host: String,
+        /// Target VMM host SSH user [default: network vm default or `ubuntu`].
+        #[arg(long)]
+        user: Option<String>,
+        /// Target VMM host SSH port [default: 22].
+        #[arg(long, default_value_t = 22)]
+        port: u16,
+        /// Target VMM home directory [default: network vm.vmm_home].
+        #[arg(long)]
+        vmm_home: Option<String>,
+        /// Target host bridge name [default: network vm.bridge].
+        #[arg(long)]
+        bridge: Option<String>,
+        /// Static private IPv4 address assigned to this VM on the host bridge.
+        #[arg(long)]
+        bridge_ip: Ipv4Addr,
+        /// Public/external IPv4 address advertised for P2P and on-chain consensus registration.
+        #[arg(long)]
+        advertise_ip: Ipv4Addr,
+        /// Port offset added to base P2P/Radicle ports (1:1 host-to-guest DNAT).
+        #[arg(long, default_value_t = 0)]
+        port_offset: u16,
+        /// Local guest OS image `.tar.zst` archive (defaults to already-deployed image if omitted).
+        #[arg(long)]
+        image_archive: Option<PathBuf>,
+        /// HTTPS URL of a guest OS image `.tar.zst` archive.
+        #[arg(long, requires = "image_sha256")]
+        image_url: Option<String>,
+        /// Expected 64-hex SHA-256 of the guest OS image `.tar.zst` archive.
+        #[arg(long)]
+        image_sha256: Option<String>,
+        #[arg(long)]
+        vcpu: Option<u32>,
+        #[arg(long)]
+        memory_gib: Option<u32>,
+        #[arg(long)]
+        disk_gib: Option<u32>,
+        /// Pass `--no-tee` to `outbe-up vm create` (for non-TEE development hosts only).
+        #[arg(long)]
+        no_tee: bool,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null`).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
+        /// Overall timeout in seconds for sync, stake, DKG activation, and post-activation lockstep.
+        #[arg(long, default_value_t = 900)]
+        timeout: u64,
+        /// Maximum acceptable finalized block lag.
+        #[arg(long, default_value_t = 20)]
+        max_lag: u64,
+        /// Minimum post-activation finalized block growth across two consecutive samples.
+        #[arg(long, default_value_t = 10)]
+        min_finalized_blocks: u64,
+    },
+    /// Add a strictly keyless full-node VM to a running VM network and verify finalized sync.
+    #[command(group(
+        ArgGroup::new("fullnode_image_source")
+            .args(["image_archive", "image_url"])
+            .multiple(false)
+    ))]
+    AddFullNode {
+        #[arg(long)]
+        artifacts: PathBuf,
+        /// Unique member name (e.g. `fullnode-0`; VM name becomes `<network>-<name>`).
+        #[arg(long)]
+        name: String,
+        /// Target VMM host SSH hostname or IP.
+        #[arg(long)]
+        host: String,
+        /// Target VMM host SSH user [default: network vm default or `ubuntu`].
+        #[arg(long)]
+        user: Option<String>,
+        /// Target VMM host SSH port [default: 22].
+        #[arg(long, default_value_t = 22)]
+        port: u16,
+        /// Target VMM home directory [default: network vm.vmm_home].
+        #[arg(long)]
+        vmm_home: Option<String>,
+        /// Target host bridge name [default: network vm.bridge].
+        #[arg(long)]
+        bridge: Option<String>,
+        /// Static private IPv4 address assigned to this VM on the host bridge.
+        #[arg(long)]
+        bridge_ip: Ipv4Addr,
+        /// Optional external IPv4 written to validator.env (defaults to bridge_ip; outbound-only).
+        #[arg(long)]
+        advertise_ip: Option<Ipv4Addr>,
+        /// Local guest OS image `.tar.zst` archive (defaults to already-deployed image if omitted).
+        #[arg(long)]
+        image_archive: Option<PathBuf>,
+        /// HTTPS URL of a guest OS image `.tar.zst` archive.
+        #[arg(long, requires = "image_sha256")]
+        image_url: Option<String>,
+        /// Expected 64-hex SHA-256 of the guest OS image `.tar.zst` archive.
+        #[arg(long)]
+        image_sha256: Option<String>,
+        #[arg(long)]
+        vcpu: Option<u32>,
+        #[arg(long)]
+        memory_gib: Option<u32>,
+        #[arg(long)]
+        disk_gib: Option<u32>,
+        /// Pass `--no-tee` to `outbe-up vm create` (for non-TEE development hosts only).
+        #[arg(long)]
+        no_tee: bool,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null`).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
+        /// Overall timeout in seconds for sync and finalized tracking verification.
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+        /// Maximum acceptable finalized block lag relative to validators.
+        #[arg(long, default_value_t = 20)]
+        max_lag: u64,
+        /// Minimum finalized block growth tracked with identical block hashes across two consecutive samples.
+        #[arg(long, default_value_t = 10)]
+        min_finalized_blocks: u64,
     },
     /// Rolling guest OS image upgrade across a running network (planned for S7).
     Update {
@@ -346,6 +481,104 @@ impl Cli {
                         }
                     }
                 }
+                NetworkCommand::AddValidator {
+                    artifacts,
+                    name,
+                    host,
+                    user,
+                    port,
+                    vmm_home,
+                    bridge,
+                    bridge_ip,
+                    advertise_ip,
+                    port_offset,
+                    image_archive,
+                    image_url,
+                    image_sha256,
+                    vcpu,
+                    memory_gib,
+                    disk_gib,
+                    no_tee,
+                    ssh_key,
+                    ssh_config,
+                    timeout,
+                    max_lag,
+                    min_finalized_blocks,
+                } => {
+                    let image_source =
+                        parse_optional_image_source(image_archive, image_url, image_sha256);
+                    network::vm::add_validator(network::vm::AddValidatorOptions {
+                        artifacts: &artifacts,
+                        name: &name,
+                        host: &host,
+                        user: user.as_deref(),
+                        port,
+                        vmm_home: vmm_home.as_deref(),
+                        bridge: bridge.as_deref(),
+                        bridge_ip,
+                        advertise_ip,
+                        port_offset,
+                        image_source,
+                        vcpu,
+                        memory_gib,
+                        disk_gib,
+                        no_tee,
+                        ssh_key: ssh_key.as_deref(),
+                        ssh_config: ssh_config.as_deref(),
+                        timeout: Duration::from_secs(timeout),
+                        max_lag,
+                        min_finalized_blocks,
+                    })
+                    .await
+                }
+                NetworkCommand::AddFullNode {
+                    artifacts,
+                    name,
+                    host,
+                    user,
+                    port,
+                    vmm_home,
+                    bridge,
+                    bridge_ip,
+                    advertise_ip,
+                    image_archive,
+                    image_url,
+                    image_sha256,
+                    vcpu,
+                    memory_gib,
+                    disk_gib,
+                    no_tee,
+                    ssh_key,
+                    ssh_config,
+                    timeout,
+                    max_lag,
+                    min_finalized_blocks,
+                } => {
+                    let image_source =
+                        parse_optional_image_source(image_archive, image_url, image_sha256);
+                    network::vm::add_full_node(network::vm::AddFullNodeOptions {
+                        artifacts: &artifacts,
+                        name: &name,
+                        host: &host,
+                        user: user.as_deref(),
+                        port,
+                        vmm_home: vmm_home.as_deref(),
+                        bridge: bridge.as_deref(),
+                        bridge_ip,
+                        advertise_ip,
+                        image_source,
+                        vcpu,
+                        memory_gib,
+                        disk_gib,
+                        no_tee,
+                        ssh_key: ssh_key.as_deref(),
+                        ssh_config: ssh_config.as_deref(),
+                        timeout: Duration::from_secs(timeout),
+                        max_lag,
+                        min_finalized_blocks,
+                    })
+                    .await
+                }
                 NetworkCommand::Update { artifacts, image } => {
                     bail!(
                         "`outbe-net-up network update` (artifacts={}, image={image}) is not yet implemented (planned for S7 rolling VM image upgrade)",
@@ -354,6 +587,25 @@ impl Cli {
                 }
             },
         }
+    }
+}
+
+fn parse_optional_image_source(
+    image_archive: Option<PathBuf>,
+    image_url: Option<String>,
+    image_sha256: Option<String>,
+) -> Option<network::vm::ImageSource> {
+    match (image_archive, image_url) {
+        (Some(path), None) => Some(network::vm::ImageSource::Archive {
+            path,
+            sha256: image_sha256,
+        }),
+        (None, Some(url)) => Some(network::vm::ImageSource::Url {
+            url,
+            sha256: image_sha256.expect("clap requires --image-sha256 when --image-url is set"),
+        }),
+        (None, None) => None,
+        (Some(_), Some(_)) => unreachable!("clap enforces mutual exclusion"),
     }
 }
 
@@ -480,6 +732,38 @@ mod tests {
             "--release-reservations",
         ])
         .is_err());
+        assert!(Cli::try_parse_from([
+            "outbe-net-up",
+            "network",
+            "add-validator",
+            "--artifacts",
+            "artifacts",
+            "--name",
+            "validator-joiner-0",
+            "--host",
+            "141.95.168.110",
+            "--bridge-ip",
+            "10.77.0.13",
+            "--advertise-ip",
+            "141.95.168.110",
+            "--port-offset",
+            "2",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-net-up",
+            "network",
+            "add-full-node",
+            "--artifacts",
+            "artifacts",
+            "--name",
+            "fullnode-0",
+            "--host",
+            "162.19.107.121",
+            "--bridge-ip",
+            "10.77.0.13",
+        ])
+        .is_ok());
         assert!(Cli::try_parse_from([
             "outbe-net-up",
             "network",

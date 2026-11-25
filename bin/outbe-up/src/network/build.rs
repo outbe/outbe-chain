@@ -708,7 +708,11 @@ fn emit_vm_founder_trees(inputs: &VmTreeInputs<'_>) -> Result<Vec<FounderArtifac
             hyperlane: inputs.config.resolve_hyperlane_config(founder)?,
         };
         operator.validate()?;
-        operator.write_runtime_config(&tree, validator_addr)?;
+        operator.write_runtime_config_for_role(
+            &tree,
+            validator_addr,
+            outbe_operator_node_role::NodeRole::Founder,
+        )?;
         let hyperlane_public = fs::read_to_string(tree.join("hyperlane-public.toml"))?;
         outbe_operator_node_role::config::validate_hyperlane_public_toml(
             &hyperlane_public,

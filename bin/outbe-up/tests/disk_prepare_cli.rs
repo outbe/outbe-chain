@@ -116,6 +116,7 @@ fn build_founder_tree(tree: &Path, chain_id: u64) {
         &tree.join("validator.env"),
         format!(
             concat!(
+                "OUTBE_NODE_ROLE=\"founder\"\n",
                 "OUTBE_EXTERNAL_IP=\"10.77.0.10\"\n",
                 "OUTBE_RPC_BIND_IP=\"10.77.0.10\"\n",
                 "OUTBE_VM_PREFIX=\"24\"\n",
@@ -703,12 +704,15 @@ fn joining_validator_disk_prepare_generates_keys_never_logs_secrets_and_is_deter
         .unwrap()
         .starts_with("0x"));
 
-    // Inspect ext4 contents via debugfs: marker, 0600 keys, no bundle binaries.
+    // Inspect ext4 contents via debugfs: OUTBE_NODE_ROLE in validator.env, 0600 keys, no bundle binaries.
     let part = tmp.path().join("joining.ext4");
     extract_ext4_partition(&fresh_img, &part);
-    assert_eq!(
-        debugfs_cat(&part, "outbe-chain/node-role"),
-        "joining-validator\n"
+    assert!(debugfs_cat(&part, "outbe-chain/validator.env")
+        .contains("OUTBE_NODE_ROLE=\"joining-validator\"\n"));
+    let (has_legacy_role, _) = debugfs_stat(&part, "outbe-chain/node-role");
+    assert!(
+        !has_legacy_role,
+        "joining disk must use validator.env OUTBE_NODE_ROLE instead of separate node-role file"
     );
     for secret_path in [
         "outbe-chain/keys/signing-key.hex",
@@ -824,7 +828,14 @@ fn full_node_disk_prepare_has_zero_keys_is_deterministic_and_device_target_refus
 
     let part = tmp.path().join("fullnode.ext4");
     extract_ext4_partition(&img_a, &part);
-    assert_eq!(debugfs_cat(&part, "outbe-chain/node-role"), "full-node\n");
+    assert!(
+        debugfs_cat(&part, "outbe-chain/validator.env").contains("OUTBE_NODE_ROLE=\"full-node\"\n")
+    );
+    let (has_legacy_role, _) = debugfs_stat(&part, "outbe-chain/node-role");
+    assert!(
+        !has_legacy_role,
+        "full-node disk must use validator.env OUTBE_NODE_ROLE instead of separate node-role file"
+    );
     for required in [
         "outbe-chain/genesis.json",
         "outbe-chain/.bb-crs/bn254_g1.dat",

@@ -174,6 +174,7 @@ fn build_founder_tree(tree: &Path, chain_id: u64, ip: Ipv4Addr) {
         &tree.join("validator.env"),
         format!(
             concat!(
+                "OUTBE_NODE_ROLE=\"founder\"\n",
                 "OUTBE_EXTERNAL_IP=\"{ip}\"\n",
                 "OUTBE_RPC_BIND_IP=\"{ip}\"\n",
                 "OUTBE_VM_PREFIX=\"24\"\n",
@@ -273,6 +274,50 @@ fn build_test_vm_artifacts(
     let joining_dir = root.join("joining");
     fs::create_dir_all(&joining_dir).unwrap();
     let op_bundle = build_operator_bundle(&joining_dir, chain_id);
+    let peer_key = "a".repeat(96);
+    write_mode(
+        &joining_dir.join("operator-config.example.yaml"),
+        format!(
+            concat!(
+                "version: 1\n",
+                "network:\n",
+                "  chain_id: {chain_id}\n",
+                "  certified_rpc: \"http://10.77.0.10:8545\"\n",
+                "  advertise_ip: 192.0.2.10\n",
+                "  rpc_bind_ip: 127.0.0.1\n",
+                "  vm_prefix: 24\n",
+                "  vm_gateway: 10.77.0.1\n",
+                "  vm_dns: [1.1.1.1, 8.8.8.8]\n",
+                "  bootnodes:\n",
+                "    - \"enode://abcd@10.77.0.10:30303\"\n",
+                "  consensus_peers:\n",
+                "    - \"{peer_key}@10.77.0.10:30400\"\n",
+                "  use_local_defaults: true\n",
+                "feeder:\n",
+                "  public_toml: |\n",
+                "    [oracle]\n",
+                "    sources = \"local\"\n",
+                "hyperlane:\n",
+                "  public_url: \"http://192.0.2.10:9000\"\n",
+                "  poll_interval_secs: 30\n",
+                "  gasless: true\n",
+                "  origins:\n",
+                "    - domain: {chain_id}\n",
+                "      rpc_urls: [\"http://127.0.0.1:8545\"]\n",
+                "      rpc_consensus: single\n",
+                "      reorg_period: 0\n",
+            ),
+            chain_id = chain_id,
+            peer_key = peer_key,
+        )
+        .as_bytes(),
+        0o644,
+    );
+    write_mode(
+        &root.join("secrets/founder-keys/validator-0/evm-key.hex"),
+        "2".repeat(64).as_bytes(),
+        0o600,
+    );
 
     let mut founders_yaml = String::new();
     let mut founders_manifest = Vec::new();
@@ -424,7 +469,9 @@ struct FakeHostState {
     staged_disks: BTreeMap<String, String>, // staging_name -> sha256
     stale_cleaned_count: usize,
     disk_prepare_calls: usize,
+    disk_prepare_roles: Vec<String>,
     disk_prepare_bundles: Vec<String>,
+    host_check_commands: Vec<String>,
     vm_create_calls: usize,
     vm_start_calls: Vec<(String, String)>, // (name, expect_vm_id)
     vm_stop_calls: Vec<(String, String, bool)>,
@@ -441,6 +488,10 @@ struct FakeHostState {
     fail_remove_vm_once: Option<String>,
     next_vm_seq: u32,
     uploaded_op_bundles: BTreeSet<String>,
+    full_node_ips: BTreeSet<String>,
+    joiner_mode_override: Option<(String, String)>, // (service_ip, mode)
+    joiner_has_shares: bool,
+    joiner_enclave_ready: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -754,7 +805,33 @@ impl HostExec for FakeHostExec {
             .to_string());
         }
 
+        if command.contains(" disk prepare ") && command.contains("--role full-node") {
+            g.disk_prepare_calls += 1;
+            g.disk_prepare_roles.push("full-node".to_owned());
+            let bundle_arg = extract_flag_value(command, "--bundle")
+                .expect("full-node disk prepare must pass --bundle");
+            let _cfg_arg = extract_flag_value(command, "--config")
+                .expect("full-node disk prepare must pass --config");
+            assert!(
+                !command.contains("--source") && !command.contains("--keys-from"),
+                "full-node disk prepare must be keyless: {command}"
+            );
+            g.disk_prepare_bundles.push(bundle_arg);
+            let staging_name = extract_flag_value(command, "--staging-name").unwrap();
+            let sha = "f".repeat(64);
+            g.staged_disks.insert(staging_name.clone(), sha.clone());
+            return Ok(json!({
+                "role": "full-node",
+                "output": format!("/home/ubuntu/.local/state/outbe-up/staging/{staging_name}/data.img"),
+                "staging_name": staging_name,
+                "size_gib": 1,
+                "sha256": sha,
+            })
+            .to_string());
+        }
+
         if command.contains(" host check ") {
+            g.host_check_commands.push(command.to_owned());
             let vm_name = extract_flag_value(command, "--vm").unwrap();
             let vm = g
                 .vms
@@ -900,7 +977,7 @@ impl HostExec for FakeHostExec {
             return Ok(String::new());
         }
 
-        // 2. `disk prepare --role founder --source - --staging-name <vm>`.
+        // 2. `disk prepare --role founder|joining-validator --source - --staging-name <vm>`.
         if command.contains(" disk prepare ") {
             g.disk_prepare_calls += 1;
             if g.fail_on_disk_prepare_call == Some(g.disk_prepare_calls) {
@@ -911,6 +988,9 @@ impl HostExec for FakeHostExec {
                 command.contains("--source -"),
                 "disk prepare must stream stdin tar via --source -: {command}"
             );
+            let role =
+                extract_flag_value(command, "--role").unwrap_or_else(|| "founder".to_owned());
+            g.disk_prepare_roles.push(role.clone());
             let bundle_arg = extract_flag_value(command, "--bundle")
                 .expect("disk prepare must pass operator --bundle");
             assert!(
@@ -926,7 +1006,7 @@ impl HostExec for FakeHostExec {
             let sha = sha256_file(tmp.path()).unwrap();
             g.staged_disks.insert(staging_name.clone(), sha.clone());
             return Ok(json!({
-                "role": "founder",
+                "role": role,
                 "output": format!("/home/ubuntu/.local/state/outbe-up/staging/{staging_name}/data.img"),
                 "staging_name": staging_name,
                 "size_gib": 1,
@@ -936,11 +1016,29 @@ impl HostExec for FakeHostExec {
             .to_string());
         }
 
-        // 3. Batched JSON-RPC via curl.
+        // 3. Batched or single JSON-RPC via curl.
         if command.contains("curl -fsS") {
             let url = sh_tokens(command).last().cloned().unwrap_or_default();
-            g.rpc_urls_hit.push(url);
-            let batch: Vec<Value> = serde_json::from_slice(stdin_bytes)?;
+            g.rpc_urls_hit.push(url.clone());
+            let parsed: Value = serde_json::from_slice(stdin_bytes)?;
+            if parsed.is_object() {
+                let height_hex = parsed
+                    .pointer("/params/0")
+                    .and_then(Value::as_str)
+                    .unwrap_or("0x64");
+                return Ok(json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {
+                        "number": height_hex,
+                        "hash": format!("0xhash-{height_hex}"),
+                    }
+                })
+                .to_string());
+            }
+            let batch = parsed
+                .as_array()
+                .ok_or_else(|| eyre::eyre!("expected JSON-RPC batch array"))?;
             assert_eq!(batch.len(), 4, "expected 4-call JSON-RPC batch");
             let vm_count = g.vms.len().max(1);
             let poll_idx = g.rpc_poll_counter / vm_count;
@@ -950,27 +1048,58 @@ impl HostExec for FakeHostExec {
                 .get(poll_idx)
                 .or_else(|| g.rpc_height_schedule.last())
                 .unwrap_or(&100);
-            let peers = vm_count.saturating_sub(1);
+            let val_count = g
+                .vms
+                .values()
+                .filter(|v| {
+                    !v.service_ip
+                        .is_some_and(|ip| g.full_node_ips.contains(&ip.to_string()))
+                })
+                .count();
+            let peers = val_count.saturating_sub(1);
             let enclave_ready = g.rpc_enclave_ready;
             let vrf_ver = g.rpc_vrf_version;
-            let resp = json!([
-                {"jsonrpc": "2.0", "id": 1, "result": format!("0x{:x}", 424_242_u64)},
-                {"jsonrpc": "2.0", "id": 2, "result": {"number": format!("0x{height:x}"), "hash": "0x01"}},
-                {"jsonrpc": "2.0", "id": 3, "result": format!("0x{peers:x}")},
-                {"jsonrpc": "2.0", "id": 4, "result": {
+            let is_full_node = g.full_node_ips.iter().any(|ip| url.contains(ip));
+            let consensus_result = if is_full_node {
+                json!({
+                    "connectedPeers": 0,
+                    "hasThresholdShares": false,
+                    "lastFinalizedBlock": height,
+                    "vrfMaterialVersion": 0,
+                    "nextPlannedActivationHeight": 0,
+                    "isValidator": false,
+                    "mode": "follower",
+                    "enclave": { "state": "disabled", "ready": false, "offerKeyReady": false }
+                })
+            } else {
+                let (mode, shares, node_enclave_ready) = match &g.joiner_mode_override {
+                    Some((ip, m)) if url.contains(ip) => (
+                        m.as_str(),
+                        g.joiner_has_shares,
+                        g.joiner_enclave_ready.unwrap_or(enclave_ready),
+                    ),
+                    _ => ("signer", true, enclave_ready),
+                };
+                json!({
                     "connectedPeers": peers,
-                    "hasThresholdShares": true,
+                    "hasThresholdShares": shares,
                     "lastFinalizedBlock": height,
                     "vrfMaterialVersion": vrf_ver,
                     "nextPlannedActivationHeight": 1200,
                     "isValidator": true,
-                    "mode": "signer",
+                    "mode": mode,
                     "enclave": {
-                        "state": if enclave_ready { "ready" } else { "booting" },
-                        "ready": enclave_ready,
-                        "offerKeyReady": enclave_ready,
+                        "state": if node_enclave_ready { "ready" } else { "booting" },
+                        "ready": node_enclave_ready,
+                        "offerKeyReady": node_enclave_ready,
                     }
-                }}
+                })
+            };
+            let resp = json!([
+                {"jsonrpc": "2.0", "id": 1, "result": format!("0x{:x}", 424_242_u64)},
+                {"jsonrpc": "2.0", "id": 2, "result": {"number": format!("0x{height:x}"), "hash": format!("0xhash-0x{height:x}")}},
+                {"jsonrpc": "2.0", "id": 3, "result": format!("0x{peers:x}")},
+                {"jsonrpc": "2.0", "id": 4, "result": consensus_result}
             ]);
             return Ok(resp.to_string());
         }
@@ -1547,6 +1676,7 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
             no_tee,
             chain_id: Some(424_242),
             finalized: Some(finalized),
+            finalized_hash: Some(format!("0x{:064x}", finalized)),
             execution_peers: Some(3),
             consensus_mode: Some("signer".to_owned()),
             consensus_peers: Some(3),
@@ -2269,4 +2399,480 @@ async fn c2_local_exec_real_outbe_up_binary_full_lifecycle() {
     rpc_stop.store(true, Ordering::Relaxed);
     let _ = vmm_handle.join();
     let _ = rpc_handle.join();
+}
+
+// ---------------------------------------------------------------------------
+// S4 Tests: Joining Validator VM + Keyless Full Node VM + Mixed-Role Lifecycle
+// ---------------------------------------------------------------------------
+
+struct FakeJoinDriverState {
+    min_stake: alloy_primitives::U256,
+    joiner_addr: alloy_primitives::Address,
+    balances: BTreeMap<alloy_primitives::Address, alloy_primitives::U256>,
+    record: outbe_operator_node_role::rpc::ValidatorRecord,
+    oracle_delegate: alloy_primitives::Address,
+    staked_symmetric: Option<String>,
+    confirm_ready_called: bool,
+    funded_calls: Vec<(alloy_primitives::Address, alloy_primitives::U256)>,
+    funded_before_vm_start: bool,
+    host_state: Arc<Mutex<FakeHostState>>,
+    joiner_ip: String,
+    joiner_vm_name: String,
+}
+
+struct FakeJoinDriver {
+    inner: Mutex<FakeJoinDriverState>,
+}
+
+impl JoinChainDriver for FakeJoinDriver {
+    fn min_stake(
+        &self,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<alloy_primitives::U256>> + Send + '_>,
+    > {
+        let val = self.inner.lock().unwrap().min_stake;
+        Box::pin(async move { Ok(val) })
+    }
+
+    fn balance(
+        &self,
+        addr: alloy_primitives::Address,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<alloy_primitives::U256>> + Send + '_>,
+    > {
+        let val = self
+            .inner
+            .lock()
+            .unwrap()
+            .balances
+            .get(&addr)
+            .copied()
+            .unwrap_or_default();
+        Box::pin(async move { Ok(val) })
+    }
+
+    fn validator(
+        &self,
+        _addr: alloy_primitives::Address,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<outbe_operator_node_role::rpc::ValidatorRecord>>
+                + Send
+                + '_,
+        >,
+    > {
+        let rec = self.inner.lock().unwrap().record.clone();
+        Box::pin(async move { Ok(rec) })
+    }
+
+    fn validator_delegate(
+        &self,
+        _validator: alloy_primitives::Address,
+        _role: u8,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<alloy_primitives::Address>> + Send + '_>,
+    > {
+        let addr = self.inner.lock().unwrap().oracle_delegate;
+        Box::pin(async move { Ok(addr) })
+    }
+
+    fn finalized_block(
+        &self,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<outbe_operator_node_role::rpc::Block>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async move {
+            Ok(outbe_operator_node_role::rpc::Block {
+                number: 100,
+                hash: "0xhash-0x64".to_owned(),
+            })
+        })
+    }
+
+    fn fund_address(
+        &self,
+        _from_key: &Path,
+        to: alloy_primitives::Address,
+        amount: alloy_primitives::U256,
+    ) -> Result<String> {
+        let mut g = self.inner.lock().unwrap();
+        let entry = g.balances.entry(to).or_default();
+        *entry = entry.saturating_add(amount);
+        g.funded_calls.push((to, amount));
+        // F1: resident TEE (`registerEnclave`) requires a non-zero balance and becomes ready only
+        // once funded; record whether funding occurred BEFORE the joiner VM was started.
+        if to == g.joiner_addr && !g.balances[&to].is_zero() {
+            let already_started = {
+                let mut h = g.host_state.lock().unwrap();
+                let started = h.vm_start_calls.iter().any(|(n, _)| n == &g.joiner_vm_name);
+                h.joiner_enclave_ready = Some(true);
+                started
+            };
+            g.funded_before_vm_start = !already_started;
+        }
+        Ok(format!("0x{}", "1".repeat(64)))
+    }
+
+    fn stake(
+        &self,
+        _joiner_keys_dir: &Path,
+        _validator: alloy_primitives::Address,
+        _amount: alloy_primitives::U256,
+        symmetric_endpoint: &str,
+    ) -> Result<String> {
+        let mut g = self.inner.lock().unwrap();
+        g.staked_symmetric = Some(symmetric_endpoint.to_owned());
+        g.record.registered = true;
+        g.record.status = 1; // PENDING
+        {
+            let mut h = g.host_state.lock().unwrap();
+            h.joiner_mode_override = Some((g.joiner_ip.clone(), "verifier".to_owned()));
+            h.joiner_has_shares = false;
+        }
+        Ok(format!("0x{}", "2".repeat(64)))
+    }
+
+    fn delegate_oracle(
+        &self,
+        _joiner_evm_key: &Path,
+        feeder: alloy_primitives::Address,
+    ) -> Result<String> {
+        self.inner.lock().unwrap().oracle_delegate = feeder;
+        Ok(format!("0x{}", "3".repeat(64)))
+    }
+
+    fn confirm_ready(&self, _joiner_evm_key: &Path) -> Result<String> {
+        let mut g = self.inner.lock().unwrap();
+        g.confirm_ready_called = true;
+        // Simulate DKG reshare completing -> ACTIVE + BLS share + signer mode.
+        g.record.status = 2;
+        g.record.has_bls_share = true;
+        {
+            let mut h = g.host_state.lock().unwrap();
+            h.joiner_mode_override = Some((g.joiner_ip.clone(), "signer".to_owned()));
+            h.joiner_has_shares = true;
+            h.rpc_poll_counter = 0;
+            h.rpc_height_schedule = vec![200, 210, 212, 215];
+        }
+        Ok(format!("0x{}", "4".repeat(64)))
+    }
+
+    fn wait_tx_finalized(
+        &self,
+        _hash: &str,
+        _deadline: Instant,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + '_>> {
+        Box::pin(async move { Ok(()) })
+    }
+}
+
+fn seed_pregenerated_member_keys(artifacts: &Path, member_name: &str) {
+    let dir = artifacts.join("secrets/members").join(member_name);
+    fs::create_dir_all(dir.join("radicle/keys")).unwrap();
+    for (rel, byte) in [
+        ("signing-key.hex", "a"),
+        ("evm-key.hex", "b"),
+        ("feeder-key.hex", "c"),
+        ("hyperlane-key.hex", "d"),
+        ("reth-p2p-secret.hex", "e"),
+    ] {
+        write_mode(&dir.join(rel), byte.repeat(64).as_bytes(), 0o600);
+    }
+    write_mode(
+        &dir.join("radicle/keys/radicle"),
+        b"fake-radicle-key",
+        0o600,
+    );
+}
+
+#[tokio::test]
+async fn s4_add_validator_and_add_full_node_full_lifecycle_and_exit2_gate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(tmp.path(), "s4net", "~/.dstack-vmm", b"fake-outbe-up");
+    let fake = FakeHostExec::new();
+    let exec: Arc<dyn HostExec> = Arc::new(fake.clone());
+
+    // 1. Deploy and start the 4 founding VMs.
+    deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fixture.image_archive.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: false,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    // 2. Add joining validator: first with host_check_ready=false -> exit code 2 BEFORE vm start.
+    //    F1: model hardware behavior where resident TEE stays not-ready until balance > 0!
+    seed_pregenerated_member_keys(&fixture.root, "validator-joiner-0");
+    let joiner_addr = outbe_operator_node_role::validator_address(
+        &fixture
+            .root
+            .join("secrets/members/validator-joiner-0/evm-key.hex"),
+    )
+    .unwrap();
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.host_check_ready = false;
+        g.host_check_commands.clear();
+        g.joiner_mode_override = Some(("10.77.0.20".to_owned(), "upstreamBootstrap".to_owned()));
+        g.joiner_has_shares = false;
+        g.joiner_enclave_ready = Some(false);
+        g.rpc_poll_counter = 0;
+        g.rpc_height_schedule = vec![100, 100, 100];
+    }
+    let min_stake = alloy_primitives::U256::from(10_000_000_000_000_000_000_u128);
+    let driver = FakeJoinDriver {
+        inner: Mutex::new(FakeJoinDriverState {
+            min_stake,
+            joiner_addr,
+            balances: BTreeMap::new(),
+            record: outbe_operator_node_role::rpc::ValidatorRecord::default(),
+            oracle_delegate: alloy_primitives::Address::ZERO,
+            staked_symmetric: None,
+            confirm_ready_called: false,
+            funded_calls: Vec::new(),
+            funded_before_vm_start: false,
+            host_state: Arc::clone(&fake.state),
+            joiner_ip: "10.77.0.20".to_owned(),
+            joiner_vm_name: "s4net-validator-joiner-0".to_owned(),
+        }),
+    };
+    let join_opts = AddValidatorOptions {
+        artifacts: &fixture.root,
+        name: "validator-joiner-0",
+        host: "192.0.2.50",
+        user: None,
+        port: 22,
+        vmm_home: None,
+        bridge: None,
+        bridge_ip: Ipv4Addr::new(10, 77, 0, 20),
+        advertise_ip: Ipv4Addr::new(198, 51, 100, 20),
+        port_offset: 2,
+        image_source: None,
+        vcpu: None,
+        memory_gib: None,
+        disk_gib: None,
+        no_tee: false,
+        ssh_key: None,
+        ssh_config: None,
+        timeout: Duration::from_secs(30),
+        max_lag: 20,
+        min_finalized_blocks: 10,
+    };
+    let err = add_validator_with_exec(&join_opts, Arc::clone(&exec), &driver)
+        .await
+        .expect_err("failed host check must exit with code 2 before starting joiner");
+    let exit_err = err
+        .downcast_ref::<ExitCodeError>()
+        .unwrap_or_else(|| panic!("expected ExitCodeError, got: {err:#}"));
+    assert_eq!(exit_err.code, EXIT_CODE_HOST_CONFIG_REQUIRED);
+    {
+        let g = fake.state.lock().unwrap();
+        assert!(g
+            .disk_prepare_roles
+            .contains(&"joining-validator".to_owned()));
+        let check_cmd = g.host_check_commands.last().unwrap();
+        for port in [
+            "30305/tcp",
+            "30305/udp",
+            "30402/tcp",
+            "31305/udp",
+            "8778/tcp",
+        ] {
+            assert!(
+                check_cmd.contains(port),
+                "joiner host check must verify 1:1 port {port}: {check_cmd}"
+            );
+        }
+        assert!(
+            !g.vm_start_calls
+                .iter()
+                .any(|(n, _)| n == "s4net-validator-joiner-0"),
+            "joiner VM must NOT be started when host check fails"
+        );
+    }
+
+    // 3. Re-run add-validator with host_check_ready=true -> reuses VM, funds joiner BEFORE vm start
+    //    (unblocking resident TEE), then drives stake -> confirm-ready -> ACTIVE lockstep!
+    fake.state.lock().unwrap().host_check_ready = true;
+    add_validator_with_exec(&join_opts, Arc::clone(&exec), &driver)
+        .await
+        .unwrap();
+    {
+        let d = driver.inner.lock().unwrap();
+        assert!(
+            d.funded_before_vm_start,
+            "F1: joiner must be funded BEFORE vm start so registerEnclave has gas"
+        );
+        let expected_min_funding = min_stake
+            + alloy_primitives::U256::from(outbe_operator_node_role::FEEDER_FUNDING_WEI)
+            + alloy_primitives::U256::from(2_000_000_000_000_000_000_u128);
+        assert_eq!(
+            d.funded_calls[0],
+            (joiner_addr, expected_min_funding),
+            "F7: pre-start funding must cover min_stake + feeder + explicit gas reserve"
+        );
+        assert_eq!(d.staked_symmetric.as_deref(), Some("198.51.100.20:30402"));
+        assert!(d.confirm_ready_called);
+        assert_eq!(d.record.status, 2);
+        assert!(d.record.has_bls_share);
+        assert_eq!(d.funded_calls.len(), 2, "must fund joiner + oracle feeder");
+    }
+
+    // 4. Add keyless full-node VM -> zero keys, zero inbound --port in host check, tracks finalized hashes.
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.full_node_ips.insert("10.77.0.30".to_owned());
+        g.host_check_commands.clear();
+        g.rpc_poll_counter = 0;
+        g.rpc_height_schedule = vec![300, 310, 312, 315];
+    }
+    add_full_node_with_exec(
+        &AddFullNodeOptions {
+            artifacts: &fixture.root,
+            name: "fullnode-0",
+            host: "192.0.2.50",
+            user: None,
+            port: 22,
+            vmm_home: None,
+            bridge: None,
+            bridge_ip: Ipv4Addr::new(10, 77, 0, 30),
+            advertise_ip: None,
+            image_source: None,
+            vcpu: None,
+            memory_gib: None,
+            disk_gib: None,
+            no_tee: false,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !fixture.root.join("secrets/members/fullnode-0").exists(),
+        "full-node must never generate or store keys"
+    );
+    {
+        let g = fake.state.lock().unwrap();
+        assert!(g.disk_prepare_roles.contains(&"full-node".to_owned()));
+        let check_cmd = g.host_check_commands.last().unwrap();
+        assert!(
+            !check_cmd.contains(" --port "),
+            "full-node host check must be outbound-only with ZERO --port args: {check_cmd}"
+        );
+    }
+
+    // 5. Verify network-vm-state.json records all 6 members across all 3 roles, and `status`, `stop`, `remove` handle all 6!
+    {
+        let lock = NetworkVmState::lock(&fixture.root).unwrap();
+        let st = NetworkVmState::load_optional_locked(&lock, &fixture.root)
+            .unwrap()
+            .unwrap();
+        assert_eq!(st.members.len(), 6);
+        assert_eq!(
+            st.member("s4net-validator-joiner-0").unwrap().role,
+            MemberRole::JoiningValidator
+        );
+        assert_eq!(
+            st.member("s4net-fullnode-0").unwrap().role,
+            MemberRole::FullNode
+        );
+    }
+
+    status_with_exec(
+        &StatusOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            watch: false,
+            max_lag: 20,
+            json: true,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    stop_with_exec(
+        &StopOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            force: false,
+            timeout: Duration::from_secs(30),
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    remove_with_exec(
+        &RemoveOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            force: false,
+            timeout: Duration::from_secs(30),
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    assert!(fake.state.lock().unwrap().vms.is_empty());
+    assert!(!NetworkVmState::path(&fixture.root).exists());
+}
+
+#[test]
+fn s4_partial_member_keys_refused_without_deleting_existing_files() {
+    let tmp = tempfile::tempdir().unwrap();
+    let artifacts = tmp.path().join("artifacts");
+    let member_dir = artifacts.join("secrets/members/validator-joiner-partial");
+    fs::create_dir_all(&member_dir).unwrap();
+    let evm_key = member_dir.join("evm-key.hex");
+    let signing_key = member_dir.join("signing-key.hex");
+    write_mode(&evm_key, "b".repeat(64).as_bytes(), 0o600);
+    write_mode(&signing_key, "a".repeat(64).as_bytes(), 0o600);
+
+    let err = ensure_local_member_keys(&artifacts, "validator-joiner-partial", 424_242)
+        .expect_err("partial member keys dir must be refused");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("partial member keys directory")
+            && msg.contains("feeder-key.hex")
+            && msg.contains("radicle/keys/radicle"),
+        "error must explain refusal and name missing key files: {msg}"
+    );
+    // Existing keys MUST NOT have been deleted or modified.
+    assert_eq!(fs::read_to_string(&evm_key).unwrap(), "b".repeat(64));
+    assert_eq!(fs::read_to_string(&signing_key).unwrap(), "a".repeat(64));
 }

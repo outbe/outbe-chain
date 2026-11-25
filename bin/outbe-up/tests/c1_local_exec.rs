@@ -90,6 +90,7 @@ fn build_founder_tree(tree: &Path, chain_id: u64) {
         &tree.join("validator.env"),
         format!(
             concat!(
+                "OUTBE_NODE_ROLE=\"founder\"\n",
                 "OUTBE_EXTERNAL_IP=\"10.77.0.10\"\n",
                 "OUTBE_RPC_BIND_IP=\"10.77.0.10\"\n",
                 "OUTBE_VM_PREFIX=\"24\"\n",

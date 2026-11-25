@@ -25,7 +25,8 @@ use outbe_operator_node_role::{
     disk_tree::{
         cleanup_stale_staging_dirs, prepare_founder_tree_cancellable,
         prepare_founder_tree_from_reader_cancellable, prepare_full_node_tree_cancellable,
-        prepare_joining_validator_tree_cancellable, FounderKeyVerify,
+        prepare_joining_validator_tree_cancellable,
+        prepare_joining_validator_tree_from_reader_cancellable, FounderKeyVerify,
     },
     progress::Progress,
     NodeRole,
@@ -145,10 +146,6 @@ pub async fn prepare(args: PrepareArgs) -> Result<()> {
         }
         NodeRole::JoiningValidator => {
             ensure!(
-                args.source.is_none(),
-                "joining-validator role accepts --bundle and --config (not --source)"
-            );
-            ensure!(
                 !args.skip_key_verify,
                 "--skip-key-verify is only valid for --role founder"
             );
@@ -156,10 +153,21 @@ pub async fn prepare(args: PrepareArgs) -> Result<()> {
                 args.bundle.is_some(),
                 "--bundle is required for --role joining-validator"
             );
-            ensure!(
-                args.config.is_some(),
-                "--config is required for --role joining-validator"
-            );
+            if let Some(source) = args.source.as_deref() {
+                ensure!(
+                    source == Path::new("-"),
+                    "joining-validator --source only supports `-` (tar stream on stdin); pass --config for local config-based preparation"
+                );
+                ensure!(
+                    args.config.is_none() && args.keys_from.is_none(),
+                    "cannot combine --source - with --config or --keys-from"
+                );
+            } else {
+                ensure!(
+                    args.config.is_some(),
+                    "--config (or --source -) is required for --role joining-validator"
+                );
+            }
         }
         NodeRole::FullNode => {
             ensure!(
@@ -307,17 +315,26 @@ pub async fn prepare(args: PrepareArgs) -> Result<()> {
                     .bundle
                     .as_deref()
                     .expect("validated above: joining-validator requires --bundle");
-                let config = args
-                    .config
-                    .as_deref()
-                    .expect("validated above: joining-validator requires --config");
-                prepare_joining_validator_tree_cancellable(
-                    bundle,
-                    config,
-                    args.keys_from.as_deref(),
-                    &staging_parent,
-                    &cancel_worker,
-                )?
+                if args.source.as_deref() == Some(Path::new("-")) {
+                    prepare_joining_validator_tree_from_reader_cancellable(
+                        io::stdin(),
+                        &staging_parent,
+                        FounderKeyVerify::Bundle(bundle),
+                        &cancel_worker,
+                    )?
+                } else {
+                    let config = args
+                        .config
+                        .as_deref()
+                        .expect("validated above: joining-validator requires --config");
+                    prepare_joining_validator_tree_cancellable(
+                        bundle,
+                        config,
+                        args.keys_from.as_deref(),
+                        &staging_parent,
+                        &cancel_worker,
+                    )?
+                }
             }
             NodeRole::FullNode => {
                 let bundle = args

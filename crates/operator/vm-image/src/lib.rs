@@ -360,12 +360,18 @@ pub fn stage_overlay(
 
     // 6. Presets with `dstack` in their filenames so `mkosi.postinst` preserves them.
     //    `75-dstack-outbe-network.preset` sorts before `80-dstack.preset` so first-match-wins
-    //    disables `systemd-networkd-wait-online.service` and `dstack-prepare.service` does not
-    //    wait for DHCP before mounting the persistent data disk.
+    //    disables `systemd-networkd-wait-online.service`, and the `/etc/systemd/system` mask
+    //    symlink overrides Debian's pre-existing `network-online.target.wants` symlink so
+    //    `dstack-prepare.service` never blocks 120s waiting for DHCP before mounting the
+    //    persistent data disk.
     write_overlay_file(
         &common.join("usr/lib/systemd/system-preset/75-dstack-outbe-network.preset"),
         "disable systemd-networkd-wait-online.service\n",
         0o644,
+    )?;
+    write_overlay_symlink(
+        &common.join("etc/systemd/system/systemd-networkd-wait-online.service"),
+        Path::new("/dev/null"),
     )?;
     write_overlay_file(
         &common.join("usr/lib/systemd/system-preset/85-dstack-outbe.preset"),
@@ -462,6 +468,17 @@ fn write_overlay_file(path: &Path, content: &str, mode: u32) -> Result<()> {
     }
     fs::write(path, content)?;
     fs::set_permissions(path, fs::Permissions::from_mode(mode))?;
+    Ok(())
+}
+
+fn write_overlay_symlink(path: &Path, target: &Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if fs::symlink_metadata(path).is_ok() {
+        fs::remove_file(path)?;
+    }
+    std::os::unix::fs::symlink(target, path)?;
     Ok(())
 }
 
@@ -1105,6 +1122,11 @@ mod tests {
         )
         .unwrap();
         assert_eq!(net_preset, "disable systemd-networkd-wait-online.service\n");
+        assert_eq!(
+            fs::read_link(common.join("etc/systemd/system/systemd-networkd-wait-online.service"))
+                .unwrap(),
+            Path::new("/dev/null")
+        );
         assert!(common
             .join("usr/lib/systemd/system-preset/85-dstack-outbe.preset")
             .is_file());

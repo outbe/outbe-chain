@@ -44,6 +44,7 @@ struct ManagedProfile<'a> {
     bin_dir: &'a str,
     outbe_up: &'a str,
     internal_bin_dir: Option<&'a str>,
+    is_vm: bool,
     joining: bool,
 }
 
@@ -53,17 +54,22 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
         bin_dir: HOST_BIN_DIR,
         outbe_up,
         internal_bin_dir: None,
+        is_vm: false,
         joining: true,
     })
 }
 
 /// Render static units for a VM image that runs binaries from `/usr/local/bin`
-/// and reads validator data from `/opt/outbe-chain`.
+/// and reads node data from `/opt/outbe-chain`.
+///
+/// `outbe-validator.target` starts `outbe-vm-boot.service`, which reads `OUTBE_NODE_ROLE` from
+/// `/opt/outbe-chain/validator.env` and starts only that role's services.
 pub fn vm_units() -> Vec<UnitFile> {
     managed_units(&ManagedProfile {
         bin_dir: VM_BIN_DIR,
         outbe_up: VM_OUTBE_UP,
         internal_bin_dir: Some(VM_BIN_DIR),
+        is_vm: true,
         joining: false,
     })
 }
@@ -79,7 +85,7 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
     let wait_rpc = format!("ExecStartPre={} internal wait-rpc", profile.outbe_up);
 
     let with_vm_boot = |mut directives: Vec<String>| {
-        if !profile.joining {
+        if profile.is_vm {
             directives.push("Requires=outbe-vm-boot.service".to_owned());
             directives.push("After=outbe-vm-boot.service".to_owned());
         }
@@ -92,21 +98,35 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
         "RuntimeDirectoryMode=0700",
         "Environment=STATE_DIRECTORY=/opt/outbe-chain/state/hyperlane",
     ]);
-    if profile.joining {
+    if !profile.is_vm && profile.joining {
         hyperlane_directives.push("Environment=OUTBE_HYPERLANE_WAIT_FOR_ACTIVE=1".to_owned());
     }
     hyperlane_directives.push(wait_rpc.clone());
     hyperlane_directives.push(internal_cmd("hyperlane"));
 
-    let radicle_listen = if profile.joining {
-        "  --listen 0.0.0.0:8776 \\"
-    } else {
+    let radicle_listen = if profile.is_vm {
         "  --listen 0.0.0.0:${OUTBE_RADICLE_PORT} \\"
-    };
-    let radicle_advertise = if profile.joining {
-        "  --advertise ${OUTBE_EXTERNAL_IP}:8776"
     } else {
+        "  --listen 0.0.0.0:8776 \\"
+    };
+    let radicle_advertise = if profile.is_vm {
         "  --advertise ${OUTBE_EXTERNAL_IP}:${OUTBE_RADICLE_PORT}"
+    } else {
+        "  --advertise ${OUTBE_EXTERNAL_IP}:8776"
+    };
+
+    let sidecar_unit_directives = if profile.is_vm {
+        // Order after whichever validator service `vm-boot` started without pulling in both.
+        with_vm_boot(lines(&[
+            "After=outbe-validator.service outbe-joining-validator.service",
+            "PartOf=outbe-validator.target",
+        ]))
+    } else {
+        lines(&[
+            "After=outbe-validator.service",
+            "Wants=outbe-validator.service",
+            "PartOf=outbe-validator.target",
+        ])
     };
 
     let mut units = vec![
@@ -134,15 +154,16 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
             limit_nofile: 65_535,
             wanted_by: "outbe-validator.target",
         }),
-        render_service(&managed_validator_spec(profile)),
+        render_service(&managed_validator_spec(
+            profile,
+            "outbe-validator.service",
+            "Outbe validator",
+            profile.joining,
+        )),
         render_service(&ServiceSpec {
             name: "outbe-feeder.service",
             description: "Outbe validator price feeder",
-            unit_directives: with_vm_boot(lines(&[
-                "After=outbe-validator.service",
-                "Wants=outbe-validator.service",
-                "PartOf=outbe-validator.target",
-            ])),
+            unit_directives: sidecar_unit_directives.clone(),
             service_directives: lines(&[
                 "EnvironmentFile=/opt/outbe-chain/validator.env",
                 "RuntimeDirectory=outbe-feeder",
@@ -158,11 +179,7 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
         render_service(&ServiceSpec {
             name: "outbe-hyperlane-validator.service",
             description: "Outbe Hyperlane validator",
-            unit_directives: with_vm_boot(lines(&[
-                "After=outbe-validator.service",
-                "Wants=outbe-validator.service",
-                "PartOf=outbe-validator.target",
-            ])),
+            unit_directives: sidecar_unit_directives,
             service_directives: hyperlane_directives,
             sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/state/hyperlane"]),
             limit_nofile: 65_535,
@@ -170,7 +187,14 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
         }),
         render_managed_target(profile),
     ];
-    if !profile.joining {
+    if profile.is_vm {
+        units.push(render_service(&managed_validator_spec(
+            profile,
+            "outbe-joining-validator.service",
+            "Outbe joining validator",
+            true,
+        )));
+        units.push(render_service(&managed_full_node_spec(profile)));
         units.push(render_vm_boot_service(profile.outbe_up, profile.bin_dir));
     }
     units.sort_by(|left, right| left.name.cmp(&right.name));
@@ -255,35 +279,30 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
     units
 }
 
-fn managed_validator_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
-    let reth_port_line = if profile.joining {
-        "  --port 30303 \\"
-    } else {
+/// Single-source Reth / `outbe-chain node` base arguments shared by every managed node role
+/// (bare-host joining validator, VM founder, VM joining validator, and VM keyless full node).
+fn common_node_exec_lines(
+    bin_dir: &str,
+    explicit_ports: bool,
+    p2p_secret_key: Option<&str>,
+) -> Vec<String> {
+    let reth_port_line = if explicit_ports {
         "  --port ${OUTBE_RETH_PORT} \\"
-    };
-    let discovery_port_line = if profile.joining {
-        "  --discovery.port 30303 \\"
     } else {
+        "  --port 30303 \\"
+    };
+    let discovery_port_line = if explicit_ports {
         "  --discovery.port ${OUTBE_RETH_PORT} \\"
-    };
-    let discv5_port_line = if profile.joining {
-        "  --discovery.v5.port 31303 \\"
     } else {
+        "  --discovery.port 30303 \\"
+    };
+    let discv5_port_line = if explicit_ports {
         "  --discovery.v5.port ${OUTBE_DISCV5_PORT} \\"
-    };
-    let consensus_listen_line = if profile.joining {
-        "  --consensus.listen-addr 0.0.0.0:30400 \\"
     } else {
-        "  --consensus.listen-addr 0.0.0.0:${OUTBE_CONSENSUS_PORT} \\"
+        "  --discovery.v5.port 31303 \\"
     };
-    let mut directives = lines(&[
-        "EnvironmentFile=/opt/outbe-chain/validator.env",
-        "Environment=RUST_MIN_STACK=16777216",
-        &format!(
-            "ExecStartPre={} internal wait-validator-dependencies",
-            profile.outbe_up
-        ),
-        &format!("ExecStart={}/outbe-chain node \\", profile.bin_dir),
+    let mut args = lines(&[
+        &format!("ExecStart={bin_dir}/outbe-chain node \\"),
         "  --chain /opt/outbe-chain/genesis.json \\",
         "  --datadir /opt/outbe-chain/validator-0/data \\",
         "  --engine.persistence-threshold 0 \\",
@@ -299,24 +318,57 @@ fn managed_validator_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
         "  --nat extip:${OUTBE_EXTERNAL_IP} \\",
         "  --discovery.v5.addr 0.0.0.0 \\",
         discv5_port_line,
-        "  --p2p-secret-key /opt/outbe-chain/keys/reth-p2p-secret.hex \\",
+    ]);
+    if let Some(key_path) = p2p_secret_key {
+        args.push(format!("  --p2p-secret-key {key_path} \\"));
+    }
+    args.extend(lines(&[
         "  --bootnodes ${OUTBE_BOOTNODES} \\",
         "  --metrics 127.0.0.1:9101 \\",
         "  --ipcpath /opt/outbe-chain/validator-0/data/reth.ipc \\",
         "  --log.file.directory /opt/outbe-chain/validator-0/logs \\",
+    ]));
+    args
+}
+
+fn managed_validator_spec(
+    profile: &ManagedProfile<'_>,
+    name: &'static str,
+    description: &'static str,
+    joining: bool,
+) -> ServiceSpec {
+    let consensus_listen_line = if profile.is_vm {
+        "  --consensus.listen-addr 0.0.0.0:${OUTBE_CONSENSUS_PORT} \\"
+    } else {
+        "  --consensus.listen-addr 0.0.0.0:30400 \\"
+    };
+    let mut directives = lines(&[
+        "EnvironmentFile=/opt/outbe-chain/validator.env",
+        "Environment=RUST_MIN_STACK=16777216",
+        &format!(
+            "ExecStartPre={} internal wait-validator-dependencies",
+            profile.outbe_up
+        ),
+    ]);
+    directives.extend(common_node_exec_lines(
+        profile.bin_dir,
+        profile.is_vm,
+        Some("/opt/outbe-chain/keys/reth-p2p-secret.hex"),
+    ));
+    directives.extend(lines(&[
         "  --validator \\",
         "  --consensus.signing-key /opt/outbe-chain/keys/signing-key.hex \\",
         "  --validator.evm-key /opt/outbe-chain/keys/evm-key.hex \\",
-    ]);
-    if profile.joining {
+    ]));
+    if joining {
         directives.push("  --consensus.keys-dir /opt/outbe-chain/keys \\".to_owned());
     }
     directives.push(consensus_listen_line.to_owned());
-    if profile.joining {
+    if joining {
         directives.push("  --consensus.peers ${OUTBE_CONSENSUS_PEERS} \\".to_owned());
     }
     directives.push("  $OUTBE_CONSENSUS_EXTRA_ARGS \\".to_owned());
-    if profile.joining {
+    if joining {
         directives.push("  --upstream ${OUTBE_CERTIFIED_RPC} \\".to_owned());
     }
     directives.extend(lines(&[
@@ -330,14 +382,14 @@ fn managed_validator_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
         "Wants=network-online.target outbe-radicle.service",
         "PartOf=outbe-validator.target",
     ]);
-    if !profile.joining {
+    if profile.is_vm {
         unit_directives.push("Requires=outbe-vm-boot.service".to_owned());
         unit_directives.push("After=outbe-vm-boot.service".to_owned());
     }
 
     ServiceSpec {
-        name: "outbe-validator.service",
-        description: "Outbe validator",
+        name,
+        description,
         unit_directives,
         service_directives: directives,
         sandbox_directives: lines(&[
@@ -348,9 +400,45 @@ fn managed_validator_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
     }
 }
 
+fn managed_full_node_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
+    // Canonical full-node flag set (no bare-host analogue yet): ADR-005 requires `--upstream`
+    // whenever `--validator` is omitted; zero validator, key, or Radicle flags are passed.
+    // Reth generates its own ephemeral P2P key inside `--datadir`, so "keyless" here means
+    // zero provisioned keys on the data disk or operator host.
+    let mut directives = lines(&[
+        "EnvironmentFile=/opt/outbe-chain/validator.env",
+        "Environment=RUST_MIN_STACK=16777216",
+    ]);
+    directives.extend(common_node_exec_lines(profile.bin_dir, profile.is_vm, None));
+    directives.extend(lines(&[
+        "  $OUTBE_CONSENSUS_EXTRA_ARGS \\",
+        "  --upstream ${OUTBE_CERTIFIED_RPC}",
+        &format!("ExecStartPost={} internal wait-rpc", profile.outbe_up),
+    ]));
+
+    let unit_directives = lines(&[
+        "After=network-online.target",
+        "Wants=network-online.target",
+        "PartOf=outbe-validator.target",
+        "Requires=outbe-vm-boot.service",
+        "After=outbe-vm-boot.service",
+    ]);
+
+    ServiceSpec {
+        name: "outbe-full-node.service",
+        description: "Outbe full node",
+        unit_directives,
+        service_directives: directives,
+        sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/validator-0"]),
+        limit_nofile: 1_048_576,
+        wanted_by: "outbe-validator.target",
+    }
+}
+
 fn render_vm_boot_service(outbe_up: &str, bin_dir: &str) -> UnitFile {
-    // Run before all validator daemons to verify the unmeasured data disk and configure the
-    // static IPv4 drop-in under /run/systemd/network.
+    // Run before all node daemons to verify the unmeasured data disk, configure the static IPv4
+    // drop-in under /run/systemd/network, read `OUTBE_NODE_ROLE` from `validator.env`, and start
+    // the corresponding role services via `systemctl start --no-block`.
     let content = format!(
         concat!(
             "[Unit]\n",
@@ -385,9 +473,12 @@ fn render_vm_boot_service(outbe_up: &str, bin_dir: &str) -> UnitFile {
 }
 
 fn render_managed_target(profile: &ManagedProfile<'_>) -> UnitFile {
-    if profile.joining {
+    if !profile.is_vm {
         return render_target("Outbe validator stack");
     }
+    // `outbe-validator.target` triggers `outbe-vm-boot.service`, which reads `OUTBE_NODE_ROLE`
+    // from `/opt/outbe-chain/validator.env` and starts only the units belonging to that role.
+    // Every role service sets `PartOf=outbe-validator.target` so stopping the target stops them.
     render_unit(
         "outbe-validator.target",
         TARGET_TEMPLATE,
@@ -397,14 +488,7 @@ fn render_managed_target(profile: &ManagedProfile<'_>) -> UnitFile {
                 "UNIT_DIRECTIVES",
                 join(&lines(&[
                     "Requires=outbe-vm-boot.service",
-                    "Wants=outbe-radicle.service",
-                    "Wants=outbe-validator.service",
-                    "Wants=outbe-feeder.service",
-                    "Wants=outbe-hyperlane-validator.service",
                     "After=outbe-vm-boot.service",
-                    "After=outbe-radicle.service",
-                    "After=outbe-validator.service outbe-feeder.service",
-                    "After=outbe-hyperlane-validator.service",
                 ])),
             ),
         ],
@@ -826,7 +910,9 @@ mod tests {
             names,
             vec![
                 "outbe-feeder.service",
+                "outbe-full-node.service",
                 "outbe-hyperlane-validator.service",
+                "outbe-joining-validator.service",
                 "outbe-radicle.service",
                 "outbe-validator.service",
                 "outbe-validator.target",
@@ -837,6 +923,8 @@ mod tests {
         for name in [
             "outbe-radicle.service",
             "outbe-validator.service",
+            "outbe-joining-validator.service",
+            "outbe-full-node.service",
             "outbe-feeder.service",
             "outbe-hyperlane-validator.service",
         ] {
@@ -866,6 +954,21 @@ mod tests {
             );
         }
 
+        // No extra role marker channel: vm-boot reads OUTBE_NODE_ROLE from validator.env and
+        // starts only that role's units directly.
+        for unit in &vm {
+            assert!(
+                !unit.content.contains("ConditionPathExists="),
+                "{}: must not introduce a ConditionPathExists role channel",
+                unit.name
+            );
+            assert!(
+                !unit.content.contains("/run/outbe-vm"),
+                "{}: must not reference /run/outbe-vm",
+                unit.name
+            );
+        }
+
         let boot = unit(&vm, "outbe-vm-boot.service");
         assert!(boot.contains("Type=oneshot"));
         assert!(boot.contains("RemainAfterExit=yes"));
@@ -873,7 +976,7 @@ mod tests {
         assert!(!boot.contains("network-online.target"));
         assert!(boot
             .contains("After=local-fs.target systemd-networkd.service outbe-data-mount.service"));
-        assert!(boot.contains("ReadWritePaths=/opt/outbe-chain /run/systemd/network"));
+        assert!(boot.contains("ReadWritePaths=/opt/outbe-chain /run/systemd/network\n"));
         assert!(boot.contains(
             "ExecStart=/usr/local/bin/outbe-up internal vm-boot --bin-dir /usr/local/bin"
         ));
@@ -881,17 +984,14 @@ mod tests {
 
         let hyperlane = unit(&vm, "outbe-hyperlane-validator.service");
         assert!(!hyperlane.contains("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE"));
+        assert!(!hyperlane.contains("Wants=outbe-validator.service"));
+        let feeder = unit(&vm, "outbe-feeder.service");
+        assert!(!feeder.contains("Wants=outbe-validator.service"));
 
         let target = unit(&vm, "outbe-validator.target");
         assert!(target.contains("Requires=outbe-vm-boot.service"));
-        for name in [
-            "outbe-radicle.service",
-            "outbe-validator.service",
-            "outbe-feeder.service",
-            "outbe-hyperlane-validator.service",
-        ] {
-            assert!(target.contains(&format!("Wants={name}")));
-        }
+        assert!(target.contains("After=outbe-vm-boot.service"));
+        assert!(!target.contains("Wants="));
 
         for unit in &vm {
             assert!(!unit.content.contains("@@"));
@@ -953,8 +1053,8 @@ mod tests {
         }
 
         assert!(
-            exec_count >= 8,
-            "expected ExecStart* directives across VM units"
+            exec_count >= 13,
+            "expected ExecStart* directives across all VM role units"
         );
         assert!(unit(&vm, "outbe-feeder.service").contains(
             "ExecStart=/usr/local/bin/outbe-up internal feeder --bin-dir /usr/local/bin"
@@ -1054,6 +1154,70 @@ mod tests {
         assert!(radicle.contains("--listen 0.0.0.0:8777"));
         assert!(radicle.contains("--advertise 162.19.107.121:8777"));
         assert!(radicle.contains("--status-listen 127.0.0.1:8876"));
+
+        let joining = expand(unit(&vm, "outbe-joining-validator.service"));
+        assert!(joining.contains("--consensus.listen-addr 0.0.0.0:30401"));
+        assert!(joining.contains("--port 30304"));
+        assert!(joining.contains("--discovery.port 30304"));
+        assert!(joining.contains("--discovery.v5.port 31304"));
+        assert!(joining.contains("--consensus.keys-dir /opt/outbe-chain/keys"));
+        assert!(joining.contains("--consensus.peers ${OUTBE_CONSENSUS_PEERS}"));
+        assert!(joining.contains("--upstream ${OUTBE_CERTIFIED_RPC}"));
+
+        let full_node = expand(unit(&vm, "outbe-full-node.service"));
+        assert!(full_node.contains("--port 30304"));
+        assert!(full_node.contains("--discovery.port 30304"));
+        assert!(full_node.contains("--discovery.v5.port 31304"));
+        assert!(full_node.contains("--http.addr 10.77.0.81"));
+        assert!(full_node.contains("--upstream ${OUTBE_CERTIFIED_RPC}"));
+    }
+
+    #[test]
+    fn vm_joining_validator_args_match_bare_host_joining_flags_and_full_node_is_keyless() {
+        let vm = vm_units();
+        let bare_joining = joining_units("/usr/local/bin/outbe-up");
+
+        // VM joining validator must have the EXACT same flag set as bare-host joining_units().
+        let bare_exec = exec_start_tokens(unit(&bare_joining, "outbe-validator.service"));
+        let vm_join_exec = exec_start_tokens(unit(&vm, "outbe-joining-validator.service"));
+        assert_eq!(vm_join_exec[0], "/usr/local/bin/outbe-chain");
+        assert_eq!(vm_join_exec[1], "node");
+        assert_eq!(
+            node_flag_set(&vm_join_exec[2..]),
+            node_flag_set(&bare_exec[2..]),
+            "VM joining validator must use the exact flags of bare-host joining_units()"
+        );
+
+        // VM full-node must be strictly keyless, require --upstream (ADR-005), and omit all
+        // validator / key / radicle flags and dependencies.
+        let full_content = unit(&vm, "outbe-full-node.service");
+        let full_exec = exec_start_tokens(full_content);
+        assert_eq!(full_exec[0], "/usr/local/bin/outbe-chain");
+        assert_eq!(full_exec[1], "node");
+        let full_flags = node_flag_set(&full_exec[2..]);
+        assert!(full_flags.contains("--upstream"));
+        assert!(full_flags.contains("$OUTBE_CONSENSUS_EXTRA_ARGS"));
+        for forbidden in [
+            "--validator",
+            "--p2p-secret-key",
+            "--consensus.signing-key",
+            "--validator.evm-key",
+            "--consensus.keys-dir",
+            "--consensus.listen-addr",
+            "--consensus.peers",
+            "--radicle.control-socket",
+            "--radicle.status-address",
+        ] {
+            assert!(
+                !full_flags.contains(forbidden),
+                "full-node unit must not pass {forbidden}"
+            );
+        }
+        assert!(!full_content.contains("/opt/outbe-chain/keys"));
+        assert!(!full_content.contains("outbe-radicle.service"));
+        assert!(!full_content.contains("wait-validator-dependencies"));
+        assert!(full_content.contains("ReadWritePaths=/opt/outbe-chain/validator-0\n"));
+        assert!(full_content.contains("ExecStartPost=/usr/local/bin/outbe-up internal wait-rpc\n"));
     }
 
     fn logical_directives(content: &str) -> Vec<(String, String)> {

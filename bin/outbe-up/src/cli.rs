@@ -80,7 +80,7 @@ enum DiskCommand {
         /// Node role for this VM data disk.
         #[arg(long, value_enum)]
         role: DiskRoleArg,
-        /// Founder VM data tree directory, tar archive (.tar, .tar.gz, .tar.zst), or `-` for tar stream on stdin.
+        /// Founder or joining-validator VM data tree directory, tar archive (.tar, .tar.gz, .tar.zst), or `-` for tar stream on stdin.
         #[arg(long, conflicts_with_all = ["config", "keys_from"])]
         source: Option<PathBuf>,
         /// Verified operator bundle (.tar.zst) for joining-validator, full-node, or founder key verification.

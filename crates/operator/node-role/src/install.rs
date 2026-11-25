@@ -27,6 +27,7 @@ pub(crate) const CANONICAL_HEX_KEYS: &[&str] = &[
 ];
 
 const ENV_KEYS: &[&str] = &[
+    "OUTBE_NODE_ROLE",
     "OUTBE_EXTERNAL_IP",
     "OUTBE_RPC_BIND_IP",
     "OUTBE_VM_PREFIX",
@@ -45,6 +46,7 @@ const ENV_KEYS: &[&str] = &[
 ];
 
 const FULL_NODE_ENV_KEYS: &[&str] = &[
+    "OUTBE_NODE_ROLE",
     "OUTBE_EXTERNAL_IP",
     "OUTBE_RPC_BIND_IP",
     "OUTBE_VM_PREFIX",
@@ -178,7 +180,9 @@ fn read_environment_with_keys(
             return false;
         }
         if !require_vm_static_net
-            && (VM_STATIC_NET_KEYS.contains(name) || VM_PORT_KEYS.contains(name))
+            && (*name == "OUTBE_NODE_ROLE"
+                || VM_STATIC_NET_KEYS.contains(name)
+                || VM_PORT_KEYS.contains(name))
         {
             return false;
         }
@@ -208,6 +212,17 @@ fn validate_environment_inner(
     role: NodeRole,
     require_vm_static_net: bool,
 ) -> Result<()> {
+    if let Some(raw_role) = values.get("OUTBE_NODE_ROLE") {
+        let parsed: NodeRole = raw_role.parse().wrap_err("invalid OUTBE_NODE_ROLE")?;
+        if require_vm_static_net {
+            ensure!(
+                parsed == role,
+                "OUTBE_NODE_ROLE ({parsed}) does not match expected role ({role})"
+            );
+        }
+    } else if require_vm_static_net {
+        eyre::bail!("missing OUTBE_NODE_ROLE in validator.env");
+    }
     values["OUTBE_EXTERNAL_IP"]
         .parse::<std::net::Ipv4Addr>()
         .wrap_err("OUTBE_EXTERNAL_IP must be an IPv4 literal")?;

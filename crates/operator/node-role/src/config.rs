@@ -192,6 +192,7 @@ impl FullNodeConfig {
         );
         let env = format!(
             concat!(
+                "OUTBE_NODE_ROLE=\"full-node\"\n",
                 "OUTBE_EXTERNAL_IP=\"{}\"\n",
                 "OUTBE_RPC_BIND_IP=\"{}\"\n",
                 "{}",
@@ -327,7 +328,32 @@ impl OperatorConfig {
         Ok((config, sha256(raw.as_bytes())))
     }
 
+    /// Write bare-host validator runtime config (`validator.env` without `OUTBE_NODE_ROLE`,
+    /// preserving byte-identical bare-host output).
     pub fn write_runtime_config(&self, root: &Path, validator: Address) -> Result<()> {
+        self.write_runtime_config_inner(root, validator, None)
+    }
+
+    /// Write VM validator runtime config, including `OUTBE_NODE_ROLE` in `validator.env`.
+    pub fn write_runtime_config_for_role(
+        &self,
+        root: &Path,
+        validator: Address,
+        role: NodeRole,
+    ) -> Result<()> {
+        ensure!(
+            matches!(role, NodeRole::Founder | NodeRole::JoiningValidator),
+            "OperatorConfig only supports founder or joining-validator roles (got {role})"
+        );
+        self.write_runtime_config_inner(root, validator, Some(role))
+    }
+
+    fn write_runtime_config_inner(
+        &self,
+        root: &Path,
+        validator: Address,
+        vm_role: Option<NodeRole>,
+    ) -> Result<()> {
         for value in self
             .network
             .bootnodes
@@ -347,6 +373,9 @@ impl OperatorConfig {
         } else {
             ""
         };
+        let role_line = vm_role
+            .map(|role| format!("OUTBE_NODE_ROLE=\"{}\"\n", role.as_str()))
+            .unwrap_or_default();
         let vm_net_lines = render_optional_vm_static_env(
             self.network.vm_prefix,
             self.network.vm_gateway,
@@ -358,6 +387,7 @@ impl OperatorConfig {
         );
         let env = format!(
             concat!(
+                "{}",
                 "OUTBE_EXTERNAL_IP=\"{}\"\n",
                 "OUTBE_RPC_BIND_IP=\"{}\"\n",
                 "{}",
@@ -368,6 +398,7 @@ impl OperatorConfig {
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"{}\"\n",
                 "OUTBE_CHAIN_ID=\"{}\"\n"
             ),
+            role_line,
             self.network.advertise_ip,
             self.network.rpc_bind_ip,
             vm_net_lines,
@@ -856,6 +887,58 @@ hyperlane:
             assert_eq!(config.network.advertise_ip, Ipv4Addr::new(192, 0, 2, 10));
             assert_eq!(config.network.rpc_bind_ip, Ipv4Addr::LOCALHOST);
         }
+    }
+
+    #[test]
+    fn bare_host_validator_env_matches_pinned_output() {
+        let peer_key = "c".repeat(96);
+        let yaml = format!(
+            r#"
+version: 1
+network:
+  chain_id: 424242
+  certified_rpc: https://rpc.example
+  advertise_ip: 192.0.2.10
+  bootnodes: ["enode://abc@192.0.2.1:30303"]
+  consensus_peers: ["{peer_key}@192.0.2.1:30400"]
+  use_local_defaults: true
+feeder:
+  public_toml: |
+    [oracle]
+    sources = "local"
+hyperlane:
+  public_url: http://192.0.2.10:9000
+  origins:
+    - domain: 424242
+      rpc_urls: [https://rpc.example]
+      reorg_period: 0
+"#
+        );
+        let config: OperatorConfig = serde_yaml_ng::from_str(&yaml).unwrap();
+        let validator: Address = "0x1111111111111111111111111111111111111111"
+            .parse()
+            .unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        config.write_runtime_config(dir.path(), validator).unwrap();
+        let actual = fs::read_to_string(dir.path().join("validator.env")).unwrap();
+        let expected = format!(
+            concat!(
+                "OUTBE_EXTERNAL_IP=\"192.0.2.10\"\n",
+                "OUTBE_RPC_BIND_IP=\"127.0.0.1\"\n",
+                "OUTBE_CERTIFIED_RPC=\"https://rpc.example\"\n",
+                "OUTBE_VALIDATOR_ADDRESS=\"0x1111111111111111111111111111111111111111\"\n",
+                "OUTBE_BOOTNODES=\"enode://abc@192.0.2.1:30303\"\n",
+                "OUTBE_CONSENSUS_PEERS=\"{peer_key}@192.0.2.1:30400\"\n",
+                "OUTBE_CONSENSUS_EXTRA_ARGS=\"--consensus.use-local-defaults\"\n",
+                "OUTBE_CHAIN_ID=\"424242\"\n",
+            ),
+            peer_key = peer_key
+        );
+        assert_eq!(actual, expected);
+        assert!(
+            !actual.contains("OUTBE_NODE_ROLE"),
+            "bare-host validator.env must not include OUTBE_NODE_ROLE"
+        );
     }
 
     #[test]

@@ -42,7 +42,7 @@ use walkdir::WalkDir;
 
 use crate::{
     bundle,
-    config::{FullNodeConfig, NodeRole, OperatorConfig, NODE_ROLE_FILE},
+    config::{FullNodeConfig, NodeRole, OperatorConfig},
     path_text, validator_address, vm_boot,
 };
 
@@ -335,23 +335,78 @@ pub fn prepare_founder_tree_from_reader_cancellable<R: Read + Send>(
     verify: FounderKeyVerify<'_>,
     cancel: &AtomicBool,
 ) -> Result<StagedDiskTree> {
-    ensure_not_canceled(cancel, "founder staging")?;
+    prepare_validator_tree_from_reader_for_role(
+        reader,
+        NodeRole::Founder,
+        staging_parent,
+        verify,
+        cancel,
+    )
+}
+
+/// Validate a joining-validator VM data tree streamed as a tar archive (plain `.tar`, `.tar.zst`,
+/// or `.tar.gz`) from `reader`, extracting only into a private `0700` locked staging directory.
+pub fn prepare_joining_validator_tree_from_reader<R: Read + Send>(
+    reader: R,
+    staging_parent: &Path,
+    verify: FounderKeyVerify<'_>,
+) -> Result<StagedDiskTree> {
+    let cancel = AtomicBool::new(false);
+    prepare_joining_validator_tree_from_reader_cancellable(reader, staging_parent, verify, &cancel)
+}
+
+/// Validate a joining-validator VM data tree streamed as a tar archive (plain `.tar`, `.tar.zst`,
+/// or `.tar.gz`) from `reader` with cooperative signal cancellation and verified `outbe-keygen`
+/// BLS key verification.
+pub fn prepare_joining_validator_tree_from_reader_cancellable<R: Read + Send>(
+    reader: R,
+    staging_parent: &Path,
+    verify: FounderKeyVerify<'_>,
+    cancel: &AtomicBool,
+) -> Result<StagedDiskTree> {
+    prepare_validator_tree_from_reader_for_role(
+        reader,
+        NodeRole::JoiningValidator,
+        staging_parent,
+        verify,
+        cancel,
+    )
+}
+
+fn prepare_validator_tree_from_reader_for_role<R: Read + Send>(
+    reader: R,
+    expected_role: NodeRole,
+    staging_parent: &Path,
+    verify: FounderKeyVerify<'_>,
+    cancel: &AtomicBool,
+) -> Result<StagedDiskTree> {
+    ensure!(
+        matches!(expected_role, NodeRole::Founder | NodeRole::JoiningValidator),
+        "stdin validator tar staging only supports founder or joining-validator (got {expected_role})"
+    );
+    let stage_label = format!("{expected_role} staging");
+    ensure_not_canceled(cancel, &stage_label)?;
 
     let (bin_dir, bundle, key_verified, keygen_source) =
         resolve_founder_keygen(None, staging_parent, verify, cancel)?;
-    ensure_not_canceled(cancel, "founder staging")?;
+    ensure_not_canceled(cancel, &stage_label)?;
 
-    let staging = create_locked_staging_dir(staging_parent, ".outbe-disk-founder-")?;
+    let prefix = match expected_role {
+        NodeRole::Founder => ".outbe-disk-founder-",
+        NodeRole::JoiningValidator => ".outbe-disk-joining-",
+        NodeRole::FullNode => unreachable!("guarded above"),
+    };
+    let staging = create_locked_staging_dir(staging_parent, prefix)?;
     let extract_root = staging.path().join("extract");
     create_dir_mode(&extract_root, 0o755)?;
     extract_founder_tar_reader(reader, &extract_root, cancel)?;
-    ensure_not_canceled(cancel, "founder staging")?;
+    ensure_not_canceled(cancel, &stage_label)?;
     let tree_path = resolve_extracted_founder_root(&extract_root)?;
     fs::set_permissions(&tree_path, fs::Permissions::from_mode(0o755))?;
 
     vm_boot::verify_static_tree_for_role_cancellable(
         &tree_path,
-        NodeRole::Founder,
+        expected_role,
         bin_dir.as_deref(),
         cancel,
     )?;
@@ -362,7 +417,7 @@ pub fn prepare_founder_tree_from_reader_cancellable<R: Read + Send>(
         tree_path,
         _staging: Some(staging),
         _bundle: bundle,
-        role: NodeRole::Founder,
+        role: expected_role,
         validator_address: Some(validator),
         hyperlane_address: Some(hyperlane),
         key_verified,
@@ -410,11 +465,6 @@ pub fn prepare_joining_validator_tree_cancellable(
     create_dir_mode(&tree, 0o755)?;
 
     copy_static_bundle_assets(bundle_root, &tree)?;
-    write_file_mode(
-        &tree.join(NODE_ROLE_FILE),
-        NodeRole::JoiningValidator.marker_contents().as_bytes(),
-        0o640,
-    )?;
 
     let keys_dir = tree.join("keys");
     create_dir_mode(&keys_dir, 0o700)?;
@@ -433,7 +483,7 @@ pub fn prepare_joining_validator_tree_cancellable(
     let validator = validator_address(&keys_dir.join("evm-key.hex"))?;
     let hyperlane = validator_address(&keys_dir.join("hyperlane-key.hex"))?;
 
-    config.write_runtime_config(&tree, validator)?;
+    config.write_runtime_config_for_role(&tree, validator, NodeRole::JoiningValidator)?;
     for name in [
         "validator.env",
         "feeder-public.toml",
@@ -500,11 +550,6 @@ pub fn prepare_full_node_tree_cancellable(
     create_dir_mode(&tree, 0o755)?;
 
     copy_static_bundle_assets(bundle_root, &tree)?;
-    write_file_mode(
-        &tree.join(NODE_ROLE_FILE),
-        NodeRole::FullNode.marker_contents().as_bytes(),
-        0o640,
-    )?;
 
     config.write_runtime_config(&tree)?;
     fs::set_permissions(
@@ -1605,10 +1650,10 @@ network:
         assert!(staged.hyperlane_address.is_some());
 
         let tree = staged.tree_path();
-        assert_eq!(
-            fs::read_to_string(tree.join(NODE_ROLE_FILE)).unwrap(),
-            "joining-validator\n"
-        );
+        assert!(fs::read_to_string(tree.join("validator.env"))
+            .unwrap()
+            .contains("OUTBE_NODE_ROLE=\"joining-validator\"\n"));
+        assert!(!tree.join(crate::NODE_ROLE_FILE).exists());
         // Bundle executables MUST NOT be copied onto the noexec VM data disk.
         assert!(!tree.join("outbe-keygen").exists());
         assert!(!tree.join("outbe-chain").exists());
@@ -1697,10 +1742,7 @@ network:
         assert!(staged.hyperlane_address.is_none());
 
         let tree = staged.tree_path();
-        assert_eq!(
-            fs::read_to_string(tree.join(NODE_ROLE_FILE)).unwrap(),
-            "full-node\n"
-        );
+        assert!(!tree.join(crate::NODE_ROLE_FILE).exists());
         assert!(tree.join("genesis.json").is_file());
         assert!(tree.join(".bb-crs/bn254_g1.dat").is_file());
         assert!(tree.join("validator.env").is_file());
@@ -1710,6 +1752,7 @@ network:
         assert!(!tree.join("outbe-chain").exists());
 
         let env_text = fs::read_to_string(tree.join("validator.env")).unwrap();
+        assert!(env_text.contains("OUTBE_NODE_ROLE=\"full-node\"\n"));
         assert!(!env_text.contains("OUTBE_VALIDATOR_ADDRESS"));
         assert!(!env_text.contains("OUTBE_CONSENSUS_PEERS"));
 
@@ -1742,7 +1785,7 @@ network:
         // 1. Standalone founder dir without sibling bundle fails closed under Auto.
         let standalone = tmp.path().join("standalone-founder");
         copy_dir_plain(joining.tree_path(), &standalone);
-        fs::remove_file(standalone.join(NODE_ROLE_FILE)).unwrap();
+        rewrite_env_role(&standalone, "founder");
         let err = prepare_founder_tree(&standalone, tmp.path(), FounderKeyVerify::Auto)
             .err()
             .expect("founder without bundle must refuse unless --skip-key-verify");
@@ -1787,7 +1830,7 @@ network:
         let artifacts = tmp.path().join("net-artifacts");
         let vm_founder = artifacts.join("vm/validator-0");
         copy_dir_plain(joining.tree_path(), &vm_founder);
-        fs::remove_file(vm_founder.join(NODE_ROLE_FILE)).unwrap();
+        rewrite_env_role(&vm_founder, "founder");
         fs::create_dir_all(artifacts.join("joining")).unwrap();
         fs::copy(
             &bundle,
@@ -1813,7 +1856,7 @@ network:
         let joining = prepare_joining_validator_tree(&bundle, &cfg, None, tmp.path()).unwrap();
         let founder_dir = tmp.path().join("validator-0");
         copy_dir_plain(joining.tree_path(), &founder_dir);
-        fs::remove_file(founder_dir.join(NODE_ROLE_FILE)).unwrap();
+        rewrite_env_role(&founder_dir, "founder");
 
         // Pack into a .tar.zst wrapped in `validator-0/`.
         let tar_zst = tmp.path().join("validator-0.tar.zst");
@@ -1832,7 +1875,7 @@ network:
         assert_eq!(staged.role, NodeRole::Founder);
         assert!(staged.key_verified);
         assert!(staged.tree_path().join("genesis.json").is_file());
-        assert!(!staged.tree_path().join(NODE_ROLE_FILE).exists());
+        assert!(!staged.tree_path().join(crate::NODE_ROLE_FILE).exists());
 
         // Tar with an executable file is rejected.
         let bad_tar = tmp.path().join("bad-exec.tar");
@@ -1992,7 +2035,7 @@ network:
         let joining = prepare_joining_validator_tree(&bundle, &cfg, None, tmp.path()).unwrap();
         let founder_dir = tmp.path().join("founder-src");
         copy_dir_plain(joining.tree_path(), &founder_dir);
-        fs::remove_file(founder_dir.join(NODE_ROLE_FILE)).unwrap();
+        rewrite_env_role(&founder_dir, "founder");
 
         // Build plain tar in memory.
         let mut plain_tar = Vec::new();
@@ -2139,6 +2182,49 @@ network:
         .err()
         .expect("empty tar stream must fail");
         assert!(err.to_string().contains("empty"), "{err}");
+
+        // 7. Joining-validator tar stream passes `prepare_joining_validator_tree_from_reader`
+        //    and rejects a founder tar (missing `node-role: joining-validator`).
+        let mut joining_tar = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut joining_tar);
+            builder.append_dir_all(".", joining.tree_path()).unwrap();
+            builder.finish().unwrap();
+        }
+        let staged_join = prepare_joining_validator_tree_from_reader(
+            io::Cursor::new(joining_tar),
+            tmp.path(),
+            FounderKeyVerify::Bundle(&bundle),
+        )
+        .unwrap();
+        assert_eq!(staged_join.role, NodeRole::JoiningValidator);
+        assert!(staged_join.key_verified);
+        assert!(
+            fs::read_to_string(staged_join.tree_path().join("validator.env"))
+                .unwrap()
+                .contains("OUTBE_NODE_ROLE=\"joining-validator\"\n")
+        );
+        drop(staged_join);
+
+        let err = prepare_joining_validator_tree_from_reader(
+            io::Cursor::new(plain_tar),
+            tmp.path(),
+            FounderKeyVerify::Bundle(&bundle),
+        )
+        .err()
+        .expect("founder tar must be rejected by joining-validator reader");
+        assert!(err.to_string().contains("role mismatch"), "{err}");
+    }
+
+    fn rewrite_env_role(tree: &Path, role: &str) {
+        let env_path = tree.join("validator.env");
+        let raw = fs::read_to_string(&env_path).unwrap();
+        let replaced = raw.replace(
+            "OUTBE_NODE_ROLE=\"joining-validator\"",
+            &format!("OUTBE_NODE_ROLE=\"{role}\""),
+        );
+        fs::write(&env_path, replaced).unwrap();
+        fs::set_permissions(&env_path, fs::Permissions::from_mode(0o640)).unwrap();
     }
 
     fn copy_dir_plain(src: &Path, dst: &Path) {

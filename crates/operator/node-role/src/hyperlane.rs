@@ -410,7 +410,10 @@ fn load_signing_key(path: &Path) -> Result<SigningKey> {
 /// Keep the service alive, register `H` at that boundary, then replace this
 /// process with the actual daemon.
 pub async fn run_service(bin_dir: Option<&Path>) -> Result<()> {
-    if std::env::var_os("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE").is_none() {
+    let wait_for_active = std::env::var_os("OUTBE_HYPERLANE_WAIT_FOR_ACTIVE").is_some()
+        || std::env::var("OUTBE_NODE_ROLE").as_deref()
+            == Ok(crate::NodeRole::JoiningValidator.as_str());
+    if !wait_for_active {
         return super::service::hyperlane(bin_dir);
     }
     let rpc_bind = required_env("OUTBE_RPC_BIND_IP")?;
@@ -447,12 +450,13 @@ pub async fn run_service(bin_dir: Option<&Path>) -> Result<()> {
         } else {
             SetupState::default()
         };
-        let (hash, submitted) = transaction(
+        let (hash, submitted) = transaction_with_bin_dir(
             state.signer_transaction.as_deref(),
             &hyperlane_key,
             &rpc_url,
             &["validator", "set-hyperlane-signer", &format!("{signer:#x}")],
             false,
+            bin_dir,
         )?;
         if submitted {
             state.signer_transaction = Some(hash.clone());
@@ -507,10 +511,23 @@ fn transaction(
     args: &[&str],
     drop_privileges: bool,
 ) -> Result<(String, bool)> {
+    transaction_with_bin_dir(existing, key, rpc_url, args, drop_privileges, None)
+}
+
+fn transaction_with_bin_dir(
+    existing: Option<&str>,
+    key: &Path,
+    rpc_url: &str,
+    args: &[&str],
+    drop_privileges: bool,
+    bin_dir: Option<&Path>,
+) -> Result<(String, bool)> {
     if let Some(hash) = existing {
         return Ok((hash.to_owned(), false));
     }
-    let binary = Path::new(process::ROOT).join("outbe-cli");
+    let binary = bin_dir
+        .unwrap_or_else(|| Path::new(process::ROOT))
+        .join("outbe-cli");
     let binary = path_text(&binary)?;
     let mut full = vec!["--rpc-url", rpc_url, "--private-key-file", path_text(key)?];
     full.extend_from_slice(args);

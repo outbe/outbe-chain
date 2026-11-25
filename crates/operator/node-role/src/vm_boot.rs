@@ -28,6 +28,26 @@ use crate::{
 const DEFAULT_VM_BIN_DIR: &str = "/usr/local/bin";
 const REQUIRED_MOUNT_OPTIONS: &[&str] = &["noexec", "nosuid", "nodev"];
 
+/// Exact systemd service units started by `vm-boot` for each VM node role.
+///
+/// `outbe-hyperlane-validator.service` is intentionally excluded for all VM roles until S9
+/// (Hyperlane delegation/funding/registration for VM networks).
+pub fn vm_role_services(role: NodeRole) -> &'static [&'static str] {
+    match role {
+        NodeRole::Founder => &[
+            "outbe-radicle.service",
+            "outbe-validator.service",
+            "outbe-feeder.service",
+        ],
+        NodeRole::JoiningValidator => &[
+            "outbe-radicle.service",
+            "outbe-joining-validator.service",
+            "outbe-feeder.service",
+        ],
+        NodeRole::FullNode => &["outbe-full-node.service"],
+    }
+}
+
 const STALE_SOCKETS: &[&str] = &[
     "keys/radicle/node/outbe-control.sock",
     "validator-0/data/reth.ipc",
@@ -70,24 +90,75 @@ struct BootOptions<'a> {
     apply_ownership: bool,
     prepare_runtime_dirs: bool,
     configure_network: bool,
+    start_role_services: bool,
     expected_role: Option<NodeRole>,
     cancel: Option<&'a AtomicBool>,
 }
 
-/// Read and validate `/opt/outbe-chain/node-role` (absent defaults to [`NodeRole::Founder`]).
-pub fn read_role_marker(root: &Path, require_root_owner: bool) -> Result<NodeRole> {
-    let path = root.join(NODE_ROLE_FILE);
-    match fs::symlink_metadata(&path) {
-        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(NodeRole::Founder),
-        Err(err) => Err(err).wrap_err_with(|| format!("failed to stat {}", path.display())),
+/// Read and strictly validate the VM node role from `/opt/outbe-chain/validator.env`
+/// (`OUTBE_NODE_ROLE=founder|joining-validator|full-node`). If a legacy `/opt/outbe-chain/node-role`
+/// file is also present on disk, both MUST agree or this fails closed.
+pub fn read_role_from_tree(root: &Path, require_root_owner: bool) -> Result<NodeRole> {
+    let env_path = root.join("validator.env");
+    verify_config_file(&env_path, require_root_owner)?;
+    let env_role = read_env_node_role(&env_path)?;
+
+    let marker_path = root.join(NODE_ROLE_FILE);
+    match fs::symlink_metadata(&marker_path) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(env_role),
+        Err(err) => Err(err).wrap_err_with(|| format!("failed to stat {}", marker_path.display())),
         Ok(_) => {
-            verify_config_file(&path, require_root_owner)?;
-            let raw = fs::read_to_string(&path)
-                .wrap_err_with(|| format!("failed to read {}", path.display()))?;
-            NodeRole::parse_marker(&raw)
-                .wrap_err_with(|| format!("invalid role marker {}", path.display()))
+            verify_config_file(&marker_path, require_root_owner)?;
+            let raw = fs::read_to_string(&marker_path)
+                .wrap_err_with(|| format!("failed to read {}", marker_path.display()))?;
+            let file_role = NodeRole::parse_marker(&raw)
+                .wrap_err_with(|| format!("invalid role marker {}", marker_path.display()))?;
+            ensure!(
+                file_role == env_role,
+                "role mismatch between validator.env OUTBE_NODE_ROLE ({env_role}) and {} ({file_role})",
+                marker_path.display()
+            );
+            Ok(env_role)
         }
     }
+}
+
+fn read_env_node_role(env_path: &Path) -> Result<NodeRole> {
+    let content = fs::read_to_string(env_path)
+        .wrap_err_with(|| format!("failed to read {}", env_path.display()))?;
+    let mut found: Option<NodeRole> = None;
+    for line in content.lines() {
+        let Some((key, quoted)) = line.split_once('=') else {
+            bail!("invalid validator.env line: {line}");
+        };
+        if key != "OUTBE_NODE_ROLE" {
+            continue;
+        }
+        ensure!(
+            found.is_none(),
+            "duplicate OUTBE_NODE_ROLE in {}",
+            env_path.display()
+        );
+        ensure!(
+            quoted.len() >= 2 && quoted.starts_with('"') && quoted.ends_with('"'),
+            "invalid OUTBE_NODE_ROLE line in {}",
+            env_path.display()
+        );
+        let value = &quoted[1..quoted.len() - 1];
+        let parsed: NodeRole = value.parse().wrap_err_with(|| {
+            format!(
+                "invalid OUTBE_NODE_ROLE value in {} (must be founder, joining-validator, or full-node)",
+                env_path.display()
+            )
+        })?;
+        found = Some(parsed);
+    }
+    found.ok_or_else(|| {
+        eyre::eyre!(
+            "missing OUTBE_NODE_ROLE in {} (must be founder, joining-validator, or full-node)",
+            env_path.display()
+        )
+    })
 }
 
 /// Verify an emitted VM data tree without checking live mountinfo or changing ownership.
@@ -105,6 +176,7 @@ pub fn verify_tree_without_mount(root: &Path, bin_dir: &Path) -> Result<()> {
             apply_ownership: false,
             prepare_runtime_dirs: true,
             configure_network: false,
+            start_role_services: false,
             expected_role: None,
             cancel: None,
         },
@@ -143,6 +215,7 @@ pub fn verify_static_tree_for_role_cancellable(
             apply_ownership: false,
             prepare_runtime_dirs: false,
             configure_network: false,
+            start_role_services: false,
             expected_role: Some(expected_role),
             cancel: Some(cancel),
         },
@@ -165,6 +238,7 @@ pub fn run(bin_dir: Option<&Path>) -> Result<()> {
             apply_ownership: true,
             prepare_runtime_dirs: true,
             configure_network: true,
+            start_role_services: true,
             expected_role: None,
             cancel: None,
         },
@@ -175,7 +249,7 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
     verify_mount(root, mountinfo)?;
     verify_tree(root)?;
 
-    let role = read_role_marker(root, options.require_root_owner)?;
+    let role = read_role_from_tree(root, options.require_root_owner)?;
     if let Some(expected) = options.expected_role {
         ensure!(
             role == expected,
@@ -260,6 +334,22 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
             applied.gateway,
             vm_network::format_dns_list(&applied.dns),
             applied.dropin_path.display()
+        );
+    }
+
+    if options.start_role_services {
+        let services = vm_role_services(role);
+        let mut args = vec!["start", "--no-block"];
+        args.extend_from_slice(services);
+        process::systemctl(&args).wrap_err_with(|| {
+            format!(
+                "failed to start VM role `{role}` services ({})",
+                services.join(", ")
+            )
+        })?;
+        eprintln!(
+            "outbe-vm-boot: started role `{role}` services: {}",
+            services.join(", ")
         );
     }
     Ok(())
@@ -740,9 +830,14 @@ mod tests {
     }
 
     fn valid_env() -> String {
+        valid_env_for_role("founder")
+    }
+
+    fn valid_env_for_role(role: &str) -> String {
         let peer_key = "a".repeat(96);
         format!(
             concat!(
+                "OUTBE_NODE_ROLE=\"{role}\"\n",
                 "OUTBE_EXTERNAL_IP=\"10.0.0.1\"\n",
                 "OUTBE_RPC_BIND_IP=\"10.77.0.10\"\n",
                 "OUTBE_VM_PREFIX=\"24\"\n",
@@ -759,6 +854,7 @@ mod tests {
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"--consensus.use-local-defaults\"\n",
                 "OUTBE_CHAIN_ID=\"707\"\n",
             ),
+            role = role,
             peer_key = peer_key
         )
     }
@@ -816,6 +912,7 @@ mod tests {
             apply_ownership: false,
             prepare_runtime_dirs: true,
             configure_network: false,
+            start_role_services: false,
             expected_role: None,
             cancel: None,
         }
@@ -1085,10 +1182,10 @@ mod tests {
     fn build_valid_full_node_root() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path();
-        write_file_mode(&root.join(NODE_ROLE_FILE), b"full-node\n", 0o640);
         write_file_mode(
             &root.join("validator.env"),
             concat!(
+                "OUTBE_NODE_ROLE=\"full-node\"\n",
                 "OUTBE_EXTERNAL_IP=\"10.0.0.2\"\n",
                 "OUTBE_RPC_BIND_IP=\"10.77.0.20\"\n",
                 "OUTBE_VM_PREFIX=\"24\"\n",
@@ -1119,16 +1216,16 @@ mod tests {
     fn role_marker_validates_joining_and_full_node_and_forbids_full_node_secrets() {
         let bins = build_fake_bin_dir();
 
-        // 1. Joining validator marker passes full validator boot checks.
+        // 1. Joining validator via OUTBE_NODE_ROLE in validator.env passes full validator checks.
         let joining = build_valid_root();
         write_file_mode(
-            &joining.path().join(NODE_ROLE_FILE),
-            b"joining-validator\n",
+            &joining.path().join("validator.env"),
+            valid_env_for_role("joining-validator").as_bytes(),
             0o640,
         );
         let mountinfo = mountinfo_for(joining.path(), "rw,nosuid,nodev,noexec");
         assert_eq!(
-            read_role_marker(joining.path(), false).unwrap(),
+            read_role_from_tree(joining.path(), false).unwrap(),
             NodeRole::JoiningValidator
         );
         boot_root(joining.path(), &mountinfo, &test_options(bins.path())).unwrap();
@@ -1189,20 +1286,64 @@ mod tests {
             "{err}"
         );
 
-        // 4. Role mismatch and corrupt/loose role markers fail closed.
+        // 4. Role mismatch, missing/invalid OUTBE_NODE_ROLE, and disagreeing node-role file fail closed.
         let err = verify_static_tree_for_role(full.path(), NodeRole::Founder, None).unwrap_err();
         assert!(err.to_string().contains("role mismatch"), "{err}");
 
-        let bad_marker = build_valid_full_node_root();
-        write_file_mode(&bad_marker.path().join(NODE_ROLE_FILE), b"bogus\n", 0o640);
-        assert!(verify_static_tree_for_role(bad_marker.path(), NodeRole::FullNode, None).is_err());
+        let missing_role = build_valid_full_node_root();
+        let stripped = fs::read_to_string(missing_role.path().join("validator.env"))
+            .unwrap()
+            .replace("OUTBE_NODE_ROLE=\"full-node\"\n", "");
+        write_file_mode(
+            &missing_role.path().join("validator.env"),
+            stripped.as_bytes(),
+            0o640,
+        );
+        let err =
+            verify_static_tree_for_role(missing_role.path(), NodeRole::FullNode, None).unwrap_err();
+        assert!(err.to_string().contains("missing OUTBE_NODE_ROLE"), "{err}");
+
+        let bogus_role = build_valid_full_node_root();
+        let bogus_env = fs::read_to_string(bogus_role.path().join("validator.env"))
+            .unwrap()
+            .replace("full-node", "bogus");
+        write_file_mode(
+            &bogus_role.path().join("validator.env"),
+            bogus_env.as_bytes(),
+            0o640,
+        );
+        assert!(verify_static_tree_for_role(bogus_role.path(), NodeRole::FullNode, None).is_err());
+
+        // Separate `node-role` file present and agreeing passes; disagreeing or loose fails closed.
+        let with_legacy_file = build_valid_full_node_root();
+        write_file_mode(
+            &with_legacy_file.path().join(NODE_ROLE_FILE),
+            b"full-node\n",
+            0o640,
+        );
+        verify_static_tree_for_role(with_legacy_file.path(), NodeRole::FullNode, None).unwrap();
 
         write_file_mode(
-            &bad_marker.path().join(NODE_ROLE_FILE),
+            &with_legacy_file.path().join(NODE_ROLE_FILE),
+            b"founder\n",
+            0o640,
+        );
+        let err = verify_static_tree_for_role(with_legacy_file.path(), NodeRole::FullNode, None)
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("role mismatch between validator.env OUTBE_NODE_ROLE"),
+            "{err}"
+        );
+
+        write_file_mode(
+            &with_legacy_file.path().join(NODE_ROLE_FILE),
             b"full-node\n",
             0o666,
         );
-        assert!(verify_static_tree_for_role(bad_marker.path(), NodeRole::FullNode, None).is_err());
+        assert!(
+            verify_static_tree_for_role(with_legacy_file.path(), NodeRole::FullNode, None).is_err()
+        );
 
         // 5. Loopback OUTBE_RPC_BIND_IP is refused for all VM roles (founder, joining-validator, full-node).
         let loopback_founder = build_valid_root();
@@ -1233,6 +1374,30 @@ mod tests {
         assert!(
             err.to_string().contains("non-loopback private IPv4"),
             "{err}"
+        );
+    }
+
+    #[test]
+    fn vm_role_services_match_exact_per_role_units() {
+        assert_eq!(
+            vm_role_services(NodeRole::Founder),
+            &[
+                "outbe-radicle.service",
+                "outbe-validator.service",
+                "outbe-feeder.service",
+            ]
+        );
+        assert_eq!(
+            vm_role_services(NodeRole::JoiningValidator),
+            &[
+                "outbe-radicle.service",
+                "outbe-joining-validator.service",
+                "outbe-feeder.service",
+            ]
+        );
+        assert_eq!(
+            vm_role_services(NodeRole::FullNode),
+            &["outbe-full-node.service"]
         );
     }
 }
