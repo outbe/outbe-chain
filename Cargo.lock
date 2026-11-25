@@ -8365,6 +8365,7 @@ dependencies = [
  "evm2",
  "outbe-core-common",
  "outbe-intex",
+ "outbe-intexfactory",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",

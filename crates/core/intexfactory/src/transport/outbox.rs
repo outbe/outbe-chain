@@ -177,6 +177,7 @@ impl Outbox<'_> {
     }
 
     /// The messages that wait for `chain_id`, first one first.
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn messages(&self, chain_id: u32) -> Result<Vec<Message>> {
         let mut messages = Vec::new();
         for index in self.head.read(&chain_id)?..self.tail.read(&chain_id)? {

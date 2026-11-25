@@ -166,7 +166,7 @@ outbe-vote.workspace = true
 outbe-zerofee = { workspace = true, features = ["test-utils"] }
 outbe-credis = { workspace = true, features = ["test-utils"] }
 outbe-intex = { workspace = true, features = ["test-utils"] }
-outbe-intexfactory.workspace = true
+outbe-intexfactory = { workspace = true, features = ["test-utils"] }
 outbe-l2registry.workspace = true
 outbe-update.workspace = true
 outbe-ccaregistry.workspace = true
