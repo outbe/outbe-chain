@@ -132,6 +132,18 @@ pub fn mark_services_enabled() -> Result<()> {
     write_file(marker, b"enabled\n", 0o644)
 }
 
+pub fn services_enabled() -> bool {
+    Path::new(SERVICES_ENABLED_MARKER).is_file()
+}
+
+pub fn clear_services_enabled() -> Result<()> {
+    match std::fs::remove_file(SERVICES_ENABLED_MARKER) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).wrap_err("failed to clear validator auto-start marker"),
+    }
+}
+
 fn output_text(program: &Path, output: Output) -> Result<String> {
     if !output.status.success() {
         let stdout = String::from_utf8_lossy(&output.stdout);

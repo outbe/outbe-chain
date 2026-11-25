@@ -40,6 +40,12 @@ pub struct ConsensusStatus {
     pub last_finalized_block: u64,
     #[serde(default)]
     pub next_planned_activation_height: u64,
+    /// Absent when talking to a node version that predates maintenance guards.
+    #[serde(default)]
+    pub next_dkg_freeze_height: Option<u64>,
+    /// Absent when talking to a node version that predates maintenance guards.
+    #[serde(default)]
+    pub maintenance_safe: Option<bool>,
     #[serde(default)]
     pub is_validator: bool,
     #[serde(default)]
@@ -310,5 +316,17 @@ mod tests {
         assert!(!status.resident_ready());
         let absent: ConsensusStatus = serde_json::from_value(json!({"isValidator": true})).unwrap();
         assert!(!absent.resident_ready());
+    }
+
+    #[test]
+    fn old_consensus_status_omits_maintenance_fields() {
+        let status: ConsensusStatus = serde_json::from_value(serde_json::json!({
+            "lastFinalizedBlock": 42,
+            "mode": "signer"
+        }))
+        .unwrap();
+        assert_eq!(status.last_finalized_block, 42);
+        assert_eq!(status.next_dkg_freeze_height, None);
+        assert_eq!(status.maintenance_safe, None);
     }
 }

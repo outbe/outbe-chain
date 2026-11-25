@@ -11,6 +11,7 @@ pub mod config;
 pub mod hyperlane;
 pub mod install;
 pub mod journal;
+pub mod maintenance;
 pub mod prepare;
 pub mod promote;
 pub mod rpc;

@@ -340,6 +340,15 @@ where
             .as_ref()
             .map(ConsensusExecutionBridge::consensus_status_with_threshold_shares)
             .unwrap_or_default();
+        let next_dkg_freeze_height = self.tee_renewal_schedule.and_then(|schedule| {
+            (status.next_planned_activation_height > 0).then(|| {
+                status
+                    .next_planned_activation_height
+                    .saturating_sub(schedule.dkg_prepare_window_blocks)
+            })
+        });
+        let maintenance_safe =
+            next_dkg_freeze_height.map(|freeze| status.last_finalized_block < freeze);
 
         Ok(ConsensusStatusInfo {
             current_view: status.current_view,
@@ -353,6 +362,8 @@ where
             last_dkg_activation_height: status.last_dkg_activation_height,
             next_planned_activation_height: status.next_planned_activation_height,
             vrf_expiry_height: status.vrf_expiry_height,
+            next_dkg_freeze_height,
+            maintenance_safe,
             is_validator,
             mode,
             enclave: enclave_health_info(

@@ -73,6 +73,28 @@ enum NetworkCommand {
         #[arg(long)]
         watch: bool,
     },
+    /// Stop every founder and disable automatic start after VM reboot.
+    Stop {
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+        #[arg(long)]
+        skip_dkg_guard: bool,
+    },
+    /// Restart founders one at a time, waiting for health after each host.
+    Restart {
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+        #[arg(long)]
+        skip_dkg_guard: bool,
+        #[arg(long)]
+        skip_quorum_guard: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -107,6 +129,18 @@ enum ValidatorCommand {
         /// Keep updating until interrupted.
         #[arg(long)]
         watch: bool,
+    },
+    /// Start an already prepared validator and wait until it is synchronized.
+    Start,
+    /// Stop the validator and disable automatic start after VM reboot.
+    Stop {
+        #[arg(long)]
+        skip_dkg_guard: bool,
+    },
+    /// Restart the validator without changing its persistent auto-start policy.
+    Restart {
+        #[arg(long)]
+        skip_dkg_guard: bool,
     },
 }
 
@@ -162,6 +196,27 @@ impl Cli {
                     ssh_key,
                     watch,
                 } => network::status::show(&artifacts, ssh_key.as_deref(), watch).await,
+                NetworkCommand::Stop {
+                    artifacts,
+                    ssh_key,
+                    skip_dkg_guard,
+                } => network::lifecycle::stop(&artifacts, ssh_key.as_deref(), skip_dkg_guard).await,
+                NetworkCommand::Restart {
+                    artifacts,
+                    ssh_key,
+                    timeout,
+                    skip_dkg_guard,
+                    skip_quorum_guard,
+                } => {
+                    network::lifecycle::restart(
+                        &artifacts,
+                        ssh_key.as_deref(),
+                        std::time::Duration::from_secs(timeout),
+                        skip_dkg_guard,
+                        skip_quorum_guard,
+                    )
+                    .await
+                }
             },
             Command::Validator(args) => match args.command {
                 ValidatorCommand::ConfigExample { output } => match output {
@@ -179,6 +234,13 @@ impl Cli {
                 }
                 ValidatorCommand::Promote => validator::promote::run().await,
                 ValidatorCommand::Status { watch } => validator::status::show(watch).await,
+                ValidatorCommand::Start => validator::maintenance::start().await,
+                ValidatorCommand::Stop { skip_dkg_guard } => {
+                    validator::maintenance::stop(skip_dkg_guard).await
+                }
+                ValidatorCommand::Restart { skip_dkg_guard } => {
+                    validator::maintenance::restart(skip_dkg_guard).await
+                }
             },
             Command::Internal(args) => match args.command {
                 InternalCommand::Feeder => validator::service::feeder(),

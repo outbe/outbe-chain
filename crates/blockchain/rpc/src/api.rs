@@ -28,6 +28,11 @@ pub struct ConsensusStatusInfo {
     pub last_dkg_activation_height: u64,
     pub next_planned_activation_height: u64,
     pub vrf_expiry_height: u64,
+    /// Next height at which the validator set freezes for a DKG ceremony.
+    /// `None` means this node does not expose a DKG schedule.
+    pub next_dkg_freeze_height: Option<u64>,
+    /// Whether a planned operator interruption is currently outside the DKG window.
+    pub maintenance_safe: Option<bool>,
     pub is_validator: bool,
     /// Current ontological consensus operating mode of this node.
     pub mode: ConsensusOperatingMode,
@@ -320,6 +325,8 @@ mod tests {
             last_dkg_activation_height: 21,
             next_planned_activation_height: 21021,
             vrf_expiry_height: 21621,
+            next_dkg_freeze_height: Some(20_721),
+            maintenance_safe: Some(true),
             is_validator: true,
             mode: ConsensusOperatingMode::Signer,
             enclave: EnclaveHealthInfo::default(),
@@ -339,6 +346,8 @@ mod tests {
             "\"lastDkgActivationHeight\"",
             "\"nextPlannedActivationHeight\"",
             "\"vrfExpiryHeight\"",
+            "\"nextDkgFreezeHeight\"",
+            "\"maintenanceSafe\"",
             "\"isValidator\"",
             "\"mode\"",
             "\"signer\"",
@@ -363,6 +372,8 @@ mod tests {
             last_dkg_activation_height: 100,
             next_planned_activation_height: 21100,
             vrf_expiry_height: 21700,
+            next_dkg_freeze_height: None,
+            maintenance_safe: None,
             is_validator: false,
             mode: ConsensusOperatingMode::Follower,
             enclave: EnclaveHealthInfo::default(),

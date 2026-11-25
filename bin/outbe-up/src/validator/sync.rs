@@ -58,15 +58,27 @@ pub async fn run(snapshot_path: Option<&Path>) -> Result<()> {
         }
     }
 
+    start_and_wait(&journal, &mut progress, true).await
+}
+
+pub(crate) async fn start_and_wait(
+    journal: &Journal,
+    progress: &mut Progress,
+    enable_on_boot: bool,
+) -> Result<()> {
     progress.stage("starting validator node");
-    process::systemctl(&["enable", "--now", VALIDATOR_TARGET])?;
-    process::mark_services_enabled()?;
+    if enable_on_boot {
+        process::systemctl(&["enable", "--now", VALIDATOR_TARGET])?;
+        process::mark_services_enabled()?;
+    } else {
+        process::systemctl(&["start", VALIDATOR_TARGET])?;
+    }
     let local = RpcClient::new(journal.config.network.local_rpc_url())?;
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
-    wait_for_rpc_chain(&local, journal.config.network.chain_id, &mut progress).await?;
+    wait_for_rpc_chain(&local, journal.config.network.chain_id, progress).await?;
     progress.stage("synchronizing validator node");
-    let (height, peers) = wait_for_sync(&local, &remote, &mut progress).await?;
-    wait_for_resident(&local, &mut progress).await?;
+    let (height, peers) = wait_for_sync(&local, &remote, progress).await?;
+    wait_for_resident(&local, progress).await?;
     progress.done(&format!(
         "validator node synchronized at finalized height {height} with {peers} peers"
     ));
