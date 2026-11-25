@@ -263,6 +263,15 @@ impl HostFixture {
                     true,
                     false,
                 ),
+                "static_no_dhcp" => (
+                    "eno1",
+                    "162.19.107.121",
+                    AMD_NFT_JSON,
+                    "1\n",
+                    true,
+                    false,
+                    false,
+                ),
                 other => panic!("unknown fixture profile {other}"),
             };
 
@@ -1787,4 +1796,194 @@ fn host_check_verifies_network_dhcp_and_published_ports_readonly() {
     assert_eq!(ej["writes_performed"], 0);
     assert!(amd.mutations().is_empty());
     assert!(empty.mutations().is_empty());
+}
+
+#[test]
+fn host_check_static_only_host_without_dhcp_local_ip_collision_and_offset_dnat() {
+    // 1. Static host without any DHCP daemon running -> host check passes when bridge+NAT+IP are valid.
+    let static_host = HostFixture::build("static_no_dhcp");
+    static_host.seed_vm(
+        "node-a",
+        "52:54:00:aa:bb:88",
+        Some(Ipv4Addr::new(10, 77, 0, 88)),
+    );
+    let ok = Command::new(OUTBE_UP_BIN)
+        .env("PATH", static_host.path_env())
+        .args(["host", "check", "--vm", "node-a", "--vmm-socket"])
+        .arg(&static_host.vmm_socket)
+        .arg("--vmm-home")
+        .arg(&static_host.vmm_home)
+        .arg("--state-dir")
+        .arg(&static_host.state_dir)
+        .arg("--sys-root")
+        .arg(&static_host.sys_root)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "static host without DHCP should pass host check:\n{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let sj: Value = serde_json::from_slice(&ok.stdout).unwrap();
+    assert_eq!(sj["ready"], true);
+    assert_eq!(sj["host_network_ok"], true);
+    assert_eq!(sj["service_ip_ok"], true);
+    assert_eq!(sj["writes_performed"], 0);
+
+    // 2. Another local VM already claims 10.77.0.88 -> host check fails closed (IP not unused).
+    static_host.seed_vm(
+        "node-b",
+        "52:54:00:aa:bb:99",
+        Some(Ipv4Addr::new(10, 77, 0, 88)),
+    );
+    let dup = Command::new(OUTBE_UP_BIN)
+        .env("PATH", static_host.path_env())
+        .args(["host", "check", "--vm", "node-a", "--vmm-socket"])
+        .arg(&static_host.vmm_socket)
+        .arg("--vmm-home")
+        .arg(&static_host.vmm_home)
+        .arg("--state-dir")
+        .arg(&static_host.state_dir)
+        .arg("--sys-root")
+        .arg(&static_host.sys_root)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(!dup.status.success(), "duplicate local VM IP must fail");
+    let dj: Value = serde_json::from_slice(&dup.stdout).unwrap();
+    assert_eq!(dj["ready"], false);
+    assert_eq!(dj["service_ip_ok"], false);
+    assert!(dj["conflicts"].as_array().unwrap().iter().any(|v| v
+        .as_str()
+        .unwrap_or("")
+        .contains("already recorded for local VM")));
+
+    // 3. 1:1 multi-VM port-offset DNAT + forward check (guest_port == host_port == base+1 for
+    //    P2P/Radicle; fixed guest 9000 -> host 9001 for Hyperlane).
+    fs::remove_file(static_host.state_dir.join("vms/node-b.json")).unwrap();
+    let offset1_nft = r#"{"nftables":[
+      {"metainfo":{"version":"1.1.6","json_schema_version":1}},
+      {"table":{"family":"inet","name":"host_firewall","handle":66}},
+      {"chain":{"family":"inet","table":"host_firewall","name":"forward","handle":2,"type":"filter","hook":"forward","prio":0,"policy":"drop"}},
+      {"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":700,"comment":"outbound:validator_vms","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},
+        {"accept":null}
+      ]}},
+      {"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":801,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"10.77.0.88"}},
+        {"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":30304}},
+        {"accept":null}
+      ]}},
+      {"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":802,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"10.77.0.88"}},
+        {"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"udp","field":"dport"}},"right":30304}},
+        {"accept":null}
+      ]}},
+      {"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":803,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"10.77.0.88"}},
+        {"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":30401}},
+        {"accept":null}
+      ]}},
+      {"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":804,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"10.77.0.88"}},
+        {"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"udp","field":"dport"}},"right":31304}},
+        {"accept":null}
+      ]}},
+      {"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":805,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"10.77.0.88"}},
+        {"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":8777}},
+        {"accept":null}
+      ]}},
+      {"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":806,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"10.77.0.88"}},
+        {"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9000}},
+        {"accept":null}
+      ]}},
+      {"table":{"family":"ip","name":"host_firewall_nat","handle":67}},
+      {"chain":{"family":"ip","table":"host_firewall_nat","name":"prerouting","handle":1,"type":"nat","hook":"prerouting","prio":-100,"policy":"accept"}},
+      {"chain":{"family":"ip","table":"host_firewall_nat","name":"postrouting","handle":2,"type":"nat","hook":"postrouting","prio":100,"policy":"accept"}},
+      {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":901,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":30304}},
+        {"dnat":{"addr":"10.77.0.88"}}
+      ]}},
+      {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":902,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"udp","field":"dport"}},"right":30304}},
+        {"dnat":{"addr":"10.77.0.88"}}
+      ]}},
+      {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":903,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":30401}},
+        {"dnat":{"addr":"10.77.0.88"}}
+      ]}},
+      {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":904,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"udp","field":"dport"}},"right":31304}},
+        {"dnat":{"addr":"10.77.0.88"}}
+      ]}},
+      {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":905,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":8777}},
+        {"dnat":{"addr":"10.77.0.88"}}
+      ]}},
+      {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":906,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":9001}},
+        {"dnat":{"addr":"10.77.0.88","port":9000}}
+      ]}},
+      {"rule":{"family":"ip","table":"host_firewall_nat","chain":"postrouting","handle":468,"comment":"outbound:validator_vms","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},
+        {"match":{"op":"!=","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},
+        {"masquerade":null}
+      ]}}
+    ]}"#;
+    fs::write(static_host._tmp.path().join("nft.json"), offset1_nft).unwrap();
+    let offset_ok = Command::new(OUTBE_UP_BIN)
+        .env("PATH", static_host.path_env())
+        .args([
+            "host",
+            "check",
+            "--vm",
+            "node-a",
+            "--port",
+            "30304/tcp",
+            "--port",
+            "30304/udp",
+            "--port",
+            "30401/tcp",
+            "--port",
+            "31304/udp",
+            "--port",
+            "8777/tcp",
+            "--port",
+            "9000:9001/tcp",
+            "--vmm-socket",
+        ])
+        .arg(&static_host.vmm_socket)
+        .arg("--vmm-home")
+        .arg(&static_host.vmm_home)
+        .arg("--state-dir")
+        .arg(&static_host.state_dir)
+        .arg("--sys-root")
+        .arg(&static_host.sys_root)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        offset_ok.status.success(),
+        "Option 1 offset DNAT host check failed:\n{}",
+        String::from_utf8_lossy(&offset_ok.stderr)
+    );
+    let oj: Value = serde_json::from_slice(&offset_ok.stdout).unwrap();
+    assert_eq!(oj["ready"], true);
+    assert_eq!(oj["published_ports_ok"], true);
+    assert!(static_host.mutations().is_empty());
 }

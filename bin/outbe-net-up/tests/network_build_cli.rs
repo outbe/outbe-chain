@@ -68,6 +68,9 @@ certified_rpc: "http://10.77.0.68:8545"
 vm:
   vmm_host:
     host: 162.19.107.121
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
 founders:
 {}
 hyperlane:
@@ -132,6 +135,9 @@ certified_rpc: "http://10.77.0.80:8545"
 vm:
   vmm_host:
     host: 162.19.107.121
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
 founders:
   - name: validator-0
     advertise_ip: 162.19.107.121
@@ -209,10 +215,28 @@ genesis:
     assert!(bootnodes.contains("@141.95.168.110:30304"), "{bootnodes}");
 
     let env0 = fs::read_to_string(testnet_out.join("vm/validator-0/validator.env")).unwrap();
+    assert!(
+        env0.contains("OUTBE_EXTERNAL_IP=\"162.19.107.121\""),
+        "{env0}"
+    );
+    assert!(env0.contains("OUTBE_RPC_BIND_IP=\"10.77.0.80\""), "{env0}");
+    assert!(env0.contains("OUTBE_VM_PREFIX=\"24\""), "{env0}");
+    assert!(env0.contains("OUTBE_VM_GATEWAY=\"10.77.0.1\""), "{env0}");
+    assert!(env0.contains("OUTBE_VM_DNS=\"1.1.1.1,8.8.8.8\""), "{env0}");
+    assert!(env0.contains("OUTBE_CONSENSUS_PORT=\"30400\""), "{env0}");
+    assert!(env0.contains("OUTBE_RETH_PORT=\"30303\""), "{env0}");
+    assert!(env0.contains("OUTBE_DISCV5_PORT=\"31303\""), "{env0}");
+    assert!(env0.contains("OUTBE_RADICLE_PORT=\"8776\""), "{env0}");
     assert!(env0.contains("162.19.107.121:30400"), "{env0}");
     assert!(env0.contains("162.19.107.121:30401"), "{env0}");
     assert!(env0.contains("141.95.168.110:30400"), "{env0}");
     assert!(env0.contains("141.95.168.110:30401"), "{env0}");
+
+    let env1 = fs::read_to_string(testnet_out.join("vm/validator-1/validator.env")).unwrap();
+    assert!(env1.contains("OUTBE_CONSENSUS_PORT=\"30401\""), "{env1}");
+    assert!(env1.contains("OUTBE_RETH_PORT=\"30304\""), "{env1}");
+    assert!(env1.contains("OUTBE_DISCV5_PORT=\"31304\""), "{env1}");
+    assert!(env1.contains("OUTBE_RADICLE_PORT=\"8777\""), "{env1}");
 
     let feeder0 =
         fs::read_to_string(testnet_out.join("vm/validator-0/feeder-public.toml")).unwrap();

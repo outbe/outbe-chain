@@ -1530,6 +1530,9 @@ network:
   certified_rpc: "http://10.77.0.10:8545"
   advertise_ip: 10.77.0.20
   rpc_bind_ip: 10.77.0.20
+  vm_prefix: 24
+  vm_gateway: 10.77.0.1
+  vm_dns: [1.1.1.1, 8.8.8.8]
   bootnodes:
     - "enode://abcd@10.77.0.10:30303"
   consensus_peers:
@@ -1560,6 +1563,9 @@ network:
   certified_rpc: "http://10.77.0.10:8545"
   advertise_ip: 10.77.0.21
   rpc_bind_ip: 10.77.0.21
+  vm_prefix: 24
+  vm_gateway: 10.77.0.1
+  vm_dns: [1.1.1.1, 8.8.8.8]
   bootnodes:
     - "enode://abcd@10.77.0.10:30303"
   use_local_defaults: true

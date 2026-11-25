@@ -58,6 +58,15 @@ pub struct VmNetworkConfig {
     /// Host Linux bridge name attached to VM NICs.
     #[serde(default = "default_vm_bridge")]
     pub bridge: String,
+    /// IPv4 CIDR prefix length for VM static addressing (required, 1..=30, e.g. `24`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<u8>,
+    /// Default IPv4 gateway for VM static addressing (required, e.g. `10.77.0.1`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<Ipv4Addr>,
+    /// IPv4 DNS servers for VM static addressing (required non-empty, e.g. `[1.1.1.1, 8.8.8.8]`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dns: Vec<Ipv4Addr>,
     /// Legacy optional dnsmasq DHCP hosts file override (hosts now auto-discover via `outbe-up host reserve`).
     #[serde(default = "default_vm_dhcp_hosts_file")]
     pub dhcp_hosts_file: PathBuf,
@@ -159,6 +168,25 @@ impl FounderPublishedPorts {
             ("reth_discv5", "udp", self.reth_discv5_udp),
         ]
     }
+
+    /// Return `outbe-up host check|publish --port` specs for 1:1 P2P/Radicle DNAT
+    /// (`host_port == guest_port == base + offset`) plus Hyperlane (`9000 -> 9000 + offset`).
+    #[allow(dead_code)]
+    pub fn publish_port_specs(self) -> Vec<String> {
+        let hyperlane = if self.hyperlane_tcp == BASE_HYPERLANE_PORT {
+            format!("{BASE_HYPERLANE_PORT}/tcp")
+        } else {
+            format!("{BASE_HYPERLANE_PORT}:{}/tcp", self.hyperlane_tcp)
+        };
+        vec![
+            format!("{}/tcp", self.reth_p2p_tcp),
+            format!("{}/udp", self.reth_p2p_udp),
+            format!("{}/tcp", self.consensus_p2p_tcp),
+            format!("{}/udp", self.reth_discv5_udp),
+            format!("{}/tcp", self.radicle_tcp),
+            hyperlane,
+        ]
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -166,6 +194,9 @@ pub struct ResolvedFounderVm {
     pub vmm_host: Ssh,
     pub vmm_home: String,
     pub bridge: String,
+    pub prefix: u8,
+    pub gateway: Ipv4Addr,
+    pub dns: Vec<Ipv4Addr>,
     #[allow(dead_code)]
     pub dhcp_hosts_file: PathBuf,
     #[allow(dead_code)]
@@ -358,6 +389,18 @@ impl NetworkConfig {
                 "vm.bridge must use letters, digits, `-`, or `_`"
             );
             ensure!(
+                vm.prefix.is_some_and(|p| (1..=30).contains(&p)),
+                "vm.prefix is required and must be an IPv4 prefix length in 1..=30"
+            );
+            ensure!(
+                vm.gateway.is_some(),
+                "vm.gateway is required for VM static addressing"
+            );
+            ensure!(
+                !vm.dns.is_empty(),
+                "vm.dns is required and must list at least one IPv4 DNS server"
+            );
+            ensure!(
                 vm.dhcp_hosts_file.is_absolute(),
                 "vm.dhcp_hosts_file must be an absolute path"
             );
@@ -424,6 +467,21 @@ impl NetworkConfig {
                     "vm.bridge_ip for {} must be a private IPv4 address",
                     founder.name
                 );
+                ensure!(
+                    founder.rpc_bind_ip == resolved.bridge_ip,
+                    "founder {} rpc_bind_ip ({}) must equal vm.bridge_ip ({}) for static VM addressing",
+                    founder.name,
+                    founder.rpc_bind_ip,
+                    resolved.bridge_ip
+                );
+                outbe_operator_node_role::vm_network::StaticVmNetworkConfig {
+                    address: resolved.bridge_ip,
+                    prefix_len: resolved.prefix,
+                    gateway: resolved.gateway,
+                    dns: resolved.dns.clone(),
+                }
+                .validate()
+                .wrap_err_with(|| format!("invalid static VM addressing for {}", founder.name))?;
                 ensure!(
                     bridge_ips_per_host
                         .insert((resolved.vmm_host.host.clone(), resolved.bridge_ip)),
@@ -586,6 +644,13 @@ impl NetworkConfig {
             .clone()
             .or_else(|| defaults.vmm_host.clone())
             .ok_or_else(|| eyre::eyre!("missing vm.vmm_host for founder {}", founder.name))?;
+        let prefix = defaults
+            .prefix
+            .ok_or_else(|| eyre::eyre!("missing vm.prefix in network config"))?;
+        let gateway = defaults
+            .gateway
+            .ok_or_else(|| eyre::eyre!("missing vm.gateway in network config"))?;
+        ensure!(!defaults.dns.is_empty(), "missing vm.dns in network config");
         Ok(ResolvedFounderVm {
             vmm_host,
             vmm_home: override_cfg
@@ -596,6 +661,9 @@ impl NetworkConfig {
                 .bridge
                 .clone()
                 .unwrap_or_else(|| defaults.bridge.clone()),
+            prefix,
+            gateway,
+            dns: defaults.dns.clone(),
             dhcp_hosts_file: defaults.dhcp_hosts_file.clone(),
             dhcp_leases_file: defaults.dhcp_leases_file.clone(),
             dhcp_pid_file: defaults.dhcp_pid_file.clone(),
@@ -903,6 +971,9 @@ certified_rpc: "http://10.77.0.10:8545"
 vm:
   vmm_host:
     host: 162.19.107.121
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
 founders:
   - name: validator-0
     advertise_ip: 162.19.107.121
@@ -978,6 +1049,49 @@ genesis:
             .validate()
             .unwrap_err();
         assert!(format!("{ovf_err:#}").contains("overflows"), "{ovf_err:#}");
+
+        // 1:1 P2P/Radicle publish port specs (guest == host == base + offset), Hyperlane fixed 9000.
+        let p0 = FounderPublishedPorts::from_offset(0).unwrap();
+        assert_eq!(
+            p0.publish_port_specs(),
+            vec![
+                "30303/tcp",
+                "30303/udp",
+                "30400/tcp",
+                "31303/udp",
+                "8776/tcp",
+                "9000/tcp",
+            ]
+        );
+        let p1 = FounderPublishedPorts::from_offset(1).unwrap();
+        assert_eq!(
+            p1.publish_port_specs(),
+            vec![
+                "30304/tcp",
+                "30304/udp",
+                "30401/tcp",
+                "31304/udp",
+                "8777/tcp",
+                "9000:9001/tcp",
+            ]
+        );
+
+        // Missing static VM fields (prefix/gateway/dns) and rpc_bind_ip != bridge_ip are rejected.
+        let mut missing_prefix = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
+        missing_prefix.vm.as_mut().unwrap().prefix = None;
+        assert!(missing_prefix
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("vm.prefix"));
+
+        let mut mismatch_bind = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
+        mismatch_bind.founders[0].rpc_bind_ip = Ipv4Addr::LOCALHOST;
+        assert!(mismatch_bind
+            .validate()
+            .unwrap_err()
+            .to_string()
+            .contains("must equal vm.bridge_ip"));
     }
 
     #[test]
@@ -992,6 +1106,9 @@ certified_rpc: "http://10.77.0.68:8545"
 vm:
   vmm_host:
     host: 162.19.107.121
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
 founders:
 {}
 hyperlane:

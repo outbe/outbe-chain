@@ -1,13 +1,13 @@
-//! Runtime hybrid service-IP configuration for Outbe VMs (Owner Decision 10).
+//! Plain static IPv4 configuration for Outbe VMs (Owner Decision 10, revised).
 //!
-//! Keeps the DHCPv4 lease acquired on the guest bridge interface (for gateway, prefix, DNS, and
-//! host-free bring-up) while adding the node's deterministic `OUTBE_RPC_BIND_IP` as a static
-//! secondary IPv4 address via a runtime `systemd-networkd` drop-in under `/run/systemd/network/`.
-//!
-//! Uses `networkctl reload` ONLY (never `networkctl reconfigure`), which in systemd 257 applies
-//! the new `.network.d` drop-in seamlessly without tearing down the active DHCPv4 lease.
+//! Reads the VM's static network parameters from `/opt/outbe-chain/validator.env`
+//! (`OUTBE_RPC_BIND_IP`, `OUTBE_VM_PREFIX`, `OUTBE_VM_GATEWAY`, `OUTBE_VM_DNS`), writes one
+//! runtime `systemd-networkd` drop-in under `/run/systemd/network/20-wired.network.d/`, runs
+//! `networkctl reload`, and waits bounded until the static IPv4 address (non-tentative, no DAD
+//! conflict) and default route via the configured gateway are up.
 
 use std::{
+    collections::{BTreeMap, BTreeSet},
     fs, io,
     io::Write,
     net::Ipv4Addr,
@@ -28,68 +28,286 @@ use rustix::{
 use serde_json::Value;
 
 pub const DEFAULT_NETWORKD_RUN_DIR: &str = "/run/systemd/network";
-pub const SERVICE_IP_DROPIN_NAME: &str = "80-outbe-service-ip.conf";
-pub const DEFAULT_DHCP_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
-pub const DEFAULT_DHCP_POLL_INTERVAL: Duration = Duration::from_millis(500);
+pub const BASE_NETWORK_FILE_NAME: &str = "20-wired.network";
+pub const STATIC_NETWORK_DROPIN_NAME: &str = "80-outbe-static.conf";
 pub const DEFAULT_APPLY_WAIT_TIMEOUT: Duration = Duration::from_secs(30);
 pub const DEFAULT_APPLY_POLL_INTERVAL: Duration = Duration::from_millis(250);
-const PREFERRED_SERVICE_METRIC: u32 = 512;
-const DEFAULT_DHCP_ROUTE_METRIC: u32 = 1024;
 
-/// Discovered live DHCPv4 parameters for the guest's primary bridge interface.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct DiscoveredDhcpConfig {
-    pub iface: String,
-    pub dhcp_ip: Ipv4Addr,
-    pub prefix_len: u8,
-    pub network: Ipv4Addr,
-    pub broadcast: Ipv4Addr,
-    pub gateway: Ipv4Addr,
-    pub dhcp_metric: u32,
-    pub network_file_name: String,
+pub const DEFAULT_CONSENSUS_PORT: u16 = 30_400;
+pub const DEFAULT_RETH_PORT: u16 = 30_303;
+pub const DEFAULT_DISCV5_PORT: u16 = 31_303;
+pub const DEFAULT_RADICLE_PORT: u16 = 8_776;
+const FIXED_GUEST_PORTS: &[u16] = &[8_545, 8_551, 8_876, 9_000, 9_002, 9_003, 9_101];
+
+/// Validated explicit VM listen/advertise ports from `validator.env` (`OUTBE_*_PORT`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VmPortsConfig {
+    pub consensus_port: u16,
+    pub reth_port: u16,
+    pub discv5_port: u16,
+    pub radicle_port: u16,
 }
 
-/// Summary of the applied hybrid service-IP configuration.
+impl Default for VmPortsConfig {
+    fn default() -> Self {
+        Self {
+            consensus_port: DEFAULT_CONSENSUS_PORT,
+            reth_port: DEFAULT_RETH_PORT,
+            discv5_port: DEFAULT_DISCV5_PORT,
+            radicle_port: DEFAULT_RADICLE_PORT,
+        }
+    }
+}
+
+impl VmPortsConfig {
+    /// Parse and strictly validate the four explicit VM port keys from `validator.env`.
+    pub fn from_env(values: &BTreeMap<String, String>) -> Result<Self> {
+        let cfg = Self {
+            consensus_port: parse_port_env(values, "OUTBE_CONSENSUS_PORT")?,
+            reth_port: parse_port_env(values, "OUTBE_RETH_PORT")?,
+            discv5_port: parse_port_env(values, "OUTBE_DISCV5_PORT")?,
+            radicle_port: parse_port_env(values, "OUTBE_RADICLE_PORT")?,
+        };
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    /// Strictly validate that all four ports are non-zero, pairwise distinct, and do not collide
+    /// with fixed guest ports (8545, 8551, 8876, 9000, 9002, 9003, 9101).
+    pub fn validate(&self) -> Result<()> {
+        let entries = [
+            ("OUTBE_CONSENSUS_PORT", self.consensus_port),
+            ("OUTBE_RETH_PORT", self.reth_port),
+            ("OUTBE_DISCV5_PORT", self.discv5_port),
+            ("OUTBE_RADICLE_PORT", self.radicle_port),
+        ];
+        let mut seen: BTreeMap<u16, &'static str> = BTreeMap::new();
+        for (name, port) in entries {
+            ensure!(port > 0, "{name} must be in 1..=65535, got 0");
+            ensure!(
+                !FIXED_GUEST_PORTS.contains(&port),
+                "{name} ({port}) collides with a fixed guest service port"
+            );
+            if let Some(prev) = seen.insert(port, name) {
+                bail!("{name} ({port}) collides with {prev} ({port})");
+            }
+        }
+        Ok(())
+    }
+}
+
+fn parse_port_env(values: &BTreeMap<String, String>, key: &str) -> Result<u16> {
+    let raw = values
+        .get(key)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| eyre::eyre!("missing {key} in validator.env"))?;
+    ensure!(
+        raw.bytes().all(|b| b.is_ascii_digit()),
+        "{key} must be a decimal port in 1..=65535, got `{raw}`"
+    );
+    let port: u16 = raw
+        .parse()
+        .wrap_err_with(|| format!("{key} must be in 1..=65535, got `{raw}`"))?;
+    ensure!(port > 0, "{key} must be in 1..=65535, got 0");
+    Ok(port)
+}
+
+/// Validated static IPv4 configuration for one Outbe VM from `validator.env`.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AppliedServiceIp {
-    pub iface: String,
-    pub dhcp_ip: Ipv4Addr,
-    pub service_ip: Ipv4Addr,
+pub struct StaticVmNetworkConfig {
+    pub address: Ipv4Addr,
     pub prefix_len: u8,
     pub gateway: Ipv4Addr,
-    pub service_metric: u32,
+    pub dns: Vec<Ipv4Addr>,
+}
+
+impl StaticVmNetworkConfig {
+    /// Parse and strictly validate static VM network keys from `validator.env`.
+    pub fn from_env(values: &BTreeMap<String, String>) -> Result<Self> {
+        let raw_ip = values
+            .get("OUTBE_RPC_BIND_IP")
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| eyre::eyre!("missing OUTBE_RPC_BIND_IP in validator.env"))?;
+        let address: Ipv4Addr = raw_ip
+            .parse()
+            .wrap_err("OUTBE_RPC_BIND_IP must be an IPv4 literal")?;
+
+        let raw_prefix = values
+            .get("OUTBE_VM_PREFIX")
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| eyre::eyre!("missing OUTBE_VM_PREFIX in validator.env"))?;
+        ensure!(
+            raw_prefix.bytes().all(|b| b.is_ascii_digit()),
+            "OUTBE_VM_PREFIX must be a decimal integer in 1..=30, got `{raw_prefix}`"
+        );
+        let prefix_len: u8 = raw_prefix
+            .parse()
+            .wrap_err_with(|| format!("invalid OUTBE_VM_PREFIX `{raw_prefix}`"))?;
+
+        let raw_gateway = values
+            .get("OUTBE_VM_GATEWAY")
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| eyre::eyre!("missing OUTBE_VM_GATEWAY in validator.env"))?;
+        let gateway: Ipv4Addr = raw_gateway
+            .parse()
+            .wrap_err("OUTBE_VM_GATEWAY must be an IPv4 literal")?;
+
+        let raw_dns = values
+            .get("OUTBE_VM_DNS")
+            .filter(|v| !v.is_empty())
+            .ok_or_else(|| eyre::eyre!("missing OUTBE_VM_DNS in validator.env"))?;
+        let dns = parse_dns_list(raw_dns)?;
+
+        let cfg = Self {
+            address,
+            prefix_len,
+            gateway,
+            dns,
+        };
+        cfg.validate()?;
+        Ok(cfg)
+    }
+
+    /// Strictly validate address, prefix length, gateway, and DNS servers.
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.address.is_loopback() && self.address.is_private(),
+            "VM static IP (OUTBE_RPC_BIND_IP) must be a non-loopback private IPv4 address, got {}",
+            self.address
+        );
+        let (network, broadcast) = subnet_bounds(self.address, self.prefix_len)?;
+        ensure!(
+            self.address != network && self.address != broadcast,
+            "VM static IP {} cannot be the network ({network}) or broadcast ({broadcast}) address of {network}/{}",
+            self.address,
+            self.prefix_len
+        );
+
+        ensure!(
+            !self.gateway.is_unspecified()
+                && !self.gateway.is_broadcast()
+                && !self.gateway.is_multicast()
+                && !self.gateway.is_loopback(),
+            "OUTBE_VM_GATEWAY must be a valid unicast IPv4 address, got {}",
+            self.gateway
+        );
+        let mask = !0u32 << (32 - self.prefix_len);
+        ensure!(
+            (u32::from(self.gateway) & mask) == u32::from(network),
+            "OUTBE_VM_GATEWAY {} is outside VM subnet {network}/{}",
+            self.gateway,
+            self.prefix_len
+        );
+        ensure!(
+            self.gateway != network && self.gateway != broadcast,
+            "OUTBE_VM_GATEWAY {} cannot be the network ({network}) or broadcast ({broadcast}) address of {network}/{}",
+            self.gateway,
+            self.prefix_len
+        );
+        ensure!(
+            self.gateway != self.address,
+            "OUTBE_VM_GATEWAY {} cannot equal VM static IP {}",
+            self.gateway,
+            self.address
+        );
+
+        ensure!(
+            !self.dns.is_empty(),
+            "OUTBE_VM_DNS must list at least one IPv4 DNS server"
+        );
+        let mut seen = BTreeSet::new();
+        for server in &self.dns {
+            validate_dns_ip(*server)?;
+            ensure!(
+                seen.insert(*server),
+                "duplicate DNS server {server} in OUTBE_VM_DNS"
+            );
+        }
+        Ok(())
+    }
+}
+
+/// Parse a strict comma-separated list of IPv4 DNS servers (no whitespace, no empty items, no duplicates).
+pub fn parse_dns_list(raw: &str) -> Result<Vec<Ipv4Addr>> {
+    ensure!(
+        !raw.is_empty(),
+        "OUTBE_VM_DNS must list at least one IPv4 DNS server"
+    );
+    ensure!(
+        !raw.chars().any(char::is_whitespace),
+        "OUTBE_VM_DNS must not contain whitespace: `{raw}`"
+    );
+    let mut servers = Vec::new();
+    let mut seen = BTreeSet::new();
+    for item in raw.split(',') {
+        ensure!(
+            !item.is_empty(),
+            "OUTBE_VM_DNS contains an empty entry: `{raw}`"
+        );
+        let ip: Ipv4Addr = item
+            .parse()
+            .wrap_err_with(|| format!("invalid IPv4 address `{item}` in OUTBE_VM_DNS"))?;
+        validate_dns_ip(ip)?;
+        ensure!(seen.insert(ip), "duplicate DNS server {ip} in OUTBE_VM_DNS");
+        servers.push(ip);
+    }
+    Ok(servers)
+}
+
+/// Format a validated DNS server list for `validator.env`.
+pub fn format_dns_list(servers: &[Ipv4Addr]) -> String {
+    servers
+        .iter()
+        .map(Ipv4Addr::to_string)
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn validate_dns_ip(ip: Ipv4Addr) -> Result<()> {
+    ensure!(
+        !ip.is_unspecified() && !ip.is_broadcast() && !ip.is_multicast(),
+        "OUTBE_VM_DNS contains invalid IPv4 server address {ip}"
+    );
+    Ok(())
+}
+
+/// Summary of the applied static VM network configuration.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AppliedStaticNetwork {
+    pub iface: String,
+    pub address: Ipv4Addr,
+    pub prefix_len: u8,
+    pub gateway: Ipv4Addr,
+    pub dns: Vec<Ipv4Addr>,
     pub dropin_path: PathBuf,
 }
 
-/// Runtime timing and filesystem configuration for [`configure_service_ip_with_backend`].
+/// Runtime timing and filesystem configuration for [`configure_static_network_with_backend`].
 #[derive(Clone, Debug)]
-pub struct ServiceIpOptions {
+pub struct StaticNetworkOptions {
     pub networkd_run_dir: PathBuf,
-    pub dhcp_wait_timeout: Duration,
-    pub dhcp_poll_interval: Duration,
+    pub network_file_name: String,
     pub apply_wait_timeout: Duration,
     pub apply_poll_interval: Duration,
 }
 
-impl Default for ServiceIpOptions {
+impl Default for StaticNetworkOptions {
     fn default() -> Self {
         Self {
             networkd_run_dir: PathBuf::from(DEFAULT_NETWORKD_RUN_DIR),
-            dhcp_wait_timeout: DEFAULT_DHCP_WAIT_TIMEOUT,
-            dhcp_poll_interval: DEFAULT_DHCP_POLL_INTERVAL,
+            network_file_name: BASE_NETWORK_FILE_NAME.to_owned(),
             apply_wait_timeout: DEFAULT_APPLY_WAIT_TIMEOUT,
             apply_poll_interval: DEFAULT_APPLY_POLL_INTERVAL,
         }
     }
 }
 
-/// Injectable guest networking backend so all discovery, drop-in rendering, reload, DAD, and
-/// preferred-source route readiness logic can be unit-tested offline against real captures.
+/// Injectable guest networking backend so static drop-in rendering, reload, DAD, and default route
+/// readiness logic can be unit-tested offline against fixtures.
 pub trait GuestNetBackend {
+    fn ip_link_show(&self) -> Result<String>;
     fn ip_addr_show(&self) -> Result<String>;
-    fn ip_route_default(&self) -> Result<String>;
     fn ip_route_show(&self, iface: &str) -> Result<String>;
-    fn networkctl_status(&self, iface: &str) -> Result<String>;
     fn networkctl_reload(&self) -> Result<()>;
     fn sleep(&self, duration: Duration);
 }
@@ -98,20 +316,16 @@ pub trait GuestNetBackend {
 pub struct LiveGuestNetBackend;
 
 impl GuestNetBackend for LiveGuestNetBackend {
+    fn ip_link_show(&self) -> Result<String> {
+        run_capture("ip", &["-j", "link", "show"])
+    }
+
     fn ip_addr_show(&self) -> Result<String> {
         run_capture("ip", &["-j", "-4", "addr", "show"])
     }
 
-    fn ip_route_default(&self) -> Result<String> {
-        run_capture("ip", &["-j", "-4", "route", "show", "default"])
-    }
-
     fn ip_route_show(&self, iface: &str) -> Result<String> {
         run_capture("ip", &["-j", "-4", "route", "show", "dev", iface])
-    }
-
-    fn networkctl_status(&self, iface: &str) -> Result<String> {
-        run_capture("networkctl", &["--json=short", "status", iface])
     }
 
     fn networkctl_reload(&self) -> Result<()> {
@@ -149,244 +363,77 @@ fn run_capture(program: &str, args: &[&str]) -> Result<String> {
         .wrap_err_with(|| format!("non-UTF-8 stdout from `{program} {}`", args.join(" ")))
 }
 
-/// Configure `service_ip` (`OUTBE_RPC_BIND_IP`) on the live guest's DHCP bridge interface.
-pub fn configure_service_ip(service_ip: Ipv4Addr) -> Result<AppliedServiceIp> {
-    configure_service_ip_with_backend(
-        service_ip,
+/// Configure plain static IPv4 addressing on the live guest's bridge interface.
+pub fn configure_static_network(config: &StaticVmNetworkConfig) -> Result<AppliedStaticNetwork> {
+    configure_static_network_with_backend(
+        config,
         &LiveGuestNetBackend,
-        &ServiceIpOptions::default(),
+        &StaticNetworkOptions::default(),
     )
 }
 
-/// Configure `service_ip` using an injectable [`GuestNetBackend`] and [`ServiceIpOptions`].
-pub fn configure_service_ip_with_backend(
-    service_ip: Ipv4Addr,
+/// Configure plain static IPv4 addressing using an injectable [`GuestNetBackend`].
+pub fn configure_static_network_with_backend(
+    config: &StaticVmNetworkConfig,
     backend: &dyn GuestNetBackend,
-    options: &ServiceIpOptions,
-) -> Result<AppliedServiceIp> {
-    ensure!(
-        !service_ip.is_loopback() && service_ip.is_private(),
-        "VM service IP (OUTBE_RPC_BIND_IP) must be a non-loopback private IPv4 address, got {service_ip}"
-    );
+    options: &StaticNetworkOptions,
+) -> Result<AppliedStaticNetwork> {
+    config.validate()?;
 
-    let dhcp = wait_for_dhcp_config(backend, options)?;
-    validate_service_ip_against_dhcp(service_ip, &dhcp)?;
+    let link_json = backend.ip_link_show()?;
+    let iface = parse_primary_interface(&link_json)?.ok_or_else(|| {
+        eyre::eyre!("no en*/eth* network interface found for static VM IP configuration")
+    })?;
 
-    let service_metric = compute_service_metric(dhcp.dhcp_metric)?;
-    let dropin_content = render_service_ip_dropin(service_ip, &dhcp, service_metric);
+    let dropin_content = render_static_network_dropin(config);
     let dropin_path = write_networkd_dropin_secure(
         &options.networkd_run_dir,
-        &dhcp.network_file_name,
+        &options.network_file_name,
         &dropin_content,
     )?;
 
     backend
         .networkctl_reload()
-        .wrap_err("failed to reload systemd-networkd after writing service-IP drop-in")?;
+        .wrap_err("failed to reload systemd-networkd after writing static network drop-in")?;
 
-    wait_for_service_ip_ready(backend, service_ip, &dhcp, service_metric, options)?;
+    wait_for_static_network_ready(backend, &iface, config, options)?;
 
-    Ok(AppliedServiceIp {
-        iface: dhcp.iface,
-        dhcp_ip: dhcp.dhcp_ip,
-        service_ip,
-        prefix_len: dhcp.prefix_len,
-        gateway: dhcp.gateway,
-        service_metric,
+    Ok(AppliedStaticNetwork {
+        iface,
+        address: config.address,
+        prefix_len: config.prefix_len,
+        gateway: config.gateway,
+        dns: config.dns.clone(),
         dropin_path,
     })
-}
-
-fn wait_for_dhcp_config(
-    backend: &dyn GuestNetBackend,
-    options: &ServiceIpOptions,
-) -> Result<DiscoveredDhcpConfig> {
-    let deadline = Instant::now() + options.dhcp_wait_timeout;
-
-    loop {
-        let last_reason = match probe_dhcp_config(backend) {
-            Ok(Some(config)) => return Ok(config),
-            Ok(None) => {
-                "no active en*/eth* interface with a dynamic DHCPv4 lease and default gateway yet"
-                    .to_owned()
-            }
-            Err(err) => format!("{err:#}"),
-        };
-
-        if Instant::now() >= deadline {
-            bail!(
-                "timed out after {}s waiting for guest DHCPv4 lease/gateway/networkd file before configuring VM service IP (refusing to guess subnet prefix): {last_reason}",
-                options.dhcp_wait_timeout.as_secs()
-            );
-        }
-        backend.sleep(options.dhcp_poll_interval);
-    }
-}
-
-fn probe_dhcp_config(backend: &dyn GuestNetBackend) -> Result<Option<DiscoveredDhcpConfig>> {
-    let addr_json = backend.ip_addr_show()?;
-    let Some((iface, dhcp_ip, prefix_len)) = parse_dhcp_interface_addr(&addr_json)? else {
-        return Ok(None);
-    };
-    let (network, broadcast) = subnet_bounds(dhcp_ip, prefix_len)?;
-
-    let default_route_json = backend.ip_route_default()?;
-    let Some((gateway, dhcp_metric)) = parse_default_route(&default_route_json, &iface)? else {
-        return Ok(None);
-    };
-
-    let status_json = backend.networkctl_status(&iface)?;
-    let Some(network_file_name) = parse_network_file_name(&status_json)? else {
-        return Ok(None);
-    };
-
-    Ok(Some(DiscoveredDhcpConfig {
-        iface,
-        dhcp_ip,
-        prefix_len,
-        network,
-        broadcast,
-        gateway,
-        dhcp_metric,
-        network_file_name,
-    }))
 }
 
 fn is_candidate_bridge_iface(name: &str) -> bool {
     name.starts_with("eth") || name.starts_with("en")
 }
 
-/// Parse `ip -j -4 addr show` and return the first active `en*`/`eth*` interface carrying a
-/// `scope: "global"`, `dynamic: true` IPv4 address `(iface, dhcp_ip, prefix_len)`.
-pub fn parse_dhcp_interface_addr(raw_json: &str) -> Result<Option<(String, Ipv4Addr, u8)>> {
-    let parsed: Value =
-        serde_json::from_str(raw_json).wrap_err("parse `ip -j -4 addr show` JSON")?;
-    let ifaces = parsed
+/// Parse `ip -j link show` and return the first `en*`/`eth*` interface name.
+pub fn parse_primary_interface(raw_json: &str) -> Result<Option<String>> {
+    let parsed: Value = serde_json::from_str(raw_json).wrap_err("parse `ip -j link show` JSON")?;
+    let links = parsed
         .as_array()
-        .ok_or_else(|| eyre::eyre!("`ip -j -4 addr show` JSON root is not an array"))?;
+        .ok_or_else(|| eyre::eyre!("`ip -j link show` JSON root is not an array"))?;
 
-    for iface in ifaces {
-        let Some(name) = iface.get("ifname").and_then(Value::as_str) else {
+    for link in links {
+        let Some(name) = link.get("ifname").and_then(Value::as_str) else {
             continue;
         };
-        if !is_candidate_bridge_iface(name) {
-            continue;
-        }
-        let operstate = iface.get("operstate").and_then(Value::as_str).unwrap_or("");
-        let flags_up = iface
-            .get("flags")
-            .and_then(Value::as_array)
-            .is_some_and(|arr| arr.iter().any(|f| f.as_str() == Some("UP")));
-        if operstate != "UP" && !flags_up {
-            continue;
-        }
-
-        let Some(addrs) = iface.get("addr_info").and_then(Value::as_array) else {
-            continue;
-        };
-        for addr in addrs {
-            if addr.get("family").and_then(Value::as_str) != Some("inet") {
-                continue;
-            }
-            if addr.get("scope").and_then(Value::as_str) != Some("global") {
-                continue;
-            }
-            if addr.get("dynamic").and_then(Value::as_bool) != Some(true) {
-                continue;
-            }
-            if addr.get("tentative").and_then(Value::as_bool) == Some(true)
-                || addr.get("dadfailed").and_then(Value::as_bool) == Some(true)
-            {
-                continue;
-            }
-            let Some(local_str) = addr.get("local").and_then(Value::as_str) else {
-                continue;
-            };
-            let Some(prefix_u64) = addr.get("prefixlen").and_then(Value::as_u64) else {
-                continue;
-            };
-            let ip: Ipv4Addr = local_str
-                .parse()
-                .wrap_err_with(|| format!("invalid IPv4 address `{local_str}` on {name}"))?;
-            let prefix_len = u8::try_from(prefix_u64)
-                .wrap_err_with(|| format!("invalid prefixlen `{prefix_u64}` on {name}"))?;
-            return Ok(Some((name.to_owned(), ip, prefix_len)));
+        if is_candidate_bridge_iface(name) {
+            return Ok(Some(name.to_owned()));
         }
     }
     Ok(None)
 }
 
-/// Parse `ip -j -4 route show default` for `iface`, returning `(gateway, dhcp_metric)`.
-///
-/// Prefers a `protocol: "dhcp"` default route if multiple default routes exist on `iface`.
-pub fn parse_default_route(raw_json: &str, iface: &str) -> Result<Option<(Ipv4Addr, u32)>> {
-    let parsed: Value =
-        serde_json::from_str(raw_json).wrap_err("parse `ip -j -4 route show default` JSON")?;
-    let routes = parsed
-        .as_array()
-        .ok_or_else(|| eyre::eyre!("`ip -j -4 route show default` JSON root is not an array"))?;
-
-    let mut fallback: Option<(Ipv4Addr, u32)> = None;
-    for route in routes {
-        if route.get("dst").and_then(Value::as_str) != Some("default") {
-            continue;
-        }
-        if route.get("dev").and_then(Value::as_str) != Some(iface) {
-            continue;
-        }
-        let Some(gw_str) = route.get("gateway").and_then(Value::as_str) else {
-            continue;
-        };
-        let gateway: Ipv4Addr = gw_str
-            .parse()
-            .wrap_err_with(|| format!("invalid default gateway `{gw_str}` on {iface}"))?;
-        let metric = route
-            .get("metric")
-            .and_then(Value::as_u64)
-            .and_then(|m| u32::try_from(m).ok())
-            .unwrap_or(DEFAULT_DHCP_ROUTE_METRIC);
-        if route.get("protocol").and_then(Value::as_str) == Some("dhcp") {
-            return Ok(Some((gateway, metric)));
-        }
-        if fallback.is_none() {
-            fallback = Some((gateway, metric));
-        }
-    }
-    Ok(fallback)
-}
-
-/// Parse `networkctl --json=short status <iface>` and extract the validated basename of
-/// `NetworkFile` (e.g. `20-wired.network`).
-pub fn parse_network_file_name(raw_json: &str) -> Result<Option<String>> {
-    let parsed: Value =
-        serde_json::from_str(raw_json).wrap_err("parse `networkctl --json=short status` JSON")?;
-    let Some(raw_path) = parsed.get("NetworkFile").and_then(Value::as_str) else {
-        return Ok(None);
-    };
-    let trimmed = raw_path.trim();
-    if trimmed.is_empty() {
-        return Ok(None);
-    }
-    let file_name = Path::new(trimmed)
-        .file_name()
-        .and_then(|s| s.to_str())
-        .ok_or_else(|| eyre::eyre!("networkctl NetworkFile has invalid basename: `{trimmed}`"))?;
-    ensure!(
-        file_name.ends_with(".network")
-            && !file_name.contains('/')
-            && !file_name.contains("..")
-            && file_name
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.')),
-        "unsafe networkctl NetworkFile basename: `{file_name}`"
-    );
-    Ok(Some(file_name.to_owned()))
-}
-
 fn subnet_bounds(addr: Ipv4Addr, prefix_len: u8) -> Result<(Ipv4Addr, Ipv4Addr)> {
     ensure!(
         (1..=30).contains(&prefix_len),
-        "guest DHCPv4 prefix length /{prefix_len} is invalid for hybrid service IP (must be /1../30)"
+        "VM IPv4 prefix length /{prefix_len} is invalid (must be /1../30)"
     );
     let mask = !0u32 << (32 - prefix_len);
     let network = Ipv4Addr::from(u32::from(addr) & mask);
@@ -394,94 +441,41 @@ fn subnet_bounds(addr: Ipv4Addr, prefix_len: u8) -> Result<(Ipv4Addr, Ipv4Addr)>
     Ok((network, broadcast))
 }
 
-/// Validate `service_ip` against the discovered DHCP subnet, gateway, and DHCP address.
-pub fn validate_service_ip_against_dhcp(
-    service_ip: Ipv4Addr,
-    dhcp: &DiscoveredDhcpConfig,
-) -> Result<()> {
-    let mask = !0u32 << (32 - dhcp.prefix_len);
-    ensure!(
-        (u32::from(service_ip) & mask) == u32::from(dhcp.network),
-        "VM service IP {service_ip} is outside guest DHCP subnet {}/{} on {}",
-        dhcp.network,
-        dhcp.prefix_len,
-        dhcp.iface
-    );
-    ensure!(
-        service_ip != dhcp.network && service_ip != dhcp.broadcast,
-        "VM service IP {service_ip} cannot be the network ({}) or broadcast ({}) address of {}/{}",
-        dhcp.network,
-        dhcp.broadcast,
-        dhcp.network,
-        dhcp.prefix_len
-    );
-    ensure!(
-        service_ip != dhcp.gateway,
-        "VM service IP {service_ip} collides with guest DHCP gateway {} on {}",
-        dhcp.gateway,
-        dhcp.iface
-    );
-    ensure!(
-        service_ip != dhcp.dhcp_ip,
-        "VM service IP {service_ip} collides with the dynamic DHCPv4 address {} on {} (ensure service IPs are outside the host DHCP pool)",
-        dhcp.dhcp_ip,
-        dhcp.iface
-    );
-    Ok(())
-}
-
-/// Choose a strictly lower route metric than the DHCP/kernel metric so both the default egress
-/// route and the on-link bridge subnet route prefer `service_ip` without colliding with kernel or
-/// DHCP routes (distinct metrics coexist cleanly in Linux FIB).
-pub fn compute_service_metric(dhcp_metric: u32) -> Result<u32> {
-    ensure!(
-        dhcp_metric > 1,
-        "guest DHCP route metric {dhcp_metric} leaves no room for a higher-priority PreferredSource route"
-    );
-    if dhcp_metric > PREFERRED_SERVICE_METRIC {
-        Ok(PREFERRED_SERVICE_METRIC)
-    } else {
-        Ok(dhcp_metric - 1)
+/// Render the single runtime `systemd-networkd` drop-in configuring plain static IPv4 addressing,
+/// default gateway, and DNS servers (with DHCP/RA/link-local disabled).
+pub fn render_static_network_dropin(config: &StaticVmNetworkConfig) -> String {
+    let mut out = concat!(
+        "# Managed at runtime by outbe-up internal vm-boot (static IPv4).\n",
+        "[Network]\n",
+        "DHCP=no\n",
+        "IPv6AcceptRA=no\n",
+        "LinkLocalAddressing=no\n",
+    )
+    .to_owned();
+    for server in &config.dns {
+        out.push_str(&format!("DNS={server}\n"));
     }
-}
-
-/// Render the runtime `systemd-networkd` drop-in adding `service_ip` with IPv4 DAD and
-/// `PreferredSource` routes for both off-subnet default egress and on-link bridge traffic.
-pub fn render_service_ip_dropin(
-    service_ip: Ipv4Addr,
-    dhcp: &DiscoveredDhcpConfig,
-    service_metric: u32,
-) -> String {
-    format!(
+    out.push_str(&format!(
         concat!(
-            "# Managed at runtime by outbe-up internal vm-boot (hybrid service IP).\n",
+            "\n",
             "[Address]\n",
-            "Address={service_ip}/{prefix_len}\n",
+            "Address={address}/{prefix_len}\n",
             "DuplicateAddressDetection=ipv4\n",
             "\n",
             "[Route]\n",
             "Destination=0.0.0.0/0\n",
             "Gateway={gateway}\n",
-            "PreferredSource={service_ip}\n",
-            "Metric={service_metric}\n",
-            "\n",
-            "[Route]\n",
-            "Destination={network}/{prefix_len}\n",
-            "Scope=link\n",
-            "PreferredSource={service_ip}\n",
-            "Metric={service_metric}\n",
         ),
-        service_ip = service_ip,
-        prefix_len = dhcp.prefix_len,
-        gateway = dhcp.gateway,
-        network = dhcp.network,
-        service_metric = service_metric,
-    )
+        address = config.address,
+        prefix_len = config.prefix_len,
+        gateway = config.gateway,
+    ));
+    out
 }
 
-/// Atomically write `<networkd_run_dir>/<network_file_name>.d/80-outbe-service-ip.conf` refusing
+/// Atomically write `<networkd_run_dir>/<network_file_name>.d/80-outbe-static.conf` refusing
 /// symlinks at every path component and setting explicit `0755`/`0644` permissions (overriding
-/// `outbe-vm-boot.service`'s `UMask=0077`) so the unprivileged `systemd-network` user can read it.
+/// `outbe-vm-boot.service`'s `UMask=0077`) so `systemd-network` can read it.
 pub fn write_networkd_dropin_secure(
     networkd_run_dir: &Path,
     network_file_name: &str,
@@ -516,10 +510,10 @@ pub fn write_networkd_dropin_secure(
         .map_err(io::Error::from)
         .wrap_err_with(|| format!("chmod 0755 {}", dropin_dir_path.display()))?;
 
-    let dropin_path = dropin_dir_path.join(SERVICE_IP_DROPIN_NAME);
+    let dropin_path = dropin_dir_path.join(STATIC_NETWORK_DROPIN_NAME);
     match statat(
         &dropin_dir_fd,
-        SERVICE_IP_DROPIN_NAME,
+        STATIC_NETWORK_DROPIN_NAME,
         AtFlags::SYMLINK_NOFOLLOW,
     ) {
         Ok(stat) => {
@@ -536,7 +530,7 @@ pub fn write_networkd_dropin_secure(
         }
     }
 
-    let tmp_name = format!(".{SERVICE_IP_DROPIN_NAME}.tmp.{}", std::process::id());
+    let tmp_name = format!(".{STATIC_NETWORK_DROPIN_NAME}.tmp.{}", std::process::id());
     let _ = unlinkat(&dropin_dir_fd, &tmp_name, AtFlags::empty());
     let tmp_fd = openat(
         &dropin_dir_fd,
@@ -569,7 +563,7 @@ pub fn write_networkd_dropin_secure(
         &dropin_dir_fd,
         &tmp_name,
         &dropin_dir_fd,
-        SERVICE_IP_DROPIN_NAME,
+        STATIC_NETWORK_DROPIN_NAME,
     )
     .map_err(io::Error::from)
     .wrap_err_with(|| format!("install {}", dropin_path.display()))?;
@@ -589,31 +583,26 @@ fn open_dir_nofollow(parent: impl AsFd, path: &Path) -> Result<OwnedFd> {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ServiceAddrState {
+enum StaticAddrState {
     Absent,
     Tentative,
     DadFailed,
     Ready,
 }
 
-fn inspect_service_addr_state(
+fn inspect_static_addr_state(
     raw_json: &str,
     iface: &str,
-    service_ip: Ipv4Addr,
+    address: Ipv4Addr,
     prefix_len: u8,
-    dhcp_ip: Ipv4Addr,
-) -> Result<(ServiceAddrState, bool)> {
+) -> Result<StaticAddrState> {
     let parsed: Value =
         serde_json::from_str(raw_json).wrap_err("parse `ip -j -4 addr show` JSON")?;
     let ifaces = parsed
         .as_array()
         .ok_or_else(|| eyre::eyre!("`ip -j -4 addr show` JSON root is not an array"))?;
 
-    let mut service_state = ServiceAddrState::Absent;
-    let mut dhcp_present = false;
-    let service_str = service_ip.to_string();
-    let dhcp_str = dhcp_ip.to_string();
-
+    let target_str = address.to_string();
     for entry in ifaces {
         if entry.get("ifname").and_then(Value::as_str) != Some(iface) {
             continue;
@@ -630,122 +619,80 @@ fn inspect_service_addr_state(
                 .get("prefixlen")
                 .and_then(Value::as_u64)
                 .and_then(|v| u8::try_from(v).ok());
-            if local == dhcp_str && plen == Some(prefix_len) {
-                dhcp_present = true;
-            }
-            if local == service_str && plen == Some(prefix_len) {
+            if local == target_str && plen == Some(prefix_len) {
                 if addr.get("dadfailed").and_then(Value::as_bool) == Some(true) {
-                    service_state = ServiceAddrState::DadFailed;
-                } else if addr.get("tentative").and_then(Value::as_bool) == Some(true) {
-                    service_state = ServiceAddrState::Tentative;
-                } else {
-                    service_state = ServiceAddrState::Ready;
+                    return Ok(StaticAddrState::DadFailed);
                 }
+                if addr.get("tentative").and_then(Value::as_bool) == Some(true) {
+                    return Ok(StaticAddrState::Tentative);
+                }
+                return Ok(StaticAddrState::Ready);
             }
         }
     }
-    Ok((service_state, dhcp_present))
+    Ok(StaticAddrState::Absent)
 }
 
-fn verify_preferred_source_routes(
-    raw_json: &str,
-    service_ip: Ipv4Addr,
-    dhcp: &DiscoveredDhcpConfig,
-    service_metric: u32,
-) -> Result<(bool, bool)> {
+fn has_default_gateway_route(raw_json: &str, gateway: Ipv4Addr) -> Result<bool> {
     let parsed: Value =
         serde_json::from_str(raw_json).wrap_err("parse `ip -j -4 route show` JSON")?;
     let routes = parsed
         .as_array()
         .ok_or_else(|| eyre::eyre!("`ip -j -4 route show` JSON root is not an array"))?;
 
-    let service_str = service_ip.to_string();
-    let gw_str = dhcp.gateway.to_string();
-    let subnet_cidr = format!("{}/{}", dhcp.network, dhcp.prefix_len);
-
-    let mut default_ok = false;
-    let mut subnet_ok = false;
-
-    for route in routes {
-        let dst = route.get("dst").and_then(Value::as_str).unwrap_or("");
-        let prefsrc = route.get("prefsrc").and_then(Value::as_str);
-        let metric = route
-            .get("metric")
-            .and_then(Value::as_u64)
-            .and_then(|v| u32::try_from(v).ok());
-        if prefsrc != Some(service_str.as_str()) {
-            continue;
-        }
-        if dst == "default"
+    let gw_str = gateway.to_string();
+    Ok(routes.iter().any(|route| {
+        route.get("dst").and_then(Value::as_str) == Some("default")
             && route.get("gateway").and_then(Value::as_str) == Some(gw_str.as_str())
-            && metric.is_some_and(|m| m <= service_metric && m < dhcp.dhcp_metric)
-        {
-            default_ok = true;
-        }
-        if dst == subnet_cidr
-            && route.get("scope").and_then(Value::as_str) == Some("link")
-            && metric.is_some_and(|m| m <= service_metric && m < dhcp.dhcp_metric)
-        {
-            subnet_ok = true;
-        }
-    }
-    Ok((default_ok, subnet_ok))
+    }))
 }
 
-fn wait_for_service_ip_ready(
+fn wait_for_static_network_ready(
     backend: &dyn GuestNetBackend,
-    service_ip: Ipv4Addr,
-    dhcp: &DiscoveredDhcpConfig,
-    service_metric: u32,
-    options: &ServiceIpOptions,
+    iface: &str,
+    config: &StaticVmNetworkConfig,
+    options: &StaticNetworkOptions,
 ) -> Result<()> {
     let deadline = Instant::now() + options.apply_wait_timeout;
 
     loop {
         let addr_json = backend.ip_addr_show()?;
-        let (addr_state, dhcp_present) = inspect_service_addr_state(
-            &addr_json,
-            &dhcp.iface,
-            service_ip,
-            dhcp.prefix_len,
-            dhcp.dhcp_ip,
-        )?;
+        let addr_state =
+            inspect_static_addr_state(&addr_json, iface, config.address, config.prefix_len)?;
         let last_status = match addr_state {
-            ServiceAddrState::DadFailed => {
+            StaticAddrState::DadFailed => {
                 bail!(
-                    "IPv4 Duplicate Address Detection (DAD) conflict for service IP {service_ip}/{} on {}: another host on the bridge already claims this address",
-                    dhcp.prefix_len,
-                    dhcp.iface
+                    "IPv4 Duplicate Address Detection (DAD) conflict for static IP {}/{} on {iface}: another host on the bridge already claims this address",
+                    config.address,
+                    config.prefix_len
                 );
             }
-            ServiceAddrState::Ready => {
-                let route_json = backend.ip_route_show(&dhcp.iface)?;
-                let (default_ok, subnet_ok) =
-                    verify_preferred_source_routes(&route_json, service_ip, dhcp, service_metric)?;
-                if default_ok && subnet_ok && dhcp_present {
+            StaticAddrState::Ready => {
+                let route_json = backend.ip_route_show(iface)?;
+                if has_default_gateway_route(&route_json, config.gateway)? {
                     return Ok(());
                 }
                 format!(
-                    "service IP {service_ip} configured on {}, waiting for state (dhcp_present={dhcp_present}, default_prefsrc_route={default_ok}, subnet_prefsrc_route={subnet_ok})",
-                    dhcp.iface
+                    "static IP {}/{} is up on {iface}, waiting for default route via {}",
+                    config.address, config.prefix_len, config.gateway
                 )
             }
-            ServiceAddrState::Tentative => format!(
-                "service IP {service_ip}/{} on {} is still tentative (IPv4 DAD in progress)",
-                dhcp.prefix_len, dhcp.iface
+            StaticAddrState::Tentative => format!(
+                "static IP {}/{} on {iface} is still tentative (IPv4 DAD in progress)",
+                config.address, config.prefix_len
             ),
-            ServiceAddrState::Absent => format!(
-                "service IP {service_ip}/{} not yet present on {} after networkctl reload",
-                dhcp.prefix_len, dhcp.iface
+            StaticAddrState::Absent => format!(
+                "static IP {}/{} not yet present on {iface} after networkctl reload",
+                config.address, config.prefix_len
             ),
         };
 
         if Instant::now() >= deadline {
             bail!(
-                "timed out after {}s waiting for VM service IP {service_ip}/{} on {} to become ready: {last_status}",
+                "timed out after {}s waiting for static VM IP {}/{} on {iface} to become ready: {last_status}",
                 options.apply_wait_timeout.as_secs(),
-                dhcp.prefix_len,
-                dhcp.iface
+                config.address,
+                config.prefix_len
             );
         }
         backend.sleep(options.apply_poll_interval);
@@ -763,482 +710,314 @@ mod tests {
 
     use super::*;
 
-    // Fixtures modeled directly on `/home/ubuntu/outbe-vm-work/dhcp-opt3/evidence/{guest-facts.stdout,guest-static.stdout}`:
-    //   eth0: 10.77.0.122/24 dynamic, metric 1024, gateway 10.77.0.1, /etc/systemd/network/20-wired.network
-    fn fixture_addr_dhcp_only() -> String {
+    fn sample_config() -> StaticVmNetworkConfig {
+        StaticVmNetworkConfig {
+            address: Ipv4Addr::new(10, 77, 0, 80),
+            prefix_len: 24,
+            gateway: Ipv4Addr::new(10, 77, 0, 1),
+            dns: vec![Ipv4Addr::new(1, 1, 1, 1), Ipv4Addr::new(8, 8, 8, 8)],
+        }
+    }
+
+    fn fixture_link_eth0() -> String {
         json!([
-            {
-                "ifindex": 1,
-                "ifname": "lo",
-                "flags": ["LOOPBACK", "UP", "LOWER_UP"],
-                "operstate": "UNKNOWN",
-                "addr_info": [{
-                    "family": "inet",
-                    "local": "127.0.0.1",
-                    "prefixlen": 8,
-                    "scope": "host"
-                }]
-            },
-            {
-                "ifindex": 2,
-                "ifname": "eth0",
-                "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
-                "operstate": "UP",
-                "addr_info": [{
-                    "family": "inet",
-                    "local": "10.77.0.122",
-                    "prefixlen": 24,
-                    "broadcast": "10.77.0.255",
-                    "scope": "global",
-                    "dynamic": true,
-                    "metric": 1024,
-                    "label": "eth0"
-                }]
-            },
-            {
-                "ifindex": 3,
-                "ifname": "docker0",
-                "flags": ["NO-CARRIER", "BROADCAST", "MULTICAST", "UP"],
-                "operstate": "DOWN",
-                "addr_info": [{
-                    "family": "inet",
-                    "local": "172.17.0.1",
-                    "prefixlen": 16,
-                    "scope": "global",
-                    "label": "docker0"
-                }]
-            }
+            { "ifindex": 1, "ifname": "lo", "flags": ["LOOPBACK", "UP"], "operstate": "UNKNOWN" },
+            { "ifindex": 2, "ifname": "eth0", "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"], "operstate": "UP" }
         ])
         .to_string()
     }
 
-    fn fixture_addr_with_service(service_ip: &str, tentative: bool, dadfailed: bool) -> String {
+    fn fixture_addr(ip: &str, prefix_len: u8, tentative: bool, dadfailed: bool) -> String {
+        let mut entry = json!({
+            "family": "inet",
+            "local": ip,
+            "prefixlen": prefix_len,
+            "scope": "global"
+        });
+        if tentative {
+            entry["tentative"] = json!(true);
+        }
+        if dadfailed {
+            entry["dadfailed"] = json!(true);
+        }
         json!([
             {
                 "ifindex": 2,
                 "ifname": "eth0",
                 "flags": ["BROADCAST", "MULTICAST", "UP", "LOWER_UP"],
                 "operstate": "UP",
-                "addr_info": [
-                    {
-                        "family": "inet",
-                        "local": "10.77.0.122",
-                        "prefixlen": 24,
-                        "broadcast": "10.77.0.255",
-                        "scope": "global",
-                        "dynamic": true,
-                        "metric": 1024,
-                        "label": "eth0"
-                    },
-                    {
-                        "family": "inet",
-                        "local": service_ip,
-                        "prefixlen": 24,
-                        "broadcast": "10.77.0.255",
-                        "scope": "global",
-                        "secondary": true,
-                        "tentative": tentative,
-                        "dadfailed": dadfailed,
-                        "label": "eth0"
-                    }
-                ]
+                "addr_info": [entry]
             }
         ])
         .to_string()
     }
 
-    fn fixture_default_route_dhcp() -> String {
+    fn fixture_routes_ready(gw: &str) -> String {
         json!([
-            {
-                "dst": "default",
-                "gateway": "10.77.0.1",
-                "dev": "eth0",
-                "protocol": "dhcp",
-                "prefsrc": "10.77.0.122",
-                "metric": 1024
-            }
+            { "dst": "default", "gateway": gw, "protocol": "static" },
+            { "dst": "10.77.0.0/24", "protocol": "kernel", "scope": "link", "prefsrc": "10.77.0.80" }
         ])
         .to_string()
     }
 
-    /// Resulting `ip -j -4 route show dev eth0` after drop-in reload:
-    ///   default via 10.77.0.1 dev eth0 proto static src 10.77.0.81 metric 512
-    ///   default via 10.77.0.1 dev eth0 proto dhcp   src 10.77.0.122 metric 1024
-    ///   10.77.0.0/24 dev eth0 proto static scope link src 10.77.0.81 metric 512
-    ///   10.77.0.0/24 dev eth0 proto kernel scope link src 10.77.0.122 metric 1024
-    ///   10.77.0.1    dev eth0 proto dhcp   scope link src 10.77.0.122 metric 1024
-    fn fixture_routes_after_reload(service_ip: &str) -> String {
-        json!([
-            {
-                "dst": "default",
-                "gateway": "10.77.0.1",
-                "dev": "eth0",
-                "protocol": "static",
-                "prefsrc": service_ip,
-                "metric": 512
-            },
-            {
-                "dst": "default",
-                "gateway": "10.77.0.1",
-                "dev": "eth0",
-                "protocol": "dhcp",
-                "prefsrc": "10.77.0.122",
-                "metric": 1024
-            },
-            {
-                "dst": "10.77.0.0/24",
-                "dev": "eth0",
-                "protocol": "static",
-                "scope": "link",
-                "prefsrc": service_ip,
-                "metric": 512
-            },
-            {
-                "dst": "10.77.0.0/24",
-                "dev": "eth0",
-                "protocol": "kernel",
-                "scope": "link",
-                "prefsrc": "10.77.0.122",
-                "metric": 1024
-            },
-            {
-                "dst": "10.77.0.1",
-                "dev": "eth0",
-                "protocol": "dhcp",
-                "scope": "link",
-                "prefsrc": "10.77.0.122",
-                "metric": 1024
-            }
-        ])
-        .to_string()
+    struct FakeGuestNet {
+        links: String,
+        addr_sequence: Mutex<Vec<String>>,
+        route_json: String,
+        reloads: Mutex<usize>,
     }
 
-    fn fixture_networkctl_status() -> String {
-        json!({
-            "Index": 2,
-            "Name": "eth0",
-            "NetworkFile": "/etc/systemd/network/20-wired.network",
-            "OperationalState": "routable",
-            "AdministrativeState": "configured"
-        })
-        .to_string()
-    }
-
-    struct StubBackendState {
-        addr_responses: Vec<String>,
-        route_default_responses: Vec<String>,
-        route_dev_responses: Vec<String>,
-        networkctl_status_responses: Vec<String>,
-        reload_calls: usize,
-        sleep_calls: usize,
-    }
-
-    struct StubBackend {
-        state: Mutex<StubBackendState>,
-    }
-
-    impl StubBackend {
-        fn new(
-            addr_responses: Vec<String>,
-            route_default_responses: Vec<String>,
-            route_dev_responses: Vec<String>,
-            networkctl_status_responses: Vec<String>,
-        ) -> Self {
+    impl FakeGuestNet {
+        fn new(addr_sequence: Vec<String>, route_json: String) -> Self {
             Self {
-                state: Mutex::new(StubBackendState {
-                    addr_responses,
-                    route_default_responses,
-                    route_dev_responses,
-                    networkctl_status_responses,
-                    reload_calls: 0,
-                    sleep_calls: 0,
-                }),
-            }
-        }
-
-        fn next_or_last(queue: &mut Vec<String>) -> String {
-            if queue.len() > 1 {
-                queue.remove(0)
-            } else {
-                queue.first().cloned().unwrap_or_else(|| "[]".to_owned())
+                links: fixture_link_eth0(),
+                addr_sequence: Mutex::new(addr_sequence),
+                route_json,
+                reloads: Mutex::new(0),
             }
         }
     }
 
-    impl GuestNetBackend for StubBackend {
-        fn ip_addr_show(&self) -> Result<String> {
-            Ok(Self::next_or_last(
-                &mut self.state.lock().unwrap().addr_responses,
-            ))
+    impl GuestNetBackend for FakeGuestNet {
+        fn ip_link_show(&self) -> Result<String> {
+            Ok(self.links.clone())
         }
 
-        fn ip_route_default(&self) -> Result<String> {
-            Ok(Self::next_or_last(
-                &mut self.state.lock().unwrap().route_default_responses,
-            ))
+        fn ip_addr_show(&self) -> Result<String> {
+            let mut seq = self.addr_sequence.lock().unwrap();
+            if seq.len() > 1 {
+                Ok(seq.remove(0))
+            } else {
+                Ok(seq[0].clone())
+            }
         }
 
         fn ip_route_show(&self, _iface: &str) -> Result<String> {
-            Ok(Self::next_or_last(
-                &mut self.state.lock().unwrap().route_dev_responses,
-            ))
-        }
-
-        fn networkctl_status(&self, _iface: &str) -> Result<String> {
-            Ok(Self::next_or_last(
-                &mut self.state.lock().unwrap().networkctl_status_responses,
-            ))
+            Ok(self.route_json.clone())
         }
 
         fn networkctl_reload(&self) -> Result<()> {
-            self.state.lock().unwrap().reload_calls += 1;
+            *self.reloads.lock().unwrap() += 1;
             Ok(())
         }
 
-        fn sleep(&self, _duration: Duration) {
-            self.state.lock().unwrap().sleep_calls += 1;
-        }
-    }
-
-    fn fast_options(run_dir: &Path) -> ServiceIpOptions {
-        ServiceIpOptions {
-            networkd_run_dir: run_dir.to_path_buf(),
-            dhcp_wait_timeout: Duration::from_millis(200),
-            dhcp_poll_interval: Duration::from_millis(5),
-            apply_wait_timeout: Duration::from_millis(200),
-            apply_poll_interval: Duration::from_millis(5),
-        }
+        fn sleep(&self, _duration: Duration) {}
     }
 
     #[test]
-    fn happy_path_writes_dropin_with_0755_0644_reloads_only_and_waits_for_dad_and_routes() {
-        let tmp = tempfile::tempdir().unwrap();
-        let run_dir = tmp.path().join("run-network");
-        fs::create_dir(&run_dir).unwrap();
-        fs::set_permissions(&run_dir, fs::Permissions::from_mode(0o700)).unwrap();
+    fn from_env_validates_strictly_and_rejects_invalid_inputs() {
+        let mut env = BTreeMap::from([
+            ("OUTBE_RPC_BIND_IP".to_owned(), "10.77.0.80".to_owned()),
+            ("OUTBE_VM_PREFIX".to_owned(), "24".to_owned()),
+            ("OUTBE_VM_GATEWAY".to_owned(), "10.77.0.1".to_owned()),
+            ("OUTBE_VM_DNS".to_owned(), "1.1.1.1,8.8.8.8".to_owned()),
+        ]);
+        let parsed = StaticVmNetworkConfig::from_env(&env).unwrap();
+        assert_eq!(parsed, sample_config());
 
-        let service_ip = Ipv4Addr::new(10, 77, 0, 81);
-        let backend = StubBackend::new(
-            vec![
-                // 1. Initial DHCP discovery
-                fixture_addr_dhcp_only(),
-                // 2. First poll after reload: tentative (DAD running)
-                fixture_addr_with_service("10.77.0.81", true, false),
-                // 3. Second poll: DAD complete, DHCP address preserved
-                fixture_addr_with_service("10.77.0.81", false, false),
-            ],
-            vec![fixture_default_route_dhcp()],
-            vec![fixture_routes_after_reload("10.77.0.81")],
-            vec![fixture_networkctl_status()],
-        );
-
-        let applied =
-            configure_service_ip_with_backend(service_ip, &backend, &fast_options(&run_dir))
-                .unwrap();
-        assert_eq!(applied.iface, "eth0");
-        assert_eq!(applied.dhcp_ip, Ipv4Addr::new(10, 77, 0, 122));
-        assert_eq!(applied.service_ip, service_ip);
-        assert_eq!(applied.prefix_len, 24);
-        assert_eq!(applied.gateway, Ipv4Addr::new(10, 77, 0, 1));
-        assert_eq!(applied.service_metric, 512);
-        assert_eq!(
-            applied.dropin_path,
-            run_dir.join("20-wired.network.d/80-outbe-service-ip.conf")
-        );
-        assert_eq!(backend.state.lock().unwrap().reload_calls, 1);
-
-        // Verify explicit 0755/0644 permissions so non-root `systemd-network` can read under UMask=0077.
-        assert_eq!(
-            fs::metadata(&run_dir).unwrap().permissions().mode() & 0o777,
-            0o755
-        );
-        assert_eq!(
-            fs::metadata(run_dir.join("20-wired.network.d"))
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o755
-        );
-        assert_eq!(
-            fs::metadata(&applied.dropin_path)
-                .unwrap()
-                .permissions()
-                .mode()
-                & 0o777,
-            0o644
-        );
-
-        let rendered = fs::read_to_string(&applied.dropin_path).unwrap();
-        assert!(rendered.contains("Address=10.77.0.81/24\n"), "{rendered}");
-        assert!(
-            rendered.contains("DuplicateAddressDetection=ipv4\n"),
-            "{rendered}"
-        );
-        assert!(
-            rendered.contains("Destination=0.0.0.0/0\nGateway=10.77.0.1\nPreferredSource=10.77.0.81\nMetric=512\n"),
-            "{rendered}"
-        );
-        assert!(
-            rendered.contains(
-                "Destination=10.77.0.0/24\nScope=link\nPreferredSource=10.77.0.81\nMetric=512\n"
+        for (key, bad_val, expected_err) in [
+            ("OUTBE_RPC_BIND_IP", "127.0.0.1", "non-loopback private"),
+            (
+                "OUTBE_RPC_BIND_IP",
+                "162.19.107.121",
+                "non-loopback private",
             ),
-            "{rendered}"
-        );
+            ("OUTBE_RPC_BIND_IP", "10.77.0.0", "network"),
+            ("OUTBE_RPC_BIND_IP", "10.77.0.255", "broadcast"),
+            ("OUTBE_VM_PREFIX", "0", "prefix length"),
+            ("OUTBE_VM_PREFIX", "31", "prefix length"),
+            ("OUTBE_VM_PREFIX", "32", "prefix length"),
+            ("OUTBE_VM_PREFIX", "+24", "decimal integer"),
+            ("OUTBE_VM_GATEWAY", "10.78.0.1", "outside VM subnet"),
+            (
+                "OUTBE_VM_GATEWAY",
+                "10.77.0.80",
+                "cannot equal VM static IP",
+            ),
+            ("OUTBE_VM_GATEWAY", "10.77.0.0", "network"),
+            ("OUTBE_VM_DNS", "", "missing OUTBE_VM_DNS"),
+            ("OUTBE_VM_DNS", "1.1.1.1, 8.8.8.8", "whitespace"),
+            ("OUTBE_VM_DNS", "1.1.1.1,,8.8.8.8", "empty entry"),
+            ("OUTBE_VM_DNS", "1.1.1.1,1.1.1.1", "duplicate DNS"),
+            ("OUTBE_VM_DNS", "0.0.0.0", "invalid IPv4"),
+            ("OUTBE_VM_DNS", "224.0.0.1", "invalid IPv4"),
+            ("OUTBE_VM_DNS", "not-an-ip", "invalid IPv4"),
+        ] {
+            let mut bad = env.clone();
+            bad.insert(key.to_owned(), bad_val.to_owned());
+            let err = StaticVmNetworkConfig::from_env(&bad)
+                .expect_err(&format!("expected failure for {key}={bad_val}"));
+            assert!(
+                format!("{err:#}").contains(expected_err),
+                "for {key}={bad_val}, expected `{expected_err}`, got: {err:#}"
+            );
+        }
+
+        // Missing any of the three static keys must fail closed (no defaults).
+        for required_key in ["OUTBE_VM_PREFIX", "OUTBE_VM_GATEWAY", "OUTBE_VM_DNS"] {
+            let mut missing = env.clone();
+            missing.remove(required_key);
+            let err = StaticVmNetworkConfig::from_env(&missing).unwrap_err();
+            assert!(err.to_string().contains(required_key), "{err}");
+        }
+        env.clear();
+        assert!(StaticVmNetworkConfig::from_env(&env).is_err());
     }
 
     #[test]
-    fn waits_for_delayed_dhcp_lease_and_refuses_when_missing_without_guessing_slash24() {
+    fn render_static_dropin_has_no_dhcp_and_no_preferred_source() {
+        let dropin = render_static_network_dropin(&sample_config());
+        assert!(dropin.contains("DHCP=no\n"));
+        assert!(dropin.contains("IPv6AcceptRA=no\n"));
+        assert!(dropin.contains("LinkLocalAddressing=no\n"));
+        assert!(dropin.contains("DNS=1.1.1.1\n"));
+        assert!(dropin.contains("DNS=8.8.8.8\n"));
+        assert!(dropin.contains("Address=10.77.0.80/24\n"));
+        assert!(dropin.contains("DuplicateAddressDetection=ipv4\n"));
+        assert!(dropin.contains("Destination=0.0.0.0/0\n"));
+        assert!(dropin.contains("Gateway=10.77.0.1\n"));
+        assert!(!dropin.contains("PreferredSource"));
+        assert!(!dropin.contains("Metric="));
+    }
+
+    #[test]
+    fn configure_static_network_writes_dropin_reloads_and_waits_for_dad_and_route() {
         let tmp = tempfile::tempdir().unwrap();
-        let run_dir = tmp.path().join("run-network");
+        let run_dir = tmp.path().join("network");
         fs::create_dir(&run_dir).unwrap();
 
-        // Delayed lease arrives on poll 2 -> succeeds.
-        let delayed = StubBackend::new(
+        let backend = FakeGuestNet::new(
             vec![
                 "[]".to_owned(),
-                fixture_addr_dhcp_only(),
-                fixture_addr_with_service("10.77.0.82", false, false),
+                fixture_addr("10.77.0.80", 24, true, false),
+                fixture_addr("10.77.0.80", 24, false, false),
             ],
-            vec![fixture_default_route_dhcp()],
-            vec![fixture_routes_after_reload("10.77.0.82")],
-            vec![fixture_networkctl_status()],
+            fixture_routes_ready("10.77.0.1"),
         );
-        let applied = configure_service_ip_with_backend(
-            Ipv4Addr::new(10, 77, 0, 82),
-            &delayed,
-            &fast_options(&run_dir),
-        )
-        .unwrap();
-        assert_eq!(applied.service_ip, Ipv4Addr::new(10, 77, 0, 82));
-        assert!(delayed.state.lock().unwrap().sleep_calls >= 1);
+        let opts = StaticNetworkOptions {
+            networkd_run_dir: run_dir.clone(),
+            network_file_name: BASE_NETWORK_FILE_NAME.to_owned(),
+            apply_wait_timeout: Duration::from_secs(5),
+            apply_poll_interval: Duration::from_millis(1),
+        };
 
-        // Missing lease never arrives -> times out cleanly without writing any drop-in.
-        let run_dir2 = tmp.path().join("run-network-2");
-        fs::create_dir(&run_dir2).unwrap();
-        let missing = StubBackend::new(
-            vec!["[]".to_owned()],
-            vec!["[]".to_owned()],
-            vec!["[]".to_owned()],
-            vec!["{}".to_owned()],
+        let applied =
+            configure_static_network_with_backend(&sample_config(), &backend, &opts).unwrap();
+        assert_eq!(applied.iface, "eth0");
+        assert_eq!(applied.address, Ipv4Addr::new(10, 77, 0, 80));
+        assert_eq!(applied.prefix_len, 24);
+        assert_eq!(applied.gateway, Ipv4Addr::new(10, 77, 0, 1));
+        assert_eq!(*backend.reloads.lock().unwrap(), 1);
+
+        let expected_path = run_dir.join("20-wired.network.d/80-outbe-static.conf");
+        assert_eq!(applied.dropin_path, expected_path);
+        assert_eq!(
+            fs::metadata(&expected_path).unwrap().permissions().mode() & 0o777,
+            0o644
         );
-        let mut opts = fast_options(&run_dir2);
-        opts.dhcp_wait_timeout = Duration::from_millis(25);
-        let err = configure_service_ip_with_backend(Ipv4Addr::new(10, 77, 0, 82), &missing, &opts)
-            .unwrap_err();
-        assert!(
-            err.to_string().contains("refusing to guess subnet prefix"),
-            "{err}"
+        assert_eq!(
+            fs::metadata(expected_path.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o755
         );
-        assert_eq!(missing.state.lock().unwrap().reload_calls, 0);
-        assert!(!run_dir2.join("20-wired.network.d").exists());
+        let written = fs::read_to_string(&expected_path).unwrap();
+        assert!(written.contains("Address=10.77.0.80/24"));
+        assert!(written.contains("Gateway=10.77.0.1"));
+        assert!(written.contains("DNS=1.1.1.1"));
     }
 
     #[test]
-    fn rejects_loopback_outside_subnet_network_broadcast_gateway_and_dhcp_ip() {
+    fn configure_static_network_fails_closed_on_dad_conflict_timeout_and_symlink() {
         let tmp = tempfile::tempdir().unwrap();
-        let run_dir = tmp.path().join("run-network");
+        let run_dir = tmp.path().join("network");
         fs::create_dir(&run_dir).unwrap();
+        let opts = StaticNetworkOptions {
+            networkd_run_dir: run_dir.clone(),
+            network_file_name: BASE_NETWORK_FILE_NAME.to_owned(),
+            apply_wait_timeout: Duration::from_millis(20),
+            apply_poll_interval: Duration::from_millis(5),
+        };
 
-        let cases = [
-            (Ipv4Addr::new(127, 0, 0, 1), "non-loopback private"),
-            (Ipv4Addr::new(162, 19, 107, 121), "non-loopback private"),
-            (Ipv4Addr::new(10, 78, 0, 10), "outside guest DHCP subnet"),
-            (Ipv4Addr::new(10, 77, 0, 0), "network"),
-            (Ipv4Addr::new(10, 77, 0, 255), "broadcast"),
-            (Ipv4Addr::new(10, 77, 0, 1), "gateway"),
-            (Ipv4Addr::new(10, 77, 0, 122), "dynamic DHCPv4 address"),
-        ];
-        for (bad_ip, expect_substr) in cases {
-            let backend = StubBackend::new(
-                vec![fixture_addr_dhcp_only()],
-                vec![fixture_default_route_dhcp()],
-                vec![],
-                vec![fixture_networkctl_status()],
-            );
-            let err = configure_service_ip_with_backend(bad_ip, &backend, &fast_options(&run_dir))
+        // 1. DAD conflict fails immediately.
+        let dad_backend = FakeGuestNet::new(
+            vec![fixture_addr("10.77.0.80", 24, false, true)],
+            fixture_routes_ready("10.77.0.1"),
+        );
+        let dad_err = configure_static_network_with_backend(&sample_config(), &dad_backend, &opts)
+            .unwrap_err();
+        assert!(dad_err.to_string().contains("DAD"), "{dad_err}");
+
+        // 2. Missing default route times out cleanly.
+        let no_route_backend = FakeGuestNet::new(
+            vec![fixture_addr("10.77.0.80", 24, false, false)],
+            "[]".to_owned(),
+        );
+        let timeout_err =
+            configure_static_network_with_backend(&sample_config(), &no_route_backend, &opts)
                 .unwrap_err();
-            assert!(
-                err.to_string().contains(expect_substr),
-                "for {bad_ip}, expected `{expect_substr}`, got: {err}"
-            );
-            assert_eq!(backend.state.lock().unwrap().reload_calls, 0);
-        }
-    }
-
-    #[test]
-    fn detects_ipv4_dad_conflict_immediately_and_times_out_stuck_tentative() {
-        let tmp = tempfile::tempdir().unwrap();
-        let run_dir = tmp.path().join("run-network");
-        fs::create_dir(&run_dir).unwrap();
-
-        // 1. Immediate failure on dadfailed=true.
-        let dad_conflict = StubBackend::new(
-            vec![
-                fixture_addr_dhcp_only(),
-                fixture_addr_with_service("10.77.0.83", false, true),
-            ],
-            vec![fixture_default_route_dhcp()],
-            vec![fixture_routes_after_reload("10.77.0.83")],
-            vec![fixture_networkctl_status()],
-        );
-        let err = configure_service_ip_with_backend(
-            Ipv4Addr::new(10, 77, 0, 83),
-            &dad_conflict,
-            &fast_options(&run_dir),
-        )
-        .unwrap_err();
         assert!(
-            err.to_string()
-                .contains("Duplicate Address Detection (DAD) conflict"),
-            "{err}"
+            timeout_err.to_string().contains("timed out")
+                && timeout_err.to_string().contains("default route"),
+            "{timeout_err}"
         );
 
-        // 2. Stuck tentative=true times out cleanly.
-        let stuck = StubBackend::new(
-            vec![
-                fixture_addr_dhcp_only(),
-                fixture_addr_with_service("10.77.0.83", true, false),
-            ],
-            vec![fixture_default_route_dhcp()],
-            vec![fixture_routes_after_reload("10.77.0.83")],
-            vec![fixture_networkctl_status()],
-        );
-        let mut opts = fast_options(&run_dir);
-        opts.apply_wait_timeout = Duration::from_millis(25);
-        let err = configure_service_ip_with_backend(Ipv4Addr::new(10, 77, 0, 83), &stuck, &opts)
-            .unwrap_err();
-        assert!(err.to_string().contains("still tentative"), "{err}");
-    }
-
-    #[test]
-    fn refuses_symlinked_networkd_dir_or_dropin_file() {
-        let tmp = tempfile::tempdir().unwrap();
+        // 3. Symlink drop-in directory is refused.
         let outside = tmp.path().join("outside");
         fs::create_dir(&outside).unwrap();
-        let symlink_run_dir = tmp.path().join("run-link");
-        symlink(&outside, &symlink_run_dir).unwrap();
+        let sym_run = tmp.path().join("sym-network");
+        fs::create_dir(&sym_run).unwrap();
+        symlink(&outside, sym_run.join("20-wired.network.d")).unwrap();
+        let sym_err =
+            write_networkd_dropin_secure(&sym_run, BASE_NETWORK_FILE_NAME, "test").unwrap_err();
+        assert!(sym_err.to_string().contains("symlink"), "{sym_err}");
+    }
 
-        let err = write_networkd_dropin_secure(&symlink_run_dir, "20-wired.network", "[Address]\n")
-            .unwrap_err();
-        assert!(
-            format!("{err:#}").contains("symlink"),
-            "expected symlink refusal, got: {err:#}"
-        );
+    #[test]
+    fn vm_ports_from_env_validates_strictly_and_rejects_collisions() {
+        let valid = BTreeMap::from([
+            ("OUTBE_CONSENSUS_PORT".to_owned(), "30401".to_owned()),
+            ("OUTBE_RETH_PORT".to_owned(), "30304".to_owned()),
+            ("OUTBE_DISCV5_PORT".to_owned(), "31304".to_owned()),
+            ("OUTBE_RADICLE_PORT".to_owned(), "8777".to_owned()),
+        ]);
+        let parsed = VmPortsConfig::from_env(&valid).unwrap();
+        assert_eq!(parsed.consensus_port, 30_401);
+        assert_eq!(parsed.reth_port, 30_304);
+        assert_eq!(parsed.discv5_port, 31_304);
+        assert_eq!(parsed.radicle_port, 8_777);
 
-        let real_run_dir = tmp.path().join("run-real");
-        let dropin_dir = real_run_dir.join("20-wired.network.d");
-        fs::create_dir_all(&dropin_dir).unwrap();
-        let outside_file = outside.join("victim.conf");
-        fs::write(&outside_file, "untouched").unwrap();
-        symlink(&outside_file, dropin_dir.join(SERVICE_IP_DROPIN_NAME)).unwrap();
+        for missing_key in [
+            "OUTBE_CONSENSUS_PORT",
+            "OUTBE_RETH_PORT",
+            "OUTBE_DISCV5_PORT",
+            "OUTBE_RADICLE_PORT",
+        ] {
+            let mut m = valid.clone();
+            m.remove(missing_key);
+            assert!(VmPortsConfig::from_env(&m)
+                .unwrap_err()
+                .to_string()
+                .contains(missing_key));
+        }
 
-        let err = write_networkd_dropin_secure(&real_run_dir, "20-wired.network", "[Address]\n")
-            .unwrap_err();
-        assert!(
-            format!("{err:#}").contains("symlink"),
-            "expected dropin file symlink refusal, got: {err:#}"
-        );
-        assert_eq!(fs::read_to_string(&outside_file).unwrap(), "untouched");
+        for (key, bad, expect) in [
+            ("OUTBE_CONSENSUS_PORT", "0", "1..=65535"),
+            ("OUTBE_RETH_PORT", "70000", "1..=65535"),
+            ("OUTBE_DISCV5_PORT", "+31303", "decimal port"),
+            ("OUTBE_RADICLE_PORT", "8545", "fixed guest service port"),
+            ("OUTBE_RADICLE_PORT", "9000", "fixed guest service port"),
+            ("OUTBE_RETH_PORT", "30401", "collides with"),
+        ] {
+            let mut m = valid.clone();
+            m.insert(key.to_owned(), bad.to_owned());
+            let err = VmPortsConfig::from_env(&m).unwrap_err();
+            assert!(
+                format!("{err:#}").contains(expect),
+                "for {key}={bad}, expected `{expect}`, got: {err:#}"
+            );
+        }
     }
 }

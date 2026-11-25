@@ -227,31 +227,38 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
         }
     };
 
-    // Decision 10: every VM role uses OUTBE_RPC_BIND_IP as its non-loopback private bridge service IP.
-    let service_ip: std::net::Ipv4Addr = environment["OUTBE_RPC_BIND_IP"]
-        .parse()
-        .wrap_err("OUTBE_RPC_BIND_IP must be an IPv4 literal")?;
-    ensure!(
-        !service_ip.is_loopback() && service_ip.is_private(),
-        "VM data disk OUTBE_RPC_BIND_IP must be a non-loopback private IPv4 service address (got {service_ip}); loopback is not valid for VM roles"
-    );
+    // Decision 10 (revised): every VM role uses plain static IPv4 addressing and explicit
+    // listen/advertise ports from validator.env.
+    let static_net = vm_network::StaticVmNetworkConfig::from_env(&environment)?;
+    let _ports = vm_network::VmPortsConfig::from_env(&environment)?;
 
     if options.prepare_runtime_dirs {
         prepare_directories(root, role, options.apply_ownership)?;
     }
 
     if options.configure_network {
-        let applied = vm_network::configure_service_ip(service_ip).wrap_err_with(|| {
-            format!("failed to configure VM service IP {service_ip} during vm-boot")
-        })?;
+        let applied = match vm_network::configure_static_network(&static_net) {
+            Ok(applied) => applied,
+            Err(err) => {
+                eprintln!(
+                    "outbe-vm-boot: static IPv4 configuration failed for {}/{}: {err:#}",
+                    static_net.address, static_net.prefix_len
+                );
+                return Err(err).wrap_err_with(|| {
+                    format!(
+                        "failed to configure VM static IP {}/{} during vm-boot",
+                        static_net.address, static_net.prefix_len
+                    )
+                });
+            }
+        };
         eprintln!(
-            "outbe-vm-boot: configured service IP {}/{} on {} (dhcp_ip={}, gw={}, metric={}, dropin={})",
-            applied.service_ip,
+            "outbe-vm-boot: configured static IP {}/{} on {} (gw={}, dns={}, dropin={})",
+            applied.address,
             applied.prefix_len,
             applied.iface,
-            applied.dhcp_ip,
             applied.gateway,
-            applied.service_metric,
+            vm_network::format_dns_list(&applied.dns),
             applied.dropin_path.display()
         );
     }
@@ -738,6 +745,13 @@ mod tests {
             concat!(
                 "OUTBE_EXTERNAL_IP=\"10.0.0.1\"\n",
                 "OUTBE_RPC_BIND_IP=\"10.77.0.10\"\n",
+                "OUTBE_VM_PREFIX=\"24\"\n",
+                "OUTBE_VM_GATEWAY=\"10.77.0.1\"\n",
+                "OUTBE_VM_DNS=\"1.1.1.1,8.8.8.8\"\n",
+                "OUTBE_CONSENSUS_PORT=\"30400\"\n",
+                "OUTBE_RETH_PORT=\"30303\"\n",
+                "OUTBE_DISCV5_PORT=\"31303\"\n",
+                "OUTBE_RADICLE_PORT=\"8776\"\n",
                 "OUTBE_CERTIFIED_RPC=\"http://127.0.0.1:8545\"\n",
                 "OUTBE_VALIDATOR_ADDRESS=\"0x1111111111111111111111111111111111111111\"\n",
                 "OUTBE_BOOTNODES=\"enode://abcd@10.0.0.1:30303\"\n",
@@ -1077,6 +1091,13 @@ mod tests {
             concat!(
                 "OUTBE_EXTERNAL_IP=\"10.0.0.2\"\n",
                 "OUTBE_RPC_BIND_IP=\"10.77.0.20\"\n",
+                "OUTBE_VM_PREFIX=\"24\"\n",
+                "OUTBE_VM_GATEWAY=\"10.77.0.1\"\n",
+                "OUTBE_VM_DNS=\"1.1.1.1,8.8.8.8\"\n",
+                "OUTBE_CONSENSUS_PORT=\"30400\"\n",
+                "OUTBE_RETH_PORT=\"30303\"\n",
+                "OUTBE_DISCV5_PORT=\"31303\"\n",
+                "OUTBE_RADICLE_PORT=\"8776\"\n",
                 "OUTBE_CERTIFIED_RPC=\"http://10.0.0.1:8545\"\n",
                 "OUTBE_BOOTNODES=\"enode://abcd@10.0.0.1:30303\"\n",
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"--consensus.use-local-defaults\"\n",

@@ -88,6 +88,20 @@ pub struct FullNodeNetworkConfig {
     pub advertise_ip: Ipv4Addr,
     #[serde(default = "default_rpc_bind_ip")]
     pub rpc_bind_ip: Ipv4Addr,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_prefix: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_gateway: Option<Ipv4Addr>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vm_dns: Vec<Ipv4Addr>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_consensus_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_reth_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_discv5_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_radicle_port: Option<u16>,
     pub bootnodes: Vec<String>,
     #[serde(default)]
     pub use_local_defaults: bool,
@@ -117,6 +131,16 @@ impl FullNodeConfig {
             self.network.rpc_bind_ip.is_loopback() || self.network.rpc_bind_ip.is_private(),
             "network.rpc_bind_ip must be a loopback or private IPv4 address"
         );
+        validate_optional_vm_static_network(
+            self.network.rpc_bind_ip,
+            self.network.vm_prefix,
+            self.network.vm_gateway,
+            &self.network.vm_dns,
+            self.network.vm_consensus_port,
+            self.network.vm_reth_port,
+            self.network.vm_discv5_port,
+            self.network.vm_radicle_port,
+        )?;
         ensure!(
             (self.network.certified_rpc.starts_with("http://")
                 || self.network.certified_rpc.starts_with("https://"))
@@ -157,10 +181,20 @@ impl FullNodeConfig {
         } else {
             ""
         };
+        let vm_net_lines = render_optional_vm_static_env(
+            self.network.vm_prefix,
+            self.network.vm_gateway,
+            &self.network.vm_dns,
+            self.network.vm_consensus_port,
+            self.network.vm_reth_port,
+            self.network.vm_discv5_port,
+            self.network.vm_radicle_port,
+        );
         let env = format!(
             concat!(
                 "OUTBE_EXTERNAL_IP=\"{}\"\n",
                 "OUTBE_RPC_BIND_IP=\"{}\"\n",
+                "{}",
                 "OUTBE_CERTIFIED_RPC=\"{}\"\n",
                 "OUTBE_BOOTNODES=\"{}\"\n",
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"{}\"\n",
@@ -168,6 +202,7 @@ impl FullNodeConfig {
             ),
             self.network.advertise_ip,
             self.network.rpc_bind_ip,
+            vm_net_lines,
             self.network.certified_rpc,
             self.network.bootnodes.join(","),
             extra,
@@ -195,6 +230,20 @@ pub struct NetworkConfig {
     pub advertise_ip: Ipv4Addr,
     #[serde(default = "default_rpc_bind_ip")]
     pub rpc_bind_ip: Ipv4Addr,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_prefix: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_gateway: Option<Ipv4Addr>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vm_dns: Vec<Ipv4Addr>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_consensus_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_reth_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_discv5_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm_radicle_port: Option<u16>,
     pub bootnodes: Vec<String>,
     pub consensus_peers: Vec<String>,
     #[serde(default)]
@@ -298,10 +347,20 @@ impl OperatorConfig {
         } else {
             ""
         };
+        let vm_net_lines = render_optional_vm_static_env(
+            self.network.vm_prefix,
+            self.network.vm_gateway,
+            &self.network.vm_dns,
+            self.network.vm_consensus_port,
+            self.network.vm_reth_port,
+            self.network.vm_discv5_port,
+            self.network.vm_radicle_port,
+        );
         let env = format!(
             concat!(
                 "OUTBE_EXTERNAL_IP=\"{}\"\n",
                 "OUTBE_RPC_BIND_IP=\"{}\"\n",
+                "{}",
                 "OUTBE_CERTIFIED_RPC=\"{}\"\n",
                 "OUTBE_VALIDATOR_ADDRESS=\"{:#x}\"\n",
                 "OUTBE_BOOTNODES=\"{}\"\n",
@@ -311,6 +370,7 @@ impl OperatorConfig {
             ),
             self.network.advertise_ip,
             self.network.rpc_bind_ip,
+            vm_net_lines,
             self.network.certified_rpc,
             validator,
             self.network.bootnodes.join(","),
@@ -343,6 +403,16 @@ impl OperatorConfig {
             self.network.rpc_bind_ip.is_loopback() || self.network.rpc_bind_ip.is_private(),
             "network.rpc_bind_ip must be a loopback or private IPv4 address"
         );
+        validate_optional_vm_static_network(
+            self.network.rpc_bind_ip,
+            self.network.vm_prefix,
+            self.network.vm_gateway,
+            &self.network.vm_dns,
+            self.network.vm_consensus_port,
+            self.network.vm_reth_port,
+            self.network.vm_discv5_port,
+            self.network.vm_radicle_port,
+        )?;
         ensure!(
             self.network.certified_rpc.starts_with("http://")
                 || self.network.certified_rpc.starts_with("https://"),
@@ -596,6 +666,85 @@ pub fn validate_hyperlane_public_toml(
         );
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_optional_vm_static_network(
+    rpc_bind_ip: Ipv4Addr,
+    vm_prefix: Option<u8>,
+    vm_gateway: Option<Ipv4Addr>,
+    vm_dns: &[Ipv4Addr],
+    vm_consensus_port: Option<u16>,
+    vm_reth_port: Option<u16>,
+    vm_discv5_port: Option<u16>,
+    vm_radicle_port: Option<u16>,
+) -> Result<()> {
+    let any_net = vm_prefix.is_some() || vm_gateway.is_some() || !vm_dns.is_empty();
+    let any_port = vm_consensus_port.is_some()
+        || vm_reth_port.is_some()
+        || vm_discv5_port.is_some()
+        || vm_radicle_port.is_some();
+    if any_net {
+        let prefix_len = vm_prefix
+            .ok_or_else(|| eyre::eyre!("network.vm_prefix is required for VM static addressing"))?;
+        let gateway = vm_gateway.ok_or_else(|| {
+            eyre::eyre!("network.vm_gateway is required for VM static addressing")
+        })?;
+        let cfg = crate::vm_network::StaticVmNetworkConfig {
+            address: rpc_bind_ip,
+            prefix_len,
+            gateway,
+            dns: vm_dns.to_vec(),
+        };
+        cfg.validate()?;
+    }
+    if any_net || any_port {
+        let defaults = crate::vm_network::VmPortsConfig::default();
+        let ports = crate::vm_network::VmPortsConfig {
+            consensus_port: vm_consensus_port.unwrap_or(defaults.consensus_port),
+            reth_port: vm_reth_port.unwrap_or(defaults.reth_port),
+            discv5_port: vm_discv5_port.unwrap_or(defaults.discv5_port),
+            radicle_port: vm_radicle_port.unwrap_or(defaults.radicle_port),
+        };
+        ports.validate()?;
+    }
+    Ok(())
+}
+
+fn render_optional_vm_static_env(
+    vm_prefix: Option<u8>,
+    vm_gateway: Option<Ipv4Addr>,
+    vm_dns: &[Ipv4Addr],
+    vm_consensus_port: Option<u16>,
+    vm_reth_port: Option<u16>,
+    vm_discv5_port: Option<u16>,
+    vm_radicle_port: Option<u16>,
+) -> String {
+    let mut out = String::new();
+    let has_net = vm_prefix.is_some() && vm_gateway.is_some() && !vm_dns.is_empty();
+    if let (Some(prefix), Some(gateway)) = (vm_prefix, vm_gateway) {
+        if !vm_dns.is_empty() {
+            out.push_str(&format!(
+                "OUTBE_VM_PREFIX=\"{prefix}\"\nOUTBE_VM_GATEWAY=\"{gateway}\"\nOUTBE_VM_DNS=\"{}\"\n",
+                crate::vm_network::format_dns_list(vm_dns)
+            ));
+        }
+    }
+    let any_port = vm_consensus_port.is_some()
+        || vm_reth_port.is_some()
+        || vm_discv5_port.is_some()
+        || vm_radicle_port.is_some();
+    if has_net || any_port {
+        let defaults = crate::vm_network::VmPortsConfig::default();
+        out.push_str(&format!(
+            "OUTBE_CONSENSUS_PORT=\"{}\"\nOUTBE_RETH_PORT=\"{}\"\nOUTBE_DISCV5_PORT=\"{}\"\nOUTBE_RADICLE_PORT=\"{}\"\n",
+            vm_consensus_port.unwrap_or(defaults.consensus_port),
+            vm_reth_port.unwrap_or(defaults.reth_port),
+            vm_discv5_port.unwrap_or(defaults.discv5_port),
+            vm_radicle_port.unwrap_or(defaults.radicle_port),
+        ));
+    }
+    out
 }
 
 impl NetworkConfig {

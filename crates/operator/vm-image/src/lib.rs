@@ -325,7 +325,8 @@ pub fn stage_overlay(
     )?;
 
     // 3. System account `outbe` with fixed UID/GID and home `/opt/outbe-chain`, plus tmpfiles
-    //    entry ensuring `/run/systemd/network` (0755) exists before `outbe-vm-boot.service` starts.
+    //    entry ensuring `/run/systemd/network` (0755) exists before `outbe-vm-boot.service` starts,
+    //    and static-network base config replacing dstack's DHCP `20-wired.network`.
     write_overlay_file(
         &common.join("usr/lib/sysusers.d/outbe.conf"),
         &render_sysusers_conf(),
@@ -334,6 +335,11 @@ pub fn stage_overlay(
     write_overlay_file(
         &common.join("usr/lib/tmpfiles.d/outbe-vm-network.conf"),
         "d /run/systemd/network 0755 root root -\n",
+        0o644,
+    )?;
+    write_overlay_file(
+        &common.join("etc/systemd/network/20-wired.network"),
+        &render_wired_network_no_dhcp(),
         0o644,
     )?;
 
@@ -352,7 +358,15 @@ pub fn stage_overlay(
         0o644,
     )?;
 
-    // 6. Preset with `dstack` in its filename so `mkosi.postinst` preserves it.
+    // 6. Presets with `dstack` in their filenames so `mkosi.postinst` preserves them.
+    //    `75-dstack-outbe-network.preset` sorts before `80-dstack.preset` so first-match-wins
+    //    disables `systemd-networkd-wait-online.service` and `dstack-prepare.service` does not
+    //    wait for DHCP before mounting the persistent data disk.
+    write_overlay_file(
+        &common.join("usr/lib/systemd/system-preset/75-dstack-outbe-network.preset"),
+        "disable systemd-networkd-wait-online.service\n",
+        0o644,
+    )?;
     write_overlay_file(
         &common.join("usr/lib/systemd/system-preset/85-dstack-outbe.preset"),
         "enable outbe-data-mount.service\n",
@@ -387,6 +401,25 @@ fn render_sysusers_conf() -> String {
          g outbe {OUTBE_GID} -\n\
          u outbe {OUTBE_UID}:{OUTBE_GID} \"Outbe validator\" /opt/outbe-chain /usr/sbin/nologin\n"
     )
+}
+
+fn render_wired_network_no_dhcp() -> String {
+    concat!(
+        "# Managed by Outbe VM image overlay (static IPv4 configured by outbe-vm-boot).\n",
+        "[Match]\n",
+        "Name=en* eth*\n",
+        "\n",
+        "[Link]\n",
+        "RequiredForOnline=no\n",
+        "ActivationPolicy=up\n",
+        "\n",
+        "[Network]\n",
+        "DHCP=no\n",
+        "IPv6AcceptRA=no\n",
+        "LinkLocalAddressing=no\n",
+        "ConfigureWithoutCarrier=yes\n",
+    )
+    .to_owned()
 }
 
 fn render_data_mount_unit() -> String {
@@ -1060,6 +1093,18 @@ mod tests {
         assert!(sysusers.contains("u outbe 900:900"));
         assert!(sysusers.contains("/opt/outbe-chain"));
         assert!(common.join("opt/outbe-chain").is_dir());
+        let wired =
+            fs::read_to_string(common.join("etc/systemd/network/20-wired.network")).unwrap();
+        assert!(wired.contains("DHCP=no"));
+        assert!(wired.contains("RequiredForOnline=no"));
+        assert!(wired.contains("ActivationPolicy=up"));
+        assert!(wired.contains("IPv6AcceptRA=no"));
+        assert!(wired.contains("LinkLocalAddressing=no"));
+        let net_preset = fs::read_to_string(
+            common.join("usr/lib/systemd/system-preset/75-dstack-outbe-network.preset"),
+        )
+        .unwrap();
+        assert_eq!(net_preset, "disable systemd-networkd-wait-online.service\n");
         assert!(common
             .join("usr/lib/systemd/system-preset/85-dstack-outbe.preset")
             .is_file());

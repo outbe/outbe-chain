@@ -504,7 +504,7 @@ pub fn check(args: CheckArgs) -> Result<()> {
         println!("  host_network_ok:    {}", report.host_network_ok);
         println!("  service_ip_ok:      {}", report.service_ip_ok);
         println!(
-            "  dhcp_reserved:      {} (optional; hybrid service IP)",
+            "  dhcp_reserved:      {} (optional; static internal IP)",
             report.dhcp_reserved
         );
         println!("  published_ports_ok: {}", report.published_ports_ok);

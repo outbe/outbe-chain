@@ -993,13 +993,13 @@ pub fn release_local_vm_dhcp(
     })
 }
 
-/// Strictly read-only verifier checking that host networking (bridge, active DHCP, IPv4
-/// forwarding, outbound NAT), the VM's hybrid service IP (inside the bridge subnet, outside the
-/// host DHCP pool, and free of conflicts), and any requested published ports (both prerouting
-/// DNAT and forward accept rules in live nftables) are configured with zero conflicts.
+/// Strictly read-only verifier checking that host networking (bridge, IPv4 forwarding, outbound
+/// NAT), the VM's static internal IP (inside the bridge subnet, outside any host DHCP pool, and
+/// unused), and any requested published ports (both prerouting DNAT and forward accept rules in
+/// live nftables) are configured with zero conflicts.
 ///
-/// Static `dhcp-hosts` reservations are no longer required (Decision 10); `dhcp_reserved` is
-/// reported as informational only.
+/// DHCP is not required on the host for static VMs (Decision 10, revised); if a host DHCP service
+/// is present, pool exclusion and reservation/lease conflict checks are still enforced.
 #[allow(clippy::too_many_arguments)]
 pub fn check_local_vm_host<T: VmmTransport>(
     store: &LocalVmStore,
@@ -1128,12 +1128,6 @@ pub fn check_local_vm_host<T: VmmTransport>(
     }
 
     let dhcp = detect_dhcp(&bridge_name, env);
-    let dhcp_service_ok = dhcp.detected && dhcp.unit_active;
-    if !dhcp_service_ok {
-        missing.push(format!(
-            "no active DHCP service detected on bridge `{bridge_name}`"
-        ));
-    }
 
     let ip_forward_runtime = read_runtime_ip_forward(env);
     let ip_forward_ok = ip_forward_runtime == Some(1);
@@ -1166,13 +1160,13 @@ pub fn check_local_vm_host<T: VmmTransport>(
         ));
     }
 
-    let host_network_ok = bridge_ok && dhcp_service_ok && ip_forward_ok && egress_ok;
+    let host_network_ok = bridge_ok && ip_forward_ok && egress_ok;
 
-    // 2. Service IP safety checks (Decision 10):
-    //    - Must be outside the host's discovered dynamic DHCP pool (`pool_start..=pool_end`).
-    //    - Must not collide with another local VM in our store, any existing static reservation
-    //      in `dhcp-hosts` (if present), or any active DHCP lease for another MAC.
-    //    - Static DHCP reservations are optional; missing reservations do NOT fail `host check`.
+    // 2. Static internal IP safety checks (Decision 10, revised):
+    //    - Must be inside the bridge subnet (not network, broadcast, or gateway).
+    //    - Must be outside any host DHCP pool (`pool_start..=pool_end`) when DHCP is present.
+    //    - Must be unused: not assigned to another local VM, any existing reservation in
+    //      `dhcp-hosts`, or any active DHCP lease for another MAC.
     let mut pool_overlap = false;
     if let (Some(pool_start), Some(pool_end)) = (dhcp.pool_start, dhcp.pool_end) {
         let ip_u32 = u32::from(ip);

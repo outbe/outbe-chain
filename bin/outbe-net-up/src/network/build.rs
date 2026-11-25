@@ -425,8 +425,30 @@ pub(super) fn genesis_cli_config(
     let validators = config
         .founders
         .iter()
-        .map(|founder| Value::String(founder.advertise_ip.to_string()))
-        .collect();
+        .map(|founder| {
+            let port_offset = if config.vm.is_some() {
+                config.resolve_founder_vm(founder)?.port_offset
+            } else {
+                0
+            };
+            if port_offset == 0 {
+                Ok(Value::String(founder.advertise_ip.to_string()))
+            } else {
+                let consensus_port = super::config::BASE_CONSENSUS_P2P_PORT
+                    .checked_add(port_offset)
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "port_offset {port_offset} overflows consensus port for {}",
+                            founder.name
+                        )
+                    })?;
+                Ok(Value::String(format!(
+                    "{}:{consensus_port}",
+                    founder.advertise_ip
+                )))
+            }
+        })
+        .collect::<Result<Vec<_>>>()?;
     let hyperlane_origins = config
         .resolve_hyperlane_config(&config.founders[0])?
         .origins;
@@ -707,6 +729,7 @@ fn emit_vm_founder_trees(inputs: &VmTreeInputs<'_>) -> Result<Vec<FounderArtifac
         copy_vm_keys(&src_keys, &dst_keys)?;
 
         let validator_addr = validator_address(&dst_keys.join("evm-key.hex"))?;
+        let ports = super::config::FounderPublishedPorts::from_offset(resolved_vm.port_offset)?;
         let operator = OperatorConfig {
             version: OPERATOR_CONFIG_VERSION,
             network: OperatorNetworkConfig {
@@ -714,6 +737,13 @@ fn emit_vm_founder_trees(inputs: &VmTreeInputs<'_>) -> Result<Vec<FounderArtifac
                 certified_rpc: inputs.config.certified_rpc.clone(),
                 advertise_ip: founder.advertise_ip,
                 rpc_bind_ip: founder.rpc_bind_ip,
+                vm_prefix: Some(resolved_vm.prefix),
+                vm_gateway: Some(resolved_vm.gateway),
+                vm_dns: resolved_vm.dns.clone(),
+                vm_consensus_port: Some(ports.consensus_p2p_tcp),
+                vm_reth_port: Some(ports.reth_p2p_tcp),
+                vm_discv5_port: Some(ports.reth_discv5_udp),
+                vm_radicle_port: Some(ports.radicle_tcp),
                 bootnodes: inputs.bootnodes.to_vec(),
                 consensus_peers: consensus_peers.clone(),
                 use_local_defaults: inputs.config.topology.use_local_defaults,
@@ -812,12 +842,26 @@ fn consensus_peers(config: &NetworkConfig, validators: &[Value]) -> Result<Vec<S
                     founder.name
                 )
             })?;
-            let effective_port = base_port.checked_add(port_offset).ok_or_else(|| {
-                eyre::eyre!(
-                    "port_offset {port_offset} overflows consensus port {base_port} for {}",
-                    founder.name
-                )
-            })?;
+            // `genesis_cli_config` already encodes `{advertise_ip}:{30400 + port_offset}` in
+            // `validators[]`, so avoid double-offsetting if `p2p_address` already carries it.
+            let expected_offset_port = super::config::BASE_CONSENSUS_P2P_PORT
+                .checked_add(port_offset)
+                .ok_or_else(|| {
+                    eyre::eyre!(
+                        "port_offset {port_offset} overflows consensus port for {}",
+                        founder.name
+                    )
+                })?;
+            let effective_port = if base_port == expected_offset_port {
+                base_port
+            } else {
+                base_port.checked_add(port_offset).ok_or_else(|| {
+                    eyre::eyre!(
+                        "port_offset {port_offset} overflows consensus port {base_port} for {}",
+                        founder.name
+                    )
+                })?
+            };
             Ok(format!("{pubkey}@{host}:{effective_port}"))
         })
         .collect()
@@ -895,6 +939,10 @@ fn joining_operator_config(
     bootnodes: Vec<String>,
     consensus_peers: Vec<String>,
 ) -> Result<OperatorConfig> {
+    let (vm_prefix, vm_gateway, vm_dns) = match &config.vm {
+        Some(vm) => (vm.prefix, vm.gateway, vm.dns.clone()),
+        None => (None, None, Vec::new()),
+    };
     Ok(OperatorConfig {
         version: OPERATOR_CONFIG_VERSION,
         network: OperatorNetworkConfig {
@@ -902,6 +950,13 @@ fn joining_operator_config(
             certified_rpc: config.certified_rpc.clone(),
             advertise_ip: Ipv4Addr::new(192, 0, 2, 10),
             rpc_bind_ip: Ipv4Addr::LOCALHOST,
+            vm_prefix,
+            vm_gateway,
+            vm_dns,
+            vm_consensus_port: None,
+            vm_reth_port: None,
+            vm_discv5_port: None,
+            vm_radicle_port: None,
             bootnodes,
             consensus_peers,
             use_local_defaults: config.topology.use_local_defaults,
@@ -1191,6 +1246,9 @@ certified_rpc: "http://10.77.0.10:8545"
 vm:
   vmm_host:
     host: 162.19.107.121
+  prefix: 24
+  gateway: 10.77.0.1
+  dns: [1.1.1.1, 8.8.8.8]
 founders:
   - name: validator-0
     advertise_ip: 162.19.107.121
@@ -1296,11 +1354,40 @@ genesis:
         assert_eq!(artifacts[2].vm.as_ref().unwrap().port_offset, 0);
         assert_eq!(artifacts[3].vm.as_ref().unwrap().port_offset, 1);
 
+        let genesis_cfg = genesis_cli_config(&config, &software_root, &keys_dir, None).unwrap();
+        assert_eq!(
+            genesis_cfg["validators"],
+            json!([
+                "162.19.107.121",
+                "162.19.107.121:30401",
+                "141.95.168.110",
+                "141.95.168.110:30401",
+            ])
+        );
+
         let env0 = fs::read_to_string(staging_root.join("vm/validator-0/validator.env")).unwrap();
+        assert!(
+            env0.contains("OUTBE_EXTERNAL_IP=\"162.19.107.121\""),
+            "{env0}"
+        );
+        assert!(env0.contains("OUTBE_RPC_BIND_IP=\"10.77.0.10\""), "{env0}");
+        assert!(env0.contains("OUTBE_VM_PREFIX=\"24\""), "{env0}");
+        assert!(env0.contains("OUTBE_VM_GATEWAY=\"10.77.0.1\""), "{env0}");
+        assert!(env0.contains("OUTBE_VM_DNS=\"1.1.1.1,8.8.8.8\""), "{env0}");
+        assert!(env0.contains("OUTBE_CONSENSUS_PORT=\"30400\""), "{env0}");
+        assert!(env0.contains("OUTBE_RETH_PORT=\"30303\""), "{env0}");
+        assert!(env0.contains("OUTBE_DISCV5_PORT=\"31303\""), "{env0}");
+        assert!(env0.contains("OUTBE_RADICLE_PORT=\"8776\""), "{env0}");
         assert!(env0.contains("162.19.107.121:30400"), "{env0}");
         assert!(env0.contains("162.19.107.121:30401"), "{env0}");
         assert!(env0.contains("141.95.168.110:30400"), "{env0}");
         assert!(env0.contains("141.95.168.110:30401"), "{env0}");
+
+        let env1 = fs::read_to_string(staging_root.join("vm/validator-1/validator.env")).unwrap();
+        assert!(env1.contains("OUTBE_CONSENSUS_PORT=\"30401\""), "{env1}");
+        assert!(env1.contains("OUTBE_RETH_PORT=\"30304\""), "{env1}");
+        assert!(env1.contains("OUTBE_DISCV5_PORT=\"31304\""), "{env1}");
+        assert!(env1.contains("OUTBE_RADICLE_PORT=\"8777\""), "{env1}");
 
         for index in 0..4 {
             let tree = staging_root.join(format!("vm/validator-{index}"));

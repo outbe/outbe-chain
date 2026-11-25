@@ -29,6 +29,13 @@ pub(crate) const CANONICAL_HEX_KEYS: &[&str] = &[
 const ENV_KEYS: &[&str] = &[
     "OUTBE_EXTERNAL_IP",
     "OUTBE_RPC_BIND_IP",
+    "OUTBE_VM_PREFIX",
+    "OUTBE_VM_GATEWAY",
+    "OUTBE_VM_DNS",
+    "OUTBE_CONSENSUS_PORT",
+    "OUTBE_RETH_PORT",
+    "OUTBE_DISCV5_PORT",
+    "OUTBE_RADICLE_PORT",
     "OUTBE_CERTIFIED_RPC",
     "OUTBE_VALIDATOR_ADDRESS",
     "OUTBE_BOOTNODES",
@@ -40,10 +47,25 @@ const ENV_KEYS: &[&str] = &[
 const FULL_NODE_ENV_KEYS: &[&str] = &[
     "OUTBE_EXTERNAL_IP",
     "OUTBE_RPC_BIND_IP",
+    "OUTBE_VM_PREFIX",
+    "OUTBE_VM_GATEWAY",
+    "OUTBE_VM_DNS",
+    "OUTBE_CONSENSUS_PORT",
+    "OUTBE_RETH_PORT",
+    "OUTBE_DISCV5_PORT",
+    "OUTBE_RADICLE_PORT",
     "OUTBE_CERTIFIED_RPC",
     "OUTBE_BOOTNODES",
     "OUTBE_CONSENSUS_EXTRA_ARGS",
     "OUTBE_CHAIN_ID",
+];
+
+const VM_STATIC_NET_KEYS: &[&str] = &["OUTBE_VM_PREFIX", "OUTBE_VM_GATEWAY", "OUTBE_VM_DNS"];
+const VM_PORT_KEYS: &[&str] = &[
+    "OUTBE_CONSENSUS_PORT",
+    "OUTBE_RETH_PORT",
+    "OUTBE_DISCV5_PORT",
+    "OUTBE_RADICLE_PORT",
 ];
 
 pub fn run() -> Result<()> {
@@ -110,7 +132,7 @@ fn validate_local_config(path: &Path) -> Result<()> {
 }
 
 pub(crate) fn read_environment(path: &Path) -> Result<BTreeMap<String, String>> {
-    read_environment_with_keys(path, ENV_KEYS)
+    read_environment_with_keys(path, ENV_KEYS, false)
 }
 
 pub(crate) fn read_environment_for_role(
@@ -119,15 +141,16 @@ pub(crate) fn read_environment_for_role(
 ) -> Result<BTreeMap<String, String>> {
     match role {
         NodeRole::Founder | NodeRole::JoiningValidator => {
-            read_environment_with_keys(path, ENV_KEYS)
+            read_environment_with_keys(path, ENV_KEYS, true)
         }
-        NodeRole::FullNode => read_environment_with_keys(path, FULL_NODE_ENV_KEYS),
+        NodeRole::FullNode => read_environment_with_keys(path, FULL_NODE_ENV_KEYS, true),
     }
 }
 
 fn read_environment_with_keys(
     path: &Path,
     allowed_keys: &[&str],
+    require_vm_static_net: bool,
 ) -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
     let allowed = allowed_keys.iter().copied().collect::<BTreeSet<_>>();
@@ -150,11 +173,17 @@ fn read_environment_with_keys(
             "duplicate validator.env key: {name}"
         );
     }
-    for name in allowed_keys
-        .iter()
-        .copied()
-        .filter(|name| !matches!(*name, "OUTBE_CONSENSUS_EXTRA_ARGS"))
-    {
+    for name in allowed_keys.iter().copied().filter(|name| {
+        if *name == "OUTBE_CONSENSUS_EXTRA_ARGS" {
+            return false;
+        }
+        if !require_vm_static_net
+            && (VM_STATIC_NET_KEYS.contains(name) || VM_PORT_KEYS.contains(name))
+        {
+            return false;
+        }
+        true
+    }) {
         ensure!(
             values.get(name).is_some_and(|value| !value.is_empty()),
             "missing {name} in validator.env"
@@ -164,12 +193,20 @@ fn read_environment_with_keys(
 }
 
 pub(crate) fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
-    validate_environment_for_role(values, NodeRole::JoiningValidator)
+    validate_environment_inner(values, NodeRole::JoiningValidator, false)
 }
 
 pub(crate) fn validate_environment_for_role(
     values: &BTreeMap<String, String>,
     role: NodeRole,
+) -> Result<()> {
+    validate_environment_inner(values, role, true)
+}
+
+fn validate_environment_inner(
+    values: &BTreeMap<String, String>,
+    role: NodeRole,
+    require_vm_static_net: bool,
 ) -> Result<()> {
     values["OUTBE_EXTERNAL_IP"]
         .parse::<std::net::Ipv4Addr>()
@@ -181,6 +218,14 @@ pub(crate) fn validate_environment_for_role(
         rpc_bind.is_loopback() || rpc_bind.is_private(),
         "OUTBE_RPC_BIND_IP must be a loopback or private IPv4 address"
     );
+    let any_vm_net = VM_STATIC_NET_KEYS.iter().any(|k| values.contains_key(*k));
+    if require_vm_static_net || any_vm_net {
+        let _ = crate::vm_network::StaticVmNetworkConfig::from_env(values)?;
+    }
+    let any_vm_port = VM_PORT_KEYS.iter().any(|k| values.contains_key(*k));
+    if require_vm_static_net || any_vm_port {
+        let _ = crate::vm_network::VmPortsConfig::from_env(values)?;
+    }
     let rpc = &values["OUTBE_CERTIFIED_RPC"];
     ensure!(
         (rpc.starts_with("http://") || rpc.starts_with("https://"))

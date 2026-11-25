@@ -98,6 +98,17 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
     hyperlane_directives.push(wait_rpc.clone());
     hyperlane_directives.push(internal_cmd("hyperlane"));
 
+    let radicle_listen = if profile.joining {
+        "  --listen 0.0.0.0:8776 \\"
+    } else {
+        "  --listen 0.0.0.0:${OUTBE_RADICLE_PORT} \\"
+    };
+    let radicle_advertise = if profile.joining {
+        "  --advertise ${OUTBE_EXTERNAL_IP}:8776"
+    } else {
+        "  --advertise ${OUTBE_EXTERNAL_IP}:${OUTBE_RADICLE_PORT}"
+    };
+
     let mut units = vec![
         render_service(&ServiceSpec {
             name: "outbe-radicle.service",
@@ -113,11 +124,11 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
                 &format!("ExecStart={}/outbe-radicle \\", profile.bin_dir),
                 "  --home /opt/outbe-chain/keys/radicle \\",
                 "  --control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \\",
-                "  --listen 0.0.0.0:8776 \\",
+                radicle_listen,
                 "  --status-listen 127.0.0.1:8876 \\",
                 "  --max-validators 128 \\",
                 "  --external-inbound-reserve 16 \\",
-                "  --advertise ${OUTBE_EXTERNAL_IP}:8776",
+                radicle_advertise,
             ]),
             sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/keys"]),
             limit_nofile: 65_535,
@@ -245,6 +256,26 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
 }
 
 fn managed_validator_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
+    let reth_port_line = if profile.joining {
+        "  --port 30303 \\"
+    } else {
+        "  --port ${OUTBE_RETH_PORT} \\"
+    };
+    let discovery_port_line = if profile.joining {
+        "  --discovery.port 30303 \\"
+    } else {
+        "  --discovery.port ${OUTBE_RETH_PORT} \\"
+    };
+    let discv5_port_line = if profile.joining {
+        "  --discovery.v5.port 31303 \\"
+    } else {
+        "  --discovery.v5.port ${OUTBE_DISCV5_PORT} \\"
+    };
+    let consensus_listen_line = if profile.joining {
+        "  --consensus.listen-addr 0.0.0.0:30400 \\"
+    } else {
+        "  --consensus.listen-addr 0.0.0.0:${OUTBE_CONSENSUS_PORT} \\"
+    };
     let mut directives = lines(&[
         "EnvironmentFile=/opt/outbe-chain/validator.env",
         "Environment=RUST_MIN_STACK=16777216",
@@ -263,11 +294,11 @@ fn managed_validator_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
         "  --http.port 8545 \\",
         "  --http.api eth,net,web3,outbe \\",
         "  --authrpc.port 8551 \\",
-        "  --port 30303 \\",
-        "  --discovery.port 30303 \\",
+        reth_port_line,
+        discovery_port_line,
         "  --nat extip:${OUTBE_EXTERNAL_IP} \\",
         "  --discovery.v5.addr 0.0.0.0 \\",
-        "  --discovery.v5.port 31303 \\",
+        discv5_port_line,
         "  --p2p-secret-key /opt/outbe-chain/keys/reth-p2p-secret.hex \\",
         "  --bootnodes ${OUTBE_BOOTNODES} \\",
         "  --metrics 127.0.0.1:9101 \\",
@@ -280,7 +311,7 @@ fn managed_validator_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
     if profile.joining {
         directives.push("  --consensus.keys-dir /opt/outbe-chain/keys \\".to_owned());
     }
-    directives.push("  --consensus.listen-addr 0.0.0.0:30400 \\".to_owned());
+    directives.push(consensus_listen_line.to_owned());
     if profile.joining {
         directives.push("  --consensus.peers ${OUTBE_CONSENSUS_PEERS} \\".to_owned());
     }
@@ -319,14 +350,13 @@ fn managed_validator_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
 
 fn render_vm_boot_service(outbe_up: &str, bin_dir: &str) -> UnitFile {
     // Run before all validator daemons to verify the unmeasured data disk and configure the
-    // hybrid service IP drop-in under /run/systemd/network.
+    // static IPv4 drop-in under /run/systemd/network.
     let content = format!(
         concat!(
             "[Unit]\n",
             "Description=Outbe VM data disk verification and boot preparation\n",
             "Requires=outbe-data-mount.service\n",
-            "Wants=network-online.target\n",
-            "After=local-fs.target network-online.target outbe-data-mount.service\n",
+            "After=local-fs.target systemd-networkd.service outbe-data-mount.service\n",
             "PartOf=outbe-validator.target\n",
             "\n",
             "[Service]\n",
@@ -840,10 +870,9 @@ mod tests {
         assert!(boot.contains("Type=oneshot"));
         assert!(boot.contains("RemainAfterExit=yes"));
         assert!(boot.contains("Requires=outbe-data-mount.service"));
-        assert!(boot.contains("Wants=network-online.target"));
-        assert!(
-            boot.contains("After=local-fs.target network-online.target outbe-data-mount.service")
-        );
+        assert!(!boot.contains("network-online.target"));
+        assert!(boot
+            .contains("After=local-fs.target systemd-networkd.service outbe-data-mount.service"));
         assert!(boot.contains("ReadWritePaths=/opt/outbe-chain /run/systemd/network"));
         assert!(boot.contains(
             "ExecStart=/usr/local/bin/outbe-up internal vm-boot --bin-dir /usr/local/bin"
@@ -994,6 +1023,37 @@ mod tests {
             BTreeSet::from(["--consensus.keys-dir", "--consensus.peers", "--upstream"])
         );
         assert!(vm_only.is_empty(), "unexpected VM-only flags: {vm_only:?}");
+    }
+
+    #[test]
+    fn vm_units_use_explicit_env_ports_for_listen_and_advertise_and_keep_fixed_ports() {
+        let vm = vm_units();
+        let expand = |raw: &str| {
+            raw.replace("${OUTBE_EXTERNAL_IP}", "162.19.107.121")
+                .replace("${OUTBE_RPC_BIND_IP}", "10.77.0.81")
+                .replace("${OUTBE_CONSENSUS_PORT}", "30401")
+                .replace("${OUTBE_RETH_PORT}", "30304")
+                .replace("${OUTBE_DISCV5_PORT}", "31304")
+                .replace("${OUTBE_RADICLE_PORT}", "8777")
+        };
+
+        let validator = expand(unit(&vm, "outbe-validator.service"));
+        assert!(validator.contains("--consensus.listen-addr 0.0.0.0:30401"));
+        assert!(validator.contains("--port 30304"));
+        assert!(validator.contains("--discovery.port 30304"));
+        assert!(validator.contains("--discovery.v5.port 31304"));
+        assert!(validator.contains("--nat extip:162.19.107.121"));
+        // Fixed guest ports stay unchanged.
+        assert!(validator.contains("--http.addr 10.77.0.81"));
+        assert!(validator.contains("--http.port 8545"));
+        assert!(validator.contains("--authrpc.port 8551"));
+        assert!(validator.contains("--metrics 127.0.0.1:9101"));
+        assert!(validator.contains("--radicle.status-address 127.0.0.1:8876"));
+
+        let radicle = expand(unit(&vm, "outbe-radicle.service"));
+        assert!(radicle.contains("--listen 0.0.0.0:8777"));
+        assert!(radicle.contains("--advertise 162.19.107.121:8777"));
+        assert!(radicle.contains("--status-listen 127.0.0.1:8876"));
     }
 
     fn logical_directives(content: &str) -> Vec<(String, String)> {

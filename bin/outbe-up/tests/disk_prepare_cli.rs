@@ -118,6 +118,13 @@ fn build_founder_tree(tree: &Path, chain_id: u64) {
             concat!(
                 "OUTBE_EXTERNAL_IP=\"10.77.0.10\"\n",
                 "OUTBE_RPC_BIND_IP=\"10.77.0.10\"\n",
+                "OUTBE_VM_PREFIX=\"24\"\n",
+                "OUTBE_VM_GATEWAY=\"10.77.0.1\"\n",
+                "OUTBE_VM_DNS=\"1.1.1.1,8.8.8.8\"\n",
+                "OUTBE_CONSENSUS_PORT=\"30400\"\n",
+                "OUTBE_RETH_PORT=\"30303\"\n",
+                "OUTBE_DISCV5_PORT=\"31303\"\n",
+                "OUTBE_RADICLE_PORT=\"8776\"\n",
                 "OUTBE_CERTIFIED_RPC=\"http://10.77.0.10:8545\"\n",
                 "OUTBE_VALIDATOR_ADDRESS=\"0x1111111111111111111111111111111111111111\"\n",
                 "OUTBE_BOOTNODES=\"enode://abcd@10.77.0.10:30303\"\n",
@@ -443,6 +450,9 @@ network:
   certified_rpc: "http://10.77.0.10:8545"
   advertise_ip: 10.77.0.20
   rpc_bind_ip: 10.77.0.20
+  vm_prefix: 24
+  vm_gateway: 10.77.0.1
+  vm_dns: [1.1.1.1, 8.8.8.8]
   bootnodes:
     - "enode://abcd@10.77.0.10:30303"
   consensus_peers:
@@ -476,6 +486,9 @@ network:
   certified_rpc: "http://10.77.0.10:8545"
   advertise_ip: 10.77.0.21
   rpc_bind_ip: 10.77.0.21
+  vm_prefix: 24
+  vm_gateway: 10.77.0.1
+  vm_dns: [1.1.1.1, 8.8.8.8]
   bootnodes:
     - "enode://abcd@10.77.0.10:30303"
   use_local_defaults: true
