@@ -221,7 +221,7 @@ fn approvals_do_not_overwrite_reservations_with_the_same_id() {
     stub_vault(&mut provider);
     StorageHandle::enter(&mut provider, |storage| {
         let router = VaultRouterContract::new(storage.clone());
-        let reservation = LiquidityReservation {
+        let reservation = CredisReservation {
             id: U256::ONE,
             asset: asset(),
             amount_minor: U256::from(123),
@@ -782,7 +782,7 @@ fn pending_removal_does_not_block_settlement_of_existing_reservations() {
             if release {
                 // Partial release also redeposits the unused amount into the origin vault.
                 assert_eq!(
-                    runtime::release_reservation(
+                    runtime::redeem_credis_reservation(
                         storage.clone(),
                         id,
                         receiver(),
@@ -798,7 +798,7 @@ fn pending_removal_does_not_block_settlement_of_existing_reservations() {
                     U256::from(100)
                 );
             }
-            assert!(runtime::reservation_of(&storage, id)
+            assert!(runtime::credis_reservation_of(&storage, id)
                 .unwrap()
                 .asset
                 .is_zero());

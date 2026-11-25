@@ -30,7 +30,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
-use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
+use outbe_vaultrouter::{CredisReservation, VaultRouterContract};
 
 use crate::runtime;
 
@@ -175,7 +175,7 @@ pub fn seed_reservation(
     let call_terms = outbe_credis::config::read(storage).expect("call terms");
     contract
         .reservations
-        .create(&LiquidityReservation {
+        .create(&CredisReservation {
             id,
             asset: settlement_asset(),
             amount_minor: amount,
@@ -738,7 +738,7 @@ pub fn env() -> HashMapStorageProvider {
     storage.stub_sub_call_at(settlement_asset(), iso_word(ISSUANCE_ISO));
     storage.stub_sub_call_at_selector(
         VAULT_ROUTER_ADDRESS,
-        outbe_vaultrouter::precompile::IVaultRouter::releaseReservationCall::SELECTOR,
+        outbe_vaultrouter::precompile::IVaultRouter::redeemCredisReservationCall::SELECTOR,
         Bytes::from(pledge_stables().to_be_bytes::<32>().to_vec()),
     );
     storage.stub_sub_call_at_selector(

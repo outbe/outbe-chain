@@ -48,7 +48,7 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
         );
 
         pledge(&storage, alice(), id, 1);
-        let reservation = outbe_vaultrouter::api::reservation_of(&storage, id).unwrap();
+        let reservation = outbe_vaultrouter::api::credis_reservation_of(&storage, id).unwrap();
         expect_issue_error(
             &storage,
             cca(),
@@ -117,7 +117,7 @@ fn issue_uses_the_reservation_pledge_once_and_rolls_back_failures() {
     provider.set_block_number(BLOCK_NUMBER + 1);
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(
-            outbe_vaultrouter::api::reservation_of(&storage, id).unwrap(),
+            outbe_vaultrouter::api::credis_reservation_of(&storage, id).unwrap(),
             reservation
         );
         fund_stake(&storage, pledge_stake());
@@ -371,7 +371,7 @@ fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
         let midnight = (CREATED_AT / DAY + 1) * DAY;
         advance_to(&storage, midnight - 300);
         let id = seed_reservation(&storage, alice(), alice(), pledge_stables());
-        let mut reservation = outbe_vaultrouter::api::reservation_of(&storage, id).unwrap();
+        let mut reservation = outbe_vaultrouter::api::credis_reservation_of(&storage, id).unwrap();
         reservation.entry_price_minor = U256::from(2_500_000u64);
         VaultRouterContract::new(storage.clone())
             .reservations
@@ -429,7 +429,7 @@ fn credis_series_lifecycle_emits_open_issue_settle_call_close_and_forfeit_events
      -> (U256, outbe_core_common::series_id::SeriesId) {
         let reservation_id = seed_reservation(storage, who, who, pledge_stables());
         let mut reservation =
-            outbe_vaultrouter::api::reservation_of(storage, reservation_id).unwrap();
+            outbe_vaultrouter::api::credis_reservation_of(storage, reservation_id).unwrap();
         if let Some(series_id) = shared_series {
             reservation.series_id = series_id;
             reservation.entry_price_minor = oracle_rate();

@@ -1,25 +1,30 @@
 //! CCA liquidity reservations held in the router's custody for a Credis owner.
 
 use alloy_primitives::{Address, U256};
-
+use alloy_sol_types::SolCall;
+use outbe_credis::CredisContract;
+use outbe_oracle::api::{self, current_vwap_24h_snapshot, vwap_24h};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::time::first_full_day;
+use outbe_system_common::{math::scaled_math::checked_quote, units::MAX_ASSET_DECIMALS};
 
 use super::calls::{erc20_transfer, vault_deposit, vault_withdraw};
 use super::{ensure_shares_cover, first_vault, SELF};
 use crate::constants::RESERVATION_TTL_SECS;
-use crate::errors::VaultRouterError;
+use crate::errors::{date_step_error, VaultRouterError};
 use crate::precompile::IVaultRouter;
-use crate::schema::{LiquidityReservation, VaultRouterContract};
+use crate::schema::{CredisReservation, VaultRouterContract};
+use crate::sol_ext::{IReferenceCurrency, IERC20};
 
-/// `reserveStables`: redeem `amount` of `asset` from its origin vault into this
+/// `createCredisReservation`: redeem `amount` of `asset` from its origin vault into this
 /// router's custody for `credis_owner`. Caller must be an active CCA.
-pub(crate) fn reserve_stables(
+pub(crate) fn create_credis_reservation(
     storage: StorageHandle<'_>,
     caller: Address,
-    call: IVaultRouter::reserveStablesCall,
+    call: IVaultRouter::createCredisReservationCall,
 ) -> Result<U256> {
-    let IVaultRouter::reserveStablesCall {
+    let IVaultRouter::createCredisReservationCall {
         credisOwner: credis_owner,
         source,
         asset,
@@ -55,7 +60,7 @@ pub(crate) fn reserve_stables(
             }
         }
         ensure_shares_cover(&storage, vault, amount)?;
-        let mut terms = crate::reservation::quote(&storage, asset, amount, reference_currency)?;
+        let mut terms = quote(&storage, asset, amount, reference_currency)?;
 
         let nonce = contract
             .reservation_nonce
@@ -93,7 +98,7 @@ pub(crate) fn reserve_stables(
 
 /// Validate the receiver as the reservation's Credis owner, pay the recorded CCA for COEN delivered to it,
 /// and return any unused remainder to the origin vault.
-pub(crate) fn release_reservation(
+pub(crate) fn redeem_credis_reservation(
     storage: StorageHandle<'_>,
     id: U256,
     receiver: Address,
@@ -107,12 +112,12 @@ pub(crate) fn release_reservation(
     } else if amount.is_zero() {
         VaultRouterError::InvalidReservationAmount
     } else {
-        return release_checked(storage, id, receiver, amount);
+        return redeem_credis_reservation_checked(storage, id, receiver, amount);
     };
     Err(error.into())
 }
 
-fn release_checked(
+fn redeem_credis_reservation_checked(
     storage: StorageHandle<'_>,
     id: U256,
     receiver: Address,
@@ -153,7 +158,7 @@ fn release_checked(
 
 /// Rejects a release that the reservation's expiry, Credis owner or amount does not cover.
 fn ensure_releasable(
-    record: &LiquidityReservation,
+    record: &CredisReservation,
     id: U256,
     now: u64,
     receiver: Address,
@@ -205,7 +210,7 @@ pub(crate) fn return_reservation(
 }
 
 /// Reads and deletes the reservation under `id`, rejecting an unknown one.
-fn take_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<LiquidityReservation> {
+fn take_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<CredisReservation> {
     take_reservation_if_held(storage, id)?
         .ok_or_else(|| VaultRouterError::ReservationNotFound(id).into())
 }
@@ -214,7 +219,7 @@ fn take_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<LiquidityRe
 fn take_reservation_if_held(
     storage: &StorageHandle<'_>,
     id: U256,
-) -> Result<Option<LiquidityReservation>> {
+) -> Result<Option<CredisReservation>> {
     let contract = VaultRouterContract::new(storage.clone());
     let Some(record) = contract.reservations.get(id)? else {
         return Ok(None);
@@ -223,14 +228,72 @@ fn take_reservation_if_held(
     Ok(Some(record))
 }
 
-/// `reservationOf`: the reservation held under `id`, or a zeroed record when none.
-pub fn reservation_of(storage: &StorageHandle<'_>, id: U256) -> Result<LiquidityReservation> {
+/// `getCredisReservation`: the reservation held under `id`, or a zeroed record when none.
+pub fn credis_reservation_of(storage: &StorageHandle<'_>, id: U256) -> Result<CredisReservation> {
     let contract = VaultRouterContract::new(storage.clone());
-    Ok(contract
-        .reservations
-        .get(id)?
-        .unwrap_or(LiquidityReservation {
-            id,
-            ..Default::default()
-        }))
+    Ok(contract.reservations.get(id)?.unwrap_or(CredisReservation {
+        id,
+        ..Default::default()
+    }))
+}
+
+/// Quote once, before withdrawing the reserved amount. Issuance never refreshes these terms.
+fn quote(
+    storage: &StorageHandle<'_>,
+    asset: Address,
+    amount: U256,
+    reference_currency: u16,
+) -> Result<CredisReservation> {
+    if storage.with_account_info(asset, |info| Ok(info.is_empty_code_hash()))? {
+        return Err(VaultRouterError::InvalidAsset.into());
+    }
+    let data = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
+    let decimals = IERC20::decimalsCall::abi_decode_returns_validate(&data)
+        .map_err(|_| VaultRouterError::InvalidAssetDecimals)?;
+    if decimals > MAX_ASSET_DECIMALS {
+        return Err(VaultRouterError::UnsupportedAssetDecimalsSimple.into());
+    }
+    let data = storage.staticcall(
+        asset,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+    )?;
+    let currency = IReferenceCurrency::isoCodeCall::abi_decode_returns_validate(&data)
+        .map_err(|_| VaultRouterError::InvalidAssetCurrency)?;
+    api::check_reference_currency(reference_currency)?;
+    let snapshot = current_vwap_24h_snapshot(storage.clone())?;
+    let valuation = vwap_24h(storage.clone(), currency, snapshot)?
+        .filter(|v| !v.is_zero())
+        .ok_or(VaultRouterError::PledgePriceUnavailable)?;
+    let entry_price_minor = vwap_24h(storage.clone(), reference_currency, snapshot)?
+        .filter(|v| !v.is_zero())
+        .ok_or(VaultRouterError::ReferencePriceUnavailable)?;
+    let gratis_minor = checked_quote(amount, decimals, valuation)?;
+    let call_terms = outbe_credis::config::read(storage)?;
+    let now = storage.now_secs()?;
+    let (policy_rate, published_at) = api::get_policy_rate(storage.clone(), currency)?;
+    if now.saturating_sub(published_at) > u64::from(call_terms.max_policy_rate_age_seconds) {
+        return Err(VaultRouterError::PolicyRateTooOld.into());
+    }
+    let call_start_day = first_full_day(now).map_err(date_step_error)?;
+    let series_id = CredisContract::series_of(now, currency, reference_currency)
+        .map_err(|_| VaultRouterError::InvalidAssetCurrency)?;
+    Ok(CredisReservation {
+        asset,
+        amount_minor: amount,
+        gratis_minor,
+        snapshot_id: snapshot.to_u256(),
+        entry_price_minor,
+        policy_rate,
+        issuance_currency: currency,
+        asset_decimals: decimals,
+        reference_currency,
+        series_id,
+        sub_series: CredisContract::sub_series_of(now),
+        call_start_day,
+        call_rate: call_terms.call_rate,
+        call_window_seconds: call_terms.call_window_seconds,
+        call_threshold_seconds: call_terms.call_threshold_seconds,
+        call_notice_period_seconds: call_terms.call_notice_period_seconds,
+        ..Default::default()
+    })
 }

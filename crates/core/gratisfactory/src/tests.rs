@@ -297,7 +297,7 @@ fn fund_and_reserve(storage: &StorageHandle<'_>, source: Address) -> U256 {
     let id = U256::ONE;
     outbe_vaultrouter::schema::VaultRouterContract::new(storage.clone())
         .reservations
-        .create(&outbe_vaultrouter::schema::LiquidityReservation {
+        .create(&outbe_vaultrouter::schema::CredisReservation {
             id,
             asset: address!("0x0000000000000000000000000000000000000888"),
             amount_minor: U256::from(2 * RESERVED),
@@ -566,7 +566,8 @@ fn mining_coen_cannot_spend_pledged_gratis() {
 
 /// Adds another reservation of `RESERVED` Gratis for `source` and pledges it.
 fn reserve_and_pledge(storage: &StorageHandle<'_>, source: Address, id: u64, nonce: u64) -> U256 {
-    let mut reservation = outbe_vaultrouter::api::reservation_of(storage, U256::ONE).unwrap();
+    let mut reservation =
+        outbe_vaultrouter::api::credis_reservation_of(storage, U256::ONE).unwrap();
     reservation.id = U256::from(id);
     outbe_vaultrouter::schema::VaultRouterContract::new(storage.clone())
         .reservations
@@ -926,7 +927,7 @@ fn view_key_reconstructs_gratis_through_pledge_and_burn() {
         let id = U256::ONE;
         outbe_vaultrouter::schema::VaultRouterContract::new(storage.clone())
             .reservations
-            .create(&outbe_vaultrouter::schema::LiquidityReservation {
+            .create(&outbe_vaultrouter::schema::CredisReservation {
                 id,
                 asset: address!("0x0000000000000000000000000000000000000888"),
                 amount_minor: pledged * U256::from(2u64),

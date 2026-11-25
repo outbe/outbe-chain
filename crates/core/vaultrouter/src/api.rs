@@ -55,16 +55,16 @@ pub fn reference_currency_assets(
 /// Direct storage read of a reservation. Same-process precompiles use this
 /// rather than a staticcall so tests sharing the provider can seed and inspect
 /// holds without routing through the EVM stub.
-pub fn reservation_of(
+pub fn credis_reservation_of(
     storage: &StorageHandle<'_>,
     id: U256,
-) -> Result<crate::schema::LiquidityReservation> {
-    crate::runtime::reservation_of(storage, id)
+) -> Result<crate::schema::CredisReservation> {
+    crate::runtime::credis_reservation_of(storage, id)
 }
 
-/// `releaseReservation`: bind `receiver` to the reserved account and pay the recorded
+/// `redeemCredisReservation`: bind `receiver` to the reserved account and pay the recorded
 /// CCA via an EVM sub-call. Any unused remainder returns to the origin vault.
-pub fn release_reservation(
+pub fn redeem_credis_reservation(
     storage: &StorageHandle<'_>,
     id: U256,
     receiver: Address,
@@ -72,8 +72,8 @@ pub fn release_reservation(
 ) -> Result<U256> {
     call_router(
         storage,
-        IVaultRouter::releaseReservationCall {
-            id,
+        IVaultRouter::redeemCredisReservationCall {
+            credisReservationId: id,
             receiver,
             amountMinor: amount,
         },

@@ -108,14 +108,14 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
         let mut provider = env();
         provider.stub_sub_call_at_selector(
             VAULT_ROUTER_ADDRESS,
-            outbe_vaultrouter::precompile::IVaultRouter::releaseReservationCall::SELECTOR,
+            outbe_vaultrouter::precompile::IVaultRouter::redeemCredisReservationCall::SELECTOR,
             Bytes::from(principal.to_be_bytes::<32>().to_vec()),
         );
         let id = StorageHandle::enter(&mut provider, |storage| {
             bootstrap(&storage, collateral);
             let reservation_id = seed_reservation(&storage, bob(), alice(), principal);
             let mut reservation =
-                outbe_vaultrouter::api::reservation_of(&storage, reservation_id).unwrap();
+                outbe_vaultrouter::api::credis_reservation_of(&storage, reservation_id).unwrap();
             reservation.gratis_minor = collateral;
             VaultRouterContract::new(storage.clone())
                 .reservations

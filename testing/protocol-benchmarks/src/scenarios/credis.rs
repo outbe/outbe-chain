@@ -16,7 +16,7 @@ use outbe_system_common::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRES
 use outbe_system_common::time::timestamp_to_date_key;
 use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
-use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
+use outbe_vaultrouter::{CredisReservation, VaultRouterContract};
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{
@@ -159,7 +159,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
     let reservation_id = U256::from(1);
     contract
         .reservations
-        .create(&LiquidityReservation {
+        .create(&CredisReservation {
             id: reservation_id,
             asset: ASSET,
             amount_minor: pledge_stables(),

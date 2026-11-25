@@ -21,7 +21,7 @@ pub fn pledge_gratis(
     auth: ModifyAuth,
 ) -> Result<()> {
     storage.with_checkpoint(|| {
-        let r = outbe_vaultrouter::api::reservation_of(&storage, reservation_id)?;
+        let r = outbe_vaultrouter::api::credis_reservation_of(&storage, reservation_id)?;
         if r.asset.is_zero() {
             return Err(GratisFactoryError::ReservationNotFound.into());
         }

@@ -317,8 +317,8 @@ fn declared_error_reservation_not_found() {
         let id = U256::from(42);
         let err = dispatch(
             storage.clone(),
-            &IVaultRouter::releaseReservationCall {
-                id,
+            &IVaultRouter::redeemCredisReservationCall {
+                credisReservationId: id,
                 receiver: receiver(),
                 amountMinor: U256::from(10),
             }

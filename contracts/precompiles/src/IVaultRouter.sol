@@ -22,7 +22,7 @@ interface IVaultRouter {
         RemoveVault
     }
 
-    struct LiquidityReservation {
+    struct CredisReservation {
         address asset;
         /// @dev In `asset`'s own minor units.
         uint256 amountMinor;
@@ -256,7 +256,7 @@ interface IVaultRouter {
         returns (address assetFrom, address assetTo, uint256 assetsToMinor);
 
     /// @notice Whether the asset's reserve vault can currently fund a withdrawal of
-    ///         `amountMinor` of `asset`. This checks share coverage only; `reserveStables`
+    ///         `amountMinor` of `asset`. This checks share coverage only; `createCredisReservation`
     ///         also rejects pending vault removals. Returns false rather than reverting
     ///         when `asset` has no vault.
     function hasStablecoin(address asset, uint256 amountMinor) external view returns (bool sufficient);
@@ -269,7 +269,7 @@ interface IVaultRouter {
     ///         VWAP at the current hour as the entry price, and the issuance currency's policy rate.
     ///         Reverts if the selected vault has a pending removal vault action, even after
     ///         its deadline, until the action is cleared or superseded.
-    function reserveStables(
+    function createCredisReservation(
         address credisOwner,
         address source,
         address asset,
@@ -284,7 +284,7 @@ interface IVaultRouter {
     ///         owner. Reverts if the reservation is missing, expired, or too small.
     /// @dev Only CredisFactory may call. `receiver` binds the Credis owner.
     ///      `receiver` cannot redirect the payout.
-    function releaseReservation(uint256 id, address receiver, uint256 amountMinor)
+    function redeemCredisReservation(uint256 credisReservationId, address receiver, uint256 amountMinor)
         external
         returns (uint256 deliveredMinor);
 
@@ -293,6 +293,9 @@ interface IVaultRouter {
     ///         Idempotent. An `id` that holds nothing returns 0 instead of reverting.
     function returnReservation(uint256 id) external returns (uint256 mintedShares);
 
-    /// @notice The reservation held under `id`, or a zeroed struct if none.
-    function reservationOf(uint256 id) external view returns (LiquidityReservation memory reservation);
+    /// @notice The reservation held under `credisReservationId`, or a zeroed struct if none.
+    function getCredisReservation(uint256 credisReservationId)
+        external
+        view
+        returns (CredisReservation memory reservation);
 }

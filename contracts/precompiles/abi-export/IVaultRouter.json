@@ -89,6 +89,45 @@
   },
   {
     "type": "function",
+    "name": "createCredisReservation",
+    "inputs": [
+      {
+        "name": "credisOwner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "source",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "internalType": "uint16"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "credisReservationId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "deposit",
     "inputs": [
       {
@@ -139,6 +178,107 @@
       }
     ],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getCredisReservation",
+    "inputs": [
+      {
+        "name": "credisReservationId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "reservation",
+        "type": "tuple",
+        "internalType": "struct IVaultRouter.CredisReservation",
+        "components": [
+          {
+            "name": "asset",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "amountMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "credisOwner",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "cca",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "vault",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "expiresAt",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "gratisMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "snapshotId",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "entryPriceMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "policyRate",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "issuanceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "assetDecimals",
+            "type": "uint8",
+            "internalType": "uint8"
+          },
+          {
+            "name": "referenceCurrency",
+            "type": "uint16",
+            "internalType": "uint16"
+          },
+          {
+            "name": "source",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "seriesId",
+            "type": "bytes14",
+            "internalType": "bytes14"
+          },
+          {
+            "name": "subSeries",
+            "type": "uint8",
+            "internalType": "uint8"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -268,6 +408,35 @@
   },
   {
     "type": "function",
+    "name": "redeemCredisReservation",
+    "inputs": [
+      {
+        "name": "credisReservationId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "receiver",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "deliveredMinor",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "referenceCurrencyAssets",
     "inputs": [
       {
@@ -337,175 +506,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "releaseReservation",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "receiver",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amountMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "deliveredMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "reservationOf",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "reservation",
-        "type": "tuple",
-        "internalType": "struct IVaultRouter.LiquidityReservation",
-        "components": [
-          {
-            "name": "asset",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "amountMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "credisOwner",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "cca",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "vault",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "expiresAt",
-            "type": "uint64",
-            "internalType": "uint64"
-          },
-          {
-            "name": "gratisMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "snapshotId",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "entryPriceMinor",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "policyRate",
-            "type": "uint256",
-            "internalType": "uint256"
-          },
-          {
-            "name": "issuanceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "assetDecimals",
-            "type": "uint8",
-            "internalType": "uint8"
-          },
-          {
-            "name": "referenceCurrency",
-            "type": "uint16",
-            "internalType": "uint16"
-          },
-          {
-            "name": "source",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
-            "name": "seriesId",
-            "type": "bytes14",
-            "internalType": "bytes14"
-          },
-          {
-            "name": "subSeries",
-            "type": "uint8",
-            "internalType": "uint8"
-          }
-        ]
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "reserveStables",
-    "inputs": [
-      {
-        "name": "credisOwner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "source",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "asset",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amountMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "referenceCurrency",
-        "type": "uint16",
-        "internalType": "uint16"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "credisReservationId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",

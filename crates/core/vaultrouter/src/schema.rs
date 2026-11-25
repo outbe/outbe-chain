@@ -11,7 +11,7 @@ pub const UNKNOWN: u8 = 0;
 /// One CCA-held liquidity reservation. A zero `asset` means the slot is empty.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[storage_record(exists_field = asset)]
-pub struct LiquidityReservation {
+pub struct CredisReservation {
     #[key]
     pub id: U256,
     #[attribute(order = 0)]
@@ -124,7 +124,7 @@ pub struct VaultRouterContract {
     /// roots 13-33: CCA stables reservations keyed by id. Each record field
     /// hashes its key with a separate root; these roots must not be reused.
     #[attribute(order = 10)]
-    pub reservations: outbe_primitives::storage::dsl::Map<U256, LiquidityReservation>,
+    pub reservations: outbe_primitives::storage::dsl::Map<U256, CredisReservation>,
 
     /// slot 35: vault -> underlying asset captured at registration time.
     #[attribute(order = 11)]
@@ -160,8 +160,8 @@ impl<'storage> VaultRouterContract<'storage> {
     }
 }
 
-impl From<LiquidityReservation> for crate::precompile::IVaultRouter::LiquidityReservation {
-    fn from(r: LiquidityReservation) -> Self {
+impl From<CredisReservation> for crate::precompile::IVaultRouter::CredisReservation {
+    fn from(r: CredisReservation) -> Self {
         Self {
             asset: r.asset,
             amountMinor: r.amount_minor,

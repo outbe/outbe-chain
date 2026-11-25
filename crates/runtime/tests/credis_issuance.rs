@@ -27,7 +27,7 @@ use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_vaultrouter::{
     precompile::IVaultRouter,
     test_support::{register_source, register_target},
-    LiquidityReservation, VaultRouterContract,
+    CredisReservation, VaultRouterContract,
 };
 
 sol! {
@@ -148,7 +148,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
     // Reserve before pledging. The code below funds the held assets through real ERC20 calls.
     let reservation_day = timestamp_to_date_key(NOW);
     let call_terms = outbe_credis::config::read(&storage)?;
-    router.reservations.create(&LiquidityReservation {
+    router.reservations.create(&CredisReservation {
         id: U256::ONE,
         asset: ASSET,
         amount_minor: U256::from(2_000_000),
@@ -397,9 +397,11 @@ fn assert_issuance_state(evm: &mut EvmWorld, failure: u64, stake: U256) -> eyre:
         OWNER,
         VAULT_ROUTER_ADDRESS,
         U256::ZERO,
-        IVaultRouter::reservationOfCall { id: U256::ONE }
+        IVaultRouter::getCredisReservationCall {
+            credisReservationId: U256::ONE
+        }
     );
-    let held = IVaultRouter::reservationOfCall::abi_decode_returns(&reservation.returndata)?;
+    let held = IVaultRouter::getCredisReservationCall::abi_decode_returns(&reservation.returndata)?;
     assert_eq!(
         held.amountMinor,
         if failure == 0 {

@@ -14,15 +14,15 @@ use outbe_gratisfactory::api as pledges;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS;
 use outbe_system_common::units::checked_protocol_to_native;
-use outbe_vaultrouter::LiquidityReservation;
+use outbe_vaultrouter::CredisReservation;
 
 /// The caller's live reservation. Returns it with the block time.
 fn live_reservation(
     storage: &StorageHandle<'_>,
     caller: Address,
     reservation_id: U256,
-) -> Result<(LiquidityReservation, u64)> {
-    let r = outbe_vaultrouter::api::reservation_of(storage, reservation_id)?;
+) -> Result<(CredisReservation, u64)> {
+    let r = outbe_vaultrouter::api::credis_reservation_of(storage, reservation_id)?;
     let now = storage.now_secs()?;
     let error = if r.asset.is_zero() {
         CredisFactoryError::ReservationNotFound
@@ -37,7 +37,7 @@ fn live_reservation(
 }
 
 /// Reject an asset whose decimals or currency changed after the reservation quoted it.
-fn ensure_asset_metadata(storage: &StorageHandle<'_>, r: &LiquidityReservation) -> Result<()> {
+fn ensure_asset_metadata(storage: &StorageHandle<'_>, r: &CredisReservation) -> Result<()> {
     let decimals = storage.staticcall(r.asset, IERC20::decimalsCall {}.abi_encode().into())?;
     let decimals = IERC20::decimalsCall::abi_decode_returns_validate(&decimals)
         .map_err(|_| CredisFactoryError::AssetDecimalsUndecodable)?;
@@ -97,7 +97,7 @@ pub fn issue_credis(
         pledges::send_to_credis(&storage, reservation_id, id, r.source, r.gratis_minor)?;
         let opened = credis.get_credis(id)?;
         storage.transfer_balance(CREDIS_FACTORY_ADDRESS, r.credis_owner, stake)?;
-        let paid = outbe_vaultrouter::api::release_reservation(
+        let paid = outbe_vaultrouter::api::redeem_credis_reservation(
             &storage,
             reservation_id,
             r.credis_owner,

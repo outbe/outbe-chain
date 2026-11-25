@@ -779,7 +779,7 @@ fn reserve_stables_rejects_pending_first_vault_removal_through_abi() {
     let result = world.call(
         CCA,
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::reserveStablesCall {
+        IVaultRouter::createCredisReservationCall {
             credisOwner: CCA,
             source: CCA,
             asset: ASSET,
@@ -805,7 +805,9 @@ fn reserve_stables_rejects_pending_first_vault_removal_through_abi() {
     let reservation = world.view(
         CCA,
         VAULT_ROUTER_ADDRESS,
-        IVaultRouter::reservationOfCall { id: U256::ONE },
+        IVaultRouter::getCredisReservationCall {
+            credisReservationId: U256::ONE,
+        },
     );
     assert_eq!(reservation.amountMinor, U256::ZERO);
     assert!(world.logs().is_empty());

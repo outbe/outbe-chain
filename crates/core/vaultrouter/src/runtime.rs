@@ -20,8 +20,8 @@ use crate::precompile::IVaultRouter;
 use crate::schema::VaultRouterContract;
 
 mod calls;
+mod credis_reservation;
 mod rebalance;
-mod reservations;
 mod stablecoin;
 mod vault_action;
 
@@ -29,9 +29,11 @@ use calls::{
     asset_iso_code, erc20_approve, erc20_balance_of, erc20_transfer, erc20_transfer_from,
     vault_asset, vault_deposit, vault_owner, vault_preview_withdraw, vault_withdraw,
 };
+pub use credis_reservation::credis_reservation_of;
+pub(crate) use credis_reservation::{
+    create_credis_reservation, redeem_credis_reservation, return_reservation,
+};
 pub(crate) use rebalance::{preview_rebalance, rebalance};
-pub use reservations::reservation_of;
-pub(crate) use reservations::{release_reservation, reserve_stables, return_reservation};
 pub(crate) use stablecoin::{
     add_stablecoin_source, add_stablecoin_target, registered_stablecoin_source,
     registered_stablecoin_target, remove_stablecoin_source, remove_stablecoin_target,

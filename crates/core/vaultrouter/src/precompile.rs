@@ -119,23 +119,23 @@ pub fn dispatch(
             hasStablecoin(c) => view(c, |c| {
                 runtime::has_stablecoin(&storage, c.asset, c.amountMinor)
             }),
-            reservationOf(c) => view(c, |c| {
-                let record = runtime::reservation_of(&storage, c.id)?;
+            getCredisReservation(c) => view(c, |c| {
+                let record = runtime::credis_reservation_of(&storage, c.credisReservationId)?;
                 Ok(record.into())
             }),
 
             // --- reservations ---
-            reserveStables(c) => mutate(&storage, c, caller, |sender, c| {
-                runtime::reserve_stables(storage.clone(), sender, c)
+            createCredisReservation(c) => mutate(&storage, c, caller, |sender, c| {
+                runtime::create_credis_reservation(storage.clone(), sender, c)
             }),
-            releaseReservation(c) => mutate(&storage, c, caller, |sender, c| {
+            redeemCredisReservation(c) => mutate(&storage, c, caller, |sender, c| {
                 if sender != outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS {
                     return Err(crate::errors::VaultRouterError::Unauthorized.into());
                 }
                 let target = runtime::registered_stablecoin_target(&storage, sender)?;
-                runtime::release_reservation(
+                runtime::redeem_credis_reservation(
                     storage.clone(),
-                    c.id,
+                    c.credisReservationId,
                     c.receiver,
                     c.amountMinor,
                     target,
