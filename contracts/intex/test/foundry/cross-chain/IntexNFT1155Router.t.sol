@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
@@ -350,5 +351,54 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         });
         uint256 fee = srcBatch.quoteMultiSend(p);
         assertEq(fee, FEE, "native fee quoted");
+    }
+
+    // --- peers ---
+
+    function test_SetRemoteRouter_EmitsRemoteRouterSet() public {
+        bytes memory interop = _interop(7, address(0xBEEF));
+        vm.expectEmit(true, false, false, true, address(srcBatch));
+        emit IIntexNFT1155Router.RemoteRouterSet(7, interop);
+        srcBatch.setRemoteRouter(7, interop);
+        assertEq(srcBatch.remoteRouter(7), interop);
+    }
+
+    function test_SetRemoteRouter_RejectsAnAddressOfAnotherChain() public {
+        bytes memory interop = _interop(8, address(0xBEEF));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.RemoteRouterChainMismatch.selector, 7, 8));
+        srcBatch.setRemoteRouter(7, interop);
+    }
+
+    function test_SetRemoteRouter_OnlyTheAdmin() public {
+        bytes memory interop = _interop(7, address(0xBEEF));
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IAccessControl.AccessControlUnauthorizedAccount.selector, sender, srcBatch.DEFAULT_ADMIN_ROLE()
+            )
+        );
+        vm.prank(sender);
+        srcBatch.setRemoteRouter(7, interop);
+    }
+
+    function test_Send_ToAChainWithNoRouterReverts() public {
+        BatchSendParam memory p = BatchSendParam({
+            dstChainId: 9, to: bytes32(uint256(uint160(recipientA))), intexIds: _u256(TID_A, TID_B), units: _u256(1, 1)
+        });
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.RemoteRouterNotSet.selector, 9));
+        srcBatch.quoteBatchSend(p);
+    }
+
+    function test_Receive_OnlyFromTheBridge() public {
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.UnauthorizedBridge.selector, sender));
+        vm.prank(sender);
+        dstBatch.receiveMessage(bytes32(0), _interop(SRC_CHAIN_ID, address(srcBatch)), hex"01");
+    }
+
+    function test_Receive_OnlyFromTheRouterOfTheSourceChain() public {
+        bytes memory stranger = _interop(SRC_CHAIN_ID, address(0xBAD));
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexNFT1155Router.UnauthorizedSourceRouter.selector, SRC_CHAIN_ID, stranger)
+        );
+        bridge.deliverAs(stranger, _interop(uint32(block.chainid), address(dstBatch)), hex"01");
     }
 }
