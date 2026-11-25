@@ -130,8 +130,12 @@ impl Fetcher {
         if response.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
+        // Only 200 is the object. A redirect is not followed, and a proxy
+        // page with another status is not an object of the storage.
+        if response.status() != StatusCode::OK {
+            eyre::bail!("status {} from {storage}", response.status());
+        }
         let mut response_body = Vec::new();
-        response = response.error_for_status()?;
         while let Some(chunk) = response.chunk().await? {
             if response_body.len() + chunk.len() >= MAX_BODY {
                 return Err(RelayError::BadLocation(storage.to_string()).into());
@@ -165,14 +169,19 @@ impl Fetcher {
         Some(signed)
     }
 
-    /// True when the storage has a reorg flag. A storage that does not
-    /// answer has no flag: the checkpoint read then finds no signature.
+    /// True when the storage has a reorg flag: a JSON object at
+    /// `reorg_flag.json`. A storage that does not answer has no flag: the
+    /// checkpoint read then finds no signature. Another body is not a flag: a
+    /// proxy that answers each path with a page must not stop the deliveries.
     async fn reorg_flag(&self, storage: &Url) -> bool {
-        matches!(
-            self.object(storage, "reorg_flag.json", REORG_FLAG_TIMEOUT)
-                .await,
-            Ok(Some(_))
-        )
+        let object = self
+            .object(storage, "reorg_flag.json", REORG_FLAG_TIMEOUT)
+            .await;
+        match object {
+            Ok(Some(body)) => serde_json::from_slice::<serde_json::Value>(&body)
+                .is_ok_and(|flag| flag.is_object()),
+            _ => false,
+        }
     }
 
     /// Reads the checkpoint of `want` from the validators until one root has
@@ -288,7 +297,8 @@ mod tests {
                 get(move || async move {
                     match reorg {
                         true => (Status::OK, "{\"reason\":\"test\"}"),
-                        false => (Status::NOT_FOUND, ""),
+                        // A catch-all page of a proxy is not a flag.
+                        false => (Status::OK, "<html>welcome</html>"),
                     }
                 }),
             );

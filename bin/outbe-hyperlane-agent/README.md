@@ -363,14 +363,17 @@ For each message, the relayer does these steps:
    `HyperlaneController.ismByDomain(destination)`, also behind routing ISMs.
    The recipient contract names its ISM, so without this rule any sender
    could give the relayer a validator set of its own. A message with another
-   ISM is dropped at once.
+   ISM is not delivered: its attempts fail and it is dropped after the last
+   one.
 6. **Read the signatures.** It reads `checkpoint_<index>_with_id.json` from
    the newest announced location of each ISM validator, its own location
    included. It reads the validators in batches of 1.5 times the threshold
    (10 at most) and stops when one root has the threshold of signatures.
-   When one validator serves `reorg_flag.json`, the relayer does not deliver.
+   When one validator serves a JSON object at `reorg_flag.json`, the relayer
+   does not deliver.
 7. **Send.** It sends `process(metadata, message)` to the destination
-   Mailbox. The gas limit is the estimate plus 75,000. `H` pays the gas.
+   Mailbox. The gas limit is the estimate plus 75,000. `H` pays the gas. A
+   delivery with an estimate above 3,000,000 gas is not sent.
 
 Delivery order. Every validator runs a relayer, so the relayers take turns:
 
@@ -397,7 +400,8 @@ When the first relayer works, the others send nothing.
 | One transaction at a time | The relayer sends one `process` transaction for each chain and waits up to 90 seconds for the receipt. On one chain, the relayer, the liveness and the announce never read a nonce at the same time. |
 | Gas price | EIP-1559 fees. On a chain with no base fee or a zero base fee, a legacy transaction with the gas price of the node. |
 | Fee cap on Outbe | A delivery to Outbe has a fee cap of 10 base fees. It pays the base fee of its block, not the cap. A delivery that stays in the pool also stops every `submitCheckpoint` of `H` behind it, because `H` has one nonce sequence. ZeroFee removes the fee, not the place in that sequence. |
-| Storage locations | Only `s3+http://` and `s3+https://` locations. No redirect, a 10 second timeout, a 50 KiB body. |
+| Storage locations | Only `s3+http://` and `s3+https://` locations. Only status 200 is an object. No redirect, a 10 second timeout, a 50 KiB body. An ISM validator chooses its location: the relayer does not refuse a private address. |
+| Largest delivery | 3,000,000 gas. There is no gas payment check yet, so `H` pays each delivery, and `H` also pays the liveness transactions. |
 | ISM limits | At most 13 ISMs in a row. The validator set must have 1 to 50 validators and a threshold above 0. |
 | Payment | The relayer does not check the IGP payment. It delivers every message that the ISM accepts. |
 
@@ -408,7 +412,7 @@ When the first relayer works, the others send nothing.
 | First sync memory | Unverified leaves stay in memory until the vote verifies them. Expect about 1 GB per 5M leaves on the first sync. |
 | Outbe `eth_getLogs` | The Outbe RPC rejects ranges above 100,000 blocks. The sync uses at most 100,000 and halves the range after a range error. |
 | `metadata_latest.json` | Not served. The relayer does not read it. |
-| Relayer history | The relayer takes in the older messages after the new ones, 256 leaves for each poll: one `delivered` call for each old message. An old leaf whose `Dispatch` log no RPC endpoint of the chain has is passed with an error in the log. |
+| Relayer history | The relayer takes in the older messages after the new ones, 32 leaves for each poll and only while fewer than 32 messages are in the queue: one `delivered` call for each old message. An old leaf whose `Dispatch` log no RPC endpoint of the chain has is passed with an error in the log. |
 | Relayer gas price | No gas price escalation. A transaction that stays in the pool stops the deliveries to that chain until a block includes it. |
 | Relayer ISM | Only the multisig ISM of the HyperlaneController for the destination domain, also behind routing ISMs. A recipient with its own ISM gets no delivery from this relayer: its owner must run a relayer. |
 | Dropped rows | The relayer reads `delivered(id)` for a dropped row once an hour and removes the row when someone delivered the message. |

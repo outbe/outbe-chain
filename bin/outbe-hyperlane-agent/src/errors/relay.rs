@@ -33,6 +33,9 @@ pub(crate) enum RelayError {
         validators: usize,
         threshold: u8,
     },
+    /// The delivery needs more gas than the relayer pays for one message.
+    #[error("the delivery needs {gas} gas, the relayer pays at most {limit}")]
+    GasAboveLimit { gas: u64, limit: u64 },
     /// The `process` transaction is in a block but reverted.
     #[error("process transaction {0} reverted")]
     Reverted(alloy_primitives::B256),

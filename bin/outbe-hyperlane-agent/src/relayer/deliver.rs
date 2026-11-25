@@ -41,6 +41,11 @@ const MAX_VALIDATOR_SET_SIZE: usize = 50;
 /// Gas on top of the estimate, as upstream `GAS_LIMIT_BUFFER`.
 const GAS_LIMIT_BUFFER: u64 = 75_000;
 const RECEIPT_TIMEOUT: Duration = Duration::from_secs(90);
+/// The largest gas estimate of one delivery. The relayer has no gas payment
+/// check yet, so `H` pays each delivery. Without a limit, a recipient that
+/// uses all the gas of a block makes `H` pay for it, and `H` also pays the
+/// liveness transactions. The default gas of `callRemote` is 200,000.
+const MAX_DELIVERY_GAS: u64 = 3_000_000;
 /// The fee cap of a delivery to Outbe, in base fees. See [`fee_cap`].
 const OUTBE_FEE_CAP_BASE_FEES: u128 = 10;
 
@@ -107,6 +112,11 @@ impl Chain {
 
     pub fn provider(&self) -> &DynProvider {
         &self.providers[self.current.load(Ordering::Relaxed) % self.providers.len()]
+    }
+
+    /// The index of the provider in use.
+    pub fn endpoint(&self) -> usize {
+        self.current.load(Ordering::Relaxed) % self.providers.len()
     }
 
     /// The next read uses the next endpoint.
@@ -299,6 +309,13 @@ pub async fn process(
     // The dry run immediately before the send: a message that another
     // relayer delivered, or that the ISM rejects, reverts here and costs no gas.
     let gas = provider.estimate_gas(tx.clone()).await?;
+    if gas > MAX_DELIVERY_GAS {
+        return Err(RelayError::GasAboveLimit {
+            gas,
+            limit: MAX_DELIVERY_GAS,
+        }
+        .into());
+    }
     let mut tx = tx.gas_limit(gas.saturating_add(GAS_LIMIT_BUFFER));
     // As upstream: a chain with no base fee or a zero base fee gets a legacy
     // transaction with the gas price of the node.
