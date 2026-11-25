@@ -10,7 +10,7 @@ use eyre::{bail, ensure, Context, Result};
 use outbe_snapshot::manifest::{EntryKind, NativeRoot, SnapshotManifestV1};
 use sha2::{Digest, Sha256};
 
-use crate::{support::process, validator::config::OperatorConfig};
+use crate::{config::OperatorConfig, process};
 
 const MAX_MANIFEST_BYTES: u64 = 256 * 1024 * 1024;
 

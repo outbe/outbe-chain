@@ -10,12 +10,13 @@ use eyre::{bail, ensure, Context, Result};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
 
+use outbe_operator_node_role::progress::Progress;
+
 use crate::{
     network::{
         build::{DeploymentKind, FounderArtifact},
         remote::NetworkArtifacts,
     },
-    support::progress::Progress,
     vm::container::{self, DiskIds, FsEntry, Tools},
 };
 

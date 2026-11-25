@@ -6,7 +6,7 @@ use std::{
 use eyre::{bail, Context, Result};
 use tokio::task::JoinSet;
 
-use crate::support::progress::Progress;
+use outbe_operator_node_role::progress::Progress;
 
 use super::{
     remote::{capture_founder, run_quiet_founder, NetworkArtifacts, SshOptions},

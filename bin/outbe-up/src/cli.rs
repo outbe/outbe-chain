@@ -2,8 +2,9 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand};
 use eyre::Result;
+use outbe_operator_node_role as validator;
 
-use crate::{network, validator, vm};
+use crate::{network, vm};
 
 #[derive(Debug, Parser)]
 #[command(name = "outbe-up", about = "Outbe node operator CLI")]

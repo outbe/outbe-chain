@@ -19,14 +19,15 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use walkdir::WalkDir;
 
-use crate::{
-    support::{process, progress::Progress},
-    validator::bundle::{self, BundleInput},
-    validator::config::{
+use outbe_operator_node_role::{
+    bundle::{self, BundleInput},
+    config::{
         FeederConfig as OperatorFeederConfig, NetworkConfig as OperatorNetworkConfig,
         OperatorConfig, CONFIG_VERSION as OPERATOR_CONFIG_VERSION,
     },
-    validator::{validator_address, FEEDER_FUNDING_WEI},
+    process,
+    progress::Progress,
+    validator_address, FEEDER_FUNDING_WEI,
 };
 
 use super::config::{Network, NetworkConfig, VmFlavor};
@@ -697,7 +698,7 @@ fn emit_vm_founder_trees(inputs: &VmTreeInputs<'_>) -> Result<Vec<FounderArtifac
         operator.validate()?;
         operator.write_runtime_config(&tree, validator_addr)?;
         let hyperlane_public = fs::read_to_string(tree.join("hyperlane-public.toml"))?;
-        crate::validator::config::validate_hyperlane_public_toml(
+        outbe_operator_node_role::config::validate_hyperlane_public_toml(
             &hyperlane_public,
             inputs.config.chain_id,
             true,
@@ -1335,7 +1336,8 @@ genesis:
             assert!(!tree.join("systemd").exists());
 
             // Run the real B3 vm-boot verification (non-root, synthetic mount) over each emitted tree.
-            crate::validator::vm_boot::verify_tree_without_mount(&tree, &fake_bins).unwrap();
+            outbe_operator_node_role::vm_boot::verify_tree_without_mount(&tree, &fake_bins)
+                .unwrap();
         }
     }
 
@@ -1600,13 +1602,14 @@ genesis:
             assert_eq!(origins[1]["rpc_consensus"].as_str(), Some("single"));
             assert_eq!(origins[1]["reorg_period"].as_integer(), Some(0));
 
-            crate::validator::vm_boot::verify_tree_without_mount(&tree, &fake_bins).unwrap();
+            outbe_operator_node_role::vm_boot::verify_tree_without_mount(&tree, &fake_bins)
+                .unwrap();
         }
     }
 
     #[test]
     fn hyperlane_public_toml_and_local_evm_reject_invalid_configs() {
-        use crate::validator::config::validate_hyperlane_public_toml;
+        use outbe_operator_node_role::config::validate_hyperlane_public_toml;
 
         let valid = "\
 [hyperlane]

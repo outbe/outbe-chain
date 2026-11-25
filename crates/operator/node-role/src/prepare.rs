@@ -4,16 +4,14 @@ use alloy_primitives::{Address, U256};
 use eyre::{ensure, Context, Result};
 
 use crate::{
-    support::{process, progress::Progress},
-    validator::{
-        bundle::{self, OperatorManifest},
-        config::OperatorConfig,
-        install,
-        journal::{self, Journal},
-        path_text,
-        rpc::RpcClient,
-        validator_address, FEEDER_FUNDING_WEI,
-    },
+    bundle::{self, OperatorManifest},
+    config::OperatorConfig,
+    install,
+    journal::{self, Journal},
+    path_text, process,
+    progress::Progress,
+    rpc::RpcClient,
+    validator_address, FEEDER_FUNDING_WEI,
 };
 
 pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {

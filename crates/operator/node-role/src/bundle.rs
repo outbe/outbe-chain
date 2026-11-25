@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 #[cfg(test)]
-use crate::validator::config::sha256;
+use crate::config::sha256;
 
-pub const MANIFEST_NAME: &str = "operator-manifest.json";
+pub(crate) const MANIFEST_NAME: &str = "operator-manifest.json";
 const MANIFEST_VERSION: u32 = 1;
 const MAX_MANIFEST_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -33,9 +33,9 @@ pub struct ManifestFile {
     pub mode: u32,
 }
 
-pub struct ExtractedBundle {
-    pub directory: tempfile::TempDir,
-    pub archive_sha256: String,
+pub(crate) struct ExtractedBundle {
+    pub(crate) directory: tempfile::TempDir,
+    pub(crate) archive_sha256: String,
 }
 
 #[derive(Clone, Debug)]
@@ -46,7 +46,7 @@ pub struct BundleInput {
 }
 
 impl OperatorManifest {
-    pub fn read(path: &Path) -> Result<Self> {
+    pub(crate) fn read(path: &Path) -> Result<Self> {
         let bytes = fs::read(path)
             .wrap_err_with(|| format!("failed to read bundle manifest: {}", path.display()))?;
         let manifest: Self = serde_json::from_slice(&bytes).wrap_err("invalid bundle manifest")?;
@@ -84,7 +84,7 @@ impl OperatorManifest {
         Ok(())
     }
 
-    pub fn verify_directory(&self, root: &Path) -> Result<()> {
+    pub(crate) fn verify_directory(&self, root: &Path) -> Result<()> {
         for expected in &self.files {
             let path = root.join(&expected.path);
             let metadata = path
@@ -115,7 +115,7 @@ impl OperatorManifest {
     }
 }
 
-pub fn verify_and_extract(archive: &Path, parent: &Path) -> Result<ExtractedBundle> {
+pub(crate) fn verify_and_extract(archive: &Path, parent: &Path) -> Result<ExtractedBundle> {
     let archive_sha256 = digest_file(archive)?;
     let mut tar = tar::Archive::new(open_archive(archive)?);
     let mut entries = tar.entries().wrap_err("failed to read operator bundle")?;
@@ -199,7 +199,7 @@ pub fn verify_and_extract(archive: &Path, parent: &Path) -> Result<ExtractedBund
     })
 }
 
-pub fn digest_file(path: &Path) -> Result<String> {
+pub(crate) fn digest_file(path: &Path) -> Result<String> {
     let mut file = File::open(path)
         .wrap_err_with(|| format!("failed to open for hashing: {}", path.display()))?;
     let mut digest = Sha256::new();

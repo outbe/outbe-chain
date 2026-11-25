@@ -5,8 +5,6 @@ use eyre::Result;
 
 mod cli;
 mod network;
-mod support;
-mod validator;
 mod vm;
 
 #[tokio::main]

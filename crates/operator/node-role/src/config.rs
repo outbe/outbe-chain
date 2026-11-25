@@ -166,7 +166,7 @@ impl OperatorConfig {
         )
     }
 
-    pub(crate) fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         ensure!(
             self.version == CONFIG_VERSION,
             "unsupported operator config version {}",
@@ -272,7 +272,7 @@ impl HyperlaneConfig {
         .wrap_err("failed to serialize Hyperlane configuration")
     }
 
-    pub(crate) fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         ensure!(
             self.poll_interval_secs > 0,
             "hyperlane.poll_interval_secs must be positive"
@@ -350,7 +350,7 @@ impl HyperlaneConfig {
 /// Shared offline validation for `hyperlane-public.toml` used by network build, host install,
 /// and `vm-boot`. Rejects secret sections (`[account]`, `[chain]`, `private_key`) and validates
 /// every origin entry without making network or controller RPC calls.
-pub(crate) fn validate_hyperlane_public_toml(
+pub fn validate_hyperlane_public_toml(
     raw: &str,
     expected_chain_id: u64,
     require_local_origin: bool,
@@ -485,7 +485,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
-pub fn sha256(bytes: &[u8]) -> String {
+pub(crate) fn sha256(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 

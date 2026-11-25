@@ -2,7 +2,7 @@ use std::time::{Duration, Instant};
 
 use eyre::{bail, ensure, Result};
 
-use crate::{support::progress::Progress, validator::rpc::RpcClient};
+use crate::{progress::Progress, rpc::RpcClient};
 
 const SYNC_POLL_TIMEOUT: Duration = Duration::from_secs(5);
 

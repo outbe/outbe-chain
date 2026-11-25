@@ -8,7 +8,7 @@ use std::{
 
 use eyre::{bail, ensure, Context, Result};
 
-use crate::{support::process, validator::rpc::RpcClient};
+use crate::{process, rpc::RpcClient};
 
 const RADICLE_SOCKET: &str = "/opt/outbe-chain/keys/radicle/node/outbe-control.sock";
 
@@ -62,7 +62,7 @@ pub fn feeder(bin_dir: Option<&Path>) -> Result<()> {
     Err(command.exec()).wrap_err("failed to exec outbe-feeder")
 }
 
-pub fn hyperlane(bin_dir: Option<&Path>) -> Result<()> {
+pub(crate) fn hyperlane(bin_dir: Option<&Path>) -> Result<()> {
     let chain_id = required_env("OUTBE_CHAIN_ID")?;
     ensure!(
         chain_id.parse::<u64>().is_ok_and(|value| value > 0),

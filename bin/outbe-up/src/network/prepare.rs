@@ -6,7 +6,7 @@ use outbe_software_bundle::verify_and_extract;
 use tokio::task::JoinSet;
 use walkdir::WalkDir;
 
-use crate::support::progress::Progress;
+use outbe_operator_node_role::progress::Progress;
 
 use super::{
     build::DeploymentKind,

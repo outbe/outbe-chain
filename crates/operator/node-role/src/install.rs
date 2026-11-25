@@ -8,10 +8,7 @@ use std::{
 use eyre::{ensure, Context, Result};
 use walkdir::WalkDir;
 
-use crate::{
-    support::process,
-    validator::{assets, path_text},
-};
+use crate::{assets, path_text, process};
 
 pub(crate) const REQUIRED_SECRETS: &[&str] = &[
     "signing-key.hex",
@@ -60,7 +57,7 @@ pub fn run() -> Result<()> {
         .wrap_err("OUTBE_CHAIN_ID must be a positive integer")?;
     let hyperlane_public =
         fs::read_to_string(&hyperlane).wrap_err("failed to read hyperlane-public.toml")?;
-    crate::validator::config::validate_hyperlane_public_toml(&hyperlane_public, chain_id, false)?;
+    crate::config::validate_hyperlane_public_toml(&hyperlane_public, chain_id, false)?;
     ensure_outbe_account()?;
     let uid = numeric_id("-u")?;
     let gid = numeric_id("-g")?;

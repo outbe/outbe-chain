@@ -3,15 +3,14 @@ use std::path::Path;
 use eyre::{bail, ensure, Result};
 
 use crate::{
-    support::{process, progress::Progress},
-    validator::{
-        bundle,
-        journal::Journal,
-        rpc::RpcClient,
-        snapshot,
-        wait::{wait_for_resident, wait_for_rpc_chain, wait_for_sync},
-        VALIDATOR_SERVICE, VALIDATOR_TARGET,
-    },
+    bundle,
+    journal::Journal,
+    process,
+    progress::Progress,
+    rpc::RpcClient,
+    snapshot,
+    wait::{wait_for_resident, wait_for_rpc_chain, wait_for_sync},
+    VALIDATOR_SERVICE, VALIDATOR_TARGET,
 };
 
 pub async fn run(snapshot_path: Option<&Path>) -> Result<()> {

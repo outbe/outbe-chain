@@ -14,8 +14,10 @@ use outbe_operator_remote::validate_ssh;
 pub use outbe_operator_remote::Ssh;
 use serde::{Deserialize, Serialize};
 
-use crate::support::progress::Progress;
-use crate::validator::config::{HyperlaneConfig, HyperlaneOrigin, ReorgPeriod, RpcConsensus};
+use outbe_operator_node_role::{
+    config::{HyperlaneConfig, HyperlaneOrigin, ReorgPeriod, RpcConsensus},
+    progress::Progress,
+};
 
 pub const CONFIG_VERSION: u32 = 1;
 pub const MIN_FOUNDERS: usize = 4;

@@ -19,7 +19,7 @@ use rustix::{
 };
 use walkdir::WalkDir;
 
-use crate::{support::process, validator::install};
+use crate::{install, process};
 
 const DEFAULT_VM_BIN_DIR: &str = "/usr/local/bin";
 const REQUIRED_MOUNT_OPTIONS: &[&str] = &["noexec", "nosuid", "nodev"];
@@ -67,8 +67,7 @@ struct BootOptions<'a> {
 }
 
 /// Verify an emitted VM data tree without checking live mountinfo or changing ownership.
-#[cfg(test)]
-pub(crate) fn verify_tree_without_mount(root: &Path, bin_dir: &Path) -> Result<()> {
+pub fn verify_tree_without_mount(root: &Path, bin_dir: &Path) -> Result<()> {
     let mountinfo = format!(
         "100 1 8:1 / {} rw,nosuid,nodev,noexec - ext4 /dev/vda1 rw\n",
         root.display()
@@ -121,7 +120,7 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
         .wrap_err("OUTBE_CHAIN_ID must be a positive integer")?;
     let hyperlane_public = fs::read_to_string(root.join("hyperlane-public.toml"))
         .wrap_err("failed to read hyperlane-public.toml")?;
-    crate::validator::config::validate_hyperlane_public_toml(&hyperlane_public, chain_id, true)?;
+    crate::config::validate_hyperlane_public_toml(&hyperlane_public, chain_id, true)?;
     install::required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
 
     verify_secrets(root, options.bin_dir)?;

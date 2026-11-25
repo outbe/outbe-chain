@@ -74,7 +74,7 @@ readiness. DKG activation continues in the background; once the validator become
 service registers the signer and starts the Hyperlane daemon automatically. Both consensus and
 feeder and Hyperlane health are visible through `status`.
 
-The editable configuration example lives at `templates/validator/operator-config.example.yaml`.
+The editable configuration example lives at `crates/operator/node-role/templates/operator-config.example.yaml`.
 Systemd policy comes from the shared `outbe-operator-systemd` crate used by both joining and
 founding flows; network-specific values remain in the generated `/opt/outbe-chain/validator.env`.
 All persistent validator data, keys, lifecycle state, Hyperlane state, and canonical systemd unit

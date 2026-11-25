@@ -9,23 +9,25 @@ pub mod assets;
 pub mod bundle;
 pub mod config;
 pub mod hyperlane;
-pub mod install;
-pub mod journal;
+mod install;
+mod journal;
 pub mod prepare;
+pub mod process;
+pub mod progress;
 pub mod promote;
 pub mod rpc;
 pub mod service;
-pub mod snapshot;
+mod snapshot;
 pub mod status;
 pub mod sync;
 pub mod vm_boot;
-pub mod wait;
+mod wait;
 
-pub const VALIDATOR_TARGET: &str = "outbe-validator.target";
-pub const VALIDATOR_SERVICE: &str = "outbe-validator.service";
+pub(crate) const VALIDATOR_TARGET: &str = "outbe-validator.target";
+pub(crate) const VALIDATOR_SERVICE: &str = "outbe-validator.service";
 pub const FEEDER_FUNDING_WEI: u64 = 1_000_000_000_000_000_000;
 
-pub(crate) fn validator_address(path: &Path) -> Result<Address> {
+pub fn validator_address(path: &Path) -> Result<Address> {
     let encoded = Zeroizing::new(
         fs::read_to_string(path)
             .wrap_err_with(|| format!("failed to read validator key: {}", path.display()))?,

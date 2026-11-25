@@ -8,17 +8,17 @@ use std::{
 
 use eyre::{bail, ensure, Context, Result};
 
-pub const ROOT: &str = "/opt/outbe-chain";
-pub const STATE_ROOT: &str = "/opt/outbe-chain/state/operator";
-pub const HYPERLANE_STATE_ROOT: &str = "/opt/outbe-chain/state/hyperlane";
+pub(crate) const ROOT: &str = "/opt/outbe-chain";
+pub(crate) const STATE_ROOT: &str = "/opt/outbe-chain/state/operator";
+pub(crate) const HYPERLANE_STATE_ROOT: &str = "/opt/outbe-chain/state/hyperlane";
 const LOCK_PATH: &str = "/run/lock/outbe-validator.lock";
 
-pub struct LifecycleLock {
+pub(crate) struct LifecycleLock {
     _file: File,
 }
 
 impl LifecycleLock {
-    pub fn acquire() -> Result<Self> {
+    pub(crate) fn acquire() -> Result<Self> {
         require_root()?;
         let mut file = OpenOptions::new()
             .read(true)
@@ -44,7 +44,7 @@ impl LifecycleLock {
     }
 }
 
-pub fn require_root() -> Result<()> {
+pub(crate) fn require_root() -> Result<()> {
     ensure!(
         rustix::process::geteuid().is_root(),
         "validator lifecycle commands must run as root"
@@ -52,7 +52,7 @@ pub fn require_root() -> Result<()> {
     Ok(())
 }
 
-pub fn run(program: impl AsRef<Path>, args: &[&str]) -> Result<()> {
+pub(crate) fn run(program: impl AsRef<Path>, args: &[&str]) -> Result<()> {
     let program = program.as_ref();
     let status = Command::new(program)
         .args(args)
@@ -75,7 +75,7 @@ pub fn capture(program: impl AsRef<Path>, args: &[&str]) -> Result<String> {
     output_text(program, output)
 }
 
-pub fn command_succeeds(program: impl AsRef<Path>, args: &[&str]) -> bool {
+pub(crate) fn command_succeeds(program: impl AsRef<Path>, args: &[&str]) -> bool {
     Command::new(program.as_ref())
         .args(args)
         .stdout(Stdio::null())
@@ -84,7 +84,7 @@ pub fn command_succeeds(program: impl AsRef<Path>, args: &[&str]) -> bool {
         .is_ok_and(|status| status.success())
 }
 
-pub fn write_file(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
+pub(crate) fn write_file(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
     let temporary = path.with_extension(format!("tmp.{}", std::process::id()));
     if temporary.exists() {
         std::fs::remove_file(&temporary)?;
@@ -101,7 +101,7 @@ pub fn write_file(path: &Path, bytes: &[u8], mode: u32) -> Result<()> {
     Ok(())
 }
 
-pub fn chown(path: &Path, uid: u32, gid: u32) -> Result<()> {
+pub(crate) fn chown(path: &Path, uid: u32, gid: u32) -> Result<()> {
     rustix::fs::chown(
         path,
         Some(rustix::process::Uid::from_raw(uid)),
@@ -111,11 +111,11 @@ pub fn chown(path: &Path, uid: u32, gid: u32) -> Result<()> {
     .wrap_err_with(|| format!("failed to change ownership of {}", path.display()))
 }
 
-pub fn systemctl(args: &[&str]) -> Result<()> {
+pub(crate) fn systemctl(args: &[&str]) -> Result<()> {
     capture("systemctl", args).map(|_| ())
 }
 
-pub fn systemctl_is_active(unit: &str) -> bool {
+pub(crate) fn systemctl_is_active(unit: &str) -> bool {
     Command::new("systemctl")
         .args(["is-active", "--quiet", unit])
         .status()

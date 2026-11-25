@@ -8552,6 +8552,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-operator-node-role"
+version = "0.1.0"
+dependencies = [
+ "alloy-consensus",
+ "alloy-eips",
+ "alloy-primitives",
+ "alloy-sol-types",
+ "eyre",
+ "hex",
+ "indicatif",
+ "k256 0.13.4",
+ "outbe-operator-systemd",
+ "outbe-snapshot",
+ "reqwest 0.12.28",
+ "rustix",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tar",
+ "tempfile",
+ "tokio",
+ "toml 0.8.23",
+ "walkdir",
+ "yaml_serde",
+ "zeroize",
+ "zstd 0.14.4",
+]
+
+[[package]]
 name = "outbe-operator-remote"
 version = "0.1.0"
 dependencies = [
@@ -9262,34 +9291,24 @@ dependencies = [
 name = "outbe-up"
 version = "0.1.0"
 dependencies = [
- "alloy-consensus",
- "alloy-eips",
  "alloy-primitives",
- "alloy-sol-types",
  "clap",
  "eyre",
  "hex",
- "indicatif",
- "k256 0.13.4",
  "outbe-genesis-cli",
+ "outbe-operator-node-role",
  "outbe-operator-remote",
- "outbe-operator-systemd",
  "outbe-primitives",
- "outbe-snapshot",
  "outbe-software-bundle",
- "reqwest 0.12.28",
  "rustix",
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tar",
  "tempfile",
  "tokio",
  "toml 0.8.23",
  "walkdir",
  "yaml_serde",
- "zeroize",
- "zstd 0.14.4",
 ]
 
 [[package]]

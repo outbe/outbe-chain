@@ -3,16 +3,17 @@ use std::path::Path;
 use eyre::{ensure, Result};
 
 use crate::{
-    support::{process, progress::Progress},
-    validator::{
-        hyperlane::{self, SetupRequest, SetupState},
-        journal::Journal,
-        path_text,
-        rpc::RpcClient,
-        validator_address,
-        wait::{wait_for_rpc_chain, wait_for_sync, wait_for_verifier, wait_transaction_finalized},
-        FEEDER_FUNDING_WEI, VALIDATOR_SERVICE,
+    hyperlane::{self, SetupRequest, SetupState},
+    journal::Journal,
+    path_text, process,
+    progress::Progress,
+    rpc::RpcClient,
+    validator_address,
+    wait::{
+        wait_for_resident, wait_for_rpc_chain, wait_for_sync, wait_for_verifier,
+        wait_transaction_finalized,
     },
+    FEEDER_FUNDING_WEI, VALIDATOR_SERVICE,
 };
 
 const ORACLE_DELEGATE_ROLE: u8 = 1;
@@ -34,7 +35,7 @@ pub async fn run() -> Result<()> {
     );
     wait_for_rpc_chain(&local, journal.config.network.chain_id, &mut progress).await?;
     wait_for_sync(&local, &remote, &mut progress).await?;
-    crate::validator::wait::wait_for_resident(&local, &mut progress).await?;
+    wait_for_resident(&local, &mut progress).await?;
     let minimum = remote.min_stake().await?;
     let mut record = remote.validator(validator).await?;
     if !record.registered {

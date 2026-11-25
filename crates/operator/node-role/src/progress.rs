@@ -74,6 +74,12 @@ impl Progress {
     }
 }
 
+impl Default for Progress {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Drop for Progress {
     fn drop(&mut self) {
         self.clear_spinner();
@@ -112,6 +118,12 @@ impl WatchDisplay {
         } else {
             println!("{status}");
         }
+    }
+}
+
+impl Default for WatchDisplay {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

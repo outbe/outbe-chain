@@ -8,7 +8,7 @@ use eyre::{ensure, Context, Result};
 pub(crate) use outbe_operator_remote::{shell_quote, SshJsonRpc, SshOptions};
 use outbe_software_bundle::sha256_file;
 
-use crate::validator::rpc::{JsonRpcTransport, RpcClient};
+use outbe_operator_node_role::rpc::{JsonRpcTransport, RpcClient};
 
 use super::{
     build::{BuildState, DeploymentKind, NetworkManifest},

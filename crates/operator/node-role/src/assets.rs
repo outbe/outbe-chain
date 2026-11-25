@@ -8,8 +8,7 @@ use std::{
 use eyre::{Context, Result};
 use outbe_operator_systemd::joining_units;
 
-pub const OPERATOR_CONFIG_EXAMPLE: &str =
-    include_str!("../../templates/validator/operator-config.example.yaml");
+pub const OPERATOR_CONFIG_EXAMPLE: &str = include_str!("../templates/operator-config.example.yaml");
 
 pub fn write_config_example(path: &Path) -> Result<()> {
     let mut file = OpenOptions::new()
@@ -24,7 +23,7 @@ pub fn write_config_example(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub fn systemd_units() -> Result<Vec<(String, String)>> {
+pub(crate) fn systemd_units() -> Result<Vec<(String, String)>> {
     Ok(joining_units("/usr/local/bin/outbe-up")
         .into_iter()
         .map(|unit| (unit.name, unit.content))
@@ -34,7 +33,7 @@ pub fn systemd_units() -> Result<Vec<(String, String)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::validator::config::OperatorConfig;
+    use crate::config::OperatorConfig;
 
     #[test]
     fn all_units_render_without_tokens() {

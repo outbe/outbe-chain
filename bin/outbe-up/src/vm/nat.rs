@@ -17,13 +17,12 @@ use std::{
 use eyre::{bail, ensure, Context, Result};
 use serde_json::Value;
 
-use crate::{
-    network::{
-        build::DeploymentKind,
-        config::Ssh,
-        remote::{shell_quote, NetworkArtifacts, SshOptions},
-    },
-    support::progress::Progress,
+use outbe_operator_node_role::progress::Progress;
+
+use crate::network::{
+    build::DeploymentKind,
+    config::Ssh,
+    remote::{shell_quote, NetworkArtifacts, SshOptions},
 };
 
 pub const NAT_TABLE_FAMILY: &str = "ip";

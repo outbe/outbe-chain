@@ -4,16 +4,12 @@ use alloy_primitives::Address;
 use eyre::{Context, Result};
 
 use crate::{
-    support::{
-        process::{self, ROOT},
-        progress::WatchDisplay,
-    },
-    validator::{
-        journal::Journal,
-        rpc::{Block, ConsensusStatus, RpcClient, ValidatorRecord},
-        validator_address,
-        wait::{eta_suffix, yes_no, CatchupEta},
-    },
+    journal::Journal,
+    process::{self, ROOT},
+    progress::WatchDisplay,
+    rpc::{Block, ConsensusStatus, RpcClient, ValidatorRecord},
+    validator_address,
+    wait::{eta_suffix, yes_no, CatchupEta},
 };
 
 const VALIDATOR_SERVICE: &str = "outbe-validator.service";

@@ -14,19 +14,15 @@ use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
 use crate::{
-    support::{
-        process::{self, HYPERLANE_STATE_ROOT},
-        progress::Progress,
+    path_text,
+    process::{self, HYPERLANE_STATE_ROOT},
+    progress::Progress,
+    rpc::{
+        encode_set_delegate, encode_set_hyperlane_signer, RpcClient, ValidatorRecord,
+        HYPERLANE_CONTROLLER, VALIDATOR_SET,
     },
-    validator::{
-        path_text,
-        rpc::{
-            encode_set_delegate, encode_set_hyperlane_signer, RpcClient, ValidatorRecord,
-            HYPERLANE_CONTROLLER, VALIDATOR_SET,
-        },
-        validator_address,
-        wait::{wait_transaction_finalized, wait_transaction_finalized_until},
-    },
+    validator_address,
+    wait::{wait_transaction_finalized, wait_transaction_finalized_until},
 };
 
 const HYPERLANE_DELEGATE_ROLE: u8 = 2;
@@ -42,14 +38,14 @@ pub struct SetupState {
     pub signer_transaction: Option<String>,
 }
 
-pub struct SetupRequest<'a> {
-    pub rpc_url: &'a str,
-    pub validator_key: &'a Path,
-    pub hyperlane_key: &'a Path,
-    pub funding: U256,
+pub(crate) struct SetupRequest<'a> {
+    pub(crate) rpc_url: &'a str,
+    pub(crate) validator_key: &'a Path,
+    pub(crate) hyperlane_key: &'a Path,
+    pub(crate) funding: U256,
 }
 
-pub async fn ensure_setup(
+pub(crate) async fn ensure_setup(
     request: SetupRequest<'_>,
     mut state: SetupState,
     progress: &mut Progress,
@@ -148,7 +144,7 @@ pub async fn ensure_setup(
 /// Returns `Ok((state, true))` when all steps complete, or `Ok((state, false))` when
 /// `deadline` expires (with any newly broadcast transaction hash already journaled).
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn ensure_setup_via_rpc(
+pub async fn ensure_setup_via_rpc(
     rpc: &RpcClient,
     validator_key: &Path,
     hyperlane_key: &Path,

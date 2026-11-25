@@ -5,9 +5,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use tokio::task::JoinSet;
 
-use crate::{
-    support::progress::{Progress, WatchDisplay},
-    validator::rpc::ConsensusStatus,
+use outbe_operator_node_role::{
+    progress::{Progress, WatchDisplay},
+    rpc::ConsensusStatus,
 };
 
 use super::remote::{capture_founder, NetworkArtifacts, SshOptions};

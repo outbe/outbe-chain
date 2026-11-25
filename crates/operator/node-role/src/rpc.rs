@@ -16,9 +16,9 @@ pub(crate) const VALIDATOR_SET: Address = address!("0000000000000000000000000000
 pub(crate) const HYPERLANE_CONTROLLER: Address =
     address!("000000000000000000000000000000000000EE14");
 
-sol!("../../contracts/precompiles/src/IStaking.sol");
-sol!("../../contracts/precompiles/src/IValidatorSet.sol");
-sol!("../../contracts/precompiles/src/IHyperlaneController.sol");
+sol!("../../../contracts/precompiles/src/IStaking.sol");
+sol!("../../../contracts/precompiles/src/IValidatorSet.sol");
+sol!("../../../contracts/precompiles/src/IHyperlaneController.sol");
 
 /// Transport that posts a JSON-RPC request payload and returns the raw JSON response text.
 pub trait JsonRpcTransport: Send + Sync {
@@ -97,10 +97,10 @@ impl ConsensusStatus {
 }
 
 #[derive(Clone, Debug, Default)]
-pub struct ValidatorRecord {
-    pub registered: bool,
-    pub status: u8,
-    pub has_bls_share: bool,
+pub(crate) struct ValidatorRecord {
+    pub(crate) registered: bool,
+    pub(crate) status: u8,
+    pub(crate) has_bls_share: bool,
 }
 
 #[derive(Serialize)]
@@ -145,7 +145,7 @@ impl RpcClient {
         }
     }
 
-    pub async fn nonce(&self, address: Address) -> Result<u64> {
+    pub(crate) async fn nonce(&self, address: Address) -> Result<u64> {
         parse_hex_u64(
             &self
                 .call(
@@ -156,7 +156,7 @@ impl RpcClient {
         )
     }
 
-    pub async fn latest_base_fee(&self) -> Result<U256> {
+    pub(crate) async fn latest_base_fee(&self) -> Result<U256> {
         let block = self
             .call("eth_getBlockByNumber", json!(["latest", false]))
             .await?;
@@ -167,7 +167,7 @@ impl RpcClient {
             .unwrap_or_else(|| U256::from(alloy_eips::eip1559::MIN_PROTOCOL_BASE_FEE)))
     }
 
-    pub async fn estimate_gas(
+    pub(crate) async fn estimate_gas(
         &self,
         from: Address,
         to: Address,
@@ -185,7 +185,7 @@ impl RpcClient {
         parse_hex_u64(&self.call("eth_estimateGas", json!([call_obj])).await?)
     }
 
-    pub async fn send_raw_transaction(&self, raw: &[u8]) -> Result<String> {
+    pub(crate) async fn send_raw_transaction(&self, raw: &[u8]) -> Result<String> {
         let value = self
             .call(
                 "eth_sendRawTransaction",
@@ -206,7 +206,7 @@ impl RpcClient {
         self.block("finalized").await
     }
 
-    pub async fn block_number(&self, number: u64) -> Result<Block> {
+    pub(crate) async fn block_number(&self, number: u64) -> Result<Block> {
         self.block(&format!("0x{number:x}")).await
     }
 
@@ -214,7 +214,7 @@ impl RpcClient {
         parse_hex_u64(&self.call("net_peerCount", json!([])).await?)
     }
 
-    pub async fn balance(&self, address: Address) -> Result<U256> {
+    pub(crate) async fn balance(&self, address: Address) -> Result<U256> {
         parse_hex_u256(
             &self
                 .call(
@@ -230,13 +230,13 @@ impl RpcClient {
             .wrap_err("invalid outbe_consensusStatus response")
     }
 
-    pub async fn min_stake(&self) -> Result<U256> {
+    pub(crate) async fn min_stake(&self) -> Result<U256> {
         let call = IStaking::getMinStakeCall {};
         let result = self.eth_call(STAKING, &call.abi_encode()).await?;
         Ok(IStaking::getMinStakeCall::abi_decode_returns(&result)?)
     }
 
-    pub async fn validator(&self, address: Address) -> Result<ValidatorRecord> {
+    pub(crate) async fn validator(&self, address: Address) -> Result<ValidatorRecord> {
         let call = IValidatorSet::isValidatorCall { addr: address };
         let result = self.eth_call(VALIDATOR_SET, &call.abi_encode()).await?;
         if !IValidatorSet::isValidatorCall::abi_decode_returns(&result)? {
@@ -253,7 +253,7 @@ impl RpcClient {
         })
     }
 
-    pub async fn validator_delegate(&self, validator: Address, role: u8) -> Result<Address> {
+    pub(crate) async fn validator_delegate(&self, validator: Address, role: u8) -> Result<Address> {
         let call = IValidatorSet::getDelegateCall { validator, role };
         let result = self.eth_call(VALIDATOR_SET, &call.abi_encode()).await?;
         Ok(IValidatorSet::getDelegateCall::abi_decode_returns(&result)?)
@@ -267,7 +267,7 @@ impl RpcClient {
         Ok(IHyperlaneController::hyperlaneSignerCall::abi_decode_returns(&result)?)
     }
 
-    pub async fn transaction_block(&self, hash: &str) -> Result<Option<u64>> {
+    pub(crate) async fn transaction_block(&self, hash: &str) -> Result<Option<u64>> {
         let Some(receipt) = self
             .call_optional("eth_getTransactionReceipt", json!([hash]))
             .await?

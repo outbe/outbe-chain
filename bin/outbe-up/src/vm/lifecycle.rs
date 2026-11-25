@@ -14,18 +14,19 @@ use eyre::{bail, ensure, Context, Result};
 use sha2::{Digest, Sha256};
 use tokio::task::JoinSet;
 
+use outbe_operator_node_role::{
+    hyperlane::{ensure_setup_via_rpc, SetupState},
+    progress::{Progress, WatchDisplay},
+    rpc::ConsensusStatus,
+    validator_address,
+};
+
 use crate::{
     network::{
         build::DeploymentKind,
         config::{Ssh, VmFlavor},
         remote::{rpc_client_via_ssh, shell_quote, NetworkArtifacts, SshOptions},
         status::rpc_ready_for_hyperlane,
-    },
-    support::progress::{Progress, WatchDisplay},
-    validator::{
-        hyperlane::{ensure_setup_via_rpc, SetupState},
-        rpc::ConsensusStatus,
-        validator_address,
     },
     vm::{
         disk,
@@ -2654,7 +2655,7 @@ mod tests {
                 next_planned_activation_height: 0,
                 is_validator: true,
                 mode: "signer".into(),
-                enclave: crate::validator::rpc::EnclaveHealth {
+                enclave: outbe_operator_node_role::rpc::EnclaveHealth {
                     state: "ready".into(),
                     ready: true,
                     offer_key_ready: true,
