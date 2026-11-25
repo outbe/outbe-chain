@@ -5,7 +5,6 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {ERC7786Sender} from "@contracts/shared/ERC7786Sender.sol";
 import {
     IIntexNFT1155Bridge,
@@ -104,7 +103,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
         new IntexNFT1155Bridge(address(0), address(bridge));
     }
 
-    /// @notice A zero bridge address is caught by the `ERC7786MessengerBase` constructor guard.
+    /// @notice A zero bridge address is caught by the `ERC7786Sender` constructor guard.
     function test_Constructor_RevertsZeroBridge() public {
         vm.expectRevert(abi.encodeWithSignature("InvalidBridge()"));
         new IntexNFT1155Bridge(address(srcToken), address(0));

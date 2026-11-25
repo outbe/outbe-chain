@@ -13,7 +13,6 @@ import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {EscrowTimes} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
-import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 

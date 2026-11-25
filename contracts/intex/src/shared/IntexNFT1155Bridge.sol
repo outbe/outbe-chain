@@ -2,6 +2,9 @@
 pragma solidity 0.8.30;
 
 import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {IERC7786Recipient} from "@openzeppelin/contracts/interfaces/draft-IERC7786.sol";
+import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
+import {SafeCast} from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {ReentrancyGuardTransient} from "@openzeppelin/contracts/utils/ReentrancyGuardTransient.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 
@@ -13,7 +16,7 @@ import {
     MultiRecipientSendParam
 } from "./interfaces/IIntexNFT1155Bridge.sol";
 import {IntexNFT1155BridgeCodec} from "./libs/IntexNFT1155BridgeCodec.sol";
-import {ERC7786MessengerBase} from "./ERC7786MessengerBase.sol";
+import {ERC7786Sender} from "./ERC7786Sender.sol";
 import {IntexGas} from "./libs/IntexGas.sol";
 
 /// @title IntexNFT1155Bridge
@@ -25,11 +28,14 @@ import {IntexGas} from "./libs/IntexGas.sol";
 ///      single-recipient batch and multi-recipient.
 contract IntexNFT1155Bridge is
     IIntexNFT1155Bridge,
-    ERC7786MessengerBase,
+    ERC7786Sender,
+    IERC7786Recipient,
     AccessControlUpgradeable,
     ReentrancyGuardTransient,
     UUPSUpgradeable
 {
+    using InteroperableAddress for bytes;
+
     uint16 public constant SEND_ONE = IntexNFT1155BridgeCodec.SEND_ONE;
     uint16 public constant SEND_BATCH = IntexNFT1155BridgeCodec.SEND_BATCH;
     uint16 public constant SEND_MULTI = IntexNFT1155BridgeCodec.SEND_MULTI;
@@ -56,6 +62,8 @@ contract IntexNFT1155Bridge is
     struct IntexNFT1155BridgeStorage {
         /// @dev Per-message map of items whose `token.crosschainMint` reverted.
         mapping(bytes32 receiveId => mapping(uint256 idx => FailedCrosschainMint)) failedCrosschainMints;
+        /// @dev ERC-7930 interoperable address of the matching adapter on a given chainId.
+        mapping(uint32 chainId => bytes interop) remoteMessenger;
     }
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155Bridge")) - 1)) & ~bytes32(uint256(0xff))
@@ -68,7 +76,7 @@ contract IntexNFT1155Bridge is
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address _token, address bridge_) ERC7786MessengerBase(bridge_) {
+    constructor(address _token, address bridge_) ERC7786Sender(bridge_) {
         if (_token == address(0)) revert ZeroAddress("token");
         token = IERC1155Bridgeable(_token);
         _disableInitializers();
@@ -99,7 +107,33 @@ contract IntexNFT1155Bridge is
 
     /// @inheritdoc IIntexNFT1155Bridge
     function registerRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _registerRemoteMessenger(chainId, interop);
+        // Inbound auth derives the key from the sender's own bytes, so the interop must embed the
+        // same chainId as the key: a mismatch would silently drop every message from that chain.
+        if (interop.length != 0) {
+            (uint256 embedded,) = interop.parseEvmV1Calldata();
+            require(embedded == chainId, RemoteMessengerChainMismatch(chainId, embedded));
+        }
+        _bs().remoteMessenger[chainId] = interop;
+        emit RemoteMessengerRegistered(chainId, interop);
+    }
+
+    /// @notice ERC-7930 interoperable address of the matching adapter on `chainId` (empty if unregistered).
+    function remoteMessenger(uint32 chainId) external view returns (bytes memory) {
+        return _bs().remoteMessenger[chainId];
+    }
+
+    function _remoteMessenger(uint32 chainId) private view returns (bytes memory interop) {
+        interop = _bs().remoteMessenger[chainId];
+        require(interop.length != 0, RemoteMessengerNotSet(chainId));
+    }
+
+    /// @dev The caller always pays the fee; the native float is never used.
+    function _sendPaidByCaller(uint32 dstChainId, bytes memory payload, uint256 gasLimit) private returns (bytes32) {
+        return _sendToPaidByCaller(_remoteMessenger(dstChainId), payload, gasLimit);
+    }
+
+    function _quoteFee(uint32 dstChainId, bytes memory payload, uint256 gasLimit) private view returns (uint256) {
+        return _quoteTo(_remoteMessenger(dstChainId), payload, gasLimit);
     }
 
     // --- Single transfer ---
@@ -221,19 +255,29 @@ contract IntexNFT1155Bridge is
     }
 
     // --- Receive ---
-    /// @inheritdoc ERC7786MessengerBase
-    /// @dev nonReentrant guards against crosschainMint-callback re-entry.
+    /// @inheritdoc IERC7786Recipient
+    /// @dev Only the bridge, with a message from the registered adapter of the source chain. The
+    ///      bridge deduplicates and rolls back on revert, so a premature message is redelivered.
+    ///      nonReentrant guards against crosschainMint-callback re-entry.
     function receiveMessage(bytes32 receiveId, bytes calldata sender, bytes calldata payload)
-        public
+        external
         payable
-        override
         nonReentrant
         returns (bytes4)
     {
-        return super.receiveMessage(receiveId, sender, payload);
+        require(msg.sender == address(BRIDGE), UnauthorizedBridge(msg.sender));
+        (uint256 srcChainId,) = sender.parseEvmV1Calldata();
+        uint32 chainId = SafeCast.toUint32(srcChainId);
+        bytes memory expected = _bs().remoteMessenger[chainId];
+        require(
+            expected.length != 0 && keccak256(sender) == keccak256(expected),
+            UnauthorizedSourceMessenger(chainId, sender)
+        );
+        _dispatch(chainId, receiveId, payload);
+        return IERC7786Recipient.receiveMessage.selector;
     }
 
-    function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal override {
+    function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata message) private {
         if (message.length < IntexNFT1155BridgeCodec.HEADER_LEN) {
             revert IntexNFT1155BridgeCodec.InvalidPayloadLength(message.length, IntexNFT1155BridgeCodec.HEADER_LEN);
         }

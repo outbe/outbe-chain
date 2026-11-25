@@ -113,7 +113,18 @@ interface IIntexNFT1155Bridge {
         uint32 units
     );
 
+    /// @notice The matching adapter on `chainId` was registered (empty `interop` clears it).
+    event RemoteMessengerRegistered(uint32 indexed chainId, bytes interop);
+
     // --- Errors ---
+    /// @notice Only the ERC-7786 bridge delivers messages.
+    error UnauthorizedBridge(address caller);
+    /// @notice The sender is not the registered adapter of its chain.
+    error UnauthorizedSourceMessenger(uint32 chainId, bytes sender);
+    /// @notice No adapter is registered for `chainId`.
+    error RemoteMessengerNotSet(uint32 chainId);
+    /// @notice The interoperable address names another chain than its key.
+    error RemoteMessengerChainMismatch(uint32 chainId, uint256 embeddedChainId);
     /// @notice Receiver address is zero.
     error InvalidReceiver();
     /// @notice Array lengths do not match.

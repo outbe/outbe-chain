@@ -9,7 +9,6 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {IIntexNFT1155Bridge, SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
-import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
 import {ERC7786Sender} from "@contracts/shared/ERC7786Sender.sol";
 
 /// @title IntexNFT1155BridgeSingleTest
@@ -89,7 +88,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         new IntexNFT1155Bridge(address(0), address(bridge));
     }
 
-    /// @notice A zero bridge address is caught by the `ERC7786MessengerBase` constructor guard.
+    /// @notice A zero bridge address is caught by the `ERC7786Sender` constructor guard.
     function test_constructor_revertsZeroBridge() public {
         vm.expectRevert(ERC7786Sender.InvalidBridge.selector);
         new IntexNFT1155Bridge(address(tokenA), address(0));
