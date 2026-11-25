@@ -154,6 +154,31 @@ fn radicle_rpc_evidence() {
     assert_eq!(info.valid_until_height, 80);
 }
 
+#[test]
+fn maintenance_requires_healthy_randomness_before_the_planned_freeze() {
+    use outbe_primitives::consensus::{ConsensusStatus, RandomnessStatus};
+
+    let mut status = ConsensusStatus {
+        last_finalized_block: 100,
+        randomness_status: RandomnessStatus::Healthy,
+        ..Default::default()
+    };
+    assert!(super::maintenance_safe_for_status(&status, 200));
+
+    status.randomness_status = RandomnessStatus::Preparing;
+    assert!(!super::maintenance_safe_for_status(&status, 200));
+    status.randomness_status = RandomnessStatus::PendingActivation;
+    assert!(!super::maintenance_safe_for_status(&status, 200));
+    status.randomness_status = RandomnessStatus::Grace;
+    assert!(!super::maintenance_safe_for_status(&status, 200));
+    status.randomness_status = RandomnessStatus::Degraded;
+    assert!(!super::maintenance_safe_for_status(&status, 200));
+
+    status.randomness_status = RandomnessStatus::Healthy;
+    status.last_finalized_block = 200;
+    assert!(!super::maintenance_safe_for_status(&status, 200));
+}
+
 #[tokio::test]
 async fn get_finality_proof_enforces_bridge_overflow_window_and_byte_limits() {
     use outbe_primitives::consensus::{ConsensusExecutionBridge, FinalizedBlockBytes};

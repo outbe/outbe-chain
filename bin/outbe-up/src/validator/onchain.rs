@@ -51,6 +51,7 @@ pub async fn unjail() -> Result<()> {
     );
 
     if record.status == STATUS_ACTIVE {
+        clear_unjail_transactions(&mut journal)?;
         progress.done("validator is already active");
         return Ok(());
     }
@@ -90,6 +91,7 @@ pub async fn unjail() -> Result<()> {
         hash
     };
     wait_transaction_finalized(&remote, &hash, &mut progress).await?;
+    clear_unjail_transactions(&mut journal)?;
     progress.done("validator unjailed and ready for the next DKG activation");
     Ok(())
 }
@@ -174,7 +176,18 @@ pub async fn claim() -> Result<()> {
         hash
     };
     wait_transaction_finalized(&remote, &hash, &mut progress).await?;
+    journal.claim_transaction = None;
+    journal.save()?;
     progress.done("unbonded stake claimed");
+    Ok(())
+}
+
+fn clear_unjail_transactions(journal: &mut Journal) -> Result<()> {
+    let had_unjail = journal.unjail_transaction.take().is_some();
+    let had_confirm_ready = journal.unjail_confirm_ready_transaction.take().is_some();
+    if had_unjail || had_confirm_ready {
+        journal.save()?;
+    }
     Ok(())
 }
 

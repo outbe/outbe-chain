@@ -129,12 +129,16 @@ fn validate_offline(archive: &Path, expected_signer: Option<&str>) -> Result<()>
 
 pub(crate) fn node_args(index: usize) -> Vec<String> {
     let root = process::ROOT;
-    let validator = format!("{root}/validator-{index}");
     let joining = index == 0 && Path::new(root).join("keys").is_dir();
+    node_args_for_layout(root, index, joining)
+}
+
+fn node_args_for_layout(root: &str, index: usize, joining: bool) -> Vec<String> {
+    let validator = format!("{root}/validator-{index}");
     let keys = if joining {
         format!("{root}/keys")
     } else {
-        validator.clone()
+        format!("{root}/keys/validator-{index}")
     };
     let reth_config = if joining {
         format!("{root}/reth.toml")
@@ -462,4 +466,28 @@ fn copy_digest(reader: &mut impl Read, writer: &mut impl Write) -> Result<String
         digest.update(&buffer[..count]);
     }
     Ok(hex::encode(digest.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn founder_snapshot_uses_the_packaged_key_directory() {
+        let args = node_args_for_layout("/opt/outbe-chain", 3, false);
+        assert!(args
+            .iter()
+            .any(|value| value == "/opt/outbe-chain/keys/validator-3/evm-key.hex"));
+        assert!(!args
+            .iter()
+            .any(|value| value == "/opt/outbe-chain/validator-3/evm-key.hex"));
+    }
+
+    #[test]
+    fn joining_snapshot_uses_the_shared_key_directory() {
+        let args = node_args_for_layout("/opt/outbe-chain", 0, true);
+        assert!(args
+            .iter()
+            .any(|value| value == "/opt/outbe-chain/keys/evm-key.hex"));
+    }
 }

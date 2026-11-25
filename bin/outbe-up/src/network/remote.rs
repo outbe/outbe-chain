@@ -2,7 +2,7 @@ use std::{
     fs::{self, OpenOptions},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 use eyre::{bail, ensure, Context, Result};
@@ -204,26 +204,41 @@ impl SshOptions {
         Ok(())
     }
 
-    pub(super) fn copy_from(
+    pub(super) fn copy_root_file_from(
         &self,
         founder: &FounderArtifact,
         source: &str,
         destination: &Path,
     ) -> Result<()> {
-        let mut process = Command::new("scp");
-        process.args(["-q", "-P", "22"]);
-        self.transport_args(&mut process, founder);
-        if let Some(ssh_key) = &self.ssh_key {
-            process.arg("-i").arg(ssh_key);
-        }
-        process.arg(format!(
-            "{}@{}:{source}",
-            founder.vm_user,
-            scp_host(&founder.private_ip.to_string())
-        ));
-        process.arg(destination);
-        let status = process.status().wrap_err("run scp")?;
-        ensure!(status.success(), "SCP download failed for {}", founder.name);
+        ensure!(
+            !destination.exists(),
+            "download destination already exists: {}",
+            destination.display()
+        );
+        let parent = destination
+            .parent()
+            .filter(|path| !path.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        fs::create_dir_all(parent)?;
+        let temporary = tempfile::NamedTempFile::new_in(parent)?;
+        fs::set_permissions(temporary.path(), fs::Permissions::from_mode(0o600))?;
+        let output = temporary.reopen()?;
+        let source = quote(source);
+        let command =
+            format!("if [ \"$(id -u)\" -eq 0 ]; then cat {source}; else sudo -n cat {source}; fi");
+        let mut process = Command::new("ssh");
+        self.ssh_args(&mut process, founder);
+        let status = process
+            .arg(command)
+            .stdout(Stdio::from(output))
+            .status()
+            .wrap_err("download root-owned file over ssh")?;
+        ensure!(status.success(), "SSH download failed for {}", founder.name);
+        temporary.as_file().sync_all()?;
+        temporary
+            .persist_noclobber(destination)
+            .map_err(|error| error.error)
+            .wrap_err_with(|| format!("persist download: {}", destination.display()))?;
         Ok(())
     }
 

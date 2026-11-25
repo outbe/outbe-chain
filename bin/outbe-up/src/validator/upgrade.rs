@@ -57,15 +57,20 @@ pub async fn run(software_bundle: &Path, skip_dkg_guard: bool) -> Result<()> {
         ],
     );
     if let Err(error) = apply {
-        bail!("software installation failed; validator remains stopped: {error:#}");
+        fail_stop()?;
+        bail!(
+            "software installation failed; validator auto-start was disabled and it remains stopped; inspect it, then run `outbe-up validator start`: {error:#}"
+        );
     }
 
     if was_active {
         let updated = Journal::load()?;
         let mut progress = Progress::new();
         if let Err(error) = sync::start_and_wait(&updated, &mut progress, enabled_on_boot).await {
-            let _ = process::systemctl(&["stop", VALIDATOR_TARGET]);
-            bail!("upgraded validator failed health checks and was stopped: {error:#}");
+            fail_stop()?;
+            bail!(
+                "upgraded validator failed health checks; auto-start was disabled and it was stopped; inspect it, then run `outbe-up validator start`: {error:#}"
+            );
         }
     }
     println!(
@@ -73,6 +78,11 @@ pub async fn run(software_bundle: &Path, skip_dkg_guard: bool) -> Result<()> {
         manifest.release_tag, manifest.commit
     );
     Ok(())
+}
+
+fn fail_stop() -> Result<()> {
+    process::clear_services_enabled()?;
+    process::systemctl(&["disable", "--now", VALIDATOR_TARGET])
 }
 
 /// Apply a previously verified software bundle while services are stopped.

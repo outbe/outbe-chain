@@ -10,7 +10,9 @@ use serde::Serialize;
 
 use crate::support::process::{self, ROOT};
 
-use super::{journal::Journal, rpc::RpcClient, validator_address, VALIDATOR_TARGET};
+use super::{
+    journal::Journal, rpc::RpcClient, status::sidecar_status, validator_address, VALIDATOR_TARGET,
+};
 
 const SUPPORT_UNITS: &[&str] = &[
     "outbe-validator.target",
@@ -23,7 +25,12 @@ const SUPPORT_UNITS: &[&str] = &[
 #[derive(Debug, Serialize)]
 struct DoctorReport {
     target_active: bool,
+    feeder_active: bool,
+    feeder_healthy: Option<bool>,
+    hyperlane_active: bool,
+    hyperlane_healthy: Option<bool>,
     services_enabled: bool,
+    systemd_units_current: bool,
     disk_available_kib: Option<u64>,
     time_synchronized: Option<bool>,
     outbe_chain_version: Option<String>,
@@ -36,6 +43,8 @@ struct DoctorReport {
     consensus_mode: Option<String>,
     consensus_peers: Option<u64>,
     resident_tee_ready: Option<bool>,
+    next_dkg_freeze_height: Option<u64>,
+    maintenance_safe: Option<bool>,
     validator_status: Option<u8>,
     software_bundle_sha256: Option<String>,
     software_commit: Option<String>,
@@ -49,6 +58,18 @@ pub async fn run(support_bundle: Option<&Path>) -> Result<()> {
     let target_active = process::systemctl_is_active(VALIDATOR_TARGET);
     if !target_active {
         issues.push(format!("{VALIDATOR_TARGET} is not active"));
+    }
+    let feeder_active = process::systemctl_is_active("outbe-feeder.service");
+    let hyperlane_active = process::systemctl_is_active("outbe-hyperlane-validator.service");
+    if target_active && !feeder_active {
+        issues.push("outbe-feeder.service is not active".into());
+    }
+    if target_active && !hyperlane_active {
+        issues.push("outbe-hyperlane-validator.service is not active".into());
+    }
+    let systemd_units_current = systemd_units_current();
+    if !systemd_units_current {
+        issues.push("installed systemd units differ from the managed copies".into());
     }
 
     let disk_available_kib = disk_available_kib(Path::new(ROOT));
@@ -73,13 +94,15 @@ pub async fn run(support_bundle: Option<&Path>) -> Result<()> {
     let local = RpcClient::new(journal.config.network.local_rpc_url())?;
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
     let address = validator_address(&Path::new(ROOT).join("keys/evm-key.hex"))?;
-    let (local_chain_id, local_block, remote_block, peers, consensus, validator) = tokio::join!(
+    let (local_chain_id, local_block, remote_block, peers, consensus, validator, feeder, hyperlane) = tokio::join!(
         local.chain_id(),
         local.finalized_block(),
         remote.finalized_block(),
         local.peer_count(),
         local.consensus_status(),
         remote.validator(address),
+        sidecar_status("http://127.0.0.1:9002/status"),
+        sidecar_status("http://127.0.0.1:9003/status"),
     );
     let local_chain_id = result_value(local_chain_id, "local chain ID", &mut issues);
     if local_chain_id.is_some_and(|value| value != journal.config.network.chain_id) {
@@ -108,10 +131,31 @@ pub async fn run(support_bundle: Option<&Path>) -> Result<()> {
         issues.push("resident TEE is not ready".into());
     }
     let validator = result_value(validator, "on-chain validator record", &mut issues);
+    let feeder = result_value(feeder, "feeder status", &mut issues);
+    let feeder_healthy = feeder
+        .as_ref()
+        .and_then(|status| status.get("healthy"))
+        .and_then(serde_json::Value::as_bool);
+    if target_active && feeder.is_some() && feeder_healthy != Some(true) {
+        issues.push("feeder is not healthy".into());
+    }
+    let hyperlane = result_value(hyperlane, "Hyperlane status", &mut issues);
+    let hyperlane_healthy = hyperlane
+        .as_ref()
+        .and_then(|status| status.get("healthy"))
+        .and_then(serde_json::Value::as_bool);
+    if target_active && hyperlane.is_some() && hyperlane_healthy != Some(true) {
+        issues.push("Hyperlane validator is not healthy".into());
+    }
 
     let report = DoctorReport {
         target_active,
+        feeder_active,
+        feeder_healthy,
+        hyperlane_active,
+        hyperlane_healthy,
         services_enabled: process::services_enabled(),
+        systemd_units_current,
         disk_available_kib,
         time_synchronized,
         outbe_chain_version,
@@ -124,6 +168,12 @@ pub async fn run(support_bundle: Option<&Path>) -> Result<()> {
         consensus_mode: consensus.as_ref().map(|status| status.mode.clone()),
         consensus_peers: consensus.as_ref().map(|status| status.connected_peers),
         resident_tee_ready: consensus.as_ref().map(|status| status.resident_ready()),
+        next_dkg_freeze_height: consensus
+            .as_ref()
+            .and_then(|status| status.next_dkg_freeze_height),
+        maintenance_safe: consensus
+            .as_ref()
+            .and_then(|status| status.maintenance_safe),
         validator_status: validator.as_ref().map(|record| record.status),
         software_bundle_sha256: journal.software_bundle_sha256.clone(),
         software_commit: journal.software_commit.clone(),
@@ -169,15 +219,21 @@ fn time_synchronized() -> Option<bool> {
         "timedatectl",
         &["show", "--property=NTPSynchronized", "--value"],
     ) {
-        return match value.trim() {
-            "yes" => Some(true),
-            "no" => Some(false),
-            _ => None,
-        };
+        if value.trim() == "yes" {
+            return Some(true);
+        }
     }
     process::capture("chronyc", &["tracking"])
         .ok()
         .map(|value| value.contains("Leap status") && value.contains("Normal"))
+}
+
+fn systemd_units_current() -> bool {
+    SUPPORT_UNITS.iter().all(|unit| {
+        let managed = fs::read(Path::new(ROOT).join("systemd").join(unit));
+        let installed = fs::read(Path::new("/etc/systemd/system").join(unit));
+        matches!((managed, installed), (Ok(managed), Ok(installed)) if managed == installed)
+    })
 }
 
 fn create_support_bundle(output: &Path, report: &str) -> Result<()> {

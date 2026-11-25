@@ -10,7 +10,9 @@ use jsonrpsee::core::RpcResult;
 use outbe_primitives::header::OutbeHeader;
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
 use outbe_primitives::{
-    consensus::{ConsensusExecutionBridge, ConsensusOperatingMode},
+    consensus::{
+        ConsensusExecutionBridge, ConsensusOperatingMode, ConsensusStatus, RandomnessStatus,
+    },
     storage::{
         readonly::{ReadOnlyStorageProvider, StorageReader},
         StorageHandle,
@@ -348,7 +350,7 @@ where
             })
         });
         let maintenance_safe =
-            next_dkg_freeze_height.map(|freeze| status.last_finalized_block < freeze);
+            next_dkg_freeze_height.map(|freeze| maintenance_safe_for_status(&status, freeze));
 
         Ok(ConsensusStatusInfo {
             current_view: status.current_view,
@@ -420,6 +422,11 @@ where
     ) -> RpcResult<crate::api::AncestorFinalizationProof> {
         self.finality_proof_for_height(height).await
     }
+}
+
+fn maintenance_safe_for_status(status: &ConsensusStatus, freeze_height: u64) -> bool {
+    status.randomness_status == RandomnessStatus::Healthy
+        && status.last_finalized_block < freeze_height
 }
 
 /// Create an internal JSON-RPC error.

@@ -42,7 +42,11 @@ and wait for full health before continuing. Upgrade consumes a software bundle d
 regular binaries atomically while retaining the preceding set in `/opt/outbe-chain/.previous`,
 regenerates systemd units from the new `outbe-up`, and stops the rollout instead of automatically
 running old binaries against data opened by a newer release. The first upgrade from a node that does
-not yet expose `maintenanceSafe` requires the explicit `--skip-dkg-guard` acknowledgement.
+not yet expose `maintenanceSafe` requires the explicit `--skip-dkg-guard` acknowledgement. A failed
+upgrade also removes the auto-start marker so a VM reboot cannot silently restart the rejected
+release; inspect the node and use `validator start` explicitly after fixing it. Founding systemd
+units are refreshed, but the generated `validator-N/run-node.sh` launch arguments remain those from
+the immutable network build; changing founder launch flags requires a new network build/prepare.
 
 Create a founder snapshot on its VM with `network snapshot create --founder ... --output
 /opt/outbe-chain/snapshots/<name>.tar.zst`; add `--download <local-path>` only when a local copy is

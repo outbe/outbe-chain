@@ -243,7 +243,7 @@ fn validator_services_status() -> String {
     .join(" | ")
 }
 
-async fn sidecar_status(url: &str) -> Result<serde_json::Value> {
+pub(crate) async fn sidecar_status(url: &str) -> Result<serde_json::Value> {
     Ok(reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()?

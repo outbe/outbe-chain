@@ -1,4 +1,4 @@
-use std::{fs, path::Path};
+use std::{collections::BTreeSet, fs, path::Path};
 
 use eyre::{ensure, Result};
 
@@ -30,6 +30,7 @@ pub async fn run(
     let required_peers = build.manifest.founders.len().saturating_sub(1);
     let mut issues = Vec::new();
     let mut diagnostics = Vec::new();
+    let mut versions = BTreeSet::new();
     for (founder, status) in build.manifest.founders.iter().zip(&statuses) {
         if !healthy(status, build.manifest.chain_id, required_peers) {
             issues.push(format!("{} is not healthy", founder.name));
@@ -60,13 +61,31 @@ pub async fn run(
                 founder.name
             ));
         }
+        if !output.contains("systemd_units_current=yes") {
+            issues.push(format!(
+                "{} has stale or missing systemd units",
+                founder.name
+            ));
+        }
         if !output.lines().any(|line| {
             line.strip_prefix("disk_available_kib=")
                 .is_some_and(|value| value.parse::<u64>().is_ok())
         }) {
             issues.push(format!("{} disk availability is unreadable", founder.name));
         }
+        match diagnostic_value(&output, "outbe_chain_version") {
+            Some(version) if !version.is_empty() => {
+                versions.insert(version.to_owned());
+            }
+            _ => issues.push(format!("{} version is unreadable", founder.name)),
+        }
         diagnostics.push((founder, output));
+    }
+    if versions.len() > 1 {
+        issues.push(format!(
+            "founders run different outbe-chain versions: {}",
+            versions.into_iter().collect::<Vec<_>>().join(", ")
+        ));
     }
 
     progress.done(&format!("diagnosed {} founding validators", statuses.len()));
@@ -119,6 +138,9 @@ if [ \"$time_sync\" = yes ]; then time_sync=yes; \
 elif command -v chronyc >/dev/null 2>&1 && chronyc tracking 2>/dev/null | grep -q 'Leap status.*Normal'; then time_sync=yes; \
 else time_sync=no; fi; \
 printf 'disk_available_kib=%s\\ntime_synchronized=%s\\n' \"$disk\" \"$time_sync\"; \
+units_ok=yes; \
+for unit in outbe-validator.target outbe-validator.service outbe-radicle.service outbe-feeder.service outbe-hyperlane-validator.service; do cmp -s \"/opt/outbe-chain/systemd/$unit\" \"/etc/systemd/system/$unit\" || units_ok=no; done; \
+printf 'systemd_units_current=%s\\n' \"$units_ok\"; \
 printf 'outbe_chain_version='; /opt/outbe-chain/outbe-chain --version 2>/dev/null || true; \
 printf 'genesis_sha256='; sha256sum /opt/outbe-chain/genesis.json 2>/dev/null | cut -d ' ' -f 1 || true"
         .to_owned()
@@ -131,6 +153,11 @@ fn journal_command() -> String {
         command.push_str(unit);
     }
     command
+}
+
+fn diagnostic_value<'a>(output: &'a str, name: &str) -> Option<&'a str> {
+    let prefix = format!("{name}=");
+    output.lines().find_map(|line| line.strip_prefix(&prefix))
 }
 
 fn safe_name(value: &str) -> String {
@@ -153,5 +180,14 @@ mod tests {
     #[test]
     fn support_file_names_cannot_escape() {
         assert_eq!(safe_name("../../validator 0"), "______validator_0");
+    }
+
+    #[test]
+    fn reads_named_diagnostic_values() {
+        let output = "disk_available_kib=10\noutbe_chain_version=outbe-chain 1.2.3\n";
+        assert_eq!(
+            diagnostic_value(output, "outbe_chain_version"),
+            Some("outbe-chain 1.2.3")
+        );
     }
 }

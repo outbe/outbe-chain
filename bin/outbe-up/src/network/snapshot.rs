@@ -78,7 +78,7 @@ test -n \"$required\" -a -n \"$available\" -a \"$available\" -ge \"$required\"",
             "download destination already exists: {}",
             destination.display()
         );
-        ssh.copy_from(&founder, options.archive, destination)?;
+        ssh.copy_root_file_from(&founder, options.archive, destination)?;
     }
     progress.done(&format!(
         "snapshot created on {} at {}",
@@ -177,6 +177,7 @@ fn snapshot_command(
     expected_signer: Option<&str>,
 ) -> String {
     let validator = format!("/opt/outbe-chain/validator-{index}");
+    let keys = format!("/opt/outbe-chain/keys/validator-{index}");
     let mut args = vec![
         "/opt/outbe-chain/outbe-chain".to_owned(),
         "snapshot".into(),
@@ -187,7 +188,7 @@ fn snapshot_command(
             "--output".into(),
             archive.into(),
             "--signing-key".into(),
-            format!("{validator}/evm-key.hex"),
+            format!("{keys}/evm-key.hex"),
         ]);
         if let Some(creator) = creator {
             args.extend(["--creator".into(), creator.into()]);
@@ -212,13 +213,13 @@ fn snapshot_command(
         "--consensus.storage-dir".into(),
         format!("{validator}/consensus"),
         "--consensus.keys-dir".into(),
-        validator.clone(),
+        keys.clone(),
         "--p2p-secret-key".into(),
-        format!("{validator}/reth-p2p-secret.hex"),
+        format!("{keys}/reth-p2p-secret.hex"),
         "--consensus.signing-key".into(),
-        format!("{validator}/signing-key.hex"),
+        format!("{keys}/signing-key.hex"),
         "--validator.evm-key".into(),
-        format!("{validator}/evm-key.hex"),
+        format!("{keys}/evm-key.hex"),
     ]);
     args.into_iter()
         .map(|argument| quote(&argument))
@@ -260,5 +261,20 @@ mod tests {
         assert!(validate_remote_archive("/opt/outbe-chain/snapshots/node.tar.zst").is_ok());
         assert!(validate_remote_archive("/tmp/node.tar.zst").is_err());
         assert!(validate_remote_archive("/opt/outbe-chain/snapshots/../keys/x").is_err());
+    }
+
+    #[test]
+    fn founder_snapshot_uses_the_packaged_key_directory() {
+        let command = snapshot_command(
+            "create",
+            "/opt/outbe-chain/snapshots/node.tar.zst",
+            2,
+            Some("0x01"),
+            Some("commit"),
+            None,
+        );
+        assert!(command.contains("/opt/outbe-chain/keys/validator-2/evm-key.hex"));
+        assert!(command.contains("/opt/outbe-chain/keys/validator-2/signing-key.hex"));
+        assert!(!command.contains("/opt/outbe-chain/validator-2/evm-key.hex"));
     }
 }

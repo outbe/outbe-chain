@@ -13,6 +13,7 @@ use super::{
 };
 
 const TARGET: &str = "outbe-validator.target";
+const SERVICES_ENABLED_MARKER: &str = "/opt/outbe-chain/state/services-enabled";
 
 pub async fn run(
     artifacts: &Path,
@@ -67,35 +68,44 @@ pub async fn run(
         ensure!(safe_staging_path(&remote), "unsafe remote staging path");
         let remote_bundle = format!("{remote}/software-bundle.tar.zst");
         let remote_outbe_up = format!("{remote}/outbe-up");
-        let result = (|| {
-            ssh.copy_to(founder, &[&bundle], &remote_bundle, false)?;
-            ssh.copy_to(founder, &[&staged_outbe_up], &remote_outbe_up, false)?;
-            ssh.run_quiet(
-                founder,
-                &format!(
-                    "set -eu; chmod 0755 {tool}; \
+        if let Err(error) = ssh
+            .copy_to(founder, &[&bundle], &remote_bundle, false)
+            .and_then(|()| ssh.copy_to(founder, &[&staged_outbe_up], &remote_outbe_up, false))
+        {
+            let _ = ssh.run_quiet(founder, &format!("rm -rf -- {}", quote(&remote)));
+            bail!(
+                "upgrade transfer failed on {}; validator was not changed: {error:#}",
+                founder.name
+            );
+        }
+        let result = ssh.run_quiet(
+            founder,
+            &format!(
+                "set -eu; chmod 0755 {tool}; \
 test \"$(sha256sum {bundle} | cut -d ' ' -f 1)\" = {digest}; \
 {root_command}",
-                    bundle = quote(&remote_bundle),
-                    tool = quote(&remote_outbe_up),
-                    digest = quote(&bundle_sha),
-                    root_command = as_root(&format!(
-                        "systemctl stop {TARGET} && ! systemctl is-active --quiet {TARGET} && \
+                bundle = quote(&remote_bundle),
+                tool = quote(&remote_outbe_up),
+                digest = quote(&bundle_sha),
+                root_command = as_root(&format!(
+                    "systemctl stop {TARGET} && ! systemctl is-active --quiet {TARGET} && \
 {} internal apply-software-upgrade --software-bundle {} --founder-index {} && \
 systemctl start {TARGET}",
-                        quote(&remote_outbe_up),
-                        quote(&remote_bundle),
-                        founder.index
-                    )),
-                ),
-            )
-        })();
+                    quote(&remote_outbe_up),
+                    quote(&remote_bundle),
+                    founder.index
+                )),
+            ),
+        );
         let cleanup = ssh.run_quiet(founder, &format!("rm -rf -- {}", quote(&remote)));
         if let Err(error) = result {
+            let fail_stop = fail_stop_command();
+            let stop_error = ssh.run_quiet(founder, &fail_stop).err();
             let _ = cleanup;
             bail!(
-                "upgrade failed on {}; validator remains stopped if replacement began: {error:#}",
-                founder.name
+                "upgrade failed on {}; validator auto-start was disabled and it remains stopped; run `outbe-up validator start` after inspection: {error:#}{}",
+                founder.name,
+                stop_error.map_or_else(String::new, |stop| format!("; fail-stop also failed: {stop:#}"))
             );
         }
         cleanup?;
@@ -109,10 +119,11 @@ systemctl start {TARGET}",
         )
         .await
         {
-            let _ = ssh.run_quiet(founder, &as_root(&format!("systemctl stop {TARGET}")));
+            let stop_error = ssh.run_quiet(founder, &fail_stop_command()).err();
             bail!(
-                "upgraded {} failed health checks and was stopped: {error:#}",
-                founder.name
+                "upgraded {} failed health checks; validator auto-start was disabled and it was stopped; run `outbe-up validator start` after inspection: {error:#}{}",
+                founder.name,
+                stop_error.map_or_else(String::new, |stop| format!("; fail-stop also failed: {stop:#}"))
             );
         }
     }
@@ -121,6 +132,12 @@ systemctl start {TARGET}",
         manifest.release_tag, manifest.commit
     ));
     Ok(())
+}
+
+fn fail_stop_command() -> String {
+    as_root(&format!(
+        "rm -f -- {SERVICES_ENABLED_MARKER}; systemctl disable --now {TARGET}"
+    ))
 }
 
 fn safe_staging_path(path: &str) -> bool {
@@ -139,5 +156,12 @@ mod tests {
         assert!(safe_staging_path("/tmp/outbe-upgrade.Ab12_3"));
         assert!(!safe_staging_path("/tmp/other.Ab12"));
         assert!(!safe_staging_path("/tmp/outbe-upgrade.x;id"));
+    }
+
+    #[test]
+    fn fail_stop_disables_persistent_restart() {
+        let command = fail_stop_command();
+        assert!(command.contains(SERVICES_ENABLED_MARKER));
+        assert!(command.contains("systemctl disable --now outbe-validator.target"));
     }
 }
