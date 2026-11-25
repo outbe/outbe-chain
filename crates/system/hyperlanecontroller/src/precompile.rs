@@ -13,7 +13,7 @@ use outbe_primitives::storage::StorageHandle;
 
 use crate::errors::HyperlaneControllerError;
 use crate::schema::{validator_domain_key, HyperlaneControllerContract};
-use crate::{ControllerBootstrap, SignedCheckpoint};
+use crate::{ControllerBootstrap, Report, SignedCheckpoint};
 
 /// No selector accepts native value. The owner holds the fee balance.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
@@ -75,6 +75,11 @@ pub fn dispatch(
                             message_id: c.messageId,
                             signature: &c.signature,
                         },
+                        &Report {
+                            latest_index: c.report.latestIndex,
+                            not_serving: &c.report.notServing,
+                            not_delivered: &c.report.notDelivered,
+                        },
                     )
                 }),
                 icaRouter(c) => view(c, |_| controller.ica_router.read()),
@@ -97,6 +102,12 @@ pub fn dispatch(
                         index: controller.vote_index.read(&key)?,
                         root: controller.vote_root.read(&key)?,
                     })
+                }),
+                livenessRound(c) => view(c, |_| controller.current_round()),
+                reportedRound(c) => view(c, |c| {
+                    controller
+                        .report_round
+                        .read(&validator_domain_key(c.validator, c.domain))
                 }),
                 missCount(c) => view(c, |c| controller.miss_count.read(&c.validator)),
                 getExchangeRateAndGasPrice(c) => view(c, |c| {

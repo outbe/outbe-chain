@@ -17,7 +17,7 @@ pub use outbe_primitives::zero_fee_types::{
 pub const ORACLE_SUBMIT_VOTE_HOOK: ZeroFeeHookTag =
     ZeroFeeHookTag::new(0, "OracleSubmitVote", Some(1));
 
-/// `HyperlaneController.submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes)` zero-fee hook tag.
+/// `HyperlaneController.submitCheckpoint(uint32,bytes32,uint32,bytes32,bytes,(uint32,address[],address[]))` zero-fee hook tag.
 pub const HYPERLANE_SUBMIT_CHECKPOINT_HOOK: ZeroFeeHookTag =
     ZeroFeeHookTag::new(1, "HyperlaneSubmitCheckpoint", Some(1));
 

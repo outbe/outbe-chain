@@ -16,6 +16,11 @@ pub(crate) fn checkpoint_calldata() -> Bytes {
         index: 7,
         messageId: B256::repeat_byte(2),
         signature: Bytes::from(vec![3u8; 65]),
+        report: IHyperlaneController::EpochReport {
+            latestIndex: 0,
+            notServing: Vec::new(),
+            notDelivered: Vec::new(),
+        },
     }
     .abi_encode()
     .into()

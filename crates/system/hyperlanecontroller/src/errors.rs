@@ -74,6 +74,9 @@ pub enum HyperlaneControllerError {
     #[error("checkpoint signature must be 65 bytes, got {length}")]
     InvalidSignatureLength { length: usize },
 
+    #[error("the report names {length} validators, more than the limit")]
+    ReportTooLong { length: usize },
+
     #[error("domain {domain} is not configured")]
     UnknownDomain { domain: u32 },
 
@@ -207,6 +210,14 @@ impl From<HyperlaneControllerError> for PrecompileError {
             HyperlaneControllerError::InvalidSignatureLength { length } => {
                 PrecompileError::RevertBytes(Bytes::from(
                     IHyperlaneController::InvalidSignatureLength {
+                        length: length as u64,
+                    }
+                    .abi_encode(),
+                ))
+            }
+            HyperlaneControllerError::ReportTooLong { length } => {
+                PrecompileError::RevertBytes(Bytes::from(
+                    IHyperlaneController::ReportTooLong {
                         length: length as u64,
                     }
                     .abi_encode(),

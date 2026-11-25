@@ -39,6 +39,15 @@ use outbe_system_common::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 ///      signed at `vote_index`)
 ///  16: vote_index - mapping(validator_domain_key => index of that vote). The
 ///      vote counts only while this index equals `target_index`
+///  17: liveness_round - number of liveness verdicts so far. The current
+///      round is this value plus 1
+///  18: report_round - mapping(validator_domain_key => round of the last
+///      report of the validator for the domain). Zero = none
+///  19: complaint_round - mapping(complaint_key => round in which the
+///      reporter made a complaint about the accused validator)
+///  20: complaints - mapping(complaints_key => `round << 16 | count` of the
+///      complaints about the accused validator). The count is valid only
+///      while the round is the current round
 #[storage_schema]
 #[contract(addr = HYPERLANE_CONTROLLER_ADDRESS)]
 pub struct HyperlaneControllerContract {
@@ -93,9 +102,50 @@ pub struct HyperlaneControllerContract {
 
     #[attribute(order = 16)]
     pub vote_index: outbe_primitives::storage::dsl::Map<B256, u32>,
+
+    #[attribute(order = 17)]
+    pub liveness_round: outbe_primitives::storage::dsl::Value<u64>,
+
+    #[attribute(order = 18)]
+    pub report_round: outbe_primitives::storage::dsl::Map<B256, u64>,
+
+    #[attribute(order = 19)]
+    pub complaint_round: outbe_primitives::storage::dsl::Map<B256, u64>,
+
+    #[attribute(order = 20)]
+    pub complaints: outbe_primitives::storage::dsl::Map<B256, u64>,
 }
 
 /// Composite key for the per-(validator, domain) checkpoint maps.
 pub fn validator_domain_key(validator: Address, domain: u32) -> B256 {
     address_u32_key(validator, domain)
+}
+
+/// What a report says about another validator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Fault {
+    /// The validator does not serve its signed checkpoint at the target index.
+    NotServing = 1,
+    /// The validator did not deliver its message in its turn.
+    NotDelivered = 2,
+}
+
+/// Key of the number of complaints about `accused` on `domain` for `fault`.
+pub fn complaints_key(accused: Address, domain: u32, fault: Fault) -> B256 {
+    let mut bytes = [0u8; 25];
+    bytes[..20].copy_from_slice(accused.as_slice());
+    bytes[20..24].copy_from_slice(&domain.to_be_bytes());
+    bytes[24] = fault as u8;
+    alloy_primitives::keccak256(bytes)
+}
+
+/// Key of the complaint of `reporter` about `accused` on `domain` for `fault`.
+pub fn complaint_key(reporter: Address, accused: Address, domain: u32, fault: Fault) -> B256 {
+    let mut bytes = [0u8; 45];
+    bytes[..20].copy_from_slice(reporter.as_slice());
+    bytes[20..40].copy_from_slice(accused.as_slice());
+    bytes[40..44].copy_from_slice(&domain.to_be_bytes());
+    bytes[44] = fault as u8;
+    alloy_primitives::keccak256(bytes)
 }

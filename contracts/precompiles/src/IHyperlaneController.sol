@@ -35,6 +35,7 @@ interface IHyperlaneController {
     error SignerTaken(address signer, address validator);
     error StaleIndex(uint32 index, uint32 submitted);
     error InvalidSignatureLength(uint64 length);
+    error ReportTooLong(uint64 length);
     error UnknownDomain(uint32 domain);
     error NoGasPrice(uint32 domain);
     error GasPriceOverflow(uint32 domain);
@@ -92,18 +93,45 @@ interface IHyperlaneController {
     /// `CROSSCHAIN_BRIDGE` balance.
     function applyApproved(uint256 proposalId, bytes calldata payload) external;
 
+    /// What a validator saw for one domain in the current liveness round.
+    /// The controller does not verify these values. It uses a value only
+    /// when a quorum of the active validators gives it.
+    struct EpochReport {
+        /// The latest checkpoint index that the validator signed. Zero when
+        /// the validator gives none.
+        uint32 latestIndex;
+        /// Validators that do not serve their signed checkpoint at
+        /// `targetIndex(domain)`.
+        address[] notServing;
+        /// Validators that did not deliver their message of this domain in
+        /// their turn.
+        address[] notDelivered;
+    }
+
     /// Liveness proof: an active validator or its Hyperlane delegate submits
     /// a signed checkpoint for `domain`. The signature is recovered over the
     /// Hyperlane digest and must match the validator's Hyperlane signer.
     /// The call does one or both of these:
     /// - `index` equals `targetIndex(domain)`: `root` becomes the vote of the
-    ///   validator for this liveness window. A new vote replaces the old one.
-    /// - `index` is higher than `submittedIndex(validator, domain)`: `index`
-    ///   becomes the latest index of the validator. The next target comes
-    ///   from these indexes.
+    ///   validator for this liveness round. A new vote replaces the old one.
+    /// - `index` or `report.latestIndex` is higher than
+    ///   `submittedIndex(validator, domain)`: the higher value becomes the
+    ///   latest index of the validator. The next target comes from these
+    ///   indexes.
     /// When neither applies, it reverts with `StaleIndex`.
-    function submitCheckpoint(uint32 domain, bytes32 root, uint32 index, bytes32 messageId, bytes calldata signature)
-        external;
+    /// The first accepted call of the validator for `domain` in a round also
+    /// gives its report: each name in the two lists of `report` is one
+    /// complaint about that validator. The lists of a later call in the same
+    /// round have no effect. The two lists can hold 32 addresses together:
+    /// more reverts with `ReportTooLong`.
+    function submitCheckpoint(
+        uint32 domain,
+        bytes32 root,
+        uint32 index,
+        bytes32 messageId,
+        bytes calldata signature,
+        EpochReport calldata report
+    ) external;
 
     /// Mirrors the active Outbe validator set into every ISM: validators =
     /// active validators, threshold = ceil(2/3 * n). No-op when the local ISM
@@ -140,6 +168,14 @@ interface IHyperlaneController {
     /// Last vote of `validator` for `domain`: the root it signed at `index`.
     /// The vote counts only while `index` equals `targetIndex(domain)`.
     function targetVote(address validator, uint32 domain) external view returns (uint32 index, bytes32 root);
+
+    /// The current liveness round. It starts at 1. Each liveness verdict
+    /// adds 1.
+    function livenessRound() external view returns (uint64);
+
+    /// The liveness round of the last report of `validator` for `domain`.
+    /// Zero when there is none.
+    function reportedRound(address validator, uint32 domain) external view returns (uint64);
 
     /// Consecutive liveness-window misses of `validator`.
     function missCount(address validator) external view returns (uint32);

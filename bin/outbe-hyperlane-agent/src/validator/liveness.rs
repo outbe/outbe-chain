@@ -257,6 +257,11 @@ impl Liveness {
             index,
             messageId: checkpoint.value.message_id,
             signature: checkpoint.signature_bytes().to_vec().into(),
+            report: IHyperlaneController::EpochReport {
+                latestIndex: 0,
+                notServing: Vec::new(),
+                notDelivered: Vec::new(),
+            },
         }
         .abi_encode();
         match self.send(provider, &calldata).await {

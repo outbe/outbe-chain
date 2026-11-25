@@ -172,6 +172,19 @@
   },
   {
     "type": "function",
+    "name": "livenessRound",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "missCount",
     "inputs": [
       {
@@ -185,6 +198,30 @@
         "name": "",
         "type": "uint32",
         "internalType": "uint32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "reportedRound",
+    "inputs": [
+      {
+        "name": "validator",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "domain",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ],
     "stateMutability": "view"
@@ -230,6 +267,28 @@
         "name": "signature",
         "type": "bytes",
         "internalType": "bytes"
+      },
+      {
+        "name": "report",
+        "type": "tuple",
+        "internalType": "struct IHyperlaneController.EpochReport",
+        "components": [
+          {
+            "name": "latestIndex",
+            "type": "uint32",
+            "internalType": "uint32"
+          },
+          {
+            "name": "notServing",
+            "type": "address[]",
+            "internalType": "address[]"
+          },
+          {
+            "name": "notDelivered",
+            "type": "address[]",
+            "internalType": "address[]"
+          }
+        ]
       }
     ],
     "outputs": [],
@@ -799,6 +858,17 @@
         "name": "enrolled",
         "type": "bytes32",
         "internalType": "bytes32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "ReportTooLong",
+    "inputs": [
+      {
+        "name": "length",
+        "type": "uint64",
+        "internalType": "uint64"
       }
     ]
   },

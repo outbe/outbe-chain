@@ -620,7 +620,7 @@ mod sync {
 mod liveness {
     use super::*;
     use crate::schema::validator_domain_key;
-    use crate::{checkpoint_digest, GRACE_BLOCKS, MAX_MISSES};
+    use crate::{checkpoint_digest, Report, GRACE_BLOCKS, MAX_MISSES};
     use alloy_primitives::{b256, hex};
     use outbe_primitives::tee_signatures::recover_signer;
 
@@ -668,6 +668,11 @@ mod liveness {
             index,
             messageId: checkpoint.message_id,
             signature: Bytes::copy_from_slice(&checkpoint.signature),
+            report: IHyperlaneController::EpochReport {
+                latestIndex: 0,
+                notServing: Vec::new(),
+                notDelivered: Vec::new(),
+            },
         }
         .abi_encode()
         .into()
@@ -981,6 +986,117 @@ mod liveness {
     }
 
     #[test]
+    fn the_first_call_of_a_round_gives_the_report_and_the_latest_index() {
+        use crate::schema::{complaints_key, Fault};
+        use crate::MAX_REPORT_ADDRESSES;
+
+        let mut p = liveness_provider();
+        p.set_block_number(100);
+        StorageHandle::enter(&mut p, |storage| {
+            four_validators(storage.clone());
+            let mut c = HyperlaneControllerContract::new(storage.clone());
+            let key = validator_domain_key(FIXTURE_VALIDATOR, LOCAL);
+            let serving = complaints_key(v(3), LOCAL, Fault::NotServing);
+            let delivered = complaints_key(v(4), LOCAL, Fault::NotDelivered);
+            c.target_index.write(&LOCAL, 2).unwrap();
+            assert_eq!(c.current_round().unwrap(), 1);
+
+            // The vote carries the report. A validator named two times in one
+            // list counts one time. The latest index of the report is above
+            // the signed index.
+            let report = Report {
+                latest_index: 7,
+                not_serving: &[v(3), v(3)],
+                not_delivered: &[v(4)],
+            };
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 2, ROOT_A, &report)
+                .unwrap();
+            assert_eq!(c.report_round.read(&key).unwrap(), 1);
+            assert_eq!(c.submitted_index.read(&key).unwrap(), 7);
+            assert_eq!(c.vote_root.read(&key).unwrap(), ROOT_A);
+            assert_eq!(c.complaints_at(&serving, 1).unwrap(), 1);
+            assert_eq!(c.complaints_at(&delivered, 1).unwrap(), 1);
+
+            // A second validator adds its vote.
+            c.record_submission(v(2), LOCAL, 2, ROOT_A, &report)
+                .unwrap();
+            assert_eq!(c.complaints_at(&serving, 1).unwrap(), 2);
+
+            // A later call of the same round changes the vote, not the report.
+            let other = Report {
+                latest_index: 0,
+                not_serving: &[v(4)],
+                not_delivered: &[v(3)],
+            };
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 2, ROOT_B, &other)
+                .unwrap();
+            assert_eq!(c.vote_root.read(&key).unwrap(), ROOT_B);
+            assert_eq!(
+                c.complaints_at(&complaints_key(v(4), LOCAL, Fault::NotServing), 1)
+                    .unwrap(),
+                0
+            );
+
+            // The views.
+            let round: Bytes = IHyperlaneController::livenessRoundCall {}
+                .abi_encode()
+                .into();
+            let ret = dispatch(storage.clone(), &round, stranger(), U256::ZERO).unwrap();
+            assert_eq!(
+                IHyperlaneController::livenessRoundCall::abi_decode_returns(&ret).unwrap(),
+                1
+            );
+            let reported: Bytes = IHyperlaneController::reportedRoundCall {
+                validator: FIXTURE_VALIDATOR,
+                domain: LOCAL,
+            }
+            .abi_encode()
+            .into();
+            let ret = dispatch(storage, &reported, stranger(), U256::ZERO).unwrap();
+            assert_eq!(
+                IHyperlaneController::reportedRoundCall::abi_decode_returns(&ret).unwrap(),
+                1
+            );
+
+            // The verdict starts the next round. The votes of round 1 do not
+            // count in round 2, and the validator can report again.
+            c.check_liveness().unwrap();
+            assert_eq!(c.current_round().unwrap(), 2);
+            assert_eq!(c.complaints_at(&serving, 2).unwrap(), 0);
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 2, ROOT_A, &report)
+                .unwrap();
+            assert_eq!(c.report_round.read(&key).unwrap(), 2);
+            assert_eq!(c.complaints_at(&serving, 2).unwrap(), 1);
+
+            // The two lists hold 32 addresses at most.
+            let many = vec![v(9); MAX_REPORT_ADDRESSES + 1];
+            let signed = checkpoint_2();
+            let long = Report {
+                latest_index: 0,
+                not_serving: &many,
+                not_delivered: &[],
+            };
+            let error = c
+                .submit_checkpoint(
+                    FIXTURE_VALIDATOR,
+                    &crate::SignedCheckpoint {
+                        domain: LOCAL,
+                        root: signed.root,
+                        index: signed.index,
+                        message_id: signed.message_id,
+                        signature: &signed.signature,
+                    },
+                    &long,
+                )
+                .unwrap_err();
+            assert_eq!(
+                revert_selector(error),
+                IHyperlaneController::ReportTooLong::SELECTOR
+            );
+        });
+    }
+
+    #[test]
     fn a_checkpoint_at_the_target_index_is_a_vote_and_a_new_root_replaces_it() {
         let mut p = liveness_provider();
         p.set_block_number(100);
@@ -1016,16 +1132,16 @@ mod liveness {
 
             // Another root at the target replaces the vote. An index that is
             // not the target and not newer is stale.
-            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 2, ROOT_B)
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 2, ROOT_B, &Report::default())
                 .unwrap();
             assert_eq!(c.vote_root.read(&key).unwrap(), ROOT_B);
             assert!(c
-                .record_submission(FIXTURE_VALIDATOR, LOCAL, 1, ROOT_B)
+                .record_submission(FIXTURE_VALIDATOR, LOCAL, 1, ROOT_B, &Report::default())
                 .is_err());
 
             // A newer index at the target is the vote and the latest index.
             c.target_index.write(&LOCAL, 9).unwrap();
-            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 9, ROOT_A)
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 9, ROOT_A, &Report::default())
                 .unwrap();
             assert_eq!(c.submitted_index.read(&key).unwrap(), 9);
             assert_eq!(c.vote_index.read(&key).unwrap(), 9);

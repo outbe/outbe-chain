@@ -8,7 +8,9 @@ use outbe_validatorset::contract::ValidatorSet;
 use crate::errors::HyperlaneControllerError;
 use crate::precompile::IHyperlaneController;
 use crate::runtime::consensus_threshold;
-use crate::schema::{validator_domain_key, HyperlaneControllerContract};
+use crate::schema::{
+    complaint_key, complaints_key, validator_domain_key, Fault, HyperlaneControllerContract,
+};
 
 /// Submissions younger than this many blocks do not count towards the next
 /// per-domain target index. This way, the target is an index that most
@@ -20,6 +22,22 @@ pub const GRACE_BLOCKS: u64 = 30;
 pub const LIVENESS_WINDOW_BLOCKS: u64 = 150;
 /// Consecutive window misses before a validator is jailed.
 pub const MAX_MISSES: u32 = 3;
+
+/// The most addresses that the two lists of one report can hold together.
+pub const MAX_REPORT_ADDRESSES: usize = 32;
+
+/// What a validator saw for one domain in the current liveness round. The
+/// controller does not verify these values. It uses a value only when a
+/// quorum of the active validators gives it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Report<'a> {
+    /// The latest checkpoint index that the validator signed. Zero = none.
+    pub latest_index: u32,
+    /// Validators that do not serve their signed checkpoint at the target.
+    pub not_serving: &'a [Address],
+    /// Validators that did not deliver their message in their turn.
+    pub not_delivered: &'a [Address],
+}
 
 /// A Hyperlane checkpoint and the validator signature over it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -66,16 +84,19 @@ impl HyperlaneControllerContract<'_> {
     /// Hyperlane signer. Then it does one or both of these:
     /// - The index equals the target index of the domain: the root becomes
     ///   the vote of the validator. A different root replaces an earlier vote.
-    /// - The index is strictly newer than the stored index: it becomes the
-    ///   latest index of the validator.
+    /// - The index, or the latest index of the report, is strictly newer
+    ///   than the stored index: the higher value becomes the latest index of
+    ///   the validator.
     ///
-    /// When neither applies, the call fails with `StaleIndex`. The
-    /// controller never accepts index 0: zero means "no target" and "no
-    /// submission".
+    /// When neither applies, the call fails with `StaleIndex`. The first
+    /// accepted call of the validator for the domain in a round also gives
+    /// its report: each name in the lists is one complaint about that validator. The controller
+    /// never accepts index 0: zero means "no target" and "no submission".
     pub fn submit_checkpoint(
         &mut self,
         caller: Address,
         checkpoint: &SignedCheckpoint<'_>,
+        report: &Report<'_>,
     ) -> Result<()> {
         self.require_initialized()?;
         let validator = self.validator_of_sender(caller)?;
@@ -106,22 +127,71 @@ impl HyperlaneControllerContract<'_> {
             }
             .into());
         }
-        self.record_submission(validator, domain, checkpoint.index, checkpoint.root)
+        let named = report.not_serving.len() + report.not_delivered.len();
+        if named > MAX_REPORT_ADDRESSES {
+            return Err(HyperlaneControllerError::ReportTooLong { length: named }.into());
+        }
+        self.record_submission(validator, domain, checkpoint.index, checkpoint.root, report)
+    }
+
+    /// The current liveness round. It starts at 1.
+    pub fn current_round(&self) -> Result<u64> {
+        Ok(self.liveness_round.read()?.saturating_add(1))
+    }
+
+    /// Adds the complaint of `reporter` about each validator of `accused`. A
+    /// second complaint of the same reporter about the same validator in one
+    /// round does not count.
+    fn record_complaints(
+        &mut self,
+        reporter: Address,
+        domain: u32,
+        fault: Fault,
+        accused: &[Address],
+        round: u64,
+    ) -> Result<()> {
+        for validator in accused {
+            let complaint = complaint_key(reporter, *validator, domain, fault);
+            if self.complaint_round.read(&complaint)? == round {
+                continue;
+            }
+            self.complaint_round.write(&complaint, round)?;
+            let key = complaints_key(*validator, domain, fault);
+            let count = self.complaints_at(&key, round)?;
+            self.complaints
+                .write(&key, round << 16 | u64::from(count.saturating_add(1)))?;
+        }
+        Ok(())
+    }
+
+    /// The number of complaints under `key` that were made in `round`.
+    pub(crate) fn complaints_at(&self, key: &B256, round: u64) -> Result<u16> {
+        let packed = self.complaints.read(key)?;
+        Ok(if packed >> 16 == round {
+            packed as u16
+        } else {
+            0
+        })
     }
 
     /// Records a verified submission as a vote, as the latest index, or as
-    /// both. See [`Self::submit_checkpoint`].
+    /// both. The first one of a round also records the report. See
+    /// [`Self::submit_checkpoint`].
     pub(crate) fn record_submission(
         &mut self,
         validator: Address,
         domain: u32,
         index: u32,
         root: B256,
+        report: &Report<'_>,
     ) -> Result<()> {
         let key = validator_domain_key(validator, domain);
         let submitted = self.submitted_index.read(&key)?;
         let target = self.target_index.read(&domain)?;
-        let is_latest = index > submitted;
+        let round = self.current_round()?;
+        let is_report = self.report_round.read(&key)? != round;
+        let latest = index.max(report.latest_index);
+        let is_latest = latest > submitted;
         // A repeat of the stored vote changes nothing, so it is not a vote.
         let is_vote = target != 0
             && index == target
@@ -143,13 +213,30 @@ impl HyperlaneControllerContract<'_> {
                 })?;
             }
             if is_latest {
-                self.submitted_index.write(&key, index)?;
+                self.submitted_index.write(&key, latest)?;
                 self.submitted_block.write(&key, block)?;
                 self.emit(IHyperlaneController::CheckpointSubmitted {
                     validator,
                     domain,
-                    index,
+                    index: latest,
                 })?;
+            }
+            if is_report {
+                self.report_round.write(&key, round)?;
+                self.record_complaints(
+                    validator,
+                    domain,
+                    Fault::NotServing,
+                    report.not_serving,
+                    round,
+                )?;
+                self.record_complaints(
+                    validator,
+                    domain,
+                    Fault::NotDelivered,
+                    report.not_delivered,
+                    round,
+                )?;
             }
             Ok(())
         })
@@ -207,7 +294,9 @@ impl HyperlaneControllerContract<'_> {
                     jailed.push(*validator);
                 }
             }
-            self.advance_targets(&references)
+            self.advance_targets(&references)?;
+            self.liveness_round
+                .write(self.liveness_round.read()?.saturating_add(1))
         })?;
         Ok(jailed)
     }
@@ -261,6 +350,7 @@ impl HyperlaneControllerContract<'_> {
             self.submitted_block.clear(&key)?;
             self.vote_index.clear(&key)?;
             self.vote_root.clear(&key)?;
+            self.report_round.clear(&key)?;
         }
         Ok(())
     }
