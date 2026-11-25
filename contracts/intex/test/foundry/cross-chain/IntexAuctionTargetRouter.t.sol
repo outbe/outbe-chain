@@ -30,7 +30,7 @@ contract IntexAuctionTargetRouterTest is CrossChainTest {
     uint32 private constant OUTBE_CHAIN_ID = 2;
 
     IntexAuctionTargetRouter private targetRouter;
-    IntexNFT1155Router private nftBridge;
+    IntexNFT1155Router private nftRouter;
 
     // Mock contracts
     IntexAuction private auction;
@@ -60,7 +60,7 @@ contract IntexAuctionTargetRouterTest is CrossChainTest {
         targetRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         // Deploy batch adapter on BNB
-        nftBridge = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
+        nftRouter = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
 
         _wireOutbeIca(targetRouter, outbeIca);
 
@@ -72,7 +72,7 @@ contract IntexAuctionTargetRouterTest is CrossChainTest {
         intex.grantRole(intex.ROUTER_ROLE(), address(targetRouter));
 
         // Grant BRIDGE_ROLE to batch adapter on intex (for crosschainBurn)
-        intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridge));
+        intex.grantRole(intex.BRIDGE_ROLE(), address(nftRouter));
     }
 
     // --- Constructor Tests ---

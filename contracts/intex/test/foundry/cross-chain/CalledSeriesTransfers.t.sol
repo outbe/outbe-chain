@@ -18,7 +18,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
     bytes14 internal constant SERIES_ID = "20260501-USD-U";
 
     IntexNFT1155 internal intex;
-    IntexNFT1155Router internal nftBridge;
+    IntexNFT1155Router internal nftRouter;
     address internal admin = address(this);
     address internal owner = address(0xCAFE);
     address internal stranger = address(0xBEEF);
@@ -27,10 +27,10 @@ contract CalledSeriesTransfersTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(admin, admin);
-        nftBridge = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
-        nftBridge.setRemoteRouter(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(0xD57)));
+        nftRouter = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
+        nftRouter.setRemoteRouter(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(0xD57)));
 
-        intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridge));
+        intex.grantRole(intex.BRIDGE_ROLE(), address(nftRouter));
 
         intex.openSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 1 days));
         intex.issueIntex(owner, 10, SERIES_ID);
@@ -44,7 +44,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
 
     function test_ABridgeHopToAnotherAddressPasses() public {
         vm.prank(owner);
-        nftBridge.send(_param(stranger, 4));
+        nftRouter.send(_param(stranger, 4));
 
         assertEq(intex.balanceOf(owner, tokenId), 6, "burned on the source, bound for the new owner");
     }
@@ -58,7 +58,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
         amounts[0] = 1;
 
         vm.prank(owner);
-        nftBridge.multiSend(
+        nftRouter.multiSend(
             MultiRecipientSendParam({dstChainId: DST_CHAIN_ID, recipients: to, intexIds: ids, units: amounts})
         );
         assertEq(intex.balanceOf(owner, tokenId), 9);
@@ -87,7 +87,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
 
         uint256 openTokenId = intex.issuedIntexId(open);
         vm.prank(owner);
-        nftBridge.send(
+        nftRouter.send(
             SendParam({
                 dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(stranger))), intexId: openTokenId, units: 2
             })

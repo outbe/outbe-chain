@@ -40,7 +40,7 @@ contract PrepareUpgradeTest is Test {
     Create3Factory internal factory;
     address internal deployer;
     IntexNFT1155 internal nft;
-    IntexNFT1155Router internal nftBridge;
+    IntexNFT1155Router internal nftRouter;
     IntexAuctionTargetRouter internal router;
 
     function setUp() public {
@@ -55,7 +55,7 @@ contract PrepareUpgradeTest is Test {
         nft = IntexNFT1155(
             _deploy("IntexNFT1155", address(new IntexNFT1155()), abi.encodeCall(IntexNFT1155.initialize, (deployer)))
         );
-        nftBridge = IntexNFT1155Router(
+        nftRouter = IntexNFT1155Router(
             payable(_deploy(
                     "IntexNFT1155Router",
                     address(new IntexNFT1155Router(address(nft), HUB)),
@@ -103,7 +103,7 @@ contract PrepareUpgradeTest is Test {
         assertTrue(vm.keyExistsJson(payload, ".upgrades[2]"), "three upgrades");
         assertFalse(vm.keyExistsJson(payload, ".upgrades[3]"), "only the deployed proxies");
         assertEq(vm.parseJsonAddress(payload, ".upgrades[0].proxy"), address(nft));
-        assertEq(vm.parseJsonAddress(payload, ".upgrades[1].proxy"), address(nftBridge));
+        assertEq(vm.parseJsonAddress(payload, ".upgrades[1].proxy"), address(nftRouter));
         assertEq(vm.parseJsonAddress(payload, ".upgrades[2].proxy"), address(router));
         assertEq(vm.parseJsonUint(payload, ".upgrades[2].chainId"), block.chainid);
         assertEq(vm.parseJsonBytes(payload, ".upgrades[2].callData"), "");
@@ -141,7 +141,7 @@ contract PrepareUpgradeTest is Test {
     }
 
     function _handOver() internal {
-        address[3] memory proxies = [address(nft), address(nftBridge), address(router)];
+        address[3] memory proxies = [address(nft), address(nftRouter), address(router)];
         vm.startPrank(deployer);
         for (uint256 i = 0; i < proxies.length; i++) {
             IntexNFT1155(proxies[i]).grantRole(bytes32(0), GOVERNANCE);

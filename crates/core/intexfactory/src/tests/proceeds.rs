@@ -237,7 +237,7 @@ fn crosschain_proceeds_with_undecodable_data_are_refused() {
 }
 
 #[test]
-fn crosschain_proceeds_come_only_from_target_router() {
+fn crosschain_proceeds_come_only_from_intex_auction_target_router() {
     let mut storage = proceeds_provider(&[SOURCE]);
     StorageHandle::enter(&mut storage, |s| {
         let err = receive(&s, WCOEN_BRIDGE_ADDRESS, U256::ONE, SOURCE, owner()).unwrap_err();
@@ -277,7 +277,7 @@ fn local_proceeds_take_the_approved_wcoen_and_burn_it() {
 }
 
 #[test]
-fn local_proceeds_come_only_from_target_router() {
+fn local_proceeds_come_only_from_intex_auction_target_router() {
     let mut storage = proceeds_provider(&[CHAIN_ID as u32]);
     StorageHandle::enter(&mut storage, |s| {
         let err = runtime::receive_local_proceeds(&s, owner(), DAY, 0, U256::ONE).unwrap_err();

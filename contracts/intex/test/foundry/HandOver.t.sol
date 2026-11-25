@@ -56,7 +56,7 @@ contract HandOverTest is Test {
         assertEq(script.askedDomain(), uint32(block.chainid), "the account on this chain");
     }
 
-    function test_HandOver_LeavesTheTargetRouterToItsOutbeIcaAndGovernance() public {
+    function test_HandOver_LeavesTheIntexAuctionTargetRouterToItsOutbeIcaAndGovernance() public {
         IntexAuctionTargetRouter router = DeployProxy.targetRouter(address(0xB41D6E), address(script), 1);
         address ica = script.outbeIcaAccount();
 

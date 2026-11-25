@@ -73,7 +73,7 @@ contract DeployTarget is BaseScript {
             address(new IntexAuction()),
             abi.encodeCall(IntexAuction.initialize, (admin))
         );
-        address nftBridge = deployProxy(
+        address nftRouter = deployProxy(
             factory,
             deployer,
             "IntexNFT1155Router",
@@ -90,7 +90,7 @@ contract DeployTarget is BaseScript {
         requireDeployerAdmin(nft, deployer);
         requireDeployerAdmin(escrow, deployer);
         requireDeployerAdmin(auction, deployer);
-        requireDeployerAdmin(nftBridge, deployer);
+        requireDeployerAdmin(nftRouter, deployer);
         requireDeployerAdmin(router, deployer);
 
         // Winners issue their own units through the auction.
@@ -104,7 +104,7 @@ contract DeployTarget is BaseScript {
         for (uint256 i = 0; i < targetChainIds.length; i++) {
             uint32 cid = uint32(targetChainIds[i]);
             if (cid == local) continue;
-            IntexNFT1155Router(payable(nftBridge))
+            IntexNFT1155Router(payable(nftRouter))
                 .setRemoteRouter(cid, InteroperableAddress.formatEvmV1(cid, bridgePeer));
         }
 
@@ -117,7 +117,7 @@ contract DeployTarget is BaseScript {
         console.log("IntexNFT1155:", nft);
         console.log("EscrowAdapter:", escrow);
         console.log("IntexAuction:", auction);
-        console.log("IntexNFT1155Router:", nftBridge);
+        console.log("IntexNFT1155Router:", nftRouter);
         console.log("IntexAuctionTargetRouter:", router);
     }
 }

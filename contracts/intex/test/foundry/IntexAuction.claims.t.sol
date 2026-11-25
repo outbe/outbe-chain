@@ -119,7 +119,7 @@ contract IntexAuctionClaimsTest is Test {
         vm.stopPrank();
     }
 
-    function _createSeries(uint32 callNoticePeriod) internal {
+    function _openSeries(uint32 callNoticePeriod) internal {
         vm.prank(relayer);
         intex.openSeries(CreateSeriesLib.params(DAY, 100, callNoticePeriod));
     }
@@ -144,7 +144,7 @@ contract IntexAuctionClaimsTest is Test {
 
     function test_AWinnerIssuesItsUnitsAndTakesItsChange() public {
         _bid(3, 1);
-        _createSeries(0);
+        _openSeries(0);
         _finalize(_winner(alice), 0, 0);
 
         vm.expectEmit(true, true, true, true, address(auction));
@@ -162,7 +162,7 @@ contract IntexAuctionClaimsTest is Test {
 
     function test_APartialWinnerIssuesItsShare() public {
         _bid(1, 5);
-        _createSeries(0);
+        _openSeries(0);
         address[] memory winners = new address[](2);
         winners[0] = alice;
         winners[1] = bob;
@@ -174,7 +174,7 @@ contract IntexAuctionClaimsTest is Test {
 
     function test_ALoserHasNothingToIssue() public {
         _bid(3, 1);
-        _createSeries(0);
+        _openSeries(0);
         _finalize(_winner(alice), 0, 0);
 
         vm.expectRevert(IEscrowAdapter.LockNotActive.selector);
@@ -183,7 +183,7 @@ contract IntexAuctionClaimsTest is Test {
 
     function test_AWinNoteRedeemsOnce() public {
         _bid(3, 1);
-        _createSeries(0);
+        _openSeries(0);
         _finalize(_winner(alice), 0, 0);
         auction.redeemWinNote(DAY, alice);
 
@@ -199,7 +199,7 @@ contract IntexAuctionClaimsTest is Test {
         vm.expectRevert(abi.encodeWithSelector(IIntexAuction.SeriesNotCreated.selector, DAY, USD, USD));
         auction.redeemWinNote(DAY, alice);
 
-        _createSeries(0);
+        _openSeries(0);
         auction.redeemWinNote(DAY, alice);
         assertEq(_units(alice), 3);
     }
@@ -210,7 +210,7 @@ contract IntexAuctionClaimsTest is Test {
         auction.returnIntexAuctionAsset(DAY, alice);
         assertEq(token.balanceOf(alice), _change(3));
 
-        _createSeries(0);
+        _openSeries(0);
         auction.redeemWinNote(DAY, alice);
         assertEq(_units(alice), 3);
         assertEq(token.balanceOf(alice), _change(3), "the change is paid once");
@@ -218,7 +218,7 @@ contract IntexAuctionClaimsTest is Test {
 
     function test_ACalledSeriesStillIssuesBeforeItsDeadline() public {
         _bid(3, 1);
-        _createSeries(1 days);
+        _openSeries(1 days);
         _finalize(_winner(alice), 0, 0);
         vm.prank(relayer);
         intex.callSeries(CreateSeriesLib.seriesId(DAY), uint32(block.timestamp));
@@ -229,7 +229,7 @@ contract IntexAuctionClaimsTest is Test {
 
     function test_win_note_is_redeemed_or_expired() public {
         _bid(3, 1);
-        _createSeries(0);
+        _openSeries(0);
         _finalize(_winner(alice), 0, 0);
         vm.prank(relayer);
         intex.callSeries(CreateSeriesLib.seriesId(DAY), uint32(block.timestamp));
@@ -253,7 +253,7 @@ contract IntexAuctionClaimsTest is Test {
     /// @dev A bidder that cannot hold the units loses nothing else: its change stays refundable.
     function test_AWinnerThatRejectsTheUnitsKeepsItsChange() public {
         _bid(3, 1);
-        _createSeries(0);
+        _openSeries(0);
         _finalize(_winner(alice), 0, 0);
         vm.etch(alice, address(new RevertingERC1155Receiver()).code);
         RevertingERC1155Receiver(alice).setReject(true);
@@ -272,7 +272,7 @@ contract IntexAuctionClaimsTest is Test {
         auction.commitIntexAuctionBid(DAY, keccak256(aliceSig));
         vm.warp(startTs + 101);
         _reveal(alice, 3, aliceSig);
-        _createSeries(0);
+        _openSeries(0);
         _finalize(_winner(alice), 0, 0);
         auction.redeemWinNote(DAY, alice);
 
@@ -282,7 +282,7 @@ contract IntexAuctionClaimsTest is Test {
     }
 
     function test_TheRelayerRoleCannotIssue() public {
-        _createSeries(0);
+        _openSeries(0);
         address router = makeAddr("router");
         vm.startPrank(admin);
         intex.grantRole(intex.ROUTER_ROLE(), router);
@@ -355,7 +355,7 @@ contract IntexAuctionClaimsTest is Test {
         assertEq(bid.intexQuantity, 3);
         assertEq(bid.issuanceCurrency, USD);
 
-        _createSeries(0);
+        _openSeries(0);
         _finalize(_winner(alice), 0, 0);
         auction.redeemWinNote(DAY, alice);
         assertEq(auction.getRevealedIntexAuctionBid(DAY, alice).bidder, address(0), "cleared with the WinNote");
@@ -381,7 +381,7 @@ contract IntexAuctionClaimsTest is Test {
 
     function test_GasOfTheClaims() public {
         _bid(3, 1);
-        _createSeries(0);
+        _openSeries(0);
         _finalize(_winner(alice), 0, 0);
 
         uint256 before = gasleft();
@@ -395,7 +395,7 @@ contract IntexAuctionClaimsTest is Test {
 
     function test_GasOfAnIssueWithoutChange() public {
         _bid(3, 1);
-        _createSeries(0);
+        _openSeries(0);
         _finalize(_winner(alice), 0, 0);
         auction.returnIntexAuctionAsset(DAY, alice);
 

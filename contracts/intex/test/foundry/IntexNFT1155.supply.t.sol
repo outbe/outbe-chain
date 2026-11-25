@@ -31,20 +31,20 @@ contract IntexNFT1155SupplyTest is Test {
         vm.stopPrank();
     }
 
-    function _createSeries(uint32 issuedUnits) internal {
+    function _openSeries(uint32 issuedUnits) internal {
         vm.prank(bridger);
         nft.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, issuedUnits, CALL_PERIOD));
     }
 
     // --- openSeries / issueIntex ---
 
-    function test_CreateSeries_ZeroIssuedCount_Reverts() public {
+    function test_OpenSeries_ZeroIssuedCount_Reverts() public {
         vm.prank(bridger);
         vm.expectRevert(IIntexNFT1155.ZeroIssuedUnits.selector);
         nft.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, 0, CALL_PERIOD));
     }
 
-    function test_CreateSeries_RejectsAnIssuedAtItCannotHonour() public {
+    function test_OpenSeries_RejectsAnIssuedAtItCannotHonour() public {
         vm.warp(1_700_000_000);
         IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID_DAY, 100, CALL_PERIOD);
 
@@ -59,7 +59,7 @@ contract IntexNFT1155SupplyTest is Test {
         nft.openSeries(params);
     }
 
-    function test_CreateSeries_KeepsTheOriginsIssuedAt() public {
+    function test_OpenSeries_KeepsTheOriginsIssuedAt() public {
         vm.warp(1_700_000_000);
         IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(SERIES_ID_DAY, 100, CALL_PERIOD);
         params.issuedAt = uint32(block.timestamp) - 3600;
@@ -72,7 +72,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     function test_Issue_BeyondIssuedUnits_Succeeds() public {
         uint32 issuedUnits = 100;
-        _createSeries(issuedUnits);
+        _openSeries(issuedUnits);
 
         vm.startPrank(bridger);
         nft.issueIntex(ownerA, issuedUnits + 1, SERIES_ID);
@@ -86,7 +86,7 @@ contract IntexNFT1155SupplyTest is Test {
     }
 
     function test_Issue_PastUint32Supply_Reverts() public {
-        _createSeries(100);
+        _openSeries(100);
 
         vm.startPrank(bridger);
         nft.crosschainMint(ownerA, TOKEN_ID, type(uint32).max);
@@ -107,7 +107,7 @@ contract IntexNFT1155SupplyTest is Test {
     // --- burnIntex: the precompiles own the series state, so the burn checks none ---
 
     function _issue(uint256 units, bool called) internal {
-        _createSeries(10);
+        _openSeries(10);
         vm.startPrank(bridger);
         nft.issueIntex(ownerA, units, SERIES_ID);
         if (called) nft.callSeries(SERIES_ID, uint32(block.timestamp));
@@ -147,7 +147,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     function test_CrosschainMint_BeyondIssuedUnits_Succeeds() public {
         uint32 issuedUnits = 10;
-        _createSeries(issuedUnits);
+        _openSeries(issuedUnits);
 
         vm.startPrank(bridger);
         nft.issueIntex(ownerA, issuedUnits, SERIES_ID);
@@ -160,7 +160,7 @@ contract IntexNFT1155SupplyTest is Test {
     }
 
     function test_CrosschainMint_PastUint32Supply_Reverts() public {
-        _createSeries(10);
+        _openSeries(10);
 
         vm.startPrank(bridger);
         nft.issueIntex(ownerA, 1, SERIES_ID);
@@ -181,7 +181,7 @@ contract IntexNFT1155SupplyTest is Test {
 
     function test_CrosschainMint_AfterCrosschainBurn_RestoresSupply() public {
         uint32 issuedUnits = 10;
-        _createSeries(issuedUnits);
+        _openSeries(issuedUnits);
 
         vm.startPrank(bridger);
         nft.issueIntex(ownerA, issuedUnits, SERIES_ID);
@@ -196,7 +196,7 @@ contract IntexNFT1155SupplyTest is Test {
     }
 
     function test_TotalSupply_TracksLiveIssuedBalance() public {
-        _createSeries(10);
+        _openSeries(10);
         assertEq(nft.getIntexSeries(SERIES_ID).totalSupply, 0);
 
         vm.startPrank(bridger);

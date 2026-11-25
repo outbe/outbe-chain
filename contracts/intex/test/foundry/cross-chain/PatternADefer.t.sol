@@ -99,8 +99,8 @@ contract PatternADeferTest is CrossChainTest {
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
     IntexAuctionTargetRouter internal bnbRouter;
-    IntexNFT1155Router internal nftBridge;
-    IntexNFT1155Router internal nftBridgeOutbe;
+    IntexNFT1155Router internal nftRouter;
+    IntexNFT1155Router internal nftRouterOutbe;
     IntexNFT1155 internal intex;
     IntexNFT1155 internal intexOutbe;
     StubAuctionWithBids internal stubAuction;
@@ -122,18 +122,18 @@ contract PatternADeferTest is CrossChainTest {
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        nftBridge = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
-        nftBridgeOutbe = DeployProxy.intexNFT1155Router(address(intexOutbe), address(bridge), admin);
+        nftRouter = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
+        nftRouterOutbe = DeployProxy.intexNFT1155Router(address(intexOutbe), address(bridge), admin);
 
         // Wire the inbound source of the router and the remote router of the NFT bridge.
         _wireOutbeIca(bnbRouter, outbeIca);
-        nftBridge.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
+        nftRouter.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftRouterOutbe)));
 
         stubAuction = new StubAuctionWithBids();
         bnbRouter.setDependencies(address(stubAuction), address(intex), admin);
 
         // The bridge burns on the local Intex.
-        intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridge));
+        intex.grantRole(intex.BRIDGE_ROLE(), address(nftRouter));
         intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
 
         // Series so callSeries + owner enumeration work.

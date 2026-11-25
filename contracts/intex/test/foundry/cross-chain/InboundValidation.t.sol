@@ -26,8 +26,8 @@ contract InboundValidationTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
     IntexAuctionTargetRouter internal bnbRouter;
-    IntexNFT1155Router internal nftBridgeBnb;
-    IntexNFT1155Router internal nftBridgeOutbe;
+    IntexNFT1155Router internal nftRouterBnb;
+    IntexNFT1155Router internal nftRouterOutbe;
 
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
@@ -41,14 +41,14 @@ contract InboundValidationTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        nftBridgeBnb = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
+        nftRouterBnb = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
 
         IntexNFT1155 intexOutbe = DeployProxy.intexNFT1155(admin, admin);
-        nftBridgeOutbe = DeployProxy.intexNFT1155Router(address(intexOutbe), address(bridge), admin);
+        nftRouterOutbe = DeployProxy.intexNFT1155Router(address(intexOutbe), address(bridge), admin);
 
         // Wire the inbound sources so authentication passes and the payload is what fails.
         _wireOutbeIca(bnbRouter, outbeIca);
-        nftBridgeBnb.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
+        nftRouterBnb.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftRouterOutbe)));
 
         bnbRouter.setDependencies(address(auction), address(intex), admin);
     }
@@ -292,9 +292,9 @@ contract InboundValidationTest is CrossChainTest {
 
     // --- Helpers ---
 
-    /// @dev Deliver a batch packet to `nftBridgeBnb` from its wired peer on OUTBE_CHAIN_ID.
+    /// @dev Deliver a batch packet to `nftRouterBnb` from its wired peer on OUTBE_CHAIN_ID.
     function _deliverToBatch(bytes memory packet) internal {
-        _deliver(OUTBE_CHAIN_ID, address(nftBridgeOutbe), address(nftBridgeBnb), packet);
+        _deliver(OUTBE_CHAIN_ID, address(nftRouterOutbe), address(nftRouterBnb), packet);
     }
 
     /// @dev Build a one-item SEND_BATCH packet for a single recipient.

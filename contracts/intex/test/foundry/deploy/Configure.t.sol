@@ -124,7 +124,7 @@ contract ConfigureTargetTest is ConfigureTest {
             nft: nft,
             escrow: address(DeployProxy.escrowAdapter(deployer, bridger)),
             auction: address(DeployProxy.intexAuction(deployer, bridger)),
-            nftBridge: address(DeployProxy.intexNFT1155Router(nft, BRIDGE, deployer)),
+            nftRouter: address(DeployProxy.intexNFT1155Router(nft, BRIDGE, deployer)),
             router: address(DeployProxy.targetRouter(BRIDGE, deployer, 1)),
             compact: address(new MockTheCompact()),
             wcoen: address(new MockWCOEN())
@@ -147,7 +147,7 @@ contract ConfigureTargetTest is ConfigureTest {
         assertTrue(escrow.hasRole(escrow.RELAYER_ROLE(), t.router));
         IntexNFT1155 nft = IntexNFT1155(t.nft);
         assertTrue(nft.hasRole(nft.ROUTER_ROLE(), t.router));
-        assertTrue(nft.hasRole(nft.BRIDGE_ROLE(), t.nftBridge));
+        assertTrue(nft.hasRole(nft.BRIDGE_ROLE(), t.nftRouter));
     }
 
     function test_Configure_GivesEachTokenHolderOnlyItsRole() public {
@@ -155,7 +155,7 @@ contract ConfigureTargetTest is ConfigureTest {
 
         IntexNFT1155 nft = IntexNFT1155(t.nft);
         assertFalse(nft.hasRole(nft.BRIDGE_ROLE(), t.router));
-        assertFalse(nft.hasRole(nft.ROUTER_ROLE(), t.nftBridge));
+        assertFalse(nft.hasRole(nft.ROUTER_ROLE(), t.nftRouter));
     }
 
     function test_Configure_SecondRunWritesNothing() public {
@@ -174,9 +174,9 @@ contract ConfigureTargetTest is ConfigureTest {
     }
 
     function test_RevertWhen_TheNftBridgeIsNotDeployed() public {
-        t.nftBridge = makeAddr("nothing");
+        t.nftRouter = makeAddr("nothing");
 
-        vm.expectRevert(abi.encodeWithSelector(BaseScript.NotDeployed.selector, t.nftBridge));
+        vm.expectRevert(abi.encodeWithSelector(BaseScript.NotDeployed.selector, t.nftRouter));
         script.configure(deployer, t);
     }
 }

@@ -39,7 +39,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
     IntexAuctionTargetRouter internal bnbRouter;
-    IntexNFT1155Router internal nftBridge;
+    IntexNFT1155Router internal nftRouter;
 
     IntexNFT1155 internal intex;
     address internal admin = address(this);
@@ -60,18 +60,18 @@ contract PayNativeAccountingTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        nftBridge = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
+        nftRouter = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
 
         // Wire the inbound source of TM and the remote router the batch adapter sends to.
         _wireOutbeIca(bnbRouter, outbeIca);
-        nftBridge.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridge)));
+        nftRouter.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftRouter)));
 
         // Wire TM with a stub auction and the batch adapter.
         StubAuction stubAuction = new StubAuction();
         bnbRouter.setDependencies(address(stubAuction), address(intex), admin);
 
         // `crosschainBurn` is `BRIDGE_ROLE`-gated, so the adapter needs it on the token.
-        intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridge));
+        intex.grantRole(intex.BRIDGE_ROLE(), address(nftRouter));
         intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
 
         // Series + owner balance so callSeries/owner enumeration and the entry-path bridge sends have tokens.
@@ -98,65 +98,65 @@ contract PayNativeAccountingTest is CrossChainTest {
 
     function test_Entry_ExactFeeLeavesNoFloat() public {
         SendParam memory params = _sendParam();
-        uint256 fee = nftBridge.quoteSend(params);
+        uint256 fee = nftRouter.quoteSend(params);
         assertEq(fee, BRIDGE_FEE, "fee mirrors the positive bridge fee");
 
         vm.deal(owner, fee);
-        uint256 floatBefore = address(nftBridge).balance;
+        uint256 floatBefore = address(nftRouter).balance;
 
         vm.prank(owner);
-        nftBridge.send{value: fee}(params);
+        nftRouter.send{value: fee}(params);
 
         // `msg.value` flowed through to the bridge exactly. Nothing seeded the relay float.
-        assertEq(address(nftBridge).balance, floatBefore, "no leakage on exact-fee entry");
+        assertEq(address(nftRouter).balance, floatBefore, "no leakage on exact-fee entry");
         assertEq(owner.balance, 0, "caller paid the full fee");
     }
 
     function test_Entry_ExcessIsRefundedToCaller() public {
         SendParam memory params = _sendParam();
-        uint256 fee = nftBridge.quoteSend(params);
+        uint256 fee = nftRouter.quoteSend(params);
 
         uint256 buffer = 0.5 ether;
         vm.deal(owner, fee + buffer);
-        uint256 floatBefore = address(nftBridge).balance;
+        uint256 floatBefore = address(nftRouter).balance;
 
         vm.prank(owner);
-        nftBridge.send{value: fee + buffer}(params);
+        nftRouter.send{value: fee + buffer}(params);
 
         // Excess refunded out of `_send`, not retained for future relay sends.
-        assertEq(address(nftBridge).balance, floatBefore, "excess must not seed the relay float");
+        assertEq(address(nftRouter).balance, floatBefore, "excess must not seed the relay float");
         assertEq(owner.balance, buffer, "caller refunded the excess");
     }
 
     function test_Entry_BelowFeeRevertsMsgValueBelowFee() public {
         SendParam memory params = _sendParam();
-        uint256 fee = nftBridge.quoteSend(params);
+        uint256 fee = nftRouter.quoteSend(params);
 
         uint256 short = fee - 1;
         vm.deal(owner, fee);
 
         vm.prank(owner);
         vm.expectRevert(abi.encodeWithSelector(ERC7786Sender.MsgValueBelowFee.selector, short, fee));
-        nftBridge.send{value: short}(params);
+        nftRouter.send{value: short}(params);
     }
 
     /// @notice Pin the no-leakage invariant across an entry-followed-by-entry sequence: the second entry must not see
     ///         the first's `msg.value` accumulated as float.
     function test_Entry_DoesNotLeakIntoFloatAcrossSends() public {
         SendParam memory params = _sendParam();
-        uint256 fee = nftBridge.quoteSend(params);
+        uint256 fee = nftRouter.quoteSend(params);
 
         uint256 buffer = 1 ether;
         vm.deal(owner, (fee + buffer) * 2);
-        uint256 floatBefore = address(nftBridge).balance;
+        uint256 floatBefore = address(nftRouter).balance;
 
         vm.prank(owner);
-        nftBridge.send{value: fee + buffer}(params);
-        assertEq(address(nftBridge).balance, floatBefore, "first entry: no leakage");
+        nftRouter.send{value: fee + buffer}(params);
+        assertEq(address(nftRouter).balance, floatBefore, "first entry: no leakage");
 
         vm.prank(owner);
-        nftBridge.send{value: fee + buffer}(params);
-        assertEq(address(nftBridge).balance, floatBefore, "second entry: no leakage");
+        nftRouter.send{value: fee + buffer}(params);
+        assertEq(address(nftRouter).balance, floatBefore, "second entry: no leakage");
         assertEq(owner.balance, 2 * buffer, "both excess values refunded");
     }
 
@@ -164,12 +164,12 @@ contract PayNativeAccountingTest is CrossChainTest {
         // `_send` refunds excess to msg.sender via `.call{value: refund}("")`. A caller whose
         // receive() reverts trips the ReturnFailed guard. Without it, a refactor that swallowed
         // the .call return would silently seed the relay float with the entry caller's excess.
-        NftRefundRejector rejector = new NftRefundRejector(address(nftBridge));
+        NftRefundRejector rejector = new NftRefundRejector(address(nftRouter));
         intex.issueIntex(address(rejector), 1, SERIES_ID);
 
         SendParam memory params = _sendParam();
         params.to = bytes32(uint256(uint160(address(rejector))));
-        uint256 fee = nftBridge.quoteSend(params);
+        uint256 fee = nftRouter.quoteSend(params);
         uint256 buffer = 0.3 ether;
         vm.deal(address(rejector), fee + buffer);
 

@@ -23,7 +23,7 @@ contract ConfigureTarget is BaseScript {
         address nft;
         address escrow;
         address auction;
-        address nftBridge;
+        address nftRouter;
         address router;
         address compact;
         address wcoen;
@@ -37,7 +37,7 @@ contract ConfigureTarget is BaseScript {
             nft: predictProxy(factory, deployer, "IntexNFT1155"),
             escrow: predictProxy(factory, deployer, "EscrowAdapter"),
             auction: predictProxy(factory, deployer, "IntexAuction"),
-            nftBridge: predictProxy(factory, deployer, "IntexNFT1155Router"),
+            nftRouter: predictProxy(factory, deployer, "IntexNFT1155Router"),
             router: predictProxy(factory, deployer, "IntexAuctionTargetRouter"),
             compact: vm.envAddress("COMPACT_ADDRESS"),
             wcoen: vm.envAddress("WCOEN_TOKEN")
@@ -53,7 +53,7 @@ contract ConfigureTarget is BaseScript {
         requireDeployed(t.nft);
         requireDeployed(t.escrow);
         requireDeployed(t.auction);
-        requireDeployed(t.nftBridge);
+        requireDeployed(t.nftRouter);
         requireDeployed(t.router);
 
         IntexAuction auction = IntexAuction(t.auction);
@@ -87,6 +87,6 @@ contract ConfigureTarget is BaseScript {
         grantRoleIfMissing(t.escrow, escrow.RELAYER_ROLE(), t.router, deployer);
         IntexNFT1155 nft = IntexNFT1155(t.nft);
         grantRoleIfMissing(t.nft, nft.ROUTER_ROLE(), t.router, deployer);
-        grantRoleIfMissing(t.nft, nft.BRIDGE_ROLE(), t.nftBridge, deployer);
+        grantRoleIfMissing(t.nft, nft.BRIDGE_ROLE(), t.nftRouter, deployer);
     }
 }
