@@ -26,14 +26,14 @@ struct SendParam {
     uint256 units;
 }
 
-/// @title IIntexNFT1155Bridge
+/// @title IIntexNFT1155Router
 /// @author Outbe
 /// @notice Interface for batch cross-chain ERC1155 transfers over the protocol-agnostic ERC-7786
 ///         bridge.
 /// @dev Supports single-recipient batch and multi-recipient modes. Sends burn on the source and
-///      mint on the paired adapter registered as the remote messenger for a chainId. `send*`
+///      mint on the paired adapter registered as the remote router for a chainId. `send*`
 ///      return the bridge `sendId`. `quote*` return the native fee.
-interface IIntexNFT1155Bridge {
+interface IIntexNFT1155Router {
     // --- Events ---
     /// @notice Emitted when units of one series leave for one recipient.
     /// @param owner The account whose units this chain burned.
@@ -114,17 +114,17 @@ interface IIntexNFT1155Bridge {
     );
 
     /// @notice The matching adapter on `chainId` was registered (empty `interop` clears it).
-    event RemoteMessengerRegistered(uint32 indexed chainId, bytes interop);
+    event RemoteRouterSet(uint32 indexed chainId, bytes interop);
 
     // --- Errors ---
     /// @notice Only the ERC-7786 bridge delivers messages.
     error UnauthorizedBridge(address caller);
     /// @notice The sender is not the registered adapter of its chain.
-    error UnauthorizedSourceMessenger(uint32 chainId, bytes sender);
+    error UnauthorizedSourceRouter(uint32 chainId, bytes sender);
     /// @notice No adapter is registered for `chainId`.
-    error RemoteMessengerNotSet(uint32 chainId);
+    error RemoteRouterNotSet(uint32 chainId);
     /// @notice The interoperable address names another chain than its key.
-    error RemoteMessengerChainMismatch(uint32 chainId, uint256 embeddedChainId);
+    error RemoteRouterChainMismatch(uint32 chainId, uint256 embeddedChainId);
     /// @notice Receiver address is zero.
     error InvalidReceiver();
     /// @notice Array lengths do not match.
@@ -136,7 +136,7 @@ interface IIntexNFT1155Bridge {
     error ZeroAddress(string field);
     /// @notice Inbound `msgType` is not in the SEND_ONE / SEND_BATCH / SEND_MULTI set.
     /// @dev Wire-format reverts (`UnsupportedBodyVersion`, `MalformedAddress`, `BatchTooLarge`,
-    ///      `InvalidPayloadLength`, `ArrayLengthMismatch`) are owned by `IntexNFT1155BridgeCodec`.
+    ///      `InvalidPayloadLength`, `ArrayLengthMismatch`) are owned by `IntexNFT1155RouterCodec`.
     /// @param got The unsupported message-type tag received.
     error UnknownMsgType(uint8 got);
     /// @notice An external caller invoked `crosschainMintOne`. Only `address(this)` is allowed.
@@ -153,7 +153,7 @@ interface IIntexNFT1155Bridge {
     ///         address.
     /// @param chainId Destination/source chainId.
     /// @param interop ERC-7930 interoperable address (empty to clear).
-    function registerRemoteMessenger(uint32 chainId, bytes calldata interop) external;
+    function setRemoteRouter(uint32 chainId, bytes calldata interop) external;
 
     // --- Single-recipient batch ---
     /// @notice Quotes the native fee for a batch cross-chain transfer.

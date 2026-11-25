@@ -8,7 +8,7 @@ import {Create3Factory} from "@shared/Create3Factory.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 
 /// @title DeployTarget
@@ -41,7 +41,7 @@ contract DeployTarget is BaseScript {
             console.log("IntexNFT1155:", predictProxy(factory, deployer, "IntexNFT1155"));
             console.log("EscrowAdapter:", predictProxy(factory, deployer, "EscrowAdapter"));
             console.log("IntexAuction:", predictProxy(factory, deployer, "IntexAuction"));
-            console.log("IntexNFT1155Bridge:", predictProxy(factory, deployer, "IntexNFT1155Bridge"));
+            console.log("IntexNFT1155Router:", predictProxy(factory, deployer, "IntexNFT1155Router"));
             console.log("TargetRouter:", predictProxy(factory, deployer, "TargetRouter"));
             console.log("Handed over to governance - skipping.");
             return;
@@ -76,9 +76,9 @@ contract DeployTarget is BaseScript {
         address nftBridge = deployProxy(
             factory,
             deployer,
-            "IntexNFT1155Bridge",
-            address(new IntexNFT1155Bridge(nft, bridge)),
-            abi.encodeCall(IntexNFT1155Bridge.initialize, (delegate))
+            "IntexNFT1155Router",
+            address(new IntexNFT1155Router(nft, bridge)),
+            abi.encodeCall(IntexNFT1155Router.initialize, (delegate))
         );
         address router = deployProxy(
             factory,
@@ -100,12 +100,12 @@ contract DeployTarget is BaseScript {
 
         // Mesh the NFT bridge with every OTHER target's bridge (all at the same CREATE3 address).
         // Skipping `local` means the origin loopback target never self-peers the bridge.
-        address bridgePeer = predictProxy(factory, deployer, "IntexNFT1155Bridge");
+        address bridgePeer = predictProxy(factory, deployer, "IntexNFT1155Router");
         for (uint256 i = 0; i < targetChainIds.length; i++) {
             uint32 cid = uint32(targetChainIds[i]);
             if (cid == local) continue;
-            IntexNFT1155Bridge(payable(nftBridge))
-                .registerRemoteMessenger(cid, InteroperableAddress.formatEvmV1(cid, bridgePeer));
+            IntexNFT1155Router(payable(nftBridge))
+                .setRemoteRouter(cid, InteroperableAddress.formatEvmV1(cid, bridgePeer));
         }
 
         // The escrow hands finalized proceeds to the router, which sends them to IntexFactory on Outbe.
@@ -117,7 +117,7 @@ contract DeployTarget is BaseScript {
         console.log("IntexNFT1155:", nft);
         console.log("EscrowAdapter:", escrow);
         console.log("IntexAuction:", auction);
-        console.log("IntexNFT1155Bridge:", nftBridge);
+        console.log("IntexNFT1155Router:", nftBridge);
         console.log("TargetRouter:", router);
     }
 }

@@ -7,17 +7,17 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {IIntexNFT1155Bridge, SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {IIntexNFT1155Router, SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {ERC7786Sender} from "@contracts/shared/ERC7786Sender.sol";
 
-/// @title IntexNFT1155BridgeSingleTest
-/// @notice Foundry tests for IntexNFT1155Bridge with IntexNFT1155 token.
+/// @title IntexNFT1155RouterSingleTest
+/// @notice Foundry tests for IntexNFT1155Router with IntexNFT1155 token.
 /// @dev Tests cross-chain transfers over the {MockERC7786Bridge} loopback via {CrossChainTest}.
 ///      Series are keyed by `seriesId` (uint32). The issued token id is `uint256(seriesId)`.
 ///      Delivery is manual: a send records the packet on the bridge and {_deliver} hands it to the
 ///      destination adapter as the bridge.
-contract IntexNFT1155BridgeSingleTest is CrossChainTest {
+contract IntexNFT1155RouterSingleTest is CrossChainTest {
     uint32 private constant A_CHAIN_ID = 1;
     uint32 private constant B_CHAIN_ID = 2;
 
@@ -25,8 +25,8 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
 
     IntexNFT1155 private tokenA;
     IntexNFT1155 private tokenB;
-    IntexNFT1155Bridge private adapterA;
-    IntexNFT1155Bridge private adapterB;
+    IntexNFT1155Router private adapterA;
+    IntexNFT1155Router private adapterB;
 
     address private admin = address(this);
     address private user = address(0x1);
@@ -53,9 +53,9 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         tokenA.grantRole(tokenA.BRIDGE_ROLE(), address(adapterA));
         tokenB.grantRole(tokenB.BRIDGE_ROLE(), address(adapterB));
 
-        // Wire adapters (register each as the other's remote messenger)
-        adapterA.registerRemoteMessenger(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapterB)));
-        adapterB.registerRemoteMessenger(A_CHAIN_ID, _interop(A_CHAIN_ID, address(adapterA)));
+        // Wire adapters (register each as the other's remote router)
+        adapterA.setRemoteRouter(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapterB)));
+        adapterB.setRemoteRouter(A_CHAIN_ID, _interop(A_CHAIN_ID, address(adapterA)));
 
         // Create series on both chains
         tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
@@ -84,14 +84,14 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
     ///         adapter (every `crosschainBurn`/`crosschainMint` reverts on a non-contract). Reject at construction.
     function test_constructor_revertsZeroToken() public {
         // Property of the implementation constructor - the token immutable is set there.
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.ZeroAddress.selector, "token"));
-        new IntexNFT1155Bridge(address(0), address(bridge));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.ZeroAddress.selector, "token"));
+        new IntexNFT1155Router(address(0), address(bridge));
     }
 
     /// @notice A zero bridge address is caught by the `ERC7786Sender` constructor guard.
     function test_constructor_revertsZeroBridge() public {
         vm.expectRevert(ERC7786Sender.InvalidBridge.selector);
-        new IntexNFT1155Bridge(address(tokenA), address(0));
+        new IntexNFT1155Router(address(tokenA), address(0));
     }
 
     function test_send() public {
@@ -129,9 +129,9 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
 
         vm.recordLogs();
         vm.expectEmit(true, true, true, true, address(adapterB));
-        emit IIntexNFT1155Bridge.IntexCrosschainReceived(receiveId, A_CHAIN_ID, user, TOKEN_ID, 40);
+        emit IIntexNFT1155Router.IntexCrosschainReceived(receiveId, A_CHAIN_ID, user, TOKEN_ID, 40);
         _deliverAToB();
-        assertEq(_countTopic(IIntexNFT1155Bridge.IntexCrosschainBatchReceived.selector), 0, "no batch event");
+        assertEq(_countTopic(IIntexNFT1155Router.IntexCrosschainBatchReceived.selector), 0, "no batch event");
         assertEq(tokenB.balanceOf(user, TOKEN_ID), 40);
     }
 
@@ -154,14 +154,14 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         uint256 failed;
         for (uint256 i; i < logs.length; ++i) {
-            assertTrue(logs[i].topics[0] != IIntexNFT1155Bridge.IntexCrosschainReceived.selector, "not received yet");
-            if (logs[i].topics[0] == IIntexNFT1155Bridge.IntexCrosschainReceiveFailed.selector) failed++;
+            assertTrue(logs[i].topics[0] != IIntexNFT1155Router.IntexCrosschainReceived.selector, "not received yet");
+            if (logs[i].topics[0] == IIntexNFT1155Router.IntexCrosschainReceiveFailed.selector) failed++;
         }
         assertEq(failed, 1);
 
         tokenB.createSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
         vm.expectEmit(true, true, true, true, address(adapterB));
-        emit IIntexNFT1155Bridge.IntexCrosschainReceived(receiveId, A_CHAIN_ID, user, failTokenId, uint32(AMOUNT));
+        emit IIntexNFT1155Router.IntexCrosschainReceived(receiveId, A_CHAIN_ID, user, failTokenId, uint32(AMOUNT));
         adapterB.retryCrosschainMint(receiveId, 0);
     }
 
@@ -241,7 +241,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         SendParam memory sendParam =
             SendParam({dstChainId: B_CHAIN_ID, to: bytes32(0), tokenId: TOKEN_ID, units: AMOUNT});
 
-        vm.expectRevert(IIntexNFT1155Bridge.InvalidReceiver.selector);
+        vm.expectRevert(IIntexNFT1155Router.InvalidReceiver.selector);
         adapterA.quoteSend(sendParam);
     }
 
@@ -321,7 +321,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         assertFalse(existsAfter, "entry cleared");
 
         // A re-retry reverts.
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainMint.selector, receiveId, 0));
         adapterB.retryCrosschainMint(receiveId, 0);
     }
 
@@ -368,18 +368,18 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         assertEq(tokenB.balanceOf(user, failTokenId), 0, "nothing on destination");
 
         // A second reclaim reverts - the entry is gone.
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, receiveId, 0));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainMint.selector, receiveId, 0));
         adapterB.reclaimToSource(receiveId, 0);
     }
 
     function test_retryCrosschainMint_revertsForUnknownReceiveId() public {
         bytes32 unknown = bytes32(uint256(0xABCD));
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.NoSuchFailedCrosschainMint.selector, unknown, 0));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainMint.selector, unknown, 0));
         adapterB.retryCrosschainMint(unknown, 0);
     }
 
     function test_crosschainMintOne_externalCallerRevertsNotSelf() public {
-        vm.expectRevert(IIntexNFT1155Bridge.NotSelf.selector);
+        vm.expectRevert(IIntexNFT1155Router.NotSelf.selector);
         adapterB.crosschainMintOne(address(0xCAFE), TOKEN_ID, 1);
     }
 }

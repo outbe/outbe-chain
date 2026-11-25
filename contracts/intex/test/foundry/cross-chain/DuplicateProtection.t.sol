@@ -3,8 +3,8 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {IIntexNFT1155Bridge, BatchSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {IIntexNFT1155Router, BatchSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
@@ -21,8 +21,8 @@ contract DuplicateProtectionTest is CrossChainTest {
     uint32 internal constant SRC_CHAIN_ID = 1;
     uint32 internal constant DST_CHAIN_ID = 2;
 
-    IntexNFT1155Bridge internal batchSrc;
-    IntexNFT1155Bridge internal batchDst;
+    IntexNFT1155Router internal batchSrc;
+    IntexNFT1155Router internal batchDst;
     IntexNFT1155 internal intexSrc;
     IntexNFT1155 internal intexDst;
 
@@ -45,10 +45,10 @@ contract DuplicateProtectionTest is CrossChainTest {
         batchDst = DeployProxy.intexNFT1155Bridge(address(intexDst), address(bridge), admin);
 
         // Outbound recipient for the send.
-        batchSrc.registerRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(batchDst)));
+        batchSrc.setRemoteRouter(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(batchDst)));
         // Inbound peer authentication: the loopback bridge stamps the sender chainId as `block.chainid`, so the
         // destination must recognize the source adapter under that chainId.
-        batchDst.registerRemoteMessenger(uint32(block.chainid), _interop(uint32(block.chainid), address(batchSrc)));
+        batchDst.setRemoteRouter(uint32(block.chainid), _interop(uint32(block.chainid), address(batchSrc)));
 
         // Series in a bridgeable (Issued) state on both chains, with the adapters granted BRIDGE_ROLE so
         // crosschainBurn/crosschainMint succeed.

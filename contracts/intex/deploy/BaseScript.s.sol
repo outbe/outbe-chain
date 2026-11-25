@@ -66,7 +66,7 @@ abstract contract BaseScript is Script {
 
     /// @notice CREATE3 prefixes of every intex proxy, on Outbe and on each target chain alike.
     function intexProxyPrefixes() internal pure returns (string[5] memory) {
-        return ["IntexNFT1155", "EscrowAdapter", "IntexAuction", "IntexNFT1155Bridge", "TargetRouter"];
+        return ["IntexNFT1155", "EscrowAdapter", "IntexAuction", "IntexNFT1155Router", "TargetRouter"];
     }
 
     /// @notice Predict a proxy address without deploying.

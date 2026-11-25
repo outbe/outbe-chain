@@ -4,31 +4,31 @@ pragma solidity 0.8.30;
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {ERC7786Sender} from "@contracts/shared/ERC7786Sender.sol";
 import {
-    IIntexNFT1155Bridge,
+    IIntexNFT1155Router,
     BatchSendParam,
     MultiRecipientSendParam
-} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
+} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
-/// @title IntexNFT1155BridgeTest
+/// @title IntexNFT1155RouterTest
 /// @notice direct coverage for the NFT-Batch outbound entry points
 ///         (`batchSend`, `multiSend`) and their `quote*` views. The inbound
 ///         `receiveMessage` validation matrix (malformed / duplicate / version / srcChainId) is covered by
 ///         the sibling cross-chain suites. This file exercises the send-side surface that had no
 ///         direct test: happy-path delivery, every revert branch, the role gate, and quoting.
-contract IntexNFT1155BridgeTest is CrossChainTest {
+contract IntexNFT1155RouterTest is CrossChainTest {
     uint32 internal constant SRC_CHAIN_ID = 1;
     uint32 internal constant DST_CHAIN_ID = 2;
 
     uint256 internal constant FEE = 0.001 ether;
 
-    IntexNFT1155Bridge internal srcBatch;
-    IntexNFT1155Bridge internal dstBatch;
+    IntexNFT1155Router internal srcBatch;
+    IntexNFT1155Router internal dstBatch;
     IntexNFT1155 internal srcToken;
     IntexNFT1155 internal dstToken;
 
@@ -53,8 +53,8 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
         srcBatch = DeployProxy.intexNFT1155Bridge(address(srcToken), address(bridge), admin);
         dstBatch = DeployProxy.intexNFT1155Bridge(address(dstToken), address(bridge), admin);
 
-        srcBatch.registerRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(dstBatch)));
-        dstBatch.registerRemoteMessenger(SRC_CHAIN_ID, _interop(SRC_CHAIN_ID, address(srcBatch)));
+        srcBatch.setRemoteRouter(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(dstBatch)));
+        dstBatch.setRemoteRouter(SRC_CHAIN_ID, _interop(SRC_CHAIN_ID, address(srcBatch)));
 
         for (uint32 i = 0; i < 2; i++) {
             uint32 day = i == 0 ? SERIES_A_DAY : SERIES_B_DAY;
@@ -99,22 +99,22 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
     ///         crosschainMint/crosschainBurn path.
     /// @dev Property of the implementation constructor.
     function test_Constructor_RevertsZeroToken() public {
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Bridge.ZeroAddress.selector, "token"));
-        new IntexNFT1155Bridge(address(0), address(bridge));
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.ZeroAddress.selector, "token"));
+        new IntexNFT1155Router(address(0), address(bridge));
     }
 
     /// @notice A zero bridge address is caught by the `ERC7786Sender` constructor guard.
     function test_Constructor_RevertsZeroBridge() public {
         vm.expectRevert(abi.encodeWithSignature("InvalidBridge()"));
-        new IntexNFT1155Bridge(address(srcToken), address(0));
+        new IntexNFT1155Router(address(srcToken), address(0));
     }
 
     /// @notice The explicit `ZeroAddress("delegate")` guard in `initialize` rejects a zero
     ///         delegate/owner during proxy initialization.
     function test_Initialize_RevertsZeroDelegate() public {
-        IntexNFT1155Bridge impl = new IntexNFT1155Bridge(address(srcToken), address(bridge));
+        IntexNFT1155Router impl = new IntexNFT1155Router(address(srcToken), address(bridge));
         vm.expectRevert(abi.encodeWithSignature("ZeroAddress(string)", "delegate"));
-        new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155Bridge.initialize, (address(0))));
+        new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155Router.initialize, (address(0))));
     }
 
     // ---------------------------------------------------------------
@@ -183,7 +183,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
             tokenIds: new uint256[](0),
             units: new uint256[](0)
         });
-        vm.expectRevert(IIntexNFT1155Bridge.EmptyBatch.selector);
+        vm.expectRevert(IIntexNFT1155Router.EmptyBatch.selector);
         vm.prank(sender);
         srcBatch.batchSend{value: FEE}(p);
     }
@@ -195,7 +195,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
             tokenIds: _u256(TID_A, TID_B),
             units: _u256One(5)
         });
-        vm.expectRevert(IIntexNFT1155Bridge.ArrayLengthMismatch.selector);
+        vm.expectRevert(IIntexNFT1155Router.ArrayLengthMismatch.selector);
         vm.prank(sender);
         srcBatch.batchSend{value: FEE}(p);
     }
@@ -206,7 +206,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
         // rolls back too.
         BatchSendParam memory p =
             BatchSendParam({dstChainId: DST_CHAIN_ID, to: bytes32(0), tokenIds: _u256One(TID_A), units: _u256One(1)});
-        vm.expectRevert(IIntexNFT1155Bridge.InvalidReceiver.selector);
+        vm.expectRevert(IIntexNFT1155Router.InvalidReceiver.selector);
         vm.prank(sender);
         srcBatch.batchSend{value: FEE}(p);
 
@@ -309,7 +309,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
         MultiRecipientSendParam memory p = MultiRecipientSendParam({
             dstChainId: DST_CHAIN_ID, recipients: new bytes32[](0), tokenIds: new uint256[](0), units: new uint256[](0)
         });
-        vm.expectRevert(IIntexNFT1155Bridge.EmptyBatch.selector);
+        vm.expectRevert(IIntexNFT1155Router.EmptyBatch.selector);
         vm.prank(sender);
         srcBatch.multiSend{value: FEE}(p);
     }
@@ -325,7 +325,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
             tokenIds: _u256One(TID_A), // length 1 vs 2 recipients
             units: _u256(3, 4)
         });
-        vm.expectRevert(IIntexNFT1155Bridge.ArrayLengthMismatch.selector);
+        vm.expectRevert(IIntexNFT1155Router.ArrayLengthMismatch.selector);
         vm.prank(sender);
         srcBatch.multiSend{value: FEE}(p);
     }
@@ -337,7 +337,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
         MultiRecipientSendParam memory p = MultiRecipientSendParam({
             dstChainId: DST_CHAIN_ID, recipients: recipients, tokenIds: _u256One(TID_A), units: _u256One(1)
         });
-        vm.expectRevert(IIntexNFT1155Bridge.InvalidReceiver.selector);
+        vm.expectRevert(IIntexNFT1155Router.InvalidReceiver.selector);
         vm.prank(sender);
         srcBatch.multiSend{value: FEE}(p);
     }

@@ -6,7 +6,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {Vm} from "forge-std/Vm.sol";
 
 /// @dev Deploys implementation + ERC1967 proxy pairs for the UUPS contracts under test.
@@ -64,10 +64,10 @@ library DeployProxy {
 
     function intexNFT1155Bridge(address tokenAddr, address bridge, address delegate)
         internal
-        returns (IntexNFT1155Bridge)
+        returns (IntexNFT1155Router)
     {
-        IntexNFT1155Bridge impl = new IntexNFT1155Bridge(tokenAddr, bridge);
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155Bridge.initialize, (delegate)));
-        return IntexNFT1155Bridge(payable(address(proxy)));
+        IntexNFT1155Router impl = new IntexNFT1155Router(tokenAddr, bridge);
+        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(IntexNFT1155Router.initialize, (delegate)));
+        return IntexNFT1155Router(payable(address(proxy)));
     }
 }

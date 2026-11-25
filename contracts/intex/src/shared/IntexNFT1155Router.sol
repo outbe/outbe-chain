@@ -10,24 +10,24 @@ import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/U
 
 import {IERC1155Bridgeable} from "./interfaces/IERC1155Bridgeable.sol";
 import {
-    IIntexNFT1155Bridge,
+    IIntexNFT1155Router,
     SendParam,
     BatchSendParam,
     MultiRecipientSendParam
-} from "./interfaces/IIntexNFT1155Bridge.sol";
-import {IntexNFT1155BridgeCodec} from "./libs/IntexNFT1155BridgeCodec.sol";
+} from "./interfaces/IIntexNFT1155Router.sol";
+import {IntexNFT1155RouterCodec} from "./libs/IntexNFT1155RouterCodec.sol";
 import {ERC7786Sender} from "./ERC7786Sender.sol";
 import {IntexGas} from "./libs/IntexGas.sol";
 
-/// @title IntexNFT1155Bridge
+/// @title IntexNFT1155Router
 /// @author Outbe
 /// @notice Batch cross-chain ERC-1155 adapter over the protocol-agnostic ERC-7786 bridge. It burns
-///         on the source and mints on the paired adapter registered as the remote messenger for a
+///         on the source and mints on the paired adapter registered as the remote router for a
 ///         chainId.
 /// @dev UUPS upgradeable. The bridge and bridged token are implementation immutables. Modes:
 ///      single-recipient batch and multi-recipient.
-contract IntexNFT1155Bridge is
-    IIntexNFT1155Bridge,
+contract IntexNFT1155Router is
+    IIntexNFT1155Router,
     ERC7786Sender,
     IERC7786Recipient,
     AccessControlUpgradeable,
@@ -36,11 +36,11 @@ contract IntexNFT1155Bridge is
 {
     using InteroperableAddress for bytes;
 
-    uint16 public constant SEND_ONE = IntexNFT1155BridgeCodec.SEND_ONE;
-    uint16 public constant SEND_BATCH = IntexNFT1155BridgeCodec.SEND_BATCH;
-    uint16 public constant SEND_MULTI = IntexNFT1155BridgeCodec.SEND_MULTI;
-    uint8 public constant BODY_VERSION_V1 = IntexNFT1155BridgeCodec.BODY_VERSION_V1;
-    uint256 public constant MAX_BATCH_SIZE = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
+    uint16 public constant SEND_ONE = IntexNFT1155RouterCodec.SEND_ONE;
+    uint16 public constant SEND_BATCH = IntexNFT1155RouterCodec.SEND_BATCH;
+    uint16 public constant SEND_MULTI = IntexNFT1155RouterCodec.SEND_MULTI;
+    uint8 public constant BODY_VERSION_V1 = IntexNFT1155RouterCodec.BODY_VERSION_V1;
+    uint256 public constant MAX_BATCH_SIZE = IntexNFT1155RouterCodec.MAX_BATCH_SIZE;
 
     /// @notice The bridgeable ERC-1155 this adapter burns on send and mints on receive.
     IERC1155Bridgeable public immutable token;
@@ -58,18 +58,18 @@ contract IntexNFT1155Bridge is
         uint256 units;
     }
 
-    /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155Bridge
-    struct IntexNFT1155BridgeStorage {
+    /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155Router
+    struct IntexNFT1155RouterStorage {
         /// @dev Per-message map of items whose `token.crosschainMint` reverted.
         mapping(bytes32 receiveId => mapping(uint256 idx => FailedCrosschainMint)) failedCrosschainMints;
         /// @dev ERC-7930 interoperable address of the matching adapter on a given chainId.
-        mapping(uint32 chainId => bytes interop) remoteMessenger;
+        mapping(uint32 chainId => bytes interop) remoteRouter;
     }
 
-    // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155Bridge")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant _STORAGE_SLOT = 0x769097ec453d253ed110328ac911e291d0940836557f2ebb5d6ffb80fa001500;
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexNFT1155Router")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0x2cbe3762cb0a38b88ca9f61f43618d2924a64d49c5fd918e01bf25761a81cd00;
 
-    function _bs() private pure returns (IntexNFT1155BridgeStorage storage $) {
+    function _bs() private pure returns (IntexNFT1155RouterStorage storage $) {
         assembly ("memory-safe") {
             $.slot := _STORAGE_SLOT
         }
@@ -102,47 +102,47 @@ contract IntexNFT1155Bridge is
     }
 
     function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
-        return interfaceId == type(IIntexNFT1155Bridge).interfaceId || super.supportsInterface(interfaceId);
+        return interfaceId == type(IIntexNFT1155Router).interfaceId || super.supportsInterface(interfaceId);
     }
 
-    /// @inheritdoc IIntexNFT1155Bridge
-    function registerRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
+    /// @inheritdoc IIntexNFT1155Router
+    function setRemoteRouter(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
         // Inbound auth derives the key from the sender's own bytes, so the interop must embed the
         // same chainId as the key: a mismatch would silently drop every message from that chain.
         if (interop.length != 0) {
             (uint256 embedded,) = interop.parseEvmV1Calldata();
-            require(embedded == chainId, RemoteMessengerChainMismatch(chainId, embedded));
+            require(embedded == chainId, RemoteRouterChainMismatch(chainId, embedded));
         }
-        _bs().remoteMessenger[chainId] = interop;
-        emit RemoteMessengerRegistered(chainId, interop);
+        _bs().remoteRouter[chainId] = interop;
+        emit RemoteRouterSet(chainId, interop);
     }
 
     /// @notice ERC-7930 interoperable address of the matching adapter on `chainId` (empty if unregistered).
-    function remoteMessenger(uint32 chainId) external view returns (bytes memory) {
-        return _bs().remoteMessenger[chainId];
+    function remoteRouter(uint32 chainId) external view returns (bytes memory) {
+        return _bs().remoteRouter[chainId];
     }
 
-    function _remoteMessenger(uint32 chainId) private view returns (bytes memory interop) {
-        interop = _bs().remoteMessenger[chainId];
-        require(interop.length != 0, RemoteMessengerNotSet(chainId));
+    function _remoteRouter(uint32 chainId) private view returns (bytes memory interop) {
+        interop = _bs().remoteRouter[chainId];
+        require(interop.length != 0, RemoteRouterNotSet(chainId));
     }
 
     /// @dev The caller always pays the fee; the native float is never used.
     function _sendPaidByCaller(uint32 dstChainId, bytes memory payload, uint256 gasLimit) private returns (bytes32) {
-        return _sendToPaidByCaller(_remoteMessenger(dstChainId), payload, gasLimit);
+        return _sendToPaidByCaller(_remoteRouter(dstChainId), payload, gasLimit);
     }
 
     function _quoteFee(uint32 dstChainId, bytes memory payload, uint256 gasLimit) private view returns (uint256) {
-        return _quoteTo(_remoteMessenger(dstChainId), payload, gasLimit);
+        return _quoteTo(_remoteRouter(dstChainId), payload, gasLimit);
     }
 
     // --- Single transfer ---
-    /// @inheritdoc IIntexNFT1155Bridge
+    /// @inheritdoc IIntexNFT1155Router
     function quoteSend(SendParam calldata _sendParam) external view returns (uint256) {
         return _quoteFee(_sendParam.dstChainId, _buildSingleMsg(_sendParam), IntexGas.nftMint(1));
     }
 
-    /// @inheritdoc IIntexNFT1155Bridge
+    /// @inheritdoc IIntexNFT1155Router
     function send(SendParam calldata _sendParam) external payable nonReentrant returns (bytes32 sendId) {
         bytes memory message = _buildSingleMsg(_sendParam);
         token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.tokenId, _sendParam.units);
@@ -159,23 +159,23 @@ contract IntexNFT1155Bridge is
 
     function _buildSingleMsg(SendParam calldata _sendParam) internal pure returns (bytes memory) {
         // reject a malformed recipient before burning. The receive path rejects it too.
-        IntexNFT1155BridgeCodec.assertAddress(_sendParam.to);
+        IntexNFT1155RouterCodec.assertAddress(_sendParam.to);
         if (_sendParam.to == bytes32(0)) revert InvalidReceiver();
-        return IntexNFT1155BridgeCodec.encodeSingle(
-            IntexNFT1155BridgeCodec.SinglePayload({
+        return IntexNFT1155RouterCodec.encodeSingle(
+            IntexNFT1155RouterCodec.SinglePayload({
                 to: _sendParam.to, intexId: _sendParam.tokenId, units: _sendParam.units
             })
         );
     }
 
     // --- Single-recipient batch ---
-    /// @inheritdoc IIntexNFT1155Bridge
+    /// @inheritdoc IIntexNFT1155Router
     function quoteBatchSend(BatchSendParam calldata _sendParam) external view returns (uint256) {
         return
             _quoteFee(_sendParam.dstChainId, _buildBatchMsg(_sendParam), IntexGas.nftMint(_sendParam.tokenIds.length));
     }
 
-    /// @inheritdoc IIntexNFT1155Bridge
+    /// @inheritdoc IIntexNFT1155Router
     function batchSend(BatchSendParam calldata _sendParam) external payable nonReentrant returns (bytes32 sendId) {
         if (_sendParam.tokenIds.length == 0) revert EmptyBatch();
         if (_sendParam.tokenIds.length != _sendParam.units.length) revert ArrayLengthMismatch();
@@ -193,26 +193,26 @@ contract IntexNFT1155Bridge is
     }
 
     function _buildBatchMsg(BatchSendParam calldata _sendParam) internal pure returns (bytes memory) {
-        IntexNFT1155BridgeCodec.assertAddress(_sendParam.to);
+        IntexNFT1155RouterCodec.assertAddress(_sendParam.to);
         if (_sendParam.to == bytes32(0)) revert InvalidReceiver();
         if (_sendParam.tokenIds.length > MAX_BATCH_SIZE) {
-            revert IntexNFT1155BridgeCodec.BatchTooLarge(_sendParam.tokenIds.length, MAX_BATCH_SIZE);
+            revert IntexNFT1155RouterCodec.BatchTooLarge(_sendParam.tokenIds.length, MAX_BATCH_SIZE);
         }
-        return IntexNFT1155BridgeCodec.encodeBatch(
-            IntexNFT1155BridgeCodec.BatchPayload({
+        return IntexNFT1155RouterCodec.encodeBatch(
+            IntexNFT1155RouterCodec.BatchPayload({
                 to: _sendParam.to, tokenIds: _sendParam.tokenIds, units: _sendParam.units
             })
         );
     }
 
     // --- Multi-recipient batch ---
-    /// @inheritdoc IIntexNFT1155Bridge
+    /// @inheritdoc IIntexNFT1155Router
     function quoteMultiSend(MultiRecipientSendParam calldata _sendParam) external view returns (uint256) {
         return
             _quoteFee(_sendParam.dstChainId, _buildMultiMsg(_sendParam), IntexGas.nftMint(_sendParam.recipients.length));
     }
 
-    /// @inheritdoc IIntexNFT1155Bridge
+    /// @inheritdoc IIntexNFT1155Router
     function multiSend(MultiRecipientSendParam calldata _sendParam)
         external
         payable
@@ -225,7 +225,7 @@ contract IntexNFT1155Bridge is
 
         bytes memory message = _buildMultiMsg(_sendParam);
         for (uint256 i = 0; i < len; i++) {
-            IntexNFT1155BridgeCodec.assertAddress(_sendParam.recipients[i]);
+            IntexNFT1155RouterCodec.assertAddress(_sendParam.recipients[i]);
             if (_sendParam.recipients[i] == bytes32(0)) revert InvalidReceiver();
             token.crosschainBurn(
                 msg.sender, _toAddress(_sendParam.recipients[i]), _sendParam.tokenIds[i], _sendParam.units[i]
@@ -245,10 +245,10 @@ contract IntexNFT1155Bridge is
 
     function _buildMultiMsg(MultiRecipientSendParam calldata _sendParam) internal pure returns (bytes memory) {
         if (_sendParam.recipients.length > MAX_BATCH_SIZE) {
-            revert IntexNFT1155BridgeCodec.BatchTooLarge(_sendParam.recipients.length, MAX_BATCH_SIZE);
+            revert IntexNFT1155RouterCodec.BatchTooLarge(_sendParam.recipients.length, MAX_BATCH_SIZE);
         }
-        return IntexNFT1155BridgeCodec.encodeMulti(
-            IntexNFT1155BridgeCodec.MultiPayload({
+        return IntexNFT1155RouterCodec.encodeMulti(
+            IntexNFT1155RouterCodec.MultiPayload({
                 recipients: _sendParam.recipients, tokenIds: _sendParam.tokenIds, units: _sendParam.units
             })
         );
@@ -268,21 +268,20 @@ contract IntexNFT1155Bridge is
         require(msg.sender == address(BRIDGE), UnauthorizedBridge(msg.sender));
         (uint256 srcChainId,) = sender.parseEvmV1Calldata();
         uint32 chainId = SafeCast.toUint32(srcChainId);
-        bytes memory expected = _bs().remoteMessenger[chainId];
+        bytes memory expected = _bs().remoteRouter[chainId];
         require(
-            expected.length != 0 && keccak256(sender) == keccak256(expected),
-            UnauthorizedSourceMessenger(chainId, sender)
+            expected.length != 0 && keccak256(sender) == keccak256(expected), UnauthorizedSourceRouter(chainId, sender)
         );
         _dispatch(chainId, receiveId, payload);
         return IERC7786Recipient.receiveMessage.selector;
     }
 
     function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata message) private {
-        if (message.length < IntexNFT1155BridgeCodec.HEADER_LEN) {
-            revert IntexNFT1155BridgeCodec.InvalidPayloadLength(message.length, IntexNFT1155BridgeCodec.HEADER_LEN);
+        if (message.length < IntexNFT1155RouterCodec.HEADER_LEN) {
+            revert IntexNFT1155RouterCodec.InvalidPayloadLength(message.length, IntexNFT1155RouterCodec.HEADER_LEN);
         }
         uint8 version = uint8(message[0]);
-        if (version != BODY_VERSION_V1) revert IntexNFT1155BridgeCodec.UnsupportedBodyVersion(version);
+        if (version != BODY_VERSION_V1) revert IntexNFT1155RouterCodec.UnsupportedBodyVersion(version);
         uint8 msgType = uint8(message[1]);
 
         if (msgType == SEND_ONE) {
@@ -297,9 +296,9 @@ contract IntexNFT1155Bridge is
     }
 
     function _handleSingleReceive(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal {
-        IntexNFT1155BridgeCodec.SinglePayload memory p = IntexNFT1155BridgeCodec.decodeSingle(message);
+        IntexNFT1155RouterCodec.SinglePayload memory p = IntexNFT1155RouterCodec.decodeSingle(message);
 
-        IntexNFT1155BridgeCodec.assertAddress(p.to);
+        IntexNFT1155RouterCodec.assertAddress(p.to);
         if (p.to == bytes32(0)) revert InvalidReceiver();
         address toAddress = address(uint160(uint256(p.to)));
 
@@ -310,9 +309,9 @@ contract IntexNFT1155Bridge is
     }
 
     function _handleBatchReceive(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal {
-        IntexNFT1155BridgeCodec.BatchPayload memory p = IntexNFT1155BridgeCodec.decodeBatch(message);
+        IntexNFT1155RouterCodec.BatchPayload memory p = IntexNFT1155RouterCodec.decodeBatch(message);
 
-        IntexNFT1155BridgeCodec.assertAddress(p.to);
+        IntexNFT1155RouterCodec.assertAddress(p.to);
         if (p.to == bytes32(0)) revert InvalidReceiver();
         address toAddress = address(uint160(uint256(p.to)));
 
@@ -324,11 +323,11 @@ contract IntexNFT1155Bridge is
     }
 
     function _handleMultiReceive(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal {
-        IntexNFT1155BridgeCodec.MultiPayload memory p = IntexNFT1155BridgeCodec.decodeMulti(message);
+        IntexNFT1155RouterCodec.MultiPayload memory p = IntexNFT1155RouterCodec.decodeMulti(message);
 
         address[] memory recipients = new address[](p.recipients.length);
         for (uint256 i = 0; i < p.recipients.length; i++) {
-            IntexNFT1155BridgeCodec.assertAddress(p.recipients[i]);
+            IntexNFT1155RouterCodec.assertAddress(p.recipients[i]);
             if (p.recipients[i] == bytes32(0)) revert InvalidReceiver();
             recipients[i] = address(uint160(uint256(p.recipients[i])));
             _tryCrosschainMintOne(srcChainId, receiveId, i, recipients[i], p.tokenIds[i], p.units[i]);
@@ -365,7 +364,7 @@ contract IntexNFT1155Bridge is
     /// @notice Permissionless retry of a previously-failed crosschainMint. A success clears the
     ///         entry.
     function retryCrosschainMint(bytes32 receiveId, uint256 idx) external nonReentrant {
-        IntexNFT1155BridgeStorage storage $ = _bs();
+        IntexNFT1155RouterStorage storage $ = _bs();
         FailedCrosschainMint memory f = $.failedCrosschainMints[receiveId][idx];
         if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
         delete $.failedCrosschainMints[receiveId][idx];
@@ -380,7 +379,7 @@ contract IntexNFT1155Bridge is
     /// @param receiveId Inbound message id where the item's crosschainMint is stranded.
     /// @param idx Position of the stranded item in that batch.
     function reclaimToSource(bytes32 receiveId, uint256 idx) external payable nonReentrant returns (bytes32 sendId) {
-        IntexNFT1155BridgeStorage storage $ = _bs();
+        IntexNFT1155RouterStorage storage $ = _bs();
         FailedCrosschainMint memory f = $.failedCrosschainMints[receiveId][idx];
         if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
         delete $.failedCrosschainMints[receiveId][idx];
@@ -420,8 +419,8 @@ contract IntexNFT1155Bridge is
         tokenIds[0] = f.tokenId;
         uint256[] memory units = new uint256[](1);
         units[0] = f.units;
-        return IntexNFT1155BridgeCodec.encodeMulti(
-            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: units})
+        return IntexNFT1155RouterCodec.encodeMulti(
+            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: units})
         );
     }
 }

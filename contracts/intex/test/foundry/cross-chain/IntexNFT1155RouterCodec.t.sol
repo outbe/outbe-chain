@@ -3,36 +3,36 @@ pragma solidity 0.8.30;
 
 import {Test} from "forge-std/Test.sol";
 
-import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
+import {IntexNFT1155RouterCodec} from "@contracts/shared/libs/IntexNFT1155RouterCodec.sol";
 
 /// @dev External wrappers so that tests can exercise the `bytes calldata` decoders from memory.
 contract CodecHarness {
-    function decodeBatch(bytes calldata _message) external pure returns (IntexNFT1155BridgeCodec.BatchPayload memory) {
-        return IntexNFT1155BridgeCodec.decodeBatch(_message);
+    function decodeBatch(bytes calldata _message) external pure returns (IntexNFT1155RouterCodec.BatchPayload memory) {
+        return IntexNFT1155RouterCodec.decodeBatch(_message);
     }
 
-    function decodeMulti(bytes calldata _message) external pure returns (IntexNFT1155BridgeCodec.MultiPayload memory) {
-        return IntexNFT1155BridgeCodec.decodeMulti(_message);
+    function decodeMulti(bytes calldata _message) external pure returns (IntexNFT1155RouterCodec.MultiPayload memory) {
+        return IntexNFT1155RouterCodec.decodeMulti(_message);
     }
 
     function decodeSingle(bytes calldata _message)
         external
         pure
-        returns (IntexNFT1155BridgeCodec.SinglePayload memory)
+        returns (IntexNFT1155RouterCodec.SinglePayload memory)
     {
-        return IntexNFT1155BridgeCodec.decodeSingle(_message);
+        return IntexNFT1155RouterCodec.decodeSingle(_message);
     }
 
     function assertAddress(bytes32 _value) external pure {
-        IntexNFT1155BridgeCodec.assertAddress(_value);
+        IntexNFT1155RouterCodec.assertAddress(_value);
     }
 }
 
-/// @title IntexNFT1155BridgeCodecTest
+/// @title IntexNFT1155RouterCodecTest
 /// @notice The batch wire codec: single-pass `abi.encode`/`abi.decode` over the named
 ///         `BatchPayload`/`MultiPayload` structs. Exercises the deep-module behaviour directly:
 ///         round-trip, version gating, batch-size cap, and the malformed-address reject.
-contract IntexNFT1155BridgeCodecTest is Test {
+contract IntexNFT1155RouterCodecTest is Test {
     CodecHarness internal harness;
 
     function setUp() public {
@@ -46,12 +46,12 @@ contract IntexNFT1155BridgeCodecTest is Test {
     // --- round-trip ---
 
     function test_SingleRoundTrip_PreservesFields() public view {
-        IntexNFT1155BridgeCodec.SinglePayload memory p =
-            IntexNFT1155BridgeCodec.SinglePayload({to: _bytes32(address(0xBEEF)), intexId: 7, units: 3});
-        bytes memory encoded = IntexNFT1155BridgeCodec.encodeSingle(p);
-        assertEq(uint8(encoded[0]), IntexNFT1155BridgeCodec.BODY_VERSION_V1);
-        assertEq(uint8(encoded[1]), IntexNFT1155BridgeCodec.SEND_ONE);
-        IntexNFT1155BridgeCodec.SinglePayload memory d = harness.decodeSingle(encoded);
+        IntexNFT1155RouterCodec.SinglePayload memory p =
+            IntexNFT1155RouterCodec.SinglePayload({to: _bytes32(address(0xBEEF)), intexId: 7, units: 3});
+        bytes memory encoded = IntexNFT1155RouterCodec.encodeSingle(p);
+        assertEq(uint8(encoded[0]), IntexNFT1155RouterCodec.BODY_VERSION_V1);
+        assertEq(uint8(encoded[1]), IntexNFT1155RouterCodec.SEND_ONE);
+        IntexNFT1155RouterCodec.SinglePayload memory d = harness.decodeSingle(encoded);
         assertEq(d.to, p.to);
         assertEq(d.intexId, 7);
         assertEq(d.units, 3);
@@ -59,12 +59,12 @@ contract IntexNFT1155BridgeCodecTest is Test {
 
     function test_DecodeSingle_RevertsOnTrailingBytes() public {
         bytes memory encoded = abi.encodePacked(
-            IntexNFT1155BridgeCodec.encodeSingle(
-                IntexNFT1155BridgeCodec.SinglePayload({to: _bytes32(address(0xBEEF)), intexId: 7, units: 3})
+            IntexNFT1155RouterCodec.encodeSingle(
+                IntexNFT1155RouterCodec.SinglePayload({to: _bytes32(address(0xBEEF)), intexId: 7, units: 3})
             ),
             bytes32(0)
         );
-        vm.expectRevert(IntexNFT1155BridgeCodec.MalformedBody.selector);
+        vm.expectRevert(IntexNFT1155RouterCodec.MalformedBody.selector);
         harness.decodeSingle(encoded);
     }
 
@@ -76,16 +76,16 @@ contract IntexNFT1155BridgeCodecTest is Test {
         amounts[0] = 5;
         amounts[1] = 7;
 
-        IntexNFT1155BridgeCodec.BatchPayload memory p =
-            IntexNFT1155BridgeCodec.BatchPayload({to: _bytes32(address(0xA11CE)), tokenIds: tokenIds, units: amounts});
+        IntexNFT1155RouterCodec.BatchPayload memory p =
+            IntexNFT1155RouterCodec.BatchPayload({to: _bytes32(address(0xA11CE)), tokenIds: tokenIds, units: amounts});
 
-        bytes memory encoded = IntexNFT1155BridgeCodec.encodeBatch(p);
+        bytes memory encoded = IntexNFT1155RouterCodec.encodeBatch(p);
 
         // Wire prefix is [bodyVersion(1)][msgType(1)].
-        assertEq(uint8(encoded[0]), IntexNFT1155BridgeCodec.BODY_VERSION_V1, "version byte V1");
-        assertEq(uint8(encoded[1]), IntexNFT1155BridgeCodec.SEND_BATCH, "msgType SEND_BATCH");
+        assertEq(uint8(encoded[0]), IntexNFT1155RouterCodec.BODY_VERSION_V1, "version byte V1");
+        assertEq(uint8(encoded[1]), IntexNFT1155RouterCodec.SEND_BATCH, "msgType SEND_BATCH");
 
-        IntexNFT1155BridgeCodec.BatchPayload memory decoded = harness.decodeBatch(encoded);
+        IntexNFT1155RouterCodec.BatchPayload memory decoded = harness.decodeBatch(encoded);
         assertEq(decoded.to, p.to, "to round-trips");
         assertEq(decoded.tokenIds.length, 2, "tokenIds length");
         assertEq(decoded.tokenIds[0], tokenIds[0], "tokenId 0");
@@ -105,14 +105,14 @@ contract IntexNFT1155BridgeCodecTest is Test {
         amounts[0] = 3;
         amounts[1] = 4;
 
-        IntexNFT1155BridgeCodec.MultiPayload memory p =
-            IntexNFT1155BridgeCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: amounts});
+        IntexNFT1155RouterCodec.MultiPayload memory p =
+            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: amounts});
 
-        bytes memory encoded = IntexNFT1155BridgeCodec.encodeMulti(p);
-        assertEq(uint8(encoded[0]), IntexNFT1155BridgeCodec.BODY_VERSION_V1, "version byte V1");
-        assertEq(uint8(encoded[1]), IntexNFT1155BridgeCodec.SEND_MULTI, "msgType SEND_MULTI");
+        bytes memory encoded = IntexNFT1155RouterCodec.encodeMulti(p);
+        assertEq(uint8(encoded[0]), IntexNFT1155RouterCodec.BODY_VERSION_V1, "version byte V1");
+        assertEq(uint8(encoded[1]), IntexNFT1155RouterCodec.SEND_MULTI, "msgType SEND_MULTI");
 
-        IntexNFT1155BridgeCodec.MultiPayload memory decoded = harness.decodeMulti(encoded);
+        IntexNFT1155RouterCodec.MultiPayload memory decoded = harness.decodeMulti(encoded);
         assertEq(decoded.recipients.length, 2, "recipients length");
         assertEq(decoded.recipients[0], recipients[0], "recipient 0");
         assertEq(decoded.recipients[1], recipients[1], "recipient 1");
@@ -123,43 +123,43 @@ contract IntexNFT1155BridgeCodecTest is Test {
     // --- version gating: an unknown version fails closed ---
 
     function test_DecodeBatch_Version2_RevertsUnsupportedBodyVersion() public {
-        bytes memory unknown = abi.encodePacked(uint8(2), IntexNFT1155BridgeCodec.SEND_BATCH, abi.encode(_emptyBatch()));
-        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155BridgeCodec.UnsupportedBodyVersion.selector, uint8(2)));
+        bytes memory unknown = abi.encodePacked(uint8(2), IntexNFT1155RouterCodec.SEND_BATCH, abi.encode(_emptyBatch()));
+        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155RouterCodec.UnsupportedBodyVersion.selector, uint8(2)));
         harness.decodeBatch(unknown);
     }
 
     function test_DecodeMulti_Version2_RevertsUnsupportedBodyVersion() public {
-        bytes memory unknown = abi.encodePacked(uint8(2), IntexNFT1155BridgeCodec.SEND_MULTI, abi.encode(_emptyMulti()));
-        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155BridgeCodec.UnsupportedBodyVersion.selector, uint8(2)));
+        bytes memory unknown = abi.encodePacked(uint8(2), IntexNFT1155RouterCodec.SEND_MULTI, abi.encode(_emptyMulti()));
+        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155RouterCodec.UnsupportedBodyVersion.selector, uint8(2)));
         harness.decodeMulti(unknown);
     }
 
     // --- batch-size cap ---
 
     function test_DecodeBatch_AtCap_Succeeds() public view {
-        IntexNFT1155BridgeCodec.BatchPayload memory p = _batchOfSize(IntexNFT1155BridgeCodec.MAX_BATCH_SIZE);
-        IntexNFT1155BridgeCodec.BatchPayload memory decoded =
-            harness.decodeBatch(IntexNFT1155BridgeCodec.encodeBatch(p));
-        assertEq(decoded.tokenIds.length, IntexNFT1155BridgeCodec.MAX_BATCH_SIZE, "exactly MAX_BATCH_SIZE decodes");
+        IntexNFT1155RouterCodec.BatchPayload memory p = _batchOfSize(IntexNFT1155RouterCodec.MAX_BATCH_SIZE);
+        IntexNFT1155RouterCodec.BatchPayload memory decoded =
+            harness.decodeBatch(IntexNFT1155RouterCodec.encodeBatch(p));
+        assertEq(decoded.tokenIds.length, IntexNFT1155RouterCodec.MAX_BATCH_SIZE, "exactly MAX_BATCH_SIZE decodes");
     }
 
     function test_DecodeBatch_OverCap_RevertsBatchTooLarge() public {
-        uint256 over = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE + 1;
-        bytes memory encoded = IntexNFT1155BridgeCodec.encodeBatch(_batchOfSize(over));
+        uint256 over = IntexNFT1155RouterCodec.MAX_BATCH_SIZE + 1;
+        bytes memory encoded = IntexNFT1155RouterCodec.encodeBatch(_batchOfSize(over));
         vm.expectRevert(
             abi.encodeWithSelector(
-                IntexNFT1155BridgeCodec.BatchTooLarge.selector, over, IntexNFT1155BridgeCodec.MAX_BATCH_SIZE
+                IntexNFT1155RouterCodec.BatchTooLarge.selector, over, IntexNFT1155RouterCodec.MAX_BATCH_SIZE
             )
         );
         harness.decodeBatch(encoded);
     }
 
     function test_DecodeMulti_OverCap_RevertsBatchTooLarge() public {
-        uint256 over = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE + 1;
-        bytes memory encoded = IntexNFT1155BridgeCodec.encodeMulti(_multiOfSize(over));
+        uint256 over = IntexNFT1155RouterCodec.MAX_BATCH_SIZE + 1;
+        bytes memory encoded = IntexNFT1155RouterCodec.encodeMulti(_multiOfSize(over));
         vm.expectRevert(
             abi.encodeWithSelector(
-                IntexNFT1155BridgeCodec.BatchTooLarge.selector, over, IntexNFT1155BridgeCodec.MAX_BATCH_SIZE
+                IntexNFT1155RouterCodec.BatchTooLarge.selector, over, IntexNFT1155RouterCodec.MAX_BATCH_SIZE
             )
         );
         harness.decodeMulti(encoded);
@@ -168,13 +168,13 @@ contract IntexNFT1155BridgeCodecTest is Test {
     // --- array-length cross-validation (forged inbound body) ---
 
     function test_DecodeBatch_MismatchedArrays_RevertsArrayLengthMismatch() public {
-        IntexNFT1155BridgeCodec.BatchPayload memory p = _emptyBatch();
+        IntexNFT1155RouterCodec.BatchPayload memory p = _emptyBatch();
         p.tokenIds = new uint256[](2);
         p.units = new uint256[](1);
         bytes memory encoded = abi.encodePacked(
-            IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND_BATCH, abi.encode(p)
+            IntexNFT1155RouterCodec.BODY_VERSION_V1, IntexNFT1155RouterCodec.SEND_BATCH, abi.encode(p)
         );
-        vm.expectRevert(IntexNFT1155BridgeCodec.ArrayLengthMismatch.selector);
+        vm.expectRevert(IntexNFT1155RouterCodec.ArrayLengthMismatch.selector);
         harness.decodeBatch(encoded);
     }
 
@@ -187,8 +187,8 @@ contract IntexNFT1155BridgeCodecTest is Test {
         // address.
         bytes memory multiBody = abi.encode(_multiOfSize(1));
         bytes memory packet =
-            abi.encodePacked(IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND_BATCH, multiBody);
-        vm.expectRevert(IntexNFT1155BridgeCodec.MalformedBody.selector);
+            abi.encodePacked(IntexNFT1155RouterCodec.BODY_VERSION_V1, IntexNFT1155RouterCodec.SEND_BATCH, multiBody);
+        vm.expectRevert(IntexNFT1155RouterCodec.MalformedBody.selector);
         harness.decodeBatch(packet);
     }
 
@@ -198,7 +198,7 @@ contract IntexNFT1155BridgeCodecTest is Test {
         // closed before the canonical check. The key property is: no misdecode-and-crosschainMint.
         bytes memory batchBody = abi.encode(_batchOfSize(1));
         bytes memory packet =
-            abi.encodePacked(IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND_MULTI, batchBody);
+            abi.encodePacked(IntexNFT1155RouterCodec.BODY_VERSION_V1, IntexNFT1155RouterCodec.SEND_MULTI, batchBody);
         vm.expectRevert();
         harness.decodeMulti(packet);
     }
@@ -206,12 +206,12 @@ contract IntexNFT1155BridgeCodecTest is Test {
     function test_DecodeBatch_TrailingBytes_RevertsMalformedBody() public {
         // `abi.decode` silently ignores trailing bytes. The canonical check rejects them.
         bytes memory packet = abi.encodePacked(
-            IntexNFT1155BridgeCodec.BODY_VERSION_V1,
-            IntexNFT1155BridgeCodec.SEND_BATCH,
+            IntexNFT1155RouterCodec.BODY_VERSION_V1,
+            IntexNFT1155RouterCodec.SEND_BATCH,
             abi.encode(_batchOfSize(1)),
             hex"deadbeef"
         );
-        vm.expectRevert(IntexNFT1155BridgeCodec.MalformedBody.selector);
+        vm.expectRevert(IntexNFT1155RouterCodec.MalformedBody.selector);
         harness.decodeBatch(packet);
     }
 
@@ -219,7 +219,7 @@ contract IntexNFT1155BridgeCodecTest is Test {
 
     function test_AssertAddress_HighBitsSet_RevertsMalformedAddress() public {
         bytes32 bad = bytes32(uint256(1) << 200);
-        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155BridgeCodec.MalformedAddress.selector, bad));
+        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155RouterCodec.MalformedAddress.selector, bad));
         harness.assertAddress(bad);
     }
 
@@ -230,44 +230,44 @@ contract IntexNFT1155BridgeCodecTest is Test {
     // --- decodeMulti array-length mismatches ---
 
     function test_DecodeMulti_MismatchTokenIds_RevertsArrayLengthMismatch() public {
-        IntexNFT1155BridgeCodec.MultiPayload memory p = _emptyMulti();
+        IntexNFT1155RouterCodec.MultiPayload memory p = _emptyMulti();
         p.recipients = new bytes32[](2);
         p.tokenIds = new uint256[](1);
         p.units = new uint256[](2);
         bytes memory encoded = abi.encodePacked(
-            IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND_MULTI, abi.encode(p)
+            IntexNFT1155RouterCodec.BODY_VERSION_V1, IntexNFT1155RouterCodec.SEND_MULTI, abi.encode(p)
         );
-        vm.expectRevert(IntexNFT1155BridgeCodec.ArrayLengthMismatch.selector);
+        vm.expectRevert(IntexNFT1155RouterCodec.ArrayLengthMismatch.selector);
         harness.decodeMulti(encoded);
     }
 
     function test_DecodeMulti_MismatchAmounts_RevertsArrayLengthMismatch() public {
-        IntexNFT1155BridgeCodec.MultiPayload memory p = _emptyMulti();
+        IntexNFT1155RouterCodec.MultiPayload memory p = _emptyMulti();
         p.recipients = new bytes32[](2);
         p.tokenIds = new uint256[](2);
         p.units = new uint256[](1);
         bytes memory encoded = abi.encodePacked(
-            IntexNFT1155BridgeCodec.BODY_VERSION_V1, IntexNFT1155BridgeCodec.SEND_MULTI, abi.encode(p)
+            IntexNFT1155RouterCodec.BODY_VERSION_V1, IntexNFT1155RouterCodec.SEND_MULTI, abi.encode(p)
         );
-        vm.expectRevert(IntexNFT1155BridgeCodec.ArrayLengthMismatch.selector);
+        vm.expectRevert(IntexNFT1155RouterCodec.ArrayLengthMismatch.selector);
         harness.decodeMulti(encoded);
     }
 
     // --- fixtures ---
 
-    function _emptyBatch() internal pure returns (IntexNFT1155BridgeCodec.BatchPayload memory) {
+    function _emptyBatch() internal pure returns (IntexNFT1155RouterCodec.BatchPayload memory) {
         return
-            IntexNFT1155BridgeCodec.BatchPayload({to: bytes32(0), tokenIds: new uint256[](0), units: new uint256[](0)});
+            IntexNFT1155RouterCodec.BatchPayload({to: bytes32(0), tokenIds: new uint256[](0), units: new uint256[](0)});
     }
 
-    function _emptyMulti() internal pure returns (IntexNFT1155BridgeCodec.MultiPayload memory) {
-        return IntexNFT1155BridgeCodec.MultiPayload({
+    function _emptyMulti() internal pure returns (IntexNFT1155RouterCodec.MultiPayload memory) {
+        return IntexNFT1155RouterCodec.MultiPayload({
             recipients: new bytes32[](0), tokenIds: new uint256[](0), units: new uint256[](0)
         });
     }
 
-    function _batchOfSize(uint256 n) internal pure returns (IntexNFT1155BridgeCodec.BatchPayload memory p) {
-        p = IntexNFT1155BridgeCodec.BatchPayload({
+    function _batchOfSize(uint256 n) internal pure returns (IntexNFT1155RouterCodec.BatchPayload memory p) {
+        p = IntexNFT1155RouterCodec.BatchPayload({
             to: _bytes32(address(0xA11CE)), tokenIds: new uint256[](n), units: new uint256[](n)
         });
         for (uint256 i = 0; i < n; i++) {
@@ -276,8 +276,8 @@ contract IntexNFT1155BridgeCodecTest is Test {
         }
     }
 
-    function _multiOfSize(uint256 n) internal pure returns (IntexNFT1155BridgeCodec.MultiPayload memory p) {
-        p = IntexNFT1155BridgeCodec.MultiPayload({
+    function _multiOfSize(uint256 n) internal pure returns (IntexNFT1155RouterCodec.MultiPayload memory p) {
+        p = IntexNFT1155RouterCodec.MultiPayload({
             recipients: new bytes32[](n), tokenIds: new uint256[](n), units: new uint256[](n)
         });
         for (uint256 i = 0; i < n; i++) {

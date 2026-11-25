@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {Vm} from "forge-std/Vm.sol";
 
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -99,8 +99,8 @@ contract PatternADeferTest is CrossChainTest {
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
     TargetRouter internal bnbRouter;
-    IntexNFT1155Bridge internal nftBridge;
-    IntexNFT1155Bridge internal nftBridgeOutbe;
+    IntexNFT1155Router internal nftBridge;
+    IntexNFT1155Router internal nftBridgeOutbe;
     IntexNFT1155 internal intex;
     IntexNFT1155 internal intexOutbe;
     StubAuctionWithBids internal stubAuction;
@@ -125,9 +125,9 @@ contract PatternADeferTest is CrossChainTest {
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
         nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
 
-        // Wire the inbound source of the router and the remote messenger of the NFT bridge.
+        // Wire the inbound source of the router and the remote router of the NFT bridge.
         _wireOutbeIca(bnbRouter, outbeIca);
-        nftBridge.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
+        nftBridge.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
 
         stubAuction = new StubAuctionWithBids();
         bnbRouter.setDependencies(address(stubAuction), address(intex), admin);

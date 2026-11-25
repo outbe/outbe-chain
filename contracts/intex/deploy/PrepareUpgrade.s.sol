@@ -8,7 +8,7 @@ import {BaseScript} from "./BaseScript.s.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 
 /// @title PrepareUpgrade
@@ -33,8 +33,8 @@ contract PrepareUpgrade is BaseScript, UpgradeProposal {
         if (index == 1) return address(new EscrowAdapter());
         if (index == 2) return address(new IntexAuction());
         if (index == 3) {
-            IntexNFT1155Bridge bridge = IntexNFT1155Bridge(payable(proxy));
-            return address(new IntexNFT1155Bridge(address(bridge.token()), address(bridge.BRIDGE())));
+            IntexNFT1155Router bridge = IntexNFT1155Router(payable(proxy));
+            return address(new IntexNFT1155Router(address(bridge.token()), address(bridge.BRIDGE())));
         }
         TargetRouter router = TargetRouter(payable(proxy));
         return

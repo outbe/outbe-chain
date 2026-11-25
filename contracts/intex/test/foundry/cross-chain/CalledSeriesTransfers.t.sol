@@ -5,8 +5,8 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {SendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {SendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
@@ -18,7 +18,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
     bytes14 internal constant SERIES_ID = "20260501-USD-U";
 
     IntexNFT1155 internal intex;
-    IntexNFT1155Bridge internal nftBridge;
+    IntexNFT1155Router internal nftBridge;
     address internal admin = address(this);
     address internal owner = address(0xCAFE);
     address internal stranger = address(0xBEEF);
@@ -28,7 +28,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(admin, admin);
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
-        nftBridge.registerRemoteMessenger(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(0xD57)));
+        nftBridge.setRemoteRouter(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(0xD57)));
 
         intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridge));
 

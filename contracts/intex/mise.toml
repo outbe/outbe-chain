@@ -31,8 +31,8 @@ rm -f ./abi-export/*.json
 for target in \
   src/shared/IntexNFT1155.sol:IntexNFT1155 \
   src/shared/interfaces/IIntexNFT1155.sol:IIntexNFT1155 \
-  src/shared/IntexNFT1155Bridge.sol:IntexNFT1155Bridge \
-  src/shared/interfaces/IIntexNFT1155Bridge.sol:IIntexNFT1155Bridge \
+  src/shared/IntexNFT1155Router.sol:IntexNFT1155Router \
+  src/shared/interfaces/IIntexNFT1155Router.sol:IIntexNFT1155Router \
   src/target/EscrowAdapter.sol:EscrowAdapter \
   src/target/interfaces/IEscrowAdapter.sol:IEscrowAdapter \
   src/target/IntexAuction.sol:IntexAuction \

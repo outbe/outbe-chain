@@ -37,7 +37,7 @@ contract ConfigureTarget is BaseScript {
             nft: predictProxy(factory, deployer, "IntexNFT1155"),
             escrow: predictProxy(factory, deployer, "EscrowAdapter"),
             auction: predictProxy(factory, deployer, "IntexAuction"),
-            nftBridge: predictProxy(factory, deployer, "IntexNFT1155Bridge"),
+            nftBridge: predictProxy(factory, deployer, "IntexNFT1155Router"),
             router: predictProxy(factory, deployer, "TargetRouter"),
             compact: vm.envAddress("COMPACT_ADDRESS"),
             wcoen: vm.envAddress("WCOEN_TOKEN")

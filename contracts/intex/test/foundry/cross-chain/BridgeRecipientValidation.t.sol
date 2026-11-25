@@ -5,9 +5,9 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {SendParam, BatchSendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
-import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {SendParam, BatchSendParam, MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {IntexNFT1155RouterCodec} from "@contracts/shared/libs/IntexNFT1155RouterCodec.sol";
 
 /// @notice The send path rejects a non-canonical recipient (dirty high bits) before any burn, as
 ///         the receive path does. Otherwise the burn would have no mint counterpart and the message
@@ -17,7 +17,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
     uint256 private constant FEE = 0.001 ether;
 
     IntexNFT1155 private token;
-    IntexNFT1155Bridge private adapter;
+    IntexNFT1155Router private adapter;
 
     address private admin = address(this);
     address private user = address(0x1);
@@ -37,14 +37,14 @@ contract BridgeRecipientValidationTest is CrossChainTest {
         token = DeployProxy.intexNFT1155(admin, admin);
         adapter = DeployProxy.intexNFT1155Bridge(address(token), address(bridge), admin);
         token.grantRole(token.BRIDGE_ROLE(), address(adapter));
-        adapter.registerRemoteMessenger(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapter)));
+        adapter.setRemoteRouter(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapter)));
 
         token.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
         token.issueIntex(user, AMOUNT, SERIES_ID);
     }
 
     function _expectMalformed() internal {
-        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155BridgeCodec.MalformedAddress.selector, DIRTY));
+        vm.expectRevert(abi.encodeWithSelector(IntexNFT1155RouterCodec.MalformedAddress.selector, DIRTY));
     }
 
     function _ids() private pure returns (uint256[] memory ids) {

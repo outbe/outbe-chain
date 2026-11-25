@@ -5,21 +5,21 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
 import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 /// @dev UUPS coverage for both NFT bridge clients. Both are now ERC-7786 clients on a
 ///      {MockERC7786Bridge}.
-contract IntexNFT1155BridgeUupsTest is CrossChainTest {
+contract IntexNFT1155RouterUupsTest is CrossChainTest {
     uint32 internal constant B_CHAIN_ID = 2;
 
     address internal admin = makeAddr("admin");
     address internal stranger = makeAddr("stranger");
     address internal tokenA = makeAddr("tokenA");
 
-    IntexNFT1155Bridge internal adapter;
-    IntexNFT1155Bridge internal batch;
+    IntexNFT1155Router internal adapter;
+    IntexNFT1155Router internal batch;
 
     function setUp() public {
         _setUpBridge();
@@ -42,17 +42,17 @@ contract IntexNFT1155BridgeUupsTest is CrossChainTest {
     }
 
     function test_RevertWhen_ImplementationInitialized() public {
-        IntexNFT1155Bridge impl = new IntexNFT1155Bridge(tokenA, address(bridge));
+        IntexNFT1155Router impl = new IntexNFT1155Router(tokenA, address(bridge));
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         impl.initialize(admin);
 
-        IntexNFT1155Bridge batchImpl = new IntexNFT1155Bridge(tokenA, address(bridge));
+        IntexNFT1155Router batchImpl = new IntexNFT1155Router(tokenA, address(bridge));
         vm.expectRevert(Initializable.InvalidInitialization.selector);
         batchImpl.initialize(admin);
     }
 
     function test_RevertWhen_AdapterUpgradeByNonAdmin() public {
-        IntexNFT1155Bridge newImpl = new IntexNFT1155Bridge(tokenA, address(bridge));
+        IntexNFT1155Router newImpl = new IntexNFT1155Router(tokenA, address(bridge));
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
@@ -61,7 +61,7 @@ contract IntexNFT1155BridgeUupsTest is CrossChainTest {
     }
 
     function test_RevertWhen_BatchUpgradeByNonAdmin() public {
-        IntexNFT1155Bridge newImpl = new IntexNFT1155Bridge(tokenA, address(bridge));
+        IntexNFT1155Router newImpl = new IntexNFT1155Router(tokenA, address(bridge));
         vm.prank(stranger);
         vm.expectRevert(
             abi.encodeWithSelector(IAccessControl.AccessControlUnauthorizedAccount.selector, stranger, bytes32(0))
@@ -69,18 +69,18 @@ contract IntexNFT1155BridgeUupsTest is CrossChainTest {
         batch.upgradeToAndCall(address(newImpl), "");
     }
 
-    function test_Upgrade_PreservesRemoteMessengerAndImmutables() public {
+    function test_Upgrade_PreservesRemoteRouterAndImmutables() public {
         bytes memory peer = _interop(B_CHAIN_ID, address(0xBEEF));
         vm.prank(admin);
-        adapter.registerRemoteMessenger(B_CHAIN_ID, peer);
+        adapter.setRemoteRouter(B_CHAIN_ID, peer);
 
-        IntexNFT1155Bridge newImpl = new IntexNFT1155Bridge(tokenA, address(bridge));
+        IntexNFT1155Router newImpl = new IntexNFT1155Router(tokenA, address(bridge));
         vm.prank(admin);
         adapter.upgradeToAndCall(address(newImpl), "");
 
         bytes32 implSlot = vm.load(address(adapter), ERC1967Utils.IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(implSlot))), address(newImpl));
-        assertEq(adapter.remoteMessenger(B_CHAIN_ID), peer);
+        assertEq(adapter.remoteRouter(B_CHAIN_ID), peer);
         assertEq(address(adapter.token()), tokenA);
         assertTrue(adapter.hasRole(adapter.DEFAULT_ADMIN_ROLE(), admin));
     }

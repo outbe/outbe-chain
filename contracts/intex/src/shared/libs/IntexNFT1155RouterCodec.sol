@@ -2,15 +2,15 @@
 pragma solidity 0.8.30;
 
 /**
- * @title IntexNFT1155BridgeCodec
+ * @title IntexNFT1155RouterCodec
  * @author Outbe
- * @notice Encode/decode for the `IntexNFT1155Bridge` ERC-7786 wire body.
+ * @notice Encode/decode for the `IntexNFT1155Router` ERC-7786 wire body.
  * @dev Wire layout: `[bodyVersion(1)][msgType(1)][abi.encode(payload)]`, single-pass
  *      `abi.encode`/`abi.decode` over named structs. `MAX_BATCH_SIZE` caps the decoded array
  *      length. Address well-formedness and the zero-recipient reject stay with the adapter (it owns
  *      the crosschainMint semantics).
  */
-library IntexNFT1155BridgeCodec {
+library IntexNFT1155RouterCodec {
     /// @notice Active body version emitted by the encoders and required by every decoder.
     uint8 internal constant BODY_VERSION_V1 = 1;
 

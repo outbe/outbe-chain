@@ -13,9 +13,9 @@ import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
-import {IntexNFT1155BridgeCodec} from "@contracts/shared/libs/IntexNFT1155BridgeCodec.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {MultiRecipientSendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
+import {IntexNFT1155RouterCodec} from "@contracts/shared/libs/IntexNFT1155RouterCodec.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
@@ -175,12 +175,12 @@ contract GasBudgetTest is CrossChainTest {
     }
 
     function test_TheQuoteCoversABridgeMintAtItsWidest() public {
-        uint256 items = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
+        uint256 items = IntexNFT1155RouterCodec.MAX_BATCH_SIZE;
         IntexNFT1155 dstToken = DeployProxy.intexNFT1155(admin, admin);
-        IntexNFT1155Bridge src = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
-        IntexNFT1155Bridge dst = DeployProxy.intexNFT1155Bridge(address(dstToken), address(bridge), admin);
-        src.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
-        dst.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
+        IntexNFT1155Router src = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        IntexNFT1155Router dst = DeployProxy.intexNFT1155Bridge(address(dstToken), address(bridge), admin);
+        src.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
+        dst.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
         intex.grantRole(intex.BRIDGE_ROLE(), address(src));
         dstToken.grantRole(dstToken.BRIDGE_ROLE(), address(dst));
 
@@ -221,12 +221,12 @@ contract GasBudgetTest is CrossChainTest {
     ///      Tokens are already burned on the source, so a budget that only covers the happy path
     ///      strands them.
     function test_TheQuoteCoversABridgeMintWhereEveryItemIsRejected() public {
-        uint256 items = IntexNFT1155BridgeCodec.MAX_BATCH_SIZE;
+        uint256 items = IntexNFT1155RouterCodec.MAX_BATCH_SIZE;
         IntexNFT1155 dstToken = DeployProxy.intexNFT1155(admin, admin);
-        IntexNFT1155Bridge src = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
-        IntexNFT1155Bridge dst = DeployProxy.intexNFT1155Bridge(address(dstToken), address(bridge), admin);
-        src.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
-        dst.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
+        IntexNFT1155Router src = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        IntexNFT1155Router dst = DeployProxy.intexNFT1155Bridge(address(dstToken), address(bridge), admin);
+        src.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(dst)));
+        dst.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(src)));
         intex.grantRole(intex.BRIDGE_ROLE(), address(src));
         dstToken.grantRole(dstToken.BRIDGE_ROLE(), address(dst));
 

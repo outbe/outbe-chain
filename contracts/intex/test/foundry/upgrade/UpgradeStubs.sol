@@ -5,7 +5,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 
 /// @dev v1.1 upgrade stubs that the upgrade drill uses. Each stub inherits the real implementation
 ///      and adds a single no-op view. An upgrade thus exercises a genuinely new code path and
@@ -40,8 +40,8 @@ contract TargetRouterV2 is TargetRouter {
     }
 }
 
-contract IntexNFT1155BridgeV2 is IntexNFT1155Bridge {
-    constructor(address tokenAddr, address lzEndpoint) IntexNFT1155Bridge(tokenAddr, lzEndpoint) {}
+contract IntexNFT1155RouterV2 is IntexNFT1155Router {
+    constructor(address tokenAddr, address lzEndpoint) IntexNFT1155Router(tokenAddr, lzEndpoint) {}
 
     function upgradeProbe() external pure returns (uint256) {
         return UPGRADE_PROBE;

@@ -10,7 +10,7 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {
@@ -20,7 +20,7 @@ import {
     IntexAuctionV2,
     EscrowAdapterV2,
     TargetRouterV2,
-    IntexNFT1155BridgeV2
+    IntexNFT1155RouterV2
 } from "./UpgradeStubs.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
 import {MockTheCompact} from "@test-mocks/MockTheCompact.sol";
@@ -187,23 +187,23 @@ contract UpgradeDrillTest is CrossChainTest {
         assertEq(address(target.erc20Router()), erc20Router, "erc20Router immutable lost");
     }
 
-    function test_Drill_IntexNFT1155Bridge() public {
+    function test_Drill_IntexNFT1155Router() public {
         address tokenAddr = makeAddr("token");
-        IntexNFT1155Bridge batch = DeployProxy.intexNFT1155Bridge(tokenAddr, address(bridge), admin);
+        IntexNFT1155Router batch = DeployProxy.intexNFT1155Bridge(tokenAddr, address(bridge), admin);
         address relayer = makeAddr("relayer");
         bytes memory remote = _interop(B_CHAIN_ID, address(0xBEEF));
 
         vm.startPrank(admin);
-        batch.registerRemoteMessenger(B_CHAIN_ID, remote);
+        batch.setRemoteRouter(B_CHAIN_ID, remote);
         batch.grantRole(batch.DEFAULT_ADMIN_ROLE(), relayer);
         vm.stopPrank();
 
-        IntexNFT1155BridgeV2 newImpl = new IntexNFT1155BridgeV2(tokenAddr, address(bridge));
+        IntexNFT1155RouterV2 newImpl = new IntexNFT1155RouterV2(tokenAddr, address(bridge));
         vm.prank(admin);
         batch.upgradeToAndCall(address(newImpl), "");
 
         _assertUpgraded(address(batch), address(newImpl));
-        assertEq(batch.remoteMessenger(B_CHAIN_ID), remote, "remote messenger lost");
+        assertEq(batch.remoteRouter(B_CHAIN_ID), remote, "remote router lost");
         assertEq(address(batch.token()), tokenAddr, "token immutable lost");
         assertTrue(batch.hasRole(batch.DEFAULT_ADMIN_ROLE(), relayer), "role lost");
     }

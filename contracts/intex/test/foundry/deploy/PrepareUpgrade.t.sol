@@ -6,7 +6,7 @@ import {ERC1967Utils} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Utils.s
 import {Create3Factory} from "@shared/Create3Factory.sol";
 import {UpgradeProposal} from "@shared/UpgradeProposal.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {Create3Deploy} from "../../../deploy/Create3Deploy.sol";
 import {PrepareUpgrade} from "../../../deploy/PrepareUpgrade.s.sol";
@@ -40,7 +40,7 @@ contract PrepareUpgradeTest is Test {
     Create3Factory internal factory;
     address internal deployer;
     IntexNFT1155 internal nft;
-    IntexNFT1155Bridge internal nftBridge;
+    IntexNFT1155Router internal nftBridge;
     TargetRouter internal router;
 
     function setUp() public {
@@ -55,11 +55,11 @@ contract PrepareUpgradeTest is Test {
         nft = IntexNFT1155(
             _deploy("IntexNFT1155", address(new IntexNFT1155()), abi.encodeCall(IntexNFT1155.initialize, (deployer)))
         );
-        nftBridge = IntexNFT1155Bridge(
+        nftBridge = IntexNFT1155Router(
             payable(_deploy(
-                    "IntexNFT1155Bridge",
-                    address(new IntexNFT1155Bridge(address(nft), HUB)),
-                    abi.encodeCall(IntexNFT1155Bridge.initialize, (deployer))
+                    "IntexNFT1155Router",
+                    address(new IntexNFT1155Router(address(nft), HUB)),
+                    abi.encodeCall(IntexNFT1155Router.initialize, (deployer))
                 ))
         );
         router = TargetRouter(
@@ -109,7 +109,7 @@ contract PrepareUpgradeTest is Test {
             vm.parseJsonAddress(payload, ".upgrades[1].implementation"),
             vm.parseJsonAddress(payload, ".upgrades[2].implementation")
         ];
-        IntexNFT1155Bridge bridgeImpl = IntexNFT1155Bridge(payable(impls[0]));
+        IntexNFT1155Router bridgeImpl = IntexNFT1155Router(payable(impls[0]));
         assertEq(address(bridgeImpl.token()), address(nft), "bridged token kept");
         assertEq(address(bridgeImpl.BRIDGE()), HUB, "bridge hub kept");
         TargetRouter routerImpl = TargetRouter(payable(impls[1]));

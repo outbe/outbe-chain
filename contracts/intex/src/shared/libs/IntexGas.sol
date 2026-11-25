@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 /// @title IntexGas
 /// @author Outbe
-/// @notice Destination gas budgets for intex cross-chain messages, passed into `ERC7786MessengerBase._send`
+/// @notice Destination gas budgets for intex cross-chain messages, passed into `ERC7786Sender._sendTo`
 ///         as the ERC-7786 executionGasLimit attribute whichever gateway is active.
 /// @dev Each budget is 1.5x the measured cost of its message's heaviest path. The transport bills
 ///      the limit rather than the spend. `GasBudget.t.sol` pins them and must run with `--isolate`.

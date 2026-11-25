@@ -10,7 +10,7 @@ import {console} from "forge-std/console.sol";
 ///      it.
 contract PredictAddresses is BaseScript {
     string[5] internal PREFIXES =
-        ["IntexAuction", "EscrowAdapter", "TargetRouter", "IntexNFT1155", "IntexNFT1155Bridge"];
+        ["IntexAuction", "EscrowAdapter", "TargetRouter", "IntexNFT1155", "IntexNFT1155Router"];
 
     /// @dev Env: DEPLOYER_PK, same as the deploy scripts, because the deployer namespaces
     ///      the salt.

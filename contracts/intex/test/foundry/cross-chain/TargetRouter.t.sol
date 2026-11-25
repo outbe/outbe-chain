@@ -4,9 +4,9 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
-import {IIntexNFT1155Bridge} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
+import {IIntexNFT1155Router} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 import {DESIS} from "@precompiles/IDesis.sol";
 import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol";
@@ -30,7 +30,7 @@ contract TargetRouterTest is CrossChainTest {
     uint32 private constant OUTBE_CHAIN_ID = 2;
 
     TargetRouter private targetRouter;
-    IntexNFT1155Bridge private nftBridge;
+    IntexNFT1155Router private nftBridge;
 
     // Mock contracts
     IntexAuction private auction;

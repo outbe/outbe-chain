@@ -6,8 +6,8 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
-import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
-import {SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
+import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
+import {SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {ERC7786Sender} from "@contracts/shared/ERC7786Sender.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
@@ -27,7 +27,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 ///             native float and reverts `NotEnoughNative` when short.
 ///         Conflating the two would let an entry caller's `msg.value` seed future relay sends
 ///         without refund, or let an entry caller drain the relay float.
-/// @dev The tests drive the entry path through the user-facing `IntexNFT1155Bridge.send` (payable).
+/// @dev The tests drive the entry path through the user-facing `IntexNFT1155Router.send` (payable).
 ///      They drive the relay path by an inbound CLEARING whose handler relays the day's bids from
 ///      inside `receiveFromOutbe`.
 contract PayNativeAccountingTest is CrossChainTest {
@@ -39,7 +39,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
     TargetRouter internal bnbRouter;
-    IntexNFT1155Bridge internal nftBridge;
+    IntexNFT1155Router internal nftBridge;
 
     IntexNFT1155 internal intex;
     address internal admin = address(this);
@@ -62,9 +62,9 @@ contract PayNativeAccountingTest is CrossChainTest {
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
-        // Wire the inbound source of TM and the remote messenger the batch adapter sends to.
+        // Wire the inbound source of TM and the remote router the batch adapter sends to.
         _wireOutbeIca(bnbRouter, outbeIca);
-        nftBridge.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridge)));
+        nftBridge.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridge)));
 
         // Wire TM with a stub auction and the batch adapter.
         StubAuction stubAuction = new StubAuction();
@@ -93,7 +93,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // Entry path - msg.value handling (IntexNFT1155Bridge.send)
+    // Entry path - msg.value handling (IntexNFT1155Router.send)
     // ---------------------------------------------------------------
 
     function test_Entry_ExactFeeLeavesNoFloat() public {
@@ -272,10 +272,10 @@ contract StubAuction {
 /// @dev Holds a bridgeable token (accepts the ERC-1155 mint), but its `receive()` reverts.
 ///      Tests use it to pin `_send`'s ReturnFailed guard on the entry path via the NFT bridge.
 contract NftRefundRejector {
-    IntexNFT1155Bridge private immutable bridge;
+    IntexNFT1155Router private immutable bridge;
 
     constructor(address _bridge) {
-        bridge = IntexNFT1155Bridge(payable(_bridge));
+        bridge = IntexNFT1155Router(payable(_bridge));
     }
 
     function callSend(SendParam calldata params) external payable {
