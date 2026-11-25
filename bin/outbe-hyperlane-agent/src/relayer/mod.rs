@@ -23,12 +23,15 @@ use crate::abi::{IMailbox, IValidatorSet};
 use crate::client::eth_call;
 use crate::errors::RelayError;
 use crate::http::health::ValidatorHealth;
-use crate::store::{RelayRow, Store};
+use crate::store::{Leaf, Meta, RelayRow, Store};
 use crate::sync::{finalized_block, is_range_error, Origin, MAX_LOG_RANGE};
 use crate::validator::liveness::VALIDATOR_SET_ADDRESS;
+use crate::validator::signer::DomainSigner;
 
-use deliver::{announced, delivered, metadata, multisig_ism, process, turn_position, Chains};
-use fetch::{Fetcher, Want};
+use deliver::{
+    announced, delivered, is_contract, metadata, multisig_ism, process, turn_position, Chains,
+};
+use fetch::{Fetcher, Quorum, Want};
 use message::{message_id, Message};
 use retry::backoff;
 
@@ -41,6 +44,11 @@ const TAKE_IN_BATCH: usize = 256;
 /// endpoint vote. The take-in reads the `Dispatch` logs of those blocks and
 /// accepts a message only when its hash is the stored leaf. Thus the log
 /// source cannot give a wrong message.
+///
+/// As the upstream relayer, the take-in starts at the newest leaf and goes
+/// in two directions: new leaves first, in index order, then the older
+/// leaves from the newest to the oldest. The history of a chain does not
+/// delay a new message.
 pub struct TakeIn {
     origin: Origin,
     store: Arc<Store>,
@@ -56,67 +64,126 @@ impl TakeIn {
         }
     }
 
-    /// Reads the messages of the next stored leaves and writes them as relay
-    /// rows with `now` (Unix seconds) as the first-seen time. Returns the
-    /// number of leaves that the relay cursor passed.
-    // ponytail: the first run takes in the full leaf history, one row and one `delivered` call per old message; start at the latest leaf if a new validator joins a chain with millions of messages
-    pub async fn tick(&mut self, provider: &DynProvider, now: u64) -> Result<usize> {
+    /// Takes in one batch of leaves and writes their messages as relay rows
+    /// with `now` (Unix seconds) as the first-seen time. `synced`: the
+    /// validator sync is at the head of the origin chain. Returns the number
+    /// of leaves that a relay cursor passed.
+    pub async fn tick(&mut self, provider: &DynProvider, now: u64, synced: bool) -> Result<usize> {
         let domain = self.origin.domain;
-        let next = self.store.relay_cursor(domain)?;
-        let mut leaves = self.store.leaves_from(domain, next, TAKE_IN_BATCH)?;
-        let Some(from) = leaves.first().map(|(_, leaf, _)| leaf.block) else {
+        let Some(next) = self.store.relay_cursor(domain)? else {
+            // The first run starts at the newest leaf. Before the sync is at
+            // the head, the newest stored leaf is an old leaf.
+            if synced {
+                self.store
+                    .relay_start(domain, self.store.leaf_count(domain)?)?;
+            }
             return Ok(0);
         };
-        let to = loop {
-            let to = from.saturating_add(self.chunk - 1);
-            match self.dispatched(provider, from, to).await {
-                Ok(mut messages) => {
-                    self.chunk = (self.chunk * 2).min(MAX_LOG_RANGE);
-                    leaves.retain(|(_, leaf, _)| leaf.block <= to);
-                    let mut rows = Vec::with_capacity(leaves.len());
-                    for (index, leaf, _) in &leaves {
-                        let raw =
-                            messages
-                                .remove(&leaf.message_id)
-                                .ok_or(RelayError::NoDispatch {
-                                    domain,
-                                    index: *index,
-                                    block: leaf.block,
-                                })?;
-                        match Message::decode(&raw) {
-                            Ok(message) if message.origin == domain => rows.push((
-                                *index,
-                                RelayRow {
-                                    first_seen: now,
-                                    attempts: 0,
-                                    next_attempt: now,
-                                    dropped: false,
-                                    message: raw,
-                                },
-                            )),
-                            other => {
-                                warn!(
-                                    domain,
-                                    index,
-                                    ?other,
-                                    "message skipped: not a message of this domain"
-                                )
-                            }
-                        }
-                    }
-                    self.store
-                        .relay_take_in(domain, &rows, next + leaves.len() as u32)?;
-                    break to;
-                }
+        let new = self.store.leaves_from(domain, next, TAKE_IN_BATCH)?;
+        if !new.is_empty() {
+            let leaves: Vec<(u32, Leaf)> = new.into_iter().map(|(i, leaf, _)| (i, leaf)).collect();
+            // A new leaf without its log stops the take-in: the endpoint
+            // must have the logs of new blocks. The next tick reads again.
+            let (taken, rows) = self.read(provider, leaves, now, false).await?;
+            let value = next + taken as u32;
+            self.store
+                .relay_take_in(domain, &rows, Meta::RelayCursor, value)?;
+            return Ok(taken);
+        }
+        let back = self.store.relay_back_cursor(domain)?;
+        if back == 0 {
+            return Ok(0);
+        }
+        let from = back.saturating_sub(TAKE_IN_BATCH as u32);
+        let mut older = Vec::new();
+        self.store
+            .for_each_leaf_from(domain, from, back, |i, leaf| older.push((i, leaf)))?;
+        // From the newest to the oldest. An old leaf without its log is
+        // passed: the endpoint does not keep the logs of old blocks forever.
+        older.reverse();
+        let (taken, rows) = self.read(provider, older, now, true).await?;
+        let value = back - taken as u32;
+        self.store
+            .relay_take_in(domain, &rows, Meta::RelayBackCursor, value)?;
+        Ok(taken)
+    }
+
+    /// Reads the messages of `leaves`, a run of leaves in index order or in
+    /// reverse index order. One log request has a block range limit, so the
+    /// read can take only the first part of the run. Returns the number of
+    /// leaves that it took and their rows. `pass_missing`: a leaf without a
+    /// `Dispatch` log is taken with no row; otherwise it is an error.
+    async fn read(
+        &mut self,
+        provider: &DynProvider,
+        mut leaves: Vec<(u32, Leaf)>,
+        now: u64,
+        pass_missing: bool,
+    ) -> Result<(usize, Vec<(u32, RelayRow)>)> {
+        let domain = self.origin.domain;
+        let Some(first) = leaves.first().map(|(_, leaf)| leaf.block) else {
+            return Ok((0, Vec::new()));
+        };
+        let descending = leaves.last().is_some_and(|(_, leaf)| leaf.block < first);
+        loop {
+            let (from, to) = match descending {
+                true => (first.saturating_sub(self.chunk - 1), first),
+                false => (first, first.saturating_add(self.chunk - 1)),
+            };
+            let mut messages = match self.dispatched(provider, from, to).await {
+                Ok(messages) => messages,
                 Err(error) if self.chunk > 1 && is_range_error(&error.to_string()) => {
                     self.chunk = (self.chunk / 2).max(1);
                     debug!(domain, chunk = self.chunk, "smaller log range");
+                    continue;
                 }
                 Err(error) => return Err(error),
+            };
+            self.chunk = (self.chunk * 2).min(MAX_LOG_RANGE);
+            // The run is in block order: the leaves of the range are its start.
+            let in_range = leaves
+                .iter()
+                .take_while(|(_, leaf)| (from..=to).contains(&leaf.block))
+                .count();
+            leaves.truncate(in_range);
+            let mut rows = Vec::with_capacity(leaves.len());
+            for (index, leaf) in &leaves {
+                let Some(raw) = messages.remove(&leaf.message_id) else {
+                    let missing = RelayError::NoDispatch {
+                        domain,
+                        index: *index,
+                        block: leaf.block,
+                    };
+                    if !pass_missing {
+                        return Err(missing.into());
+                    }
+                    error!(domain, index, %missing, "old message passed: the relayer cannot read it");
+                    continue;
+                };
+                match Message::decode(&raw) {
+                    Ok(message) if message.origin == domain => rows.push((
+                        *index,
+                        RelayRow {
+                            first_seen: now,
+                            attempts: 0,
+                            next_attempt: now,
+                            dropped: false,
+                            message: raw,
+                        },
+                    )),
+                    other => {
+                        warn!(
+                            domain,
+                            index,
+                            ?other,
+                            "message skipped: not a message of this domain"
+                        )
+                    }
+                }
             }
-        };
-        debug!(domain, from, to, taken = leaves.len(), "messages taken in");
-        Ok(leaves.len())
+            debug!(domain, from, to, taken = leaves.len(), "messages taken in");
+            return Ok((leaves.len(), rows));
+        }
     }
 
     /// The messages that the origin Mailbox dispatched in the block range, by
@@ -151,12 +218,25 @@ enum Outcome {
     Wait,
     /// The attempt failed. `fast`: only the validator signatures are missing.
     Retry { fast: bool, reason: String },
+    /// The message can never be delivered: no more attempts.
+    Drop(String),
 }
 
 fn unix_now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs())
+}
+
+/// The rows in the order of the upstream queue: a message with no failed
+/// attempt first, by leaf index, then the retries by the time of their next
+/// attempt. A retry does not delay a new message.
+fn in_queue_order(mut rows: Vec<(u32, RelayRow)>) -> Vec<(u32, RelayRow)> {
+    rows.sort_by_key(|(index, row)| match row.attempts {
+        0 => (0, 0, *index),
+        _ => (1, row.next_attempt, *index),
+    });
+    rows
 }
 
 /// The relayer of one origin domain: takes the messages in and delivers them
@@ -174,6 +254,9 @@ pub struct Relayer {
     /// sends only while `V` is an active validator.
     pub validator: Address,
     pub health: Arc<ValidatorHealth>,
+    /// The validator sync of this domain: the take-in starts when the sync
+    /// is at the head of the chain.
+    pub signer: Arc<DomainSigner>,
 }
 
 impl Relayer {
@@ -183,17 +266,29 @@ impl Relayer {
         let domain = self.origin.domain;
         let mut take_in = TakeIn::new(self.origin.clone(), self.store.clone());
         loop {
-            if let Err(error) = self.tick(&mut take_in, unix_now()).await {
-                warn!(domain, error = format!("{error:#}"), "relayer tick failed");
-                if let Some(chain) = self.chains.get(domain) {
-                    chain.rotate();
+            let pause = match self.tick(&mut take_in, unix_now()).await {
+                Ok(next_attempt) => self.pause(interval, next_attempt),
+                Err(error) => {
+                    warn!(domain, error = format!("{error:#}"), "relayer tick failed");
+                    interval
                 }
-            }
-            tokio::time::sleep(interval).await;
+            };
+            tokio::time::sleep(pause).await;
         }
     }
 
-    async fn tick(&self, take_in: &mut TakeIn, now: u64) -> Result<()> {
+    /// The time to the next tick: the poll interval, or less when a retry is
+    /// due earlier. The fast retries of 2 seconds need this.
+    fn pause(&self, interval: Duration, next_attempt: Option<u64>) -> Duration {
+        match next_attempt {
+            Some(at) => interval.min(Duration::from_secs(at.saturating_sub(unix_now()).max(1))),
+            None => interval,
+        }
+    }
+
+    /// One pass: takes new messages in, then looks at each row that is due.
+    /// Returns the earliest time of a retry that is not due yet.
+    async fn tick(&self, take_in: &mut TakeIn, now: u64) -> Result<Option<u64>> {
         let domain = self.origin.domain;
         let chain = self.chains.get(domain).ok_or(RelayError::NoChain(domain))?;
         // The operator sees in the status when `H` has no gas on this chain.
@@ -202,49 +297,59 @@ impl Relayer {
             Ok(wei) => self.health.set_balance(domain, wei),
             Err(error) => debug!(domain, %error, "balance read failed"),
         }
-        take_in.tick(chain.provider(), now).await?;
-        let rows = self.store.relay_rows(domain)?;
-        if rows
-            .iter()
-            .all(|(_, row)| row.dropped || row.next_attempt > now)
-        {
-            return Ok(());
+        // A take-in error must not stop the rows that are already in the queue.
+        let synced = self
+            .signer
+            .progress()
+            .is_some_and(|(_, behind)| behind == 0);
+        if let Err(error) = take_in.tick(chain.provider(), now, synced).await {
+            warn!(
+                domain,
+                error = format!("{error:#}"),
+                "take-in of new messages failed"
+            );
+            chain.rotate();
         }
-        let out = eth_call(
-            &self.outbe,
-            VALIDATOR_SET_ADDRESS,
-            IValidatorSet::getActiveValidatorsCall {}.abi_encode(),
-            BlockId::latest(),
-        )
-        .await?;
-        let active = IValidatorSet::getActiveValidatorsCall::abi_decode_returns(&out)?;
-        for (index, row) in rows {
-            if row.dropped || row.next_attempt > now {
-                continue;
-            }
-            let id = message_id(&row.message);
-            let outcome = match self.look(index, &row, id, now, &active).await {
-                Ok(outcome) => outcome,
-                // An RPC error is not a fault of the message: no attempt counts.
-                Err(error) => {
-                    warn!(domain, index, %id, error = format!("{error:#}"), "message check failed");
+        let rows = in_queue_order(self.store.relay_rows(domain)?);
+        let due = |row: &RelayRow| !row.dropped && row.next_attempt <= now;
+        if rows.iter().any(|(_, row)| due(row)) {
+            let out = eth_call(
+                &self.outbe,
+                VALIDATOR_SET_ADDRESS,
+                IValidatorSet::getActiveValidatorsCall {}.abi_encode(),
+                BlockId::latest(),
+            )
+            .await?;
+            let active = IValidatorSet::getActiveValidatorsCall::abi_decode_returns(&out)?;
+            for (index, row) in rows {
+                if !due(&row) {
                     continue;
                 }
-            };
-            self.record(index, row, id, outcome, now)?;
+                let id = message_id(&row.message);
+                // As upstream, every error counts as a failed attempt, also
+                // an RPC error: the relayer does not sort the errors.
+                let outcome = match self.look(index, &row, id, now, &active).await {
+                    Ok(outcome) => outcome,
+                    Err(error) => Outcome::Retry {
+                        fast: false,
+                        reason: format!("{error:#}"),
+                    },
+                };
+                self.record(index, row, id, outcome)?;
+            }
         }
-        Ok(())
+        let now = unix_now();
+        Ok(self
+            .store
+            .relay_rows(domain)?
+            .iter()
+            .filter(|(_, row)| !row.dropped && row.next_attempt > now)
+            .map(|(_, row)| row.next_attempt)
+            .min())
     }
 
     /// Writes the result of one look into the relay row.
-    fn record(
-        &self,
-        index: u32,
-        mut row: RelayRow,
-        id: B256,
-        outcome: Outcome,
-        now: u64,
-    ) -> Result<()> {
+    fn record(&self, index: u32, mut row: RelayRow, id: B256, outcome: Outcome) -> Result<()> {
         let domain = self.origin.domain;
         match outcome {
             Outcome::Done => {
@@ -255,8 +360,10 @@ impl Relayer {
             Outcome::Retry { fast, reason } => {
                 row.attempts += 1;
                 match backoff(row.attempts, fast, id) {
+                    // The pause starts when the attempt fails, not when the
+                    // tick started: one tick can run for minutes.
                     Some(pause) => {
-                        row.next_attempt = now + pause.as_secs();
+                        row.next_attempt = unix_now() + pause.as_secs();
                         warn!(domain, index, %id, attempts = row.attempts, pause = pause.as_secs(), reason, "delivery attempt failed");
                     }
                     None => {
@@ -266,10 +373,16 @@ impl Relayer {
                 }
                 self.store.put_relay(domain, index, &row)
             }
+            Outcome::Drop(reason) => {
+                row.dropped = true;
+                error!(domain, index, %id, reason, "message dropped: it can never be delivered");
+                self.store.put_relay(domain, index, &row)
+            }
         }
     }
 
     /// Checks one message and delivers it when this relayer has the turn.
+    /// The steps follow the upstream `prepare`, `submit` and `confirm`.
     async fn look(
         &self,
         index: u32,
@@ -279,33 +392,36 @@ impl Relayer {
         active: &[Address],
     ) -> Result<Outcome> {
         let message = Message::decode(&row.message)?;
+        let retry = |fast, reason: String| Ok(Outcome::Retry { fast, reason });
         let Some(dest) = self.chains.get(message.destination) else {
-            return Ok(Outcome::Retry {
-                fast: false,
-                reason: format!("destination domain {} does not run", message.destination),
-            });
+            return retry(
+                false,
+                format!("destination domain {} does not run", message.destination),
+            );
         };
         let mailbox = dest.origin.mailbox;
-        let reads = async {
-            let provider = dest.provider();
-            let last_final = finalized_block(provider, dest.period).await?;
-            // A reorg of the destination can undo a delivery: only a final
-            // block ends the work on a message.
-            if delivered(provider, mailbox, id, BlockId::number(last_final)).await? {
-                return Ok(Some(Outcome::Done));
-            }
-            if delivered(provider, mailbox, id, BlockId::latest()).await? {
-                return Ok(Some(Outcome::Wait));
-            }
-            eyre::Ok(None)
+        let provider = dest.provider();
+        // After an error the next look reads from the next endpoint.
+        let rotate = |error| {
+            dest.rotate();
+            error
         };
-        match reads.await {
-            Ok(Some(outcome)) => return Ok(outcome),
-            Ok(None) => {}
-            Err(error) => {
-                dest.rotate();
-                return Err(error);
-            }
+        let last_final = finalized_block(provider, dest.period)
+            .await
+            .map_err(rotate)?;
+        // A reorg of the destination can undo a delivery: only a final block
+        // ends the work on a message. Upstream waits 10 minutes for this.
+        if delivered(provider, mailbox, id, BlockId::number(last_final))
+            .await
+            .map_err(rotate)?
+        {
+            return Ok(Outcome::Done);
+        }
+        if delivered(provider, mailbox, id, BlockId::latest())
+            .await
+            .map_err(rotate)?
+        {
+            return Ok(Outcome::Wait);
         }
         // A validator that is not active does not send: it only removes
         // its rows when another relayer delivers.
@@ -315,48 +431,72 @@ impl Relayer {
         if now < row.first_seen + place as u64 * dest.turn_secs {
             return Ok(Outcome::Wait);
         }
-        let retry = |fast, reason: String| Ok(Outcome::Retry { fast, reason });
+        if !is_contract(provider, message.recipient)
+            .await
+            .map_err(rotate)?
+        {
+            return Ok(Outcome::Drop(format!(
+                "the recipient {} has no code on domain {}",
+                message.recipient, message.destination
+            )));
+        }
         let (validators, threshold) =
-            match multisig_ism(dest.provider(), mailbox, message.recipient, &row.message).await {
-                Ok(set) => set,
-                Err(error) => return retry(false, format!("ISM read failed: {error:#}")),
-            };
+            multisig_ism(provider, mailbox, message.recipient, &row.message)
+                .await
+                .map_err(rotate)?;
+        // The daemon replaces the chain entry when the controller changes the
+        // ValidatorAnnounce of the domain: read the address at each look.
         let origin_chain = self
             .chains
             .get(self.origin.domain)
             .ok_or(RelayError::NoChain(self.origin.domain))?;
         let locations = announced(
             origin_chain.provider(),
-            self.origin.validator_announce,
+            origin_chain.origin.validator_announce,
             &validators,
         )
-        .await?;
+        .await
+        .inspect_err(|_| origin_chain.rotate())?;
         let want = Want {
             domain: self.origin.domain,
             hook: self.origin.hook,
             index,
             message_id: id,
         };
-        let Some((root, signatures)) = self
+        let (root, signatures) = match self
             .fetcher
             .quorum(&validators, &locations, threshold, &want)
             .await
-        else {
-            return retry(
-                true,
-                format!("fewer than {threshold} validators serve a signed checkpoint"),
-            );
+        {
+            Quorum::Found(root, signatures) => (root, signatures),
+            Quorum::NotYet => {
+                return retry(
+                    true,
+                    format!("fewer than {threshold} validators serve a signed checkpoint"),
+                )
+            }
+            Quorum::Reorg(validator) => {
+                return retry(
+                    false,
+                    format!(
+                        "validator {validator} reports a reorg of domain {}",
+                        want.domain
+                    ),
+                )
+            }
         };
         let metadata = metadata(self.origin.hook, root, index, &signatures);
-        match process(&dest, &self.wallet, metadata, &row.message).await {
-            Ok(Some(hash)) => {
+        match process(&dest, &self.wallet, metadata, &row.message)
+            .await
+            .map_err(rotate)?
+        {
+            Some(hash) => {
                 self.health
                     .record_delivery(self.origin.domain, index, message.destination, hash);
                 info!(domain = self.origin.domain, index, %id, destination = message.destination, %hash, "message delivered; waiting for a final block");
                 Ok(Outcome::Wait)
             }
-            Ok(None) => Ok(Outcome::Wait),
-            Err(error) => retry(false, format!("process failed: {error:#}")),
+            None => Ok(Outcome::Wait),
         }
     }
 }
@@ -417,7 +557,6 @@ mod tests {
         ];
         let url = serve_json_rpc(move |req: &Value| {
             assert_eq!(req["method"], "eth_getLogs");
-            assert_eq!(req["params"][0]["fromBlock"], "0xa");
             json!({"jsonrpc": "2.0", "id": req["id"], "result": logs})
         })
         .await;
@@ -445,21 +584,43 @@ mod tests {
         let mut take_in = TakeIn::new(origin, store.clone());
         let provider = connect(&url).unwrap();
 
-        assert_eq!(take_in.tick(&provider, 1_000).await.unwrap(), 3);
+        // Before the validator sync is at the head, the relayer does not start.
+        assert_eq!(take_in.tick(&provider, 999, false).await.unwrap(), 0);
+        assert_eq!(store.relay_cursor(5).unwrap(), None);
+        // The first run starts at the newest leaf: leaves 0 to 2 are older.
+        assert_eq!(take_in.tick(&provider, 999, true).await.unwrap(), 0);
+        assert_eq!(store.relay_cursor(5).unwrap(), Some(3));
+        assert_eq!(store.relay_back_cursor(5).unwrap(), 3);
+        assert!(store.relay_rows(5).unwrap().is_empty());
+
+        // No new leaf: the older leaves come in.
+        assert_eq!(take_in.tick(&provider, 1_000, true).await.unwrap(), 3);
         let rows = store.relay_rows(5).unwrap();
         // Leaf 2 has origin 6 in its header: the cursor passes it, no row.
         assert_eq!(rows.iter().map(|(i, _)| *i).collect::<Vec<_>>(), [0, 1]);
         assert_eq!(rows[1].1.message, messages[1]);
         assert_eq!(rows[1].1.first_seen, 1_000);
-        assert_eq!(store.relay_cursor(5).unwrap(), 3);
-        // No new leaf: no request.
-        assert_eq!(take_in.tick(&provider, 1_001).await.unwrap(), 0);
+        assert_eq!(store.relay_back_cursor(5).unwrap(), 0);
+        // No new leaf and no older leaf: no request.
+        assert_eq!(take_in.tick(&provider, 1_001, true).await.unwrap(), 0);
 
-        // The endpoint does not have the log of leaf 3: nothing moves.
+        // The endpoint does not have the log of the new leaf 3: nothing moves.
         store.commit_batch(5, &[leaf(3, 10)], &[], 12).unwrap();
-        let error = take_in.tick(&provider, 1_002).await.unwrap_err();
+        let error = take_in.tick(&provider, 1_002, true).await.unwrap_err();
         assert!(error.to_string().contains("no Dispatch log"), "{error}");
-        assert_eq!(store.relay_cursor(5).unwrap(), 3);
+        assert_eq!(store.relay_cursor(5).unwrap(), Some(3));
+
+        // An old leaf without its log is passed: it does not stop the others.
+        store.relay_start(5, 4).unwrap();
+        assert_eq!(take_in.tick(&provider, 1_003, true).await.unwrap(), 4);
+        assert_eq!(store.relay_back_cursor(5).unwrap(), 0);
+        let indexes: Vec<u32> = store
+            .relay_rows(5)
+            .unwrap()
+            .iter()
+            .map(|(i, _)| *i)
+            .collect();
+        assert_eq!(indexes, [0, 1]);
     }
 
     const VA: Address = Address::repeat_byte(0xa1);
@@ -497,6 +658,7 @@ mod tests {
                 "eth_blockNumber" => json!("0x64"),
                 "eth_chainId" => json!("0x61"),
                 "eth_getTransactionCount" => json!("0x0"),
+                "eth_getCode" => json!("0x60"),
                 // 1.5 native tokens.
                 "eth_getBalance" => json!("0x14d1120d7b160000"),
                 "eth_gasPrice" | "eth_maxPriorityFeePerGas" => json!("0x3b9aca00"),
@@ -645,6 +807,11 @@ mod tests {
         }
         let health = Arc::new(ValidatorHealth::new(store.clone()));
         health.set_relayer(true);
+        let signer = Arc::new(
+            DomainSigner::new(origin(5, MAILBOX), store.clone(), keys[0].clone()).unwrap(),
+        );
+        // The relayer of this domain started before leaf 0.
+        store.relay_start(5, 0).unwrap();
         let relayer = |validator| Relayer {
             origin: origin(5, MAILBOX),
             store: store.clone(),
@@ -654,6 +821,7 @@ mod tests {
             wallet: EthereumWallet::from(keys[0].clone()),
             validator,
             health: health.clone(),
+            signer: signer.clone(),
         };
         let mut take_in = TakeIn::new(origin(5, MAILBOX), store.clone());
 

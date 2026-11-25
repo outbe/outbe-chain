@@ -102,8 +102,13 @@ pub enum Meta {
     /// The 20-byte `MerkleTreeHook` address of the stored history. The
     /// checkpoint JSON contains it.
     Hook = 4,
-    /// The next leaf index that the relayer takes in, as a big-endian `u32`.
+    /// The next new leaf index that the relayer takes in, as a big-endian
+    /// `u32`. Absent: the relayer did not start on this domain yet.
     RelayCursor = 5,
+    /// The older leaves that the relayer did not take in yet are below this
+    /// index, as a big-endian `u32`. The relayer takes them in from the
+    /// newest to the oldest. Absent or 0: no older leaf is left.
+    RelayBackCursor = 6,
 }
 
 /// A message of an origin domain that the relayer did not deliver yet. The
@@ -317,10 +322,21 @@ impl Store {
 
     /// Calls `f` for every leaf of `domain` below index `end`, in index order
     /// (tree rebuild).
-    pub fn for_each_leaf(&self, domain: u32, end: u32, mut f: impl FnMut(u32, Leaf)) -> Result<()> {
+    pub fn for_each_leaf(&self, domain: u32, end: u32, f: impl FnMut(u32, Leaf)) -> Result<()> {
+        self.for_each_leaf_from(domain, 0, end, f)
+    }
+
+    /// Calls `f` for every leaf of `domain` from index `from` to below index
+    /// `end`, in index order.
+    pub fn for_each_leaf_from(
+        &self,
+        domain: u32,
+        from: u32,
+        end: u32,
+        mut f: impl FnMut(u32, Leaf),
+    ) -> Result<()> {
         let tx = self.db.tx()?;
-        let mut cursor = tx.cursor_read::<Leaves>()?;
-        for row in cursor.walk(Some(key(domain, 0)))? {
+        for row in tx.cursor_read::<Leaves>()?.walk(Some(key(domain, from)))? {
             let (k, v) = row?;
             let (d, index) = split(k);
             if d != domain || index >= end {
@@ -392,29 +408,55 @@ impl Store {
         Ok(())
     }
 
-    /// The next leaf index of `domain` that the relayer takes in.
-    pub fn relay_cursor(&self, domain: u32) -> Result<u32> {
-        match self.meta(domain, Meta::RelayCursor)? {
-            Some(v) => Ok(u32::from_be_bytes(
-                v.as_slice()
+    fn relay_meta(&self, domain: u32, name: Meta) -> Result<Option<u32>> {
+        self.meta(domain, name)?
+            .map(|v| {
+                let bytes: [u8; 4] = v
+                    .as_slice()
                     .try_into()
-                    .map_err(|_| StoreError::CorruptRecord("relay cursor"))?,
-            )),
-            None => Ok(0),
-        }
+                    .map_err(|_| StoreError::CorruptRecord("relay cursor"))?;
+                Ok(u32::from_be_bytes(bytes))
+            })
+            .transpose()
     }
 
-    /// Writes new relay rows and moves the relay cursor to `next` in one
-    /// transaction.
-    pub fn relay_take_in(&self, domain: u32, rows: &[(u32, RelayRow)], next: u32) -> Result<()> {
+    /// The next new leaf index of `domain` that the relayer takes in. `None`:
+    /// the relayer did not start on this domain yet.
+    pub fn relay_cursor(&self, domain: u32) -> Result<Option<u32>> {
+        self.relay_meta(domain, Meta::RelayCursor)
+    }
+
+    /// The older leaves of `domain` that the relayer did not take in yet are
+    /// below this index.
+    pub fn relay_back_cursor(&self, domain: u32) -> Result<u32> {
+        Ok(self.relay_meta(domain, Meta::RelayBackCursor)?.unwrap_or(0))
+    }
+
+    /// Starts the relayer of `domain` at leaf `at`: new leaves go up from
+    /// `at`, older leaves go down from `at`.
+    pub fn relay_start(&self, domain: u32, at: u32) -> Result<()> {
+        let tx = self.db.tx_mut()?;
+        for name in [Meta::RelayCursor, Meta::RelayBackCursor] {
+            tx.put::<MetaTable>(key(domain, name as u32), at.to_be_bytes().to_vec())?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Writes new relay rows and moves one relay cursor to `value` in one
+    /// transaction. `cursor` is `RelayCursor` or `RelayBackCursor`.
+    pub fn relay_take_in(
+        &self,
+        domain: u32,
+        rows: &[(u32, RelayRow)],
+        cursor: Meta,
+        value: u32,
+    ) -> Result<()> {
         let tx = self.db.tx_mut()?;
         for (index, row) in rows {
             tx.put::<Relay>(key(domain, *index), encode_relay(row))?;
         }
-        tx.put::<MetaTable>(
-            key(domain, Meta::RelayCursor as u32),
-            next.to_be_bytes().to_vec(),
-        )?;
+        tx.put::<MetaTable>(key(domain, cursor as u32), value.to_be_bytes().to_vec())?;
         tx.commit()?;
         Ok(())
     }
@@ -665,7 +707,10 @@ mod tests {
     fn relay_rows_and_cursor() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).unwrap();
-        assert_eq!(store.relay_cursor(1).unwrap(), 0);
+        assert_eq!(store.relay_cursor(1).unwrap(), None);
+        store.relay_start(1, 4).unwrap();
+        assert_eq!(store.relay_cursor(1).unwrap(), Some(4));
+        assert_eq!(store.relay_back_cursor(1).unwrap(), 4);
         let row = |n: u8| RelayRow {
             first_seen: 1_000 + u64::from(n),
             attempts: 0,
@@ -674,10 +719,13 @@ mod tests {
             message: vec![n; 80],
         };
         store
-            .relay_take_in(1, &[(4, row(4)), (6, row(6))], 7)
+            .relay_take_in(1, &[(4, row(4)), (6, row(6))], Meta::RelayCursor, 7)
             .unwrap();
-        store.relay_take_in(2, &[(0, row(9))], 1).unwrap();
-        assert_eq!(store.relay_cursor(1).unwrap(), 7);
+        store
+            .relay_take_in(2, &[(0, row(9))], Meta::RelayCursor, 1)
+            .unwrap();
+        assert_eq!(store.relay_cursor(1).unwrap(), Some(7));
+        assert_eq!(store.relay_back_cursor(1).unwrap(), 4);
         assert_eq!(store.relay_rows(1).unwrap(), [(4, row(4)), (6, row(6))]);
 
         // A failed attempt, then a drop: the row stays.
@@ -693,8 +741,11 @@ mod tests {
         assert_eq!(store.relay_rows(1).unwrap(), [(4, failed)]);
         assert_eq!(store.relay_rows(2).unwrap(), [(0, row(9))]);
         // An empty take-in moves only the cursor.
-        store.relay_take_in(1, &[], 9).unwrap();
-        assert_eq!(store.relay_cursor(1).unwrap(), 9);
+        store
+            .relay_take_in(1, &[], Meta::RelayBackCursor, 2)
+            .unwrap();
+        assert_eq!(store.relay_cursor(1).unwrap(), Some(7));
+        assert_eq!(store.relay_back_cursor(1).unwrap(), 2);
     }
 
     #[test]

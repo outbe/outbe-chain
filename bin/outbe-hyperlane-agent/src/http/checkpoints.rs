@@ -6,7 +6,8 @@
 //! Object keys and JSON forms follow hyperlane-monorepo `agents-v3.0.0`,
 //! `rust/main/hyperlane-base/src/types/s3_storage.rs` (Apache-2.0, see
 //! `LICENSE-APACHE`). Changes: read only, objects come from the store on each
-//! request, no `metadata_latest.json` (the relayer does not read it).
+//! request, no `metadata_latest.json` (the relayer does not read it), the
+//! reorg flag has the reason as text and not the upstream `ReorgEvent`.
 //!
 //! The server reads only the store. The checkpoint JSON gets the hook from
 //! `Meta::Hook`, so stored checkpoints stay readable while discovery or the
@@ -110,6 +111,18 @@ fn read(bucket: &Bucket, domain: &str, key: &str) -> Result<Option<Vec<u8>>> {
     if key == "announcement.json" {
         return store.meta(domain, Meta::Announcement);
     }
+    // As the upstream validator: relayers stop the deliveries from this
+    // origin while a validator has this object in its storage.
+    if key == "reorg_flag.json" {
+        return Ok(store
+            .meta(domain, Meta::ReorgFlag)?
+            .map(|reason| {
+                serde_json::to_vec(&serde_json::json!({
+                    "reason": String::from_utf8_lossy(&reason),
+                }))
+            })
+            .transpose()?);
+    }
     let index = key
         .strip_prefix("checkpoint_")
         .and_then(|rest| rest.strip_suffix("_with_id.json"))
@@ -202,6 +215,14 @@ mod tests {
     async fn serves_s3_objects_and_errors() {
         let (url, store, _dir) = serve().await;
         let base = format!("{url}/{BUCKET}/5");
+
+        // The reorg flag exists only while the domain is halted after a reorg.
+        let flag = format!("{base}/reorg_flag.json");
+        assert_eq!(get(&flag).await.0, 404);
+        store.set_meta(5, Meta::ReorgFlag, b"index 2").unwrap();
+        let (status, _, _, body) = get(&flag).await;
+        assert_eq!((status, body.as_str()), (200, "{\"reason\":\"index 2\"}"));
+        store.delete_meta(5, Meta::ReorgFlag).unwrap();
 
         // Nothing signed yet: S3 NoSuchKey.
         let (status, ct, _, body) = get(&format!("{base}/checkpoint_latest_index.json")).await;

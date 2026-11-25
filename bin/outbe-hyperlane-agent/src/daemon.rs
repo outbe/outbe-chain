@@ -171,6 +171,10 @@ impl Daemon {
     async fn restart_announce(&self, d: &ControllerDomain) -> Result<JoinSet<()>> {
         let config = self.origin_config(d.domain)?;
         let origin = check_origin(d, config).await?;
+        // The relayer reads the storage locations from the new contract.
+        if let Some(relay) = &self.relay {
+            relay.chains.insert(relay_chain(&origin, config)?);
+        }
         Ok(self.spawn_announce(origin, config))
     }
 
@@ -208,16 +212,7 @@ impl Daemon {
         let wake = ws_wake(config, origin.hook, &mut tasks);
         tasks.spawn(signer.clone().run(config.clone(), wake));
         if let Some(relay) = &self.relay {
-            let providers = dedup_urls(&config.rpc_urls)
-                .iter()
-                .map(|url| connect(url))
-                .collect::<Result<_>>()?;
-            relay.chains.insert(Arc::new(Chain::new(
-                origin.clone(),
-                providers,
-                config.reorg_period,
-                config.relay_turn_secs,
-            )));
+            relay.chains.insert(relay_chain(&origin, config)?);
             let relayer = Relayer {
                 origin: origin.clone(),
                 store: self.store.clone(),
@@ -227,6 +222,7 @@ impl Daemon {
                 wallet: EthereumWallet::from(self.key.clone()),
                 validator: self.validator,
                 health: self.health.clone(),
+                signer: signer.clone(),
             };
             // Its own task: a relayer error never stops the signer.
             tasks.spawn(relayer.run(Duration::from_secs(config.interval_secs)));
@@ -241,6 +237,20 @@ impl Daemon {
             announce,
         })
     }
+}
+
+/// The entry of a running domain for the relayers.
+fn relay_chain(origin: &Origin, config: &OriginConfig) -> Result<Arc<Chain>> {
+    let providers = dedup_urls(&config.rpc_urls)
+        .iter()
+        .map(|url| connect(url))
+        .collect::<Result<_>>()?;
+    Ok(Arc::new(Chain::new(
+        origin.clone(),
+        providers,
+        config.reorg_period,
+        config.relay_turn_secs,
+    )))
 }
 
 #[cfg(test)]

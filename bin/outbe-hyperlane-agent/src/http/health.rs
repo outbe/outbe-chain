@@ -236,7 +236,9 @@ impl ValidatorHealth {
                     value["balance_wei"] = json!(balances.get(&domain).map(|wei| wei.to_string()));
                     value["relay"] = json!({
                         // The next leaf that the relayer takes in.
-                        "cursor": store.relay_cursor(domain).ok(),
+                        "cursor": store.relay_cursor(domain).ok().flatten(),
+                        // Older leaves below this index wait for the take-in.
+                        "backlog": store.relay_back_cursor(domain).ok(),
                         // Messages on the way, and messages after the last attempt.
                         "queue": rows.len() - dropped,
                         "dropped": dropped,

@@ -13,17 +13,18 @@ pub(crate) enum RelayError {
     /// the relayer can read.
     #[error("storage location {0} is not a readable s3+http(s) location")]
     BadLocation(String),
-    /// A checkpoint file is not the wanted checkpoint of the validator.
-    #[error("the checkpoint {index} of validator {validator} has other content or another signer")]
-    WrongCheckpoint {
-        validator: alloy_primitives::Address,
-        index: u32,
-    },
     /// The destination uses an ISM that the relayer cannot serve.
     #[error("ISM {ism} has module type {module}: only the message-id multisig ISM is supported")]
     UnsupportedIsm {
         ism: alloy_primitives::Address,
         module: u8,
+    },
+    /// The multisig ISM returned a validator set that the relayer cannot use.
+    #[error("ISM {ism} has {validators} validators and threshold {threshold}: the set must have 1 to 50 validators and a threshold above 0")]
+    BadValidatorSet {
+        ism: alloy_primitives::Address,
+        validators: usize,
+        threshold: u8,
     },
     /// The `process` transaction is in a block but reverted.
     #[error("process transaction {0} reverted")]

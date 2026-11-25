@@ -4,16 +4,19 @@
 //! The flow follows hyperlane-monorepo `agents-v3.0.0`,
 //! `rust/main/agents/relayer/src/msg/pending_message.rs` and
 //! `msg/metadata/multisig/message_id_multisig.rs` (Apache-2.0, see
-//! `LICENSE-APACHE`). Changes: only the message-id multisig ISM (also behind
-//! a routing ISM), one transaction at a time for each chain, no gas price
-//! escalation, no batch.
+//! `LICENSE-APACHE`), and the Classic submit path of
+//! `rust/main/chains/hyperlane-ethereum/src/tx.rs`. Changes:
+//! - Only the message-id multisig ISM, also behind routing ISMs.
+//! - No cache of the contract reads.
+//! - One transaction at a time for each chain, no batch.
+//! - No gas price escalation and no gas payment check.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use alloy_eips::BlockId;
+use alloy_eips::{BlockId, BlockNumberOrTag};
 use alloy_network::EthereumWallet;
 use alloy_primitives::{keccak256, Address, Bytes, B256};
 use alloy_provider::{DynProvider, Provider, ProviderBuilder};
@@ -23,7 +26,7 @@ use eyre::Result;
 use tracing::warn;
 
 use crate::abi::{IIsm, IMailbox, IValidatorAnnounce};
-use crate::client::{eth_call, wait_receipt};
+use crate::client::{eth_call, wait_receipt, SEND_LOCK};
 use crate::config::ReorgPeriod;
 use crate::errors::RelayError;
 use crate::sync::Origin;
@@ -31,8 +34,10 @@ use crate::sync::Origin;
 /// `IInterchainSecurityModule.Types`.
 const ISM_ROUTING: u8 = 1;
 const ISM_MESSAGE_ID_MULTISIG: u8 = 5;
-/// Routing ISMs in a row that the relayer follows.
-const MAX_ROUTES: usize = 4;
+/// ISMs in a row that the relayer follows, as upstream `ISM_MAX_DEPTH`.
+const ISM_MAX_DEPTH: usize = 13;
+/// As upstream `MAX_VALIDATOR_SET_SIZE`.
+const MAX_VALIDATOR_SET_SIZE: usize = 50;
 /// Gas on top of the estimate, as upstream `GAS_LIMIT_BUFFER`.
 const GAS_LIMIT_BUFFER: u64 = 75_000;
 const RECEIPT_TIMEOUT: Duration = Duration::from_secs(90);
@@ -153,7 +158,7 @@ pub async fn multisig_ism(
     )
     .await?;
     let mut ism = IMailbox::recipientIsmCall::abi_decode_returns(&out)?;
-    for _ in 0..MAX_ROUTES {
+    for _ in 0..ISM_MAX_DEPTH {
         let out = call(ism, IIsm::moduleTypeCall {}.abi_encode()).await?;
         match IIsm::moduleTypeCall::abi_decode_returns(&out)? {
             ISM_ROUTING => {
@@ -167,6 +172,15 @@ pub async fn multisig_ism(
                 let read = IIsm::validatorsAndThresholdCall { message };
                 let out = call(ism, read.abi_encode()).await?;
                 let set = IIsm::validatorsAndThresholdCall::abi_decode_returns(&out)?;
+                let count = set.validators.len();
+                if count == 0 || count > MAX_VALIDATOR_SET_SIZE || set.threshold == 0 {
+                    return Err(RelayError::BadValidatorSet {
+                        ism,
+                        validators: count,
+                        threshold: set.threshold,
+                    }
+                    .into());
+                }
                 return Ok((set.validators, usize::from(set.threshold)));
             }
             module => return Err(RelayError::UnsupportedIsm { ism, module }.into()),
@@ -177,6 +191,13 @@ pub async fn multisig_ism(
         module: ISM_ROUTING,
     }
     .into())
+}
+
+/// True when the recipient has code on the destination chain. A message to
+/// an address without code can never be delivered.
+pub async fn is_contract(provider: &DynProvider, recipient: B256) -> Result<bool> {
+    let code = provider.get_code_at(Address::from_word(recipient)).await?;
+    Ok(!code.is_empty())
 }
 
 /// The announced storage locations of each validator on the origin chain.
@@ -222,15 +243,9 @@ pub async fn process(
     metadata: Vec<u8>,
     message: &[u8],
 ) -> Result<Option<B256>> {
-    let _one_at_a_time = dest.send.lock().await;
+    let _one_per_chain = dest.send.lock().await;
     let provider = dest.provider();
     let from = wallet.default_signer().address();
-    // ponytail: no gas price escalation; a transaction that stays in the pool stops the deliveries to this chain until a block includes it
-    let pending = provider.get_transaction_count(from).pending().await?;
-    if pending > provider.get_transaction_count(from).await? {
-        warn!(domain = dest.origin.domain, %from, "an earlier transaction is still in the pool; the delivery waits");
-        return Ok(None);
-    }
     let call = IMailbox::processCall {
         metadata: metadata.into(),
         message: Bytes::copy_from_slice(message),
@@ -239,13 +254,34 @@ pub async fn process(
         .from(from)
         .to(dest.origin.mailbox)
         .input(Bytes::from(call.abi_encode()).into());
+    // The dry run immediately before the send: a message that another
+    // relayer delivered, or that the ISM rejects, reverts here and costs no gas.
     let gas = provider.estimate_gas(tx.clone()).await?;
-    let sender = ProviderBuilder::new()
-        .wallet(wallet.clone())
-        .connect_provider(provider.clone());
-    let sent = sender
-        .send_transaction(tx.gas_limit(gas.saturating_add(GAS_LIMIT_BUFFER)))
-        .await?;
+    let mut tx = tx.gas_limit(gas.saturating_add(GAS_LIMIT_BUFFER));
+    // As upstream: a chain with no base fee or a zero base fee gets a legacy
+    // transaction with the gas price of the node.
+    let base_fee = provider
+        .get_fee_history(1, BlockNumberOrTag::Latest, &[])
+        .await
+        .ok()
+        .and_then(|history| history.latest_block_base_fee());
+    if base_fee.is_none_or(|fee| fee == 0) {
+        tx = tx.gas_price(provider.get_gas_price().await?);
+    }
+    let sent = {
+        let _one_at_a_time = SEND_LOCK.lock().await;
+        // ponytail: no gas price escalation; a transaction that stays in the pool stops the deliveries to this chain until a block includes it
+        let pending = provider.get_transaction_count(from).pending().await?;
+        if pending > provider.get_transaction_count(from).await? {
+            warn!(domain = dest.origin.domain, %from, "an earlier transaction is still in the pool; the delivery waits");
+            return Ok(None);
+        }
+        ProviderBuilder::new()
+            .wallet(wallet.clone())
+            .connect_provider(provider.clone())
+            .send_transaction(tx)
+            .await?
+    };
     let hash = *sent.tx_hash();
     match wait_receipt(provider, hash, RECEIPT_TIMEOUT).await {
         Ok(receipt) if receipt.status() => Ok(Some(hash)),

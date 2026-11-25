@@ -27,6 +27,11 @@ pub async fn eth_call<P: Provider>(
         .with_context(|| "eth_call failed")
 }
 
+/// One transaction at a time reads its nonce and goes to the pool. The
+/// liveness, the announce and the relayer send with the same key `H`: without
+/// this lock, two of them can read the same nonce.
+pub static SEND_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 pub struct TxSender<'a> {
     /// A provider of [`crate::sync::connect`], with its time limits.
     pub provider: &'a DynProvider,
@@ -56,6 +61,7 @@ pub async fn send_tx(sender: &TxSender<'_>, to: Address, calldata: &[u8]) -> Res
             .max(MIN_PROTOCOL_BASE_FEE as u128);
         tx = tx.max_fee_per_gas(fee_cap).max_priority_fee_per_gas(0);
     }
+    let _one_at_a_time = SEND_LOCK.lock().await;
     let pending = provider
         .send_transaction(tx)
         .await

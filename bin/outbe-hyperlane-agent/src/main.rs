@@ -135,6 +135,9 @@ async fn main() -> Result<()> {
         .init();
 
     let cli = Cli::parse();
+    if let Some(Command::Status { url: Some(url) }) = &cli.command {
+        return status::run(url).await;
+    }
     let config = ValidatorConfig::load(&cli.config)?;
     match cli.command {
         Some(Command::Db(command)) => return run_db(&config, command),

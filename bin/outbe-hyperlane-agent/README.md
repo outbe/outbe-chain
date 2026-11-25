@@ -173,6 +173,7 @@ Port 9000 uses path-style requests: `GET /<bucket>/<domain>/<key>`.
 | `checkpoint_latest_index.json` | The latest signed index, a JSON number. |
 | `checkpoint_<index>_with_id.json` | The signed checkpoint, the same bytes as the upstream agent. |
 | `announcement.json` | The signed announcement, pretty JSON. |
+| `reorg_flag.json` | Exists only while the domain is halted after a reorg: `{"reason": "…"}`. Relayers stop the deliveries from that origin while one validator serves it. |
 
 A missing key returns 404 with the S3 `NoSuchKey` XML. Another bucket returns
 404 `NoSuchBucket`. The server reads only the store, so it serves stored
@@ -211,7 +212,8 @@ While the daemon waits for the controller, `/health` returns 200.
 | `domains.<id>.head` | The last final block of the origin chain. `null` before the first read. |
 | `domains.<id>.behind` | Blocks up to `head` that the sync did not read yet. `0` means that the sync is at the head. |
 | `domains.<id>.balance_wei` | Relayer only: native balance of `H` on this chain in wei, as a string. `H` pays the gas of each delivery to this chain. `null` before the first read. |
-| `domains.<id>.relay.cursor` | Relayer only: the next leaf index that the relayer takes in. |
+| `domains.<id>.relay.cursor` | Relayer only: the next new leaf index that the relayer takes in. `null` before the relayer starts on the domain. |
+| `domains.<id>.relay.backlog` | Relayer only: older leaves below this index wait for the take-in. `0` means that the history is done. |
 | `domains.<id>.relay.queue` | Relayer only: messages that are not delivered yet. |
 | `domains.<id>.relay.dropped` | Relayer only: messages after the last delivery attempt. |
 | `domains.<id>.reorg` | The domain halted after a reorg. |
@@ -247,7 +249,7 @@ open it.
 | `Leaves` | (domain, index) | Message id, origin block |
 | `Checkpoints` | (domain, index) | Root, 65-byte signature |
 | `Cursor` | domain | Finalized origin block of the last stored leaf batch |
-| `Meta` | (domain, name) | `Announcement`, `Signer`, `ReorgFlag`, `Hook`, `RelayCursor` |
+| `Meta` | (domain, name) | `Announcement`, `Signer`, `ReorgFlag`, `Hook`, `RelayCursor`, `RelayBackCursor` |
 | `Relay` | (domain, index) | A message that the relayer did not deliver yet: message bytes, first-seen time, attempt count, time of the next attempt, dropped flag |
 
 The `db` commands work only while the daemon is stopped:
@@ -339,6 +341,11 @@ domain. The task delivers the messages of that origin chain to the other
 domains of the `HyperlaneController`. A relayer error does not stop the
 validator role.
 
+The relayer starts when the validator sync is at the head of the chain. As
+the upstream relayer, it starts at the newest leaf and goes in two
+directions: new messages first, then the older messages from the newest to
+the oldest. The history of a chain does not delay a new message.
+
 For each message, the relayer does these steps:
 
 1. **Take in.** The validator sync stores the message id and the block of
@@ -348,13 +355,17 @@ For each message, the relayer does these steps:
 2. **Check.** It reads `delivered(id)` on the destination Mailbox at a final
    block. When the result is true, it deletes the row.
 3. **Wait for the turn.** See the delivery order below.
-4. **Read the ISM.** It reads `recipientIsm(recipient)` and then
+4. **Check the recipient.** A recipient without code on the destination
+   chain can never get the message: the relayer drops the message at once.
+5. **Read the ISM.** It reads `recipientIsm(recipient)` and then
    `validatorsAndThreshold(message)`. Only the message-id multisig ISM is
-   supported, also behind a routing ISM.
-5. **Read the signatures.** It reads `checkpoint_<index>_with_id.json` from
-   the announced location of each ISM validator, its own location included.
-   It needs the threshold of signatures over one root.
-6. **Send.** It sends `process(metadata, message)` to the destination
+   supported, also behind routing ISMs.
+6. **Read the signatures.** It reads `checkpoint_<index>_with_id.json` from
+   the newest announced location of each ISM validator, its own location
+   included. It reads the validators in batches of 1.5 times the threshold
+   (10 at most) and stops when one root has the threshold of signatures.
+   When one validator serves `reorg_flag.json`, the relayer does not deliver.
+7. **Send.** It sends `process(metadata, message)` to the destination
    Mailbox. The gas limit is the estimate plus 75,000. `H` pays the gas.
 
 Delivery order. Every validator runs a relayer, so the relayers take turns:
@@ -376,10 +387,13 @@ When the first relayer works, the others send nothing.
 |---|---|
 | Gas | `H` needs native gas on every destination chain. |
 | Finality | A row goes away only when `delivered(id)` is true at a final block (`reorg_period` of the destination). A reorg of the destination cannot lose a message. |
-| Retry | A failed attempt follows the upstream schedule: 5 s, 10 s, 30 s, 60 s, then 3 minutes, and longer pauses later. Missing signatures get three fast retries of 2 s. |
+| Retry | A failed attempt follows the upstream schedule: 5 s, 10 s, 30 s, 60 s, then 3 minutes, and longer pauses later. Missing signatures get three fast retries of 2 s. Every error counts as a failed attempt, also an RPC error. The relayer then reads from the next RPC endpoint. |
+| Order | Messages with no failed attempt go first, then the retries by the time of their next attempt. |
 | Dropped | After 66 attempts (about two weeks) the row stays as dropped. `/status` counts it. Anyone can still deliver the message by hand. |
-| One transaction at a time | The relayer sends one `process` transaction for each chain and waits up to 90 seconds for the receipt. |
-| Storage locations | Only `s3+http://` and `s3+https://` locations. No redirect, a 10 second timeout, a 16 KB body. |
+| One transaction at a time | The relayer sends one `process` transaction for each chain and waits up to 90 seconds for the receipt. The relayer, the liveness and the announce never read a nonce at the same time. |
+| Gas price | EIP-1559 fees. On a chain with no base fee or a zero base fee, a legacy transaction with the gas price of the node. |
+| Storage locations | Only `s3+http://` and `s3+https://` locations. No redirect, a 10 second timeout, a 50 KiB body. |
+| ISM limits | At most 13 ISMs in a row. The validator set must have 1 to 50 validators and a threshold above 0. |
 | Payment | The relayer does not check the IGP payment. It delivers every message that the ISM accepts. |
 
 ## Limits
@@ -389,7 +403,8 @@ When the first relayer works, the others send nothing.
 | First sync memory | Unverified leaves stay in memory until the vote verifies them. Expect about 1 GB per 5M leaves on the first sync. |
 | Outbe `eth_getLogs` | The Outbe RPC rejects ranges above 100,000 blocks. The sync uses at most 100,000 and halves the range after a range error. |
 | `metadata_latest.json` | Not served. The relayer does not read it. |
-| Relayer first run | The relayer takes in the full leaf history: one `delivered` call for each old message. |
+| Relayer history | The relayer takes in the older messages after the new ones, 256 leaves for each poll: one `delivered` call for each old message. An old leaf whose `Dispatch` log the RPC no longer has is passed with an error in the log. |
 | Relayer gas price | No gas price escalation. A transaction that stays in the pool stops the deliveries to that chain until a block includes it. |
 | Relayer ISM types | Only the message-id multisig ISM and the routing ISM. A message with another ISM is retried and then dropped. |
+| Relayer differences from upstream | No cache of contract reads and checkpoints. No gas payment check. The delivery is final at a final block of the destination (`reorg_period`), not after a fixed 10 minutes. The Classic submit path, not Lander. |
 | Private key | The key is plaintext in the config file. |
