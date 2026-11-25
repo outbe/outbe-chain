@@ -278,7 +278,7 @@ fn view_pledged(s: &StorageHandle<'_>, a: Address) -> U256 {
 }
 
 #[test]
-fn mining_coen_cannot_spend_pledged_gratis() {
+fn pledged_gratis_cannot_be_mined_into_coen() {
     with_env(|storage| {
         let minted = U256::from(1_000u64);
         runtime::mint(

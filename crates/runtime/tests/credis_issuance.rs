@@ -73,7 +73,7 @@ struct PaymentObservation {
 /// Each failure mode of the issue: 0 succeeds; 1 and 2 fail a token transfer; 5 brings a pledge
 /// sealed for another reservation; 6 and 7 change the asset metadata; 8 issues after expiry.
 #[test]
-fn cash_account_issue_moves_every_asset_once_and_rolls_back_failures() {
+fn issue_reverts_as_a_whole_at_each_fault() {
     for failure in [0, 1, 2, 5, 6, 7, 8] {
         test_enclave::install();
         let key = derive_account_keys(&test_enclave::state_key(), OWNER).unwrap();

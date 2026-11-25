@@ -60,7 +60,7 @@ fn settle_runs_immediately_after_issuance() {
 }
 
 #[test]
-fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
+fn part_settlement_frees_its_share_in_the_main_account() {
     let mut provider = env();
     let id = StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());
@@ -743,5 +743,294 @@ fn the_owner_cannot_forfeit_a_lapsed_call_that_the_sweep_forfeits() {
         assert_eq!(unallocated(&storage), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
+    teardown();
+}
+
+#[test]
+fn issue_pledges_from_the_free_balance_of_the_main_account() {
+    let mut provider = env();
+    StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost() * U256::from(3u64));
+        let id = seed_reservation(&storage, bob(), pledge_stables());
+        issue(&storage, id, alice()).unwrap();
+        assert_eq!(
+            view_balance(&storage, alice()),
+            pledge_cost() * U256::from(2u64)
+        );
+        assert_eq!(view_pledged(&storage, alice()), pledge_cost());
+        assert_eq!(view_pledged(&storage, bob()), U256::ZERO);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            pledge_cost()
+        );
+    });
+    teardown();
+}
+
+#[test]
+fn no_read_or_event_links_a_main_account_to_a_credis() {
+    use outbe_credis::precompile::ICredis;
+    let mut provider = env();
+    let alice_word = alloy_primitives::B256::left_padding_from(alice().as_slice());
+    let holds_alice = |bytes: &[u8]| bytes.windows(20).any(|window| window == alice().as_slice());
+    let issued_from = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        storage.block_number().unwrap()
+    });
+    let events_from = provider.get_ordered_events().len();
+    let (calldata, credis_id) = StorageHandle::enter(&mut provider, |storage| {
+        let id = seed_reservation(&storage, bob(), pledge_stables());
+        let calldata = ICredisFactory::issueCredisCall {
+            credisReservationId: id,
+            pledge: sealed_pledge(&storage, alice(), id).into(),
+        }
+        .abi_encode();
+        let out =
+            crate::precompile::dispatch(storage.clone(), &calldata, bob(), U256::ZERO).unwrap();
+        let issued = ICredisFactory::issueCredisCall::abi_decode_returns(&out).unwrap();
+        (calldata, issued.credisId)
+    });
+    assert_eq!(issued_from, BLOCK_NUMBER);
+    settle_principal(
+        &mut provider,
+        bob(),
+        credis_id,
+        pledge_stables() / U256::from(2u64),
+    );
+    assert!(!holds_alice(&calldata));
+    for log in &provider.get_ordered_events()[events_from..] {
+        assert!(!log.data.topics().contains(&alice_word), "{log:?}");
+        assert!(!holds_alice(&log.data.data), "{log:?}");
+    }
+    StorageHandle::enter(&mut provider, |storage| {
+        let read = outbe_credis::precompile::dispatch(
+            storage.clone(),
+            &ICredis::getCredisCall {
+                credisId: credis_id,
+            }
+            .abi_encode(),
+            Address::ZERO,
+            U256::ZERO,
+        )
+        .unwrap();
+        assert!(!holds_alice(&read));
+        let uri = credis_view(
+            &storage,
+            ICredis::tokenURICall {
+                credisId: credis_id,
+            },
+        );
+        assert!(!uri
+            .to_lowercase()
+            .contains(&alloy_primitives::hex::encode(alice().as_slice())));
+    });
+    teardown();
+}
+
+#[test]
+fn full_settlement_deletes_the_credis() {
+    use alloy_sol_types::SolEvent;
+    use outbe_credis::precompile::ICredis;
+    use outbe_system_common::addresses::CREDIS_ADDRESS;
+    let mut provider = env();
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        open(&storage)
+    });
+    settle_principal(&mut provider, alice(), id, pledge_stables());
+    StorageHandle::enter(&mut provider, |storage| {
+        let credis = CredisContract::new(storage.clone());
+        assert!(deleted(&storage, id));
+        assert_eq!(credis.credis_count_of(alice()).unwrap(), 0);
+        assert_eq!(
+            credis.amount_and_outstanding_of(alice()).unwrap(),
+            (U256::ZERO, U256::ZERO)
+        );
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(view_balance(&storage, alice()), pledge_cost());
+    });
+    let events = provider.get_events(CREDIS_ADDRESS);
+    let burned: Vec<_> = events
+        .iter()
+        .filter_map(|log| ICredis::CredisBurned::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(burned.len(), 1);
+    assert_eq!((burned[0].credisId, burned[0].owner), (id, alice()));
+    assert!(events
+        .iter()
+        .filter_map(|log| ICredis::Transfer::decode_log_data(log).ok())
+        .any(|transfer| transfer.tokenId == id && transfer.to == Address::ZERO));
+    teardown();
+}
+
+#[test]
+fn full_settlement_or_owner_forfeit_in_the_issue_block_fails() {
+    let mut provider = env();
+    StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        let id = open(&storage);
+        let full = fee_plus(&storage, id, pledge_stables());
+        let err =
+            runtime::settle_credis(storage.clone(), alice(), id, Address::ZERO, full).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::CannotFullySettleInIssueBlock
+            )
+            .to_string()
+        );
+        let err = runtime::forfeit_by_owner(storage.clone(), alice(), id).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::CannotForfeitInIssueBlock
+            )
+            .to_string()
+        );
+        let part = fee_plus(&storage, id, pledge_stables() / U256::from(2u64));
+        runtime::settle_credis(storage.clone(), alice(), id, Address::ZERO, part).unwrap();
+        assert_eq!(
+            record(&storage, id).outstanding_amount_minor,
+            pledge_stables() / U256::from(2u64)
+        );
+    });
+    teardown();
+}
+
+fn owner_forfeit_world() -> (
+    outbe_primitives::storage::hashmap::HashMapStorageProvider,
+    U256,
+) {
+    let mut provider = env();
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost());
+        open(&storage)
+    });
+    provider.set_block_number(BLOCK_NUMBER + 1);
+    (provider, id)
+}
+
+#[test]
+fn owner_forfeit_fault_at_each_write_then_retry() {
+    let (mut clean, id) = owner_forfeit_world();
+    clean.fail_after_mutation_at(usize::MAX);
+    StorageHandle::enter(&mut clean, |storage| {
+        runtime::forfeit_by_owner(storage.clone(), alice(), id).unwrap();
+    });
+    let mutations = clean.clear_mutation_failure();
+    assert!(mutations > 0);
+    for operation in 0..mutations {
+        let (mut provider, id) = owner_forfeit_world();
+        let storage_before = provider.storage.clone();
+        let events_before = provider.events.clone();
+        provider.fail_after_mutation_at(operation);
+        let failed = StorageHandle::enter(&mut provider, |storage| {
+            runtime::forfeit_by_owner(storage.clone(), alice(), id)
+        });
+        assert!(
+            failed.is_err(),
+            "mutation {operation} unexpectedly succeeded"
+        );
+        assert_eq!(provider.clear_mutation_failure(), operation + 1);
+        assert_eq!(provider.storage, storage_before, "storage at {operation}");
+        assert_eq!(provider.events, events_before, "events at {operation}");
+        StorageHandle::enter(&mut provider, |storage| {
+            runtime::forfeit_by_owner(storage.clone(), alice(), id).unwrap();
+        });
+        assert_eq!(
+            provider.storage, clean.storage,
+            "state after retry at {operation}"
+        );
+    }
+    teardown();
+}
+
+#[test]
+fn credis_settles_in_another_asset_when_its_vault_is_gone() {
+    use alloy_sol_types::SolEvent;
+    use outbe_credis::precompile::ICredis;
+    use outbe_system_common::addresses::CREDIS_ADDRESS;
+    let other = Address::repeat_byte(0x31);
+    let foreign = Address::repeat_byte(0x32);
+    let world = || {
+        let mut provider = env();
+        stub_asset(&mut provider, other, ISSUANCE_ISO);
+        provider.stub_sub_call_at_selector(
+            other,
+            crate::sol_ext::IERC20::decimalsCall::SELECTOR,
+            iso_word(18),
+        );
+        stub_asset(&mut provider, foreign, REFERENCE_ISO);
+        let id = StorageHandle::enter(&mut provider, |storage| {
+            bootstrap(&storage, pledge_cost());
+            outbe_vaultrouter::test_support::register_vault(
+                &storage,
+                other,
+                Address::repeat_byte(0x41),
+                ISSUANCE_ISO,
+            )
+            .unwrap();
+            outbe_vaultrouter::test_support::register_vault(
+                &storage,
+                foreign,
+                Address::repeat_byte(0x42),
+                REFERENCE_ISO,
+            )
+            .unwrap();
+            open(&storage)
+        });
+        provider.set_block_number(BLOCK_NUMBER + 1);
+        (provider, id)
+    };
+    let not_allowed = || {
+        outbe_primitives::error::PrecompileError::from(
+            crate::errors::CredisFactoryError::SettlementAssetNotAllowed,
+        )
+        .to_string()
+    };
+
+    // While the Credis asset has a vault, another asset is refused.
+    let (mut provider, id) = world();
+    StorageHandle::enter(&mut provider, |storage| {
+        outbe_vaultrouter::test_support::register_vault(
+            &storage,
+            settlement_asset(),
+            Address::repeat_byte(0x43),
+            ISSUANCE_ISO,
+        )
+        .unwrap();
+        let err = runtime::settle_credis(storage.clone(), bob(), id, other, pledge_stables())
+            .unwrap_err();
+        assert_eq!(err.to_string(), not_allowed());
+    });
+    teardown();
+
+    // With no vault for the Credis asset, an asset of another currency is still refused,
+    // and an asset of the issuance currency pays at par in its own units.
+    let (mut provider, id) = world();
+    let owed = StorageHandle::enter(&mut provider, |storage| {
+        let err = runtime::settle_credis(storage.clone(), bob(), id, foreign, pledge_stables())
+            .unwrap_err();
+        assert_eq!(err.to_string(), not_allowed());
+        runtime::quote_settlement(&storage, id).unwrap()
+    });
+    StorageHandle::enter(&mut provider, |storage| {
+        runtime::settle_credis(storage.clone(), bob(), id, other, owed).unwrap();
+        assert!(deleted(&storage, id));
+        assert_eq!(view_balance(&storage, alice()), pledge_cost());
+    });
+    let pull = outbe_vaultrouter::test_support::last_deposit_from(&provider).unwrap();
+    assert_eq!(pull.asset, other);
+    assert_eq!(
+        pull.assetsMinor,
+        owed * U256::from(10u64).pow(U256::from(12u64))
+    );
+    let settled: Vec<_> = provider
+        .get_events(CREDIS_ADDRESS)
+        .iter()
+        .filter_map(|log| ICredis::CredisSettled::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(settled.len(), 1);
+    assert_eq!((settled[0].asset, settled[0].amountMinor), (other, owed));
     teardown();
 }

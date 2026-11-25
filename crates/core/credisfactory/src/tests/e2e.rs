@@ -214,7 +214,7 @@ fn a_payment_the_router_refuses_rolls_back_credis_and_pledged_collateral() {
 }
 
 #[test]
-fn forfeit_burns_only_remaining_credis_backing_and_leaves_fidelity_untouched() {
+fn forfeit_burns_the_pledged_gratis_of_the_unsettled_part() {
     let mut provider = env();
     StorageHandle::enter(&mut provider, |storage| {
         bootstrap(&storage, pledge_cost());

@@ -580,3 +580,74 @@ fn nod_mint_event_amount_differs_from_balance_and_opens_to_the_delta() {
         first_amount + second_amount
     );
 }
+
+#[test]
+fn pledge_authorization_binds_one_reservation() {
+    with_env(|storage| {
+        let amount = U256::from(100u64);
+        api::mint(
+            storage.clone(),
+            alice(),
+            amount,
+            auth(GratisOp::Mint, alice(), amount, 0),
+        )
+        .unwrap();
+        let sealed = test_enclave::sealed_pledge(alice(), amount, U256::ONE, CHAIN_ID);
+        let rejected = |bytes: &[u8], reservation: U256, quantity: U256| {
+            api::pledge_sealed(&storage, bytes, reservation, quantity).unwrap_err()
+        };
+        let reason = |sentence: &str| {
+            outbe_primitives::error::PrecompileError::from(crate::errors::GratisError::Rejected(
+                sentence.into(),
+            ))
+            .to_string()
+        };
+        let invalid = reason("invalid pledge authorization");
+        let malformed = reason("malformed sealed pledge");
+        assert_eq!(
+            rejected(&sealed, U256::from(2u64), amount).to_string(),
+            invalid
+        );
+        assert_eq!(
+            rejected(&sealed, U256::ONE, amount - U256::ONE).to_string(),
+            invalid
+        );
+        let other_account = test_enclave::sealed_pledge(
+            address!("0x00000000000000000000000000000000000000b0"),
+            amount,
+            U256::ONE,
+            CHAIN_ID,
+        );
+        assert!(api::pledge_sealed(&storage, &other_account, U256::ONE, amount).is_err());
+        // A Nod offer sealed to the same key does not open as a pledge.
+        let (cipher, nonce, ephemeral) = outbe_core_common::confidential_tee::encrypt_offer(
+            &outbe_core_common::confidential_tee::offer_public_key(),
+            &[0x11; crate::engine::PLEDGE_PLAINTEXT_LEN],
+        )
+        .unwrap();
+        let offer = [ephemeral.as_slice(), nonce.as_slice(), cipher.as_slice()].concat();
+        assert_eq!(rejected(&offer, U256::ONE, amount).to_string(), malformed);
+        assert_eq!(
+            rejected(&sealed[..sealed.len() - 1], U256::ONE, amount).to_string(),
+            malformed
+        );
+        assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
+
+        // Another Gratis operation of the main account between the MAC and the issue.
+        api::burn(
+            storage.clone(),
+            alice(),
+            U256::ONE,
+            auth(GratisOp::Burn, alice(), U256::ONE, 1),
+        )
+        .unwrap();
+        let pledged = amount - U256::ONE;
+        let sealed = test_enclave::sealed_pledge(alice(), pledged, U256::ONE, CHAIN_ID);
+        assert_eq!(
+            api::pledge_sealed(&storage, &sealed, U256::ONE, pledged).unwrap(),
+            alice()
+        );
+        assert_eq!(view_pledged(storage.clone(), alice()), pledged);
+        assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 2);
+    });
+}

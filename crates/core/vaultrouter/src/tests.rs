@@ -2108,6 +2108,16 @@ fn with_reservable_asset<R>(
     block: u64,
     f: impl FnOnce(StorageHandle<'_>) -> R,
 ) -> R {
+    let mut storage = reservable_asset_world(issuance_iso, decimals, shares, block);
+    StorageHandle::enter(&mut storage, f)
+}
+
+fn reservable_asset_world(
+    issuance_iso: u16,
+    decimals: u8,
+    shares: U256,
+    block: u64,
+) -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_block_number(block);
     storage.set_timestamp(U256::from(1_700_000_000u64));
@@ -2158,8 +2168,8 @@ fn with_reservable_asset<R>(
         storage
             .set_code(receiver(), Bytecode::new_raw(vec![0x00u8].into()))
             .unwrap();
-        f(storage)
-    })
+    });
+    storage
 }
 
 #[test]
@@ -2853,8 +2863,9 @@ fn reservation_reads_the_last_closed_policy_rate() {
     });
 }
 
+/// The Oracle keeps policy rates unsigned, so a rate below zero reaches a reservation as zero.
 #[test]
-fn zero_rate_is_valid() {
+fn zero_rate_is_valid_and_a_rate_below_zero_counts_as_zero() {
     with_reservable_vault(U256::from(100u64), |storage| {
         OracleContract::new(storage.clone())
             .policy_rate
@@ -2902,3 +2913,102 @@ fn reservation_rejects_a_bad_price_or_bad_decimals() {
 }
 
 mod registry;
+
+/// The WCOEN calls the router made since `from`.
+fn wcoen_calls(provider: &HashMapStorageProvider, from: usize) -> Vec<Bytes> {
+    provider.sub_call_inputs()[from..]
+        .iter()
+        .filter(|call| call.target == outbe_core_common::addresses::WCOEN_ADDRESS)
+        .map(|call| call.calldata.clone())
+        .collect()
+}
+
+#[test]
+fn reservation_names_no_account_of_the_pledge() {
+    with_reservable_vault(U256::from(100u64), |storage| {
+        let id = reserve_in(&storage, USD_ISO_CODE).unwrap();
+        let out = dispatch(
+            storage,
+            &IVaultRouter::getCredisReservationCall {
+                credisReservationId: id,
+            }
+            .abi_encode(),
+            stranger(),
+            U256::ZERO,
+        )
+        .unwrap();
+        let held = IVaultRouter::getCredisReservationCall::abi_decode_returns(&out).unwrap();
+        assert_eq!(
+            (held.credisOwner, held.cca, held.ccaReceiver, held.omnibus),
+            (receiver(), cca(), cca(), omnibus())
+        );
+        assert_eq!(
+            held.wcoenMinor,
+            outbe_system_common::units::checked_protocol_to_native(held.gratisMinor).unwrap()
+        );
+    });
+}
+
+#[test]
+fn unused_reservation_returns_wcoen_and_escrow() {
+    let mut provider = reservable_asset_world(USD_ISO_CODE, 6, U256::from(100u64), 0);
+    let calls = provider.sub_call_inputs().len();
+    let (id, wcoen, expiry) = StorageHandle::enter(&mut provider, |storage| {
+        let id = reserve_in(&storage, USD_ISO_CODE).unwrap();
+        let held = runtime::credis_reservation_of(&storage, id).unwrap();
+        (id, held.wcoen_minor, held.expires_at)
+    });
+    assert_eq!(
+        wcoen_calls(&provider, calls),
+        [IERC20::transferFromCall {
+            from: cca(),
+            to: VAULT_ROUTER_ADDRESS,
+            amount: wcoen,
+        }
+        .abi_encode()]
+    );
+
+    let calls = provider.sub_call_inputs().len();
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_revert::<IVaultRouter::Unauthorized>(
+            &runtime::cancel_credis_reservation(storage.clone(), stranger(), id).unwrap_err(),
+        );
+        storage.set_block_timestamp(U256::from(expiry)).unwrap();
+        assert_revert::<IVaultRouter::Unauthorized>(
+            &runtime::expire_credis_reservation(storage.clone(), id).unwrap_err(),
+        );
+        assert_eq!(
+            runtime::cancel_credis_reservation(storage.clone(), cca(), id).unwrap(),
+            U256::from(100)
+        );
+    });
+    assert_eq!(
+        wcoen_calls(&provider, calls),
+        [IERC20::transferCall {
+            to: cca(),
+            amount: wcoen,
+        }
+        .abi_encode()]
+    );
+
+    let calls = provider.sub_call_inputs().len();
+    StorageHandle::enter(&mut provider, |storage| {
+        let id = reserve_in(&storage, USD_ISO_CODE).unwrap();
+        let expiry = runtime::credis_reservation_of(&storage, id)
+            .unwrap()
+            .expires_at;
+        storage.set_block_timestamp(U256::from(expiry + 1)).unwrap();
+        assert_revert::<IVaultRouter::Unauthorized>(
+            &runtime::cancel_credis_reservation(storage.clone(), cca(), id).unwrap_err(),
+        );
+        assert_eq!(
+            runtime::expire_credis_reservation(storage.clone(), id).unwrap(),
+            U256::from(100)
+        );
+        assert!(runtime::credis_reservation_of(&storage, id)
+            .unwrap()
+            .asset
+            .is_zero());
+    });
+    assert_eq!(wcoen_calls(&provider, calls).len(), 2);
+}
