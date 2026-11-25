@@ -6,3 +6,5 @@ pub mod prepare;
 pub(crate) mod remote;
 pub mod start;
 pub mod status;
+pub mod vm;
+pub mod vm_state;

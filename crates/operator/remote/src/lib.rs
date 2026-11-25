@@ -1,9 +1,12 @@
 //! SSH/SCP command execution and SSH-tunneled JSON-RPC transport.
 
 use std::{
+    collections::BTreeMap,
+    fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
-    process::Command,
-    sync::Arc,
+    process::{Command, Stdio},
+    sync::{Arc, Mutex},
 };
 
 use eyre::{bail, ensure, Context, Result};
@@ -76,28 +79,16 @@ impl SshOptions {
         command: &str,
         stdin_bytes: &[u8],
     ) -> Result<String> {
-        use std::{io::Write, process::Stdio};
-
         let mut process = Command::new("ssh");
         self.ssh_endpoint_args(&mut process, ssh);
-        let mut child = process
+        let child = process
             .arg(command)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .wrap_err("spawn ssh")?;
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(stdin_bytes).wrap_err("write ssh stdin")?;
-        }
-        let output = child.wait_with_output().wrap_err("wait for ssh")?;
-        if !output.status.success() {
-            bail!(
-                "SSH command failed on {label}: {}",
-                String::from_utf8_lossy(&output.stderr).trim()
-            );
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+        run_child_with_stdin(child, label, stdin_bytes)
     }
 
     pub fn run_ssh(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()> {
@@ -201,28 +192,305 @@ impl SshOptions {
     }
 
     fn ssh_endpoint_args(&self, process: &mut Command, ssh: &Ssh) {
+        self.ssh_endpoint_args_with_control(process, ssh, None);
+    }
+
+    fn scp_endpoint_args(&self, process: &mut Command, ssh: &Ssh) {
+        self.scp_endpoint_args_with_control(process, ssh, None);
+    }
+
+    fn ssh_endpoint_args_with_control(
+        &self,
+        process: &mut Command,
+        ssh: &Ssh,
+        control_path: Option<&Path>,
+    ) {
         if let Some(ssh_config) = &self.ssh_config {
             process.arg("-F").arg(ssh_config);
         }
         process.args(["-p", &ssh.port.to_string()]);
         process.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
+        if let Some(ctrl) = control_path {
+            process.args(["-o", "ControlMaster=auto", "-o", "ControlPersist=60s"]);
+            process
+                .arg("-o")
+                .arg(format!("ControlPath={}", ctrl.display()));
+        }
         if let Some(ssh_key) = &self.ssh_key {
             process.arg("-i").arg(ssh_key);
         }
         process.arg(format!("{}@{}", ssh.user, ssh.host));
     }
 
-    fn scp_endpoint_args(&self, process: &mut Command, ssh: &Ssh) {
+    fn scp_endpoint_args_with_control(
+        &self,
+        process: &mut Command,
+        ssh: &Ssh,
+        control_path: Option<&Path>,
+    ) {
         process.arg("-q");
         if let Some(ssh_config) = &self.ssh_config {
             process.arg("-F").arg(ssh_config);
         }
         process.args(["-P", &ssh.port.to_string()]);
         process.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"]);
+        if let Some(ctrl) = control_path {
+            process.args(["-o", "ControlMaster=auto", "-o", "ControlPersist=60s"]);
+            process
+                .arg("-o")
+                .arg(format!("ControlPath={}", ctrl.display()));
+        }
         if let Some(ssh_key) = &self.ssh_key {
             process.arg("-i").arg(ssh_key);
         }
     }
+}
+
+/// Multiplexed SSH/SCP executor using per-run `0700` ControlMaster sockets.
+///
+/// Opens at most one persistent SSH connection per unique `(user, host, port)` and cleanly shuts
+/// down every master socket with `ssh -O exit` when dropped.
+pub struct SshControlSession {
+    options: SshOptions,
+    control_dir: tempfile::TempDir,
+    sockets: Mutex<BTreeMap<String, (Ssh, PathBuf)>>,
+}
+
+impl SshControlSession {
+    pub fn new(ssh_key: Option<&Path>, ssh_config: Option<&Path>) -> Result<Self> {
+        let options = SshOptions::new(ssh_key, ssh_config)?;
+        let control_dir = tempfile::Builder::new()
+            .prefix("outbe-ssh-")
+            .tempdir()
+            .wrap_err("create private SSH ControlMaster socket directory")?;
+        fs::set_permissions(control_dir.path(), fs::Permissions::from_mode(0o700))
+            .wrap_err("set 0700 mode on SSH ControlMaster directory")?;
+        Ok(Self {
+            options,
+            control_dir,
+            sockets: Mutex::new(BTreeMap::new()),
+        })
+    }
+
+    pub fn control_dir(&self) -> &Path {
+        self.control_dir.path()
+    }
+
+    fn socket_for(&self, ssh: &Ssh) -> PathBuf {
+        let key = format!("{}@{}:{}", ssh.user, ssh.host, ssh.port);
+        let mut guard = self.sockets.lock().unwrap_or_else(|e| e.into_inner());
+        guard
+            .entry(key.clone())
+            .or_insert_with(|| {
+                let hash = fnv1a_64(key.as_bytes());
+                let sock = self.control_dir.path().join(format!("{hash:016x}.sock"));
+                (ssh.clone(), sock)
+            })
+            .1
+            .clone()
+    }
+
+    /// Gracefully terminate all active SSH ControlMaster connections (`ssh -O exit`).
+    pub fn close_all(&self) {
+        let entries: Vec<(Ssh, PathBuf)> = {
+            let mut guard = self.sockets.lock().unwrap_or_else(|e| e.into_inner());
+            std::mem::take(&mut *guard).into_values().collect()
+        };
+        for (ssh, sock) in entries {
+            if !sock.exists() {
+                continue;
+            }
+            let mut cmd = Command::new("ssh");
+            if let Some(ssh_config) = &self.options.ssh_config {
+                cmd.arg("-F").arg(ssh_config);
+            }
+            cmd.args(["-p", &ssh.port.to_string()]);
+            cmd.args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=5"]);
+            cmd.arg("-S").arg(&sock);
+            cmd.args(["-O", "exit"]);
+            cmd.arg(format!("{}@{}", ssh.user, ssh.host));
+            cmd.stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null());
+            let _ = cmd.status();
+        }
+    }
+
+    fn capture_raw_inner(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
+        let sock = self.socket_for(ssh);
+        let mut process = Command::new("ssh");
+        self.options
+            .ssh_endpoint_args_with_control(&mut process, ssh, Some(&sock));
+        let output = process.arg(command).output().wrap_err("run ssh")?;
+        if !output.status.success() {
+            bail!(
+                "SSH command failed on {label}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            );
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    }
+
+    fn capture_stdin_inner(
+        &self,
+        ssh: &Ssh,
+        label: &str,
+        command: &str,
+        stdin_bytes: &[u8],
+    ) -> Result<String> {
+        let sock = self.socket_for(ssh);
+        let mut process = Command::new("ssh");
+        self.options
+            .ssh_endpoint_args_with_control(&mut process, ssh, Some(&sock));
+        let child = process
+            .arg(command)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .wrap_err("spawn ssh")?;
+        run_child_with_stdin(child, label, stdin_bytes)
+    }
+}
+
+/// Stream `stdin_bytes` to `child` on a scoped writer thread while draining stdout/stderr via
+/// `wait_with_output`. Tolerates `BrokenPipe` if the remote exits before consuming stdin so the
+/// child is always reaped and remote stderr is surfaced as the primary error.
+fn run_child_with_stdin(
+    mut child: std::process::Child,
+    label: &str,
+    stdin_bytes: &[u8],
+) -> Result<String> {
+    use std::io::{ErrorKind, Write};
+
+    let stdin = child.stdin.take();
+    let (write_res, output) = std::thread::scope(|scope| {
+        let writer = scope.spawn(move || -> std::io::Result<()> {
+            if let Some(mut pipe) = stdin {
+                if let Err(err) = pipe.write_all(stdin_bytes) {
+                    if err.kind() != ErrorKind::BrokenPipe {
+                        return Err(err);
+                    }
+                }
+            }
+            Ok(())
+        });
+        let output = child.wait_with_output().wrap_err("wait for ssh");
+        let write_res = match writer.join() {
+            Ok(res) => res,
+            Err(_) => Err(std::io::Error::other("ssh stdin writer thread panicked")),
+        };
+        (write_res, output)
+    });
+
+    let output = output?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = stderr.trim();
+        if detail.is_empty() {
+            if let Err(write_err) = write_res {
+                bail!("SSH command failed on {label} (stdin write error: {write_err})");
+            }
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            bail!("SSH command failed on {label}: {}", stdout.trim());
+        }
+        bail!("SSH command failed on {label}: {detail}");
+    }
+    write_res.wrap_err("write ssh stdin")?;
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+impl Drop for SshControlSession {
+    fn drop(&mut self) {
+        self.close_all();
+    }
+}
+
+impl HostExec for SshControlSession {
+    fn capture(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
+        Ok(self
+            .capture_raw_inner(ssh, label, command)?
+            .trim()
+            .to_owned())
+    }
+
+    fn capture_raw(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
+        self.capture_raw_inner(ssh, label, command)
+    }
+
+    fn capture_stdin(
+        &self,
+        ssh: &Ssh,
+        label: &str,
+        command: &str,
+        stdin_bytes: &[u8],
+    ) -> Result<String> {
+        self.capture_stdin_inner(ssh, label, command, stdin_bytes)
+    }
+
+    fn run(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()> {
+        let sock = self.socket_for(ssh);
+        let mut process = Command::new("ssh");
+        self.options
+            .ssh_endpoint_args_with_control(&mut process, ssh, Some(&sock));
+        let status = process.arg(command).status().wrap_err("run ssh")?;
+        ensure!(status.success(), "SSH command failed on {label}");
+        Ok(())
+    }
+
+    fn run_quiet(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()> {
+        let sock = self.socket_for(ssh);
+        let mut process = Command::new("ssh");
+        self.options
+            .ssh_endpoint_args_with_control(&mut process, ssh, Some(&sock));
+        let output = process.arg(command).output().wrap_err("run ssh")?;
+        if !output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let details = [stdout.trim(), stderr.trim()]
+                .into_iter()
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            bail!("SSH command failed on {label}:\n{details}");
+        }
+        Ok(())
+    }
+
+    fn copy_to(
+        &self,
+        ssh: &Ssh,
+        label: &str,
+        sources: &[&Path],
+        destination: &str,
+        recursive: bool,
+    ) -> Result<()> {
+        let sock = self.socket_for(ssh);
+        let mut process = Command::new("scp");
+        self.options
+            .scp_endpoint_args_with_control(&mut process, ssh, Some(&sock));
+        if recursive {
+            process.arg("-r");
+        }
+        process.args(sources);
+        process.arg(format!(
+            "{}@{}:{destination}",
+            ssh.user,
+            scp_host(&ssh.host)
+        ));
+        let status = process.status().wrap_err("run scp")?;
+        ensure!(status.success(), "SCP failed for {label}");
+        Ok(())
+    }
+}
+
+fn fnv1a_64(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for &b in bytes {
+        hash ^= u64::from(b);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 /// Object-safe remote host execution interface implemented by [`SshOptions`] and fake test
@@ -536,6 +804,76 @@ mod tests {
         assert_eq!(
             exec.capture_stdin(&ssh, "amd", "cat", b"hello").unwrap(),
             "hello"
+        );
+    }
+
+    #[test]
+    fn ssh_control_session_uses_0700_dir_short_socket_and_control_master_args() {
+        let session = SshControlSession::new(None, Some(Path::new("/dev/null"))).unwrap();
+        assert_eq!(
+            fs::metadata(session.control_dir())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
+        );
+        let endpoint = Ssh {
+            host: "192.0.2.50".into(),
+            user: "ubuntu".into(),
+            port: 2222,
+        };
+        let sock = session.socket_for(&endpoint);
+        assert!(sock.starts_with(session.control_dir()));
+        assert!(
+            sock.to_string_lossy().len() < 100,
+            "socket path too long: {}",
+            sock.display()
+        );
+        assert_eq!(sock, session.socket_for(&endpoint));
+
+        let mut ssh_cmd = Command::new("ssh");
+        session
+            .options
+            .ssh_endpoint_args_with_control(&mut ssh_cmd, &endpoint, Some(&sock));
+        let ssh_args: Vec<String> = ssh_cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(ssh_args.contains(&"ControlMaster=auto".to_owned()));
+        assert!(ssh_args.contains(&"ControlPersist=60s".to_owned()));
+        assert!(ssh_args.contains(&format!("ControlPath={}", sock.display())));
+
+        let mut scp_cmd = Command::new("scp");
+        session
+            .options
+            .scp_endpoint_args_with_control(&mut scp_cmd, &endpoint, Some(&sock));
+        let scp_args: Vec<String> = scp_cmd
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(scp_args.contains(&"ControlMaster=auto".to_owned()));
+        assert!(scp_args.contains(&format!("ControlPath={}", sock.display())));
+
+        session.close_all();
+    }
+
+    #[test]
+    fn run_child_with_stdin_surfaces_remote_stderr_on_early_exit_broken_pipe() {
+        let child = Command::new("sh")
+            .args(["-c", "echo 'outbe-up: staging lock busy' >&2; exit 1"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        // Large payload exceeds OS pipe buffer so writer hits BrokenPipe when child exits early.
+        let large_stdin = vec![b'x'; 512 * 1024];
+        let err = run_child_with_stdin(child, "host-a", &large_stdin).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("outbe-up: staging lock busy"),
+            "expected remote stderr to be surfaced, got: {msg}"
         );
     }
 }

@@ -46,7 +46,7 @@ enum NetworkCommand {
         #[arg(long)]
         keys_dir: Option<PathBuf>,
     },
-    /// Deploy built network artifacts across hosts (VM mode drives `outbe-up` over SSH; bare-host mode runs prepare).
+    /// Deploy built network artifacts across hosts (VM mode reconciles against host `outbe-up --json`; bare-host mode runs prepare).
     #[command(group(
         ArgGroup::new("image_source")
             .args(["image_archive", "image_url"])
@@ -83,7 +83,7 @@ enum NetworkCommand {
         #[arg(long)]
         ssh_config: Option<PathBuf>,
     },
-    /// Start founding validators and wait for finalized consensus.
+    /// Start founding validators and wait for finalized consensus growth.
     Start {
         #[arg(long)]
         artifacts: PathBuf,
@@ -97,12 +97,9 @@ enum NetworkCommand {
         /// Maximum acceptable execution-to-finalized block lag during readiness checks.
         #[arg(long, default_value_t = 20)]
         max_lag: u64,
-        /// Minimum finalized block height required before declaring consensus healthy.
-        #[arg(long, default_value_t = 1)]
+        /// Minimum finalized block growth (`min(finalized) >= B + N` across two consecutive samples).
+        #[arg(long, default_value_t = 10)]
         min_finalized_blocks: u64,
-        /// Configure Hyperlane validator signers on-chain after finality (optional for VM networks).
-        #[arg(long)]
-        configure_hyperlane: bool,
     },
     /// Stop all founding validator VMs for this network.
     Stop {
@@ -119,7 +116,7 @@ enum NetworkCommand {
         #[arg(long, default_value_t = 120)]
         timeout: u64,
     },
-    /// Inspect founding validator health and consensus status.
+    /// Inspect founding validator health and consensus status (works on full or partial deploys).
     Status {
         #[arg(long)]
         artifacts: PathBuf,
@@ -137,7 +134,7 @@ enum NetworkCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Remove founding validator VMs (and optionally release DHCP reservations and firewall publish blocks).
+    /// Remove founding validator VMs and staged disks gracefully (never modifies host DHCP/firewall config).
     Remove {
         #[arg(long)]
         artifacts: PathBuf,
@@ -146,13 +143,7 @@ enum NetworkCommand {
         /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null`).
         #[arg(long)]
         ssh_config: Option<PathBuf>,
-        /// Also run `outbe-up host release --apply` for each VM on its host.
-        #[arg(long)]
-        release_reservations: bool,
-        /// Also run `outbe-up host publish --remove --apply` for each published VM on its host.
-        #[arg(long)]
-        release_firewall: bool,
-        /// Force-stop running VMs before removal.
+        /// Force-stop running VMs before removal (bypasses graceful guest shutdown).
         #[arg(long)]
         force: bool,
         #[arg(long, default_value_t = 120)]
@@ -181,12 +172,12 @@ impl Cli {
                 } => network::build::run(&software_bundle, &config, &output, keys_dir.as_deref()),
                 NetworkCommand::Deploy {
                     artifacts,
-                    image_archive: _,
-                    image_url: _,
-                    image_sha256: _,
+                    image_archive,
+                    image_url,
+                    image_sha256,
                     ssh_key,
                     ssh_config,
-                    no_tee: _,
+                    no_tee,
                 } => {
                     let loaded = network::remote::NetworkArtifacts::load(&artifacts)?;
                     match loaded.manifest.deployment {
@@ -199,9 +190,34 @@ impl Cli {
                             .await
                         }
                         network::build::DeploymentKind::Vm => {
-                            bail!(
-                                "VM `outbe-net-up network deploy` orchestration is scheduled for S6.3"
-                            );
+                            let image_source = match (image_archive, image_url) {
+                                (Some(path), None) => network::vm::ImageSource::Archive {
+                                    path,
+                                    sha256: image_sha256,
+                                },
+                                (None, Some(url)) => network::vm::ImageSource::Url {
+                                    url,
+                                    sha256: image_sha256.expect(
+                                        "clap requires --image-sha256 when --image-url is set",
+                                    ),
+                                },
+                                (None, None) => {
+                                    bail!(
+                                        "VM deployment requires either `--image-archive <path>` or `--image-url <https-url> --image-sha256 <hex>`"
+                                    );
+                                }
+                                (Some(_), Some(_)) => {
+                                    unreachable!("clap enforces mutual exclusion on image_source");
+                                }
+                            };
+                            network::vm::deploy(network::vm::DeployOptions {
+                                artifacts: &artifacts,
+                                image_source,
+                                ssh_key: ssh_key.as_deref(),
+                                ssh_config: ssh_config.as_deref(),
+                                no_tee,
+                            })
+                            .await
                         }
                     }
                 }
@@ -218,40 +234,117 @@ impl Cli {
                     ssh_key,
                     ssh_config,
                     timeout,
-                    max_lag: _,
-                    min_finalized_blocks: _,
-                    configure_hyperlane: _,
+                    max_lag,
+                    min_finalized_blocks,
                 } => {
-                    network::start::run(
-                        &artifacts,
-                        ssh_key.as_deref(),
-                        ssh_config.as_deref(),
-                        Duration::from_secs(timeout),
-                    )
-                    .await
+                    let loaded = network::remote::NetworkArtifacts::load(&artifacts)?;
+                    match loaded.manifest.deployment {
+                        network::build::DeploymentKind::Host => {
+                            network::start::run(
+                                &artifacts,
+                                ssh_key.as_deref(),
+                                ssh_config.as_deref(),
+                                Duration::from_secs(timeout),
+                            )
+                            .await
+                        }
+                        network::build::DeploymentKind::Vm => {
+                            network::vm::start(network::vm::StartOptions {
+                                artifacts: &artifacts,
+                                ssh_key: ssh_key.as_deref(),
+                                ssh_config: ssh_config.as_deref(),
+                                timeout: Duration::from_secs(timeout),
+                                max_lag,
+                                min_finalized_blocks,
+                            })
+                            .await
+                        }
+                    }
                 }
-                NetworkCommand::Stop { .. } => {
-                    bail!("`outbe-net-up network stop` is scheduled for S6.3");
+                NetworkCommand::Stop {
+                    artifacts,
+                    ssh_key,
+                    ssh_config,
+                    force,
+                    timeout,
+                } => {
+                    let loaded = network::remote::NetworkArtifacts::load(&artifacts)?;
+                    match loaded.manifest.deployment {
+                        network::build::DeploymentKind::Vm => {
+                            network::vm::stop(network::vm::StopOptions {
+                                artifacts: &artifacts,
+                                ssh_key: ssh_key.as_deref(),
+                                ssh_config: ssh_config.as_deref(),
+                                force,
+                                timeout: Duration::from_secs(timeout),
+                            })
+                            .await
+                        }
+                        network::build::DeploymentKind::Host => {
+                            bail!(
+                                "`outbe-net-up network stop` currently supports VM deployments only"
+                            );
+                        }
+                    }
                 }
                 NetworkCommand::Status {
                     artifacts,
                     ssh_key,
                     ssh_config,
                     watch,
-                    max_lag: _,
+                    max_lag,
                     json,
                 } => {
-                    network::status::show(
-                        &artifacts,
-                        ssh_key.as_deref(),
-                        ssh_config.as_deref(),
-                        watch,
-                        json,
-                    )
-                    .await
+                    let loaded = network::remote::NetworkArtifacts::load(&artifacts)?;
+                    match loaded.manifest.deployment {
+                        network::build::DeploymentKind::Host => {
+                            network::status::show(
+                                &artifacts,
+                                ssh_key.as_deref(),
+                                ssh_config.as_deref(),
+                                watch,
+                                json,
+                            )
+                            .await
+                        }
+                        network::build::DeploymentKind::Vm => {
+                            network::vm::status(network::vm::StatusOptions {
+                                artifacts: &artifacts,
+                                ssh_key: ssh_key.as_deref(),
+                                ssh_config: ssh_config.as_deref(),
+                                watch,
+                                max_lag,
+                                json,
+                            })
+                            .await
+                        }
+                    }
                 }
-                NetworkCommand::Remove { .. } => {
-                    bail!("`outbe-net-up network remove` is scheduled for S6.3");
+                NetworkCommand::Remove {
+                    artifacts,
+                    ssh_key,
+                    ssh_config,
+                    force,
+                    timeout,
+                } => {
+                    let loaded = network::remote::NetworkArtifacts::load(&artifacts)?;
+                    match loaded.manifest.deployment {
+                        network::build::DeploymentKind::Vm => {
+                            network::vm::remove(network::vm::RemoveOptions {
+                                artifacts: &artifacts,
+                                ssh_key: ssh_key.as_deref(),
+                                ssh_config: ssh_config.as_deref(),
+                                force,
+                                timeout: Duration::from_secs(timeout),
+                            })
+                            .await
+                        }
+                        network::build::DeploymentKind::Host => {
+                            bail!(
+                                "`outbe-net-up network remove` currently supports VM deployments only"
+                            );
+                        }
+                    }
                 }
                 NetworkCommand::Update { artifacts, image } => {
                     bail!(
@@ -313,21 +406,44 @@ mod tests {
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
         ])
         .is_ok());
+        // Removed flags (`--wait-host-check`, `--configure-hyperlane`, `--release-reservations`) must be rejected.
+        assert!(Cli::try_parse_from([
+            "outbe-net-up",
+            "network",
+            "deploy",
+            "--artifacts",
+            "artifacts",
+            "--image-archive",
+            "image.tar.zst",
+            "--wait-host-check",
+        ])
+        .is_err());
+        let parsed_start = Cli::try_parse_from([
+            "outbe-net-up",
+            "network",
+            "start",
+            "--artifacts",
+            "artifacts",
+        ])
+        .unwrap();
+        assert!(matches!(
+            parsed_start.command,
+            Command::Network(NetworkArgs {
+                command: NetworkCommand::Start {
+                    min_finalized_blocks: 10,
+                    ..
+                }
+            })
+        ));
         assert!(Cli::try_parse_from([
             "outbe-net-up",
             "network",
             "start",
             "--artifacts",
             "artifacts",
-            "--timeout",
-            "900",
-            "--max-lag",
-            "20",
-            "--min-finalized-blocks",
-            "3",
             "--configure-hyperlane",
         ])
-        .is_ok());
+        .is_err());
         assert!(Cli::try_parse_from([
             "outbe-net-up",
             "network",
@@ -352,11 +468,18 @@ mod tests {
             "remove",
             "--artifacts",
             "artifacts",
-            "--release-reservations",
-            "--release-firewall",
             "--force",
         ])
         .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-net-up",
+            "network",
+            "remove",
+            "--artifacts",
+            "artifacts",
+            "--release-reservations",
+        ])
+        .is_err());
         assert!(Cli::try_parse_from([
             "outbe-net-up",
             "network",

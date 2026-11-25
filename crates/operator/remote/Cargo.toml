@@ -9,6 +9,7 @@ publish.workspace = true
 eyre.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 
 [lints]

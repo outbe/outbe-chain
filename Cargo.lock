@@ -8506,13 +8506,16 @@ dependencies = [
  "outbe-operator-remote",
  "outbe-primitives",
  "outbe-software-bundle",
+ "rustix",
  "serde",
  "serde_json",
+ "tar",
  "tempfile",
  "tokio",
  "toml 0.8.23",
  "walkdir",
  "yaml_serde",
+ "zstd 0.14.4",
 ]
 
 [[package]]
@@ -8609,6 +8612,7 @@ dependencies = [
  "eyre",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 

@@ -446,6 +446,18 @@ impl NetworkConfig {
                     founder.name
                 );
                 let resolved = self.resolve_founder_vm(founder)?;
+                let vm_name = format!("{}-{}", self.name, founder.name);
+                ensure!(
+                    !vm_name.is_empty() && vm_name.len() <= 63,
+                    "computed VM name `{vm_name}` exceeds 63 characters (shorten network name or founder name)"
+                );
+                ensure!(
+                    vm_name
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_ascii_alphanumeric()),
+                    "computed VM name `{vm_name}` must start with an ASCII letter or digit"
+                );
                 validate_ssh(&resolved.vmm_host, &founder.name)?;
                 ensure!(
                     resolved.vcpu > 0,
@@ -1131,5 +1143,29 @@ genesis:
         ))
         .unwrap();
         cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn vm_validation_enforces_rpc_bind_eq_bridge_ip_and_vm_name_rules() {
+        // 1. rpc_bind_ip != vm.bridge_ip must fail.
+        let mut cfg = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
+        cfg.founders[0].rpc_bind_ip = Ipv4Addr::LOCALHOST;
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("rpc_bind_ip") && err.to_string().contains("vm.bridge_ip"),
+            "{err}"
+        );
+
+        // 2. Combined VM name > 63 chars must fail.
+        let mut long_cfg = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
+        long_cfg.name = "a".repeat(55);
+        let err = long_cfg.validate().unwrap_err();
+        assert!(err.to_string().contains("63 characters"), "{err}");
+
+        // 3. VM name starting with non-alphanumeric (`-` or `_`) must fail.
+        let mut leading_dash = mixed_host_vm_config([Some(0), Some(1), Some(0), Some(1)]);
+        leading_dash.name = "-leading".into();
+        let err = leading_dash.validate().unwrap_err();
+        assert!(err.to_string().contains("ASCII letter or digit"), "{err}");
     }
 }
