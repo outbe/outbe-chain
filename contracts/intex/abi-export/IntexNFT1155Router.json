@@ -143,7 +143,7 @@
             "internalType": "bytes32"
           },
           {
-            "name": "tokenIds",
+            "name": "intexIds",
             "type": "uint256[]",
             "internalType": "uint256[]"
           },
@@ -166,7 +166,7 @@
   },
   {
     "type": "function",
-    "name": "crosschainMintOne",
+    "name": "crosschainReceiveOne",
     "inputs": [
       {
         "name": "to",
@@ -174,7 +174,7 @@
         "internalType": "address"
       },
       {
-        "name": "tokenId",
+        "name": "intexId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -189,7 +189,7 @@
   },
   {
     "type": "function",
-    "name": "failedCrosschainMints",
+    "name": "getFailedCrosschainReceive",
     "inputs": [
       {
         "name": "receiveId",
@@ -209,7 +209,7 @@
         "internalType": "address"
       },
       {
-        "name": "tokenId",
+        "name": "intexId",
         "type": "uint256",
         "internalType": "uint256"
       },
@@ -320,7 +320,7 @@
             "internalType": "bytes32[]"
           },
           {
-            "name": "tokenIds",
+            "name": "intexIds",
             "type": "uint256[]",
             "internalType": "uint256[]"
           },
@@ -374,7 +374,7 @@
             "internalType": "bytes32"
           },
           {
-            "name": "tokenIds",
+            "name": "intexIds",
             "type": "uint256[]",
             "internalType": "uint256[]"
           },
@@ -415,7 +415,7 @@
             "internalType": "bytes32[]"
           },
           {
-            "name": "tokenIds",
+            "name": "intexIds",
             "type": "uint256[]",
             "internalType": "uint256[]"
           },
@@ -425,30 +425,6 @@
             "internalType": "uint256[]"
           }
         ]
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "quoteReclaimToSource",
-    "inputs": [
-      {
-        "name": "receiveId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "idx",
-        "type": "uint256",
-        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -480,7 +456,7 @@
             "internalType": "bytes32"
           },
           {
-            "name": "tokenId",
+            "name": "intexId",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -490,6 +466,30 @@
             "internalType": "uint256"
           }
         ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "quoteSendBackToSource",
+    "inputs": [
+      {
+        "name": "receiveId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "idx",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
     "outputs": [
@@ -532,49 +532,7 @@
   },
   {
     "type": "function",
-    "name": "reclaimToSource",
-    "inputs": [
-      {
-        "name": "receiveId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "idx",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "sendId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      }
-    ],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "registerRemoteMessenger",
-    "inputs": [
-      {
-        "name": "chainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "interop",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "remoteMessenger",
+    "name": "remoteRouter",
     "inputs": [
       {
         "name": "chainId",
@@ -611,7 +569,7 @@
   },
   {
     "type": "function",
-    "name": "retryCrosschainMint",
+    "name": "retryIntexCrosschainReceive",
     "inputs": [
       {
         "name": "receiveId",
@@ -665,7 +623,7 @@
             "internalType": "bytes32"
           },
           {
-            "name": "tokenId",
+            "name": "intexId",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -685,6 +643,48 @@
       }
     ],
     "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "sendBackToSource",
+    "inputs": [
+      {
+        "name": "receiveId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "idx",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sendId",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "setRemoteRouter",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "interop",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -1089,7 +1089,7 @@
   },
   {
     "type": "event",
-    "name": "RemoteMessengerRegistered",
+    "name": "RemoteRouterSet",
     "inputs": [
       {
         "name": "chainId",
@@ -1354,7 +1354,7 @@
   },
   {
     "type": "error",
-    "name": "NoSuchFailedCrosschainMint",
+    "name": "NoSuchFailedCrosschainReceive",
     "inputs": [
       {
         "name": "receiveId",
@@ -1396,7 +1396,7 @@
   },
   {
     "type": "error",
-    "name": "RemoteMessengerChainMismatch",
+    "name": "RemoteRouterChainMismatch",
     "inputs": [
       {
         "name": "chainId",
@@ -1412,7 +1412,7 @@
   },
   {
     "type": "error",
-    "name": "RemoteMessengerNotSet",
+    "name": "RemoteRouterNotSet",
     "inputs": [
       {
         "name": "chainId",
@@ -1471,7 +1471,7 @@
   },
   {
     "type": "error",
-    "name": "UnauthorizedSourceMessenger",
+    "name": "UnauthorizedSourceRouter",
     "inputs": [
       {
         "name": "chainId",

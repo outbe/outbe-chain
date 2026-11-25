@@ -291,6 +291,31 @@
   },
   {
     "type": "event",
+    "name": "IntexAuctionTargetRouterDependenciesSet",
+    "inputs": [
+      {
+        "name": "intexAuction",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "intexContract",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "escrow",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "IntexAuctionWinnersReceived",
     "inputs": [
       {
@@ -372,31 +397,6 @@
         "type": "bytes",
         "indexed": false,
         "internalType": "bytes"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "TargetRouterDependenciesSet",
-    "inputs": [
-      {
-        "name": "intexAuction",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "intexContract",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "escrow",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
       }
     ],
     "anonymous": false

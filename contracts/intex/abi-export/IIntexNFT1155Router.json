@@ -19,7 +19,7 @@
             "internalType": "bytes32"
           },
           {
-            "name": "tokenIds",
+            "name": "intexIds",
             "type": "uint256[]",
             "internalType": "uint256[]"
           },
@@ -60,7 +60,7 @@
             "internalType": "bytes32[]"
           },
           {
-            "name": "tokenIds",
+            "name": "intexIds",
             "type": "uint256[]",
             "internalType": "uint256[]"
           },
@@ -101,7 +101,7 @@
             "internalType": "bytes32"
           },
           {
-            "name": "tokenIds",
+            "name": "intexIds",
             "type": "uint256[]",
             "internalType": "uint256[]"
           },
@@ -142,7 +142,7 @@
             "internalType": "bytes32[]"
           },
           {
-            "name": "tokenIds",
+            "name": "intexIds",
             "type": "uint256[]",
             "internalType": "uint256[]"
           },
@@ -183,7 +183,7 @@
             "internalType": "bytes32"
           },
           {
-            "name": "tokenId",
+            "name": "intexId",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -206,24 +206,6 @@
   },
   {
     "type": "function",
-    "name": "registerRemoteMessenger",
-    "inputs": [
-      {
-        "name": "chainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "interop",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "send",
     "inputs": [
       {
@@ -242,7 +224,7 @@
             "internalType": "bytes32"
           },
           {
-            "name": "tokenId",
+            "name": "intexId",
             "type": "uint256",
             "internalType": "uint256"
           },
@@ -262,6 +244,24 @@
       }
     ],
     "stateMutability": "payable"
+  },
+  {
+    "type": "function",
+    "name": "setRemoteRouter",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "interop",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "event",
@@ -602,6 +602,25 @@
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "RemoteRouterSet",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "interop",
+        "type": "bytes",
+        "indexed": false,
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "ArrayLengthMismatch",
     "inputs": []
@@ -618,7 +637,7 @@
   },
   {
     "type": "error",
-    "name": "NoSuchFailedCrosschainMint",
+    "name": "NoSuchFailedCrosschainReceive",
     "inputs": [
       {
         "name": "receiveId",
@@ -636,6 +655,60 @@
     "type": "error",
     "name": "NotSelf",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "RemoteRouterChainMismatch",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "embeddedChainId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "RemoteRouterNotSet",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedBridge",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
+  },
+  {
+    "type": "error",
+    "name": "UnauthorizedSourceRouter",
+    "inputs": [
+      {
+        "name": "chainId",
+        "type": "uint32",
+        "internalType": "uint32"
+      },
+      {
+        "name": "sender",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ]
   },
   {
     "type": "error",
