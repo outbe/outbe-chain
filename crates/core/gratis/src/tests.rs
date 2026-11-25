@@ -612,13 +612,20 @@ fn pledge_authorization_binds_one_reservation() {
             rejected(&sealed, U256::ONE, amount - U256::ONE).to_string(),
             invalid
         );
-        let other_account = test_enclave::sealed_pledge(
+        // A cash account cannot name the main account with a MAC of another key.
+        let forged = test_enclave::sealed_pledge_by(
             address!("0x00000000000000000000000000000000000000b0"),
+            alice(),
             amount,
             U256::ONE,
             CHAIN_ID,
         );
-        assert!(api::pledge_sealed(&storage, &other_account, U256::ONE, amount).is_err());
+        assert_eq!(rejected(&forged, U256::ONE, amount).to_string(), invalid);
+        let other_chain = test_enclave::sealed_pledge(alice(), amount, U256::ONE, CHAIN_ID + 1);
+        assert_eq!(
+            rejected(&other_chain, U256::ONE, amount).to_string(),
+            invalid
+        );
         // A Nod offer sealed to the same key does not open as a pledge.
         let (cipher, nonce, ephemeral) = outbe_core_common::confidential_tee::encrypt_offer(
             &outbe_core_common::confidential_tee::offer_public_key(),

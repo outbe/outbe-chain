@@ -253,7 +253,18 @@ pub mod test_enclave {
         credis_reservation_id: alloy_primitives::U256,
         chain_id: u64,
     ) -> Vec<u8> {
-        let keys = derive_account_keys(&state_key(), account).expect("account keys");
+        sealed_pledge_by(account, account, amount, credis_reservation_id, chain_id)
+    }
+
+    /// [`sealed_pledge`] that names `account` with the MAC of `signer`'s modify key.
+    pub fn sealed_pledge_by(
+        signer: alloy_primitives::Address,
+        account: alloy_primitives::Address,
+        amount: alloy_primitives::U256,
+        credis_reservation_id: alloy_primitives::U256,
+        chain_id: u64,
+    ) -> Vec<u8> {
+        let keys = derive_account_keys(&state_key(), signer).expect("account keys");
         let message = crate::engine::credis_pledge_message(
             account,
             amount,

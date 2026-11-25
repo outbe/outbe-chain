@@ -348,7 +348,7 @@ fn opened_pledge_account(
     let pledge = req
         .sealed_pledge
         .as_ref()
-        .filter(|_| req.op == GratisOp::OpenSealedPledge && !req.amount.is_zero())
+        .filter(|_| is_bare_open(req))
         .ok_or(GratisRejectReason::MalformedSealedPledge)?;
     let (account, mac) = open_sealed(offer, &pledge.sealed)?;
     let keys = derive_account_keys(state_key, account)?;
@@ -361,6 +361,19 @@ fn opened_pledge_account(
     verify_modify_mac(&keys, CREDIS_PLEDGE_MAC_TAG, &message, &mac)
         .then_some(account)
         .ok_or(GratisRejectReason::InvalidPledgeAuthorization)
+}
+
+/// An open names an amount and the seal only: the account, the blobs, the owner
+/// authorization and the Fidelity section come with the pledge that follows it.
+fn is_bare_open(req: &GratisOpRequest) -> bool {
+    let carried = [
+        !req.account.is_zero(),
+        !req.current_balance.is_empty(),
+        !req.current_pledged.is_empty(),
+        req.modify_auth != empty_auth(0),
+        req.fidelity.is_some(),
+    ];
+    req.op == GratisOp::OpenSealedPledge && !req.amount.is_zero() && !carried.contains(&true)
 }
 
 /// The main account and the MAC in `sealed`: ephemeral key, AEAD nonce and ciphertext.
