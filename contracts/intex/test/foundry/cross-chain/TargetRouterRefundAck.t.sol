@@ -54,14 +54,14 @@ contract TargetRouterRefundAckTest is CrossChainTest {
 
     TargetRouter internal target;
     ClosableEscrowAdapter internal escrow;
-    address internal originSender = makeAddr("originSender");
+    address internal outbeIca = makeAddr("outbeIca");
 
     function setUp() public {
         _setUpBridge();
         target = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
         escrow = new ClosableEscrowAdapter(IERC20(address(new MockWCOEN())));
         target.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
-        target.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
+        _wireOutbeIca(target, outbeIca);
     }
 
     function _deliverChunk(uint16 pageIndex, uint16 totalPages) internal {
@@ -69,18 +69,18 @@ contract TargetRouterRefundAckTest is CrossChainTest {
         winners[0] = makeAddr("bidder");
         bytes memory packet =
             BridgeMsgCodec.encodeIntexAuctionWinners(DAY, pageIndex, totalPages, 600_000, 1e6, winners, 0, 0);
-        _deliver(OUTBE_CHAIN_ID, originSender, address(target), packet);
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(target), packet);
     }
 
     function _expectIgnored(uint16 pageIndex, uint8 reason) internal {
-        vm.expectEmit(false, true, false, true, address(target));
-        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, reason);
+        vm.expectEmit(true, true, false, true, address(target));
+        emit ITargetRouter.IntexAuctionMessageIgnored(BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS, DAY, reason);
     }
 
     function test_AChunkForAFailedDayIsObsolete() public {
         TargetRouter failedTarget = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
         failedTarget.setDependencies(address(new FailedDayAuction()), makeAddr("intex"), address(escrow));
-        failedTarget.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
+        _wireOutbeIca(failedTarget, outbeIca);
         target = failedTarget;
 
         _expectIgnored(0, InboundReason.OBSOLETE);

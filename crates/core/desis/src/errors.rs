@@ -54,9 +54,6 @@ pub enum DesisError {
     #[error("min bid quantity scaling overflow")]
     MinIntexAuctionBidQuantityScalingOverflow,
 
-    #[error("targetsOf undecodable")]
-    TargetsOfUndecodable,
-
     #[error("emission day {0} has {1} targets, more than the cap")]
     TooManyTargets(EmissionDate, usize),
 
@@ -138,7 +135,6 @@ impl From<DesisError> for PrecompileError {
             DesisError::MinIntexAuctionBidQuantityScalingOverflow => {
                 revert_with(I::MinIntexAuctionBidQuantityScalingOverflow {})
             }
-            DesisError::TargetsOfUndecodable => revert_with(I::TargetsOfUndecodable {}),
             DesisError::TooManyTargets(day, count) => revert_with(I::TooManyTargets {
                 emissionDay: day.value(),
                 count: count as u64,

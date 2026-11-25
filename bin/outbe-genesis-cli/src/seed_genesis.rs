@@ -14,9 +14,10 @@ use crate::seed_alloc::{
 use crate::seed_codec::{
     parse_header_timestamp, seed_profile_selector, StorageBuilder, ALL_PRECOMPILE_ADDRESSES,
     CREDIS_ADDRESS, CREDIS_PROFILE_SLOT, GEM_ADDRESS, GEM_PROFILE_SLOT, INTEX_ADDRESS,
-    INTEX_PROFILE_SLOT, MARKER_CODE, NOD_ADDRESS, NOD_PROFILE_SLOT,
+    INTEX_FACTORY_ADDRESS, INTEX_PROFILE_SLOT, MARKER_CODE, NOD_ADDRESS, NOD_PROFILE_SLOT,
 };
 use crate::seed_economy::{merge_storage_into_alloc, seed_coen, seed_economic_state};
+use crate::seed_intex::seed_intex_targets;
 use crate::seed_system::seed_system_state;
 use crate::seed_validators::seed_founders;
 
@@ -80,8 +81,16 @@ pub fn apply_seed(
             .get("timestamp")
             .map(|_| parse_header_timestamp(genesis))
             .transpose()?;
+        let own_chain_id = genesis.pointer("/config/chainId").and_then(Value::as_u64);
         let alloc = ensure_object_field(genesis, "alloc")?;
         seed_economic_state(seed, genesis_timestamp, alloc)?;
+        if let Some(intex) = seed.get("intex") {
+            let own_chain_id = own_chain_id
+                .ok_or_else(|| GenesisError::validation("intex needs a numeric config.chainId"))?;
+            let mut targets = StorageBuilder::new();
+            seed_intex_targets(&mut targets, intex, own_chain_id)?;
+            merge_storage_into_alloc(alloc, INTEX_FACTORY_ADDRESS, &targets)?;
+        }
         let contracts_path = options.contracts_dir.as_deref().map(Path::new);
         seed_contract_alloc(alloc, seed, contracts_path)?;
     }

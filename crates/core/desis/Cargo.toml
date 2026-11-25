@@ -21,6 +21,7 @@ tracing.workspace = true
 
 [dev-dependencies]
 outbe-primitives = { workspace = true, features = ["test-utils"] }
+outbe-intexfactory = { workspace = true, features = ["test-utils"] }
 
 [lints]
 workspace = true

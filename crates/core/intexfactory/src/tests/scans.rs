@@ -228,8 +228,7 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
     });
 }
 
-/// Seed a series directly in the registry + call-price index, bypassing issue()
-/// so tests can omit the OriginRouter stub.
+/// Seed a series directly in the registry + call-price index, bypassing issue().
 fn seed_issued(s: &StorageHandle<'_>, id: u32) {
     seed_issued_at(s, id, ISSUED_AT);
 }
@@ -277,10 +276,6 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
             crate::constants::INTEX_NFT1155_ADDRESS,
             alloy_primitives::Bytes::from(vec![0u8; 32]),
         );
-        storage.stub_sub_call_at(
-            crate::constants::ORIGIN_ROUTER_ADDRESS,
-            alloy_primitives::Bytes::from(vec![0u8; 32]),
-        );
         StorageHandle::enter(&mut storage, |s| {
             select_prod_profile(&s);
             seed_issued_at(&s, 7, issued_at);
@@ -308,7 +303,6 @@ fn the_issue_day_counts_only_for_a_series_issued_at_midnight() {
 
 #[test]
 fn call_survives_router_failure() {
-    // No OriginRouter stub: notify_called fails silently.
     // The Issued -> Called transition must still complete.
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(ISSUED_AT));

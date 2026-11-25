@@ -81,9 +81,9 @@ library IntexGas {
     ///      `ClearingRelayMailboxGas.t.sol` prices a send at ~157k against the canonical mailbox,
     ///      and production runs one hub hop more. So the routing part carries 170k for it. Every
     ///      part then takes a 1.3x margin.
-    ///      On Outbe itself the route hands the WCOEN to the origin router in the same call, so it
-    ///      also runs the unwrap and the distribute: 76k measured plus `PROCEEDS_COMPOSE`. That
-    ///      route is the dearer one, and the routing part covers it.
+    ///      On Outbe itself the route hands the WCOEN to IntexFactory in the same call, so it also
+    ///      runs the burn: `PROCEEDS_COMPOSE`. That route is the dearer one, and the routing part
+    ///      covers it.
     uint256 internal constant RETURN_BASE = 207_000;
     uint256 internal constant RETURN_SETTLE_BASE = 110_000;
     uint256 internal constant RETURN_PER_ITEM = 9_250;

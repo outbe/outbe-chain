@@ -26,8 +26,20 @@ pub enum IntexFactoryError {
     InsufficientSettled,
     #[error("insufficient proof of work")]
     InsufficientProofOfWork,
-    #[error("caller is not the origin router")]
-    NotOriginRouter,
+    #[error("proceeds from an unexpected caller {0}")]
+    UnauthorizedProceedsCaller(alloy_primitives::Address),
+    #[error("proceeds from a chain {0} that the day did not start on")]
+    UnexpectedProceedsSource(u32),
+    #[error("proceeds from a sender other than TargetRouter")]
+    UnauthorizedProceedsSender(alloy_primitives::Bytes),
+    #[error("proceeds data does not decode as (emissionDay, pageIndex)")]
+    UndecodableProceedsData,
+    #[error("WCOEN refused the proceeds transfer")]
+    ProceedsTransferRefused,
+    #[error("chain id exceeds u32")]
+    ChainIdExceedsU32,
+    #[error("message of type {0} breaks its wire limits")]
+    InvalidWireMessage(u8),
 
     #[error("forfeited promis load overflow")]
     ForfeitedPromisLoadOverflow,
@@ -52,9 +64,6 @@ pub enum IntexFactoryError {
 
     #[error("NFT balanceOf undecodable")]
     NftBalanceOfUndecodable,
-
-    #[error("the router answered no legs")]
-    RouterAnsweredNoLegs,
 
     #[error("promis overflow")]
     PromisOverflow,
@@ -109,7 +118,27 @@ impl From<IntexFactoryError> for PrecompileError {
             IntexFactoryError::InsufficientProofOfWork => {
                 revert_with(I::InsufficientProofOfWork {})
             }
-            IntexFactoryError::NotOriginRouter => revert_with(I::NotOriginRouter {}),
+            IntexFactoryError::UnauthorizedProceedsCaller(caller) => {
+                revert_with(I::UnauthorizedProceedsCaller { caller })
+            }
+            IntexFactoryError::UnexpectedProceedsSource(src_chain_id) => {
+                revert_with(I::UnexpectedProceedsSource {
+                    srcChainId: src_chain_id,
+                })
+            }
+            IntexFactoryError::UnauthorizedProceedsSender(from) => {
+                revert_with(I::UnauthorizedProceedsSender { from })
+            }
+            IntexFactoryError::UndecodableProceedsData => {
+                revert_with(I::UndecodableProceedsData {})
+            }
+            IntexFactoryError::ProceedsTransferRefused => {
+                revert_with(I::ProceedsTransferRefused {})
+            }
+            IntexFactoryError::ChainIdExceedsU32 => revert_with(I::ChainIdExceedsU32 {}),
+            IntexFactoryError::InvalidWireMessage(msg_type) => {
+                revert_with(I::InvalidWireMessage { msgType: msg_type })
+            }
             IntexFactoryError::ForfeitedPromisLoadOverflow => {
                 revert_with(I::ForfeitedPromisLoadOverflow {})
             }
@@ -124,7 +153,6 @@ impl From<IntexFactoryError> for PrecompileError {
             IntexFactoryError::NftBalanceOfUndecodable => {
                 revert_with(I::NftBalanceOfUndecodable {})
             }
-            IntexFactoryError::RouterAnsweredNoLegs => revert_with(I::RouterAnsweredNoLegs {}),
             IntexFactoryError::PromisOverflow => revert_with(I::PromisOverflow {}),
             IntexFactoryError::MiningSequenceOverflow => revert_with(I::MiningSequenceOverflow {}),
             IntexFactoryError::MinedUnitsExceedSeries => revert_with(I::MinedUnitsExceedSeries {}),

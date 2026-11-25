@@ -9,7 +9,7 @@ fn deadline_retirement_fits_budget_for_1088_and_64_accepted_bids() {
     for total_batches in [17u16, 1] {
         let mut provider = HashMapStorageProvider::new(CHAIN_ID);
         provider.set_timestamp(U256::from(NOW));
-        provider.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+        seed_targets(&mut provider, &[SRC_CHAIN]);
         let before = StorageHandle::enter(&mut provider, |s| {
             seed_rate(&s, NOW, ENTRY_PRICE);
             open_revealing(&s);

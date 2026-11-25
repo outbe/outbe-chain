@@ -9,15 +9,29 @@ pub const INTEX_NFT1155_ADDRESS: Address = address!("0x8E5041c14D3f0b802E8eFA4e5
 #[cfg(feature = "e2e-test")]
 pub const INTEX_NFT1155_ADDRESS: Address = address!("0x116063CF0558225D808d1C309322d6C3CbfDE343");
 
-/// Intex OriginRouter: the auction's outbound ERC-7786 sends and target-chain
-/// registry. CREATE3 proxy under salt "outbe-intex:OriginRouter:v7.0.0", same deployer and factory.
+/// The ERC-7786 hub on Outbe, which delivers the messages of the target chains. CREATE3 proxy
+/// under salt "ERC7786Bridgev7.0.0", same deployer and factory.
 #[cfg(not(feature = "e2e-test"))]
-pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x62C1EFaCBfB20a864342B61A6dEC6f4d80729D18");
+pub const ERC7786_HUB_ADDRESS: Address = address!("0x1925D1af9dEd78172EF305Ff46A5999d05505f32");
 #[cfg(feature = "e2e-test")]
-pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x78639251937A333daee04233867A199E314D7Bbb");
+pub const ERC7786_HUB_ADDRESS: Address = address!("0x2cFdf7b8b56300d97F90f51Dc489dbc77dC15555");
+
+/// Intex TargetRouter, the same address on every target chain and on Outbe. CREATE3 proxy under salt
+/// "outbe-intex:TargetRouter:v7.0.0", same deployer and factory.
+#[cfg(not(feature = "e2e-test"))]
+pub const TARGET_ROUTER_ADDRESS: Address = address!("0x426F62D1F01930FEbfd760B10c294dae0eDbd468");
+#[cfg(feature = "e2e-test")]
+pub const TARGET_ROUTER_ADDRESS: Address = address!("0xab400214c9Ec6441951d316e431C25ec39f1dBb0");
 
 /// WCOEN on Outbe. CREATE3 proxy under salt "WCOENv7.0.0", same deployer and factory.
 #[cfg(not(feature = "e2e-test"))]
 pub const WCOEN_ADDRESS: Address = address!("0x3414f55f086Eb224135D9044299E6eBc6E841197");
 #[cfg(feature = "e2e-test")]
 pub const WCOEN_ADDRESS: Address = address!("0x5C8E0466cCD1f66A85f167Fa3ec75E5F48C7145F");
+
+/// The WCOEN token bridge, the same address on every chain. CREATE3 proxy under salt
+/// "WCOENBridgev7.0.0", same deployer and factory.
+#[cfg(not(feature = "e2e-test"))]
+pub const WCOEN_BRIDGE_ADDRESS: Address = address!("0xDEb9bA2f46395D03c6ff51b4A2c4898930ED170b");
+#[cfg(feature = "e2e-test")]
+pub const WCOEN_BRIDGE_ADDRESS: Address = address!("0x189b63A6583Ffd67082D15456F0fACD0CBb2B631");

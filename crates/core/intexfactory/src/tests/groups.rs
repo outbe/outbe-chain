@@ -30,7 +30,7 @@ mod group_scans {
             call_trigger: crate::tests::prod_trigger(),
             issuance_currency,
             reference_currency: REFERENCE_ISO,
-            snapshot_chains: vec![1],
+            target_chains: vec![1],
         }
     }
 

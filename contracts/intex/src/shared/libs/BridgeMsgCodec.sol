@@ -2,7 +2,6 @@
 pragma solidity 0.8.30;
 
 import {IIntexAuction} from "../../target/interfaces/IIntexAuction.sol";
-import {IOriginRouter} from "../../origin/interfaces/IOriginRouter.sol";
 
 /// @title BridgeMsgCodec
 /// @author Outbe
@@ -279,7 +278,7 @@ library BridgeMsgCodec {
         uint32 _issuanceEnd,
         uint128 _promisLoadMinor,
         uint32 _minBidRate,
-        IOriginRouter.ReferenceCurrencyPrice[] memory _prices,
+        IIntexAuction.ReferenceCurrencyPrice[] memory _prices,
         uint32 _callNoticePeriod,
         uint32 _callWindow,
         uint32 _callThreshold,

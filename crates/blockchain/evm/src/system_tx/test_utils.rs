@@ -144,6 +144,8 @@ empty_module!(
     TestBeginStep5 => "test_begin_5",
     TestBeginStep6 => "test_begin_6",
     TestBeginStep7 => "test_begin_7",
+    TestBeginStep9 => "test_begin_9",
+    TestBeginStep10 => "test_begin_10",
     TestEndStep0 => "test_end_0",
     TestEndStep1 => "test_end_1",
     TestEndStep2 => "test_end_2",
@@ -202,6 +204,8 @@ pub const TEST_BLOCK_ORDER: BlockOrder = BlockOrder {
         begin_step::<TestBeginStep6>().soft_fail(),
         begin_step::<TestBeginStep7>().soft_fail(),
         begin_step::<CycleTick>().with_validators(),
+        begin_step::<TestBeginStep9>().soft_fail(),
+        begin_step::<TestBeginStep10>().soft_fail(),
     ],
     end_block: &[
         end_step::<TestEndStep0>().with_mutation_entitlements(test_end_entitlements),

@@ -41,7 +41,7 @@ fn assembler_uses_only_active_builders_and_preserves_payloads() {
     ));
     ctx.pending_tee_bootstrap = Some(&tee);
     let prefix = assemble_prefix_system_txs(&TEST_BLOCK_ORDER, &ctx).unwrap();
-    assert_eq!(prefix.len(), 12);
+    assert_eq!(prefix.len(), 14);
     assert_eq!(prefix[0], boundary_input);
     assert_eq!(prefix[1], bootstrap_input);
     assert_eq!(prefix[2], fixtures::consensus(4, Bytes::new()));

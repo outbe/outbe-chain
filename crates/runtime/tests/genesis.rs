@@ -581,12 +581,12 @@ fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
     let expected_block1 = [2, 3, 4]
         .into_iter()
         .map(SystemTxStepId::consensus)
-        .chain((0..9).map(SystemTxStepId::begin_block))
+        .chain((0..11).map(SystemTxStepId::begin_block))
         .collect::<Vec<_>>();
     assert_eq!(
         block1, expected_block1,
         "block 1 pins to BoundaryOutcome, TeeBootstrap, \
-         ValidatorLiveness, and the nine begin-block steps; \
+         ValidatorLiveness, and the eleven begin-block steps; \
          CertifiedParentAccounting is absent"
     );
 
@@ -734,6 +734,38 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
                 .unwrap(),
             alloy_primitives::U256::ZERO,
             "genesis carries no Gem bodies"
+        );
+    });
+}
+
+/// The seeded target chains read back through the IntexFactory schema, `own` as this network.
+#[test]
+fn seeded_intex_targets_read_back_through_the_factory() {
+    use outbe_intexfactory::targets::{target_chains, TargetMode};
+    const SEED: &str = r#"{
+      "intex": { "target_chains": [
+        { "chain_id": "own", "mode": "auctions" },
+        { "chain_id": 97, "mode": "series" }
+      ] }
+    }"#;
+    let (_tmp, genesis, _raw) =
+        run_seed_genesis(FIXTURE_GENESIS, SEED, FIXTURE_VALIDATORS_4_PUBLIC_ONLY);
+    let own = u32::try_from(
+        genesis["config"]["chainId"]
+            .as_u64()
+            .expect("numeric chainId"),
+    )
+    .expect("chain id fits u32");
+    let mut provider = HashMapStorageProvider::new(u64::from(own));
+    load_seeded_storage(
+        &mut provider,
+        &genesis,
+        outbe_system_common::addresses::INTEX_FACTORY_ADDRESS,
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            target_chains(&storage).unwrap(),
+            vec![(own, TargetMode::Auctions), (97, TargetMode::Series)]
         );
     });
 }

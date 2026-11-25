@@ -50,13 +50,10 @@ library TargetInbound {
     ///      - a day a cancel reached first (conflict)
     ///      - a schedule the day can no longer honour
     ///      - an unknown day state
-    ///      Anything else propagates so the bridge redelivers.
-    function handleIntexAuctionStart(
-        TargetRouterStorage storage $,
-        uint32 srcChainId,
-        bytes32 receiveId,
-        bytes calldata message
-    ) external {
+    ///      Anything else propagates so the relayer redelivers.
+    function handleIntexAuctionStart(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
+        external
+    {
         (uint32 emissionDay, IIntexAuction.AuctionSchedule memory schedule, IIntexAuction.AuctionParams memory params) =
             BridgeMsgCodec.decodeAuctionParams(message);
 
@@ -73,7 +70,7 @@ library TargetInbound {
             } else {
                 LowLevelCall.bubbleRevert(reason);
             }
-            _ignoreMessage(receiveId, srcChainId, why);
+            _ignoreMessage(BridgeMsgCodec.MSG_INTEX_AUCTION_START, emissionDay, why);
         }
     }
 
@@ -85,13 +82,10 @@ library TargetInbound {
     ///      - a failed day, which found no result in time
     ///      - a day this chain never opened
     ///      A day whose commit stage is still running propagates. Time alone makes the transition
-    ///      valid, so the bridge redelivers. Only the outbound intexAuctionBidsSendState is caught (parked on failure).
-    function handleIntexAuctionClearingStart(
-        TargetRouterStorage storage $,
-        uint32 srcChainId,
-        bytes32 receiveId,
-        bytes calldata message
-    ) external {
+    ///      valid, so the relayer redelivers. Only the outbound intexAuctionBidsSendState is caught (parked on failure).
+    function handleIntexAuctionClearingStart(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
+        external
+    {
         uint32 emissionDay = BridgeMsgCodec.decodeIntexAuctionClearingStart(message);
 
         try $.intexAuction.startAuctionClearing(emissionDay) {}
@@ -108,7 +102,7 @@ library TargetInbound {
             } else {
                 LowLevelCall.bubbleRevert(reason);
             }
-            _ignoreMessage(receiveId, srcChainId, why);
+            _ignoreMessage(BridgeMsgCodec.MSG_INTEX_AUCTION_CLEARING_START, emissionDay, why);
             return;
         }
 
@@ -142,14 +136,11 @@ library TargetInbound {
     ///      - a result the day already holds (same -> duplicate, other -> conflict)
     ///      - a canceled, failed or unknown day
     ///      - a result that fails the auction's permanent sanity bounds
-    ///      A day whose reveal stage has not closed yet (clock skew) propagates so the bridge
+    ///      A day whose reveal stage has not closed yet (clock skew) propagates so the relayer
     ///      redelivers.
-    function handleIntexAuctionResult(
-        TargetRouterStorage storage $,
-        uint32 srcChainId,
-        bytes32 receiveId,
-        bytes calldata message
-    ) external {
+    function handleIntexAuctionResult(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
+        external
+    {
         (uint32 emissionDay, BridgeMsgCodec.IntexAuctionChainResult memory r) =
             BridgeMsgCodec.decodeIntexAuctionResult(message);
 
@@ -182,7 +173,7 @@ library TargetInbound {
             } else {
                 LowLevelCall.bubbleRevert(reason);
             }
-            _ignoreMessage(receiveId, srcChainId, why);
+            _ignoreMessage(BridgeMsgCodec.MSG_INTEX_AUCTION_RESULT, emissionDay, why);
         }
     }
 
@@ -192,12 +183,9 @@ library TargetInbound {
     ///      - a day that is already canceled (duplicate)
     ///      - a day with a result, or one that failed (obsolete)
     ///      A day this chain has not started is recorded as canceled.
-    function handleIntexAuctionCancel(
-        TargetRouterStorage storage $,
-        uint32 srcChainId,
-        bytes32 receiveId,
-        bytes calldata message
-    ) external {
+    function handleIntexAuctionCancel(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
+        external
+    {
         (uint32 emissionDay, uint8 reason) = BridgeMsgCodec.decodeIntexAuctionCancel(message);
 
         try $.intexAuction.cancelAuction(emissionDay, reason) {}
@@ -211,7 +199,7 @@ library TargetInbound {
             } else {
                 LowLevelCall.bubbleRevert(err);
             }
-            _ignoreMessage(receiveId, srcChainId, why);
+            _ignoreMessage(BridgeMsgCodec.MSG_INTEX_AUCTION_CANCEL, emissionDay, why);
             return;
         }
 
@@ -276,30 +264,25 @@ library TargetInbound {
     }
 
     /// @notice Decode one ISSUANCE_INSTRUCTIONS chunk and create the series it names.
-    /// @dev The handler acknowledges these cases without effect (`MessageIgnored`):
+    /// @dev The handler acknowledges these cases without effect (`IntexAuctionMessageIgnored`):
     ///      - a repeated chunk
     ///      - a chunk whose header disagrees with the day's run
     ///      - a series whose stored params differ from the chunk's
     ///      The last applied page emits `IntexSeriesAllReceived`.
-    function handleIntexSeries(
-        TargetRouterStorage storage $,
-        uint32 srcChainId,
-        bytes32 receiveId,
-        bytes calldata message
-    ) external {
+    function handleIntexSeries(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message) external {
         (uint32 emissionDay, uint16 pageIndex, uint16 totalPages, BridgeMsgCodec.IntexSeriesPayload[] memory series) =
             BridgeMsgCodec.decodeIntexSeries(message);
 
         // forge-lint: disable-next-line(incorrect-shift) -- the bit of chunk `pageIndex`
         uint256 bit = 1 << pageIndex;
         if ($.intexSeriesPagesApplied[emissionDay] & bit != 0) {
-            _ignoreMessage(receiveId, srcChainId, InboundReason.DUPLICATE);
+            _ignoreMessage(BridgeMsgCodec.MSG_INTEX_SERIES, emissionDay, InboundReason.DUPLICATE);
             return;
         }
         IntexIssuanceState memory progress = $.intexIssuanceState[emissionDay];
         uint16 knownTotal = progress.totalPages;
         if (knownTotal != 0 && knownTotal != totalPages) {
-            _ignoreMessage(receiveId, srcChainId, InboundReason.CONFLICT);
+            _ignoreMessage(BridgeMsgCodec.MSG_INTEX_SERIES, emissionDay, InboundReason.CONFLICT);
             return;
         }
         // Nothing of a chunk is applied when it names one of these:
@@ -310,7 +293,7 @@ library TargetInbound {
         bool[] memory known = new bool[](series.length);
         for (uint256 s = 0; s < series.length; s++) {
             if (series[s].issuedUnits == 0) {
-                _ignoreMessage(receiveId, srcChainId, InboundReason.INVALID);
+                _ignoreMessage(BridgeMsgCodec.MSG_INTEX_SERIES, emissionDay, InboundReason.INVALID);
                 return;
             }
             known[s] = $.intexContract.seriesExists(series[s].seriesId);
@@ -321,7 +304,7 @@ library TargetInbound {
                 known[s] = true;
             }
             if (conflict) {
-                _ignoreMessage(receiveId, srcChainId, InboundReason.CONFLICT);
+                _ignoreMessage(BridgeMsgCodec.MSG_INTEX_SERIES, emissionDay, InboundReason.CONFLICT);
                 return;
             }
         }
@@ -400,20 +383,17 @@ library TargetInbound {
             && d.callTrigger.transitMargin == payload.transitMargin;
     }
 
-    function _ignoreMessage(bytes32 receiveId, uint32 srcChainId, uint8 reason) private {
-        emit ITargetRouter.MessageIgnored(receiveId, srcChainId, reason);
+    function _ignoreMessage(uint8 msgType, uint32 emissionDay, uint8 reason) private {
+        emit ITargetRouter.IntexAuctionMessageIgnored(msgType, emissionDay, reason);
     }
 
     /// @notice Decode REFUND_INSTRUCTIONS and forward finalization instructions to the EscrowAdapter.
     /// @dev The handler acknowledges without effect a page
     ///      already applied, or one arriving after the escrow closed the day or the day failed.
     ///      Bidders it would have settled recover through the auction's `returnIntexAuctionAsset` path.
-    function handleIntexAuctionWinners(
-        TargetRouterStorage storage $,
-        uint32 srcChainId,
-        bytes32 receiveId,
-        bytes calldata message
-    ) external {
+    function handleIntexAuctionWinners(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
+        external
+    {
         (
             uint32 emissionDay,
             uint16 pageIndex,
@@ -428,18 +408,18 @@ library TargetInbound {
         // forge-lint: disable-next-line(incorrect-shift) -- the bit of chunk `pageIndex`
         uint256 bit = 1 << pageIndex;
         if ($.intexAuctionWinnersPagesApplied[emissionDay] & bit != 0) {
-            _ignoreMessage(receiveId, srcChainId, InboundReason.DUPLICATE);
+            _ignoreMessage(BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS, emissionDay, InboundReason.DUPLICATE);
             return;
         }
         IntexAuctionReturnState memory progress = $.intexAuctionReturnState[emissionDay];
         uint16 knownTotal = progress.totalPages;
         if (knownTotal != 0 && knownTotal != totalPages) {
-            _ignoreMessage(receiveId, srcChainId, InboundReason.CONFLICT);
+            _ignoreMessage(BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS, emissionDay, InboundReason.CONFLICT);
             return;
         }
         (, bool finalized,) = $.escrow.auctionStatus(emissionDay);
         if (finalized || _failed($, emissionDay)) {
-            _ignoreMessage(receiveId, srcChainId, InboundReason.OBSOLETE);
+            _ignoreMessage(BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS, emissionDay, InboundReason.OBSOLETE);
             return;
         }
 
@@ -458,7 +438,7 @@ library TargetInbound {
         }
 
         emit ITargetRouter.IntexAuctionWinnersReceived(
-            receiveId, emissionDay, srcChainId, pageIndex, totalPages, uint32(winners.length)
+            emissionDay, srcChainId, pageIndex, totalPages, uint32(winners.length)
         );
     }
 
@@ -466,15 +446,13 @@ library TargetInbound {
     ///         will not take it yet.
     /// @dev The handler acknowledges a zero call time without effect. No series can take it, and a
     ///      slot reads zero as empty.
-    function handleIntexSeriesCallNotice(
-        TargetRouterStorage storage $,
-        uint32 srcChainId,
-        bytes32 receiveId,
-        bytes calldata message
-    ) external {
-        (, uint64 calledAt, bytes14[] memory seriesIds) = BridgeMsgCodec.decodeIntexSeriesCallNotice(message);
+    function handleIntexSeriesCallNotice(TargetRouterStorage storage $, uint32 srcChainId, bytes calldata message)
+        external
+    {
+        (uint32 emissionDay, uint64 calledAt, bytes14[] memory seriesIds) =
+            BridgeMsgCodec.decodeIntexSeriesCallNotice(message);
         if (calledAt == 0) {
-            _ignoreMessage(receiveId, srcChainId, InboundReason.INVALID);
+            _ignoreMessage(BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE, emissionDay, InboundReason.INVALID);
             return;
         }
         for (uint256 i = 0; i < seriesIds.length; ++i) {

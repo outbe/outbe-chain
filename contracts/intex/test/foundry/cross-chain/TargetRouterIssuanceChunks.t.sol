@@ -25,14 +25,14 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
 
     TargetRouter internal router;
     IntexNFT1155 internal intex;
-    address internal originSender = makeAddr("originSender");
+    address internal outbeIca = makeAddr("outbeIca");
 
     function setUp() public {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(address(this), address(this));
         router = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
 
-        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
+        _wireOutbeIca(router, outbeIca);
         router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.ROUTER_ROLE(), address(router));
     }
@@ -56,7 +56,7 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     function _deliver(uint16 pageIndex, uint16 totalPages, BridgeMsgCodec.IntexSeriesPayload[] memory series) internal {
         _deliver(
             OUTBE_CHAIN_ID,
-            originSender,
+            outbeIca,
             address(router),
             BridgeMsgCodec.encodeIntexSeries(DAY, pageIndex, totalPages, series)
         );
@@ -68,8 +68,8 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         _deliver(0, 1, IssuanceBatchLib.one(_series(USD)));
         assertTrue(intex.seriesExists(USD), "first delivery creates");
 
-        vm.expectEmit(false, true, false, true, address(router));
-        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, InboundReason.DUPLICATE);
+        vm.expectEmit(true, true, false, true, address(router));
+        emit ITargetRouter.IntexAuctionMessageIgnored(BridgeMsgCodec.MSG_INTEX_SERIES, DAY, InboundReason.DUPLICATE);
         _deliver(0, 1, IssuanceBatchLib.one(_series(USD)));
         (uint16 seen, uint16 total) = router.getIntexIssuanceState(DAY);
         assertEq(seen, 1, "repeat is not counted");
@@ -81,8 +81,8 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     function test_AChunkDisagreeingOnTheTotalIsSkipped() public {
         _deliver(0, 2, IssuanceBatchLib.one(_series(USD)));
 
-        vm.expectEmit(false, true, false, true, address(router));
-        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, InboundReason.CONFLICT);
+        vm.expectEmit(true, true, false, true, address(router));
+        emit ITargetRouter.IntexAuctionMessageIgnored(BridgeMsgCodec.MSG_INTEX_SERIES, DAY, InboundReason.CONFLICT);
         _deliver(1, 3, IssuanceBatchLib.one(_series(EUR)));
         assertFalse(intex.seriesExists(EUR), "nothing of the conflicting chunk applied");
         (uint16 seen,) = router.getIntexIssuanceState(DAY);
@@ -97,8 +97,8 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         chunk[1] = _series(USD);
         chunk[1].entryPriceMinor = 101e6; // disagrees with the series this chain already holds
 
-        vm.expectEmit(false, true, false, true, address(router));
-        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, InboundReason.CONFLICT);
+        vm.expectEmit(true, true, false, true, address(router));
+        emit ITargetRouter.IntexAuctionMessageIgnored(BridgeMsgCodec.MSG_INTEX_SERIES, DAY, InboundReason.CONFLICT);
         _deliver(1, 2, chunk);
         assertFalse(intex.seriesExists(EUR), "the healthy series of the chunk is not created either");
         assertFalse(router.intexSeriesPageApplied(DAY, 1), "chunk stays unapplied so a corrected resend can land");
@@ -121,8 +121,8 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
     function test_ASeriesWithNoSupplyIsInvalidNotALoop() public {
         BridgeMsgCodec.IntexSeriesPayload memory p = _series(USD);
         p.issuedUnits = 0;
-        vm.expectEmit(false, true, false, true, address(router));
-        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, InboundReason.INVALID);
+        vm.expectEmit(true, true, false, true, address(router));
+        emit ITargetRouter.IntexAuctionMessageIgnored(BridgeMsgCodec.MSG_INTEX_SERIES, DAY, InboundReason.INVALID);
         _deliver(0, 1, IssuanceBatchLib.one(p));
         assertFalse(intex.seriesExists(USD), "nothing created");
         assertFalse(router.intexSeriesPageApplied(DAY, 0), "a corrected resend can still land");
@@ -134,8 +134,8 @@ contract TargetRouterIssuanceChunksTest is CrossChainTest {
         chunk[1] = _series(USD);
         chunk[1].entryPriceMinor = 101e6;
 
-        vm.expectEmit(false, true, false, true, address(router));
-        emit ITargetRouter.MessageIgnored(bytes32(0), OUTBE_CHAIN_ID, InboundReason.CONFLICT);
+        vm.expectEmit(true, true, false, true, address(router));
+        emit ITargetRouter.IntexAuctionMessageIgnored(BridgeMsgCodec.MSG_INTEX_SERIES, DAY, InboundReason.CONFLICT);
         _deliver(0, 1, chunk);
         assertFalse(intex.seriesExists(USD), "nothing of the chunk applied");
     }

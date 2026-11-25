@@ -430,6 +430,22 @@ pub(crate) fn observe_cycle_tick(
     None
 }
 
+/// Removes CycleTick and the steps after it, returning CycleTick.
+pub(crate) fn split_off_cycle_tick(
+    system_txs: &mut Vec<Recovered<TransactionSigned>>,
+) -> Recovered<TransactionSigned> {
+    let index = system_txs
+        .iter()
+        .position(|tx| {
+            matches!(
+                SystemTx::decode(tx.tx().input().as_ref()),
+                Ok(SystemTx::BeginBlock { step_index: 8 })
+            )
+        })
+        .expect("CycleTick system tx in begin prefix");
+    system_txs.split_off(index).remove(0)
+}
+
 pub(crate) struct ParentAccountingFixture {
     pub(crate) parent_hash: B256,
     pub(crate) metadata: CertifiedParentAccountingMetadata,

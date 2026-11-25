@@ -21,13 +21,13 @@ contract MarkCalledClockTest is CrossChainTest {
     TargetRouter internal router;
     IntexNFT1155 internal intex;
     address internal admin = address(this);
-    address internal originPeer = address(0x0B1);
+    address internal outbeIca = address(0x0B1);
 
     function setUp() public {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(admin, admin);
         router = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        router.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originPeer));
+        _wireOutbeIca(router, outbeIca);
         router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.ROUTER_ROLE(), address(router));
         // A real notice period: with zero the window closes the instant the series
@@ -38,7 +38,7 @@ contract MarkCalledClockTest is CrossChainTest {
     function _deliverCalled(uint32 calledAt) internal {
         _deliver(
             OUTBE_CHAIN_ID,
-            originPeer,
+            outbeIca,
             address(router),
             BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, calledAt, MarkBatchLib.one(SERIES_ID))
         );
