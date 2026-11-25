@@ -118,7 +118,7 @@ pub struct LocalVmState {
 }
 
 impl LocalVmState {
-    fn record_step(&mut self, step: impl Into<String>, detail: Option<String>) {
+    pub(crate) fn record_step(&mut self, step: impl Into<String>, detail: Option<String>) {
         let timestamp_unix_secs = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()

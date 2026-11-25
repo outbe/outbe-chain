@@ -15,17 +15,18 @@ use std::{
 };
 
 use eyre::{bail, ensure, Context, Result};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::shell_quote;
 
-const NAT_TABLE_FAMILY: &str = "ip";
-const NAT_TABLE_NAME: &str = "outbe_up_nat";
+pub const NAT_TABLE_FAMILY: &str = "ip";
+pub const NAT_TABLE_NAME: &str = "outbe_up_nat";
 const NAT_RULES_PATH: &str = "/etc/outbe-up/nat.nft";
 const NAT_SERVICE_NAME: &str = "outbe-up-nat.service";
 const NAT_SERVICE_PATH: &str = "/etc/systemd/system/outbe-up-nat.service";
 const NAT_SYSCTL_PATH: &str = "/etc/sysctl.d/90-outbe-up-nat.conf";
-const OWNERSHIP_MARKER: &str = "# managed by outbe-up vm host-nat";
+pub const OWNERSHIP_MARKER: &str = "# managed by outbe-up vm host-nat";
 
 const SENTINEL_BRIDGE_ADDR: &str = "===OUTBE_NAT_BRIDGE_ADDR===";
 const SENTINEL_UPLINK_ROUTE: &str = "===OUTBE_NAT_UPLINK_ROUTE===";
@@ -34,14 +35,36 @@ const SENTINEL_PERSISTENT_SYSCTL: &str = "===OUTBE_NAT_PERSISTENT_SYSCTL===";
 const SENTINEL_OWNED_FILES: &str = "===OUTBE_NAT_OWNED_FILES===";
 const SENTINEL_NFT_JSON: &str = "===OUTBE_NAT_NFT_JSON===";
 
-/// Configurable file paths on the target host (overridden in unit tests).
+/// Configurable file paths on the target host (overridden in unit/integration tests).
 #[derive(Clone, Debug)]
 pub struct HostNatPaths {
-    rules_path: PathBuf,
-    service_path: PathBuf,
-    sysctl_path: PathBuf,
-    sysctl_scan_dirs: Vec<PathBuf>,
-    sysctl_conf_path: PathBuf,
+    pub rules_path: PathBuf,
+    pub service_path: PathBuf,
+    pub sysctl_path: PathBuf,
+    pub sysctl_scan_dirs: Vec<PathBuf>,
+    pub sysctl_conf_path: PathBuf,
+}
+
+impl HostNatPaths {
+    /// Resolve standard host NAT paths relative to a filesystem root (default `"/"`).
+    pub fn under_root(root: &Path) -> Self {
+        if root == Path::new("/") {
+            return Self::default();
+        }
+        Self {
+            rules_path: root.join(NAT_RULES_PATH.trim_start_matches('/')),
+            service_path: root.join(NAT_SERVICE_PATH.trim_start_matches('/')),
+            sysctl_path: root.join(NAT_SYSCTL_PATH.trim_start_matches('/')),
+            sysctl_scan_dirs: vec![
+                root.join("etc/sysctl.d"),
+                root.join("run/sysctl.d"),
+                root.join("usr/local/lib/sysctl.d"),
+                root.join("usr/lib/sysctl.d"),
+                root.join("lib/sysctl.d"),
+            ],
+            sysctl_conf_path: root.join("etc/sysctl.conf"),
+        }
+    }
 }
 
 impl Default for HostNatPaths {
@@ -75,13 +98,13 @@ pub trait StageReporter {
 
 /// Normalized IPv4 CIDR block (network address + prefix length).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Ipv4Subnet {
-    network: Ipv4Addr,
-    prefix_len: u8,
+pub struct Ipv4Subnet {
+    pub network: Ipv4Addr,
+    pub prefix_len: u8,
 }
 
 impl Ipv4Subnet {
-    fn from_addr_prefix(addr: Ipv4Addr, prefix_len: u8) -> Result<Self> {
+    pub fn from_addr_prefix(addr: Ipv4Addr, prefix_len: u8) -> Result<Self> {
         ensure!(
             (1..=30).contains(&prefix_len),
             "bridge IPv4 prefix length must be between 1 and 30, got /{prefix_len}"
@@ -111,7 +134,7 @@ impl Ipv4Subnet {
         })
     }
 
-    fn contains(self, ip: Ipv4Addr) -> bool {
+    pub fn contains(self, ip: Ipv4Addr) -> bool {
         let mask = if self.prefix_len == 0 {
             0u32
         } else {
@@ -120,95 +143,106 @@ impl Ipv4Subnet {
         (u32::from(ip) & mask) == u32::from(self.network)
     }
 
+    pub fn broadcast(self) -> Ipv4Addr {
+        let host_bits = if self.prefix_len == 0 {
+            !0u32
+        } else {
+            !(!0u32 << (32 - self.prefix_len))
+        };
+        Ipv4Addr::from(u32::from(self.network) | host_bits)
+    }
+
     /// Returns true when `self` covers every address in `other`.
     fn covers(self, other: Self) -> bool {
         self.prefix_len <= other.prefix_len && self.contains(other.network)
     }
 
-    fn cidr_string(self) -> String {
+    pub fn cidr_string(self) -> String {
         format!("{}/{}", self.network, self.prefix_len)
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum ForwardChainClass {
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ForwardChainClass {
     /// `policy accept` and no rule with `drop`, `reject`, `jump`, `goto`, or `vmap`.
     PureAccept,
     /// `policy drop`, or contains at least one rule with `drop`, `reject`, `jump`, `goto`, or `vmap`.
     BlocksOrUnknown,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ForeignForwardChain {
-    family: String,
-    table: String,
-    chain: String,
-    priority: String,
-    policy: String,
-    class: ForwardChainClass,
-    reasons: Vec<String>,
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ForeignForwardChain {
+    pub family: String,
+    pub table: String,
+    pub chain: String,
+    pub priority: String,
+    pub policy: String,
+    pub class: ForwardChainClass,
+    pub reasons: Vec<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ExistingEgress {
+    pub family: String,
+    pub table: String,
+    pub chain: String,
+    pub kind: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PartialEgress {
+    pub family: String,
+    pub table: String,
+    pub chain: String,
+    pub kind: String,
+    pub narrowing: Vec<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct ExistingEgress {
-    family: String,
-    table: String,
-    chain: String,
-    kind: String,
+pub struct NftInspection {
+    pub foreign_forward_chains: Vec<ForeignForwardChain>,
+    pub blocks_or_unknown_chains: Vec<ForeignForwardChain>,
+    pub existing_egress: Vec<ExistingEgress>,
+    pub partial_egress: Vec<PartialEgress>,
+    pub docker_or_libvirt_chains: Vec<String>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PartialEgress {
-    family: String,
-    table: String,
-    chain: String,
-    kind: String,
-    narrowing: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct NftInspection {
-    foreign_forward_chains: Vec<ForeignForwardChain>,
-    blocks_or_unknown_chains: Vec<ForeignForwardChain>,
-    existing_egress: Vec<ExistingEgress>,
-    partial_egress: Vec<PartialEgress>,
-    docker_or_libvirt_chains: Vec<String>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum FileOwnership {
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileOwnership {
     Absent,
     Owned,
     Foreign,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct ManagedFileStates {
-    rules: FileOwnership,
-    service: FileOwnership,
-    sysctl: FileOwnership,
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ManagedFileStates {
+    pub rules: FileOwnership,
+    pub service: FileOwnership,
+    pub sysctl: FileOwnership,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct PersistentSysctlState {
-    effective_value: Option<u8>,
-    effective_source: Option<String>,
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PersistentSysctlState {
+    pub effective_value: Option<u8>,
+    pub effective_source: Option<String>,
     /// True when `effective_value == Some(0)` and `effective_source` is ordered after
     /// `90-outbe-up-nat.conf` (e.g. `99-*.conf` or `/etc/sysctl.conf`), so writing our
     /// 90- drop-in would still be overridden back to 0 on reboot.
-    overridden_by_later_zero: bool,
+    pub overridden_by_later_zero: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct PreflightReport {
-    bridge: String,
-    bridge_addr: Ipv4Addr,
-    subnet: Ipv4Subnet,
-    uplink: String,
-    ip_forward: u8,
-    persistent_sysctl: PersistentSysctlState,
-    files: ManagedFileStates,
-    nft: NftInspection,
+pub(crate) struct PreflightReport {
+    pub(crate) bridge: String,
+    pub(crate) bridge_addr: Ipv4Addr,
+    pub(crate) subnet: Ipv4Subnet,
+    pub(crate) uplink: String,
+    pub(crate) ip_forward: u8,
+    pub(crate) persistent_sysctl: PersistentSysctlState,
+    pub(crate) files: ManagedFileStates,
+    pub(crate) nft: NftInspection,
 }
 
 #[derive(Clone, Debug)]
@@ -570,7 +604,7 @@ pub fn validate_iface_name(name: &str, label: &str) -> Result<()> {
 ///
 /// Uses the `ip` family because VM bridge networking and `net.ipv4.ip_forward` are
 /// IPv4-only; this avoids touching IPv6 hooks and works on all Linux nftables kernels.
-fn render_nat_ruleset(bridge: &str, subnet: Ipv4Subnet, uplink: &str) -> Result<String> {
+pub(crate) fn render_nat_ruleset(bridge: &str, subnet: Ipv4Subnet, uplink: &str) -> Result<String> {
     validate_iface_name(bridge, "bridge")?;
     validate_iface_name(uplink, "uplink")?;
     ensure!(
@@ -598,7 +632,7 @@ fn render_nat_ruleset(bridge: &str, subnet: Ipv4Subnet, uplink: &str) -> Result<
     ))
 }
 
-fn render_systemd_unit(rules_path: &Path) -> String {
+pub(crate) fn render_systemd_unit(rules_path: &Path) -> String {
     let rules = rules_path.display();
     format!(
         "{OWNERSHIP_MARKER}\n\
@@ -635,12 +669,12 @@ fn ownership_probe_snippet(paths: &HostNatPaths) -> String {
     )
 }
 
-fn build_ownership_probe_command(paths: &HostNatPaths) -> String {
+pub(crate) fn build_ownership_probe_command(paths: &HostNatPaths) -> String {
     let script = ownership_probe_snippet(paths);
     format!("sudo -n sh -ec {}", shell_quote(&script))
 }
 
-fn build_preflight_command(
+pub(crate) fn build_preflight_command(
     bridge: &str,
     uplink_override: Option<&str>,
     paths: &HostNatPaths,
@@ -697,7 +731,7 @@ fn build_preflight_command(
     Ok(format!("sudo -n sh -ec {}", shell_quote(&script)))
 }
 
-fn build_apply_command(
+pub(crate) fn build_apply_command(
     ruleset: &str,
     unit: &str,
     write_sysctl_dropin: bool,
@@ -788,7 +822,7 @@ fn build_apply_command(
 
 /// Remove only managed artifacts carrying `OWNERSHIP_MARKER` and our nftables table.
 /// Never writes `net.ipv4.ip_forward=0` and never deletes foreign files.
-fn build_remove_command(paths: &HostNatPaths) -> String {
+pub(crate) fn build_remove_command(paths: &HostNatPaths) -> String {
     let rules_dir = paths
         .rules_path
         .parent()
@@ -832,7 +866,7 @@ fn build_remove_command(paths: &HostNatPaths) -> String {
     format!("sudo -n sh -ec {}", shell_quote(&script))
 }
 
-fn parse_preflight_output(
+pub(crate) fn parse_preflight_output(
     raw: &str,
     bridge: &str,
     founder_ips: &[Ipv4Addr],
@@ -889,7 +923,7 @@ fn parse_preflight_output(
     })
 }
 
-fn parse_owned_files_section(section: &str) -> Result<ManagedFileStates> {
+pub(crate) fn parse_owned_files_section(section: &str) -> Result<ManagedFileStates> {
     let mut rules = None;
     let mut service = None;
     let mut sysctl = None;
@@ -926,7 +960,10 @@ fn parse_owned_files_section(section: &str) -> Result<ManagedFileStates> {
 ///    the same basename).
 /// 2. Winning basenames are applied in lexicographical order.
 /// 3. `/etc/sysctl.conf` is applied last (matching procps-ng `sysctl --system` on Ubuntu).
-fn parse_persistent_sysctl(section: &str, our_dropin_basename: &str) -> PersistentSysctlState {
+pub(crate) fn parse_persistent_sysctl(
+    section: &str,
+    our_dropin_basename: &str,
+) -> PersistentSysctlState {
     // Map basename -> (dir_idx, full_path) where smaller dir_idx = higher priority.
     let mut winner_by_basename: BTreeMap<String, (usize, String)> = BTreeMap::new();
     let mut sysctl_conf_path: Option<String> = None;
@@ -1064,7 +1101,7 @@ fn parse_uplink_section(output: &str) -> Result<String> {
 /// `BlocksOrUnknown` (policy drop OR any rule containing `drop`, `reject`, `jump`,
 /// `goto`, or `vmap`), and detects existing foreign `postrouting` masquerade/snat
 /// rules that already provide egress for `subnet` towards `uplink`.
-fn inspect_nft_json(
+pub(crate) fn inspect_nft_json(
     json_str: &str,
     bridge: &str,
     subnet: Ipv4Subnet,

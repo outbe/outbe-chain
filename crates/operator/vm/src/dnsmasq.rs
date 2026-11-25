@@ -2,10 +2,16 @@
 
 use std::{collections::BTreeMap, net::Ipv4Addr, path::Path};
 
-use eyre::{bail, Result};
+use eyre::{bail, ensure, Result};
 use sha2::{Digest, Sha256};
 
-use crate::shell_quote;
+use crate::{
+    block_splice::{
+        iter_line_spans, parse_managed_blocks, render_managed_block, splice_remove_block,
+        splice_upsert_block_at, BlockSpliceResult,
+    },
+    shell_quote,
+};
 
 pub const DNSMASQ_RESERVATIONS_FILENAME: &str = "dnsmasq-reservations.txt";
 /// Finite DHCP lease duration written into managed dnsmasq reservations so
@@ -27,58 +33,37 @@ pub fn dnsmasq_entry(mac: &str, ip: Ipv4Addr) -> String {
     )
 }
 
-/// Refuse when any requested bridge IP appears in a non-comment line outside our managed block.
+/// Refuse when any requested bridge IP appears in a non-comment line outside our own managed
+/// `# outbe-up:<block_key>:begin..end` block.
 ///
-/// Fails closed on any dnsmasq hosts grammar (`mac,ip`, `mac,set:tag,ip`, `mac,ip,host,lease`,
-/// etc.): any line outside our managed block containing a requested IP as a comma-separated field
-/// is a conflict unless it is an exact match for `our_mac` (when `our_mac` is non-empty).
+/// Enforces strict `# outbe-up:` marker grammar first (F2) and treats ANY foreign line carrying
+/// a requested IP — even if its MAC matches ours or it lives inside another marked block — as a
+/// conflict (F1). Never adopts or moves foreign lines.
 pub fn check_dnsmasq_ip_conflicts(
     existing_hosts: &str,
     requested: &[(String, Ipv4Addr)],
-    network_name: &str,
+    block_key: &str,
 ) -> Result<()> {
-    let begin = format!("# outbe-up:{network_name}:begin");
-    let end = format!("# outbe-up:{network_name}:end");
-    let mut inside_ours = false;
+    let blocks = parse_managed_blocks(existing_hosts)?;
+    let own_span = blocks.iter().find(|b| b.key == block_key);
 
-    for (line_no, line) in existing_hosts.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed == begin {
-            inside_ours = true;
+    for span in iter_line_spans(existing_hosts) {
+        if own_span.is_some_and(|b| span.start >= b.block_start && span.start < b.block_end) {
             continue;
         }
-        if trimmed == end {
-            inside_ours = false;
-            continue;
-        }
-        if inside_ours {
-            continue;
-        }
-        let stripped = line.split('#').next().unwrap_or("").trim();
+        let stripped = span.text.split('#').next().unwrap_or("").trim();
         if stripped.is_empty() {
             continue;
         }
         let fields: Vec<&str> = stripped.split(',').map(str::trim).collect();
-        let first_field_lc = fields.first().map(|f| f.to_ascii_lowercase());
-        for (our_mac, our_ip) in requested {
+        for (_our_mac, our_ip) in requested {
             let ip_present = fields
                 .iter()
                 .any(|field| field.parse::<Ipv4Addr>().ok() == Some(*our_ip));
-            if !ip_present {
-                continue;
-            }
-            let our_mac_lc = our_mac.to_ascii_lowercase();
-            let exact_own_line = !our_mac_lc.is_empty()
-                && (fields.len() == 2 || fields.len() == 3)
-                && first_field_lc.as_deref() == Some(our_mac_lc.as_str())
-                && fields
-                    .get(1)
-                    .and_then(|field| field.parse::<Ipv4Addr>().ok())
-                    == Some(*our_ip);
-            if !exact_own_line {
+            if ip_present {
                 bail!(
                     "bridge IP {our_ip} conflicts with existing dnsmasq hosts line {}: `{stripped}`",
-                    line_no + 1
+                    span.line_no
                 );
             }
         }
@@ -166,106 +151,130 @@ pub fn missing_dnsmasq_entries(
         .collect()
 }
 
-/// Merge our network's `mac,ip` entries into a shared dnsmasq hosts file idempotently,
-/// refusing any IP conflict with foreign reservations.
+/// Merge our `mac,ip` entries into a shared dnsmasq hosts file via strict, byte-preserving
+/// block splicing.
 ///
-/// Foreign lines outside our managed block are preserved verbatim so co-located test
-/// networks on the same VMM host are never disturbed.
+/// - Enforces strict `# outbe-up:` marker grammar across the entire file (F2).
+/// - Refuses any foreign IP OR MAC conflict outside our exact managed block (F1) — never deletes,
+///   moves, or steals foreign lines.
+/// - Preserves every byte outside our block verbatim (CRLF, blank lines, trailing newline or its
+///   absence) (F3).
 pub fn merge_dnsmasq_hosts(
     existing: &str,
     our_entries: &[(String, Ipv4Addr)],
-    network_name: &str,
+    block_key: &str,
 ) -> Result<String> {
-    check_dnsmasq_ip_conflicts(existing, our_entries, network_name)?;
+    let res = merge_dnsmasq_hosts_checked(existing, our_entries, block_key)?;
+    Ok(res.content)
+}
 
-    let begin = format!("# outbe-up:{network_name}:begin");
-    let end = format!("# outbe-up:{network_name}:end");
-    let our_macs: Vec<String> = our_entries
+/// Same as [`merge_dnsmasq_hosts`], returning full [`BlockSpliceResult`] metadata (`exact_match`,
+/// `changed`, `existing_block`).
+pub fn merge_dnsmasq_hosts_checked(
+    existing: &str,
+    our_entries: &[(String, Ipv4Addr)],
+    block_key: &str,
+) -> Result<BlockSpliceResult> {
+    check_dnsmasq_ip_conflicts(existing, our_entries, block_key)?;
+    check_dnsmasq_mac_conflicts(existing, our_entries, block_key)?;
+
+    if our_entries.is_empty() {
+        return strip_dnsmasq_block_checked(existing, block_key, None);
+    }
+
+    let body_lines: Vec<String> = our_entries
+        .iter()
+        .map(|(mac, ip)| dnsmasq_entry(mac, *ip))
+        .collect();
+    let rendered = render_managed_block(block_key, &body_lines, "")?;
+    let expected_macs: Vec<String> = our_entries
         .iter()
         .map(|(mac, _)| mac.to_ascii_lowercase())
         .collect();
-
-    let mut kept = Vec::new();
-    let mut inside_ours = false;
-    for line in existing.lines() {
-        let trimmed = line.trim();
-        if trimmed == begin {
-            inside_ours = true;
-            continue;
-        }
-        if trimmed == end {
-            inside_ours = false;
-            continue;
-        }
-        if inside_ours {
-            continue;
-        }
-        // Drop any pre-existing unmanaged line for one of our own MACs to avoid duplicate leases.
-        let stripped = line.split('#').next().unwrap_or("").trim();
-        if let Some((mac, _)) = stripped.split_once(',') {
-            if our_macs
-                .iter()
-                .any(|ours| ours == &mac.trim().to_ascii_lowercase())
-            {
-                continue;
-            }
-        }
-        kept.push(line.to_owned());
-    }
-
-    // Trim trailing blank lines before appending our managed block.
-    while kept.last().is_some_and(|line| line.trim().is_empty()) {
-        kept.pop();
-    }
-
-    if !our_entries.is_empty() {
-        if !kept.is_empty() {
-            kept.push(String::new());
-        }
-        kept.push(begin);
-        for (mac, ip) in our_entries {
-            kept.push(dnsmasq_entry(mac, *ip));
-        }
-        kept.push(end);
-    }
-
-    if kept.is_empty() {
-        Ok(String::new())
+    let single_vm = block_key.starts_with("vm:");
+    let expected_for_validation = if single_vm {
+        Some(expected_macs.as_slice())
     } else {
-        Ok(format!("{}\n", kept.join("\n")))
-    }
+        None
+    };
+
+    splice_upsert_block_at(existing, block_key, &rendered, existing.len(), |body| {
+        validate_managed_dnsmasq_body(body, block_key, single_vm, expected_for_validation)
+    })
 }
 
-/// Remove only this network's managed `# outbe-up:<network>:begin..end` block from a shared
-/// dnsmasq hosts file, preserving all foreign entries verbatim.
+/// Remove only this block's managed `# outbe-up:<block_key>:begin..end` block from a shared
+/// dnsmasq hosts file, preserving every byte outside our block verbatim.
+///
+/// Fails closed on malformed/unclosed/nested/duplicate markers or foreign lines inside our block.
+pub fn strip_dnsmasq_block_checked(
+    existing: &str,
+    block_key: &str,
+    expected_mac: Option<&str>,
+) -> Result<BlockSpliceResult> {
+    let single_vm = block_key.starts_with("vm:");
+    let expected_list = expected_mac.map(|m| vec![m.to_ascii_lowercase()]);
+    splice_remove_block(existing, block_key, |body| {
+        validate_managed_dnsmasq_body(body, block_key, single_vm, expected_list.as_deref())
+    })
+}
+
+/// Legacy infallible wrapper used by the old SSH path until S6.
 pub fn strip_dnsmasq_network_block(existing: &str, network_name: &str) -> String {
-    let begin = format!("# outbe-up:{network_name}:begin");
-    let end = format!("# outbe-up:{network_name}:end");
-    let mut kept = Vec::new();
-    let mut inside_ours = false;
-    for line in existing.lines() {
-        let trimmed = line.trim();
-        if trimmed == begin {
-            inside_ours = true;
-            continue;
+    strip_dnsmasq_block_checked(existing, network_name, None)
+        .map(|r| r.content)
+        .unwrap_or_else(|_| existing.to_owned())
+}
+
+fn validate_managed_dnsmasq_body(
+    body: &str,
+    block_key: &str,
+    single_vm: bool,
+    expected_macs: Option<&[String]>,
+) -> Result<()> {
+    let mut entry_count = 0usize;
+    for span in iter_line_spans(body) {
+        let trimmed = span.text.trim();
+        ensure!(
+            !trimmed.is_empty() && !trimmed.starts_with('#'),
+            "refusing unexpected blank or comment line inside managed block `# outbe-up:{block_key}`: `{}`",
+            span.text
+        );
+        ensure!(
+            !trimmed.contains('#'),
+            "refusing inline comment inside managed block `# outbe-up:{block_key}`: `{trimmed}`"
+        );
+        let fields: Vec<&str> = trimmed.split(',').map(str::trim).collect();
+        let valid_shape = if single_vm {
+            fields.len() == 3
+                && is_mac_address(fields[0])
+                && fields[1].parse::<Ipv4Addr>().is_ok()
+                && fields[2] == DNSMASQ_LEASE_DURATION
+        } else {
+            (fields.len() == 2 || fields.len() == 3)
+                && is_mac_address(fields[0])
+                && fields[1].parse::<Ipv4Addr>().is_ok()
+        };
+        ensure!(
+            valid_shape,
+            "refusing unrecognized foreign line inside managed block `# outbe-up:{block_key}`: `{trimmed}`"
+        );
+        if let Some(allowed) = expected_macs {
+            let mac_lc = fields[0].to_ascii_lowercase();
+            ensure!(
+                allowed.iter().any(|m| m == &mac_lc),
+                "refusing foreign MAC `{mac_lc}` inside managed block `# outbe-up:{block_key}`"
+            );
         }
-        if trimmed == end {
-            inside_ours = false;
-            continue;
-        }
-        if inside_ours {
-            continue;
-        }
-        kept.push(line.to_owned());
+        entry_count += 1;
     }
-    while kept.last().is_some_and(|line| line.trim().is_empty()) {
-        kept.pop();
+    if single_vm {
+        ensure!(
+            entry_count <= 1,
+            "refusing single-VM block `# outbe-up:{block_key}` containing {entry_count} entries"
+        );
     }
-    if kept.is_empty() {
-        String::new()
-    } else {
-        format!("{}\n", kept.join("\n"))
-    }
+    Ok(())
 }
 
 /// Build a privileged read command that distinguishes an absent file from a read failure.
@@ -358,6 +367,197 @@ pub fn build_host_reserve_write_command(
 /// Compute lowercase hex SHA-256 for CAS checks on dnsmasq hosts content.
 pub fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
+}
+
+/// Format the per-VM managed block (`# outbe-up:vm:<name>:begin..end`) for a single VM reservation.
+pub fn render_vm_dnsmasq_block(vm_name: &str, mac: &str, ip: Ipv4Addr) -> String {
+    format!(
+        "# outbe-up:vm:{vm_name}:begin\n{}\n# outbe-up:vm:{vm_name}:end\n",
+        dnsmasq_entry(mac, ip)
+    )
+}
+
+/// Validate that every non-empty, non-comment line in a dnsmasq `--dhcp-hostsfile` matches
+/// recognized comma-separated dnsmasq host grammar (`mac,ip[,hostname][,lease]` or tagged variants)
+/// AND that all `# outbe-up:` block markers in the file obey strict balanced grammar (F2).
+///
+/// Returns the number of valid reservation lines parsed.
+pub fn validate_dnsmasq_hosts_format(content: &str) -> Result<usize> {
+    parse_managed_blocks(content)?;
+    let mut count = 0usize;
+    for span in iter_line_spans(content) {
+        let stripped = span.text.split('#').next().unwrap_or("").trim();
+        if stripped.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = stripped.split(',').map(str::trim).collect();
+        if fields.len() < 2 || fields.iter().any(|f| f.is_empty()) {
+            bail!(
+                "unrecognized dnsmasq hosts line {} (expected comma-separated fields): `{stripped}`",
+                span.line_no
+            );
+        }
+        let has_mac = fields.iter().any(|f| is_mac_address(f));
+        let has_ip = fields.iter().any(|f| f.parse::<Ipv4Addr>().is_ok());
+        if !has_mac && !has_ip {
+            bail!(
+                "unrecognized dnsmasq hosts line {} (missing MAC or IPv4 address): `{stripped}`",
+                span.line_no
+            );
+        }
+        for field in &fields {
+            if field
+                .chars()
+                .any(|c| c.is_control() || c.is_whitespace() || c == ';')
+            {
+                bail!(
+                    "invalid characters in dnsmasq hosts line {}: `{stripped}`",
+                    span.line_no
+                );
+            }
+        }
+        count += 1;
+    }
+    Ok(count)
+}
+
+/// Refuse when any requested MAC already appears in ANY non-comment line outside our own managed
+/// `# outbe-up:<block_key>:begin..end` block (even if mapped to the same IP — never steal or move
+/// a foreign reservation) (F1).
+pub fn check_dnsmasq_mac_conflicts(
+    existing_hosts: &str,
+    requested: &[(String, Ipv4Addr)],
+    block_key: &str,
+) -> Result<()> {
+    let blocks = parse_managed_blocks(existing_hosts)?;
+    let own_span = blocks.iter().find(|b| b.key == block_key);
+
+    for span in iter_line_spans(existing_hosts) {
+        if own_span.is_some_and(|b| span.start >= b.block_start && span.start < b.block_end) {
+            continue;
+        }
+        let stripped = span.text.split('#').next().unwrap_or("").trim();
+        if stripped.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = stripped.split(',').map(str::trim).collect();
+        for (our_mac, _our_ip) in requested {
+            let our_mac_lc = our_mac.to_ascii_lowercase();
+            if our_mac_lc.is_empty() {
+                continue;
+            }
+            let mac_present = fields.iter().any(|f| f.to_ascii_lowercase() == our_mac_lc);
+            if mac_present {
+                bail!(
+                    "MAC {our_mac_lc} conflicts with existing dnsmasq hosts line {}: `{stripped}`",
+                    span.line_no
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Extract the exact existing `# outbe-up:<block_key>:begin..end` block (including markers), if
+/// present in `existing_hosts`, after validating strict marker grammar.
+pub fn extract_dnsmasq_block(existing_hosts: &str, block_key: &str) -> Result<Option<String>> {
+    let blocks = parse_managed_blocks(existing_hosts)?;
+    Ok(blocks
+        .into_iter()
+        .find(|b| b.key == block_key)
+        .map(|b| existing_hosts[b.block_start..b.block_end].to_owned()))
+}
+
+/// Count non-empty, non-comment lease lines in a dnsmasq leases file.
+pub fn count_dnsmasq_leases(existing_leases: &str) -> usize {
+    parse_dnsmasq_leases(existing_leases).len()
+}
+
+/// Build a local locked compare-and-swap shell script that verifies file type/owner and SHA-256
+/// under `flock`, atomically replaces `hosts_file` from stdin, and reloads `reload_unit` via
+/// `systemctl reload` (never shelling out to `kill -HUP`).
+pub fn build_local_hosts_cas_write_script(
+    hosts_file: &Path,
+    lock_file: &Path,
+    expected_sha256: &str,
+    reload_unit: &str,
+    expected_uid: u32,
+    expected_gid: u32,
+) -> Result<String> {
+    validate_systemd_unit_name(reload_unit)?;
+    let lock_preamble = build_local_lock_preamble(lock_file);
+    let hosts_quoted = shell_quote(&hosts_file.to_string_lossy());
+    let tmp_template = shell_quote(&format!("{}.outbe-up.XXXXXX", hosts_file.display()));
+    let expected_quoted = shell_quote(expected_sha256);
+    let unit_quoted = shell_quote(reload_unit);
+
+    Ok(format!(
+        "{lock_preamble} \
+         if [ -L {hosts_quoted} ] || [ ! -f {hosts_quoted} ]; then echo 'dhcp-hosts file must be an existing regular file (not a symlink)' >&2; exit 1; fi; \
+         if [ \"$(stat -c '%u:%g' {hosts_quoted})\" != '{expected_uid}:{expected_gid}' ]; then echo 'dhcp-hosts file owner mismatch' >&2; exit 1; fi; \
+         actual=$(sha256sum {hosts_quoted} | awk '{{print $1}}'); \
+         if [ \"$actual\" != {expected_quoted} ]; then echo 'hosts file changed concurrently; retry' >&2; exit 1; fi; \
+         tmp=$(mktemp {tmp_template}); \
+         trap 'rm -f \"$tmp\"' EXIT; \
+         cat > \"$tmp\"; \
+         chmod 0644 \"$tmp\"; \
+         chown '{expected_uid}:{expected_gid}' \"$tmp\" 2>/dev/null || true; \
+         mv -f \"$tmp\" {hosts_quoted}; \
+         trap - EXIT; \
+         systemctl reload {unit_quoted}"
+    ))
+}
+
+/// Build a locked `systemctl reload <unit>` script used when `--apply` is re-run on an already
+/// up-to-date hosts file (ensuring a previously failed reload is retried cleanly) (F5).
+pub fn build_local_service_reload_script(lock_file: &Path, reload_unit: &str) -> Result<String> {
+    validate_systemd_unit_name(reload_unit)?;
+    let lock_preamble = build_local_lock_preamble(lock_file);
+    let unit_quoted = shell_quote(reload_unit);
+    Ok(format!("{lock_preamble} systemctl reload {unit_quoted}"))
+}
+
+fn build_local_lock_preamble(lock_file: &Path) -> String {
+    let lock_quoted = shell_quote(&lock_file.to_string_lossy());
+    let lock_dir_quoted = shell_quote(
+        &lock_file
+            .parent()
+            .unwrap_or_else(|| Path::new("/run/outbe-up"))
+            .to_string_lossy(),
+    );
+    format!(
+        "uid=$(id -u); gid=$(id -g); \
+         if [ -L {lock_dir_quoted} ]; then echo 'lock directory must not be a symlink' >&2; exit 1; fi; \
+         if [ ! -e {lock_dir_quoted} ]; then install -d -m 0700 -o \"$uid\" -g \"$gid\" {lock_dir_quoted}; fi; \
+         if [ ! -d {lock_dir_quoted} ] || [ -L {lock_dir_quoted} ]; then echo 'lock directory is not a directory' >&2; exit 1; fi; \
+         if [ \"$(stat -c '%u %a' {lock_dir_quoted})\" != \"$uid 700\" ]; then echo 'lock directory has unsafe owner or permissions' >&2; exit 1; fi; \
+         if [ -e {lock_quoted} ] || [ -L {lock_quoted} ]; then \
+           if [ ! -f {lock_quoted} ] || [ -L {lock_quoted} ] || [ \"$(stat -c '%u' {lock_quoted})\" != \"$uid\" ]; then \
+             echo 'lock entry must be a regular file owned by current uid' >&2; exit 1; \
+           fi; \
+         fi; \
+         exec 9>>{lock_quoted}; flock -x 9;"
+    )
+}
+
+fn validate_systemd_unit_name(unit: &str) -> Result<()> {
+    if unit.is_empty()
+        || !unit.ends_with(".service")
+        || !unit
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'@'))
+    {
+        bail!("invalid systemd service unit name: {unit}");
+    }
+    Ok(())
+}
+
+fn is_mac_address(s: &str) -> bool {
+    let parts: Vec<&str> = s.split(':').collect();
+    parts.len() == 6
+        && parts
+            .iter()
+            .all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_hexdigit()))
 }
 
 #[cfg(test)]
@@ -773,5 +973,145 @@ mod tests {
         let _ = dummy_dnsmasq.wait();
         assert_eq!(fs::read_to_string(&hosts).unwrap(), foreign);
         assert_eq!(fs::read_to_string(&hup_marker).unwrap().trim(), "HUP");
+    }
+
+    #[test]
+    fn f1_refuses_foreign_mac_or_ip_even_when_same_pair_and_never_deletes_foreign_lines() {
+        let ours = vec![("52:54:00:aa:bb:88".to_owned(), Ipv4Addr::new(10, 77, 0, 88))];
+
+        // Unmanaged line with our exact MAC+IP -> conflict (never steal or move).
+        let unmanaged_same = "52:54:00:aa:bb:88,10.77.0.88,10m\n";
+        assert!(merge_dnsmasq_hosts_checked(unmanaged_same, &ours, "vm:node-a").is_err());
+        let rm =
+            strip_dnsmasq_block_checked(unmanaged_same, "vm:node-a", Some("52:54:00:aa:bb:88"))
+                .unwrap();
+        assert!(!rm.exact_match);
+        assert!(!rm.changed);
+        assert_eq!(rm.content, unmanaged_same);
+
+        // Foreign marked block with our exact MAC+IP -> conflict on reserve, untouched on release.
+        let foreign_block = "\
+# outbe-up:foreign:begin
+52:54:00:aa:bb:88,10.77.0.88,10m
+# outbe-up:foreign:end
+";
+        assert!(merge_dnsmasq_hosts_checked(foreign_block, &ours, "vm:node-a").is_err());
+        let rm_foreign =
+            strip_dnsmasq_block_checked(foreign_block, "vm:node-a", Some("52:54:00:aa:bb:88"))
+                .unwrap();
+        assert!(!rm_foreign.exact_match);
+        assert!(!rm_foreign.changed);
+        assert_eq!(rm_foreign.content, foreign_block);
+
+        // Foreign line with our MAC and a different IP -> conflict.
+        let foreign_mac = "52:54:00:aa:bb:88,10.77.0.99,infinite\n";
+        let err = merge_dnsmasq_hosts_checked(foreign_mac, &ours, "vm:node-a").unwrap_err();
+        assert!(err.to_string().contains("52:54:00:aa:bb:88"), "{err}");
+
+        // Foreign line with a different MAC and our IP -> conflict.
+        let foreign_ip = "52:54:00:de:ad:01,10.77.0.88,infinite\n";
+        let err = merge_dnsmasq_hosts_checked(foreign_ip, &ours, "vm:node-a").unwrap_err();
+        assert!(err.to_string().contains("10.77.0.88"), "{err}");
+    }
+
+    #[test]
+    fn f2_refuses_malformed_markers_and_foreign_lines_inside_own_block() {
+        let ours = vec![("52:54:00:aa:bb:88".to_owned(), Ipv4Addr::new(10, 77, 0, 88))];
+
+        // Unclosed begin followed by another block -> refused everywhere.
+        let unclosed = "\
+# outbe-up:vm:node-a:begin
+52:54:00:aa:bb:88,10.77.0.88,10m
+# outbe-up:final-amd:begin
+be:f7:7b:2c:d1:85,10.77.0.68,10m
+# outbe-up:final-amd:end
+";
+        assert!(validate_dnsmasq_hosts_format(unclosed).is_err());
+        assert!(merge_dnsmasq_hosts_checked(unclosed, &ours, "vm:node-a").is_err());
+        assert!(
+            strip_dnsmasq_block_checked(unclosed, "vm:node-a", Some("52:54:00:aa:bb:88")).is_err()
+        );
+
+        // Foreign second line injected inside our own block -> refused on reserve and release.
+        let foreign_inside = "\
+# outbe-up:vm:node-a:begin
+52:54:00:aa:bb:88,10.77.0.88,10m
+be:6a:63:f8:84:d0,10.77.0.11,validator-0,infinite
+# outbe-up:vm:node-a:end
+";
+        assert!(merge_dnsmasq_hosts_checked(foreign_inside, &ours, "vm:node-a").is_err());
+        assert!(strip_dnsmasq_block_checked(foreign_inside, "vm:node-a", None).is_err());
+
+        // Comment or non-10m foreign entry inside our single-VM block -> refused.
+        let comment_inside = "\
+# outbe-up:vm:node-a:begin
+# hand-edited comment
+52:54:00:aa:bb:88,10.77.0.88,10m
+# outbe-up:vm:node-a:end
+";
+        assert!(merge_dnsmasq_hosts_checked(comment_inside, &ours, "vm:node-a").is_err());
+        assert!(strip_dnsmasq_block_checked(comment_inside, "vm:node-a", None).is_err());
+
+        let wrong_lease = "\
+# outbe-up:vm:node-a:begin
+52:54:00:aa:bb:88,10.77.0.88,infinite
+# outbe-up:vm:node-a:end
+";
+        assert!(merge_dnsmasq_hosts_checked(wrong_lease, &ours, "vm:node-a").is_err());
+        assert!(strip_dnsmasq_block_checked(wrong_lease, "vm:node-a", None).is_err());
+    }
+
+    #[test]
+    fn f3_byte_preserving_dnsmasq_splice_keeps_crlf_and_blank_lines_exact() {
+        let crlf_with_blanks = "02:00:00:00:00:11,10.77.0.11,infinite\r\n\r\n";
+        let ours = vec![("52:54:00:aa:bb:88".to_owned(), Ipv4Addr::new(10, 77, 0, 88))];
+
+        // Release when absent returns exact bytes with exact_match=false, changed=false.
+        let absent = strip_dnsmasq_block_checked(crlf_with_blanks, "vm:node-a", None).unwrap();
+        assert!(!absent.exact_match);
+        assert!(!absent.changed);
+        assert_eq!(absent.content.as_bytes(), crlf_with_blanks.as_bytes());
+
+        // Reserve appends our block without altering a single byte of the CRLF + blank lines prefix.
+        let added = merge_dnsmasq_hosts_checked(crlf_with_blanks, &ours, "vm:node-a").unwrap();
+        assert!(added.changed);
+        assert!(!added.exact_match);
+        assert_eq!(
+            &added.content.as_bytes()[..crlf_with_blanks.len()],
+            crlf_with_blanks.as_bytes()
+        );
+
+        // Second reserve is an exact match with changed=false.
+        let again = merge_dnsmasq_hosts_checked(&added.content, &ours, "vm:node-a").unwrap();
+        assert!(again.exact_match);
+        assert!(!again.changed);
+        assert_eq!(again.content.as_bytes(), added.content.as_bytes());
+
+        // Release restores exact original CRLF + trailing blank lines byte-for-byte.
+        let removed =
+            strip_dnsmasq_block_checked(&added.content, "vm:node-a", Some("52:54:00:aa:bb:88"))
+                .unwrap();
+        assert!(removed.exact_match);
+        assert!(removed.changed);
+        assert_eq!(removed.content.as_bytes(), crlf_with_blanks.as_bytes());
+
+        // Add-then-remove on a file WITHOUT a final LF restores exact original bytes (zero extra LF).
+        let no_final_lf = "02:00:00:00:00:11,10.77.0.11,infinite";
+        let added_no_lf = merge_dnsmasq_hosts_checked(no_final_lf, &ours, "vm:node-a").unwrap();
+        assert!(added_no_lf.changed);
+        assert!(!added_no_lf.exact_match);
+        let idemp_no_lf =
+            merge_dnsmasq_hosts_checked(&added_no_lf.content, &ours, "vm:node-a").unwrap();
+        assert!(idemp_no_lf.exact_match);
+        assert!(!idemp_no_lf.changed);
+        let removed_no_lf = strip_dnsmasq_block_checked(
+            &added_no_lf.content,
+            "vm:node-a",
+            Some("52:54:00:aa:bb:88"),
+        )
+        .unwrap();
+        assert!(removed_no_lf.exact_match);
+        assert!(removed_no_lf.changed);
+        assert_eq!(removed_no_lf.content.as_bytes(), no_final_lf.as_bytes());
     }
 }

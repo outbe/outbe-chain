@@ -90,6 +90,46 @@ pub struct StatusResponse {
     pub total: u32,
 }
 
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct VmmVersionResponse {
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub rev: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct VmmResourcesMeta {
+    #[serde(default)]
+    pub max_cvm_number: u32,
+    #[serde(default)]
+    pub max_allocable_vcpu: u32,
+    #[serde(default)]
+    pub max_allocable_memory_in_mb: u64,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct VmmNetworkingMeta {
+    #[serde(default)]
+    pub supported_modes: Vec<String>,
+    #[serde(default)]
+    pub default_mode: String,
+    #[serde(default)]
+    pub default_bridge: String,
+    #[serde(default)]
+    pub max_queues: u32,
+    #[serde(default)]
+    pub default_vhost: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct VmmMetaResponse {
+    #[serde(default)]
+    pub resources: VmmResourcesMeta,
+    #[serde(default)]
+    pub networking: VmmNetworkingMeta,
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct GetInfoResponse {
     #[serde(default)]
@@ -960,6 +1000,14 @@ impl<T: VmmTransport> VmmClient<T> {
 
     pub fn get_meta(&self) -> Result<serde_json::Value> {
         self.prpc_call("GetMeta", &serde_json::json!({}), None)
+    }
+
+    pub fn get_meta_typed(&self) -> Result<VmmMetaResponse> {
+        self.prpc_call("GetMeta", &serde_json::json!({}), None)
+    }
+
+    pub fn version(&self) -> Result<VmmVersionResponse> {
+        self.prpc_call("Version", &serde_json::json!({}), None)
     }
 
     /// Read the tail of the VM serial log from `<vmm_home>/vm/<vm_id>/serial.log` (or VMM `/logs`).

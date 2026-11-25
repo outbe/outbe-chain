@@ -5,6 +5,7 @@ use eyre::Result;
 
 mod cli;
 mod disk;
+mod host;
 mod image;
 mod network;
 mod vm;
