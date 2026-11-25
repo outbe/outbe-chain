@@ -93,6 +93,7 @@ fn render(status: &Value) -> String {
             d["behind"].as_u64(),
         ) {
             (Some(error), ..) => error.to_owned(),
+            _ if d["relay"]["error"].is_string() => cell(&d["relay"]["error"]),
             (_, true, _) => "halted: reorg".to_owned(),
             (_, _, Some(behind)) if behind > 0 => "syncing".to_owned(),
             (_, _, None) => "starting".to_owned(),

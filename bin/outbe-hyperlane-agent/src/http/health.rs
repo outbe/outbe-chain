@@ -45,6 +45,9 @@ struct State {
     last_delivery: Option<serde_json::Value>,
     /// Native balance of `H` on each chain, in wei.
     balances: BTreeMap<u32, alloy_primitives::U256>,
+    /// Why the relayer stopped the deliveries of a domain. The validator
+    /// role of that domain continues.
+    relay_errors: BTreeMap<u32, String>,
 }
 
 pub struct ValidatorHealth {
@@ -117,6 +120,12 @@ impl ValidatorHealth {
         self.state().balances.insert(domain, wei);
     }
 
+    /// Records why the relayer stopped the deliveries of `domain`. This does
+    /// not stop the checkpoint submission of the domain.
+    pub fn set_relay_error(&self, domain: u32, error: String) {
+        self.state().relay_errors.insert(domain, error);
+    }
+
     pub fn set_signer_error(&self, error: Option<String>) {
         self.state().signer_error = error;
     }
@@ -156,6 +165,7 @@ impl ValidatorHealth {
         let mut state = self.state();
         state.domains.retain(|d, _| keep(*d));
         state.balances.retain(|d, _| keep(*d));
+        state.relay_errors.retain(|d, _| keep(*d));
     }
 
     /// The signer of a started domain, also after a stop.
@@ -184,6 +194,7 @@ impl ValidatorHealth {
         let state = self.state();
         self.miss_count.load(Ordering::Relaxed) == 0
             && state.signer_error.is_none()
+            && state.relay_errors.is_empty()
             && state.domains.values().all(|d| {
                 d.error.is_none() && !d.signer.as_ref().is_some_and(|s| s.halted() || s.stalled())
             })
@@ -191,7 +202,16 @@ impl ValidatorHealth {
 
     pub fn status_json(&self) -> serde_json::Value {
         let relayer = self.relayer.load(Ordering::Relaxed);
-        let (controller, active, signer_error, submit_error, last_delivery, balances, domains) = {
+        let (
+            controller,
+            active,
+            signer_error,
+            submit_error,
+            last_delivery,
+            balances,
+            relay_errors,
+            domains,
+        ) = {
             let state = self.state();
             let domains: Vec<_> = state
                 .domains
@@ -205,6 +225,7 @@ impl ValidatorHealth {
                 state.submit_error.clone(),
                 state.last_delivery.clone(),
                 state.balances.clone(),
+                state.relay_errors.clone(),
                 domains,
             )
         };
@@ -242,6 +263,8 @@ impl ValidatorHealth {
                         // Messages on the way, and messages after the last attempt.
                         "queue": rows.len() - dropped,
                         "dropped": dropped,
+                        // Why the relayer stopped the deliveries of the domain.
+                        "error": relay_errors.get(&domain),
                     });
                 }
                 (domain.to_string(), value)

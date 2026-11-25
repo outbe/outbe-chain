@@ -519,14 +519,17 @@ impl Relayer {
                 message.recipient, message.destination
             )));
         }
-        // A message whose ISM is not the controller ISM fails here. It is a
-        // retry and not a drop at once: the controller can replace the ISM
-        // of a domain, and the daemon sees the new address only at its next
-        // poll.
-        let (validators, threshold) =
-            multisig_ism(provider, mailbox, message.recipient, &row.message, dest.ism)
-                .await
-                .map_err(rotate)?;
+        // A message whose ISM is not the controller ISM is dropped at once.
+        // The controller ISM of a domain is fixed: if it changes, the daemon
+        // stops the relayer of that domain before this point.
+        let ism = multisig_ism(provider, mailbox, message.recipient, &row.message, dest.ism).await;
+        let (validators, threshold) = match ism {
+            Ok(set) => set,
+            Err(error) if matches!(error.downcast_ref(), Some(RelayError::ForeignIsm { .. })) => {
+                return Ok(Outcome::Drop(format!("{error:#}")))
+            }
+            Err(error) => return Err(rotate(error)),
+        };
         // The daemon replaces the chain entry when the controller changes the
         // ValidatorAnnounce of the domain: read the address at each look.
         let origin_chain = self
@@ -983,9 +986,8 @@ mod tests {
         assert_eq!(seen.lock().unwrap().sent, 1);
 
         // The recipient of the next message names an ISM that is not the ISM
-        // of the controller: the relayer does not deliver the message and
-        // reads no storage location of that ISM. The attempt fails and the
-        // message stays for a retry, because the controller can change its ISM.
+        // of the controller: the relayer drops the message at once and reads
+        // no storage location of that ISM.
         seen.lock().unwrap().delivered = false;
         let next = Leaf {
             message_id: message_id(&other_message),
@@ -1011,7 +1013,7 @@ mod tests {
         strict.tick(&mut take_in, 2_100).await.unwrap();
         let rows = store.relay_rows(5).unwrap();
         assert_eq!(rows.len(), 1);
-        assert!(rows[0].1.attempts >= 1 && !rows[0].1.dropped);
+        assert!(rows[0].1.dropped && rows[0].1.attempts == 0);
         assert_eq!(seen.lock().unwrap().sent, 1);
     }
 }

@@ -152,6 +152,7 @@ Domain lifecycle:
 | New domain with an `[[origin]]` block | The domain starts: sync, signing, backfill, optional WebSocket waker, announce. |
 | Domain without an `[[origin]]` block | An error of that domain only. The other domains continue. |
 | `hookByDomain` changes | The daemon stops that domain and shows an error. The domain does not start again in this process. |
+| `ismByDomain` changes | The relayer takes the controller ISM of a domain as fixed. On a change it stops the deliveries of that domain and shows `relay.error`. The validator role of the domain continues. Restart the agent: it then reads the new ISM. To change an ISM, remove the domain and add it again. |
 | Controller removes the domain | The daemon stops the domain. |
 
 ## Ports
@@ -189,6 +190,7 @@ otherwise:
 - A domain halted after a reorg.
 - A domain has an error. A sync that makes no progress after many rewinds is
   also an error.
+- The relayer stopped the deliveries of a domain (`relay.error`).
 
 While the daemon waits for the controller, `/health` returns 200.
 
@@ -216,7 +218,8 @@ While the daemon waits for the controller, `/health` returns 200.
 | `domains.<id>.relay.cursor` | Relayer only: the next new leaf index that the relayer takes in. `null` before the relayer starts on the domain. |
 | `domains.<id>.relay.backlog` | Relayer only: older leaves below this index wait for the take-in. `0` means that the history is done. |
 | `domains.<id>.relay.queue` | Relayer only: messages that are not delivered yet. |
-| `domains.<id>.relay.dropped` | Relayer only: messages after the last delivery attempt. |
+| `domains.<id>.relay.dropped` | Relayer only: messages after the last delivery attempt, and messages that can never be delivered. |
+| `domains.<id>.relay.error` | Relayer only: why the relayer stopped the deliveries of this domain, or `null`. |
 | `domains.<id>.reorg` | The domain halted after a reorg. |
 | `domains.<id>.error` | Domain error, or `null`. |
 
@@ -363,8 +366,7 @@ For each message, the relayer does these steps:
    `HyperlaneController.ismByDomain(destination)`, also behind routing ISMs.
    The recipient contract names its ISM, so without this rule any sender
    could give the relayer a validator set of its own. A message with another
-   ISM is not delivered: its attempts fail and it is dropped after the last
-   one.
+   ISM is dropped at once.
 6. **Read the signatures.** It reads `checkpoint_<index>_with_id.json` from
    the newest announced location of each ISM validator, its own location
    included. It reads the validators in batches of 1.5 times the threshold

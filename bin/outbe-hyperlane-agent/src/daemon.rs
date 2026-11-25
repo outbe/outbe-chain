@@ -121,20 +121,19 @@ impl Daemon {
             relay.chains.retain(listed_has);
         }
         for d in &listed {
-            // The controller can set another ISM for a domain: the relayers
-            // must deliver for the new one.
+            // The relayer takes the controller ISM of a domain as fixed. If
+            // it changes all the same, the relayer must not drop the
+            // messages of that domain as messages of a foreign ISM: it stops
+            // the deliveries and shows an error. The validator role continues.
             if let Some(relay) = &self.relay {
                 if let Some(chain) = relay.chains.get(d.domain).filter(|c| c.ism != d.ism) {
-                    match self.origin_config(d.domain) {
-                        Ok(config) => match relay.chain(&chain.origin, config, d.ism) {
-                            Ok(chain) => {
-                                info!(domain = d.domain, ism = %d.ism, "controller ISM changed");
-                                relay.chains.insert(chain)
-                            }
-                            Err(error) => warn!(domain = d.domain, %error, "ISM change failed"),
-                        },
-                        Err(error) => warn!(domain = d.domain, %error, "ISM change failed"),
-                    }
+                    let message = format!(
+                        "ismByDomain changed from {} to {}: the relayer stopped the deliveries of this domain. Restart the agent",
+                        chain.ism, d.ism
+                    );
+                    error!(domain = d.domain, "{message}");
+                    relay.chains.retain(|domain| domain != d.domain);
+                    self.health.set_relay_error(d.domain, message);
                 }
             }
             match domains.get_mut(&d.domain) {
@@ -294,7 +293,8 @@ mod tests {
 
     /// What the controller returns: icaRouter, domains, hook and
     /// ValidatorAnnounce of each domain.
-    type Controller = Arc<Mutex<(Address, Vec<u32>, Address, Address)>>;
+    /// ValidatorAnnounce and ISM of each domain.
+    type Controller = Arc<Mutex<(Address, Vec<u32>, Address, Address, Address)>>;
 
     /// One endpoint for Outbe and the origin chain of domain 5. The
     /// announcement of `location` is already on-chain.
@@ -305,6 +305,7 @@ mod tests {
                 "eth_blockNumber" => json!("0x64"),
                 "eth_chainId" => json!("0x5"),
                 "eth_getLogs" => json!([]),
+                "eth_getBalance" => json!("0x0"),
                 "eth_call" => eth_call(&state, &location, &req["params"][0]),
                 other => panic!("unexpected method {other}"),
             };
@@ -322,9 +323,9 @@ mod tests {
         };
         let data: Bytes = serde_json::from_value(input.clone()).unwrap();
         let selector: [u8; 4] = data[..4].try_into().unwrap();
-        let (ica, domains, hook, va) = state.lock().unwrap().clone();
+        let (ica, domains, hook, va, ism) = state.lock().unwrap().clone();
         let out = if to == HYPERLANE_CONTROLLER_ADDRESS {
-            controller_call(selector, ica, domains, hook, va)
+            controller_call(selector, ica, domains, hook, va, ism)
         } else if to == VALIDATOR_SET_ADDRESS {
             assert_eq!(selector, IValidatorSet::getActiveValidatorsCall::SELECTOR);
             Vec::<Address>::new().abi_encode()
@@ -342,13 +343,14 @@ mod tests {
         domains: Vec<u32>,
         hook: Address,
         va: Address,
+        ism: Address,
     ) -> Vec<u8> {
         match selector {
             IHyperlaneController::icaRouterCall::SELECTOR => ica.abi_encode(),
             IHyperlaneController::domainsCall::SELECTOR => domains.abi_encode(),
             IHyperlaneController::hookByDomainCall::SELECTOR => hook.abi_encode(),
             IHyperlaneController::validatorAnnounceByDomainCall::SELECTOR => va.abi_encode(),
-            IHyperlaneController::ismByDomainCall::SELECTOR => Address::ZERO.abi_encode(),
+            IHyperlaneController::ismByDomainCall::SELECTOR => ism.abi_encode(),
             IHyperlaneController::hyperlaneSignerCall::SELECTOR => Address::ZERO.abi_encode(),
             IHyperlaneController::submittedIndexCall::SELECTOR
             | IHyperlaneController::targetIndexCall::SELECTOR
@@ -384,7 +386,8 @@ mod tests {
     #[tokio::test]
     async fn poll_starts_stops_and_removes_domains() {
         let hook1 = Address::repeat_byte(0x11);
-        let state: Controller = Arc::new(Mutex::new((Address::ZERO, vec![], hook1, VA)));
+        let ism1 = Address::repeat_byte(0x15);
+        let state: Controller = Arc::new(Mutex::new((Address::ZERO, vec![], hook1, VA, ism1)));
         let url = chain(state.clone(), "s3+http://h:9000/0xb/5".into()).await;
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(Store::open(dir.path()).unwrap());
@@ -401,7 +404,7 @@ mod tests {
             store: store.clone(),
             health: health.clone(),
             location: "s3+http://h:9000/0xb".into(),
-            relay: None,
+            relay: Some(Relay::new(5).unwrap()),
         };
         let outbe = connect(&url).unwrap();
         let mut domains = HashMap::new();
@@ -473,6 +476,20 @@ mod tests {
         ));
         assert_eq!(health.running().len(), 1);
 
+        // The controller ISM of a domain is fixed. A change stops only the
+        // relayer of that domain and shows an error: the signer continues.
+        health.set_relayer(true);
+        let chains = &daemon.relay.as_ref().unwrap().chains;
+        assert_eq!(chains.get(5).unwrap().ism, ism1);
+        state.lock().unwrap().4 = Address::repeat_byte(0x16);
+        daemon.poll(&outbe, &mut domains).await.unwrap();
+        assert!(chains.get(5).is_none());
+        let error = status("domains")["5"]["relay"]["error"].clone();
+        assert!(error.as_str().unwrap().contains("ismByDomain changed"));
+        assert_eq!(status("healthy"), false);
+        assert_eq!(health.running().len(), 1);
+        assert!(matches!(domains.get(&5), Some(Domain::Running { .. })));
+
         // A hook change stops the domain and its tasks. No restart.
         state.lock().unwrap().2 = Address::repeat_byte(0x22);
         daemon.poll(&outbe, &mut domains).await.unwrap();
@@ -504,6 +521,7 @@ mod tests {
             vec![5],
             Address::repeat_byte(0x22),
             VA,
+            Address::repeat_byte(0x15),
         )));
         let url = chain(state, "s3+http://h:9000/0xb/5".into()).await;
         let dir = tempfile::tempdir().unwrap();
