@@ -9,7 +9,7 @@ use outbe_genesis_cli::launch_bundle::quote;
 use crate::support::progress::Progress;
 
 use super::{
-    lifecycle::{as_root, guard, simplex_quorum, wait_healthy},
+    lifecycle::{as_root, guard, simplex_quorum, wait_healthy, HealthWait},
     remote::{NetworkArtifacts, SshOptions},
     status::{healthy, query_all},
 };
@@ -52,20 +52,22 @@ test -n \"$required\" -a -n \"$available\" -a \"$available\" -ge \"$required\"",
 
     progress.stage(&format!("creating snapshot on {}", founder.name));
     let command = snapshot_command(
-        "create",
+        SnapshotAction::Create {
+            creator: &founder.validator_address,
+            source: &build.manifest.software.commit,
+        },
         options.archive,
         founder.index,
-        Some(&founder.validator_address),
-        Some(&build.manifest.software.commit),
-        None,
     );
     let operation = ssh.run_quiet(&founder, &transient_command(&command));
     let recovery = wait_healthy(
-        &build,
-        &ssh,
-        &founder.name,
-        required_peers,
-        options.timeout,
+        HealthWait {
+            build: &build,
+            ssh: &ssh,
+            founder: &founder.name,
+            required_peers,
+            timeout: options.timeout,
+        },
         &mut progress,
     )
     .await;
@@ -98,20 +100,19 @@ pub async fn validate(
     ssh.run_quiet(&founder, &format!("test -f {}", quote(options.archive)))?;
     progress.stage(&format!("validating snapshot on {}", founder.name));
     let command = snapshot_command(
-        "validate",
+        SnapshotAction::Validate { expected_signer },
         options.archive,
         founder.index,
-        None,
-        None,
-        expected_signer,
     );
     let operation = ssh.run_quiet(&founder, &transient_command(&command));
     let recovery = wait_healthy(
-        &build,
-        &ssh,
-        &founder.name,
-        required_peers,
-        options.timeout,
+        HealthWait {
+            build: &build,
+            ssh: &ssh,
+            founder: &founder.name,
+            required_peers,
+            timeout: options.timeout,
+        },
         &mut progress,
     )
     .await;
@@ -168,38 +169,32 @@ rc=0; {operation} || rc=$?; systemctl start {TARGET} || exit $?; exit $rc"
     ))
 }
 
-fn snapshot_command(
-    action: &str,
-    archive: &str,
-    index: usize,
-    creator: Option<&str>,
-    source: Option<&str>,
-    expected_signer: Option<&str>,
-) -> String {
+enum SnapshotAction<'a> {
+    Create { creator: &'a str, source: &'a str },
+    Validate { expected_signer: Option<&'a str> },
+}
+
+fn snapshot_command(action: SnapshotAction<'_>, archive: &str, index: usize) -> String {
     let validator = format!("/opt/outbe-chain/validator-{index}");
     let keys = format!("/opt/outbe-chain/keys/validator-{index}");
-    let mut args = vec![
-        "/opt/outbe-chain/outbe-chain".to_owned(),
-        "snapshot".into(),
-        action.into(),
-    ];
-    if action == "create" {
-        args.extend([
-            "--output".into(),
-            archive.into(),
-            "--signing-key".into(),
-            format!("{keys}/evm-key.hex"),
-        ]);
-        if let Some(creator) = creator {
+    let mut args = vec!["/opt/outbe-chain/outbe-chain".to_owned(), "snapshot".into()];
+    match action {
+        SnapshotAction::Create { creator, source } => {
+            args.extend([
+                "create".into(),
+                "--output".into(),
+                archive.into(),
+                "--signing-key".into(),
+                format!("{keys}/evm-key.hex"),
+            ]);
             args.extend(["--creator".into(), creator.into()]);
-        }
-        if let Some(source) = source {
             args.extend(["--source".into(), source.into()]);
         }
-    } else {
-        args.extend(["--archive".into(), archive.into()]);
-        if let Some(signer) = expected_signer {
-            args.extend(["--expected-signer".into(), signer.into()]);
+        SnapshotAction::Validate { expected_signer } => {
+            args.extend(["validate".into(), "--archive".into(), archive.into()]);
+            if let Some(signer) = expected_signer {
+                args.extend(["--expected-signer".into(), signer.into()]);
+            }
         }
     }
     args.push("--".into());
@@ -266,12 +261,12 @@ mod tests {
     #[test]
     fn founder_snapshot_uses_the_packaged_key_directory() {
         let command = snapshot_command(
-            "create",
+            SnapshotAction::Create {
+                creator: "0x01",
+                source: "commit",
+            },
             "/opt/outbe-chain/snapshots/node.tar.zst",
             2,
-            Some("0x01"),
-            Some("commit"),
-            None,
         );
         assert!(command.contains("/opt/outbe-chain/keys/validator-2/evm-key.hex"));
         assert!(command.contains("/opt/outbe-chain/keys/validator-2/signing-key.hex"));

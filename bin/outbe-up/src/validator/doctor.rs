@@ -51,10 +51,81 @@ struct DoctorReport {
     issues: Vec<String>,
 }
 
+struct HostDiagnostics {
+    target_active: bool,
+    feeder_active: bool,
+    hyperlane_active: bool,
+    services_enabled: bool,
+    systemd_units_current: bool,
+    disk_available_kib: Option<u64>,
+    time_synchronized: Option<bool>,
+    outbe_chain_version: Option<String>,
+    genesis_sha256: Option<String>,
+}
+
+struct RpcDiagnostics {
+    local_chain_id: Option<u64>,
+    local_finalized: Option<u64>,
+    remote_finalized: Option<u64>,
+    execution_peers: Option<u64>,
+    consensus_mode: Option<String>,
+    consensus_peers: Option<u64>,
+    resident_tee_ready: Option<bool>,
+    next_dkg_freeze_height: Option<u64>,
+    maintenance_safe: Option<bool>,
+    validator_status: Option<u8>,
+    feeder_healthy: Option<bool>,
+    hyperlane_healthy: Option<bool>,
+}
+
 pub async fn run(support_bundle: Option<&Path>) -> Result<()> {
     process::require_root()?;
     let journal = Journal::load()?;
     let mut issues = Vec::new();
+    let host = collect_host_diagnostics(&mut issues);
+    let rpc = collect_rpc_diagnostics(&journal, host.target_active, &mut issues).await?;
+    let report = DoctorReport {
+        target_active: host.target_active,
+        feeder_active: host.feeder_active,
+        feeder_healthy: rpc.feeder_healthy,
+        hyperlane_active: host.hyperlane_active,
+        hyperlane_healthy: rpc.hyperlane_healthy,
+        services_enabled: host.services_enabled,
+        systemd_units_current: host.systemd_units_current,
+        disk_available_kib: host.disk_available_kib,
+        time_synchronized: host.time_synchronized,
+        outbe_chain_version: host.outbe_chain_version,
+        genesis_sha256: host.genesis_sha256,
+        expected_chain_id: journal.config.network.chain_id,
+        local_chain_id: rpc.local_chain_id,
+        local_finalized: rpc.local_finalized,
+        remote_finalized: rpc.remote_finalized,
+        execution_peers: rpc.execution_peers,
+        consensus_mode: rpc.consensus_mode,
+        consensus_peers: rpc.consensus_peers,
+        resident_tee_ready: rpc.resident_tee_ready,
+        next_dkg_freeze_height: rpc.next_dkg_freeze_height,
+        maintenance_safe: rpc.maintenance_safe,
+        validator_status: rpc.validator_status,
+        software_bundle_sha256: journal.software_bundle_sha256.clone(),
+        software_commit: journal.software_commit.clone(),
+        issues,
+    };
+    let json = serde_json::to_string_pretty(&report)?;
+    println!("{json}");
+    if let Some(path) = support_bundle {
+        create_support_bundle(path, &json)?;
+        println!("support bundle: {}", path.display());
+    }
+    ensure!(
+        report.issues.is_empty(),
+        "validator doctor found {} issue(s)",
+        report.issues.len()
+    );
+    Ok(())
+}
+
+fn collect_host_diagnostics(issues: &mut Vec<String>) -> HostDiagnostics {
     let target_active = process::systemctl_is_active(VALIDATOR_TARGET);
     if !target_active {
         issues.push(format!("{VALIDATOR_TARGET} is not active"));
@@ -91,6 +162,24 @@ pub async fn run(support_bundle: Option<&Path>) -> Result<()> {
         issues.push("cannot hash genesis.json".into());
     }
 
+    HostDiagnostics {
+        target_active,
+        feeder_active,
+        hyperlane_active,
+        services_enabled: process::services_enabled(),
+        systemd_units_current,
+        disk_available_kib,
+        time_synchronized,
+        outbe_chain_version,
+        genesis_sha256,
+    }
+}
+
+async fn collect_rpc_diagnostics(
+    journal: &Journal,
+    target_active: bool,
+    issues: &mut Vec<String>,
+) -> Result<RpcDiagnostics> {
     let local = RpcClient::new(journal.config.network.local_rpc_url())?;
     let remote = RpcClient::new(journal.config.network.certified_rpc.clone())?;
     let address = validator_address(&Path::new(ROOT).join("keys/evm-key.hex"))?;
@@ -104,12 +193,12 @@ pub async fn run(support_bundle: Option<&Path>) -> Result<()> {
         sidecar_status("http://127.0.0.1:9002/status"),
         sidecar_status("http://127.0.0.1:9003/status"),
     );
-    let local_chain_id = result_value(local_chain_id, "local chain ID", &mut issues);
+    let local_chain_id = result_value(local_chain_id, "local chain ID", issues);
     if local_chain_id.is_some_and(|value| value != journal.config.network.chain_id) {
         issues.push("local chain ID does not match operator configuration".into());
     }
-    let local_block = result_value(local_block, "local finalized block", &mut issues);
-    let remote_block = result_value(remote_block, "remote finalized block", &mut issues);
+    let local_block = result_value(local_block, "local finalized block", issues);
+    let remote_block = result_value(remote_block, "remote finalized block", issues);
     if let (Some(local), Some(remote)) = (&local_block, &remote_block) {
         if remote.number.saturating_sub(local.number) > 16 {
             issues.push(format!(
@@ -118,11 +207,11 @@ pub async fn run(support_bundle: Option<&Path>) -> Result<()> {
             ));
         }
     }
-    let peers = result_value(peers, "execution peer count", &mut issues);
+    let peers = result_value(peers, "execution peer count", issues);
     if target_active && peers == Some(0) {
         issues.push("validator has no execution peers".into());
     }
-    let consensus = result_value(consensus, "consensus status", &mut issues);
+    let consensus = result_value(consensus, "consensus status", issues);
     if target_active
         && consensus
             .as_ref()
@@ -130,37 +219,23 @@ pub async fn run(support_bundle: Option<&Path>) -> Result<()> {
     {
         issues.push("resident TEE is not ready".into());
     }
-    let validator = result_value(validator, "on-chain validator record", &mut issues);
-    let feeder = result_value(feeder, "feeder status", &mut issues);
-    let feeder_healthy = feeder
-        .as_ref()
-        .and_then(|status| status.get("healthy"))
-        .and_then(serde_json::Value::as_bool);
-    if target_active && feeder.is_some() && feeder_healthy != Some(true) {
-        issues.push("feeder is not healthy".into());
-    }
-    let hyperlane = result_value(hyperlane, "Hyperlane status", &mut issues);
-    let hyperlane_healthy = hyperlane
-        .as_ref()
-        .and_then(|status| status.get("healthy"))
-        .and_then(serde_json::Value::as_bool);
-    if target_active && hyperlane.is_some() && hyperlane_healthy != Some(true) {
-        issues.push("Hyperlane validator is not healthy".into());
-    }
-
-    let report = DoctorReport {
+    let validator = result_value(validator, "on-chain validator record", issues);
+    let feeder_healthy = sidecar_health(
+        feeder,
+        "feeder status",
         target_active,
-        feeder_active,
-        feeder_healthy,
-        hyperlane_active,
-        hyperlane_healthy,
-        services_enabled: process::services_enabled(),
-        systemd_units_current,
-        disk_available_kib,
-        time_synchronized,
-        outbe_chain_version,
-        genesis_sha256,
-        expected_chain_id: journal.config.network.chain_id,
+        "feeder is not healthy",
+        issues,
+    );
+    let hyperlane_healthy = sidecar_health(
+        hyperlane,
+        "Hyperlane status",
+        target_active,
+        "Hyperlane validator is not healthy",
+        issues,
+    );
+
+    Ok(RpcDiagnostics {
         local_chain_id,
         local_finalized: local_block.as_ref().map(|block| block.number),
         remote_finalized: remote_block.as_ref().map(|block| block.number),
@@ -175,22 +250,27 @@ pub async fn run(support_bundle: Option<&Path>) -> Result<()> {
             .as_ref()
             .and_then(|status| status.maintenance_safe),
         validator_status: validator.as_ref().map(|record| record.status),
-        software_bundle_sha256: journal.software_bundle_sha256.clone(),
-        software_commit: journal.software_commit.clone(),
-        issues,
-    };
-    let json = serde_json::to_string_pretty(&report)?;
-    println!("{json}");
-    if let Some(path) = support_bundle {
-        create_support_bundle(path, &json)?;
-        println!("support bundle: {}", path.display());
+        feeder_healthy,
+        hyperlane_healthy,
+    })
+}
+
+fn sidecar_health(
+    result: Result<serde_json::Value>,
+    label: &str,
+    target_active: bool,
+    unhealthy_issue: &str,
+    issues: &mut Vec<String>,
+) -> Option<bool> {
+    let status = result_value(result, label, issues);
+    let healthy = status
+        .as_ref()
+        .and_then(|status| status.get("healthy"))
+        .and_then(serde_json::Value::as_bool);
+    if target_active && status.is_some() && healthy != Some(true) {
+        issues.push(unhealthy_issue.into());
     }
-    ensure!(
-        report.issues.is_empty(),
-        "validator doctor found {} issue(s)",
-        report.issues.len()
-    );
-    Ok(())
+    healthy
 }
 
 fn result_value<T>(result: Result<T>, label: &str, issues: &mut Vec<String>) -> Option<T> {

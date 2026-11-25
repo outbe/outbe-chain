@@ -89,11 +89,13 @@ pub async fn restart(
             )),
         )?;
         wait_healthy(
-            &build,
-            &ssh,
-            &founder.name,
-            required_peers,
-            timeout,
+            HealthWait {
+                build: &build,
+                ssh: &ssh,
+                founder: &founder.name,
+                required_peers,
+                timeout,
+            },
             &mut progress,
         )
         .await?;
@@ -115,29 +117,39 @@ pub(super) fn guard(status: &FounderStatus, skip_dkg_guard: bool) -> Result<()> 
     .wrap_err_with(|| format!("{} is not safe for maintenance", status.name))
 }
 
-pub(super) async fn wait_healthy(
-    build: &NetworkArtifacts,
-    ssh: &SshOptions,
-    founder: &str,
-    required_peers: usize,
-    timeout: Duration,
-    progress: &mut Progress,
-) -> Result<()> {
-    let deadline = Instant::now() + timeout;
+pub(super) struct HealthWait<'a> {
+    pub(super) build: &'a NetworkArtifacts,
+    pub(super) ssh: &'a SshOptions,
+    pub(super) founder: &'a str,
+    pub(super) required_peers: usize,
+    pub(super) timeout: Duration,
+}
+
+pub(super) async fn wait_healthy(options: HealthWait<'_>, progress: &mut Progress) -> Result<()> {
+    let deadline = Instant::now() + options.timeout;
     loop {
-        let statuses = query_all(build, ssh).await?;
+        let statuses = query_all(options.build, options.ssh).await?;
         if statuses.iter().any(|status| {
-            status.name == founder && healthy(status, build.manifest.chain_id, required_peers)
+            status.name == options.founder
+                && healthy(
+                    status,
+                    options.build.manifest.chain_id,
+                    options.required_peers,
+                )
         }) {
             return Ok(());
         }
         if Instant::now() >= deadline {
             bail!(
-                "{founder} did not become healthy within {} seconds",
-                timeout.as_secs()
+                "{} did not become healthy within {} seconds",
+                options.founder,
+                options.timeout.as_secs()
             );
         }
-        progress.update(&format!("waiting for {founder} to become healthy"));
+        progress.update(&format!(
+            "waiting for {} to become healthy",
+            options.founder
+        ));
         tokio::time::sleep(Duration::from_secs(5)).await;
     }
 }

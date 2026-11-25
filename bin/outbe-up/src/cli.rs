@@ -134,42 +134,52 @@ struct NetworkSnapshotArgs {
 enum NetworkSnapshotCommand {
     /// Create a signed snapshot on one founder, optionally downloading it.
     Create {
-        #[arg(long)]
-        artifacts: PathBuf,
-        #[arg(long)]
-        founder: String,
+        #[command(flatten)]
+        remote: NetworkSnapshotRemoteArgs,
         #[arg(long)]
         output: String,
         #[arg(long)]
         download: Option<PathBuf>,
-        #[arg(long)]
-        ssh_key: Option<PathBuf>,
-        #[arg(long, default_value_t = 600)]
-        timeout: u64,
-        #[arg(long)]
-        skip_dkg_guard: bool,
-        #[arg(long)]
-        skip_quorum_guard: bool,
     },
     /// Validate a signed snapshot on one founder.
     Validate {
-        #[arg(long)]
-        artifacts: PathBuf,
-        #[arg(long)]
-        founder: String,
+        #[command(flatten)]
+        remote: NetworkSnapshotRemoteArgs,
         #[arg(long)]
         archive: String,
         #[arg(long)]
         expected_signer: Option<String>,
-        #[arg(long)]
-        ssh_key: Option<PathBuf>,
-        #[arg(long, default_value_t = 600)]
-        timeout: u64,
-        #[arg(long)]
-        skip_dkg_guard: bool,
-        #[arg(long)]
-        skip_quorum_guard: bool,
     },
+}
+
+#[derive(Debug, Args)]
+struct NetworkSnapshotRemoteArgs {
+    #[arg(long)]
+    artifacts: PathBuf,
+    #[arg(long)]
+    founder: String,
+    #[arg(long)]
+    ssh_key: Option<PathBuf>,
+    #[arg(long, default_value_t = 600)]
+    timeout: u64,
+    #[arg(long)]
+    skip_dkg_guard: bool,
+    #[arg(long)]
+    skip_quorum_guard: bool,
+}
+
+impl NetworkSnapshotRemoteArgs {
+    fn options<'a>(&'a self, archive: &'a str) -> network::snapshot::RemoteSnapshotOptions<'a> {
+        network::snapshot::RemoteSnapshotOptions {
+            artifacts: &self.artifacts,
+            founder: &self.founder,
+            archive,
+            ssh_key: self.ssh_key.as_deref(),
+            timeout: std::time::Duration::from_secs(self.timeout),
+            skip_dkg_guard: self.skip_dkg_guard,
+            skip_quorum_guard: self.skip_quorum_guard,
+        }
+    }
 }
 
 #[derive(Debug, Args)]
@@ -357,14 +367,14 @@ impl Cli {
                     skip_dkg_guard,
                     skip_quorum_guard,
                 } => {
-                    network::upgrade::run(
-                        &artifacts,
-                        &software_bundle,
-                        ssh_key.as_deref(),
-                        std::time::Duration::from_secs(timeout),
+                    network::upgrade::run(network::upgrade::UpgradeOptions {
+                        artifacts: &artifacts,
+                        software_bundle: &software_bundle,
+                        ssh_key: ssh_key.as_deref(),
+                        timeout: std::time::Duration::from_secs(timeout),
                         skip_dkg_guard,
                         skip_quorum_guard,
-                    )
+                    })
                     .await
                 }
                 NetworkCommand::Doctor {
@@ -377,49 +387,20 @@ impl Cli {
                 }
                 NetworkCommand::Snapshot(args) => match args.command {
                     NetworkSnapshotCommand::Create {
-                        artifacts,
-                        founder,
+                        remote,
                         output,
                         download,
-                        ssh_key,
-                        timeout,
-                        skip_dkg_guard,
-                        skip_quorum_guard,
                     } => {
-                        network::snapshot::create(
-                            network::snapshot::RemoteSnapshotOptions {
-                                artifacts: &artifacts,
-                                founder: &founder,
-                                archive: &output,
-                                ssh_key: ssh_key.as_deref(),
-                                timeout: std::time::Duration::from_secs(timeout),
-                                skip_dkg_guard,
-                                skip_quorum_guard,
-                            },
-                            download.as_deref(),
-                        )
-                        .await
+                        network::snapshot::create(remote.options(&output), download.as_deref())
+                            .await
                     }
                     NetworkSnapshotCommand::Validate {
-                        artifacts,
-                        founder,
+                        remote,
                         archive,
                         expected_signer,
-                        ssh_key,
-                        timeout,
-                        skip_dkg_guard,
-                        skip_quorum_guard,
                     } => {
                         network::snapshot::validate(
-                            network::snapshot::RemoteSnapshotOptions {
-                                artifacts: &artifacts,
-                                founder: &founder,
-                                archive: &archive,
-                                ssh_key: ssh_key.as_deref(),
-                                timeout: std::time::Duration::from_secs(timeout),
-                                skip_dkg_guard,
-                                skip_quorum_guard,
-                            },
+                            remote.options(&archive),
                             expected_signer.as_deref(),
                         )
                         .await
@@ -538,6 +519,19 @@ mod tests {
             "--founder",
             "validator-0",
             "--output",
+            "/opt/outbe-chain/snapshots/node.tar.zst",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "network",
+            "snapshot",
+            "validate",
+            "--artifacts",
+            "network-final",
+            "--founder",
+            "validator-0",
+            "--archive",
             "/opt/outbe-chain/snapshots/node.tar.zst",
         ])
         .is_ok());

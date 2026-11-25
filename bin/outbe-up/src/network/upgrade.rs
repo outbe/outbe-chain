@@ -7,7 +7,7 @@ use outbe_software_bundle::{sha256_file, verify_and_extract};
 use crate::{support::progress::Progress, validator::upgrade::validate_manifest};
 
 use super::{
-    lifecycle::{as_root, guard, simplex_quorum, wait_healthy},
+    lifecycle::{as_root, guard, simplex_quorum, wait_healthy, HealthWait},
     remote::{NetworkArtifacts, SshOptions},
     status::{healthy, query_all},
 };
@@ -15,19 +15,22 @@ use super::{
 const TARGET: &str = "outbe-validator.target";
 const SERVICES_ENABLED_MARKER: &str = "/opt/outbe-chain/state/services-enabled";
 
-pub async fn run(
-    artifacts: &Path,
-    software_bundle: &Path,
-    ssh_key: Option<&Path>,
-    timeout: Duration,
-    skip_dkg_guard: bool,
-    skip_quorum_guard: bool,
-) -> Result<()> {
+pub struct UpgradeOptions<'a> {
+    pub artifacts: &'a Path,
+    pub software_bundle: &'a Path,
+    pub ssh_key: Option<&'a Path>,
+    pub timeout: Duration,
+    pub skip_dkg_guard: bool,
+    pub skip_quorum_guard: bool,
+}
+
+pub async fn run(options: UpgradeOptions<'_>) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("verifying network and software bundle");
-    let build = NetworkArtifacts::load(artifacts)?;
-    let ssh = SshOptions::new(ssh_key, &build.manifest.genesis.final_sha256)?;
-    let bundle = software_bundle
+    let build = NetworkArtifacts::load(options.artifacts)?;
+    let ssh = SshOptions::new(options.ssh_key, &build.manifest.genesis.final_sha256)?;
+    let bundle = options
+        .software_bundle
         .canonicalize()
         .wrap_err("software bundle does not exist")?;
     let staging = tempfile::tempdir()?;
@@ -39,7 +42,7 @@ pub async fn run(
 
     let count = build.manifest.founders.len();
     let quorum = simplex_quorum(count);
-    if !skip_quorum_guard {
+    if !options.skip_quorum_guard {
         ensure!(
             count.saturating_sub(1) >= quorum,
             "rolling upgrade would leave {} validators, below quorum {quorum}; pass --skip-quorum-guard only for an intentional outage",
@@ -61,7 +64,7 @@ pub async fn run(
             .iter()
             .find(|status| status.name == founder.name)
             .ok_or_else(|| eyre::eyre!("missing status for {}", founder.name))?;
-        guard(status, skip_dkg_guard)?;
+        guard(status, options.skip_dkg_guard)?;
         progress.stage(&format!("upgrading {}", founder.name));
 
         let remote = ssh.capture(founder, "set -eu; mktemp -d /tmp/outbe-upgrade.XXXXXX")?;
@@ -110,11 +113,13 @@ systemctl start {TARGET}",
         }
         cleanup?;
         if let Err(error) = wait_healthy(
-            &build,
-            &ssh,
-            &founder.name,
-            required_peers,
-            timeout,
+            HealthWait {
+                build: &build,
+                ssh: &ssh,
+                founder: &founder.name,
+                required_peers,
+                timeout: options.timeout,
+            },
             &mut progress,
         )
         .await
