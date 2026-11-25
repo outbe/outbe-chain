@@ -30,7 +30,7 @@ contract IntexNFT1155Erc4906Test is Test {
         vm.startPrank(admin);
         nft.grantRole(nft.BURNER_ROLE(), bridger);
         vm.stopPrank();
-        iTok = nft.issuedTokenId(SERIES_ID);
+        iTok = nft.issuedIntexId(SERIES_ID);
     }
 
     /// @dev Drains recorded logs; counts MetadataUpdate emits and checks the de-indexed shape.
@@ -55,9 +55,9 @@ contract IntexNFT1155Erc4906Test is Test {
         vm.recordLogs();
         vm.startPrank(bridger);
 
-        nft.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD));
+        nft.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD));
         (uint256 count, uint256 tokenId) = _metadataUpdates();
-        assertEq(count, 1, "createSeries emits once");
+        assertEq(count, 1, "openSeries emits once");
         assertEq(tokenId, iTok);
 
         nft.issueIntex(user, 10, SERIES_ID);
@@ -68,9 +68,9 @@ contract IntexNFT1155Erc4906Test is Test {
         (count,) = _metadataUpdates();
         assertEq(count, 0, "burnIntex is supply-only");
 
-        nft.markCalled(SERIES_ID, uint32(block.timestamp));
+        nft.callSeries(SERIES_ID, uint32(block.timestamp));
         (count, tokenId) = _metadataUpdates();
-        assertEq(count, 1, "markCalled changes the document");
+        assertEq(count, 1, "callSeries changes the document");
         assertEq(tokenId, iTok);
 
         nft.crosschainBurn(user, user, iTok, 1);

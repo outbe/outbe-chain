@@ -38,10 +38,10 @@ contract IntexNFT1155MetadataTest is Test {
         params.callPriceMinor = CALL_PRICE;
         params.promisLoadMinor = PROMIS_LOAD;
         vm.prank(bridger);
-        token.createSeries(params);
+        token.openSeries(params);
         vm.prank(bridger);
         token.issueIntex(user, 10, SERIES_ID);
-        iTok = token.issuedTokenId(SERIES_ID);
+        iTok = token.issuedIntexId(SERIES_ID);
     }
 
     function _json(uint256 tokenId) internal view returns (bytes memory) {
@@ -80,8 +80,8 @@ contract IntexNFT1155MetadataTest is Test {
         IIntexNFT1155.CreateSeriesParams memory params = CreateSeriesLib.params(20260623, CAP, CALL_PERIOD);
         params.seriesId = shortId;
         vm.prank(bridger);
-        token.createSeries(params);
-        uint256 issued = token.issuedTokenId(shortId);
+        token.openSeries(params);
+        uint256 issued = token.issuedIntexId(shortId);
         _assertContains(_json(issued), "\"name\":\"Intex 20260623-USD\",");
     }
 
@@ -100,8 +100,8 @@ contract IntexNFT1155MetadataTest is Test {
         assertFalse(json.contains("Floor Price"), "no floor price");
         _assertContains(json, "{\"trait_type\":\"Call Price\",\"value\":2.28,\"display_type\":\"number\"}");
         _assertContains(json, "{\"trait_type\":\"Promis Load\",\"value\":100000,\"display_type\":\"number\"}");
-        assertFalse(json.contains("\"Called At\""), "no call rows before markCalled");
-        assertFalse(json.contains("\"Call Deadline\""), "no call rows before markCalled");
+        assertFalse(json.contains("\"Called At\""), "no call rows before callSeries");
+        assertFalse(json.contains("\"Call Deadline\""), "no call rows before callSeries");
     }
 
     function test_uri_ExcludesRetiredTraits() public view {
@@ -115,7 +115,7 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_uri_Called_AddsCallTimestamps() public {
         vm.prank(bridger);
-        token.markCalled(SERIES_ID, uint32(block.timestamp));
+        token.callSeries(SERIES_ID, uint32(block.timestamp));
         uint256 calledAt = block.timestamp;
 
         bytes memory json = _json(iTok);
@@ -145,9 +145,9 @@ contract IntexNFT1155MetadataTest is Test {
 
     function test_uri_Forfeited_DerivedFromClock() public {
         vm.prank(bridger);
-        token.markCalled(SERIES_ID, uint32(block.timestamp));
+        token.callSeries(SERIES_ID, uint32(block.timestamp));
         uint256 deadline = block.timestamp + CALL_PERIOD;
-        uint256 closeAt = deadline + token.readData(SERIES_ID).callTrigger.transitMargin;
+        uint256 closeAt = deadline + token.getIntexSeries(SERIES_ID).callTrigger.transitMargin;
 
         vm.warp(closeAt);
         _assertContains(_json(iTok), "{\"trait_type\":\"Series State\",\"value\":\"Called\"}");

@@ -65,7 +65,7 @@ contract IntexAuctionTargetRouterIssuanceBatchTest is CrossChainTest {
         assertTrue(intex.seriesExists("20250101-USD-U"), "dollar series");
         assertTrue(intex.seriesExists("20250101-EUR-E"), "euro series");
         assertTrue(intex.seriesExists("20250101-TRY-U"), "lira series");
-        assertEq(intex.totalSupply(intex.issuedTokenId("20250101-USD-U")), 0, "the message mints nothing");
+        assertEq(intex.totalSupply(intex.issuedIntexId("20250101-USD-U")), 0, "the message mints nothing");
     }
 
     function test_ASeriesRepeatedInALaterMessageIsCreatedOnce() public {

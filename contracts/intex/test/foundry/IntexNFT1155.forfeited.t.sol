@@ -31,13 +31,13 @@ contract IntexNFT1155ForfeitedTest is Test {
     function setUp() public {
         token = DeployProxy.intexNFT1155(admin, relayer);
         vm.startPrank(relayer);
-        token.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD));
+        token.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, CAP, CALL_PERIOD));
         token.issueIntex(user, 10, SERIES_ID);
-        token.markCalled(SERIES_ID, uint32(block.timestamp));
+        token.callSeries(SERIES_ID, uint32(block.timestamp));
         vm.stopPrank();
-        iTok = token.issuedTokenId(SERIES_ID);
+        iTok = token.issuedIntexId(SERIES_ID);
         deadline = block.timestamp + CALL_PERIOD;
-        closeAt = deadline + token.readData(SERIES_ID).callTrigger.transitMargin;
+        closeAt = deadline + token.getIntexSeries(SERIES_ID).callTrigger.transitMargin;
     }
 
     /// The stored `state` word: `SeriesData` packs `issuedAt`, `calledAt`, `totalSupply`
@@ -49,13 +49,13 @@ contract IntexNFT1155ForfeitedTest is Test {
 
     function test_ReadsCalledUpToTheTransitCloseAndForfeitedAfterIt() public {
         vm.warp(deadline + 1);
-        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called));
+        assertEq(uint8(token.getIntexSeries(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called));
 
         vm.warp(closeAt);
-        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called));
+        assertEq(uint8(token.getIntexSeries(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called));
 
         vm.warp(closeAt + 1);
-        assertEq(uint8(token.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Forfeited));
+        assertEq(uint8(token.getIntexSeries(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Forfeited));
     }
 
     /// The whole point of deriving: storage still says `Called`, so `_update`,
@@ -91,7 +91,7 @@ contract IntexNFT1155ForfeitedTest is Test {
         token.burnForfeited(user, SERIES_ID);
 
         assertEq(token.balanceOf(user, iTok), 0);
-        assertEq(token.readData(SERIES_ID).totalSupply, 0);
+        assertEq(token.getIntexSeries(SERIES_ID).totalSupply, 0);
     }
 
     function test_BurnForfeited_RevertsUpToTheTransitClose() public {

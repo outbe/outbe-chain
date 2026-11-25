@@ -19,7 +19,7 @@ contract NFT1155SupplyHandler is Test {
     constructor(IntexNFT1155 _intex, bytes14 _seriesId, address[] memory _bidders) {
         intex = _intex;
         seriesId = _seriesId;
-        tokenId = _intex.issuedTokenId(_seriesId);
+        tokenId = _intex.issuedIntexId(_seriesId);
         bidders = _bidders;
     }
 
@@ -50,7 +50,7 @@ contract IntexNFT1155SupplyInvariantTest is StdInvariant, Test {
 
     function setUp() public {
         intex = DeployProxy.intexNFT1155(admin, admin);
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        intex.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
         bidders.push(address(0xB1));
         bidders.push(address(0xB2));
@@ -70,8 +70,8 @@ contract IntexNFT1155SupplyInvariantTest is StdInvariant, Test {
 
     /// @dev `issuedUnits` never moves, and parity (sum balanceOf == totalSupply) holds.
     function invariant_issuedUnitsAndParity() public view {
-        uint256 iTok = intex.issuedTokenId(SERIES_ID);
-        IIntexNFT1155.SeriesData memory d = intex.readData(SERIES_ID);
+        uint256 iTok = intex.issuedIntexId(SERIES_ID);
+        IIntexNFT1155.SeriesData memory d = intex.getIntexSeries(SERIES_ID);
         assertEq(d.issuedUnits, ISSUED_UNITS, "issuedUnits is immutable");
         uint256 sum;
         for (uint256 i = 0; i < bidders.length; i++) {

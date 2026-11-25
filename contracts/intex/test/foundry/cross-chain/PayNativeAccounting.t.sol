@@ -74,8 +74,8 @@ contract PayNativeAccountingTest is CrossChainTest {
         intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridge));
         intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
 
-        // Series + owner balance so markCalled/owner enumeration and the entry-path bridge sends have tokens.
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
+        // Series + owner balance so callSeries/owner enumeration and the entry-path bridge sends have tokens.
+        intex.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
         intex.issueIntex(owner, 5, SERIES_ID);
     }
 

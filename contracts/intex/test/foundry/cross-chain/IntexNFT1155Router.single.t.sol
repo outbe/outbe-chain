@@ -58,8 +58,8 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         adapterB.setRemoteRouter(A_CHAIN_ID, _interop(A_CHAIN_ID, address(adapterA)));
 
         // Create series on both chains
-        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
-        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenA.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenB.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
         // Mint initial tokens to user on chain A
         tokenA.issueIntex(user, AMOUNT, SERIES_ID);
@@ -139,7 +139,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
         uint256 failTokenId = uint256(keccak256(abi.encodePacked(failSeries)));
-        tokenA.createSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenA.openSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
         SendParam memory sendParam = SendParam({
             dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: failTokenId, units: AMOUNT
@@ -159,7 +159,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         }
         assertEq(failed, 1);
 
-        tokenB.createSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenB.openSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
         vm.expectEmit(true, true, true, true, address(adapterB));
         emit IIntexNFT1155Router.IntexCrosschainReceived(receiveId, A_CHAIN_ID, user, failTokenId, uint32(AMOUNT));
         adapterB.retryCrosschainMint(receiveId, 0);
@@ -261,7 +261,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
     }
 
     function test_intex_state_preserved_after_bridge() public {
-        IIntexNFT1155.SeriesData memory dataA = tokenA.readData(SERIES_ID);
+        IIntexNFT1155.SeriesData memory dataA = tokenA.getIntexSeries(SERIES_ID);
         assertEq(uint8(dataA.state), uint8(IIntexNFT1155.IntexState.Issued));
 
         // Send tokens A -> B
@@ -274,7 +274,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         _deliverAToB();
 
         // Verify state is identical on chain B
-        IIntexNFT1155.SeriesData memory dataB = tokenB.readData(SERIES_ID);
+        IIntexNFT1155.SeriesData memory dataB = tokenB.getIntexSeries(SERIES_ID);
         assertEq(uint8(dataB.state), uint8(IIntexNFT1155.IntexState.Issued));
     }
 
@@ -286,7 +286,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
         uint256 failTokenId = uint256(keccak256(abi.encodePacked(failSeries)));
-        tokenA.createSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenA.openSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
 
         SendParam memory sendParam = SendParam({
@@ -313,7 +313,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         assertEq(amount, AMOUNT);
 
         // Fix the cause on B, then retry -> minted and entry cleared.
-        tokenB.createSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenB.openSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
         adapterB.retryCrosschainMint(receiveId, 0);
         assertEq(tokenB.balanceOf(user, failTokenId), AMOUNT, "minted on retry");
 
@@ -330,7 +330,7 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
         uint32 failDay = 20260402;
         bytes14 failSeries = "20260402-USD-U";
         uint256 failTokenId = uint256(keccak256(abi.encodePacked(failSeries)));
-        tokenA.createSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenA.openSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
         tokenA.issueIntex(user, AMOUNT, failSeries);
 
         SendParam memory sendParam = SendParam({

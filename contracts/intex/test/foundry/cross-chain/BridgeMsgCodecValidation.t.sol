@@ -155,7 +155,7 @@ contract BridgeMsgCodecValidationTest is Test {
                 BridgeMsgCodec.encodeIntexSeriesCallNotice(20260212, CALLED_AT, MarkBatchLib.one("20260212-TRY-U"))
             ),
             bytes14("20260212-TRY-U"),
-            "markCalled"
+            "callSeries"
         );
     }
 

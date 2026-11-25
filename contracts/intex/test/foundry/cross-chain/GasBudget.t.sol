@@ -57,7 +57,7 @@ contract GasBudgetTest is CrossChainTest {
         for (uint256 i = 0; i < batch.length; ++i) {
             IIntexNFT1155.CreateSeriesParams memory p = CreateSeriesLib.params(EMISSION_DAY, 10_000, 0);
             p.seriesId = batch[i];
-            intex.createSeries(p);
+            intex.openSeries(p);
         }
     }
 
@@ -186,11 +186,11 @@ contract GasBudgetTest is CrossChainTest {
 
         bytes14[] memory one = MarkBatchLib.one(SERIES_PREFIX);
         _seed(one);
-        dstToken.createSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
+        dstToken.openSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
 
         // `multiSend` burns the whole batch from its caller and fans it out to `recipients`.
         address sender = address(0x3000);
-        uint256 tokenId = intex.issuedTokenId(SERIES_PREFIX);
+        uint256 tokenId = intex.issuedIntexId(SERIES_PREFIX);
         intex.issueIntex(sender, items, SERIES_PREFIX);
 
         bytes32[] memory to = new bytes32[](items);
@@ -231,10 +231,10 @@ contract GasBudgetTest is CrossChainTest {
         dstToken.grantRole(dstToken.BRIDGE_ROLE(), address(dst));
 
         _seed(MarkBatchLib.one(SERIES_PREFIX));
-        dstToken.createSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
+        dstToken.openSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
 
         address sender = address(0x3000);
-        uint256 tokenId = intex.issuedTokenId(SERIES_PREFIX);
+        uint256 tokenId = intex.issuedIntexId(SERIES_PREFIX);
         intex.issueIntex(sender, items, SERIES_PREFIX);
 
         // One receiver that rejects every mint, so every item takes the recording path.
@@ -300,7 +300,7 @@ contract GasBurningIntex {
         return true;
     }
 
-    function markCalled(bytes14 seriesId, uint64) external {
+    function callSeries(bytes14 seriesId, uint64) external {
         if (seriesId == poison) {
             // Spin until the frame's gas is gone.
             while (true) {

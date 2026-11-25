@@ -344,7 +344,7 @@ library TargetInbound {
         // Create-if-absent: any of a day's chunks may be the first to name a series.
         if (!seriesKnown) {
             $.intexContract
-                .createSeries(
+                .openSeries(
                     IIntexNFT1155.CreateSeriesParams({
                         seriesId: payload.seriesId,
                         emissionDay: payload.emissionDay,
@@ -387,7 +387,7 @@ library TargetInbound {
         view
         returns (bool)
     {
-        IIntexNFT1155.SeriesData memory d = $.intexContract.readData(payload.seriesId);
+        IIntexNFT1155.SeriesData memory d = $.intexContract.getIntexSeries(payload.seriesId);
         return d.emissionDay == payload.emissionDay && d.issuanceCurrency == payload.issuanceCurrency
             && d.referenceCurrency == payload.referenceCurrency && d.issuedUnits == payload.issuedUnits
             && d.promisLoadMinor == payload.promisLoadMinor && d.entryPriceMinor == payload.entryPriceMinor

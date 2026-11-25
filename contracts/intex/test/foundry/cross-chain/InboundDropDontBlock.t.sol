@@ -41,7 +41,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         _wireOutbeIca(bnbRouter, outbeIca);
 
-        // TM drives the local Intex on markCalled.
+        // TM drives the local Intex on callSeries.
         bnbRouter.setDependencies(address(auction), address(intex), admin);
         auction.grantRole(auction.RELAYER_ROLE(), address(bnbRouter));
         intex.grantRole(intex.ROUTER_ROLE(), address(bnbRouter));
@@ -82,11 +82,11 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
         _deliverToTM(packet);
 
         // Prerequisite lands (the ISSUANCE that would have created the series).
-        intex.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
+        intex.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, 10_000, 0));
 
         bnbRouter.retryIntexSeriesCallNoticeApply(SERIES_ID);
 
-        IIntexNFT1155.SeriesData memory data = intex.readData(SERIES_ID);
+        IIntexNFT1155.SeriesData memory data = intex.getIntexSeries(SERIES_ID);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called), "series flipped to Called on flush");
     }
 }

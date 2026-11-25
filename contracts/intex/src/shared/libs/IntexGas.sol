@@ -32,7 +32,7 @@ library IntexGas {
     uint256 internal constant INTEX_SERIES_CALL_NOTICE_PER_SERIES = 45_000;
 
     /// @notice Per-series ceiling: uncapped, a runaway series takes 63/64 of the message's gas and starves
-    ///         the slot write. Kept under the `markCalled` marginal so a runaway still fits its own budget.
+    ///         the slot write. Kept under the `callSeries` marginal so a runaway still fits its own budget.
     uint256 internal constant CALL_NOTICE_APPLY_CAP = 60_000;
 
     /// @dev What a round must have left to send one more BIDS_BATCH: a full 64-bid chunk measures ~714k

@@ -41,14 +41,14 @@ contract MarkBatchWireTest is CrossChainTest {
     }
 
     function _createBoth() internal {
-        intex.createSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
+        intex.openSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
         IIntexNFT1155.CreateSeriesParams memory eur = CreateSeriesLib.params(EMISSION_DAY, 10_000, 0);
         eur.seriesId = EUR_SERIES;
-        intex.createSeries(eur);
+        intex.openSeries(eur);
     }
 
     function _state(bytes14 seriesId) internal view returns (uint8) {
-        return uint8(intex.readData(seriesId).state);
+        return uint8(intex.getIntexSeries(seriesId).state);
     }
 
     function test_oneMessageCarriesTheWholeGroupToTheTarget() public {
@@ -68,7 +68,7 @@ contract MarkBatchWireTest is CrossChainTest {
 
     /// @notice One series missing on the target must not cost the rest of its batch.
     function test_aMissingSeriesParksAloneWhileTheRestApply() public {
-        intex.createSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
+        intex.openSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 0));
 
         _deliver(
             OUTBE_CHAIN_ID,

@@ -370,7 +370,7 @@ contract IntexAuctionTargetRouter is
     /// @param calledAt Origin's call timestamp.
     function applyIntexSeriesCallNotice(bytes14 seriesId, uint64 calledAt) external {
         if (msg.sender != address(this)) revert NotSelf();
-        _ts().intexContract.markCalled(seriesId, calledAt);
+        _ts().intexContract.callSeries(seriesId, calledAt);
     }
 
     /// @notice Permissionless apply of the mark waiting in `seriesId`'s slot. Reverts if nothing
@@ -381,7 +381,7 @@ contract IntexAuctionTargetRouter is
         uint64 calledAt = $.failedIntexSeriesCallNoticeApplies[seriesId];
         if (calledAt == 0) revert NoFailedIntexSeriesCallNoticeApply(seriesId);
         delete $.failedIntexSeriesCallNoticeApplies[seriesId];
-        $.intexContract.markCalled(seriesId, calledAt);
+        $.intexContract.callSeries(seriesId, calledAt);
     }
 
     /// @notice Self-call shim around `_sendIntexAuctionProceeds`. Only callable by this contract itself.

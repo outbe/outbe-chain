@@ -46,7 +46,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         nftBridgeOutbe.setRemoteRouter(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(nftBridgeBnb)));
 
         // Two series: one Issued (crosschainMint succeeds), one not (crosschainMint reverts on state check).
-        intex.createSeries(CreateSeriesLib.params(SERIES_GOOD_DAY, 10_000, 0));
+        intex.openSeries(CreateSeriesLib.params(SERIES_GOOD_DAY, 10_000, 0));
         // SERIES_BAD intentionally not created - `intex.crosschainMint` will revert on lookup.
 
         intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridgeBnb));
@@ -133,7 +133,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         assertTrue(existsBefore, "bad item parked");
 
         // Fix upstream: create SERIES_BAD now so crosschainMint can succeed.
-        intex.createSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
+        intex.openSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
 
         // Anyone can retry - no auth gate.
         vm.prank(address(0xDEAD));
@@ -155,7 +155,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         _deliverInbound(packet);
 
         // Fix upstream + retry once.
-        intex.createSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
+        intex.openSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
         nftBridgeBnb.retryCrosschainMint(receiveId, 1);
 
         // Second retry must revert, because the slot has been deleted.

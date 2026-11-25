@@ -32,10 +32,10 @@ contract CalledSeriesTransfersTest is CrossChainTest {
 
         intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridge));
 
-        intex.createSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 1 days));
+        intex.openSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 1 days));
         intex.issueIntex(owner, 10, SERIES_ID);
-        tokenId = intex.issuedTokenId(SERIES_ID);
-        intex.markCalled(SERIES_ID, uint32(block.timestamp));
+        tokenId = intex.issuedIntexId(SERIES_ID);
+        intex.callSeries(SERIES_ID, uint32(block.timestamp));
     }
 
     function _param(address to, uint256 amount) internal view returns (SendParam memory) {
@@ -81,11 +81,11 @@ contract CalledSeriesTransfersTest is CrossChainTest {
     }
 
     function test_BeforeTheCallTheBridgeStillCarriesToAnyone() public {
-        intex.createSeries(CreateSeriesLib.params(20260502, 10_000, 1 days));
+        intex.openSeries(CreateSeriesLib.params(20260502, 10_000, 1 days));
         bytes14 open = "20260502-USD-U";
         intex.issueIntex(owner, 5, open);
 
-        uint256 openTokenId = intex.issuedTokenId(open);
+        uint256 openTokenId = intex.issuedIntexId(open);
         vm.prank(owner);
         nftBridge.send(
             SendParam({

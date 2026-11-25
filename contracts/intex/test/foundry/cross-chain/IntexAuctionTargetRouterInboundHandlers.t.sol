@@ -140,7 +140,7 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
         intex.grantRole(intex.AUCTION_ROLE(), admin);
         intex.issueIntex(bidder, 5, SERIES_ID);
 
-        uint256 tokenId = intex.issuedTokenId(SERIES_ID);
+        uint256 tokenId = intex.issuedIntexId(SERIES_ID);
         assertEq(intex.balanceOf(bidder, tokenId), 5);
 
         _deliver(
@@ -152,7 +152,7 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
             )
         );
 
-        assertEq(uint8(intex.readData(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called), "series Called");
+        assertEq(uint8(intex.getIntexSeries(SERIES_ID).state), uint8(IIntexNFT1155.IntexState.Called), "series Called");
         assertEq(intex.balanceOf(bidder, tokenId), 5, "balances untouched by the mark");
     }
 
@@ -163,7 +163,7 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
         }
     }
 
-    // --- _handleIssuanceInstructions: createSeries on local IntexNFT1155, no mint ---
+    // --- _handleIssuanceInstructions: openSeries on local IntexNFT1155, no mint ---
     function test_handleIssuanceInstructions_createsSeriesOnly() public {
         BridgeMsgCodec.IntexSeriesPayload memory payload = BridgeMsgCodec.IntexSeriesPayload({
             seriesId: SERIES_ID,
@@ -184,7 +184,7 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
         _deliver(packet);
 
         assertTrue(intex.seriesExists(SERIES_ID), "series created");
-        assertEq(intex.totalSupply(intex.issuedTokenId(SERIES_ID)), 0, "winners issue their own units");
+        assertEq(intex.totalSupply(intex.issuedIntexId(SERIES_ID)), 0, "winners issue their own units");
     }
 
     function _issuancePacket() internal view returns (bytes memory) {
@@ -382,7 +382,7 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
     }
 
     function _seedSeriesOnIntex() internal {
-        intex.createSeries(CreateSeriesLib.params(EMISSION_DAY, ISSUED_UNITS, 0));
+        intex.openSeries(CreateSeriesLib.params(EMISSION_DAY, ISSUED_UNITS, 0));
     }
 
     function _deliver(bytes memory packet) internal {

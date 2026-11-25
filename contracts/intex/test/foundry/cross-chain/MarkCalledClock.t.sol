@@ -32,7 +32,7 @@ contract MarkCalledClockTest is CrossChainTest {
         intex.grantRole(intex.ROUTER_ROLE(), address(router));
         // A real notice period: with zero the window closes the instant the series
         // is called, and the reads below would report the series forfeited.
-        intex.createSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 21 days));
+        intex.openSeries(CreateSeriesLib.params(EMISSION_DAY, 10_000, 21 days));
     }
 
     function _deliverCalled(uint32 calledAt) internal {
@@ -50,7 +50,7 @@ contract MarkCalledClockTest is CrossChainTest {
 
         _deliverCalled(originCalledAt);
 
-        IIntexNFT1155.SeriesData memory data = intex.readData(SERIES_ID);
+        IIntexNFT1155.SeriesData memory data = intex.getIntexSeries(SERIES_ID);
         assertEq(uint8(data.state), uint8(IIntexNFT1155.IntexState.Called), "series Called");
         assertEq(data.calledAt, originCalledAt, "stamp is the origin's, not the delivery time");
     }
@@ -60,7 +60,7 @@ contract MarkCalledClockTest is CrossChainTest {
 
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.CalledAtInvalid.selector, ahead, uint32(block.timestamp)));
         vm.prank(address(router));
-        intex.markCalled(SERIES_ID, ahead);
+        intex.callSeries(SERIES_ID, ahead);
     }
 
     /// @dev Zero is what an uncalled series reads, so taking it would set a deadline in 1970 and brick
@@ -70,6 +70,6 @@ contract MarkCalledClockTest is CrossChainTest {
             abi.encodeWithSelector(IIntexNFT1155.CalledAtInvalid.selector, uint32(0), uint32(block.timestamp))
         );
         vm.prank(address(router));
-        intex.markCalled(SERIES_ID, 0);
+        intex.callSeries(SERIES_ID, 0);
     }
 }

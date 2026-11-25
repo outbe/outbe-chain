@@ -55,7 +55,7 @@ contract IntexNFT1155UupsTest is Test {
 
     function test_Upgrade_PreservesStateAndSwapsImplementation() public {
         vm.prank(bridger);
-        nft.createSeries(CreateSeriesLib.params(7, 100, 0));
+        nft.openSeries(CreateSeriesLib.params(7, 100, 0));
         vm.prank(bridger);
         nft.issueIntex(stranger, 3, CreateSeriesLib.seriesId(7));
 
@@ -65,7 +65,7 @@ contract IntexNFT1155UupsTest is Test {
 
         bytes32 implSlot = vm.load(address(nft), ERC1967Utils.IMPLEMENTATION_SLOT);
         assertEq(address(uint160(uint256(implSlot))), address(newImpl));
-        uint256 tokenId = nft.issuedTokenId(CreateSeriesLib.seriesId(7));
+        uint256 tokenId = nft.issuedIntexId(CreateSeriesLib.seriesId(7));
         assertEq(nft.balanceOf(stranger, tokenId), 3);
         assertEq(nft.totalSupply(tokenId), 3);
         assertTrue(nft.hasRole(nft.ROUTER_ROLE(), bridger));

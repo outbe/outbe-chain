@@ -175,7 +175,7 @@ impl World {
         self.ok(
             RELAYER,
             INTEX_NFT1155_ADDRESS,
-            IIntexNFT1155::createSeriesCall {
+            IIntexNFT1155::openSeriesCall {
                 params: IIntexNFT1155::CreateSeriesParams {
                     seriesId: FixedBytes(SERIES),
                     emissionDay: 20_241_220,

@@ -255,7 +255,7 @@ contract LocalLoopbackTest is Test {
         // Each winner issues its own units through the auction.
         auction.redeemWinNote(DAY, iba1);
         auction.redeemWinNote(DAY, iba2);
-        uint256 tokenId = intex.issuedTokenId(CreateSeriesLib.seriesId(DAY));
+        uint256 tokenId = intex.issuedIntexId(CreateSeriesLib.seriesId(DAY));
         assertEq(intex.balanceOf(iba1, tokenId), 30, "iba1 issued");
         assertEq(intex.balanceOf(iba2, tokenId), 20, "iba2 issued");
 

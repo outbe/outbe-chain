@@ -65,7 +65,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
     }
 
     function _state() internal view returns (IIntexNFT1155.IntexState) {
-        return intex.readData(series).state;
+        return intex.getIntexSeries(series).state;
     }
 
     function _expectIgnored(uint8 msgType, uint8 reason) internal {
@@ -90,7 +90,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
     }
 
     function test_ACallNoticeTheTokenRefusesWaitsWithTheRefusal() public {
-        intex.createSeries(CreateSeriesLib.params(DAY, 10, 0));
+        intex.openSeries(CreateSeriesLib.params(DAY, 10, 0));
         intex.revokeRole(intex.ROUTER_ROLE(), address(router));
 
         vm.expectEmit(true, true, true, true, address(router));
@@ -155,11 +155,11 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
 
         vm.warp(block.timestamp + 1);
         bytes14 other = CreateSeriesLib.seriesId(DAY + 1);
-        intex.createSeries(CreateSeriesLib.params(DAY + 1, 10, 0));
+        intex.openSeries(CreateSeriesLib.params(DAY + 1, 10, 0));
         vm.recordLogs();
         _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY + 1, uint32(block.timestamp), MarkBatchLib.one(other)));
         assertEq(_routerTopics().length, 0, "a notice the token takes gives no router event");
-        assertEq(uint8(intex.readData(other).state), uint8(IIntexNFT1155.IntexState.Called));
+        assertEq(uint8(intex.getIntexSeries(other).state), uint8(IIntexNFT1155.IntexState.Called));
     }
 
     /// @dev A series that lands after its deadline is still created, so the chain holds its terms.
@@ -189,7 +189,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
 
     function test_RetryIntexSeriesCallNoticeApplyIsPermissionless() public {
         _deliver(_called());
-        intex.createSeries(CreateSeriesLib.params(DAY, 10, 0)); // the series appears by another path
+        intex.openSeries(CreateSeriesLib.params(DAY, 10, 0)); // the series appears by another path
 
         vm.prank(makeAddr("anyone"));
         router.retryIntexSeriesCallNoticeApply(series);
@@ -222,7 +222,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
     }
 
     function test_AZeroCallTimeForAnExistingSeriesIsInvalidAndLeavesItIssued() public {
-        intex.createSeries(CreateSeriesLib.params(DAY, 10, 0));
+        intex.openSeries(CreateSeriesLib.params(DAY, 10, 0));
         _expectZeroCallTimeIgnored();
         _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY, 0, MarkBatchLib.one(series)));
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Issued), "the series stays Issued");
@@ -232,7 +232,7 @@ contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
     // --- already there ---
 
     function test_ARepeatedCalledIsADuplicate() public {
-        intex.createSeries(CreateSeriesLib.params(DAY, 10, 0));
+        intex.openSeries(CreateSeriesLib.params(DAY, 10, 0));
         _deliver(_called());
         // A series that is already called gets no event.
         vm.recordLogs();

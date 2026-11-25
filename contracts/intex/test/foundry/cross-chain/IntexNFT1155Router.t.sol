@@ -59,8 +59,8 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         for (uint32 i = 0; i < 2; i++) {
             uint32 day = i == 0 ? SERIES_A_DAY : SERIES_B_DAY;
             bytes14 series = i == 0 ? SERIES_A : SERIES_B;
-            srcToken.createSeries(CreateSeriesLib.params(day, 1_000_000, 0));
-            dstToken.createSeries(CreateSeriesLib.params(day, 1_000_000, 0));
+            srcToken.openSeries(CreateSeriesLib.params(day, 1_000_000, 0));
+            dstToken.openSeries(CreateSeriesLib.params(day, 1_000_000, 0));
         }
 
         srcToken.grantRole(srcToken.BRIDGE_ROLE(), address(srcBatch));

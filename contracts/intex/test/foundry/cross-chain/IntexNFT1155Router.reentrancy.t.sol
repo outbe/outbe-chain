@@ -106,8 +106,8 @@ contract IntexNFT1155RouterReentrancyTest is CrossChainTest {
         adapterA.setRemoteRouter(bChainId, _interop(bChainId, address(adapterB)));
         adapterB.setRemoteRouter(aChainId, _interop(aChainId, address(adapterA)));
 
-        tokenA.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
-        tokenB.createSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenA.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
+        tokenB.openSeries(CreateSeriesLib.params(SERIES_ID_DAY, ISSUED_UNITS, 0));
 
         tokenA.issueIntex(user, AMOUNT, SERIES_ID);
     }
