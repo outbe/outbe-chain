@@ -32,7 +32,7 @@ pub fn ensure_maintenance_safe(
     Ok(())
 }
 
-async fn local_guard(journal: &Journal, skip_dkg_guard: bool) -> Result<()> {
+pub(crate) async fn local_guard(journal: &Journal, skip_dkg_guard: bool) -> Result<()> {
     let local = super::rpc::RpcClient::new(journal.config.network.local_rpc_url())?;
     let status = local.consensus_status().await?;
     ensure_maintenance_safe(&status, skip_dkg_guard, DEFAULT_MAINTENANCE_HEADROOM_BLOCKS)

@@ -95,6 +95,21 @@ enum NetworkCommand {
         #[arg(long)]
         skip_quorum_guard: bool,
     },
+    /// Upgrade founders one at a time from a verified software bundle.
+    Upgrade {
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        software_bundle: PathBuf,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+        #[arg(long)]
+        skip_dkg_guard: bool,
+        #[arg(long)]
+        skip_quorum_guard: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -142,6 +157,13 @@ enum ValidatorCommand {
         #[arg(long)]
         skip_dkg_guard: bool,
     },
+    /// Upgrade this validator from a verified software-only bundle.
+    Upgrade {
+        #[arg(long)]
+        software_bundle: PathBuf,
+        #[arg(long)]
+        skip_dkg_guard: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -157,6 +179,12 @@ enum InternalCommand {
     HyperlaneSetup,
     WaitRpc(WaitArgs),
     WaitValidatorDependencies(WaitArgs),
+    ApplySoftwareUpgrade {
+        #[arg(long)]
+        software_bundle: PathBuf,
+        #[arg(long)]
+        founder_index: Option<usize>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -217,6 +245,24 @@ impl Cli {
                     )
                     .await
                 }
+                NetworkCommand::Upgrade {
+                    artifacts,
+                    software_bundle,
+                    ssh_key,
+                    timeout,
+                    skip_dkg_guard,
+                    skip_quorum_guard,
+                } => {
+                    network::upgrade::run(
+                        &artifacts,
+                        &software_bundle,
+                        ssh_key.as_deref(),
+                        std::time::Duration::from_secs(timeout),
+                        skip_dkg_guard,
+                        skip_quorum_guard,
+                    )
+                    .await
+                }
             },
             Command::Validator(args) => match args.command {
                 ValidatorCommand::ConfigExample { output } => match output {
@@ -241,6 +287,10 @@ impl Cli {
                 ValidatorCommand::Restart { skip_dkg_guard } => {
                     validator::maintenance::restart(skip_dkg_guard).await
                 }
+                ValidatorCommand::Upgrade {
+                    software_bundle,
+                    skip_dkg_guard,
+                } => validator::upgrade::run(&software_bundle, skip_dkg_guard).await,
             },
             Command::Internal(args) => match args.command {
                 InternalCommand::Feeder => validator::service::feeder(),
@@ -250,6 +300,10 @@ impl Cli {
                 InternalCommand::WaitValidatorDependencies(args) => {
                     validator::service::wait_validator_dependencies(args.timeout).await
                 }
+                InternalCommand::ApplySoftwareUpgrade {
+                    software_bundle,
+                    founder_index,
+                } => validator::upgrade::apply(&software_bundle, founder_index),
             },
         }
     }

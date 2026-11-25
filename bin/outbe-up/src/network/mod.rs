@@ -7,3 +7,4 @@ pub mod prepare;
 mod remote;
 pub mod start;
 pub mod status;
+pub mod upgrade;

@@ -18,6 +18,13 @@ const JOURNAL_NAME: &str = "validator-state.json";
 pub struct Journal {
     pub version: u32,
     pub bundle_sha256: String,
+    /// Digest and source identity of the last installed software-only bundle.
+    #[serde(default)]
+    pub software_bundle_sha256: Option<String>,
+    #[serde(default)]
+    pub software_commit: Option<String>,
+    #[serde(default)]
+    pub software_release_tag: Option<String>,
     pub config_sha256: String,
     pub config: OperatorConfig,
     #[serde(default)]
@@ -49,6 +56,9 @@ impl Journal {
         Self {
             version: JOURNAL_VERSION,
             bundle_sha256,
+            software_bundle_sha256: None,
+            software_commit: None,
+            software_release_tag: None,
             config_sha256,
             config,
             installed: false,

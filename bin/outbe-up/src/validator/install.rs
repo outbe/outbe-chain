@@ -58,7 +58,7 @@ pub fn run() -> Result<()> {
     fs::set_permissions(&feeder, fs::Permissions::from_mode(0o640))?;
     fs::set_permissions(&hyperlane, fs::Permissions::from_mode(0o640))?;
     fs::set_permissions(&reth, fs::Permissions::from_mode(0o640))?;
-    install_units(root)?;
+    install_units(root, assets::systemd_units()?)?;
     process::systemctl(&["daemon-reload"])?;
     Ok(())
 }
@@ -328,7 +328,7 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
     Ok(())
 }
 
-fn install_units(root: &Path) -> Result<()> {
+pub(crate) fn install_units(root: &Path, units: Vec<(String, String)>) -> Result<()> {
     let unit_dir = root.join("systemd");
     if let Ok(metadata) = fs::symlink_metadata(&unit_dir) {
         ensure!(
@@ -338,7 +338,7 @@ fn install_units(root: &Path) -> Result<()> {
         );
     }
     create_owned_dir(&unit_dir, 0o755, 0, 0)?;
-    for (name, content) in assets::systemd_units()? {
+    for (name, content) in units {
         let canonical = unit_dir.join(&name);
         process::write_file(&canonical, content.as_bytes(), 0o644)?;
         process::chown(&canonical, 0, 0)?;
