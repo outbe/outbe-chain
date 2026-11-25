@@ -87,7 +87,7 @@ pub fn dispatch(
     })
 }
 
-fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::CredisData> {
+fn abi_credis(p: &crate::schema::CredisView, now: u64) -> Result<ICredis::CredisData> {
     let outcome = crate::runtime::outcome(p, now)?;
     Ok(ICredis::CredisData {
         credisId: p.credis_id,
@@ -108,9 +108,9 @@ fn abi_credis(p: &crate::schema::Credis, now: u64) -> Result<ICredis::CredisData
         settledFeeMinor: p.settled_fee_minor,
         call: ICredis::CallTerms {
             callPriceMinor: p.call_price_minor,
-            callWindow: p.call_window_seconds,
-            callThreshold: p.call_threshold_seconds,
-            callNoticePeriod: p.call_notice_period_seconds,
+            callWindow: p.terms.call_window_seconds,
+            callThreshold: p.terms.call_threshold_seconds,
+            callNoticePeriod: p.terms.call_notice_period_seconds,
             calledAt: p.called_at,
             settlementDeadline: if p.called_at == 0 {
                 0

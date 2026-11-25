@@ -79,7 +79,7 @@ fn cash_account_issues_the_credis_with_one_command() {
                 .unwrap()
         );
         assert_eq!(
-            record.call_notice_period_seconds,
+            record.terms.call_notice_period_seconds,
             outbe_credis::constants::CALL_NOTICE_PERIOD
         );
     });
@@ -488,14 +488,21 @@ fn reservation_snapshots_call_profile_terms_and_a_called_full_settlement_deletes
                 .unwrap();
             let (id, _) = issue(&storage, reservation_id, alice()).unwrap();
             let record = CredisContract::new(storage.clone()).get_credis(id).unwrap();
-            assert_eq!(record.call_rate, prod_terms.call_rate);
-            assert_eq!(record.call_window_seconds, prod_terms.call_window_seconds);
             assert_eq!(
-                record.call_threshold_seconds,
+                record.call_price_minor,
+                crate::rules::calc_call_price(record.entry_price_minor, prod_terms.call_rate)
+                    .unwrap()
+            );
+            assert_eq!(
+                record.terms.call_window_seconds,
+                prod_terms.call_window_seconds
+            );
+            assert_eq!(
+                record.terms.call_threshold_seconds,
                 prod_terms.call_threshold_seconds
             );
             assert_eq!(
-                record.call_notice_period_seconds,
+                record.terms.call_notice_period_seconds,
                 prod_terms.call_notice_period_seconds
             );
 
@@ -517,7 +524,10 @@ fn reservation_snapshots_call_profile_terms_and_a_called_full_settlement_deletes
         let record = credis.get_credis(id_called_settled).unwrap();
         assert_eq!(record.series_id, series_id);
         assert!(record.called_at > 0);
-        assert_eq!(record.call_window_seconds, prod_terms.call_window_seconds);
+        assert_eq!(
+            record.terms.call_window_seconds,
+            prod_terms.call_window_seconds
+        );
         (
             runtime::quote_settlement(&storage, id_called_settled).unwrap(),
             credis.group_of(&record).unwrap(),

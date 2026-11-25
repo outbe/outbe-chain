@@ -14,7 +14,7 @@ fn unallocated(storage: &StorageHandle<'_>) -> U256 {
         .unwrap()
 }
 
-fn record(storage: &StorageHandle<'_>, id: U256) -> outbe_credis::Credis {
+fn record(storage: &StorageHandle<'_>, id: U256) -> outbe_credis::CredisView {
     CredisContract::new(storage.clone()).get_credis(id).unwrap()
 }
 

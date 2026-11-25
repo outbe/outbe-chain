@@ -107,9 +107,9 @@ pub fn issue_credis(
                     referenceCurrency: opened.reference_currency,
                     entryPriceMinor: opened.entry_price_minor,
                     callPriceMinor: opened.call_price_minor,
-                    callWindow: u64::from(opened.call_window_seconds),
-                    callThreshold: u64::from(opened.call_threshold_seconds),
-                    callNoticePeriod: u64::from(opened.call_notice_period_seconds),
+                    callWindow: u64::from(opened.terms.call_window_seconds),
+                    callThreshold: u64::from(opened.terms.call_threshold_seconds),
+                    callNoticePeriod: u64::from(opened.terms.call_notice_period_seconds),
                 }),
             )?;
         }
@@ -185,7 +185,7 @@ pub fn settle_credis(
 fn live_record(
     credis: &CredisContract<'_>,
     credis_id: U256,
-) -> Result<Option<outbe_credis::Credis>> {
+) -> Result<Option<outbe_credis::CredisView>> {
     if credis.credis_exists(credis_id)? {
         return Ok(Some(credis.get_credis(credis_id)?));
     }
@@ -194,8 +194,8 @@ fn live_record(
 
 /// The Gratis the settlement freed, checked against the repayment.
 fn released_gratis(
-    before: &outbe_credis::Credis,
-    after: Option<&outbe_credis::Credis>,
+    before: &outbe_credis::CredisView,
+    after: Option<&outbe_credis::CredisView>,
     repayment: &rules::Repayment,
 ) -> Result<U256> {
     let outstanding = after.map_or(U256::ZERO, |record| record.outstanding_gratis_minor);
@@ -273,7 +273,7 @@ pub fn forfeit_by_owner(
 fn burn_forfeited_collateral(
     storage: StorageHandle<'_>,
     credis_id: U256,
-    validate: impl FnOnce(&CredisContract<'_>, &outbe_credis::Credis) -> Result<()>,
+    validate: impl FnOnce(&CredisContract<'_>, &outbe_credis::CredisView) -> Result<()>,
 ) -> Result<Forfeit> {
     storage.with_checkpoint(|| {
         let mut credis = CredisContract::new(storage.clone());
@@ -288,7 +288,7 @@ fn burn_forfeited_collateral(
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .add(outbe_promislimit::LimitSource::Credis, pledged)?;
         }
-        let forfeit = rules::delete_forfeited(&mut credis, before)?;
+        let forfeit = rules::delete_forfeited(&mut credis, before.record)?;
         if forfeit.forfeited_gratis_minor != pledged || credis.credis_exists(credis_id)? {
             return Err(CredisFactoryError::ForfeitureCollateralMismatch.into());
         }

@@ -7,7 +7,7 @@ use outbe_core_common::series_id::SeriesId;
 use outbe_credis::errors::CredisError;
 use outbe_credis::precompile::ICredis;
 use outbe_credis::runtime::effective_state;
-use outbe_credis::{Credis, CredisContract, CredisState};
+use outbe_credis::{CallTerms, Credis, CredisContract, CredisState, CredisView};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::time::{timestamp_to_date_key, SECONDS_PER_DAY};
@@ -179,13 +179,8 @@ pub fn issue_in_series(
             call_price_minor,
             issued_at: params.issued_at,
             last_settled_at: params.issued_at,
-            called_at: 0,
             series_id,
             sub_series: params.sub_series,
-            call_notice_period_seconds: params.call_notice_period_seconds,
-            call_rate: params.call_rate,
-            call_window_seconds: params.call_window_seconds,
-            call_threshold_seconds: params.call_threshold_seconds,
             settled_fee_minor: U256::ZERO,
         };
         outbe_ccaregistry::api::credis_issued(
@@ -194,7 +189,12 @@ pub fn issue_in_series(
             reward_day(&credis.storage)?,
             params.gratis_minor,
         )?;
-        let newly_opened = credis.create_credis_record(&record, call_start_day)?;
+        let terms = CallTerms {
+            call_window_seconds: params.call_window_seconds,
+            call_threshold_seconds: params.call_threshold_seconds,
+            call_notice_period_seconds: params.call_notice_period_seconds,
+        };
+        let newly_opened = credis.create_credis_record(&record, &terms, call_start_day)?;
 
         Ok((credis_id, newly_opened))
     })
@@ -319,7 +319,7 @@ pub(crate) fn in_issue_block(credis: &CredisContract<'_>, record: &Credis) -> Re
 /// Validates that `caller` may forfeit `record` in the current block.
 pub(crate) fn validate_forfeit_by_owner(
     credis: &CredisContract<'_>,
-    record: &Credis,
+    record: &CredisView,
     caller: Address,
 ) -> Result<()> {
     if caller != record.owner {

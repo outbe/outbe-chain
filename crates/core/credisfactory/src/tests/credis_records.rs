@@ -162,7 +162,7 @@ fn at(day: u64) -> u64 {
 }
 
 /// The record of `id`, or `None` once the full settlement deleted it.
-fn live(credis: &CredisContract<'_>, id: U256) -> Option<outbe_credis::Credis> {
+fn live(credis: &CredisContract<'_>, id: U256) -> Option<outbe_credis::CredisView> {
     credis
         .credis_exists(id)
         .unwrap()
@@ -175,7 +175,7 @@ fn call(
     id: U256,
     now: u64,
 ) -> outbe_primitives::error::Result<bool> {
-    let group = credis.group_of(&credis.get_credis(id)?)?;
+    let group = credis.group_of(&credis.get_credis(id)?.record)?;
     if credis.group_called_at.read(&group)? != 0 {
         return Ok(false);
     }
@@ -192,7 +192,7 @@ fn forfeit_lapsed(
     use crate::errors::CredisFactoryError;
     let record = credis.get_credis(id)?;
     let refused = match effective_state(&record, now)? {
-        CredisState::Forfeited => return rules::delete_forfeited(credis, record),
+        CredisState::Forfeited => return rules::delete_forfeited(credis, record.record),
         CredisState::Issued => CredisFactoryError::NotCalled,
         CredisState::Called => CredisFactoryError::SettlementDeadlineNotPassed,
         CredisState::Settled => CredisFactoryError::CredisClosed,
@@ -280,14 +280,15 @@ fn issuance_seals_the_call_price_from_the_entry_price() {
             calc_call_price(entry_price(), CALL_RATE_PCT).unwrap()
         );
         assert_eq!(
-            p.call_notice_period_seconds,
+            p.terms.call_notice_period_seconds,
             outbe_credis::constants::CALL_NOTICE_PERIOD
         );
-        assert_eq!(p.call_rate, CALL_RATE_PCT);
-        assert_eq!(p.call_rate, 64);
-        assert_eq!(p.call_window_seconds, outbe_credis::constants::CALL_WINDOW);
         assert_eq!(
-            p.call_threshold_seconds,
+            p.terms.call_window_seconds,
+            outbe_credis::constants::CALL_WINDOW
+        );
+        assert_eq!(
+            p.terms.call_threshold_seconds,
             outbe_credis::constants::CALL_THRESHOLD
         );
 
@@ -2638,13 +2639,12 @@ fn issuance_off_mainnet_seals_the_dev_terms() {
         let record = credis.get_credis(id).unwrap();
         assert_eq!(
             (
-                u64::from(record.call_window_seconds),
-                u64::from(record.call_threshold_seconds),
-                u64::from(record.call_notice_period_seconds)
+                u64::from(record.terms.call_window_seconds),
+                u64::from(record.terms.call_threshold_seconds),
+                u64::from(record.terms.call_notice_period_seconds)
             ),
             (3 * DAY, 2 * DAY, 3 * DAY)
         );
-        assert_eq!(record.call_rate, 2);
         assert_eq!(
             record.call_price_minor,
             entry_price() * U256::from(102u64) / U256::from(100u64)
