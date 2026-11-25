@@ -345,19 +345,38 @@ fn opened_pledge_account(
     offer: &OfferKeyHandle,
     req: &GratisOpRequest,
 ) -> Result<Address, GratisRejectReason> {
-    let malformed = GratisRejectReason::MalformedSealedPledge;
-    let pledge = match &req.sealed_pledge {
-        Some(pledge) if req.op == GratisOp::OpenSealedPledge && !req.amount.is_zero() => pledge,
-        _ => return Err(malformed),
-    };
-    if pledge.sealed.len() != SEALED_PLEDGE_LEN {
-        return Err(malformed);
+    let pledge = req
+        .sealed_pledge
+        .as_ref()
+        .filter(|_| req.op == GratisOp::OpenSealedPledge && !req.amount.is_zero())
+        .ok_or(GratisRejectReason::MalformedSealedPledge)?;
+    let (account, mac) = open_sealed(offer, &pledge.sealed)?;
+    let keys = derive_account_keys(state_key, account)?;
+    let message = credis_pledge_message(
+        account,
+        req.amount,
+        pledge.credis_reservation_id,
+        req.chain_id,
+    );
+    verify_modify_mac(&keys, CREDIS_PLEDGE_MAC_TAG, &message, &mac)
+        .then_some(account)
+        .ok_or(GratisRejectReason::InvalidPledgeAuthorization)
+}
+
+/// The main account and the MAC in `sealed`: ephemeral key, AEAD nonce and ciphertext.
+fn open_sealed(
+    offer: &OfferKeyHandle,
+    sealed: &[u8],
+) -> Result<(Address, [u8; 32]), GratisRejectReason> {
+    let malformed = |_| GratisRejectReason::MalformedSealedPledge;
+    if sealed.len() != SEALED_PLEDGE_LEN {
+        return Err(GratisRejectReason::MalformedSealedPledge);
     }
-    let (peer, rest) = pledge.sealed.split_at(32);
+    let (peer, rest) = sealed.split_at(32);
     let (nonce, ciphertext) = rest.split_at(12);
-    let (Ok(peer), Ok(nonce)) = (<[u8; 32]>::try_from(peer), <[u8; 12]>::try_from(nonce)) else {
-        return Err(malformed);
-    };
+    let peer = <[u8; 32]>::try_from(peer).map_err(|_| GratisRejectReason::MalformedSealedPledge)?;
+    let nonce =
+        <[u8; 12]>::try_from(nonce).map_err(|_| GratisRejectReason::MalformedSealedPledge)?;
     let plaintext = offer
         .ecdhe_decrypt(
             &OFFER_HKDF_SALT,
@@ -366,25 +385,13 @@ fn opened_pledge_account(
             &nonce,
             ciphertext,
         )
+        .map_err(malformed)?;
+    let mac = <[u8; 32]>::try_from(&plaintext[20..])
         .map_err(|_| GratisRejectReason::MalformedSealedPledge)?;
-    let Ok(mac) = <[u8; 32]>::try_from(&plaintext[20..]) else {
-        return Err(GratisRejectReason::MalformedSealedPledge);
-    };
     let account = Address::from_slice(&plaintext[..20]);
-    if account.is_zero() {
-        return Err(GratisRejectReason::MalformedSealedPledge);
-    }
-    let keys = derive_account_keys(state_key, account)?;
-    let message = credis_pledge_message(
-        account,
-        req.amount,
-        pledge.credis_reservation_id,
-        req.chain_id,
-    );
-    if !verify_modify_mac(&keys, CREDIS_PLEDGE_MAC_TAG, &message, &mac) {
-        return Err(GratisRejectReason::InvalidPledgeAuthorization);
-    }
-    Ok(account)
+    (!account.is_zero())
+        .then_some((account, mac))
+        .ok_or(GratisRejectReason::MalformedSealedPledge)
 }
 
 /// Zero authorization used by collateral ops and tests that fill the MAC later.

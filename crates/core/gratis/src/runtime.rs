@@ -295,22 +295,7 @@ pub(crate) fn release_pledged(
     account: Address,
     amount: U256,
 ) -> Result<()> {
-    storage.with_checkpoint(|| {
-        let req = base_request(
-            GratisOp::ReleasePledged,
-            chain_id_b256(storage)?,
-            account,
-            amount,
-        );
-        apply_collateral_op(storage, req)?;
-        let gratis = Gratis::new(storage.clone());
-        crate::state::set_pledged_total_supply(
-            &gratis,
-            crate::state::pledged_total_supply(&gratis)?
-                .checked_sub(amount)
-                .ok_or(GratisFatalError::PledgedSupplyUnderflow)?,
-        )
-    })
+    take_pledged(storage, GratisOp::ReleasePledged, account, amount)
 }
 
 /// Burn pledged collateral of a defaulted position. Fidelity is unchanged.
@@ -319,13 +304,18 @@ pub(crate) fn burn_pledged(
     account: Address,
     amount: U256,
 ) -> Result<()> {
+    take_pledged(storage, GratisOp::BurnPledged, account, amount)
+}
+
+/// Release or burn pledged collateral and take it out of the pledged supply.
+fn take_pledged(
+    storage: &StorageHandle<'_>,
+    op: GratisOp,
+    account: Address,
+    amount: U256,
+) -> Result<()> {
     storage.with_checkpoint(|| {
-        let req = base_request(
-            GratisOp::BurnPledged,
-            chain_id_b256(storage)?,
-            account,
-            amount,
-        );
+        let req = base_request(op, chain_id_b256(storage)?, account, amount);
         apply_collateral_op(storage, req)?;
         let gratis = Gratis::new(storage.clone());
         crate::state::set_pledged_total_supply(

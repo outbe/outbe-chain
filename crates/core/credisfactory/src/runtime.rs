@@ -167,29 +167,11 @@ pub fn settle_credis(
         if repayment.closed && rules::in_issue_block(&credis, &before)? {
             return Err(CredisFactoryError::CannotFullySettleInIssueBlock.into());
         }
-        let after = if repayment.closed {
-            None
-        } else {
-            Some(credis.get_credis(credis_id)?)
-        };
-        let outstanding_after = after
-            .as_ref()
-            .map_or(U256::ZERO, |record| record.outstanding_gratis_minor);
-        let released = before
-            .outstanding_gratis_minor
-            .checked_sub(outstanding_after)
-            .ok_or(CredisFactoryError::CollateralIncreased)?;
-        if released != repayment.unpledged_gratis_minor {
-            return Err(CredisFactoryError::CollateralReleaseMismatch.into());
-        }
+        let after = live_record(&credis, credis_id)?;
+        let released = released_gratis(&before, after.as_ref(), &repayment)?;
         let payment = payment_in(&storage, &before, paid_asset, repayment.amount_minor)?;
         outbe_vaultrouter::settlement::collect(&storage, caller, paid_asset, payment)?;
-        let now_record = if repayment.closed {
-            None
-        } else {
-            Some(credis.get_credis(credis_id)?)
-        };
-        if now_record != after || (repayment.closed && credis.credis_exists(credis_id)?) {
+        if live_record(&credis, credis_id)? != after {
             return Err(CredisFactoryError::CredisChangedDuringPayment.into());
         }
         if !released.is_zero() {
@@ -197,6 +179,34 @@ pub fn settle_credis(
         }
         Ok((repayment.settled_amount_minor, repayment.settled_fee_minor))
     })
+}
+
+/// The record of `credis_id`, or `None` once the full settlement deleted it.
+fn live_record(
+    credis: &CredisContract<'_>,
+    credis_id: U256,
+) -> Result<Option<outbe_credis::Credis>> {
+    if credis.credis_exists(credis_id)? {
+        return Ok(Some(credis.get_credis(credis_id)?));
+    }
+    Ok(None)
+}
+
+/// The Gratis the settlement freed, checked against the repayment.
+fn released_gratis(
+    before: &outbe_credis::Credis,
+    after: Option<&outbe_credis::Credis>,
+    repayment: &rules::Repayment,
+) -> Result<U256> {
+    let outstanding = after.map_or(U256::ZERO, |record| record.outstanding_gratis_minor);
+    let released = before
+        .outstanding_gratis_minor
+        .checked_sub(outstanding)
+        .ok_or(CredisFactoryError::CollateralIncreased)?;
+    if released != repayment.unpledged_gratis_minor {
+        return Err(CredisFactoryError::CollateralReleaseMismatch.into());
+    }
+    Ok(released)
 }
 
 /// The payment of `amount_minor` (Credis asset units) in `paid_asset`. Another asset is
