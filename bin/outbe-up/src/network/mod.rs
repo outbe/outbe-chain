@@ -2,6 +2,7 @@
 
 pub mod build;
 pub mod config;
+pub mod doctor;
 pub mod lifecycle;
 pub mod prepare;
 mod remote;

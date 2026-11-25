@@ -110,6 +110,16 @@ enum NetworkCommand {
         #[arg(long)]
         skip_quorum_guard: bool,
     },
+    /// Run read-only network and host diagnostics.
+    Doctor {
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+        /// Write a private, secret-free support archive to this path.
+        #[arg(long)]
+        support_bundle: Option<PathBuf>,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -163,6 +173,12 @@ enum ValidatorCommand {
         software_bundle: PathBuf,
         #[arg(long)]
         skip_dkg_guard: bool,
+    },
+    /// Run read-only validator, host, and time-synchronization diagnostics.
+    Doctor {
+        /// Write a private, secret-free support archive to this path.
+        #[arg(long)]
+        support_bundle: Option<PathBuf>,
     },
 }
 
@@ -263,6 +279,14 @@ impl Cli {
                     )
                     .await
                 }
+                NetworkCommand::Doctor {
+                    artifacts,
+                    ssh_key,
+                    support_bundle,
+                } => {
+                    network::doctor::run(&artifacts, ssh_key.as_deref(), support_bundle.as_deref())
+                        .await
+                }
             },
             Command::Validator(args) => match args.command {
                 ValidatorCommand::ConfigExample { output } => match output {
@@ -291,6 +315,9 @@ impl Cli {
                     software_bundle,
                     skip_dkg_guard,
                 } => validator::upgrade::run(&software_bundle, skip_dkg_guard).await,
+                ValidatorCommand::Doctor { support_bundle } => {
+                    validator::doctor::run(support_bundle.as_deref()).await
+                }
             },
             Command::Internal(args) => match args.command {
                 InternalCommand::Feeder => validator::service::feeder(),
@@ -335,6 +362,26 @@ mod tests {
             "network.yaml",
             "--output",
             "network-artifacts",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "network",
+            "upgrade",
+            "--artifacts",
+            "network-final",
+            "--software-bundle",
+            "software.tar.zst",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "network",
+            "doctor",
+            "--artifacts",
+            "network-final",
+            "--support-bundle",
+            "support.tar.zst",
         ])
         .is_ok());
         assert!(Cli::try_parse_from([
@@ -386,6 +433,22 @@ mod tests {
         .is_ok());
         assert!(Cli::try_parse_from(["outbe-up", "validator", "promote"]).is_ok());
         assert!(Cli::try_parse_from(["outbe-up", "validator", "status", "--watch"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "validator",
+            "upgrade",
+            "--software-bundle",
+            "software.tar.zst",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "validator",
+            "doctor",
+            "--support-bundle",
+            "support.tar.zst",
+        ])
+        .is_ok());
     }
 
     #[test]
