@@ -113,7 +113,7 @@ interface IEscrowAdapter {
     );
 
     /// @notice Emitted when the escrow gives asset back: the asset of a bid that lost, or the change of a winner.
-    /// @param reason 0 a return or a redeem, 1 the safety path after 30 days.
+    /// @param reason 0 a return or a redeem, 1 the escrow timeout after 4 days.
     event IntexAuctionAssetReturned(
         uint32 indexed emissionDay, address indexed bidder, address asset, uint256 amountMinor, uint8 reason
     );
@@ -125,7 +125,7 @@ interface IEscrowAdapter {
 
     /// @notice Emitted when the escrow gives the whole bond back.
     /// @param reason 0 a reveal or a cancel, 1 an unlock 24 hours after the reveal end with no reveal,
-    ///        2 the safety path after 30 days.
+    ///        2 the escrow timeout after 4 days.
     event IntexAuctionBidBondUnlocked(
         uint32 indexed emissionDay, address indexed bidder, address asset, uint256 amountMinor, uint8 reason
     );
