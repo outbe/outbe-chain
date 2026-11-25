@@ -837,8 +837,6 @@ fn token_deltas(logs: &[alloy_primitives::LogData], account: Address) -> Vec<(bo
     for log in logs {
         let opened = if let Ok(event) = IGratis::GratisMinedFromNod::decode_log_data(log) {
             Some((true, event.encryptedAmountMinor))
-        } else if let Ok(event) = IGratis::GratisMinedFromPromis::decode_log_data(log) {
-            Some((true, event.encryptedAmountMinor))
         } else if let Ok(event) = IGratis::GratisBurnedFromPledge::decode_log_data(log) {
             Some((false, event.encryptedAmountMinor))
         } else if let Ok(event) = IGratis::GratisBurned::decode_log_data(log) {
@@ -887,14 +885,15 @@ fn pledge_names(logs: &[alloy_primitives::LogData]) -> Vec<&'static str> {
         .collect()
 }
 
-/// One account walks nod mint, promis mint, pledge, cancel, pledge, credis,
+/// One account walks nod mint, COEN mint, pledge, cancel, pledge, credis,
 /// release, pledge burn, and coen burn. The owner's view key opens every token
-/// event, and mints minus burns match liquid plus pledged after each step.
+/// event, the COEN mint is in clear in `GratisMinedFromCoen`, and mints minus
+/// burns match liquid plus pledged after each step.
 #[test]
 fn view_key_reconstructs_gratis_through_pledge_and_burn() {
     let mut provider = test_storage();
     let nod_amount = U256::from(400u64);
-    let promis_amount = U256::from(250u64);
+    let coen_amount = U256::from(250u64);
     let pledged = U256::from(RESERVED);
     let released = U256::from(40u64);
     let burned_pledge = pledged - released;
@@ -914,11 +913,10 @@ fn view_key_reconstructs_gratis_through_pledge_and_burn() {
         )
         .unwrap();
         snap(&storage, &mut liquid, &mut pledged_bal);
-        runtime::mint(
-            storage.clone(),
-            alice(),
-            promis_amount,
-            auth(GratisOp::Mint, alice(), promis_amount, 1),
+        mine_gratis(
+            &storage,
+            &mine_gratis_call(coen_amount, 1),
+            checked_protocol_to_native(coen_amount).unwrap(),
         )
         .unwrap();
         snap(&storage, &mut liquid, &mut pledged_bal);
@@ -949,7 +947,7 @@ fn view_key_reconstructs_gratis_through_pledge_and_burn() {
         snap(&storage, &mut liquid, &mut pledged_bal);
         runtime::burn_from_credis(&storage, credis, burned_pledge).unwrap();
         snap(&storage, &mut liquid, &mut pledged_bal);
-        let remaining = nod_amount + promis_amount - burned_pledge;
+        let remaining = nod_amount + coen_amount - burned_pledge;
         runtime::mine_coen(
             storage.clone(),
             alice(),
@@ -961,6 +959,12 @@ fn view_key_reconstructs_gratis_through_pledge_and_burn() {
         (liquid, pledged_bal)
     });
     let deltas = token_deltas(provider.get_events(GRATIS_ADDRESS), alice());
+    let mined_from_coen: Vec<_> = provider
+        .get_events(GRATIS_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| IGratisFactory::GratisMinedFromCoen::decode_log_data(log).ok())
+        .map(|event| event.amountMinor)
+        .collect();
     fidelity_enclave::uninstall();
     test_enclave::uninstall();
 
@@ -968,16 +972,17 @@ fn view_key_reconstructs_gratis_through_pledge_and_burn() {
         deltas,
         vec![
             (true, nod_amount),
-            (true, promis_amount),
             (false, burned_pledge),
-            (false, nod_amount + promis_amount - burned_pledge),
+            (false, nod_amount + coen_amount - burned_pledge),
         ]
     );
-    let token_counts = [1usize, 2, 2, 2, 2, 2, 2, 3, 4];
+    assert_eq!(mined_from_coen, vec![coen_amount]);
+    let token_counts = [1usize, 1, 1, 1, 1, 1, 1, 2, 3];
     assert_eq!(liquid.len(), token_counts.len());
     for (index, count) in token_counts.iter().enumerate() {
+        let coen = if index == 0 { U256::ZERO } else { coen_amount };
         assert_eq!(
-            prefix_net(&deltas, *count),
+            prefix_net(&deltas, *count) + coen,
             liquid[index] + pledged_bal[index],
             "step {index}"
         );
@@ -1057,11 +1062,11 @@ fn mine_gratis_burns_coen_into_the_promis_limit_and_mints_gratis() {
 
     assert_eq!(mined.len(), 1);
     assert_eq!(mined[0].account, alice());
-    assert_eq!(mined[0].gratisMinor, gratis_minor);
+    assert_eq!(mined[0].amountMinor, gratis_minor);
     assert_eq!(added.len(), 1);
     assert_eq!(added[0].source, 47);
     assert_eq!(added[0].amountMinor, gratis_minor);
-    assert_eq!(deltas, vec![(true, gratis_minor)]);
+    assert!(deltas.is_empty());
 }
 
 #[test]

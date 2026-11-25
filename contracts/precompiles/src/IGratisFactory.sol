@@ -25,7 +25,7 @@ interface IGratisFactory {
     event GratisPledgeReleased(uint256 indexed credisId, address indexed source, uint256 gratisMinor);
     event GratisPledgeBurned(uint256 indexed credisId, address indexed source, uint256 gratisMinor);
     event CoenMinedFromGratis(address indexed account, uint256 amountMinor);
-    event GratisMinedFromCoen(address indexed account, uint256 gratisMinor);
+    event GratisMinedFromCoen(address indexed account, uint256 amountMinor);
     /// Pledge the reservation's Gratis from the caller's liquid balance. The caller
     /// must be the reservation source. `auth` binds `Pledge` and the reserved amount.
     function pledgeGratis(uint256 reservationId, ModifyAuth calldata auth) external;
