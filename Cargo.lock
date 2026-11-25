@@ -7712,7 +7712,6 @@ dependencies = [
 name = "outbe-cli"
 version = "0.1.0"
 dependencies = [
- "alloy-consensus",
  "alloy-eips",
  "alloy-primitives",
  "alloy-sol-types",
@@ -7732,7 +7731,6 @@ dependencies = [
  "outbe-system-common",
  "outbe-tee",
  "outbe-update",
- "outbe-zerofee",
  "radicle-crypto",
  "rand 0.10.2",
  "rand_core 0.10.1",

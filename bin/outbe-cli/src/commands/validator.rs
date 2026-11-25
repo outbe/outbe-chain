@@ -62,8 +62,6 @@ pub enum ValidatorCmd {
     },
     /// Register the caller as this validator's Hyperlane checkpoint signer.
     SetHyperlaneSigner { signer: Address },
-    /// Fund a dedicated operational key from the validator account.
-    FundOperationalKey { address: Address, amount: U256 },
     /// Set this validator's Commonware P2P address in the on-chain registry
     SetP2p {
         /// Symmetric socket address, e.g. 10.0.0.1:30400.
@@ -109,9 +107,6 @@ impl ValidatorCmd {
             Self::GetDelegate { validator, role } => get_delegate(client, validator, role).await,
             Self::SetHyperlaneSigner { signer } => {
                 set_hyperlane_signer(client, private_key, signer).await
-            }
-            Self::FundOperationalKey { address, amount } => {
-                fund_operational_key(client, private_key, address, amount).await
             }
             Self::SetP2p {
                 symmetric,
@@ -381,18 +376,6 @@ async fn set_hyperlane_signer(
     let tx_hash = signer
         .send_tx(client, abi::HYPERLANE_CONTROLLER_ADDR, data, U256::ZERO)
         .await?;
-    println!("Transaction sent: {tx_hash}");
-    Ok(())
-}
-
-async fn fund_operational_key(
-    client: &(impl Rpc + Sync),
-    private_key: Option<&str>,
-    address: Address,
-    amount: U256,
-) -> Result<()> {
-    let signer = super::require_signer(private_key)?;
-    let tx_hash = signer.send_tx(client, address, Vec::new(), amount).await?;
     println!("Transaction sent: {tx_hash}");
     Ok(())
 }
@@ -838,17 +821,6 @@ mod tests {
             recording_send_tx_rpc(TEST_KEY, abi::HYPERLANE_CONTROLLER_ADDR, data, U256::ZERO)
                 .unwrap();
         set_hyperlane_signer(&mock, Some(TEST_KEY), signer_address)
-            .await
-            .unwrap();
-        mock.assert_done();
-    }
-
-    #[tokio::test]
-    async fn fund_operational_key_sends_the_requested_value() {
-        let recipient = Address::repeat_byte(0x44);
-        let amount = U256::from(123_u64);
-        let mock = recording_send_tx_rpc(TEST_KEY, recipient, Vec::new(), amount).unwrap();
-        fund_operational_key(&mock, Some(TEST_KEY), recipient, amount)
             .await
             .unwrap();
         mock.assert_done();

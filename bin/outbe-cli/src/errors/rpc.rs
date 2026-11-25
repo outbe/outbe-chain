@@ -36,9 +36,6 @@ pub(crate) enum RpcError {
     /// The transaction send result is not a hash string.
     #[error("expected tx hash string")]
     ExpectedTxHashString,
-    /// The log query result is not an array.
-    #[error("expected array of logs")]
-    ExpectedLogsArray,
     /// The mock RPC field is not configured.
     #[cfg(test)]
     #[error("not mocked")]
@@ -62,9 +59,6 @@ pub(crate) enum TxError {
     /// The 32-byte value is not a valid secp256k1 secret key.
     #[error("invalid private key: {0}")]
     InvalidPrivateKey(k256::ecdsa::Error),
-    /// Signing the EIP-7702 transaction digest failed.
-    #[error("EIP-7702 transaction signing failed: {0}")]
-    Eip7702SigningFailed(k256::ecdsa::Error),
     /// Adding the 20 percent gas buffer overflowed `u64`.
     #[error("gas limit buffer overflow")]
     GasLimitBufferOverflow,

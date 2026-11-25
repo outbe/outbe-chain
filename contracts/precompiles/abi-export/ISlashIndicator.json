@@ -1,6 +1,51 @@
 [
   {
     "type": "function",
+    "name": "getConfig",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "tuple",
+        "internalType": "struct ISlashIndicator.SlashConfig",
+        "components": [
+          {
+            "name": "proposerMisdemeanorThreshold",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "proposerFelonyThreshold",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "voterMisdemeanorThreshold",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "voterFelonyThreshold",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "slashAmountPercent",
+            "type": "uint64",
+            "internalType": "uint64"
+          },
+          {
+            "name": "evidenceRewardPercent",
+            "type": "uint64",
+            "internalType": "uint64"
+          }
+        ]
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "getFelonyCount",
     "inputs": [
       {
