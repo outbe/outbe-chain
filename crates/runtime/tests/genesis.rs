@@ -738,6 +738,34 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
     });
 }
 
+/// The seeded target chains read back through the IntexFactory schema, `own` as this network.
+#[test]
+fn seeded_intex_targets_read_back_through_the_factory() {
+    use outbe_intexfactory::targets::{target_chains, TargetMode};
+    const SEED: &str = r#"{
+      "intex": { "target_chains": [
+        { "chain_id": "own", "mode": "auctions" },
+        { "chain_id": 97, "mode": "series" }
+      ] }
+    }"#;
+    let (_tmp, genesis, _raw) =
+        run_seed_genesis(FIXTURE_GENESIS, SEED, FIXTURE_VALIDATORS_4_PUBLIC_ONLY);
+    let own = u32::try_from(genesis["config"]["chainId"].as_u64().expect("numeric chainId"))
+        .expect("chain id fits u32");
+    let mut provider = HashMapStorageProvider::new(u64::from(own));
+    load_seeded_storage(
+        &mut provider,
+        &genesis,
+        outbe_system_common::addresses::INTEX_FACTORY_ADDRESS,
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            target_chains(&storage).unwrap(),
+            vec![(own, TargetMode::Auctions), (97, TargetMode::Series)]
+        );
+    });
+}
+
 /// A genesis S-curve seed reads back as the same curve that the Oracle starts at
 /// the same hour with the same peak price.
 #[test]
