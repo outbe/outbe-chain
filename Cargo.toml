@@ -4,6 +4,7 @@ members = [
     "crates/runtime",
     "crates/operator/systemd",
     "crates/operator/software-bundle",
+    "crates/operator/vm-image",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/primitives",
@@ -90,6 +91,7 @@ default-members = [
     "crates/runtime",
     "crates/operator/systemd",
     "crates/operator/software-bundle",
+    "crates/operator/vm-image",
     # blockchain
     "crates/blockchain/macros",
     "crates/blockchain/primitives",
@@ -197,6 +199,7 @@ outbe-runtime = { path = "crates/runtime" }
 # Internal - operator tooling
 outbe-operator-systemd = { path = "crates/operator/systemd" }
 outbe-software-bundle = { path = "crates/operator/software-bundle" }
+outbe-operator-vm-image = { path = "crates/operator/vm-image" }
 # Internal - blockchain
 outbe-macros = { path = "crates/blockchain/macros" }
 outbe-primitives = { path = "crates/blockchain/primitives" }

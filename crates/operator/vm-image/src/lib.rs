@@ -849,8 +849,22 @@ fn capture_git_in(dir: &Path, args: &[&str]) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
-    use crate::release::repository_root;
+
+    fn repository_root() -> Result<PathBuf> {
+        let output = Command::new("git")
+            .args(["rev-parse", "--show-toplevel"])
+            .output()
+            .wrap_err("resolve repository root")?;
+        ensure!(
+            output.status.success(),
+            "git rev-parse --show-toplevel failed"
+        );
+        let root = String::from_utf8(output.stdout)?;
+        fs::canonicalize(root.trim()).wrap_err("canonicalize repository root")
+    }
 
     #[test]
     fn pinned_dstack_rev_patches_and_app_compose_match_repository() {

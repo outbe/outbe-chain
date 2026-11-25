@@ -8556,6 +8556,18 @@ name = "outbe-operator-systemd"
 version = "0.1.0"
 
 [[package]]
+name = "outbe-operator-vm-image"
+version = "0.1.0"
+dependencies = [
+ "eyre",
+ "outbe-operator-systemd",
+ "outbe-software-bundle",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "outbe-oracle"
 version = "0.1.0"
 dependencies = [
@@ -17051,6 +17063,7 @@ dependencies = [
  "hex",
  "outbe-genesis-cli",
  "outbe-operator-systemd",
+ "outbe-operator-vm-image",
  "outbe-software-bundle",
  "serde",
  "serde_json",
