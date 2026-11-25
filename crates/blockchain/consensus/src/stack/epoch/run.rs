@@ -239,7 +239,7 @@ where
     )
     .await?;
 
-    let super::threshold_recovery::RecoveredThreshold {
+    let Some(super::threshold_recovery::RecoveredThreshold {
         local_consensus_key,
         last_execution_height,
         last_execution_hash,
@@ -252,7 +252,7 @@ where
         mut genesis_dkg_boundary_artifact,
         participants,
         proposer_evm_address,
-    } = super::threshold_recovery::recover_threshold(
+    }) = super::threshold_recovery::recover_threshold(
         &ctx,
         super::threshold_recovery::ThresholdRecovery {
             args: &args,
@@ -267,7 +267,11 @@ where
             protocol: protocol.as_ref(),
         },
     )
-    .await?;
+    .await?
+    else {
+        info!("global stop received during initial DKG subchannel registration; exiting startup");
+        return Ok(());
+    };
     let shareless_verifier = signing_share.is_none();
     super::tee_bootstrap::prepare_tee(
         &ctx,
