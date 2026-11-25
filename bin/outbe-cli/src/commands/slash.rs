@@ -1,11 +1,11 @@
 //! Slash information and evidence submission commands.
 
-use alloy_primitives::{keccak256, Address, B256};
+use alloy_primitives::Address;
 use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::Result;
 
-use crate::abi::{self, ISlashIndicator, SLASH_INDICATOR_ADDR};
+use crate::abi::{self, ISlashIndicator};
 use crate::errors::SlashError;
 use crate::rpc::Rpc;
 
@@ -18,12 +18,6 @@ pub enum SlashCmd {
     },
     /// Show slashing configuration parameters
     Config,
-    /// Show slashing history from event logs
-    History {
-        /// Number of recent events to show (default: 20)
-        #[arg(long, default_value = "20")]
-        limit: usize,
-    },
     /// Submit slashing evidence
     Evidence {
         #[command(subcommand)]
@@ -58,7 +52,6 @@ impl SlashCmd {
         match self {
             Self::Info { address } => info(client, address).await,
             Self::Config => config(client).await,
-            Self::History { limit } => history(client, limit).await,
             Self::Evidence { kind } => submit_evidence(client, private_key, kind).await,
         }
     }
@@ -174,120 +167,11 @@ async fn config(client: &(impl Rpc + Sync)) -> Result<()> {
     Ok(())
 }
 
-struct SlashTopics {
-    proposer_felony: String,
-    proposer_misd: String,
-    voter_misd: String,
-    evidence: String,
-}
-
-impl SlashTopics {
-    fn new() -> Self {
-        Self {
-            proposer_felony: slash_event_topic(b"ProposerFelony(address,uint64,uint64)"),
-            proposer_misd: slash_event_topic(b"ProposerMisdemeanor(address,uint64)"),
-            voter_misd: slash_event_topic(b"VoterMisdemeanor(address,uint64)"),
-            evidence: slash_event_topic(b"EvidenceFelonyApplied(address,address,uint256,uint256)"),
-        }
-    }
-
-    fn format_row(&self, parsed: &super::ParsedLog<'_>) -> Option<String> {
-        let topic0 = parsed.topic(0);
-        let validator = parsed.topic_addr(1);
-        if topic0 == self.proposer_felony {
-            Some(format!(
-                "{:<14} {:<12} {:<44} miss={}, felony={}",
-                parsed.block,
-                "FELONY",
-                validator,
-                parsed.word_u64(0),
-                parsed.word_u64(1)
-            ))
-        } else if topic0 == self.proposer_misd || topic0 == self.voter_misd {
-            let label = if topic0 == self.proposer_misd {
-                "PROP_MISD"
-            } else {
-                "VOTER_MISD"
-            };
-            Some(format!(
-                "{:<14} {:<12} {:<44} miss={}",
-                parsed.block,
-                label,
-                validator,
-                parsed.word_u64(0)
-            ))
-        } else if topic0 == self.evidence {
-            let submitter = parsed.topic_addr(2);
-            let slashed = parsed.word_u256(0);
-            Some(format!(
-                "{:<14} {:<12} {:<44} slashed={} COEN, by={}",
-                parsed.block,
-                "EVIDENCE",
-                validator,
-                super::format_coen_amount(slashed),
-                submitter,
-            ))
-        } else {
-            None
-        }
-    }
-}
-
-fn slash_event_topic(signature: &[u8]) -> String {
-    format!("{:?}", B256::from(keccak256(signature)))
-}
-
-async fn history(client: &(impl Rpc + Sync), limit: usize) -> Result<()> {
-    let topics = SlashTopics::new();
-
-    // Fetch all logs from SlashIndicator without topic filter to get all event types
-    let all_logs = client
-        .eth_get_logs(SLASH_INDICATOR_ADDR, &[], "earliest", "latest")
-        .await?;
-
-    if all_logs.is_empty() {
-        println!("No slashing events found.");
-        return Ok(());
-    }
-
-    println!("{:<14} {:<12} {:<44} Details", "Block", "Type", "Validator");
-    println!("{}", "-".repeat(90));
-
-    for log in super::recent_logs(&all_logs, limit) {
-        let parsed = super::ParsedLog::from_value(log);
-        if let Some(line) = topics.format_row(&parsed) {
-            println!("{line}");
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-use super::format_topic_addr;
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::U256;
-
-    #[test]
-    fn test_format_topic_addr_standard_padded() {
-        let topic = "0x000000000000000000000000abcdef0123456789abcdef0123456789abcdef01";
-        assert_eq!(
-            format_topic_addr(topic),
-            "0xabcdef0123456789abcdef0123456789abcdef01"
-        );
-    }
-
-    #[test]
-    fn test_format_topic_addr_short_string_returned_verbatim() {
-        assert_eq!(format_topic_addr("0xabc"), "0xabc");
-        assert_eq!(format_topic_addr(""), "");
-    }
-
-    // --- Mock RPC tests ---
     use crate::rpc::mock::{abi_u64, call_map, recording_send_tx_rpc, MockRpc};
+    use alloy_primitives::U256;
     use alloy_sol_types::SolCall;
     use std::collections::HashMap;
 
@@ -358,15 +242,6 @@ mod tests {
     async fn test_slash_config_rpc_error() {
         let mock = MockRpc::default();
         assert!(config(&mock).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_slash_history_empty() {
-        let mock = MockRpc {
-            logs: Ok(vec![]),
-            ..Default::default()
-        };
-        history(&mock, 20).await.unwrap();
     }
 
     const TEST_KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";

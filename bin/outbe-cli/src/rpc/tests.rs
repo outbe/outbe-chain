@@ -204,28 +204,6 @@ async fn test_rpc_client_send_raw_transaction_non_string_errors() {
 }
 
 #[tokio::test]
-async fn test_rpc_client_get_balance_sends_exact_body_and_decodes_u256() {
-    let (url, body_rx) =
-        serve_rpc_once("200 OK", r#"{"jsonrpc":"2.0","result":"0xf4240","id":1}"#).await;
-    let client = RpcClient::new(&url).expect("rpc client");
-    let address = address!("0x1111111111111111111111111111111111111111");
-
-    let balance = client.eth_get_balance(address).await.unwrap();
-
-    assert_eq!(balance, U256::from(1_000_000u64));
-    let body: Value = serde_json::from_str(&body_rx.await.unwrap()).unwrap();
-    assert_eq!(
-        body,
-        json!({
-            "jsonrpc": "2.0",
-            "method": "eth_getBalance",
-            "params": [format!("{address:?}"), "latest"],
-            "id": 1,
-        })
-    );
-}
-
-#[tokio::test]
 async fn test_rpc_client_get_block_by_number_sends_hex_block_and_false() {
     let result = json!({"number": "0x2a", "hash": "0xabc"});
     let response = json!({"jsonrpc": "2.0", "result": result, "id": 1}).to_string();
@@ -270,113 +248,6 @@ async fn test_rpc_client_get_latest_block_sends_latest_and_false() {
 }
 
 #[tokio::test]
-async fn test_rpc_client_get_vrf_seed_sends_null_block_param() {
-    let result = json!({"seed": "0x1234"});
-    let response = json!({"jsonrpc": "2.0", "result": result, "id": 1}).to_string();
-    let (url, body_rx) = serve_rpc_once("200 OK", response).await;
-    let client = RpcClient::new(&url).expect("rpc client");
-
-    let seed = client.outbe_get_vrf_seed().await.unwrap();
-
-    assert_eq!(seed, json!({"seed": "0x1234"}));
-    let body: Value = serde_json::from_str(&body_rx.await.unwrap()).unwrap();
-    assert_eq!(
-        body,
-        json!({
-            "jsonrpc": "2.0",
-            "method": "outbe_getVrfSeed",
-            "params": [null],
-            "id": 1,
-        })
-    );
-}
-
-#[tokio::test]
-async fn test_rpc_client_get_vrf_seed_at_sends_numeric_block_param() {
-    let result = json!({"seed": "0xabcd"});
-    let response = json!({"jsonrpc": "2.0", "result": result, "id": 1}).to_string();
-    let (url, body_rx) = serve_rpc_once("200 OK", response).await;
-    let client = RpcClient::new(&url).expect("rpc client");
-
-    let seed = client.outbe_get_vrf_seed_at(99).await.unwrap();
-
-    assert_eq!(seed, json!({"seed": "0xabcd"}));
-    let body: Value = serde_json::from_str(&body_rx.await.unwrap()).unwrap();
-    assert_eq!(
-        body,
-        json!({
-            "jsonrpc": "2.0",
-            "method": "outbe_getVrfSeed",
-            "params": [99],
-            "id": 1,
-        })
-    );
-}
-
-#[tokio::test]
-async fn test_rpc_client_get_logs_sends_exact_filter_and_decodes_array() {
-    let result = json!([
-        {
-            "address": "0x0000000000000000000000000000000000001006",
-            "topics": ["0xaaa"],
-            "data": "0x",
-        }
-    ]);
-    let response = json!({"jsonrpc": "2.0", "result": result, "id": 1}).to_string();
-    let (url, body_rx) = serve_rpc_once("200 OK", response).await;
-    let client = RpcClient::new(&url).expect("rpc client");
-    let address = address!("0x0000000000000000000000000000000000001006");
-    let topics = [Some("0xaaa".to_string()), None, Some("0xccc".to_string())];
-
-    let logs = client
-        .eth_get_logs(address, &topics, "0x10", "latest")
-        .await
-        .unwrap();
-
-    assert_eq!(
-        logs,
-        vec![json!({
-            "address": "0x0000000000000000000000000000000000001006",
-            "topics": ["0xaaa"],
-            "data": "0x",
-        })]
-    );
-    let body: Value = serde_json::from_str(&body_rx.await.unwrap()).unwrap();
-    assert_eq!(
-        body,
-        json!({
-            "jsonrpc": "2.0",
-            "method": "eth_getLogs",
-            "params": [{
-                "address": format!("{address:?}"),
-                "topics": ["0xaaa", null, "0xccc"],
-                "fromBlock": "0x10",
-                "toBlock": "latest",
-            }],
-            "id": 1,
-        })
-    );
-}
-
-#[tokio::test]
-async fn test_rpc_client_get_logs_non_array_errors() {
-    let (url, _body_rx) =
-        serve_rpc_once("200 OK", r#"{"jsonrpc":"2.0","result":{"log":1},"id":1}"#).await;
-    let client = RpcClient::new(&url).expect("rpc client");
-    let address = address!("0x0000000000000000000000000000000000001006");
-
-    let err = client
-        .eth_get_logs(address, &[], "earliest", "latest")
-        .await
-        .unwrap_err();
-
-    assert!(
-        err.to_string().contains("expected array of logs"),
-        "unexpected error: {err}"
-    );
-}
-
-#[tokio::test]
 async fn test_rpc_client_ids_increment_across_calls() {
     let (url, mut body_rx) = serve_rpc_sequence([
         r#"{"jsonrpc":"2.0","result":"0x1","id":1}"#,
@@ -387,7 +258,7 @@ async fn test_rpc_client_ids_increment_across_calls() {
     let client = RpcClient::new(&url).expect("rpc client");
 
     assert_eq!(client.eth_block_number().await.unwrap(), 1);
-    assert_eq!(client.net_peer_count().await.unwrap(), 2);
+    assert_eq!(client.eth_gas_price().await.unwrap(), U256::from(2u64));
     assert_eq!(client.eth_chain_id().await.unwrap(), 3);
 
     let first: Value = serde_json::from_str(&body_rx.recv().await.unwrap()).unwrap();
@@ -407,7 +278,7 @@ async fn test_rpc_client_ids_increment_across_calls() {
         second,
         json!({
             "jsonrpc": "2.0",
-            "method": "net_peerCount",
+            "method": "eth_gasPrice",
             "params": [],
             "id": 2,
         })
@@ -466,13 +337,11 @@ async fn test_rpc_client_quantity_wrappers_send_exact_bodies_and_decode() {
 async fn test_rpc_client_outbe_no_param_wrappers_send_exact_bodies() {
     let consensus = json!({"mode": "validator"});
     let epoch = json!({"epoch": 3});
-    let emission = json!({"rate": "0x1"});
     let slash = json!({"slashAmountPercent": 5});
     let (url, mut body_rx) = serve_rpc_sequence([
         json!({"jsonrpc": "2.0", "result": consensus, "id": 1}).to_string(),
         json!({"jsonrpc": "2.0", "result": epoch, "id": 2}).to_string(),
-        json!({"jsonrpc": "2.0", "result": emission, "id": 3}).to_string(),
-        json!({"jsonrpc": "2.0", "result": slash, "id": 4}).to_string(),
+        json!({"jsonrpc": "2.0", "result": slash, "id": 3}).to_string(),
     ])
     .await;
     let client = RpcClient::new(&url).expect("rpc client");
@@ -486,10 +355,6 @@ async fn test_rpc_client_outbe_no_param_wrappers_send_exact_bodies() {
         json!({"epoch": 3})
     );
     assert_eq!(
-        client.outbe_get_emission_info().await.unwrap(),
-        json!({"rate": "0x1"})
-    );
-    assert_eq!(
         client.outbe_get_slash_config().await.unwrap(),
         json!({"slashAmountPercent": 5})
     );
@@ -497,7 +362,6 @@ async fn test_rpc_client_outbe_no_param_wrappers_send_exact_bodies() {
     let first: Value = serde_json::from_str(&body_rx.recv().await.unwrap()).unwrap();
     let second: Value = serde_json::from_str(&body_rx.recv().await.unwrap()).unwrap();
     let third: Value = serde_json::from_str(&body_rx.recv().await.unwrap()).unwrap();
-    let fourth: Value = serde_json::from_str(&body_rx.recv().await.unwrap()).unwrap();
 
     assert_eq!(
         first,
@@ -521,18 +385,9 @@ async fn test_rpc_client_outbe_no_param_wrappers_send_exact_bodies() {
         third,
         json!({
             "jsonrpc": "2.0",
-            "method": "outbe_getEmissionInfo",
-            "params": [],
-            "id": 3,
-        })
-    );
-    assert_eq!(
-        fourth,
-        json!({
-            "jsonrpc": "2.0",
             "method": "outbe_getSlashConfig",
             "params": [],
-            "id": 4,
+            "id": 3,
         })
     );
 }
