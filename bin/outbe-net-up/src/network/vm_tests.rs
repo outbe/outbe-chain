@@ -1664,6 +1664,89 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
     ));
 }
 
+#[test]
+fn host_check_port_specs_include_p2p_and_radicle_1to1_ports() {
+    let make_member =
+        |idx: usize, host: &str, pub_ip: Ipv4Addr, bridge_ip: Ipv4Addr, offset: u16| {
+            DesiredMember {
+                index: idx,
+                role: MemberRole::Founder,
+                name: format!("validator-{idx}"),
+                vm_name: format!("s6r1-validator-{idx}"),
+                owner_tag: format!("outbe-net:s6r1:01234567:validator-{idx}"),
+                vmm_host: Ssh {
+                    host: host.to_owned(),
+                    user: "ubuntu".to_owned(),
+                    port: 22,
+                },
+                vmm_home: "~/.dstack-vmm".to_owned(),
+                bridge: "obr0".to_owned(),
+                service_ip: bridge_ip,
+                advertise_ip: pub_ip,
+                port_offset: offset,
+                vcpu: 3,
+                memory_gib: 5,
+                disk_gib: 10,
+                flavor: VmFlavor::Dev,
+                no_tee: false,
+                image_name: None,
+                image_hash: None,
+                recorded_disk_sha256: None,
+            }
+        };
+    let members = vec![
+        make_member(
+            0,
+            "162.19.107.121",
+            Ipv4Addr::new(162, 19, 107, 121),
+            Ipv4Addr::new(10, 77, 0, 11),
+            0,
+        ),
+        make_member(
+            1,
+            "162.19.107.121",
+            Ipv4Addr::new(162, 19, 107, 121),
+            Ipv4Addr::new(10, 77, 0, 12),
+            1,
+        ),
+        make_member(
+            2,
+            "141.95.168.110",
+            Ipv4Addr::new(141, 95, 168, 110),
+            Ipv4Addr::new(10, 77, 0, 11),
+            0,
+        ),
+        make_member(
+            3,
+            "141.95.168.110",
+            Ipv4Addr::new(141, 95, 168, 110),
+            Ipv4Addr::new(10, 77, 0, 12),
+            1,
+        ),
+    ];
+    let ctx = PublishContext::from_members(&members);
+    assert_eq!(
+        ctx.p2p_port_specs(&members[0]).unwrap(),
+        vec![
+            "30303/tcp",
+            "30303/udp",
+            "30400/tcp",
+            "31303/udp",
+            "8776/tcp",
+        ]
+    );
+    assert_eq!(
+        ctx.p2p_port_specs(&members[1]).unwrap(),
+        vec![
+            "30304/tcp",
+            "30304/udp",
+            "30401/tcp",
+            "31304/udp",
+            "8777/tcp",
+        ]
+    );
+}
+
 // ---------------------------------------------------------------------------
 // LocalExec Integration Tier: executes the REAL compiled `outbe-up` binary
 // locally against a fake Unix-socket VMM server + local HTTP JSON-RPC server.

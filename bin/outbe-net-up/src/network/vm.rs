@@ -2396,6 +2396,7 @@ impl PublishContext {
             format!("{}/udp", ports.reth_p2p_udp),
             format!("{}/tcp", ports.consensus_p2p_tcp),
             format!("{}/udp", ports.reth_discv5_udp),
+            format!("{}/tcp", ports.radicle_tcp),
         ])
     }
 }
