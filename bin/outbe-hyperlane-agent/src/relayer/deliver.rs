@@ -23,7 +23,7 @@ use alloy_provider::{DynProvider, Provider, ProviderBuilder};
 use alloy_rpc_types::TransactionRequest;
 use alloy_sol_types::SolCall;
 use eyre::Result;
-use tracing::warn;
+use tracing::{debug, warn};
 
 use crate::abi::{IIsm, IMailbox, IValidatorAnnounce};
 use crate::client::{eth_call, send_lock, wait_receipt};
@@ -345,7 +345,7 @@ pub async fn process(
         // ponytail: no gas price escalation; a transaction that stays in the pool stops the deliveries to this chain until a block includes it
         let pending = provider.get_transaction_count(from).pending().await?;
         if pending > provider.get_transaction_count(from).await? {
-            warn!(domain = dest.origin.domain, %from, "an earlier transaction is still in the pool; the delivery waits");
+            debug!(domain = dest.origin.domain, %from, "an earlier transaction is still in the pool; the delivery waits");
             return Ok(None);
         }
         ProviderBuilder::new()
