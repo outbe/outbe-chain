@@ -3,8 +3,8 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
@@ -38,7 +38,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     ///      `msg.value` or the float.
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
-    TargetRouter internal bnbRouter;
+    IntexAuctionTargetRouter internal bnbRouter;
     IntexNFT1155Router internal nftBridge;
 
     IntexNFT1155 internal intex;
@@ -181,7 +181,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     // Relay / float path - fired from inside receiveFromOutbe (CLEARING)
     // ---------------------------------------------------------------
 
-    /// @dev The inbound CLEARING handler relays the day's bids, funding the send from TargetRouter's float.
+    /// @dev The inbound CLEARING handler relays the day's bids, funding the send from IntexAuctionTargetRouter's float.
     ///      With that float empty the send reverts, the round rolls back whole, and the day stays resumable.
     function test_Relay_InsideReceiveFromOutbe_EmptyFloatLeavesTheDayResumable() public {
         assertEq(address(bnbRouter).balance, 0, "router float unfunded");
@@ -194,7 +194,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         assertFalse(done, "so the day is still open");
     }
 
-    /// @dev With TargetRouter's float funded, the relay fired from inside `receiveFromOutbe` draws the fee and
+    /// @dev With IntexAuctionTargetRouter's float funded, the relay fired from inside `receiveFromOutbe` draws the fee and
     ///      sends cleanly. Nothing is parked.
     function test_Relay_InsideReceiveFromOutbe_FundedFloatSucceeds() public {
         vm.deal(address(bnbRouter), 1 ether);

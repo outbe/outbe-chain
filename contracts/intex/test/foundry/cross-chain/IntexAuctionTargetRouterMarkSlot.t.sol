@@ -9,8 +9,8 @@ import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IssuanceBatchLib} from "../helpers/IssuanceBatch.sol";
 
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
@@ -19,11 +19,11 @@ import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 /// A Called mark for a series that this chain has not seen waits in one slot per series. The router
 /// applies it when ISSUANCE creates the series. The router acknowledges a mark that the series
 /// already carries, without effect.
-contract TargetRouterMarkSlotTest is CrossChainTest {
+contract IntexAuctionTargetRouterMarkSlotTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_250_101;
 
-    TargetRouter internal router;
+    IntexAuctionTargetRouter internal router;
     IntexNFT1155 internal intex;
     address internal outbeIca = makeAddr("outbeIca");
     bytes14 internal series;
@@ -70,12 +70,12 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
 
     function _expectIgnored(uint8 msgType, uint8 reason) internal {
         vm.expectEmit(true, true, false, true, address(router));
-        emit ITargetRouter.IntexAuctionMessageIgnored(msgType, DAY, reason);
+        emit IIntexAuctionTargetRouter.IntexAuctionMessageIgnored(msgType, DAY, reason);
     }
 
     function _expectZeroCallTimeIgnored() internal {
         vm.expectEmit(true, true, false, true, address(router));
-        emit ITargetRouter.IntexAuctionMessageIgnored(
+        emit IIntexAuctionTargetRouter.IntexAuctionMessageIgnored(
             BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE, DAY, InboundReason.INVALID
         );
     }
@@ -84,7 +84,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
 
     function test_AMarkForAnUnknownSeriesWaitsInItsSlot() public {
         vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.IntexSeriesCallNoticeApplyFailed(series, uint32(block.chainid), "");
+        emit IIntexAuctionTargetRouter.IntexSeriesCallNoticeApplyFailed(series, uint32(block.chainid), "");
         _deliver(_called());
         assertEq(router.failedIntexSeriesCallNoticeApply(series), uint32(block.timestamp), "slotted with its call time");
     }
@@ -94,7 +94,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         intex.revokeRole(intex.ROUTER_ROLE(), address(router));
 
         vm.expectEmit(true, true, true, true, address(router));
-        emit ITargetRouter.IntexSeriesCallNoticeApplyFailed(
+        emit IIntexAuctionTargetRouter.IntexSeriesCallNoticeApplyFailed(
             series,
             uint32(block.chainid),
             abi.encodeWithSelector(
@@ -117,7 +117,10 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         Vm.Log[] memory logs = vm.getRecordedLogs();
         uint256 called;
         for (uint256 i; i < logs.length; ++i) {
-            assertTrue(logs[i].topics[0] != ITargetRouter.IntexSeriesCallNoticeApplyFailed.selector, "no failure event");
+            assertTrue(
+                logs[i].topics[0] != IIntexAuctionTargetRouter.IntexSeriesCallNoticeApplyFailed.selector,
+                "no failure event"
+            );
             if (logs[i].emitter == address(intex) && logs[i].topics[0] == IIntexNFT1155.IntexSeriesCalled.selector) {
                 ++called;
             }
@@ -142,13 +145,13 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         _deliver(_called());
         bytes32[] memory waiting = _routerTopics();
         assertEq(waiting.length, 1, "a waiting notice gives one router event");
-        assertEq(waiting[0], ITargetRouter.IntexSeriesCallNoticeApplyFailed.selector);
+        assertEq(waiting[0], IIntexAuctionTargetRouter.IntexSeriesCallNoticeApplyFailed.selector);
 
         vm.recordLogs();
         _deliver(_issuance());
         bytes32[] memory applied = _routerTopics();
         assertEq(applied.length, 1, "the later apply gives no router event of the notice");
-        assertEq(applied[0], ITargetRouter.IntexSeriesAllReceived.selector);
+        assertEq(applied[0], IIntexAuctionTargetRouter.IntexSeriesAllReceived.selector);
 
         vm.warp(block.timestamp + 1);
         bytes14 other = CreateSeriesLib.seriesId(DAY + 1);
@@ -178,7 +181,9 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied on redelivery");
         assertEq(router.failedIntexSeriesCallNoticeApply(series), 0, "the settled slot is cleared");
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoFailedIntexSeriesCallNoticeApply.selector, series));
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexAuctionTargetRouter.NoFailedIntexSeriesCallNoticeApply.selector, series)
+        );
         router.retryIntexSeriesCallNoticeApply(series);
     }
 
@@ -190,7 +195,9 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         router.retryIntexSeriesCallNoticeApply(series);
         assertEq(uint8(_state()), uint8(IIntexNFT1155.IntexState.Called), "applied");
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoFailedIntexSeriesCallNoticeApply.selector, series));
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexAuctionTargetRouter.NoFailedIntexSeriesCallNoticeApply.selector, series)
+        );
         router.retryIntexSeriesCallNoticeApply(series);
     }
 
@@ -208,7 +215,9 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY, 0, MarkBatchLib.one(series)));
         assertEq(router.failedIntexSeriesCallNoticeApply(series), 0, "nothing waits");
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoFailedIntexSeriesCallNoticeApply.selector, series));
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexAuctionTargetRouter.NoFailedIntexSeriesCallNoticeApply.selector, series)
+        );
         router.retryIntexSeriesCallNoticeApply(series);
     }
 
@@ -230,8 +239,13 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         _deliver(_called());
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i; i < logs.length; ++i) {
-            assertTrue(logs[i].topics[0] != ITargetRouter.IntexAuctionMessageIgnored.selector, "no ignore event");
-            assertTrue(logs[i].topics[0] != ITargetRouter.IntexSeriesCallNoticeApplyFailed.selector, "no failure event");
+            assertTrue(
+                logs[i].topics[0] != IIntexAuctionTargetRouter.IntexAuctionMessageIgnored.selector, "no ignore event"
+            );
+            assertTrue(
+                logs[i].topics[0] != IIntexAuctionTargetRouter.IntexSeriesCallNoticeApplyFailed.selector,
+                "no failure event"
+            );
         }
     }
 }

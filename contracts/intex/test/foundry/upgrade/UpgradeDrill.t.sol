@@ -9,7 +9,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
@@ -19,7 +19,7 @@ import {
     IntexNFT1155V2Reinit,
     IntexAuctionV2,
     EscrowAdapterV2,
-    TargetRouterV2,
+    IntexAuctionTargetRouterV2,
     IntexNFT1155RouterV2
 } from "./UpgradeStubs.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
@@ -35,7 +35,7 @@ interface IUpgradeProbe {
 ///      3. Upgrade the implementation to a v1.1 stub that adds a new view.
 ///      4. Assert that persisted state survived the upgrade, the implementation pointer moved,
 ///         and the new view is callable.
-///      Covers one upgrade per impl contract. The bridge clients (TargetRouter and the NFT bridge)
+///      Covers one upgrade per impl contract. The bridge clients (IntexAuctionTargetRouter and the NFT bridge)
 ///      run against a standalone {MockERC7786Bridge}.
 contract UpgradeDrillTest is CrossChainTest {
     uint32 internal constant A_CHAIN_ID = 1;
@@ -162,9 +162,9 @@ contract UpgradeDrillTest is CrossChainTest {
         assertTrue(escrow.hasRole(escrow.AUCTION_ROLE(), auction), "auction role lost");
     }
 
-    function test_Drill_TargetRouter() public {
+    function test_Drill_IntexAuctionTargetRouter() public {
         address erc20Router = makeAddr("erc20Router");
-        TargetRouter target = DeployProxy.targetRouter(address(bridge), admin, A_CHAIN_ID, erc20Router);
+        IntexAuctionTargetRouter target = DeployProxy.targetRouter(address(bridge), admin, A_CHAIN_ID, erc20Router);
         address auction = makeAddr("auction");
         address intex = makeAddr("intex");
         address escrow = makeAddr("escrow");
@@ -176,7 +176,7 @@ contract UpgradeDrillTest is CrossChainTest {
         target.grantRole(icaRole, ica);
         vm.stopPrank();
 
-        TargetRouterV2 newImpl = new TargetRouterV2(address(bridge), A_CHAIN_ID, erc20Router);
+        IntexAuctionTargetRouterV2 newImpl = new IntexAuctionTargetRouterV2(address(bridge), A_CHAIN_ID, erc20Router);
         vm.prank(admin);
         target.upgradeToAndCall(address(newImpl), "");
 

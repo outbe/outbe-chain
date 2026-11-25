@@ -3,9 +3,9 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
 import {IIntexNFT1155Router} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {MockDesis} from "@test-mocks/MockDesis.sol";
 import {DESIS} from "@precompiles/IDesis.sol";
@@ -20,16 +20,16 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 
 /**
- * @title TargetRouterTest
- * @notice Foundry tests for TargetRouter
+ * @title IntexAuctionTargetRouterTest
+ * @notice Foundry tests for IntexAuctionTargetRouter
  * @dev Tests message encoding/decoding and cross-chain communication.
  *      All auction/series messages are keyed by `seriesId` (uint32).
  */
-contract TargetRouterTest is CrossChainTest {
+contract IntexAuctionTargetRouterTest is CrossChainTest {
     uint32 private constant BNB_CHAIN_ID = 1;
     uint32 private constant OUTBE_CHAIN_ID = 2;
 
-    TargetRouter private targetRouter;
+    IntexAuctionTargetRouter private targetRouter;
     IntexNFT1155Router private nftBridge;
 
     // Mock contracts
@@ -86,30 +86,30 @@ contract TargetRouterTest is CrossChainTest {
     }
 
     function test_setting_events_hold_only_new_values() public {
-        TargetRouter fresh = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        IntexAuctionTargetRouter fresh = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         vm.expectEmit(true, true, true, true, address(fresh));
-        emit ITargetRouter.TargetRouterDependenciesSet(address(auction), address(intex), admin);
+        emit IIntexAuctionTargetRouter.IntexAuctionTargetRouterDependenciesSet(address(auction), address(intex), admin);
         fresh.setDependencies(address(auction), address(intex), admin);
     }
 
     function test_wire_revert_zero_address() public {
-        TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        IntexAuctionTargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "intexAuction"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.ZeroAddress.selector, "intexAuction"));
         newRouter.setDependencies(address(0), address(intex), admin);
     }
 
     function test_wire_revert_zero_intex() public {
-        TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        IntexAuctionTargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "intexContract"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.ZeroAddress.selector, "intexContract"));
         newRouter.setDependencies(address(auction), address(0), admin);
     }
 
     function test_wire_revert_zero_escrowAdapter() public {
-        TargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        IntexAuctionTargetRouter newRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "escrow"));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.ZeroAddress.selector, "escrow"));
         newRouter.setDependencies(address(auction), address(intex), address(0));
     }
 
@@ -158,7 +158,7 @@ contract TargetRouterTest is CrossChainTest {
         assertEq(uint8(auction.auctionStage(SERIES_ID_DAY)), uint8(IIntexAuction.AuctionStage.CommittingBids));
 
         vm.expectEmit(true, true, false, true, address(targetRouter));
-        emit ITargetRouter.IntexAuctionMessageIgnored(
+        emit IIntexAuctionTargetRouter.IntexAuctionMessageIgnored(
             BridgeMsgCodec.MSG_INTEX_AUCTION_START, SERIES_ID_DAY, InboundReason.DUPLICATE
         );
         vm.prank(outbeIca);

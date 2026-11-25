@@ -7,7 +7,7 @@ import {BaseScript} from "./BaseScript.s.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 
 /// @title ConfigureTarget
 /// @author Outbe
@@ -38,7 +38,7 @@ contract ConfigureTarget is BaseScript {
             escrow: predictProxy(factory, deployer, "EscrowAdapter"),
             auction: predictProxy(factory, deployer, "IntexAuction"),
             nftBridge: predictProxy(factory, deployer, "IntexNFT1155Router"),
-            router: predictProxy(factory, deployer, "TargetRouter"),
+            router: predictProxy(factory, deployer, "IntexAuctionTargetRouter"),
             compact: vm.envAddress("COMPACT_ADDRESS"),
             wcoen: vm.envAddress("WCOEN_TOKEN")
         });
@@ -73,14 +73,14 @@ contract ConfigureTarget is BaseScript {
             console.log("EscrowAdapter wired");
         }
 
-        TargetRouter router = TargetRouter(payable(t.router));
+        IntexAuctionTargetRouter router = IntexAuctionTargetRouter(payable(t.router));
         if (
             address(router.intexAuction()) != t.auction || address(router.intexContract()) != t.nft
                 || address(router.escrow()) != t.escrow
         ) {
             requireDeployerAdmin(t.router, deployer);
             router.setDependencies(t.auction, t.nft, t.escrow);
-            console.log("TargetRouter wired");
+            console.log("IntexAuctionTargetRouter wired");
         }
 
         grantRoleIfMissing(t.auction, auction.RELAYER_ROLE(), t.router, deployer);

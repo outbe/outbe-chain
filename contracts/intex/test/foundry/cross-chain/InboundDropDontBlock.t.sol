@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
@@ -26,7 +26,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     uint32 internal constant SERIES_ID_DAY = 20250101;
     bytes14 internal constant SERIES_ID = "20250101-USD-U";
 
-    TargetRouter internal bnbRouter;
+    IntexAuctionTargetRouter internal bnbRouter;
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
     address internal admin = address(this);
@@ -52,7 +52,7 @@ contract InboundRevertAndRedeliverTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetRouter - premature MARK_CALLED waits in the series' slot, then applies once the series lands
+    // IntexAuctionTargetRouter - premature MARK_CALLED waits in the series' slot, then applies once the series lands
     // ---------------------------------------------------------------
 
     /// @notice MARK_CALLED for a series the BNB intex has never seen waits in its slot rather than

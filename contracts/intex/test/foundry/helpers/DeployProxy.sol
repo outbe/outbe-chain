@@ -5,7 +5,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {Vm} from "forge-std/Vm.sol";
 
@@ -49,17 +49,21 @@ library DeployProxy {
         return escrow;
     }
 
-    function targetRouter(address bridge, address delegate, uint32 outbeChainId) internal returns (TargetRouter) {
+    function targetRouter(address bridge, address delegate, uint32 outbeChainId)
+        internal
+        returns (IntexAuctionTargetRouter)
+    {
         return targetRouter(bridge, delegate, outbeChainId, address(0x7E57B12D6E));
     }
 
     function targetRouter(address bridge, address delegate, uint32 outbeChainId, address wcoenBridge)
         internal
-        returns (TargetRouter)
+        returns (IntexAuctionTargetRouter)
     {
-        TargetRouter impl = new TargetRouter(bridge, outbeChainId, wcoenBridge);
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(TargetRouter.initialize, (delegate)));
-        return TargetRouter(payable(address(proxy)));
+        IntexAuctionTargetRouter impl = new IntexAuctionTargetRouter(bridge, outbeChainId, wcoenBridge);
+        ERC1967Proxy proxy =
+            new ERC1967Proxy(address(impl), abi.encodeCall(IntexAuctionTargetRouter.initialize, (delegate)));
+        return IntexAuctionTargetRouter(payable(address(proxy)));
     }
 
     function intexNFT1155Bridge(address tokenAddr, address bridge, address delegate)

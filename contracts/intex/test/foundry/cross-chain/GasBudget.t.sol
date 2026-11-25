@@ -5,7 +5,7 @@ import {AuctionResultLib} from "../helpers/AuctionResultLib.sol";
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
@@ -32,7 +32,7 @@ contract GasBudgetTest is CrossChainTest {
     bytes14 internal constant SERIES_PREFIX = "20260501-USD-U";
     bytes14 internal constant POISON = "20260501-EUR-U";
 
-    TargetRouter internal router;
+    IntexAuctionTargetRouter internal router;
     IntexNFT1155 internal intex;
     address internal admin = address(this);
     address internal outbeIca = address(0x0B1);
@@ -75,14 +75,14 @@ contract GasBudgetTest is CrossChainTest {
     ///      series runs away. A batch where most of them do is outside what the quote can carry.
     function test_TheQuoteSurvivesOneRunawaySeriesInAFullBatch() public {
         GasBurningIntex poisoned = new GasBurningIntex(POISON);
-        TargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        IntexAuctionTargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         _wireOutbeIca(mocked, outbeIca);
         mocked.setDependencies(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
 
         bytes14[] memory batch = MarkBatchLib.sized(SERIES_PREFIX, BridgeMsgCodec.MAX_SERIES_PER_CALL_NOTICE);
         batch[0] = POISON;
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch);
-        bytes memory call = abi.encodeCall(TargetRouter.receiveFromOutbe, (packet));
+        bytes memory call = abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (packet));
 
         vm.prank(outbeIca);
         (bool ok,) = address(mocked).call{gas: IntexGas.intexSeriesCallNotice(batch.length)}(call);
@@ -116,7 +116,7 @@ contract GasBudgetTest is CrossChainTest {
         _seed(batch);
         intex.revokeRole(intex.ROUTER_ROLE(), address(router));
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(EMISSION_DAY, uint32(block.timestamp), batch);
-        bytes memory call = abi.encodeCall(TargetRouter.receiveFromOutbe, (packet));
+        bytes memory call = abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (packet));
 
         vm.prank(outbeIca);
         uint256 before = gasleft();
@@ -266,14 +266,14 @@ contract GasBudgetTest is CrossChainTest {
     // before the parking write, and the whole message reverts into redelivery.
     function test_ARunawaySeriesIsParkedAndTheBatchContinues() public {
         GasBurningIntex poisoned = new GasBurningIntex(POISON);
-        TargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
+        IntexAuctionTargetRouter mocked = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
         _wireOutbeIca(mocked, outbeIca);
         mocked.setDependencies(makeAddr("auction"), address(poisoned), makeAddr("escrow"));
 
         bytes memory packet = BridgeMsgCodec.encodeIntexSeriesCallNotice(
             EMISSION_DAY, uint32(block.timestamp), MarkBatchLib.two(POISON, SERIES_PREFIX)
         );
-        bytes memory call = abi.encodeCall(TargetRouter.receiveFromOutbe, (packet));
+        bytes memory call = abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (packet));
         vm.prank(outbeIca);
         (bool ok,) = address(mocked).call{gas: IntexGas.intexSeriesCallNotice(2)}(call);
 
@@ -338,7 +338,7 @@ contract AuctionGasBudgetTest is CrossChainTest {
     uint32 internal constant ISSUED_UNITS = 10_000;
     uint64 internal constant ENTRY_PRICE = 100e6;
 
-    TargetRouter internal router;
+    IntexAuctionTargetRouter internal router;
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
     EscrowAdapter internal escrow;
@@ -473,7 +473,7 @@ contract ClearingRelayGasTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant EMISSION_DAY = 20250101;
 
-    TargetRouter internal router;
+    IntexAuctionTargetRouter internal router;
     BidStub internal stub;
     address internal admin = address(this);
     address internal outbeIca = address(0x0B1);
@@ -493,7 +493,8 @@ contract ClearingRelayGasTest is CrossChainTest {
         stub.setBidCount(bids);
         bytes memory packet = BridgeMsgCodec.encodeIntexAuctionClearingStart(EMISSION_DAY);
         vm.prank(outbeIca);
-        (delivered,) = address(router).call{gas: gasCap}(abi.encodeCall(TargetRouter.receiveFromOutbe, (packet)));
+        (delivered,) =
+            address(router).call{gas: gasCap}(abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (packet)));
     }
 
     function _clearingCost(uint256 bids) internal returns (uint256 spent) {
@@ -607,7 +608,7 @@ contract GasBudgetLateIssuanceTest is CrossChainTest {
     uint32 internal constant ISSUED_AT = 1_777_550_400;
     bytes14 internal constant SERIES_PREFIX = "20260430-USD-U";
 
-    TargetRouter internal router;
+    IntexAuctionTargetRouter internal router;
     IntexNFT1155 internal intex;
     address internal outbeIca = address(0x0B1);
 

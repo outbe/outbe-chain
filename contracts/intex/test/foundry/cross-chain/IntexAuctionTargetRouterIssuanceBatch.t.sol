@@ -3,17 +3,17 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
 /// A chain's share of a day is a set of series. The set arrives in as few messages as the cap
 /// allows. A series repeated in another message is safe: the receiver creates it only if absent.
-contract TargetRouterIssuanceBatchTest is CrossChainTest {
+contract IntexAuctionTargetRouterIssuanceBatchTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_250_101;
 
-    TargetRouter internal router;
+    IntexAuctionTargetRouter internal router;
     IntexNFT1155 internal intex;
     address internal outbeIca = makeAddr("outbeIca");
 

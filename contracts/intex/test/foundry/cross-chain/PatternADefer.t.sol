@@ -5,8 +5,8 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {Vm} from "forge-std/Vm.sol";
 
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
@@ -86,7 +86,7 @@ contract StubAuctionWithBids {
 }
 
 /// @title PatternADeferTest
-/// @notice Behavioural coverage of Pattern A on `TargetRouter`. The inbound clearing/mark-called
+/// @notice Behavioural coverage of Pattern A on `IntexAuctionTargetRouter`. The inbound clearing/mark-called
 ///         handlers fire an outbound relay (bids batch / owners bridge). The relay parks on
 ///         failure, and anyone can retry it via `flushPending*`. The tests force failure by
 ///         starving the relay float. A positive bridge fee with a zero native balance makes
@@ -98,7 +98,7 @@ contract PatternADeferTest is CrossChainTest {
     /// @dev Fee the loopback bridge charges. The relay must have this in native float to send.
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
-    TargetRouter internal bnbRouter;
+    IntexAuctionTargetRouter internal bnbRouter;
     IntexNFT1155Router internal nftBridge;
     IntexNFT1155Router internal nftBridgeOutbe;
     IntexNFT1155 internal intex;
@@ -146,7 +146,7 @@ contract PatternADeferTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetRouter - bids relay: a round that cannot pay leaves the day resumable
+    // IntexAuctionTargetRouter - bids relay: a round that cannot pay leaves the day resumable
     // ---------------------------------------------------------------
 
     function test_TM_BidsRelayStopsWhenTheFloatCannotPay() public {
@@ -177,7 +177,9 @@ contract PatternADeferTest is CrossChainTest {
         vm.deal(address(bnbRouter), 10 ether);
         bnbRouter.sendIntexAuctionBids(SERIES_ID_DAY);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoIntexAuctionBidsToSend.selector, SERIES_ID_DAY));
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexAuctionTargetRouter.NoIntexAuctionBidsToSend.selector, SERIES_ID_DAY)
+        );
         bnbRouter.sendIntexAuctionBids(SERIES_ID_DAY);
     }
 
@@ -186,7 +188,9 @@ contract PatternADeferTest is CrossChainTest {
     function test_TM_RelayBidsBeforeClearingReverts() public {
         stubAuction.setStage(IIntexAuction.AuctionStage.RevealingBids);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.NoIntexAuctionBidsToSend.selector, SERIES_ID_DAY));
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexAuctionTargetRouter.NoIntexAuctionBidsToSend.selector, SERIES_ID_DAY)
+        );
         bnbRouter.sendIntexAuctionBids(SERIES_ID_DAY);
     }
 
@@ -201,7 +205,7 @@ contract PatternADeferTest is CrossChainTest {
         vm.recordLogs();
         vm.prank(outbeIca);
         (bool delivered,) =
-            address(bnbRouter).call{gas: 4_500_000}(abi.encodeCall(TargetRouter.receiveFromOutbe, (packet)));
+            address(bnbRouter).call{gas: 4_500_000}(abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (packet)));
         assertTrue(delivered, "the delivery itself must survive");
         _assertStopEvents(vm.getRecordedLogs(), 1, 0, 0);
 
@@ -231,13 +235,15 @@ contract PatternADeferTest is CrossChainTest {
         stubAuction.setBidCount(130);
         vm.deal(address(bnbRouter), 10 ether);
         vm.mockCallRevert(
-            address(bnbRouter), abi.encodeCall(TargetRouter.sendIntexAuctionBidsPause, (SERIES_ID_DAY)), "pause"
+            address(bnbRouter),
+            abi.encodeCall(IntexAuctionTargetRouter.sendIntexAuctionBidsPause, (SERIES_ID_DAY)),
+            "pause"
         );
         bytes memory packet = BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY);
         vm.recordLogs();
         vm.prank(outbeIca);
         (bool delivered,) =
-            address(bnbRouter).call{gas: 4_500_000}(abi.encodeCall(TargetRouter.receiveFromOutbe, (packet)));
+            address(bnbRouter).call{gas: 4_500_000}(abi.encodeCall(IntexAuctionTargetRouter.receiveFromOutbe, (packet)));
         assertTrue(delivered, "the delivery itself must survive");
         _assertStopEvents(vm.getRecordedLogs(), 0, 1, 0);
     }
@@ -250,9 +256,9 @@ contract PatternADeferTest is CrossChainTest {
         for (uint256 i; i < logs.length; ++i) {
             if (logs[i].emitter != address(bnbRouter)) continue;
             bytes32 topic = logs[i].topics[0];
-            if (topic == ITargetRouter.IntexAuctionBidsPauseSent.selector) ++counts[0];
-            if (topic == ITargetRouter.IntexAuctionBidsPauseSendFailed.selector) ++counts[1];
-            if (topic == ITargetRouter.IntexAuctionBidsSendFailed.selector) ++counts[2];
+            if (topic == IIntexAuctionTargetRouter.IntexAuctionBidsPauseSent.selector) ++counts[0];
+            if (topic == IIntexAuctionTargetRouter.IntexAuctionBidsPauseSendFailed.selector) ++counts[1];
+            if (topic == IIntexAuctionTargetRouter.IntexAuctionBidsSendFailed.selector) ++counts[2];
         }
         assertEq(counts[0], pauseSent, "pause sent");
         assertEq(counts[1], pauseFailed, "pause send failed");
@@ -260,7 +266,7 @@ contract PatternADeferTest is CrossChainTest {
     }
 
     function test_TM_RelayBidsToOutbe_ExternalCallerRevertsNotSelf() public {
-        vm.expectRevert(ITargetRouter.NotSelf.selector);
+        vm.expectRevert(IIntexAuctionTargetRouter.NotSelf.selector);
         bnbRouter.sendIntexAuctionBidsToOutbe(SERIES_ID_DAY);
     }
 
@@ -298,7 +304,7 @@ contract PatternADeferTest is CrossChainTest {
 
     /// @dev Extract the `bidsCount` of every `BidsBatchSent` log, in emission order.
     function _bidsBatchSentSizes(Vm.Log[] memory logs) internal pure returns (uint256[] memory sizes) {
-        bytes32 topic = ITargetRouter.IntexAuctionBidsSent.selector;
+        bytes32 topic = IIntexAuctionTargetRouter.IntexAuctionBidsSent.selector;
         uint256 n;
         for (uint256 i = 0; i < logs.length; i++) {
             if (logs[i].topics.length != 0 && logs[i].topics[0] == topic) n++;

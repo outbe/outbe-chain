@@ -15,7 +15,7 @@ import {IERC7786TokenBridge} from "@tokens/interfaces/IERC7786TokenBridge.sol";
 import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
 import {DESIS} from "@precompiles/IDesis.sol";
 import {IIntexFactory, INTEX_FACTORY} from "@precompiles/IIntexFactory.sol";
-import {ITargetRouter} from "./interfaces/ITargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "./interfaces/IIntexAuctionTargetRouter.sol";
 import {ERC7786Sender} from "../shared/ERC7786Sender.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
@@ -25,10 +25,10 @@ import {
     IntexAuctionBidsSendState,
     FailedIntexAuctionProceedsSend,
     IntexAuctionReturnState,
-    TargetRouterStorage
-} from "./TargetRouterStorage.sol";
+    IntexAuctionTargetRouterStorage
+} from "./IntexAuctionTargetRouterStorage.sol";
 
-/// @title TargetRouter
+/// @title IntexAuctionTargetRouter
 /// @author Outbe
 /// @notice BNB-side router: sends BIDS_BATCH to Outbe over the protocol-agnostic ERC-7786 bridge (the
 ///         `crosschain` hub), which selects the active transport, and receives auction/series messages
@@ -37,8 +37,8 @@ import {
 ///      {ERC7786Sender}), so every upgrade must pass the same bridge to the constructor.
 ///      All auction/series auction messages are keyed by `emissionDay`. Series messages
 ///      (issuance/mark) are keyed by `seriesId`.
-contract TargetRouter is
-    ITargetRouter,
+contract IntexAuctionTargetRouter is
+    IIntexAuctionTargetRouter,
     ERC7786Sender,
     AccessControlUpgradeable,
     ReentrancyGuardTransient,
@@ -60,10 +60,10 @@ contract TargetRouter is
     ///      same address on every chain.
     IERC7786TokenBridge private immutable ERC20_ROUTER;
 
-    // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetRouter")) - 1)) & ~bytes32(uint256(0xff))
-    bytes32 private constant _STORAGE_SLOT = 0x69b6aeeb915a7ddfacf9fc7eeda850d126d37a2c760f56ea4c74fddcae77ba00;
+    // keccak256(abi.encode(uint256(keccak256("outbe.intex.IntexAuctionTargetRouter")) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant _STORAGE_SLOT = 0x44ee08f7512088ecc03eef76086fda81f7ab9de278097e366e1b36675dea4500;
 
-    function _ts() private pure returns (TargetRouterStorage storage $) {
+    function _ts() private pure returns (IntexAuctionTargetRouterStorage storage $) {
         assembly ("memory-safe") {
             $.slot := _STORAGE_SLOT
         }
@@ -140,7 +140,7 @@ contract TargetRouter is
     /// @notice Issuance chunk progress of `emissionDay` on this chain: applied so far and the
     ///         declared total (0 until the first chunk lands).
     function getIntexIssuanceState(uint32 emissionDay) external view returns (uint16 seen, uint16 total) {
-        TargetRouterStorage storage $ = _ts();
+        IntexAuctionTargetRouterStorage storage $ = _ts();
         IntexIssuanceState memory progress = $.intexIssuanceState[emissionDay];
         return (progress.pagesSeen, progress.totalPages);
     }
@@ -148,7 +148,7 @@ contract TargetRouter is
     /// @notice Refund chunk progress of `emissionDay` on this chain: applied so far and the
     ///         declared total (0 until the first chunk lands).
     function getIntexAuctionReturnState(uint32 emissionDay) external view returns (uint16 seen, uint16 total) {
-        TargetRouterStorage storage $ = _ts();
+        IntexAuctionTargetRouterStorage storage $ = _ts();
         IntexAuctionReturnState memory progress = $.intexAuctionReturnState[emissionDay];
         return (progress.pagesSeen, progress.totalPages);
     }
@@ -165,7 +165,7 @@ contract TargetRouter is
     }
 
     // --- Admin ---
-    /// @inheritdoc ITargetRouter
+    /// @inheritdoc IIntexAuctionTargetRouter
     function setDependencies(address _intexAuction, address _intexContract, address _escrow)
         external
         onlyRole(DEFAULT_ADMIN_ROLE)
@@ -174,7 +174,7 @@ contract TargetRouter is
         if (_intexContract == address(0)) revert ZeroAddress("intexContract");
         if (_escrow == address(0)) revert ZeroAddress("escrow");
 
-        TargetRouterStorage storage $ = _ts();
+        IntexAuctionTargetRouterStorage storage $ = _ts();
         IEscrowAdapter current = $.escrow;
         // A day in flight finalizes on the escrow that took its locks, so the venue stays until nothing is left.
         bool changing = _intexAuction != address($.intexAuction) || _intexContract != address($.intexContract)
@@ -185,11 +185,11 @@ contract TargetRouter is
         $.intexAuction = IIntexAuction(_intexAuction);
         $.intexContract = IIntexNFT1155(_intexContract);
         $.escrow = IEscrowAdapter(_escrow);
-        emit TargetRouterDependenciesSet(_intexAuction, _intexContract, _escrow);
+        emit IntexAuctionTargetRouterDependenciesSet(_intexAuction, _intexContract, _escrow);
     }
 
     // --- Receive ---
-    /// @inheritdoc ITargetRouter
+    /// @inheritdoc IIntexAuctionTargetRouter
     /// @dev nonReentrant guards against re-entry through downstream
     ///      `intexAuction`/`escrow`/`intexContract` calls.
     function receiveFromOutbe(bytes calldata message) external onlyRole(OUTBE_ICA_ROLE) nonReentrant {
@@ -248,7 +248,7 @@ contract TargetRouter is
     ///         that stage.
     /// @param emissionDay Emission day (yyyymmdd) to continue relaying.
     function sendIntexAuctionBids(uint32 emissionDay) external nonReentrant {
-        TargetRouterStorage storage $ = _ts();
+        IntexAuctionTargetRouterStorage storage $ = _ts();
         if ($.intexAuctionBidsSendState[emissionDay].done) revert NoIntexAuctionBidsToSend(emissionDay);
         if ($.intexAuction.auctionStage(emissionDay) != IIntexAuction.AuctionStage.AwaitingResult) {
             revert NoIntexAuctionBidsToSend(emissionDay);
@@ -275,7 +275,7 @@ contract TargetRouter is
     ///      moves. Every chunk carries `pageIndex`/`totalPages` for the unordered bridge. The
     ///      marker goes with the last chunk. No bids -> one empty batch (0 of 1).
     function _sendIntexAuctionBids(uint32 emissionDay) internal {
-        TargetRouterStorage storage $ = _ts();
+        IntexAuctionTargetRouterStorage storage $ = _ts();
         IntexAuctionBidsSendState storage progress = $.intexAuctionBidsSendState[emissionDay];
         if (progress.done) return;
 
@@ -377,7 +377,7 @@ contract TargetRouter is
     ///         waits or the series still will not take it, leaving the slot in place.
     /// @param seriesId Series whose slotted mark to apply.
     function retryIntexSeriesCallNoticeApply(bytes14 seriesId) external nonReentrant {
-        TargetRouterStorage storage $ = _ts();
+        IntexAuctionTargetRouterStorage storage $ = _ts();
         uint64 calledAt = $.failedIntexSeriesCallNoticeApplies[seriesId];
         if (calledAt == 0) revert NoFailedIntexSeriesCallNoticeApply(seriesId);
         delete $.failedIntexSeriesCallNoticeApplies[seriesId];

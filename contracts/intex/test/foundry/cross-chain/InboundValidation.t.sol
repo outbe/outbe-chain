@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexNFT1155RouterCodec} from "@contracts/shared/libs/IntexNFT1155RouterCodec.sol";
@@ -18,14 +18,14 @@ import {DeployProxy} from "../helpers/DeployProxy.sol";
 ///         advances a lane silently. Instead the router/adapter reverts with a typed error, the
 ///         bridge rolls back, and the transport redelivers. Each case asserts that the exact typed
 ///         revert propagates out of the delivery.
-/// @dev TargetRouter takes its messages from the Interchain Account of Outbe and the NFT bridge
+/// @dev IntexAuctionTargetRouter takes its messages from the Interchain Account of Outbe and the NFT bridge
 ///      from the loopback bridge as the authenticated peer, so the payload is the only thing under
 ///      test.
 contract InboundValidationTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
-    TargetRouter internal bnbRouter;
+    IntexAuctionTargetRouter internal bnbRouter;
     IntexNFT1155Router internal nftBridgeBnb;
     IntexNFT1155Router internal nftBridgeOutbe;
 
@@ -54,7 +54,7 @@ contract InboundValidationTest is CrossChainTest {
     }
 
     // ---------------------------------------------------------------
-    // TargetRouter - BridgeMsgCodec validation
+    // IntexAuctionTargetRouter - BridgeMsgCodec validation
     // ---------------------------------------------------------------
 
     function test_TM_TooShortPayload_RevertsInvalidPayloadLength() public {

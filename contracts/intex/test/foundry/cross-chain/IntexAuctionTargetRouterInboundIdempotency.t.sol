@@ -7,8 +7,8 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {ReferenceCurrencyPriceLib} from "../helpers/ReferenceCurrencyPriceLib.sol";
 
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
 import {EscrowTimes} from "@contracts/target/interfaces/IEscrowAdapter.sol";
@@ -23,13 +23,13 @@ import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 /// - a RESULT that fails the auction's permanent bounds
 /// Only a transition that time or a missing prerequisite will still make valid keeps reverting.
 /// Thus the bridge redelivers it.
-contract TargetRouterInboundIdempotencyTest is CrossChainTest {
+contract IntexAuctionTargetRouterInboundIdempotencyTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_250_101;
     uint128 internal constant PROMIS_LOAD_MINOR = 1e6;
     uint64 internal constant ENTRY_PRICE = 100e6;
 
-    TargetRouter internal router;
+    IntexAuctionTargetRouter internal router;
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
     address internal outbeIca = makeAddr("outbeIca");
@@ -81,7 +81,7 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
 
     function _expectIgnored(uint8 msgType, uint8 reason) internal {
         vm.expectEmit(true, true, false, true, address(router));
-        emit ITargetRouter.IntexAuctionMessageIgnored(msgType, DAY, reason);
+        emit IIntexAuctionTargetRouter.IntexAuctionMessageIgnored(msgType, DAY, reason);
     }
 
     // --- START ---
@@ -157,7 +157,9 @@ contract TargetRouterInboundIdempotencyTest is CrossChainTest {
         vm.recordLogs();
         _expectIgnored(BridgeMsgCodec.MSG_INTEX_AUCTION_CLEARING_START, InboundReason.OBSOLETE);
         _deliver(BridgeMsgCodec.encodeIntexAuctionClearingStart(DAY));
-        assertEq(_countTopic(ITargetRouter.IntexAuctionBidsTotalsSent.selector), 0, "no relay for a cleared day");
+        assertEq(
+            _countTopic(IIntexAuctionTargetRouter.IntexAuctionBidsTotalsSent.selector), 0, "no relay for a cleared day"
+        );
     }
 
     function test_AClearingForACancelledDayIsObsolete() public {

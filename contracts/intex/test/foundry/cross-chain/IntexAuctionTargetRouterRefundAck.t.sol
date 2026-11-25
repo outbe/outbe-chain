@@ -3,8 +3,8 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {InboundReason} from "@contracts/shared/libs/InboundReason.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
@@ -47,11 +47,11 @@ contract ClosableEscrowAdapter {
 
 /// The router acknowledges without effect a refund chunk that was already applied, or that lands
 /// after the escrow closed the day. The chunk does not bounce back to the transport.
-contract TargetRouterRefundAckTest is CrossChainTest {
+contract IntexAuctionTargetRouterRefundAckTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_260_713;
 
-    TargetRouter internal target;
+    IntexAuctionTargetRouter internal target;
     ClosableEscrowAdapter internal escrow;
     address internal outbeIca = makeAddr("outbeIca");
 
@@ -73,11 +73,11 @@ contract TargetRouterRefundAckTest is CrossChainTest {
 
     function _expectIgnored(uint16 pageIndex, uint8 reason) internal {
         vm.expectEmit(true, true, false, true, address(target));
-        emit ITargetRouter.IntexAuctionMessageIgnored(BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS, DAY, reason);
+        emit IIntexAuctionTargetRouter.IntexAuctionMessageIgnored(BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS, DAY, reason);
     }
 
     function test_AChunkForAFailedDayIsObsolete() public {
-        TargetRouter failedTarget = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
+        IntexAuctionTargetRouter failedTarget = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
         failedTarget.setDependencies(address(new FailedDayAuction()), makeAddr("intex"), address(escrow));
         _wireOutbeIca(failedTarget, outbeIca);
         target = failedTarget;

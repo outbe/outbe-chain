@@ -3,8 +3,8 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
 import {IEscrowAdapter} from "@contracts/target/interfaces/IEscrowAdapter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
@@ -65,11 +65,11 @@ contract CountingTokenBridge {
 
 /// A chain's refunds arrive as a run of chunks, and each chunk sends its own proceeds home. A chunk
 /// that never lands holds back no other chunk's proceeds.
-contract TargetRouterRefundChunksTest is CrossChainTest {
+contract IntexAuctionTargetRouterRefundChunksTest is CrossChainTest {
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant DAY = 20_260_713;
 
-    TargetRouter internal target;
+    IntexAuctionTargetRouter internal target;
     CountingTokenBridge internal tokenBridge;
 
     address internal outbeIca = makeAddr("outbeIca");
@@ -96,17 +96,17 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
 
     function test_EachChunkSendsItsOwnProceeds() public {
         vm.expectEmit(false, true, true, true, address(target));
-        emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), DAY, 0, 40e6);
+        emit IIntexAuctionTargetRouter.IntexAuctionProceedsSent(bytes32(0), DAY, 0, 40e6);
         vm.expectEmit(true, true, false, true, address(target));
-        emit ITargetRouter.IntexAuctionWinnersReceived(DAY, OUTBE_CHAIN_ID, 0, 2, 1);
+        emit IIntexAuctionTargetRouter.IntexAuctionWinnersReceived(DAY, OUTBE_CHAIN_ID, 0, 2, 1);
         _deliverChunk(0, 2, 40e6);
         assertEq(tokenBridge.calls(), 1, "the first chunk routes at once");
         assertEq(tokenBridge.lastAmount(), 40e6);
 
         vm.expectEmit(false, true, true, true, address(target));
-        emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), DAY, 1, 60e6);
+        emit IIntexAuctionTargetRouter.IntexAuctionProceedsSent(bytes32(0), DAY, 1, 60e6);
         vm.expectEmit(true, true, false, true, address(target));
-        emit ITargetRouter.IntexAuctionWinnersReceived(DAY, OUTBE_CHAIN_ID, 1, 2, 1);
+        emit IIntexAuctionTargetRouter.IntexAuctionWinnersReceived(DAY, OUTBE_CHAIN_ID, 1, 2, 1);
         _deliverChunk(1, 2, 60e6);
         assertEq(tokenBridge.calls(), 2, "the second chunk routes its own part");
         assertEq(tokenBridge.lastAmount(), 60e6);

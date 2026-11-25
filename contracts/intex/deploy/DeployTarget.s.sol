@@ -9,12 +9,12 @@ import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 
 /// @title DeployTarget
 /// @author Outbe
 /// @notice Deploy the auction target stack on one chain: the NFT collection + bridge,
-///         EscrowAdapter, IntexAuction and TargetRouter. The deploy is uniform for every target,
+///         EscrowAdapter, IntexAuction and IntexAuctionTargetRouter. The deploy is uniform for every target,
 ///         including the origin chain as a loopback target (origin==target). There, the shared
 ///         NFT/bridge result from the idempotent CREATE3 deploy. The bridge meshes only with OTHER
 ///         targets, so it never self-peers.
@@ -35,14 +35,14 @@ contract DeployTarget is BaseScript {
         uint32 local = uint32(block.chainid);
 
         Create3Factory factory = create3Factory();
-        // HandOver.s.sol moves the TargetRouter last, so a handed-over router means the whole stack is.
-        if (handedOver(predictProxy(factory, deployer, "TargetRouter"), deployer)) {
+        // HandOver.s.sol moves the IntexAuctionTargetRouter last, so a handed-over router means the whole stack is.
+        if (handedOver(predictProxy(factory, deployer, "IntexAuctionTargetRouter"), deployer)) {
             console.log("Create3Factory:", address(factory));
             console.log("IntexNFT1155:", predictProxy(factory, deployer, "IntexNFT1155"));
             console.log("EscrowAdapter:", predictProxy(factory, deployer, "EscrowAdapter"));
             console.log("IntexAuction:", predictProxy(factory, deployer, "IntexAuction"));
             console.log("IntexNFT1155Router:", predictProxy(factory, deployer, "IntexNFT1155Router"));
-            console.log("TargetRouter:", predictProxy(factory, deployer, "TargetRouter"));
+            console.log("IntexAuctionTargetRouter:", predictProxy(factory, deployer, "IntexAuctionTargetRouter"));
             console.log("Handed over to governance - skipping.");
             return;
         }
@@ -83,9 +83,9 @@ contract DeployTarget is BaseScript {
         address router = deployProxy(
             factory,
             deployer,
-            "TargetRouter",
-            address(new TargetRouter(bridge, originChainId, wcoenBridge)),
-            abi.encodeCall(TargetRouter.initialize, (delegate))
+            "IntexAuctionTargetRouter",
+            address(new IntexAuctionTargetRouter(bridge, originChainId, wcoenBridge)),
+            abi.encodeCall(IntexAuctionTargetRouter.initialize, (delegate))
         );
         requireDeployerAdmin(nft, deployer);
         requireDeployerAdmin(escrow, deployer);
@@ -118,6 +118,6 @@ contract DeployTarget is BaseScript {
         console.log("EscrowAdapter:", escrow);
         console.log("IntexAuction:", auction);
         console.log("IntexNFT1155Router:", nftBridge);
-        console.log("TargetRouter:", router);
+        console.log("IntexAuctionTargetRouter:", router);
     }
 }

@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {Test} from "forge-std/Test.sol";
 import {CROSSCHAIN_BRIDGE} from "@precompiles/ICrosschainBridge.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {HandOver} from "../../deploy/HandOver.s.sol";
 import {DeployProxy} from "./helpers/DeployProxy.sol";
 
@@ -57,7 +57,7 @@ contract HandOverTest is Test {
     }
 
     function test_HandOver_LeavesTheTargetRouterToItsOutbeIcaAndGovernance() public {
-        TargetRouter router = DeployProxy.targetRouter(address(0xB41D6E), address(script), 1);
+        IntexAuctionTargetRouter router = DeployProxy.targetRouter(address(0xB41D6E), address(script), 1);
         address ica = script.outbeIcaAccount();
 
         script.grantOutbeIca(address(router), ica);

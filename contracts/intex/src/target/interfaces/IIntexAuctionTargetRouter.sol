@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity 0.8.30;
 
-/// @title ITargetRouter
+/// @title IIntexAuctionTargetRouter
 /// @author Outbe
 /// @notice Interface for a target-chain router. Relays revealed bids to Outbe over the protocol-agnostic ERC-7786
 ///         bridge and receives auction/series messages from the Interchain Account of Outbe.
@@ -9,7 +9,7 @@ pragma solidity 0.8.30;
 ///      {receiveFromOutbe}. The inbound INTEX_AUCTION_CLEARING_START triggers the bids relay,
 ///      and the contract's relay float funds it. Auction messages are keyed by `emissionDay`. Series
 ///      (issuance/mark) messages are keyed by `seriesId`.
-interface ITargetRouter {
+interface IIntexAuctionTargetRouter {
     // --- Events ---
     /// @notice Emitted when one page of the revealed bids leaves for Outbe.
     event IntexAuctionBidsSent(
@@ -61,7 +61,7 @@ interface ITargetRouter {
     );
 
     /// @notice Emitted when an admin sets IntexAuction, the Intex contract and the escrow. Only the new values.
-    event TargetRouterDependenciesSet(address intexAuction, address intexContract, address escrow);
+    event IntexAuctionTargetRouterDependenciesSet(address intexAuction, address intexContract, address escrow);
 
     /// @notice Emitted when a call notice cannot be applied to its series here, and the notice waits.
     ///         `errorData` is empty when the call left no revert data, for example while the series has not

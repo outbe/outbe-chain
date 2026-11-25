@@ -6,7 +6,7 @@ import {IAccessControl} from "@openzeppelin/contracts/access/IAccessControl.sol"
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {BaseScript} from "../../../deploy/BaseScript.s.sol";
 import {ConfigureOrigin} from "../../../deploy/ConfigureOrigin.s.sol";
 import {ConfigureTarget} from "../../../deploy/ConfigureTarget.s.sol";
@@ -139,7 +139,7 @@ contract ConfigureTargetTest is ConfigureTest {
         assertEq(escrow.intexAuction(), t.auction);
         assertEq(address(escrow.compact()), t.compact);
         assertEq(address(escrow.intexAuctionAsset()), t.wcoen);
-        TargetRouter router = TargetRouter(payable(t.router));
+        IntexAuctionTargetRouter router = IntexAuctionTargetRouter(payable(t.router));
         assertEq(address(router.intexAuction()), t.auction);
         assertEq(address(router.intexContract()), t.nft);
         assertEq(address(router.escrow()), t.escrow);

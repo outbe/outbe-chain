@@ -37,8 +37,8 @@ for target in \
   src/target/interfaces/IEscrowAdapter.sol:IEscrowAdapter \
   src/target/IntexAuction.sol:IntexAuction \
   src/target/interfaces/IIntexAuction.sol:IIntexAuction \
-  src/target/TargetRouter.sol:TargetRouter \
-  src/target/interfaces/ITargetRouter.sol:ITargetRouter; do
+  src/target/IntexAuctionTargetRouter.sol:IntexAuctionTargetRouter \
+  src/target/interfaces/IIntexAuctionTargetRouter.sol:IIntexAuctionTargetRouter; do
   forge inspect "$target" abi --json > "./abi-export/${target##*:}.json"
 done
 '''

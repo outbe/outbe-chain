@@ -7,7 +7,7 @@ import {Create3Factory} from "@shared/Create3Factory.sol";
 import {UpgradeProposal} from "@shared/UpgradeProposal.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {Create3Deploy} from "../../../deploy/Create3Deploy.sol";
 import {PrepareUpgrade} from "../../../deploy/PrepareUpgrade.s.sol";
 
@@ -41,7 +41,7 @@ contract PrepareUpgradeTest is Test {
     address internal deployer;
     IntexNFT1155 internal nft;
     IntexNFT1155Router internal nftBridge;
-    TargetRouter internal router;
+    IntexAuctionTargetRouter internal router;
 
     function setUp() public {
         script = new PrepareUpgradeHarness();
@@ -62,11 +62,11 @@ contract PrepareUpgradeTest is Test {
                     abi.encodeCall(IntexNFT1155Router.initialize, (deployer))
                 ))
         );
-        router = TargetRouter(
+        router = IntexAuctionTargetRouter(
             payable(_deploy(
-                    "TargetRouter",
-                    address(new TargetRouter(HUB, OUTBE, WCOEN_BRIDGE)),
-                    abi.encodeCall(TargetRouter.initialize, (deployer))
+                    "IntexAuctionTargetRouter",
+                    address(new IntexAuctionTargetRouter(HUB, OUTBE, WCOEN_BRIDGE)),
+                    abi.encodeCall(IntexAuctionTargetRouter.initialize, (deployer))
                 ))
         );
         vm.stopPrank();
@@ -78,10 +78,12 @@ contract PrepareUpgradeTest is Test {
         script.prepareChain(PK);
 
         assertTrue(_implementation(address(router)) != oldImpl, "router upgraded");
-        assertEq(address(TargetRouter(payable(_implementation(address(router)))).BRIDGE()), HUB, "hub kept");
-        assertEq(TargetRouter(payable(_implementation(address(router)))).OUTBE_CHAIN_ID(), OUTBE, "outbe kept");
+        assertEq(address(IntexAuctionTargetRouter(payable(_implementation(address(router)))).BRIDGE()), HUB, "hub kept");
         assertEq(
-            address(TargetRouter(payable(_implementation(address(router)))).erc20Router()),
+            IntexAuctionTargetRouter(payable(_implementation(address(router)))).OUTBE_CHAIN_ID(), OUTBE, "outbe kept"
+        );
+        assertEq(
+            address(IntexAuctionTargetRouter(payable(_implementation(address(router)))).erc20Router()),
             WCOEN_BRIDGE,
             "erc20Router kept"
         );
@@ -112,7 +114,7 @@ contract PrepareUpgradeTest is Test {
         IntexNFT1155Router bridgeImpl = IntexNFT1155Router(payable(impls[0]));
         assertEq(address(bridgeImpl.token()), address(nft), "bridged token kept");
         assertEq(address(bridgeImpl.BRIDGE()), HUB, "bridge hub kept");
-        TargetRouter routerImpl = TargetRouter(payable(impls[1]));
+        IntexAuctionTargetRouter routerImpl = IntexAuctionTargetRouter(payable(impls[1]));
         assertEq(address(routerImpl.BRIDGE()), HUB, "router hub kept");
         assertEq(routerImpl.OUTBE_CHAIN_ID(), OUTBE, "outbe kept");
         assertEq(address(routerImpl.erc20Router()), WCOEN_BRIDGE, "erc20Router kept");

@@ -3,8 +3,8 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
+import {IIntexAuctionTargetRouter} from "@contracts/target/interfaces/IIntexAuctionTargetRouter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
@@ -86,13 +86,13 @@ contract MockTokenBridge {
     }
 }
 
-contract TargetRouterProceedsTest is CrossChainTest {
+contract IntexAuctionTargetRouterProceedsTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
     uint32 internal constant SERIES_ID = 20_260_713;
     uint128 internal constant AMOUNT = 100e6;
 
-    TargetRouter internal target;
+    IntexAuctionTargetRouter internal target;
     MockEscrowAdapter internal escrow;
     MockTokenBridge internal tokenBridge;
     MockWCOEN internal wcoen;
@@ -116,7 +116,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
         vm.mockCall(INTEX_FACTORY, abi.encodeWithSelector(IIntexFactory.receiveLocalProceeds.selector), "");
     }
 
-    function _targetOn(uint32 outbeChainId, address erc20Router) internal returns (TargetRouter router) {
+    function _targetOn(uint32 outbeChainId, address erc20Router) internal returns (IntexAuctionTargetRouter router) {
         router = DeployProxy.targetRouter(address(bridge), address(this), outbeChainId, erc20Router);
         router.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
         _wireOutbeIca(router, outbeIca);
@@ -141,8 +141,8 @@ contract TargetRouterProceedsTest is CrossChainTest {
     }
 
     function test_RevertWhen_Erc20RouterZero() public {
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "erc20Router"));
-        new TargetRouter(address(bridge), OUTBE_CHAIN_ID, address(0));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.ZeroAddress.selector, "erc20Router"));
+        new IntexAuctionTargetRouter(address(bridge), OUTBE_CHAIN_ID, address(0));
     }
 
     function test_proceeds_of_a_page_carry_the_page_index() public {
@@ -203,12 +203,12 @@ contract TargetRouterProceedsTest is CrossChainTest {
     function test_on_outbe_the_proceeds_of_a_page_go_to_intex_factory_with_no_send_id() public {
         uint32 local = uint32(block.chainid);
         _mockIntexFactory();
-        TargetRouter outbeTarget = _targetOn(local, address(tokenBridge));
+        IntexAuctionTargetRouter outbeTarget = _targetOn(local, address(tokenBridge));
         escrow.setTotalPaid(AMOUNT);
         vm.expectCall(INTEX_FACTORY, abi.encodeCall(IIntexFactory.receiveLocalProceeds, (SERIES_ID, 1, AMOUNT)), 1);
 
         vm.expectEmit(true, true, true, true, address(outbeTarget));
-        emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), SERIES_ID, 1, AMOUNT);
+        emit IIntexAuctionTargetRouter.IntexAuctionProceedsSent(bytes32(0), SERIES_ID, 1, AMOUNT);
         _deliver(local, outbeIca, address(outbeTarget), _winnersPage(SERIES_ID, 1, 2));
 
         assertEq(tokenBridge.calls(), 0, "the Outbe route does not use the token bridge");
@@ -220,16 +220,19 @@ contract TargetRouterProceedsTest is CrossChainTest {
         _mockIntexFactory();
         vm.expectCall(INTEX_FACTORY, abi.encodeWithSelector(IIntexFactory.receiveLocalProceeds.selector), 0);
         MockWCOEN otherWcoen = new MockWCOEN();
-        TargetRouter outbeTarget = _targetOn(local, address(new MockTokenBridge(IERC20(address(otherWcoen)))));
+        IntexAuctionTargetRouter outbeTarget =
+            _targetOn(local, address(new MockTokenBridge(IERC20(address(otherWcoen)))));
         escrow.setTotalPaid(AMOUNT);
 
         vm.expectEmit(true, true, false, true, address(outbeTarget));
-        emit ITargetRouter.IntexAuctionProceedsSendFailed(
+        emit IIntexAuctionTargetRouter.IntexAuctionProceedsSendFailed(
             0,
             SERIES_ID,
             0,
             AMOUNT,
-            abi.encodeWithSelector(ITargetRouter.ProceedsTokenNotBridged.selector, address(wcoen), address(otherWcoen))
+            abi.encodeWithSelector(
+                IIntexAuctionTargetRouter.ProceedsTokenNotBridged.selector, address(wcoen), address(otherWcoen)
+            )
         );
         _deliver(local, outbeIca, address(outbeTarget), _winnersPage(SERIES_ID, 0, 1));
 
@@ -247,7 +250,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
 
         tokenBridge.setShouldRevert(false);
         vm.expectEmit(false, true, true, true, address(target));
-        emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), SERIES_ID, 0, AMOUNT);
+        emit IIntexAuctionTargetRouter.IntexAuctionProceedsSent(bytes32(0), SERIES_ID, 0, AMOUNT);
         target.retryIntexAuctionProceedsSend(0);
 
         assertEq(tokenBridge.calls(), 1);
@@ -263,13 +266,13 @@ contract TargetRouterProceedsTest is CrossChainTest {
         tokenBridge.setShouldRevert(false);
         target.retryIntexAuctionProceedsSend(0);
 
-        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.AlreadyResolved.selector, uint256(0)));
+        vm.expectRevert(abi.encodeWithSelector(IIntexAuctionTargetRouter.AlreadyResolved.selector, uint256(0)));
         target.retryIntexAuctionProceedsSend(0);
     }
 
     function test_RevertWhen_FlushUnknownIdx() public {
         vm.expectRevert(
-            abi.encodeWithSelector(ITargetRouter.NoSuchFailedIntexAuctionProceedsSend.selector, uint256(99))
+            abi.encodeWithSelector(IIntexAuctionTargetRouter.NoSuchFailedIntexAuctionProceedsSend.selector, uint256(99))
         );
         target.retryIntexAuctionProceedsSend(99);
     }

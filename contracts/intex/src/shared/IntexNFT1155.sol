@@ -24,7 +24,7 @@ import {IntexMetadata} from "./libs/IntexMetadata.sol";
  *      precompile on Outbe: a settlement burns them here.
  */
 contract IntexNFT1155 is ERC1155Upgradeable, AccessControlUpgradeable, UUPSUpgradeable, IIntexNFT1155 {
-    /// @notice Router role: TargetRouter. It can call `createSeries` and `markCalled`.
+    /// @notice Router role: IntexAuctionTargetRouter. It can call `createSeries` and `markCalled`.
     bytes32 public constant ROUTER_ROLE = keccak256("ROUTER_ROLE");
     /// @notice Bridge role: IntexNFT1155Router. It can call `crosschainBurn` and `crosschainMint`.
     bytes32 public constant BRIDGE_ROLE = keccak256("BRIDGE_ROLE");

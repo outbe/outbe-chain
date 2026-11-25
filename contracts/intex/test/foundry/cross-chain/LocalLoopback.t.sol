@@ -11,7 +11,7 @@ import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-Interope
 
 import {DESIS} from "@precompiles/IDesis.sol";
 import {IIntexFactory, INTEX_FACTORY} from "@precompiles/IIntexFactory.sol";
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
@@ -51,7 +51,7 @@ contract LocalTokenBridge {
     }
 }
 
-/// @dev Outbe as its own target. The Interchain Account of Outbe hands every message to TargetRouter
+/// @dev Outbe as its own target. The Interchain Account of Outbe hands every message to IntexAuctionTargetRouter
 ///      under its IntexGas budget, and the bids relay that fires from inside the CLEARING delivery
 ///      reaches Desis through a synchronous in-process bridge under its executionGasLimit attribute.
 ///      An undersized budget makes a delivery run out of gas and fails the walk. Thus the test is
@@ -66,7 +66,7 @@ contract LocalLoopbackTest is Test {
     );
 
     MockERC7786Bridge internal bridge;
-    TargetRouter internal target;
+    IntexAuctionTargetRouter internal target;
     IntexAuction internal auction;
     EscrowAdapter internal escrow;
     IntexNFT1155 internal intex;

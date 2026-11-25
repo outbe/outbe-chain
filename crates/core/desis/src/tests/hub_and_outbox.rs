@@ -3,7 +3,7 @@
 use super::*;
 use alloy_primitives::B256;
 use alloy_sol_types::SolValue;
-use outbe_core_common::addresses::{ERC7786_HUB_ADDRESS, TARGET_ROUTER_ADDRESS};
+use outbe_core_common::addresses::{ERC7786_HUB_ADDRESS, INTEX_AUCTION_TARGET_ROUTER_ADDRESS};
 use outbe_intexfactory::transport::wire::{
     MSG_BIDS_PAGE, MSG_BIDS_PAUSE, MSG_BIDS_TOTALS, MSG_INTEX_AUCTION_CLEARING_START,
     MSG_INTEX_AUCTION_START,
@@ -90,7 +90,7 @@ fn from_target_router(s: &StorageHandle, payload: Vec<u8>) -> Bytes {
     deliver(
         s,
         ERC7786_HUB_ADDRESS,
-        interop(SRC_CHAIN, TARGET_ROUTER_ADDRESS),
+        interop(SRC_CHAIN, INTEX_AUCTION_TARGET_ROUTER_ADDRESS),
         payload,
     )
     .unwrap()
@@ -139,7 +139,7 @@ fn only_the_hub_may_deliver() {
         assert!(deliver(
             &s,
             bidder(9),
-            interop(SRC_CHAIN, TARGET_ROUTER_ADDRESS),
+            interop(SRC_CHAIN, INTEX_AUCTION_TARGET_ROUTER_ADDRESS),
             bids_page(SRC_CHAIN, 1)
         )
         .is_err());
@@ -187,7 +187,7 @@ fn a_page_from_a_chain_outside_the_day_is_ignored() {
         deliver(
             &s,
             ERC7786_HUB_ADDRESS,
-            interop(other, TARGET_ROUTER_ADDRESS),
+            interop(other, INTEX_AUCTION_TARGET_ROUTER_ADDRESS),
             bids_page(other, 1),
         )
         .unwrap();
@@ -207,7 +207,7 @@ fn a_page_before_the_reveal_reverts_so_the_hub_delivers_it_again() {
         assert!(deliver(
             &s,
             ERC7786_HUB_ADDRESS,
-            interop(SRC_CHAIN, TARGET_ROUTER_ADDRESS),
+            interop(SRC_CHAIN, INTEX_AUCTION_TARGET_ROUTER_ADDRESS),
             bids_page(SRC_CHAIN, 1)
         )
         .is_err());

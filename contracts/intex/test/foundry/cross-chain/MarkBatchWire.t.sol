@@ -3,7 +3,7 @@ pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
@@ -21,7 +21,7 @@ contract MarkBatchWireTest is CrossChainTest {
     bytes14 internal constant USD_SERIES = "20250101-USD-U";
     bytes14 internal constant EUR_SERIES = "20250101-EUR-U";
 
-    TargetRouter internal bnbRouter;
+    IntexAuctionTargetRouter internal bnbRouter;
     IntexAuction internal auction;
     IntexNFT1155 internal intex;
 

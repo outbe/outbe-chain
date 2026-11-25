@@ -553,7 +553,7 @@ pub(super) fn seed_intex_targets(
     }
 }
 
-/// `InteroperableAddress.formatEvmV1(chain, TargetRouter)`, the sender of the bids at the hub.
+/// `InteroperableAddress.formatEvmV1(chain, IntexAuctionTargetRouter)`, the sender of the bids at the hub.
 fn target_router_sender(chain: u32) -> Vec<u8> {
     let reference: Vec<u8> = chain
         .to_be_bytes()
@@ -563,7 +563,9 @@ fn target_router_sender(chain: u32) -> Vec<u8> {
     let mut out = vec![0x00, 0x01, 0x00, 0x00, reference.len() as u8];
     out.extend_from_slice(&reference);
     out.push(20);
-    out.extend_from_slice(outbe_core_common::addresses::TARGET_ROUTER_ADDRESS.as_slice());
+    out.extend_from_slice(
+        outbe_core_common::addresses::INTEX_AUCTION_TARGET_ROUTER_ADDRESS.as_slice(),
+    );
     out
 }
 

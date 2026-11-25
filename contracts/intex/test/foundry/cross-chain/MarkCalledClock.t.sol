@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 import {MarkBatchLib} from "../helpers/MarkBatchLib.sol";
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 
-import {TargetRouter} from "@contracts/target/TargetRouter.sol";
+import {IntexAuctionTargetRouter} from "@contracts/target/IntexAuctionTargetRouter.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
@@ -18,7 +18,7 @@ contract MarkCalledClockTest is CrossChainTest {
     uint32 internal constant EMISSION_DAY = 20260501;
     bytes14 internal constant SERIES_ID = "20260501-USD-U";
 
-    TargetRouter internal router;
+    IntexAuctionTargetRouter internal router;
     IntexNFT1155 internal intex;
     address internal admin = address(this);
     address internal outbeIca = address(0x0B1);
