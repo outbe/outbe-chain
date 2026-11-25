@@ -7872,7 +7872,6 @@ dependencies = [
  "outbe-credis",
  "outbe-fidelity",
  "outbe-gratis",
- "outbe-gratisfactory",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",
@@ -8283,13 +8282,11 @@ dependencies = [
  "outbe-core-common",
  "outbe-fidelity",
  "outbe-gratis",
- "outbe-macros",
  "outbe-nod",
  "outbe-primitives",
  "outbe-promislimit",
  "outbe-system-common",
  "outbe-tee",
- "outbe-vaultrouter",
  "thiserror 2.0.21",
 ]
 

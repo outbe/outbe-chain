@@ -55,34 +55,27 @@ pub fn reference_currency_assets(
 /// Direct storage read of a reservation. Same-process precompiles use this
 /// rather than a staticcall so tests sharing the provider can seed and inspect
 /// holds without routing through the EVM stub.
-pub fn reservation_of(
+pub fn credis_reservation_of(
     storage: &StorageHandle<'_>,
     id: U256,
-) -> Result<crate::schema::LiquidityReservation> {
-    crate::runtime::reservation_of(storage, id)
+) -> Result<crate::schema::CredisReservation> {
+    crate::runtime::credis_reservation_of(storage, id)
 }
 
-/// `releaseReservation`: bind `receiver` to the reserved account and pay the recorded
-/// CCA via an EVM sub-call. Any unused remainder returns to the origin vault.
-pub fn release_reservation(
+/// `redeemCredisReservation`: at the issue of `credis_id`, move the reservation's assets
+/// through an EVM sub-call to the vault router. Returns the amount.
+pub fn redeem_credis_reservation(
     storage: &StorageHandle<'_>,
     id: U256,
-    receiver: Address,
-    amount: U256,
+    credis_id: U256,
 ) -> Result<U256> {
     call_router(
         storage,
-        IVaultRouter::releaseReservationCall {
-            id,
-            receiver,
-            amountMinor: amount,
+        IVaultRouter::redeemCredisReservationCall {
+            credisReservationId: id,
+            credisId: credis_id,
         },
     )
-}
-
-/// `returnReservation`: deposit the assets held under `id` back into their vault.
-pub fn return_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<U256> {
-    call_router(storage, IVaultRouter::returnReservationCall { id })
 }
 
 /// `withdraw`: redeem `amount` of `asset` from its reserve vault and transfer

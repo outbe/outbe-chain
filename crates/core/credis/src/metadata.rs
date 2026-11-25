@@ -3,10 +3,10 @@ use outbe_primitives::error::Result;
 
 use crate::constants::{TOKEN_DESCRIPTION, TOKEN_NAME};
 use crate::runtime::{effective_state, outcome, settlement_deadline};
-use crate::schema::{Credis, CredisContract, CredisState};
+use crate::schema::{CredisContract, CredisState, CredisView};
 
 /// The Credis's `tokenURI` at block time `now`. It evaluates accrued fee at `now`.
-pub(crate) fn token_uri(record: &Credis, now: u64) -> Result<String> {
+pub(crate) fn token_uri(record: &CredisView, now: u64) -> Result<String> {
     let effective = effective_state(record, now)?;
     let outcome = outcome(record, now)?;
     let state = match effective {

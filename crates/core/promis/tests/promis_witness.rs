@@ -439,6 +439,7 @@ fn wrong_payload_tags_are_tape_invalid_before_the_cursor_moves() {
             inputs_canonical_hash: B256::ZERO,
             attestation_tag: Vec::new(),
             encrypted_event_amount: Vec::new(),
+            pledge_account: None,
         },
     )
     .expect("tag 1 body");
