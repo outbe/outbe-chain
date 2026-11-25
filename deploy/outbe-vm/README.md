@@ -132,6 +132,7 @@ Pass `--ssh-config /dev/null` (forwarded to `ssh -F`) when the local system SSH 
 - `outbe-up vm create`
 - `outbe-up vm host-reserve`
 - `outbe-up vm host-release`
+- `outbe-up vm host-nat`
 - `outbe-up vm start`
 - `outbe-up vm stop`
 - `outbe-up vm remove`
@@ -196,6 +197,43 @@ To stop or remove all VMs in the network (guest OS images stay intact; `vm remov
 
 `vm remove --release-reservations` and `vm host-release` strip only this network's managed block from `dhcp_hosts_file` and reload dnsmasq. They do not delete active leases from `dhcp_leases_file`. Existing leases stay active until expiry (`10m` for networks created by this version; leases created by earlier versions without a duration may be infinite). Re-creating a network on the same IPs before those leases expire fails `vm create`'s preflight before any mutation. Wait for lease expiry or choose other free bridge IPs; do not hand-edit `dhcp_leases_file`.
 
+## Outbound Internet for VMs
+
+VMs on the host bridge (`obr0`) have no outbound internet route unless the VMM host forwards and masquerades their subnet. Configure host-side NAT masquerade on every distinct `vmm_host` in the network:
+
+```bash
+# Preview preflight checks, rendered nftables ruleset, and planned commands without changing the host:
+./out/cli/bin/outbe-up vm host-nat \
+  --artifacts ./out/network \
+  --ssh-key ~/.ssh/id_ed25519 \
+  --dry-run
+
+# Apply NAT masquerade and persist it across reboots:
+./out/cli/bin/outbe-up vm host-nat \
+  --artifacts ./out/network \
+  --ssh-key ~/.ssh/id_ed25519
+```
+
+Pass `--uplink <iface>` to override the detected IPv4 default-route interface.
+
+What `vm host-nat` does on each VMM host:
+- Runs a read-only preflight first using `nft -j list ruleset` (JSON): verifies the bridge interface and IPv4 subnet contain all founder `bridge_ip` addresses, detects the uplink interface, checks runtime and persistent `net.ipv4.ip_forward`, and inspects existing nftables tables.
+- If a foreign table already masquerades or SNATs the bridge subnet towards the uplink and `net.ipv4.ip_forward` is `1`, prints `egress already provided by <family> <table> <chain>` and exits `0` without changing the host (pass `--force` to install `ip outbe_up_nat` anyway).
+- Classifies every foreign `ip`/`inet` `forward` base chain as either `pure-accept` (`policy accept` with no `drop`/`reject`/`jump`/`goto`/`vmap` rules) or `blocks-or-unknown`. When any foreign forward chain is `blocks-or-unknown`, preflight refuses to apply because the verdict cannot be decided statically; pass `--force` only after confirming the foreign chain permits bridge forwarding, then verify egress from a guest.
+- Atomically loads a single owned nftables table (`ip outbe_up_nat`) via `nft -f -` with `postrouting` masquerade for `<bridge>` -> `<uplink>` and `forward` accept rules for `<bridge>` -> `<uplink>` and established/related return traffic. It never touches `outbe_host_fw` or any other foreign table.
+- Persists the ruleset to `/etc/outbe-up/nat.nft` and enables `outbe-up-nat.service` (`After=network-online.target`). Writes `/etc/sysctl.d/90-outbe-up-nat.conf` (`net.ipv4.ip_forward = 1`) whenever no persistent sysctl configuration already sets `1` (even if runtime `ip_forward` is already `1`), and sets runtime `net.ipv4.ip_forward=1` if it was `0`. All managed files carry `# managed by outbe-up vm host-nat`; unmanaged files at those paths are never overwritten.
+
+To remove managed host NAT artifacts:
+
+```bash
+./out/cli/bin/outbe-up vm host-nat \
+  --artifacts ./out/network \
+  --ssh-key ~/.ssh/id_ed25519 \
+  --remove
+```
+
+`--remove` deletes `table ip outbe_up_nat` and removes `/etc/outbe-up/nat.nft`, `outbe-up-nat.service`, and `/etc/sysctl.d/90-outbe-up-nat.conf` only when they carry the `# managed by outbe-up vm host-nat` marker. Runtime `net.ipv4.ip_forward` is left unchanged so other host workloads are not disrupted.
+
 ## 8. Dev-Flavor Guest SSH Access
 
 - The `dev` flavor enables `sshd` with default `StrictModes yes` and `PermitRootLogin prohibit-password`. The `prod` flavor contains no `sshd` configuration or SSH service preset.
@@ -206,7 +244,7 @@ To stop or remove all VMs in the network (guest OS images stay intact; `vm remov
 
 ## Known Limitations
 
-- **Hyperlane validator on devnet**: `outbe-hyperlane-validator` runs and registers on chain, but remains idle on devnet because genesis has no external controller and VMs have no outbound internet route.
+- **Hyperlane validator on devnet**: `outbe-hyperlane-validator` runs and registers on chain, but remains idle on devnet because genesis has no external controller (an outbound internet route is available after running `outbe-up vm host-nat`, while the devnet controller remains unset).
 - **Force-stop during pending DKG**: force-stopping or power-cutting a validator can lose its pending DKG snapshot (tracked as a node defect; use graceful `dstack stop` and wait for `stopped` before restarting).
 - **TEE resident key location**: the validator's TEE resident key is stored on the unmeasured ext4 data disk under `/opt/outbe-chain`.
 - **`/dstack/persistent` mount flags**: `/opt/outbe-chain` is bind-mounted `noexec,nosuid,nodev`, while `/dstack/persistent` itself remains mounted `exec` (and `noexec` does not block script interpreters).

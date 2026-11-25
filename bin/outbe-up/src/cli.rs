@@ -187,6 +187,28 @@ enum VmCommand {
         #[arg(long)]
         ssh_config: Option<PathBuf>,
     },
+    /// Configure or remove host-side NAT masquerade so VM guests have outbound internet access.
+    HostNat {
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null` to ignore system SSH config).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
+        /// Override the host uplink interface (defaults to the IPv4 default-route interface).
+        #[arg(long)]
+        uplink: Option<String>,
+        /// Remove the managed nftables table, systemd unit, ruleset file, and sysctl drop-in (if ours).
+        #[arg(long)]
+        remove: bool,
+        /// Print preflight findings, rendered nftables ruleset, and planned commands without modifying the host.
+        #[arg(long)]
+        dry_run: bool,
+        /// Apply even when existing foreign egress is detected or foreign forward chains cannot be verified statically.
+        #[arg(long)]
+        force: bool,
+    },
     /// Start recorded founder VMs, wait for finalized consensus, and configure Hyperlane.
     Start {
         #[arg(long)]
@@ -386,6 +408,23 @@ impl Cli {
                     ssh_key.as_deref(),
                     ssh_config.as_deref(),
                 ),
+                VmCommand::HostNat {
+                    artifacts,
+                    ssh_key,
+                    ssh_config,
+                    uplink,
+                    remove,
+                    dry_run,
+                    force,
+                } => vm::nat::run(vm::nat::HostNatOptions {
+                    artifacts: &artifacts,
+                    ssh_key: ssh_key.as_deref(),
+                    ssh_config: ssh_config.as_deref(),
+                    uplink: uplink.as_deref(),
+                    remove,
+                    dry_run,
+                    force,
+                }),
                 VmCommand::Start {
                     artifacts,
                     ssh_key,
