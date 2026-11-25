@@ -378,7 +378,7 @@ exec {} --config {}\n",
     )
 }
 
-/// Render the non-secret Hyperlane validator configuration for one host.
+/// Render the non-secret Hyperlane agent configuration for one host.
 pub fn hyperlane_public_config(config: &Value, index: usize) -> Result<String, GenesisError> {
     let public_url = config
         .get("hyperlane_public_urls")
@@ -411,6 +411,10 @@ pub fn hyperlane_public_config(config: &Value, index: usize) -> Result<String, G
         "server": {
             "bind_address": "0.0.0.0:9000",
             "public_url": public_url,
+        },
+        // Every validator runs the relayer role of the agent.
+        "relayer": {
+            "enabled": true,
         },
         "origin": origins,
     });
