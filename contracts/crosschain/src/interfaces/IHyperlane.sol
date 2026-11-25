@@ -55,6 +55,14 @@ interface IMailbox {
     /// @dev The ISM that verifies messages for `recipient`.
     function recipientIsm(address recipient) external view returns (address);
 
+    /// @dev The account that called {process} for the message. Zero when the message was not
+    /// processed.
+    function processor(bytes32 messageId) external view returns (address);
+
+    /// @dev The block number of the {process} call for the message. Zero when the message was not
+    /// processed.
+    function processedAt(bytes32 messageId) external view returns (uint48);
+
     /// @dev Verifies `message` with the recipient ISM and delivers it to the recipient.
     function process(bytes calldata metadata, bytes calldata message) external payable;
 }

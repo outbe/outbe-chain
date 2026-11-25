@@ -68,14 +68,19 @@ fn fee_cap(estimate: u128, base_fee: u128, priority_fee: u128, outbe: bool) -> u
     }
 }
 
+/// Length of one turn of the delivery order, in seconds: each next relayer
+/// of a message waits one more turn before it sends. It is the same value for
+/// every validator and every chain: a validator also uses it to decide if
+/// another validator did not deliver a message in its turn, and all
+/// validators must decide the same.
+pub const RELAY_TURN_SECS: u64 = 40;
+
 /// One running domain: the origin of its messages and the destination of the
 /// messages of the other domains.
 pub struct Chain {
     pub origin: Origin,
     pub providers: Vec<DynProvider>,
     pub period: ReorgPeriod,
-    /// Length of one turn of the delivery order, in seconds.
-    pub turn_secs: u64,
     /// `HyperlaneController.ismByDomain` of this domain: the only ISM whose
     /// messages the relayer delivers to this chain.
     pub ism: Address,
@@ -94,7 +99,6 @@ impl Chain {
         origin: Origin,
         providers: Vec<DynProvider>,
         period: ReorgPeriod,
-        turn_secs: u64,
         ism: Address,
         outbe: bool,
     ) -> Self {
@@ -102,7 +106,6 @@ impl Chain {
             origin,
             providers,
             period,
-            turn_secs,
             ism,
             outbe,
             current: AtomicUsize::new(0),
@@ -156,17 +159,33 @@ impl Chains {
 /// the others in equal parts. `None`: `me` is not an active validator and
 /// has no turn.
 pub fn turn_position(active: &[Address], me: Address, message_id: B256) -> Option<usize> {
-    let rank = |validator: &Address| {
-        let mut buf = [0u8; 52];
-        buf[..32].copy_from_slice(message_id.as_slice());
-        buf[32..].copy_from_slice(validator.as_slice());
-        keccak256(buf)
-    };
     if !active.contains(&me) {
         return None;
     }
-    let mine = rank(&me);
-    Some(active.iter().filter(|v| rank(v) < mine).count())
+    let mine = turn_rank(message_id, &me);
+    Some(
+        active
+            .iter()
+            .filter(|v| turn_rank(message_id, v) < mine)
+            .count(),
+    )
+}
+
+/// The validator that has the first turn of a message: it sends at once.
+pub fn turn_owner(active: &[Address], message_id: B256) -> Option<Address> {
+    active
+        .iter()
+        .copied()
+        .min_by_key(|validator| turn_rank(message_id, validator))
+}
+
+/// The place of `validator` in the delivery order of a message: a lower value
+/// sends earlier.
+fn turn_rank(message_id: B256, validator: &Address) -> B256 {
+    let mut buf = [0u8; 52];
+    buf[..32].copy_from_slice(message_id.as_slice());
+    buf[32..].copy_from_slice(validator.as_slice());
+    keccak256(buf)
 }
 
 pub async fn delivered(
@@ -368,6 +387,17 @@ pub async fn process(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_turn_owner_has_position_zero() {
+        let active: Vec<Address> = (1..=5).map(Address::repeat_byte).collect();
+        for n in 0..20u8 {
+            let id = B256::repeat_byte(n);
+            let owner = turn_owner(&active, id).unwrap();
+            assert_eq!(turn_position(&active, owner, id), Some(0));
+        }
+        assert_eq!(turn_owner(&[], B256::ZERO), None);
+    }
 
     #[test]
     fn turn_order_is_a_permutation_that_depends_on_the_message() {

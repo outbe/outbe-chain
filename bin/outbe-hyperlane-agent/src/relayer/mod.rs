@@ -31,6 +31,7 @@ use crate::validator::signer::DomainSigner;
 
 use deliver::{
     announced, delivered, is_contract, metadata, multisig_ism, process, turn_position, Chains,
+    RELAY_TURN_SECS,
 };
 use fetch::{Fetcher, Quorum, Want};
 use message::{message_id, Message};
@@ -176,7 +177,7 @@ impl TakeIn {
                 true => (first.saturating_sub(self.chunk - 1).max(last), first),
                 false => (first, first.saturating_add(self.chunk - 1).min(last)),
             };
-            let mut messages = match self.dispatched(provider, from, to).await {
+            let mut messages = match dispatched(provider, self.origin.mailbox, from, to).await {
                 Ok(messages) => messages,
                 Err(error) if self.chunk > 1 && is_range_error(&error.to_string()) => {
                     self.chunk = (self.chunk / 2).max(1);
@@ -231,27 +232,26 @@ impl TakeIn {
             return Ok((leaves.len(), rows));
         }
     }
+}
 
-    /// The messages that the origin Mailbox dispatched in the block range, by
-    /// message id.
-    async fn dispatched(
-        &self,
-        provider: &DynProvider,
-        from: u64,
-        to: u64,
-    ) -> Result<HashMap<B256, Vec<u8>>> {
-        let filter = Filter::new()
-            .address(self.origin.mailbox)
-            .event_signature(IMailbox::Dispatch::SIGNATURE_HASH)
-            .from_block(from)
-            .to_block(to);
-        let mut messages = HashMap::new();
-        for log in provider.get_logs(&filter).await? {
-            let event = IMailbox::Dispatch::decode_log_data(log.data())?;
-            messages.insert(message_id(&event.message), event.message.to_vec());
-        }
-        Ok(messages)
+/// The messages that `mailbox` dispatched in the block range, by message id.
+pub(crate) async fn dispatched(
+    provider: &DynProvider,
+    mailbox: Address,
+    from: u64,
+    to: u64,
+) -> Result<HashMap<B256, Vec<u8>>> {
+    let filter = Filter::new()
+        .address(mailbox)
+        .event_signature(IMailbox::Dispatch::SIGNATURE_HASH)
+        .from_block(from)
+        .to_block(to);
+    let mut messages = HashMap::new();
+    for log in provider.get_logs(&filter).await? {
+        let event = IMailbox::Dispatch::decode_log_data(log.data())?;
+        messages.insert(message_id(&event.message), event.message.to_vec());
     }
+    Ok(messages)
 }
 
 /// What the relayer does with a relay row after one look at it.
@@ -508,7 +508,7 @@ impl Relayer {
         let Some(place) = turn_position(active, self.validator, id) else {
             return Ok(Outcome::Wait);
         };
-        if now < row.first_seen + place as u64 * dest.turn_secs {
+        if now < row.first_seen + place as u64 * RELAY_TURN_SECS {
             return Ok(Outcome::Wait);
         }
         if !is_contract(provider, message.recipient)
@@ -916,7 +916,6 @@ mod tests {
                 origin(domain, mailbox),
                 vec![connect(&url).unwrap()],
                 ReorgPeriod::Blocks(0),
-                40,
                 ISM,
                 false,
             )));
@@ -1000,7 +999,6 @@ mod tests {
                 origin(domain, mailbox),
                 vec![connect(&url).unwrap()],
                 ReorgPeriod::Blocks(0),
-                40,
                 Address::repeat_byte(0x16),
                 false,
             )));

@@ -205,6 +205,7 @@ async fn main() -> Result<()> {
     let liveness = liveness.with_report_checks(relayer::report::ReportChecks {
         chains: relay.chains.clone(),
         fetcher: relay.fetcher.clone(),
+        store: store.clone(),
     });
     let daemon = daemon::Daemon {
         origins: config.origin,

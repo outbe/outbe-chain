@@ -122,7 +122,6 @@ matches the code. Unknown fields are errors.
 | `[[origin]] interval_secs` | `15` | Sync poll interval. With `ws_url`, the fallback poll. Must be > 0. |
 | `[[origin]] ws_url` | none | WebSocket endpoint. Its events only start the next poll earlier. They verify nothing. |
 | `[[origin]] index_from` | `deployedBlock()` of the hook | First origin block to read. |
-| `[[origin]] relay_turn_secs` | `40` | Relayer: length of one turn of the delivery order when this chain is the destination. Must be > 0. |
 
 The configuration has no contract addresses. The daemon reads them from the
 chains:
@@ -338,6 +337,29 @@ The call has these parts:
   index yet, the call has the latest signed checkpoint.
 - Report: the latest signed index. The controller sets the next target from
   these indexes.
+- Report: `notServing`, the other active validators that do not serve their
+  signed checkpoint at the target index. The daemon reads the checkpoint from
+  the announced storage of each validator. A validator goes to the list when
+  the read fails, when another key signed the checkpoint, or when the root is
+  not the root of this daemon. When no validator answers, the daemon names
+  nobody: the cause can be its own network.
+- Report: `notDelivered`, the active validators that did not deliver a message
+  in their turn. The check starts at `deliveryIndex(domain)` of the
+  controller and goes up to the target index. For each validator, the daemon
+  looks at the first message whose first turn that validator has. It reads
+  `processor(id)` and `processedAt(id)` of the destination Mailbox at a final
+  block. The validator goes to the list only when another active validator
+  delivered the message later than 40 seconds after the message was ready.
+  The message is ready at the time of the origin block that makes its block
+  final (`reorg_period` blocks later). Only chain data decides, so every
+  daemon gets the same result. An origin with a finality tag has no delivery
+  check.
+
+The two lists hold 16 addresses together. A validator that a quorum names in
+a list gets a liveness miss. A validator that gave a report and did not name
+that validator gets a miss too. When a check did not run, the daemon tries
+again on the next poll. From 35 blocks before the end of the epoch it sends
+the call with no names, so the vote is not lost.
 
 The daemon sends no call when `reportedRound(V, domain)` is the current
 `livenessRound()`: the controller has the report of this round. It also sends
@@ -390,12 +412,13 @@ Delivery order. Every validator runs a relayer, so the relayers take turns:
   `keccak256(message id || validator address)`. Every relayer gets the same
   order. The order is different for each message.
 - The first validator of the order sends at once.
-- Each next validator waits `relay_turn_secs` more, and sends only when the
-  message is still not delivered.
+- Each next validator waits 40 seconds more, and sends only when the
+  message is still not delivered. The 40 seconds are a constant of the agent,
+  the same for every validator and every chain.
 - The relayers do not talk to each other. Each one reads `delivered(id)`
   before it sends.
 
-Example with four validators and `relay_turn_secs = 40`: the first relayer
+Example with four validators: the first relayer
 sends at 0 s, the second at 40 s, the third at 80 s, the fourth at 120 s.
 When the first relayer works, the others send nothing.
 

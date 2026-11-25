@@ -67,7 +67,6 @@ impl Relay {
             origin.clone(),
             providers,
             config.reorg_period,
-            config.relay_turn_secs,
             ism,
             origin.domain == self.outbe_domain,
         )))
