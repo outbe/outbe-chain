@@ -5,7 +5,7 @@
 //! into a local store, serves them as an S3-compatible bucket, announces the
 //! bucket on each origin chain, and proves liveness to the HyperlaneController.
 //!
-//! Relayer (`[relayer] enabled`): delivers the messages of each origin chain
+//! Relayer: delivers the messages of each origin chain
 //! to their destination chains with the signatures of the validators.
 
 mod abi;
@@ -201,12 +201,7 @@ async fn main() -> Result<()> {
         validator,
         health.clone(),
     );
-    let relay = match config.relayer.enabled {
-        true => Some(daemon::Relay::new(u32::try_from(config.chain.chain_id)?)?),
-        false => None,
-    };
-    health.set_relayer(relay.is_some());
-    info!(relayer = relay.is_some(), "relayer role");
+    let relay = daemon::Relay::new(u32::try_from(config.chain.chain_id)?)?;
     let daemon = daemon::Daemon {
         origins: config.origin,
         poll_interval,

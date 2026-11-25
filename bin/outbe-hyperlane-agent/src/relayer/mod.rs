@@ -921,7 +921,6 @@ mod tests {
             )));
         }
         let health = Arc::new(ValidatorHealth::new(store.clone()));
-        health.set_relayer(true);
         let signer = Arc::new(
             DomainSigner::new(origin(5, MAILBOX), store.clone(), keys[0].clone()).unwrap(),
         );

@@ -8,7 +8,7 @@ process. It has two roles:
 - **Validator.** It signs the checkpoints of each origin chain. This role
   replaces three services: the Docker Hyperlane validator agent, MinIO and
   the attester.
-- **Relayer** (`[relayer] enabled = true`). It delivers the messages to their
+- **Relayer.** It delivers the messages to their
   destination chains. This role replaces the Docker Hyperlane relayer. Every
   validator runs it. See [Relayer](#relayer).
 
@@ -48,7 +48,7 @@ source and the changes.
    to the controller with `submitCheckpoint`. The controller jails validators
    that fall behind the quorum for `MAX_MISSES` liveness windows in a row (see
    [`liveness.rs`](../../crates/system/hyperlanecontroller/src/liveness.rs)).
-8. **Relay.** With the relayer role, the daemon delivers each message to its
+8. **Relay.** The daemon delivers each message to its
    destination chain. See [Relayer](#relayer).
 
 ## Keys
@@ -79,7 +79,7 @@ validator key remains accepted for Hyperlane calls.
 |---|---|
 | Bucket name | The lowercase `0x` address of `H`. |
 | Gas for announce | `H` needs native gas on every origin chain, Outbe included. The announce is a normal transaction. |
-| Gas for the relayer | With the relayer role, `H` pays for each `process` transaction on the destination chain. |
+| Gas for the relayer | `H` pays for each `process` transaction on the destination chain. |
 | Gas for liveness | With `gasless = true`, `submitCheckpoint` on Outbe uses the ZeroFee policy and costs no gas. |
 | One process per `H` | Do not run a second process with `H`. Both processes would use the same nonces. |
 
@@ -115,7 +115,6 @@ matches the code. Unknown fields are errors.
 | `[storage] db_path` | required | Directory of the MDBX store. Never the node database. |
 | `[server] bind_address` | `0.0.0.0:9000` | Address of the S3-compatible read endpoint. |
 | `[server] public_url` | required | `http(s)://host[:port]` that relayers use. No path. The announced location comes from it. |
-| `[relayer] enabled` | `false` | Start the relayer role. Without a `[relayer]` section, the agent only validates. |
 | `[[origin]] domain` | required | Hyperlane domain of the origin chain. One block per domain. |
 | `[[origin]] rpc_urls` | required | HTTP endpoints. Each unique URL has one vote. Duplicates are removed. |
 | `[[origin]] rpc_consensus` | `"majority"` | Votes for a root: `"majority"` = N − floor(N/3), `"quorum"` = ceil(N/2), `"single"` = 1. |
@@ -203,7 +202,6 @@ While the daemon waits for the controller, `/health` returns 200.
 | `active` | `V` is in the active validator set. `null` before the first read. |
 | `signer_error` | Why `H` is not the accepted checkpoint signer, or `null`. |
 | `miss_count` | `missCount(V)` on the controller. |
-| `relayer.enabled` | The relayer role runs. |
 | `relayer.delivered` | `process` transactions of this relayer that a block included, since the start. |
 | `relayer.last_delivery` | Origin domain, leaf index, destination domain, transaction hash and Unix time of the last one, or `null`. |
 | `submitted`, `failed` | `submitCheckpoint` counters since the start. `submitted` counts only transactions with a successful receipt. A revert or no receipt is a failure. |
@@ -228,7 +226,7 @@ The `status` command prints `/status` of the running agent as a table:
 ```text
 $ outbe-hyperlane-agent status
 healthy: true   controller: ready   active: true   misses: 0
-relayer: on   delivered: 12
+delivered: 12
 
 domain         leaves   signed        head  behind  queue  dropped       balance  state
 54322345         1204     1203       48220       0      0        0       12.5000  ok
@@ -340,8 +338,7 @@ daemon never submits index 0. It waits up to 60 seconds for the receipt.
 
 ## Relayer
 
-With `[relayer] enabled = true`, the daemon starts one relayer task for each
-domain. The task delivers the messages of that origin chain to the other
+The daemon starts one relayer task for each domain. The task delivers the messages of that origin chain to the other
 domains of the `HyperlaneController`. A relayer error does not stop the
 validator role.
 

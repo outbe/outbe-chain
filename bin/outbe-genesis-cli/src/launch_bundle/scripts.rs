@@ -412,10 +412,6 @@ pub fn hyperlane_public_config(config: &Value, index: usize) -> Result<String, G
             "bind_address": "0.0.0.0:9000",
             "public_url": public_url,
         },
-        // Every validator runs the relayer role of the agent.
-        "relayer": {
-            "enabled": true,
-        },
         "origin": origins,
     });
     let value: toml::Value = serde_json::from_value(value)

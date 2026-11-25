@@ -67,14 +67,7 @@ fn render(status: &Value) -> String {
         cell(&status["active"]),
         cell(&status["miss_count"]),
     );
-    let relayer = &status["relayer"];
-    let relaying = relayer["enabled"] == true;
-    let _ = writeln!(
-        out,
-        "relayer: {}   delivered: {}",
-        if relaying { "on" } else { "off" },
-        cell(&relayer["delivered"]),
-    );
+    let _ = writeln!(out, "delivered: {}", cell(&status["relayer"]["delivered"]));
     for error in ["signer_error", "last_submit_error"] {
         if let Some(text) = status[error].as_str() {
             let _ = writeln!(out, "{error}: {text}");
@@ -126,7 +119,7 @@ mod tests {
         let status = json!({
             "healthy": false, "controller": "ready", "active": true, "miss_count": 0,
             "signer_error": null, "last_submit_error": "nonce too low",
-            "relayer": {"enabled": true, "delivered": 12},
+            "relayer": {"delivered": 12},
             "domains": {
                 "97": {"leaves": 388, "latest_signed_index": 387, "head": 5000, "behind": 0,
                        "reorg": false, "error": null, "relay": {"queue": 1, "dropped": 0},
@@ -145,7 +138,7 @@ mod tests {
                 .map(String::from)
                 .collect::<Vec<_>>()
         };
-        assert!(text.contains("relayer: on   delivered: 12"), "{text}");
+        assert!(text.contains("delivered: 12"), "{text}");
         assert!(text.contains("last_submit_error: nonce too low"));
         assert_eq!(
             line("97"),

@@ -1,7 +1,7 @@
 //! Health and status HTTP server: `GET /health`, `GET /status`.
 
 use std::collections::BTreeMap;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use axum::extract::State as AxumState;
@@ -56,8 +56,6 @@ pub struct ValidatorHealth {
     pub last_submit_time: AtomicU64,
     /// Consecutive liveness misses recorded on-chain for this validator.
     pub miss_count: AtomicU64,
-    /// The relayer role runs.
-    relayer: AtomicBool,
     /// `process` transactions of this relayer that a block included.
     delivered: AtomicU64,
     store: Arc<Store>,
@@ -71,7 +69,6 @@ impl ValidatorHealth {
             failed: AtomicU64::new(0),
             last_submit_time: AtomicU64::new(0),
             miss_count: AtomicU64::new(0),
-            relayer: AtomicBool::new(false),
             delivered: AtomicU64::new(0),
             store,
             state: Mutex::default(),
@@ -91,10 +88,6 @@ impl ValidatorHealth {
     pub fn record_failure(&self, error: String) {
         self.failed.fetch_add(1, Ordering::Relaxed);
         self.state().submit_error = Some(redact_urls(&error));
-    }
-
-    pub fn set_relayer(&self, enabled: bool) {
-        self.relayer.store(enabled, Ordering::Relaxed);
     }
 
     /// Records a `process` transaction of this relayer that a block included.
@@ -201,7 +194,6 @@ impl ValidatorHealth {
     }
 
     pub fn status_json(&self) -> serde_json::Value {
-        let relayer = self.relayer.load(Ordering::Relaxed);
         let (
             controller,
             active,
@@ -250,7 +242,7 @@ impl ValidatorHealth {
                     "reorg": signer.is_some_and(|s| s.halted()),
                     "error": error,
                 });
-                if relayer {
+                {
                     let rows = store.relay_rows(domain).unwrap_or_default();
                     let dropped = rows.iter().filter(|(_, row)| row.dropped).count();
                     // A string: the value does not fit a JSON number.
@@ -285,7 +277,6 @@ impl ValidatorHealth {
             "last_submit_time": self.last_submit_time.load(Ordering::Relaxed),
             "last_submit_error": submit_error,
             "relayer": {
-                "enabled": relayer,
                 "delivered": self.delivered.load(Ordering::Relaxed),
                 "last_delivery": last_delivery,
             },

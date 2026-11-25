@@ -1,6 +1,6 @@
 //! The daemon loop: reads the HyperlaneController domains every poll, runs
 //! one signer per domain, and announces the storage location on each origin
-//! chain. With the relayer role, it also runs one relayer per domain.
+//! chain. It also runs one relayer per domain.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -36,8 +36,8 @@ pub struct Daemon {
     pub health: Arc<ValidatorHealth>,
     /// `s3+http(s)://host[:port]/<bucket>`. The domain follows.
     pub location: String,
-    /// The relayer role. `None`: the agent only validates.
-    pub relay: Option<Relay>,
+    /// What the relayers of all domains share.
+    pub relay: Relay,
 }
 
 /// What the relayers of all domains share.
@@ -117,24 +117,21 @@ impl Daemon {
             keep
         });
         self.health.retain_domains(listed_has);
-        if let Some(relay) = &self.relay {
-            relay.chains.retain(listed_has);
-        }
+        let relay = &self.relay;
+        relay.chains.retain(listed_has);
         for d in &listed {
             // The relayer takes the controller ISM of a domain as fixed. If
             // it changes all the same, the relayer must not drop the
             // messages of that domain as messages of a foreign ISM: it stops
             // the deliveries and shows an error. The validator role continues.
-            if let Some(relay) = &self.relay {
-                if let Some(chain) = relay.chains.get(d.domain).filter(|c| c.ism != d.ism) {
-                    let message = format!(
-                        "ismByDomain changed from {} to {}: the relayer stopped the deliveries of this domain. Restart the agent",
-                        chain.ism, d.ism
-                    );
-                    error!(domain = d.domain, "{message}");
-                    relay.chains.retain(|domain| domain != d.domain);
-                    self.health.set_relay_error(d.domain, message);
-                }
+            if let Some(chain) = relay.chains.get(d.domain).filter(|c| c.ism != d.ism) {
+                let message = format!(
+                    "ismByDomain changed from {} to {}: the relayer stopped the deliveries of this domain. Restart the agent",
+                    chain.ism, d.ism
+                );
+                error!(domain = d.domain, "{message}");
+                relay.chains.retain(|domain| domain != d.domain);
+                self.health.set_relay_error(d.domain, message);
             }
             match domains.get_mut(&d.domain) {
                 Some(Domain::Running { hook, .. }) if *hook != d.hook => {
@@ -145,9 +142,7 @@ impl Daemon {
                     error!(domain = d.domain, "{message}");
                     domains.insert(d.domain, Domain::Stopped);
                     self.health.set_error(d.domain, message);
-                    if let Some(relay) = &self.relay {
-                        relay.chains.retain(|domain| domain != d.domain);
-                    }
+                    relay.chains.retain(|domain| domain != d.domain);
                 }
                 // The signed history stays valid. Only the announce changes.
                 Some(Domain::Running {
@@ -206,9 +201,8 @@ impl Daemon {
         let config = self.origin_config(d.domain)?;
         let origin = check_origin(d, config).await?;
         // The relayer reads the storage locations from the new contract.
-        if let Some(relay) = &self.relay {
-            relay.chains.insert(relay.chain(&origin, config, d.ism)?);
-        }
+        let relay = &self.relay;
+        relay.chains.insert(relay.chain(&origin, config, d.ism)?);
         Ok(self.spawn_announce(origin, config))
     }
 
@@ -245,22 +239,21 @@ impl Daemon {
         let mut tasks = JoinSet::new();
         let wake = ws_wake(config, origin.hook, &mut tasks);
         tasks.spawn(signer.clone().run(config.clone(), wake));
-        if let Some(relay) = &self.relay {
-            relay.chains.insert(relay.chain(&origin, config, d.ism)?);
-            let relayer = Relayer {
-                origin: origin.clone(),
-                store: self.store.clone(),
-                chains: relay.chains.clone(),
-                fetcher: relay.fetcher.clone(),
-                outbe: outbe.clone(),
-                wallet: EthereumWallet::from(self.key.clone()),
-                validator: self.validator,
-                health: self.health.clone(),
-                signer: signer.clone(),
-            };
-            // Its own task: a relayer error never stops the signer.
-            tasks.spawn(relayer.run(Duration::from_secs(config.interval_secs)));
-        }
+        let relay = &self.relay;
+        relay.chains.insert(relay.chain(&origin, config, d.ism)?);
+        let relayer = Relayer {
+            origin: origin.clone(),
+            store: self.store.clone(),
+            chains: relay.chains.clone(),
+            fetcher: relay.fetcher.clone(),
+            outbe: outbe.clone(),
+            wallet: EthereumWallet::from(self.key.clone()),
+            validator: self.validator,
+            health: self.health.clone(),
+            signer: signer.clone(),
+        };
+        // Its own task: a relayer error never stops the signer.
+        tasks.spawn(relayer.run(Duration::from_secs(config.interval_secs)));
         let announce = self.spawn_announce(origin, config);
         self.health.set_running(signer);
         info!(domain = d.domain, hook = %d.hook, "domain started");
@@ -404,7 +397,7 @@ mod tests {
             store: store.clone(),
             health: health.clone(),
             location: "s3+http://h:9000/0xb".into(),
-            relay: Some(Relay::new(5).unwrap()),
+            relay: Relay::new(5).unwrap(),
         };
         let outbe = connect(&url).unwrap();
         let mut domains = HashMap::new();
@@ -478,8 +471,7 @@ mod tests {
 
         // The controller ISM of a domain is fixed. A change stops only the
         // relayer of that domain and shows an error: the signer continues.
-        health.set_relayer(true);
-        let chains = &daemon.relay.as_ref().unwrap().chains;
+        let chains = &daemon.relay.chains;
         assert_eq!(chains.get(5).unwrap().ism, ism1);
         state.lock().unwrap().4 = Address::repeat_byte(0x16);
         daemon.poll(&outbe, &mut domains).await.unwrap();
@@ -541,7 +533,7 @@ mod tests {
             store: store.clone(),
             health: health.clone(),
             location: "s3+http://h:9000/0xb".into(),
-            relay: None,
+            relay: Relay::new(5).unwrap(),
         };
         let mut domains = HashMap::new();
         daemon

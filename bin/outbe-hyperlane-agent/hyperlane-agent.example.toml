@@ -36,11 +36,6 @@ bind_address = "0.0.0.0:9000"
 # The http(s)://host[:port] that relayers use. No path.
 public_url = "http://203.0.113.7:9000"
 
-[relayer]
-# Deliver the messages of each [[origin]] chain to the other [[origin]] chains.
-# The key H sends the transactions and pays the gas on each chain.
-enabled = true
-
 # One [[origin]] block for each domain of the HyperlaneController.
 
 [[origin]]
