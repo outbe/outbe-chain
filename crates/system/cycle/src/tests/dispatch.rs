@@ -160,7 +160,7 @@ fn process_emission_day_keeps_midnight_slot_pending_until_late_reward_window_clo
         );
         let validator_claimable = |voter| {
             outbe_agentreward::AgentRewardContract::new(ctx.storage.clone())
-                .get_pool_claimable_reward(outbe_agentreward::schema::RewardPool::Validator, voter)
+                .get_agent_reward(outbe_agentreward::schema::RewardPool::Validator, voter)
                 .unwrap()
         };
         // The late voter counts the same as the base-certificate voter.
@@ -232,7 +232,7 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
         }
         let claimable = |n: u64| {
             outbe_agentreward::AgentRewardContract::new(handle.clone())
-                .get_pool_claimable_reward(RewardPool::Waa, recipient(n))
+                .get_agent_reward(RewardPool::Waa, recipient(n))
                 .unwrap()
         };
 
@@ -325,8 +325,8 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
         crate::handler::process_agent_rewards(&ctx_fire).unwrap();
 
         let agent_reward = outbe_agentreward::AgentRewardContract::new(ctx_fire.storage.clone());
-        let wallet_claimable = agent_reward.get_claimable_reward(wallet).unwrap();
-        let sra_claimable = agent_reward.get_claimable_reward(sra).unwrap();
+        let wallet_claimable = agent_reward.agent_reward_total(wallet).unwrap();
+        let sra_claimable = agent_reward.agent_reward_total(sra).unwrap();
         let waa_pool = day_zero_allocation(EmissionSinkId::Waa);
         let sra_pool = day_zero_allocation(EmissionSinkId::Sra);
         assert_eq!(wallet_claimable, waa_pool);
@@ -383,10 +383,7 @@ fn prepared_validator_topup_and_terminal_residue_conserve_the_allocation() {
         let planned = voters.iter().fold(U256::ZERO, |total, voter| {
             total
                 + agent_reward
-                    .get_pool_claimable_reward(
-                        outbe_agentreward::schema::RewardPool::Validator,
-                        *voter,
-                    )
+                    .get_agent_reward(outbe_agentreward::schema::RewardPool::Validator, *voter)
                     .unwrap()
         });
         for voter in voters {
@@ -440,10 +437,7 @@ fn zero_total_validator_participation_routes_the_pool_without_halting() {
         for voter in voters {
             assert_eq!(
                 agent_reward
-                    .get_pool_claimable_reward(
-                        outbe_agentreward::schema::RewardPool::Validator,
-                        voter
-                    )
+                    .get_agent_reward(outbe_agentreward::schema::RewardPool::Validator, voter)
                     .unwrap(),
                 U256::ZERO
             );
@@ -556,7 +550,7 @@ fn topup_voters_claimable(ctx: &BlockRuntimeContext<'_>) -> U256 {
     TOPUP_VOTERS.iter().fold(U256::ZERO, |total, voter| {
         total
             + agent_reward
-                .get_pool_claimable_reward(outbe_agentreward::schema::RewardPool::Validator, *voter)
+                .get_agent_reward(outbe_agentreward::schema::RewardPool::Validator, *voter)
                 .unwrap()
     })
 }
@@ -757,7 +751,7 @@ fn emission_dispatch_is_idempotent_per_prev_day() {
         );
         let cca_claimable = || {
             outbe_agentreward::AgentRewardContract::new(ctx.storage.clone())
-                .get_pool_claimable_reward(
+                .get_agent_reward(
                     outbe_agentreward::schema::RewardPool::Cca,
                     Address::repeat_byte(0xc1),
                 )

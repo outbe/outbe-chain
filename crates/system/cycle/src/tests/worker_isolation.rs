@@ -77,7 +77,7 @@ fn tail_worker_missing_job_reverts_and_cleanup_continues_then_next_block_retries
         assert_eq!(rewards.worker_height.read().unwrap(), 0);
         assert!(!rewards.worker_initialized.read().unwrap());
         assert_eq!(rewards.pending_jobs_by_day.read(&DAY.value()).unwrap(), 4);
-        assert_eq!(rewards.get_claimable_reward(RECIPIENT).unwrap(), U256::ZERO);
+        assert_eq!(rewards.agent_reward_total(RECIPIENT).unwrap(), U256::ZERO);
         let desis = ctx.storage.contract::<DesisContract>();
         assert_eq!(desis.cleanup_head.read().unwrap(), 0);
         assert_eq!(desis.cleanup_pending.read(&CLEANUP_DAY).unwrap(), 2);
@@ -94,7 +94,7 @@ fn tail_worker_missing_job_reverts_and_cleanup_continues_then_next_block_retries
         assert_eq!(rewards.worker_height.read().unwrap(), 3);
         assert_eq!(
             rewards
-                .get_pool_claimable_reward(RewardPool::Waa, RECIPIENT)
+                .get_agent_reward(RewardPool::Waa, RECIPIENT)
                 .unwrap(),
             U256::from(10)
         );
@@ -140,7 +140,7 @@ fn tail_worker_revert_budget_exceeded_and_panic_emit_cycle_worker_failed_and_pre
                 write_worker_page(ctx)?;
                 match failure {
                     0 => Err(
-                        outbe_agentreward::errors::AgentRewardError::ClaimPriceUnavailable(840)
+                        outbe_agentreward::errors::AgentRewardError::RedeemPriceUnavailable(840)
                             .into(),
                     ),
                     1 => Ok(()),
@@ -255,7 +255,7 @@ fn real_accrual_page_one_gas_short_rolls_back_credits_logs_and_cursors() {
         assert_eq!(rewards.worker_height.read().unwrap(), 0);
         assert!(!rewards.worker_initialized.read().unwrap());
         assert_eq!(rewards.pending_jobs_by_day.read(&DAY.value()).unwrap(), 4);
-        assert_eq!(rewards.get_claimable_reward(RECIPIENT).unwrap(), U256::ZERO);
+        assert_eq!(rewards.agent_reward_total(RECIPIENT).unwrap(), U256::ZERO);
     });
     assert_eq!(worker_failures(&storage), vec![(1, 2)]);
     let mut without_failure = storage.events.clone();

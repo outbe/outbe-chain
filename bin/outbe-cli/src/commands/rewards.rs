@@ -1,7 +1,7 @@
 //! Rewards commands.
 //!
 //! Validator daily emission is credited to the validator pool of AgentReward and
-//! claimed there as a Gem (`claimReward`), so there is no `claim` / `pending`
+//! redeemed there as a Gem (`redeemAgentReward`), so there is no `claim` / `pending`
 //! command here.
 
 use clap::Subcommand;
@@ -40,7 +40,7 @@ async fn emission(client: &(impl Rpc + Sync)) -> Result<()> {
     println!("=== Reward Emission Parameters ===");
     println!("Validator Cap:      {validator_pct}%");
     println!("Fee Escrow:         {escrow_addr}");
-    println!("Delivery:           claimed as a Gem from the AgentReward validator pool");
+    println!("Delivery:           redeemed as a Gem from the AgentReward validator pool");
     println!("Settlement Source:  finalized block execution summary artifact");
 
     Ok(())

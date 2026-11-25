@@ -112,8 +112,8 @@ pub(super) fn assert_dense_agent_accrual_pending(
     for n in 0..address_count {
         let waa = numbered_test_address(0x10, n);
         let sra = numbered_test_address(0x11, n);
-        let waa_claimable = agent.get_claimable_reward(waa)?;
-        let sra_claimable = agent.get_claimable_reward(sra)?;
+        let waa_claimable = agent.agent_reward_total(waa)?;
+        let sra_claimable = agent.agent_reward_total(sra)?;
         assert_eq!(
             waa_claimable,
             U256::ZERO,
@@ -177,7 +177,7 @@ pub(super) fn assert_dense_validator_settlement(
     for index in 0..validator_count {
         let voter = numbered_test_address(0x12, u64::from(index));
         let claimable = agent_reward
-            .get_pool_claimable_reward(outbe_agentreward::schema::RewardPool::Validator, voter)?;
+            .get_agent_reward(outbe_agentreward::schema::RewardPool::Validator, voter)?;
         assert!(
             !claimable.is_zero(),
             "GAS-05: dense validator {voter} received zero claimable reward"
