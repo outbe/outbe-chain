@@ -1233,3 +1233,320 @@ fn cli_enforces_keys_from_allowlist_redacts_verify_errors_verifies_founder_bls_a
         .is_symlink());
     assert!(!nonexistent.exists());
 }
+
+#[test]
+fn sigint_during_outbe_keygen_verify_terminates_child_and_cleans_staging() {
+    if !has_disk_tools() {
+        eprintln!("SKIPPED: sfdisk/mke2fs/debugfs not available");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let ready_marker = tmp.path().join("verify.ready");
+    let pid_file = tmp.path().join("verify.pid");
+    let verify_body = format!(
+        "    echo $$ > '{}'\n    : > '{}'\n    sleep 30\n    exit 0",
+        pid_file.to_str().unwrap(),
+        ready_marker.to_str().unwrap()
+    );
+    let slow_verify_bundle =
+        build_operator_bundle_with_verify_and_validator(tmp.path(), 707, &verify_body, "");
+    let cfg = tmp.path().join("operator.yaml");
+    write_operator_config(&cfg, 707);
+
+    let out_dir = tmp.path().join("verify-sigint-out");
+    fs::create_dir_all(&out_dir).unwrap();
+    let out_img = out_dir.join("canceled-verify.img");
+
+    let child = Command::new(OUTBE_UP_BIN)
+        .args(["disk", "prepare", "--role", "joining-validator", "--bundle"])
+        .arg(&slow_verify_bundle)
+        .arg("--config")
+        .arg(&cfg)
+        .args(["--size-gib", "1", "--output"])
+        .arg(&out_img)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !ready_marker.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for outbe-keygen verify to start"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    let start = std::time::Instant::now();
+    let kill_status = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(kill_status.success(), "kill -INT failed");
+
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(5),
+        "outbe-up took too long ({:?}) to exit after SIGINT during outbe-keygen verify",
+        start.elapsed()
+    );
+    assert!(
+        !output.status.success(),
+        "outbe-up must exit non-zero after SIGINT during outbe-keygen verify"
+    );
+    assert!(fs::symlink_metadata(&out_img).is_err());
+
+    let leftover: Vec<String> = fs::read_dir(&out_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| {
+            name.starts_with(".outbe-prepare-")
+                || name.starts_with(".outbe-disk-")
+                || name.starts_with(".outbe-vm-disk-")
+        })
+        .collect();
+    assert!(
+        leftover.is_empty(),
+        "SIGINT during outbe-keygen verify left staging dirs behind: {leftover:?}"
+    );
+
+    if let Ok(verify_pid) = fs::read_to_string(&pid_file) {
+        let verify_pid = verify_pid.trim();
+        if !verify_pid.is_empty() {
+            let alive = Command::new("kill")
+                .args(["-0", verify_pid])
+                .status()
+                .is_ok_and(|s| s.success());
+            assert!(
+                !alive,
+                "outbe-keygen verify child (pid {verify_pid}) survived SIGINT"
+            );
+        }
+    }
+}
+
+#[test]
+fn sigint_during_stalled_gzip_extraction_terminates_gzip_and_cleans_staging() {
+    if !has_disk_tools() {
+        eprintln!("SKIPPED: sfdisk/mke2fs/debugfs not available");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let fake_bin = tmp.path().join("fake-bin");
+    let ready_marker = tmp.path().join("gzip.ready");
+    let pid_file = tmp.path().join("gzip.pid");
+    let fake_gzip = fake_bin.join("gzip");
+    write_mode(
+        &fake_gzip,
+        format!(
+            "#!/bin/sh\necho $$ > '{}'\n: > '{}'\nsleep 30\n",
+            pid_file.to_str().unwrap(),
+            ready_marker.to_str().unwrap()
+        )
+        .as_bytes(),
+        0o755,
+    );
+
+    // File with valid gzip magic bytes so extract_founder_tar spawns `gzip -dc`.
+    let fake_tgz = tmp.path().join("founder.tar.gz");
+    write_mode(&fake_tgz, &[0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00], 0o644);
+
+    let out_dir = tmp.path().join("gzip-sigint-out");
+    fs::create_dir_all(&out_dir).unwrap();
+    let out_img = out_dir.join("canceled-gzip.img");
+
+    let orig_path = std::env::var("PATH").unwrap_or_default();
+    let path_env = format!("{}:{orig_path}", fake_bin.display());
+
+    let child = Command::new(OUTBE_UP_BIN)
+        .env("PATH", path_env)
+        .args([
+            "disk",
+            "prepare",
+            "--role",
+            "founder",
+            "--skip-key-verify",
+            "--source",
+        ])
+        .arg(&fake_tgz)
+        .args(["--size-gib", "1", "--output"])
+        .arg(&out_img)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !ready_marker.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for stalled gzip child to start"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    let start = std::time::Instant::now();
+    let kill_status = Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(kill_status.success(), "kill -INT failed");
+
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(5),
+        "outbe-up took too long ({:?}) to exit after SIGINT during stalled gzip",
+        start.elapsed()
+    );
+    assert!(
+        !output.status.success(),
+        "outbe-up must exit non-zero after SIGINT during gzip extraction"
+    );
+    assert!(fs::symlink_metadata(&out_img).is_err());
+
+    let leftover: Vec<String> = fs::read_dir(&out_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| {
+            name.starts_with(".outbe-prepare-")
+                || name.starts_with(".outbe-disk-")
+                || name.starts_with(".outbe-vm-disk-")
+        })
+        .collect();
+    assert!(
+        leftover.is_empty(),
+        "SIGINT during stalled gzip left staging dirs behind: {leftover:?}"
+    );
+
+    if let Ok(gzip_pid) = fs::read_to_string(&pid_file) {
+        let gzip_pid = gzip_pid.trim();
+        if !gzip_pid.is_empty() {
+            let alive = Command::new("kill")
+                .args(["-0", gzip_pid])
+                .status()
+                .is_ok_and(|s| s.success());
+            assert!(
+                !alive,
+                "stalled gzip child (pid {gzip_pid}) survived SIGINT"
+            );
+        }
+    }
+}
+
+#[test]
+fn cleanup_stale_preserves_live_concurrent_prepare_staging_dirs() {
+    if !has_disk_tools() {
+        eprintln!("SKIPPED: sfdisk/mke2fs/debugfs not available");
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let ready_marker = tmp.path().join("first.ready");
+    let release_marker = tmp.path().join("first.release");
+    let hook = format!(
+        "    : > '{}'\n    while [ ! -f '{}' ]; do sleep 0.05; done\n",
+        ready_marker.to_str().unwrap(),
+        release_marker.to_str().unwrap()
+    );
+    let slow_bundle =
+        build_operator_bundle_with_verify_and_validator(tmp.path(), 707, "    exit 0", &hook);
+    let fast_bundle = build_operator_bundle(&tmp.path().join("fast"), 707);
+    let cfg = tmp.path().join("operator.yaml");
+    write_operator_config(&cfg, 707);
+    let full_cfg = tmp.path().join("fullnode.yaml");
+    write_full_node_config(&full_cfg, 707);
+
+    let shared_dir = tmp.path().join("parallel");
+    fs::create_dir_all(&shared_dir).unwrap();
+    let stale_dir = shared_dir.join(".outbe-disk-stale-orphan");
+    fs::create_dir_all(&stale_dir).unwrap();
+
+    // Start first prepare (blocks inside fake outbe-keygen holding live .outbe-prepare-* and
+    // .outbe-disk-joining-* staging dirs).
+    let first_img = shared_dir.join("first.img");
+    let first_child = Command::new(OUTBE_UP_BIN)
+        .args(["disk", "prepare", "--role", "joining-validator", "--bundle"])
+        .arg(&slow_bundle)
+        .arg("--config")
+        .arg(&cfg)
+        .args(["--size-gib", "1", "--output"])
+        .arg(&first_img)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !ready_marker.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for first prepare to enter staging"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+
+    let live_dirs_before: Vec<PathBuf> = fs::read_dir(&shared_dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+            (name.starts_with(".outbe-prepare-") || name.starts_with(".outbe-disk-joining-"))
+                && p.is_dir()
+        })
+        .collect();
+    assert_eq!(
+        live_dirs_before.len(),
+        2,
+        "expected live .outbe-prepare-* and .outbe-disk-joining-* dirs, found: {live_dirs_before:?}"
+    );
+
+    // Run a SECOND concurrent `disk prepare --cleanup-stale` targeting the SAME directory.
+    let second_img = shared_dir.join("second.img");
+    let second_out = Command::new(OUTBE_UP_BIN)
+        .args([
+            "disk",
+            "prepare",
+            "--role",
+            "full-node",
+            "--cleanup-stale",
+            "--bundle",
+        ])
+        .arg(&fast_bundle)
+        .arg("--config")
+        .arg(&full_cfg)
+        .args(["--size-gib", "1", "--output"])
+        .arg(&second_img)
+        .output()
+        .unwrap();
+    assert!(
+        second_out.status.success(),
+        "second prepare --cleanup-stale failed:\n{}",
+        String::from_utf8_lossy(&second_out.stderr)
+    );
+
+    // Truly stale orphan MUST have been removed, while BOTH live staging dirs MUST remain intact!
+    assert!(
+        !stale_dir.exists(),
+        "--cleanup-stale must remove unlocked stale staging dir"
+    );
+    for live_dir in &live_dirs_before {
+        assert!(
+            live_dir.is_dir(),
+            "--cleanup-stale deleted a live concurrent staging dir: {}",
+            live_dir.display()
+        );
+    }
+
+    // Release the first prepare and assert it completes cleanly and builds its image!
+    fs::write(&release_marker, b"go").unwrap();
+    let first_out = first_child.wait_with_output().unwrap();
+    assert!(
+        first_out.status.success(),
+        "first prepare failed after concurrent --cleanup-stale:\n{}",
+        String::from_utf8_lossy(&first_out.stderr)
+    );
+    assert!(first_img.is_file());
+}

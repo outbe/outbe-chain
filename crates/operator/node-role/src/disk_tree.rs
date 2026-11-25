@@ -17,11 +17,11 @@ use std::{
     fs::{self, DirBuilder, File, OpenOptions},
     io::{self, Read, Seek, SeekFrom, Write},
     os::unix::{
-        fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
+        fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt},
         process::CommandExt,
     },
     path::{Component, Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, ChildStdout, Command, Stdio},
     rc::Rc,
     sync::atomic::{AtomicBool, Ordering},
     thread,
@@ -30,7 +30,14 @@ use std::{
 
 use alloy_primitives::Address;
 use eyre::{bail, ensure, Context, Result};
-use rustix::process::{getuid, kill_process_group, test_kill_process_group, Pid, Signal};
+use rustix::{
+    fd::OwnedFd,
+    fs::{
+        fcntl_getfl, fcntl_setfl, flock, fstat, openat, FileType, FlockOperation, Mode, OFlags, CWD,
+    },
+    io::Errno,
+    process::{getuid, kill_process_group, test_kill_process_group, Pid, Signal},
+};
 use walkdir::WalkDir;
 
 use crate::{
@@ -76,11 +83,24 @@ pub enum FounderKeyVerify<'a> {
     Skip,
 }
 
+struct LockedTempDir {
+    // Field order matters: `dir` drops (`remove_dir_all`) BEFORE `_lock` releases the exclusive
+    // directory `flock`, preventing `--cleanup-stale` from racing with teardown.
+    dir: tempfile::TempDir,
+    _lock: OwnedFd,
+}
+
+impl LockedTempDir {
+    fn path(&self) -> &Path {
+        self.dir.path()
+    }
+}
+
 /// Verified static VM data tree ready to be packed into a deterministic ext4 disk image.
 pub struct StagedDiskTree {
     tree_path: PathBuf,
-    _staging: Option<tempfile::TempDir>,
-    _bundle_dir: Option<tempfile::TempDir>,
+    _staging: Option<LockedTempDir>,
+    _bundle: Option<bundle::ExtractedBundle>,
     pub role: NodeRole,
     pub validator_address: Option<Address>,
     pub hyperlane_address: Option<Address>,
@@ -97,23 +117,49 @@ impl StagedDiskTree {
 }
 
 /// Remove stale `.outbe-prepare-*`, `.outbe-disk-*`, and `.outbe-vm-disk-*` staging directories
-/// inside `staging_parent` that are real directories (not symlinks) owned by the current UID.
+/// inside `staging_parent` that are real directories (not symlinks) owned by the current UID and
+/// NOT currently locked by a live `outbe-up` process.
+///
+/// Acquires an exclusive `flock` on `staging_parent` during the scan (serialized against the brief
+/// shared `flock` held while live processes create and lock new staging dirs) and probes each
+/// candidate directory with `NonBlockingLockExclusive` so live staging directories are never
+/// deleted.
 ///
 /// Only intended to be called when the operator explicitly passes `--cleanup-stale` (for example
 /// after an uncatchable `SIGKILL` or host power loss).
 pub fn cleanup_stale_staging_dirs(staging_parent: &Path) -> Result<Vec<PathBuf>> {
-    let entries = match fs::read_dir(staging_parent) {
-        Ok(entries) => entries,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+    let parent_fd = match openat(
+        CWD,
+        staging_parent,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    ) {
+        Ok(fd) => fd,
+        Err(Errno::NOENT) => return Ok(Vec::new()),
         Err(err) => {
-            return Err(err).wrap_err_with(|| {
+            return Err(io::Error::from(err)).wrap_err_with(|| {
                 format!(
-                    "failed to read staging directory parent {}",
+                    "failed to open staging directory parent {}",
                     staging_parent.display()
                 )
             });
         }
     };
+    flock(&parent_fd, FlockOperation::LockExclusive)
+        .map_err(io::Error::from)
+        .wrap_err_with(|| {
+            format!(
+                "failed to lock staging directory parent {}",
+                staging_parent.display()
+            )
+        })?;
+
+    let entries = fs::read_dir(staging_parent).wrap_err_with(|| {
+        format!(
+            "failed to read staging directory parent {}",
+            staging_parent.display()
+        )
+    })?;
 
     let my_uid = getuid().as_raw();
     let mut removed = Vec::new();
@@ -130,23 +176,43 @@ pub fn cleanup_stale_staging_dirs(staging_parent: &Path) -> Result<Vec<PathBuf>>
             continue;
         }
         let path = entry.path();
-        let meta = match fs::symlink_metadata(&path) {
-            Ok(meta) => meta,
-            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+        let cand_fd = match openat(
+            CWD,
+            &path,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        ) {
+            Ok(fd) => fd,
+            Err(Errno::NOENT | Errno::NOTDIR | Errno::LOOP) => continue,
             Err(err) => {
-                return Err(err).wrap_err_with(|| format!("failed to stat {}", path.display()));
+                return Err(io::Error::from(err)).wrap_err_with(|| {
+                    format!("failed to open staging candidate {}", path.display())
+                });
             }
         };
-        if meta.file_type().is_symlink() || !meta.is_dir() {
+        let st = fstat(&cand_fd)
+            .map_err(io::Error::from)
+            .wrap_err_with(|| format!("failed to stat {}", path.display()))?;
+        if FileType::from_raw_mode(st.st_mode) != FileType::Directory || st.st_uid != my_uid {
             continue;
         }
-        if meta.uid() != my_uid {
-            continue;
+        match flock(&cand_fd, FlockOperation::NonBlockingLockExclusive) {
+            Ok(()) => {}
+            Err(Errno::WOULDBLOCK) => {
+                // Held exclusively by a live `outbe-up` process; never touch it.
+                continue;
+            }
+            Err(err) => {
+                return Err(io::Error::from(err))
+                    .wrap_err_with(|| format!("failed to probe lock on {}", path.display()));
+            }
         }
         fs::remove_dir_all(&path)
             .wrap_err_with(|| format!("failed to remove stale staging dir {}", path.display()))?;
+        drop(cand_fd);
         removed.push(path);
     }
+    drop(parent_fd);
     Ok(removed)
 }
 
@@ -182,18 +248,23 @@ pub fn prepare_founder_tree_cancellable(
         source.display()
     );
 
-    let (bin_dir, bundle_dir, key_verified, keygen_source) =
+    let (bin_dir, bundle, key_verified, keygen_source) =
         resolve_founder_keygen(source, staging_parent, verify, cancel)?;
     ensure_not_canceled(cancel, "founder staging")?;
 
     if meta.is_dir() {
-        vm_boot::verify_static_tree_for_role(source, NodeRole::Founder, bin_dir.as_deref())?;
+        vm_boot::verify_static_tree_for_role_cancellable(
+            source,
+            NodeRole::Founder,
+            bin_dir.as_deref(),
+            cancel,
+        )?;
         let validator = validator_address(&source.join("keys/evm-key.hex"))?;
         let hyperlane = validator_address(&source.join("keys/hyperlane-key.hex"))?;
         return Ok(StagedDiskTree {
             tree_path: source.to_path_buf(),
             _staging: None,
-            _bundle_dir: bundle_dir,
+            _bundle: bundle,
             role: NodeRole::Founder,
             validator_address: Some(validator),
             hyperlane_address: Some(hyperlane),
@@ -208,7 +279,7 @@ pub fn prepare_founder_tree_cancellable(
         source.display()
     );
 
-    let staging = create_private_tempdir(staging_parent, ".outbe-disk-founder-")?;
+    let staging = create_locked_staging_dir(staging_parent, ".outbe-disk-founder-")?;
     let extract_root = staging.path().join("extract");
     create_dir_mode(&extract_root, 0o755)?;
     extract_founder_tar(source, &extract_root, cancel)?;
@@ -216,14 +287,19 @@ pub fn prepare_founder_tree_cancellable(
     let tree_path = resolve_extracted_founder_root(&extract_root)?;
     fs::set_permissions(&tree_path, fs::Permissions::from_mode(0o755))?;
 
-    vm_boot::verify_static_tree_for_role(&tree_path, NodeRole::Founder, bin_dir.as_deref())?;
+    vm_boot::verify_static_tree_for_role_cancellable(
+        &tree_path,
+        NodeRole::Founder,
+        bin_dir.as_deref(),
+        cancel,
+    )?;
     let validator = validator_address(&tree_path.join("keys/evm-key.hex"))?;
     let hyperlane = validator_address(&tree_path.join("keys/hyperlane-key.hex"))?;
 
     Ok(StagedDiskTree {
         tree_path,
         _staging: Some(staging),
-        _bundle_dir: bundle_dir,
+        _bundle: bundle,
         role: NodeRole::Founder,
         validator_address: Some(validator),
         hyperlane_address: Some(hyperlane),
@@ -267,7 +343,7 @@ pub fn prepare_joining_validator_tree_cancellable(
     verify_bundle_chain_id(bundle_root, config.network.chain_id)?;
     ensure_not_canceled(cancel, "joining-validator staging")?;
 
-    let staging = create_private_tempdir(staging_parent, ".outbe-disk-joining-")?;
+    let staging = create_locked_staging_dir(staging_parent, ".outbe-disk-joining-")?;
     let tree = staging.path().join("tree");
     create_dir_mode(&tree, 0o755)?;
 
@@ -305,12 +381,17 @@ pub fn prepare_joining_validator_tree_cancellable(
     }
 
     ensure_not_canceled(cancel, "joining-validator verification")?;
-    vm_boot::verify_static_tree_for_role(&tree, NodeRole::JoiningValidator, Some(bundle_root))?;
+    vm_boot::verify_static_tree_for_role_cancellable(
+        &tree,
+        NodeRole::JoiningValidator,
+        Some(bundle_root),
+        cancel,
+    )?;
 
     Ok(StagedDiskTree {
         tree_path: tree,
         _staging: Some(staging),
-        _bundle_dir: Some(extracted.directory),
+        _bundle: Some(extracted),
         role: NodeRole::JoiningValidator,
         validator_address: Some(validator),
         hyperlane_address: Some(hyperlane),
@@ -352,7 +433,7 @@ pub fn prepare_full_node_tree_cancellable(
     verify_bundle_chain_id(bundle_root, config.network.chain_id)?;
     ensure_not_canceled(cancel, "full-node staging")?;
 
-    let staging = create_private_tempdir(staging_parent, ".outbe-disk-fullnode-")?;
+    let staging = create_locked_staging_dir(staging_parent, ".outbe-disk-fullnode-")?;
     let tree = staging.path().join("tree");
     create_dir_mode(&tree, 0o755)?;
 
@@ -370,12 +451,12 @@ pub fn prepare_full_node_tree_cancellable(
     )?;
 
     ensure_not_canceled(cancel, "full-node verification")?;
-    vm_boot::verify_static_tree_for_role(&tree, NodeRole::FullNode, None)?;
+    vm_boot::verify_static_tree_for_role_cancellable(&tree, NodeRole::FullNode, None, cancel)?;
 
     Ok(StagedDiskTree {
         tree_path: tree,
         _staging: Some(staging),
-        _bundle_dir: Some(extracted.directory),
+        _bundle: Some(extracted),
         role: NodeRole::FullNode,
         validator_address: None,
         hyperlane_address: None,
@@ -392,7 +473,7 @@ fn resolve_founder_keygen(
     cancel: &AtomicBool,
 ) -> Result<(
     Option<PathBuf>,
-    Option<tempfile::TempDir>,
+    Option<bundle::ExtractedBundle>,
     bool,
     Option<String>,
 )> {
@@ -422,7 +503,7 @@ fn resolve_founder_keygen(
             );
             Ok((
                 Some(dir_path),
-                Some(extracted.directory),
+                Some(extracted),
                 true,
                 Some(format!("bundle:{}", bundle_path.display())),
             ))
@@ -446,7 +527,7 @@ fn resolve_founder_keygen(
             );
             Ok((
                 Some(dir_path),
-                Some(extracted.directory),
+                Some(extracted),
                 true,
                 Some(format!("artifacts:{}", discovered.display())),
             ))
@@ -482,15 +563,44 @@ fn ensure_not_canceled(cancel: &AtomicBool, stage: &str) -> Result<()> {
     Ok(())
 }
 
-fn create_private_tempdir(parent: &Path, prefix: &str) -> Result<tempfile::TempDir> {
+fn create_locked_staging_dir(parent: &Path, prefix: &str) -> Result<LockedTempDir> {
     fs::create_dir_all(parent)
         .wrap_err_with(|| format!("failed to create staging parent {}", parent.display()))?;
+    let parent_fd = openat(
+        CWD,
+        parent,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)
+    .wrap_err_with(|| format!("failed to open staging parent {}", parent.display()))?;
+    flock(&parent_fd, FlockOperation::LockShared)
+        .map_err(io::Error::from)
+        .wrap_err_with(|| format!("failed to lock staging parent {}", parent.display()))?;
+
     let dir = tempfile::Builder::new()
         .prefix(prefix)
         .tempdir_in(parent)
         .wrap_err_with(|| format!("failed to create staging tempdir in {}", parent.display()))?;
     fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700))?;
-    Ok(dir)
+    let lock = openat(
+        CWD,
+        dir.path(),
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(io::Error::from)
+    .wrap_err_with(|| {
+        format!(
+            "failed to open staging dir {} for flock",
+            dir.path().display()
+        )
+    })?;
+    flock(&lock, FlockOperation::LockExclusive)
+        .map_err(io::Error::from)
+        .wrap_err_with(|| format!("failed to flock staging dir {}", dir.path().display()))?;
+    drop(parent_fd);
+    Ok(LockedTempDir { dir, _lock: lock })
 }
 
 fn create_dir_mode(path: &Path, mode: u32) -> Result<()> {
@@ -836,6 +946,53 @@ impl<R: Read> Read for BoundedTarReader<'_, R> {
     }
 }
 
+/// Non-blocking wrapper around a child process's stdout pipe so stalled subprocesses (e.g. a
+/// blocked `gzip -dc`) never prevent `SIGINT`/`SIGTERM` cancellation from terminating the child
+/// process group promptly.
+struct CancellableChildStdout<'a> {
+    stdout: ChildStdout,
+    child_pid: u32,
+    cancel: &'a AtomicBool,
+}
+
+impl<'a> CancellableChildStdout<'a> {
+    fn new(stdout: ChildStdout, child_pid: u32, cancel: &'a AtomicBool) -> Result<Self> {
+        let flags = fcntl_getfl(&stdout)
+            .map_err(io::Error::from)
+            .wrap_err("read gzip stdout descriptor flags")?;
+        fcntl_setfl(&stdout, flags | OFlags::NONBLOCK)
+            .map_err(io::Error::from)
+            .wrap_err("set O_NONBLOCK on gzip stdout pipe")?;
+        Ok(Self {
+            stdout,
+            child_pid,
+            cancel,
+        })
+    }
+}
+
+impl Read for CancellableChildStdout<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            if self.cancel.load(Ordering::Relaxed) {
+                terminate_process_group(self.child_pid);
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "gzip -dc canceled by signal",
+                ));
+            }
+            match self.stdout.read(buf) {
+                Ok(n) => return Ok(n),
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(25));
+                }
+                Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                Err(err) => return Err(err),
+            }
+        }
+    }
+}
+
 fn extract_founder_tar(archive_path: &Path, destination: &Path, cancel: &AtomicBool) -> Result<()> {
     ensure_not_canceled(cancel, "founder tar extraction")?;
     let mut file = File::open(archive_path)
@@ -862,13 +1019,22 @@ fn extract_founder_tar(archive_path: &Path, destination: &Path, cancel: &AtomicB
         let mut child = cmd
             .spawn()
             .wrap_err("failed to spawn gzip -dc for founder tar.gz archive")?;
+        let child_pid = child.id();
         let stdout = child
             .stdout
             .take()
             .ok_or_else(|| eyre::eyre!("gzip stdout unavailable"))?;
-        let extract_result = extract_tar_stream(stdout, destination, cancel);
+        let cancellable_stdout = match CancellableChildStdout::new(stdout, child_pid, cancel) {
+            Ok(reader) => reader,
+            Err(err) => {
+                terminate_process_group(child_pid);
+                let _ = child.wait();
+                return Err(err);
+            }
+        };
+        let extract_result = extract_tar_stream(cancellable_stdout, destination, cancel);
         if extract_result.is_err() {
-            terminate_process_group(child.id());
+            terminate_process_group(child_pid);
             let _ = child.wait();
             return extract_result;
         }
@@ -1601,15 +1767,24 @@ network:
         fs::write(&keep_file, b"keep").unwrap();
         std::os::unix::fs::symlink(&outside_dir, &symlink_dir).unwrap();
 
+        let live_locked = create_locked_staging_dir(tmp.path(), ".outbe-disk-live-").unwrap();
+        let live_path = live_locked.path().to_path_buf();
+        fs::write(live_path.join("in-flight.hex"), b"live").unwrap();
+
         let removed = cleanup_stale_staging_dirs(tmp.path()).unwrap();
         assert_eq!(removed.len(), 3);
         assert!(!stale_a.exists());
         assert!(!stale_b.exists());
         assert!(!stale_c.exists());
+        assert!(
+            live_path.is_dir() && live_path.join("in-flight.hex").is_file(),
+            "cleanup_stale_staging_dirs must NEVER delete a live locked staging dir"
+        );
         assert!(keep_dir.is_dir());
         assert!(keep_file.is_file());
         assert!(outside_dir.is_dir());
         assert!(fs::symlink_metadata(&symlink_dir).is_ok());
+        drop(live_locked);
     }
 
     fn copy_dir_plain(src: &Path, dst: &Path) {

@@ -354,27 +354,78 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
 }
 
 pub(crate) fn verify_signing_key(bin_dir: &Path, keys_dir: &Path) -> Result<()> {
+    let never = std::sync::atomic::AtomicBool::new(false);
+    verify_signing_key_cancellable(bin_dir, keys_dir, &never)
+}
+
+pub(crate) fn verify_signing_key_cancellable(
+    bin_dir: &Path,
+    keys_dir: &Path,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<()> {
+    use std::{
+        os::unix::process::CommandExt,
+        process::{Command, Stdio},
+        sync::atomic::Ordering,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    ensure!(
+        !cancel.load(Ordering::Relaxed),
+        "outbe-keygen verify canceled by signal"
+    );
     let keygen = bin_dir.join("outbe-keygen");
     ensure!(
         keygen.is_file(),
         "outbe-keygen binary is missing: {}",
         keygen.display()
     );
-    let output = std::process::Command::new(&keygen)
-        .args([
-            "verify",
-            "--key",
-            path_text(&keys_dir.join("signing-key.hex"))?,
-        ])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .output()
+    let mut cmd = Command::new(&keygen);
+    cmd.args([
+        "verify",
+        "--key",
+        path_text(&keys_dir.join("signing-key.hex"))?,
+    ])
+    .stdin(Stdio::null())
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .process_group(0);
+
+    let mut child = cmd
+        .spawn()
         .wrap_err_with(|| format!("failed to execute {}", keygen.display()))?;
+    let status = loop {
+        if cancel.load(Ordering::Relaxed) {
+            if let Ok(pgid_i32) = i32::try_from(child.id()) {
+                if let Some(pgid) = rustix::process::Pid::from_raw(pgid_i32) {
+                    let _ =
+                        rustix::process::kill_process_group(pgid, rustix::process::Signal::TERM);
+                    let deadline = Instant::now() + Duration::from_millis(500);
+                    while Instant::now() < deadline {
+                        if rustix::process::test_kill_process_group(pgid).is_err() {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    let _ =
+                        rustix::process::kill_process_group(pgid, rustix::process::Signal::KILL);
+                }
+            }
+            let _ = child.wait();
+            return Err(eyre::eyre!("outbe-keygen verify canceled by signal"));
+        }
+        if let Some(status) = child
+            .try_wait()
+            .wrap_err_with(|| format!("wait for {} verify", keygen.display()))?
+        {
+            break status;
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
     ensure!(
-        output.status.success(),
-        "signing-key.hex failed outbe-keygen verify (exit status: {})",
-        output.status
+        status.success(),
+        "signing-key.hex failed outbe-keygen verify (exit status: {status})"
     );
     Ok(())
 }

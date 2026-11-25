@@ -24,7 +24,11 @@ use std::{
 
 use eyre::{bail, ensure, Context, Result};
 use rustix::{
-    fs::{fchmod, renameat_with, Mode, RenameFlags, SeekFrom as RustixSeekFrom, CWD},
+    fd::OwnedFd,
+    fs::{
+        fchmod, flock, openat, renameat_with, FlockOperation, Mode, OFlags, RenameFlags,
+        SeekFrom as RustixSeekFrom, CWD,
+    },
     io::Errno,
     process::{kill_process_group, test_kill_process_group, Pid, Signal},
 };
@@ -137,21 +141,55 @@ pub(crate) fn write_disk_image(
         .filter(|p| !p.as_os_str().is_empty())
         .unwrap_or_else(|| Path::new("."));
     fs::create_dir_all(parent)?;
-    let work = tempfile::Builder::new()
-        .prefix(".outbe-vm-disk-")
-        .tempdir_in(parent)?;
-    fs::set_permissions(work.path(), fs::Permissions::from_mode(0o700))?;
+    // Hold an exclusive directory flock for the life of `.outbe-vm-disk-*` (serialized against
+    // `--cleanup-stale` via a brief shared flock on `parent`) so concurrent cleanup never deletes
+    // a live disk-build staging directory. Field order ensures `work` drops before `_work_lock`.
+    struct LockedWorkDir {
+        dir: tempfile::TempDir,
+        _lock: OwnedFd,
+    }
+    let work = {
+        let parent_fd = openat(
+            CWD,
+            parent,
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(io::Error::from)
+        .wrap_err_with(|| format!("open staging parent {}", parent.display()))?;
+        flock(&parent_fd, FlockOperation::LockShared)
+            .map_err(io::Error::from)
+            .wrap_err_with(|| format!("lock staging parent {}", parent.display()))?;
+        let dir = tempfile::Builder::new()
+            .prefix(".outbe-vm-disk-")
+            .tempdir_in(parent)?;
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700))?;
+        let lock = openat(
+            CWD,
+            dir.path(),
+            OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .map_err(io::Error::from)
+        .wrap_err_with(|| format!("open staging dir {} for flock", dir.path().display()))?;
+        flock(&lock, FlockOperation::LockExclusive)
+            .map_err(io::Error::from)
+            .wrap_err_with(|| format!("flock staging dir {}", dir.path().display()))?;
+        drop(parent_fd);
+        LockedWorkDir { dir, _lock: lock }
+    };
+    let work_path = work.dir.path();
 
     // 1. Build a deterministic sparse ext4 filesystem in a 0600 standalone partition file.
     ensure_not_canceled(cancel, "disk build")?;
-    let part_path = work.path().join("part.ext4");
+    let part_path = work_path.join("part.ext4");
     create_sparse_file(&part_path, part_bytes)?;
     format_ext4(tools, &part_path, ids, cancel)?;
-    populate_ext4(tools, &part_path, work.path(), entries, cancel)?;
+    populate_ext4(tools, &part_path, work_path, entries, cancel)?;
 
     // 2. Create the 0600 sparse raw disk image and write its deterministic GPT table.
     ensure_not_canceled(cancel, "disk build")?;
-    let disk_path = work.path().join("disk.img");
+    let disk_path = work_path.join("disk.img");
     create_sparse_file(&disk_path, disk_bytes)?;
     write_gpt(tools, &disk_path, part_sectors, ids, cancel)?;
 

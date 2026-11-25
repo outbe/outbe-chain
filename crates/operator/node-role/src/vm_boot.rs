@@ -5,6 +5,7 @@ use std::{
     fs, io,
     os::unix::fs::{FileTypeExt, MetadataExt},
     path::{Component, Path},
+    sync::atomic::AtomicBool,
 };
 
 use eyre::{bail, ensure, Context, Result};
@@ -69,6 +70,7 @@ struct BootOptions<'a> {
     apply_ownership: bool,
     prepare_runtime_dirs: bool,
     expected_role: Option<NodeRole>,
+    cancel: Option<&'a AtomicBool>,
 }
 
 /// Read and validate `/opt/outbe-chain/node-role` (absent defaults to [`NodeRole::Founder`]).
@@ -102,6 +104,7 @@ pub fn verify_tree_without_mount(root: &Path, bin_dir: &Path) -> Result<()> {
             apply_ownership: false,
             prepare_runtime_dirs: true,
             expected_role: None,
+            cancel: None,
         },
     )
 }
@@ -112,6 +115,18 @@ pub fn verify_static_tree_for_role(
     root: &Path,
     expected_role: NodeRole,
     bin_dir: Option<&Path>,
+) -> Result<()> {
+    let never = AtomicBool::new(false);
+    verify_static_tree_for_role_cancellable(root, expected_role, bin_dir, &never)
+}
+
+/// Strictly verify a static VM data tree for `expected_role` with cooperative signal cancellation
+/// forwarded into `outbe-keygen verify`.
+pub fn verify_static_tree_for_role_cancellable(
+    root: &Path,
+    expected_role: NodeRole,
+    bin_dir: Option<&Path>,
+    cancel: &AtomicBool,
 ) -> Result<()> {
     let mountinfo = format!(
         "100 1 8:1 / {} rw,nosuid,nodev,noexec - ext4 /dev/vda1 rw\n",
@@ -126,6 +141,7 @@ pub fn verify_static_tree_for_role(
             apply_ownership: false,
             prepare_runtime_dirs: false,
             expected_role: Some(expected_role),
+            cancel: Some(cancel),
         },
     )
 }
@@ -146,6 +162,7 @@ pub fn run(bin_dir: Option<&Path>) -> Result<()> {
             apply_ownership: true,
             prepare_runtime_dirs: true,
             expected_role: None,
+            cancel: None,
         },
     )
 }
@@ -182,7 +199,7 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
             crate::config::validate_hyperlane_public_toml(&hyperlane_public, chain_id, true)?;
             install::required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
 
-            verify_secrets(root, options.bin_dir)?;
+            verify_secrets(root, options.bin_dir, options.cancel)?;
         }
         NodeRole::FullNode => {
             verify_config_file(&env_path, options.require_root_owner)?;
@@ -376,7 +393,7 @@ fn verify_config_file(path: &Path, require_root_owner: bool) -> Result<()> {
     Ok(())
 }
 
-fn verify_secrets(root: &Path, bin_dir: Option<&Path>) -> Result<()> {
+fn verify_secrets(root: &Path, bin_dir: Option<&Path>, cancel: Option<&AtomicBool>) -> Result<()> {
     let keys = root.join("keys");
     let keys_meta = fs::symlink_metadata(&keys)
         .wrap_err_with(|| format!("keys directory is missing: {}", keys.display()))?;
@@ -405,7 +422,10 @@ fn verify_secrets(root: &Path, bin_dir: Option<&Path>) -> Result<()> {
         install::canonical_key(&keys.join(relative))?;
     }
     if let Some(bin_dir) = bin_dir {
-        install::verify_signing_key(bin_dir, &keys)?;
+        match cancel {
+            Some(flag) => install::verify_signing_key_cancellable(bin_dir, &keys, flag)?,
+            None => install::verify_signing_key(bin_dir, &keys)?,
+        }
     } else {
         let signing = fs::read_to_string(keys.join("signing-key.hex"))
             .wrap_err("failed to read signing-key.hex")?;
@@ -751,6 +771,7 @@ mod tests {
             apply_ownership: false,
             prepare_runtime_dirs: true,
             expected_role: None,
+            cancel: None,
         }
     }
 

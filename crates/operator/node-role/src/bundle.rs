@@ -34,7 +34,10 @@ pub struct ManifestFile {
 }
 
 pub(crate) struct ExtractedBundle {
+    // Field order matters: `directory` drops (`remove_dir_all`) BEFORE `_dir_lock` releases the
+    // exclusive directory `flock`, preventing `--cleanup-stale` from racing with teardown.
     pub(crate) directory: tempfile::TempDir,
+    pub(crate) _dir_lock: rustix::fd::OwnedFd,
     pub(crate) archive_sha256: String,
 }
 
@@ -129,7 +132,7 @@ pub(crate) fn verify_and_extract_cancellable(
         !cancel.load(std::sync::atomic::Ordering::Relaxed),
         "bundle extraction canceled by signal"
     );
-    let archive_sha256 = digest_file(archive)?;
+    let archive_sha256 = digest_file_cancellable(archive, cancel)?;
     ensure!(
         !cancel.load(std::sync::atomic::Ordering::Relaxed),
         "bundle extraction canceled by signal"
@@ -155,11 +158,7 @@ pub(crate) fn verify_and_extract_cancellable(
         serde_json::from_slice(&raw_manifest).wrap_err("invalid operator manifest")?;
     manifest.validate()?;
 
-    let directory = tempfile::Builder::new()
-        .prefix(".outbe-prepare-")
-        .tempdir_in(parent)
-        .wrap_err_with(|| format!("failed to create staging directory in {}", parent.display()))?;
-    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))?;
+    let (directory, dir_lock) = create_locked_prepare_dir(parent)?;
     write_file(&directory.path().join(MANIFEST_NAME), &raw_manifest, 0o644)?;
 
     let expected: BTreeMap<&str, &ManifestFile> = manifest
@@ -205,7 +204,7 @@ pub(crate) fn verify_and_extract_cancellable(
             .create_new(true)
             .open(&output)
             .wrap_err_with(|| format!("failed to create {}", output.display()))?;
-        let digest = copy_digest(&mut entry, &mut file)?;
+        let digest = copy_digest_cancellable(&mut entry, &mut file, cancel)?;
         file.sync_all()
             .wrap_err_with(|| format!("failed to sync {}", output.display()))?;
         fs::set_permissions(&output, fs::Permissions::from_mode(expected.mode))?;
@@ -217,8 +216,91 @@ pub(crate) fn verify_and_extract_cancellable(
     );
     Ok(ExtractedBundle {
         directory,
+        _dir_lock: dir_lock,
         archive_sha256,
     })
+}
+
+fn create_locked_prepare_dir(parent: &Path) -> Result<(tempfile::TempDir, rustix::fd::OwnedFd)> {
+    use rustix::fs::{flock, openat, FlockOperation, Mode, OFlags, CWD};
+
+    fs::create_dir_all(parent)
+        .wrap_err_with(|| format!("failed to create staging parent {}", parent.display()))?;
+    let parent_fd = openat(
+        CWD,
+        parent,
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(std::io::Error::from)
+    .wrap_err_with(|| format!("open staging parent {}", parent.display()))?;
+    flock(&parent_fd, FlockOperation::LockShared)
+        .map_err(std::io::Error::from)
+        .wrap_err_with(|| format!("lock staging parent {}", parent.display()))?;
+
+    let directory = tempfile::Builder::new()
+        .prefix(".outbe-prepare-")
+        .tempdir_in(parent)
+        .wrap_err_with(|| format!("failed to create staging directory in {}", parent.display()))?;
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))?;
+    let dir_lock = openat(
+        CWD,
+        directory.path(),
+        OFlags::RDONLY | OFlags::DIRECTORY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(std::io::Error::from)
+    .wrap_err_with(|| format!("open staging dir {} for flock", directory.path().display()))?;
+    flock(&dir_lock, FlockOperation::LockExclusive)
+        .map_err(std::io::Error::from)
+        .wrap_err_with(|| format!("flock staging dir {}", directory.path().display()))?;
+    drop(parent_fd);
+    Ok((directory, dir_lock))
+}
+
+fn digest_file_cancellable(path: &Path, cancel: &std::sync::atomic::AtomicBool) -> Result<String> {
+    let mut file =
+        File::open(path).wrap_err_with(|| format!("failed to open {}", path.display()))?;
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        ensure!(
+            !cancel.load(std::sync::atomic::Ordering::Relaxed),
+            "bundle verification canceled by signal"
+        );
+        let count = file.read(&mut buffer).wrap_err("failed to hash file")?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+    }
+    Ok(hex::encode(digest.finalize()))
+}
+
+fn copy_digest_cancellable(
+    reader: &mut impl Read,
+    writer: &mut impl Write,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<String> {
+    let mut digest = Sha256::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        ensure!(
+            !cancel.load(std::sync::atomic::Ordering::Relaxed),
+            "bundle extraction canceled by signal"
+        );
+        let count = reader
+            .read(&mut buffer)
+            .wrap_err("failed to read bundle entry")?;
+        if count == 0 {
+            break;
+        }
+        digest.update(&buffer[..count]);
+        writer
+            .write_all(&buffer[..count])
+            .wrap_err("failed to write bundle entry")?;
+    }
+    Ok(hex::encode(digest.finalize()))
 }
 
 pub(crate) fn digest_file(path: &Path) -> Result<String> {
@@ -311,20 +393,6 @@ fn append_archive_bytes(
     header.set_cksum();
     archive.append_data(&mut header, path, bytes)?;
     Ok(())
-}
-
-fn copy_digest(reader: &mut impl Read, writer: &mut impl Write) -> Result<String> {
-    let mut digest = Sha256::new();
-    let mut buffer = [0_u8; 64 * 1024];
-    loop {
-        let count = reader.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        writer.write_all(&buffer[..count])?;
-        digest.update(&buffer[..count]);
-    }
-    Ok(hex::encode(digest.finalize()))
 }
 
 fn open_archive(path: &Path) -> Result<Box<dyn Read>> {
