@@ -20,6 +20,9 @@ pub struct ControllerDomain {
     pub domain: u32,
     pub hook: Address,
     pub validator_announce: Address,
+    /// The multisig ISM of the domain that the controller manages. Its
+    /// validators are the Outbe validators.
+    pub ism: Address,
 }
 
 /// Reads the domains and their contracts from the HyperlaneController.
@@ -41,10 +44,13 @@ pub async fn controller_domains(outbe: &impl Provider) -> Result<Option<Vec<Cont
             .await?;
         let validator_announce =
             IHyperlaneController::validatorAnnounceByDomainCall::abi_decode_returns(&out)?;
+        let out = call(IHyperlaneController::ismByDomainCall { domain }.abi_encode()).await?;
+        let ism = IHyperlaneController::ismByDomainCall::abi_decode_returns(&out)?;
         domains.push(ControllerDomain {
             domain,
             hook,
             validator_announce,
+            ism,
         });
     }
     Ok(Some(domains))

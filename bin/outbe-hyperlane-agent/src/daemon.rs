@@ -44,14 +44,33 @@ pub struct Daemon {
 pub struct Relay {
     pub chains: Chains,
     pub fetcher: Arc<Fetcher>,
+    /// The Hyperlane domain of Outbe, equal to its chain id.
+    pub outbe_domain: u32,
 }
 
 impl Relay {
-    pub fn new() -> Result<Self> {
+    pub fn new(outbe_domain: u32) -> Result<Self> {
         Ok(Self {
             chains: Chains::default(),
             fetcher: Arc::new(Fetcher::new()?),
+            outbe_domain,
         })
+    }
+
+    /// The entry of a running domain for the relayers.
+    fn chain(&self, origin: &Origin, config: &OriginConfig, ism: Address) -> Result<Arc<Chain>> {
+        let providers = dedup_urls(&config.rpc_urls)
+            .iter()
+            .map(|url| connect(url))
+            .collect::<Result<_>>()?;
+        Ok(Arc::new(Chain::new(
+            origin.clone(),
+            providers,
+            config.reorg_period,
+            config.relay_turn_secs,
+            ism,
+            origin.domain == self.outbe_domain,
+        )))
     }
 }
 
@@ -102,6 +121,22 @@ impl Daemon {
             relay.chains.retain(listed_has);
         }
         for d in &listed {
+            // The controller can set another ISM for a domain: the relayers
+            // must deliver for the new one.
+            if let Some(relay) = &self.relay {
+                if let Some(chain) = relay.chains.get(d.domain).filter(|c| c.ism != d.ism) {
+                    match self.origin_config(d.domain) {
+                        Ok(config) => match relay.chain(&chain.origin, config, d.ism) {
+                            Ok(chain) => {
+                                info!(domain = d.domain, ism = %d.ism, "controller ISM changed");
+                                relay.chains.insert(chain)
+                            }
+                            Err(error) => warn!(domain = d.domain, %error, "ISM change failed"),
+                        },
+                        Err(error) => warn!(domain = d.domain, %error, "ISM change failed"),
+                    }
+                }
+            }
             match domains.get_mut(&d.domain) {
                 Some(Domain::Running { hook, .. }) if *hook != d.hook => {
                     let message = format!(
@@ -173,7 +208,7 @@ impl Daemon {
         let origin = check_origin(d, config).await?;
         // The relayer reads the storage locations from the new contract.
         if let Some(relay) = &self.relay {
-            relay.chains.insert(relay_chain(&origin, config)?);
+            relay.chains.insert(relay.chain(&origin, config, d.ism)?);
         }
         Ok(self.spawn_announce(origin, config))
     }
@@ -212,7 +247,7 @@ impl Daemon {
         let wake = ws_wake(config, origin.hook, &mut tasks);
         tasks.spawn(signer.clone().run(config.clone(), wake));
         if let Some(relay) = &self.relay {
-            relay.chains.insert(relay_chain(&origin, config)?);
+            relay.chains.insert(relay.chain(&origin, config, d.ism)?);
             let relayer = Relayer {
                 origin: origin.clone(),
                 store: self.store.clone(),
@@ -237,20 +272,6 @@ impl Daemon {
             announce,
         })
     }
-}
-
-/// The entry of a running domain for the relayers.
-fn relay_chain(origin: &Origin, config: &OriginConfig) -> Result<Arc<Chain>> {
-    let providers = dedup_urls(&config.rpc_urls)
-        .iter()
-        .map(|url| connect(url))
-        .collect::<Result<_>>()?;
-    Ok(Arc::new(Chain::new(
-        origin.clone(),
-        providers,
-        config.reorg_period,
-        config.relay_turn_secs,
-    )))
 }
 
 #[cfg(test)]
@@ -327,6 +348,7 @@ mod tests {
             IHyperlaneController::domainsCall::SELECTOR => domains.abi_encode(),
             IHyperlaneController::hookByDomainCall::SELECTOR => hook.abi_encode(),
             IHyperlaneController::validatorAnnounceByDomainCall::SELECTOR => va.abi_encode(),
+            IHyperlaneController::ismByDomainCall::SELECTOR => Address::ZERO.abi_encode(),
             IHyperlaneController::hyperlaneSignerCall::SELECTOR => Address::ZERO.abi_encode(),
             IHyperlaneController::submittedIndexCall::SELECTOR
             | IHyperlaneController::targetIndexCall::SELECTOR

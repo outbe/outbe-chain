@@ -18,6 +18,9 @@ pub(crate) enum ConfigError {
     /// An `[[origin]]` block has a zero poll interval.
     #[error("[[origin]] domain {0}: interval_secs must be > 0")]
     ZeroOriginInterval(u32),
+    /// An `[[origin]]` block has a zero relay turn.
+    #[error("[[origin]] domain {0}: relay_turn_secs must be > 0")]
+    ZeroRelayTurn(u32),
     /// The controller knows a domain that has no `[[origin]]` block.
     #[error("domain {0} has no [[origin]] block in the configuration")]
     MissingOrigin(u32),

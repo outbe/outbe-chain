@@ -19,6 +19,13 @@ pub(crate) enum RelayError {
         ism: alloy_primitives::Address,
         module: u8,
     },
+    /// The message uses a multisig ISM that the HyperlaneController does not
+    /// manage.
+    #[error("the message uses ISM {ism}, but the relayer delivers only for the controller ISM {trusted}")]
+    ForeignIsm {
+        ism: alloy_primitives::Address,
+        trusted: alloy_primitives::Address,
+    },
     /// The multisig ISM returned a validator set that the relayer cannot use.
     #[error("ISM {ism} has {validators} validators and threshold {threshold}: the set must have 1 to 50 validators and a threshold above 0")]
     BadValidatorSet {

@@ -234,6 +234,11 @@ impl OriginConfig {
         if self.interval_secs == 0 {
             return Err(ConfigError::ZeroOriginInterval(self.domain).into());
         }
+        // With a zero turn every relayer sends at once and all but one pay
+        // for a reverted transaction.
+        if self.relay_turn_secs == 0 {
+            return Err(ConfigError::ZeroRelayTurn(self.domain).into());
+        }
         Ok(())
     }
 }

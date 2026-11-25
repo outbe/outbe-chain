@@ -123,7 +123,7 @@ matches the code. Unknown fields are errors.
 | `[[origin]] interval_secs` | `15` | Sync poll interval. With `ws_url`, the fallback poll. Must be > 0. |
 | `[[origin]] ws_url` | none | WebSocket endpoint. Its events only start the next poll earlier. They verify nothing. |
 | `[[origin]] index_from` | `deployedBlock()` of the hook | First origin block to read. |
-| `[[origin]] relay_turn_secs` | `40` | Relayer: length of one turn of the delivery order when this chain is the destination. |
+| `[[origin]] relay_turn_secs` | `40` | Relayer: length of one turn of the delivery order when this chain is the destination. Must be > 0. |
 
 The configuration has no contract addresses. The daemon reads them from the
 chains:
@@ -133,6 +133,7 @@ chains:
 | Domains | `HyperlaneController.domains()` |
 | MerkleTreeHook | `HyperlaneController.hookByDomain(domain)` |
 | ValidatorAnnounce | `HyperlaneController.validatorAnnounceByDomain(domain)` |
+| Multisig ISM (relayer) | `HyperlaneController.ismByDomain(domain)` |
 | Mailbox | `ValidatorAnnounce.mailbox()` on the origin chain |
 | First block | `index_from`, else `MerkleTreeHook.deployedBlock()` |
 | Active set | `ValidatorSet.getActiveValidators()` (`0x…EE00`) |
@@ -358,8 +359,11 @@ For each message, the relayer does these steps:
 4. **Check the recipient.** A recipient without code on the destination
    chain can never get the message: the relayer drops the message at once.
 5. **Read the ISM.** It reads `recipientIsm(recipient)` and then
-   `validatorsAndThreshold(message)`. Only the message-id multisig ISM is
-   supported, also behind routing ISMs.
+   `validatorsAndThreshold(message)`. The ISM must be
+   `HyperlaneController.ismByDomain(destination)`, also behind routing ISMs.
+   The recipient contract names its ISM, so without this rule any sender
+   could give the relayer a validator set of its own. A message with another
+   ISM is dropped at once.
 6. **Read the signatures.** It reads `checkpoint_<index>_with_id.json` from
    the newest announced location of each ISM validator, its own location
    included. It reads the validators in batches of 1.5 times the threshold
@@ -390,8 +394,9 @@ When the first relayer works, the others send nothing.
 | Retry | A failed attempt follows the upstream schedule: 5 s, 10 s, 30 s, 60 s, then 3 minutes, and longer pauses later. Missing signatures get three fast retries of 2 s. Every error counts as a failed attempt, also an RPC error. The relayer then reads from the next RPC endpoint. |
 | Order | Messages with no failed attempt go first, then the retries by the time of their next attempt. |
 | Dropped | After 66 attempts (about two weeks) the row stays as dropped. `/status` counts it. Anyone can still deliver the message by hand. |
-| One transaction at a time | The relayer sends one `process` transaction for each chain and waits up to 90 seconds for the receipt. The relayer, the liveness and the announce never read a nonce at the same time. |
+| One transaction at a time | The relayer sends one `process` transaction for each chain and waits up to 90 seconds for the receipt. On one chain, the relayer, the liveness and the announce never read a nonce at the same time. |
 | Gas price | EIP-1559 fees. On a chain with no base fee or a zero base fee, a legacy transaction with the gas price of the node. |
+| Fee cap on Outbe | A delivery to Outbe has a fee cap of 10 base fees. It pays the base fee of its block, not the cap. A delivery that stays in the pool also stops every `submitCheckpoint` of `H` behind it, because `H` has one nonce sequence. ZeroFee removes the fee, not the place in that sequence. |
 | Storage locations | Only `s3+http://` and `s3+https://` locations. No redirect, a 10 second timeout, a 50 KiB body. |
 | ISM limits | At most 13 ISMs in a row. The validator set must have 1 to 50 validators and a threshold above 0. |
 | Payment | The relayer does not check the IGP payment. It delivers every message that the ISM accepts. |
@@ -403,8 +408,9 @@ When the first relayer works, the others send nothing.
 | First sync memory | Unverified leaves stay in memory until the vote verifies them. Expect about 1 GB per 5M leaves on the first sync. |
 | Outbe `eth_getLogs` | The Outbe RPC rejects ranges above 100,000 blocks. The sync uses at most 100,000 and halves the range after a range error. |
 | `metadata_latest.json` | Not served. The relayer does not read it. |
-| Relayer history | The relayer takes in the older messages after the new ones, 256 leaves for each poll: one `delivered` call for each old message. An old leaf whose `Dispatch` log the RPC no longer has is passed with an error in the log. |
+| Relayer history | The relayer takes in the older messages after the new ones, 256 leaves for each poll: one `delivered` call for each old message. An old leaf whose `Dispatch` log no RPC endpoint of the chain has is passed with an error in the log. |
 | Relayer gas price | No gas price escalation. A transaction that stays in the pool stops the deliveries to that chain until a block includes it. |
-| Relayer ISM types | Only the message-id multisig ISM and the routing ISM. A message with another ISM is retried and then dropped. |
+| Relayer ISM | Only the multisig ISM of the HyperlaneController for the destination domain, also behind routing ISMs. A recipient with its own ISM gets no delivery from this relayer: its owner must run a relayer. |
+| Dropped rows | The relayer reads `delivered(id)` for a dropped row once an hour and removes the row when someone delivered the message. |
 | Relayer differences from upstream | No cache of contract reads and checkpoints. No gas payment check. The delivery is final at a final block of the destination (`reorg_period`), not after a fixed 10 minutes. The Classic submit path, not Lander. |
 | Private key | The key is plaintext in the config file. |

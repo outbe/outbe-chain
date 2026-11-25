@@ -1,5 +1,7 @@
 //! Outbe RPC access: read-only calls and signed transaction submission.
 
+use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use alloy_eips::{eip1559::MIN_PROTOCOL_BASE_FEE, BlockId};
@@ -27,10 +29,20 @@ pub async fn eth_call<P: Provider>(
         .with_context(|| "eth_call failed")
 }
 
-/// One transaction at a time reads its nonce and goes to the pool. The
-/// liveness, the announce and the relayer send with the same key `H`: without
-/// this lock, two of them can read the same nonce.
-pub static SEND_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// The send lock of one chain. One transaction at a time reads its nonce and
+/// goes to the pool of that chain. The liveness, the announce and the relayer
+/// send with the same key `H`: without this lock, two of them can read the
+/// same nonce. The lock is for each chain, so a slow endpoint of one chain
+/// does not delay a transaction on another chain.
+pub fn send_lock(chain_id: u64) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: Mutex<BTreeMap<u64, Arc<tokio::sync::Mutex<()>>>> = Mutex::new(BTreeMap::new());
+    LOCKS
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .entry(chain_id)
+        .or_default()
+        .clone()
+}
 
 pub struct TxSender<'a> {
     /// A provider of [`crate::sync::connect`], with its time limits.
@@ -61,7 +73,8 @@ pub async fn send_tx(sender: &TxSender<'_>, to: Address, calldata: &[u8]) -> Res
             .max(MIN_PROTOCOL_BASE_FEE as u128);
         tx = tx.max_fee_per_gas(fee_cap).max_priority_fee_per_gas(0);
     }
-    let _one_at_a_time = SEND_LOCK.lock().await;
+    let lock = send_lock(sender.chain_id);
+    let _one_at_a_time = lock.lock().await;
     let pending = provider
         .send_transaction(tx)
         .await

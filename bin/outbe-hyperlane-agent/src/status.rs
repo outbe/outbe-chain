@@ -8,7 +8,19 @@ use serde_json::Value;
 
 /// The URL of the health server of this host for a `[health] bind_address`.
 pub fn local_url(bind_address: &str) -> String {
-    let address = bind_address.replace("0.0.0.0", "127.0.0.1");
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+
+    let address = match bind_address.parse::<SocketAddr>() {
+        // A server on every address answers on the loopback address.
+        Ok(bound) if bound.ip().is_unspecified() => {
+            let loopback = match bound {
+                SocketAddr::V4(_) => IpAddr::V4(Ipv4Addr::LOCALHOST),
+                SocketAddr::V6(_) => IpAddr::V6(Ipv6Addr::LOCALHOST),
+            };
+            SocketAddr::new(loopback, bound.port()).to_string()
+        }
+        _ => bind_address.to_owned(),
+    };
     format!("http://{address}/status")
 }
 
@@ -142,5 +154,7 @@ mod tests {
         assert_eq!(line("6 ")[1..8], ["0", "-", "-", "-", "-", "-", "-"]);
         assert!(text.contains("no [[origin]] block"));
         assert_eq!(local_url("0.0.0.0:9003"), "http://127.0.0.1:9003/status");
+        assert_eq!(local_url("10.0.0.0:9003"), "http://10.0.0.0:9003/status");
+        assert_eq!(local_url("[::]:9003"), "http://[::1]:9003/status");
     }
 }

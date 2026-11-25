@@ -288,6 +288,13 @@ impl DomainSync {
         (self.head, self.scanned)
     }
 
+    /// True when the sync read up to the last final block and every leaf
+    /// that it read is verified. The store then has the newest leaf, once
+    /// the caller committed the last batch.
+    pub fn caught_up(&self) -> bool {
+        self.head > 0 && self.scanned >= self.head && self.pending.is_empty()
+    }
+
     fn rotate_source(&mut self) {
         self.source = (self.source + 1) % self.endpoints.len();
     }

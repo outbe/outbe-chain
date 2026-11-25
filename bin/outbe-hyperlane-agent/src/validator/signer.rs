@@ -60,6 +60,9 @@ pub struct DomainSigner {
     /// sync read. See [`DomainSync::progress`].
     head: AtomicU64,
     scanned: AtomicU64,
+    /// The store has the newest leaf of the origin chain. See
+    /// [`DomainSync::caught_up`].
+    synced: AtomicBool,
     /// Wakes the backfill worker after a commit or a halt.
     wake: Notify,
 }
@@ -76,6 +79,7 @@ impl DomainSigner {
             stalled: AtomicBool::new(false),
             head: AtomicU64::new(0),
             scanned: AtomicU64::new(0),
+            synced: AtomicBool::new(false),
             wake: Notify::new(),
         })
     }
@@ -108,6 +112,12 @@ impl DomainSigner {
         let head = self.head.load(Ordering::Relaxed);
         let scanned = self.scanned.load(Ordering::Relaxed);
         (head > 0).then(|| (head, head.saturating_sub(scanned)))
+    }
+
+    /// True when the store has the newest leaf of the origin chain. The
+    /// relayer starts at that leaf.
+    pub fn synced(&self) -> bool {
+        self.synced.load(Ordering::Relaxed)
     }
 
     /// Syncs, signs and backfills the domain until a reorg halts it. A domain
@@ -160,6 +170,9 @@ impl DomainSigner {
                     Err(error) => warn!(domain, %error, "sync tick failed"),
                 }
             }
+            // After the commit: the leaves of the batch are in the store.
+            let synced = sync.as_ref().is_some_and(DomainSync::caught_up);
+            self.synced.store(synced, Ordering::Relaxed);
             if !self.halted() {
                 wait_next(interval, ws_wake.as_deref()).await;
             }

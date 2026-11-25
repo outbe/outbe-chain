@@ -202,7 +202,7 @@ async fn main() -> Result<()> {
         health.clone(),
     );
     let relay = match config.relayer.enabled {
-        true => Some(daemon::Relay::new()?),
+        true => Some(daemon::Relay::new(u32::try_from(config.chain.chain_id)?)?),
         false => None,
     };
     health.set_relayer(relay.is_some());

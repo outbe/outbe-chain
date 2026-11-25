@@ -26,7 +26,7 @@ use eyre::Result;
 use tracing::warn;
 
 use crate::abi::{IIsm, IMailbox, IValidatorAnnounce};
-use crate::client::{eth_call, wait_receipt, SEND_LOCK};
+use crate::client::{eth_call, send_lock, wait_receipt};
 use crate::config::ReorgPeriod;
 use crate::errors::RelayError;
 use crate::sync::Origin;
@@ -41,6 +41,27 @@ const MAX_VALIDATOR_SET_SIZE: usize = 50;
 /// Gas on top of the estimate, as upstream `GAS_LIMIT_BUFFER`.
 const GAS_LIMIT_BUFFER: u64 = 75_000;
 const RECEIPT_TIMEOUT: Duration = Duration::from_secs(90);
+/// The fee cap of a delivery to Outbe, in base fees. See [`fee_cap`].
+const OUTBE_FEE_CAP_BASE_FEES: u128 = 10;
+
+/// The `maxFeePerGas` of a delivery. A transaction pays the base fee of its
+/// block, not this cap: a high cap costs nothing while the chain is calm.
+///
+/// On Outbe the cap is 10 base fees. A delivery that stays in the pool,
+/// because the base fee went above its cap, also stops every
+/// `submitCheckpoint` behind it: the key has one nonce sequence, and ZeroFee
+/// removes the fee of a transaction, not its place in that sequence. Missed
+/// checkpoints lead to a jail.
+fn fee_cap(estimate: u128, base_fee: u128, priority_fee: u128, outbe: bool) -> u128 {
+    match outbe {
+        true => estimate.max(
+            base_fee
+                .saturating_mul(OUTBE_FEE_CAP_BASE_FEES)
+                .saturating_add(priority_fee),
+        ),
+        false => estimate,
+    }
+}
 
 /// One running domain: the origin of its messages and the destination of the
 /// messages of the other domains.
@@ -50,6 +71,12 @@ pub struct Chain {
     pub period: ReorgPeriod,
     /// Length of one turn of the delivery order, in seconds.
     pub turn_secs: u64,
+    /// `HyperlaneController.ismByDomain` of this domain: the only ISM whose
+    /// messages the relayer delivers to this chain.
+    pub ism: Address,
+    /// This chain is Outbe: the liveness sends `submitCheckpoint` here with
+    /// the same key and the same nonce sequence.
+    pub outbe: bool,
     /// The provider in use. It moves after an RPC error.
     current: AtomicUsize,
     /// One `process` transaction at a time: the relayers of all origins send
@@ -63,12 +90,16 @@ impl Chain {
         providers: Vec<DynProvider>,
         period: ReorgPeriod,
         turn_secs: u64,
+        ism: Address,
+        outbe: bool,
     ) -> Self {
         Self {
             origin,
             providers,
             period,
             turn_secs,
+            ism,
+            outbe,
             current: AtomicUsize::new(0),
             send: tokio::sync::Mutex::new(()),
         }
@@ -142,12 +173,20 @@ pub async fn delivered(
 }
 
 /// The validators and the threshold of the ISM that checks `message` on the
-/// destination chain.
+/// destination chain. The ISM must be `trusted`, the ISM of the
+/// HyperlaneController.
+///
+/// The recipient contract names its ISM, and the sender chooses the
+/// recipient. Without this check, any sender gives the relayer a validator
+/// set of its own: the relayer then reads the storage locations that the
+/// sender announced, and pays the gas for a message that no Outbe validator
+/// checked.
 pub async fn multisig_ism(
     provider: &DynProvider,
     mailbox: Address,
     recipient: B256,
     message: &[u8],
+    trusted: Address,
 ) -> Result<(Vec<Address>, usize)> {
     let call = |to: Address, data: Vec<u8>| eth_call(provider, to, data, BlockId::latest());
     let message = Bytes::copy_from_slice(message);
@@ -169,6 +208,9 @@ pub async fn multisig_ism(
                 ism = IIsm::routeCall::abi_decode_returns(&out)?;
             }
             ISM_MESSAGE_ID_MULTISIG => {
+                if ism != trusted {
+                    return Err(RelayError::ForeignIsm { ism, trusted }.into());
+                }
                 let read = IIsm::validatorsAndThresholdCall { message };
                 let out = call(ism, read.abi_encode()).await?;
                 let set = IIsm::validatorsAndThresholdCall::abi_decode_returns(&out)?;
@@ -265,11 +307,24 @@ pub async fn process(
         .await
         .ok()
         .and_then(|history| history.latest_block_base_fee());
-    if base_fee.is_none_or(|fee| fee == 0) {
-        tx = tx.gas_price(provider.get_gas_price().await?);
+    match base_fee {
+        None | Some(0) => tx = tx.gas_price(provider.get_gas_price().await?),
+        Some(base_fee) => {
+            let fees = provider.estimate_eip1559_fees().await?;
+            let priority = fees.max_priority_fee_per_gas;
+            tx = tx
+                .max_priority_fee_per_gas(priority)
+                .max_fee_per_gas(fee_cap(
+                    fees.max_fee_per_gas,
+                    base_fee,
+                    priority,
+                    dest.outbe,
+                ));
+        }
     }
+    let lock = send_lock(provider.get_chain_id().await?);
     let sent = {
-        let _one_at_a_time = SEND_LOCK.lock().await;
+        let _one_at_a_time = lock.lock().await;
         // ponytail: no gas price escalation; a transaction that stays in the pool stops the deliveries to this chain until a block includes it
         let pending = provider.get_transaction_count(from).pending().await?;
         if pending > provider.get_transaction_count(from).await? {
@@ -315,6 +370,16 @@ mod tests {
         // A relayer that is not an active validator has no turn.
         let outsider = Address::repeat_byte(9);
         assert_eq!(turn_position(&active, outsider, B256::ZERO), None);
+    }
+
+    #[test]
+    fn fee_cap_of_outbe_is_ten_base_fees() {
+        // Another chain: the estimate of the node, here 2 base fees + tip.
+        assert_eq!(fee_cap(21, 10, 1, false), 21);
+        // Outbe: 10 base fees + tip, so the delivery passes a base fee of 100.
+        assert_eq!(fee_cap(21, 10, 1, true), 101);
+        // A higher estimate stays.
+        assert_eq!(fee_cap(500, 10, 1, true), 500);
     }
 
     #[test]
