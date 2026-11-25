@@ -1,15 +1,19 @@
 //! Outbe `DispatchFn` adapter for the PayNote precompile, the payable-selector
 //! policy, and the selector-sensitive base gas.
 //!
-//! Deposits, proof-authorized merges and views are public. Settlement spending
-//! remains the Rust-only [`crate::api::consume`].
+//! Deposits, proof-authorized merges and views are public. Only the settlement
+//! factories may call `consume`. They reach it through [`crate::api::consume`].
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
-use outbe_primitives::dispatch::{dispatch_call, mutate_void, reject_value, view};
+use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, reject_value, view};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::{
+    GEM_FACTORY_ADDRESS, INTEX_FACTORY_ADDRESS, NOD_FACTORY_ADDRESS,
+};
 
+use crate::errors::PayNoteError;
 use crate::runtime;
 use crate::schema::PayNoteContract;
 
@@ -27,6 +31,14 @@ pub const PAYNOTE_DEPOSIT_BASE_GAS: u64 = 850_000;
 /// Calldata and persistent storage operations are charged separately.
 pub const PAYNOTE_MERGE_BASE_GAS: u64 =
     PAYNOTE_DEPOSIT_BASE_GAS + outbe_primitives::storage::gas::ZK_VERIFY_GAS;
+
+/// The modules that may spend a note. Each one checks the claim against the
+/// settlement it performs.
+const SPENDERS: [Address; 3] = [
+    NOD_FACTORY_ADDRESS,
+    GEM_FACTORY_ADDRESS,
+    INTEX_FACTORY_ADDRESS,
+];
 
 /// Base gas for the read-only views: a handful of storage reads, plus the
 /// root-window scan for `isKnownRoot`.
@@ -53,6 +65,18 @@ pub fn dispatch(
             }),
             mergePayNotes(c) => mutate_void(&storage, c, caller, |_, c| {
                 runtime::merge_pay_notes(&storage, &c.proof)
+            }),
+            consume(c) => mutate(&storage, c, caller, |caller, c| {
+                if !SPENDERS.contains(&caller) {
+                    return Err(PayNoteError::UnauthorizedSpender.into());
+                }
+                let claim = runtime::consume(&storage, &c.proof)?;
+                Ok(IPayNote::consumeReturn {
+                    asset: claim.asset,
+                    spendAmount: claim.spend_amount,
+                    context: claim.context,
+                    nullifier: claim.nullifier,
+                })
             }),
             maxMergeInputs(c) => view(c, |_| runtime::max_merge_inputs()),
             currentRoot(c) => view(c, |_| {
@@ -84,7 +108,9 @@ pub fn dispatch(
 pub fn base_gas(input: &[u8]) -> u64 {
     match input.first_chunk::<4>() {
         Some(&IPayNote::depositCall::SELECTOR) => PAYNOTE_DEPOSIT_BASE_GAS,
-        Some(&IPayNote::mergePayNotesCall::SELECTOR) => PAYNOTE_MERGE_BASE_GAS,
+        Some(&IPayNote::mergePayNotesCall::SELECTOR) | Some(&IPayNote::consumeCall::SELECTOR) => {
+            PAYNOTE_MERGE_BASE_GAS
+        }
         Some(&IPayNote::currentRootCall::SELECTOR)
         | Some(&IPayNote::maxMergeInputsCall::SELECTOR)
         | Some(&IPayNote::leafCountCall::SELECTOR)

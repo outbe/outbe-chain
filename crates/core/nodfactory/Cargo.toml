@@ -12,6 +12,7 @@ outbe-primitives.workspace = true
 outbe-nod.workspace = true
 outbe-promislimit.workspace = true
 outbe-vaultrouter.workspace = true
+outbe-paynote.workspace = true
 outbe-oracle.workspace = true
 outbe-gratisfactory.workspace = true
 outbe-tee.workspace = true

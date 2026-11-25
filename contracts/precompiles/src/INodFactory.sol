@@ -115,6 +115,17 @@ interface INodFactory {
     /// it reverts `CostAboveCap`. The call takes only the cost.
     function settleNod(uint256 nodId, address asset, uint256 snapshotId, uint256 amountCapMinor) external;
 
+    /// @notice Pay an uncalled Nod, or a called one at or before its settlement
+    /// deadline, by spending a PayNote. Any caller may submit the proof. The Nod
+    /// stays with its owner. The pool routes the spent amount into the reserve
+    /// vault of the asset.
+    /// @param payNoteProof `outbe.paynote` spend proof. It must:
+    /// - be bound to this Nod and the snapshot `quoteSettlement` names (zero on
+    ///   the reference rail)
+    /// - carry an asset the Nod accepts on either currency rail
+    /// - spend exactly the cost
+    function settleNodWithPayNote(uint256 nodId, bytes calldata payNoteProof) external;
+
     /// @notice What settling `nodId` with `asset` costs, and which of the Nod's
     /// two currencies that asset settles on. Only the Nod owner may call this
     /// quote; reverts for any other caller or for an asset the Nod does not accept.

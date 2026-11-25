@@ -11,10 +11,10 @@ pragma solidity ^0.8.0;
 /// transfer it actually performed. Opaque caller-supplied commitments are
 /// prohibited, so Merkle membership attests both the asset and the amount.
 ///
-/// Spending is deliberately **not** on this interface. It consumes a frozen
-/// `outbe.paynote`, version 1.3.0, UltraHonkKeccak proof and is exposed only as
-/// the in-process Rust API `outbe_paynote::api::consume`, for integration by
-/// other precompile modules.
+/// Spending consumes a frozen `outbe.paynote`, version 1.3.0, UltraHonkKeccak
+/// proof. Only the settlement factories (NodFactory, GemFactory, IntexFactory)
+/// may call `consume`. An EOA pays with a note through the factory's
+/// `settle…WithPayNote` method.
 interface IPayNote {
     /// @notice The pool holds no vault for this asset.
     error AssetVaultMissing(address asset);
@@ -42,6 +42,16 @@ interface IPayNote {
     /// @dev Accepts the active outbe.paynote.merge combined proof. Amounts and
     /// keys remain private. No tokens move and no settlement is performed.
     function mergePayNotes(bytes calldata proof) external;
+
+    /// @notice Spend one note for a settlement. Only NodFactory, GemFactory and
+    /// IntexFactory may call it.
+    /// @dev Verifies the proof, nullifies the note, appends the change note, if
+    /// there is one, and routes `spendAmount` of `asset` from the pool into the
+    /// reserve vault of the asset. The caller must check `asset`, `spendAmount`
+    /// and `context` against the settlement it performs.
+    function consume(bytes calldata proof)
+        external
+        returns (address asset, uint256 spendAmount, bytes32 context, bytes32 nullifier);
 
     /// @notice Maximum input count supported by the active merge circuit.
     function maxMergeInputs() external view returns (uint32 count);
@@ -74,7 +84,7 @@ interface IPayNote {
         bytes32 indexed commitment, uint32 leafIndex, bytes32 rootAfter, address indexed asset, uint256 noteAmount
     );
 
-    /// @notice A note was spent through the Rust `consume` API.
+    /// @notice A note was spent through `consume`.
     /// @param asset The spent note's bound ERC20 (indexed).
     /// @param context Settlement statement bound by the proof (indexed).
     /// @param nullifier The spent nullifier (indexed).

@@ -57,6 +57,16 @@ interface IIntexFactory {
         uint256 amountCapMinor
     ) external;
 
+    /// @notice Settle like `settleIntex`, paying the cost by spending a PayNote.
+    /// @dev The pool routes the spent amount into the reserve vault of the asset.
+    /// @param payNoteProof `outbe.paynote` spend proof. Must be bound to this series,
+    ///        `owner`, `units` and the snapshot `quoteSettlement` names (zero on
+    ///        the reference rail), carry a token registered with the vault router under
+    ///        either of the series' currencies, and spend exactly the settlement cost.
+    ///        Anyone may submit it.
+    function settleIntexWithPayNote(uint256 intexId, address owner, uint256 units, bytes calldata payNoteProof)
+        external;
+
     /// @notice What settling `units` of `intexId` with `asset` costs,
     ///         and which of the series' two currencies that asset settles on. Priced
     ///         exactly as `settleIntex` charges it. Reverts for an asset the series does

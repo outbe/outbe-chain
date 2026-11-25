@@ -13,6 +13,7 @@ outbe-core-common.workspace = true
 outbe-gem.workspace = true
 outbe-intex.workspace = true
 outbe-vaultrouter.workspace = true
+outbe-paynote.workspace = true
 outbe-promisfactory.workspace = true
 outbe-promislimit.workspace = true
 tracing.workspace = true

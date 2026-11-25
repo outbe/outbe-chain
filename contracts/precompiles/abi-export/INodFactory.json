@@ -226,6 +226,24 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "settleNodWithPayNote",
+    "inputs": [
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "payNoteProof",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "NodSeriesCalled",
     "inputs": [

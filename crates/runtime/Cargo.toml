@@ -150,6 +150,7 @@ outbe-nodfactory = { workspace = true, features = ["test-utils"] }
 outbe-oracle = { workspace = true, features = ["test-utils"] }
 outbe-tee = { workspace = true, features = ["test-utils"] }
 outbe-vaultrouter = { workspace = true, features = ["test-utils"] }
+outbe-paynote = { workspace = true, features = ["test-utils"] }
 outbe-zk.workspace = true
 outbe-teeregistry.workspace = true
 outbe-validatorset = { workspace = true, features = ["test-utils"] }

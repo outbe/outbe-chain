@@ -237,43 +237,92 @@ pub fn settle_intex(
     payment: SettlementPayment,
     amount_cap_minor: U256,
 ) -> Result<()> {
-    let OwnerUnits {
-        series_id,
-        owner,
-        units,
-    } = held;
     let SettlementPayment {
         payer,
         asset,
         snapshot_id,
     } = payment;
-    if owner.is_zero() || payer.is_zero() {
+    if payer.is_zero() {
         return Err(IntexFactoryError::ZeroAddress.into());
     }
-    if units.is_zero() {
-        return Err(IntexFactoryError::ZeroUnits.into());
-    }
-
-    let series = outbe_intex::api::get_series(storage, series_id)?;
-    require_settleable(storage, &series)?;
-
-    let balance = nft_balance_of(storage, owner, outbe_intex::intex_id(series_id))?;
-    if balance.is_zero() {
-        return Err(IntexFactoryError::ZeroBalance.into());
-    }
-    if units > balance {
-        return Err(IntexFactoryError::UnitsExceedBalance.into());
-    }
-
+    let series = load_settleable(storage, &held)?;
     let quote = settlement::quote(
         storage,
         asset,
         pricing::currencies(&series),
-        &pricing::settlement_cost(&series, units),
+        &pricing::settlement_cost(&series, held.units),
     )?;
     quote.require_snapshot(snapshot_id)?;
     settlement::require_funds(storage, payer, asset, amount_cap_minor)?;
     quote.require_within_cap(amount_cap_minor)?;
+    settle_units(storage, &held, &series, || {
+        settlement::collect(storage, payer, asset, quote.payment_minor)?;
+        Ok((asset, quote.payment_minor))
+    })
+}
+
+/// Settle by spending a PayNote bound to this holding, unit count and the snapshot
+/// of the quote. The note must spend exactly the cost. Any caller may relay it. The
+/// settled units stay with `owner`. The pool routes the spent amount into the
+/// reserve vault.
+pub fn settle_intex_with_paynote(
+    storage: &StorageHandle<'_>,
+    held: OwnerUnits,
+    paynote_proof: &[u8],
+) -> Result<()> {
+    let series = load_settleable(storage, &held)?;
+    settle_units(storage, &held, &series, || {
+        let statement = (
+            outbe_paynote::api::SettlementDomain::Intex,
+            outbe_paynote::api::intex_holding_target(held.series_id.as_bytes(), held.owner),
+            held.units,
+        );
+        let (claim, quote) =
+            outbe_paynote::api::settle(storage, paynote_proof, statement, |asset| {
+                settlement::quote(
+                    storage,
+                    asset,
+                    pricing::currencies(&series),
+                    &pricing::settlement_cost(&series, held.units),
+                )
+            })?;
+        Ok((claim.asset, quote.payment_minor))
+    })
+}
+
+/// The series of `held` when the owner holds at least `units` of a settleable series.
+fn load_settleable(storage: &StorageHandle<'_>, held: &OwnerUnits) -> Result<SeriesRecord> {
+    if held.owner.is_zero() {
+        return Err(IntexFactoryError::ZeroAddress.into());
+    }
+    if held.units.is_zero() {
+        return Err(IntexFactoryError::ZeroUnits.into());
+    }
+    let series = outbe_intex::api::get_series(storage, held.series_id)?;
+    require_settleable(storage, &series)?;
+    let balance = nft_balance_of(storage, held.owner, outbe_intex::intex_id(held.series_id))?;
+    if balance.is_zero() {
+        return Err(IntexFactoryError::ZeroBalance.into());
+    }
+    if held.units > balance {
+        return Err(IntexFactoryError::UnitsExceedBalance.into());
+    }
+    Ok(series)
+}
+
+/// Burns and records the settled units, then takes the payment `pay` makes, which
+/// returns the asset and the amount it took. One checkpoint covers all of it.
+fn settle_units(
+    storage: &StorageHandle<'_>,
+    held: &OwnerUnits,
+    series: &SeriesRecord,
+    pay: impl FnOnce() -> Result<(Address, U256)>,
+) -> Result<()> {
+    let OwnerUnits {
+        series_id,
+        owner,
+        units,
+    } = *held;
     storage.clone().with_checkpoint(|| {
         // The units move before payment so a token callback cannot settle them
         // twice. A failed payment rolls the move back.
@@ -293,7 +342,7 @@ pub fn settle_intex(
             u32::try_from(units).map_err(|_| IntexFactoryError::SettledUnitsExceedU32)?;
         outbe_intex::api::record_settled_units(storage, series_id, owner, settled_units)?;
 
-        settlement::collect(storage, payer, asset, quote.payment_minor)?;
+        let (asset, amount_minor) = pay()?;
 
         IntexContract::new(storage.clone()).emit(outbe_intex::precompile::IIntex::IntexSettled {
             intexId: outbe_intex::intex_id(series_id),
@@ -301,7 +350,7 @@ pub fn settle_intex(
             issuanceCurrency: series.issuance_currency,
             referenceCurrency: series.reference_currency,
             asset,
-            amountMinor: quote.payment_minor,
+            amountMinor: amount_minor,
             units: settled_units,
         })
     })

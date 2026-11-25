@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, U256};
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_core_common::addresses::INTEX_NFT1155_ADDRESS;
 use outbe_core_common::markup::marked_up;
@@ -381,6 +381,41 @@ pub fn settle_gem(
             issuanceCurrency: gem.item.issuance_currency,
             referenceCurrency: gem.item.reference_currency,
             asset,
+            amountMinor: quote.payment_minor,
+        })
+    })
+}
+
+/// Settles a gem by spending a PayNote bound to this gem and the snapshot of the
+/// quote. The note must spend exactly the cost. Any caller may relay it. The pool
+/// routes the spent amount into the reserve vault.
+pub fn settle_gem_with_paynote(
+    storage: &StorageHandle<'_>,
+    gem_id: U256,
+    paynote_proof: &[u8],
+) -> Result<()> {
+    let gem = load_view(storage, gem_id)?;
+    require_settleable(storage, &gem)?;
+    storage.clone().with_checkpoint(|| {
+        // Settle before the spend, as `settle_gem` does.
+        let (item, group) =
+            gem_api::load_pair(storage, gem_id)?.ok_or(GemFactoryError::GemNotFound)?;
+        gem_api::record_settled(storage, item, group)?;
+        let statement = (
+            outbe_paynote::api::SettlementDomain::Gem,
+            B256::from(gem_id),
+            U256::ONE,
+        );
+        let (claim, quote) =
+            outbe_paynote::api::settle(storage, paynote_proof, statement, |asset| {
+                settlement::quote(storage, asset, currencies(&gem), &settlement_cost(&gem))
+            })?;
+        GemContract::new(storage.clone()).emit(GemSettled {
+            gemId: gem_id,
+            owner: gem.item.owner,
+            issuanceCurrency: gem.item.issuance_currency,
+            referenceCurrency: gem.item.reference_currency,
+            asset: claim.asset,
             amountMinor: quote.payment_minor,
         })
     })

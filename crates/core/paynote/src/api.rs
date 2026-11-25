@@ -1,18 +1,23 @@
 //! Cross-module API for the PayNote pool.
 //!
-//! In-process Rust surface for other precompile modules (gem, nod, …). This is
-//! deliberately **not** a Solidity ABI. Spending a note is a privileged
-//! in-runtime transition, not something an EOA calls directly. Thus `consume`
-//! never appears in `IPayNote.sol` and never routes through dispatch.
+//! Rust surface for other precompile modules (gem, nod, …). Spending a note is
+//! a privileged transition, not something an EOA calls directly. `consume`
+//! reaches `IPayNote.consume` by an EVM sub-call, so the pool is `msg.sender`
+//! for the token calls that route the spent value. Only the settlement
+//! factories may make that call.
 //!
 //! Callers depend on this module, not on [`crate::runtime`] or
 //! [`crate::state`]-level internals.
 
-use alloy_primitives::B256;
-use outbe_primitives::error::Result;
+use alloy_primitives::{Address, B256, U256};
+use alloy_sol_types::SolCall;
+use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
+use outbe_system_common::addresses::PAYNOTE_ADDRESS;
+use outbe_vaultrouter::settlement::Quote;
 
-use crate::runtime;
+use crate::errors::PayNoteError;
+use crate::precompile::IPayNote;
 use crate::schema::PayNoteContract;
 
 pub use crate::runtime::PayNoteClaim;
@@ -42,10 +47,62 @@ pub use crate::context::{intex_holding_target, settlement_context, SettlementDom
 /// - the proof fails verification.
 /// - the vault routing fails.
 ///
+/// - the caller is not a settlement factory.
+///
 /// The nullifier write, the change append and the vault routing roll back
 /// together with the effects of the caller.
 pub fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNoteClaim> {
-    runtime::consume(storage, proof)
+    let ret = storage.call(
+        PAYNOTE_ADDRESS,
+        U256::ZERO,
+        IPayNote::consumeCall {
+            proof: proof.to_vec().into(),
+        }
+        .abi_encode()
+        .into(),
+    )?;
+    let ret = IPayNote::consumeCall::abi_decode_returns(&ret)
+        .map_err(|_| PrecompileError::Fatal("PayNote consume returned undecodable data".into()))?;
+    Ok(PayNoteClaim {
+        asset: ret.asset,
+        context: ret.context,
+        spend_amount: ret.spendAmount,
+        nullifier: ret.nullifier,
+    })
+}
+
+/// Pay one settlement with a note: [`consume`] the proof, price the settlement
+/// in the asset of the note with `price`, and require the proof to bind this
+/// settlement and to spend exactly its cost.
+///
+/// `target` and `units` are the arguments of [`settlement_context`]. The
+/// snapshot comes from the quote. Run it inside the checkpoint of the caller,
+/// after the state transition, so a failure here rolls the transition back.
+pub fn settle(
+    storage: &StorageHandle<'_>,
+    proof: &[u8],
+    (domain, target, units): (SettlementDomain, B256, U256),
+    price: impl FnOnce(Address) -> Result<Quote>,
+) -> Result<(PayNoteClaim, Quote)> {
+    let claim = consume(storage, proof)?;
+    let quote = price(claim.asset)?;
+    let expected = settlement_context(domain, target, units, quote.snapshot_id())?;
+    if claim.context != expected {
+        return Err(PayNoteError::ContextMismatch {
+            expected,
+            actual: claim.context,
+        }
+        .into());
+    }
+    // Exact: the pool routes the whole spend into the vault.
+    if claim.spend_amount != quote.payment_minor {
+        return Err(PayNoteError::CostMismatch {
+            covered: claim.spend_amount,
+            required: quote.payment_minor,
+        }
+        .into());
+    }
+    Ok((claim, quote))
 }
 
 /// Whether `root` is inside the acceptance window. Useful for pre-flighting a

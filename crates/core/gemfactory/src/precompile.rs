@@ -64,6 +64,9 @@ pub fn dispatch(
                     c.amountCapMinor,
                 )
             }),
+            settleGemWithPayNote(c) => mutate_void(&storage, c, caller, |_, c| {
+                runtime::settle_gem_with_paynote(&storage, c.gemId, &c.payNoteProof)
+            }),
             minePromis(c) => mutate(&storage, c, caller, |_sender, c| {
                 let auth = outbe_promisfactory::api::ModifyAuth {
                     mac: c.mac.0,
