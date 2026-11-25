@@ -3,8 +3,9 @@ use std::{net::Ipv4Addr, path::PathBuf, time::Duration};
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use eyre::Result;
 use outbe_operator_node_role as validator;
+use outbe_operator_vm_image as vm_image;
 
-use crate::{disk, network, vm};
+use crate::{disk, image, network, vm};
 
 const LEGACY_VM_HEADING: &str =
     "Legacy multi-founder mode (--artifacts, moves to outbe-net-up in S6)";
@@ -21,6 +22,8 @@ pub struct Cli {
 enum Command {
     /// Prepare a VM data disk for a single node role.
     Disk(DiskArgs),
+    /// Build, fetch, verify, list, and remove local Outbe guest OS images.
+    Image(Box<ImageArgs>),
     /// Build and operate a new founding-validator network.
     Network(NetworkArgs),
     /// Prepare, synchronize, promote, and inspect a validator host.
@@ -96,6 +99,139 @@ enum DiskCommand {
         /// Target block device path (not yet supported; see S3 probe / owner decision R-3).
         #[arg(long)]
         device: Option<PathBuf>,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Args)]
+struct ImageArgs {
+    #[command(subcommand)]
+    command: ImageCommand,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum ImageFlavorArg {
+    Dev,
+    Prod,
+}
+
+impl From<ImageFlavorArg> for vm_image::Flavor {
+    fn from(value: ImageFlavorArg) -> Self {
+        match value {
+            ImageFlavorArg::Dev => Self::Dev,
+            ImageFlavorArg::Prod => Self::Prod,
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
+enum ImageCommand {
+    /// Build a reproducible dstack guest OS image and its deterministic `.tar.zst` archive(s).
+    Build {
+        /// Clean Outbe repository checkout containing `deploy/outbe-vm/patches/`.
+        #[arg(long, default_value = ".")]
+        source: PathBuf,
+        /// Verified `.tar.zst` software bundle produced by `cargo xtask release build`.
+        #[arg(long)]
+        software_bundle: PathBuf,
+        /// Output directory receiving built image trees, `.tar.zst` archives, and `vm-image-manifest.json`.
+        #[arg(long)]
+        output: PathBuf,
+        /// Comma-separated dstack image flavors to build (`dev`, `prod`).
+        #[arg(long, default_value = "dev,prod")]
+        flavors: String,
+        /// Local path or git URL of the pinned dstack repository.
+        #[arg(long, default_value = vm_image::DEFAULT_DSTACK_REPO)]
+        dstack_repo: String,
+        /// Directory containing pinned LLVM 18 runtime libraries (`libc++.so.1`, `libc++abi.so.1`, `libunwind.so.1`).
+        #[arg(long)]
+        runtime_libs_dir: Option<PathBuf>,
+        /// Docker image tag for the extracted toolchain stage.
+        #[arg(long, default_value = vm_image::DEFAULT_TOOLCHAIN_IMAGE)]
+        toolchain_image: String,
+        /// Docker image tag for dstack's mkosi build container (`DSTACK_MKOSI_IMAGE`).
+        #[arg(long, default_value = vm_image::DEFAULT_MKOSI_IMAGE)]
+        mkosi_image: String,
+        /// Optional CPU set passed to `docker run --cpuset-cpus` (`DOCKER_CPUSET_CPUS`).
+        #[arg(long)]
+        cpuset_cpus: Option<String>,
+        /// Build parallelism passed to dstack's `repro-build.sh` (`JOBS`).
+        #[arg(long, default_value_t = 4)]
+        jobs: usize,
+        /// Run two isolated builds and verify byte-identical flavor outputs AND archive SHA-256.
+        #[arg(long)]
+        check: bool,
+        /// Publish built image(s) into the local VMM image store (`<vmm_home>/image/`).
+        #[arg(long)]
+        publish: bool,
+        /// Local dstack VMM home directory for `--publish` [default: ~/.dstack-vmm].
+        #[arg(long)]
+        vmm_home: Option<PathBuf>,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Download a guest OS image archive over HTTPS, verify its SHA-256 before extraction, and publish it locally.
+    Fetch {
+        /// Archive HTTPS URL (including presigned S3 HTTPS URLs).
+        #[arg(long)]
+        url: String,
+        /// Expected 64-hex SHA-256 digest of the raw `.tar.zst` archive (verified before decompression).
+        #[arg(long)]
+        sha256: String,
+        /// Optional expected 64-hex `os_image_hash` (`digest.txt`) to cross-check against the archive manifest.
+        #[arg(long)]
+        os_image_hash: Option<String>,
+        /// Local dstack VMM home directory [default: ~/.dstack-vmm].
+        #[arg(long)]
+        vmm_home: Option<PathBuf>,
+        /// Download timeout in seconds.
+        #[arg(long, default_value_t = image::default_fetch_timeout_secs())]
+        timeout: u64,
+        /// Allow plaintext http:// strictly to loopback addresses (for local integration tests only).
+        #[arg(long, hide = true)]
+        allow_insecure_loopback_http: bool,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify a built or fetched guest OS image directory offline against its manifest and SHA-256 hashes.
+    Verify {
+        /// Guest OS image directory to verify.
+        #[arg(long)]
+        dir: PathBuf,
+        /// Optional manifest file (`vm-image-manifest.json` or `image-archive-manifest.json`); defaults to `<dir>/image-archive-manifest.json`.
+        #[arg(long)]
+        manifest: Option<PathBuf>,
+        /// Optional flavor selector when verifying against a multi-flavor `vm-image-manifest.json`.
+        #[arg(long, value_enum)]
+        flavor: Option<ImageFlavorArg>,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// List Outbe-managed guest OS images stored in the local VMM image directory.
+    List {
+        /// Local dstack VMM home directory [default: ~/.dstack-vmm].
+        #[arg(long)]
+        vmm_home: Option<PathBuf>,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove an unreferenced Outbe-managed guest OS image after checking VMM for active or stopped VMs.
+    Remove {
+        /// Digest-qualified image directory name (e.g. `outbe-vm-dev-<hash16>`).
+        #[arg(long)]
+        name: String,
+        /// Local dstack VMM home directory [default: ~/.dstack-vmm].
+        #[arg(long)]
+        vmm_home: Option<PathBuf>,
+        /// Local dstack VMM Unix socket path [default: <vmm_home>/run/vmm.sock].
+        #[arg(long)]
+        vmm_socket: Option<PathBuf>,
         /// Emit machine-readable JSON output.
         #[arg(long)]
         json: bool,
@@ -594,6 +730,84 @@ impl Cli {
                     })
                     .await
                 }
+            },
+            Command::Image(args) => match args.command {
+                ImageCommand::Build {
+                    source,
+                    software_bundle,
+                    output,
+                    flavors,
+                    dstack_repo,
+                    runtime_libs_dir,
+                    toolchain_image,
+                    mkosi_image,
+                    cpuset_cpus,
+                    jobs,
+                    check,
+                    publish,
+                    vmm_home,
+                    json,
+                } => image::build(image::BuildArgs {
+                    source,
+                    software_bundle,
+                    output,
+                    flavors,
+                    dstack_repo,
+                    runtime_libs_dir,
+                    toolchain_image,
+                    mkosi_image,
+                    cpuset_cpus,
+                    jobs,
+                    check,
+                    publish,
+                    vmm_home,
+                    json,
+                }),
+                ImageCommand::Fetch {
+                    url,
+                    sha256,
+                    os_image_hash,
+                    vmm_home,
+                    timeout,
+                    allow_insecure_loopback_http,
+                    json,
+                } => {
+                    image::fetch(image::FetchArgs {
+                        url,
+                        sha256,
+                        os_image_hash,
+                        vmm_home,
+                        timeout_secs: timeout,
+                        allow_insecure_loopback_http,
+                        json,
+                    })
+                    .await
+                }
+                ImageCommand::Verify {
+                    dir,
+                    manifest,
+                    flavor,
+                    json,
+                } => image::verify(image::VerifyArgs {
+                    dir,
+                    manifest,
+                    flavor: flavor.map(Into::into),
+                    json,
+                }),
+                ImageCommand::List { vmm_home, json } => {
+                    image::list(image::ListArgs { vmm_home, json })
+                }
+                ImageCommand::Remove {
+                    name,
+                    vmm_home,
+                    vmm_socket,
+                    json,
+                } => image::remove(image::RemoveArgs {
+                    name,
+                    vmm_home,
+                    vmm_socket,
+                    json,
+                }),
             },
             Command::Network(args) => match args.command {
                 NetworkCommand::ConfigExample { output } => network::config::init(&output),
@@ -1547,5 +1761,72 @@ mod tests {
             "./out.img",
         ])
         .is_err());
+    }
+
+    #[test]
+    fn image_commands_parse() {
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "image",
+            "build",
+            "--software-bundle",
+            "./bundle.tar.zst",
+            "--output",
+            "./out-img",
+            "--flavors",
+            "dev,prod",
+            "--check",
+            "--publish",
+            "--json",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "image",
+            "fetch",
+            "--url",
+            "https://example.com/image.tar.zst?X-Amz-Signature=abc",
+            "--sha256",
+            &"a".repeat(64),
+            "--os-image-hash",
+            &"b".repeat(64),
+            "--json",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "image",
+            "verify",
+            "--dir",
+            "./out/dev/dstack-dev-0.6.3",
+            "--manifest",
+            "./vm-image-manifest.json",
+            "--flavor",
+            "dev",
+            "--json",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "image",
+            "list",
+            "--vmm-home",
+            "/tmp/vmm",
+            "--json",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "image",
+            "remove",
+            "--name",
+            "outbe-vm-dev-0123456789abcdef",
+            "--vmm-home",
+            "/tmp/vmm",
+            "--vmm-socket",
+            "/tmp/vmm/run/vmm.sock",
+            "--json",
+        ])
+        .is_ok());
     }
 }

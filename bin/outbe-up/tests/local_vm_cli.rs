@@ -565,11 +565,8 @@ fn f8_sigterm_while_waiting_for_vm_lock_exits_promptly_without_any_vmm_rpc() {
     thread::sleep(Duration::from_millis(150));
 
     let started = Instant::now();
-    let term_status = Command::new("kill")
-        .args(["-TERM", &proc.id().to_string()])
-        .status()
-        .unwrap();
-    assert!(term_status.success());
+    let pid = rustix::process::Pid::from_raw(i32::try_from(proc.id()).unwrap()).unwrap();
+    rustix::process::kill_process(pid, rustix::process::Signal::TERM).unwrap();
 
     let wait_deadline = Instant::now() + Duration::from_secs(3);
     let exit_status = loop {
@@ -691,11 +688,8 @@ fn f8_qemu_img_does_not_inherit_lock_fd_and_sigterm_kills_child_process_group() 
         .unwrap();
 
     // 2. Send SIGTERM to outbe-up; it must terminate fake qemu-img's process group and exit promptly.
-    let term_status = Command::new("kill")
-        .args(["-TERM", &proc.id().to_string()])
-        .status()
-        .unwrap();
-    assert!(term_status.success());
+    let pid = rustix::process::Pid::from_raw(i32::try_from(proc.id()).unwrap()).unwrap();
+    rustix::process::kill_process(pid, rustix::process::Signal::TERM).unwrap();
 
     let wait_deadline = Instant::now() + Duration::from_secs(5);
     let exit_status = loop {
@@ -714,9 +708,9 @@ fn f8_qemu_img_does_not_inherit_lock_fd_and_sigterm_kills_child_process_group() 
     let child_dead_deadline = Instant::now() + Duration::from_secs(2);
     while PathBuf::from(format!("/proc/{child_pid}")).exists() {
         if Instant::now() >= child_dead_deadline {
-            let _ = Command::new("kill")
-                .args(["-KILL", &child_pid.to_string()])
-                .status();
+            if let Some(pid) = rustix::process::Pid::from_raw(child_pid) {
+                let _ = rustix::process::kill_process(pid, rustix::process::Signal::KILL);
+            }
             panic!("fake qemu-img (pid {child_pid}) survived SIGTERM to outbe-up");
         }
         thread::sleep(Duration::from_millis(20));

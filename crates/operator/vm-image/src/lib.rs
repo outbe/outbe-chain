@@ -1,6 +1,10 @@
 //! Reproducible Outbe VM guest image builder on top of a pinned dstack revision.
 
-use std::{collections::BTreeMap, fs, os::unix::fs::PermissionsExt, path::Path, process::Command};
+pub mod archive;
+
+use std::{
+    collections::BTreeMap, fs, io, os::unix::fs::PermissionsExt, path::Path, process::Command,
+};
 
 use eyre::{bail, ensure, Context, Result};
 use outbe_operator_systemd::vm_units;
@@ -133,6 +137,12 @@ pub struct ManifestDigest {
 pub struct FlavorArtifact {
     pub os_image_hash: String,
     pub image_dir: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<archive::ImageFileEntry>,
 }
 
 /// Parse a comma-separated list of dstack flavors (`dev`, `prod`).
@@ -161,11 +171,23 @@ pub fn parse_flavors(raw: &str) -> Result<Vec<Flavor>> {
 pub fn build(options: &VmImageOptions<'_>) -> Result<VmImageManifest> {
     ensure!(!options.flavors.is_empty(), "flavors must not be empty");
     ensure!(options.jobs > 0, "jobs must be positive");
-    ensure!(
-        !options.output_dir.exists(),
-        "output directory already exists: {}",
-        options.output_dir.display()
-    );
+    match fs::symlink_metadata(options.output_dir) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(err).wrap_err_with(|| {
+                format!(
+                    "failed to stat output directory {}",
+                    options.output_dir.display()
+                )
+            });
+        }
+        Ok(_) => {
+            return Err(eyre::eyre!(
+                "output directory already exists: {}",
+                options.output_dir.display()
+            ));
+        }
+    }
 
     require_clean_checkout(options.repo_root)?;
     let source_commit = git_head_commit(options.repo_root)?;
@@ -218,6 +240,8 @@ pub fn build(options: &VmImageOptions<'_>) -> Result<VmImageManifest> {
     let flavors = execute_repro_builds(
         work.path(),
         &dstack_src,
+        &source_commit,
+        DSTACK_COMMIT,
         &overlay_commit,
         &output_abs,
         options.flavors,
@@ -605,11 +629,15 @@ fn run_repro_build(
 /// Run either a single normal build into `output_dir`, or two isolated builds
 /// (`a` and `b`) from separate `--no-hardlinks` clones at `overlay_commit` into
 /// `output_dir/a` and `output_dir/b`, compare every flavor artifact byte for
-/// byte via SHA-256, and promote `output_dir/a/out` to `output_dir/out`.
+/// byte via SHA-256, pack deterministic `.tar.zst` distribution archives in BOTH
+/// runs and verify identical `archive_sha256`, then promote `output_dir/a/out`
+/// and each verified archive into `output_dir`.
 #[allow(clippy::too_many_arguments)]
 fn execute_repro_builds<F>(
     work_dir: &Path,
     dstack_src: &Path,
+    source_commit: &str,
+    dstack_rev: &str,
     overlay_commit: &str,
     output_dir: &Path,
     flavors: &[Flavor],
@@ -622,7 +650,14 @@ where
 {
     if !check {
         run_build(dstack_src, output_dir)?;
-        return collect_flavor_hashes(output_dir, flavors, dstack_version);
+        return collect_and_pack_flavors(
+            output_dir,
+            flavors,
+            dstack_version,
+            source_commit,
+            dstack_rev,
+            overlay_commit,
+        );
     }
 
     let dstack_a = work_dir.join("dstack-a");
@@ -640,9 +675,60 @@ where
 
     compare_flavor_runs(&run_a_dir, &run_b_dir, flavors, dstack_version)?;
 
+    // Pack the distribution archive in BOTH isolated runs and require identical archive SHA-256.
+    let artifacts_a = collect_and_pack_flavors(
+        &run_a_dir,
+        flavors,
+        dstack_version,
+        source_commit,
+        dstack_rev,
+        overlay_commit,
+    )?;
+    let artifacts_b = collect_and_pack_flavors(
+        &run_b_dir,
+        flavors,
+        dstack_version,
+        source_commit,
+        dstack_rev,
+        overlay_commit,
+    )?;
+    compare_packed_archives(&artifacts_a, &artifacts_b)?;
+
     fs::rename(run_a_dir.join("out"), output_dir.join("out"))
         .wrap_err("promote verified run a outputs to output/out")?;
-    collect_flavor_hashes(output_dir, flavors, dstack_version)
+    for artifact in artifacts_a.values() {
+        if let Some(archive_name) = &artifact.archive {
+            fs::rename(run_a_dir.join(archive_name), output_dir.join(archive_name))
+                .wrap_err_with(|| format!("promote verified archive {archive_name}"))?;
+        }
+    }
+    Ok(artifacts_a)
+}
+
+fn compare_packed_archives(
+    artifacts_a: &BTreeMap<String, FlavorArtifact>,
+    artifacts_b: &BTreeMap<String, FlavorArtifact>,
+) -> Result<()> {
+    let mut failures = Vec::new();
+    for (flavor, art_a) in artifacts_a {
+        let Some(art_b) = artifacts_b.get(flavor) else {
+            failures.push(format!("flavor '{flavor}' missing from run b"));
+            continue;
+        };
+        if art_a.archive != art_b.archive || art_a.archive_sha256 != art_b.archive_sha256 {
+            failures.push(format!(
+                "flavor '{flavor}' archive SHA-256 mismatch (run a={:?}, run b={:?})",
+                art_a.archive_sha256, art_b.archive_sha256
+            ));
+        }
+    }
+    if !failures.is_empty() {
+        bail!(
+            "archive reproducibility check failed: {}",
+            failures.join("; ")
+        );
+    }
+    Ok(())
 }
 
 fn clone_overlay_for_run(dstack_src: &Path, dst: &Path, expected_commit: &str) -> Result<()> {
@@ -773,30 +859,39 @@ fn read_dstack_version(dstack_src: &Path) -> Result<String> {
     bail!("DSTACK_VERSION not found in os/mkosi/versions.env");
 }
 
-fn collect_flavor_hashes(
-    output_dir: &Path,
+fn collect_and_pack_flavors(
+    base_dir: &Path,
     flavors: &[Flavor],
     dstack_version: &str,
+    source_commit: &str,
+    dstack_rev: &str,
+    overlay_commit: &str,
 ) -> Result<BTreeMap<String, FlavorArtifact>> {
     let mut map = BTreeMap::new();
     for flavor in flavors {
         let rel = flavor_image_rel(flavor, dstack_version);
-        let dir = output_dir.join(&rel);
-        let digest_path = dir.join("digest.txt");
-        let os_image_hash = fs::read_to_string(&digest_path)
-            .wrap_err_with(|| format!("read {}", digest_path.display()))?
-            .trim()
-            .to_owned();
-        ensure!(
-            !os_image_hash.is_empty(),
-            "empty os_image_hash in {}",
-            digest_path.display()
-        );
+        let dir = base_dir.join(&rel);
+        let os_image_hash = archive::read_digest_txt(&dir)?;
+        let archive_name = archive::archive_filename(*flavor, &os_image_hash)?;
+        let archive_path = base_dir.join(&archive_name);
+        let (archive_manifest, archive_sha256) = archive::pack_flavor_archive(
+            &dir,
+            &archive::ArchiveBuildMetadata {
+                flavor: *flavor,
+                source_commit,
+                dstack_rev,
+                overlay_commit,
+            },
+            &archive_path,
+        )?;
         map.insert(
             flavor.as_str().to_owned(),
             FlavorArtifact {
                 os_image_hash,
                 image_dir: rel,
+                archive: Some(archive_name),
+                archive_sha256: Some(archive_sha256),
+                files: archive_manifest.files,
             },
         );
     }
@@ -1077,10 +1172,10 @@ mod tests {
         rootfs: &[u8],
     ) {
         let dir = build_dir.join(flavor_image_rel(&flavor, version));
-        fs::create_dir_all(dir.join("nested")).unwrap();
+        fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("digest.txt"), format!("{digest}\n")).unwrap();
         fs::write(dir.join("rootfs.img"), rootfs).unwrap();
-        fs::write(dir.join("nested/metadata.json"), "{\"ok\":true}\n").unwrap();
+        fs::write(dir.join("metadata.json"), "{\"rootfs\":\"rootfs.img\"}\n").unwrap();
     }
 
     #[test]
@@ -1091,11 +1186,15 @@ mod tests {
         let output_dir = temp.path().join("output");
         fs::create_dir_all(&output_dir).unwrap();
         let overlay_commit = init_fake_overlay_repo(&dstack_src);
+        let dev_hash = "1".repeat(64);
+        let prod_hash = "2".repeat(64);
 
         let mut seen_runs = Vec::new();
         let flavors = execute_repro_builds(
             &work_dir,
             &dstack_src,
+            &"a".repeat(40),
+            DSTACK_COMMIT,
             &overlay_commit,
             &output_dir,
             &[Flavor::Dev, Flavor::Prod],
@@ -1108,14 +1207,8 @@ mod tests {
                     overlay_commit
                 );
                 seen_runs.push((run_src.to_path_buf(), run_out.to_path_buf()));
-                write_fake_flavor_output(run_out, Flavor::Dev, "0.6.3", "devhash123", b"dev-img");
-                write_fake_flavor_output(
-                    run_out,
-                    Flavor::Prod,
-                    "0.6.3",
-                    "prodhash456",
-                    b"prod-img",
-                );
+                write_fake_flavor_output(run_out, Flavor::Dev, "0.6.3", &dev_hash, b"dev-img");
+                write_fake_flavor_output(run_out, Flavor::Prod, "0.6.3", &prod_hash, b"prod-img");
                 Ok(())
             },
         )
@@ -1132,10 +1225,22 @@ mod tests {
             .join("out/prod/dstack-0.6.3/rootfs.img")
             .is_file());
 
+        // Both runs produced deterministic archives and run a's archives were promoted to output_dir.
+        let dev_archive = archive::archive_filename(Flavor::Dev, &dev_hash).unwrap();
+        let prod_archive = archive::archive_filename(Flavor::Prod, &prod_hash).unwrap();
+        assert!(output_dir.join(&dev_archive).is_file());
+        assert!(output_dir.join(&prod_archive).is_file());
+        assert!(output_dir.join("b").join(&dev_archive).is_file());
+        assert_eq!(
+            archive::sha256_file_streaming(&output_dir.join(&dev_archive)).unwrap(),
+            archive::sha256_file_streaming(&output_dir.join("b").join(&dev_archive)).unwrap(),
+            "run a and run b archives must have identical SHA-256"
+        );
+
         let manifest = VmImageManifest {
             version: MANIFEST_VERSION,
-            source_commit: "abc".to_owned(),
-            software_bundle_sha256: "def".to_owned(),
+            source_commit: "a".repeat(40),
+            software_bundle_sha256: "d".repeat(64),
             dstack_rev: DSTACK_COMMIT.to_owned(),
             overlay_commit,
             reproducible: true,
@@ -1147,15 +1252,59 @@ mod tests {
         let written: serde_json::Value =
             serde_json::from_slice(&fs::read(output_dir.join(MANIFEST_NAME)).unwrap()).unwrap();
         assert_eq!(written["reproducible"], serde_json::Value::Bool(true));
-        assert_eq!(written["flavors"]["dev"]["os_image_hash"], "devhash123");
+        assert_eq!(written["flavors"]["dev"]["os_image_hash"], dev_hash);
         assert_eq!(
             written["flavors"]["dev"]["image_dir"],
             "out/dev/dstack-dev-0.6.3"
         );
-        assert_eq!(written["flavors"]["prod"]["os_image_hash"], "prodhash456");
+        assert_eq!(written["flavors"]["dev"]["archive"], dev_archive);
+        assert_eq!(
+            written["flavors"]["dev"]["archive_sha256"],
+            archive::sha256_file_streaming(&output_dir.join(&dev_archive)).unwrap()
+        );
+        assert_eq!(written["flavors"]["prod"]["os_image_hash"], prod_hash);
         assert_eq!(
             written["flavors"]["prod"]["image_dir"],
             "out/prod/dstack-0.6.3"
+        );
+
+        // `verify_image_dir` validates the built output directory against `vm-image-manifest.json`.
+        let verified = archive::verify_image_dir(
+            &output_dir.join("out/dev/dstack-dev-0.6.3"),
+            Some(&output_dir.join(MANIFEST_NAME)),
+            Some(Flavor::Dev),
+        )
+        .unwrap();
+        assert_eq!(verified.os_image_hash, dev_hash);
+
+        // Archive reproducibility mismatch check rejects differing archive SHA-256s.
+        let mut fake_a = BTreeMap::new();
+        let mut fake_b = BTreeMap::new();
+        fake_a.insert(
+            "dev".to_owned(),
+            FlavorArtifact {
+                os_image_hash: dev_hash.clone(),
+                image_dir: "out/dev/dstack-dev-0.6.3".to_owned(),
+                archive: Some(dev_archive.clone()),
+                archive_sha256: Some("a".repeat(64)),
+                files: Vec::new(),
+            },
+        );
+        fake_b.insert(
+            "dev".to_owned(),
+            FlavorArtifact {
+                os_image_hash: dev_hash,
+                image_dir: "out/dev/dstack-dev-0.6.3".to_owned(),
+                archive: Some(dev_archive),
+                archive_sha256: Some("b".repeat(64)),
+                files: Vec::new(),
+            },
+        );
+        let err = compare_packed_archives(&fake_a, &fake_b)
+            .expect_err("differing archive sha256 across runs must fail");
+        assert!(
+            err.to_string().contains("archive SHA-256 mismatch"),
+            "{err}"
         );
     }
 
@@ -1167,11 +1316,15 @@ mod tests {
         let output_dir = temp.path().join("output");
         fs::create_dir_all(&output_dir).unwrap();
         let overlay_commit = init_fake_overlay_repo(&dstack_src);
+        let dev_hash = "1".repeat(64);
+        let prod_hash = "2".repeat(64);
 
         let mut call_idx = 0usize;
         let err = execute_repro_builds(
             &work_dir,
             &dstack_src,
+            &"a".repeat(40),
+            DSTACK_COMMIT,
             &overlay_commit,
             &output_dir,
             &[Flavor::Dev, Flavor::Prod],
@@ -1184,14 +1337,8 @@ mod tests {
                 } else {
                     b"dev-img-b".as_slice()
                 };
-                write_fake_flavor_output(run_out, Flavor::Dev, "0.6.3", "devhash123", dev_bytes);
-                write_fake_flavor_output(
-                    run_out,
-                    Flavor::Prod,
-                    "0.6.3",
-                    "prodhash456",
-                    b"prod-img",
-                );
+                write_fake_flavor_output(run_out, Flavor::Dev, "0.6.3", &dev_hash, dev_bytes);
+                write_fake_flavor_output(run_out, Flavor::Prod, "0.6.3", &prod_hash, b"prod-img");
                 Ok(())
             },
         )

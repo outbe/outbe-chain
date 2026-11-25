@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     disk::{sha256_sparse_file, stage_local_disk_cancellable},
     dnsmasq::lookup_lease_ip_by_mac,
-    image::publish_local_image,
+    image::publish_local_image_locked_cancellable,
     nat::validate_iface_name,
     vmm::{
         calc_app_id, extract_primary_mac, validate_vm_id, CreateVmRequest, NetworkingConfig,
@@ -824,12 +824,16 @@ where
     let guard = store.lock_vm_with_options(&options.name, op_deadline, cancel)?;
 
     check_canceled(cancel, "publishing local guest image")?;
-    let published = publish_local_image(
+    let published_locked = publish_local_image_locked_cancellable(
         &options.vmm_home,
         &options.image_dir,
         options.image_name.as_deref(),
         &options.flavor,
+        op_deadline,
+        cancel,
     )?;
+    let published = published_locked.published;
+    let image_lock = published_locked.lock;
 
     let existing = store.load_optional_locked(&guard, &options.name)?;
     let mut state = match existing {
@@ -987,6 +991,10 @@ where
             intent
         }
     };
+    // Release the per-image lock only after CreateVm has returned and the VM is registered on VMM
+    // and persisted locally as `Created` (or higher), preventing a concurrent `image remove` from
+    // deleting the image in the window between publication and VMM registration.
+    drop(image_lock);
 
     if state.phase == LocalVmPhase::Created {
         check_canceled(cancel, "fetching VM info")?;
@@ -3087,5 +3095,197 @@ mod tests {
         let g = store.lock_vm("race-vm").unwrap();
         let final_state = store.load_locked(&g, "race-vm").unwrap();
         assert_eq!(final_state.journal.len(), 32);
+    }
+
+    #[test]
+    fn f5_remove_local_image_waits_for_vm_create_lock_and_refuses_registered_vm() {
+        use std::sync::{mpsc, Arc, Mutex};
+
+        use crate::image::{publish_local_image, remove_local_image};
+
+        struct PausingCreateTransport {
+            vms: Arc<Mutex<Vec<serde_json::Value>>>,
+            create_entered_tx: Mutex<Option<mpsc::Sender<()>>>,
+            allow_create_rx: Mutex<Option<mpsc::Receiver<()>>>,
+        }
+
+        impl VmmTransport for PausingCreateTransport {
+            fn prpc_post(&self, method: &str, payload: &[u8]) -> Result<String> {
+                match method {
+                    "Status" => {
+                        let vms = self.vms.lock().unwrap();
+                        Ok(serde_json::json!({
+                            "vms": *vms,
+                            "total": vms.len()
+                        })
+                        .to_string())
+                    }
+                    "CreateVm" => {
+                        let req: serde_json::Value = serde_json::from_slice(payload)?;
+                        if let Some(tx) = self.create_entered_tx.lock().unwrap().take() {
+                            let _ = tx.send(());
+                        }
+                        if let Some(rx) = self.allow_create_rx.lock().unwrap().take() {
+                            let _ = rx.recv();
+                        }
+                        let info = serde_json::json!({
+                            "id": UUID_OWNED,
+                            "name": req["name"].as_str().unwrap_or("race-create"),
+                            "status": "stopped",
+                            "running": false,
+                            "boot_progress": "",
+                            "boot_error": "",
+                            "uptime": "",
+                            "interfaces": [
+                                {"mode": "bridge", "mac": "52:54:00:ab:cd:ef"}
+                            ],
+                            "configuration": {
+                                "name": req["name"].as_str().unwrap_or("race-create"),
+                                "image": req["image"].as_str().unwrap_or(""),
+                                "vcpu": req["vcpu"].as_u64().unwrap_or(3),
+                                "memory": req["memory"].as_u64().unwrap_or(5120),
+                                "disk_size": req["disk_size"].as_u64().unwrap_or(40)
+                            }
+                        });
+                        self.vms.lock().unwrap().push(info);
+                        Ok(serde_json::json!({"id": UUID_OWNED}).to_string())
+                    }
+                    "GetInfo" => {
+                        let vms = self.vms.lock().unwrap();
+                        if let Some(info) = vms.first() {
+                            Ok(serde_json::json!({"found": true, "info": info}).to_string())
+                        } else {
+                            Ok(r#"{"found":false,"info":null}"#.to_owned())
+                        }
+                    }
+                    other => Err(eyre::eyre!("unexpected VMM method {other}")),
+                }
+            }
+
+            fn read_serial_log(&self, _vm_id: &str, _lines: usize) -> Result<String> {
+                Ok(String::new())
+            }
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let vmm_home = dir.path().join("vmm");
+        let state_dir = dir.path().join("state");
+        let src_image = dir.path().join("src-image");
+        fs::create_dir_all(&src_image).unwrap();
+        let digest = "0123456789abcdef".repeat(4);
+        fs::write(src_image.join("digest.txt"), format!("{digest}\n")).unwrap();
+        fs::write(src_image.join("metadata.json"), "{}").unwrap();
+        fs::write(
+            src_image.join("image-archive-manifest.json"),
+            serde_json::to_vec_pretty(&serde_json::json!({
+                "version": 1,
+                "flavor": "dev",
+                "os_image_hash": digest,
+                "source_commit": "a".repeat(40),
+                "dstack_rev": "b".repeat(40),
+                "overlay_commit": "c".repeat(40),
+                "files": [
+                    {"path": "digest.txt", "size": 65, "sha256": "0".repeat(64), "mode": 0o644},
+                    {"path": "metadata.json", "size": 2, "sha256": "1".repeat(64), "mode": 0o644}
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        // Pre-publish the image so a concurrent `image remove` without F5 locking would delete it
+        // while `CreateVm` is paused before registering the VM.
+        let published = publish_local_image(&vmm_home, &src_image, None, "dev").unwrap();
+        let disk_source = dir.path().join("data.raw");
+        fs::write(&disk_source, b"fake-raw-disk").unwrap();
+
+        let shared_vms = Arc::new(Mutex::new(Vec::new()));
+        let (create_entered_tx, create_entered_rx) = mpsc::channel();
+        let (allow_create_tx, allow_create_rx) = mpsc::channel();
+
+        let create_transport = PausingCreateTransport {
+            vms: Arc::clone(&shared_vms),
+            create_entered_tx: Mutex::new(Some(create_entered_tx)),
+            allow_create_rx: Mutex::new(Some(allow_create_rx)),
+        };
+        let remove_transport = PausingCreateTransport {
+            vms: Arc::clone(&shared_vms),
+            create_entered_tx: Mutex::new(None),
+            allow_create_rx: Mutex::new(None),
+        };
+
+        let store = LocalVmStore::new(state_dir);
+        let opts = CreateLocalVmOptions {
+            name: "race-vm".to_owned(),
+            image_dir: src_image,
+            image_name: None,
+            flavor: "dev".to_owned(),
+            disk_source,
+            bridge: "obr0".to_owned(),
+            vcpu: 3,
+            memory_gib: 5,
+            disk_gib: 10,
+            app_compose_path: None,
+            intended_ip: None,
+            no_tee: false,
+            vmm_socket: vmm_home.join("run/vmm.sock"),
+            vmm_home: vmm_home.clone(),
+            retry_create: false,
+            recovery_grace: Duration::from_secs(1),
+            poll_interval: Duration::from_millis(10),
+            timeout: Some(Duration::from_secs(10)),
+        };
+
+        let create_handle = thread::spawn(move || {
+            let vmm = VmmClient::new(create_transport, "pausing-create");
+            create_local_vm_with_disk_stager(&store, &vmm, &opts, |home, id, _, _| {
+                let p = home.join("vm").join(id).join("hda.img");
+                fs::create_dir_all(p.parent().unwrap()).unwrap();
+                fs::write(&p, b"qcow2").unwrap();
+                Ok(p)
+            })
+        });
+
+        // Wait until `vm create` is inside `CreateVm` (still holding the per-image lock).
+        create_entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("vm create did not reach CreateVm");
+
+        let (remove_done_tx, remove_done_rx) = mpsc::channel();
+        let vmm_home_for_rm = vmm_home.clone();
+        let image_name_for_rm = published.name.clone();
+        let remove_handle = thread::spawn(move || {
+            let vmm = VmmClient::new(remove_transport, "concurrent-remove");
+            let res = remove_local_image(&vmm_home_for_rm, &vmm, &image_name_for_rm);
+            let _ = remove_done_tx.send(res);
+        });
+
+        // While CreateVm is paused, `image remove` MUST stay blocked on the per-image lock.
+        assert!(
+            matches!(
+                remove_done_rx.recv_timeout(Duration::from_millis(200)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
+            "image remove must block while vm create holds the per-image lock across CreateVm"
+        );
+
+        // Allow CreateVm to register the VM and finish persisting `Created`.
+        allow_create_tx.send(()).unwrap();
+        let created = create_handle.join().unwrap().expect("vm create failed");
+        assert_eq!(created.phase, LocalVmPhase::Ready);
+
+        let remove_err = remove_done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("image remove did not finish after CreateVm released lock")
+            .expect_err("image remove must refuse image referenced by newly created VM");
+        remove_handle.join().unwrap();
+        assert!(
+            format!("{remove_err:#}").contains("still referenced by VM(s): race-vm"),
+            "{remove_err:#}"
+        );
+        assert!(
+            published.target_dir.is_dir(),
+            "referenced image directory must remain intact"
+        );
     }
 }

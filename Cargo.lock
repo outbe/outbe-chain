@@ -8613,11 +8613,16 @@ name = "outbe-operator-vm-image"
 version = "0.1.0"
 dependencies = [
  "eyre",
+ "hex",
  "outbe-operator-systemd",
  "outbe-software-bundle",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
+ "tar",
  "tempfile",
+ "walkdir",
+ "zstd 0.14.4",
 ]
 
 [[package]]
@@ -9314,13 +9319,17 @@ dependencies = [
  "outbe-operator-node-role",
  "outbe-operator-remote",
  "outbe-operator-vm",
+ "outbe-operator-vm-image",
  "outbe-primitives",
  "outbe-software-bundle",
+ "reqwest 0.12.28",
+ "rustix",
  "serde",
  "serde_json",
  "tempfile",
  "tokio",
  "toml 0.8.23",
+ "url",
  "walkdir",
  "yaml_serde",
 ]

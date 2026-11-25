@@ -951,11 +951,8 @@ fn sigint_cleans_up_staging_dirs_and_cleanup_stale_is_opt_in() {
     }
 
     // Send SIGINT to outbe-up.
-    let kill_status = Command::new("kill")
-        .args(["-INT", &child.id().to_string()])
-        .status()
-        .unwrap();
-    assert!(kill_status.success(), "kill -INT failed");
+    let pid = rustix::process::Pid::from_raw(i32::try_from(child.id()).unwrap()).unwrap();
+    rustix::process::kill_process(pid, rustix::process::Signal::INT).unwrap();
 
     let output = child.wait_with_output().unwrap();
     assert!(
@@ -1279,11 +1276,8 @@ fn sigint_during_outbe_keygen_verify_terminates_child_and_cleans_staging() {
     }
 
     let start = std::time::Instant::now();
-    let kill_status = Command::new("kill")
-        .args(["-INT", &child.id().to_string()])
-        .status()
-        .unwrap();
-    assert!(kill_status.success(), "kill -INT failed");
+    let pid = rustix::process::Pid::from_raw(i32::try_from(child.id()).unwrap()).unwrap();
+    rustix::process::kill_process(pid, rustix::process::Signal::INT).unwrap();
 
     let output = child.wait_with_output().unwrap();
     assert!(
@@ -1313,16 +1307,14 @@ fn sigint_during_outbe_keygen_verify_terminates_child_and_cleans_staging() {
     );
 
     if let Ok(verify_pid) = fs::read_to_string(&pid_file) {
-        let verify_pid = verify_pid.trim();
-        if !verify_pid.is_empty() {
-            let alive = Command::new("kill")
-                .args(["-0", verify_pid])
-                .status()
-                .is_ok_and(|s| s.success());
-            assert!(
-                !alive,
-                "outbe-keygen verify child (pid {verify_pid}) survived SIGINT"
-            );
+        if let Ok(raw) = verify_pid.trim().parse::<i32>() {
+            if let Some(pid) = rustix::process::Pid::from_raw(raw) {
+                let alive = rustix::process::test_kill_process(pid).is_ok();
+                assert!(
+                    !alive,
+                    "outbe-keygen verify child (pid {raw}) survived SIGINT"
+                );
+            }
         }
     }
 }
@@ -1388,11 +1380,8 @@ fn sigint_during_stalled_gzip_extraction_terminates_gzip_and_cleans_staging() {
     }
 
     let start = std::time::Instant::now();
-    let kill_status = Command::new("kill")
-        .args(["-INT", &child.id().to_string()])
-        .status()
-        .unwrap();
-    assert!(kill_status.success(), "kill -INT failed");
+    let pid = rustix::process::Pid::from_raw(i32::try_from(child.id()).unwrap()).unwrap();
+    rustix::process::kill_process(pid, rustix::process::Signal::INT).unwrap();
 
     let output = child.wait_with_output().unwrap();
     assert!(
@@ -1422,16 +1411,11 @@ fn sigint_during_stalled_gzip_extraction_terminates_gzip_and_cleans_staging() {
     );
 
     if let Ok(gzip_pid) = fs::read_to_string(&pid_file) {
-        let gzip_pid = gzip_pid.trim();
-        if !gzip_pid.is_empty() {
-            let alive = Command::new("kill")
-                .args(["-0", gzip_pid])
-                .status()
-                .is_ok_and(|s| s.success());
-            assert!(
-                !alive,
-                "stalled gzip child (pid {gzip_pid}) survived SIGINT"
-            );
+        if let Ok(raw) = gzip_pid.trim().parse::<i32>() {
+            if let Some(pid) = rustix::process::Pid::from_raw(raw) {
+                let alive = rustix::process::test_kill_process(pid).is_ok();
+                assert!(!alive, "stalled gzip child (pid {raw}) survived SIGINT");
+            }
         }
     }
 }
