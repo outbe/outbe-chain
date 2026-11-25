@@ -89,8 +89,8 @@ contract IntexNFT1155RouterSingleReentrancyTest is CrossChainTest {
         tokenA = DeployProxy.intexNFT1155(address(this), address(this));
         tokenB = DeployProxy.intexNFT1155(address(this), address(this));
 
-        adapterA = DeployProxy.intexNFT1155Bridge(address(tokenA), address(bridge), address(this));
-        adapterB = DeployProxy.intexNFT1155Bridge(address(tokenB), address(bridge), address(this));
+        adapterA = DeployProxy.intexNFT1155Router(address(tokenA), address(bridge), address(this));
+        adapterB = DeployProxy.intexNFT1155Router(address(tokenB), address(bridge), address(this));
 
         tokenA.grantRole(tokenA.BRIDGE_ROLE(), address(adapterA));
         tokenB.grantRole(tokenB.BRIDGE_ROLE(), address(adapterB));

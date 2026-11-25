@@ -23,8 +23,8 @@ contract IntexNFT1155RouterUupsTest is CrossChainTest {
 
     function setUp() public {
         _setUpBridge();
-        adapter = DeployProxy.intexNFT1155Bridge(tokenA, address(bridge), admin);
-        batch = DeployProxy.intexNFT1155Bridge(tokenA, address(bridge), admin);
+        adapter = DeployProxy.intexNFT1155Router(tokenA, address(bridge), admin);
+        batch = DeployProxy.intexNFT1155Router(tokenA, address(bridge), admin);
     }
 
     function test_Initialize_SetsAdmin() public view {

@@ -60,7 +60,7 @@ contract IntexAuctionTargetRouterTest is CrossChainTest {
         targetRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
 
         // Deploy batch adapter on BNB
-        nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridge = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
 
         _wireOutbeIca(targetRouter, outbeIca);
 

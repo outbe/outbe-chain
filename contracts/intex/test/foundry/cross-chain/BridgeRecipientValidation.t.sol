@@ -35,7 +35,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
         bridge.setFee(FEE);
 
         token = DeployProxy.intexNFT1155(admin, admin);
-        adapter = DeployProxy.intexNFT1155Bridge(address(token), address(bridge), admin);
+        adapter = DeployProxy.intexNFT1155Router(address(token), address(bridge), admin);
         token.grantRole(token.BRIDGE_ROLE(), address(adapter));
         adapter.setRemoteRouter(B_CHAIN_ID, _interop(B_CHAIN_ID, address(adapter)));
 

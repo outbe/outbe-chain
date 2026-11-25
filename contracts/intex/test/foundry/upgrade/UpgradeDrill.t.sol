@@ -189,7 +189,7 @@ contract UpgradeDrillTest is CrossChainTest {
 
     function test_Drill_IntexNFT1155Router() public {
         address tokenAddr = makeAddr("token");
-        IntexNFT1155Router batch = DeployProxy.intexNFT1155Bridge(tokenAddr, address(bridge), admin);
+        IntexNFT1155Router batch = DeployProxy.intexNFT1155Router(tokenAddr, address(bridge), admin);
         address relayer = makeAddr("relayer");
         bytes memory remote = _interop(B_CHAIN_ID, address(0xBEEF));
 

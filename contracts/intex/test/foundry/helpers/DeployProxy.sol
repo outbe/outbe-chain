@@ -66,7 +66,7 @@ library DeployProxy {
         return IntexAuctionTargetRouter(payable(address(proxy)));
     }
 
-    function intexNFT1155Bridge(address tokenAddr, address bridge, address delegate)
+    function intexNFT1155Router(address tokenAddr, address bridge, address delegate)
         internal
         returns (IntexNFT1155Router)
     {

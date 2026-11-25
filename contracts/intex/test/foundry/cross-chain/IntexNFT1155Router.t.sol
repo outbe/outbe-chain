@@ -50,8 +50,8 @@ contract IntexNFT1155RouterTest is CrossChainTest {
 
         srcToken = DeployProxy.intexNFT1155(admin, admin);
         dstToken = DeployProxy.intexNFT1155(admin, admin);
-        srcBatch = DeployProxy.intexNFT1155Bridge(address(srcToken), address(bridge), admin);
-        dstBatch = DeployProxy.intexNFT1155Bridge(address(dstToken), address(bridge), admin);
+        srcBatch = DeployProxy.intexNFT1155Router(address(srcToken), address(bridge), admin);
+        dstBatch = DeployProxy.intexNFT1155Router(address(dstToken), address(bridge), admin);
 
         srcBatch.setRemoteRouter(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(dstBatch)));
         dstBatch.setRemoteRouter(SRC_CHAIN_ID, _interop(SRC_CHAIN_ID, address(srcBatch)));

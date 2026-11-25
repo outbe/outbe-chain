@@ -124,7 +124,7 @@ contract ConfigureTargetTest is ConfigureTest {
             nft: nft,
             escrow: address(DeployProxy.escrowAdapter(deployer, bridger)),
             auction: address(DeployProxy.intexAuction(deployer, bridger)),
-            nftBridge: address(DeployProxy.intexNFT1155Bridge(nft, BRIDGE, deployer)),
+            nftBridge: address(DeployProxy.intexNFT1155Router(nft, BRIDGE, deployer)),
             router: address(DeployProxy.targetRouter(BRIDGE, deployer, 1)),
             compact: address(new MockTheCompact()),
             wcoen: address(new MockWCOEN())

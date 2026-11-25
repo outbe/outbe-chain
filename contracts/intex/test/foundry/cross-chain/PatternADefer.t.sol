@@ -122,8 +122,8 @@ contract PatternADeferTest is CrossChainTest {
         intexOutbe = DeployProxy.intexNFT1155(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
-        nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
+        nftBridge = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
+        nftBridgeOutbe = DeployProxy.intexNFT1155Router(address(intexOutbe), address(bridge), admin);
 
         // Wire the inbound source of the router and the remote router of the NFT bridge.
         _wireOutbeIca(bnbRouter, outbeIca);

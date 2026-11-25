@@ -41,10 +41,10 @@ contract InboundValidationTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        nftBridgeBnb = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridgeBnb = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
 
         IntexNFT1155 intexOutbe = DeployProxy.intexNFT1155(admin, admin);
-        nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
+        nftBridgeOutbe = DeployProxy.intexNFT1155Router(address(intexOutbe), address(bridge), admin);
 
         // Wire the inbound sources so authentication passes and the payload is what fails.
         _wireOutbeIca(bnbRouter, outbeIca);

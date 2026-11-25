@@ -61,7 +61,7 @@ contract IntexAuctionTargetRouterInboundHandlersTest is CrossChainTest {
         auction = DeployProxy.intexAuction(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridge = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
 
         escrow = DeployProxy.escrowAdapter(admin, admin);
         compact = new MockTheCompact();

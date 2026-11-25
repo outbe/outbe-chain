@@ -39,8 +39,8 @@ contract InboundFailureIsolationTest is CrossChainTest {
         _setUpBridge();
 
         intex = DeployProxy.intexNFT1155(admin, admin);
-        nftBridgeBnb = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
-        nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridgeBnb = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
+        nftBridgeOutbe = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
 
         nftBridgeBnb.setRemoteRouter(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
         nftBridgeOutbe.setRemoteRouter(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(nftBridgeBnb)));

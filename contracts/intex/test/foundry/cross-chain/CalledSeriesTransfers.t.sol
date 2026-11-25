@@ -27,7 +27,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
     function setUp() public {
         _setUpBridge();
         intex = DeployProxy.intexNFT1155(admin, admin);
-        nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
+        nftBridge = DeployProxy.intexNFT1155Router(address(intex), address(bridge), admin);
         nftBridge.setRemoteRouter(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(0xD57)));
 
         intex.grantRole(intex.BRIDGE_ROLE(), address(nftBridge));

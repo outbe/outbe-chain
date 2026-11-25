@@ -41,8 +41,8 @@ contract DuplicateProtectionTest is CrossChainTest {
 
         intexSrc = DeployProxy.intexNFT1155(admin, admin);
         intexDst = DeployProxy.intexNFT1155(admin, admin);
-        batchSrc = DeployProxy.intexNFT1155Bridge(address(intexSrc), address(bridge), admin);
-        batchDst = DeployProxy.intexNFT1155Bridge(address(intexDst), address(bridge), admin);
+        batchSrc = DeployProxy.intexNFT1155Router(address(intexSrc), address(bridge), admin);
+        batchDst = DeployProxy.intexNFT1155Router(address(intexDst), address(bridge), admin);
 
         // Outbound recipient for the send.
         batchSrc.setRemoteRouter(DST_CHAIN_ID, _interop(DST_CHAIN_ID, address(batchDst)));
