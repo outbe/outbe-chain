@@ -128,22 +128,26 @@ pub struct VaultRouterContract {
     #[attribute(order = 9)]
     pub reservation_nonce: outbe_primitives::storage::dsl::Value<U256>,
 
-    /// roots 13-33: CCA stables reservations keyed by id. Each record field
+    /// roots 13-35: CCA stables reservations keyed by id. Each record field
     /// hashes its key with a separate root; these roots must not be reused.
     #[attribute(order = 10)]
     pub reservations: outbe_primitives::storage::dsl::Map<U256, CredisReservation>,
 
-    /// slot 35: vault -> underlying asset captured at registration time.
+    /// slot 36: vault -> underlying asset captured at registration time.
     #[attribute(order = 11)]
     pub vault_assets: outbe_primitives::storage::dsl::Map<Address, Address>,
 
-    /// roots 36-38: pending vault actions keyed by proposal ID.
+    /// roots 37-39: pending vault actions keyed by proposal ID.
     #[attribute(order = 12)]
     pub vault_actions: outbe_primitives::storage::dsl::Map<U256, VaultActionData>,
 
-    /// slot 39: vault -> pending proposal ID; zero means none.
+    /// slot 40: vault -> pending proposal ID; zero means none.
     #[attribute(order = 13)]
     pub pending_vault_proposals: outbe_primitives::storage::dsl::Map<Address, U256>,
+
+    /// slot 41: vault -> open Credis reservations whose escrow came from it.
+    #[attribute(order = 14)]
+    pub vault_open_reservations: outbe_primitives::storage::dsl::Map<Address, u32>,
 }
 
 impl<'storage> VaultRouterContract<'storage> {
@@ -159,6 +163,39 @@ impl<'storage> VaultRouterContract<'storage> {
     pub fn reference_currency_vault_set(&self, iso_code: u16) -> StorageSet<'storage, Address> {
         let base = iso_code.mapping_slot(self.reference_currency_vaults.base_slot());
         StorageSet::new(base, self.address, self.storage.clone())
+    }
+
+    /// Holds `reservation` and counts it against the vault its escrow came from.
+    pub fn hold_credis_reservation(
+        &self,
+        reservation: &CredisReservation,
+    ) -> outbe_primitives::error::Result<()> {
+        self.reservations.create(reservation)?;
+        let open = self
+            .vault_open_reservations
+            .read(&reservation.vault)?
+            .checked_add(1)
+            .ok_or(crate::errors::VaultRouterError::InvalidReservationAmount)?;
+        self.vault_open_reservations.write(&reservation.vault, open)
+    }
+
+    /// Deletes the reservation `id` and returns it, or `None` when none is held.
+    pub fn take_credis_reservation(
+        &self,
+        id: U256,
+    ) -> outbe_primitives::error::Result<Option<CredisReservation>> {
+        let Some(reservation) = self.reservations.get(id)? else {
+            return Ok(None);
+        };
+        self.reservations.delete(id)?;
+        let open = self
+            .vault_open_reservations
+            .read(&reservation.vault)?
+            .checked_sub(1)
+            .ok_or(crate::errors::VaultRouterError::ReservationNotFound(id))?;
+        self.vault_open_reservations
+            .write(&reservation.vault, open)?;
+        Ok(Some(reservation))
     }
 
     /// First vault registered for `asset`, or `None` if the asset has no vault.

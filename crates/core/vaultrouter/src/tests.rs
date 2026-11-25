@@ -2137,6 +2137,12 @@ fn reservable_asset_world(
         storage
             .set_code(asset(), Bytecode::new_raw(vec![0x00].into()))
             .unwrap();
+        storage
+            .set_code(
+                outbe_core_common::addresses::WCOEN_ADDRESS,
+                Bytecode::new_raw(vec![0x00].into()),
+            )
+            .unwrap();
         for iso in [USD_ISO_CODE, issuance_iso] {
             let pair = AddressPair::new_coen_to(iso);
             if outbe_oracle::api::coen_pair_index_opt(storage.clone(), iso)
@@ -2467,8 +2473,7 @@ fn a_stranger_cannot_return_a_live_reservation() {
 fn seed_expired_reservation(storage: &StorageHandle<'_>) -> U256 {
     let id = U256::from(0x51u64);
     VaultRouterContract::new(storage.clone())
-        .reservations
-        .create(&CredisReservation {
+        .hold_credis_reservation(&CredisReservation {
             id,
             asset: asset(),
             amount_minor: U256::from(10),
@@ -2662,6 +2667,12 @@ fn same_utc_day_reservations_share_series_id_including_midnight_and_next_day_ope
     StorageHandle::enter(&mut storage, |storage| {
         storage
             .set_code(asset(), Bytecode::new_raw(vec![0x00].into()))
+            .unwrap();
+        storage
+            .set_code(
+                outbe_core_common::addresses::WCOEN_ADDRESS,
+                Bytecode::new_raw(vec![0x00].into()),
+            )
             .unwrap();
         storage
             .set_code(receiver(), Bytecode::new_raw(vec![0x00u8].into()))
@@ -3011,4 +3022,47 @@ fn unused_reservation_returns_wcoen_and_escrow() {
             .is_zero());
     });
     assert_eq!(wcoen_calls(&provider, calls).len(), 2);
+}
+
+#[test]
+fn a_vault_with_an_open_reservation_cannot_be_removed() {
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    stub_registrable_vault(&mut storage);
+    StorageHandle::enter(&mut storage, |storage| {
+        runtime::add_vault(storage.clone(), vault()).unwrap();
+        let router = VaultRouterContract::new(storage.clone());
+        router
+            .hold_credis_reservation(&CredisReservation {
+                id: U256::ONE,
+                asset: asset(),
+                amount_minor: U256::from(10),
+                credis_owner: receiver(),
+                cca: cca(),
+                vault: vault(),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_revert::<IVaultRouter::ReserveVaultHasReservations>(
+            &runtime::remove_vault(storage.clone(), vault()).unwrap_err(),
+        );
+        router.take_credis_reservation(U256::ONE).unwrap();
+        runtime::remove_vault(storage.clone(), vault()).unwrap();
+    });
+}
+
+#[test]
+fn a_reservation_needs_the_wcoen_contract() {
+    let mut provider = reservable_asset_world(USD_ISO_CODE, 6, U256::from(100u64), 0);
+    StorageHandle::enter(&mut provider, |storage| {
+        storage
+            .set_code(
+                outbe_core_common::addresses::WCOEN_ADDRESS,
+                Bytecode::new_raw(Default::default()),
+            )
+            .unwrap();
+        assert_revert::<IVaultRouter::InvalidAsset>(
+            &reserve_in(&storage, USD_ISO_CODE).unwrap_err(),
+        );
+        assert_no_reservation(&storage);
+    });
 }

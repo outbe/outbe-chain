@@ -182,8 +182,7 @@ pub fn seed_reservation(storage: &StorageHandle<'_>, credis_owner: Address, amou
     let call_start_day = outbe_system_common::time::first_full_day(now).expect("date step");
     let call_terms = outbe_credis::config::read(storage).expect("call terms");
     contract
-        .reservations
-        .create(&CredisReservation {
+        .hold_credis_reservation(&CredisReservation {
             id,
             asset: settlement_asset(),
             amount_minor: amount,

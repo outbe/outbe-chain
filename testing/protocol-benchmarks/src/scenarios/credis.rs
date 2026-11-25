@@ -159,8 +159,7 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
     let profile = outbe_credis::config::read(&storage).map_err(|error| error.to_string())?;
     let reservation_id = U256::from(1);
     contract
-        .reservations
-        .create(&CredisReservation {
+        .hold_credis_reservation(&CredisReservation {
             id: reservation_id,
             asset: ASSET,
             amount_minor: pledge_stables(),

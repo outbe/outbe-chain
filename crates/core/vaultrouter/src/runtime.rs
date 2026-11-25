@@ -148,6 +148,14 @@ pub(crate) fn remove_vault(storage: StorageHandle<'_>, vault: Address) -> Result
     if !shares.is_zero() {
         return Err(VaultRouterError::ReserveVaultHasShares { vault, shares }.into());
     }
+    let reservations = contract.vault_open_reservations.read(&vault)?;
+    if reservations != 0 {
+        return Err(VaultRouterError::ReserveVaultHasReservations {
+            vault,
+            reservations,
+        }
+        .into());
+    }
     contract.asset_vault_set(asset).remove(&vault)?;
     if contract.asset_vault_set(asset).is_empty()? {
         contract.assets.remove(&asset)?;

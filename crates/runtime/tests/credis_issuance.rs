@@ -153,7 +153,7 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
     // The escrow and the WCOEN of the reservation are funded through real ERC20 calls below.
     let reservation_day = timestamp_to_date_key(NOW);
     let call_terms = outbe_credis::config::read(&storage)?;
-    router.reservations.create(&CredisReservation {
+    router.hold_credis_reservation(&CredisReservation {
         id: U256::ONE,
         asset: ASSET,
         amount_minor: U256::from(AMOUNT),

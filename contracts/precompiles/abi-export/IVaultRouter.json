@@ -1291,11 +1291,6 @@
   },
   {
     "type": "error",
-    "name": "CredisOwnerMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "CurrencyMismatch",
     "inputs": [
       {
@@ -1463,22 +1458,6 @@
   },
   {
     "type": "error",
-    "name": "ReservationInsufficient",
-    "inputs": [
-      {
-        "name": "availableMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "requiredMinor",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ReservationNotFound",
     "inputs": [
       {
@@ -1492,6 +1471,22 @@
     "type": "error",
     "name": "ReserveVaultAlreadyAdded",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReserveVaultHasReservations",
+    "inputs": [
+      {
+        "name": "vault",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "reservations",
+        "type": "uint32",
+        "internalType": "uint32"
+      }
+    ]
   },
   {
     "type": "error",

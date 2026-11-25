@@ -81,6 +81,7 @@ pub(crate) fn create_credis_reservation(
             return Err(VaultRouterError::ReservationExists(id).into());
         }
 
+        require_code(&storage, WCOEN_ADDRESS)?;
         erc20_transfer_from(&storage, WCOEN_ADDRESS, caller, SELF, wcoen)?;
         let burned_shares = vault_withdraw(&storage, vault, amount, SELF, SELF)?;
         terms.id = id;
@@ -91,7 +92,7 @@ pub(crate) fn create_credis_reservation(
         terms.wcoen_minor = wcoen;
         terms.cca_receiver = cca_receiver;
         terms.omnibus = omnibus;
-        contract.reservations.create(&terms)?;
+        contract.hold_credis_reservation(&terms)?;
 
         let mut contract = VaultRouterContract::new(storage.clone());
         contract.emit(IVaultRouter::CredisReservationCreated {
@@ -246,12 +247,7 @@ fn take_reservation_if_held(
     storage: &StorageHandle<'_>,
     id: U256,
 ) -> Result<Option<CredisReservation>> {
-    let contract = VaultRouterContract::new(storage.clone());
-    let Some(record) = contract.reservations.get(id)? else {
-        return Ok(None);
-    };
-    contract.reservations.delete(id)?;
-    Ok(Some(record))
+    VaultRouterContract::new(storage.clone()).take_credis_reservation(id)
 }
 
 /// `getCredisReservation`: the reservation held under `id`, or a zeroed record when none.
@@ -263,6 +259,14 @@ pub fn credis_reservation_of(storage: &StorageHandle<'_>, id: U256) -> Result<Cr
     }))
 }
 
+/// A token call to an address with no code would succeed and move nothing.
+fn require_code(storage: &StorageHandle<'_>, token: Address) -> Result<()> {
+    if storage.with_account_info(token, |info| Ok(info.is_empty_code_hash()))? {
+        return Err(VaultRouterError::InvalidAsset.into());
+    }
+    Ok(())
+}
+
 /// Quote once, before withdrawing the reserved amount. Issuance never refreshes these terms.
 fn quote(
     storage: &StorageHandle<'_>,
@@ -270,9 +274,7 @@ fn quote(
     amount: U256,
     reference_currency: u16,
 ) -> Result<CredisReservation> {
-    if storage.with_account_info(asset, |info| Ok(info.is_empty_code_hash()))? {
-        return Err(VaultRouterError::InvalidAsset.into());
-    }
+    require_code(storage, asset)?;
     let data = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
     let decimals = IERC20::decimalsCall::abi_decode_returns_validate(&data)
         .map_err(|_| VaultRouterError::InvalidAssetDecimals)?;

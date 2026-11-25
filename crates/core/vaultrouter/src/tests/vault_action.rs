@@ -228,7 +228,7 @@ fn approvals_do_not_overwrite_reservations_with_the_same_id() {
             credis_owner: owner(),
             ..Default::default()
         };
-        router.reservations.create(&reservation).unwrap();
+        router.hold_credis_reservation(&reservation).unwrap();
         stage(&storage, 1, ADD_VAULT, 0);
         assert_eq!(
             router.reservations.get(U256::ONE).unwrap(),

@@ -56,6 +56,7 @@ interface IVaultRouter {
     error ReserveVaultAlreadyAdded();
     error ReserveVaultNotFound();
     error ReserveVaultHasShares(address vault, uint256 shares);
+    error ReserveVaultHasReservations(address vault, uint32 reservations);
     error ReserveVaultRemovalPending(address vault, uint256 proposalId);
     error ReserveVaultOwnerNotRenounced(address currentOwner);
     error StablecoinSourceNotFound();
@@ -69,8 +70,6 @@ interface IVaultRouter {
     error ReservationExists(uint256 id);
     error ReservationNotFound(uint256 id);
     error ReservationExpired(uint256 id);
-    error CredisOwnerMismatch();
-    error ReservationInsufficient(uint256 availableMinor, uint256 requiredMinor);
     error InvalidReservationAmount();
     error ZeroAddress();
     error Unauthorized();
