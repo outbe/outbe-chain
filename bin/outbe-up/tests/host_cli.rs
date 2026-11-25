@@ -1351,8 +1351,9 @@ fn host_check_verifies_network_dhcp_and_published_ports_readonly() {
     );
     let nft_file = amd._tmp.path().join("nft.json");
 
-    // 1. Missing static DHCP reservation -> non-zero exit, ready=false, prints exact recommendation, zero writes.
-    let missing_dhcp = Command::new(OUTBE_UP_BIN)
+    // 1. Decision 10: NO static DHCP reservation needed when service IP (10.77.0.88) is inside
+    //    the bridge subnet, outside the DHCP pool (10.77.0.100..=10.77.0.200), and conflict-free!
+    let no_reservation = Command::new(OUTBE_UP_BIN)
         .env("PATH", amd.path_env())
         .args(["host", "check", "--vm", "node-a", "--vmm-socket"])
         .arg(&amd.vmm_socket)
@@ -1366,26 +1367,61 @@ fn host_check_verifies_network_dhcp_and_published_ports_readonly() {
         .output()
         .unwrap();
     assert!(
-        !missing_dhcp.status.success(),
-        "host check must fail when static DHCP reservation is missing"
+        no_reservation.status.success(),
+        "host check must pass without static DHCP reservation under Decision 10:\n{}",
+        String::from_utf8_lossy(&no_reservation.stderr)
     );
-    let mj: Value = serde_json::from_slice(&missing_dhcp.stdout).unwrap();
-    assert_eq!(mj["ready"], false);
+    let mj: Value = serde_json::from_slice(&no_reservation.stdout).unwrap();
+    assert_eq!(mj["ready"], true);
     assert_eq!(mj["host_network_ok"], true);
+    assert_eq!(mj["service_ip_ok"], true);
     assert_eq!(mj["dhcp_reserved"], false);
     assert_eq!(mj["published_ports_ok"], true);
     assert_eq!(mj["writes_performed"], 0);
-    assert_eq!(
-        mj["recommended_dhcp_block"],
-        "# outbe-up:vm:node-a:begin\n52:54:00:aa:bb:88,10.77.0.88,10m\n# outbe-up:vm:node-a:end\n"
-    );
-    assert_eq!(
-        mj["recommended_dhcp_reload"],
-        "sudo systemctl reload validator-vm-dhcp.service"
-    );
+    assert!(mj["recommended_dhcp_block"].is_null());
+    assert!(mj["recommended_dhcp_reload"].is_null());
     assert!(amd.mutations().is_empty());
 
-    // 2. Operator adds `# outbe-up:vm:node-a:begin..end` -> host check (no ports) passes!
+    // 1b. Service IP overlapping the host DHCP pool (10.77.0.100..=10.77.0.200) -> MUST fail!
+    amd.seed_vm(
+        "node-a",
+        "52:54:00:aa:bb:88",
+        Some(Ipv4Addr::new(10, 77, 0, 150)),
+    );
+    let pool_overlap = Command::new(OUTBE_UP_BIN)
+        .env("PATH", amd.path_env())
+        .args(["host", "check", "--vm", "node-a", "--vmm-socket"])
+        .arg(&amd.vmm_socket)
+        .arg("--vmm-home")
+        .arg(&amd.vmm_home)
+        .arg("--state-dir")
+        .arg(&amd.state_dir)
+        .arg("--sys-root")
+        .arg(&amd.sys_root)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        !pool_overlap.status.success(),
+        "host check must fail when service IP overlaps DHCP pool"
+    );
+    let poj: Value = serde_json::from_slice(&pool_overlap.stdout).unwrap();
+    assert_eq!(poj["ready"], false);
+    assert_eq!(poj["service_ip_ok"], false);
+    assert!(poj["conflicts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v.as_str().unwrap_or("").contains("overlaps host DHCP pool")));
+
+    // Restore non-pool service IP 10.77.0.88.
+    amd.seed_vm(
+        "node-a",
+        "52:54:00:aa:bb:88",
+        Some(Ipv4Addr::new(10, 77, 0, 88)),
+    );
+
+    // 2. Optional static reservation (`# outbe-up:vm:node-a:begin..end`) -> still accepted and sets dhcp_reserved=true.
     let with_block = format!(
         "{AMD_DHCP_HOSTS}# outbe-up:vm:node-a:begin\n52:54:00:aa:bb:88,10.77.0.88,10m\n# outbe-up:vm:node-a:end\n"
     );
@@ -1412,6 +1448,7 @@ fn host_check_verifies_network_dhcp_and_published_ports_readonly() {
     let okj: Value = serde_json::from_slice(&ok_managed.stdout).unwrap();
     assert_eq!(okj["ready"], true);
     assert_eq!(okj["host_network_ok"], true);
+    assert_eq!(okj["service_ip_ok"], true);
     assert_eq!(okj["dhcp_reserved"], true);
     assert_eq!(okj["published_ports_ok"], true);
     assert_eq!(okj["writes_performed"], 0);
@@ -1439,6 +1476,7 @@ fn host_check_verifies_network_dhcp_and_published_ports_readonly() {
     );
     let pj: Value = serde_json::from_slice(&ok_plain.stdout).unwrap();
     assert_eq!(pj["ready"], true);
+    assert_eq!(pj["service_ip_ok"], true);
     assert_eq!(pj["dhcp_reserved"], true);
 
     // 4. DHCP IP conflict (different MAC owns 10.77.0.88) -> fails closed with conflict!
@@ -1460,11 +1498,12 @@ fn host_check_verifies_network_dhcp_and_published_ports_readonly() {
     assert!(!bad_dhcp.status.success());
     let bcj: Value = serde_json::from_slice(&bad_dhcp.stdout).unwrap();
     assert_eq!(bcj["ready"], false);
+    assert_eq!(bcj["service_ip_ok"], false);
     assert_eq!(bcj["dhcp_reserved"], false);
     assert!(!bcj["conflicts"].as_array().unwrap().is_empty());
 
-    // Restore valid DHCP reservation for port publication checks.
-    fs::write(&amd.hosts_file, &with_block).unwrap();
+    // Restore clean hosts file (no static reservation needed) for port publication checks.
+    fs::write(&amd.hosts_file, AMD_DHCP_HOSTS).unwrap();
 
     // 5. Missing published ports -> ready=false, prints exact forward + prerouting rules + apply commands.
     let missing_ports = Command::new(OUTBE_UP_BIN)
@@ -1495,7 +1534,8 @@ fn host_check_verifies_network_dhcp_and_published_ports_readonly() {
     assert!(!missing_ports.status.success());
     let mpj: Value = serde_json::from_slice(&missing_ports.stdout).unwrap();
     assert_eq!(mpj["ready"], false);
-    assert_eq!(mpj["dhcp_reserved"], true);
+    assert_eq!(mpj["service_ip_ok"], true);
+    assert_eq!(mpj["dhcp_reserved"], false);
     assert_eq!(mpj["published_ports_ok"], false);
     assert_eq!(
         mpj["recommended_forward_rules"].as_array().unwrap().len(),

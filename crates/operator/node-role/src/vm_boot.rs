@@ -22,7 +22,7 @@ use walkdir::WalkDir;
 
 use crate::{
     config::{NodeRole, NODE_ROLE_FILE},
-    install, process,
+    install, process, vm_network,
 };
 
 const DEFAULT_VM_BIN_DIR: &str = "/usr/local/bin";
@@ -69,6 +69,7 @@ struct BootOptions<'a> {
     require_root_owner: bool,
     apply_ownership: bool,
     prepare_runtime_dirs: bool,
+    configure_network: bool,
     expected_role: Option<NodeRole>,
     cancel: Option<&'a AtomicBool>,
 }
@@ -103,6 +104,7 @@ pub fn verify_tree_without_mount(root: &Path, bin_dir: &Path) -> Result<()> {
             require_root_owner: false,
             apply_ownership: false,
             prepare_runtime_dirs: true,
+            configure_network: false,
             expected_role: None,
             cancel: None,
         },
@@ -140,6 +142,7 @@ pub fn verify_static_tree_for_role_cancellable(
             require_root_owner: false,
             apply_ownership: false,
             prepare_runtime_dirs: false,
+            configure_network: false,
             expected_role: Some(expected_role),
             cancel: Some(cancel),
         },
@@ -161,6 +164,7 @@ pub fn run(bin_dir: Option<&Path>) -> Result<()> {
             require_root_owner: true,
             apply_ownership: true,
             prepare_runtime_dirs: true,
+            configure_network: true,
             expected_role: None,
             cancel: None,
         },
@@ -180,7 +184,7 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
     }
 
     let env_path = root.join("validator.env");
-    match role {
+    let environment = match role {
         NodeRole::Founder | NodeRole::JoiningValidator => {
             for name in CONFIG_FILES {
                 verify_config_file(&root.join(name), options.require_root_owner)?;
@@ -200,6 +204,7 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
             install::required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
 
             verify_secrets(root, options.bin_dir, options.cancel)?;
+            environment
         }
         NodeRole::FullNode => {
             verify_config_file(&env_path, options.require_root_owner)?;
@@ -218,11 +223,37 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
             install::required_file(&root.join("genesis.json"))?;
             install::validate_genesis(root, &environment["OUTBE_CHAIN_ID"])?;
             install::required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
+            environment
         }
-    }
+    };
+
+    // Decision 10: every VM role uses OUTBE_RPC_BIND_IP as its non-loopback private bridge service IP.
+    let service_ip: std::net::Ipv4Addr = environment["OUTBE_RPC_BIND_IP"]
+        .parse()
+        .wrap_err("OUTBE_RPC_BIND_IP must be an IPv4 literal")?;
+    ensure!(
+        !service_ip.is_loopback() && service_ip.is_private(),
+        "VM data disk OUTBE_RPC_BIND_IP must be a non-loopback private IPv4 service address (got {service_ip}); loopback is not valid for VM roles"
+    );
 
     if options.prepare_runtime_dirs {
         prepare_directories(root, role, options.apply_ownership)?;
+    }
+
+    if options.configure_network {
+        let applied = vm_network::configure_service_ip(service_ip).wrap_err_with(|| {
+            format!("failed to configure VM service IP {service_ip} during vm-boot")
+        })?;
+        eprintln!(
+            "outbe-vm-boot: configured service IP {}/{} on {} (dhcp_ip={}, gw={}, metric={}, dropin={})",
+            applied.service_ip,
+            applied.prefix_len,
+            applied.iface,
+            applied.dhcp_ip,
+            applied.gateway,
+            applied.service_metric,
+            applied.dropin_path.display()
+        );
     }
     Ok(())
 }
@@ -706,7 +737,7 @@ mod tests {
         format!(
             concat!(
                 "OUTBE_EXTERNAL_IP=\"10.0.0.1\"\n",
-                "OUTBE_RPC_BIND_IP=\"127.0.0.1\"\n",
+                "OUTBE_RPC_BIND_IP=\"10.77.0.10\"\n",
                 "OUTBE_CERTIFIED_RPC=\"http://127.0.0.1:8545\"\n",
                 "OUTBE_VALIDATOR_ADDRESS=\"0x1111111111111111111111111111111111111111\"\n",
                 "OUTBE_BOOTNODES=\"enode://abcd@10.0.0.1:30303\"\n",
@@ -770,6 +801,7 @@ mod tests {
             require_root_owner: false,
             apply_ownership: false,
             prepare_runtime_dirs: true,
+            configure_network: false,
             expected_role: None,
             cancel: None,
         }
@@ -1044,7 +1076,7 @@ mod tests {
             &root.join("validator.env"),
             concat!(
                 "OUTBE_EXTERNAL_IP=\"10.0.0.2\"\n",
-                "OUTBE_RPC_BIND_IP=\"127.0.0.1\"\n",
+                "OUTBE_RPC_BIND_IP=\"10.77.0.20\"\n",
                 "OUTBE_CERTIFIED_RPC=\"http://10.0.0.1:8545\"\n",
                 "OUTBE_BOOTNODES=\"enode://abcd@10.0.0.1:30303\"\n",
                 "OUTBE_CONSENSUS_EXTRA_ARGS=\"--consensus.use-local-defaults\"\n",
@@ -1150,5 +1182,36 @@ mod tests {
             0o666,
         );
         assert!(verify_static_tree_for_role(bad_marker.path(), NodeRole::FullNode, None).is_err());
+
+        // 5. Loopback OUTBE_RPC_BIND_IP is refused for all VM roles (founder, joining-validator, full-node).
+        let loopback_founder = build_valid_root();
+        let env_lb = valid_env().replace("10.77.0.10", "127.0.0.1");
+        write_file_mode(
+            &loopback_founder.path().join("validator.env"),
+            env_lb.as_bytes(),
+            0o640,
+        );
+        let err = verify_static_tree_for_role(loopback_founder.path(), NodeRole::Founder, None)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("non-loopback private IPv4"),
+            "{err}"
+        );
+
+        let loopback_full = build_valid_full_node_root();
+        let full_env_lb = fs::read_to_string(loopback_full.path().join("validator.env"))
+            .unwrap()
+            .replace("10.77.0.20", "127.0.0.1");
+        write_file_mode(
+            &loopback_full.path().join("validator.env"),
+            full_env_lb.as_bytes(),
+            0o640,
+        );
+        let err = verify_static_tree_for_role(loopback_full.path(), NodeRole::FullNode, None)
+            .unwrap_err();
+        assert!(
+            err.to_string().contains("non-loopback private IPv4"),
+            "{err}"
+        );
     }
 }

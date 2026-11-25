@@ -324,10 +324,16 @@ pub fn stage_overlay(
         0o644,
     )?;
 
-    // 3. System account `outbe` with fixed UID/GID and home `/opt/outbe-chain`.
+    // 3. System account `outbe` with fixed UID/GID and home `/opt/outbe-chain`, plus tmpfiles
+    //    entry ensuring `/run/systemd/network` (0755) exists before `outbe-vm-boot.service` starts.
     write_overlay_file(
         &common.join("usr/lib/sysusers.d/outbe.conf"),
         &render_sysusers_conf(),
+        0o644,
+    )?;
+    write_overlay_file(
+        &common.join("usr/lib/tmpfiles.d/outbe-vm-network.conf"),
+        "d /run/systemd/network 0755 root root -\n",
         0o644,
     )?;
 

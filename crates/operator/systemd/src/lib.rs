@@ -318,13 +318,15 @@ fn managed_validator_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
 }
 
 fn render_vm_boot_service(outbe_up: &str, bin_dir: &str) -> UnitFile {
-    // Run before all validator daemons to verify the unmeasured data disk.
+    // Run before all validator daemons to verify the unmeasured data disk and configure the
+    // hybrid service IP drop-in under /run/systemd/network.
     let content = format!(
         concat!(
             "[Unit]\n",
             "Description=Outbe VM data disk verification and boot preparation\n",
             "Requires=outbe-data-mount.service\n",
-            "After=local-fs.target outbe-data-mount.service\n",
+            "Wants=network-online.target\n",
+            "After=local-fs.target network-online.target outbe-data-mount.service\n",
             "PartOf=outbe-validator.target\n",
             "\n",
             "[Service]\n",
@@ -338,7 +340,7 @@ fn render_vm_boot_service(outbe_up: &str, bin_dir: &str) -> UnitFile {
             "PrivateTmp=true\n",
             "ProtectHome=true\n",
             "ProtectSystem=strict\n",
-            "ReadWritePaths=/opt/outbe-chain\n",
+            "ReadWritePaths=/opt/outbe-chain /run/systemd/network\n",
             "\n",
             "[Install]\n",
             "WantedBy=outbe-validator.target\n",
@@ -838,7 +840,11 @@ mod tests {
         assert!(boot.contains("Type=oneshot"));
         assert!(boot.contains("RemainAfterExit=yes"));
         assert!(boot.contains("Requires=outbe-data-mount.service"));
-        assert!(boot.contains("After=local-fs.target outbe-data-mount.service"));
+        assert!(boot.contains("Wants=network-online.target"));
+        assert!(
+            boot.contains("After=local-fs.target network-online.target outbe-data-mount.service")
+        );
+        assert!(boot.contains("ReadWritePaths=/opt/outbe-chain /run/systemd/network"));
         assert!(boot.contains(
             "ExecStart=/usr/local/bin/outbe-up internal vm-boot --bin-dir /usr/local/bin"
         ));
@@ -899,8 +905,12 @@ mod tests {
                     let paths: Vec<&str> = value.split_whitespace().collect();
                     assert!(!paths.is_empty(), "{}: empty ReadWritePaths", unit.name);
                     for path in paths {
+                        let allowed_vm_boot_net =
+                            unit.name == "outbe-vm-boot.service" && path == "/run/systemd/network";
                         assert!(
-                            path == "/opt/outbe-chain" || path.starts_with("/opt/outbe-chain/"),
+                            path == "/opt/outbe-chain"
+                                || path.starts_with("/opt/outbe-chain/")
+                                || allowed_vm_boot_net,
                             "{}: ReadWritePaths outside /opt/outbe-chain: {path}",
                             unit.name
                         );

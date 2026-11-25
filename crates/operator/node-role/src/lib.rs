@@ -22,6 +22,7 @@ mod snapshot;
 pub mod status;
 pub mod sync;
 pub mod vm_boot;
+pub mod vm_network;
 mod wait;
 
 pub use config::{FullNodeConfig, FullNodeNetworkConfig, NodeRole, NODE_ROLE_FILE};

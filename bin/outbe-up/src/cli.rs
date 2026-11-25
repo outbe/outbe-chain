@@ -241,7 +241,7 @@ enum HostCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Verify (read-only) that host networking, static DHCP reservation, and optional published ports are configured for a VM.
+    /// Verify (read-only) that host networking, hybrid service IP (outside DHCP pool and conflict-free), and optional published ports are configured for a VM.
     Check {
         /// Local VM name recorded in the local VM state store.
         #[arg(long)]

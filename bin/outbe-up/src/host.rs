@@ -502,7 +502,11 @@ pub fn check(args: CheckArgs) -> Result<()> {
             report.vm, report.vm_id, report.mac, report.ip, report.bridge
         );
         println!("  host_network_ok:    {}", report.host_network_ok);
-        println!("  dhcp_reserved:      {}", report.dhcp_reserved);
+        println!("  service_ip_ok:      {}", report.service_ip_ok);
+        println!(
+            "  dhcp_reserved:      {} (optional; hybrid service IP)",
+            report.dhcp_reserved
+        );
         println!("  published_ports_ok: {}", report.published_ports_ok);
         println!("  ready:              {}", report.ready);
 

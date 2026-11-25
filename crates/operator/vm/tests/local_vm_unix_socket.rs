@@ -528,21 +528,25 @@ fn full_local_vm_lifecycle_over_fake_unix_socket() {
         trickle_start.elapsed()
     );
 
-    // Status without leases file -> IP unknown (None), then with leases file -> resolved IP.
+    // Status reports service_ip (intended_ip) and dhcp_ip (from leases file, None when absent).
     let status_no_ip = status_local_vm(&store, &vmm, "dev", &leases_file).unwrap();
     assert_eq!(status_no_ip.vmm_status, "running");
     assert!(status_no_ip.running);
     assert_eq!(status_no_ip.uptime, "0h 1m 12s");
-    assert_eq!(status_no_ip.ip, None);
+    assert_eq!(status_no_ip.service_ip, Some(Ipv4Addr::new(10, 77, 0, 88)));
+    assert_eq!(status_no_ip.dhcp_ip, None);
+    assert_eq!(status_no_ip.ip, Some(Ipv4Addr::new(10, 77, 0, 88)));
     assert_eq!(status_no_ip.image_name, "outbe-vm-dev-fedcba9876543210");
 
     fs::write(
         &leases_file,
-        format!("1795598734 {TEST_MAC} 10.77.0.88 dev *\n"),
+        format!("1795598734 {TEST_MAC} 10.77.0.122 dev *\n"),
     )
     .unwrap();
     let all = status_all_local_vms(&store, &vmm, &leases_file).unwrap();
     assert_eq!(all.len(), 1);
+    assert_eq!(all[0].service_ip, Some(Ipv4Addr::new(10, 77, 0, 88)));
+    assert_eq!(all[0].dhcp_ip, Some(Ipv4Addr::new(10, 77, 0, 122)));
     assert_eq!(all[0].ip, Some(Ipv4Addr::new(10, 77, 0, 88)));
 
     // Logs fallback over chunked HTTP /logs when serial.log is absent, then direct file read.

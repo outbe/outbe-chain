@@ -1339,7 +1339,7 @@ network:
   chain_id: {chain_id}
   certified_rpc: "http://10.77.0.10:8545"
   advertise_ip: 10.77.0.20
-  rpc_bind_ip: 127.0.0.1
+  rpc_bind_ip: 10.77.0.20
   bootnodes:
     - "enode://abcd@10.77.0.10:30303"
   consensus_peers:
@@ -1369,7 +1369,7 @@ network:
   chain_id: {chain_id}
   certified_rpc: "http://10.77.0.10:8545"
   advertise_ip: 10.77.0.21
-  rpc_bind_ip: 127.0.0.1
+  rpc_bind_ip: 10.77.0.21
   bootnodes:
     - "enode://abcd@10.77.0.10:30303"
   use_local_defaults: true

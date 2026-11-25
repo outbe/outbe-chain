@@ -337,6 +337,7 @@ pub struct HostCheckReport {
     pub ports: Vec<PublishPortSpec>,
     pub ready: bool,
     pub host_network_ok: bool,
+    pub service_ip_ok: bool,
     pub dhcp_reserved: bool,
     pub published_ports_ok: bool,
     pub missing: Vec<String>,
@@ -532,10 +533,10 @@ pub fn evaluate_host_setup<T: VmmTransport>(
             status.bridge.name
         ));
     }
-    if !status.dhcp.detected || !status.dhcp.unit_active || status.dhcp.hosts_file.is_none() {
+    if !status.dhcp.detected || !status.dhcp.unit_active {
         missing_components.push(format!("DHCP service on bridge `{}`", status.bridge.name));
         planned_steps.push(format!(
-            "Configure and enable a dnsmasq DHCP service on `{}` with `--dhcp-hostsfile`, `--dhcp-leasefile`, and `ExecReload=/bin/kill -HUP $MAINPID`.",
+            "Configure and enable a dnsmasq DHCP service on `{}` with `--dhcp-range` and `--dhcp-leasefile`.",
             status.bridge.name
         ));
     }
@@ -992,9 +993,13 @@ pub fn release_local_vm_dhcp(
     })
 }
 
-/// Strictly read-only verifier checking that host networking (bridge, DHCP, IPv4 forwarding,
-/// outbound NAT), the VM's static DHCP reservation, and any requested published ports (both
-/// prerouting DNAT and forward accept rules in live nftables) are configured with zero conflicts.
+/// Strictly read-only verifier checking that host networking (bridge, active DHCP, IPv4
+/// forwarding, outbound NAT), the VM's hybrid service IP (inside the bridge subnet, outside the
+/// host DHCP pool, and free of conflicts), and any requested published ports (both prerouting
+/// DNAT and forward accept rules in live nftables) are configured with zero conflicts.
+///
+/// Static `dhcp-hosts` reservations are no longer required (Decision 10); `dhcp_reserved` is
+/// reported as informational only.
 #[allow(clippy::too_many_arguments)]
 pub fn check_local_vm_host<T: VmmTransport>(
     store: &LocalVmStore,
@@ -1094,9 +1099,10 @@ pub fn check_local_vm_host<T: VmmTransport>(
     let mut conflicts = Vec::new();
     let mut port_conflicts = Vec::new();
 
-    // 1. Host networking checks (bridge, DHCP, IPv4 forwarding, outbound NAT egress).
+    // 1. Host networking checks (bridge, active DHCP, IPv4 forwarding, outbound NAT egress).
     let (bridge_status, bridge_subnet) = detect_bridge(&bridge_name);
     let bridge_ok = bridge_status.present && bridge_status.up && bridge_subnet.is_some();
+    let mut bridge_ip_ok = false;
     if !bridge_ok {
         missing.push(format!(
             "bridge `{bridge_name}` is missing, down, or has no IPv4 CIDR configured"
@@ -1104,30 +1110,28 @@ pub fn check_local_vm_host<T: VmmTransport>(
     } else if let Some(subnet) = bridge_subnet {
         if !subnet.contains(ip) {
             conflicts.push(format!(
-                "VM IP {ip} is outside bridge `{bridge_name}` subnet {}",
+                "VM service IP {ip} is outside bridge `{bridge_name}` subnet {}",
                 subnet.cidr_string()
             ));
         } else if ip == subnet.network || ip == subnet.broadcast() {
             conflicts.push(format!(
-                "VM IP {ip} is the network or broadcast address of {}",
+                "VM service IP {ip} is the network or broadcast address of {}",
                 subnet.cidr_string()
             ));
         } else if bridge_status.gateway_ip == Some(ip) {
             conflicts.push(format!(
-                "VM IP {ip} is the bridge `{bridge_name}` gateway address"
+                "VM service IP {ip} is the bridge `{bridge_name}` gateway address"
             ));
+        } else {
+            bridge_ip_ok = true;
         }
     }
 
     let dhcp = detect_dhcp(&bridge_name, env);
-    let dhcp_service_ok = dhcp.detected && dhcp.unit_active && dhcp.hosts_file.is_some();
-    if !dhcp.detected || !dhcp.unit_active {
+    let dhcp_service_ok = dhcp.detected && dhcp.unit_active;
+    if !dhcp_service_ok {
         missing.push(format!(
             "no active DHCP service detected on bridge `{bridge_name}`"
-        ));
-    } else if dhcp.hosts_file.is_none() {
-        missing.push(format!(
-            "DHCP service on `{bridge_name}` does not specify `--dhcp-hostsfile`"
         ));
     }
 
@@ -1164,8 +1168,24 @@ pub fn check_local_vm_host<T: VmmTransport>(
 
     let host_network_ok = bridge_ok && dhcp_service_ok && ip_forward_ok && egress_ok;
 
-    // 2. Static DHCP reservation check (accepts either managed block or operator-entered line,
-    //    while failing closed on format/owner/symlink errors or any IP/MAC/lease/store conflict).
+    // 2. Service IP safety checks (Decision 10):
+    //    - Must be outside the host's discovered dynamic DHCP pool (`pool_start..=pool_end`).
+    //    - Must not collide with another local VM in our store, any existing static reservation
+    //      in `dhcp-hosts` (if present), or any active DHCP lease for another MAC.
+    //    - Static DHCP reservations are optional; missing reservations do NOT fail `host check`.
+    let mut pool_overlap = false;
+    if let (Some(pool_start), Some(pool_end)) = (dhcp.pool_start, dhcp.pool_end) {
+        let ip_u32 = u32::from(ip);
+        let lo = u32::from(pool_start).min(u32::from(pool_end));
+        let hi = u32::from(pool_start).max(u32::from(pool_end));
+        if ip_u32 >= lo && ip_u32 <= hi {
+            pool_overlap = true;
+            conflicts.push(format!(
+                "VM service IP {ip} overlaps host DHCP pool {pool_start}..={pool_end} on bridge `{bridge_name}`; choose a service IP outside the DHCP pool"
+            ));
+        }
+    }
+
     let mut local_store_conflicts = Vec::new();
     for other_name in store.list_vm_names()? {
         if other_name == vm_name {
@@ -1190,57 +1210,55 @@ pub fn check_local_vm_host<T: VmmTransport>(
     conflicts.extend(local_store_conflicts);
 
     let mut dhcp_reserved = false;
-    let mut recommended_dhcp_block = None;
-    let mut recommended_dhcp_reload = None;
+    let mut hosts_conflict = false;
+    let mut lease_conflict = false;
+
+    if let Some(leases_file) = &dhcp.leases_file {
+        if let Ok(leases_content) = fs::read_to_string(leases_file) {
+            if let Err(err) =
+                check_dnsmasq_lease_conflicts(&leases_content, &[(live_mac.clone(), ip)])
+            {
+                lease_conflict = true;
+                conflicts.push(err.to_string());
+            }
+        }
+    }
 
     if let Some(hosts_file) = &dhcp.hosts_file {
         match read_and_validate_hosts_file(hosts_file, env.expected_hosts_owner) {
             Ok(existing_hosts) => {
                 match check_dnsmasq_reservation_status(&existing_hosts, &live_mac, ip) {
                     Ok(res_check) => {
-                        let mut lease_conflict = false;
-                        if let Some(leases_file) = &dhcp.leases_file {
-                            if let Ok(leases_content) = fs::read_to_string(leases_file) {
-                                if let Err(err) = check_dnsmasq_lease_conflicts(
-                                    &leases_content,
-                                    &[(live_mac.clone(), ip)],
-                                ) {
-                                    lease_conflict = true;
-                                    conflicts.push(err.to_string());
-                                }
-                            }
-                        }
-
                         if !res_check.conflicts.is_empty() {
+                            hosts_conflict = true;
                             conflicts.extend(res_check.conflicts);
                         } else if res_check.exact_match
                             && !lease_conflict
                             && !has_local_store_conflict
                         {
                             dhcp_reserved = true;
-                        } else if !res_check.exact_match {
-                            missing.push(format!(
-                                "static DHCP reservation for VM `{vm_name}` ({live_mac} -> {ip}) is not present in {}",
-                                hosts_file.display()
-                            ));
-                            recommended_dhcp_block =
-                                Some(render_vm_dnsmasq_block(vm_name, &live_mac, ip));
-                            recommended_dhcp_reload = dhcp
-                                .unit_name
-                                .as_ref()
-                                .map(|u| format!("sudo systemctl reload {u}"));
                         }
                     }
                     Err(err) => {
+                        hosts_conflict = true;
                         conflicts.push(err.to_string());
                     }
                 }
             }
             Err(err) => {
+                hosts_conflict = true;
                 conflicts.push(err.to_string());
             }
         }
     }
+
+    let service_ip_ok = bridge_ip_ok
+        && !pool_overlap
+        && !has_local_store_conflict
+        && !hosts_conflict
+        && !lease_conflict;
+    let recommended_dhcp_block = None;
+    let recommended_dhcp_reload = None;
 
     // 3. Optional published-port verification (DNAT + forward accept, fail closed on unparsed DNAT).
     let mut resolved_public_ip = public_ip_override;
@@ -1417,7 +1435,7 @@ pub fn check_local_vm_host<T: VmmTransport>(
     }
 
     let ready = host_network_ok
-        && dhcp_reserved
+        && service_ip_ok
         && published_ports_ok
         && missing.is_empty()
         && conflicts.is_empty();
@@ -1432,6 +1450,7 @@ pub fn check_local_vm_host<T: VmmTransport>(
         ports,
         ready,
         host_network_ok,
+        service_ip_ok,
         dhcp_reserved,
         published_ports_ok,
         missing,

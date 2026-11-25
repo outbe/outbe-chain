@@ -704,10 +704,16 @@ pub struct LocalVmStatusOutput {
     pub uptime: String,
     pub mac: String,
     pub ip: Option<Ipv4Addr>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_ip: Option<Ipv4Addr>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dhcp_ip: Option<Ipv4Addr>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intended_ip: Option<Ipv4Addr>,
     pub image_name: String,
     pub os_image_hash: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_source_sha256: Option<String>,
     pub bridge: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub boot_error: Option<String>,
@@ -1590,6 +1596,7 @@ fn query_status_from_state<T: VmmTransport>(
     state: &LocalVmState,
     leases_content: Option<&str>,
 ) -> Result<LocalVmStatusOutput> {
+    let service_ip = state.intended_ip;
     if state.phase == LocalVmPhase::Creating && state.vm_id.is_empty() {
         return Ok(LocalVmStatusOutput {
             name: state.name.clone(),
@@ -1599,10 +1606,13 @@ fn query_status_from_state<T: VmmTransport>(
             running: false,
             uptime: String::new(),
             mac: state.mac.clone(),
-            ip: None,
+            ip: service_ip,
+            service_ip,
+            dhcp_ip: None,
             intended_ip: state.intended_ip,
             image_name: state.image_name.clone(),
             os_image_hash: state.os_image_hash.clone(),
+            disk_source_sha256: state.disk_source_sha256.clone(),
             bridge: state.bridge.clone(),
             boot_error: None,
             error: Some(
@@ -1614,7 +1624,7 @@ fn query_status_from_state<T: VmmTransport>(
 
     let resp = vmm.get_info(&state.vm_id)?;
     if resp.is_gone() {
-        let ip = leases_content.and_then(|raw| lookup_lease_ip_by_mac(raw, &state.mac));
+        let dhcp_ip = leases_content.and_then(|raw| lookup_lease_ip_by_mac(raw, &state.mac));
         return Ok(LocalVmStatusOutput {
             name: state.name.clone(),
             vm_id: state.vm_id.clone(),
@@ -1623,10 +1633,13 @@ fn query_status_from_state<T: VmmTransport>(
             running: false,
             uptime: String::new(),
             mac: state.mac.clone(),
-            ip,
+            ip: service_ip.or(dhcp_ip),
+            service_ip,
+            dhcp_ip,
             intended_ip: state.intended_ip,
             image_name: state.image_name.clone(),
             os_image_hash: state.os_image_hash.clone(),
+            disk_source_sha256: state.disk_source_sha256.clone(),
             bridge: state.bridge.clone(),
             boot_error: None,
             error: Some(format!("VM {} not found on local VMM", state.vm_id)),
@@ -1635,7 +1648,7 @@ fn query_status_from_state<T: VmmTransport>(
 
     let info = resp.info.unwrap();
     let mac = extract_primary_mac(&info).unwrap_or_else(|_| state.mac.clone());
-    let ip = leases_content.and_then(|raw| lookup_lease_ip_by_mac(raw, &mac));
+    let dhcp_ip = leases_content.and_then(|raw| lookup_lease_ip_by_mac(raw, &mac));
     let image_name = info
         .image_name()
         .map(str::to_owned)
@@ -1656,10 +1669,13 @@ fn query_status_from_state<T: VmmTransport>(
         running: info.running,
         uptime: info.uptime,
         mac,
-        ip,
+        ip: service_ip.or(dhcp_ip),
+        service_ip,
+        dhcp_ip,
         intended_ip: state.intended_ip,
         image_name,
         os_image_hash: state.os_image_hash.clone(),
+        disk_source_sha256: state.disk_source_sha256.clone(),
         bridge: state.bridge.clone(),
         boot_error,
         error,
@@ -3025,16 +3041,30 @@ mod tests {
             .unwrap()
             .contains("12-defect-pending-dkg-snapshot.md"));
 
-        // Status reads DHCP leases file when present and returns unknown (None) when absent.
+        // Status reports both service_ip (recorded intended_ip) and dhcp_ip (from leases file,
+        // None when absent).
         let leases_file = dir.path().join("dhcp-leases");
         let status_no_leases = status_local_vm(&store, &vmm, "dev", &leases_file).unwrap();
-        assert_eq!(status_no_leases.ip, None);
+        assert_eq!(
+            status_no_leases.service_ip,
+            Some(Ipv4Addr::new(10, 77, 0, 88))
+        );
+        assert_eq!(status_no_leases.dhcp_ip, None);
+        assert_eq!(status_no_leases.ip, Some(Ipv4Addr::new(10, 77, 0, 88)));
         fs::write(
             &leases_file,
-            "1795598734 52:54:00:aa:bb:cc 10.77.0.88 dev *\n",
+            "1795598734 52:54:00:aa:bb:cc 10.77.0.122 dev *\n",
         )
         .unwrap();
         let status_with_leases = status_local_vm(&store, &vmm, "dev", &leases_file).unwrap();
+        assert_eq!(
+            status_with_leases.service_ip,
+            Some(Ipv4Addr::new(10, 77, 0, 88))
+        );
+        assert_eq!(
+            status_with_leases.dhcp_ip,
+            Some(Ipv4Addr::new(10, 77, 0, 122))
+        );
         assert_eq!(status_with_leases.ip, Some(Ipv4Addr::new(10, 77, 0, 88)));
 
         // Remove waits across asynchronous polls and deletes only state file, leaving image intact.

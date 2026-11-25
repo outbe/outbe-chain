@@ -342,6 +342,8 @@ fn outbe_up_cli_executes_local_vm_flow_with_json_output() {
         raw_disk.to_str().unwrap(),
         "--bridge",
         "obr0",
+        "--ip",
+        "10.77.0.88",
         "--disk-gib",
         "1",
         "--vmm-socket",
@@ -421,9 +423,35 @@ fn outbe_up_cli_executes_local_vm_flow_with_json_output() {
         0o700
     );
     let status: Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(status["ip"], json!("10.77.0.91"));
+    assert_eq!(status["service_ip"], json!("10.77.0.88"));
+    assert_eq!(status["dhcp_ip"], json!("10.77.0.91"));
+    assert_eq!(status["ip"], json!("10.77.0.88"));
+    assert_eq!(status["intended_ip"], json!("10.77.0.88"));
+    assert!(status["disk_source_sha256"]
+        .as_str()
+        .is_some_and(|s| s.len() == 64));
     assert_eq!(status["uptime"], json!("2m 0s"));
     assert_eq!(status["image_name"], json!("outbe-vm-dev-1122334455667788"));
+
+    // Verify human table displays both SERVICE_IP and DHCP_IP.
+    let table_out = run_cli(&[
+        "vm",
+        "status",
+        "--name",
+        "dev",
+        "--dhcp-leases",
+        leases.to_str().unwrap(),
+        "--vmm-socket",
+        sock.to_str().unwrap(),
+        "--state-dir",
+        state_dir.to_str().unwrap(),
+    ]);
+    assert!(table_out.status.success());
+    let table_str = String::from_utf8_lossy(&table_out.stdout);
+    assert!(table_str.contains("SERVICE_IP"), "{table_str}");
+    assert!(table_str.contains("DHCP_IP"), "{table_str}");
+    assert!(table_str.contains("10.77.0.88"), "{table_str}");
+    assert!(table_str.contains("10.77.0.91"), "{table_str}");
 
     // 4. logs --json
     fs::write(

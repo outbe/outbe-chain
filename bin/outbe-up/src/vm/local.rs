@@ -146,7 +146,7 @@ pub async fn create(args: LocalCreateArgs) -> Result<()> {
         );
         println!("  bridge:  {} (mac {})", out.bridge, out.mac);
         if let Some(ip) = out.intended_ip {
-            println!("  ip:      {ip} (recorded; configure reservation via host setup/S2)");
+            println!("  ip:      {ip} (service IP; configured in-guest by vm-boot)");
         }
         println!("  state:   {}", out.state_file.display());
     }
@@ -295,8 +295,8 @@ pub fn remove(
 
 fn print_status_table(rows: &[LocalVmStatusOutput]) {
     println!(
-        "{:<20} {:<10} {:<12} {:<18} {:<16} IMAGE",
-        "NAME", "STATUS", "UPTIME", "MAC", "IP"
+        "{:<20} {:<10} {:<12} {:<18} {:<16} {:<16} IMAGE",
+        "NAME", "STATUS", "UPTIME", "MAC", "SERVICE_IP", "DHCP_IP"
     );
     for row in rows {
         let uptime = if row.uptime.is_empty() {
@@ -305,19 +305,19 @@ fn print_status_table(rows: &[LocalVmStatusOutput]) {
             &row.uptime
         };
         let mac = if row.mac.is_empty() { "-" } else { &row.mac };
-        let ip = row
-            .ip
+        let service_ip = row
+            .service_ip
+            .or(row.intended_ip)
+            .map(|addr| addr.to_string())
+            .unwrap_or_else(|| "-".to_owned());
+        let dhcp_ip = row
+            .dhcp_ip
             .map(|addr| addr.to_string())
             .unwrap_or_else(|| "unknown".to_owned());
         println!(
-            "{:<20} {:<10} {:<12} {:<18} {:<16} {}",
-            row.name, row.vmm_status, uptime, mac, ip, row.image_name
+            "{:<20} {:<10} {:<12} {:<18} {:<16} {:<16} {}",
+            row.name, row.vmm_status, uptime, mac, service_ip, dhcp_ip, row.image_name
         );
-        if let Some(intended) = row.intended_ip {
-            if row.ip != Some(intended) {
-                println!("  intended_ip: {intended}");
-            }
-        }
         if let Some(boot_err) = &row.boot_error {
             println!("  boot_error:  {boot_err}");
         }
