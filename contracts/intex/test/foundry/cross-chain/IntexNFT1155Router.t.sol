@@ -386,6 +386,20 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         });
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.RemoteRouterNotSet.selector, 9));
         srcBatch.quoteBatchSend(p);
+        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.RemoteRouterNotSet.selector, 9));
+        vm.prank(sender);
+        srcBatch.batchSend{value: FEE}(p);
+        assertEq(srcToken.balanceOf(sender, TID_A), 100, "nothing burns");
+    }
+
+    function test_SetRemoteRouter_ClearsThePeer() public {
+        dstBatch.setRemoteRouter(SRC_CHAIN_ID, "");
+        assertEq(dstBatch.remoteRouter(SRC_CHAIN_ID).length, 0);
+        bytes memory source = _interop(SRC_CHAIN_ID, address(srcBatch));
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexNFT1155Router.UnauthorizedSourceRouter.selector, SRC_CHAIN_ID, source)
+        );
+        bridge.deliverAs(source, _interop(uint32(block.chainid), address(dstBatch)), hex"01");
     }
 
     function test_Receive_OnlyFromTheBridge() public {
