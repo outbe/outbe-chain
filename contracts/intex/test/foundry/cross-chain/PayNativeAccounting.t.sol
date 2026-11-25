@@ -6,10 +6,9 @@ import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {IIntexAuction} from "@contracts/target/interfaces/IIntexAuction.sol";
-import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
-import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
+import {ERC7786Sender} from "@contracts/shared/ERC7786Sender.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
@@ -18,7 +17,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 
 /// @title PayNativeAccountingTest
 /// @notice Behavioural coverage for the native-fee funding logic that
-///         {ERC7786MessengerBase-_send} owns for every intex bridge client. The logic
+///         {ERC7786Sender-_sendTo} owns for every intex bridge client. The logic
 ///         distinguishes two calling conventions:
 ///           * entry-funded (`msg.value > 0`): the send must cover the quoted fee and refund the
 ///             excess to the caller. Thus an entry caller's buffer never silently seeds (or
@@ -30,7 +29,7 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 ///         without refund, or let an entry caller drain the relay float.
 /// @dev The tests drive the entry path through the user-facing `IntexNFT1155Bridge.send` (payable).
 ///      They drive the relay path by an inbound CLEARING whose handler relays the day's bids from
-///      inside `receiveMessage`.
+///      inside `receiveFromOutbe`.
 contract PayNativeAccountingTest is CrossChainTest {
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
@@ -40,12 +39,12 @@ contract PayNativeAccountingTest is CrossChainTest {
     uint256 internal constant BRIDGE_FEE = 0.001 ether;
 
     TargetRouter internal bnbRouter;
-    OriginRouter internal outbeRouter;
     IntexNFT1155Bridge internal nftBridge;
 
     IntexNFT1155 internal intex;
     address internal admin = address(this);
     address internal auctionRole = address(0xA11C7);
+    address internal outbeIca = makeAddr("outbeIca");
 
     uint32 internal constant SERIES_ID_DAY = 20260501;
     bytes14 internal constant SERIES_ID = "20260501-USD-U";
@@ -61,12 +60,10 @@ contract PayNativeAccountingTest is CrossChainTest {
         intex = DeployProxy.intexNFT1155(admin, admin);
 
         bnbRouter = DeployProxy.targetRouter(address(bridge), admin, OUTBE_CHAIN_ID);
-        outbeRouter = DeployProxy.originRouter(address(bridge), admin);
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
 
-        // Register remote messengers so `_send` has a destination and inbound delivery authenticates.
-        bnbRouter.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(outbeRouter)));
-        outbeRouter.registerRemoteMessenger(BNB_CHAIN_ID, _interop(BNB_CHAIN_ID, address(bnbRouter)));
+        // Wire the inbound source of TM and the remote messenger the batch adapter sends to.
+        _wireOutbeIca(bnbRouter, outbeIca);
         nftBridge.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridge)));
 
         // Wire TM with a stub auction and the batch adapter.
@@ -139,7 +136,7 @@ contract PayNativeAccountingTest is CrossChainTest {
         vm.deal(owner, fee);
 
         vm.prank(owner);
-        vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, short, fee));
+        vm.expectRevert(abi.encodeWithSelector(ERC7786Sender.MsgValueBelowFee.selector, short, fee));
         nftBridge.send{value: short}(params);
     }
 
@@ -176,17 +173,17 @@ contract PayNativeAccountingTest is CrossChainTest {
         uint256 buffer = 0.3 ether;
         vm.deal(address(rejector), fee + buffer);
 
-        vm.expectRevert(ERC7786MessengerBase.ReturnFailed.selector);
+        vm.expectRevert(ERC7786Sender.ReturnFailed.selector);
         rejector.callSend{value: fee + buffer}(params);
     }
 
     // ---------------------------------------------------------------
-    // Relay / float path - fired from inside receiveMessage (CLEARING)
+    // Relay / float path - fired from inside receiveFromOutbe (CLEARING)
     // ---------------------------------------------------------------
 
     /// @dev The inbound CLEARING handler relays the day's bids, funding the send from TargetRouter's float.
     ///      With that float empty the send reverts, the round rolls back whole, and the day stays resumable.
-    function test_Relay_InsideReceiveMessage_EmptyFloatLeavesTheDayResumable() public {
+    function test_Relay_InsideReceiveFromOutbe_EmptyFloatLeavesTheDayResumable() public {
         assertEq(address(bnbRouter).balance, 0, "router float unfunded");
 
         _deliverClearing();
@@ -197,9 +194,9 @@ contract PayNativeAccountingTest is CrossChainTest {
         assertFalse(done, "so the day is still open");
     }
 
-    /// @dev With TargetRouter's float funded, the relay fired from inside `receiveMessage` draws the fee and
+    /// @dev With TargetRouter's float funded, the relay fired from inside `receiveFromOutbe` draws the fee and
     ///      sends cleanly. Nothing is parked.
-    function test_Relay_InsideReceiveMessage_FundedFloatSucceeds() public {
+    function test_Relay_InsideReceiveFromOutbe_FundedFloatSucceeds() public {
         vm.deal(address(bnbRouter), 1 ether);
         uint256 floatBefore = address(bnbRouter).balance;
 
@@ -213,10 +210,7 @@ contract PayNativeAccountingTest is CrossChainTest {
 
     function _deliverClearing() internal {
         _deliver(
-            OUTBE_CHAIN_ID,
-            address(outbeRouter),
-            address(bnbRouter),
-            BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY)
+            OUTBE_CHAIN_ID, outbeIca, address(bnbRouter), BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY)
         );
     }
 }

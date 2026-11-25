@@ -417,7 +417,7 @@ fn bootstrap_payload_builder_ignores_nonempty_pool_and_replays_exactly() {
         [2, 3, 4]
             .into_iter()
             .map(SystemTxStepId::consensus)
-            .chain((0..9).map(SystemTxStepId::begin_block))
+            .chain((0..11).map(SystemTxStepId::begin_block))
             .collect::<Vec<_>>()
     );
     assert!(layout.user.is_empty());
@@ -428,7 +428,7 @@ fn bootstrap_payload_builder_ignores_nonempty_pool_and_replays_exactly() {
         .expect("builder exposes the exact executed payload");
     let receipts = &executed.execution_output.result.receipts;
     assert_eq!(receipts.len(), body.len());
-    assert_eq!(receipts.len(), 12);
+    assert_eq!(receipts.len(), 14);
     assert_eq!(case.rejected.load(Ordering::Relaxed), 0);
 
     let replay = case
@@ -492,7 +492,7 @@ fn bootstrap_payload_survives_repeated_block_one_proposal_attempts() {
         [2, 3, 4]
             .into_iter()
             .map(SystemTxStepId::consensus)
-            .chain((0..9).map(SystemTxStepId::begin_block))
+            .chain((0..11).map(SystemTxStepId::begin_block))
             .collect::<Vec<_>>()
     );
 }

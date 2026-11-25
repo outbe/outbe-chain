@@ -8365,6 +8365,7 @@ dependencies = [
  "evm2",
  "outbe-core-common",
  "outbe-intex",
+ "outbe-intexfactory",
  "outbe-macros",
  "outbe-oracle",
  "outbe-primitives",
@@ -8671,6 +8672,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-primitives",
  "alloy-sol-types",
+ "outbe-core-common",
  "outbe-macros",
  "outbe-primitives",
  "outbe-system-common",

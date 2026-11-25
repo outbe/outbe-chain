@@ -1,12 +1,15 @@
 //! ABI dispatch for the Desis precompile at `DESIS_ADDRESS`.
 //!
-//! OriginRouter submits bids through this ABI. The Cycle `complete_auctions` hook owns clearing.
+//! The ERC-7786 hub delivers the bids through `receiveMessage`. The Cycle `complete_auctions` hook
+//! owns clearing.
 //! The runtime owns the protocol logic.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::SolInterface;
+use alloy_sol_types::{SolCall, SolInterface};
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
-use outbe_primitives::dispatch::{dispatch_call, mutate_void, reject_value, view};
+use outbe_primitives::dispatch::{
+    dispatch_call, metadata, mutate, mutate_void, reject_value, view,
+};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 
@@ -18,7 +21,7 @@ use crate::schema::IntexAuctionBidData;
 /// without flipping the route fails the build.
 pub const PAYABLE_SELECTORS: &[[u8; 4]] = &[];
 
-/// `type(IDesis).interfaceId` that `OriginRouter.wire` probes.
+/// `type(IDesis).interfaceId`.
 pub(crate) const IDESIS_INTERFACE_ID: [u8; 4] = {
     let selectors = abi::IDesis::IDesisCalls::SELECTORS;
     let mut id = [0u8; 4];
@@ -54,34 +57,6 @@ pub fn dispatch(
     dispatch_call(data, IDesis::IDesisCalls::abi_decode, |call| {
         use IDesis::IDesisCalls::*;
         match call {
-            collectIntexAuctionBids(c) => mutate_void(&storage, c, caller, |sender, c| {
-                let bids = bids_from_sol_arrays(&c.bidders, &c.packedBids)?;
-                runtime::collect_intex_auction_bids(
-                    storage.clone(),
-                    runtime::Inbound {
-                        caller: sender,
-                        receive_id: c.receiveId,
-                        emission_day: c.emissionDay.into(),
-                        src_chain_id: c.srcChainId,
-                    },
-                    c.pageIndex,
-                    c.totalPages,
-                    bids,
-                )
-            }),
-            completeIntexAuctionBids(c) => mutate_void(&storage, c, caller, |sender, c| {
-                runtime::complete_intex_auction_bids(
-                    storage.clone(),
-                    runtime::Inbound {
-                        caller: sender,
-                        receive_id: c.receiveId,
-                        emission_day: c.emissionDay.into(),
-                        src_chain_id: c.srcChainId,
-                    },
-                    c.totalPages,
-                    c.totalBids,
-                )
-            }),
             auctionStage(c) => view(c, |c| {
                 use crate::schema::DesisContract;
                 let contract = storage.contract::<DesisContract>();
@@ -124,13 +99,32 @@ pub fn dispatch(
                 let id: [u8; 4] = c.interfaceId.0;
                 Ok(id == ERC165_INTERFACE_ID || id == IDESIS_INTERFACE_ID)
             }),
+            receiveMessage(c) => mutate(&storage, c, caller, |sender, c| {
+                runtime::receive_bids_message(
+                    storage.clone(),
+                    sender,
+                    c.receiveId,
+                    &c.sender,
+                    &c.payload,
+                )?;
+                Ok(alloy_primitives::FixedBytes(
+                    IDesis::receiveMessageCall::SELECTOR,
+                ))
+            }),
+            flush(c) => mutate_void(&storage, c, caller, |_, _| crate::outbox::flush(&storage)),
+            outboxHead(c) => metadata::<IDesis::outboxHeadCall>(|| {
+                crate::outbox::outbox_head(&storage, c.chainId)
+            }),
         }
     })
 }
 
 /// Mirrors `BridgeMsgCodec.packBid`: one word per bid, low bits up -
 /// reference(16) | issuance(16) | timestamp(32) | rate(32) | quantity(16).
-fn bids_from_sol_arrays(bidders: &[Address], packed: &[U256]) -> Result<Vec<IntexAuctionBidData>> {
+pub(crate) fn bids_from_sol_arrays(
+    bidders: &[Address],
+    packed: &[U256],
+) -> Result<Vec<IntexAuctionBidData>> {
     if bidders.len() != packed.len() {
         return Err(crate::errors::DesisError::PageArrayLengthMismatch.into());
     }

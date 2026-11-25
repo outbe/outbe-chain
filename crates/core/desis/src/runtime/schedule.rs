@@ -1,6 +1,6 @@
 use super::clearing::{clearing_run_gas, fetch_targets};
 use super::*;
-use outbe_primitives::error::{PassFailure, PrecompileError};
+use outbe_primitives::error::PrecompileError;
 use sweep::Sweep;
 
 mod sweep;
@@ -360,11 +360,13 @@ fn start_auction(
     let brief = brief_cancel_reason(contract, emission_day, config.promis_load_minor)?;
     let unpriced = config.reference_prices.is_empty();
     let late = commit_end.saturating_sub(now) < MIN_COMMIT_WINDOW_SECONDS;
+    let no_targets = outbe_intexfactory::targets::auction_target_chains(storage)?.is_empty();
     let reason = [
         brief.filter(|reason| *reason == CANCELED_NO_LIMIT),
         unpriced.then_some(CANCELED_UNPRICED),
         brief,
         late.then_some(CANCELED_LATE_START),
+        no_targets.then_some(CANCELED_NO_TARGETS),
     ]
     .into_iter()
     .flatten()
@@ -433,43 +435,26 @@ fn arm_clearing(storage: &StorageHandle<'_>, emission_day: EmissionDate, now: u6
     contract.push_gate_active(emission_day)?;
     contract.write_stage(emission_day, AuctionStage::CollectingBids)?;
 
-    // Per chain, each in its own checkpoint. A chain whose send fails takes neither the day's
-    // arming nor the other chains' rounds with it. The fan-in deadline covers the one left behind.
     let targets = fetch_targets(storage, emission_day)?;
     if targets.len() > MAX_TARGET_CHAINS {
         return Err(DesisError::TooManyTargets(emission_day, targets.len()).into());
     }
+    let payload = outbe_intexfactory::transport::wire::encode_intex_auction_clearing_start(
+        emission_day.value(),
+    );
+    let label = Label::new(
+        MSG_INTEX_AUCTION_CLEARING_START,
+        emission_day.value(),
+        [0; 3],
+    );
     for chain_id in targets {
-        let sent = storage.with_checkpoint(|| {
-            let gas = clearing_run_gas(storage, emission_day, chain_id)?;
-            storage.call(
-                ORIGIN_ROUTER_ADDRESS,
-                U256::ZERO,
-                IOriginRouter::sendIntexAuctionClearingStartCall {
-                    emissionDay: emission_day.into(),
-                    dstChainId: chain_id,
-                    gasLimit: U256::from(gas),
-                }
-                .abi_encode()
-                .into(),
-            )?;
-            Ok(())
-        });
-        match sent {
-            Ok(()) => {}
-            Err(error) if error.pass_failure() != PassFailure::Skip => return Err(error),
-            Err(error) => {
-                let error_data = match error {
-                    PrecompileError::RevertBytes(bytes) => bytes,
-                    _ => Bytes::new(),
-                };
-                contract.emit(IDesis::IntexAuctionClearingStartSendFailed {
-                    emissionDay: emission_day.into(),
-                    dstChainId: chain_id,
-                    errorData: error_data,
-                })?;
-            }
-        }
+        let gas = outbe_intexfactory::transport::gas::intex_auction_clearing_start(
+            clearing_run_gas(storage, emission_day, chain_id)?,
+        );
+        contract
+            .clearing_gas
+            .write(&DesisContract::chain_key(emission_day, chain_id), gas)?;
+        crate::outbox::push_to(storage, &[chain_id], label, gas, &payload)?;
     }
     Ok(())
 }

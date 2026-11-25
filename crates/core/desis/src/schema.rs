@@ -327,6 +327,35 @@ pub struct DesisContract {
     pub sched_poll_cursor: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 51)]
     pub gate_poll_cursor: outbe_primitives::storage::dsl::Value<u32>,
+
+    /// `chain_key` -> destination gas of the day's COLLECTING_BIDS rounds to that chain.
+    #[attribute(order = 58)]
+    pub clearing_gas: outbe_primitives::storage::dsl::Map<B256, u64>,
+
+    /// The outbox to the target chains, see `outbe_intexfactory::transport::outbox`.
+    #[attribute(order = 59)]
+    pub outbox_head: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 60)]
+    pub outbox_tail: outbe_primitives::storage::dsl::Map<u32, u32>,
+    #[attribute(order = 61)]
+    pub outbox_meta: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 62)]
+    pub outbox_label: outbe_primitives::storage::dsl::Map<u64, U256>,
+    #[attribute(order = 63)]
+    pub outbox_payload:
+        outbe_primitives::storage::dsl::Map<u64, outbe_primitives::storage::dsl::Bytes>,
+}
+
+impl<'storage> DesisContract<'storage> {
+    pub fn outbox(&self) -> outbe_intexfactory::transport::outbox::Outbox<'storage> {
+        outbe_intexfactory::transport::outbox::Outbox {
+            head: self.outbox_head.clone(),
+            tail: self.outbox_tail.clone(),
+            meta: self.outbox_meta.clone(),
+            label: self.outbox_label.clone(),
+            payload: self.outbox_payload.clone(),
+        }
+    }
 }
 
 impl DesisContract<'_> {

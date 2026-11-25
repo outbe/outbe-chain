@@ -88,15 +88,8 @@ fn drain(handle: &StorageHandle<'_>) {
     send_call_notices(&ctx).expect("a dropped notice never fails the drain");
 }
 
-/// A provider whose OriginRouter accepts sends, so the drain exercises the path a live chain takes
-/// rather than the requeue a missing stub produces.
 fn provider() -> HashMapStorageProvider {
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.stub_sub_call_at(
-        outbe_intexfactory::constants::ORIGIN_ROUTER_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 32]),
-    );
-    storage
+    HashMapStorageProvider::new(CHAIN_ID)
 }
 
 fn bounds(handle: &StorageHandle<'_>) -> (u32, u32) {
@@ -197,7 +190,7 @@ fn a_run_that_hits_the_chunk_limit_is_split_not_overrun() {
         assert_eq!(
             bounds(&handle),
             (SWEEP_WRITES_PER_BLOCK, queued),
-            "the firing stops on its router-call budget"
+            "the firing stops on its message budget"
         );
 
         let factory = IntexFactoryContract::new(handle.clone());

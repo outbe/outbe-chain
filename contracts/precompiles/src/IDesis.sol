@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.30;
 
+/// @dev The Desis precompile. Matches `DESIS_ADDRESS` in crates/system/common/src/addresses.rs.
+address constant DESIS = 0x0000000000000000000000000000000000001016;
+
 /// @title IDesis
 /// @notice Inbound call surface for the Desis runtime precompile.
 ///         The Desis runtime drives the auction schedule from a Metadosis brief.
-///         OriginRouter calls bid ingestion. Clearing runs from the Desis
+///         The ERC-7786 hub delivers the bids. Clearing runs from the Desis
 ///         begin-block gate.
 interface IDesis {
     error InvalidEmissionDay(uint32 emissionDay);
@@ -19,7 +22,6 @@ interface IDesis {
     error PageArrayLengthMismatch();
     error DesisLimitAnchorExceedsU32();
     error MinIntexAuctionBidQuantityScalingOverflow();
-    error TargetsOfUndecodable();
     error TooManyTargets(uint32 emissionDay, uint64 count, uint64 max);
     error PageTotalMismatch();
     error InvalidTotalPages();
@@ -38,32 +40,6 @@ interface IDesis {
         Failed
     }
 
-    // --- Bid ingestion (from OriginRouter) ---
-    /// @notice Accept a relayed bid batch from a target chain. A day's batches may arrive in any
-    ///         order over the unordered bridge. The receiver collects all `totalPages` (by
-    ///         `pageIndex`) before finalizing.
-    function collectIntexAuctionBids(
-        bytes32 receiveId,
-        uint32 emissionDay,
-        uint32 srcChainId,
-        uint16 pageIndex,
-        uint16 totalPages,
-        address[] calldata bidders,
-        uint256[] calldata packedBids
-    ) external;
-
-    /// @notice Per-chain completeness marker: the source relayed `totalPages`/`totalBids` for
-    ///         this day. The gate clears the auction once every snapshot chain has reported (or
-    ///         the fan-in deadline passes).
-    function completeIntexAuctionBids(
-        bytes32 receiveId,
-        uint32 emissionDay,
-        uint32 srcChainId,
-        uint16 totalPages,
-        uint32 totalBids
-    ) external;
-
-    // --- Views ---
     function auctionStage(uint32 emissionDay) external view returns (AuctionStage);
     function intexAuctionBidsCount(uint32 emissionDay) external view returns (uint256);
     function chainIntexAuctionBidsCount(uint32 emissionDay, uint32 srcChainId) external view returns (uint256);
@@ -72,6 +48,20 @@ interface IDesis {
 
     /// @notice ERC-165 interface support check.
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
+
+    /// @notice Takes BIDS_PAGE, BIDS_TOTALS and BIDS_PAUSE of TargetRouter from the ERC-7786 hub.
+    ///         Reverts only for a caller other than the hub and for a day before its reveal.
+    function receiveMessage(bytes32 receiveId, bytes calldata sender, bytes calldata payload) external returns (bytes4);
+
+    /// @notice Sends the due messages of the outbox to the target chains. Anyone may call it.
+    function flush() external;
+
+    /// @notice The first message of the outbox of `chainId`: its type and day, the messages
+    ///         that wait for that chain, the failed tries of the first one and its next try.
+    function outboxHead(uint32 chainId)
+        external
+        view
+        returns (uint8 msgType, uint32 emissionDay, uint32 pending, uint32 failures, uint64 nextTry);
 
     // --- Events ---
     event DesisLimitSet(uint32 indexed emissionDay, uint256 amountMinor);
@@ -106,5 +96,41 @@ interface IDesis {
     event IntexAuctionBidsIgnored(
         bytes32 indexed receiveId, uint32 indexed emissionDay, uint32 indexed srcChainId, uint8 reason
     );
-    event IntexAuctionClearingStartSendFailed(uint32 indexed emissionDay, uint32 indexed dstChainId, bytes errorData);
+
+    /// @notice `sendId` is the Hyperlane message id that CrosschainBridge returned.
+    event IntexAuctionStartSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint32 indexed dstChainId);
+    event IntexAuctionCancelSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint32 indexed dstChainId);
+    event IntexAuctionClearingStartSent(bytes32 indexed sendId, uint32 indexed emissionDay, uint32 indexed dstChainId);
+    event IntexAuctionResultSent(
+        bytes32 indexed sendId,
+        uint32 indexed emissionDay,
+        uint32 indexed dstChainId,
+        uint32 wonQuantity,
+        uint32 wonBidsCount
+    );
+    event IntexAuctionWinnersSent(
+        bytes32 indexed sendId,
+        uint32 indexed emissionDay,
+        uint32 indexed dstChainId,
+        uint32 pageIndex,
+        uint32 totalPages,
+        uint32 winnersCount
+    );
+
+    /// @notice A try to send the message failed; `failures` counts the failed tries in a row.
+    event IntexAuctionStartSendFailed(
+        uint32 indexed emissionDay, uint32 indexed dstChainId, uint32 failures, bytes errorData
+    );
+    event IntexAuctionCancelSendFailed(
+        uint32 indexed emissionDay, uint32 indexed dstChainId, uint32 failures, bytes errorData
+    );
+    event IntexAuctionClearingStartSendFailed(
+        uint32 indexed emissionDay, uint32 indexed dstChainId, uint32 failures, bytes errorData
+    );
+    event IntexAuctionResultSendFailed(
+        uint32 indexed emissionDay, uint32 indexed dstChainId, uint32 failures, bytes errorData
+    );
+    event IntexAuctionWinnersSendFailed(
+        uint32 indexed emissionDay, uint32 indexed dstChainId, uint32 pageIndex, uint32 failures, bytes errorData
+    );
 }

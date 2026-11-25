@@ -38,7 +38,7 @@ fn block_1_body_index_map_starts_at_boundary_outcome() {
             CONSENSUS_BOUNDARY_OUTCOME_STEP_INDEX
         ))
     );
-    assert_eq!(fsm.plan().expected_prefix_steps().len(), 12);
+    assert_eq!(fsm.plan().expected_prefix_steps().len(), 14);
     assert_eq!(
         walk_prefix(BLOCK_1, flags).stage(),
         BlockExecutionStage::Completed
