@@ -18,10 +18,22 @@ use crate::{
 
 const DATA_ROOT_IN_FS: &str = "outbe-chain";
 
-/// Build a deterministic sparse raw GPT + ext4 data disk image from `source_tree`.
+/// Build a deterministic sparse raw GPT + ext4 data disk image from `source_tree` with mode
+/// `0600` from creation and atomic no-clobber publication (`RENAME_NOREPLACE`).
 pub fn build_disk_image(source_tree: &Path, output: &Path, disk_bytes: u64) -> Result<()> {
+    let never_canceled = std::sync::atomic::AtomicBool::new(false);
+    build_disk_image_cancellable(source_tree, output, disk_bytes, &never_canceled)
+}
+
+/// Cancellable variant of [`build_disk_image`].
+pub fn build_disk_image_cancellable(
+    source_tree: &Path,
+    output: &Path,
+    disk_bytes: u64,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<()> {
     let tools = Tools::resolve()?;
-    build_disk_from_tree(&tools, source_tree, output, disk_bytes)
+    build_disk_from_tree(&tools, source_tree, output, disk_bytes, cancel)
 }
 
 fn build_disk_from_tree(
@@ -29,15 +41,12 @@ fn build_disk_from_tree(
     source_tree: &Path,
     output: &Path,
     disk_bytes: u64,
+    cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<()> {
-    ensure!(
-        !output.exists(),
-        "output disk image already exists: {}",
-        output.display()
-    );
+    container::ensure_output_path_absent(output)?;
     let (entries, content_digest) = collect_entries(source_tree)?;
     let ids = derive_disk_ids(&content_digest);
-    container::write_disk_image(tools, output, disk_bytes, &ids, &entries)
+    container::write_disk_image(tools, output, disk_bytes, &ids, &entries, cancel)
 }
 
 /// Walk `source_tree` in deterministic lexicographic order, rejecting symlinks,
@@ -568,8 +577,30 @@ mod tests {
         let img_a = out_dir.path().join("a.img");
         let img_b = out_dir.path().join("b.img");
 
-        build_disk_from_tree(&tools, tree.path(), &img_a, TEST_DISK_BYTES).unwrap();
-        build_disk_from_tree(&tools, tree.path(), &img_b, TEST_DISK_BYTES).unwrap();
+        let never_canceled = std::sync::atomic::AtomicBool::new(false);
+        build_disk_from_tree(
+            &tools,
+            tree.path(),
+            &img_a,
+            TEST_DISK_BYTES,
+            &never_canceled,
+        )
+        .unwrap();
+        build_disk_from_tree(
+            &tools,
+            tree.path(),
+            &img_b,
+            TEST_DISK_BYTES,
+            &never_canceled,
+        )
+        .unwrap();
+
+        // 0. Host file mode MUST be 0600 (F1) regardless of umask.
+        assert_eq!(
+            fs::metadata(&img_a).unwrap().permissions().mode() & 0o777,
+            0o600,
+            "raw disk image must be published with mode 0600"
+        );
 
         // 1. Determinism: identical bytes across repeated builds.
         assert_eq!(sha256_file(&img_a).unwrap(), sha256_file(&img_b).unwrap());
@@ -636,9 +667,35 @@ mod tests {
             assert!(status.success(), "e2fsck -f -n failed with {status}");
         }
 
-        // 5. Refuses to overwrite an existing output file.
-        let err = build_disk_from_tree(&tools, tree.path(), &img_a, TEST_DISK_BYTES).unwrap_err();
+        // 5. Refuses to overwrite an existing output file or a dangling symlink (F7).
+        let err = build_disk_from_tree(
+            &tools,
+            tree.path(),
+            &img_a,
+            TEST_DISK_BYTES,
+            &never_canceled,
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("already exists"), "{err}");
+
+        let dangling = out_dir.path().join("dangling.img");
+        std::os::unix::fs::symlink(out_dir.path().join("absent-target.img"), &dangling).unwrap();
+        let err = build_disk_from_tree(
+            &tools,
+            tree.path(),
+            &dangling,
+            TEST_DISK_BYTES,
+            &never_canceled,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("already exists"), "{err}");
+        assert!(
+            fs::symlink_metadata(&dangling)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "dangling symlink must remain untouched"
+        );
     }
 
     #[test]

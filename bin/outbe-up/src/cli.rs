@@ -1,10 +1,10 @@
 use std::{net::Ipv4Addr, path::PathBuf, time::Duration};
 
-use clap::{ArgGroup, Args, Parser, Subcommand};
+use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use eyre::Result;
 use outbe_operator_node_role as validator;
 
-use crate::{network, vm};
+use crate::{disk, network, vm};
 
 const LEGACY_VM_HEADING: &str =
     "Legacy multi-founder mode (--artifacts, moves to outbe-net-up in S6)";
@@ -19,6 +19,8 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Prepare a VM data disk for a single node role.
+    Disk(DiskArgs),
     /// Build and operate a new founding-validator network.
     Network(NetworkArgs),
     /// Prepare, synchronize, promote, and inspect a validator host.
@@ -27,6 +29,77 @@ enum Command {
     Vm(Box<VmArgs>),
     #[command(hide = true)]
     Internal(InternalArgs),
+}
+
+#[derive(Debug, Args)]
+struct DiskArgs {
+    #[command(subcommand)]
+    command: DiskCommand,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum DiskRoleArg {
+    Founder,
+    #[value(name = "joining-validator")]
+    JoiningValidator,
+    #[value(name = "full-node")]
+    FullNode,
+}
+
+impl From<DiskRoleArg> for validator::NodeRole {
+    fn from(value: DiskRoleArg) -> Self {
+        match value {
+            DiskRoleArg::Founder => Self::Founder,
+            DiskRoleArg::JoiningValidator => Self::JoiningValidator,
+            DiskRoleArg::FullNode => Self::FullNode,
+        }
+    }
+}
+
+#[derive(Debug, Subcommand)]
+enum DiskCommand {
+    /// Prepare a single-VM ext4 data disk for founder, joining-validator, or full-node.
+    #[command(group(
+        ArgGroup::new("disk_target")
+            .required(true)
+            .multiple(false)
+            .args(["output", "device"])
+    ))]
+    Prepare {
+        /// Node role for this VM data disk.
+        #[arg(long, value_enum)]
+        role: DiskRoleArg,
+        /// Founder VM data tree directory or tar archive (.tar, .tar.gz, .tar.zst).
+        #[arg(long, conflicts_with_all = ["config", "keys_from"])]
+        source: Option<PathBuf>,
+        /// Verified operator bundle (.tar.zst) for joining-validator, full-node, or founder key verification.
+        #[arg(long)]
+        bundle: Option<PathBuf>,
+        /// Operator config YAML (joining-validator) or full-node config YAML (full-node).
+        #[arg(long, conflicts_with = "source")]
+        config: Option<PathBuf>,
+        /// Pre-existing keys directory for deterministic joining-validator disk builds.
+        #[arg(long, conflicts_with = "source")]
+        keys_from: Option<PathBuf>,
+        /// Skip outbe-keygen BLS verification for founder disks (default requires a verified operator bundle).
+        #[arg(long)]
+        skip_key_verify: bool,
+        /// Remove stale .outbe-prepare-*, .outbe-disk-*, and .outbe-vm-disk-* staging directories owned by the current UID before staging.
+        #[arg(long)]
+        cleanup_stale: bool,
+        /// Raw data disk size in GiB.
+        #[arg(long, default_value_t = 40)]
+        size_gib: u32,
+        /// Output raw GPT+ext4 disk image path (refuses to overwrite existing files or symlinks).
+        #[arg(long)]
+        output: Option<PathBuf>,
+        /// Target block device path (not yet supported; see S3 probe / owner decision R-3).
+        #[arg(long)]
+        device: Option<PathBuf>,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -492,6 +565,36 @@ struct WaitArgs {
 impl Cli {
     pub async fn run(self) -> Result<()> {
         match self.command {
+            Command::Disk(args) => match args.command {
+                DiskCommand::Prepare {
+                    role,
+                    source,
+                    bundle,
+                    config,
+                    keys_from,
+                    skip_key_verify,
+                    cleanup_stale,
+                    size_gib,
+                    output,
+                    device,
+                    json,
+                } => {
+                    disk::prepare(disk::PrepareArgs {
+                        role: role.into(),
+                        source,
+                        bundle,
+                        config,
+                        keys_from,
+                        skip_key_verify,
+                        cleanup_stale,
+                        size_gib,
+                        output,
+                        device,
+                        json,
+                    })
+                    .await
+                }
+            },
             Command::Network(args) => match args.command {
                 NetworkCommand::ConfigExample { output } => network::config::init(&output),
                 NetworkCommand::Build {
@@ -1308,6 +1411,140 @@ mod tests {
             "--artifacts",
             "net",
             "--forget-intent",
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn disk_prepare_commands_parse_and_enforce_target_mutual_exclusion() {
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "disk",
+            "prepare",
+            "--role",
+            "founder",
+            "--source",
+            "./vm/validator-0",
+            "--output",
+            "./validator-0.img",
+            "--size-gib",
+            "40",
+            "--json",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "disk",
+            "prepare",
+            "--role",
+            "joining-validator",
+            "--bundle",
+            "./bundle.tar.zst",
+            "--config",
+            "./operator.yaml",
+            "--keys-from",
+            "./keys",
+            "--output",
+            "./joining.img",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "disk",
+            "prepare",
+            "--role",
+            "full-node",
+            "--bundle",
+            "./bundle.tar.zst",
+            "--config",
+            "./fullnode.yaml",
+            "--device",
+            "/dev/loop99",
+        ])
+        .is_ok());
+
+        // Neither --output nor --device fails.
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "disk",
+            "prepare",
+            "--role",
+            "founder",
+            "--source",
+            "./vm/validator-0",
+        ])
+        .is_err());
+        // Both --output and --device fail.
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "disk",
+            "prepare",
+            "--role",
+            "founder",
+            "--source",
+            "./vm/validator-0",
+            "--output",
+            "./out.img",
+            "--device",
+            "/dev/loop99",
+        ])
+        .is_err());
+        // Founder accepts --bundle (for verified outbe-keygen) or --skip-key-verify + --cleanup-stale.
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "disk",
+            "prepare",
+            "--role",
+            "founder",
+            "--source",
+            "./vm/validator-0",
+            "--bundle",
+            "./bundle.tar.zst",
+            "--cleanup-stale",
+            "--output",
+            "./out.img",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "disk",
+            "prepare",
+            "--role",
+            "founder",
+            "--source",
+            "./vm/validator-0",
+            "--skip-key-verify",
+            "--output",
+            "./out.img",
+        ])
+        .is_ok());
+        // Mixing --source with --config or --keys-from fails.
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "disk",
+            "prepare",
+            "--role",
+            "founder",
+            "--source",
+            "./vm/validator-0",
+            "--config",
+            "./operator.yaml",
+            "--output",
+            "./out.img",
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "disk",
+            "prepare",
+            "--role",
+            "founder",
+            "--source",
+            "./vm/validator-0",
+            "--keys-from",
+            "./keys",
+            "--output",
+            "./out.img",
         ])
         .is_err());
     }

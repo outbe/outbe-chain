@@ -116,7 +116,24 @@ impl OperatorManifest {
 }
 
 pub(crate) fn verify_and_extract(archive: &Path, parent: &Path) -> Result<ExtractedBundle> {
+    let never = std::sync::atomic::AtomicBool::new(false);
+    verify_and_extract_cancellable(archive, parent, &never)
+}
+
+pub(crate) fn verify_and_extract_cancellable(
+    archive: &Path,
+    parent: &Path,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<ExtractedBundle> {
+    ensure!(
+        !cancel.load(std::sync::atomic::Ordering::Relaxed),
+        "bundle extraction canceled by signal"
+    );
     let archive_sha256 = digest_file(archive)?;
+    ensure!(
+        !cancel.load(std::sync::atomic::Ordering::Relaxed),
+        "bundle extraction canceled by signal"
+    );
     let mut tar = tar::Archive::new(open_archive(archive)?);
     let mut entries = tar.entries().wrap_err("failed to read operator bundle")?;
     let mut manifest_entry = entries
@@ -142,6 +159,7 @@ pub(crate) fn verify_and_extract(archive: &Path, parent: &Path) -> Result<Extrac
         .prefix(".outbe-prepare-")
         .tempdir_in(parent)
         .wrap_err_with(|| format!("failed to create staging directory in {}", parent.display()))?;
+    fs::set_permissions(directory.path(), fs::Permissions::from_mode(0o700))?;
     write_file(&directory.path().join(MANIFEST_NAME), &raw_manifest, 0o644)?;
 
     let expected: BTreeMap<&str, &ManifestFile> = manifest
@@ -151,6 +169,10 @@ pub(crate) fn verify_and_extract(archive: &Path, parent: &Path) -> Result<Extrac
         .collect();
     let mut found = BTreeSet::new();
     for entry in entries {
+        ensure!(
+            !cancel.load(std::sync::atomic::Ordering::Relaxed),
+            "bundle extraction canceled by signal"
+        );
         let mut entry = entry.wrap_err("failed to read operator bundle entry")?;
         ensure!(
             entry.header().entry_type().is_file(),

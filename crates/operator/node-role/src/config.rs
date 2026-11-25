@@ -1,10 +1,12 @@
 use std::{
     collections::BTreeSet,
+    fmt,
     fs::{self, OpenOptions},
     io::Write,
     net::Ipv4Addr,
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::Path,
+    str::FromStr,
 };
 
 use alloy_primitives::Address;
@@ -13,6 +15,167 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 pub const CONFIG_VERSION: u32 = 1;
+pub const NODE_ROLE_FILE: &str = "node-role";
+
+/// Role of a single Outbe VM data disk, communicated to `vm-boot` via `/opt/outbe-chain/node-role`.
+///
+/// An absent `node-role` marker file defaults to [`NodeRole::Founder`] for backward compatibility
+/// with existing founder data trees and byte-identical `vm disk` output.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum NodeRole {
+    Founder,
+    JoiningValidator,
+    FullNode,
+}
+
+impl NodeRole {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Founder => "founder",
+            Self::JoiningValidator => "joining-validator",
+            Self::FullNode => "full-node",
+        }
+    }
+
+    pub fn marker_contents(self) -> String {
+        format!("{}\n", self.as_str())
+    }
+
+    /// Strictly parse the contents of `/opt/outbe-chain/node-role`.
+    ///
+    /// Accepts only the exact lowercase role token with an optional single trailing newline.
+    pub fn parse_marker(raw: &str) -> Result<Self> {
+        let trimmed = raw.strip_suffix('\n').unwrap_or(raw);
+        Self::from_str(trimmed)
+    }
+}
+
+impl fmt::Display for NodeRole {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+impl FromStr for NodeRole {
+    type Err = eyre::Report;
+
+    fn from_str(value: &str) -> Result<Self> {
+        match value {
+            "founder" => Ok(Self::Founder),
+            "joining-validator" => Ok(Self::JoiningValidator),
+            "full-node" => Ok(Self::FullNode),
+            other => Err(eyre::eyre!(
+                "invalid node-role value {other:?} (expected 'founder', 'joining-validator', or 'full-node')"
+            )),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FullNodeConfig {
+    pub version: u32,
+    pub network: FullNodeNetworkConfig,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FullNodeNetworkConfig {
+    pub chain_id: u64,
+    pub certified_rpc: String,
+    #[serde(alias = "external_ip")]
+    pub advertise_ip: Ipv4Addr,
+    #[serde(default = "default_rpc_bind_ip")]
+    pub rpc_bind_ip: Ipv4Addr,
+    pub bootnodes: Vec<String>,
+    #[serde(default)]
+    pub use_local_defaults: bool,
+}
+
+impl FullNodeConfig {
+    pub fn read(path: &Path) -> Result<(Self, String)> {
+        let raw = std::fs::read_to_string(path)
+            .wrap_err_with(|| format!("failed to read full-node config: {}", path.display()))?;
+        let config: Self = serde_yaml_ng::from_str(&raw)
+            .wrap_err_with(|| format!("invalid full-node config: {}", path.display()))?;
+        config.validate()?;
+        Ok((config, sha256(raw.as_bytes())))
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            self.version == CONFIG_VERSION,
+            "unsupported full-node config version {}",
+            self.version
+        );
+        ensure!(
+            self.network.chain_id > 0,
+            "network.chain_id must be positive"
+        );
+        ensure!(
+            self.network.rpc_bind_ip.is_loopback() || self.network.rpc_bind_ip.is_private(),
+            "network.rpc_bind_ip must be a loopback or private IPv4 address"
+        );
+        ensure!(
+            (self.network.certified_rpc.starts_with("http://")
+                || self.network.certified_rpc.starts_with("https://"))
+                && !self.network.certified_rpc.contains(char::is_whitespace),
+            "network.certified_rpc must be an HTTP(S) URL"
+        );
+        ensure!(
+            !self.network.bootnodes.is_empty(),
+            "network.bootnodes is empty"
+        );
+        if self
+            .network
+            .bootnodes
+            .iter()
+            .any(|node| !node.starts_with("enode://") || node.contains(char::is_whitespace))
+        {
+            bail!("network.bootnodes contains an invalid enode URL");
+        }
+        Ok(())
+    }
+
+    pub fn write_runtime_config(&self, root: &Path) -> Result<()> {
+        for value in self
+            .network
+            .bootnodes
+            .iter()
+            .chain(std::iter::once(&self.network.certified_rpc))
+        {
+            ensure!(
+                !value
+                    .chars()
+                    .any(|character| matches!(character, '"' | '\n' | '\r')),
+                "full-node config contains a value that cannot be written to validator.env"
+            );
+        }
+        let extra = if self.network.use_local_defaults {
+            "--consensus.use-local-defaults"
+        } else {
+            ""
+        };
+        let env = format!(
+            concat!(
+                "OUTBE_EXTERNAL_IP=\"{}\"\n",
+                "OUTBE_RPC_BIND_IP=\"{}\"\n",
+                "OUTBE_CERTIFIED_RPC=\"{}\"\n",
+                "OUTBE_BOOTNODES=\"{}\"\n",
+                "OUTBE_CONSENSUS_EXTRA_ARGS=\"{}\"\n",
+                "OUTBE_CHAIN_ID=\"{}\"\n"
+            ),
+            self.network.advertise_ip,
+            self.network.rpc_bind_ip,
+            self.network.certified_rpc,
+            self.network.bootnodes.join(","),
+            extra,
+            self.network.chain_id,
+        );
+        write_private(&root.join("validator.env"), env.as_bytes())
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -106,7 +269,7 @@ pub enum FinalityTag {
 }
 
 impl OperatorConfig {
-    pub(crate) fn read(path: &Path) -> Result<(Self, String)> {
+    pub fn read(path: &Path) -> Result<(Self, String)> {
         let raw = std::fs::read_to_string(path)
             .wrap_err_with(|| format!("failed to read operator config: {}", path.display()))?;
         let config: Self = serde_yaml_ng::from_str(&raw)
@@ -478,7 +641,11 @@ const fn is_false(value: &bool) -> bool {
 }
 
 fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)?;
     fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
     file.write_all(bytes)?;
     file.sync_all()?;
@@ -539,6 +706,80 @@ hyperlane:
             config.validate().unwrap();
             assert_eq!(config.network.advertise_ip, Ipv4Addr::new(192, 0, 2, 10));
             assert_eq!(config.network.rpc_bind_ip, Ipv4Addr::LOCALHOST);
+        }
+    }
+
+    #[test]
+    fn full_node_config_validates_minimal_and_rejects_validator_sections() {
+        let valid = r#"
+version: 1
+network:
+  chain_id: 424242
+  certified_rpc: https://rpc.example
+  advertise_ip: 192.0.2.10
+  bootnodes: ["enode://abc@192.0.2.1:30303"]
+  use_local_defaults: true
+"#;
+        let cfg: FullNodeConfig = serde_yaml_ng::from_str(valid).unwrap();
+        cfg.validate().unwrap();
+        assert_eq!(cfg.network.rpc_bind_ip, Ipv4Addr::LOCALHOST);
+
+        let dir = tempfile::tempdir().unwrap();
+        cfg.write_runtime_config(dir.path()).unwrap();
+        let env = fs::read_to_string(dir.path().join("validator.env")).unwrap();
+        assert!(env.contains("OUTBE_CERTIFIED_RPC=\"https://rpc.example\""));
+        assert!(!env.contains("OUTBE_VALIDATOR_ADDRESS"));
+        assert!(!env.contains("OUTBE_CONSENSUS_PEERS"));
+
+        // Reject unused/validator sections strictly via deny_unknown_fields.
+        for bad in [
+            format!("{valid}\nfeeder:\n  public_toml: \"[oracle]\\n\"\n"),
+            format!("{valid}\nhyperlane:\n  public_url: http://192.0.2.10:9000\n  origins: []\n"),
+            format!(
+                "{valid}  consensus_peers: [\"{}@192.0.2.1:30400\"]\n",
+                "c".repeat(96)
+            ),
+        ] {
+            assert!(
+                serde_yaml_ng::from_str::<FullNodeConfig>(&bad).is_err(),
+                "full-node config must reject validator fields:\n{bad}"
+            );
+        }
+    }
+
+    #[test]
+    fn node_role_marker_parsing_is_strict() {
+        assert_eq!(
+            NodeRole::parse_marker("founder").unwrap(),
+            NodeRole::Founder
+        );
+        assert_eq!(
+            NodeRole::parse_marker("founder\n").unwrap(),
+            NodeRole::Founder
+        );
+        assert_eq!(
+            NodeRole::parse_marker("joining-validator\n").unwrap(),
+            NodeRole::JoiningValidator
+        );
+        assert_eq!(
+            NodeRole::parse_marker("full-node\n").unwrap(),
+            NodeRole::FullNode
+        );
+
+        for invalid in [
+            "",
+            "\n",
+            "founder\n\n",
+            " founder\n",
+            "founder \n",
+            "FOUNDER\n",
+            "validator\n",
+            "fullnode\n",
+        ] {
+            assert!(
+                NodeRole::parse_marker(invalid).is_err(),
+                "must reject invalid role marker: {invalid:?}"
+            );
         }
     }
 }

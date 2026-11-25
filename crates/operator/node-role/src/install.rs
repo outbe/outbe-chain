@@ -8,7 +8,7 @@ use std::{
 use eyre::{ensure, Context, Result};
 use walkdir::WalkDir;
 
-use crate::{assets, path_text, process};
+use crate::{assets, config::NodeRole, path_text, process};
 
 pub(crate) const REQUIRED_SECRETS: &[&str] = &[
     "signing-key.hex",
@@ -33,6 +33,15 @@ const ENV_KEYS: &[&str] = &[
     "OUTBE_VALIDATOR_ADDRESS",
     "OUTBE_BOOTNODES",
     "OUTBE_CONSENSUS_PEERS",
+    "OUTBE_CONSENSUS_EXTRA_ARGS",
+    "OUTBE_CHAIN_ID",
+];
+
+const FULL_NODE_ENV_KEYS: &[&str] = &[
+    "OUTBE_EXTERNAL_IP",
+    "OUTBE_RPC_BIND_IP",
+    "OUTBE_CERTIFIED_RPC",
+    "OUTBE_BOOTNODES",
     "OUTBE_CONSENSUS_EXTRA_ARGS",
     "OUTBE_CHAIN_ID",
 ];
@@ -101,8 +110,27 @@ fn validate_local_config(path: &Path) -> Result<()> {
 }
 
 pub(crate) fn read_environment(path: &Path) -> Result<BTreeMap<String, String>> {
+    read_environment_with_keys(path, ENV_KEYS)
+}
+
+pub(crate) fn read_environment_for_role(
+    path: &Path,
+    role: NodeRole,
+) -> Result<BTreeMap<String, String>> {
+    match role {
+        NodeRole::Founder | NodeRole::JoiningValidator => {
+            read_environment_with_keys(path, ENV_KEYS)
+        }
+        NodeRole::FullNode => read_environment_with_keys(path, FULL_NODE_ENV_KEYS),
+    }
+}
+
+fn read_environment_with_keys(
+    path: &Path,
+    allowed_keys: &[&str],
+) -> Result<BTreeMap<String, String>> {
     let mut values = BTreeMap::new();
-    let allowed = ENV_KEYS.iter().copied().collect::<BTreeSet<_>>();
+    let allowed = allowed_keys.iter().copied().collect::<BTreeSet<_>>();
     for line in fs::read_to_string(path)?.lines() {
         let (name, quoted) = line
             .split_once('=')
@@ -122,7 +150,7 @@ pub(crate) fn read_environment(path: &Path) -> Result<BTreeMap<String, String>> 
             "duplicate validator.env key: {name}"
         );
     }
-    for name in ENV_KEYS
+    for name in allowed_keys
         .iter()
         .copied()
         .filter(|name| !matches!(*name, "OUTBE_CONSENSUS_EXTRA_ARGS"))
@@ -136,6 +164,13 @@ pub(crate) fn read_environment(path: &Path) -> Result<BTreeMap<String, String>> 
 }
 
 pub(crate) fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
+    validate_environment_for_role(values, NodeRole::JoiningValidator)
+}
+
+pub(crate) fn validate_environment_for_role(
+    values: &BTreeMap<String, String>,
+    role: NodeRole,
+) -> Result<()> {
     values["OUTBE_EXTERNAL_IP"]
         .parse::<std::net::Ipv4Addr>()
         .wrap_err("OUTBE_EXTERNAL_IP must be an IPv4 literal")?;
@@ -151,10 +186,6 @@ pub(crate) fn validate_environment(values: &BTreeMap<String, String>) -> Result<
         (rpc.starts_with("http://") || rpc.starts_with("https://"))
             && !rpc.contains(char::is_whitespace),
         "OUTBE_CERTIFIED_RPC must be an HTTP(S) URL"
-    );
-    ensure!(
-        valid_address(&values["OUTBE_VALIDATOR_ADDRESS"]),
-        "OUTBE_VALIDATOR_ADDRESS must be a 20-byte hex address"
     );
     ensure!(
         values["OUTBE_CHAIN_ID"]
@@ -173,13 +204,19 @@ pub(crate) fn validate_environment(values: &BTreeMap<String, String>) -> Result<
         extra.is_empty() || extra == "--consensus.use-local-defaults",
         "OUTBE_CONSENSUS_EXTRA_ARGS is invalid"
     );
-    let peers = values["OUTBE_CONSENSUS_PEERS"]
-        .split(',')
-        .collect::<Vec<_>>();
-    ensure!(
-        !peers.is_empty() && peers.iter().all(|peer| valid_peer(peer)),
-        "OUTBE_CONSENSUS_PEERS is invalid"
-    );
+    if matches!(role, NodeRole::Founder | NodeRole::JoiningValidator) {
+        ensure!(
+            valid_address(&values["OUTBE_VALIDATOR_ADDRESS"]),
+            "OUTBE_VALIDATOR_ADDRESS must be a 20-byte hex address"
+        );
+        let peers = values["OUTBE_CONSENSUS_PEERS"]
+            .split(',')
+            .collect::<Vec<_>>();
+        ensure!(
+            !peers.is_empty() && peers.iter().all(|peer| valid_peer(peer)),
+            "OUTBE_CONSENSUS_PEERS is invalid"
+        );
+    }
     Ok(())
 }
 
@@ -317,14 +354,28 @@ fn install_state(root: &Path, uid: u32, gid: u32) -> Result<()> {
 }
 
 pub(crate) fn verify_signing_key(bin_dir: &Path, keys_dir: &Path) -> Result<()> {
-    process::capture(
-        bin_dir.join("outbe-keygen"),
-        &[
+    let keygen = bin_dir.join("outbe-keygen");
+    ensure!(
+        keygen.is_file(),
+        "outbe-keygen binary is missing: {}",
+        keygen.display()
+    );
+    let output = std::process::Command::new(&keygen)
+        .args([
             "verify",
             "--key",
             path_text(&keys_dir.join("signing-key.hex"))?,
-        ],
-    )?;
+        ])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .output()
+        .wrap_err_with(|| format!("failed to execute {}", keygen.display()))?;
+    ensure!(
+        output.status.success(),
+        "signing-key.hex failed outbe-keygen verify (exit status: {})",
+        output.status
+    );
     Ok(())
 }
 

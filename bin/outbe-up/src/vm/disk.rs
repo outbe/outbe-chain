@@ -22,11 +22,21 @@ pub fn run(
 ) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("loading VM network artifacts");
-    ensure!(
-        !output.exists(),
-        "output disk image already exists: {}",
-        output.display()
-    );
+    match std::fs::symlink_metadata(output) {
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => {
+            return Err(eyre::eyre!(
+                "failed to stat output disk image {}: {err}",
+                output.display()
+            ));
+        }
+        Ok(_) => {
+            return Err(eyre::eyre!(
+                "output disk image already exists: {}",
+                output.display()
+            ));
+        }
+    }
     let build = NetworkArtifacts::load(artifacts)?;
     ensure!(
         build.manifest.deployment == DeploymentKind::Vm,

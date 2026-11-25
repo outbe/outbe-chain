@@ -4,6 +4,7 @@ use clap::Parser;
 use eyre::Result;
 
 mod cli;
+mod disk;
 mod network;
 mod vm;
 

@@ -8,6 +8,7 @@ use zeroize::Zeroizing;
 pub mod assets;
 pub mod bundle;
 pub mod config;
+pub mod disk_tree;
 pub mod hyperlane;
 mod install;
 mod journal;
@@ -22,6 +23,8 @@ pub mod status;
 pub mod sync;
 pub mod vm_boot;
 mod wait;
+
+pub use config::{FullNodeConfig, FullNodeNetworkConfig, NodeRole, NODE_ROLE_FILE};
 
 pub(crate) const VALIDATOR_TARGET: &str = "outbe-validator.target";
 pub(crate) const VALIDATOR_SERVICE: &str = "outbe-validator.service";

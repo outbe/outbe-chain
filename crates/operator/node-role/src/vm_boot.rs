@@ -19,7 +19,10 @@ use rustix::{
 };
 use walkdir::WalkDir;
 
-use crate::{install, process};
+use crate::{
+    config::{NodeRole, NODE_ROLE_FILE},
+    install, process,
+};
 
 const DEFAULT_VM_BIN_DIR: &str = "/usr/local/bin";
 const REQUIRED_MOUNT_OPTIONS: &[&str] = &["noexec", "nosuid", "nodev"];
@@ -61,9 +64,27 @@ const CONFIG_FILES: &[&str] = &[
 ];
 
 struct BootOptions<'a> {
-    bin_dir: &'a Path,
+    bin_dir: Option<&'a Path>,
     require_root_owner: bool,
     apply_ownership: bool,
+    prepare_runtime_dirs: bool,
+    expected_role: Option<NodeRole>,
+}
+
+/// Read and validate `/opt/outbe-chain/node-role` (absent defaults to [`NodeRole::Founder`]).
+pub fn read_role_marker(root: &Path, require_root_owner: bool) -> Result<NodeRole> {
+    let path = root.join(NODE_ROLE_FILE);
+    match fs::symlink_metadata(&path) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(NodeRole::Founder),
+        Err(err) => Err(err).wrap_err_with(|| format!("failed to stat {}", path.display())),
+        Ok(_) => {
+            verify_config_file(&path, require_root_owner)?;
+            let raw = fs::read_to_string(&path)
+                .wrap_err_with(|| format!("failed to read {}", path.display()))?;
+            NodeRole::parse_marker(&raw)
+                .wrap_err_with(|| format!("invalid role marker {}", path.display()))
+        }
+    }
 }
 
 /// Verify an emitted VM data tree without checking live mountinfo or changing ownership.
@@ -76,9 +97,35 @@ pub fn verify_tree_without_mount(root: &Path, bin_dir: &Path) -> Result<()> {
         root,
         &mountinfo,
         &BootOptions {
+            bin_dir: Some(bin_dir),
+            require_root_owner: false,
+            apply_ownership: false,
+            prepare_runtime_dirs: true,
+            expected_role: None,
+        },
+    )
+}
+
+/// Strictly verify a static VM data tree for `expected_role` without mutating `root` or checking
+/// live `/proc/self/mountinfo`.
+pub fn verify_static_tree_for_role(
+    root: &Path,
+    expected_role: NodeRole,
+    bin_dir: Option<&Path>,
+) -> Result<()> {
+    let mountinfo = format!(
+        "100 1 8:1 / {} rw,nosuid,nodev,noexec - ext4 /dev/vda1 rw\n",
+        root.display()
+    );
+    boot_root(
+        root,
+        &mountinfo,
+        &BootOptions {
             bin_dir,
             require_root_owner: false,
             apply_ownership: false,
+            prepare_runtime_dirs: false,
+            expected_role: Some(expected_role),
         },
     )
 }
@@ -94,9 +141,11 @@ pub fn run(bin_dir: Option<&Path>) -> Result<()> {
         root,
         &mountinfo,
         &BootOptions {
-            bin_dir,
+            bin_dir: Some(bin_dir),
             require_root_owner: true,
             apply_ownership: true,
+            prepare_runtime_dirs: true,
+            expected_role: None,
         },
     )
 }
@@ -105,26 +154,59 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
     verify_mount(root, mountinfo)?;
     verify_tree(root)?;
 
-    let env_path = root.join("validator.env");
-    for name in CONFIG_FILES {
-        verify_config_file(&root.join(name), options.require_root_owner)?;
+    let role = read_role_marker(root, options.require_root_owner)?;
+    if let Some(expected) = options.expected_role {
+        ensure!(
+            role == expected,
+            "VM data disk role mismatch: expected {expected}, found {role}"
+        );
     }
 
-    let environment = install::read_environment(&env_path)?;
-    install::validate_environment(&environment)?;
+    let env_path = root.join("validator.env");
+    match role {
+        NodeRole::Founder | NodeRole::JoiningValidator => {
+            for name in CONFIG_FILES {
+                verify_config_file(&root.join(name), options.require_root_owner)?;
+            }
 
-    install::required_file(&root.join("genesis.json"))?;
-    install::validate_genesis(root, &environment["OUTBE_CHAIN_ID"])?;
-    let chain_id: u64 = environment["OUTBE_CHAIN_ID"]
-        .parse()
-        .wrap_err("OUTBE_CHAIN_ID must be a positive integer")?;
-    let hyperlane_public = fs::read_to_string(root.join("hyperlane-public.toml"))
-        .wrap_err("failed to read hyperlane-public.toml")?;
-    crate::config::validate_hyperlane_public_toml(&hyperlane_public, chain_id, true)?;
-    install::required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
+            let environment = install::read_environment_for_role(&env_path, role)?;
+            install::validate_environment_for_role(&environment, role)?;
 
-    verify_secrets(root, options.bin_dir)?;
-    prepare_directories(root, options.apply_ownership)?;
+            install::required_file(&root.join("genesis.json"))?;
+            install::validate_genesis(root, &environment["OUTBE_CHAIN_ID"])?;
+            let chain_id: u64 = environment["OUTBE_CHAIN_ID"]
+                .parse()
+                .wrap_err("OUTBE_CHAIN_ID must be a positive integer")?;
+            let hyperlane_public = fs::read_to_string(root.join("hyperlane-public.toml"))
+                .wrap_err("failed to read hyperlane-public.toml")?;
+            crate::config::validate_hyperlane_public_toml(&hyperlane_public, chain_id, true)?;
+            install::required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
+
+            verify_secrets(root, options.bin_dir)?;
+        }
+        NodeRole::FullNode => {
+            verify_config_file(&env_path, options.require_root_owner)?;
+            for forbidden in ["feeder-public.toml", "hyperlane-public.toml", "keys"] {
+                let path = root.join(forbidden);
+                ensure!(
+                    fs::symlink_metadata(&path).is_err(),
+                    "full-node data disk must not contain validator artifact: {}",
+                    path.display()
+                );
+            }
+
+            let environment = install::read_environment_for_role(&env_path, role)?;
+            install::validate_environment_for_role(&environment, role)?;
+
+            install::required_file(&root.join("genesis.json"))?;
+            install::validate_genesis(root, &environment["OUTBE_CHAIN_ID"])?;
+            install::required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
+        }
+    }
+
+    if options.prepare_runtime_dirs {
+        prepare_directories(root, role, options.apply_ownership)?;
+    }
     Ok(())
 }
 
@@ -294,7 +376,7 @@ fn verify_config_file(path: &Path, require_root_owner: bool) -> Result<()> {
     Ok(())
 }
 
-fn verify_secrets(root: &Path, bin_dir: &Path) -> Result<()> {
+fn verify_secrets(root: &Path, bin_dir: Option<&Path>) -> Result<()> {
     let keys = root.join("keys");
     let keys_meta = fs::symlink_metadata(&keys)
         .wrap_err_with(|| format!("keys directory is missing: {}", keys.display()))?;
@@ -322,7 +404,14 @@ fn verify_secrets(root: &Path, bin_dir: &Path) -> Result<()> {
     for relative in install::CANONICAL_HEX_KEYS {
         install::canonical_key(&keys.join(relative))?;
     }
-    install::verify_signing_key(bin_dir, &keys)?;
+    if let Some(bin_dir) = bin_dir {
+        install::verify_signing_key(bin_dir, &keys)?;
+    } else {
+        let signing = fs::read_to_string(keys.join("signing-key.hex"))
+            .wrap_err("failed to read signing-key.hex")?;
+        let trimmed = signing.trim();
+        ensure!(!trimmed.is_empty(), "signing-key.hex must not be empty");
+    }
     Ok(())
 }
 
@@ -337,7 +426,7 @@ fn require_outbe_account() -> Result<(u32, u32)> {
     Ok((uid, gid))
 }
 
-fn prepare_directories(root: &Path, apply_ownership: bool) -> Result<()> {
+fn prepare_directories(root: &Path, role: NodeRole, apply_ownership: bool) -> Result<()> {
     let ownership = if apply_ownership {
         Some(require_outbe_account()?)
     } else {
@@ -351,9 +440,6 @@ fn prepare_directories(root: &Path, apply_ownership: bool) -> Result<()> {
     for relative in VALIDATOR_DIRS {
         ensure_dir_nofollow(&root_fd, root, Path::new(relative), 0o750, outbe_owner)?;
     }
-    for relative in RADICLE_DIRS {
-        ensure_dir_nofollow(&root_fd, root, Path::new(relative), 0o700, outbe_owner)?;
-    }
     ensure_dir_nofollow(&root_fd, root, Path::new("state"), 0o750, root_group_outbe)?;
     ensure_dir_nofollow(
         &root_fd,
@@ -362,36 +448,63 @@ fn prepare_directories(root: &Path, apply_ownership: bool) -> Result<()> {
         0o700,
         root_owner,
     )?;
-    ensure_dir_nofollow(
-        &root_fd,
-        root,
-        Path::new("state/feeder"),
-        0o700,
-        outbe_owner,
-    )?;
-    ensure_dir_nofollow(
-        &root_fd,
-        root,
-        Path::new("state/hyperlane"),
-        0o700,
-        outbe_owner,
-    )?;
 
-    // Normalize static keys directories and secret files without descending into radicle state.
-    for relative in ["keys", "keys/radicle", "keys/radicle/keys"] {
-        ensure_dir_nofollow(&root_fd, root, Path::new(relative), 0o700, outbe_owner)?;
-    }
-    for relative in install::REQUIRED_SECRETS {
+    if root.join(NODE_ROLE_FILE).exists() {
         normalize_file_nofollow(
             &root_fd,
             root,
-            &Path::new("keys").join(relative),
-            0o600,
-            outbe_owner,
+            Path::new(NODE_ROLE_FILE),
+            0o640,
+            root_group_outbe,
         )?;
     }
-    for name in CONFIG_FILES {
-        normalize_file_nofollow(&root_fd, root, Path::new(name), 0o640, root_group_outbe)?;
+
+    match role {
+        NodeRole::Founder | NodeRole::JoiningValidator => {
+            for relative in RADICLE_DIRS {
+                ensure_dir_nofollow(&root_fd, root, Path::new(relative), 0o700, outbe_owner)?;
+            }
+            ensure_dir_nofollow(
+                &root_fd,
+                root,
+                Path::new("state/feeder"),
+                0o700,
+                outbe_owner,
+            )?;
+            ensure_dir_nofollow(
+                &root_fd,
+                root,
+                Path::new("state/hyperlane"),
+                0o700,
+                outbe_owner,
+            )?;
+
+            // Normalize static keys directories and secret files without descending into radicle state.
+            for relative in ["keys", "keys/radicle", "keys/radicle/keys"] {
+                ensure_dir_nofollow(&root_fd, root, Path::new(relative), 0o700, outbe_owner)?;
+            }
+            for relative in install::REQUIRED_SECRETS {
+                normalize_file_nofollow(
+                    &root_fd,
+                    root,
+                    &Path::new("keys").join(relative),
+                    0o600,
+                    outbe_owner,
+                )?;
+            }
+            for name in CONFIG_FILES {
+                normalize_file_nofollow(&root_fd, root, Path::new(name), 0o640, root_group_outbe)?;
+            }
+        }
+        NodeRole::FullNode => {
+            normalize_file_nofollow(
+                &root_fd,
+                root,
+                Path::new("validator.env"),
+                0o640,
+                root_group_outbe,
+            )?;
+        }
     }
     Ok(())
 }
@@ -633,9 +746,11 @@ mod tests {
 
     fn test_options(bin_dir: &Path) -> BootOptions<'_> {
         BootOptions {
-            bin_dir,
+            bin_dir: Some(bin_dir),
             require_root_owner: false,
             apply_ownership: false,
+            prepare_runtime_dirs: true,
+            expected_role: None,
         }
     }
 
@@ -751,7 +866,7 @@ mod tests {
         // Plant a symlink where a state directory is expected to be normalized.
         fs::create_dir_all(root.join("state")).unwrap();
         symlink(&outside_dir, root.join("state/feeder")).unwrap();
-        let err = prepare_directories(root, false).unwrap_err();
+        let err = prepare_directories(root, NodeRole::Founder, false).unwrap_err();
         assert!(
             err.to_string().contains("refusing symlink"),
             "expected symlink refusal, got: {err}"
@@ -766,7 +881,7 @@ mod tests {
         fs::remove_file(root.join("state/feeder")).unwrap();
         fs::remove_file(root.join("feeder-public.toml")).unwrap();
         symlink(&outside_file, root.join("feeder-public.toml")).unwrap();
-        let err = prepare_directories(root, false).unwrap_err();
+        let err = prepare_directories(root, NodeRole::Founder, false).unwrap_err();
         assert!(
             err.to_string().contains("refusing symlink"),
             "expected symlink refusal, got: {err}"
@@ -872,13 +987,147 @@ mod tests {
         let bins = tempfile::tempdir().unwrap();
         write_file_mode(
             &bins.path().join("outbe-keygen"),
-            b"#!/bin/sh\necho 'invalid BLS key' >&2\nexit 1\n",
+            concat!(
+                "#!/bin/sh\n",
+                "echo 'STDOUT_SECRET_MARKER_deadbeef'\n",
+                "echo 'STDERR_SECRET_MARKER_cafebabe' >&2\n",
+                "exit 1\n",
+            )
+            .as_bytes(),
             0o755,
         );
         let root = dir.path();
         let mountinfo = mountinfo_for(root, "rw,nosuid,nodev,noexec");
 
         let err = boot_root(root, &mountinfo, &test_options(bins.path())).unwrap_err();
-        assert!(err.to_string().contains("invalid BLS key"), "{err}");
+        let rendered = format!("{err:#}");
+        assert!(
+            rendered.contains("signing-key.hex failed outbe-keygen verify"),
+            "{rendered}"
+        );
+        assert!(
+            !rendered.contains("STDOUT_SECRET_MARKER_deadbeef"),
+            "verify_signing_key must never leak stdout: {rendered}"
+        );
+        assert!(
+            !rendered.contains("STDERR_SECRET_MARKER_cafebabe"),
+            "verify_signing_key must never leak stderr: {rendered}"
+        );
+    }
+
+    fn build_valid_full_node_root() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        write_file_mode(&root.join(NODE_ROLE_FILE), b"full-node\n", 0o640);
+        write_file_mode(
+            &root.join("validator.env"),
+            concat!(
+                "OUTBE_EXTERNAL_IP=\"10.0.0.2\"\n",
+                "OUTBE_RPC_BIND_IP=\"127.0.0.1\"\n",
+                "OUTBE_CERTIFIED_RPC=\"http://10.0.0.1:8545\"\n",
+                "OUTBE_BOOTNODES=\"enode://abcd@10.0.0.1:30303\"\n",
+                "OUTBE_CONSENSUS_EXTRA_ARGS=\"--consensus.use-local-defaults\"\n",
+                "OUTBE_CHAIN_ID=\"707\"\n",
+            )
+            .as_bytes(),
+            0o640,
+        );
+        write_file_mode(
+            &root.join("genesis.json"),
+            br#"{"config":{"chainId":707}}"#,
+            0o644,
+        );
+        write_file_mode(&root.join(".bb-crs/bn254_g1.dat"), b"crs", 0o644);
+        dir
+    }
+
+    #[test]
+    fn role_marker_validates_joining_and_full_node_and_forbids_full_node_secrets() {
+        let bins = build_fake_bin_dir();
+
+        // 1. Joining validator marker passes full validator boot checks.
+        let joining = build_valid_root();
+        write_file_mode(
+            &joining.path().join(NODE_ROLE_FILE),
+            b"joining-validator\n",
+            0o640,
+        );
+        let mountinfo = mountinfo_for(joining.path(), "rw,nosuid,nodev,noexec");
+        assert_eq!(
+            read_role_marker(joining.path(), false).unwrap(),
+            NodeRole::JoiningValidator
+        );
+        boot_root(joining.path(), &mountinfo, &test_options(bins.path())).unwrap();
+        assert!(joining.path().join("state/hyperlane").is_dir());
+
+        // 2. Full node passes with zero keys and creates only validator-0 + state/operator.
+        let full = build_valid_full_node_root();
+        let full_mount = mountinfo_for(full.path(), "rw,nosuid,nodev,noexec");
+        verify_static_tree_for_role(full.path(), NodeRole::FullNode, None).unwrap();
+        assert!(
+            !full.path().join("validator-0").exists(),
+            "static verification must not create runtime directories"
+        );
+        boot_root(full.path(), &full_mount, &test_options(bins.path())).unwrap();
+        assert!(full.path().join("validator-0/data").is_dir());
+        assert!(full.path().join("state/operator").is_dir());
+        assert!(!full.path().join("state/feeder").exists());
+        assert!(!full.path().join("state/hyperlane").exists());
+        assert!(!full.path().join("keys").exists());
+
+        // 3. Full node rejects validator keys, feeder/hyperlane configs, and validator env keys.
+        let bad_keys = build_valid_full_node_root();
+        write_file_mode(
+            &bad_keys.path().join("keys/evm-key.hex"),
+            "a".repeat(64).as_bytes(),
+            0o600,
+        );
+        let err =
+            verify_static_tree_for_role(bad_keys.path(), NodeRole::FullNode, None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("must not contain validator artifact"),
+            "{err}"
+        );
+
+        let bad_feeder = build_valid_full_node_root();
+        write_file_mode(
+            &bad_feeder.path().join("feeder-public.toml"),
+            b"[oracle]\n",
+            0o640,
+        );
+        let err =
+            verify_static_tree_for_role(bad_feeder.path(), NodeRole::FullNode, None).unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("must not contain validator artifact"),
+            "{err}"
+        );
+
+        let bad_env = build_valid_full_node_root();
+        let mut env = fs::read_to_string(bad_env.path().join("validator.env")).unwrap();
+        env.push_str("OUTBE_VALIDATOR_ADDRESS=\"0x1111111111111111111111111111111111111111\"\n");
+        write_file_mode(&bad_env.path().join("validator.env"), env.as_bytes(), 0o640);
+        let err =
+            verify_static_tree_for_role(bad_env.path(), NodeRole::FullNode, None).unwrap_err();
+        assert!(
+            err.to_string().contains("unknown validator.env key"),
+            "{err}"
+        );
+
+        // 4. Role mismatch and corrupt/loose role markers fail closed.
+        let err = verify_static_tree_for_role(full.path(), NodeRole::Founder, None).unwrap_err();
+        assert!(err.to_string().contains("role mismatch"), "{err}");
+
+        let bad_marker = build_valid_full_node_root();
+        write_file_mode(&bad_marker.path().join(NODE_ROLE_FILE), b"bogus\n", 0o640);
+        assert!(verify_static_tree_for_role(bad_marker.path(), NodeRole::FullNode, None).is_err());
+
+        write_file_mode(
+            &bad_marker.path().join(NODE_ROLE_FILE),
+            b"full-node\n",
+            0o666,
+        );
+        assert!(verify_static_tree_for_role(bad_marker.path(), NodeRole::FullNode, None).is_err());
     }
 }
