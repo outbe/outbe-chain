@@ -42,6 +42,9 @@ exclude_patterns = [
   "**/vendor/**",
   # Codegen scripts. Inline qlty-ignore and [[triage]] do not hide their smells.
   "crates/zk/outbe-zk/build.rs",
+  # PayNote proof checks are flat early-return validation chains; splitting them hides the order.
+  "crates/core/paynote/src/runtime.rs",
+  "crates/core/paynote/src/client.rs",
   "Cargo.lock",
 ]
 

@@ -12,7 +12,7 @@ use alloy_sol_types::SolEvent;
 use ark_ff::Zero;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_primitives::storage::StorageHandle;
-use outbe_system_common::addresses::PAYNOTE_ADDRESS;
+use outbe_system_common::addresses::{PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_zk::codec::{field_from_b256, field_to_b256};
 use outbe_zk::noir::paynote::Paynote;
 use outbe_zk::paynote::{
@@ -28,6 +28,7 @@ use crate::precompile::IPayNote;
 use crate::schema::{
     PayNoteContract, PAYNOTE_ROOT_WINDOW, PAYNOTE_TREE_CAPACITY, PAYNOTE_TREE_DEPTH,
 };
+use crate::token;
 use crate::Field;
 
 /// The validated public claim a spend proof carries, returned to the consuming
@@ -202,8 +203,9 @@ pub(crate) fn append(
     Ok((leaf_index, current))
 }
 
-/// `deposit(asset, amount, noteSn)` — pull the ERC20, route it into the
-/// asset's reserve vault, and append the derived note commitment.
+/// `deposit(asset, amount, noteSn)` — pull the ERC20 into the pool and append
+/// the derived note commitment. The tokens stay in the pool until a spend. The
+/// spend routes them into the reserve vault of the asset.
 pub(crate) fn deposit(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -231,6 +233,11 @@ pub(crate) fn deposit(
     if leaf_count >= PAYNOTE_TREE_CAPACITY {
         return Err(PayNoteError::TreeFull.into());
     }
+    // A spend routes the tokens into the vault of the asset. If the asset has
+    // no vault, no spend can settle the note. Thus, reject the deposit.
+    if outbe_vaultrouter::api::asset_vaults_count(&storage, asset)?.is_zero() {
+        return Err(PayNoteError::AssetVaultMissing.into());
+    }
 
     // The runtime always derives the commitment from the asset and amount this
     // call actually moves. The caller never supplies it, so Merkle membership
@@ -252,9 +259,10 @@ pub(crate) fn deposit(
     // Initialization and the first append are atomic, so an active tree never
     // observes `leaf_count == 0`.
     storage.with_checkpoint(|| {
-        // The router pulls straight from the caller into the asset's reserve
-        // vault and rejects any shortfall, so the caller approves the router.
-        outbe_vaultrouter::api::deposit_from(&storage, caller, asset, amount)?;
+        // The caller must approve the pool. The commitment uses `amount`. Thus,
+        // the pool must receive exactly `amount`. This check also rejects a
+        // fee-on-transfer token and a reentrant nested deposit.
+        token::pull_exact(&storage, asset, caller, amount)?;
 
         if leaf_count == 0 {
             let empty_root = field_to_b256(&zeros[PAYNOTE_TREE_DEPTH])
@@ -281,9 +289,10 @@ pub(crate) fn deposit(
     })
 }
 
-/// `consume(proof)` — verify a frozen `outbe.paynote@1.3.0` spend proof,
-/// nullify the note, append any change commitment, and return the validated
-/// claim. Moves no tokens.
+/// `consume(proof)` — verify a frozen `outbe.paynote@1.3.0` spend proof and
+/// return the validated claim. The function nullifies the note and appends the
+/// change commitment, if there is one. Then it routes `spend_amount` of the
+/// asset from the pool into the reserve vault of the asset.
 ///
 /// The proof is the single source of truth for the statement it carries.
 /// `context` is an opaque public word. The caller recomputes the settlement
@@ -369,7 +378,9 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         }
     }
 
-    // One rollback unit: nullifier, optional change append, events.
+    // These steps roll back as one unit: the nullifier, the optional change
+    // append, the vault routing and the events. The state changes occur before
+    // the token sub-calls.
     storage.with_checkpoint(|| {
         paynote.spent_nullifiers.write(&nullifier_word, true)?;
         let change_receipt = if partial {
@@ -379,6 +390,20 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         } else {
             None
         };
+        // The router pulls exactly `spend_amount` from the pool. Thus, no
+        // allowance stays after the call. The change value stays in the pool.
+        token::approve(
+            storage,
+            claim.asset,
+            VAULT_ROUTER_ADDRESS,
+            claim.spend_amount,
+        )?;
+        outbe_vaultrouter::api::deposit_from(
+            storage,
+            PAYNOTE_ADDRESS,
+            claim.asset,
+            claim.spend_amount,
+        )?;
         storage.emit_event(
             PAYNOTE_ADDRESS,
             IPayNote::NoteUsed::encode_log_data(&IPayNote::NoteUsed {
