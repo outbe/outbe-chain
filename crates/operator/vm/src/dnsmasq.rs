@@ -12,6 +12,8 @@ pub const DNSMASQ_RESERVATIONS_FILENAME: &str = "dnsmasq-reservations.txt";
 /// removed VMs do not leave permanent stale leases on shared bridges.
 pub const DNSMASQ_LEASE_DURATION: &str = "10m";
 pub const DEFAULT_DNSMASQ_LOCK_FILE: &str = "/run/outbe-up/dnsmasq.lock";
+/// Default host dnsmasq leases file managed by `validator-vm-dhcp.service`.
+pub const DEFAULT_DHCP_LEASES_FILE: &str = "/var/lib/validator-vm/dhcp-leases";
 
 pub(crate) const PRESENT_SENTINEL: &str = "OUTBE_UP_PRESENT";
 pub(crate) const MISSING_SENTINEL: &str = "OUTBE_UP_MISSING";
@@ -84,14 +86,8 @@ pub fn check_dnsmasq_ip_conflicts(
     Ok(())
 }
 
-/// Refuse when any requested bridge IP has an active lease for a MAC other than the exact
-/// requested MAC+IP pair.
-///
-/// Standard dnsmasq lease format: `<expiry> <mac> <ip> <hostname> <client-id>`.
-pub fn check_dnsmasq_lease_conflicts(
-    existing_leases: &str,
-    requested: &[(String, Ipv4Addr)],
-) -> Result<()> {
+/// Parse standard dnsmasq lease lines (`<expiry> <mac> <ip> <hostname> <client-id>`).
+fn parse_dnsmasq_leases(existing_leases: &str) -> BTreeMap<Ipv4Addr, String> {
     let mut leases: BTreeMap<Ipv4Addr, String> = BTreeMap::new();
     for line in existing_leases.lines() {
         let trimmed = line.trim();
@@ -105,6 +101,29 @@ pub fn check_dnsmasq_lease_conflicts(
             }
         }
     }
+    leases
+}
+
+/// Look up the leased IPv4 address for `mac` in a dnsmasq leases file, if present.
+pub fn lookup_lease_ip_by_mac(existing_leases: &str, mac: &str) -> Option<Ipv4Addr> {
+    let needle = mac.trim().to_ascii_lowercase();
+    if needle.is_empty() {
+        return None;
+    }
+    parse_dnsmasq_leases(existing_leases)
+        .into_iter()
+        .find_map(|(ip, lease_mac)| (lease_mac == needle).then_some(ip))
+}
+
+/// Refuse when any requested bridge IP has an active lease for a MAC other than the exact
+/// requested MAC+IP pair.
+///
+/// Standard dnsmasq lease format: `<expiry> <mac> <ip> <hostname> <client-id>`.
+pub fn check_dnsmasq_lease_conflicts(
+    existing_leases: &str,
+    requested: &[(String, Ipv4Addr)],
+) -> Result<()> {
+    let leases = parse_dnsmasq_leases(existing_leases);
     for (our_mac, our_ip) in requested {
         if let Some(lease_mac) = leases.get(our_ip) {
             let our_mac_lc = our_mac.to_ascii_lowercase();

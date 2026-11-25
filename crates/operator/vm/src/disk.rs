@@ -13,7 +13,7 @@ use walkdir::WalkDir;
 use crate::{
     container::{self, DiskIds, FsEntry, Tools},
     shell_quote,
-    vmm::remote_vmm_path,
+    vmm::{remote_vmm_path, validate_vm_id},
 };
 
 const DATA_ROOT_IN_FS: &str = "outbe-chain";
@@ -158,6 +158,194 @@ fn derive_uuid(seed: &[u8; 32], domain: &[u8]) -> String {
         bytes[8], bytes[9],
         bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15],
     )
+}
+
+/// Convert a local raw disk image into `<vmm_home>/vm/<vm_id>/hda.img` (qcow2), resize it to
+/// `disk_gib`, fsync, and publish atomically.
+pub fn stage_local_disk(
+    vmm_home: &Path,
+    vm_id: &str,
+    raw_disk: &Path,
+    disk_gib: u32,
+) -> Result<PathBuf> {
+    let never_canceled = std::sync::atomic::AtomicBool::new(false);
+    stage_local_disk_cancellable(vmm_home, vm_id, raw_disk, disk_gib, &never_canceled)
+}
+
+/// Convert and resize a local raw disk image into `<vmm_home>/vm/<vm_id>/hda.img`, spawning each
+/// `qemu-img` subprocess in its own process group (`setpgid(0, 0)`) and terminating that process
+/// group (`SIGTERM`, escalating to `SIGKILL`) if `cancel` is triggered (e.g. by SIGINT/SIGTERM).
+///
+/// Remaining `SIGKILL` limit: an uncaught `SIGKILL` of `outbe-up` cannot run cleanup, so an
+/// in-flight `qemu-img` child in its own process group may briefly outlive `outbe-up` while
+/// writing only to its private `.hda-stage.*` temp file (never modifying `hda.img`, and never
+/// holding the VM lock because the lock descriptor is opened with `O_CLOEXEC`).
+pub fn stage_local_disk_cancellable(
+    vmm_home: &Path,
+    vm_id: &str,
+    raw_disk: &Path,
+    disk_gib: u32,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<PathBuf> {
+    use std::ffi::OsStr;
+
+    validate_vm_id(vm_id)?;
+    ensure!(disk_gib > 0, "disk size must be positive");
+    ensure!(
+        raw_disk.is_file(),
+        "raw disk image does not exist: {}",
+        raw_disk.display()
+    );
+
+    let vm_dir = vmm_home.join("vm").join(vm_id);
+    if let Ok(meta) = fs::symlink_metadata(&vm_dir) {
+        ensure!(
+            meta.file_type().is_dir(),
+            "VM work directory is not a real directory: {}",
+            vm_dir.display()
+        );
+    } else {
+        fs::create_dir_all(&vm_dir)
+            .wrap_err_with(|| format!("create VM work directory {}", vm_dir.display()))?;
+    }
+
+    let target_hda = vm_dir.join("hda.img");
+    if let Ok(meta) = fs::symlink_metadata(&target_hda) {
+        ensure!(
+            !meta.file_type().is_symlink(),
+            "refusing to overwrite symlink at {}",
+            target_hda.display()
+        );
+    }
+
+    let tmp_dir = tempfile::Builder::new()
+        .prefix(".hda-stage.")
+        .tempdir_in(&vm_dir)
+        .wrap_err_with(|| format!("create temporary disk staging dir in {}", vm_dir.display()))?;
+    let qcow2_tmp = tmp_dir.path().join("hda.img");
+
+    run_qemu_img_in_pgrp(
+        &[
+            OsStr::new("convert"),
+            OsStr::new("-f"),
+            OsStr::new("raw"),
+            OsStr::new("-O"),
+            OsStr::new("qcow2"),
+            raw_disk.as_os_str(),
+            qcow2_tmp.as_os_str(),
+        ],
+        "qemu-img convert",
+        cancel,
+    )?;
+
+    let size_arg = format!("{disk_gib}G");
+    run_qemu_img_in_pgrp(
+        &[
+            OsStr::new("resize"),
+            OsStr::new("-f"),
+            OsStr::new("qcow2"),
+            qcow2_tmp.as_os_str(),
+            OsStr::new(&size_arg),
+        ],
+        "qemu-img resize",
+        cancel,
+    )?;
+
+    fs::File::open(&qcow2_tmp)
+        .wrap_err("open converted qcow2 disk for sync")?
+        .sync_all()
+        .wrap_err("fsync converted qcow2 disk")?;
+    fs::rename(&qcow2_tmp, &target_hda)
+        .wrap_err_with(|| format!("publish qcow2 disk to {}", target_hda.display()))?;
+    if let Ok(dir_handle) = fs::File::open(&vm_dir) {
+        let _ = dir_handle.sync_all();
+    }
+    Ok(target_hda)
+}
+
+fn run_qemu_img_in_pgrp(
+    args: &[&std::ffi::OsStr],
+    label: &str,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Result<()> {
+    use std::{
+        io::Read,
+        os::unix::process::CommandExt,
+        process::{Command, Stdio},
+        sync::atomic::Ordering,
+        thread,
+        time::Duration,
+    };
+
+    ensure!(!cancel.load(Ordering::Relaxed), "{label} canceled");
+    let mut child = Command::new("qemu-img")
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .process_group(0)
+        .spawn()
+        .wrap_err_with(|| format!("run `{label}` (is qemu-img installed in PATH?)"))?;
+
+    let child_pid = child.id();
+    let stderr_pipe = child.stderr.take();
+    let stderr_handle = thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(mut pipe) = stderr_pipe {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let status = loop {
+        if let Some(status) = child
+            .try_wait()
+            .wrap_err_with(|| format!("poll {label} subprocess"))?
+        {
+            break status;
+        }
+        if cancel.load(Ordering::Relaxed) {
+            terminate_process_group(child_pid);
+            let _ = child.wait();
+            let _ = stderr_handle.join();
+            bail!("{label} interrupted by signal; terminated child process group {child_pid}");
+        }
+        thread::sleep(Duration::from_millis(25));
+    };
+
+    let stderr_bytes = stderr_handle.join().unwrap_or_default();
+    if !status.success() {
+        bail!(
+            "{label} failed: {}",
+            String::from_utf8_lossy(&stderr_bytes).trim()
+        );
+    }
+    Ok(())
+}
+
+fn terminate_process_group(pgid_raw: u32) {
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+
+    use rustix::process::{kill_process_group, test_kill_process_group, Pid, Signal};
+
+    let Ok(pgid_i32) = i32::try_from(pgid_raw) else {
+        return;
+    };
+    let Some(pgid) = Pid::from_raw(pgid_i32) else {
+        return;
+    };
+    let _ = kill_process_group(pgid, Signal::TERM);
+    let escalate_at = Instant::now() + Duration::from_millis(500);
+    while Instant::now() < escalate_at {
+        if test_kill_process_group(pgid).is_err() {
+            return;
+        }
+        thread::sleep(Duration::from_millis(25));
+    }
+    let _ = kill_process_group(pgid, Signal::KILL);
 }
 
 /// Build the host shell command that extracts a sparse raw disk, verifies its raw SHA-256,
@@ -626,6 +814,43 @@ mod tests {
         assert!(
             !bad_log.exists(),
             "qemu-img must not run when raw checksum mismatches"
+        );
+    }
+
+    #[test]
+    fn stage_local_disk_converts_and_resizes_with_qemu_img() {
+        let has_qemu_img = Command::new("qemu-img")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !has_qemu_img {
+            eprintln!("SKIPPED: qemu-img not available in PATH");
+            return;
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let raw_disk = dir.path().join("source.img");
+        let file = fs::File::create(&raw_disk).unwrap();
+        // 16 MiB sparse raw disk, resized to 1 GiB qcow2.
+        file.set_len(16 * 1024 * 1024).unwrap();
+        drop(file);
+
+        let vmm_home = dir.path().join("vmm");
+        let hda = stage_local_disk(&vmm_home, UUID_0, &raw_disk, 1).unwrap();
+        assert_eq!(hda, vmm_home.join(format!("vm/{UUID_0}/hda.img")));
+        assert!(hda.is_file());
+
+        let info = Command::new("qemu-img")
+            .args(["info", "--output=json"])
+            .arg(&hda)
+            .output()
+            .unwrap();
+        assert!(info.status.success());
+        let parsed: serde_json::Value = serde_json::from_slice(&info.stdout).unwrap();
+        assert_eq!(parsed["format"], serde_json::json!("qcow2"));
+        assert_eq!(
+            parsed["virtual-size"],
+            serde_json::json!(1024_u64 * 1024 * 1024)
         );
     }
 }

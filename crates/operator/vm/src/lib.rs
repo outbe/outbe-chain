@@ -1,9 +1,11 @@
-//! Outbe VM disk creation, dstack VMM client, guest image staging, and host network helpers.
+//! Outbe VM disk creation, dstack VMM client, guest image staging, local VM lifecycle,
+//! and host network helpers.
 
 mod container;
 pub mod disk;
 pub mod dnsmasq;
 pub mod image;
+pub mod local;
 pub mod nat;
 pub mod vmm;
 

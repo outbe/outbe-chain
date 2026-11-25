@@ -31,7 +31,8 @@ use outbe_operator_vm::{
         validate_image_dir, RemoteImageAction,
     },
     vmm::{
-        calc_app_id, extract_primary_mac, remote_vmm_path, CreateVmRequest, GetInfoResponse,
+        build_prpc_curl_command, build_serial_log_command, calc_app_id, extract_primary_mac,
+        parse_curl_http_response, remote_vmm_path, CreateVmRequest, GetInfoResponse,
         NetworkingConfig, StatusRequest, VmInfo, VmmClient, VmmTransport, APP_COMPOSE_JSON,
     },
 };
@@ -56,18 +57,23 @@ const SERIAL_LOG_TAIL_LINES: usize = 40;
 struct SshVmmTransport {
     ssh: Ssh,
     ssh_options: SshOptions,
+    vmm_home: String,
     label: String,
 }
 
 impl VmmTransport for SshVmmTransport {
-    fn capture(&self, command: &str) -> Result<String> {
-        self.ssh_options
-            .capture_ssh(&self.ssh, &self.label, command)
+    fn prpc_post(&self, method: &str, payload: &[u8]) -> Result<String> {
+        let command = build_prpc_curl_command(&self.vmm_home, method);
+        let raw = self
+            .ssh_options
+            .capture_ssh_stdin(&self.ssh, &self.label, &command, payload)?;
+        Ok(parse_curl_http_response(method, &raw)?.to_owned())
     }
 
-    fn capture_stdin(&self, command: &str, stdin_bytes: &[u8]) -> Result<String> {
+    fn read_serial_log(&self, vm_id: &str, lines: usize) -> Result<String> {
+        let command = build_serial_log_command(&self.vmm_home, vm_id, lines)?;
         self.ssh_options
-            .capture_ssh_stdin(&self.ssh, &self.label, command, stdin_bytes)
+            .capture_ssh(&self.ssh, &self.label, &command)
     }
 }
 
@@ -81,9 +87,10 @@ fn ssh_vmm_client(
     let transport = SshVmmTransport {
         ssh,
         ssh_options,
+        vmm_home: vmm_home.into(),
         label: label.clone(),
     };
-    VmmClient::new(transport, vmm_home, label)
+    VmmClient::new(transport, label)
 }
 
 pub struct CreateOptions<'a> {

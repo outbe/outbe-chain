@@ -1,8 +1,14 @@
-//! Guest OS image validation, digest-qualified naming, and atomic host publication commands.
+//! Guest OS image validation, digest-qualified naming, and atomic host publication helpers.
 
-use std::{fs, path::Path};
+use std::{
+    fs,
+    os::unix::fs::MetadataExt,
+    path::{Path, PathBuf},
+};
 
 use eyre::{bail, ensure, Context, Result};
+use rustix::fs::{flock, openat, FlockOperation, Mode, OFlags, CWD};
+use walkdir::WalkDir;
 
 use crate::{
     dnsmasq::{MISSING_SENTINEL, PRESENT_SENTINEL},
@@ -14,6 +20,14 @@ use crate::{
 pub enum RemoteImageAction {
     Upload,
     Reuse,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PublishedImage {
+    pub name: String,
+    pub digest: String,
+    pub target_dir: PathBuf,
+    pub reused: bool,
 }
 
 /// Validate a local guest OS image directory and derive its digest-qualified VMM image name.
@@ -81,6 +95,166 @@ pub fn decide_remote_image_action(
             }
         }
     }
+}
+
+/// Atomically publish a validated local guest OS image directory into `<vmm_home>/image/<name>`.
+///
+/// Acquires an exclusive `flock` on `<vmm_home>/image/.<name>.lock`, reuses an existing image when
+/// its `digest.txt` matches, and refuses to overwrite an existing image with a different digest.
+pub fn publish_local_image(
+    vmm_home: &Path,
+    image_dir: &Path,
+    image_name: Option<&str>,
+    flavor_label: &str,
+) -> Result<PublishedImage> {
+    let (name, digest) = validate_image_dir(image_dir, image_name, flavor_label)?;
+    let image_root = vmm_home.join("image");
+    if let Ok(meta) = fs::symlink_metadata(&image_root) {
+        ensure!(
+            meta.file_type().is_dir(),
+            "VMM image directory is not a real directory: {}",
+            image_root.display()
+        );
+    } else {
+        fs::create_dir_all(&image_root)
+            .wrap_err_with(|| format!("create VMM image directory {}", image_root.display()))?;
+    }
+
+    let lock_path = image_root.join(format!(".{name}.lock"));
+    let current_uid = rustix::process::getuid().as_raw();
+    if let Ok(meta) = fs::symlink_metadata(&lock_path) {
+        ensure!(
+            meta.file_type().is_file() && meta.uid() == current_uid,
+            "image lock must be a regular file owned by current uid: {}",
+            lock_path.display()
+        );
+    }
+    let lock_fd = openat(
+        CWD,
+        &lock_path,
+        OFlags::CREATE | OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::from_raw_mode(0o600),
+    )
+    .wrap_err_with(|| format!("open image lock {}", lock_path.display()))?;
+    let lock_file = fs::File::from(lock_fd);
+    let lock_meta = lock_file
+        .metadata()
+        .wrap_err_with(|| format!("stat image lock {}", lock_path.display()))?;
+    ensure!(
+        lock_meta.file_type().is_file() && lock_meta.uid() == current_uid,
+        "image lock must be a regular file owned by current uid: {}",
+        lock_path.display()
+    );
+    flock(&lock_file, FlockOperation::LockExclusive)
+        .wrap_err_with(|| format!("lock {}", lock_path.display()))?;
+
+    let target_dir = image_root.join(&name);
+    if let Ok(meta) = fs::symlink_metadata(&target_dir) {
+        ensure!(
+            meta.file_type().is_dir(),
+            "existing image path is not a directory: {}",
+            target_dir.display()
+        );
+        let existing_digest_path = target_dir.join("digest.txt");
+        ensure!(
+            existing_digest_path.is_file(),
+            "existing image is missing digest.txt: {}",
+            existing_digest_path.display()
+        );
+        let existing_digest = fs::read_to_string(&existing_digest_path)
+            .wrap_err_with(|| format!("read {}", existing_digest_path.display()))?;
+        let action = decide_remote_image_action(Some(&existing_digest), &digest, &name)?;
+        debug_assert_eq!(action, RemoteImageAction::Reuse);
+        return Ok(PublishedImage {
+            name,
+            digest,
+            target_dir,
+            reused: true,
+        });
+    }
+
+    // Stage into a unique temporary sibling directory so publication is one atomic rename.
+    let stage = tempfile::Builder::new()
+        .prefix(&format!(".{name}.tmp."))
+        .tempdir_in(&image_root)
+        .wrap_err_with(|| format!("create staging directory in {}", image_root.display()))?;
+    copy_image_tree(image_dir, stage.path())?;
+
+    let staged_digest = fs::read_to_string(stage.path().join("digest.txt"))
+        .wrap_err("verify staged image digest.txt")?
+        .trim()
+        .to_ascii_lowercase();
+    ensure!(
+        staged_digest == digest,
+        "staged image digest mismatch: {staged_digest} != {digest}"
+    );
+
+    let staged_path = stage.keep();
+    if let Err(err) = fs::rename(&staged_path, &target_dir) {
+        let _ = fs::remove_dir_all(&staged_path);
+        return Err(err).wrap_err_with(|| {
+            format!(
+                "publish guest image {} to {}",
+                staged_path.display(),
+                target_dir.display()
+            )
+        });
+    }
+    if let Ok(parent_dir) = fs::File::open(&image_root) {
+        let _ = parent_dir.sync_all();
+    }
+
+    let published_digest = fs::read_to_string(target_dir.join("digest.txt"))
+        .wrap_err("read published image digest.txt")?
+        .trim()
+        .to_ascii_lowercase();
+    ensure!(
+        published_digest == digest,
+        "published image digest mismatch: {published_digest} != {digest}"
+    );
+
+    drop(lock_file);
+    Ok(PublishedImage {
+        name,
+        digest,
+        target_dir,
+        reused: false,
+    })
+}
+
+fn copy_image_tree(src_root: &Path, dst_root: &Path) -> Result<()> {
+    for entry in WalkDir::new(src_root).follow_links(false) {
+        let entry = entry?;
+        let path = entry.path();
+        if path == src_root {
+            continue;
+        }
+        let rel = path.strip_prefix(src_root)?;
+        let dst = dst_root.join(rel);
+        let meta = fs::symlink_metadata(path)
+            .wrap_err_with(|| format!("stat guest image entry {}", path.display()))?;
+        let ft = meta.file_type();
+        ensure!(
+            !ft.is_symlink(),
+            "refusing symlink in guest image directory: {}",
+            path.display()
+        );
+        if ft.is_dir() {
+            fs::create_dir_all(&dst)
+                .wrap_err_with(|| format!("create directory {}", dst.display()))?;
+            fs::set_permissions(&dst, meta.permissions())?;
+        } else if ft.is_file() {
+            fs::copy(path, &dst)
+                .wrap_err_with(|| format!("copy {} to {}", path.display(), dst.display()))?;
+            fs::set_permissions(&dst, meta.permissions())?;
+        } else {
+            bail!(
+                "refusing non-regular entry in guest image directory: {}",
+                path.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Build the host shell command that reads `<vmm_home>/image/<image_name>/digest.txt` with sentinels.
@@ -227,6 +401,36 @@ mod tests {
             RemoteImageAction::Reuse
         );
         let err = decide_remote_image_action(Some(&"f".repeat(64)), &digest, &name).unwrap_err();
+        assert!(err.to_string().contains("refusing to replace"), "{err}");
+    }
+
+    #[test]
+    fn publish_local_image_publishes_reuses_and_refuses_digest_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let vmm_home = dir.path().join("vmm");
+        let src_a = dir.path().join("src-a");
+        fs::create_dir_all(&src_a).unwrap();
+        let digest_a = "0123456789abcdef".repeat(4);
+        fs::write(src_a.join("metadata.json"), "{\"v\":1}").unwrap();
+        fs::write(src_a.join("digest.txt"), format!("{digest_a}\n")).unwrap();
+        fs::write(src_a.join("kernel"), b"kernel-bytes").unwrap();
+
+        let first = publish_local_image(&vmm_home, &src_a, None, "dev").unwrap();
+        assert!(!first.reused);
+        assert_eq!(first.name, "outbe-vm-dev-0123456789abcdef");
+        assert!(first.target_dir.join("kernel").is_file());
+
+        let second = publish_local_image(&vmm_home, &src_a, None, "dev").unwrap();
+        assert!(second.reused);
+        assert_eq!(second.target_dir, first.target_dir);
+
+        // Different digest under the same explicit image name must be refused.
+        let src_b = dir.path().join("src-b");
+        fs::create_dir_all(&src_b).unwrap();
+        let digest_b = "f".repeat(64);
+        fs::write(src_b.join("metadata.json"), "{\"v\":2}").unwrap();
+        fs::write(src_b.join("digest.txt"), format!("{digest_b}\n")).unwrap();
+        let err = publish_local_image(&vmm_home, &src_b, Some(&first.name), "dev").unwrap_err();
         assert!(err.to_string().contains("refusing to replace"), "{err}");
     }
 }
