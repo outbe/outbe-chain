@@ -4,7 +4,9 @@ use alloy_sol_types::SolEvent;
 use outbe_fidelity::{FidelityOpOutcome, FidelityOpSection};
 
 use crate::nod_mine::MineEncryptedNodRequestV1;
-use crate::protocol::{GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus, ModifyAuth};
+use crate::protocol::{
+    GratisOp, GratisOpRequest, GratisOpResult, GratisOpStatus, ModifyAuth, SealedPledge,
+};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::GRATIS_ADDRESS;
@@ -46,6 +48,7 @@ fn base_request(op: GratisOp, chain_id: B256, account: Address, amount: U256) ->
         current_pledged: Vec::new(),
         modify_auth: no_auth(),
         fidelity: None,
+        sealed_pledge: None,
     }
 }
 
@@ -243,6 +246,48 @@ pub(crate) fn pledge_with_fidelity(
             .ok_or(GratisError::PledgedSupplyOverflow)?;
         crate::state::set_pledged_total_supply(&gratis, pledged)?;
         require_fidelity_outcome(result.fidelity)
+    })
+}
+
+/// Open the sealed pledge of `credis_reservation_id` and pledge `amount` from the main account
+/// it names. Returns that account.
+pub(crate) fn pledge_sealed(
+    storage: &StorageHandle<'_>,
+    sealed: &[u8],
+    credis_reservation_id: U256,
+    amount: U256,
+) -> Result<Address> {
+    storage.with_checkpoint(|| {
+        let chain_id = chain_id_b256(storage)?;
+        let mut open = base_request(GratisOp::OpenSealedPledge, chain_id, Address::ZERO, amount);
+        open.sealed_pledge = Some(SealedPledge {
+            sealed: sealed.to_vec(),
+            credis_reservation_id,
+        });
+        let opened = {
+            let _scope = outbe_tee::call_context::ContextScope::from_storage(storage)?;
+            apply_gratis_op(open)?
+        };
+        ensure_applied(&opened)?;
+        let account = match opened.pledge_account {
+            Some(account)
+                if !account.is_zero()
+                    && opened.event_amount == amount
+                    && opened.new_balance.is_empty()
+                    && opened.new_pledged.is_empty() =>
+            {
+                account
+            }
+            _ => return Err(GratisFatalError::CollateralResultMismatch.into()),
+        };
+        let pledge = base_request(GratisOp::PledgeCollateral, chain_id, account, amount);
+        apply_collateral_op(storage, pledge)?;
+        let gratis = Gratis::new(storage.clone());
+        let pledged = crate::state::pledged_total_supply(&gratis)?
+            .checked_add(amount)
+            .ok_or(GratisError::PledgedSupplyOverflow)?;
+        crate::state::set_pledged_total_supply(&gratis, pledged)?;
+        Ok(account)
     })
 }
 

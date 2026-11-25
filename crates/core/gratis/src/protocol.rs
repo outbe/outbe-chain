@@ -21,6 +21,10 @@ pub enum GratisOp {
     ReleasePledged = 3,
     /// Burn collateral from the pledged balance.
     BurnPledged = 4,
+    /// Open a pledge authorization sealed to the offer key and check its MAC.
+    OpenSealedPledge = 5,
+    /// Move a runtime-authorized amount from liquid to pledged.
+    PledgeCollateral = 6,
 }
 
 impl OperationTag for GratisOp {
@@ -36,6 +40,15 @@ pub struct ModifyAuth {
     pub mac: [u8; 32],
     /// Replay counter bound by [`Self::mac`].
     pub op_nonce: u64,
+}
+
+/// A main-account pledge authorization sealed to the offer key, for one reservation.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct SealedPledge {
+    /// Ephemeral X25519 key, AEAD nonce and ciphertext of the account and its MAC.
+    pub sealed: Vec<u8>,
+    /// Credis reservation the MAC binds.
+    pub credis_reservation_id: U256,
 }
 
 /// Stateless transition over an account's liquid and pledged balance blobs.
@@ -57,6 +70,8 @@ pub struct GratisOpRequest {
     pub modify_auth: ModifyAuth,
     /// Co-located Fidelity section. Collateral ops must leave this empty.
     pub fidelity: Option<FidelityOpSection>,
+    /// Sealed pledge of [`GratisOp::OpenSealedPledge`]. Empty for every other op.
+    pub sealed_pledge: Option<SealedPledge>,
 }
 
 /// Outcome of one Gratis op.
@@ -92,6 +107,8 @@ pub struct GratisOpResult {
     pub attestation_tag: Vec<u8>,
     /// Owner-encrypted event amount for mint, burn, and pledged burn.
     pub encrypted_event_amount: Vec<u8>,
+    /// Main account an opened sealed pledge names. Empty for every other op.
+    pub pledge_account: Option<Address>,
 }
 
 fn push_bytes(buf: &mut Vec<u8>, bytes: &[u8]) {
@@ -118,6 +135,14 @@ pub fn gratis_op_canonical_hash(req: &GratisOpRequest) -> B256 {
             buf.extend_from_slice(&section.timestamp.to_be_bytes());
             buf.extend_from_slice(&section.first_qualified_start.to_be_bytes());
             push_bytes(&mut buf, &section.current_blob);
+        }
+        None => buf.push(0),
+    }
+    match &req.sealed_pledge {
+        Some(pledge) => {
+            buf.push(1);
+            push_bytes(&mut buf, &pledge.sealed);
+            buf.extend_from_slice(&pledge.credis_reservation_id.to_be_bytes::<32>());
         }
         None => buf.push(0),
     }

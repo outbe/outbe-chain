@@ -12,6 +12,9 @@ pub const OFFER_HKDF_SALT: [u8; 32] = *b"outbe/offer/salt/v1\0\0\0\0\0\0\0\0\0\0
 /// HKDF info string binding the derived key to the offer domain.
 pub const OFFER_HKDF_INFO: &[u8] = b"outbe/offer/encryption/v1";
 
+/// HKDF info of a Credis pledge authorization sealed to the offer key.
+pub const CREDIS_PLEDGE_HKDF_INFO: &[u8] = b"outbe/credis/pledge-seal/v1";
+
 /// `(cipher_text, nonce, ephemeral_pub)` produced by [`encrypt_offer`].
 pub type EncryptedOfferParts = (Vec<u8>, [u8; 12], [u8; 32]);
 

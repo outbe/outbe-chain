@@ -178,6 +178,7 @@ fn mint_request(request: &MineEncryptedNodRequestV1, amount: U256) -> GratisOpRe
         current_pledged: Vec::new(),
         modify_auth: request.modify_auth.clone(),
         fidelity: Some(request.fidelity.clone()),
+        sealed_pledge: None,
     }
 }
 

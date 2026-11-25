@@ -318,6 +318,7 @@ fn gratis_attestation_rejects_a_cross_domain_tag_a_bad_key_and_a_mutated_event()
         inputs_canonical_hash: hash,
         attestation_tag: Vec::new(),
         encrypted_event_amount: vec![4, 5, 6, 7],
+        pledge_account: None,
     };
     let gratis_preimage = gratis_op_attestation_preimage(hash, &gratis).unwrap();
     let gratis_tag = signer.sign(&gratis_preimage).to_bytes();

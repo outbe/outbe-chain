@@ -477,6 +477,7 @@ fn an_owner_result_that_differs_from_the_request_is_refused() {
         fidelity: None,
         inputs_canonical_hash: B256::ZERO,
         attestation_tag: Vec::new(),
+        pledge_account: None,
     };
     let amount = U256::from(5u64);
     assert!(ensure_owner_result(amount, 3, &result(5, 4)).is_ok());

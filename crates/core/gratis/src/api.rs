@@ -94,6 +94,17 @@ pub fn pledge_with_fidelity(
     runtime::pledge_with_fidelity(storage, caller, amount, auth, fidelity)
 }
 
+/// Open the sealed pledge of `credis_reservation_id` and pledge `amount` from the main account
+/// it names. Returns that account.
+pub fn pledge_sealed(
+    storage: &StorageHandle<'_>,
+    sealed: &[u8],
+    credis_reservation_id: U256,
+    amount: U256,
+) -> Result<Address> {
+    runtime::pledge_sealed(storage, sealed, credis_reservation_id, amount)
+}
+
 /// Return pledged collateral to `account`'s liquid balance. The caller authorizes it.
 pub fn release_pledged(storage: &StorageHandle<'_>, account: Address, amount: U256) -> Result<()> {
     runtime::release_pledged(storage, account, amount)

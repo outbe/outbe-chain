@@ -67,6 +67,7 @@ fn request(op: GratisOp, amount: U256, nonce: u64) -> GratisOpRequest {
         current_pledged: Vec::new(),
         modify_auth: empty_auth(nonce),
         fidelity: None,
+        sealed_pledge: None,
     }
 }
 
@@ -403,6 +404,10 @@ fn should_apply(op: GratisOp, amount: U256, books: &Books) -> bool {
             books.pledged >= amount && books.liquid.checked_add(amount).is_some()
         }
         GratisOp::BurnPledged => books.pledged >= amount,
+        GratisOp::PledgeCollateral => {
+            books.liquid >= amount && books.pledged.checked_add(amount).is_some()
+        }
+        GratisOp::OpenSealedPledge => false,
     }
 }
 
@@ -431,6 +436,11 @@ fn note_applied(op: GratisOp, amount: U256, books: &mut Books) {
             books.pledged -= amount;
             books.burned_pledged += U512::from(amount);
         }
+        GratisOp::PledgeCollateral => {
+            books.liquid -= amount;
+            books.pledged += amount;
+        }
+        GratisOp::OpenSealedPledge => {}
     }
 }
 
@@ -655,7 +665,7 @@ fn assert_applied_shape(
             assert!(result.new_pledged.is_empty(), "{label}");
             assert_eq!(result.next_op_nonce, nonce + 1, "{label}");
         }
-        GratisOp::Pledge | GratisOp::ReleasePledged => {
+        GratisOp::Pledge | GratisOp::ReleasePledged | GratisOp::PledgeCollateral => {
             assert!(!result.new_balance.is_empty(), "{label}");
             assert!(!result.new_pledged.is_empty(), "{label}");
             let expected_nonce = if op == GratisOp::Pledge { nonce + 1 } else { 0 };
@@ -665,6 +675,10 @@ fn assert_applied_shape(
             assert!(result.new_balance.is_empty(), "{label}");
             assert!(!result.new_pledged.is_empty(), "{label}");
             assert_eq!(result.next_op_nonce, 0, "{label}");
+        }
+        GratisOp::OpenSealedPledge => {
+            assert!(result.new_balance.is_empty(), "{label}");
+            assert!(result.new_pledged.is_empty(), "{label}");
         }
     }
 }

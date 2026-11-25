@@ -2,9 +2,12 @@
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::confidential_tee::{
-    event_amount_input_hash, BalanceTransition, TeeError, FIELD_BALANCE, GRATIS,
+    event_amount_input_hash, BalanceTransition, TeeError, CREDIS_PLEDGE_HKDF_INFO, FIELD_BALANCE,
+    GRATIS, OFFER_HKDF_SALT,
 };
-use outbe_tee::resident::{AccountKeysHandle, ResidentOfferMaterial, StateKeyHandle};
+use outbe_tee::resident::{
+    verify_modify_mac, AccountKeysHandle, OfferKeyHandle, ResidentOfferMaterial, StateKeyHandle,
+};
 use thiserror::Error;
 
 use crate::cipher;
@@ -15,6 +18,15 @@ use crate::protocol::{
 
 /// Pledged-blob field tag. It differs from [`FIELD_BALANCE`], so the blobs never share a nonce.
 pub const FIELD_PLEDGED: u8 = 1;
+
+/// Domain of the MAC that a main account gives to pledge Gratis for one Credis reservation.
+pub const CREDIS_PLEDGE_MAC_TAG: &[u8] = b"outbe/gratis/credis-pledge/v1";
+
+/// The sealed plaintext: the 20-byte main account and its 32-byte MAC.
+pub const PLEDGE_PLAINTEXT_LEN: usize = 52;
+
+/// Ephemeral X25519 key, AEAD nonce, the sealed plaintext and its AEAD tag.
+pub const SEALED_PLEDGE_LEN: usize = 32 + 12 + PLEDGE_PLAINTEXT_LEN + 16;
 
 /// The account operation covered by a Gratis authorization.
 pub type ModifyOperation = outbe_core_common::confidential_tee::ModifyOperation<GratisOp>;
@@ -37,6 +49,15 @@ pub(crate) enum GratisRejectReason {
     /// Debit exceeded the blob, or a credit overflowed.
     #[error("insufficient balance or balance overflow")]
     InsufficientBalanceOrOverflow,
+    /// A sealed pledge reached an op that has no offer key.
+    #[error("sealed pledge needs the offer key")]
+    SealedPledgeNeedsOfferKey,
+    /// The sealed pledge has the wrong length, does not open, or names no account.
+    #[error("malformed sealed pledge")]
+    MalformedSealedPledge,
+    /// The pledge MAC does not match the account, the amount and the reservation.
+    #[error("invalid pledge authorization")]
+    InvalidPledgeAuthorization,
     /// Envelope cryptography failed. Display stays the historical sentence.
     #[error(transparent)]
     Crypto(#[from] TeeError),
@@ -125,6 +146,7 @@ fn empty_result() -> GratisOpResult {
         fidelity: None,
         inputs_canonical_hash: B256::ZERO,
         attestation_tag: Vec::new(),
+        pledge_account: None,
     }
 }
 
@@ -213,6 +235,11 @@ fn apply_op_inner(
     req: &GratisOpRequest,
     inputs_canonical_hash: B256,
 ) -> Result<GratisOpResult, TeeError> {
+    if req.op == GratisOp::OpenSealedPledge || req.sealed_pledge.is_some() {
+        return Ok(rejected_reason(
+            GratisRejectReason::SealedPledgeNeedsOfferKey,
+        ));
+    }
     if req.amount.is_zero() || req.account.is_zero() {
         return Ok(rejected_reason(
             GratisRejectReason::AmountAndAccountMustBeNonzero,
@@ -276,7 +303,92 @@ fn field_moves(op: GratisOp) -> (Option<bool>, Option<bool>) {
         GratisOp::Pledge => (Some(false), Some(true)),
         GratisOp::ReleasePledged => (Some(true), Some(false)),
         GratisOp::BurnPledged => (None, Some(false)),
+        GratisOp::PledgeCollateral => (Some(false), Some(true)),
+        GratisOp::OpenSealedPledge => (None, None),
     }
+}
+
+/// Message that the main account MACs to pledge `amount` for one Credis reservation.
+#[must_use]
+pub fn credis_pledge_message(
+    account: Address,
+    amount: U256,
+    credis_reservation_id: U256,
+    chain_id: B256,
+) -> Vec<u8> {
+    let mut message = Vec::with_capacity(20 + 3 * 32);
+    message.extend_from_slice(account.as_slice());
+    message.extend_from_slice(&amount.to_be_bytes::<32>());
+    message.extend_from_slice(&credis_reservation_id.to_be_bytes::<32>());
+    message.extend_from_slice(chain_id.as_slice());
+    message
+}
+
+/// Open a sealed pledge with the offer key and check the MAC of the main account it names.
+#[must_use]
+pub fn open_sealed_pledge(
+    state_key: &StateKeyHandle,
+    offer: &OfferKeyHandle,
+    req: &GratisOpRequest,
+) -> GratisOpResult {
+    let mut result = match opened_pledge_account(state_key, offer, req) {
+        Ok(account) => {
+            let mut result = empty_result();
+            result.event_amount = req.amount;
+            result.pledge_account = Some(account);
+            result
+        }
+        Err(reason) => rejected_reason(reason),
+    };
+    result.inputs_canonical_hash = gratis_op_canonical_hash(req);
+    result
+}
+
+fn opened_pledge_account(
+    state_key: &StateKeyHandle,
+    offer: &OfferKeyHandle,
+    req: &GratisOpRequest,
+) -> Result<Address, GratisRejectReason> {
+    let malformed = GratisRejectReason::MalformedSealedPledge;
+    let pledge = match &req.sealed_pledge {
+        Some(pledge) if req.op == GratisOp::OpenSealedPledge && !req.amount.is_zero() => pledge,
+        _ => return Err(malformed),
+    };
+    if pledge.sealed.len() != SEALED_PLEDGE_LEN {
+        return Err(malformed);
+    }
+    let (peer, rest) = pledge.sealed.split_at(32);
+    let (nonce, ciphertext) = rest.split_at(12);
+    let (Ok(peer), Ok(nonce)) = (<[u8; 32]>::try_from(peer), <[u8; 12]>::try_from(nonce)) else {
+        return Err(malformed);
+    };
+    let plaintext = offer
+        .ecdhe_decrypt(
+            &OFFER_HKDF_SALT,
+            CREDIS_PLEDGE_HKDF_INFO,
+            &peer,
+            &nonce,
+            ciphertext,
+        )
+        .map_err(|_| GratisRejectReason::MalformedSealedPledge)?;
+    let Ok(mac) = <[u8; 32]>::try_from(&plaintext[20..]) else {
+        return Err(GratisRejectReason::MalformedSealedPledge);
+    };
+    let account = Address::from_slice(&plaintext[..20]);
+    if account.is_zero() {
+        return Err(GratisRejectReason::MalformedSealedPledge);
+    }
+    let keys = derive_account_keys(state_key, account)?;
+    let message = credis_pledge_message(
+        account,
+        req.amount,
+        pledge.credis_reservation_id,
+        req.chain_id,
+    );
+    if !verify_modify_mac(&keys, CREDIS_PLEDGE_MAC_TAG, &message, &mac) {
+        return Err(GratisRejectReason::InvalidPledgeAuthorization);
+    }
+    Ok(account)
 }
 
 /// Zero authorization used by collateral ops and tests that fill the MAC later.

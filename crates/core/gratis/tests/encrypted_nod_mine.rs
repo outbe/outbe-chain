@@ -120,6 +120,7 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
         current_pledged: Vec::new(),
         modify_auth: auth(GratisOp::Burn, U256::from(23u64), 1),
         fidelity: None,
+        sealed_pledge: None,
     };
     let after = apply_op(&key, &burn);
     assert!(matches!(after.status, GratisOpStatus::Applied));
