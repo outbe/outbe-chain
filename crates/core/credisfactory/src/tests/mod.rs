@@ -690,7 +690,7 @@ pub fn zero_word() -> Bytes {
     Bytes::from(vec![0u8; 32])
 }
 
-/// Positive Fidelity so `gratisfactory::pledge_gratis` clears the eligibility gate.
+/// Positive Fidelity, so a test sees that a Credis leaves it unchanged.
 pub fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
     const ONE_YEAR_SECS: u64 = 365 * DAY;
     outbe_fidelity::api::cohort_in(
@@ -799,11 +799,6 @@ pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
     seed_oracle(storage.clone(), oracle_rate());
 }
 
-/// Credits the factory with the stake the payable boundary would have credited.
-///
-/// Tests drive `runtime::issue_credis` directly, below the precompile boundary that
-/// moves `msg.value`. Without this credit, the escrow would have a claim with no
-/// COEN behind it, and the release would underflow.
 pub fn teardown() {
     fidelity_enclave::uninstall();
     test_enclave::uninstall();

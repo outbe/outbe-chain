@@ -1034,3 +1034,118 @@ fn credis_settles_in_another_asset_when_its_vault_is_gone() {
     assert_eq!((settled[0].asset, settled[0].amountMinor), (other, owed));
     teardown();
 }
+
+#[test]
+fn issue_at_expires_at_passes_and_a_second_later_fails() {
+    let mut provider = env();
+    StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost() * U256::from(2u64));
+        let late = seed_reservation(&storage, bob(), pledge_stables());
+        let on_time = seed_reservation(&storage, alice(), pledge_stables());
+        let expires_at = outbe_vaultrouter::api::credis_reservation_of(&storage, on_time)
+            .unwrap()
+            .expires_at;
+        advance_to(&storage, expires_at);
+        issue(&storage, on_time, alice()).unwrap();
+        advance_to(&storage, expires_at + 1);
+        let err = issue(&storage, late, alice()).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                crate::errors::CredisFactoryError::ReservationExpired
+            )
+            .to_string()
+        );
+        assert_eq!(view_pledged(&storage, alice()), pledge_cost());
+    });
+    teardown();
+}
+
+#[test]
+fn issue_with_too_little_free_gratis_changes_nothing() {
+    let mut provider = env();
+    StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost() - U256::ONE);
+        let id = seed_reservation(&storage, bob(), pledge_stables());
+        let before = outbe_vaultrouter::api::credis_reservation_of(&storage, id).unwrap();
+        let err = issue(&storage, id, alice()).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            outbe_primitives::error::PrecompileError::from(
+                outbe_gratis::errors::GratisError::Rejected(
+                    "insufficient balance or balance overflow".into()
+                )
+            )
+            .to_string()
+        );
+        assert_eq!(
+            outbe_vaultrouter::api::credis_reservation_of(&storage, id).unwrap(),
+            before
+        );
+        assert_eq!(view_balance(&storage, alice()), pledge_cost() - U256::ONE);
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::ZERO
+        );
+        assert_eq!(
+            CredisContract::new(storage.clone())
+                .credis_count_of(bob())
+                .unwrap(),
+            0
+        );
+    });
+    teardown();
+}
+
+#[test]
+fn one_main_account_backs_two_credis_and_each_frees_only_its_own_gratis() {
+    let mut provider = env();
+    let (first, second) = StorageHandle::enter(&mut provider, |storage| {
+        bootstrap(&storage, pledge_cost() * U256::from(2u64));
+        let first = issue(
+            &storage,
+            seed_reservation(&storage, bob(), pledge_stables()),
+            alice(),
+        )
+        .unwrap()
+        .0;
+        let second = issue(
+            &storage,
+            seed_reservation(&storage, alice(), pledge_stables()),
+            alice(),
+        )
+        .unwrap()
+        .0;
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            view_pledged(&storage, alice()),
+            pledge_cost() * U256::from(2u64)
+        );
+        (first, second)
+    });
+    settle_principal(&mut provider, bob(), first, pledge_stables());
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(deleted(&storage, first));
+        assert_eq!(view_balance(&storage, alice()), pledge_cost());
+        assert_eq!(view_pledged(&storage, alice()), pledge_cost());
+        assert_eq!(
+            record(&storage, second).outstanding_gratis_minor,
+            pledge_cost()
+        );
+    });
+    settle_principal(&mut provider, alice(), second, pledge_stables());
+    StorageHandle::enter(&mut provider, |storage| {
+        assert!(deleted(&storage, second));
+        assert_eq!(
+            view_balance(&storage, alice()),
+            pledge_cost() * U256::from(2u64)
+        );
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
+        assert_eq!(
+            outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
+            U256::ZERO
+        );
+    });
+    teardown();
+}

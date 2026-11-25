@@ -71,10 +71,11 @@ struct PaymentObservation {
 }
 
 /// Each failure mode of the issue: 0 succeeds; 1 and 2 fail a token transfer; 5 brings a pledge
-/// sealed for another reservation; 6 and 7 change the asset metadata; 8 issues after expiry.
+/// sealed for another reservation; 6 and 7 change the asset metadata; 8 issues after expiry;
+/// 9 fails the WCOEN transfer to the Credis owner.
 #[test]
 fn issue_reverts_as_a_whole_at_each_fault() {
-    for failure in [0, 1, 2, 5, 6, 7, 8] {
+    for failure in [0, 1, 2, 5, 6, 7, 8, 9] {
         test_enclave::install();
         let key = derive_account_keys(&test_enclave::state_key(), OWNER).unwrap();
         let mut db = issuance_database();
@@ -327,6 +328,14 @@ fn prepare_issuance_counterparties(evm: &mut EvmWorld, failure: u64) -> eyre::Re
             amount: U256::MAX,
         },
     )?;
+    if failure == 9 {
+        fixture_call(
+            evm,
+            OWNER,
+            WCOEN_ADDRESS,
+            IFixture::configureCall { mode: U256::ONE },
+        )?;
+    }
     if [1, 2, 6, 7].contains(&failure) {
         fixture_call(
             evm,
@@ -342,7 +351,7 @@ fn prepare_issuance_counterparties(evm: &mut EvmWorld, failure: u64) -> eyre::Re
 }
 
 fn reset_counterparties(evm: &mut EvmWorld) -> eyre::Result<()> {
-    for target in [ASSET, VAULT] {
+    for target in [ASSET, VAULT, WCOEN_ADDRESS] {
         call!(
             evm,
             OWNER,

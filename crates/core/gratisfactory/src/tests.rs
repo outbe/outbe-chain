@@ -311,6 +311,16 @@ fn pledged_gratis_cannot_be_mined_into_coen() {
         .unwrap();
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(view_pledged(&storage, alice()), pledged);
+        outbe_gratis::api::release_pledged(&storage, alice(), pledged).unwrap();
+        runtime::mine_coen(
+            storage.clone(),
+            alice(),
+            pledged,
+            auth(GratisOp::Burn, alice(), pledged, 2),
+        )
+        .unwrap();
+        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
+        assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
 }
 
