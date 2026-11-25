@@ -55,6 +55,12 @@ pub fn run() -> Result<()> {
 
     install_binary(&root.join("outbe-up"), Path::new("/usr/local/bin/outbe-up"))?;
     validate_genesis(root, &environment["OUTBE_CHAIN_ID"])?;
+    let chain_id: u64 = environment["OUTBE_CHAIN_ID"]
+        .parse()
+        .wrap_err("OUTBE_CHAIN_ID must be a positive integer")?;
+    let hyperlane_public =
+        fs::read_to_string(&hyperlane).wrap_err("failed to read hyperlane-public.toml")?;
+    crate::validator::config::validate_hyperlane_public_toml(&hyperlane_public, chain_id, false)?;
     ensure_outbe_account()?;
     let uid = numeric_id("-u")?;
     let gid = numeric_id("-g")?;

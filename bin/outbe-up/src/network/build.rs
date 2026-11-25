@@ -5,9 +5,13 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use alloy_primitives::Address;
 use eyre::{ensure, Context, Result};
 use outbe_genesis_cli::{
-    attestation::run_tee_stage, create_genesis::create_seeded_genesis, launch_bundle,
+    attestation::run_tee_stage,
+    create_genesis::create_seeded_genesis,
+    launch_bundle,
+    seed_codec::{HYPERLANE_CONTROLLER_ADDRESS, HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT},
 };
 use outbe_primitives::tee_attestation_v1::{NetworkBindingV1, TeePolicyScheduleV1};
 use outbe_software_bundle::{sha256_file, verify_and_extract, SoftwareManifest};
@@ -190,6 +194,10 @@ pub fn run(
         &seeded,
     )
     .wrap_err("failed to create seeded genesis")?;
+    if config.network == Network::Devnet {
+        let founder0 = validator_address(&keys.join("validator-0/evm-key.hex"))?;
+        verify_devnet_hyperlane_admin(&seeded, founder0)?;
+    }
 
     let final_genesis = staging.path().join("genesis.json");
     run_tee_stage(
@@ -203,6 +211,10 @@ pub fn run(
         &genesis_config,
     )
     .wrap_err("failed to finalize the genesis TEE policy")?;
+    if config.network == Network::Devnet {
+        let founder0 = validator_address(&keys.join("validator-0/evm-key.hex"))?;
+        verify_devnet_hyperlane_admin(&final_genesis, founder0)?;
+    }
     let deployment = if config.vm.is_some() {
         DeploymentKind::Vm
     } else {
@@ -413,6 +425,9 @@ pub(super) fn genesis_cli_config(
         .iter()
         .map(|founder| Value::String(founder.advertise_ip.to_string()))
         .collect();
+    let hyperlane_origins = config
+        .resolve_hyperlane_config(&config.founders[0])?
+        .origins;
     for (key, value) in [
         ("network", json!(config.network.as_str())),
         ("chain_id", json!(config.chain_id)),
@@ -453,7 +468,7 @@ pub(super) fn genesis_cli_config(
                 .map(|founder| &founder.hyperlane_public_url)
                 .collect::<Vec<_>>()),
         ),
-        ("hyperlane_origins", json!(config.hyperlane.origins)),
+        ("hyperlane_origins", json!(hyperlane_origins)),
         ("crs_path", json!(software.join(".bb-crs/bn254_g1.dat"))),
         (
             "consensus_use_local_defaults",
@@ -466,6 +481,30 @@ pub(super) fn genesis_cli_config(
     }
     if config.network == Network::Devnet {
         root.insert("price_provider".into(), json!("mock"));
+        let founder0 = validator_address(&keys.join("validator-0/evm-key.hex"))?;
+        let founder0_hex = format!("{founder0:#x}");
+        let hc = root
+            .entry("hyperlane_controller")
+            .or_insert_with(|| Value::Object(Map::new()));
+        let hc_obj = hc.as_object_mut().ok_or_else(|| {
+            eyre::eyre!("genesis.overrides.hyperlane_controller must be a mapping")
+        })?;
+        if let Some(existing) = hc_obj.get("admin") {
+            let existing_str = existing.as_str().ok_or_else(|| {
+                eyre::eyre!(
+                    "genesis.overrides.hyperlane_controller.admin must be a hex address string"
+                )
+            })?;
+            let parsed: Address = existing_str.parse().wrap_err_with(|| {
+                format!("invalid genesis.overrides.hyperlane_controller.admin: {existing_str}")
+            })?;
+            ensure!(
+                parsed == founder0,
+                "devnet sets HyperlaneController bootstrap admin to founder 0 ({founder0_hex}); \
+                 remove conflicting genesis.overrides.hyperlane_controller.admin ({existing_str})"
+            );
+        }
+        hc_obj.insert("admin".into(), json!(founder0_hex));
     }
     if let Some(path) = base_genesis {
         root.insert("base_genesis".into(), json!(path));
@@ -653,13 +692,16 @@ fn emit_vm_founder_trees(inputs: &VmTreeInputs<'_>) -> Result<Vec<FounderArtifac
             feeder: OperatorFeederConfig {
                 public_toml: feeder_public_toml.clone(),
             },
-            hyperlane: inputs
-                .config
-                .hyperlane
-                .for_public_url(founder.hyperlane_public_url.clone()),
+            hyperlane: inputs.config.resolve_hyperlane_config(founder)?,
         };
         operator.validate()?;
         operator.write_runtime_config(&tree, validator_addr)?;
+        let hyperlane_public = fs::read_to_string(tree.join("hyperlane-public.toml"))?;
+        crate::validator::config::validate_hyperlane_public_toml(
+            &hyperlane_public,
+            inputs.config.chain_id,
+            true,
+        )?;
         for name in [
             "validator.env",
             "feeder-public.toml",
@@ -812,9 +854,7 @@ fn joining_operator_config(
         feeder: OperatorFeederConfig {
             public_toml: joining_feeder_public_toml(config, software)?,
         },
-        hyperlane: config
-            .hyperlane
-            .for_public_url("http://192.0.2.10:9000".into()),
+        hyperlane: config.resolve_joining_hyperlane_config()?,
     })
 }
 
@@ -887,7 +927,74 @@ pub(super) fn required_validator_field<'a>(validator: &'a Value, name: &str) -> 
         .ok_or_else(|| eyre::eyre!("generated validator has no {name}"))
 }
 
-pub(super) fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
+pub(super) fn verify_devnet_hyperlane_admin(
+    genesis_path: &Path,
+    expected_admin: Address,
+) -> Result<()> {
+    let genesis: Value =
+        serde_json::from_slice(&fs::read(genesis_path).wrap_err_with(|| {
+            format!("read genesis for admin check: {}", genesis_path.display())
+        })?)?;
+    let actual = read_hyperlane_admin_slot(&genesis)?;
+    ensure!(
+        actual == expected_admin,
+        "devnet HyperlaneController slot {HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT} admin \
+         mismatch: expected founder 0 ({expected_admin:#x}), got {actual:#x}"
+    );
+    Ok(())
+}
+
+fn read_hyperlane_admin_slot(genesis: &Value) -> Result<Address> {
+    let alloc = genesis
+        .get("alloc")
+        .and_then(Value::as_object)
+        .ok_or_else(|| eyre::eyre!("genesis is missing alloc object"))?;
+    let target_addr = HYPERLANE_CONTROLLER_ADDRESS
+        .strip_prefix("0x")
+        .unwrap_or(HYPERLANE_CONTROLLER_ADDRESS)
+        .to_ascii_lowercase();
+    let entry = alloc
+        .iter()
+        .find(|(addr, _)| {
+            addr.strip_prefix("0x")
+                .unwrap_or(addr)
+                .eq_ignore_ascii_case(&target_addr)
+        })
+        .map(|(_, val)| val)
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "genesis alloc is missing HyperlaneController ({HYPERLANE_CONTROLLER_ADDRESS})"
+            )
+        })?;
+    let storage = entry
+        .get("storage")
+        .and_then(Value::as_object)
+        .ok_or_else(|| eyre::eyre!("HyperlaneController alloc entry has no storage"))?;
+    let slot_hex = format!("{HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT:064x}");
+    let raw_word = storage
+        .iter()
+        .find(|(slot, _)| {
+            slot.strip_prefix("0x")
+                .unwrap_or(slot)
+                .eq_ignore_ascii_case(&slot_hex)
+        })
+        .and_then(|(_, val)| val.as_str())
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "HyperlaneController storage is missing bootstrap admin slot {HYPERLANE_CONTROLLER_BOOTSTRAP_ADMIN_SLOT}"
+            )
+        })?;
+    let word_hex = raw_word.strip_prefix("0x").unwrap_or(raw_word);
+    let word_bytes = hex::decode(word_hex).wrap_err("invalid hex in HyperlaneController slot 9")?;
+    ensure!(
+        word_bytes.len() == 32,
+        "expected 32-byte word in HyperlaneController slot 9, got {} bytes",
+        word_bytes.len()
+    );
+    Ok(Address::from_slice(&word_bytes[12..32]))
+}
+
+fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
     ensure!(
         source.is_dir(),
         "keys directory does not exist: {}",
@@ -927,10 +1034,13 @@ mod tests {
         let keys = root.join("keys");
         let mut addresses = Vec::new();
         for index in 0..count {
-            let key = keys.join(format!("validator-{index}/feeder-key.hex"));
-            fs::create_dir_all(key.parent().unwrap()).unwrap();
-            fs::write(&key, format!("{:064x}", index + 1)).unwrap();
-            addresses.push(format!("{:#x}", validator_address(&key).unwrap()));
+            let dir = keys.join(format!("validator-{index}"));
+            fs::create_dir_all(&dir).unwrap();
+            let feeder_key = dir.join("feeder-key.hex");
+            fs::write(&feeder_key, format!("{:064x}", index + 1)).unwrap();
+            let evm_key = dir.join("evm-key.hex");
+            fs::write(&evm_key, format!("{:064x}", index + 101)).unwrap();
+            addresses.push(format!("{:#x}", validator_address(&feeder_key).unwrap()));
         }
         (keys, addresses)
     }
@@ -1227,5 +1337,324 @@ genesis:
             // Run the real B3 vm-boot verification (non-root, synthetic mount) over each emitted tree.
             crate::validator::vm_boot::verify_tree_without_mount(&tree, &fake_bins).unwrap();
         }
+    }
+
+    #[test]
+    fn devnet_seeded_genesis_sets_hyperlane_admin_to_founder_zero_and_testnet_is_unchanged() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .parent()
+            .unwrap();
+        let real_testnet_profile = repo_root.join("bin/outbe-genesis-cli/profiles/testnet.yaml");
+        let software = temp.path().join("software");
+        let profile_dst = software.join("share/outbe-genesis/profiles/testnet.yaml");
+        fs::create_dir_all(profile_dst.parent().unwrap()).unwrap();
+        fs::copy(&real_testnet_profile, &profile_dst).unwrap();
+        let devnet_pairs = software.join("share/outbe-genesis/profiles/devnet/pairs.toml");
+        fs::create_dir_all(devnet_pairs.parent().unwrap()).unwrap();
+        fs::write(
+            &devnet_pairs,
+            "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"mock\" }]\n",
+        )
+        .unwrap();
+        let testnet_pairs = software.join("share/outbe-genesis/profiles/testnet/pairs.toml");
+        fs::create_dir_all(testnet_pairs.parent().unwrap()).unwrap();
+        fs::write(
+            &testnet_pairs,
+            "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"mock_http\" }]\n",
+        )
+        .unwrap();
+
+        let (keys, _) = feeder_keys(temp.path(), 4);
+        let founder0_addr = validator_address(&keys.join("validator-0/evm-key.hex")).unwrap();
+        let profile_admin: Address = "0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05"
+            .parse()
+            .unwrap();
+        assert_ne!(founder0_addr, profile_admin);
+
+        let validators_fixture: Vec<Value> = (0..4)
+            .map(|i| {
+                let addr = format!(
+                    "{:#x}",
+                    validator_address(&keys.join(format!("validator-{i}/evm-key.hex"))).unwrap()
+                );
+                let feeder = format!(
+                    "{:#x}",
+                    validator_address(&keys.join(format!("validator-{i}/feeder-key.hex"))).unwrap()
+                );
+                json!({
+                    "address": addr,
+                    "feeder_address": feeder,
+                    "public_key": format!("{:096x}", i + 1),
+                    "radicle_node_id": format!("{:064x}", i + 1),
+                })
+            })
+            .collect();
+
+        // 1. Devnet: real build_seed + seed_validators produces slot 9 == founder 0.
+        let mut devnet_cfg: NetworkConfig =
+            serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
+        devnet_cfg.network = Network::Devnet;
+        devnet_cfg.chain_id = Network::Devnet.chain_id();
+        let devnet_cli = genesis_cli_config(&devnet_cfg, &software, &keys, None).unwrap();
+        let devnet_seed = outbe_genesis_cli::stages::build_seed(&devnet_cli).unwrap();
+        let mut devnet_alloc = Map::new();
+        let mut devnet_genesis = json!({
+            "config": {"chainId": 424242, "epochLengthBlocks": 1200},
+            "timestamp": "0x6800000",
+            "alloc": {}
+        });
+        outbe_genesis_cli::seed_validators::seed_founders(
+            &devnet_genesis,
+            &devnet_seed,
+            &validators_fixture,
+            &mut devnet_alloc,
+        )
+        .unwrap();
+        devnet_genesis["alloc"] = Value::Object(devnet_alloc);
+        assert_eq!(
+            read_hyperlane_admin_slot(&devnet_genesis).unwrap(),
+            founder0_addr
+        );
+        let devnet_genesis_path = temp.path().join("devnet.genesis.json");
+        fs::write(
+            &devnet_genesis_path,
+            serde_json::to_vec(&devnet_genesis).unwrap(),
+        )
+        .unwrap();
+        verify_devnet_hyperlane_admin(&devnet_genesis_path, founder0_addr).unwrap();
+        assert!(verify_devnet_hyperlane_admin(&devnet_genesis_path, profile_admin).is_err());
+
+        // 2. Devnet with conflicting explicit override must fail.
+        let mut conflict_cfg = devnet_cfg.clone();
+        conflict_cfg.genesis.overrides.insert(
+            "hyperlane_controller".into(),
+            serde_yaml_ng::from_str("admin: \"0x2Af7d3C5C3f82Fee4eA037A674f55fa2eD011c05\"")
+                .unwrap(),
+        );
+        let err = genesis_cli_config(&conflict_cfg, &software, &keys, None).unwrap_err();
+        assert!(
+            err.to_string().contains("founder 0"),
+            "expected founder 0 policy error, got: {err}"
+        );
+
+        // 3. Testnet: unchanged — inherits testnet.yaml admin.
+        let testnet_cfg: NetworkConfig =
+            serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
+        let testnet_cli = genesis_cli_config(&testnet_cfg, &software, &keys, None).unwrap();
+        let testnet_seed = outbe_genesis_cli::stages::build_seed(&testnet_cli).unwrap();
+        let mut testnet_alloc = Map::new();
+        let mut testnet_genesis = json!({
+            "config": {"chainId": 54322345, "epochLengthBlocks": 1200},
+            "timestamp": "0x6800000",
+            "alloc": {}
+        });
+        outbe_genesis_cli::seed_validators::seed_founders(
+            &testnet_genesis,
+            &testnet_seed,
+            &validators_fixture,
+            &mut testnet_alloc,
+        )
+        .unwrap();
+        testnet_genesis["alloc"] = Value::Object(testnet_alloc);
+        assert_eq!(
+            read_hyperlane_admin_slot(&testnet_genesis).unwrap(),
+            profile_admin
+        );
+    }
+
+    #[test]
+    fn vm_devnet_local_evm_generates_exactly_two_origins_and_passes_vm_boot() {
+        let temp = tempfile::tempdir().unwrap();
+        let software_root = temp.path().join("software");
+        let staging_root = temp.path().join("staging");
+        let keys_dir = staging_root.join("secrets/founder-keys");
+        let fake_bins = temp.path().join("bins");
+        fs::create_dir_all(&staging_root).unwrap();
+        fs::create_dir_all(&fake_bins).unwrap();
+
+        let fake_keygen = fake_bins.join("outbe-keygen");
+        fs::write(&fake_keygen, b"#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&fake_keygen, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let pairs = software_root.join("share/outbe-genesis/profiles/devnet/pairs.toml");
+        fs::create_dir_all(pairs.parent().unwrap()).unwrap();
+        fs::write(
+            &pairs,
+            "[[currency_pairs]]\nbase = \"COEN\"\nquote = \"840\"\nmarkets = [{ provider = \"mock\" }]\n",
+        )
+        .unwrap();
+        let crs = software_root.join(".bb-crs/bn254_g1.dat");
+        fs::create_dir_all(crs.parent().unwrap()).unwrap();
+        fs::write(&crs, b"crs-bytes").unwrap();
+        fs::write(
+            staging_root.join("genesis.json"),
+            br#"{"config":{"chainId":424242}}"#,
+        )
+        .unwrap();
+
+        let config_path = temp.path().join("network.yaml");
+        let config: NetworkConfig = serde_yaml_ng::from_str(&format!(
+            r#"
+version: 1
+name: vm-devnet-hl3
+network: devnet
+chain_id: 424242
+certified_rpc: "http://10.77.0.68:8545"
+vm:
+  vmm_host:
+    host: 192.0.2.50
+founders:
+{}
+hyperlane:
+  gasless: true
+  local_evm:
+    domain: 31337
+    rpc_url: "http://10.77.0.1:8546"
+    reorg_period: 0
+topology:
+  use_local_defaults: true
+genesis:
+  prefunded_accounts: {{}}
+"#,
+            (0..4)
+                .map(|index| format!(
+                    "  - name: validator-{index}\n    advertise_ip: 10.77.0.{}\n    rpc_bind_ip: 10.77.0.{}\n    hyperlane_public_url: http://10.77.0.{}:9000\n    vm:\n      bridge_ip: 10.77.0.{}",
+                    68 + index,
+                    68 + index,
+                    68 + index,
+                    68 + index,
+                ))
+                .collect::<Vec<_>>()
+                .join("\n")
+        ))
+        .unwrap();
+        config.validate().unwrap();
+
+        let mut validators = Vec::new();
+        let mut bootnodes = Vec::new();
+        for index in 0..4 {
+            let val_keys = keys_dir.join(format!("validator-{index}"));
+            fs::create_dir_all(val_keys.join("radicle/keys")).unwrap();
+            let key_hex = format!("{:064x}", index + 1);
+            for file in [
+                "signing-key.hex",
+                "reth-p2p-secret.hex",
+                "radicle/keys/radicle",
+            ] {
+                fs::write(val_keys.join(file), format!("{key_hex}\n")).unwrap();
+            }
+            for file in ["evm-key.hex", "feeder-key.hex", "hyperlane-key.hex"] {
+                fs::write(val_keys.join(file), &key_hex).unwrap();
+            }
+            let addr = format!(
+                "{:#x}",
+                validator_address(&val_keys.join("evm-key.hex")).unwrap()
+            );
+            let host = format!("10.77.0.{}", 68 + index);
+            validators.push(json!({
+                "address": addr,
+                "hyperlane_address": addr,
+                "public_key": format!("{:096x}", index + 1),
+                "p2p_address": format!("{host}:30400"),
+            }));
+            bootnodes.push(format!("enode://{:0128x}@{host}:30303", index + 1));
+        }
+
+        emit_vm_founder_trees(&VmTreeInputs {
+            staging_root: &staging_root,
+            software_root: &software_root,
+            keys_dir: &keys_dir,
+            config_path: &config_path,
+            config: &config,
+            validators: &validators,
+            bootnodes: &bootnodes,
+        })
+        .unwrap();
+
+        for index in 0..4 {
+            let tree = staging_root.join(format!("vm/validator-{index}"));
+            let raw = fs::read_to_string(tree.join("hyperlane-public.toml")).unwrap();
+            assert!(!raw.contains("[account]"));
+            assert!(!raw.contains("private_key"));
+            assert!(!raw.contains("testnet.outbe.net"));
+            assert!(!raw.contains("bnbchain.org"));
+            assert!(!raw.contains("publicnode.com"));
+            let parsed: toml::Table = raw.parse().unwrap();
+            let origins = parsed["origin"].as_array().unwrap();
+            assert_eq!(origins.len(), 2);
+            assert_eq!(origins[0]["domain"].as_integer(), Some(424_242));
+            assert_eq!(
+                origins[0]["rpc_urls"].as_array().unwrap()[0].as_str(),
+                Some(format!("http://10.77.0.{}:8545", 68 + index).as_str())
+            );
+            assert_eq!(origins[0]["rpc_consensus"].as_str(), Some("single"));
+            assert_eq!(origins[0]["reorg_period"].as_integer(), Some(0));
+            assert_eq!(origins[1]["domain"].as_integer(), Some(31_337));
+            assert_eq!(
+                origins[1]["rpc_urls"].as_array().unwrap()[0].as_str(),
+                Some("http://10.77.0.1:8546")
+            );
+            assert_eq!(origins[1]["rpc_consensus"].as_str(), Some("single"));
+            assert_eq!(origins[1]["reorg_period"].as_integer(), Some(0));
+
+            crate::validator::vm_boot::verify_tree_without_mount(&tree, &fake_bins).unwrap();
+        }
+    }
+
+    #[test]
+    fn hyperlane_public_toml_and_local_evm_reject_invalid_configs() {
+        use crate::validator::config::validate_hyperlane_public_toml;
+
+        let valid = "\
+[hyperlane]
+poll_interval_secs = 30
+gasless = true
+
+[health]
+enabled = true
+bind_address = \"127.0.0.1:9003\"
+
+[storage]
+db_path = \"/opt/outbe-chain/state/hyperlane/db\"
+
+[server]
+bind_address = \"0.0.0.0:9000\"
+public_url = \"http://10.77.0.68:9000\"
+
+[[origin]]
+domain = 424242
+rpc_urls = [\"http://10.77.0.68:8545\"]
+rpc_consensus = \"single\"
+reorg_period = 0
+
+[[origin]]
+domain = 31337
+rpc_urls = [\"http://10.77.0.1:8546\"]
+rpc_consensus = \"single\"
+reorg_period = 0
+";
+        validate_hyperlane_public_toml(valid, 424_242, true).unwrap();
+
+        // Missing local origin fails when require_local_origin = true.
+        assert!(validate_hyperlane_public_toml(valid, 54_322_345, true).is_err());
+
+        // [account] section is rejected in public TOML.
+        let with_account = format!("{valid}\n[account]\nprivate_key = \"0x01\"\n");
+        assert!(validate_hyperlane_public_toml(&with_account, 424_242, true).is_err());
+
+        // domain = 0 is rejected.
+        let zero_domain = valid.replace("domain = 31337", "domain = 0");
+        assert!(validate_hyperlane_public_toml(&zero_domain, 424_242, true).is_err());
+
+        // Duplicate domain is rejected.
+        let dup_domain = valid.replace("domain = 31337", "domain = 424242");
+        assert!(validate_hyperlane_public_toml(&dup_domain, 424_242, true).is_err());
+
+        // Credentials in RPC URL are rejected.
+        let with_creds = valid.replace("http://10.77.0.1:8546", "http://user:pass@10.77.0.1:8546");
+        assert!(validate_hyperlane_public_toml(&with_creds, 424_242, true).is_err());
     }
 }

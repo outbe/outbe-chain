@@ -13,7 +13,7 @@ use eyre::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::support::progress::Progress;
-use crate::validator::config::{HyperlaneConfig, HyperlaneOrigin};
+use crate::validator::config::{HyperlaneConfig, HyperlaneOrigin, ReorgPeriod, RpcConsensus};
 
 pub const CONFIG_VERSION: u32 = 1;
 pub const MIN_FOUNDERS: usize = 4;
@@ -166,7 +166,32 @@ pub struct HyperlaneNetworkConfig {
     pub gasless: bool,
     #[serde(default = "default_hyperlane_funding_wei")]
     pub signer_funding_wei: String,
+    #[serde(default)]
     pub origins: Vec<HyperlaneOrigin>,
+    /// Optional local EVM origin (e.g. host-side anvil) for VM networks.
+    /// When set on a VM network, `origins` must be empty and `outbe-up` generates
+    /// exactly two origins: the local Outbe node and this local EVM origin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_evm: Option<LocalEvmOriginConfig>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct LocalEvmOriginConfig {
+    /// Hyperlane domain ID (non-zero, distinct from `chain_id`).
+    pub domain: u32,
+    /// HTTP(S) RPC URL reachable from inside the guest VM (e.g. `http://10.77.0.1:8546`).
+    pub rpc_url: String,
+    /// Confirmation lag in blocks (defaults to 0 for deterministic local mining).
+    #[serde(default)]
+    pub reorg_period: u64,
+    /// Polling interval in seconds (defaults to 15).
+    #[serde(default = "default_local_evm_interval")]
+    pub interval_secs: u64,
+}
+
+const fn default_local_evm_interval() -> u64 {
+    15
 }
 
 impl HyperlaneNetworkConfig {
@@ -371,9 +396,7 @@ impl NetworkConfig {
                 "rpc_bind_ip for {} must be loopback or private",
                 founder.name
             );
-            self.hyperlane
-                .for_public_url(founder.hyperlane_public_url.clone())
-                .validate()
+            self.resolve_hyperlane_config(founder)
                 .wrap_err_with(|| format!("invalid Hyperlane config for {}", founder.name))?;
         }
 
@@ -462,6 +485,107 @@ impl NetworkConfig {
                 .clone()
                 .or_else(|| defaults.authorized_keys.clone()),
         })
+    }
+
+    /// Resolve effective Hyperlane validator configuration for a founder.
+    ///
+    /// - Non-VM networks use `hyperlane.origins` verbatim (preserving template public origins)
+    ///   and reject `hyperlane.local_evm`.
+    /// - VM networks with empty `hyperlane.origins` synthesize the local Outbe origin (domain =
+    ///   `chain_id`, RPC = this founder's in-VM node `http://<rpc_bind_ip>:8545`,
+    ///   `rpc_consensus = single`, `reorg_period = 0`) plus the optional `hyperlane.local_evm`
+    ///   origin. Explicit `hyperlane.origins` on a VM network cannot be combined with `local_evm`
+    ///   and must include the local Outbe domain.
+    pub fn resolve_hyperlane_config(&self, founder: &Founder) -> Result<HyperlaneConfig> {
+        self.resolve_hyperlane_for_endpoint(
+            founder.hyperlane_public_url.clone(),
+            founder.rpc_bind_ip,
+        )
+    }
+
+    /// Resolve Hyperlane configuration for the joining operator example config.
+    pub fn resolve_joining_hyperlane_config(&self) -> Result<HyperlaneConfig> {
+        self.resolve_hyperlane_for_endpoint("http://192.0.2.10:9000".into(), Ipv4Addr::LOCALHOST)
+    }
+
+    fn resolve_hyperlane_for_endpoint(
+        &self,
+        public_url: String,
+        local_rpc_ip: Ipv4Addr,
+    ) -> Result<HyperlaneConfig> {
+        if self.vm.is_none() {
+            ensure!(
+                self.hyperlane.local_evm.is_none(),
+                "hyperlane.local_evm is only supported for VM deployments"
+            );
+            let cfg = self.hyperlane.for_public_url(public_url);
+            cfg.validate()?;
+            return Ok(cfg);
+        }
+
+        let local_domain = u32::try_from(self.chain_id).wrap_err_with(|| {
+            format!(
+                "chain_id {} does not fit in Hyperlane uint32 domain",
+                self.chain_id
+            )
+        })?;
+        ensure!(local_domain > 0, "chain_id must be non-zero");
+
+        let origins = if self.hyperlane.origins.is_empty() {
+            let mut generated = vec![HyperlaneOrigin {
+                domain: local_domain,
+                rpc_urls: vec![format!("http://{local_rpc_ip}:8545")],
+                rpc_consensus: RpcConsensus::Single,
+                reorg_period: ReorgPeriod::Blocks(0),
+                interval_secs: default_local_evm_interval(),
+                ws_url: None,
+                index_from: None,
+            }];
+            if let Some(local_evm) = &self.hyperlane.local_evm {
+                ensure!(
+                    local_evm.domain > 0,
+                    "hyperlane.local_evm.domain must be non-zero"
+                );
+                ensure!(
+                    local_evm.domain != local_domain,
+                    "hyperlane.local_evm.domain ({}) must differ from local chain_id ({local_domain})",
+                    local_evm.domain
+                );
+                generated.push(HyperlaneOrigin {
+                    domain: local_evm.domain,
+                    rpc_urls: vec![local_evm.rpc_url.clone()],
+                    rpc_consensus: RpcConsensus::Single,
+                    reorg_period: ReorgPeriod::Blocks(local_evm.reorg_period),
+                    interval_secs: local_evm.interval_secs,
+                    ws_url: None,
+                    index_from: None,
+                });
+            }
+            generated
+        } else {
+            ensure!(
+                self.hyperlane.local_evm.is_none(),
+                "hyperlane.origins must be empty when hyperlane.local_evm is configured on a VM network"
+            );
+            ensure!(
+                self.hyperlane
+                    .origins
+                    .iter()
+                    .any(|origin| origin.domain == local_domain),
+                "VM hyperlane.origins must include local domain {local_domain} (or omit origins to auto-generate local origins)"
+            );
+            self.hyperlane.origins.clone()
+        };
+
+        let cfg = HyperlaneConfig {
+            public_url,
+            poll_interval_secs: self.hyperlane.poll_interval_secs,
+            gasless: self.hyperlane.gasless,
+            signer_funding_wei: self.hyperlane.signer_funding_wei.clone(),
+            origins,
+        };
+        cfg.validate()?;
+        Ok(cfg)
     }
 }
 

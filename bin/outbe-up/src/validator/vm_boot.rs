@@ -116,6 +116,12 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
 
     install::required_file(&root.join("genesis.json"))?;
     install::validate_genesis(root, &environment["OUTBE_CHAIN_ID"])?;
+    let chain_id: u64 = environment["OUTBE_CHAIN_ID"]
+        .parse()
+        .wrap_err("OUTBE_CHAIN_ID must be a positive integer")?;
+    let hyperlane_public = fs::read_to_string(root.join("hyperlane-public.toml"))
+        .wrap_err("failed to read hyperlane-public.toml")?;
+    crate::validator::config::validate_hyperlane_public_toml(&hyperlane_public, chain_id, true)?;
     install::required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
 
     verify_secrets(root, options.bin_dir)?;
@@ -589,7 +595,29 @@ mod tests {
             b"pairs = \"pairs.toml\"\n",
             0o640,
         );
-        write_file_mode(&root.join("hyperlane-public.toml"), b"[hyperlane]\n", 0o640);
+        write_file_mode(
+            &root.join("hyperlane-public.toml"),
+            concat!(
+                "[hyperlane]\n",
+                "poll_interval_secs = 30\n",
+                "gasless = true\n\n",
+                "[health]\n",
+                "enabled = true\n",
+                "bind_address = \"127.0.0.1:9003\"\n\n",
+                "[storage]\n",
+                "db_path = \"/opt/outbe-chain/state/hyperlane/db\"\n\n",
+                "[server]\n",
+                "bind_address = \"0.0.0.0:9000\"\n",
+                "public_url = \"http://10.0.0.1:9000\"\n\n",
+                "[[origin]]\n",
+                "domain = 707\n",
+                "rpc_urls = [\"http://127.0.0.1:8545\"]\n",
+                "rpc_consensus = \"single\"\n",
+                "reorg_period = 0\n",
+            )
+            .as_bytes(),
+            0o640,
+        );
         write_file_mode(
             &root.join("genesis.json"),
             br#"{"config":{"chainId":707}}"#,

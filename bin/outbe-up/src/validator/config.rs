@@ -297,6 +297,10 @@ impl HyperlaneConfig {
         let mut domains = BTreeSet::new();
         for origin in &self.origins {
             ensure!(
+                origin.domain > 0,
+                "Hyperlane origin domain must be non-zero"
+            );
+            ensure!(
                 domains.insert(origin.domain),
                 "duplicate Hyperlane origin domain {}",
                 origin.domain
@@ -316,8 +320,24 @@ impl HyperlaneConfig {
                     format!("invalid Hyperlane origin {} RPC URL", origin.domain)
                 })?;
                 ensure!(
-                    matches!(url.scheme(), "http" | "https"),
-                    "Hyperlane origin {} RPC must use HTTP(S)",
+                    matches!(url.scheme(), "http" | "https")
+                        && url.host_str().is_some()
+                        && url.username().is_empty()
+                        && url.password().is_none(),
+                    "Hyperlane origin {} RPC must be an HTTP(S) URL without credentials",
+                    origin.domain
+                );
+            }
+            if let Some(ws) = &origin.ws_url {
+                let url = reqwest::Url::parse(ws).wrap_err_with(|| {
+                    format!("invalid Hyperlane origin {} WS URL", origin.domain)
+                })?;
+                ensure!(
+                    matches!(url.scheme(), "ws" | "wss")
+                        && url.host_str().is_some()
+                        && url.username().is_empty()
+                        && url.password().is_none(),
+                    "Hyperlane origin {} WS URL must be a WS(S) URL without credentials",
                     origin.domain
                 );
             }
@@ -325,6 +345,94 @@ impl HyperlaneConfig {
         self.public_toml()?.parse::<toml::Table>()?;
         Ok(())
     }
+}
+
+/// Shared offline validation for `hyperlane-public.toml` used by network build, host install,
+/// and `vm-boot`. Rejects secret sections (`[account]`, `[chain]`, `private_key`) and validates
+/// every origin entry without making network or controller RPC calls.
+pub(crate) fn validate_hyperlane_public_toml(
+    raw: &str,
+    expected_chain_id: u64,
+    require_local_origin: bool,
+) -> Result<()> {
+    let table: toml::Table = raw
+        .parse()
+        .wrap_err("hyperlane-public.toml is not valid TOML")?;
+    ensure!(
+        !table.contains_key("account"),
+        "hyperlane-public.toml must not contain an [account] section"
+    );
+    ensure!(
+        !table.contains_key("chain"),
+        "hyperlane-public.toml must not contain a [chain] section"
+    );
+    ensure!(
+        !table.contains_key("private_key"),
+        "hyperlane-public.toml must not contain private_key"
+    );
+
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PublicHyperlaneSection {
+        poll_interval_secs: u64,
+        gasless: bool,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PublicHealthSection {
+        #[allow(dead_code)]
+        enabled: bool,
+        #[allow(dead_code)]
+        bind_address: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PublicStorageSection {
+        #[allow(dead_code)]
+        db_path: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PublicServerSection {
+        #[allow(dead_code)]
+        bind_address: String,
+        public_url: String,
+    }
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct PublicToml {
+        hyperlane: PublicHyperlaneSection,
+        #[allow(dead_code)]
+        health: PublicHealthSection,
+        #[allow(dead_code)]
+        storage: PublicStorageSection,
+        server: PublicServerSection,
+        #[serde(default)]
+        origin: Vec<HyperlaneOrigin>,
+    }
+
+    let parsed: PublicToml =
+        toml::from_str(raw).wrap_err("invalid hyperlane-public.toml structure")?;
+    let cfg = HyperlaneConfig {
+        public_url: parsed.server.public_url,
+        poll_interval_secs: parsed.hyperlane.poll_interval_secs,
+        gasless: parsed.hyperlane.gasless,
+        signer_funding_wei: default_hyperlane_funding_wei(),
+        origins: parsed.origin,
+    };
+    cfg.validate()?;
+    if require_local_origin {
+        let local_domain = u32::try_from(expected_chain_id).wrap_err_with(|| {
+            format!("chain_id {expected_chain_id} does not fit in Hyperlane uint32 domain")
+        })?;
+        ensure!(
+            cfg.origins
+                .iter()
+                .any(|origin| origin.domain == local_domain),
+            "hyperlane-public.toml must include local origin domain {local_domain}"
+        );
+    }
+    Ok(())
 }
 
 impl NetworkConfig {

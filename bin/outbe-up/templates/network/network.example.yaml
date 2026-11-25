@@ -77,7 +77,15 @@ genesis:
   overrides: {}
 
 # Optional VM deployment (devnet and testnet only). When present, replace each
-# founder's `ssh` block with a `vm` block (`bridge_ip`, plus optional overrides):
+# founder's `ssh` block with a `vm` block (`bridge_ip`, plus optional overrides).
+# For a local VM devnet with two Hyperlane origins (the local Outbe node plus
+# host-side anvil), omit `hyperlane.origins` and configure `hyperlane.local_evm`:
+# hyperlane:
+#   gasless: true
+#   local_evm:
+#     domain: 31337
+#     rpc_url: "http://10.77.0.1:8546"
+#     reorg_period: 0
 # vm:
 #   vmm_host:
 #     host: 192.0.2.50
