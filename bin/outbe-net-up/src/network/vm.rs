@@ -1473,6 +1473,8 @@ pub(crate) struct VmMemberStatus {
     pub(crate) tee_ready: Option<bool>,
     #[serde(skip_serializing)]
     pub(crate) consensus: Option<ConsensusStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) boot_warning: Option<String>,
     pub(crate) error: Option<String>,
 }
 
@@ -2813,15 +2815,16 @@ fn build_member_status(
             vrf_material_version: None,
             tee_ready: None,
             consensus: None,
+            boot_warning: None,
             error: Some("VM not created on host".to_owned()),
         };
     };
 
-    let mut error = vm
-        .error
-        .clone()
-        .or_else(|| vm.boot_error.clone())
-        .filter(|s| !s.trim().is_empty());
+    // Keep VMM `boot_error` as a non-fatal warning when live checks pass (e.g. dstack-vmm
+    // permanently latches a transient `dstack-guest-agent.service` restart even after recovery).
+    // Surface it inside `error` whenever live checks fail (`!running` or RPC unreachable).
+    let boot_warning = vm.boot_error.clone().filter(|s| !s.trim().is_empty());
+    let mut error = vm.error.clone().filter(|s| !s.trim().is_empty());
     let effective_no_tee = vm.no_tee;
     let service_ip = vm
         .service_ip
@@ -2829,6 +2832,9 @@ fn build_member_status(
         .unwrap_or(member.service_ip);
 
     if !vm.running || !query_rpc || kind != VmClassKind::Ours {
+        if !vm.running && error.is_none() {
+            error.clone_from(&boot_warning);
+        }
         return VmMemberStatus {
             name: member.name,
             role: member.role,
@@ -2853,6 +2859,7 @@ fn build_member_status(
             vrf_material_version: None,
             tee_ready: None,
             consensus: None,
+            boot_warning,
             error,
         };
     }
@@ -2861,15 +2868,19 @@ fn build_member_status(
         Ok(res) => res,
         Err(err) => {
             if error.is_none() {
-                error = Some(format!(
-                    "RPC unreachable on service IP {service_ip}: {err:#}"
+                error = Some(format_rpc_error_with_boot_warning(
+                    format!("RPC unreachable on service IP {service_ip}: {err:#}"),
+                    boot_warning.as_deref(),
                 ));
             }
             BatchedRpcResult::default()
         }
     };
-    if rpc.chain_id.is_none() && error.is_none() {
-        error = Some(format!("RPC unreachable on service IP {service_ip}"));
+    if (rpc.chain_id.is_none() || rpc.finalized.is_none()) && error.is_none() {
+        error = Some(format_rpc_error_with_boot_warning(
+            format!("RPC unreachable on service IP {service_ip}"),
+            boot_warning.as_deref(),
+        ));
     }
 
     let tee_ready = if effective_no_tee {
@@ -2902,7 +2913,15 @@ fn build_member_status(
         vrf_material_version: rpc.consensus.as_ref().map(|c| c.vrf_material_version),
         tee_ready,
         consensus: rpc.consensus,
+        boot_warning,
         error,
+    }
+}
+
+fn format_rpc_error_with_boot_warning(base: String, boot_warning: Option<&str>) -> String {
+    match boot_warning {
+        Some(warn) => format!("{base} (boot_error: {warn})"),
+        None => base,
     }
 }
 
@@ -3082,7 +3101,7 @@ fn render_vm_status(
                 .map(|r| if r { "ready" } else { "not-ready" }.to_owned())
                 .unwrap_or_else(|| "-".to_owned())
         };
-        let detail = s
+        let base_detail = s
             .error
             .as_deref()
             .or(s.classification_detail.as_deref())
@@ -3094,6 +3113,10 @@ fn render_vm_status(
                     a.reasons.join(", ")
                 }
             });
+        let detail = match s.boot_warning.as_deref() {
+            Some(warn) if !base_detail.contains(warn) => format!("{base_detail} (warn: {warn})"),
+            _ => base_detail,
+        };
         lines.push(format!(
             "{:<14} {:<10} {:<16} {:<10} {:<10} {:<8} {:<6} {:<6} {:<12} {detail}",
             s.name, class_str, s.service_ip, s.vmm_status, mode, finalized, lag, vrf, tee

@@ -1684,6 +1684,7 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
             vrf_material_version: Some(vrf),
             tee_ready: if no_tee { None } else { Some(tee_ok) },
             consensus: Some(consensus),
+            boot_warning: None,
             error: None,
         }
     };
@@ -2875,4 +2876,187 @@ fn s4_partial_member_keys_refused_without_deleting_existing_files() {
     // Existing keys MUST NOT have been deleted or modified.
     assert_eq!(fs::read_to_string(&evm_key).unwrap(), "b".repeat(64));
     assert_eq!(fs::read_to_string(&signing_key).unwrap(), "a".repeat(64));
+}
+
+#[test]
+fn s4_boot_error_warning_vs_live_unhealthy() {
+    struct StaticRpcExec {
+        rpc_response: Option<String>,
+    }
+    impl HostExec for StaticRpcExec {
+        fn run(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn run_quiet(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<()> {
+            unreachable!()
+        }
+        fn capture(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<String> {
+            unreachable!()
+        }
+        fn capture_raw(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<String> {
+            unreachable!()
+        }
+        fn capture_stdin(
+            &self,
+            _ssh: &Ssh,
+            _label: &str,
+            _command: &str,
+            _stdin: &[u8],
+        ) -> Result<String> {
+            self.rpc_response
+                .clone()
+                .ok_or_else(|| eyre::eyre!("connection refused"))
+        }
+        fn copy_to(
+            &self,
+            _ssh: &Ssh,
+            _label: &str,
+            _sources: &[&Path],
+            _destination: &str,
+            _recursive: bool,
+        ) -> Result<()> {
+            unreachable!()
+        }
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(tmp.path(), "devnet", "~/.dstack-vmm", b"fake-outbe-up");
+    let build = NetworkArtifacts::load(&fixture.root).unwrap();
+    let member = DesiredMember {
+        index: 1,
+        role: MemberRole::Founder,
+        name: "validator-1".to_owned(),
+        vm_name: "devnet-validator-1".to_owned(),
+        owner_tag: "outbe-net:devnet:01234567:validator-1".to_owned(),
+        vmm_host: Ssh {
+            host: "192.0.2.50".to_owned(),
+            user: "ubuntu".to_owned(),
+            port: 22,
+        },
+        vmm_home: "~/.dstack-vmm".to_owned(),
+        bridge: "obr0".to_owned(),
+        service_ip: Ipv4Addr::new(10, 77, 0, 12),
+        advertise_ip: Ipv4Addr::new(192, 0, 2, 50),
+        port_offset: 1,
+        vcpu: 3,
+        memory_gib: 5,
+        disk_gib: 10,
+        flavor: VmFlavor::Dev,
+        no_tee: false,
+        image_name: None,
+        image_hash: None,
+        recorded_disk_sha256: None,
+    };
+    let observed_running = RemoteVmStatusOutput {
+        name: member.vm_name.clone(),
+        vm_id: "550e8400-e29b-41d4-a716-446655440012".to_owned(),
+        owner_tag: Some(member.owner_tag.clone()),
+        phase: "ready".to_owned(),
+        vmm_status: "running".to_owned(),
+        running: true,
+        uptime: "18m".to_owned(),
+        mac: "7e:64:73:fe:93:be".to_owned(),
+        ip: Some(member.service_ip),
+        service_ip: Some(member.service_ip),
+        dhcp_ip: None,
+        intended_ip: Some(member.service_ip),
+        image_name: "outbe-vm-dev-93721673e3cd9a46".to_owned(),
+        os_image_hash: "1".repeat(64),
+        disk_source_sha256: Some("a".repeat(64)),
+        app_id: "c".repeat(40),
+        no_tee: false,
+        vcpu: 3,
+        memory_gib: 5,
+        disk_gib: 10,
+        bridge: "obr0".to_owned(),
+        boot_error: Some("dstack-guest-agent.service failed".to_owned()),
+        error: None,
+    };
+
+    let healthy_rpc = json!([
+        {"jsonrpc": "2.0", "id": 1, "result": format!("0x{:x}", build.config.chain_id)},
+        {"jsonrpc": "2.0", "id": 2, "result": {"number": "0xe94", "hash": "0xf03ee63eb69aa22203420b9bac433e92a8c95b28fe96178e1556b4caf1ceea0d"}},
+        {"jsonrpc": "2.0", "id": 3, "result": "0x4"},
+        {"jsonrpc": "2.0", "id": 4, "result": {
+            "connectedPeers": 4,
+            "hasThresholdShares": true,
+            "lastFinalizedBlock": 3732,
+            "vrfMaterialVersion": 12,
+            "nextPlannedActivationHeight": 4000,
+            "isValidator": true,
+            "mode": "signer",
+            "enclave": {"state": "ready", "ready": true, "offerKeyReady": true}
+        }}
+    ])
+    .to_string();
+
+    // Case 1: boot_error present, live checks healthy -> ready with warning in DETAIL & JSON.
+    let healthy_exec = StaticRpcExec {
+        rpc_response: Some(healthy_rpc),
+    };
+    let status_ok =
+        build_member_status(member.clone(), Some(&observed_running), &healthy_exec, true);
+    assert!(status_ok.error.is_none());
+    assert_eq!(
+        status_ok.boot_warning.as_deref(),
+        Some("dstack-guest-agent.service failed")
+    );
+    assert!(member_node_ready(&status_ok, build.config.chain_id, 4));
+    let assessments_ok = assess_members_lag(std::slice::from_ref(&status_ok), 20);
+    assert!(
+        check_unhealthy_members(std::slice::from_ref(&status_ok), &assessments_ok, &[],).is_ok()
+    );
+    let rendered = render_vm_status(&build, std::slice::from_ref(&status_ok), &[], 20);
+    assert!(
+        rendered.contains("ok (warn: dstack-guest-agent.service failed)"),
+        "DETAIL must surface boot_error warning on healthy VM: {rendered}"
+    );
+    let json_val = serde_json::to_value(&status_ok).unwrap();
+    assert_eq!(
+        json_val["boot_warning"],
+        json!("dstack-guest-agent.service failed")
+    );
+    assert!(json_val["error"].is_null());
+
+    // Case 2a: boot_error present + live RPC unreachable -> not ready, boot_error surfaced in error.
+    let dead_rpc_exec = StaticRpcExec { rpc_response: None };
+    let status_rpc_dead = build_member_status(
+        member.clone(),
+        Some(&observed_running),
+        &dead_rpc_exec,
+        true,
+    );
+    assert!(!member_node_ready(
+        &status_rpc_dead,
+        build.config.chain_id,
+        4
+    ));
+    let rpc_err = status_rpc_dead.error.as_deref().unwrap_or("");
+    assert!(
+        rpc_err.contains("RPC unreachable")
+            && rpc_err.contains("dstack-guest-agent.service failed"),
+        "RPC failure must surface boot_error in error: {rpc_err}"
+    );
+    let assessments_dead = assess_members_lag(std::slice::from_ref(&status_rpc_dead), 20);
+    assert!(check_unhealthy_members(
+        std::slice::from_ref(&status_rpc_dead),
+        &assessments_dead,
+        &[],
+    )
+    .is_err());
+
+    // Case 2b: boot_error present + VM not running -> not ready, boot_error surfaced in error.
+    let mut observed_stopped = observed_running;
+    observed_stopped.running = false;
+    observed_stopped.vmm_status = "stopped".to_owned();
+    let status_stopped = build_member_status(member, Some(&observed_stopped), &dead_rpc_exec, true);
+    assert!(!member_node_ready(
+        &status_stopped,
+        build.config.chain_id,
+        4
+    ));
+    assert_eq!(
+        status_stopped.error.as_deref(),
+        Some("dstack-guest-agent.service failed")
+    );
 }
