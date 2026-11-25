@@ -213,6 +213,9 @@ interface IValidatorSet {
     function getEpochNumber() external view returns (uint256);
     function getEpochStartTimestamp() external view returns (uint64);
     function getEpochStartBlock() external view returns (uint64);
+    /// Length of an epoch in blocks. The current epoch ends at
+    /// `getEpochStartBlock() + getEpochLengthBlocks()`.
+    function getEpochLengthBlocks() external view returns (uint32);
     /// Stable role ids: 1 = ORACLE, 2 = HYPERLANE. Unknown ids revert.
     function setDelegate(uint8 role, address delegate) external;
     function revokeDelegate(uint8 role) external;

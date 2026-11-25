@@ -65,7 +65,7 @@ fn list_and_count_views_route_to_their_queries() -> Result<()> {
     assert_returns(&mut storage, I::getValidatorsCall {}, vec![FIRST, SECOND]);
     assert_returns(&mut storage, I::getActiveValidatorsCall {}, vec![FIRST]);
     assert_returns(&mut storage, I::getActiveConsensusSetCall {}, vec![FIRST]);
-    let (count, active, consensus, pending, epoch, start_time, start_block) =
+    let (count, active, consensus, pending, epoch, start_time, start_block, length) =
         storage.enter(|storage| -> Result<_> {
             let vs = ValidatorSet::new(storage);
             Ok((
@@ -76,6 +76,7 @@ fn list_and_count_views_route_to_their_queries() -> Result<()> {
                 vs.epoch_number.read()?,
                 vs.epoch_start_timestamp.read()?,
                 vs.epoch_start_block.read()?,
+                vs.config_epoch_length_blocks.read()?,
             ))
         })?;
     assert_eq!((count, active, consensus), (2, 1, 1));
@@ -86,6 +87,7 @@ fn list_and_count_views_route_to_their_queries() -> Result<()> {
     assert_returns(&mut storage, I::getEpochNumberCall {}, epoch);
     assert_returns(&mut storage, I::getEpochStartTimestampCall {}, start_time);
     assert_returns(&mut storage, I::getEpochStartBlockCall {}, start_block);
+    assert_returns(&mut storage, I::getEpochLengthBlocksCall {}, length);
     Ok(())
 }
 

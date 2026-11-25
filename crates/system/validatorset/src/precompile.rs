@@ -77,6 +77,9 @@ fn route(
         getEpochStartBlock(_) => {
             metadata::<I::getEpochStartBlockCall>(|| vs.epoch_start_block.read())
         }
+        getEpochLengthBlocks(_) => {
+            metadata::<I::getEpochLengthBlocksCall>(|| vs.config_epoch_length_blocks.read())
+        }
         setDelegate(c) => mutate_void(storage, c, caller, |sender, c| {
             vs.set_delegate(sender, Role::try_from(c.role)?, c.delegate)
         }),
