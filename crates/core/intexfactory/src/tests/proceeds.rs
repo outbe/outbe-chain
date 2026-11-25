@@ -205,6 +205,29 @@ fn crosschain_proceeds_come_only_from_a_chain_of_the_day() {
 }
 
 #[test]
+fn crosschain_proceeds_with_undecodable_data_are_refused() {
+    let mut storage = proceeds_provider(&[SOURCE]);
+    StorageHandle::enter(&mut storage, |s| {
+        let err = runtime::receive_crosschain_proceeds(
+            &s,
+            WCOEN_BRIDGE_ADDRESS,
+            runtime::CrosschainProceeds {
+                src_chain_id: SOURCE,
+                from: &interop(SOURCE, TARGET_ROUTER_ADDRESS),
+                amount: U256::ONE,
+                extra_data: &[0xde, 0xad],
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            revert_of(IntexFactoryError::UndecodableProceedsData)
+        );
+    });
+    assert!(burned_events(&storage).is_empty());
+}
+
+#[test]
 fn crosschain_proceeds_come_only_from_target_router() {
     let mut storage = proceeds_provider(&[SOURCE]);
     StorageHandle::enter(&mut storage, |s| {

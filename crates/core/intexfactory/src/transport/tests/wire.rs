@@ -3,7 +3,22 @@
 use alloy_primitives::{hex, Address, FixedBytes, U256};
 use alloy_sol_types::SolValue;
 
+use crate::errors::IntexFactoryError;
 use crate::transport::wire::*;
+
+/// The encoder refused with the typed wire error of `msg_type`.
+fn refused<T: std::fmt::Debug>(
+    result: Result<T, outbe_primitives::error::PrecompileError>,
+    msg_type: u8,
+) {
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        outbe_primitives::error::PrecompileError::from(IntexFactoryError::InvalidWireMessage(
+            msg_type
+        ))
+        .to_string()
+    );
+}
 
 #[test]
 fn intex_auction_start_matches_the_solidity_golden() {
@@ -47,7 +62,7 @@ fn intex_auction_start_needs_between_one_and_255_price_rows() {
         min_bid_quantity: 0,
         bid_bond_minor: 0,
     };
-    assert!(encode_intex_auction_start(&start).is_err());
+    refused(encode_intex_auction_start(&start), MSG_INTEX_AUCTION_START);
     start.prices = vec![
         ReferenceCurrencyPrice {
             iso_code: 840,
@@ -56,7 +71,7 @@ fn intex_auction_start_needs_between_one_and_255_price_rows() {
         };
         256
     ];
-    assert!(encode_intex_auction_start(&start).is_err());
+    refused(encode_intex_auction_start(&start), MSG_INTEX_AUCTION_START);
 }
 
 #[test]
@@ -90,8 +105,14 @@ fn call_notice_is_the_header_and_the_abi_body() {
     let mut expected = hex!("0108").to_vec();
     expected.extend((20260212u32, 1_777_000_000u64, vec![id]).abi_encode_params());
     assert_eq!(payload.to_vec(), expected);
-    assert!(encode_intex_series_call_notice(1, 1, &[]).is_err());
-    assert!(encode_intex_series_call_notice(1, 1, &[id; MAX_SERIES_PER_CALL_NOTICE + 1]).is_err());
+    refused(
+        encode_intex_series_call_notice(1, 1, &[]),
+        MSG_INTEX_SERIES_CALL_NOTICE,
+    );
+    refused(
+        encode_intex_series_call_notice(1, 1, &[id; MAX_SERIES_PER_CALL_NOTICE + 1]),
+        MSG_INTEX_SERIES_CALL_NOTICE,
+    );
 }
 
 fn series(day: u32) -> IntexSeriesPayload {
@@ -132,11 +153,14 @@ fn series_pages_hold_one_day_and_stay_inside_the_caps() {
         (3u64..=13).map(U256::from).collect::<Vec<_>>()[..]
     );
 
-    assert!(encode_intex_series(7, 0, 1, &[series(8)]).is_err());
-    assert!(encode_intex_series(7, 1, 1, &[series(7)]).is_err());
-    assert!(encode_intex_series(7, 0, 0, &[series(7)]).is_err());
-    assert!(encode_intex_series(7, 0, 1, &[]).is_err());
-    assert!(encode_intex_series(7, 0, 1, &vec![series(7); MAX_SERIES_PER_ISSUANCE + 1]).is_err());
+    refused(encode_intex_series(7, 0, 1, &[series(8)]), MSG_INTEX_SERIES);
+    refused(encode_intex_series(7, 1, 1, &[series(7)]), MSG_INTEX_SERIES);
+    refused(encode_intex_series(7, 0, 0, &[series(7)]), MSG_INTEX_SERIES);
+    refused(encode_intex_series(7, 0, 1, &[]), MSG_INTEX_SERIES);
+    refused(
+        encode_intex_series(7, 0, 1, &vec![series(7); MAX_SERIES_PER_ISSUANCE + 1]),
+        MSG_INTEX_SERIES,
+    );
 }
 
 #[test]
@@ -167,17 +191,21 @@ fn winners_pages_carry_the_partial_fill_inside_the_page() {
             .abi_encode_params(),
     );
     assert_eq!(payload.to_vec(), expected);
-    assert!(encode_intex_auction_winners(&IntexAuctionWinners {
-        partial_index: 2,
-        ..winners.clone()
-    })
-    .is_err());
-    assert!(encode_intex_auction_winners(&IntexAuctionWinners {
-        winners: vec![Address::ZERO; MAX_PAYLOAD_ARRAY_LEN + 1],
-        partial_won: 0,
-        ..winners
-    })
-    .is_err());
+    refused(
+        encode_intex_auction_winners(&IntexAuctionWinners {
+            partial_index: 2,
+            ..winners.clone()
+        }),
+        MSG_INTEX_AUCTION_WINNERS,
+    );
+    refused(
+        encode_intex_auction_winners(&IntexAuctionWinners {
+            winners: vec![Address::ZERO; MAX_PAYLOAD_ARRAY_LEN + 1],
+            partial_won: 0,
+            ..winners
+        }),
+        MSG_INTEX_AUCTION_WINNERS,
+    );
 }
 
 #[test]
