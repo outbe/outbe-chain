@@ -38,7 +38,7 @@ async fn cancellation_interrupts_a_non_slashable_retry_deadline() -> eyre::Resul
     let _ = recorder();
     let signer = Arc::new(OutbeEvmSigner::from_secret_bytes([1; 32])?);
     let seeded = support::seed_target(signer.address(), false);
-    let (node, _runtime, _temp) = launch(&seeded, signer.clone()).await?;
+    let (node, runtime, _temp) = launch(&seeded, signer.clone()).await?;
     let mailbox = EquivocationEvidenceMailbox::new();
     mailbox.push(evidence(Kind::ConflictingNotarize));
     let cancel = CancellationToken::new();
@@ -57,6 +57,7 @@ async fn cancellation_interrupts_a_non_slashable_retry_deadline() -> eyre::Resul
         .is_empty());
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(1), worker).await??;
+    support::shutdown(runtime).await?;
     Ok(())
 }
 
@@ -70,7 +71,7 @@ async fn an_evicted_epoch_expires_even_a_non_slashable_validator(
     } else {
         support::seed_target(signer.address(), false)
     };
-    let (node, _runtime, _temp) = launch(&seeded, signer.clone()).await?;
+    let (node, runtime, _temp) = launch(&seeded, signer.clone()).await?;
     let mailbox = EquivocationEvidenceMailbox::new();
     mailbox.push(evidence(Kind::ConflictingFinalize));
     let cancel = CancellationToken::new();
@@ -105,6 +106,7 @@ async fn an_evicted_epoch_expires_even_a_non_slashable_validator(
         .is_empty());
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(1), worker).await??;
+    support::shutdown(runtime).await?;
     Ok(())
 }
 
@@ -116,7 +118,7 @@ async fn retained_evidence_retry_expiration_and_deadline_cancellation() -> eyre:
     }
     let signer = Arc::new(OutbeEvmSigner::from_secret_bytes([1; 32])?);
     let mut seeded = support::seed_unjailed(signer.address());
-    let (node, _runtime, _temp) = launch(&seeded, signer.clone()).await?;
+    let (node, runtime, _temp) = launch(&seeded, signer.clone()).await?;
     let mailbox = EquivocationEvidenceMailbox::new();
     mailbox.push(evidence(Kind::NullifyFinalize));
     let cancel = CancellationToken::new();
@@ -174,6 +176,7 @@ async fn retained_evidence_retry_expiration_and_deadline_cancellation() -> eyre:
     .await?;
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(1), worker).await??;
+    support::shutdown(runtime).await?;
     support::execute(
         &seeded,
         transaction.to_consensus().into_inner(),
