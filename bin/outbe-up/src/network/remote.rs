@@ -10,7 +10,7 @@ use outbe_genesis_cli::launch_bundle::quote;
 use outbe_software_bundle::sha256_file;
 
 use super::{
-    build::{BuildState, FounderArtifact, NetworkManifest, MANIFEST_VERSION},
+    build::{BuildState, FounderArtifact, JoiningArtifact, NetworkManifest, MANIFEST_VERSION},
     config::NetworkConfig,
 };
 
@@ -101,11 +101,29 @@ impl NetworkArtifacts {
                 "founder {index} archive changed after network build"
             );
         }
+        verify_joining_artifacts(root, &manifest.joining)?;
         Ok(Self {
             root: root.to_owned(),
             manifest,
         })
     }
+}
+
+fn verify_joining_artifacts(root: &Path, joining: &JoiningArtifact) -> Result<()> {
+    ensure!(
+        joining.bundle == "joining/outbe-validator-operator-bundle.tar.zst"
+            && joining.config_example == "joining/operator-config.example.yaml",
+        "joining artifacts do not use the expected immutable paths"
+    );
+    ensure!(
+        sha256_file(&root.join(&joining.bundle))? == joining.bundle_sha256,
+        "joining operator bundle changed after network build"
+    );
+    ensure!(
+        root.join(&joining.config_example).is_file(),
+        "joining operator config example is missing"
+    );
+    Ok(())
 }
 
 #[derive(Clone)]
@@ -403,5 +421,28 @@ mod tests {
         assert!(!agent_command
             .get_args()
             .any(|argument| argument == "IdentitiesOnly=yes"));
+    }
+
+    #[test]
+    fn joining_bundle_is_bound_to_the_network_manifest() {
+        let root = tempfile::tempdir().unwrap();
+        let joining = root.path().join("joining");
+        fs::create_dir(&joining).unwrap();
+        let bundle = joining.join("outbe-validator-operator-bundle.tar.zst");
+        fs::write(&bundle, b"operator bundle").unwrap();
+        fs::write(
+            joining.join("operator-config.example.yaml"),
+            b"version: 1\n",
+        )
+        .unwrap();
+        let artifact = JoiningArtifact {
+            bundle: "joining/outbe-validator-operator-bundle.tar.zst".into(),
+            bundle_sha256: sha256_file(&bundle).unwrap(),
+            config_example: "joining/operator-config.example.yaml".into(),
+        };
+        verify_joining_artifacts(root.path(), &artifact).unwrap();
+
+        fs::write(&bundle, b"changed bundle").unwrap();
+        assert!(verify_joining_artifacts(root.path(), &artifact).is_err());
     }
 }

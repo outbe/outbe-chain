@@ -145,6 +145,7 @@ pub fn run(
         .tempdir_in(parent)?;
     let software = verify_and_extract(software_bundle, software_root.path())?;
     ensure_supported_software(&software)?;
+    ensure_builder_matches_bundle(software_root.path())?;
 
     progress.stage("generating founding validator identities and genesis");
     let staging = tempfile::Builder::new()
@@ -261,6 +262,19 @@ pub fn run(
     println!(
         "Next: outbe-up network prepare --artifacts {}",
         output.display()
+    );
+    Ok(())
+}
+
+fn ensure_builder_matches_bundle(software_root: &Path) -> Result<()> {
+    let current = std::env::current_exe().wrap_err("locate the running outbe-up binary")?;
+    ensure_same_builder(&current, &software_root.join("bin/outbe-up"))
+}
+
+fn ensure_same_builder(current: &Path, bundled: &Path) -> Result<()> {
+    ensure!(
+        sha256_file(current)? == sha256_file(bundled)?,
+        "network build must be run with the outbe-up binary from the supplied software bundle"
     );
     Ok(())
 }
@@ -813,6 +827,19 @@ mod tests {
             addresses.push(format!("{:#x}", validator_address(&key).unwrap()));
         }
         (keys, addresses)
+    }
+
+    #[test]
+    fn network_builder_must_match_the_bundled_outbe_up() {
+        let root = tempfile::tempdir().unwrap();
+        let current = root.path().join("current");
+        let bundled = root.path().join("bundled");
+        fs::write(&current, b"same binary").unwrap();
+        fs::write(&bundled, b"same binary").unwrap();
+        ensure_same_builder(&current, &bundled).unwrap();
+
+        fs::write(&bundled, b"different binary").unwrap();
+        assert!(ensure_same_builder(&current, &bundled).is_err());
     }
 
     #[test]

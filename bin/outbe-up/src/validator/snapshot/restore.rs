@@ -7,12 +7,11 @@ use std::{
 };
 
 use eyre::{bail, ensure, Context, Result};
+use outbe_snapshot::archive::read_archive_index;
 use outbe_snapshot::manifest::{EntryKind, NativeRoot, SnapshotManifestV1};
 use sha2::{Digest, Sha256};
 
 use crate::{support::process, validator::config::OperatorConfig};
-
-const MAX_MANIFEST_BYTES: u64 = 256 * 1024 * 1024;
 
 struct ExpectedMember<'a> {
     output: PathBuf,
@@ -23,7 +22,7 @@ struct ExpectedMember<'a> {
 }
 
 pub(crate) fn restore(path: &Path, config: &OperatorConfig, resume: bool) -> Result<u64> {
-    let manifest = read_manifest(path)?;
+    let manifest = read_verified_manifest(path)?;
     ensure!(
         manifest.chain_id == config.network.chain_id,
         "snapshot chain id {} does not match {}",
@@ -48,30 +47,10 @@ pub(crate) fn restore(path: &Path, config: &OperatorConfig, resume: bool) -> Res
     Ok(manifest.progress.finalized.number)
 }
 
-fn read_manifest(path: &Path) -> Result<SnapshotManifestV1> {
-    let mut archive = tar::Archive::new(open(path)?);
-    let mut raw = None;
-    for entry in archive
-        .entries()
-        .wrap_err("failed to read snapshot archive")?
-    {
-        let mut entry = entry.wrap_err("failed to read snapshot entry")?;
-        if entry.path()?.as_ref() != Path::new("manifest.json") {
-            continue;
-        }
-        ensure!(raw.is_none(), "snapshot contains duplicate manifest.json");
-        ensure!(
-            entry.header().entry_type().is_file() && entry.size() <= MAX_MANIFEST_BYTES,
-            "invalid snapshot manifest entry"
-        );
-        let mut bytes = Vec::new();
-        entry
-            .read_to_end(&mut bytes)
-            .wrap_err("failed to read snapshot manifest")?;
-        raw = Some(bytes);
-    }
-    let raw = raw.ok_or_else(|| eyre::eyre!("snapshot is missing manifest.json"))?;
-    SnapshotManifestV1::from_bytes(&raw).wrap_err("invalid snapshot manifest")
+fn read_verified_manifest(path: &Path) -> Result<SnapshotManifestV1> {
+    read_archive_index(open(path)?, None)
+        .map(|index| index.manifest)
+        .wrap_err("snapshot signature or payload verification failed")
 }
 
 fn clear_destinations(manifest: &SnapshotManifestV1) -> Result<()> {
@@ -279,4 +258,32 @@ fn copy_digest(reader: &mut impl Read, writer: &mut impl Write) -> Result<String
         digest.update(&buffer[..count]);
     }
     Ok(hex::encode(digest.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn restore_rejects_an_unsigned_archive_before_extraction() {
+        let archive = tempfile::NamedTempFile::new().unwrap();
+        let file = archive.reopen().unwrap();
+        let mut builder = tar::Builder::new(file);
+        let manifest = b"{}";
+        let mut header = tar::Header::new_gnu();
+        header.set_size(manifest.len() as u64);
+        header.set_mode(0o644);
+        header.set_entry_type(tar::EntryType::Regular);
+        header.set_cksum();
+        builder
+            .append_data(&mut header, "manifest.json", manifest.as_slice())
+            .unwrap();
+        builder.finish().unwrap();
+
+        let error = read_verified_manifest(archive.path()).unwrap_err();
+        assert!(
+            error.to_string().contains("verification failed"),
+            "{error:#}"
+        );
+    }
 }

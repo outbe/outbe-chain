@@ -226,7 +226,7 @@ fn print_summary(
     println!("  Reth P2P key:     /opt/outbe-chain/keys/reth-p2p-secret.hex");
     println!("  Radicle identity: /opt/outbe-chain/keys/radicle");
     println!();
-    println!("Fund this address before `outbe-up validator sync` (registration gas and stake):");
+    println!("Fund this address before `outbe-up validator promote` (registration gas and stake):");
     println!("VALIDATOR_ADDR='{validator:#x}'");
     println!("CERTIFIED_RPC='{certified_rpc}'");
     println!("MINIMUM_STAKE_WEI='{minimum_stake}'");

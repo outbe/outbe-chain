@@ -22,6 +22,7 @@ const SUPPORT_UNITS: &[&str] = &[
     "outbe-feeder.service",
     "outbe-hyperlane-validator.service",
 ];
+const SUPPORT_CONFIG_FILES: &[&str] = &["genesis.json", "reth.toml"];
 
 #[derive(Debug, Serialize)]
 struct DoctorReport {
@@ -330,13 +331,7 @@ fn create_support_bundle(output: &Path, report: &str) -> Result<()> {
     fs::write(staging.path().join("doctor.json"), report)?;
     let config = staging.path().join("config");
     fs::create_dir(&config)?;
-    for name in [
-        "genesis.json",
-        "validator.env",
-        "feeder-public.toml",
-        "hyperlane-public.toml",
-        "reth.toml",
-    ] {
+    for &name in SUPPORT_CONFIG_FILES {
         copy_public_file(&Path::new(ROOT).join(name), &config.join(name))?;
     }
     let units = staging.path().join("systemd");
@@ -419,6 +414,17 @@ mod tests {
             fs::metadata(output).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[test]
+    fn support_bundle_excludes_configs_that_may_contain_url_credentials() {
+        for name in [
+            "validator.env",
+            "feeder-public.toml",
+            "hyperlane-public.toml",
+        ] {
+            assert!(!SUPPORT_CONFIG_FILES.contains(&name));
+        }
     }
 
     #[test]

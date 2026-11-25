@@ -116,7 +116,7 @@ enum NetworkCommand {
         artifacts: PathBuf,
         #[arg(long)]
         ssh_key: Option<PathBuf>,
-        /// Write a private, secret-free support archive to this path.
+        /// Write a private support archive excluding keys and operator configuration.
         #[arg(long)]
         support_bundle: Option<PathBuf>,
     },
@@ -147,6 +147,7 @@ enum NetworkSnapshotCommand {
         remote: NetworkSnapshotRemoteArgs,
         #[arg(long)]
         archive: String,
+        /// Expected 33-byte compressed secp256k1 public key in hex.
         #[arg(long)]
         expected_signer: Option<String>,
     },
@@ -236,7 +237,7 @@ enum ValidatorCommand {
     },
     /// Run read-only validator, host, and time-synchronization diagnostics.
     Doctor {
-        /// Write a private, secret-free support archive to this path.
+        /// Write a private support archive excluding keys and operator configuration.
         #[arg(long)]
         support_bundle: Option<PathBuf>,
     },
@@ -273,6 +274,7 @@ enum ValidatorSnapshotCommand {
     Validate {
         #[arg(long)]
         archive: PathBuf,
+        /// Expected 33-byte compressed secp256k1 public key in hex.
         #[arg(long)]
         expected_signer: Option<String>,
         #[arg(long)]

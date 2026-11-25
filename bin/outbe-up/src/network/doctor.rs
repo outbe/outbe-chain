@@ -20,6 +20,7 @@ const SUPPORT_UNITS: &[&str] = &[
     "outbe-feeder.service",
     "outbe-hyperlane-validator.service",
 ];
+const SUPPORT_ARTIFACTS: &[&str] = &["network-manifest.json", "genesis.json"];
 
 struct HostDiagnostic<'a> {
     founder: &'a FounderArtifact,
@@ -171,7 +172,7 @@ fn create_support_bundle(
             .unwrap_or_else(|error| format!("journal unavailable: {error:#}"));
         fs::write(hosts.join(format!("{name}-journald.txt")), logs)?;
     }
-    for name in ["network.yaml", "network-manifest.json", "genesis.json"] {
+    for &name in SUPPORT_ARTIFACTS {
         fs::copy(build.root.join(name), staging.path().join(name))?;
     }
     write_archive(staging.path(), output)
@@ -242,6 +243,11 @@ mod tests {
     #[test]
     fn support_file_names_cannot_escape() {
         assert_eq!(safe_name("../../validator 0"), "______validator_0");
+    }
+
+    #[test]
+    fn support_bundle_excludes_operator_inputs_that_may_contain_url_credentials() {
+        assert!(!SUPPORT_ARTIFACTS.contains(&"network.yaml"));
     }
 
     #[test]

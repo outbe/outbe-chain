@@ -7,7 +7,8 @@ are compiled from the shared Rust implementation so they cannot drift from the l
 ## Founding network
 
 Build the immutable software bundle once with `cargo xtask release build`. The network
-commands consume that bundle; they never compile source code.
+commands consume that bundle; they never compile source code. Run `network build` with the
+`bin/outbe-up` extracted from that same bundle so builder logic and released software cannot drift.
 
 ```text
 outbe-up network config-example --output network.yaml
@@ -28,6 +29,8 @@ outbe-up network doctor --artifacts network-artifacts [--support-bundle support.
 
 `build` produces one fresh genesis, one founder identity per configured host, host-specific
 founding archives, and a joining-validator bundle/config from the same software and genesis.
+The complete artifacts directory contains founder private keys and is a private recovery asset:
+keep it mode `0700`, never publish it as an ordinary CI artifact, and encrypt archived copies.
 `prepare` verifies and installs every host over SSH without starting it. `start` starts all
 founders and waits for RPC, execution peers, consensus signer state, threshold shares, resident
 TEE readiness, a healthy feeder, and a finalized block. It then delegates and funds each dedicated
@@ -50,7 +53,8 @@ the immutable network build; changing founder launch flags requires a new networ
 
 Create a founder snapshot on its VM with `network snapshot create --founder ... --output
 /opt/outbe-chain/snapshots/<name>.tar.zst`; add `--download <local-path>` only when a local copy is
-actually needed. `network snapshot validate` runs the existing signed snapshot validator. Both
+actually needed. `network snapshot validate` runs the existing signed snapshot validator;
+`--expected-signer` is a 33-byte compressed secp256k1 public key in hex, not an EVM address. Both
 commands check quorum, DKG safety, and recovery of the temporarily stopped founder.
 
 `network.yaml` v2 declares bare-metal `machines` and assigns every founder a private VM address.
@@ -103,8 +107,8 @@ Run `outbe-up validator config-example` to print the embedded operator template,
 then creates host-local identities and installs services without starting them. `sync` optionally
 restores a verified snapshot before starting the validator target. Its single node process runs with
 `--validator --validator.evm-key ... --upstream ...`, autonomously obtains its resident TEE key,
-and synchronizes the chain. Fund the validator address before `sync` for registration gas, stake,
-and Hyperlane signer funding. `promote` checks local TEE health through
+and synchronizes the chain. Fund the validator address before `promote` for registration gas, stake,
+and Hyperlane signer funding; funding may happen while `sync` is running. `promote` checks local TEE health through
 `outbe_consensusStatus.enclave`, verifies finalized synchronization against the certified RPC,
 bonds the minimum stake, delegates oracle votes to the feeder, delegates and funds its dedicated
 Hyperlane signer, and submits validator readiness. It never stops or restarts the node: its TEE key
@@ -124,9 +128,10 @@ files live under `/opt/outbe-chain`, so one persistent mount covers the complete
 `validator stop` disables automatic start across VM reboots; transient `restart`, `upgrade`, and
 snapshot operations do not change that persistent policy. `validator snapshot create` checks free
 space and uses the existing signed snapshot format; `snapshot validate` performs the existing native
-validation. `doctor` is read-only. Its optional private support archive contains only a fixed list of
-public configs, canonical unit files, status output, and bounded journald logs; key and operator-state
-directories are never traversed.
+validation. `--expected-signer` accepts a 33-byte compressed secp256k1 public key in hex, not an EVM
+address. `doctor` is read-only. Its optional private support archive contains only a fixed list of
+non-credential configuration, canonical unit files, status output, and bounded journald logs; key,
+operator configuration, and operator-state directories are never traversed.
 
 For on-chain maintenance, `validator unjail` requires a synchronized resident validator, submits
 unjail, and confirms readiness for the next DKG. `validator exit` deactivates an active validator,
