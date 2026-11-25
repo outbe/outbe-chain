@@ -202,6 +202,10 @@ async fn main() -> Result<()> {
         health.clone(),
     );
     let relay = daemon::Relay::new(u32::try_from(config.chain.chain_id)?)?;
+    let liveness = liveness.with_report_checks(relayer::report::ReportChecks {
+        chains: relay.chains.clone(),
+        fetcher: relay.fetcher.clone(),
+    });
     let daemon = daemon::Daemon {
         origins: config.origin,
         poll_interval,

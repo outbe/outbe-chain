@@ -184,6 +184,23 @@ impl Fetcher {
         }
     }
 
+    /// True when the storage of `validator` serves the checkpoint of `want`
+    /// with the root `root` and the signature of `validator`.
+    pub async fn serves(
+        &self,
+        validator: Address,
+        locations: &[String],
+        want: &Want,
+        root: B256,
+    ) -> bool {
+        let Some(url) = storage(validator, locations) else {
+            return false;
+        };
+        self.checkpoint(validator, &url, want)
+            .await
+            .is_some_and(|signed| signed.value.checkpoint.root == root)
+    }
+
     /// Reads the checkpoint of `want` from the validators until one root has
     /// `threshold` signatures. `locations[i]` are the announced locations of
     /// `validators[i]`.
@@ -341,6 +358,24 @@ mod tests {
         let chosen = storage(Address::ZERO, &locations).unwrap();
         assert_eq!(chosen.as_str(), "http://new/b/");
         assert!(storage(Address::ZERO, &[]).is_none());
+    }
+
+    #[tokio::test]
+    async fn a_validator_serves_only_its_own_checkpoint_with_the_wanted_root() {
+        let key = PrivateKeySigner::random();
+        let location = vec![bucket(sign(&key, &WANT, 7)).await];
+        let fetcher = Fetcher::new().unwrap();
+        let root = B256::repeat_byte(7);
+        assert!(fetcher.serves(key.address(), &location, &WANT, root).await);
+        // Another root: the validator serves a checkpoint of another tree.
+        let other = B256::repeat_byte(8);
+        assert!(!fetcher.serves(key.address(), &location, &WANT, other).await);
+        // Another signer, no location, and a storage that does not answer.
+        let stranger = Address::repeat_byte(0x99);
+        assert!(!fetcher.serves(stranger, &location, &WANT, root).await);
+        assert!(!fetcher.serves(key.address(), &[], &WANT, root).await);
+        let closed = vec!["s3+http://127.0.0.1:1/b/5".to_owned()];
+        assert!(!fetcher.serves(key.address(), &closed, &WANT, root).await);
     }
 
     #[tokio::test]

@@ -4,6 +4,7 @@
 pub mod deliver;
 pub mod fetch;
 pub mod message;
+pub mod report;
 pub mod retry;
 
 use std::collections::{BTreeSet, HashMap};

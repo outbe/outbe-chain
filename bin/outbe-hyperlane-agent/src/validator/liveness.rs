@@ -25,6 +25,7 @@ use crate::client::{self, TxSender};
 use crate::config::{ChainConfig, HyperlaneConfig};
 use crate::errors::LivenessError;
 use crate::http::health::ValidatorHealth;
+use crate::relayer::report::{fit_report, OtherValidator, ReportChecks};
 use crate::sync::connect;
 use crate::validator::signer::DomainSigner;
 
@@ -39,6 +40,10 @@ pub const VALIDATOR_SET_ADDRESS: Address =
 /// The controller uses the latest index of a report only when it is 30 blocks
 /// old at the verdict (`GRACE_BLOCKS`), so the call must not be later.
 const REPORT_BLOCKS_BEFORE_END: u64 = 60;
+/// The controller uses the latest index of a report only when it is 30 blocks
+/// old at the verdict. From this many blocks before the end of the epoch, the
+/// agent does not wait for a check of the other validators that did not run.
+const LAST_CHANCE_BLOCKS: u64 = 35;
 /// The longest wait for the receipt of `submitCheckpoint`.
 const RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -51,6 +56,8 @@ pub struct Liveness {
     signer: Address,
     validator: Address,
     health: Arc<ValidatorHealth>,
+    /// The checks of the other validators for the report.
+    checks: Option<ReportChecks>,
 }
 
 impl Liveness {
@@ -69,7 +76,15 @@ impl Liveness {
             wallet,
             validator,
             health,
+            checks: None,
         }
+    }
+
+    /// Gives the liveness loop the checks of the other validators. Without them the two lists of
+    /// the report are empty.
+    pub fn with_report_checks(mut self, checks: ReportChecks) -> Self {
+        self.checks = Some(checks);
+        self
     }
 
     /// Polls forever. It logs every error and retries on the next tick.
@@ -117,8 +132,8 @@ impl Liveness {
             )
             .await
             .with_context(|| "getActiveValidators() failed")?;
-        let active = IValidatorSet::getActiveValidatorsCall::abi_decode_returns(&out)?
-            .contains(&self.validator);
+        let validators = IValidatorSet::getActiveValidatorsCall::abi_decode_returns(&out)?;
+        let active = validators.contains(&self.validator);
         self.health.set_active(active);
         let signer_error = self.check_signer(&provider).await?;
         if let Some(error) = &signer_error {
@@ -150,9 +165,13 @@ impl Liveness {
                 IValidatorSet::getEpochLengthBlocksCall {},
             )
             .await?;
-        if provider.get_block_number().await? < report_from_block(start, u64::from(length)) {
+        let block = provider.get_block_number().await?;
+        if block < report_from_block(start, u64::from(length)) {
             return Ok(());
         }
+        // After this block a call can be too late for the verdict: the agent
+        // sends it also when a check of the other validators did not run.
+        let last_chance = block + LAST_CHANCE_BLOCKS >= start + u64::from(length);
         let round = self
             .view(
                 &provider,
@@ -161,7 +180,8 @@ impl Liveness {
             )
             .await?;
         for signer in self.health.running() {
-            if let Err(error) = self.submit_round(&provider, &signer, round).await {
+            let call = self.submit_round(&provider, &signer, round, &validators, last_chance);
+            if let Err(error) = call.await {
                 warn!(domain = signer.domain(), %error, "hyperlane checkpoint submit failed");
             }
         }
@@ -226,6 +246,8 @@ impl Liveness {
         provider: &DynProvider,
         signer: &DomainSigner,
         round: u64,
+        validators: &[Address],
+        last_chance: bool,
     ) -> Result<()> {
         let domain = signer.domain();
         let controller = HYPERLANE_CONTROLLER_ADDRESS;
@@ -277,19 +299,84 @@ impl Liveness {
         if !is_vote && latest <= submitted {
             return Ok(());
         }
+        // The checks of the other validators are for the target index. Without a vote at the
+        // target, the lists are empty.
+        let mut not_serving = Vec::new();
+        let mut not_delivered = Vec::new();
         let (index, checkpoint) = match voted {
-            Some(checkpoint) => (target, checkpoint),
+            Some(checkpoint) => {
+                let check = self.not_serving(provider, validators, &checkpoint);
+                match check.await {
+                    Ok(bad) => not_serving = bad,
+                    Err(error) if last_chance => {
+                        warn!(
+                            domain,
+                            error = format!("{error:#}"),
+                            "the check of the other validators did not run; the report has no names"
+                        );
+                    }
+                    Err(error) => {
+                        return Err(error.wrap_err("the check of the other validators did not run"))
+                    }
+                }
+                (target, checkpoint)
+            }
             None => match signer.signed_checkpoint(latest)? {
                 Some(checkpoint) => (latest, checkpoint),
                 None => return Ok(()),
             },
         };
+        fit_report(&mut not_serving, &mut not_delivered);
+        if !not_serving.is_empty() {
+            warn!(
+                domain,
+                index,
+                ?not_serving,
+                "validators do not serve the target checkpoint"
+            );
+        }
         let report = IHyperlaneController::EpochReport {
             latestIndex: latest,
-            notServing: Vec::new(),
-            notDelivered: Vec::new(),
+            notServing: not_serving,
+            notDelivered: not_delivered,
         };
         self.submit(provider, domain, index, &checkpoint, report)
+            .await
+    }
+
+    /// The other active validators that do not serve the target checkpoint
+    /// that this validator signed as `mine`. Empty without the report checks.
+    async fn not_serving(
+        &self,
+        provider: &DynProvider,
+        validators: &[Address],
+        mine: &Signed<CheckpointWithMessageId>,
+    ) -> Result<Vec<Address>> {
+        let Some(checks) = &self.checks else {
+            return Ok(Vec::new());
+        };
+        let mut others = Vec::new();
+        for validator in validators.iter().filter(|v| **v != self.validator) {
+            let call = IHyperlaneController::hyperlaneSignerCall {
+                validator: *validator,
+            };
+            let signer = self
+                .view(provider, HYPERLANE_CONTROLLER_ADDRESS, call)
+                .await?;
+            others.push(OtherValidator {
+                validator: *validator,
+                signer: if signer.is_zero() { *validator } else { signer },
+            });
+        }
+        let checkpoint = &mine.value.checkpoint;
+        checks
+            .not_serving(
+                &others,
+                checkpoint.mailbox_domain,
+                checkpoint.index,
+                mine.value.message_id,
+                checkpoint.root,
+            )
             .await
     }
 
