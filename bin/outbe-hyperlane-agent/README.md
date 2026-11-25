@@ -46,7 +46,7 @@ source and the changes.
    of each origin chain, once.
 7. **Liveness.** The daemon sends the latest signed checkpoint of each domain
    to the controller with `submitCheckpoint`. The controller jails validators
-   that fall behind the quorum for `MAX_MISSES` liveness windows in a row (see
+   that fall behind the quorum for `MAX_MISSES` liveness rounds in a row (see
    [`liveness.rs`](../../crates/system/hyperlanecontroller/src/liveness.rs)).
 8. **Relay.** The daemon delivers each message to its
    destination chain. See [Relayer](#relayer).
@@ -322,19 +322,29 @@ is jailed:
 | Relayer | Sends no transaction. It deletes a message from its queue when another relayer delivers that message. |
 | `/status` | `"active": false`. This is not an error. |
 
-While `V` is active, the daemon sends `submitCheckpoint` for each running
-domain in these two cases:
+While `V` is active, the daemon sends one `submitCheckpoint` for each running
+domain in each epoch. It sends the call 60 blocks before the end of the epoch.
+If the epoch is shorter than 120 blocks, it sends the call at half the epoch.
+A validator that is behind thus has the full epoch to sign the target index.
+The daemon reads the start and the length of the epoch from the
+`ValidatorSet`.
 
-- Liveness vote: `targetIndex(domain)` is not zero, the store has the signed
-  checkpoint at that index, and `targetVote(V, domain)` is not that index and
-  root. The controller compares the roots of all validators at the target
-  index. A missing vote, or a root that differs from the root of the quorum,
-  is a liveness miss.
-- Latest checkpoint: its index is above `submittedIndex(V, domain)`. The
-  controller sets the next target from these indexes.
+The call has these parts:
 
-When the target index is also the latest index, one transaction does both. The
-daemon never submits index 0. It waits up to 60 seconds for the receipt.
+- Liveness vote: the signed checkpoint at `targetIndex(domain)`. The
+  controller compares the roots of all validators at the target index. A
+  missing vote, or a root that differs from the root of the quorum, is a
+  liveness miss. When there is no target, or the store does not have that
+  index yet, the call has the latest signed checkpoint.
+- Report: the latest signed index. The controller sets the next target from
+  these indexes.
+
+The daemon sends no call when `reportedRound(V, domain)` is the current
+`livenessRound()`: the controller has the report of this round. It also sends
+no call that gives the controller no new vote and no newer index. The daemon
+never submits index 0. It waits up to 60 seconds for the receipt.
+
+The controller gives the liveness verdict in the first block of each epoch.
 
 ## Relayer
 

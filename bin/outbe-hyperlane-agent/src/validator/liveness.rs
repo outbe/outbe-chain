@@ -1,7 +1,8 @@
 //! Hyperlane liveness: submits this validator's signed checkpoints of each
 //! running domain from the local store to the HyperlaneController precompile.
-//! Per domain it submits the checkpoint at the target index of the controller
-//! (the liveness vote) and the latest checkpoint.
+//! Per domain it sends one `submitCheckpoint` in each epoch, near the end of
+//! the epoch: the checkpoint at the target index of the controller (the
+//! liveness vote) with the report of the validator.
 //!
 //! The controller accepts checkpoints only from active validators. While `V`
 //! is not in the active set (for example jailed), the daemon keeps signing
@@ -13,7 +14,7 @@ use std::time::Duration;
 use alloy_eips::BlockId;
 use alloy_network::{Ethereum, EthereumWallet, NetworkWallet};
 use alloy_primitives::{Address, Bytes, B256};
-use alloy_provider::DynProvider;
+use alloy_provider::{DynProvider, Provider};
 use alloy_sol_types::SolCall;
 use eyre::{Context, Result};
 use tracing::{info, warn};
@@ -33,6 +34,11 @@ pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
 /// ValidatorSet precompile address (0xEE00).
 pub const VALIDATOR_SET_ADDRESS: Address =
     alloy_primitives::address!("0x000000000000000000000000000000000000EE00");
+/// The agent sends its call of the round this many blocks before the end of
+/// the epoch. An epoch shorter than two times this value: at half the epoch.
+/// The controller uses the latest index of a report only when it is 30 blocks
+/// old at the verdict (`GRACE_BLOCKS`), so the call must not be later.
+const REPORT_BLOCKS_BEFORE_END: u64 = 60;
 /// The longest wait for the receipt of `submitCheckpoint`.
 const RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -128,17 +134,52 @@ impl Liveness {
             return Ok(());
         }
 
+        // One call for each domain in an epoch, near its end: a validator
+        // that is behind has the full epoch to sign the target index.
+        let start = self
+            .view(
+                &provider,
+                VALIDATOR_SET_ADDRESS,
+                IValidatorSet::getEpochStartBlockCall {},
+            )
+            .await?;
+        let length = self
+            .view(
+                &provider,
+                VALIDATOR_SET_ADDRESS,
+                IValidatorSet::getEpochLengthBlocksCall {},
+            )
+            .await?;
+        if provider.get_block_number().await? < report_from_block(start, u64::from(length)) {
+            return Ok(());
+        }
+        let round = self
+            .view(
+                &provider,
+                HYPERLANE_CONTROLLER_ADDRESS,
+                IHyperlaneController::livenessRoundCall {},
+            )
+            .await?;
         for signer in self.health.running() {
-            // The target first: when the target is also the latest index, one
-            // transaction does both.
-            if let Err(error) = self.submit_target(&provider, &signer).await {
-                warn!(domain = signer.domain(), %error, "hyperlane target checkpoint submit failed");
-            }
-            if let Err(error) = self.submit_latest(&provider, &signer).await {
+            if let Err(error) = self.submit_round(&provider, &signer, round).await {
                 warn!(domain = signer.domain(), %error, "hyperlane checkpoint submit failed");
             }
         }
         Ok(())
+    }
+
+    /// Reads one view of `to` at the latest block.
+    async fn view<C: SolCall>(
+        &self,
+        provider: &DynProvider,
+        to: Address,
+        call: C,
+    ) -> Result<C::Return> {
+        let out = self
+            .call(provider, to, call.abi_encode())
+            .await
+            .with_context(|| format!("{} failed", C::SIGNATURE))?;
+        Ok(C::abi_decode_returns(&out)?)
     }
 
     /// The controller accepts only signatures of `hyperlaneSigner(V)`, or of
@@ -173,73 +214,83 @@ impl Liveness {
         client::eth_call(provider, to, data, BlockId::latest()).await
     }
 
-    /// Submits the signed checkpoint at `targetIndex(domain)`: the liveness
-    /// vote of this window. It does nothing when there is no target, when the
-    /// store does not have that index yet, or when the controller already
-    /// has this root as the vote.
-    async fn submit_target(&self, provider: &DynProvider, signer: &DomainSigner) -> Result<()> {
+    /// Sends the call of `round` for the domain of `signer`: the signed
+    /// checkpoint at `targetIndex(domain)` (the liveness vote) with the report.
+    /// When there is no target, or the store does not have that index yet, it
+    /// sends the latest signed checkpoint. It sends nothing when the
+    /// controller already has the report of this round, or when the call
+    /// gives the controller no new vote and no newer index: the controller
+    /// rejects such a call. Index 0 is never submitted.
+    async fn submit_round(
+        &self,
+        provider: &DynProvider,
+        signer: &DomainSigner,
+        round: u64,
+    ) -> Result<()> {
         let domain = signer.domain();
-        let out = self
-            .call(
+        let controller = HYPERLANE_CONTROLLER_ADDRESS;
+        let validator = self.validator;
+        let reported = self
+            .view(
                 provider,
-                HYPERLANE_CONTROLLER_ADDRESS,
-                IHyperlaneController::targetIndexCall { domain }.abi_encode(),
+                controller,
+                IHyperlaneController::reportedRoundCall { validator, domain },
             )
-            .await
-            .with_context(|| "hyperlane targetIndex() failed")?;
-        let target = IHyperlaneController::targetIndexCall::abi_decode_returns(&out)?;
-        if target == 0 {
+            .await?;
+        if reported == round {
             return Ok(());
         }
-        let Some(checkpoint) = signer.signed_checkpoint(target)? else {
+        let Some(latest) = signer.latest_index()? else {
             return Ok(());
         };
-        let out = self
-            .call(
+        let target = self
+            .view(
                 provider,
-                HYPERLANE_CONTROLLER_ADDRESS,
-                IHyperlaneController::targetVoteCall {
-                    validator: self.validator,
-                    domain,
-                }
-                .abi_encode(),
+                controller,
+                IHyperlaneController::targetIndexCall { domain },
             )
-            .await
-            .with_context(|| "hyperlane targetVote() failed")?;
-        let vote = IHyperlaneController::targetVoteCall::abi_decode_returns(&out)?;
-        if vote.index == target && vote.root == checkpoint.value.checkpoint.root {
+            .await?;
+        let voted = match target {
+            0 => None,
+            target => signer.signed_checkpoint(target)?,
+        };
+        let is_vote = match &voted {
+            None => false,
+            Some(checkpoint) => {
+                let vote = self
+                    .view(
+                        provider,
+                        controller,
+                        IHyperlaneController::targetVoteCall { validator, domain },
+                    )
+                    .await?;
+                vote.index != target || vote.root != checkpoint.value.checkpoint.root
+            }
+        };
+        let submitted = self
+            .view(
+                provider,
+                controller,
+                IHyperlaneController::submittedIndexCall { validator, domain },
+            )
+            .await?;
+        if !is_vote && latest <= submitted {
             return Ok(());
         }
-        self.submit(provider, domain, target, &checkpoint).await
-    }
-
-    /// Submits the latest signed checkpoint when its index is above
-    /// `submittedIndex(V, domain)`. Index 0 is never submitted.
-    async fn submit_latest(&self, provider: &DynProvider, signer: &DomainSigner) -> Result<()> {
-        let domain = signer.domain();
-        let Some(index) = signer.latest_index()? else {
-            return Ok(());
+        let (index, checkpoint) = match voted {
+            Some(checkpoint) => (target, checkpoint),
+            None => match signer.signed_checkpoint(latest)? {
+                Some(checkpoint) => (latest, checkpoint),
+                None => return Ok(()),
+            },
         };
-        let out = self
-            .call(
-                provider,
-                HYPERLANE_CONTROLLER_ADDRESS,
-                IHyperlaneController::submittedIndexCall {
-                    validator: self.validator,
-                    domain,
-                }
-                .abi_encode(),
-            )
+        let report = IHyperlaneController::EpochReport {
+            latestIndex: latest,
+            notServing: Vec::new(),
+            notDelivered: Vec::new(),
+        };
+        self.submit(provider, domain, index, &checkpoint, report)
             .await
-            .with_context(|| "hyperlane submittedIndex() failed")?;
-        let submitted = IHyperlaneController::submittedIndexCall::abi_decode_returns(&out)?;
-        if index <= submitted {
-            return Ok(());
-        }
-        let Some(checkpoint) = signer.signed_checkpoint(index)? else {
-            return Ok(());
-        };
-        self.submit(provider, domain, index, &checkpoint).await
     }
 
     /// Sends `submitCheckpoint` for the stored `checkpoint` at `index` and
@@ -250,6 +301,7 @@ impl Liveness {
         domain: u32,
         index: u32,
         checkpoint: &Signed<CheckpointWithMessageId>,
+        report: IHyperlaneController::EpochReport,
     ) -> Result<()> {
         let calldata = IHyperlaneController::submitCheckpointCall {
             domain,
@@ -257,11 +309,7 @@ impl Liveness {
             index,
             messageId: checkpoint.value.message_id,
             signature: checkpoint.signature_bytes().to_vec().into(),
-            report: IHyperlaneController::EpochReport {
-                latestIndex: 0,
-                notServing: Vec::new(),
-                notDelivered: Vec::new(),
-            },
+            report,
         }
         .abi_encode();
         match self.send(provider, &calldata).await {
@@ -294,6 +342,12 @@ impl Liveness {
         }
         Ok(hash)
     }
+}
+
+/// The first block at which the agent sends its call of the round, for an
+/// epoch that starts at `start` and has `length` blocks.
+fn report_from_block(start: u64, length: u64) -> u64 {
+    start + length.saturating_sub(REPORT_BLOCKS_BEFORE_END.min(length / 2))
 }
 
 #[cfg(test)]
@@ -359,7 +413,18 @@ mod tests {
                     let data: Bytes = serde_json::from_value(input.clone()).unwrap();
                     let selector: [u8; 4] = data[..4].try_into().unwrap();
                     let out = match (to, selector) {
+                        (
+                            VALIDATOR_SET_ADDRESS,
+                            IValidatorSet::getEpochStartBlockCall::SELECTOR,
+                        ) => 0u64.abi_encode(),
+                        // An epoch of 0 blocks: the agent sends at once.
+                        (
+                            VALIDATOR_SET_ADDRESS,
+                            IValidatorSet::getEpochLengthBlocksCall::SELECTOR,
+                        ) => 0u32.abi_encode(),
                         (VALIDATOR_SET_ADDRESS, _) => vec![V].abi_encode(),
+                        (_, IHyperlaneController::livenessRoundCall::SELECTOR) => 1u64.abi_encode(),
+                        (_, IHyperlaneController::reportedRoundCall::SELECTOR) => 0u64.abi_encode(),
                         (_, IHyperlaneController::hyperlaneSignerCall::SELECTOR) => {
                             signer_of_v.lock().unwrap().abi_encode()
                         }
@@ -377,6 +442,7 @@ mod tests {
                     };
                     json!(Bytes::from(out))
                 }
+                "eth_blockNumber" => json!("0x64"),
                 other => panic!("unexpected method {other}"),
             };
             json!({"jsonrpc": "2.0", "id": id, "result": result})
@@ -459,9 +525,18 @@ mod tests {
         assert_eq!(status["last_submit_time"], 0);
 
         // The controller has a target at index 1 and no vote of V: the tick
-        // sends the target checkpoint and then the latest checkpoint.
+        // sends one call, the target checkpoint with the report.
         *target.lock().unwrap() = 1;
         liveness.tick().await.unwrap();
-        assert_eq!(*sent.lock().unwrap(), 3);
+        assert_eq!(*sent.lock().unwrap(), 2);
+    }
+
+    #[test]
+    fn the_call_of_the_round_goes_near_the_end_of_the_epoch() {
+        // An epoch of 300 blocks from block 900: 60 blocks before block 1200.
+        assert_eq!(report_from_block(900, 300), 1140);
+        // A short epoch: at half the epoch.
+        assert_eq!(report_from_block(900, 100), 950);
+        assert_eq!(report_from_block(900, 0), 900);
     }
 }
