@@ -30,6 +30,18 @@ pub enum PayNoteError {
     TreeFull,
     #[error("PayNote commitment already exists")]
     CommitmentExists,
+    #[error("PayNote caller may not spend notes")]
+    UnauthorizedSpender,
+    #[error("PayNote context {actual} does not match settlement {expected}")]
+    ContextMismatch {
+        expected: alloy_primitives::B256,
+        actual: alloy_primitives::B256,
+    },
+    #[error("PayNote spends {covered}, settlement cost is {required}")]
+    CostMismatch {
+        covered: alloy_primitives::U256,
+        required: alloy_primitives::U256,
+    },
     #[error("PayNote asset has no reserve vault")]
     AssetVaultMissing,
     /// An ERC20 call returned data that is not empty and not `true`.

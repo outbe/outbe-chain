@@ -75,6 +75,10 @@ pub fn dispatch(
                 )?;
                 Ok(INodFactory::settleNodReturn {})
             }),
+            settleNodWithPayNote(c) => mutate(&storage, c, caller, |_, c| {
+                runtime::settle_nod_with_paynote(&storage, c.nodId, &c.payNoteProof)?;
+                Ok(INodFactory::settleNodWithPayNoteReturn {})
+            }),
             quoteSettlement(c) => view(c, |c| {
                 let (settlement_currency, encrypted_payment_minor, snapshot_id) =
                     runtime::quote_settlement(&storage, caller, c.nodId, c.asset)?;

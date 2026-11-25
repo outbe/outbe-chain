@@ -5,8 +5,9 @@
 //! state exclusively through [`outbe_nod::api`] and emits its own events at
 //! [`NOD_FACTORY_ADDRESS`].
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::SolEvent;
+use outbe_paynote::api::SettlementDomain;
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::NOD_FACTORY_ADDRESS;
@@ -158,14 +159,7 @@ pub fn settle_nod(
         asset,
         snapshot_id,
     } = payment;
-    let (item, group) = load_nod(storage, nod_id)?;
-    if item.body().is_settled {
-        return Err(NodFactoryError::NodAlreadySettled.into());
-    }
-    let deadline = nod_api::settlement_deadline(storage, item.body().group_key)?;
-    if deadline != 0 && storage.now_secs()? > deadline {
-        return Err(NodFactoryError::SettlementDeadlinePassed.into());
-    }
+    let (item, group) = load_settleable(storage, nod_id)?;
     let owner = item.body().owner;
     let issuance_currency = item.body().issuance_currency;
     let reference_currency = item.body().reference_currency;
@@ -192,6 +186,53 @@ pub fn settle_nod(
             amountMinor: quote.payment_minor,
         })
     })
+}
+
+/// Pays an uncalled or called Nod's exact cost by spending a PayNote. The proof must
+/// bind this Nod and the snapshot of the quote, and spend exactly the cost. Any caller
+/// may relay it. The pool routes the spent amount into the reserve vault.
+pub fn settle_nod_with_paynote(
+    storage: &StorageHandle<'_>,
+    nod_id: U256,
+    paynote_proof: &[u8],
+) -> Result<()> {
+    let (item, group) = load_settleable(storage, nod_id)?;
+    let owner = item.body().owner;
+    let currencies = currencies(item.body());
+    let cost = settlement_cost(item.body())?;
+    storage.clone().with_checkpoint(|| {
+        // Publish the transition before the spend, as `settle_nod` does.
+        nod_api::record_settled(storage, item, group)?;
+        let statement = (SettlementDomain::Nod, B256::from(nod_id), U256::ONE);
+        let (claim, quote) =
+            outbe_paynote::api::settle(storage, paynote_proof, statement, |asset| {
+                settlement::quote(storage, asset, currencies, &cost)
+            })?;
+        outbe_nod::NodContract::new(storage.clone()).emit(INod::NodSettled {
+            nodId: nod_id,
+            owner,
+            issuanceCurrency: currencies.issuance,
+            referenceCurrency: currencies.reference,
+            asset: claim.asset,
+            amountMinor: quote.payment_minor,
+        })
+    })
+}
+
+/// A Nod that is not settled and whose settlement deadline, if any, has not passed.
+fn load_settleable(
+    storage: &StorageHandle<'_>,
+    nod_id: U256,
+) -> Result<(LoadedNodItem, LoadedNodGroup)> {
+    let (item, group) = load_nod(storage, nod_id)?;
+    if item.body().is_settled {
+        return Err(NodFactoryError::NodAlreadySettled.into());
+    }
+    let deadline = nod_api::settlement_deadline(storage, item.body().group_key)?;
+    if deadline != 0 && storage.now_secs()? > deadline {
+        return Err(NodFactoryError::SettlementDeadlinePassed.into());
+    }
+    Ok((item, group))
 }
 
 /// Cost of one Nod at `entry_price_minor` and `gratis_load_minor` in an asset.

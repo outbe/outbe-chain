@@ -63,6 +63,17 @@ pub fn dispatch(
                         c.amountCapMinor,
                     )
                 }),
+                settleIntexWithPayNote(c) => mutate_void(&storage, c, caller, |_, c| {
+                    runtime::settle_intex_with_paynote(
+                        &storage,
+                        runtime::OwnerUnits {
+                            series_id: series_of(&storage, c.intexId)?,
+                            owner: c.owner,
+                            units: c.units,
+                        },
+                        &c.payNoteProof,
+                    )
+                }),
                 quoteSettlement(c) => metadata::<IIntexFactory::quoteSettlementCall>(|| {
                     let (settlement_currency, amount_minor, snapshot_id) =
                         runtime::quote_settlement(

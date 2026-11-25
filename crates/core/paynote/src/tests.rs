@@ -716,3 +716,35 @@ fn client_witnesses_match_runtime_roots() {
         assert!(witness(&wrong_tree, Field::from(1)).is_err());
     }
 }
+
+#[test]
+fn only_a_settlement_factory_may_consume_through_the_abi() {
+    use outbe_system_common::addresses::NOD_FACTORY_ADDRESS;
+
+    let mut provider = HashMapStorageProvider::new(CHAIN_ID);
+    let (proof, public, tree) = prove_spend(CHAIN_ID, USDC, 100, 100);
+    seed_pool(&mut provider, CHAIN_ID, tree.leaves());
+    let data = IPayNote::consumeCall {
+        proof: proof.into(),
+    }
+    .abi_encode();
+    assert_eq!(base_gas(&data), crate::precompile::PAYNOTE_MERGE_BASE_GAS);
+
+    let before = provider.storage.clone();
+    provider.enter(|storage| {
+        assert_revert(
+            dispatch(storage, &data, ALICE, U256::ZERO),
+            "PayNote caller may not spend notes",
+        )
+    });
+    assert_eq!(provider.storage, before);
+
+    provider.enter(|storage| {
+        let ret = dispatch(storage, &data, NOD_FACTORY_ADDRESS, U256::ZERO).unwrap();
+        let ret = IPayNote::consumeCall::abi_decode_returns(&ret).unwrap();
+        assert_eq!(ret.asset, USDC);
+        assert_eq!(ret.spendAmount, U256::from(100));
+        assert_eq!(ret.context, statement());
+        assert_eq!(ret.nullifier, b256(public.nullifier));
+    });
+}

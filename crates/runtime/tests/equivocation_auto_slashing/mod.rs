@@ -233,6 +233,18 @@ pub async fn launch_configured(
     Ok((handle.node, runtime, temp))
 }
 
+/// Gracefully stops a launched node. Only the graceful signal makes reth send
+/// `Terminate` to the engine OS thread; without it that thread outlives the
+/// test and can crash the process at exit.
+pub async fn shutdown(runtime: Runtime) -> eyre::Result<()> {
+    let stopped = tokio::task::spawn_blocking(move || {
+        runtime.graceful_shutdown_with_timeout(std::time::Duration::from_secs(10))
+    })
+    .await?;
+    eyre::ensure!(stopped, "node graceful tasks did not stop");
+    Ok(())
+}
+
 /// Publishes contract fixture transitions through the real provider's state writer.
 pub fn publish(node: &OutbeFullNode, seeded: &HashMapStorageProvider) -> eyre::Result<()> {
     use evm2::block::bundle_state::{PlainStorageChangeset, StateChangeset};

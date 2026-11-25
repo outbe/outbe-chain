@@ -47,7 +47,7 @@ async fn own_basefee_replacement_retries_underpriced_and_ignores_queued_siblings
 ) -> eyre::Result<()> {
     let signer = Arc::new(OutbeEvmSigner::from_secret_bytes([1; 32])?);
     let seeded = seed(signer.address());
-    let (node, _runtime, _temp) =
+    let (node, runtime, _temp) =
         support::launch_configured(&seeded, signer.clone(), 100, 200).await?;
     let mailbox = EquivocationEvidenceMailbox::new();
     mailbox.push(evidence(Kind::ConflictingNotarize));
@@ -89,6 +89,7 @@ async fn own_basefee_replacement_retries_underpriced_and_ignores_queued_siblings
     assert_ne!(*replacement.hash(), B256::ZERO);
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(1), worker).await??;
+    support::shutdown(runtime).await?;
     support::execute(
         &seeded,
         replacement.to_consensus().into_inner(),
@@ -106,7 +107,7 @@ async fn a_shared_key_foreign_transaction_defers_evidence_until_the_committed_no
     };
     let signer = Arc::new(OutbeEvmSigner::from_secret_bytes([1; 32])?);
     let seeded = seed(signer.address());
-    let (node, _runtime, _temp) = launch(&seeded, signer.clone()).await?;
+    let (node, runtime, _temp) = launch(&seeded, signer.clone()).await?;
     let initial_account = AccountInfo {
         balance: U256::from(1_000_000),
         ..Default::default()
@@ -194,5 +195,6 @@ async fn a_shared_key_foreign_transaction_defers_evidence_until_the_committed_no
     assert_ne!(*tx.hash(), foreign_hash);
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(1), worker).await??;
+    support::shutdown(runtime).await?;
     Ok(())
 }

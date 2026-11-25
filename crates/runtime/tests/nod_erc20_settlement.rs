@@ -9,6 +9,7 @@ use outbe_gratis::GratisOp;
 use outbe_gratis::{derive_account_keys, modify_mac};
 use outbe_nod::{precompile::INod, NodIssueParams};
 use outbe_nodfactory::precompile::INodFactory;
+use outbe_paynote::api::SettlementDomain;
 use outbe_primitives::{
     chain::CHAIN_ID,
     storage::{StorageHandle, SubCallStatus},
@@ -92,6 +93,19 @@ impl Rail for Nod {
         }
         .abi_encode()
         .into()
+    }
+
+    fn paynote_call(self, id: U256, proof: Bytes) -> Bytes {
+        INodFactory::settleNodWithPayNoteCall {
+            nodId: id,
+            payNoteProof: proof,
+        }
+        .abi_encode()
+        .into()
+    }
+
+    fn paynote_statement(self, id: U256) -> (SettlementDomain, B256, U256) {
+        (SettlementDomain::Nod, B256::from(id), U256::ONE)
     }
 
     fn assert_settled(self, world: &World<Self>) {
@@ -242,4 +256,9 @@ fn insufficient_allowance_and_balance_revert_without_payment() {
         assert_eq!(balances[1], U256::from(FACTORY_FLOAT));
         assert_unsettled(&mut world);
     }
+}
+
+#[test]
+fn a_paynote_pays_exactly_the_cost_once() {
+    settlement::a_paynote_pays_exactly_the_cost_once(NOD);
 }

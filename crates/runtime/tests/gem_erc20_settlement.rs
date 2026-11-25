@@ -2,10 +2,11 @@
 #[path = "support/factory_erc20_settlement.rs"]
 mod settlement;
 
-use alloy_primitives::{Address, Bytes, U256};
+use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent};
 use outbe_gem::{precompile::IGem, GemAddParams};
 use outbe_gemfactory::precompile::IGemFactory;
+use outbe_paynote::api::SettlementDomain;
 use outbe_primitives::storage::{StorageHandle, SubCallStatus};
 use outbe_system_common::addresses::{GEM_ADDRESS, GEM_FACTORY_ADDRESS};
 use outbe_vaultrouter::precompile::IVaultRouter::StablecoinSource;
@@ -95,6 +96,19 @@ impl Rail for Gem {
         }
         .abi_encode()
         .into()
+    }
+
+    fn paynote_call(self, id: U256, proof: Bytes) -> Bytes {
+        IGemFactory::settleGemWithPayNoteCall {
+            gemId: id,
+            payNoteProof: proof,
+        }
+        .abi_encode()
+        .into()
+    }
+
+    fn paynote_statement(self, id: U256) -> (SettlementDomain, B256, U256) {
+        (SettlementDomain::Gem, B256::from(id), U256::ONE)
     }
 
     fn assert_settled(self, world: &World<Self>) {
@@ -196,4 +210,9 @@ fn a_called_gem_settles_at_its_deadline_and_is_refused_a_second_later() {
         "the public status projects Forfeited before any cleanup"
     );
     assert_eq!(gem.owner, OWNER);
+}
+
+#[test]
+fn a_paynote_pays_exactly_the_cost_once() {
+    settlement::a_paynote_pays_exactly_the_cost_once(GEM);
 }

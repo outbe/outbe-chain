@@ -3,17 +3,22 @@
 
 use std::fmt::Debug;
 
-use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolEvent};
+use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_sol_types::{sol, SolCall, SolEvent};
 use evm2::evm::{CacheDB, EmptyDB};
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_oracle::test_support::seed_trailing_vwap_window;
+use outbe_paynote::api::{settlement_context, SettlementDomain};
+use outbe_paynote::precompile::IPayNote;
+use outbe_paynote::test_support::{note, spend_proof};
+use outbe_primitives::chain::CHAIN_ID;
 use outbe_primitives::storage::{StorageHandle, SubCallOutput, SubCallStatus};
-use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
+use outbe_system_common::addresses::{PAYNOTE_ADDRESS, VAULT_ROUTER_ADDRESS};
 use outbe_vaultrouter::{
     precompile::IVaultRouter::{self, StablecoinSource},
     test_support::{register_source, register_vault},
 };
+use outbe_zk::codec::field_to_b256;
 
 sol! {
     interface IEurFixture {
@@ -61,6 +66,12 @@ pub trait Rail: Copy + Debug + Sized {
     fn quote(self, world: &mut World<Self>) -> Quote;
 
     fn settle_call(self, id: U256, snapshot_id: U256, cost: U256) -> Bytes;
+
+    /// Settles the entity by spending the PayNote `proof`.
+    fn paynote_call(self, id: U256, proof: Bytes) -> Bytes;
+
+    /// The domain, target and units a PayNote proof for the entity binds.
+    fn paynote_statement(self, id: U256) -> (SettlementDomain, B256, U256);
 
     fn assert_settled(self, world: &World<Self>);
 
@@ -115,6 +126,7 @@ impl<R: Rail> World<R> {
             if registered {
                 register_source(&storage, R::FACTORY, R::SOURCE).unwrap();
             }
+            register_source(&storage, PAYNOTE_ADDRESS, StablecoinSource::PayNoteDeposit).unwrap();
             let seeded = rail.seed(&storage, issuance_currency);
             if issuance_currency != 840 {
                 seed_trailing_vwap_window(
@@ -414,4 +426,106 @@ pub fn the_payer_cannot_reenter_settlement_during_transfer<R: Rail>(rail: R) {
     world.succeeds(out);
     assert!(world.view(ASSET, IFixture::callbackRejectedCall {}));
     assert_eq!(world.balances(), world.paid_balances(), "{rail:?}");
+}
+
+/// A deposited PayNote pays exactly the cost once, relayed by anyone. The pool routes
+/// the spent amount into the vault and keeps the change. A proof bound to another
+/// statement, a replay and a direct `consume` all revert and move nothing.
+pub fn a_paynote_pays_exactly_the_cost_once<R: Rail>(rail: R) {
+    let mut world = World::new(rail, THIRD_PARTY, true);
+    let change = U256::from(5);
+    let deposit = world.cost + change;
+    let paid = note(CHAIN_ID, 23, ASSET, deposit);
+    world.ok(
+        OWNER,
+        ASSET,
+        IFixture::mintCall {
+            account: THIRD_PARTY,
+            amount: deposit,
+        },
+    );
+    world.ok(
+        THIRD_PARTY,
+        ASSET,
+        IFixture::approveCall {
+            spender: PAYNOTE_ADDRESS,
+            amount: deposit,
+        },
+    );
+    world.ok(
+        THIRD_PARTY,
+        PAYNOTE_ADDRESS,
+        IPayNote::depositCall {
+            asset: ASSET,
+            amount: deposit,
+            noteSn: field_to_b256(&paid.serial).unwrap(),
+        },
+    );
+    let mut tree = outbe_paynote::client::new_tree(CHAIN_ID).unwrap();
+    tree.append(paid.commitment).unwrap();
+    let nullifier = field_to_b256(&paid.nullifier).unwrap();
+    let (domain, target, units) = rail.paynote_statement(world.id);
+    let snapshot_id = world.snapshot_id;
+    let bound = |target| settlement_context(domain, target, units, snapshot_id).unwrap();
+    let vault_balance =
+        |world: &mut World<R>| world.view(ASSET, IFixture::balanceOfCall { account: VAULT });
+    let vault_before = vault_balance(&mut world);
+
+    let stray = spend_proof(
+        CHAIN_ID,
+        &tree,
+        0,
+        &paid,
+        bound(B256::repeat_byte(9)),
+        world.cost,
+    );
+    let id = world.id;
+    let out = world.call(
+        OWNER,
+        R::FACTORY,
+        rail.paynote_call(id, stray.into()),
+        false,
+    );
+    assert!(!matches!(out.status, SubCallStatus::Success), "{rail:?}");
+    assert!(!world.view(PAYNOTE_ADDRESS, IPayNote::isSpentCall { nullifier }));
+    assert_eq!(vault_balance(&mut world), vault_before, "{rail:?}");
+
+    let proof: Bytes = spend_proof(CHAIN_ID, &tree, 0, &paid, bound(target), world.cost).into();
+    let direct = world.call(
+        OWNER,
+        PAYNOTE_ADDRESS,
+        IPayNote::consumeCall {
+            proof: proof.clone(),
+        }
+        .abi_encode()
+        .into(),
+        false,
+    );
+    assert!(!matches!(direct.status, SubCallStatus::Success), "{rail:?}");
+
+    let out = world.call(
+        OWNER,
+        R::FACTORY,
+        rail.paynote_call(id, proof.clone()),
+        false,
+    );
+    world.succeeds(out);
+    rail.assert_settled(&world);
+    rail.assert_kept_by_owner(&mut world);
+    assert!(world.view(PAYNOTE_ADDRESS, IPayNote::isSpentCall { nullifier }));
+    let cost = world.cost;
+    assert_eq!(vault_balance(&mut world), vault_before + cost, "{rail:?}");
+    assert_eq!(
+        world.view(
+            ASSET,
+            IFixture::balanceOfCall {
+                account: PAYNOTE_ADDRESS
+            }
+        ),
+        change,
+        "{rail:?}"
+    );
+
+    let replay = world.call(OWNER, R::FACTORY, rail.paynote_call(id, proof), false);
+    assert!(!matches!(replay.status, SubCallStatus::Success), "{rail:?}");
 }

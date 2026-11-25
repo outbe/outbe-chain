@@ -17,11 +17,11 @@
 //!
 //! Notes are bearer instruments: spend authority is knowledge of the note spend
 //! key, not an address. The proof's `context` word is an opaque settlement
-//! statement. The caller recomputes it. The crate exposes spending only as
-//! [`api::consume`], an in-process Rust entry point for other precompile
-//! modules. That entry point is not on the Solidity ABI. It routes the spent
-//! amount from the pool through VaultRouter into the reserve vault of the
-//! asset. Then it returns the validated claim. The caller settles the claim.
+//! statement. The caller recomputes it. Only the settlement factories may
+//! spend, through `IPayNote.consume`. They reach it with [`api::consume`] or
+//! [`api::settle`]. A spend routes the spent amount from the pool through
+//! VaultRouter into the reserve vault of the asset. Then it returns the
+//! validated claim. The caller settles the claim.
 //!
 //! The hash/tree formulas mirror the frozen noir circuit's `paynote.nr`. The
 //! runtime operates over persistent EVM storage.

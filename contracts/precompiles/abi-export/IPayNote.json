@@ -1,6 +1,40 @@
 [
   {
     "type": "function",
+    "name": "consume",
+    "inputs": [
+      {
+        "name": "proof",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "spendAmount",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "context",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      },
+      {
+        "name": "nullifier",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "currentRoot",
     "inputs": [],
     "outputs": [

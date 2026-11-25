@@ -2,12 +2,13 @@
 #[path = "support/factory_erc20_settlement.rs"]
 mod settlement;
 
-use alloy_primitives::{Address, Bytes, FixedBytes, U256};
+use alloy_primitives::{Address, Bytes, FixedBytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
 use outbe_core_common::addresses::INTEX_NFT1155_ADDRESS;
 use outbe_intex::precompile::IIntex;
 use outbe_intex::{CreateSeriesParams, IntexCallTrigger, SeriesId};
 use outbe_intexfactory::precompile::IIntexFactory;
+use outbe_paynote::api::SettlementDomain;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::{INTEX_ADDRESS, INTEX_FACTORY_ADDRESS};
 use outbe_system_common::time::EmissionDate;
@@ -98,6 +99,25 @@ impl Rail for Intex {
         .into()
     }
 
+    fn paynote_call(self, _id: U256, proof: Bytes) -> Bytes {
+        IIntexFactory::settleIntexWithPayNoteCall {
+            intexId: outbe_intex::intex_id(SeriesId::from(FixedBytes(SERIES))),
+            owner: OWNER,
+            units: U256::from(UNITS),
+            payNoteProof: proof,
+        }
+        .abi_encode()
+        .into()
+    }
+
+    fn paynote_statement(self, _id: U256) -> (SettlementDomain, B256, U256) {
+        (
+            SettlementDomain::Intex,
+            outbe_paynote::api::intex_holding_target(&SERIES, OWNER),
+            U256::from(UNITS),
+        )
+    }
+
     fn assert_settled(self, world: &World<Self>) {
         let settled: Vec<_> = world
             .evm
@@ -161,4 +181,9 @@ fn optional_empty_token_returns_are_accepted() {
 #[test]
 fn the_payer_cannot_reenter_settlement_during_transfer() {
     settlement::the_payer_cannot_reenter_settlement_during_transfer(Intex);
+}
+
+#[test]
+fn a_paynote_pays_exactly_the_cost_once() {
+    settlement::a_paynote_pays_exactly_the_cost_once(Intex);
 }

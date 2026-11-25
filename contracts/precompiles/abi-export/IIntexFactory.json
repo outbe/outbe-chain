@@ -264,6 +264,34 @@
     "stateMutability": "nonpayable"
   },
   {
+    "type": "function",
+    "name": "settleIntexWithPayNote",
+    "inputs": [
+      {
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "units",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "payNoteProof",
+        "type": "bytes",
+        "internalType": "bytes"
+      }
+    ],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
     "type": "event",
     "name": "IntexAuctionProceedsBurned",
     "inputs": [

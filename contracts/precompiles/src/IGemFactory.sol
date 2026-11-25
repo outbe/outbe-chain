@@ -60,6 +60,13 @@ interface IGemFactory {
     ///        allowance or balance is below it reverts `InsufficientFunds`; a cost above
     ///        it reverts `CostAboveCap`. The call takes only the cost.
     function settleGem(uint256 gemId, address asset, uint256 snapshotId, uint256 amountCapMinor) external;
+    /// @notice Settle a gem by spending a PayNote for its cost. Any caller may pay.
+    ///         The gem stays with its owner.
+    /// @dev The pool routes the spent amount into the reserve vault of the asset.
+    /// @param payNoteProof `outbe.paynote` spend proof. Must be bound to this gem and
+    ///        the snapshot `quoteSettlement` names (zero on the reference rail),
+    ///        carry a settlement asset the gem accepts, and spend exactly the cost.
+    function settleGemWithPayNote(uint256 gemId, bytes calldata payNoteProof) external;
     /// @notice Burn a settled gem and mint confidential Promis to its owner,
     ///         gated by off-chain proof of work. Any caller may submit. The owner's Promis
     ///         modify key authorizes the call: `mac = HMAC(modifyKey, op-preimage)`.

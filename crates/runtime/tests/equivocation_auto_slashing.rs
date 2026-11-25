@@ -29,7 +29,7 @@ async fn every_vote_conflict_reaches_the_real_pool_from_a_zero_balance_sender() 
     ] {
         let signer = Arc::new(OutbeEvmSigner::from_secret_bytes([1; 32])?);
         let seeded = seed(signer.address());
-        let (node, _runtime, _temp) = launch(&seeded, signer.clone()).await?;
+        let (node, runtime, _temp) = launch(&seeded, signer.clone()).await?;
         let mailbox = EquivocationEvidenceMailbox::new();
         mailbox.push(evidence(kind));
         let cancel = CancellationToken::new();
@@ -55,6 +55,7 @@ async fn every_vote_conflict_reaches_the_real_pool_from_a_zero_balance_sender() 
         assert_eq!(transaction.max_priority_fee_per_gas(), Some(0));
         cancel.cancel();
         tokio::time::timeout(Duration::from_secs(1), worker).await??;
+        support::shutdown(runtime).await?;
         support::execute(
             &seeded,
             transaction.to_consensus().into_inner(),
@@ -72,7 +73,7 @@ async fn every_vote_conflict_reaches_the_real_pool_from_a_zero_balance_sender() 
 #[tokio::test]
 async fn cancellation_interrupts_an_idle_mailbox_wait() -> eyre::Result<()> {
     let signer = Arc::new(OutbeEvmSigner::from_secret_bytes([1; 32])?);
-    let (node, _runtime, _temp) = launch(&seed(signer.address()), signer.clone()).await?;
+    let (node, runtime, _temp) = launch(&seed(signer.address()), signer.clone()).await?;
     let cancel = CancellationToken::new();
     let worker = spawn(
         node,
@@ -83,6 +84,7 @@ async fn cancellation_interrupts_an_idle_mailbox_wait() -> eyre::Result<()> {
     tokio::task::yield_now().await;
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(1), worker).await??;
+    support::shutdown(runtime).await?;
     Ok(())
 }
 
@@ -107,7 +109,7 @@ async fn reporter_ranking_excludes_the_accused_before_assigning_the_first_slot()
         .unwrap();
     let signer = Arc::new(signer);
     let seeded = seed(signer.address());
-    let (node, _runtime, _temp) = launch(&seeded, signer.clone()).await?;
+    let (node, runtime, _temp) = launch(&seeded, signer.clone()).await?;
     let mailbox = EquivocationEvidenceMailbox::new();
     mailbox.push(evidence(Kind::ConflictingFinalize));
     let cancel = CancellationToken::new();
@@ -130,6 +132,7 @@ async fn reporter_ranking_excludes_the_accused_before_assigning_the_first_slot()
     .await?;
     cancel.cancel();
     tokio::time::timeout(Duration::from_secs(1), worker).await??;
+    support::shutdown(runtime).await?;
     assert_eq!(
         node.pool.get_transactions_by_sender(signer.address()).len(),
         1
