@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn rolling_quorum_requires_four_validator_topology() {
         assert_eq!(simplex_quorum(4), 3);
-        assert!(4 - 1 >= simplex_quorum(4));
+        assert!(4 > simplex_quorum(4));
         assert!(3 - 1 < simplex_quorum(3));
         assert!(1 - 1 < simplex_quorum(1));
     }

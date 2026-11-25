@@ -6,6 +6,7 @@ pub mod doctor;
 pub mod lifecycle;
 pub mod prepare;
 mod remote;
+pub mod snapshot;
 pub mod start;
 pub mod status;
 pub mod upgrade;

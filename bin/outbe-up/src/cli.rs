@@ -120,6 +120,56 @@ enum NetworkCommand {
         #[arg(long)]
         support_bundle: Option<PathBuf>,
     },
+    /// Create or validate a founder snapshot.
+    Snapshot(NetworkSnapshotArgs),
+}
+
+#[derive(Debug, Args)]
+struct NetworkSnapshotArgs {
+    #[command(subcommand)]
+    command: NetworkSnapshotCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum NetworkSnapshotCommand {
+    /// Create a signed snapshot on one founder, optionally downloading it.
+    Create {
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        founder: String,
+        #[arg(long)]
+        output: String,
+        #[arg(long)]
+        download: Option<PathBuf>,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+        #[arg(long)]
+        skip_dkg_guard: bool,
+        #[arg(long)]
+        skip_quorum_guard: bool,
+    },
+    /// Validate a signed snapshot on one founder.
+    Validate {
+        #[arg(long)]
+        artifacts: PathBuf,
+        #[arg(long)]
+        founder: String,
+        #[arg(long)]
+        archive: String,
+        #[arg(long)]
+        expected_signer: Option<String>,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+        #[arg(long)]
+        skip_dkg_guard: bool,
+        #[arg(long)]
+        skip_quorum_guard: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -179,6 +229,44 @@ enum ValidatorCommand {
         /// Write a private, secret-free support archive to this path.
         #[arg(long)]
         support_bundle: Option<PathBuf>,
+    },
+    /// Create or validate a signed snapshot for this validator.
+    Snapshot(ValidatorSnapshotArgs),
+    /// Recover a jailed validator and confirm it for the next DKG.
+    Unjail,
+    /// Deactivate, begin unbonding, and stop this validator.
+    Exit,
+    /// Show validator exit and unbonding state.
+    ExitStatus,
+    /// Claim stake after the unbonding period has completed.
+    Claim,
+}
+
+#[derive(Debug, Args)]
+struct ValidatorSnapshotArgs {
+    #[command(subcommand)]
+    command: ValidatorSnapshotCommand,
+}
+
+#[derive(Debug, Subcommand)]
+enum ValidatorSnapshotCommand {
+    /// Create a signed offline snapshot and return the validator to its prior state.
+    Create {
+        #[arg(long)]
+        output: PathBuf,
+        #[arg(long)]
+        signing_key: Option<PathBuf>,
+        #[arg(long)]
+        skip_dkg_guard: bool,
+    },
+    /// Validate a signed snapshot and return the validator to its prior state.
+    Validate {
+        #[arg(long)]
+        archive: PathBuf,
+        #[arg(long)]
+        expected_signer: Option<String>,
+        #[arg(long)]
+        skip_dkg_guard: bool,
     },
 }
 
@@ -287,6 +375,56 @@ impl Cli {
                     network::doctor::run(&artifacts, ssh_key.as_deref(), support_bundle.as_deref())
                         .await
                 }
+                NetworkCommand::Snapshot(args) => match args.command {
+                    NetworkSnapshotCommand::Create {
+                        artifacts,
+                        founder,
+                        output,
+                        download,
+                        ssh_key,
+                        timeout,
+                        skip_dkg_guard,
+                        skip_quorum_guard,
+                    } => {
+                        network::snapshot::create(
+                            network::snapshot::RemoteSnapshotOptions {
+                                artifacts: &artifacts,
+                                founder: &founder,
+                                archive: &output,
+                                ssh_key: ssh_key.as_deref(),
+                                timeout: std::time::Duration::from_secs(timeout),
+                                skip_dkg_guard,
+                                skip_quorum_guard,
+                            },
+                            download.as_deref(),
+                        )
+                        .await
+                    }
+                    NetworkSnapshotCommand::Validate {
+                        artifacts,
+                        founder,
+                        archive,
+                        expected_signer,
+                        ssh_key,
+                        timeout,
+                        skip_dkg_guard,
+                        skip_quorum_guard,
+                    } => {
+                        network::snapshot::validate(
+                            network::snapshot::RemoteSnapshotOptions {
+                                artifacts: &artifacts,
+                                founder: &founder,
+                                archive: &archive,
+                                ssh_key: ssh_key.as_deref(),
+                                timeout: std::time::Duration::from_secs(timeout),
+                                skip_dkg_guard,
+                                skip_quorum_guard,
+                            },
+                            expected_signer.as_deref(),
+                        )
+                        .await
+                    }
+                },
             },
             Command::Validator(args) => match args.command {
                 ValidatorCommand::ConfigExample { output } => match output {
@@ -318,6 +456,32 @@ impl Cli {
                 ValidatorCommand::Doctor { support_bundle } => {
                     validator::doctor::run(support_bundle.as_deref()).await
                 }
+                ValidatorCommand::Snapshot(args) => match args.command {
+                    ValidatorSnapshotCommand::Create {
+                        output,
+                        signing_key,
+                        skip_dkg_guard,
+                    } => {
+                        validator::snapshot::create(&output, signing_key.as_deref(), skip_dkg_guard)
+                            .await
+                    }
+                    ValidatorSnapshotCommand::Validate {
+                        archive,
+                        expected_signer,
+                        skip_dkg_guard,
+                    } => {
+                        validator::snapshot::validate(
+                            &archive,
+                            expected_signer.as_deref(),
+                            skip_dkg_guard,
+                        )
+                        .await
+                    }
+                },
+                ValidatorCommand::Unjail => validator::onchain::unjail().await,
+                ValidatorCommand::Exit => validator::onchain::exit().await,
+                ValidatorCommand::ExitStatus => validator::onchain::exit_status().await,
+                ValidatorCommand::Claim => validator::onchain::claim().await,
             },
             Command::Internal(args) => match args.command {
                 InternalCommand::Feeder => validator::service::feeder(),
@@ -362,6 +526,19 @@ mod tests {
             "network.yaml",
             "--output",
             "network-artifacts",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "network",
+            "snapshot",
+            "create",
+            "--artifacts",
+            "network-final",
+            "--founder",
+            "validator-0",
+            "--output",
+            "/opt/outbe-chain/snapshots/node.tar.zst",
         ])
         .is_ok());
         assert!(Cli::try_parse_from([
@@ -423,6 +600,18 @@ mod tests {
             "validator.yaml",
         ])
         .is_ok());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "validator",
+            "snapshot",
+            "create",
+            "--output",
+            "/opt/outbe-chain/snapshots/node.tar.zst",
+        ])
+        .is_ok());
+        for command in ["unjail", "exit", "exit-status", "claim"] {
+            assert!(Cli::try_parse_from(["outbe-up", "validator", command]).is_ok());
+        }
         assert!(Cli::try_parse_from([
             "outbe-up",
             "validator",

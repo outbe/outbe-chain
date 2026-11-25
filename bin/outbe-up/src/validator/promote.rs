@@ -206,7 +206,7 @@ async fn ensure_feeder_delegate(
     Ok(())
 }
 
-fn run_outbe_cli(args: &[&str]) -> Result<String> {
+pub(crate) fn run_outbe_cli(args: &[&str]) -> Result<String> {
     let journal = Journal::load()?;
     let binary = Path::new(process::ROOT).join("outbe-cli");
     let mut full = vec![
@@ -223,7 +223,7 @@ fn run_outbe_cli(args: &[&str]) -> Result<String> {
     process::capture("runuser", &full)
 }
 
-fn transaction_hash(output: &str) -> Result<String> {
+pub(crate) fn transaction_hash(output: &str) -> Result<String> {
     output
         .split_whitespace()
         .find(|word| {

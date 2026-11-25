@@ -13,6 +13,7 @@ pub mod hyperlane;
 pub mod install;
 pub mod journal;
 pub mod maintenance;
+pub mod onchain;
 pub mod prepare;
 pub mod promote;
 pub mod rpc;

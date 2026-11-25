@@ -86,6 +86,7 @@ impl ConsensusStatus {
 pub struct ValidatorRecord {
     pub registered: bool,
     pub status: u8,
+    pub stake: U256,
     pub has_bls_share: bool,
 }
 
@@ -173,8 +174,15 @@ impl RpcClient {
         Ok(ValidatorRecord {
             registered: !record.validatorAddress.is_zero(),
             status: record.status,
+            stake: record.stake,
             has_bls_share: record.hasBLSShare,
         })
+    }
+
+    pub async fn is_consensus_participant(&self, address: Address) -> Result<bool> {
+        let call = IValidatorSet::isConsensusParticipantCall { addr: address };
+        let result = self.eth_call(VALIDATOR_SET, &call.abi_encode()).await?;
+        Ok(IValidatorSet::isConsensusParticipantCall::abi_decode_returns(&result)?)
     }
 
     pub async fn validator_delegate(&self, validator: Address, role: u8) -> Result<Address> {

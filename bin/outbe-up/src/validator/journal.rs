@@ -44,6 +44,16 @@ pub struct Journal {
     #[serde(default)]
     pub confirm_ready_transaction: Option<String>,
     #[serde(default)]
+    pub unjail_transaction: Option<String>,
+    #[serde(default)]
+    pub unjail_confirm_ready_transaction: Option<String>,
+    #[serde(default)]
+    pub deactivate_transaction: Option<String>,
+    #[serde(default)]
+    pub unstake_transaction: Option<String>,
+    #[serde(default)]
+    pub claim_transaction: Option<String>,
+    #[serde(default)]
     pub snapshot_sha256: Option<String>,
     #[serde(default)]
     pub snapshot_restore_in_progress: Option<String>,
@@ -69,6 +79,11 @@ impl Journal {
             hyperlane_funding_transaction: None,
             hyperlane_signer_transaction: None,
             confirm_ready_transaction: None,
+            unjail_transaction: None,
+            unjail_confirm_ready_transaction: None,
+            deactivate_transaction: None,
+            unstake_transaction: None,
+            claim_transaction: None,
             snapshot_sha256: None,
             snapshot_restore_in_progress: None,
             snapshot_finalized_height: None,

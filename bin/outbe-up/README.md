@@ -19,6 +19,11 @@ outbe-up network build \
 outbe-up network prepare --artifacts network-artifacts [--ssh-key ~/.ssh/operator]
 outbe-up network start --artifacts network-artifacts [--ssh-key ~/.ssh/operator]
 outbe-up network status --artifacts network-artifacts [--ssh-key ~/.ssh/operator] [--watch]
+outbe-up network stop --artifacts network-artifacts [--ssh-key ~/.ssh/operator]
+outbe-up network restart --artifacts network-artifacts [--ssh-key ~/.ssh/operator]
+outbe-up network upgrade --artifacts network-artifacts \
+  --software-bundle outbe-software-bundle-....tar.zst [--ssh-key ~/.ssh/operator]
+outbe-up network doctor --artifacts network-artifacts [--support-bundle support.tar.zst]
 ```
 
 `build` produces one fresh genesis, one founder identity per configured host, host-specific
@@ -30,6 +35,19 @@ Hyperlane signer, registers it with the controller, and waits for every Hyperlan
 become healthy.
 `prepare` refuses to reinstall over an active validator target; `start` can be repeated for the
 same artifacts.
+
+`stop` deliberately removes the persistent auto-start marker. `restart` and `upgrade` preserve it,
+operate one founder at a time, verify quorum before the first interruption, avoid DKG freeze windows,
+and wait for full health before continuing. Upgrade consumes a software bundle directly, replaces
+regular binaries atomically while retaining the preceding set in `/opt/outbe-chain/.previous`,
+regenerates systemd units from the new `outbe-up`, and stops the rollout instead of automatically
+running old binaries against data opened by a newer release. The first upgrade from a node that does
+not yet expose `maintenanceSafe` requires the explicit `--skip-dkg-guard` acknowledgement.
+
+Create a founder snapshot on its VM with `network snapshot create --founder ... --output
+/opt/outbe-chain/snapshots/<name>.tar.zst`; add `--download <local-path>` only when a local copy is
+actually needed. `network snapshot validate` runs the existing signed snapshot validator. Both
+commands check quorum, DKG safety, and recovery of the temporarily stopped founder.
 
 `network.yaml` v2 declares bare-metal `machines` and assigns every founder a private VM address.
 `build` groups founders by machine and assigns deterministic port offsets, so one public IP can
@@ -61,6 +79,17 @@ sudo outbe-up validator prepare --bundle <operator-bundle.tar.zst> --config <ope
 sudo outbe-up validator sync [--snapshot <snapshot.tar.zst>]
 sudo outbe-up validator promote
 sudo outbe-up validator status [--watch]
+sudo outbe-up validator stop
+sudo outbe-up validator start
+sudo outbe-up validator restart
+sudo outbe-up validator upgrade --software-bundle <software-bundle.tar.zst>
+sudo outbe-up validator doctor [--support-bundle support.tar.zst]
+sudo outbe-up validator snapshot create --output /opt/outbe-chain/snapshots/node.tar.zst
+sudo outbe-up validator snapshot validate --archive /opt/outbe-chain/snapshots/node.tar.zst
+sudo outbe-up validator unjail
+sudo outbe-up validator exit
+sudo outbe-up validator exit-status
+sudo outbe-up validator claim
 ```
 
 Run `outbe-up validator config-example` to print the embedded operator template, or add
@@ -87,3 +116,16 @@ founding flows; network-specific values remain in the generated `/opt/outbe-chai
 All persistent validator data, keys, lifecycle state, Hyperlane state, and canonical systemd unit
 files live under `/opt/outbe-chain`, so one persistent mount covers the complete installation.
 `/etc/systemd/system` contains only links to those units, and `/run` remains ephemeral.
+
+`validator stop` disables automatic start across VM reboots; transient `restart`, `upgrade`, and
+snapshot operations do not change that persistent policy. `validator snapshot create` checks free
+space and uses the existing signed snapshot format; `snapshot validate` performs the existing native
+validation. `doctor` is read-only. Its optional private support archive contains only a fixed list of
+public configs, canonical unit files, status output, and bounded journald logs; key and operator-state
+directories are never traversed.
+
+For on-chain maintenance, `validator unjail` requires a synchronized resident validator, submits
+unjail, and confirms readiness for the next DKG. `validator exit` deactivates an active validator,
+waits until it is no longer a consensus participant, starts unbonding, then stops and disables the
+services. It does not wait through the unbonding period; use `validator exit-status` and later
+`validator claim`.

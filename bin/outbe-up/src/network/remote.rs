@@ -204,6 +204,29 @@ impl SshOptions {
         Ok(())
     }
 
+    pub(super) fn copy_from(
+        &self,
+        founder: &FounderArtifact,
+        source: &str,
+        destination: &Path,
+    ) -> Result<()> {
+        let mut process = Command::new("scp");
+        process.args(["-q", "-P", "22"]);
+        self.transport_args(&mut process, founder);
+        if let Some(ssh_key) = &self.ssh_key {
+            process.arg("-i").arg(ssh_key);
+        }
+        process.arg(format!(
+            "{}@{}:{source}",
+            founder.vm_user,
+            scp_host(&founder.private_ip.to_string())
+        ));
+        process.arg(destination);
+        let status = process.status().wrap_err("run scp")?;
+        ensure!(status.success(), "SCP download failed for {}", founder.name);
+        Ok(())
+    }
+
     fn ssh_args(&self, process: &mut Command, founder: &FounderArtifact) {
         process.args(["-p", "22"]);
         self.transport_args(process, founder);
