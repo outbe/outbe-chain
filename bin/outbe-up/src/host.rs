@@ -1,14 +1,16 @@
-//! Thin local CLI wrapper for `outbe-up host status|setup|nat|reserve|release|publish`.
+//! Thin local CLI wrapper for `outbe-up host status|setup|nat|reserve|release|publish|check`.
 //!
-//! Strictly local: uses only `outbe-operator-vm`, with zero SSH or remote dependencies.
+//! Strictly local and strictly read-only: uses only `outbe-operator-vm`, with zero SSH,
+//! zero remote dependencies, and zero mutations to host networking/DHCP/firewall configuration.
 
 use std::{net::Ipv4Addr, path::PathBuf};
 
 use eyre::{bail, Context, Result};
 use outbe_operator_vm::{
     host::{
-        evaluate_host_setup, inspect_host_status, plan_host_publish, release_local_vm_dhcp,
-        reserve_local_vm_dhcp, run_local_host_nat, HostEnv, DEFAULT_BRIDGE_NAME,
+        check_local_vm_host, evaluate_host_setup, inspect_host_status, plan_host_publish,
+        plan_local_host_nat, release_local_vm_dhcp, reserve_local_vm_dhcp, HostEnv,
+        DEFAULT_BRIDGE_NAME,
     },
     local::{default_state_dir, expand_tilde, resolve_vmm_paths, LocalVmStore},
     vmm::{LocalUnixVmmTransport, VmmClient},
@@ -35,8 +37,6 @@ pub struct NatArgs {
     pub bridge: Option<String>,
     pub uplink: Option<String>,
     pub remove: bool,
-    pub dry_run: bool,
-    pub force: bool,
     pub vmm_socket: Option<PathBuf>,
     pub vmm_home: Option<PathBuf>,
     pub sys_root: Option<PathBuf>,
@@ -46,12 +46,10 @@ pub struct NatArgs {
 pub struct ReserveArgs {
     pub vm: String,
     pub ip: Option<Ipv4Addr>,
-    pub apply: bool,
     pub bridge: Option<String>,
     pub vmm_socket: Option<PathBuf>,
     pub vmm_home: Option<PathBuf>,
     pub state_dir: Option<PathBuf>,
-    pub fix_permissions: bool,
     pub sys_root: Option<PathBuf>,
     pub expected_hosts_owner: Option<String>,
     pub json: bool,
@@ -59,12 +57,25 @@ pub struct ReserveArgs {
 
 pub struct ReleaseArgs {
     pub vm: String,
-    pub apply: bool,
     pub bridge: Option<String>,
     pub vmm_socket: Option<PathBuf>,
     pub vmm_home: Option<PathBuf>,
     pub state_dir: Option<PathBuf>,
-    pub fix_permissions: bool,
+    pub sys_root: Option<PathBuf>,
+    pub expected_hosts_owner: Option<String>,
+    pub json: bool,
+}
+
+pub struct CheckArgs {
+    pub vm: String,
+    pub ip: Option<Ipv4Addr>,
+    pub ports: Vec<String>,
+    pub sources: Vec<String>,
+    pub public_ip: Option<Ipv4Addr>,
+    pub bridge: Option<String>,
+    pub vmm_socket: Option<PathBuf>,
+    pub vmm_home: Option<PathBuf>,
+    pub state_dir: Option<PathBuf>,
     pub sys_root: Option<PathBuf>,
     pub expected_hosts_owner: Option<String>,
     pub json: bool,
@@ -338,26 +349,32 @@ pub fn nat(args: NatArgs) -> Result<()> {
             }
         }
     };
-    let report = run_local_host_nat(
-        &bridge,
-        args.uplink.as_deref(),
-        args.remove,
-        args.dry_run,
-        args.force,
-        &env,
-    )?;
+    let report = plan_local_host_nat(&bridge, args.uplink.as_deref(), args.remove, &env)?;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         println!(
-            "Host NAT ({}, bridge={}, outcome={}):",
+            "Host NAT ({}, bridge={}, outcome={}) [read-only; zero writes]:",
             report.action, report.bridge, report.outcome
         );
         println!("  {}", report.detail);
+        for warning in &report.warnings {
+            println!("  Warning: {warning}");
+        }
         if let Some(ruleset) = &report.rendered_ruleset {
-            if args.dry_run {
-                println!("\nPlanned ruleset:\n{ruleset}");
+            println!("\nRecommended nftables ruleset:\n{ruleset}");
+        }
+        if let Some(unit) = &report.rendered_unit {
+            println!("Recommended systemd unit:\n{unit}");
+        }
+        if let Some(sysctl) = &report.rendered_sysctl {
+            println!("Recommended sysctl drop-in:\n{sysctl}");
+        }
+        if !report.recommended_commands.is_empty() {
+            println!("Recommended command(s):");
+            for (idx, cmd) in report.recommended_commands.iter().enumerate() {
+                println!("  {}. {cmd}", idx + 1);
             }
         }
     }
@@ -366,7 +383,7 @@ pub fn nat(args: NatArgs) -> Result<()> {
 
 pub fn reserve(args: ReserveArgs) -> Result<()> {
     let (vmm, _) = open_vmm(args.vmm_socket.as_ref(), args.vmm_home.as_ref())?;
-    let store = open_store(args.state_dir.as_ref(), args.fix_permissions && args.apply)?;
+    let store = open_store(args.state_dir.as_ref(), false)?;
     let owner_override = parse_owner_pair(args.expected_hosts_owner.as_deref())?;
     let env = HostEnv::from_sys_root(args.sys_root.as_deref(), owner_override);
 
@@ -376,7 +393,6 @@ pub fn reserve(args: ReserveArgs) -> Result<()> {
         &args.vm,
         args.ip,
         args.bridge.as_deref(),
-        args.apply,
         &env,
     )?;
 
@@ -385,55 +401,32 @@ pub fn reserve(args: ReserveArgs) -> Result<()> {
         return Ok(());
     }
 
-    if !report.applied {
-        println!(
-            "DHCP reservation preview for VM `{}` ({}) [read-only; no files modified]:",
-            report.vm, report.vm_id
-        );
-        println!("  hosts file:  {}", report.hosts_file.display());
-        println!("  DHCP unit:   {}", report.dhcp_unit);
-        println!(
-            "  status:      {}",
-            if report.already_present {
-                "already present in hosts file"
-            } else {
-                "not yet written"
-            }
-        );
-        println!(
-            "\nManaged block to add to {}:\n{}",
-            report.hosts_file.display(),
-            report.block_content
-        );
-        println!("Reload command:\n  {}", report.reload_command);
-        println!(
-            "\nRe-run with `--apply` to write `{}` via locked CAS and run `{}`.",
-            report.block_marker, report.reload_command
-        );
-    } else if report.changed {
-        println!(
-            "Reserved {} -> {} for VM `{}` in {} and reloaded {}.",
-            report.mac,
-            report.ip,
-            report.vm,
-            report.hosts_file.display(),
-            report.dhcp_unit
-        );
-    } else {
-        println!(
-            "Reservation {} -> {} for VM `{}` is already present in {}; reloaded {} (no file change).",
-            report.mac,
-            report.ip,
-            report.vm,
-            report.hosts_file.display(),
-            report.dhcp_unit
-        );
-    }
+    println!(
+        "DHCP reservation recommendation for VM `{}` ({}) [read-only; zero writes]:",
+        report.vm, report.vm_id
+    );
+    println!("  hosts file:  {}", report.hosts_file.display());
+    println!("  DHCP unit:   {}", report.dhcp_unit);
+    println!(
+        "  status:      {}",
+        if report.already_present {
+            "already present in hosts file"
+        } else {
+            "not yet written"
+        }
+    );
+    println!(
+        "\nManaged block to add to {}:\n{}",
+        report.hosts_file.display(),
+        report.block_content
+    );
+    println!("Reload command:\n  {}", report.reload_command);
+    println!("\nNo files were modified or services reloaded (read-only).");
     Ok(())
 }
 
 pub fn release(args: ReleaseArgs) -> Result<()> {
-    let store = open_store(args.state_dir.as_ref(), args.fix_permissions && args.apply)?;
+    let store = open_store(args.state_dir.as_ref(), false)?;
     let owner_override = parse_owner_pair(args.expected_hosts_owner.as_deref())?;
     let env = HostEnv::from_sys_root(args.sys_root.as_deref(), owner_override);
     let bridge = match args.bridge {
@@ -453,50 +446,118 @@ pub fn release(args: ReleaseArgs) -> Result<()> {
         }
     };
 
-    let report = release_local_vm_dhcp(&store, &args.vm, bridge.as_deref(), args.apply, &env)?;
+    let report = release_local_vm_dhcp(&store, &args.vm, bridge.as_deref(), &env)?;
 
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
         return Ok(());
     }
 
-    if !report.applied {
+    println!(
+        "DHCP release recommendation for VM `{}` [read-only; zero writes]:",
+        report.vm
+    );
+    println!("  hosts file:  {}", report.hosts_file.display());
+    println!("  DHCP unit:   {}", report.dhcp_unit);
+    if let Some(block) = &report.existing_block {
         println!(
-            "DHCP release preview for VM `{}` [read-only; no files modified]:",
-            report.vm
+            "\nManaged block to remove from {}:\n{block}",
+            report.hosts_file.display()
         );
-        println!("  hosts file:  {}", report.hosts_file.display());
-        println!("  DHCP unit:   {}", report.dhcp_unit);
-        if let Some(block) = &report.existing_block {
-            println!(
-                "\nManaged block to remove from {}:\n{block}",
-                report.hosts_file.display()
-            );
-            println!("Reload command:\n  {}", report.reload_command);
-            println!(
-                "\nRe-run with `--apply` to remove `{}` via locked CAS and run `{}`.",
-                report.block_marker, report.reload_command
-            );
-        } else {
-            println!(
-                "  status:      no `{}` block present in {}",
-                report.block_marker,
-                report.hosts_file.display()
-            );
-        }
-    } else if report.changed {
-        println!(
-            "Removed `{}` from {} and reloaded {}.",
-            report.block_marker,
-            report.hosts_file.display(),
-            report.dhcp_unit
-        );
+        println!("Reload command:\n  {}", report.reload_command);
     } else {
         println!(
-            "No `{}` block present in {}; reloaded {} (no file change).",
+            "  status:      no `{}` block present in {}",
             report.block_marker,
-            report.hosts_file.display(),
-            report.dhcp_unit
+            report.hosts_file.display()
+        );
+    }
+    println!("\nNo files were modified or services reloaded (read-only).");
+    Ok(())
+}
+
+pub fn check(args: CheckArgs) -> Result<()> {
+    let (vmm, _) = open_vmm(args.vmm_socket.as_ref(), args.vmm_home.as_ref())?;
+    let store = open_store(args.state_dir.as_ref(), false)?;
+    let owner_override = parse_owner_pair(args.expected_hosts_owner.as_deref())?;
+    let env = HostEnv::from_sys_root(args.sys_root.as_deref(), owner_override);
+
+    let report = check_local_vm_host(
+        &store,
+        &vmm,
+        &args.vm,
+        args.ip,
+        &args.ports,
+        &args.sources,
+        args.public_ip,
+        args.bridge.as_deref(),
+        &env,
+    )?;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+    } else {
+        println!(
+            "Host check for VM `{}` ({}, mac={}, ip={}, bridge={}) [read-only; zero writes]:",
+            report.vm, report.vm_id, report.mac, report.ip, report.bridge
+        );
+        println!("  host_network_ok:    {}", report.host_network_ok);
+        println!("  dhcp_reserved:      {}", report.dhcp_reserved);
+        println!("  published_ports_ok: {}", report.published_ports_ok);
+        println!("  ready:              {}", report.ready);
+
+        if !report.conflicts.is_empty() {
+            println!("\nConflicts:");
+            for item in &report.conflicts {
+                println!("  - {item}");
+            }
+        }
+        if !report.missing.is_empty() {
+            println!("\nMissing prerequisites:");
+            for item in &report.missing {
+                println!("  - {item}");
+            }
+        }
+        if let Some(block) = &report.recommended_dhcp_block {
+            println!(
+                "\nRecommended DHCP reservation for {}:\n{block}",
+                report
+                    .hosts_file
+                    .as_ref()
+                    .map_or_else(|| "<dhcp-hosts>".to_owned(), |p| p.display().to_string())
+            );
+            if let Some(reload) = &report.recommended_dhcp_reload {
+                println!("Reload DHCP:\n  {reload}");
+            }
+        }
+        if !report.recommended_forward_rules.is_empty() {
+            println!("\nRecommended forward accept rule(s):");
+            for rule in &report.recommended_forward_rules {
+                println!("    {rule}");
+            }
+        }
+        if !report.recommended_prerouting_rules.is_empty() {
+            println!("\nRecommended prerouting DNAT rule(s):");
+            for rule in &report.recommended_prerouting_rules {
+                println!("    {rule}");
+            }
+        }
+        if !report.recommended_firewall_commands.is_empty() {
+            println!("\nApply firewall changes:");
+            for (idx, cmd) in report.recommended_firewall_commands.iter().enumerate() {
+                println!("  {}. {cmd}", idx + 1);
+            }
+        }
+    }
+
+    if !report.ready {
+        let mut reasons = Vec::new();
+        reasons.extend(report.conflicts.iter().cloned());
+        reasons.extend(report.missing.iter().cloned());
+        bail!(
+            "host prerequisites not satisfied for VM `{}`: {}",
+            report.vm,
+            reasons.join("; ")
         );
     }
     Ok(())

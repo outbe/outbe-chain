@@ -4,7 +4,7 @@ use std::{
     cell::RefCell,
     collections::{BTreeMap, BTreeSet},
     fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io::{self, Read, Seek, SeekFrom, Write},
     os::unix::fs::{OpenOptionsExt, PermissionsExt},
     path::{Component, Path, PathBuf},
     rc::Rc,
@@ -12,6 +12,7 @@ use std::{
 };
 
 use eyre::{bail, ensure, Context, Result};
+use rustix::fs::{openat, Mode, OFlags, CWD};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use walkdir::WalkDir;
@@ -309,6 +310,98 @@ pub fn verify_archive_and_extract_cancellable(
     )
 }
 
+/// Open a local archive path ONCE with `O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC`, refusing symlinks,
+/// non-regular files (including FIFOs without hanging), and files exceeding [`MAX_EXTRACTED_BYTES`].
+fn open_regular_archive_nofollow(path: &Path) -> Result<(File, fs::Metadata)> {
+    let fd = openat(
+        CWD,
+        path,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::NONBLOCK | OFlags::CLOEXEC,
+        Mode::empty(),
+    )
+    .map_err(|err| {
+        if err == rustix::io::Errno::LOOP {
+            eyre::eyre!("refusing symlink image archive: {}", path.display())
+        } else {
+            eyre::Report::new(err).wrap_err(format!("open image archive {}", path.display()))
+        }
+    })?;
+    let file = File::from(fd);
+    let meta = file
+        .metadata()
+        .wrap_err_with(|| format!("fstat image archive {}", path.display()))?;
+    ensure!(
+        meta.file_type().is_file(),
+        "refusing non-regular image archive: {}",
+        path.display()
+    );
+    ensure!(
+        meta.len() <= MAX_EXTRACTED_BYTES,
+        "image archive ({} bytes) exceeds maximum {MAX_EXTRACTED_BYTES} bytes",
+        meta.len()
+    );
+    Ok((file, meta))
+}
+
+fn sha256_reader_streaming_cancellable<R: Read>(
+    reader: &mut R,
+    label: &str,
+    cancel: &AtomicBool,
+    max_bytes: Option<u64>,
+) -> Result<String> {
+    let mut hasher = Sha256::new();
+    let mut buf = [0_u8; 64 * 1024];
+    let mut total: u64 = 0;
+    loop {
+        ensure!(
+            !cancel.load(Ordering::Relaxed),
+            "image verification canceled by signal"
+        );
+        let n = reader
+            .read(&mut buf)
+            .wrap_err_with(|| format!("read {label} for SHA-256"))?;
+        if n == 0 {
+            break;
+        }
+        total = total
+            .checked_add(n as u64)
+            .ok_or_else(|| eyre::eyre!("size overflow hashing {label}"))?;
+        if let Some(limit) = max_bytes {
+            ensure!(
+                total <= limit,
+                "image archive ({total} bytes) exceeds maximum {limit} bytes"
+            );
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Verify and extract from an ALREADY-OPEN regular [`File`] descriptor without reopening by path
+/// (eliminating TOCTOU between download/hash and extraction): `fstat` -> `seek(0)` -> SHA-256 ->
+/// `seek(0)` -> zstd/tar extraction on the exact same open FD.
+pub fn verify_archive_file_and_extract_cancellable(
+    file: &mut File,
+    label: &str,
+    expected_archive_sha256: &str,
+    expected_os_image_hash: Option<&str>,
+    dest_dir: &Path,
+    cancel: &AtomicBool,
+) -> Result<ImageArchiveManifest> {
+    verify_archive_file_and_extract_with_limits_and_hook(
+        file,
+        label,
+        expected_archive_sha256,
+        expected_os_image_hash,
+        dest_dir,
+        MAX_ARCHIVE_FILES,
+        MAX_EXTRACTED_BYTES,
+        MAX_ARCHIVE_HEADER_METADATA_BYTES,
+        cancel,
+        || Ok(()),
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 fn verify_archive_and_extract_with_limits(
     archive_path: &Path,
@@ -320,6 +413,72 @@ fn verify_archive_and_extract_with_limits(
     max_entry_meta_bytes: u64,
     cancel: &AtomicBool,
 ) -> Result<ImageArchiveManifest> {
+    verify_archive_and_extract_with_limits_and_hook(
+        archive_path,
+        expected_archive_sha256,
+        expected_os_image_hash,
+        dest_dir,
+        max_files,
+        max_extracted_bytes,
+        max_entry_meta_bytes,
+        cancel,
+        || Ok(()),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_archive_and_extract_with_limits_and_hook<F>(
+    archive_path: &Path,
+    expected_archive_sha256: &str,
+    expected_os_image_hash: Option<&str>,
+    dest_dir: &Path,
+    max_files: usize,
+    max_extracted_bytes: u64,
+    max_entry_meta_bytes: u64,
+    cancel: &AtomicBool,
+    after_hash_hook: F,
+) -> Result<ImageArchiveManifest>
+where
+    F: FnOnce() -> Result<()>,
+{
+    ensure!(
+        !cancel.load(Ordering::Relaxed),
+        "image archive verification canceled by signal"
+    );
+    // Open ONCE with O_NOFOLLOW | O_NONBLOCK and reuse the exact same FD for fstat, SHA-256, and
+    // extraction so swapping the path between phases cannot bypass verification.
+    let (mut file, _) = open_regular_archive_nofollow(archive_path)?;
+    let label = archive_path.display().to_string();
+    verify_archive_file_and_extract_with_limits_and_hook(
+        &mut file,
+        &label,
+        expected_archive_sha256,
+        expected_os_image_hash,
+        dest_dir,
+        max_files,
+        max_extracted_bytes,
+        max_entry_meta_bytes,
+        cancel,
+        after_hash_hook,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn verify_archive_file_and_extract_with_limits_and_hook<F>(
+    file: &mut File,
+    label: &str,
+    expected_archive_sha256: &str,
+    expected_os_image_hash: Option<&str>,
+    dest_dir: &Path,
+    max_files: usize,
+    max_extracted_bytes: u64,
+    max_entry_meta_bytes: u64,
+    cancel: &AtomicBool,
+    after_hash_hook: F,
+) -> Result<ImageArchiveManifest>
+where
+    F: FnOnce() -> Result<()>,
+{
     ensure!(
         !cancel.load(Ordering::Relaxed),
         "image archive verification canceled by signal"
@@ -329,12 +488,30 @@ fn verify_archive_and_extract_with_limits(
         .map(|h| normalize_sha256(h, "--os-image-hash"))
         .transpose()?;
 
-    // Verify-before-parse: hash raw downloaded bytes before touching zstd/tar.
-    let actual_archive = sha256_file_streaming_cancellable(archive_path, cancel)?;
+    let meta = file
+        .metadata()
+        .wrap_err_with(|| format!("fstat image archive {label}"))?;
+    ensure!(
+        meta.file_type().is_file(),
+        "refusing non-regular image archive: {label}"
+    );
+    ensure!(
+        meta.len() <= MAX_EXTRACTED_BYTES,
+        "image archive ({} bytes) exceeds maximum {MAX_EXTRACTED_BYTES} bytes",
+        meta.len()
+    );
+
+    // Verify-before-parse: hash raw bytes from this open FD before touching zstd/tar.
+    file.seek(SeekFrom::Start(0))
+        .wrap_err_with(|| format!("rewind image archive {label} before hashing"))?;
+    let actual_archive =
+        sha256_reader_streaming_cancellable(file, label, cancel, Some(MAX_EXTRACTED_BYTES))?;
     ensure!(
         actual_archive == expected_archive,
         "archive SHA-256 mismatch: expected {expected_archive}, got {actual_archive}"
     );
+
+    after_hash_hook()?;
 
     ensure!(
         dest_dir.is_dir(),
@@ -342,9 +519,10 @@ fn verify_archive_and_extract_with_limits(
         dest_dir.display()
     );
 
-    let file = File::open(archive_path)
-        .wrap_err_with(|| format!("open image archive {}", archive_path.display()))?;
-    let decoder = zstd::Decoder::new(file).wrap_err("open image archive zstd stream")?;
+    // Rewind the EXACT SAME open FD (never reopen by path) and extract from it.
+    file.seek(SeekFrom::Start(0))
+        .wrap_err_with(|| format!("rewind image archive {label} before extraction"))?;
+    let decoder = zstd::Decoder::new(&mut *file).wrap_err("open image archive zstd stream")?;
     // Allow manifest + tar framing headroom above file payload cap on the raw stream while still
     // bounding every decompressed byte before tar parses or allocates.
     let max_stream_bytes = max_extracted_bytes
@@ -1379,5 +1557,113 @@ mod tests {
         let err = pack_flavor_archive(&src, &meta, &dangling)
             .expect_err("dangling symlink output must be refused");
         assert!(err.to_string().contains("already exists"), "{err}");
+    }
+
+    #[test]
+    fn single_fd_verify_ignores_path_swap_between_hash_and_extract() {
+        let tmp = tempfile::tempdir().unwrap();
+        let digest = "2222222222222222".repeat(4);
+        let src = tmp.path().join("src");
+        build_sample_image_dir(&src, &digest);
+        let meta = ArchiveBuildMetadata {
+            flavor: Flavor::Dev,
+            source_commit: "a".repeat(40).leak(),
+            dstack_rev: "b".repeat(40).leak(),
+            overlay_commit: "c".repeat(40).leak(),
+        };
+        let archive = tmp.path().join("legit.tar.zst");
+        let (_, legit_sha) = pack_flavor_archive(&src, &meta, &archive).unwrap();
+
+        // Prepare an attacker file on disk to atomically swap into `archive` right after the
+        // hash phase and BEFORE extraction.
+        let evil_tmp = tmp.path().join("evil.tar.zst");
+        fs::write(&evil_tmp, b"ATTACKER-SWAPPED-NON-ZSTD-PAYLOAD").unwrap();
+
+        let dest = tmp.path().join("extracted");
+        fs::create_dir(&dest).unwrap();
+        let never = AtomicBool::new(false);
+        let archive_for_swap = archive.clone();
+        let evil_for_swap = evil_tmp.clone();
+
+        let manifest = verify_archive_and_extract_with_limits_and_hook(
+            &archive,
+            &legit_sha,
+            Some(&digest),
+            &dest,
+            MAX_ARCHIVE_FILES,
+            MAX_EXTRACTED_BYTES,
+            MAX_ARCHIVE_HEADER_METADATA_BYTES,
+            &never,
+            move || {
+                // Atomically swap the directory entry to a brand-new inode after hashing!
+                fs::rename(&evil_for_swap, &archive_for_swap)?;
+                Ok(())
+            },
+        )
+        .expect("single-FD extraction must read verified original FD despite path swap");
+
+        assert_eq!(manifest.os_image_hash, digest);
+        assert_eq!(
+            fs::read_to_string(dest.join("digest.txt")).unwrap().trim(),
+            digest
+        );
+        // Confirm the path on disk really was replaced with the attacker payload.
+        assert_eq!(
+            fs::read(&archive).unwrap(),
+            b"ATTACKER-SWAPPED-NON-ZSTD-PAYLOAD"
+        );
+    }
+
+    #[test]
+    fn verify_archive_refuses_symlink_directory_and_fifo_without_blocking() {
+        use std::process::Command;
+        use std::time::{Duration, Instant};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let digest = "3333333333333333".repeat(4);
+        let src = tmp.path().join("src");
+        build_sample_image_dir(&src, &digest);
+        let meta = ArchiveBuildMetadata {
+            flavor: Flavor::Dev,
+            source_commit: "a".repeat(40).leak(),
+            dstack_rev: "b".repeat(40).leak(),
+            overlay_commit: "c".repeat(40).leak(),
+        };
+        let real_archive = tmp.path().join("real.tar.zst");
+        let (_, sha) = pack_flavor_archive(&src, &meta, &real_archive).unwrap();
+
+        let dest = tmp.path().join("out");
+        fs::create_dir(&dest).unwrap();
+
+        // 1. Symlink to a valid archive -> refused via O_NOFOLLOW.
+        let link = tmp.path().join("link.tar.zst");
+        std::os::unix::fs::symlink(&real_archive, &link).unwrap();
+        let err = verify_archive_and_extract(&link, &sha, None, &dest)
+            .expect_err("symlink archive must be refused");
+        assert!(format!("{err:#}").contains("symlink"), "{err:#}");
+
+        // 2. Directory -> refused via fstat !is_file().
+        let dir = tmp.path().join("dir.tar.zst");
+        fs::create_dir(&dir).unwrap();
+        let err = verify_archive_and_extract(&dir, &sha, None, &dest)
+            .expect_err("directory archive must be refused");
+        assert!(format!("{err:#}").contains("non-regular"), "{err:#}");
+
+        // 3. FIFO -> refused immediately (O_NONBLOCK + fstat !is_file()) without hanging!
+        let fifo = tmp.path().join("pipe.tar.zst");
+        assert!(Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+        let start = Instant::now();
+        let err = verify_archive_and_extract(&fifo, &sha, None, &dest)
+            .expect_err("FIFO archive must be refused without blocking");
+        assert!(
+            start.elapsed() < Duration::from_secs(2),
+            "FIFO open took too long: {:?}",
+            start.elapsed()
+        );
+        assert!(format!("{err:#}").contains("non-regular"), "{err:#}");
     }
 }

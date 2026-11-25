@@ -22,7 +22,7 @@ pub struct Cli {
 enum Command {
     /// Prepare a VM data disk for a single node role.
     Disk(DiskArgs),
-    /// Inspect local VM host networking, manage NAT/DHCP reservations, and print firewall publish rules.
+    /// Inspect local VM host networking, verify prerequisites, and print NAT/DHCP/firewall recommendations (read-only).
     Host(Box<HostArgs>),
     /// Build, fetch, verify, list, and remove local Outbe guest OS images.
     Image(Box<ImageArgs>),
@@ -30,6 +30,12 @@ enum Command {
     Network(NetworkArgs),
     /// Prepare, synchronize, promote, and inspect a validator host.
     Validator(ValidatorArgs),
+    /// Print outbe-up package version and SHA-256 of the running executable.
+    Version {
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
     /// Build and manage Outbe VM data disks and instances.
     Vm(Box<VmArgs>),
     #[command(hide = true)]
@@ -154,7 +160,7 @@ enum HostCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Manage local host-side outbound NAT masquerade (no-op when broad foreign egress already exists).
+    /// Inspect local outbound NAT egress and print recommended nftables/sysctl rules (read-only; zero writes).
     Nat {
         /// Bridge interface name [default: VMM default_bridge or obr0].
         #[arg(long)]
@@ -162,15 +168,9 @@ enum HostCommand {
         /// Override the host uplink interface (defaults to the IPv4 default-route interface).
         #[arg(long)]
         uplink: Option<String>,
-        /// Remove only the outbe-up managed NAT table, unit, ruleset file, and sysctl drop-in.
+        /// Print recommended commands to remove outbe-up managed NAT artifacts (read-only).
         #[arg(long)]
         remove: bool,
-        /// Print preflight findings and planned ruleset without modifying the host.
-        #[arg(long)]
-        dry_run: bool,
-        /// Apply even when existing foreign egress is detected or foreign forward chains cannot be verified statically.
-        #[arg(long)]
-        force: bool,
         /// Local dstack VMM Unix socket path [default: ~/.dstack-vmm/run/vmm.sock].
         #[arg(long)]
         vmm_socket: Option<PathBuf>,
@@ -184,7 +184,7 @@ enum HostCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Print (or with `--apply`, write via locked CAS and reload) a static DHCP reservation for one local VM.
+    /// Validate conflicts and print the recommended static DHCP reservation block + reload command for one local VM (read-only; zero writes).
     Reserve {
         /// Local VM name recorded in the local VM state store.
         #[arg(long)]
@@ -192,9 +192,6 @@ enum HostCommand {
         /// Static IPv4 address within the bridge subnet (defaults to VM state `intended_ip`).
         #[arg(long)]
         ip: Option<Ipv4Addr>,
-        /// Apply the managed `# outbe-up:vm:<name>:begin..end` block via locked CAS and run `systemctl reload`.
-        #[arg(long)]
-        apply: bool,
         /// Bridge interface name [default: VM's recorded bridge].
         #[arg(long)]
         bridge: Option<String>,
@@ -207,9 +204,6 @@ enum HostCommand {
         /// Directory for local per-VM state files [default: ${XDG_STATE_HOME:-~/.local/state}/outbe-up].
         #[arg(long)]
         state_dir: Option<PathBuf>,
-        /// Tighten unsafe permissions on preexisting user-owned state directories/files (0700/0600).
-        #[arg(long)]
-        fix_permissions: bool,
         /// Override system root directory (for local integration tests only).
         #[arg(long, hide = true)]
         sys_root: Option<PathBuf>,
@@ -220,14 +214,11 @@ enum HostCommand {
         #[arg(long)]
         json: bool,
     },
-    /// Print (or with `--apply`, remove via locked CAS and reload) only this VM's managed DHCP reservation block.
+    /// Inspect and print the managed DHCP reservation block to remove + reload command for one local VM (read-only; zero writes).
     Release {
         /// Local VM name whose `# outbe-up:vm:<name>:begin..end` block to release.
         #[arg(long)]
         vm: String,
-        /// Remove the managed block via locked CAS and run `systemctl reload`.
-        #[arg(long)]
-        apply: bool,
         /// Bridge interface name [default: VM's recorded bridge or obr0].
         #[arg(long)]
         bridge: Option<String>,
@@ -240,9 +231,45 @@ enum HostCommand {
         /// Directory for local per-VM state files [default: ${XDG_STATE_HOME:-~/.local/state}/outbe-up].
         #[arg(long)]
         state_dir: Option<PathBuf>,
-        /// Tighten unsafe permissions on preexisting user-owned state directories/files (0700/0600).
+        /// Override system root directory (for local integration tests only).
+        #[arg(long, hide = true)]
+        sys_root: Option<PathBuf>,
+        /// Override expected uid:gid owner of dhcp-hosts (only effective with --sys-root in tests).
+        #[arg(long, hide = true)]
+        expected_hosts_owner: Option<String>,
+        /// Emit machine-readable JSON output.
         #[arg(long)]
-        fix_permissions: bool,
+        json: bool,
+    },
+    /// Verify (read-only) that host networking, static DHCP reservation, and optional published ports are configured for a VM.
+    Check {
+        /// Local VM name recorded in the local VM state store.
+        #[arg(long)]
+        vm: String,
+        /// Expected static IPv4 address within the bridge subnet (defaults to VM state `intended_ip`).
+        #[arg(long)]
+        ip: Option<Ipv4Addr>,
+        /// Published port mapping `<guest>[:<host>][/(tcp|udp)]` to verify in live nftables (repeatable).
+        #[arg(long = "port")]
+        ports: Vec<String>,
+        /// Expected allowed source IPv4 CIDR or address (repeatable; used for source checks and recommendations).
+        #[arg(long = "source")]
+        sources: Vec<String>,
+        /// Override the host public IPv4 address for DNAT matching.
+        #[arg(long)]
+        public_ip: Option<Ipv4Addr>,
+        /// Bridge interface name [default: VM's recorded bridge].
+        #[arg(long)]
+        bridge: Option<String>,
+        /// Local dstack VMM Unix socket path [default: ~/.dstack-vmm/run/vmm.sock].
+        #[arg(long)]
+        vmm_socket: Option<PathBuf>,
+        /// Local dstack VMM home directory [default: derived from --vmm-socket or ~/.dstack-vmm].
+        #[arg(long)]
+        vmm_home: Option<PathBuf>,
+        /// Directory for local per-VM state files [default: ${XDG_STATE_HOME:-~/.local/state}/outbe-up].
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
         /// Override system root directory (for local integration tests only).
         #[arg(long, hide = true)]
         sys_root: Option<PathBuf>,
@@ -379,6 +406,24 @@ enum ImageCommand {
         /// Allow plaintext http:// strictly to loopback addresses (for local integration tests only).
         #[arg(long, hide = true)]
         allow_insecure_loopback_http: bool,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Verify a local guest OS image `.tar.zst` archive by SHA-256 before extraction and publish it into `<vmm_home>/image/`.
+    Import {
+        /// Local `.tar.zst` guest OS image archive path.
+        #[arg(long)]
+        archive: PathBuf,
+        /// Expected 64-hex SHA-256 digest of the raw `.tar.zst` archive (verified before decompression).
+        #[arg(long)]
+        sha256: String,
+        /// Optional expected 64-hex `os_image_hash` (`digest.txt`) to cross-check against the archive manifest.
+        #[arg(long)]
+        os_image_hash: Option<String>,
+        /// Local dstack VMM home directory [default: ~/.dstack-vmm].
+        #[arg(long)]
+        vmm_home: Option<PathBuf>,
         /// Emit machine-readable JSON output.
         #[arg(long)]
         json: bool,
@@ -950,8 +995,6 @@ impl Cli {
                     bridge,
                     uplink,
                     remove,
-                    dry_run,
-                    force,
                     vmm_socket,
                     vmm_home,
                     sys_root,
@@ -960,8 +1003,6 @@ impl Cli {
                     bridge,
                     uplink,
                     remove,
-                    dry_run,
-                    force,
                     vmm_socket,
                     vmm_home,
                     sys_root,
@@ -970,47 +1011,66 @@ impl Cli {
                 HostCommand::Reserve {
                     vm,
                     ip,
-                    apply,
                     bridge,
                     vmm_socket,
                     vmm_home,
                     state_dir,
-                    fix_permissions,
                     sys_root,
                     expected_hosts_owner,
                     json,
                 } => host::reserve(host::ReserveArgs {
                     vm,
                     ip,
-                    apply,
                     bridge,
                     vmm_socket,
                     vmm_home,
                     state_dir,
-                    fix_permissions,
                     sys_root,
                     expected_hosts_owner,
                     json,
                 }),
                 HostCommand::Release {
                     vm,
-                    apply,
                     bridge,
                     vmm_socket,
                     vmm_home,
                     state_dir,
-                    fix_permissions,
                     sys_root,
                     expected_hosts_owner,
                     json,
                 } => host::release(host::ReleaseArgs {
                     vm,
-                    apply,
                     bridge,
                     vmm_socket,
                     vmm_home,
                     state_dir,
-                    fix_permissions,
+                    sys_root,
+                    expected_hosts_owner,
+                    json,
+                }),
+                HostCommand::Check {
+                    vm,
+                    ip,
+                    ports,
+                    sources,
+                    public_ip,
+                    bridge,
+                    vmm_socket,
+                    vmm_home,
+                    state_dir,
+                    sys_root,
+                    expected_hosts_owner,
+                    json,
+                } => host::check(host::CheckArgs {
+                    vm,
+                    ip,
+                    ports,
+                    sources,
+                    public_ip,
+                    bridge,
+                    vmm_socket,
+                    vmm_home,
+                    state_dir,
                     sys_root,
                     expected_hosts_owner,
                     json,
@@ -1040,6 +1100,7 @@ impl Cli {
                     json,
                 }),
             },
+            Command::Version { json } => run_version(json),
             Command::Image(args) => match args.command {
                 ImageCommand::Build {
                     source,
@@ -1088,6 +1149,22 @@ impl Cli {
                         vmm_home,
                         timeout_secs: timeout,
                         allow_insecure_loopback_http,
+                        json,
+                    })
+                    .await
+                }
+                ImageCommand::Import {
+                    archive,
+                    sha256,
+                    os_image_hash,
+                    vmm_home,
+                    json,
+                } => {
+                    image::import(image::ImportArgs {
+                        archive,
+                        sha256,
+                        os_image_hash,
+                        vmm_home,
                         json,
                     })
                     .await
@@ -1483,6 +1560,34 @@ impl Cli {
             },
         }
     }
+}
+
+#[derive(Debug, serde::Serialize)]
+struct VersionOutput {
+    name: &'static str,
+    version: &'static str,
+    binary_path: PathBuf,
+    binary_sha256: String,
+}
+
+fn run_version(json: bool) -> Result<()> {
+    let exe = std::env::current_exe()?;
+    let sha256 = vm_image::archive::sha256_file_streaming(&exe)?;
+    let out = VersionOutput {
+        name: env!("CARGO_PKG_NAME"),
+        version: env!("CARGO_PKG_VERSION"),
+        binary_path: exe,
+        binary_sha256: sha256,
+    };
+    if json {
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        println!(
+            "{} {} (sha256: {})",
+            out.name, out.version, out.binary_sha256
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2153,13 +2258,7 @@ mod tests {
         ])
         .is_ok());
         assert!(Cli::try_parse_from([
-            "outbe-up",
-            "host",
-            "nat",
-            "--bridge",
-            "obr0",
-            "--remove",
-            "--dry-run"
+            "outbe-up", "host", "nat", "--bridge", "obr0", "--remove", "--json"
         ])
         .is_ok());
         assert!(Cli::try_parse_from([
@@ -2170,14 +2269,48 @@ mod tests {
             "node-a",
             "--ip",
             "10.77.0.88",
-            "--apply",
             "--json"
         ])
         .is_ok());
+        assert!(
+            Cli::try_parse_from(["outbe-up", "host", "release", "--vm", "node-a", "--json"])
+                .is_ok()
+        );
+        // Host write flags (`--apply`, `--force`) are removed (all `outbe-up host ...` commands are strictly read-only).
+        assert!(
+            Cli::try_parse_from(["outbe-up", "host", "reserve", "--vm", "node-a", "--apply"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["outbe-up", "host", "release", "--vm", "node-a", "--apply"])
+                .is_err()
+        );
+        assert!(
+            Cli::try_parse_from(["outbe-up", "host", "nat", "--bridge", "obr0", "--force"])
+                .is_err()
+        );
         assert!(Cli::try_parse_from([
-            "outbe-up", "host", "release", "--vm", "node-a", "--apply", "--json"
+            "outbe-up",
+            "host",
+            "check",
+            "--vm",
+            "node-a",
+            "--ip",
+            "10.77.0.88",
+            "--port",
+            "30303:30313",
+            "--port",
+            "30303:30313/udp",
+            "--source",
+            "141.95.147.184/32",
+            "--public-ip",
+            "162.19.107.121",
+            "--json"
         ])
         .is_ok());
+        assert!(
+            Cli::try_parse_from(["outbe-up", "host", "check", "--vm", "node-a", "--json"]).is_ok()
+        );
         assert!(Cli::try_parse_from([
             "outbe-up",
             "host",

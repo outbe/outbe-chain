@@ -629,7 +629,7 @@ fn host_setup_is_zero_write_noop_on_configured_host_and_refuses_unconfigured_hos
 }
 
 #[test]
-fn host_nat_is_noop_on_amd_fixture_and_isolates_dry_run_and_remove() {
+fn host_nat_is_strictly_readonly_noop_or_prints_recommendations_and_remove_commands() {
     let amd = HostFixture::build("amd");
     let noop = Command::new(OUTBE_UP_BIN)
         .env("PATH", amd.path_env())
@@ -647,34 +647,47 @@ fn host_nat_is_noop_on_amd_fixture_and_isolates_dry_run_and_remove() {
     assert_eq!(j["outcome"], "no_op_existing_egress");
     assert_eq!(j["writes_performed"], 0);
     assert!(
+        j["recommended_commands"].as_array().unwrap().is_empty(),
+        "no-op should not recommend commands"
+    );
+    assert!(
         amd.mutations().is_empty(),
         "host nat no-op must perform zero writes"
     );
 
-    // Clean host without foreign egress: `--dry-run` renders ruleset with zero writes.
+    // Clean host without foreign egress: prints ruleset, unit, sysctl drop-in, and apply command with ZERO writes.
     let clean = HostFixture::build("clean_nat");
-    let dry = Command::new(OUTBE_UP_BIN)
+    let rec = Command::new(OUTBE_UP_BIN)
         .env("PATH", clean.path_env())
-        .args(["host", "nat", "--bridge", "obr0", "--dry-run", "--sys-root"])
+        .args(["host", "nat", "--bridge", "obr0", "--sys-root"])
         .arg(&clean.sys_root)
         .arg("--json")
         .output()
         .unwrap();
     assert!(
-        dry.status.success(),
-        "host nat dry-run failed:\n{}",
-        String::from_utf8_lossy(&dry.stderr)
+        rec.status.success(),
+        "host nat recommend failed:\n{}",
+        String::from_utf8_lossy(&rec.stderr)
     );
-    let dj: Value = serde_json::from_slice(&dry.stdout).unwrap();
-    assert_eq!(dj["outcome"], "dry_run");
+    let dj: Value = serde_json::from_slice(&rec.stdout).unwrap();
+    assert_eq!(dj["outcome"], "print_only");
     assert_eq!(dj["writes_performed"], 0);
     assert!(dj["rendered_ruleset"]
         .as_str()
         .unwrap()
         .contains("table ip outbe_up_nat"));
-    assert!(clean.mutations().is_empty());
+    assert!(dj["rendered_unit"].as_str().unwrap().contains("outbe-up"));
+    assert!(dj["rendered_sysctl"]
+        .as_str()
+        .unwrap()
+        .contains("net.ipv4.ip_forward = 1"));
+    assert_eq!(dj["recommended_commands"].as_array().unwrap().len(), 1);
+    assert!(
+        clean.mutations().is_empty(),
+        "host nat must NEVER perform writes"
+    );
 
-    // `--remove` removes only owned outbe-up files and preserves foreign `/etc/sysctl.d/90-vm-host.conf`.
+    // `--remove` prints removal commands without deleting owned or foreign files (zero writes).
     let owned_rules = amd.sys_root.join("etc/outbe-up/nat.nft");
     write_file(
         &owned_rules,
@@ -692,23 +705,49 @@ fn host_nat_is_noop_on_amd_fixture_and_isolates_dry_run_and_remove() {
         "host nat remove failed:\n{}",
         String::from_utf8_lossy(&rm.stderr)
     );
-    assert!(!owned_rules.exists(), "owned ruleset must be removed");
+    let rj: Value = serde_json::from_slice(&rm.stdout).unwrap();
+    assert_eq!(rj["outcome"], "print_only");
+    assert_eq!(rj["writes_performed"], 0);
+    assert_eq!(rj["recommended_commands"].as_array().unwrap().len(), 1);
+    assert!(
+        owned_rules.exists(),
+        "read-only host nat --remove must NOT delete files"
+    );
     assert!(
         amd.sys_root.join("etc/sysctl.d/90-vm-host.conf").is_file(),
         "foreign sysctl file must remain untouched"
     );
     assert!(
-        !amd.mutations().contains("ip_forward=0"),
-        "remove must never reset runtime ip_forward=0"
+        amd.mutations().is_empty(),
+        "host nat --remove must perform zero writes"
     );
 }
 
 #[test]
-fn host_reserve_and_release_print_by_default_and_apply_with_cas_reload_and_conflict_refusals() {
+fn host_reserve_and_release_are_strictly_readonly_and_refuse_conflicts() {
     let amd = HostFixture::build("amd");
     amd.seed_vm("node-a", "52:54:00:aa:bb:88", None);
 
-    // 1. Default `host reserve` (NO `--apply`) prints block + reload command with ZERO writes.
+    // 1. `--apply` is rejected on both `host reserve` and `host release`.
+    let apply_rejected = Command::new(OUTBE_UP_BIN)
+        .env("PATH", amd.path_env())
+        .args([
+            "host",
+            "reserve",
+            "--vm",
+            "node-a",
+            "--ip",
+            "10.77.0.88",
+            "--apply",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !apply_rejected.status.success(),
+        "host reserve --apply must be rejected"
+    );
+
+    // 2. `host reserve` prints exact block + reload command with ZERO writes.
     let preview = Command::new(OUTBE_UP_BIN)
         .env("PATH", amd.path_env())
         .args([
@@ -736,8 +775,8 @@ fn host_reserve_and_release_print_by_default_and_apply_with_cas_reload_and_confl
         String::from_utf8_lossy(&preview.stderr)
     );
     let pj: Value = serde_json::from_slice(&preview.stdout).unwrap();
-    assert_eq!(pj["applied"], false);
-    assert_eq!(pj["changed"], false);
+    assert_eq!(pj["already_present"], false);
+    assert_eq!(pj["writes_performed"], 0);
     assert_eq!(
         pj["block_content"],
         "# outbe-up:vm:node-a:begin\n52:54:00:aa:bb:88,10.77.0.88,10m\n# outbe-up:vm:node-a:end\n"
@@ -749,14 +788,14 @@ fn host_reserve_and_release_print_by_default_and_apply_with_cas_reload_and_confl
     assert_eq!(
         fs::read_to_string(&amd.hosts_file).unwrap(),
         AMD_DHCP_HOSTS,
-        "default reserve must NOT modify dhcp-hosts"
+        "host reserve must NOT modify dhcp-hosts"
     );
     assert!(
         amd.mutations().is_empty(),
-        "default reserve must NOT reload dhcp service"
+        "host reserve must NOT reload dhcp service"
     );
 
-    // 2. Conflict refusals (legacy `.11`, active lease `.68`, gateway `.1`, wrong owner).
+    // 3. Conflict refusals (legacy `.11`, active lease `.68`, gateway `.1`, outside subnet, wrong owner).
     for (bad_ip, expect_msg) in [
         ("10.77.0.11", "conflicts with existing dnsmasq hosts"),
         ("10.77.0.68", "conflicts with existing dnsmasq hosts"),
@@ -788,7 +827,6 @@ fn host_reserve_and_release_print_by_default_and_apply_with_cas_reload_and_confl
         assert!(err.contains(expect_msg), "for {bad_ip}: {err}");
     }
 
-    // Wrong file owner refusal (when current user is not uid 0).
     if rustix::process::getuid().as_raw() != 0 {
         let wrong_owner = Command::new(OUTBE_UP_BIN)
             .env("PATH", amd.path_env())
@@ -816,9 +854,14 @@ fn host_reserve_and_release_print_by_default_and_apply_with_cas_reload_and_confl
         assert!(String::from_utf8_lossy(&wrong_owner.stderr).contains("expected owner 0:0"));
     }
 
-    // 3. Explicit `--apply` writes ONLY `# outbe-up:vm:node-a:begin..end`, preserves all foreign
-    //    lines/blocks, reloads via `systemctl reload validator-vm-dhcp.service`, and records `intended_ip`.
-    let applied = Command::new(OUTBE_UP_BIN)
+    // 4. After operator manually adds the printed block, `host reserve` reports `already_present=true`
+    //    and `host release` reports `block_present=true` + prints exact block to remove (zero writes).
+    let with_block = format!(
+        "{AMD_DHCP_HOSTS}# outbe-up:vm:node-a:begin\n52:54:00:aa:bb:88,10.77.0.88,10m\n# outbe-up:vm:node-a:end\n"
+    );
+    fs::write(&amd.hosts_file, &with_block).unwrap();
+
+    let already = Command::new(OUTBE_UP_BIN)
         .env("PATH", amd.path_env())
         .args([
             "host",
@@ -827,7 +870,6 @@ fn host_reserve_and_release_print_by_default_and_apply_with_cas_reload_and_confl
             "node-a",
             "--ip",
             "10.77.0.88",
-            "--apply",
             "--vmm-socket",
         ])
         .arg(&amd.vmm_socket)
@@ -840,52 +882,11 @@ fn host_reserve_and_release_print_by_default_and_apply_with_cas_reload_and_confl
         .arg("--json")
         .output()
         .unwrap();
-    assert!(
-        applied.status.success(),
-        "reserve --apply failed:\n{}",
-        String::from_utf8_lossy(&applied.stderr)
-    );
-    let aj: Value = serde_json::from_slice(&applied.stdout).unwrap();
-    assert_eq!(aj["applied"], true);
-    assert_eq!(aj["changed"], true);
+    assert!(already.status.success());
+    let aj: Value = serde_json::from_slice(&already.stdout).unwrap();
+    assert_eq!(aj["already_present"], true);
+    assert_eq!(aj["writes_performed"], 0);
 
-    let after_apply = fs::read_to_string(&amd.hosts_file).unwrap();
-    assert!(
-        after_apply.starts_with(AMD_DHCP_HOSTS),
-        "all foreign lines and blocks must be preserved verbatim:\n{after_apply}"
-    );
-    assert!(after_apply.contains(
-        "# outbe-up:vm:node-a:begin\n52:54:00:aa:bb:88,10.77.0.88,10m\n# outbe-up:vm:node-a:end"
-    ));
-    assert!(amd
-        .mutations()
-        .contains("systemctl reload validator-vm-dhcp.service"));
-
-    // Disagreeing `--ip` against recorded `intended_ip` is refused.
-    let disagree = Command::new(OUTBE_UP_BIN)
-        .env("PATH", amd.path_env())
-        .args([
-            "host",
-            "reserve",
-            "--vm",
-            "node-a",
-            "--ip",
-            "10.77.0.89",
-            "--vmm-socket",
-        ])
-        .arg(&amd.vmm_socket)
-        .arg("--vmm-home")
-        .arg(&amd.vmm_home)
-        .arg("--state-dir")
-        .arg(&amd.state_dir)
-        .arg("--sys-root")
-        .arg(&amd.sys_root)
-        .output()
-        .unwrap();
-    assert!(!disagree.status.success());
-    assert!(String::from_utf8_lossy(&disagree.stderr).contains("disagrees with --ip"));
-
-    // 4. Default `host release` (NO `--apply`) previews without modifying `dhcp-hosts`.
     let rel_preview = Command::new(OUTBE_UP_BIN)
         .env("PATH", amd.path_env())
         .args(["host", "release", "--vm", "node-a", "--state-dir"])
@@ -897,50 +898,32 @@ fn host_reserve_and_release_print_by_default_and_apply_with_cas_reload_and_confl
         .unwrap();
     assert!(rel_preview.status.success());
     let rpj: Value = serde_json::from_slice(&rel_preview.stdout).unwrap();
-    assert_eq!(rpj["applied"], false);
     assert_eq!(rpj["block_present"], true);
+    assert_eq!(rpj["writes_performed"], 0);
+    assert!(rpj["existing_block"]
+        .as_str()
+        .unwrap()
+        .contains("52:54:00:aa:bb:88,10.77.0.88,10m"));
     assert_eq!(
         fs::read_to_string(&amd.hosts_file).unwrap(),
-        after_apply,
-        "default release must NOT modify dhcp-hosts"
+        with_block,
+        "host release must NOT modify dhcp-hosts"
     );
+    assert!(amd.mutations().is_empty());
 
-    // 5. Explicit `host release --apply` removes ONLY our block and restores original foreign file.
-    let rel_apply = Command::new(OUTBE_UP_BIN)
-        .env("PATH", amd.path_env())
-        .args([
-            "host",
-            "release",
-            "--vm",
-            "node-a",
-            "--apply",
-            "--state-dir",
-        ])
-        .arg(&amd.state_dir)
-        .arg("--sys-root")
-        .arg(&amd.sys_root)
-        .arg("--json")
-        .output()
-        .unwrap();
-    assert!(
-        rel_apply.status.success(),
-        "release --apply failed:\n{}",
-        String::from_utf8_lossy(&rel_apply.stderr)
-    );
-    let raj: Value = serde_json::from_slice(&rel_apply.stdout).unwrap();
-    assert_eq!(raj["applied"], true);
-    assert_eq!(raj["changed"], true);
-    assert_eq!(
-        fs::read_to_string(&amd.hosts_file).unwrap(),
-        AMD_DHCP_HOSTS,
-        "release --apply must restore foreign entries byte-for-byte"
-    );
-
-    // 6. Unrecognized file format and symlink at `dhcp-hosts` are both refused.
+    // 5. Unrecognized file format and symlink at `dhcp-hosts` are both refused.
     fs::write(&amd.hosts_file, "corrupted non-dnsmasq content\n").unwrap();
     let bad_fmt = Command::new(OUTBE_UP_BIN)
         .env("PATH", amd.path_env())
-        .args(["host", "reserve", "--vm", "node-a", "--vmm-socket"])
+        .args([
+            "host",
+            "reserve",
+            "--vm",
+            "node-a",
+            "--ip",
+            "10.77.0.88",
+            "--vmm-socket",
+        ])
         .arg(&amd.vmm_socket)
         .arg("--vmm-home")
         .arg(&amd.vmm_home)
@@ -957,7 +940,15 @@ fn host_reserve_and_release_print_by_default_and_apply_with_cas_reload_and_confl
     symlink(&amd.leases_file, &amd.hosts_file).unwrap();
     let sym_err = Command::new(OUTBE_UP_BIN)
         .env("PATH", amd.path_env())
-        .args(["host", "reserve", "--vm", "node-a", "--vmm-socket"])
+        .args([
+            "host",
+            "reserve",
+            "--vm",
+            "node-a",
+            "--ip",
+            "10.77.0.88",
+            "--vmm-socket",
+        ])
         .arg(&amd.vmm_socket)
         .arg("--vmm-home")
         .arg(&amd.vmm_home)
@@ -969,6 +960,7 @@ fn host_reserve_and_release_print_by_default_and_apply_with_cas_reload_and_confl
         .unwrap();
     assert!(!sym_err.status.success());
     assert!(String::from_utf8_lossy(&sym_err.stderr).contains("symlink"));
+    assert!(amd.mutations().is_empty());
 }
 
 #[test]
@@ -1075,12 +1067,12 @@ fn host_publish_detects_port_9000_conflict_and_prints_valid_nft_rules_readonly()
 }
 
 #[test]
-fn host_reserve_and_release_f1_f2_f3_regressions() {
+fn host_reserve_and_release_f1_f2_readonly_regressions() {
     let amd = HostFixture::build("amd");
     amd.seed_vm("node-a", "52:54:00:aa:bb:88", None);
 
-    // F1: Foreign block AND unmanaged line carrying our exact MAC+IP -> reserve refuses,
-    //     foreign bytes remain untouched; release refuses/leaves foreign bytes untouched.
+    // F1: Foreign unmanaged line carrying our exact MAC+IP -> reserve refuses,
+    //     foreign bytes remain untouched; release reports absent and leaves bytes untouched.
     let foreign_with_same = "\
 52:54:00:aa:bb:88,10.77.0.88,10m
 # outbe-up:foreign:begin
@@ -1097,7 +1089,6 @@ fn host_reserve_and_release_f1_f2_f3_regressions() {
             "node-a",
             "--ip",
             "10.77.0.88",
-            "--apply",
             "--vmm-socket",
         ])
         .arg(&amd.vmm_socket)
@@ -1130,6 +1121,7 @@ fn host_reserve_and_release_f1_f2_f3_regressions() {
     assert!(f1_rel.status.success());
     let rj: Value = serde_json::from_slice(&f1_rel.stdout).unwrap();
     assert_eq!(rj["block_present"], false);
+    assert_eq!(rj["writes_performed"], 0);
     assert_eq!(
         fs::read_to_string(&amd.hosts_file).unwrap(),
         foreign_with_same
@@ -1162,7 +1154,6 @@ be:6a:63:f8:84:d0,10.77.0.11,validator-0,infinite
                 "node-a",
                 "--ip",
                 "10.77.0.88",
-                "--apply",
                 "--vmm-socket",
             ])
             .arg(&amd.vmm_socket)
@@ -1182,14 +1173,7 @@ be:6a:63:f8:84:d0,10.77.0.11,validator-0,infinite
 
         let rel_bad = Command::new(OUTBE_UP_BIN)
             .env("PATH", amd.path_env())
-            .args([
-                "host",
-                "release",
-                "--vm",
-                "node-a",
-                "--apply",
-                "--state-dir",
-            ])
+            .args(["host", "release", "--vm", "node-a", "--state-dir"])
             .arg(&amd.state_dir)
             .arg("--sys-root")
             .arg(&amd.sys_root)
@@ -1201,166 +1185,7 @@ be:6a:63:f8:84:d0,10.77.0.11,validator-0,infinite
         );
         assert_eq!(fs::read_to_string(&amd.hosts_file).unwrap(), broken);
     }
-
-    // F3: CRLF + trailing blank lines preserved byte-for-byte across preview, reserve --apply, and release --apply.
-    let crlf_hosts = "02:00:00:00:00:11,10.77.0.11,infinite\r\n\r\n";
-    fs::write(&amd.hosts_file, crlf_hosts).unwrap();
-
-    let absent_rel = Command::new(OUTBE_UP_BIN)
-        .env("PATH", amd.path_env())
-        .args(["host", "release", "--vm", "node-a", "--state-dir"])
-        .arg(&amd.state_dir)
-        .arg("--sys-root")
-        .arg(&amd.sys_root)
-        .arg("--json")
-        .output()
-        .unwrap();
-    assert!(absent_rel.status.success());
-    let arj: Value = serde_json::from_slice(&absent_rel.stdout).unwrap();
-    assert_eq!(arj["block_present"], false);
-    assert_eq!(arj["changed"], false);
-    assert_eq!(fs::read(&amd.hosts_file).unwrap(), crlf_hosts.as_bytes());
-
-    let res_apply = Command::new(OUTBE_UP_BIN)
-        .env("PATH", amd.path_env())
-        .args([
-            "host",
-            "reserve",
-            "--vm",
-            "node-a",
-            "--ip",
-            "10.77.0.88",
-            "--apply",
-            "--vmm-socket",
-        ])
-        .arg(&amd.vmm_socket)
-        .arg("--vmm-home")
-        .arg(&amd.vmm_home)
-        .arg("--state-dir")
-        .arg(&amd.state_dir)
-        .arg("--sys-root")
-        .arg(&amd.sys_root)
-        .arg("--json")
-        .output()
-        .unwrap();
-    assert!(
-        res_apply.status.success(),
-        "F3 reserve --apply failed:\n{}",
-        String::from_utf8_lossy(&res_apply.stderr)
-    );
-    let after_res = fs::read(&amd.hosts_file).unwrap();
-    assert_eq!(
-        &after_res[..crlf_hosts.len()],
-        crlf_hosts.as_bytes(),
-        "F3: untouched CRLF + blank-line prefix must be byte-for-byte identical"
-    );
-
-    let rel_apply = Command::new(OUTBE_UP_BIN)
-        .env("PATH", amd.path_env())
-        .args([
-            "host",
-            "release",
-            "--vm",
-            "node-a",
-            "--apply",
-            "--state-dir",
-        ])
-        .arg(&amd.state_dir)
-        .arg("--sys-root")
-        .arg(&amd.sys_root)
-        .arg("--json")
-        .output()
-        .unwrap();
-    assert!(rel_apply.status.success());
-    assert_eq!(
-        fs::read(&amd.hosts_file).unwrap(),
-        crlf_hosts.as_bytes(),
-        "F3: release --apply must restore CRLF + blank-line bytes verbatim"
-    );
-
-    // F3 (no final LF): reserve --apply then release --apply restores exact bytes with NO extra LF.
-    let no_lf_hosts = "02:00:00:00:00:11,10.77.0.11,infinite";
-    fs::write(&amd.hosts_file, no_lf_hosts).unwrap();
-
-    let res_no_lf = Command::new(OUTBE_UP_BIN)
-        .env("PATH", amd.path_env())
-        .args([
-            "host",
-            "reserve",
-            "--vm",
-            "node-a",
-            "--ip",
-            "10.77.0.88",
-            "--apply",
-            "--vmm-socket",
-        ])
-        .arg(&amd.vmm_socket)
-        .arg("--vmm-home")
-        .arg(&amd.vmm_home)
-        .arg("--state-dir")
-        .arg(&amd.state_dir)
-        .arg("--sys-root")
-        .arg(&amd.sys_root)
-        .arg("--json")
-        .output()
-        .unwrap();
-    assert!(
-        res_no_lf.status.success(),
-        "F3 no-LF reserve --apply failed:\n{}",
-        String::from_utf8_lossy(&res_no_lf.stderr)
-    );
-    let rnl: Value = serde_json::from_slice(&res_no_lf.stdout).unwrap();
-    assert_eq!(rnl["changed"], true);
-
-    // Second reserve preview recognizes exact match on the no-LF file.
-    let res_no_lf_again = Command::new(OUTBE_UP_BIN)
-        .env("PATH", amd.path_env())
-        .args([
-            "host",
-            "reserve",
-            "--vm",
-            "node-a",
-            "--ip",
-            "10.77.0.88",
-            "--vmm-socket",
-        ])
-        .arg(&amd.vmm_socket)
-        .arg("--vmm-home")
-        .arg(&amd.vmm_home)
-        .arg("--state-dir")
-        .arg(&amd.state_dir)
-        .arg("--sys-root")
-        .arg(&amd.sys_root)
-        .arg("--json")
-        .output()
-        .unwrap();
-    assert!(res_no_lf_again.status.success());
-    let rnla: Value = serde_json::from_slice(&res_no_lf_again.stdout).unwrap();
-    assert_eq!(rnla["already_present"], true);
-    assert_eq!(rnla["changed"], false);
-
-    let rel_no_lf = Command::new(OUTBE_UP_BIN)
-        .env("PATH", amd.path_env())
-        .args([
-            "host",
-            "release",
-            "--vm",
-            "node-a",
-            "--apply",
-            "--state-dir",
-        ])
-        .arg(&amd.state_dir)
-        .arg("--sys-root")
-        .arg(&amd.sys_root)
-        .arg("--json")
-        .output()
-        .unwrap();
-    assert!(rel_no_lf.status.success());
-    assert_eq!(
-        fs::read(&amd.hosts_file).unwrap(),
-        no_lf_hosts.as_bytes(),
-        "F3: add+remove on file without final LF must restore exact original bytes with zero extra LF"
-    );
+    assert!(amd.mutations().is_empty());
 }
 
 #[test]
@@ -1517,71 +1342,144 @@ fn host_publish_f4_port_ranges_sets_and_unparsed_dnat_fail_closed() {
 }
 
 #[test]
-fn host_reserve_and_release_f5_reload_retry_and_post_reload_service_check() {
+fn host_check_verifies_network_dhcp_and_published_ports_readonly() {
     let amd = HostFixture::build("amd");
-    amd.seed_vm("node-a", "52:54:00:aa:bb:88", None);
-
-    // Replace stub `systemctl` with a mode-controlled stub (ok | fail_reload | post_failed).
-    let mode_file = amd._tmp.path().join("systemctl.mode");
-    let reload_count_file = amd._tmp.path().join("reload.count");
-    let post_flip_flag = amd._tmp.path().join("post_failed.triggered");
-    fs::write(&mode_file, "fail_reload").unwrap();
-    fs::write(&reload_count_file, "").unwrap();
-
-    write_exec(
-        &amd.bin_dir.join("systemctl"),
-        &format!(
-            r#"#!/bin/sh
-mode=$(cat '{mode}')
-if [ "$1" = "show" ]; then
-  unit=""
-  for arg in "$@"; do unit="$arg"; done
-  case "$unit" in
-    validator-vm-dhcp.service)
-      state="active"
-      if [ "$mode" = "post_failed" ] && [ -f '{flip}' ]; then
-        state="failed"
-      fi
-      printf 'LoadState=loaded\nActiveState=%s\nUnitFileState=enabled\nMainPID=219283\nExecStart={{ path=/usr/sbin/dnsmasq ; argv[]=/usr/sbin/dnsmasq --user=root --conf-file=/dev/null --interface=obr0 --bind-interfaces --except-interface=lo --port=0 --dhcp-ignore-clid --dhcp-range=10.77.0.100,10.77.0.200,255.255.255.0,5m --dhcp-hostsfile={hosts} --dhcp-leasefile={leases} --pid-file=/run/validator-vm-dhcp.pid ; ignore_errors=no }}\nExecReload={{ path=/bin/kill ; argv[]=/bin/kill -HUP $MAINPID ; ignore_errors=no }}\n' "$state"
-      ;;
-    *)
-      printf 'LoadState=loaded\nActiveState=active\nUnitFileState=enabled\nMainPID=0\nExecStart=\nExecReload=\n'
-      ;;
-  esac
-  exit 0
-fi
-if [ "$1" = "reload" ]; then
-  echo "reload $2" >> '{reloads}'
-  if [ "$mode" = "fail_reload" ]; then
-    echo "simulated reload failure" >&2
-    exit 42
-  fi
-  if [ "$mode" = "post_failed" ]; then
-    touch '{flip}'
-  fi
-  exit 0
-fi
-exit 0
-"#,
-            mode = mode_file.display(),
-            flip = post_flip_flag.display(),
-            hosts = amd.hosts_file.display(),
-            leases = amd.leases_file.display(),
-            reloads = reload_count_file.display(),
-        ),
+    amd.seed_vm(
+        "node-a",
+        "52:54:00:aa:bb:88",
+        Some(Ipv4Addr::new(10, 77, 0, 88)),
     );
+    let nft_file = amd._tmp.path().join("nft.json");
 
-    // 1. First `reserve --apply`: hosts file is written, then `systemctl reload` fails (exit 42).
-    let first = Command::new(OUTBE_UP_BIN)
+    // 1. Missing static DHCP reservation -> non-zero exit, ready=false, prints exact recommendation, zero writes.
+    let missing_dhcp = Command::new(OUTBE_UP_BIN)
+        .env("PATH", amd.path_env())
+        .args(["host", "check", "--vm", "node-a", "--vmm-socket"])
+        .arg(&amd.vmm_socket)
+        .arg("--vmm-home")
+        .arg(&amd.vmm_home)
+        .arg("--state-dir")
+        .arg(&amd.state_dir)
+        .arg("--sys-root")
+        .arg(&amd.sys_root)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        !missing_dhcp.status.success(),
+        "host check must fail when static DHCP reservation is missing"
+    );
+    let mj: Value = serde_json::from_slice(&missing_dhcp.stdout).unwrap();
+    assert_eq!(mj["ready"], false);
+    assert_eq!(mj["host_network_ok"], true);
+    assert_eq!(mj["dhcp_reserved"], false);
+    assert_eq!(mj["published_ports_ok"], true);
+    assert_eq!(mj["writes_performed"], 0);
+    assert_eq!(
+        mj["recommended_dhcp_block"],
+        "# outbe-up:vm:node-a:begin\n52:54:00:aa:bb:88,10.77.0.88,10m\n# outbe-up:vm:node-a:end\n"
+    );
+    assert_eq!(
+        mj["recommended_dhcp_reload"],
+        "sudo systemctl reload validator-vm-dhcp.service"
+    );
+    assert!(amd.mutations().is_empty());
+
+    // 2. Operator adds `# outbe-up:vm:node-a:begin..end` -> host check (no ports) passes!
+    let with_block = format!(
+        "{AMD_DHCP_HOSTS}# outbe-up:vm:node-a:begin\n52:54:00:aa:bb:88,10.77.0.88,10m\n# outbe-up:vm:node-a:end\n"
+    );
+    fs::write(&amd.hosts_file, &with_block).unwrap();
+
+    let ok_managed = Command::new(OUTBE_UP_BIN)
+        .env("PATH", amd.path_env())
+        .args(["host", "check", "--vm", "node-a", "--vmm-socket"])
+        .arg(&amd.vmm_socket)
+        .arg("--vmm-home")
+        .arg(&amd.vmm_home)
+        .arg("--state-dir")
+        .arg(&amd.state_dir)
+        .arg("--sys-root")
+        .arg(&amd.sys_root)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        ok_managed.status.success(),
+        "host check with managed DHCP block failed:\n{}",
+        String::from_utf8_lossy(&ok_managed.stderr)
+    );
+    let okj: Value = serde_json::from_slice(&ok_managed.stdout).unwrap();
+    assert_eq!(okj["ready"], true);
+    assert_eq!(okj["host_network_ok"], true);
+    assert_eq!(okj["dhcp_reserved"], true);
+    assert_eq!(okj["published_ports_ok"], true);
+    assert_eq!(okj["writes_performed"], 0);
+
+    // 3. Operator uses a plain static line instead of managed markers -> also accepted!
+    let with_plain = format!("{AMD_DHCP_HOSTS}52:54:00:aa:bb:88,10.77.0.88,node-a,infinite\n");
+    fs::write(&amd.hosts_file, &with_plain).unwrap();
+    let ok_plain = Command::new(OUTBE_UP_BIN)
+        .env("PATH", amd.path_env())
+        .args(["host", "check", "--vm", "node-a", "--vmm-socket"])
+        .arg(&amd.vmm_socket)
+        .arg("--vmm-home")
+        .arg(&amd.vmm_home)
+        .arg("--state-dir")
+        .arg(&amd.state_dir)
+        .arg("--sys-root")
+        .arg(&amd.sys_root)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        ok_plain.status.success(),
+        "host check with operator plain DHCP line failed:\n{}",
+        String::from_utf8_lossy(&ok_plain.stderr)
+    );
+    let pj: Value = serde_json::from_slice(&ok_plain.stdout).unwrap();
+    assert_eq!(pj["ready"], true);
+    assert_eq!(pj["dhcp_reserved"], true);
+
+    // 4. DHCP IP conflict (different MAC owns 10.77.0.88) -> fails closed with conflict!
+    let with_conflict = format!("{AMD_DHCP_HOSTS}52:54:00:de:ad:99,10.77.0.88,other-vm,infinite\n");
+    fs::write(&amd.hosts_file, &with_conflict).unwrap();
+    let bad_dhcp = Command::new(OUTBE_UP_BIN)
+        .env("PATH", amd.path_env())
+        .args(["host", "check", "--vm", "node-a", "--vmm-socket"])
+        .arg(&amd.vmm_socket)
+        .arg("--vmm-home")
+        .arg(&amd.vmm_home)
+        .arg("--state-dir")
+        .arg(&amd.state_dir)
+        .arg("--sys-root")
+        .arg(&amd.sys_root)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(!bad_dhcp.status.success());
+    let bcj: Value = serde_json::from_slice(&bad_dhcp.stdout).unwrap();
+    assert_eq!(bcj["ready"], false);
+    assert_eq!(bcj["dhcp_reserved"], false);
+    assert!(!bcj["conflicts"].as_array().unwrap().is_empty());
+
+    // Restore valid DHCP reservation for port publication checks.
+    fs::write(&amd.hosts_file, &with_block).unwrap();
+
+    // 5. Missing published ports -> ready=false, prints exact forward + prerouting rules + apply commands.
+    let missing_ports = Command::new(OUTBE_UP_BIN)
         .env("PATH", amd.path_env())
         .args([
             "host",
-            "reserve",
+            "check",
             "--vm",
             "node-a",
-            "--ip",
-            "10.77.0.88",
-            "--apply",
+            "--port",
+            "30303:30313",
+            "--port",
+            "30303:30313/udp",
+            "--source",
+            "141.95.168.110/32",
             "--vmm-socket",
         ])
         .arg(&amd.vmm_socket)
@@ -1591,41 +1489,138 @@ exit 0
         .arg(&amd.state_dir)
         .arg("--sys-root")
         .arg(&amd.sys_root)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(!missing_ports.status.success());
+    let mpj: Value = serde_json::from_slice(&missing_ports.stdout).unwrap();
+    assert_eq!(mpj["ready"], false);
+    assert_eq!(mpj["dhcp_reserved"], true);
+    assert_eq!(mpj["published_ports_ok"], false);
+    assert_eq!(
+        mpj["recommended_forward_rules"].as_array().unwrap().len(),
+        2
+    );
+    assert_eq!(
+        mpj["recommended_prerouting_rules"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(!mpj["recommended_firewall_commands"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+
+    // 6. DNAT present in prerouting WITHOUT forward accept rule -> MUST still fail!
+    let dnat_only_nft = r#"{"nftables":[
+      {"metainfo":{"version":"1.1.6","json_schema_version":1}},
+      {"table":{"family":"inet","name":"host_firewall","handle":66}},
+      {"chain":{"family":"inet","table":"host_firewall","name":"forward","handle":2,"type":"filter","hook":"forward","prio":0,"policy":"drop"}},
+      {"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":700,"comment":"outbound:validator_vms","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},
+        {"accept":null}
+      ]}},
+      {"table":{"family":"ip","name":"host_firewall_nat","handle":67}},
+      {"chain":{"family":"ip","table":"host_firewall_nat","name":"prerouting","handle":1,"type":"nat","hook":"prerouting","prio":-100,"policy":"accept"}},
+      {"chain":{"family":"ip","table":"host_firewall_nat","name":"postrouting","handle":2,"type":"nat","hook":"postrouting","prio":100,"policy":"accept"}},
+      {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":801,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"141.95.168.110"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":30313}},
+        {"dnat":{"addr":"10.77.0.88","port":30303}}
+      ]}},
+      {"rule":{"family":"ip","table":"host_firewall_nat","chain":"postrouting","handle":468,"comment":"outbound:validator_vms","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},
+        {"match":{"op":"!=","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},
+        {"masquerade":null}
+      ]}}
+    ]}"#;
+    fs::write(&nft_file, dnat_only_nft).unwrap();
+    let dnat_only = Command::new(OUTBE_UP_BIN)
+        .env("PATH", amd.path_env())
+        .args([
+            "host",
+            "check",
+            "--vm",
+            "node-a",
+            "--port",
+            "30303:30313",
+            "--vmm-socket",
+        ])
+        .arg(&amd.vmm_socket)
+        .arg("--vmm-home")
+        .arg(&amd.vmm_home)
+        .arg("--state-dir")
+        .arg(&amd.state_dir)
+        .arg("--sys-root")
+        .arg(&amd.sys_root)
+        .arg("--json")
         .output()
         .unwrap();
     assert!(
-        !first.status.success(),
-        "F5: failed reload must exit non-zero"
+        !dnat_only.status.success(),
+        "host check must fail when DNAT exists without forward accept rule"
     );
-    let first_err = String::from_utf8_lossy(&first.stderr);
-    assert!(first_err.contains("ActiveState="), "{first_err}");
-    assert!(
-        fs::read_to_string(&amd.hosts_file)
+    let doj: Value = serde_json::from_slice(&dnat_only.stdout).unwrap();
+    assert_eq!(doj["ready"], false);
+    assert_eq!(doj["published_ports_ok"], false);
+    assert_eq!(
+        doj["recommended_prerouting_rules"]
+            .as_array()
             .unwrap()
-            .contains("# outbe-up:vm:node-a:begin"),
-        "hosts file now contains our block on disk"
+            .len(),
+        0
     );
     assert_eq!(
-        fs::read_to_string(&reload_count_file)
-            .unwrap()
-            .lines()
-            .count(),
+        doj["recommended_forward_rules"].as_array().unwrap().len(),
         1
     );
 
-    // 2. Fix reload and retry `reserve --apply` when file ALREADY contains our exact block:
-    //    MUST still execute `systemctl reload`!
-    fs::write(&mode_file, "ok").unwrap();
-    let retry = Command::new(OUTBE_UP_BIN)
+    // 7. BOTH DNAT + forward accept present -> passes (and enforces explicit `--source` match)!
+    let both_nft = r#"{"nftables":[
+      {"metainfo":{"version":"1.1.6","json_schema_version":1}},
+      {"table":{"family":"inet","name":"host_firewall","handle":66}},
+      {"chain":{"family":"inet","table":"host_firewall","name":"forward","handle":2,"type":"filter","hook":"forward","prio":0,"policy":"drop"}},
+      {"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":700,"comment":"outbound:validator_vms","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},
+        {"accept":null}
+      ]}},
+      {"rule":{"family":"inet","table":"host_firewall","chain":"forward","handle":811,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"141.95.168.110"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"10.77.0.88"}},
+        {"match":{"op":"in","left":{"ct":{"key":"status"}},"right":"dnat"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":30303}},
+        {"accept":null}
+      ]}},
+      {"table":{"family":"ip","name":"host_firewall_nat","handle":67}},
+      {"chain":{"family":"ip","table":"host_firewall_nat","name":"prerouting","handle":1,"type":"nat","hook":"prerouting","prio":-100,"policy":"accept"}},
+      {"chain":{"family":"ip","table":"host_firewall_nat","name":"postrouting","handle":2,"type":"nat","hook":"postrouting","prio":100,"policy":"accept"}},
+      {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":801,"comment":"outbe-up:node-a","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":"162.19.107.121"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":"141.95.168.110"}},
+        {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":30313}},
+        {"dnat":{"addr":"10.77.0.88","port":30303}}
+      ]}},
+      {"rule":{"family":"ip","table":"host_firewall_nat","chain":"postrouting","handle":468,"comment":"outbound:validator_vms","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},
+        {"match":{"op":"!=","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},
+        {"masquerade":null}
+      ]}}
+    ]}"#;
+    fs::write(&nft_file, both_nft).unwrap();
+    let both_ok = Command::new(OUTBE_UP_BIN)
         .env("PATH", amd.path_env())
         .args([
             "host",
-            "reserve",
+            "check",
             "--vm",
             "node-a",
-            "--ip",
-            "10.77.0.88",
-            "--apply",
+            "--port",
+            "30303:30313",
+            "--source",
+            "141.95.168.110",
             "--vmm-socket",
         ])
         .arg(&amd.vmm_socket)
@@ -1639,36 +1634,27 @@ exit 0
         .output()
         .unwrap();
     assert!(
-        retry.status.success(),
-        "F5 retry failed:\n{}",
-        String::from_utf8_lossy(&retry.stderr)
+        both_ok.status.success(),
+        "host check with both DNAT and forward accept failed:\n{}",
+        String::from_utf8_lossy(&both_ok.stderr)
     );
-    let rj: Value = serde_json::from_slice(&retry.stdout).unwrap();
-    assert_eq!(rj["already_present"], true);
-    assert_eq!(rj["changed"], false);
-    assert_eq!(rj["reloaded"], true);
-    assert_eq!(rj["service_active"], true);
-    assert_eq!(
-        fs::read_to_string(&reload_count_file)
-            .unwrap()
-            .lines()
-            .count(),
-        2,
-        "F5: retry must execute systemctl reload even when changed == false"
-    );
+    let boj: Value = serde_json::from_slice(&both_ok.stdout).unwrap();
+    assert_eq!(boj["ready"], true);
+    assert_eq!(boj["published_ports_ok"], true);
+    assert_eq!(boj["writes_performed"], 0);
 
-    // 3. Reload exits 0 but unit becomes `ActiveState=failed` -> MUST exit non-zero reporting service status.
-    fs::write(&mode_file, "post_failed").unwrap();
-    let post_bad = Command::new(OUTBE_UP_BIN)
+    // Requesting an uncovered source CIDR fails!
+    let wrong_src = Command::new(OUTBE_UP_BIN)
         .env("PATH", amd.path_env())
         .args([
             "host",
-            "reserve",
+            "check",
             "--vm",
             "node-a",
-            "--ip",
-            "10.77.0.88",
-            "--apply",
+            "--port",
+            "30303:30313",
+            "--source",
+            "203.0.113.9/32",
             "--vmm-socket",
         ])
         .arg(&amd.vmm_socket)
@@ -1678,77 +1664,86 @@ exit 0
         .arg(&amd.state_dir)
         .arg("--sys-root")
         .arg(&amd.sys_root)
+        .arg("--json")
         .output()
         .unwrap();
     assert!(
-        !post_bad.status.success(),
-        "F5: inactive service after reload must exit non-zero"
+        !wrong_src.status.success(),
+        "host check must fail when requested --source is not allowed"
     );
-    let post_err = String::from_utf8_lossy(&post_bad.stderr);
-    assert!(post_err.contains("ActiveState=failed"), "{post_err}");
-    let _ = fs::remove_file(&post_flip_flag);
 
-    // 4. Same reload-retry guarantee for `release --apply`:
-    //    first `release --apply` removes block from file then fails reload -> second `release --apply`
-    //    retries reload even though block is already absent!
-    fs::write(&mode_file, "fail_reload").unwrap();
-    let rel_fail = Command::new(OUTBE_UP_BIN)
+    // 8. Unparseable DNAT rule -> fails closed!
+    let unparsed_nft = r#"{"nftables":[
+      {"metainfo":{"version":"1.1.6","json_schema_version":1}},
+      {"table":{"family":"ip","name":"host_firewall_nat","handle":67}},
+      {"chain":{"family":"ip","table":"host_firewall_nat","name":"prerouting","handle":1,"type":"nat","hook":"prerouting","prio":-100,"policy":"accept"}},
+      {"chain":{"family":"ip","table":"host_firewall_nat","name":"postrouting","handle":2,"type":"nat","hook":"postrouting","prio":100,"policy":"accept"}},
+      {"rule":{"family":"ip","table":"host_firewall_nat","chain":"prerouting","handle":999,"comment":"dynamic","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"tcp","field":"dport"}},"right":"@dynamic_ports"}},
+        {"dnat":{"addr":"10.77.0.11"}}
+      ]}},
+      {"rule":{"family":"ip","table":"host_firewall_nat","chain":"postrouting","handle":468,"comment":"outbound:validator_vms","expr":[
+        {"match":{"op":"==","left":{"payload":{"protocol":"ip","field":"saddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},
+        {"match":{"op":"!=","left":{"payload":{"protocol":"ip","field":"daddr"}},"right":{"prefix":{"addr":"10.77.0.0","len":24}}}},
+        {"masquerade":null}
+      ]}}
+    ]}"#;
+    fs::write(&nft_file, unparsed_nft).unwrap();
+    let unparsed = Command::new(OUTBE_UP_BIN)
         .env("PATH", amd.path_env())
         .args([
             "host",
-            "release",
+            "check",
             "--vm",
             "node-a",
-            "--apply",
-            "--state-dir",
+            "--port",
+            "30303:30313",
+            "--vmm-socket",
         ])
-        .arg(&amd.state_dir)
-        .arg("--sys-root")
-        .arg(&amd.sys_root)
-        .output()
-        .unwrap();
-    assert!(!rel_fail.status.success());
-    assert!(!fs::read_to_string(&amd.hosts_file)
-        .unwrap()
-        .contains("# outbe-up:vm:node-a:begin"));
-    let reloads_before_retry = fs::read_to_string(&reload_count_file)
-        .unwrap()
-        .lines()
-        .count();
-
-    fs::write(&mode_file, "ok").unwrap();
-    let rel_retry = Command::new(OUTBE_UP_BIN)
-        .env("PATH", amd.path_env())
-        .args([
-            "host",
-            "release",
-            "--vm",
-            "node-a",
-            "--apply",
-            "--state-dir",
-        ])
+        .arg(&amd.vmm_socket)
+        .arg("--vmm-home")
+        .arg(&amd.vmm_home)
+        .arg("--state-dir")
         .arg(&amd.state_dir)
         .arg("--sys-root")
         .arg(&amd.sys_root)
         .arg("--json")
         .output()
         .unwrap();
-    assert!(
-        rel_retry.status.success(),
-        "F5 release retry failed:\n{}",
-        String::from_utf8_lossy(&rel_retry.stderr)
+    assert!(!unparsed.status.success());
+    let uj: Value = serde_json::from_slice(&unparsed.stdout).unwrap();
+    assert_eq!(uj["ready"], false);
+    assert_eq!(uj["published_ports_ok"], false);
+    assert!(uj["conflicts"][0]
+        .as_str()
+        .unwrap()
+        .contains("unparseable DNAT"));
+
+    // 9. Unconfigured host -> fails with host_network_ok=false and zero writes.
+    let empty = HostFixture::build("unconfigured");
+    empty.seed_vm(
+        "node-a",
+        "52:54:00:aa:bb:88",
+        Some(Ipv4Addr::new(10, 77, 0, 88)),
     );
-    let rrj: Value = serde_json::from_slice(&rel_retry.stdout).unwrap();
-    assert_eq!(rrj["block_present"], false);
-    assert_eq!(rrj["changed"], false);
-    assert_eq!(rrj["reloaded"], true);
-    assert_eq!(rrj["service_active"], true);
-    assert_eq!(
-        fs::read_to_string(&reload_count_file)
-            .unwrap()
-            .lines()
-            .count(),
-        reloads_before_retry + 1,
-        "F5: release --apply retry must execute systemctl reload even when block is already absent"
-    );
+    let unconf = Command::new(OUTBE_UP_BIN)
+        .env("PATH", empty.path_env())
+        .args(["host", "check", "--vm", "node-a", "--vmm-socket"])
+        .arg(&empty.vmm_socket)
+        .arg("--vmm-home")
+        .arg(&empty.vmm_home)
+        .arg("--state-dir")
+        .arg(&empty.state_dir)
+        .arg("--sys-root")
+        .arg(&empty.sys_root)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(!unconf.status.success());
+    let ej: Value = serde_json::from_slice(&unconf.stdout).unwrap();
+    assert_eq!(ej["ready"], false);
+    assert_eq!(ej["host_network_ok"], false);
+    assert_eq!(ej["writes_performed"], 0);
+    assert!(amd.mutations().is_empty());
+    assert!(empty.mutations().is_empty());
 }

@@ -24,11 +24,13 @@ use outbe_operator_vm::{
 use outbe_operator_vm_image::{
     archive::{
         normalize_sha256, verify_archive_and_extract, verify_archive_and_extract_cancellable,
-        verify_image_dir, verify_image_dir_against_archive_manifest, MAX_EXTRACTED_BYTES,
+        verify_archive_file_and_extract_cancellable, verify_image_dir,
+        verify_image_dir_against_archive_manifest, MAX_EXTRACTED_BYTES,
     },
     build as build_vm_image, parse_flavors, Flavor, VmImageOptions,
 };
 use reqwest::Url;
+use rustix::fs::{openat, Mode, OFlags, CWD};
 use serde::Serialize;
 use tokio::signal::unix::{signal, SignalKind};
 
@@ -62,6 +64,14 @@ pub struct FetchArgs {
     pub json: bool,
 }
 
+pub struct ImportArgs {
+    pub archive: PathBuf,
+    pub sha256: String,
+    pub os_image_hash: Option<String>,
+    pub vmm_home: Option<PathBuf>,
+    pub json: bool,
+}
+
 pub struct VerifyArgs {
     pub dir: PathBuf,
     pub manifest: Option<PathBuf>,
@@ -86,6 +96,17 @@ struct FetchOutput {
     /// Effective URL sanitized to scheme + host + optional port + path (no userinfo, query, or fragment).
     url: String,
     host: String,
+    image_name: String,
+    flavor: Flavor,
+    os_image_hash: String,
+    archive_sha256: String,
+    target_dir: PathBuf,
+    reused: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct ImportOutput {
+    archive: PathBuf,
     image_name: String,
     flavor: Flavor,
     os_image_hash: String,
@@ -268,7 +289,7 @@ pub async fn fetch(args: FetchArgs) -> Result<()> {
 
     let fetch_result = async {
         let parsed = parse_and_validate_http_url(&args.url, args.allow_insecure_loopback_http)?;
-        let (effective_url, effective_host) = tokio::select! {
+        let (effective_url, effective_host, mut archive_file) = tokio::select! {
             res = fetch_http_to_file(
                 &parsed,
                 &archive_path,
@@ -290,14 +311,17 @@ pub async fn fetch(args: FetchArgs) -> Result<()> {
         fs::create_dir(&extract_dir)?;
         let expected_sha_clone = expected_sha256.clone();
         let expected_os_clone = expected_os_hash.clone();
-        let archive_clone = archive_path.clone();
+        let archive_label = archive_path.display().to_string();
         let extract_clone = extract_dir.clone();
         let vmm_home_clone = vmm_home.clone();
         let cancel_worker = Arc::clone(&cancel);
 
         let (manifest, published) = tokio::task::spawn_blocking(move || -> Result<_> {
-            let manifest = verify_archive_and_extract_cancellable(
-                &archive_clone,
+            // Hash and extract from the EXACT SAME open staging FD returned by fetch_http_to_file
+            // (zero reopen by path between download, hash, and extraction).
+            let manifest = verify_archive_file_and_extract_cancellable(
+                &mut archive_file,
+                &archive_label,
                 &expected_sha_clone,
                 expected_os_clone.as_deref(),
                 &extract_clone,
@@ -346,6 +370,108 @@ pub async fn fetch(args: FetchArgs) -> Result<()> {
     } else {
         println!("Source host:    {}", out.host);
         println!("Source URL:     {}", out.url);
+        println!("Image:          {}", out.image_name);
+        println!("Flavor:         {}", out.flavor.as_str());
+        println!("OS image hash:  {}", out.os_image_hash);
+        println!("Archive SHA256: {}", out.archive_sha256);
+        println!(
+            "Location:       {} ({})",
+            out.target_dir.display(),
+            if out.reused { "reused" } else { "published" }
+        );
+    }
+    Ok(())
+}
+
+pub async fn import(args: ImportArgs) -> Result<()> {
+    let expected_sha256 = normalize_sha256(&args.sha256, "--sha256")?;
+    let expected_os_hash = args
+        .os_image_hash
+        .as_deref()
+        .map(|raw| normalize_sha256(raw, "--os-image-hash"))
+        .transpose()?;
+
+    let vmm_home = resolve_vmm_home(args.vmm_home)?;
+    let image_root = vmm_home.join("image");
+    fs::create_dir_all(&image_root)
+        .wrap_err_with(|| format!("create VMM image root {}", image_root.display()))?;
+
+    let cancel = Arc::new(AtomicBool::new(false));
+    let mut sigint = signal(SignalKind::interrupt()).wrap_err("install SIGINT handler")?;
+    let mut sigterm = signal(SignalKind::terminate()).wrap_err("install SIGTERM handler")?;
+    let cancel_signal = Arc::clone(&cancel);
+    let signal_task = tokio::spawn(async move {
+        tokio::select! {
+            _ = sigint.recv() => {
+                cancel_signal.store(true, Ordering::SeqCst);
+            }
+            _ = sigterm.recv() => {
+                cancel_signal.store(true, Ordering::SeqCst);
+            }
+        }
+    });
+
+    let work = tempfile::Builder::new()
+        .prefix(".import-")
+        .tempdir_in(&image_root)
+        .wrap_err_with(|| format!("create import staging dir in {}", image_root.display()))?;
+    let extract_dir = work.path().join("extracted");
+    fs::create_dir(&extract_dir)?;
+
+    let archive_clone = args.archive.clone();
+    let expected_sha_clone = expected_sha256.clone();
+    let expected_os_clone = expected_os_hash.clone();
+    let extract_clone = extract_dir.clone();
+    let vmm_home_clone = vmm_home.clone();
+    let cancel_worker = Arc::clone(&cancel);
+
+    let import_res = tokio::task::spawn_blocking(move || -> Result<_> {
+        let manifest = verify_archive_and_extract_cancellable(
+            &archive_clone,
+            &expected_sha_clone,
+            expected_os_clone.as_deref(),
+            &extract_clone,
+            &cancel_worker,
+        )?;
+        let manifest_for_verify = manifest.clone();
+        let cancel_for_verify = Arc::clone(&cancel_worker);
+        let published = publish_local_image_verified_cancellable(
+            &vmm_home_clone,
+            &extract_clone,
+            None,
+            manifest.flavor.as_str(),
+            &cancel_worker,
+            move |existing_dir| {
+                verify_image_dir_against_archive_manifest(
+                    existing_dir,
+                    &manifest_for_verify,
+                    &cancel_for_verify,
+                )
+                .map(|_| ())
+            },
+        )?;
+        Ok((manifest, published))
+    })
+    .await
+    .wrap_err("image import worker panicked")?;
+
+    signal_task.abort();
+    let (manifest, published) = import_res?;
+
+    let out = ImportOutput {
+        archive: args.archive,
+        image_name: published.name,
+        flavor: manifest.flavor,
+        os_image_hash: published.digest,
+        archive_sha256: expected_sha256,
+        target_dir: published.target_dir,
+        reused: published.reused,
+    };
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else {
+        println!("Archive:        {}", out.archive.display());
         println!("Image:          {}", out.image_name);
         println!("Flavor:         {}", out.flavor.as_str());
         println!("OS image hash:  {}", out.os_image_hash);
@@ -497,7 +623,7 @@ async fn fetch_http_to_file(
     allow_loopback_http: bool,
     timeout: Duration,
     cancel: &AtomicBool,
-) -> Result<(String, String)> {
+) -> Result<(String, String, fs::File)> {
     let safe_initial = sanitize_url(url);
     let initial_scheme = url.scheme().to_owned();
     let policy = reqwest::redirect::Policy::custom(move |attempt| {
@@ -547,8 +673,14 @@ async fn fetch_http_to_file(
         );
     }
 
-    let mut file = fs::File::create(dest_path)
-        .wrap_err_with(|| format!("create temporary download file {}", dest_path.display()))?;
+    let fd = openat(
+        CWD,
+        dest_path,
+        OFlags::CREATE | OFlags::EXCL | OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+        Mode::from_raw_mode(0o600),
+    )
+    .wrap_err_with(|| format!("create temporary download file {}", dest_path.display()))?;
+    let mut file = fs::File::from(fd);
     let mut written: u64 = 0;
     while let Some(chunk) = response.chunk().await.map_err(|err| {
         eyre::eyre!(
@@ -577,7 +709,7 @@ async fn fetch_http_to_file(
             "truncated download for {effective_url}: received {written} of {len} bytes"
         );
     }
-    Ok((effective_url, effective_host))
+    Ok((effective_url, effective_host, file))
 }
 
 pub const fn default_fetch_timeout_secs() -> u64 {

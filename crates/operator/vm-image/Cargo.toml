@@ -10,6 +10,7 @@ eyre.workspace = true
 hex.workspace = true
 outbe-operator-systemd.workspace = true
 outbe-software-bundle.workspace = true
+rustix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

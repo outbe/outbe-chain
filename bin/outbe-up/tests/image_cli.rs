@@ -1066,3 +1066,167 @@ fn image_list_and_remove_refuse_referenced_or_unreachable_vmm_and_delete_unrefer
     let after_json: Value = serde_json::from_slice(&list_after.stdout).unwrap();
     assert!(after_json.as_array().unwrap().is_empty());
 }
+
+#[test]
+fn version_json_reports_name_version_and_actual_binary_sha256() {
+    let expected_sha = sha256_file_streaming(Path::new(OUTBE_UP_BIN)).unwrap();
+
+    let out = Command::new(OUTBE_UP_BIN)
+        .args(["version", "--json"])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "version --json failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let json: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json["name"], "outbe-up");
+    assert!(!json["version"].as_str().unwrap_or("").is_empty());
+    assert_eq!(json["binary_sha256"], expected_sha);
+
+    let human = Command::new(OUTBE_UP_BIN).arg("version").output().unwrap();
+    assert!(human.status.success());
+    let text = String::from_utf8_lossy(&human.stdout);
+    assert!(text.contains("outbe-up "), "{text}");
+    assert!(text.contains(&expected_sha), "{text}");
+}
+
+#[test]
+fn image_import_verifies_archive_sha256_before_extract_publishes_reuses_and_refuses_tampering() {
+    let tmp = tempfile::tempdir().unwrap();
+    let digest = "fedcba9876543210".repeat(4);
+    let (archive_path, archive_sha) = build_sample_archive(tmp.path(), Flavor::Dev, &digest);
+    let vmm_home = tmp.path().join("vmm-home");
+
+    // 1. Wrong archive SHA-256 -> refused BEFORE extraction, nothing published.
+    let bad_sha = Command::new(OUTBE_UP_BIN)
+        .args(["image", "import", "--archive"])
+        .arg(&archive_path)
+        .args(["--sha256", &"0".repeat(64), "--vmm-home"])
+        .arg(&vmm_home)
+        .output()
+        .unwrap();
+    assert!(!bad_sha.status.success());
+    assert!(!vmm_home
+        .join("image/outbe-vm-dev-fedcba9876543210")
+        .exists());
+
+    // 2. Wrong `--os-image-hash` -> refused, nothing published.
+    let bad_os = Command::new(OUTBE_UP_BIN)
+        .args(["image", "import", "--archive"])
+        .arg(&archive_path)
+        .args([
+            "--sha256",
+            &archive_sha,
+            "--os-image-hash",
+            &"a".repeat(64),
+            "--vmm-home",
+        ])
+        .arg(&vmm_home)
+        .output()
+        .unwrap();
+    assert!(!bad_os.status.success());
+    assert!(!vmm_home
+        .join("image/outbe-vm-dev-fedcba9876543210")
+        .exists());
+
+    // 3. Valid import publishes cleanly with expected JSON schema.
+    let ok = Command::new(OUTBE_UP_BIN)
+        .args(["image", "import", "--archive"])
+        .arg(&archive_path)
+        .args([
+            "--sha256",
+            &archive_sha,
+            "--os-image-hash",
+            &digest,
+            "--vmm-home",
+        ])
+        .arg(&vmm_home)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(
+        ok.status.success(),
+        "image import failed:\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&ok.stdout),
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let j: Value = serde_json::from_slice(&ok.stdout).unwrap();
+    assert_eq!(j["image_name"], "outbe-vm-dev-fedcba9876543210");
+    assert_eq!(j["flavor"], "dev");
+    assert_eq!(j["os_image_hash"], digest);
+    assert_eq!(j["archive_sha256"], archive_sha);
+    assert_eq!(j["reused"], false);
+    let target = vmm_home.join("image/outbe-vm-dev-fedcba9876543210");
+    assert!(target.join(ARCHIVE_MANIFEST_NAME).is_file());
+
+    // 4. Re-import is idempotent (`reused == true`).
+    let reuse = Command::new(OUTBE_UP_BIN)
+        .args(["image", "import", "--archive"])
+        .arg(&archive_path)
+        .args(["--sha256", &archive_sha, "--vmm-home"])
+        .arg(&vmm_home)
+        .arg("--json")
+        .output()
+        .unwrap();
+    assert!(reuse.status.success());
+    let rj: Value = serde_json::from_slice(&reuse.stdout).unwrap();
+    assert_eq!(rj["reused"], true);
+
+    // 5. Tampering with already-installed file causes re-import to refuse reuse (fail closed).
+    fs::write(target.join("rootfs.squashfs"), b"tampered-rootfs").unwrap();
+    let tampered = Command::new(OUTBE_UP_BIN)
+        .args(["image", "import", "--archive"])
+        .arg(&archive_path)
+        .args(["--sha256", &archive_sha, "--vmm-home"])
+        .arg(&vmm_home)
+        .output()
+        .unwrap();
+    assert!(
+        !tampered.status.success(),
+        "import must refuse to reuse a corrupted installed image"
+    );
+
+    // 6. Symlink and FIFO at `--archive` are both refused promptly via single-FD O_NOFOLLOW | O_NONBLOCK.
+    let symlink_archive = tmp.path().join("link.tar.zst");
+    std::os::unix::fs::symlink(&archive_path, &symlink_archive).unwrap();
+    let sym_out = Command::new(OUTBE_UP_BIN)
+        .args(["image", "import", "--archive"])
+        .arg(&symlink_archive)
+        .args(["--sha256", &archive_sha, "--vmm-home"])
+        .arg(&vmm_home)
+        .output()
+        .unwrap();
+    assert!(!sym_out.status.success(), "symlink archive must be refused");
+    assert!(
+        String::from_utf8_lossy(&sym_out.stderr).contains("symlink"),
+        "{}",
+        String::from_utf8_lossy(&sym_out.stderr)
+    );
+
+    let fifo_archive = tmp.path().join("fifo.tar.zst");
+    assert!(Command::new("mkfifo")
+        .arg(&fifo_archive)
+        .status()
+        .unwrap()
+        .success());
+    let start = Instant::now();
+    let fifo_out = Command::new(OUTBE_UP_BIN)
+        .args(["image", "import", "--archive"])
+        .arg(&fifo_archive)
+        .args(["--sha256", &archive_sha, "--vmm-home"])
+        .arg(&vmm_home)
+        .output()
+        .unwrap();
+    assert!(!fifo_out.status.success(), "FIFO archive must be refused");
+    assert!(
+        start.elapsed() < Duration::from_secs(3),
+        "FIFO archive must fail promptly without blocking"
+    );
+    assert!(
+        String::from_utf8_lossy(&fifo_out.stderr).contains("non-regular"),
+        "{}",
+        String::from_utf8_lossy(&fifo_out.stderr)
+    );
+}

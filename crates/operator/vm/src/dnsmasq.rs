@@ -473,83 +473,83 @@ pub fn count_dnsmasq_leases(existing_leases: &str) -> usize {
     parse_dnsmasq_leases(existing_leases).len()
 }
 
-/// Build a local locked compare-and-swap shell script that verifies file type/owner and SHA-256
-/// under `flock`, atomically replaces `hosts_file` from stdin, and reloads `reload_unit` via
-/// `systemctl reload` (never shelling out to `kill -HUP`).
-pub fn build_local_hosts_cas_write_script(
-    hosts_file: &Path,
-    lock_file: &Path,
-    expected_sha256: &str,
-    reload_unit: &str,
-    expected_uid: u32,
-    expected_gid: u32,
-) -> Result<String> {
-    validate_systemd_unit_name(reload_unit)?;
-    let lock_preamble = build_local_lock_preamble(lock_file);
-    let hosts_quoted = shell_quote(&hosts_file.to_string_lossy());
-    let tmp_template = shell_quote(&format!("{}.outbe-up.XXXXXX", hosts_file.display()));
-    let expected_quoted = shell_quote(expected_sha256);
-    let unit_quoted = shell_quote(reload_unit);
-
-    Ok(format!(
-        "{lock_preamble} \
-         if [ -L {hosts_quoted} ] || [ ! -f {hosts_quoted} ]; then echo 'dhcp-hosts file must be an existing regular file (not a symlink)' >&2; exit 1; fi; \
-         if [ \"$(stat -c '%u:%g' {hosts_quoted})\" != '{expected_uid}:{expected_gid}' ]; then echo 'dhcp-hosts file owner mismatch' >&2; exit 1; fi; \
-         actual=$(sha256sum {hosts_quoted} | awk '{{print $1}}'); \
-         if [ \"$actual\" != {expected_quoted} ]; then echo 'hosts file changed concurrently; retry' >&2; exit 1; fi; \
-         tmp=$(mktemp {tmp_template}); \
-         trap 'rm -f \"$tmp\"' EXIT; \
-         cat > \"$tmp\"; \
-         chmod 0644 \"$tmp\"; \
-         chown '{expected_uid}:{expected_gid}' \"$tmp\" 2>/dev/null || true; \
-         mv -f \"$tmp\" {hosts_quoted}; \
-         trap - EXIT; \
-         systemctl reload {unit_quoted}"
-    ))
+/// Result of verifying whether one VM's `(mac, ip)` static DHCP reservation is present in a
+/// dnsmasq `--dhcp-hostsfile` without any conflicting IP or MAC mappings.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct DnsmasqReservationCheck {
+    pub exact_match: bool,
+    pub conflicts: Vec<String>,
 }
 
-/// Build a locked `systemctl reload <unit>` script used when `--apply` is re-run on an already
-/// up-to-date hosts file (ensuring a previously failed reload is retried cleanly) (F5).
-pub fn build_local_service_reload_script(lock_file: &Path, reload_unit: &str) -> Result<String> {
-    validate_systemd_unit_name(reload_unit)?;
-    let lock_preamble = build_local_lock_preamble(lock_file);
-    let unit_quoted = shell_quote(reload_unit);
-    Ok(format!("{lock_preamble} systemctl reload {unit_quoted}"))
-}
-
-fn build_local_lock_preamble(lock_file: &Path) -> String {
-    let lock_quoted = shell_quote(&lock_file.to_string_lossy());
-    let lock_dir_quoted = shell_quote(
-        &lock_file
-            .parent()
-            .unwrap_or_else(|| Path::new("/run/outbe-up"))
-            .to_string_lossy(),
+/// Check (strictly read-only) whether `existing_hosts` contains an exact static reservation for
+/// `(expected_mac, expected_ip)` — either inside `# outbe-up:vm:<name>:begin..end` or as an
+/// operator-entered static line — and report any conflicting lines that map `expected_ip` to a
+/// different MAC or `expected_mac` to a different IP.
+pub fn check_dnsmasq_reservation_status(
+    existing_hosts: &str,
+    expected_mac: &str,
+    expected_ip: Ipv4Addr,
+) -> Result<DnsmasqReservationCheck> {
+    parse_managed_blocks(existing_hosts)?;
+    let expected_mac_lc = expected_mac.trim().to_ascii_lowercase();
+    ensure!(
+        is_mac_address(&expected_mac_lc),
+        "invalid expected MAC address: `{expected_mac}`"
     );
-    format!(
-        "uid=$(id -u); gid=$(id -g); \
-         if [ -L {lock_dir_quoted} ]; then echo 'lock directory must not be a symlink' >&2; exit 1; fi; \
-         if [ ! -e {lock_dir_quoted} ]; then install -d -m 0700 -o \"$uid\" -g \"$gid\" {lock_dir_quoted}; fi; \
-         if [ ! -d {lock_dir_quoted} ] || [ -L {lock_dir_quoted} ]; then echo 'lock directory is not a directory' >&2; exit 1; fi; \
-         if [ \"$(stat -c '%u %a' {lock_dir_quoted})\" != \"$uid 700\" ]; then echo 'lock directory has unsafe owner or permissions' >&2; exit 1; fi; \
-         if [ -e {lock_quoted} ] || [ -L {lock_quoted} ]; then \
-           if [ ! -f {lock_quoted} ] || [ -L {lock_quoted} ] || [ \"$(stat -c '%u' {lock_quoted})\" != \"$uid\" ]; then \
-             echo 'lock entry must be a regular file owned by current uid' >&2; exit 1; \
-           fi; \
-         fi; \
-         exec 9>>{lock_quoted}; flock -x 9;"
-    )
-}
 
-fn validate_systemd_unit_name(unit: &str) -> Result<()> {
-    if unit.is_empty()
-        || !unit.ends_with(".service")
-        || !unit
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'@'))
-    {
-        bail!("invalid systemd service unit name: {unit}");
+    let mut exact_match = false;
+    let mut conflicts = Vec::new();
+
+    for span in iter_line_spans(existing_hosts) {
+        let stripped = span.text.split('#').next().unwrap_or("").trim();
+        if stripped.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = stripped.split(',').map(str::trim).collect();
+        let line_macs: Vec<String> = fields
+            .iter()
+            .filter(|f| is_mac_address(f))
+            .map(|f| f.to_ascii_lowercase())
+            .collect();
+        let line_ips: Vec<Ipv4Addr> = fields
+            .iter()
+            .filter_map(|f| f.parse::<Ipv4Addr>().ok())
+            .collect();
+
+        let has_expected_mac = line_macs.iter().any(|m| m == &expected_mac_lc);
+        let has_expected_ip = line_ips.contains(&expected_ip);
+
+        match (has_expected_mac, has_expected_ip) {
+            (true, true) => {
+                if line_macs.len() == 1 && line_ips.len() == 1 {
+                    exact_match = true;
+                } else {
+                    conflicts.push(format!(
+                        "ambiguous dnsmasq hosts line {} contains multiple MACs or IPs: `{stripped}`",
+                        span.line_no
+                    ));
+                }
+            }
+            (false, true) => {
+                conflicts.push(format!(
+                    "bridge IP {expected_ip} conflicts with existing dnsmasq hosts line {}: `{stripped}`",
+                    span.line_no
+                ));
+            }
+            (true, false) => {
+                conflicts.push(format!(
+                    "MAC {expected_mac_lc} conflicts with existing dnsmasq hosts line {}: `{stripped}`",
+                    span.line_no
+                ));
+            }
+            (false, false) => {}
+        }
     }
-    Ok(())
+
+    Ok(DnsmasqReservationCheck {
+        exact_match: exact_match && conflicts.is_empty(),
+        conflicts,
+    })
 }
 
 fn is_mac_address(s: &str) -> bool {
@@ -1113,5 +1113,62 @@ be:6a:63:f8:84:d0,10.77.0.11,validator-0,infinite
         assert!(removed_no_lf.exact_match);
         assert!(removed_no_lf.changed);
         assert_eq!(removed_no_lf.content.as_bytes(), no_final_lf.as_bytes());
+    }
+
+    #[test]
+    fn check_dnsmasq_reservation_status_accepts_managed_or_operator_entries_and_flags_conflicts() {
+        let managed = "\
+be:6a:63:f8:84:d0,10.77.0.11,validator-0,infinite
+# outbe-up:vm:node-a:begin
+52:54:00:aa:bb:88,10.77.0.88,10m
+# outbe-up:vm:node-a:end
+";
+        let ok_managed = check_dnsmasq_reservation_status(
+            managed,
+            "52:54:00:AA:BB:88",
+            Ipv4Addr::new(10, 77, 0, 88),
+        )
+        .unwrap();
+        assert!(ok_managed.exact_match);
+        assert!(ok_managed.conflicts.is_empty());
+
+        let operator_plain = "52:54:00:aa:bb:88,10.77.0.88,node-a,infinite\n";
+        let ok_plain = check_dnsmasq_reservation_status(
+            operator_plain,
+            "52:54:00:aa:bb:88",
+            Ipv4Addr::new(10, 77, 0, 88),
+        )
+        .unwrap();
+        assert!(ok_plain.exact_match);
+        assert!(ok_plain.conflicts.is_empty());
+
+        let missing = check_dnsmasq_reservation_status(
+            "be:6a:63:f8:84:d0,10.77.0.11,validator-0,infinite\n",
+            "52:54:00:aa:bb:88",
+            Ipv4Addr::new(10, 77, 0, 88),
+        )
+        .unwrap();
+        assert!(!missing.exact_match);
+        assert!(missing.conflicts.is_empty());
+
+        let ip_conflict = check_dnsmasq_reservation_status(
+            "be:6a:63:f8:84:d0,10.77.0.88,other,infinite\n",
+            "52:54:00:aa:bb:88",
+            Ipv4Addr::new(10, 77, 0, 88),
+        )
+        .unwrap();
+        assert!(!ip_conflict.exact_match);
+        assert_eq!(ip_conflict.conflicts.len(), 1);
+        assert!(ip_conflict.conflicts[0].contains("10.77.0.88"));
+
+        let mac_conflict = check_dnsmasq_reservation_status(
+            "52:54:00:aa:bb:88,10.77.0.99,node-a,infinite\n",
+            "52:54:00:aa:bb:88",
+            Ipv4Addr::new(10, 77, 0, 88),
+        )
+        .unwrap();
+        assert!(!mac_conflict.exact_match);
+        assert_eq!(mac_conflict.conflicts.len(), 1);
+        assert!(mac_conflict.conflicts[0].contains("52:54:00:aa:bb:88"));
     }
 }

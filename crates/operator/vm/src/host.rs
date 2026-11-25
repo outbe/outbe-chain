@@ -1,18 +1,16 @@
-//! Local host inspection, NAT, DHCP static reservation, and firewall publish-rule helpers
-//! (`outbe-up host status|setup|nat|reserve|release|publish`).
+//! Strictly read-only local host inspection, verification, and configuration recommendation
+//! helpers (`outbe-up host status|setup|nat|reserve|release|publish|check`).
 //!
-//! Strictly local: zero SSH and zero remote orchestration dependencies.
-//! All commands are read-only by default; only `host nat` (when egress is absent) and
-//! `host reserve --apply` / `host release --apply` perform privileged mutations via `sudo -n`.
+//! Strictly local and strictly read-only: zero SSH, zero remote orchestration dependencies, and
+//! zero writes or reloads to host networking, DHCP, sysctl, systemd, or nftables state.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    io::Write,
     net::Ipv4Addr,
     os::unix::fs::MetadataExt,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
 };
 
 use eyre::{bail, ensure, Context, Result};
@@ -21,22 +19,18 @@ use serde_json::Value;
 
 use crate::{
     dnsmasq::{
-        build_local_hosts_cas_write_script, build_local_service_reload_script,
         check_dnsmasq_ip_conflicts, check_dnsmasq_lease_conflicts, check_dnsmasq_mac_conflicts,
-        count_dnsmasq_leases, lookup_lease_ip_by_mac, merge_dnsmasq_hosts_checked,
-        render_vm_dnsmasq_block, sha256_hex, strip_dnsmasq_block_checked,
+        check_dnsmasq_reservation_status, count_dnsmasq_leases, lookup_lease_ip_by_mac,
+        merge_dnsmasq_hosts_checked, render_vm_dnsmasq_block, strip_dnsmasq_block_checked,
         validate_dnsmasq_hosts_format,
     },
     local::{validate_vm_name, LocalVmPhase, LocalVmStore},
     nat::{
-        build_apply_command, build_ownership_probe_command, build_preflight_command,
-        build_remove_command, inspect_nft_json, parse_owned_files_section, parse_persistent_sysctl,
-        parse_preflight_output, render_nat_ruleset, render_systemd_unit, validate_iface_name,
-        ApplyOutcome, ExistingEgress, FileOwnership, ForeignForwardChain, HostNatPaths, HostRunner,
-        Ipv4Subnet, ManagedFileStates, PartialEgress, PersistentSysctlState, NAT_TABLE_FAMILY,
-        NAT_TABLE_NAME, OWNERSHIP_MARKER,
+        build_apply_command, build_remove_command, inspect_nft_json, parse_persistent_sysctl,
+        render_nat_ruleset, render_systemd_unit, validate_iface_name, ExistingEgress,
+        FileOwnership, ForeignForwardChain, HostNatPaths, Ipv4Subnet, ManagedFileStates,
+        PartialEgress, PersistentSysctlState, NAT_TABLE_FAMILY, NAT_TABLE_NAME, OWNERSHIP_MARKER,
     },
-    shell_quote,
     vmm::{extract_primary_mac, StatusRequest, VmmClient, VmmTransport},
 };
 
@@ -57,7 +51,6 @@ const MAX_STATUS_PAGES: u32 = 100;
 pub struct HostEnv {
     pub sys_root: PathBuf,
     pub expected_hosts_owner: (u32, u32),
-    pub lock_file: PathBuf,
     pub nat_paths: HostNatPaths,
 }
 
@@ -74,7 +67,6 @@ impl HostEnv {
         Self {
             sys_root: PathBuf::from("/"),
             expected_hosts_owner: (0, 0),
-            lock_file: PathBuf::from("/run/outbe-up/dnsmasq.lock"),
             nat_paths: HostNatPaths::default(),
         }
     }
@@ -93,7 +85,6 @@ impl HostEnv {
                 Self {
                     sys_root: root.to_path_buf(),
                     expected_hosts_owner: expected_owner.unwrap_or(default_owner),
-                    lock_file: root.join("run/outbe-up/dnsmasq.lock"),
                     nat_paths: HostNatPaths::under_root(root),
                 }
             }
@@ -298,6 +289,9 @@ pub struct HostNatLocalReport {
     pub managed_files: Option<ManagedFileStates>,
     pub rendered_ruleset: Option<String>,
     pub rendered_unit: Option<String>,
+    pub rendered_sysctl: Option<String>,
+    pub recommended_commands: Vec<String>,
+    pub warnings: Vec<String>,
     pub detail: String,
 }
 
@@ -314,10 +308,8 @@ pub struct HostReserveReport {
     pub block_content: String,
     pub reload_command: String,
     pub already_present: bool,
-    pub applied: bool,
-    pub changed: bool,
-    pub reloaded: bool,
     pub service_active: bool,
+    pub writes_performed: usize,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -330,10 +322,34 @@ pub struct HostReleaseReport {
     pub existing_block: Option<String>,
     pub reload_command: String,
     pub block_present: bool,
-    pub applied: bool,
-    pub changed: bool,
-    pub reloaded: bool,
     pub service_active: bool,
+    pub writes_performed: usize,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct HostCheckReport {
+    pub vm: String,
+    pub vm_id: String,
+    pub mac: String,
+    pub ip: Ipv4Addr,
+    pub bridge: String,
+    pub public_ip: Option<Ipv4Addr>,
+    pub ports: Vec<PublishPortSpec>,
+    pub ready: bool,
+    pub host_network_ok: bool,
+    pub dhcp_reserved: bool,
+    pub published_ports_ok: bool,
+    pub missing: Vec<String>,
+    pub conflicts: Vec<String>,
+    pub port_conflicts: Vec<PublishPortConflict>,
+    pub hosts_file: Option<PathBuf>,
+    pub dhcp_unit: Option<String>,
+    pub recommended_dhcp_block: Option<String>,
+    pub recommended_dhcp_reload: Option<String>,
+    pub recommended_forward_rules: Vec<String>,
+    pub recommended_prerouting_rules: Vec<String>,
+    pub recommended_firewall_commands: Vec<String>,
+    pub writes_performed: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -394,39 +410,6 @@ pub struct HostPublishReport {
     pub conflicts: Vec<PublishPortConflict>,
     pub already_published_ports: Vec<PublishPortSpec>,
     pub writes_performed: usize,
-}
-
-/// Strictly local `HostRunner` for `crates/operator/vm/src/nat.rs` (zero SSH).
-#[derive(Clone, Debug, Default)]
-pub struct LocalHostRunner;
-
-impl HostRunner for LocalHostRunner {
-    fn run_raw(&mut self, _host: &str, command: &str) -> Result<String> {
-        let effective = if rustix::process::geteuid().as_raw() == 0 {
-            command.strip_prefix("sudo -n ").unwrap_or(command)
-        } else {
-            command
-        };
-        let out = Command::new("sh")
-            .args(["-ec", effective])
-            .output()
-            .wrap_err("execute local host command")?;
-        if !out.status.success() {
-            let stderr = String::from_utf8_lossy(&out.stderr).trim().to_owned();
-            let stdout = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-            bail!(
-                "local command exited with {}: {}{}",
-                out.status,
-                stderr,
-                if stdout.is_empty() {
-                    String::new()
-                } else {
-                    format!(" (stdout: {stdout})")
-                }
-            );
-        }
-        String::from_utf8(out.stdout).wrap_err("local host command produced non-UTF-8 output")
-    }
 }
 
 /// Inspect the local host and return a stable v1 [`HostStatusReport`]. Strictly read-only.
@@ -590,112 +573,97 @@ pub fn evaluate_host_setup<T: VmmTransport>(
     })
 }
 
-/// Run local `outbe-up host nat` (apply, dry-run, or remove) using the existing `nat.rs` logic
-/// without SSH. On hosts with existing broad foreign egress (AMD & Intel) this is a pure read-only
-/// no-op with zero writes.
-pub fn run_local_host_nat(
+/// Inspect local host NAT / IPv4 forwarding state and render recommended ruleset, systemd unit,
+/// sysctl drop-in, and operator apply/remove commands. Strictly read-only (zero writes).
+pub fn plan_local_host_nat(
     bridge: &str,
     uplink_override: Option<&str>,
     remove: bool,
-    dry_run: bool,
-    force: bool,
     env: &HostEnv,
 ) -> Result<HostNatLocalReport> {
     validate_iface_name(bridge, "bridge")?;
-    let mut runner = LocalHostRunner;
     let paths = &env.nat_paths;
+    let uplink = match uplink_override {
+        Some(u) => {
+            validate_iface_name(u, "uplink")?;
+            Some(u.to_owned())
+        }
+        None => detect_default_uplink(),
+    };
+    let ip_forward_runtime = read_runtime_ip_forward(env);
+    let ip_forward_persistent = scan_persistent_ip_forward(paths);
+    let managed_files = probe_managed_nat_files(paths);
 
     if remove {
         let remove_cmd = build_remove_command(paths);
-        if dry_run {
-            let probe_cmd = build_ownership_probe_command(paths);
-            let raw = runner
-                .run_raw("localhost", &probe_cmd)
-                .wrap_err("probe managed NAT file ownership")?;
-            let files = parse_owned_files_section(&raw)?;
-            return Ok(HostNatLocalReport {
-                action: "remove".to_owned(),
-                bridge: bridge.to_owned(),
-                uplink: uplink_override.map(str::to_owned),
-                outcome: "dry_run".to_owned(),
-                writes_performed: 0,
-                ip_forward_runtime: read_runtime_ip_forward(env),
-                ip_forward_persistent: Some(scan_persistent_ip_forward(paths)),
-                existing_egress: Vec::new(),
-                partial_egress: Vec::new(),
-                foreign_forward_chains: Vec::new(),
-                managed_files: Some(files),
-                rendered_ruleset: None,
-                rendered_unit: None,
-                detail: format!("Dry-run remove (no changes applied). Command:\n{remove_cmd}"),
-            });
-        }
-
-        let output = runner
-            .run_raw("localhost", &remove_cmd)
-            .wrap_err("remove managed host NAT artifacts")?;
         return Ok(HostNatLocalReport {
             action: "remove".to_owned(),
             bridge: bridge.to_owned(),
-            uplink: uplink_override.map(str::to_owned),
-            outcome: "removed".to_owned(),
-            writes_performed: 1,
-            ip_forward_runtime: read_runtime_ip_forward(env),
-            ip_forward_persistent: Some(scan_persistent_ip_forward(paths)),
+            uplink,
+            outcome: "print_only".to_owned(),
+            writes_performed: 0,
+            ip_forward_runtime,
+            ip_forward_persistent: Some(ip_forward_persistent),
             existing_egress: Vec::new(),
             partial_egress: Vec::new(),
             foreign_forward_chains: Vec::new(),
-            managed_files: Some(probe_managed_nat_files(paths)),
+            managed_files: Some(managed_files),
             rendered_ruleset: None,
             rendered_unit: None,
-            detail: if output.trim().is_empty() {
-                "Removed managed outbe-up NAT artifacts (runtime net.ipv4.ip_forward and foreign files left unchanged).".to_owned()
-            } else {
-                output.trim().to_owned()
-            },
+            rendered_sysctl: None,
+            recommended_commands: vec![remove_cmd],
+            warnings: Vec::new(),
+            detail: "Read-only removal recommendation (zero writes performed). Run the recommended command manually to remove outbe-up managed NAT artifacts while preserving foreign files and runtime net.ipv4.ip_forward.".to_owned(),
         });
     }
 
-    let preflight_cmd = build_preflight_command(bridge, uplink_override, paths)?;
-    let raw = runner
-        .run_raw("localhost", &preflight_cmd)
-        .wrap_err("run local NAT preflight")?;
-    let report = parse_preflight_output(&raw, bridge, &[])?;
+    let (_, bridge_subnet) = detect_bridge(bridge);
+    let subnet = bridge_subnet.ok_or_else(|| {
+        eyre::eyre!("bridge `{bridge}` is missing or has no IPv4 CIDR configured")
+    })?;
+    let uplink_name = uplink.clone().ok_or_else(|| {
+        eyre::eyre!("could not detect default IPv4 uplink interface; pass `--uplink <iface>`")
+    })?;
 
-    // 1. Existing full foreign egress -> pure read-only no-op unless --force.
-    if report.ip_forward == 1 && !report.nft.existing_egress.is_empty() && !force {
-        let providers = report
-            .nft
-            .existing_egress
+    let (firewall, existing_egress, partial_egress) =
+        detect_firewall_and_egress(bridge, Some(subnet), Some(&uplink_name));
+    ensure!(
+        firewall.nft_accessible,
+        "cannot inspect live nftables ruleset: `nft -j list ruleset` is inaccessible (requires root or passwordless `sudo -n nft`)"
+    );
+
+    if ip_forward_runtime == Some(1) && !existing_egress.is_empty() {
+        let providers = existing_egress
             .iter()
             .map(|e| format!("{} {} {}", e.family, e.table, e.chain))
             .collect::<Vec<_>>()
             .join(", ");
         return Ok(HostNatLocalReport {
-            action: "apply".to_owned(),
-            bridge: report.bridge,
-            uplink: Some(report.uplink),
-            outcome: outcome_str(ApplyOutcome::NoOpExistingEgress).to_owned(),
+            action: "recommend".to_owned(),
+            bridge: bridge.to_owned(),
+            uplink: Some(uplink_name),
+            outcome: "no_op_existing_egress".to_owned(),
             writes_performed: 0,
-            ip_forward_runtime: Some(report.ip_forward),
-            ip_forward_persistent: Some(report.persistent_sysctl),
-            existing_egress: report.nft.existing_egress,
-            partial_egress: report.nft.partial_egress,
-            foreign_forward_chains: report.nft.foreign_forward_chains,
-            managed_files: Some(report.files),
+            ip_forward_runtime,
+            ip_forward_persistent: Some(ip_forward_persistent),
+            existing_egress,
+            partial_egress,
+            foreign_forward_chains: firewall.forward_chains,
+            managed_files: Some(managed_files),
             rendered_ruleset: None,
             rendered_unit: None,
+            rendered_sysctl: None,
+            recommended_commands: Vec::new(),
+            warnings: Vec::new(),
             detail: format!(
-                "egress already provided by {providers}; skipping apply (zero writes; pass --force to install `table {NAT_TABLE_FAMILY} {NAT_TABLE_NAME}` anyway)"
+                "egress already provided by {providers} with net.ipv4.ip_forward=1; no NAT changes required (zero writes)"
             ),
         });
     }
 
-    // 1b. Partial foreign masquerade/SNAT -> refuse unless --force.
-    if report.nft.existing_egress.is_empty() && !report.nft.partial_egress.is_empty() && !force {
-        let rules = report
-            .nft
-            .partial_egress
+    let mut warnings = Vec::new();
+    if existing_egress.is_empty() && !partial_egress.is_empty() {
+        let rules = partial_egress
             .iter()
             .map(|p| {
                 format!(
@@ -709,68 +677,56 @@ pub fn run_local_host_nat(
             })
             .collect::<Vec<_>>()
             .join("; ");
-        bail!(
-            "refusing to apply NAT: partial foreign masquerade/snat rule(s) found that cannot be decided statically as full egress coverage: {rules}. Inspect those rules and re-run with --force"
-        );
+        warnings.push(format!(
+            "partial foreign masquerade/snat rule(s) detected: {rules}; inspect before applying"
+        ));
     }
 
-    // 2. Refuse foreign file collisions and later persistent sysctl=0 overrides.
-    let mut foreign_collisions = Vec::new();
-    if report.files.rules == FileOwnership::Foreign {
-        foreign_collisions.push(paths.rules_path.display().to_string());
-    }
-    if report.files.service == FileOwnership::Foreign {
-        foreign_collisions.push(paths.service_path.display().to_string());
-    }
-    let need_sysctl_dropin = report.persistent_sysctl.effective_value != Some(1);
-    if need_sysctl_dropin && report.persistent_sysctl.overridden_by_later_zero {
-        let overriding = report
-            .persistent_sysctl
+    let need_sysctl_dropin = ip_forward_persistent.effective_value != Some(1);
+    if need_sysctl_dropin && ip_forward_persistent.overridden_by_later_zero {
+        let overriding = ip_forward_persistent
             .effective_source
             .as_deref()
             .unwrap_or("unknown sysctl file");
-        bail!(
-            "cannot persist net.ipv4.ip_forward=1 via {}: `{overriding}` sets net.ipv4.ip_forward=0 and takes precedence on reboot",
+        warnings.push(format!(
+            "`{overriding}` sets net.ipv4.ip_forward=0 and overrides {} on reboot",
             paths.sysctl_path.display()
-        );
+        ));
     }
-    if need_sysctl_dropin && report.files.sysctl == FileOwnership::Foreign {
+    let mut foreign_collisions = Vec::new();
+    if managed_files.rules == FileOwnership::Foreign {
+        foreign_collisions.push(paths.rules_path.display().to_string());
+    }
+    if managed_files.service == FileOwnership::Foreign {
+        foreign_collisions.push(paths.service_path.display().to_string());
+    }
+    if need_sysctl_dropin && managed_files.sysctl == FileOwnership::Foreign {
         foreign_collisions.push(paths.sysctl_path.display().to_string());
     }
-    ensure!(
-        foreign_collisions.is_empty(),
-        "refusing to overwrite unmanaged file(s) (missing `{OWNERSHIP_MARKER}` marker): {}",
-        foreign_collisions.join(", ")
-    );
-
-    // 3. Refuse when any foreign forward base chain is classified blocks-or-unknown unless --force.
-    if !report.nft.blocks_or_unknown_chains.is_empty() && !force {
-        let chains = report
-            .nft
-            .blocks_or_unknown_chains
-            .iter()
-            .map(|c| {
-                format!(
-                    "{} {}::{} (priority {}, policy {}, {})",
-                    c.family,
-                    c.table,
-                    c.chain,
-                    c.priority,
-                    c.policy,
-                    c.reasons.join("; ")
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        bail!(
-            "refusing to apply NAT: foreign forward base chain(s) cannot be verified statically: {chains}. `outbe-up host nat` never edits foreign nftables tables; inspect those chains and re-run with --force only if they permit bridge `{}` forwarding",
-            report.bridge
-        );
+    if !foreign_collisions.is_empty() {
+        warnings.push(format!(
+            "unmanaged file(s) already exist (missing `{OWNERSHIP_MARKER}` marker): {}",
+            foreign_collisions.join(", ")
+        ));
+    }
+    for chain in &firewall.forward_chains {
+        if !chain.reasons.is_empty() {
+            warnings.push(format!(
+                "foreign forward base chain {} {}::{} (policy {}) may restrict bridge `{bridge}` forwarding: {}",
+                chain.family,
+                chain.table,
+                chain.chain,
+                chain.policy,
+                chain.reasons.join("; ")
+            ));
+        }
     }
 
-    let ruleset = render_nat_ruleset(&report.bridge, report.subnet, &report.uplink)?;
+    let ruleset = render_nat_ruleset(bridge, subnet, &uplink_name)?;
     let unit = render_systemd_unit(&paths.rules_path);
-    let enable_runtime_ip_forward = report.ip_forward == 0;
+    let rendered_sysctl =
+        need_sysctl_dropin.then(|| format!("{OWNERSHIP_MARKER}\nnet.ipv4.ip_forward = 1\n"));
+    let enable_runtime_ip_forward = ip_forward_runtime != Some(1);
     let apply_cmd = build_apply_command(
         &ruleset,
         &unit,
@@ -779,88 +735,50 @@ pub fn run_local_host_nat(
         paths,
     );
 
-    if dry_run {
-        return Ok(HostNatLocalReport {
-            action: "apply".to_owned(),
-            bridge: report.bridge,
-            uplink: Some(report.uplink),
-            outcome: outcome_str(ApplyOutcome::DryRun).to_owned(),
-            writes_performed: 0,
-            ip_forward_runtime: Some(report.ip_forward),
-            ip_forward_persistent: Some(report.persistent_sysctl),
-            existing_egress: report.nft.existing_egress,
-            partial_egress: report.nft.partial_egress,
-            foreign_forward_chains: report.nft.foreign_forward_chains,
-            managed_files: Some(report.files),
-            rendered_ruleset: Some(ruleset),
-            rendered_unit: Some(unit),
-            detail: "Dry-run plan computed (no changes applied).".to_owned(),
-        });
-    }
-
-    runner
-        .run_raw("localhost", &apply_cmd)
-        .wrap_err("apply managed host NAT")?;
-    let verify_cmd = format!(
-        "sudo -n nft list table {} {}",
-        shell_quote(NAT_TABLE_FAMILY),
-        shell_quote(NAT_TABLE_NAME)
-    );
-    let live = runner
-        .run_raw("localhost", &verify_cmd)
-        .wrap_err("verify applied host NAT table")?;
-
     Ok(HostNatLocalReport {
-        action: "apply".to_owned(),
-        bridge: report.bridge,
-        uplink: Some(report.uplink),
-        outcome: outcome_str(ApplyOutcome::Applied).to_owned(),
-        writes_performed: 1,
-        ip_forward_runtime: Some(1),
-        ip_forward_persistent: Some(scan_persistent_ip_forward(paths)),
-        existing_egress: report.nft.existing_egress,
-        partial_egress: report.nft.partial_egress,
-        foreign_forward_chains: report.nft.foreign_forward_chains,
-        managed_files: Some(probe_managed_nat_files(paths)),
+        action: "recommend".to_owned(),
+        bridge: bridge.to_owned(),
+        uplink: Some(uplink_name),
+        outcome: "print_only".to_owned(),
+        writes_performed: 0,
+        ip_forward_runtime,
+        ip_forward_persistent: Some(ip_forward_persistent),
+        existing_egress,
+        partial_egress,
+        foreign_forward_chains: firewall.forward_chains,
+        managed_files: Some(managed_files),
         rendered_ruleset: Some(ruleset),
         rendered_unit: Some(unit),
-        detail: format!("Applied and verified:\n{}", live.trim_end()),
+        rendered_sysctl,
+        recommended_commands: vec![apply_cmd],
+        warnings,
+        detail: format!(
+            "Outbound NAT egress for bridge `{bridge}` is not yet configured. Apply the recommended nftables ruleset (`table {NAT_TABLE_FAMILY} {NAT_TABLE_NAME}`), systemd unit, and sysctl setting manually (read-only; zero writes)."
+        ),
     })
 }
 
-/// Plan or apply a per-VM static DHCP reservation (`# outbe-up:vm:<name>:begin..end`).
-///
-/// By default (`apply == false`), performs **zero writes** and returns the exact marked block and
-/// `sudo systemctl reload <unit>` command. Writes only when `apply == true`.
-#[allow(clippy::too_many_arguments)]
+/// Validate conflicts and render a per-VM static DHCP reservation (`# outbe-up:vm:<name>:begin..end`)
+/// plus `sudo systemctl reload <unit>`. Strictly read-only (zero writes).
 pub fn reserve_local_vm_dhcp<T: VmmTransport>(
     store: &LocalVmStore,
     vmm: &VmmClient<T>,
     vm_name: &str,
     explicit_ip: Option<Ipv4Addr>,
     bridge_override: Option<&str>,
-    apply: bool,
     env: &HostEnv,
 ) -> Result<HostReserveReport> {
     validate_vm_name(vm_name)?;
 
-    // Acquire per-VM lock only when applying (read-only preview avoids even creating lock files).
-    let (mut state, vm_guard) = if apply {
-        let guard = store.lock_vm(vm_name)?;
-        let st = store.load_locked(&guard, vm_name)?;
-        (st, Some(guard))
-    } else {
-        let path = store.state_path(vm_name)?;
-        let raw = fs::read_to_string(&path).wrap_err_with(|| {
-            format!(
-                "local VM `{vm_name}` is not recorded in {} (create it first with `outbe-up vm create`)",
-                path.display()
-            )
-        })?;
-        let st: crate::local::LocalVmState = serde_json::from_str(&raw)
-            .wrap_err_with(|| format!("parse local VM state {}", path.display()))?;
-        (st, None)
-    };
+    let path = store.state_path(vm_name)?;
+    let raw = fs::read_to_string(&path).wrap_err_with(|| {
+        format!(
+            "local VM `{vm_name}` is not recorded in {} (create it first with `outbe-up vm create`)",
+            path.display()
+        )
+    })?;
+    let state: crate::local::LocalVmState = serde_json::from_str(&raw)
+        .wrap_err_with(|| format!("parse local VM state {}", path.display()))?;
 
     ensure!(
         !state.vm_id.is_empty() && state.phase != LocalVmPhase::Removing,
@@ -986,48 +904,6 @@ pub fn reserve_local_vm_dhcp<T: VmmTransport>(
     let already_present = splice.exact_match;
     let reload_command = format!("sudo systemctl reload {dhcp_unit}");
 
-    if !apply {
-        return Ok(HostReserveReport {
-            vm: vm_name.to_owned(),
-            vm_id: state.vm_id,
-            mac: live_mac,
-            ip,
-            bridge: bridge_name,
-            dhcp_unit,
-            hosts_file,
-            block_marker: format!("# outbe-up:vm:{vm_name}:begin..end"),
-            block_content,
-            reload_command,
-            already_present,
-            applied: false,
-            changed: false,
-            reloaded: false,
-            service_active: dhcp.unit_active,
-        });
-    }
-
-    let changed = splice.changed;
-    apply_local_hosts_change_or_reload(
-        &hosts_file,
-        &env.lock_file,
-        &dhcp_unit,
-        env.expected_hosts_owner,
-        &existing_hosts,
-        &splice.content,
-        changed,
-    )?;
-
-    if let Some(guard) = vm_guard {
-        if state.intended_ip.is_none() || state.mac.is_empty() {
-            state.intended_ip = Some(ip);
-            if state.mac.is_empty() {
-                state.mac = live_mac.clone();
-            }
-            state.record_step("dhcp-reserved", Some(format!("ip={ip} mac={live_mac}")));
-            store.save_locked(&guard, &state)?;
-        }
-    }
-
     Ok(HostReserveReport {
         vm: vm_name.to_owned(),
         vm_id: state.vm_id,
@@ -1040,23 +916,18 @@ pub fn reserve_local_vm_dhcp<T: VmmTransport>(
         block_content,
         reload_command,
         already_present,
-        applied: true,
-        changed,
-        reloaded: true,
-        service_active: true,
+        service_active: dhcp.unit_active,
+        writes_performed: 0,
     })
 }
 
-/// Plan or apply removal of ONLY `# outbe-up:vm:<name>:begin..end` from the discovered DHCP hosts
-/// file. Works even if `<name>` has already been removed from `LocalVmStore`.
-///
-/// By default (`apply == false`), performs **zero writes** and prints the exact lines and reload
-/// command. Writes only when `apply == true`.
+/// Inspect and print the exact `# outbe-up:vm:<name>:begin..end` block to remove from the
+/// discovered DHCP hosts file, plus `sudo systemctl reload <unit>`. Works even if `<name>` has
+/// already been removed from `LocalVmStore`. Strictly read-only (zero writes).
 pub fn release_local_vm_dhcp(
     store: &LocalVmStore,
     vm_name: &str,
     bridge_override: Option<&str>,
-    apply: bool,
     env: &HostEnv,
 ) -> Result<HostReleaseReport> {
     validate_vm_name(vm_name)?;
@@ -1107,34 +978,6 @@ pub fn release_local_vm_dhcp(
     let existing_block = splice.existing_block;
     let reload_command = format!("sudo systemctl reload {dhcp_unit}");
 
-    if !apply {
-        return Ok(HostReleaseReport {
-            vm: vm_name.to_owned(),
-            bridge: bridge_name,
-            dhcp_unit,
-            hosts_file,
-            block_marker: format!("# outbe-up:vm:{vm_name}:begin..end"),
-            existing_block,
-            reload_command,
-            block_present,
-            applied: false,
-            changed: false,
-            reloaded: false,
-            service_active: dhcp.unit_active,
-        });
-    }
-
-    let changed = splice.changed;
-    apply_local_hosts_change_or_reload(
-        &hosts_file,
-        &env.lock_file,
-        &dhcp_unit,
-        env.expected_hosts_owner,
-        &existing_hosts,
-        &splice.content,
-        changed,
-    )?;
-
     Ok(HostReleaseReport {
         vm: vm_name.to_owned(),
         bridge: bridge_name,
@@ -1144,72 +987,477 @@ pub fn release_local_vm_dhcp(
         existing_block,
         reload_command,
         block_present,
-        applied: true,
-        changed,
-        reloaded: true,
-        service_active: true,
+        service_active: dhcp.unit_active,
+        writes_performed: 0,
     })
 }
 
-/// Write `new_hosts` via locked CAS + `systemctl reload <unit>` when `changed` is true, or run a
-/// locked `systemctl reload <unit>` when `changed` is false (so retries after a failed reload
-/// always reload), then verify that `<unit>` is active afterward (F5).
-fn apply_local_hosts_change_or_reload(
-    hosts_file: &Path,
-    lock_file: &Path,
-    dhcp_unit: &str,
-    expected_owner: (u32, u32),
-    existing_hosts: &str,
-    new_hosts: &str,
-    changed: bool,
-) -> Result<()> {
-    let run_res = if changed {
-        let expected_sha = sha256_hex(existing_hosts.as_bytes());
-        let (exp_uid, exp_gid) = expected_owner;
-        let script = build_local_hosts_cas_write_script(
-            hosts_file,
-            lock_file,
-            &expected_sha,
-            dhcp_unit,
-            exp_uid,
-            exp_gid,
-        )?;
-        run_privileged_shell_with_stdin(&script, new_hosts.as_bytes())
+/// Strictly read-only verifier checking that host networking (bridge, DHCP, IPv4 forwarding,
+/// outbound NAT), the VM's static DHCP reservation, and any requested published ports (both
+/// prerouting DNAT and forward accept rules in live nftables) are configured with zero conflicts.
+#[allow(clippy::too_many_arguments)]
+pub fn check_local_vm_host<T: VmmTransport>(
+    store: &LocalVmStore,
+    vmm: &VmmClient<T>,
+    vm_name: &str,
+    explicit_ip: Option<Ipv4Addr>,
+    raw_ports: &[String],
+    raw_sources: &[String],
+    public_ip_override: Option<Ipv4Addr>,
+    bridge_override: Option<&str>,
+    env: &HostEnv,
+) -> Result<HostCheckReport> {
+    validate_vm_name(vm_name)?;
+
+    let mut ports = Vec::with_capacity(raw_ports.len());
+    let mut seen_host_ports = BTreeSet::new();
+    for raw in raw_ports {
+        let spec = parse_port_spec(raw)?;
+        ensure!(
+            seen_host_ports.insert((spec.proto.as_str(), spec.host_port)),
+            "duplicate host port {}/{} in --port arguments",
+            spec.proto.as_str(),
+            spec.host_port
+        );
+        ports.push(spec);
+    }
+
+    let explicit_sources = raw_sources
+        .iter()
+        .map(|s| normalize_ipv4_cidr(s))
+        .collect::<Result<Vec<_>>>()?;
+    let recommended_sources = if explicit_sources.is_empty() {
+        vec!["0.0.0.0/0".to_owned()]
     } else {
-        let script = build_local_service_reload_script(lock_file, dhcp_unit)?;
-        run_privileged_shell_with_stdin(&script, &[])
+        explicit_sources.clone()
     };
 
-    if let Err(err) = run_res {
-        let post = query_systemd_unit(dhcp_unit);
-        bail!(
-            "failed to {} and reload `{dhcp_unit}` (service ActiveState={}, MainPID={:?}): {err}; re-run with `--apply` once `{dhcp_unit}` is healthy to retry reload",
-            if changed {
-                format!("update {}", hosts_file.display())
-            } else {
-                format!("confirm {}", hosts_file.display())
-            },
-            if post.active_state.is_empty() {
-                "unknown"
-            } else {
-                &post.active_state
-            },
-            post.main_pid
+    let state_path = store.state_path(vm_name)?;
+    let raw_state = fs::read_to_string(&state_path).wrap_err_with(|| {
+        format!(
+            "local VM `{vm_name}` is not recorded in {} (create it first with `outbe-up vm create`)",
+            state_path.display()
+        )
+    })?;
+    let state: crate::local::LocalVmState = serde_json::from_str(&raw_state)
+        .wrap_err_with(|| format!("parse local VM state {}", state_path.display()))?;
+    ensure!(
+        !state.vm_id.is_empty() && state.phase != LocalVmPhase::Removing,
+        "VM `{vm_name}` is in phase `{:?}` and cannot be checked",
+        state.phase
+    );
+
+    let info_resp = vmm.get_info(&state.vm_id)?;
+    ensure!(
+        !info_resp.is_gone(),
+        "VM `{vm_name}` ({}) is missing from local VMM",
+        state.vm_id
+    );
+    let info = info_resp.info.unwrap();
+    ensure!(
+        info.name == state.name,
+        "VMM VM {} has unexpected name `{}` (expected `{}`)",
+        state.vm_id,
+        info.name,
+        state.name
+    );
+    let live_mac = extract_primary_mac(&info)?;
+    if !state.mac.is_empty() {
+        ensure!(
+            state.mac.eq_ignore_ascii_case(&live_mac),
+            "VM `{vm_name}` MAC mismatch: recorded state has `{}`, live VMM reports `{live_mac}`",
+            state.mac
         );
     }
 
-    let post = query_systemd_unit(dhcp_unit);
-    ensure!(
-        post.is_active(),
-        "DHCP service `{dhcp_unit}` is not active after reload (ActiveState={}, MainPID={:?})",
-        if post.active_state.is_empty() {
-            "unknown"
-        } else {
-            &post.active_state
-        },
-        post.main_pid
+    let ip = match (explicit_ip, state.intended_ip) {
+        (Some(given), Some(recorded)) => {
+            ensure!(
+                given == recorded,
+                "VM `{vm_name}` already has recorded intended_ip {recorded}, which disagrees with --ip {given}"
+            );
+            given
+        }
+        (Some(given), None) => given,
+        (None, Some(recorded)) => recorded,
+        (None, None) => {
+            bail!(
+                "no IPv4 address for VM `{vm_name}`: pass `--ip <ipv4>` or record one during `outbe-up vm create --ip <ipv4>`"
+            );
+        }
+    };
+
+    let bridge_name = bridge_override.unwrap_or(&state.bridge).to_owned();
+    validate_iface_name(&bridge_name, "bridge")?;
+
+    let mut missing = Vec::new();
+    let mut conflicts = Vec::new();
+    let mut port_conflicts = Vec::new();
+
+    // 1. Host networking checks (bridge, DHCP, IPv4 forwarding, outbound NAT egress).
+    let (bridge_status, bridge_subnet) = detect_bridge(&bridge_name);
+    let bridge_ok = bridge_status.present && bridge_status.up && bridge_subnet.is_some();
+    if !bridge_ok {
+        missing.push(format!(
+            "bridge `{bridge_name}` is missing, down, or has no IPv4 CIDR configured"
+        ));
+    } else if let Some(subnet) = bridge_subnet {
+        if !subnet.contains(ip) {
+            conflicts.push(format!(
+                "VM IP {ip} is outside bridge `{bridge_name}` subnet {}",
+                subnet.cidr_string()
+            ));
+        } else if ip == subnet.network || ip == subnet.broadcast() {
+            conflicts.push(format!(
+                "VM IP {ip} is the network or broadcast address of {}",
+                subnet.cidr_string()
+            ));
+        } else if bridge_status.gateway_ip == Some(ip) {
+            conflicts.push(format!(
+                "VM IP {ip} is the bridge `{bridge_name}` gateway address"
+            ));
+        }
+    }
+
+    let dhcp = detect_dhcp(&bridge_name, env);
+    let dhcp_service_ok = dhcp.detected && dhcp.unit_active && dhcp.hosts_file.is_some();
+    if !dhcp.detected || !dhcp.unit_active {
+        missing.push(format!(
+            "no active DHCP service detected on bridge `{bridge_name}`"
+        ));
+    } else if dhcp.hosts_file.is_none() {
+        missing.push(format!(
+            "DHCP service on `{bridge_name}` does not specify `--dhcp-hostsfile`"
+        ));
+    }
+
+    let ip_forward_runtime = read_runtime_ip_forward(env);
+    let ip_forward_ok = ip_forward_runtime == Some(1);
+    if !ip_forward_ok {
+        missing.push(format!(
+            "net.ipv4.ip_forward is not enabled (runtime value: {})",
+            ip_forward_runtime.map_or_else(|| "unknown".to_owned(), |v| v.to_string())
+        ));
+    }
+
+    let uplink = detect_default_uplink();
+    let (firewall, existing_egress, partial_egress) =
+        detect_firewall_and_egress(&bridge_name, bridge_subnet, uplink.as_deref());
+    let egress_status = classify_egress_status(
+        firewall.nft_accessible,
+        firewall.managed_nat_table_present,
+        &existing_egress,
+        &partial_egress,
     );
-    Ok(())
+    let egress_ok =
+        firewall.nft_accessible && matches!(egress_status, "foreign_provided" | "managed");
+    if !firewall.nft_accessible {
+        missing.push(
+            "nftables ruleset is inaccessible (requires root or passwordless `sudo -n nft`)"
+                .to_owned(),
+        );
+    } else if !egress_ok {
+        missing.push(format!(
+            "outbound NAT egress for bridge `{bridge_name}` is not configured (status={egress_status}); run `outbe-up host nat --bridge {bridge_name}` for recommended rules"
+        ));
+    }
+
+    let host_network_ok = bridge_ok && dhcp_service_ok && ip_forward_ok && egress_ok;
+
+    // 2. Static DHCP reservation check (accepts either managed block or operator-entered line,
+    //    while failing closed on format/owner/symlink errors or any IP/MAC/lease/store conflict).
+    let mut local_store_conflicts = Vec::new();
+    for other_name in store.list_vm_names()? {
+        if other_name == vm_name {
+            continue;
+        }
+        if let Ok(raw) = fs::read_to_string(store.state_path(&other_name)?) {
+            if let Ok(other) = serde_json::from_str::<crate::local::LocalVmState>(&raw) {
+                if other.intended_ip == Some(ip) {
+                    local_store_conflicts.push(format!(
+                        "IP {ip} is already recorded for local VM `{other_name}`"
+                    ));
+                }
+                if other.mac.eq_ignore_ascii_case(&live_mac) {
+                    local_store_conflicts.push(format!(
+                        "MAC {live_mac} is already recorded for local VM `{other_name}`"
+                    ));
+                }
+            }
+        }
+    }
+    let has_local_store_conflict = !local_store_conflicts.is_empty();
+    conflicts.extend(local_store_conflicts);
+
+    let mut dhcp_reserved = false;
+    let mut recommended_dhcp_block = None;
+    let mut recommended_dhcp_reload = None;
+
+    if let Some(hosts_file) = &dhcp.hosts_file {
+        match read_and_validate_hosts_file(hosts_file, env.expected_hosts_owner) {
+            Ok(existing_hosts) => {
+                match check_dnsmasq_reservation_status(&existing_hosts, &live_mac, ip) {
+                    Ok(res_check) => {
+                        let mut lease_conflict = false;
+                        if let Some(leases_file) = &dhcp.leases_file {
+                            if let Ok(leases_content) = fs::read_to_string(leases_file) {
+                                if let Err(err) = check_dnsmasq_lease_conflicts(
+                                    &leases_content,
+                                    &[(live_mac.clone(), ip)],
+                                ) {
+                                    lease_conflict = true;
+                                    conflicts.push(err.to_string());
+                                }
+                            }
+                        }
+
+                        if !res_check.conflicts.is_empty() {
+                            conflicts.extend(res_check.conflicts);
+                        } else if res_check.exact_match
+                            && !lease_conflict
+                            && !has_local_store_conflict
+                        {
+                            dhcp_reserved = true;
+                        } else if !res_check.exact_match {
+                            missing.push(format!(
+                                "static DHCP reservation for VM `{vm_name}` ({live_mac} -> {ip}) is not present in {}",
+                                hosts_file.display()
+                            ));
+                            recommended_dhcp_block =
+                                Some(render_vm_dnsmasq_block(vm_name, &live_mac, ip));
+                            recommended_dhcp_reload = dhcp
+                                .unit_name
+                                .as_ref()
+                                .map(|u| format!("sudo systemctl reload {u}"));
+                        }
+                    }
+                    Err(err) => {
+                        conflicts.push(err.to_string());
+                    }
+                }
+            }
+            Err(err) => {
+                conflicts.push(err.to_string());
+            }
+        }
+    }
+
+    // 3. Optional published-port verification (DNAT + forward accept, fail closed on unparsed DNAT).
+    let mut resolved_public_ip = public_ip_override;
+    let mut recommended_forward_rules = Vec::new();
+    let mut recommended_prerouting_rules = Vec::new();
+    let mut recommended_firewall_commands = Vec::new();
+    let mut published_ports_ok = ports.is_empty();
+
+    if !ports.is_empty() {
+        if !firewall.nft_accessible {
+            published_ports_ok = false;
+        } else if !firewall.unparsed_dnat_rules.is_empty() {
+            let details = firewall
+                .unparsed_dnat_rules
+                .iter()
+                .map(|u| {
+                    format!(
+                        "{} {}::{} (handle={:?}, comment={}): {}",
+                        u.family,
+                        u.table,
+                        u.chain,
+                        u.handle,
+                        u.comment.as_deref().unwrap_or("-"),
+                        u.reason
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; ");
+            conflicts.push(format!(
+                "live nftables ruleset contains {} unparseable DNAT rule(s); refusing to verify published ports: {details}",
+                firewall.unparsed_dnat_rules.len()
+            ));
+            published_ports_ok = false;
+        } else {
+            match resolve_public_ip(public_ip_override, &firewall.dnat_rules, uplink.as_deref()) {
+                Err(err) => {
+                    missing.push(err.to_string());
+                    published_ports_ok = false;
+                }
+                Ok(pub_ip) => {
+                    resolved_public_ip = Some(pub_ip);
+                    let (forward_table, _forward_policy) = firewall
+                        .forward_chains
+                        .iter()
+                        .find(|c| c.table == "host_firewall" && c.chain == "forward")
+                        .or_else(|| firewall.forward_chains.iter().find(|c| c.policy == "drop"))
+                        .map(|c| (format!("{} {}", c.family, c.table), c.policy.clone()))
+                        .unwrap_or_else(|| ("inet host_firewall".to_owned(), "unknown".to_owned()));
+                    let nat_table = firewall
+                        .tables
+                        .iter()
+                        .find(|t| t.name == "host_firewall_nat")
+                        .map(|t| format!("{} {}", t.family, t.name))
+                        .unwrap_or_else(|| "ip host_firewall_nat".to_owned());
+
+                    let sources_set = format!("{{ {} }}", recommended_sources.join(", "));
+                    let comment = format!("outbe-up:{vm_name}");
+                    let mut all_ports_present = true;
+
+                    for spec in &ports {
+                        let mut dnat_matched = false;
+                        let mut spec_has_conflict = false;
+
+                        for rule in &firewall.dnat_rules {
+                            if rule.proto != spec.proto.as_str()
+                                || !rule.covers_host_port(spec.host_port)
+                            {
+                                continue;
+                            }
+                            if let Some(rule_pub) = rule.public_ip {
+                                if rule_pub != pub_ip {
+                                    continue;
+                                }
+                            }
+                            if rule.host_port_end.is_none()
+                                && rule.dest_ip == ip
+                                && rule.guest_port == spec.guest_port
+                            {
+                                if nft_sources_cover_requested(&rule.sources, &explicit_sources) {
+                                    dnat_matched = true;
+                                }
+                            } else {
+                                spec_has_conflict = true;
+                                conflicts.push(format!(
+                                    "host port {}/{} conflicts with existing DNAT rule -> {}:{} in {} {}::{} (comment={}, handle={:?})",
+                                    rule.proto,
+                                    spec.host_port,
+                                    rule.dest_ip,
+                                    rule.guest_port,
+                                    rule.family,
+                                    rule.table,
+                                    rule.chain,
+                                    rule.comment.as_deref().unwrap_or("-"),
+                                    rule.handle
+                                ));
+                                port_conflicts.push(PublishPortConflict {
+                                    proto: rule.proto.clone(),
+                                    host_port: spec.host_port,
+                                    requested_dest_ip: ip,
+                                    requested_guest_port: spec.guest_port,
+                                    existing_table: format!("{} {}", rule.family, rule.table),
+                                    existing_chain: rule.chain.clone(),
+                                    existing_dest_ip: rule.dest_ip,
+                                    existing_guest_port: rule.guest_port,
+                                    existing_sources: rule.sources.clone(),
+                                    existing_comment: rule.comment.clone(),
+                                    existing_handle: rule.handle,
+                                });
+                            }
+                        }
+
+                        let forward_matched = firewall.forward_allows.iter().any(|rule| {
+                            rule.dest_ip == ip
+                                && rule.proto == spec.proto.as_str()
+                                && rule.dest_port == spec.guest_port
+                                && nft_sources_cover_requested(&rule.sources, &explicit_sources)
+                        });
+
+                        if !dnat_matched && !spec_has_conflict {
+                            all_ports_present = false;
+                            missing.push(format!(
+                                "missing nftables prerouting DNAT rule for {}/{} ({pub_ip}:{} -> {}:{})",
+                                spec.proto.as_str(),
+                                spec.host_port,
+                                spec.host_port,
+                                ip,
+                                spec.guest_port
+                            ));
+                            let dnat_target = if spec.host_port == spec.guest_port {
+                                ip.to_string()
+                            } else {
+                                format!("{ip}:{}", spec.guest_port)
+                            };
+                            recommended_prerouting_rules.push(format!(
+                                "ip daddr {pub_ip} ip saddr {sources_set} {} dport {} dnat to {dnat_target} comment \"{comment}\";",
+                                spec.proto.as_str(),
+                                spec.host_port
+                            ));
+                        }
+
+                        if !forward_matched {
+                            all_ports_present = false;
+                            missing.push(format!(
+                                "missing nftables forward accept rule for {}/{} -> {}:{}",
+                                spec.proto.as_str(),
+                                spec.guest_port,
+                                ip,
+                                spec.guest_port
+                            ));
+                            recommended_forward_rules.push(format!(
+                                "ip saddr {sources_set} ip daddr {ip} ct status dnat {} dport {} accept comment \"{comment}\";",
+                                spec.proto.as_str(),
+                                spec.guest_port
+                            ));
+                        }
+                    }
+
+                    if !recommended_forward_rules.is_empty()
+                        || !recommended_prerouting_rules.is_empty()
+                    {
+                        recommended_firewall_commands = vec![
+                            format!(
+                                "Add the forward rule(s) into `table {forward_table} {{ chain forward {{ ... }} }}` and the prerouting rule(s) into `table {nat_table} {{ chain prerouting {{ ... }} }}` inside `{HOST_FIREWALL_NFT_PATH}`"
+                            ),
+                            format!("sudo nft --check --file {HOST_FIREWALL_NFT_PATH}"),
+                            format!("sudo systemctl reload {HOST_FIREWALL_SERVICE}"),
+                        ];
+                    }
+
+                    published_ports_ok = all_ports_present && port_conflicts.is_empty();
+                }
+            }
+        }
+    }
+
+    let ready = host_network_ok
+        && dhcp_reserved
+        && published_ports_ok
+        && missing.is_empty()
+        && conflicts.is_empty();
+
+    Ok(HostCheckReport {
+        vm: vm_name.to_owned(),
+        vm_id: state.vm_id,
+        mac: live_mac,
+        ip,
+        bridge: bridge_name,
+        public_ip: resolved_public_ip,
+        ports,
+        ready,
+        host_network_ok,
+        dhcp_reserved,
+        published_ports_ok,
+        missing,
+        conflicts,
+        port_conflicts,
+        hosts_file: dhcp.hosts_file,
+        dhcp_unit: dhcp.unit_name,
+        recommended_dhcp_block,
+        recommended_dhcp_reload,
+        recommended_forward_rules,
+        recommended_prerouting_rules,
+        recommended_firewall_commands,
+        writes_performed: 0,
+    })
+}
+
+fn nft_sources_cover_requested(rule_sources: &[String], requested: &[String]) -> bool {
+    if requested.is_empty() || rule_sources.is_empty() {
+        return true;
+    }
+    if rule_sources.iter().any(|s| s == "0.0.0.0/0") {
+        return true;
+    }
+    requested
+        .iter()
+        .all(|req| rule_sources.iter().any(|s| s == req))
 }
 
 /// Compute and render `/etc/host-firewall.nft` DNAT + forward-accept rules for one local VM,
@@ -1519,14 +1767,6 @@ pub fn normalize_ipv4_cidr(raw: &str) -> Result<String> {
     }
 }
 
-fn outcome_str(outcome: ApplyOutcome) -> &'static str {
-    match outcome {
-        ApplyOutcome::DryRun => "dry_run",
-        ApplyOutcome::NoOpExistingEgress => "no_op_existing_egress",
-        ApplyOutcome::Applied => "applied",
-    }
-}
-
 fn read_and_validate_hosts_file(hosts_file: &Path, expected_owner: (u32, u32)) -> Result<String> {
     let meta = fs::symlink_metadata(hosts_file).wrap_err_with(|| {
         format!(
@@ -1558,37 +1798,6 @@ fn read_and_validate_hosts_file(hosts_file: &Path, expected_owner: (u32, u32)) -
         )
     })?;
     Ok(content)
-}
-
-fn run_privileged_shell_with_stdin(script: &str, stdin_bytes: &[u8]) -> Result<String> {
-    let mut cmd = if rustix::process::geteuid().as_raw() == 0 {
-        let mut c = Command::new("sh");
-        c.args(["-ec", script]);
-        c
-    } else {
-        let mut c = Command::new("sudo");
-        c.args(["-n", "sh", "-ec", script]);
-        c
-    };
-    let mut child = cmd
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .wrap_err("spawn privileged host update command")?;
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(stdin_bytes)
-            .wrap_err("write updated hosts content to stdin")?;
-    }
-    let out = child
-        .wait_with_output()
-        .wrap_err("wait for privileged host update command")?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_owned();
-        bail!("privileged update failed ({}): {stderr}", out.status);
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 fn run_capture(program: &str, args: &[&str]) -> Option<String> {
