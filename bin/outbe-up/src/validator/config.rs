@@ -32,10 +32,32 @@ pub struct NetworkConfig {
     pub advertise_ip: Ipv4Addr,
     #[serde(default = "default_rpc_bind_ip")]
     pub rpc_bind_ip: Ipv4Addr,
+    #[serde(default)]
+    pub ports: NetworkPorts,
     pub bootnodes: Vec<String>,
     pub consensus_peers: Vec<String>,
     #[serde(default)]
     pub use_local_defaults: bool,
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NetworkPorts {
+    pub reth_p2p: u16,
+    pub reth_discovery: u16,
+    pub consensus: u16,
+    pub radicle: u16,
+}
+
+impl Default for NetworkPorts {
+    fn default() -> Self {
+        Self {
+            reth_p2p: 30_303,
+            reth_discovery: 31_303,
+            consensus: 30_400,
+            radicle: 8_776,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -139,6 +161,10 @@ impl OperatorConfig {
             concat!(
                 "OUTBE_EXTERNAL_IP=\"{}\"\n",
                 "OUTBE_RPC_BIND_IP=\"{}\"\n",
+                "OUTBE_RETH_P2P_PORT=\"{}\"\n",
+                "OUTBE_RETH_DISCOVERY_PORT=\"{}\"\n",
+                "OUTBE_CONSENSUS_PORT=\"{}\"\n",
+                "OUTBE_RADICLE_PORT=\"{}\"\n",
                 "OUTBE_CERTIFIED_RPC=\"{}\"\n",
                 "OUTBE_VALIDATOR_ADDRESS=\"{:#x}\"\n",
                 "OUTBE_BOOTNODES=\"{}\"\n",
@@ -148,6 +174,10 @@ impl OperatorConfig {
             ),
             self.network.advertise_ip,
             self.network.rpc_bind_ip,
+            self.network.ports.reth_p2p,
+            self.network.ports.reth_discovery,
+            self.network.ports.consensus,
+            self.network.ports.radicle,
             self.network.certified_rpc,
             validator,
             self.network.bootnodes.join(","),
@@ -179,6 +209,20 @@ impl OperatorConfig {
         ensure!(
             self.network.rpc_bind_ip.is_loopback() || self.network.rpc_bind_ip.is_private(),
             "network.rpc_bind_ip must be a loopback or private IPv4 address"
+        );
+        let ports = [
+            self.network.ports.reth_p2p,
+            self.network.ports.reth_discovery,
+            self.network.ports.consensus,
+            self.network.ports.radicle,
+        ];
+        ensure!(
+            ports.iter().all(|port| *port > 0),
+            "network.ports values must be positive"
+        );
+        ensure!(
+            ports.into_iter().collect::<BTreeSet<_>>().len() == ports.len(),
+            "network.ports values must be unique"
         );
         ensure!(
             self.network.certified_rpc.starts_with("http://")
@@ -431,6 +475,8 @@ hyperlane:
             config.validate().unwrap();
             assert_eq!(config.network.advertise_ip, Ipv4Addr::new(192, 0, 2, 10));
             assert_eq!(config.network.rpc_bind_ip, Ipv4Addr::LOCALHOST);
+            assert_eq!(config.network.ports.reth_p2p, 30_303);
+            assert_eq!(config.network.ports.consensus, 30_400);
         }
     }
 }

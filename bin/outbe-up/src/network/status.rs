@@ -45,7 +45,7 @@ pub async fn show(artifacts: &Path, ssh_key: Option<&Path>, watch: bool) -> Resu
     let mut progress = Progress::new();
     progress.stage("querying founding validator status");
     let build = NetworkArtifacts::load(artifacts)?;
-    let ssh = SshOptions::new(ssh_key)?;
+    let ssh = SshOptions::new(ssh_key, &build.manifest.genesis.final_sha256)?;
     let statuses = query_all(&build, &ssh).await?;
     if !watch {
         progress.done(&format!("queried {} founding validators", statuses.len()));
@@ -78,17 +78,17 @@ pub(super) async fn query_all(
     ssh: &SshOptions,
 ) -> Result<Vec<FounderStatus>> {
     let mut tasks = JoinSet::new();
-    for founder in build.config.founders.clone() {
+    for founder in build.manifest.founders.clone() {
         let ssh = ssh.clone();
         tasks.spawn_blocking(move || query_one(&ssh, &founder));
     }
-    let mut statuses = Vec::with_capacity(build.config.founders.len());
+    let mut statuses = Vec::with_capacity(build.manifest.founders.len());
     while let Some(result) = tasks.join_next().await {
         statuses.push(result.wrap_err("founder status task panicked")?);
     }
     statuses.sort_by_key(|status| {
         build
-            .config
+            .manifest
             .founders
             .iter()
             .position(|founder| founder.name == status.name)
@@ -135,15 +135,15 @@ pub(super) fn ready_for_hyperlane_setup(
 }
 
 pub(super) fn render(build: &NetworkArtifacts, statuses: &[FounderStatus]) -> String {
-    let required_peers = build.config.founders.len().saturating_sub(1);
+    let required_peers = build.manifest.founders.len().saturating_sub(1);
     let healthy_count = statuses
         .iter()
-        .filter(|status| healthy(status, build.config.chain_id, required_peers))
+        .filter(|status| healthy(status, build.manifest.chain_id, required_peers))
         .count();
     let mut output = format!(
         "Network     {} | chain {} | healthy {healthy_count}/{}\n\n",
-        build.config.name,
-        build.config.chain_id,
+        build.manifest.name,
+        build.manifest.chain_id,
         statuses.len()
     );
     output.push_str("Founder              Services                      Hyperlane              Finalized  Exec  Consensus\n");
@@ -199,7 +199,7 @@ pub(super) fn render(build: &NetworkArtifacts, statuses: &[FounderStatus]) -> St
     output.trim_end().to_owned()
 }
 
-fn query_one(ssh: &SshOptions, founder: &super::config::Founder) -> FounderStatus {
+fn query_one(ssh: &SshOptions, founder: &super::build::FounderArtifact) -> FounderStatus {
     match query_one_inner(ssh, founder) {
         Ok(status) => status,
         Err(error) => FounderStatus {
@@ -221,8 +221,11 @@ fn query_one(ssh: &SshOptions, founder: &super::config::Founder) -> FounderStatu
     }
 }
 
-fn query_one_inner(ssh: &SshOptions, founder: &super::config::Founder) -> Result<FounderStatus> {
-    let url = format!("http://{}:8545", founder.rpc_bind_ip);
+fn query_one_inner(
+    ssh: &SshOptions,
+    founder: &super::build::FounderArtifact,
+) -> Result<FounderStatus> {
+    let url = format!("http://{}:8545", founder.private_ip);
     let request = |method: &str, params: &str, id: u8| {
         format!(
             "curl -fsS --max-time 4 -H 'content-type: application/json' --data '{{\"jsonrpc\":\"2.0\",\"method\":\"{method}\",\"params\":{params},\"id\":{id}}}' {url} || true; printf '\\n'"

@@ -156,6 +156,7 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
                 "{removed} must not be generated"
             );
         }
+        assert!(directory.join("reth-bootnodes.txt").is_file());
         for name in [
             "run-radicle.sh",
             "run-node.sh",
@@ -213,6 +214,9 @@ fn render_writes_valid_bash_scripts_and_stable_bootnodes() {
         assert!(feeder.contains(&format!("private_key = \"0x{:064x}\"", index + 11)));
         assert!(!feeder.contains(&format!("private_key = \"0x{:064x}\"", index + 1)));
         assert!(directory.join("systemd/outbe-validator.target").is_file());
+        let node = fs::read_to_string(directory.join("run-node.sh")).expect("node script");
+        assert!(node.contains("--tee-bootstrap-timeout-secs 300"));
+        assert!(node.contains(&format!("/validator-{index}/reth-bootnodes.txt")));
     }
 
     let first_bootnodes =
@@ -481,6 +485,56 @@ fn caddy_systemd_units_and_resident_tee() {
     assert!(fs::read_to_string(rpc_dir.join("Caddyfile"))
         .expect("rpc caddy")
         .contains("reverse_proxy 10.0.0.3:8545"));
+}
+
+#[test]
+fn per_validator_runtime_configures_nat_ports_and_private_rpc() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let runtime = json!({
+        "validator_runtime": [
+            {
+                "rpc_bind_ip": "10.77.0.11",
+                "reth_p2p_port": 30303,
+                "reth_discv5_port": 31303,
+                "radicle_port": 8776,
+                "consensus_p2p_port": 30400
+            },
+            {
+                "rpc_bind_ip": "10.77.0.12",
+                "reth_p2p_port": 30304,
+                "reth_discv5_port": 31304,
+                "radicle_port": 8777,
+                "consensus_p2p_port": 30401
+            },
+            {
+                "rpc_bind_ip": "10.77.0.13",
+                "reth_p2p_port": 30305,
+                "reth_discv5_port": 31305,
+                "radicle_port": 8778,
+                "consensus_p2p_port": 30402
+            },
+            {
+                "rpc_bind_ip": "10.77.0.14",
+                "reth_p2p_port": 30306,
+                "reth_discv5_port": 31306,
+                "radicle_port": 8779,
+                "consensus_p2p_port": 30403
+            }
+        ]
+    });
+    let (_, output) = render_fixture(tmp.path(), Some(runtime));
+    let node = fs::read_to_string(output.join("validator-1/run-node.sh")).expect("node");
+    assert!(node.contains("--http.addr 10.77.0.12 --http.port 8545"));
+    assert!(node.contains("--port 30304"));
+    assert!(node.contains("--discovery.v5.port 31304"));
+    let radicle = fs::read_to_string(output.join("validator-1/run-radicle.sh")).expect("radicle");
+    assert!(radicle.contains("--listen 0.0.0.0:8777"));
+    assert!(radicle.contains("--advertise 10.0.0.2:8777"));
+    let bootnodes = fs::read_to_string(output.join("reth-bootnodes.txt")).expect("bootnodes");
+    assert!(bootnodes
+        .lines()
+        .nth(1)
+        .is_some_and(|line| line.ends_with(":30304")));
 }
 
 #[test]

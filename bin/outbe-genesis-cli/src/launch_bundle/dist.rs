@@ -204,7 +204,9 @@ until TDX/SNP attestation is implemented.\n";
         .rsplit_once(':')
         .map(|(host, _)| host)
         .unwrap_or(first_p2p);
-    let rpc_bind = if config.get("rpc_bind_ip").and_then(Value::as_str) == Some("validator") {
+    let rpc_bind = if config.get("validator_runtime").is_some() {
+        "<per-validator-private-ip>".to_owned()
+    } else if config.get("rpc_bind_ip").and_then(Value::as_str) == Some("validator") {
         "<this-validator-private-ip>".to_owned()
     } else {
         rpc_bind_ip(config, first_host)?.to_string()
@@ -218,8 +220,9 @@ Chain id `{chain_id}`, {founder_count} founding validators, TEE mode `{mode}`.\n
 |---|---|---|---|\n\
 {rows_joined}\n\
 \n\
-Everything below was generated from your `network.yaml`. Ports are identical on\n\
-every machine, because each founder runs on its own host.\n\
+Everything below was generated from your `network.yaml`. When `validator_runtime`\n\
+is present, each generated validator script contains its resolved bind address and\n\
+ports; the network manifest is authoritative.\n\
 \n\
 ## 1. Copy the per-validator archive to each machine\n\
 \n\
@@ -241,7 +244,7 @@ Never copy one validator's archive or key directory to another machine.\n\
 \n\
 ## 2. Open the ports\n\
 \n\
-Between all founding machines:\n\
+Default ports between founding machines (per-validator runtime settings may override them):\n\
 \n\
 | Port | Purpose |\n\
 |---|---|\n\
