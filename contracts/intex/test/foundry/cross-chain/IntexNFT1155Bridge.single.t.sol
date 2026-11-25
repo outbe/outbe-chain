@@ -10,6 +10,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {IIntexNFT1155Bridge, SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
+import {ERC7786Sender} from "@contracts/shared/ERC7786Sender.sol";
 
 /// @title IntexNFT1155BridgeSingleTest
 /// @notice Foundry tests for IntexNFT1155Bridge with IntexNFT1155 token.
@@ -90,7 +91,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
 
     /// @notice A zero bridge address is caught by the `ERC7786MessengerBase` constructor guard.
     function test_constructor_revertsZeroBridge() public {
-        vm.expectRevert(ERC7786MessengerBase.InvalidBridge.selector);
+        vm.expectRevert(ERC7786Sender.InvalidBridge.selector);
         new IntexNFT1155Bridge(address(tokenA), address(0));
     }
 
@@ -171,7 +172,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         vm.deal(address(adapterA), 1 ether);
 
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, 0, FEE));
+        vm.expectRevert(abi.encodeWithSelector(ERC7786Sender.MsgValueBelowFee.selector, 0, FEE));
         adapterA.send(sendParam);
 
         assertEq(address(adapterA).balance, 1 ether, "the float is untouched");
@@ -352,7 +353,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         assertEq(adapterB.quoteReclaimToSource(receiveId, 0), FEE);
         vm.deal(address(adapterB), 1 ether);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, 0, FEE));
+        vm.expectRevert(abi.encodeWithSelector(ERC7786Sender.MsgValueBelowFee.selector, 0, FEE));
         adapterB.reclaimToSource(receiveId, 0);
 
         // Reclaim: B sends the transfer back to its origin A - the only exit that skips B's gate.

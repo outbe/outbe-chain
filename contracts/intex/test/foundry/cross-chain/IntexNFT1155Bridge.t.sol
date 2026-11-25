@@ -6,6 +6,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
+import {ERC7786Sender} from "@contracts/shared/ERC7786Sender.sol";
 import {
     IIntexNFT1155Bridge,
     BatchSendParam,
@@ -131,7 +132,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
         vm.deal(address(srcBatch), 1 ether);
 
         vm.prank(sender);
-        vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, 0, FEE));
+        vm.expectRevert(abi.encodeWithSelector(ERC7786Sender.MsgValueBelowFee.selector, 0, FEE));
         srcBatch.batchSend(p);
 
         assertEq(address(srcBatch).balance, 1 ether, "the float is untouched");
@@ -147,7 +148,7 @@ contract IntexNFT1155BridgeTest is CrossChainTest {
         vm.deal(address(srcBatch), 1 ether);
 
         vm.prank(sender);
-        vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, 0, FEE));
+        vm.expectRevert(abi.encodeWithSelector(ERC7786Sender.MsgValueBelowFee.selector, 0, FEE));
         srcBatch.multiSend(p);
 
         assertEq(address(srcBatch).balance, 1 ether, "the float is untouched");

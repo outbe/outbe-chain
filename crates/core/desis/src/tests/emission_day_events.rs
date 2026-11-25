@@ -19,14 +19,13 @@ use crate::schema::{AuctionStage, DesisContract};
 
 use super::{
     brief, brief_at, clear, mark_done, open_clearing, relay_bids, unprice_day, ANCHOR, CHAIN_ID,
-    EMISSION_DAY, ENTRY_PRICE, LAST_CLEARING, LAST_START, LOAD_MINOR, NOW, ORIGIN_ROUTER_ADDRESS,
-    SRC_CHAIN,
+    EMISSION_DAY, ENTRY_PRICE, LAST_CLEARING, LAST_START, LOAD_MINOR, NOW, SRC_CHAIN,
 };
 
 fn world(f: impl FnOnce(&StorageHandle)) -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, super::targets_stub(&[SRC_CHAIN]));
+    super::seed_targets(&mut storage, &[SRC_CHAIN]);
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
@@ -202,7 +201,6 @@ fn an_empty_clear_returns_the_whole_limit() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,

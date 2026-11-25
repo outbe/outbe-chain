@@ -55,7 +55,7 @@ fn publication_begin_inputs_match_signed_proposer_and_verifier_after_hooks() {
         ));
         assert!(matches!(
             proposer.last().unwrap().0,
-            SystemTx::BeginBlock { step_index: 8 }
+            SystemTx::BeginBlock { step_index: 10 }
         ));
         scenario.body = body;
         let verifier = scenario.resolve().unwrap();
@@ -260,7 +260,11 @@ fn assert_begin_phase_order(proposer: &BeginInputs, height: u64) {
         return;
     }
     let steps: Vec<_> = proposer.iter().map(|(input, _)| input.step_id()).collect();
-    assert_eq!(steps.last(), Some(&SystemTxStepId::begin_block(8)));
+    assert!(steps.ends_with(&[
+        SystemTxStepId::begin_block(8),
+        SystemTxStepId::begin_block(9),
+        SystemTxStepId::begin_block(10),
+    ]));
     assert_eq!(
         steps.contains(&SystemTxStepId::consensus(
             CONSENSUS_TEE_BOOTSTRAP_STEP_INDEX

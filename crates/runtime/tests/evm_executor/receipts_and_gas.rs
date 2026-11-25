@@ -123,7 +123,7 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
         );
     }
 
-    assert_eq!(executor.receipts().len(), 12);
+    assert_eq!(executor.receipts().len(), 14);
     assert!(executor.receipts().iter().all(|receipt| receipt.success));
     assert!(
         executor.system_tx_execution_gas > 0,
@@ -141,9 +141,9 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
         .receipts()
         .iter()
         .all(|receipt| receipt.tx_type == reth_ethereum::TxType::Legacy));
-    assert_eq!(executor.receipts()[11].cumulative_gas_used, 0);
+    assert_eq!(executor.receipts()[13].cumulative_gas_used, 0);
 
-    assert_eq!(system_txs.len(), 12);
+    assert_eq!(system_txs.len(), 14);
     assert_eq!(Address::from(*system_txs[0].signer()), proposer);
     assert_eq!(system_txs[0].tx().chain_id(), Some(CHAIN_ID));
     assert_eq!(system_txs[0].tx().tx_type(), reth_ethereum::TxType::Legacy);
@@ -178,6 +178,14 @@ fn apply_pre_execution_changes_executes_cycle_tick_system_tx_receipt() {
     assert!(matches!(
         SystemTx::decode(system_txs[11].tx().input().as_ref()).unwrap(),
         SystemTx::BeginBlock { step_index: 8 }
+    ));
+    assert!(matches!(
+        SystemTx::decode(system_txs[12].tx().input().as_ref()).unwrap(),
+        SystemTx::BeginBlock { step_index: 9 }
+    ));
+    assert!(matches!(
+        SystemTx::decode(system_txs[13].tx().input().as_ref()).unwrap(),
+        SystemTx::BeginBlock { step_index: 10 }
     ));
 
     let read_ctx = BlockContext {
@@ -359,7 +367,7 @@ fn cycle_tick_utc_boundary_gas_usage() {
         }
     }
 
-    assert_eq!(executor.receipts().len(), 12);
+    assert_eq!(executor.receipts().len(), 14);
     let visible_gas = cycle_tick_visible_gas.expect("CycleTick visible gas must be captured");
     let cycle_tick_receipt = &executor.receipts()[11];
     assert!(
@@ -473,7 +481,7 @@ fn cycle_tick_gas_regression_exercises_dense_agentreward_state() {
             bootstrap: BootstrapFixture::explicit(Some(tee_bootstrap)),
         },
     );
-    let cycle_tx = system_txs.pop().expect("CycleTick is last in begin prefix");
+    let cycle_tx = fixtures::split_off_cycle_tick(&mut system_txs);
     for tx in system_txs {
         executor
             .execute_transaction(tx)
@@ -917,9 +925,9 @@ fn mixed_system_and_user_block_finish_uses_visible_system_gas() {
     finalize_executor_header_artifacts(&mut executor, 0).expect("final extra_data should encode");
     let result = executor.finish().expect("finish should succeed").result;
     assert_eq!(result.gas_used, user_gas);
-    assert_eq!(result.receipts.len(), 18);
+    assert_eq!(result.receipts.len(), 20);
     assert_eq!(result.receipts[0].cumulative_gas_used, 0);
-    assert_eq!(result.receipts[11].cumulative_gas_used, 0);
-    assert_eq!(result.receipts[12].cumulative_gas_used, user_gas);
-    assert_eq!(result.receipts[17].cumulative_gas_used, user_gas);
+    assert_eq!(result.receipts[13].cumulative_gas_used, 0);
+    assert_eq!(result.receipts[14].cumulative_gas_used, user_gas);
+    assert_eq!(result.receipts[19].cumulative_gas_used, user_gas);
 }

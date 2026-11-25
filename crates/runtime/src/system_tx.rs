@@ -83,6 +83,8 @@ impl ProtocolModule for BoundaryOutcomeModule {
 pub const ORACLE_SLASH_STEP_GAS_LIMIT: u64 = 701_035_000;
 /// Four times the measured 255-validator, 256-domain nested ISM envelope, rounded up.
 pub const HYPERLANE_STEP_GAS_LIMIT: u64 = 1_362_315_000;
+/// 64 sends through CrosschainBridge, each with its quote, its IGP payment and its dispatch.
+pub const INTEX_OUTBOX_STEP_GAS_LIMIT: u64 = 200_000_000;
 /// Bounds factory work while retaining headroom for wide first-write batches and nested calls.
 pub const END_BLOCK_FACTORY_STEP_GAS_LIMIT: u64 = 500_000_000;
 
@@ -121,6 +123,12 @@ pub const BEGIN_BLOCK_ORDER: &[ProtocolStep] = &[
         .soft_fail()
         .with_gas_limit(HYPERLANE_STEP_GAS_LIMIT),
     begin_step::<outbe_cycle::CycleModule>().with_validators(),
+    begin_step::<outbe_desis::DesisOutboxModule>()
+        .soft_fail()
+        .with_gas_limit(INTEX_OUTBOX_STEP_GAS_LIMIT),
+    begin_step::<outbe_intexfactory::IntexFactoryOutboxModule>()
+        .soft_fail()
+        .with_gas_limit(INTEX_OUTBOX_STEP_GAS_LIMIT),
 ];
 
 fn process_ready_entitlements(ctx: MutationEntitlementContext<'_>) -> MutationEntitlements {

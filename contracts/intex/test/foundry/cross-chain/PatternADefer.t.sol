@@ -108,7 +108,7 @@ contract PatternADeferTest is CrossChainTest {
     address internal admin = address(this);
     // Registered peer standing in for the Outbe-side router. The router authenticates delivery
     // against this address.
-    address internal outbePeer = makeAddr("outbePeer");
+    address internal outbeIca = makeAddr("outbeIca");
     uint32 internal constant SERIES_ID_DAY = 20260301;
     bytes14 internal constant SERIES_ID = "20260301-USD-U";
     uint256 internal constant TOKEN_ID = uint256(keccak256(abi.encodePacked(SERIES_ID)));
@@ -125,8 +125,8 @@ contract PatternADeferTest is CrossChainTest {
         nftBridge = DeployProxy.intexNFT1155Bridge(address(intex), address(bridge), admin);
         nftBridgeOutbe = DeployProxy.intexNFT1155Bridge(address(intexOutbe), address(bridge), admin);
 
-        // Register remote messengers so inbound authentication passes and the outbound relay has a destination.
-        bnbRouter.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, outbePeer));
+        // Wire the inbound source of the router and the remote messenger of the NFT bridge.
+        _wireOutbeIca(bnbRouter, outbeIca);
         nftBridge.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, address(nftBridgeOutbe)));
 
         stubAuction = new StubAuctionWithBids();
@@ -142,7 +142,7 @@ contract PatternADeferTest is CrossChainTest {
 
     /// @dev Deliver an inbound packet to the router from the registered Outbe peer.
     function _deliverBridge(bytes memory message) internal {
-        _deliver(OUTBE_CHAIN_ID, outbePeer, address(bnbRouter), message);
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(bnbRouter), message);
     }
 
     // ---------------------------------------------------------------
@@ -190,7 +190,7 @@ contract PatternADeferTest is CrossChainTest {
         bnbRouter.sendIntexAuctionBids(SERIES_ID_DAY);
     }
 
-    /// @dev A round that moved but could not finish reports the remainder home. The origin
+    /// @dev A round that moved but could not finish reports the remainder home. Desis
     ///      answers that with another round. Thus a heavy day needs no hand at all.
     function test_TM_AStoppedRoundReportsWhatIsLeft() public {
         stubAuction.setBidCount(130); // three chunks
@@ -199,12 +199,9 @@ contract PatternADeferTest is CrossChainTest {
         // Deliver with enough gas for a chunk or two, not for the day: exactly what a tight budget does.
         bytes memory packet = BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY);
         vm.recordLogs();
-        (bool delivered,) = address(bridge).call{gas: 4_500_000}(
-            abi.encodeCall(
-                bridge.deliverAs,
-                (_interop(OUTBE_CHAIN_ID, outbePeer), _interop(uint32(block.chainid), address(bnbRouter)), packet)
-            )
-        );
+        vm.prank(outbeIca);
+        (bool delivered,) =
+            address(bnbRouter).call{gas: 4_500_000}(abi.encodeCall(TargetRouter.receiveFromOutbe, (packet)));
         assertTrue(delivered, "the delivery itself must survive");
         _assertStopEvents(vm.getRecordedLogs(), 1, 0, 0);
 
@@ -217,7 +214,7 @@ contract PatternADeferTest is CrossChainTest {
         assertEq(uint8(reported[1]), BridgeMsgCodec.MSG_BIDS_PAUSE, "the last thing sent is the report");
     }
 
-    /// @dev A round that sent nothing must not report. The origin would answer with the same
+    /// @dev A round that sent nothing must not report. Desis would answer with the same
     ///      budget for the same outcome. That is a loop rather than a recovery.
     function test_TM_ARoundThatSentNothingDoesNotReport() public {
         // Zero float, so the round reverts whole before any chunk leaves.
@@ -238,12 +235,9 @@ contract PatternADeferTest is CrossChainTest {
         );
         bytes memory packet = BridgeMsgCodec.encodeIntexAuctionClearingStart(SERIES_ID_DAY);
         vm.recordLogs();
-        (bool delivered,) = address(bridge).call{gas: 4_500_000}(
-            abi.encodeCall(
-                bridge.deliverAs,
-                (_interop(OUTBE_CHAIN_ID, outbePeer), _interop(uint32(block.chainid), address(bnbRouter)), packet)
-            )
-        );
+        vm.prank(outbeIca);
+        (bool delivered,) =
+            address(bnbRouter).call{gas: 4_500_000}(abi.encodeCall(TargetRouter.receiveFromOutbe, (packet)));
         assertTrue(delivered, "the delivery itself must survive");
         _assertStopEvents(vm.getRecordedLogs(), 0, 1, 0);
     }

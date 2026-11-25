@@ -5,7 +5,6 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {IntexAuction} from "@contracts/target/IntexAuction.sol";
 import {EscrowAdapter} from "@contracts/target/EscrowAdapter.sol";
-import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {Vm} from "forge-std/Vm.sol";
@@ -50,16 +49,15 @@ library DeployProxy {
         return escrow;
     }
 
-    /// @dev The router is not chain-pinned. Targets are a runtime registry. Callers register
-    ///      targets via `addTarget` after wiring the peer.
-    function originRouter(address bridge, address delegate) internal returns (OriginRouter) {
-        OriginRouter impl = new OriginRouter(bridge);
-        ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(OriginRouter.initialize, (delegate)));
-        return OriginRouter(payable(address(proxy)));
+    function targetRouter(address bridge, address delegate, uint32 outbeChainId) internal returns (TargetRouter) {
+        return targetRouter(bridge, delegate, outbeChainId, address(0x7E57B12D6E));
     }
 
-    function targetRouter(address bridge, address delegate, uint32 outbeChainId) internal returns (TargetRouter) {
-        TargetRouter impl = new TargetRouter(bridge, outbeChainId);
+    function targetRouter(address bridge, address delegate, uint32 outbeChainId, address wcoenBridge)
+        internal
+        returns (TargetRouter)
+    {
+        TargetRouter impl = new TargetRouter(bridge, outbeChainId, wcoenBridge);
         ERC1967Proxy proxy = new ERC1967Proxy(address(impl), abi.encodeCall(TargetRouter.initialize, (delegate)));
         return TargetRouter(payable(address(proxy)));
     }

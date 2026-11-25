@@ -129,7 +129,7 @@ define_exact_routes! {
     GEM_ADDRESS => (outbe_gem::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_gem::precompile::PAYABLE_SELECTORS),
     GEM_FACTORY_ADDRESS => (outbe_gemfactory::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_gemfactory::precompile::PAYABLE_SELECTORS),
     INTEX_ADDRESS => (outbe_intex::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_intex::precompile::PAYABLE_SELECTORS),
-    INTEX_FACTORY_ADDRESS => (outbe_intexfactory::precompile::dispatch, default_base_gas, ValuePolicy::Payable, outbe_intexfactory::precompile::PAYABLE_SELECTORS),
+    INTEX_FACTORY_ADDRESS => (outbe_intexfactory::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_intexfactory::precompile::PAYABLE_SELECTORS),
     DESIS_ADDRESS => (outbe_desis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_desis::precompile::PAYABLE_SELECTORS),
     VAULT_ROUTER_ADDRESS => (outbe_vaultrouter::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_vaultrouter::precompile::PAYABLE_SELECTORS),
     CREDIS_ADDRESS => (outbe_credis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_credis::precompile::PAYABLE_SELECTORS),
