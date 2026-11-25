@@ -37,6 +37,8 @@ pub struct IssueCredisParams {
     /// Main account whose pledged Gratis backs the Credis.
     pub pledge_account: Address,
     pub asset: Address,
+    /// Decimals of `asset` at the reservation.
+    pub asset_decimals: u8,
     /// ISO 4217 numeric code of the disbursed `asset`.
     pub issuance_currency: u16,
     /// ISO 4217 numeric code of the reference currency elected at the reservation and
@@ -74,7 +76,6 @@ pub struct Repayment {
     pub amount_minor: U256,
     /// Collateral freed and owed back to the pledger.
     pub unpledged_gratis_minor: U256,
-    pub asset: Address,
     /// True when this repayment drove the outstanding amount to zero.
     pub closed: bool,
 }
@@ -167,6 +168,7 @@ pub fn issue_in_series(
             owner: params.owner,
             cca: params.cca,
             asset: params.asset,
+            asset_decimals: params.asset_decimals,
             issuance_currency: params.issuance_currency,
             reference_currency: params.reference_currency,
             pledge_account: params.pledge_account,
@@ -301,7 +303,6 @@ pub fn settle(
         settled_amount_minor: amount_paid,
         amount_minor: total_paid,
         unpledged_gratis_minor,
-        asset: record.asset,
         closed,
     })
 }

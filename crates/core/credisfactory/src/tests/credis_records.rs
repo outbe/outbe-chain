@@ -124,6 +124,7 @@ fn params(owner: Address) -> IssueCredisParams {
         cca: cca(),
         pledge_account: source(),
         asset: settlement_asset(),
+        asset_decimals: 6,
         issuance_currency: 840,
         reference_currency: 978,
         policy_rate: policy_rate(),

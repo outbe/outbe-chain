@@ -76,6 +76,7 @@ pub fn issue_credis(
                 cca: r.cca,
                 pledge_account,
                 asset: r.asset,
+                asset_decimals: r.asset_decimals,
                 issuance_currency: r.issuance_currency,
                 reference_currency: r.reference_currency,
                 policy_rate: r.policy_rate,
@@ -230,7 +231,7 @@ fn payment_in(
     outbe_core_common::settlement::floor_to_asset_units(
         amount_minor,
         U256::ONE,
-        decimals(storage, record.asset)?,
+        record.asset_decimals,
         decimals(storage, paid_asset)?,
     )
     .map_err(|_| CredisFactoryError::SettlementAssetNotAllowed.into())

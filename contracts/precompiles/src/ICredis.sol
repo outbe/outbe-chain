@@ -69,8 +69,9 @@ interface ICredis {
     event CredisBurned(uint256 indexed credisId, address indexed owner);
 
     /// @notice Lifecycle state of a Credis, mirroring the Rust `CredisState`.
-    ///         `Issued -> (Called) -> Settled | Forfeited`. A Credis is settleable
-    ///         from the moment it is issued.
+    ///         `Issued -> (Called) -> Forfeited`. A Credis is settleable from the
+    ///         moment it is issued, and its full settlement deletes it, so no read shows
+    ///         `Settled`.
     enum State {
         Issued,
         Called,

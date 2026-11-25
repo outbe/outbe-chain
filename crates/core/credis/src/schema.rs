@@ -146,6 +146,10 @@ pub struct Credis {
     /// UTC hour of the reservation, 0-23.
     #[attribute(order = 17)]
     pub sub_series: u8,
+
+    /// Decimals of `asset` at the reservation. The amounts of the Credis are in these units.
+    #[attribute(order = 18)]
+    pub asset_decimals: u8,
 }
 
 impl Credis {
