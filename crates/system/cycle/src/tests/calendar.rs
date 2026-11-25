@@ -358,7 +358,7 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         );
         assert_eq!(
             rec.metadosis_state,
-            outbe_emission::schema::metadosis_state::CANCELLED
+            outbe_emission::schema::metadosis_state::CANCELED
         );
         assert_eq!(U256::from(rec.promis_limit), expected_cap);
         assert_eq!(

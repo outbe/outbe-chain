@@ -570,7 +570,7 @@ fn failed_terminal_dispatch_takes_the_allocation_fallback() {
         );
         assert_eq!(
             record.metadosis_state,
-            outbe_emission::schema::metadosis_state::CANCELLED
+            outbe_emission::schema::metadosis_state::CANCELED
         );
         assert_eq!(U256::from(record.promis_limit), failed.emissionLimitMinor);
         assert_eq!(

@@ -212,7 +212,7 @@ pub fn record_day_allocation(
 }
 
 /// Records a failed daily allocation: all of `emission_limit` lands in `promis_limit`,
-/// `metadosis_state` becomes `Cancelled`, and `state` becomes `Completed`.
+/// `metadosis_state` becomes `CANCELED`, and `state` becomes `Completed`.
 pub fn record_failed_day_allocation(
     storage: StorageHandle<'_>,
     day: u32,
@@ -236,7 +236,7 @@ pub fn record_failed_day_allocation(
     record.cca = 0;
     record.nods = 0;
     record.promis_limit = limit_u128;
-    record.metadosis_state = metadosis_state::CANCELLED;
+    record.metadosis_state = metadosis_state::CANCELED;
     check_conservation(&record)?;
     record.state = emission_day_state::COMPLETED;
     EmissionContract::new(storage)
@@ -285,7 +285,7 @@ pub fn record_metadosis_completed(
     Ok(record)
 }
 
-/// Marks Metadosis of `day` as `Cancelled` when `metadosis_limit == 0`.
+/// Marks Metadosis of `day` as `CANCELED` when `metadosis_limit == 0`.
 pub fn record_metadosis_canceled(storage: StorageHandle<'_>, day: u32) -> Result<EmissionDay> {
     let contract = EmissionContract::new(storage);
     let mut record = contract
@@ -296,13 +296,13 @@ pub fn record_metadosis_canceled(storage: StorageHandle<'_>, day: u32) -> Result
         return Err(EmissionError::InvalidMetadosisStateTransition {
             day,
             from_state: record.metadosis_state,
-            to_state: metadosis_state::CANCELLED,
+            to_state: metadosis_state::CANCELED,
         }
         .into());
     }
     record.desis_limit = 0;
     record.nods = 0;
-    record.metadosis_state = metadosis_state::CANCELLED;
+    record.metadosis_state = metadosis_state::CANCELED;
     contract.emission_days.update(&record)?;
     Ok(record)
 }
@@ -384,7 +384,7 @@ pub fn record_reward_pool_residue(
         .ok_or(EmissionError::AmountOverflow)?;
     let unsettled = match record.metadosis_state {
         metadosis_state::PENDING => record.metadosis_limit,
-        metadosis_state::COMPLETED | metadosis_state::CANCELLED | metadosis_state::FAILED => 0,
+        metadosis_state::COMPLETED | metadosis_state::CANCELED | metadosis_state::FAILED => 0,
         from_state => {
             return Err(EmissionError::InvalidMetadosisStateTransition {
                 day,
@@ -873,7 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn record_metadosis_canceled_requires_pending_zero_limit_and_sets_cancelled() {
+    fn record_metadosis_canceled_requires_pending_zero_limit_and_sets_canceled() {
         let mut provider = HashMapStorageProvider::new(1);
         let storage = StorageHandle::new(&mut provider);
         let day = 20261001;
@@ -899,7 +899,7 @@ mod tests {
             EmissionError::InvalidMetadosisStateTransition {
                 day,
                 from_state: metadosis_state::PENDING,
-                to_state: metadosis_state::CANCELLED,
+                to_state: metadosis_state::CANCELED,
             },
         );
 
@@ -911,18 +911,18 @@ mod tests {
         put_emission_day_record(storage.clone(), &zero_limit_record).unwrap();
 
         let canceled = record_metadosis_canceled(storage.clone(), day).unwrap();
-        assert_eq!(canceled.metadosis_state, metadosis_state::CANCELLED);
+        assert_eq!(canceled.metadosis_state, metadosis_state::CANCELED);
         let completed = complete_day_emission_limit(storage.clone(), day).unwrap();
         assert_eq!(completed.state, emission_day_state::COMPLETED);
-        assert_eq!(completed.metadosis_state, metadosis_state::CANCELLED);
+        assert_eq!(completed.metadosis_state, metadosis_state::CANCELED);
 
         let repeat_err = record_metadosis_canceled(storage, day).unwrap_err();
         assert_emission_error(
             repeat_err,
             EmissionError::InvalidMetadosisStateTransition {
                 day,
-                from_state: metadosis_state::CANCELLED,
-                to_state: metadosis_state::CANCELLED,
+                from_state: metadosis_state::CANCELED,
+                to_state: metadosis_state::CANCELED,
             },
         );
     }
