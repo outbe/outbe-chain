@@ -29,7 +29,7 @@ use crate::{
     nat::validate_iface_name,
     vmm::{
         calc_app_id, extract_primary_mac, validate_vm_id, CreateVmRequest, NetworkingConfig,
-        StatusRequest, VmInfo, VmmClient, VmmTransport, APP_COMPOSE_JSON,
+        StatusRequest, UpdateVmRequest, VmInfo, VmmClient, VmmTransport, APP_COMPOSE_JSON,
     },
 };
 
@@ -1168,6 +1168,34 @@ pub struct StopLocalVmOutput {
     pub warning: Option<String>,
 }
 
+/// Parameters for `outbe-up vm update` (graceful stop, switch guest image via `UpdateVm`, start
+/// with the same `hda.img` data disk; never uses forced `StopVm`).
+#[derive(Clone, Debug)]
+pub struct UpdateLocalVmOptions {
+    pub name: String,
+    pub expect_vm_id: Option<String>,
+    /// Local guest image directory OR name of an already-published image under `<vmm_home>/image/`.
+    pub image: PathBuf,
+    pub image_name: Option<String>,
+    pub flavor: String,
+    pub vmm_home: PathBuf,
+    pub stop_timeout: Duration,
+    pub poll_interval: Duration,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct UpdateLocalVmOutput {
+    pub name: String,
+    pub vm_id: String,
+    pub previous_image_name: String,
+    pub previous_os_image_hash: String,
+    pub image_name: String,
+    pub os_image_hash: String,
+    pub image_reused: bool,
+    pub already_updated: bool,
+    pub vmm_status: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct LocalVmStatusOutput {
     pub name: String,
@@ -2167,6 +2195,255 @@ pub fn stop_local_vm_with_expected_id<T: VmmTransport>(
     })
 }
 
+/// Update one locally recorded VM to a new guest OS image while preserving its VM UUID, MAC,
+/// networking, annotations, and `hda.img` data disk.
+///
+/// Strictly uses graceful guest shutdown (`ShutdownVm`) and NEVER calls forced `StopVm` (see
+/// `/home/ubuntu/tdx/12-defect-pending-dkg-snapshot.md`). Idempotent: returns
+/// `already_updated = true` without restarting when the VM is already running on the target image.
+pub fn update_local_vm<T: VmmTransport>(
+    store: &LocalVmStore,
+    vmm: &VmmClient<T>,
+    options: &UpdateLocalVmOptions,
+) -> Result<UpdateLocalVmOutput> {
+    update_local_vm_cancellable(store, vmm, options, None)
+}
+
+/// Same as [`update_local_vm`], honoring an optional cooperative cancellation flag.
+pub fn update_local_vm_cancellable<T: VmmTransport>(
+    store: &LocalVmStore,
+    vmm: &VmmClient<T>,
+    options: &UpdateLocalVmOptions,
+    cancel: Option<&AtomicBool>,
+) -> Result<UpdateLocalVmOutput> {
+    if let Some(expected) = options.expect_vm_id.as_deref() {
+        validate_vm_id(expected).wrap_err("invalid --expect-vm-id")?;
+    }
+    // F5: Use separate deadlines for image publishing/locking, graceful shutdown, UpdateVm, and
+    // post-start running confirmation so a slow image publish never eats into `stop_timeout`.
+    let prep_budget = options.stop_timeout.max(Duration::from_secs(60));
+    let publish_deadline = Instant::now() + prep_budget;
+
+    // Resolve and lock target image BEFORE stopping the VM so missing/corrupt images fail closed
+    // without causing any downtime.
+    let (image_dir, effective_image_name) = resolve_update_image_source(options)?;
+    let published = publish_local_image_locked_cancellable(
+        &options.vmm_home,
+        &image_dir,
+        effective_image_name.as_deref(),
+        &options.flavor,
+        Some(publish_deadline),
+        cancel,
+    )?;
+    let _image_lock = published.lock;
+    let target_image_name = published.published.name;
+    let target_os_image_hash = published.published.digest;
+    let image_reused = published.published.reused;
+
+    let lock_deadline = Instant::now() + prep_budget;
+    let guard = store.lock_vm_with_options(&options.name, Some(lock_deadline), cancel)?;
+    let mut state = store.load_locked(&guard, &options.name)?;
+    verify_expected_vm_id(&state, options.expect_vm_id.as_deref())?;
+    ensure!(
+        state.phase == LocalVmPhase::Ready,
+        "VM `{}` ({}) is in phase `{:?}`, not `Ready`; refusing to update image",
+        options.name,
+        state.vm_id,
+        state.phase
+    );
+
+    let info = require_owned_vmm_info(vmm, &state, Some(lock_deadline))?;
+    let previous_image_name = info
+        .image_name()
+        .map(str::to_owned)
+        .unwrap_or_else(|| state.image_name.clone());
+    let previous_os_image_hash = state.os_image_hash.clone();
+
+    // Idempotent fast path: already running on target image.
+    if info.running
+        && info.image_name() == Some(target_image_name.as_str())
+        && state.image_name == target_image_name
+        && state.os_image_hash == target_os_image_hash
+    {
+        return Ok(UpdateLocalVmOutput {
+            name: state.name,
+            vm_id: state.vm_id,
+            previous_image_name,
+            previous_os_image_hash,
+            image_name: target_image_name,
+            os_image_hash: target_os_image_hash,
+            image_reused,
+            already_updated: true,
+            vmm_status: info.status,
+        });
+    }
+
+    // 1. Strictly graceful shutdown if currently running (never `StopVm`), with its own full
+    //    `stop_timeout` budget starting now.
+    if !info.is_stopped() {
+        let stop_deadline = Instant::now() + options.stop_timeout;
+        check_canceled(cancel, "requesting graceful shutdown for vm update")?;
+        state.record_step(
+            "updating-shutting-down",
+            Some(format!("target_image={target_image_name}")),
+        );
+        store.save_locked(&guard, &state)?;
+        vmm.shutdown_vm_with_deadline(&state.vm_id, Some(stop_deadline))
+            .wrap_err_with(|| {
+                format!(
+                    "gracefully shut down VM `{}` ({}) for image update (forced StopVm is never used)",
+                    state.name, state.vm_id
+                )
+            })?;
+        wait_until_stopped(vmm, &state, stop_deadline, options.poll_interval, false).wrap_err_with(
+            || {
+                format!(
+                    "VM `{}` ({}) did not stop gracefully within {}s; aborting image update without force-stop (pending-DKG safety)",
+                    state.name,
+                    state.vm_id,
+                    options.stop_timeout.as_secs()
+                )
+            },
+        )?;
+    }
+
+    // 2. Switch image via VMM `UpdateVm` if VMM manifest does not already name the target image.
+    let update_deadline = Instant::now() + Duration::from_secs(60);
+    let current_info = require_owned_vmm_info(vmm, &state, Some(update_deadline))?;
+    ensure!(
+        current_info.is_stopped(),
+        "VM `{}` ({}) is not stopped before UpdateVm (status={}, running={})",
+        state.name,
+        state.vm_id,
+        current_info.status,
+        current_info.running
+    );
+    if current_info.image_name() != Some(target_image_name.as_str()) {
+        check_canceled(cancel, "calling VMM UpdateVm")?;
+        state.record_step(
+            "updating-image",
+            Some(format!("from={previous_image_name} to={target_image_name}")),
+        );
+        store.save_locked(&guard, &state)?;
+        vmm.update_vm_with_deadline(
+            &UpdateVmRequest {
+                id: state.vm_id.clone(),
+                image: Some(target_image_name.clone()),
+            },
+            Some(update_deadline),
+        )
+        .wrap_err_with(|| {
+            format!(
+                "update VM `{}` ({}) image to `{target_image_name}`",
+                state.name, state.vm_id
+            )
+        })?;
+        let verified = require_owned_vmm_info(vmm, &state, Some(update_deadline))?;
+        ensure!(
+            verified.image_name() == Some(target_image_name.as_str()),
+            "VMM UpdateVm for `{}` ({}) did not record target image `{target_image_name}` (got {:?})",
+            state.name,
+            state.vm_id,
+            verified.image_name()
+        );
+    }
+
+    // Persist new image identity BEFORE starting so local state matches VMM even if start fails.
+    state.image_name = target_image_name.clone();
+    state.os_image_hash = target_os_image_hash.clone();
+    state.record_step(
+        "updated-image",
+        Some(format!(
+            "image={target_image_name} hash={target_os_image_hash}"
+        )),
+    );
+    store.save_locked(&guard, &state)?;
+
+    // 3. Start VM with the exact same `hda.img` data disk and wait until VMM confirms running (F6).
+    let start_budget = options
+        .stop_timeout
+        .clamp(Duration::from_millis(50), Duration::from_secs(60));
+    let start_deadline = Instant::now() + start_budget;
+    check_canceled(cancel, "starting VM after image update")?;
+    vmm.start_vm_with_deadline(&state.vm_id, Some(start_deadline))
+        .wrap_err_with(|| {
+            format!(
+                "start VM `{}` ({}) after switching image to `{target_image_name}`",
+                state.name, state.vm_id
+            )
+        })?;
+    let post_status =
+        wait_until_running(vmm, &state, start_deadline, options.poll_interval, cancel)?;
+
+    state.record_step("updated-started", Some(format!("status={post_status}")));
+    store.save_locked(&guard, &state)?;
+
+    Ok(UpdateLocalVmOutput {
+        name: state.name,
+        vm_id: state.vm_id,
+        previous_image_name,
+        previous_os_image_hash,
+        image_name: target_image_name,
+        os_image_hash: target_os_image_hash,
+        image_reused,
+        already_updated: false,
+        vmm_status: post_status,
+    })
+}
+
+fn wait_until_running<T: VmmTransport>(
+    vmm: &VmmClient<T>,
+    state: &LocalVmState,
+    deadline: Instant,
+    poll_interval: Duration,
+    cancel: Option<&AtomicBool>,
+) -> Result<String> {
+    loop {
+        check_canceled(cancel, "waiting for VM to reach running state")?;
+        let info = require_owned_vmm_info(vmm, state, Some(deadline))?;
+        if info.running && info.status == VmInfo::STATUS_RUNNING {
+            return Ok(info.status);
+        }
+        let now = Instant::now();
+        if now >= deadline {
+            bail!(
+                "VM `{}` ({}) did not reach `running` state after StartVm (last status={}, running={})",
+                state.name,
+                state.vm_id,
+                info.status,
+                info.running
+            );
+        }
+        let remaining = deadline.saturating_duration_since(now);
+        thread::sleep(remaining.min(poll_interval));
+    }
+}
+
+fn resolve_update_image_source(
+    options: &UpdateLocalVmOptions,
+) -> Result<(PathBuf, Option<String>)> {
+    if options.image.is_dir() {
+        return Ok((options.image.clone(), options.image_name.clone()));
+    }
+    let raw = options
+        .image
+        .to_str()
+        .ok_or_else(|| eyre::eyre!("non-UTF-8 image path/name: {}", options.image.display()))?;
+    ensure!(
+        !raw.is_empty() && !raw.contains('/') && !raw.contains('\\') && raw != "." && raw != "..",
+        "guest image directory does not exist: {}",
+        options.image.display()
+    );
+    let candidate = options.vmm_home.join("image").join(raw);
+    ensure!(
+        candidate.is_dir(),
+        "guest image `{raw}` not found under {} (pass a local image directory or an already-published image name)",
+        options.vmm_home.join("image").display()
+    );
+    let effective_name = options.image_name.clone().unwrap_or_else(|| raw.to_owned());
+    Ok((candidate, Some(effective_name)))
+}
+
 /// Query status for one locally recorded VM, reading DHCP leases best-effort for IP lookup.
 pub fn status_local_vm<T: VmmTransport>(
     store: &LocalVmStore,
@@ -2696,6 +2973,8 @@ mod tests {
         drop_create_response_once: bool,
         delay_registration_polls: usize,
         pending_delayed_vm: Option<FakeVm>,
+        ignore_shutdown: bool,
+        ignore_start: bool,
     }
 
     #[derive(Clone)]
@@ -2910,6 +3189,9 @@ mod tests {
                 }
                 "StartVm" => {
                     let id = req["id"].as_str().unwrap();
+                    if guard.ignore_start {
+                        return Ok("{}".into());
+                    }
                     let vm = guard.vms.get_mut(id).unwrap();
                     vm.running = true;
                     vm.stopped_flag = false;
@@ -2919,10 +3201,21 @@ mod tests {
                 }
                 "ShutdownVm" => {
                     let id = req["id"].as_str().unwrap();
+                    if guard.ignore_shutdown {
+                        return Ok("{}".into());
+                    }
                     let vm = guard.vms.get_mut(id).unwrap();
                     vm.running = false;
                     // Exact dstack VMM status after graceful ShutdownVm (.started remains true).
                     vm.status = VmInfo::STATUS_EXITED.into();
+                    Ok("{}".into())
+                }
+                "UpdateVm" => {
+                    let id = req["id"].as_str().unwrap();
+                    let vm = guard.vms.get_mut(id).unwrap();
+                    if let Some(new_img) = req.get("image").and_then(|v| v.as_str()) {
+                        vm.image = new_img.to_owned();
+                    }
                     Ok("{}".into())
                 }
                 "StopVm" => {
@@ -4469,5 +4762,268 @@ mod tests {
             assert!(e.sha256.is_none());
             assert!(e.size_bytes.is_none());
         }
+    }
+
+    #[test]
+    fn s7_update_local_vm_graceful_idempotent_and_never_force_stops() {
+        let dir = tempfile::tempdir().unwrap();
+        let (image_v1, disk) = make_image_and_disk(dir.path());
+        let image_v2 = dir.path().join("image-v2");
+        fs::create_dir_all(&image_v2).unwrap();
+        let v2_digest = "2".repeat(64);
+        fs::write(
+            image_v2.join("metadata.json"),
+            "{\"rootfs\":\"rootfs.img\"}\n",
+        )
+        .unwrap();
+        fs::write(image_v2.join("digest.txt"), format!("{v2_digest}\n")).unwrap();
+        fs::write(image_v2.join("rootfs.img"), b"fake-rootfs-v2").unwrap();
+
+        let store = LocalVmStore::new(dir.path().join("state"));
+        let stub = StubVmm::new();
+        let vmm = VmmClient::new(stub.clone(), "stub");
+        let opts = base_opts(dir.path(), &image_v1, &disk);
+        let vmm_home = opts.vmm_home.clone();
+
+        let created = create_local_vm_with_disk_stager(&store, &vmm, &opts, |home, id, _, _| {
+            let dst = home.join("vm").join(id).join("hda.img");
+            fs::create_dir_all(dst.parent().unwrap()).unwrap();
+            fs::write(&dst, b"precious-validator-hda").unwrap();
+            Ok(dst)
+        })
+        .unwrap();
+        start_local_vm(&store, &vmm, "dev").unwrap();
+
+        let hda_path = vmm_home.join("vm").join(&created.vm_id).join("hda.img");
+        let prev_image_name = created.image_name.clone();
+        let prev_hash = created.os_image_hash.clone();
+
+        // 1. Missing target image fails closed BEFORE stopping the running VM.
+        let missing_err = update_local_vm(
+            &store,
+            &vmm,
+            &UpdateLocalVmOptions {
+                name: "dev".into(),
+                expect_vm_id: Some(created.vm_id.clone()),
+                image: PathBuf::from("outbe-vm-dev-missing"),
+                image_name: None,
+                flavor: "dev".into(),
+                vmm_home: vmm_home.clone(),
+                stop_timeout: Duration::from_secs(5),
+                poll_interval: Duration::from_millis(5),
+            },
+        )
+        .unwrap_err();
+        assert!(
+            format!("{missing_err:#}").contains("not found"),
+            "{missing_err:#}"
+        );
+        assert!(stub.state.lock().unwrap().vms[&created.vm_id].running);
+
+        // 2. Wrong --expect-vm-id fails closed without touching VMM.
+        let bad_id_err = update_local_vm(
+            &store,
+            &vmm,
+            &UpdateLocalVmOptions {
+                name: "dev".into(),
+                expect_vm_id: Some("00000000-0000-4000-8000-000000000099".into()),
+                image: image_v2.clone(),
+                image_name: None,
+                flavor: "dev".into(),
+                vmm_home: vmm_home.clone(),
+                stop_timeout: Duration::from_secs(5),
+                poll_interval: Duration::from_millis(5),
+            },
+        )
+        .unwrap_err();
+        assert!(
+            format!("{bad_id_err:#}").contains("vm_id_mismatch"),
+            "{bad_id_err:#}"
+        );
+
+        // 3. Graceful stop timeout MUST fail closed and NEVER call StopVm.
+        stub.state.lock().unwrap().ignore_shutdown = true;
+        stub.state.lock().unwrap().calls.clear();
+        let timeout_err = update_local_vm(
+            &store,
+            &vmm,
+            &UpdateLocalVmOptions {
+                name: "dev".into(),
+                expect_vm_id: Some(created.vm_id.clone()),
+                image: image_v2.clone(),
+                image_name: None,
+                flavor: "dev".into(),
+                vmm_home: vmm_home.clone(),
+                stop_timeout: Duration::from_millis(40),
+                poll_interval: Duration::from_millis(5),
+            },
+        )
+        .unwrap_err();
+        assert!(
+            format!("{timeout_err:#}").contains("without force-stop"),
+            "{timeout_err:#}"
+        );
+        {
+            let calls = &stub.state.lock().unwrap().calls;
+            assert!(calls.iter().any(|c| c == "ShutdownVm"));
+            assert!(
+                !calls.iter().any(|c| c == "StopVm"),
+                "must NEVER call StopVm: {calls:?}"
+            );
+            assert!(!calls.iter().any(|c| c == "UpdateVm"));
+        }
+
+        // 4. Happy path: graceful ShutdownVm -> UpdateVm -> StartVm preserving vm_id, MAC, and hda.img.
+        stub.state.lock().unwrap().ignore_shutdown = false;
+        stub.state.lock().unwrap().calls.clear();
+        let updated = update_local_vm(
+            &store,
+            &vmm,
+            &UpdateLocalVmOptions {
+                name: "dev".into(),
+                expect_vm_id: Some(created.vm_id.clone()),
+                image: image_v2.clone(),
+                image_name: None,
+                flavor: "dev".into(),
+                vmm_home: vmm_home.clone(),
+                stop_timeout: Duration::from_secs(5),
+                poll_interval: Duration::from_millis(5),
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.vm_id, created.vm_id);
+        assert_eq!(updated.previous_image_name, prev_image_name);
+        assert_eq!(updated.previous_os_image_hash, prev_hash);
+        assert_eq!(
+            updated.image_name,
+            format!("outbe-vm-dev-{}", &v2_digest[..16])
+        );
+        assert_eq!(updated.os_image_hash, v2_digest);
+        assert!(!updated.already_updated);
+        assert_eq!(updated.vmm_status, VmInfo::STATUS_RUNNING);
+        // hda.img untouched!
+        assert_eq!(fs::read(&hda_path).unwrap(), b"precious-validator-hda");
+        {
+            let calls = &stub.state.lock().unwrap().calls;
+            assert!(!calls.iter().any(|c| c == "StopVm"));
+            let shutdown_idx = calls.iter().position(|c| c == "ShutdownVm").unwrap();
+            let update_idx = calls.iter().position(|c| c == "UpdateVm").unwrap();
+            let start_idx = calls.iter().position(|c| c == "StartVm").unwrap();
+            assert!(
+                shutdown_idx < update_idx && update_idx < start_idx,
+                "{calls:?}"
+            );
+        }
+
+        // 5. Idempotent re-run referencing published image name directly returns already_updated=true
+        //    without stopping or restarting the VM.
+        stub.state.lock().unwrap().calls.clear();
+        let rerun = update_local_vm(
+            &store,
+            &vmm,
+            &UpdateLocalVmOptions {
+                name: "dev".into(),
+                expect_vm_id: Some(created.vm_id.clone()),
+                image: PathBuf::from(&updated.image_name),
+                image_name: None,
+                flavor: "dev".into(),
+                vmm_home: vmm_home.clone(),
+                stop_timeout: Duration::from_secs(5),
+                poll_interval: Duration::from_millis(5),
+            },
+        )
+        .unwrap();
+        assert!(rerun.already_updated);
+        assert_eq!(rerun.image_name, updated.image_name);
+        assert_eq!(rerun.os_image_hash, v2_digest);
+        {
+            let calls = &stub.state.lock().unwrap().calls;
+            assert!(
+                !calls.iter().any(|c| matches!(
+                    c.as_str(),
+                    "ShutdownVm" | "StopVm" | "UpdateVm" | "StartVm"
+                )),
+                "{calls:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn s7_update_local_vm_fails_closed_if_vmm_never_reports_running() {
+        let dir = tempfile::tempdir().unwrap();
+        let (image_v1, disk) = make_image_and_disk(dir.path());
+        let image_v2 = dir.path().join("image-v2");
+        fs::create_dir_all(&image_v2).unwrap();
+        let v2_digest = "4".repeat(64);
+        fs::write(
+            image_v2.join("metadata.json"),
+            "{\"rootfs\":\"rootfs.img\"}\n",
+        )
+        .unwrap();
+        fs::write(image_v2.join("digest.txt"), format!("{v2_digest}\n")).unwrap();
+        fs::write(image_v2.join("rootfs.img"), b"fake-rootfs-v2").unwrap();
+
+        let store = LocalVmStore::new(dir.path().join("state"));
+        let stub = StubVmm::new();
+        let vmm = VmmClient::new(stub.clone(), "stub");
+        let opts = base_opts(dir.path(), &image_v1, &disk);
+        let vmm_home = opts.vmm_home.clone();
+
+        let created = create_local_vm_with_disk_stager(&store, &vmm, &opts, |home, id, _, _| {
+            let dst = home.join("vm").join(id).join("hda.img");
+            fs::create_dir_all(dst.parent().unwrap()).unwrap();
+            fs::write(&dst, b"precious-validator-hda").unwrap();
+            Ok(dst)
+        })
+        .unwrap();
+        start_local_vm(&store, &vmm, "dev").unwrap();
+
+        // F6: StartVm succeeds at RPC layer, but VMM GetInfo never transitions to `running`.
+        stub.state.lock().unwrap().ignore_start = true;
+        let err = update_local_vm(
+            &store,
+            &vmm,
+            &UpdateLocalVmOptions {
+                name: "dev".into(),
+                expect_vm_id: Some(created.vm_id.clone()),
+                image: image_v2.clone(),
+                image_name: None,
+                flavor: "dev".into(),
+                vmm_home: vmm_home.clone(),
+                stop_timeout: Duration::from_millis(80),
+                poll_interval: Duration::from_millis(5),
+            },
+        )
+        .unwrap_err();
+        assert!(
+            format!("{err:#}").contains("did not reach `running` state after StartVm"),
+            "{err:#}"
+        );
+        assert!(!stub.state.lock().unwrap().vms[&created.vm_id].running);
+
+        // Resuming after StartVm works again skips ShutdownVm & UpdateVm and confirms `running`.
+        stub.state.lock().unwrap().ignore_start = false;
+        stub.state.lock().unwrap().calls.clear();
+        let resumed = update_local_vm(
+            &store,
+            &vmm,
+            &UpdateLocalVmOptions {
+                name: "dev".into(),
+                expect_vm_id: Some(created.vm_id.clone()),
+                image: image_v2,
+                image_name: None,
+                flavor: "dev".into(),
+                vmm_home,
+                stop_timeout: Duration::from_secs(5),
+                poll_interval: Duration::from_millis(5),
+            },
+        )
+        .unwrap();
+        assert_eq!(resumed.vmm_status, VmInfo::STATUS_RUNNING);
+        assert_eq!(resumed.os_image_hash, v2_digest);
+        let calls = &stub.state.lock().unwrap().calls;
+        assert!(!calls.iter().any(|c| c == "ShutdownVm"), "{calls:?}");
+        assert!(!calls.iter().any(|c| c == "UpdateVm"), "{calls:?}");
+        assert!(calls.iter().any(|c| c == "StartVm"), "{calls:?}");
     }
 }

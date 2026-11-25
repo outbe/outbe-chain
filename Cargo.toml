@@ -71,6 +71,7 @@ members = [
     # binaries
     "bin/outbe-up",
     "bin/outbe-net-up",
+    "bin/outbe-vm-agent",
     "bin/outbe-chain",
     "bin/outbe-genesis-cli",
     "bin/outbe-keygen",
@@ -162,6 +163,7 @@ default-members = [
     # binaries
     "bin/outbe-up",
     "bin/outbe-net-up",
+    "bin/outbe-vm-agent",
     "bin/outbe-chain",
     "bin/outbe-genesis-cli",
     "bin/outbe-keygen",

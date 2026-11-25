@@ -65,7 +65,11 @@ pub struct ConsensusStatus {
     #[serde(default)]
     pub vrf_material_version: u64,
     #[serde(default)]
+    pub last_dkg_activation_height: Option<u64>,
+    #[serde(default)]
     pub next_planned_activation_height: u64,
+    #[serde(default)]
+    pub randomness_status: Option<String>,
     #[serde(default)]
     pub is_validator: bool,
     #[serde(default)]

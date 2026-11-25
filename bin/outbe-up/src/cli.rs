@@ -974,6 +974,42 @@ enum VmCommand {
         #[arg(long, group = "legacy_opts", help_heading = LEGACY_VM_HEADING, requires = "artifacts")]
         max_lag: Option<u64>,
     },
+    /// Gracefully stop one local VM, switch its guest OS image via VMM UpdateVm, and start it with the same data disk (never uses forced stop).
+    Update {
+        /// Local VM name to update.
+        #[arg(long)]
+        name: String,
+        /// Expected VMM VM UUID verified under the per-VM lock before issuing any VMM RPC.
+        #[arg(long)]
+        expect_vm_id: Option<String>,
+        /// Target guest OS image directory (containing metadata.json + digest.txt) or already-published image name under `<vmm-home>/image/`.
+        #[arg(long)]
+        image: PathBuf,
+        /// Override the digest-qualified VMM image name (defaults to `outbe-vm-<flavor>-<digest16>` or published name).
+        #[arg(long)]
+        image_name: Option<String>,
+        /// Guest image flavor label used when deriving the default image name [default: dev].
+        #[arg(long)]
+        flavor: Option<String>,
+        /// Maximum seconds to wait for graceful guest shutdown (`ShutdownVm`; forced stop is never used).
+        #[arg(long, default_value_t = 120)]
+        stop_timeout: u64,
+        /// Local dstack VMM Unix socket path [default: ~/.dstack-vmm/run/vmm.sock].
+        #[arg(long)]
+        vmm_socket: Option<PathBuf>,
+        /// Local dstack VMM home directory [default: derived from --vmm-socket or ~/.dstack-vmm].
+        #[arg(long)]
+        vmm_home: Option<PathBuf>,
+        /// Directory for local per-VM state files [default: ${XDG_STATE_HOME:-~/.local/state}/outbe-up].
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+        /// Tighten unsafe permissions on preexisting user-owned state directories/files (0700/0600).
+        #[arg(long)]
+        fix_permissions: bool,
+        /// Emit machine-readable JSON on stdout.
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Args)]
@@ -1656,6 +1692,36 @@ impl Cli {
                         },
                     ),
                 },
+                VmCommand::Update {
+                    name,
+                    expect_vm_id,
+                    image,
+                    image_name,
+                    flavor,
+                    stop_timeout,
+                    vmm_socket,
+                    vmm_home,
+                    state_dir,
+                    fix_permissions,
+                    json,
+                } => {
+                    vm::local::update(vm::local::LocalUpdateArgs {
+                        name,
+                        expect_vm_id,
+                        image,
+                        image_name,
+                        flavor,
+                        stop_timeout,
+                        conn: vm::local::LocalConnectionArgs {
+                            vmm_socket,
+                            vmm_home,
+                            state_dir,
+                            fix_permissions,
+                            json,
+                        },
+                    })
+                    .await
+                }
             },
             Command::Internal(args) => match args.command {
                 InternalCommand::Feeder(args) => {

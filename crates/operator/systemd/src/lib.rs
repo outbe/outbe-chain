@@ -4,7 +4,7 @@ const SERVICE_TEMPLATE: &str = include_str!("../templates/service.unit");
 const TARGET_TEMPLATE: &str = include_str!("../templates/target.unit");
 const HOST_BIN_DIR: &str = "/opt/outbe-chain";
 const VM_BIN_DIR: &str = "/usr/local/bin";
-const VM_OUTBE_UP: &str = "/usr/local/bin/outbe-up";
+const VM_AGENT: &str = "/usr/local/bin/outbe-vm-agent";
 
 /// One rendered systemd asset.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -42,7 +42,7 @@ struct FoundingService<'a> {
 
 struct ManagedProfile<'a> {
     bin_dir: &'a str,
-    outbe_up: &'a str,
+    helper_prefix: String,
     internal_bin_dir: Option<&'a str>,
     is_vm: bool,
     joining: bool,
@@ -52,7 +52,7 @@ struct ManagedProfile<'a> {
 pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
     managed_units(&ManagedProfile {
         bin_dir: HOST_BIN_DIR,
-        outbe_up,
+        helper_prefix: format!("{outbe_up} internal"),
         internal_bin_dir: None,
         is_vm: false,
         joining: true,
@@ -63,11 +63,12 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
 /// and reads node data from `/opt/outbe-chain`.
 ///
 /// `outbe-validator.target` starts `outbe-vm-boot.service`, which reads `OUTBE_NODE_ROLE` from
-/// `/opt/outbe-chain/validator.env` and starts only that role's services.
+/// `/opt/outbe-chain/validator.env` and starts only that role's services. All guest helper
+/// invocations use `/usr/local/bin/outbe-vm-agent` (never `outbe-up`).
 pub fn vm_units() -> Vec<UnitFile> {
     managed_units(&ManagedProfile {
         bin_dir: VM_BIN_DIR,
-        outbe_up: VM_OUTBE_UP,
+        helper_prefix: VM_AGENT.to_owned(),
         internal_bin_dir: Some(VM_BIN_DIR),
         is_vm: true,
         joining: false,
@@ -77,12 +78,12 @@ pub fn vm_units() -> Vec<UnitFile> {
 fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
     let internal_cmd = |subcommand: &str| match profile.internal_bin_dir {
         Some(dir) => format!(
-            "ExecStart={} internal {subcommand} --bin-dir {dir}",
-            profile.outbe_up
+            "ExecStart={} {subcommand} --bin-dir {dir}",
+            profile.helper_prefix
         ),
-        None => format!("ExecStart={} internal {subcommand}", profile.outbe_up),
+        None => format!("ExecStart={} {subcommand}", profile.helper_prefix),
     };
-    let wait_rpc = format!("ExecStartPre={} internal wait-rpc", profile.outbe_up);
+    let wait_rpc = format!("ExecStartPre={} wait-rpc", profile.helper_prefix);
 
     let with_vm_boot = |mut directives: Vec<String>| {
         if profile.is_vm {
@@ -195,7 +196,10 @@ fn managed_units(profile: &ManagedProfile<'_>) -> Vec<UnitFile> {
             true,
         )));
         units.push(render_service(&managed_full_node_spec(profile)));
-        units.push(render_vm_boot_service(profile.outbe_up, profile.bin_dir));
+        units.push(render_vm_boot_service(
+            &profile.helper_prefix,
+            profile.bin_dir,
+        ));
     }
     units.sort_by(|left, right| left.name.cmp(&right.name));
     units
@@ -346,8 +350,8 @@ fn managed_validator_spec(
         "EnvironmentFile=/opt/outbe-chain/validator.env",
         "Environment=RUST_MIN_STACK=16777216",
         &format!(
-            "ExecStartPre={} internal wait-validator-dependencies",
-            profile.outbe_up
+            "ExecStartPre={} wait-validator-dependencies",
+            profile.helper_prefix
         ),
     ]);
     directives.extend(common_node_exec_lines(
@@ -374,7 +378,7 @@ fn managed_validator_spec(
     directives.extend(lines(&[
         "  --radicle.control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \\",
         "  --radicle.status-address 127.0.0.1:8876",
-        &format!("ExecStartPost={} internal wait-rpc", profile.outbe_up),
+        &format!("ExecStartPost={} wait-rpc", profile.helper_prefix),
     ]));
 
     let mut unit_directives = lines(&[
@@ -413,7 +417,7 @@ fn managed_full_node_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
     directives.extend(lines(&[
         "  $OUTBE_CONSENSUS_EXTRA_ARGS \\",
         "  --upstream ${OUTBE_CERTIFIED_RPC}",
-        &format!("ExecStartPost={} internal wait-rpc", profile.outbe_up),
+        &format!("ExecStartPost={} wait-rpc", profile.helper_prefix),
     ]));
 
     let unit_directives = lines(&[
@@ -435,7 +439,7 @@ fn managed_full_node_spec(profile: &ManagedProfile<'_>) -> ServiceSpec {
     }
 }
 
-fn render_vm_boot_service(outbe_up: &str, bin_dir: &str) -> UnitFile {
+fn render_vm_boot_service(helper_prefix: &str, bin_dir: &str) -> UnitFile {
     // Run before all node daemons to verify the unmeasured data disk, configure the static IPv4
     // drop-in under /run/systemd/network, read `OUTBE_NODE_ROLE` from `validator.env`, and start
     // the corresponding role services via `systemctl start --no-block`.
@@ -450,7 +454,7 @@ fn render_vm_boot_service(outbe_up: &str, bin_dir: &str) -> UnitFile {
             "[Service]\n",
             "Type=oneshot\n",
             "RemainAfterExit=yes\n",
-            "ExecStart={outbe_up} internal vm-boot --bin-dir {bin_dir}\n",
+            "ExecStart={helper_prefix} vm-boot --bin-dir {bin_dir}\n",
             "StandardOutput=journal+console\n",
             "StandardError=journal+console\n",
             "UMask=0077\n",
@@ -463,7 +467,7 @@ fn render_vm_boot_service(outbe_up: &str, bin_dir: &str) -> UnitFile {
             "[Install]\n",
             "WantedBy=outbe-validator.target\n",
         ),
-        outbe_up = outbe_up,
+        helper_prefix = helper_prefix,
         bin_dir = bin_dir,
     );
     UnitFile {
@@ -977,9 +981,8 @@ mod tests {
         assert!(boot
             .contains("After=local-fs.target systemd-networkd.service outbe-data-mount.service"));
         assert!(boot.contains("ReadWritePaths=/opt/outbe-chain /run/systemd/network\n"));
-        assert!(boot.contains(
-            "ExecStart=/usr/local/bin/outbe-up internal vm-boot --bin-dir /usr/local/bin"
-        ));
+        assert!(boot
+            .contains("ExecStart=/usr/local/bin/outbe-vm-agent vm-boot --bin-dir /usr/local/bin"));
         assert!(!boot.contains("EnvironmentFile="));
 
         let hyperlane = unit(&vm, "outbe-hyperlane-validator.service");
@@ -997,6 +1000,11 @@ mod tests {
             assert!(!unit.content.contains("@@"));
             assert!(!unit.content.contains("%i"));
             assert!(!unit.content.contains("@.service"));
+            assert!(
+                !unit.content.contains("outbe-up") && !unit.content.contains("outbe-net-up"),
+                "{}: VM unit must use outbe-vm-agent, never outbe-up or outbe-net-up",
+                unit.name
+            );
         }
     }
 
@@ -1056,11 +1064,10 @@ mod tests {
             exec_count >= 13,
             "expected ExecStart* directives across all VM role units"
         );
-        assert!(unit(&vm, "outbe-feeder.service").contains(
-            "ExecStart=/usr/local/bin/outbe-up internal feeder --bin-dir /usr/local/bin"
-        ));
+        assert!(unit(&vm, "outbe-feeder.service")
+            .contains("ExecStart=/usr/local/bin/outbe-vm-agent feeder --bin-dir /usr/local/bin"));
         assert!(unit(&vm, "outbe-hyperlane-validator.service").contains(
-            "ExecStart=/usr/local/bin/outbe-up internal hyperlane --bin-dir /usr/local/bin"
+            "ExecStart=/usr/local/bin/outbe-vm-agent hyperlane --bin-dir /usr/local/bin"
         ));
     }
 
@@ -1217,7 +1224,7 @@ mod tests {
         assert!(!full_content.contains("outbe-radicle.service"));
         assert!(!full_content.contains("wait-validator-dependencies"));
         assert!(full_content.contains("ReadWritePaths=/opt/outbe-chain/validator-0\n"));
-        assert!(full_content.contains("ExecStartPost=/usr/local/bin/outbe-up internal wait-rpc\n"));
+        assert!(full_content.contains("ExecStartPost=/usr/local/bin/outbe-vm-agent wait-rpc\n"));
     }
 
     fn logical_directives(content: &str) -> Vec<(String, String)> {

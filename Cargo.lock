@@ -9428,6 +9428,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-vm-agent"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "eyre",
+ "outbe-operator-node-role",
+ "tokio",
+]
+
+[[package]]
 name = "outbe-vote"
 version = "0.1.0"
 dependencies = [

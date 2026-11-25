@@ -21,6 +21,7 @@ use super::elf::{self, ReleaseIdentity};
 
 const COMMON_BINARIES: &[&str] = &[
     "outbe-up",
+    "outbe-vm-agent",
     "outbe-chain",
     "outbe-cli",
     "outbe-keygen",
@@ -267,9 +268,10 @@ fn cargo_build_command(repo_root: &Path, target: &str) -> Command {
     command
 }
 
-fn binary_targets() -> [(&'static str, &'static str); 8] {
+fn binary_targets() -> [(&'static str, &'static str); 9] {
     [
         ("outbe-up", "outbe-up"),
+        ("outbe-vm-agent", "outbe-vm-agent"),
         ("outbe-chain", "outbe-chain"),
         ("outbe-cli", "outbe-cli"),
         ("outbe-keygen", "outbe-keygen"),
@@ -576,6 +578,7 @@ mod tests {
                 "outbe-keygen",
                 "outbe-radicle",
                 "outbe-up",
+                "outbe-vm-agent",
             ]
         );
         assert!(manifest

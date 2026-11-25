@@ -6,7 +6,7 @@ const OUTBE_NET_UP_BIN: &str = env!("CARGO_BIN_EXE_outbe-net-up");
 const REAL_S5_BUNDLE: &str = "/home/ubuntu/outbe-vm-work/s5-bundle/outbe-software-bundle-v1-671c5c9d1b61ab2acb9619d97fc340379caa8c9d.tar.zst";
 
 #[test]
-fn config_example_and_update_placeholder_work_via_cli() {
+fn config_example_and_update_cli_validation_work() {
     let tmp = tempfile::tempdir().unwrap();
     let cfg_path = tmp.path().join("network.yaml");
 
@@ -22,23 +22,69 @@ fn config_example_and_update_placeholder_work_via_cli() {
     );
     assert!(cfg_path.is_file());
 
-    let upd = Command::new(OUTBE_NET_UP_BIN)
+    // `network update` must require an image source (`--image-archive` or `--image-url`).
+    let missing_img = Command::new(OUTBE_NET_UP_BIN)
+        .args(["network", "update", "--artifacts", "/tmp/fake-artifacts"])
+        .output()
+        .unwrap();
+    assert!(!missing_img.status.success());
+    let stderr = String::from_utf8_lossy(&missing_img.stderr);
+    assert!(
+        stderr.contains("--image-archive") && stderr.contains("--image-url"),
+        "{stderr}"
+    );
+
+    // `network update` must reject `--force` (strictly graceful shutdown only).
+    let force_rej = Command::new(OUTBE_NET_UP_BIN)
         .args([
             "network",
             "update",
             "--artifacts",
             "/tmp/fake-artifacts",
-            "--image",
-            "outbe-vm-dev-0123456789abcdef",
+            "--image-archive",
+            "/tmp/fake-image.tar.zst",
+            "--force",
         ])
         .output()
         .unwrap();
-    assert!(!upd.status.success());
-    let stderr = String::from_utf8_lossy(&upd.stderr);
-    assert!(
-        stderr.contains("not yet implemented") && stderr.contains("S7"),
-        "{stderr}"
-    );
+    assert!(!force_rej.status.success());
+    let stderr = String::from_utf8_lossy(&force_rej.stderr);
+    assert!(stderr.contains("--force"), "{stderr}");
+
+    // `network update` must reject `--dkg-guard-blocks 0` (F2: cannot disable DKG guard).
+    let zero_guard = Command::new(OUTBE_NET_UP_BIN)
+        .args([
+            "network",
+            "update",
+            "--artifacts",
+            "/tmp/fake-artifacts",
+            "--image-archive",
+            "/tmp/fake-image.tar.zst",
+            "--dkg-guard-blocks",
+            "0",
+        ])
+        .output()
+        .unwrap();
+    assert!(!zero_guard.status.success());
+    let stderr = String::from_utf8_lossy(&zero_guard.stderr);
+    assert!(stderr.contains("dkg-guard-blocks"), "{stderr}");
+
+    // `network update` must reject removed `--skip-dkg-boundary-wait`.
+    let skip_rej = Command::new(OUTBE_NET_UP_BIN)
+        .args([
+            "network",
+            "update",
+            "--artifacts",
+            "/tmp/fake-artifacts",
+            "--image-archive",
+            "/tmp/fake-image.tar.zst",
+            "--skip-dkg-boundary-wait",
+        ])
+        .output()
+        .unwrap();
+    assert!(!skip_rej.status.success());
+    let stderr = String::from_utf8_lossy(&skip_rej.stderr);
+    assert!(stderr.contains("--skip-dkg-boundary-wait"), "{stderr}");
 }
 
 #[test]

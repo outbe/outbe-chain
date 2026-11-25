@@ -24,12 +24,14 @@ pub const OUTBE_GID: u32 = 900;
 
 /// Binaries copied from the verified software bundle into `/usr/local/bin`.
 /// The CRS is intentionally omitted from the image and stays on the data disk.
+/// `outbe-up` and `outbe-net-up` are intentionally excluded (R-4 / S8); guest units invoke
+/// `/usr/local/bin/outbe-vm-agent` instead.
 pub const VM_BINARIES: &[&str] = &[
     "outbe-chain",
     "outbe-radicle",
     "outbe-feeder",
     "outbe-hyperlane-validator",
-    "outbe-up",
+    "outbe-vm-agent",
     "outbe-cli",
     "outbe-keygen",
 ];
@@ -1069,6 +1071,12 @@ mod tests {
             fs::write(&path, format!("elf-{binary}")).unwrap();
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
         }
+        // Host-only operator CLIs exist in the bundle/workspace but must NEVER enter the VM image.
+        for excluded in ["outbe-up", "outbe-net-up"] {
+            let path = software_root.join("bin").join(excluded);
+            fs::write(&path, format!("elf-{excluded}")).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        }
         // CRS exists in the software bundle, but must NOT be copied into the VM image.
         fs::write(software_root.join(".bb-crs/bn254_g1.dat"), b"crs").unwrap();
 
@@ -1081,7 +1089,8 @@ mod tests {
         let common = dstack_root.join("os/mkosi/mkosi.skeleton");
         let dev_only = dstack_root.join("os/mkosi/mkosi.profiles/dev/mkosi.skeleton");
 
-        // All 7 VM binaries installed with 0755; CRS omitted.
+        // All 7 VM binaries installed with 0755 (including outbe-vm-agent); outbe-up,
+        // outbe-net-up, and CRS omitted.
         for binary in VM_BINARIES {
             let dst = common.join("usr/local/bin").join(binary);
             assert!(dst.is_file(), "missing binary: {binary}");
@@ -1090,6 +1099,9 @@ mod tests {
                 0o755
             );
         }
+        assert!(common.join("usr/local/bin/outbe-vm-agent").is_file());
+        assert!(!common.join("usr/local/bin/outbe-up").exists());
+        assert!(!common.join("usr/local/bin/outbe-net-up").exists());
         assert!(!common.join("opt/outbe-chain/.bb-crs").exists());
         assert!(!common.join(".bb-crs").exists());
 

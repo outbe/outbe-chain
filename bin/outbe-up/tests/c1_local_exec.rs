@@ -527,6 +527,13 @@ fn serve_one(
             vm.status = "exited".into();
             "{}".into()
         }
+        "UpdateVm" => {
+            let vm = guard.get_mut(req["id"].as_str().unwrap()).unwrap();
+            if let Some(img) = req.get("image").and_then(Value::as_str) {
+                vm.image = img.to_owned();
+            }
+            "{}".into()
+        }
         "StopVm" => {
             let vm = guard.get_mut(req["id"].as_str().unwrap()).unwrap();
             vm.running = false;
@@ -850,8 +857,93 @@ fn c1_local_exec_full_staged_disk_owner_tag_and_expect_vm_id_flow() {
         "mismatched --expect-vm-id must issue ZERO VMM RPCs"
     );
 
-    // 8. `--expect-vm-id` matching UUID succeeds across status -> start -> logs -> stop -> remove.
-    for sub in ["status", "start", "logs", "stop", "remove"] {
+    // 8. `--expect-vm-id` matching UUID succeeds across status -> start -> update -> logs -> stop -> remove.
+    for sub in ["status", "start", "logs"] {
+        let out = LocalExec::run(
+            &[
+                "vm",
+                sub,
+                "--name",
+                "validator-0",
+                "--expect-vm-id",
+                TEST_UUID,
+                "--vmm-socket",
+                sock.to_str().unwrap(),
+                "--state-dir",
+                state_dir.to_str().unwrap(),
+                "--json",
+            ],
+            None,
+        );
+        assert!(
+            out.status.success(),
+            "vm {sub} with matching --expect-vm-id failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    // S7: `vm update` switches guest image gracefully (never StopVm) and preserves vm_id/hda.img.
+    let image_v2 = dir.path().join("image-v2");
+    fs::create_dir_all(&image_v2).unwrap();
+    let v2_digest = "2".repeat(64);
+    fs::write(image_v2.join("metadata.json"), "{}").unwrap();
+    fs::write(image_v2.join("digest.txt"), format!("{v2_digest}\n")).unwrap();
+    let out = LocalExec::run(
+        &[
+            "vm",
+            "update",
+            "--name",
+            "validator-0",
+            "--expect-vm-id",
+            TEST_UUID,
+            "--image",
+            image_v2.to_str().unwrap(),
+            "--vmm-socket",
+            sock.to_str().unwrap(),
+            "--state-dir",
+            state_dir.to_str().unwrap(),
+            "--json",
+        ],
+        None,
+    );
+    assert!(
+        out.status.success(),
+        "vm update failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let updated: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(updated["vm_id"], json!(TEST_UUID));
+    assert_eq!(updated["os_image_hash"], json!(v2_digest));
+    assert_eq!(updated["already_updated"], json!(false));
+
+    // Idempotent second `vm update` returns already_updated=true.
+    let out = LocalExec::run(
+        &[
+            "vm",
+            "update",
+            "--name",
+            "validator-0",
+            "--expect-vm-id",
+            TEST_UUID,
+            "--image",
+            updated["image_name"].as_str().unwrap(),
+            "--vmm-socket",
+            sock.to_str().unwrap(),
+            "--state-dir",
+            state_dir.to_str().unwrap(),
+            "--json",
+        ],
+        None,
+    );
+    assert!(
+        out.status.success(),
+        "idempotent vm update failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let rerun: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(rerun["already_updated"], json!(true));
+
+    for sub in ["stop", "remove"] {
         let out = LocalExec::run(
             &[
                 "vm",

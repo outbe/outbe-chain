@@ -1785,7 +1785,9 @@ mod tests {
                 has_threshold_shares: true,
                 last_finalized_block: finalized,
                 vrf_material_version: vrf,
+                last_dkg_activation_height: None,
                 next_planned_activation_height: 0,
+                randomness_status: None,
                 is_validator: true,
                 mode: "signer".into(),
                 enclave: outbe_operator_node_role::rpc::EnclaveHealth {

@@ -445,7 +445,7 @@ fn subnet_bounds(addr: Ipv4Addr, prefix_len: u8) -> Result<(Ipv4Addr, Ipv4Addr)>
 /// default gateway, and DNS servers (with DHCP/RA/link-local disabled).
 pub fn render_static_network_dropin(config: &StaticVmNetworkConfig) -> String {
     let mut out = concat!(
-        "# Managed at runtime by outbe-up internal vm-boot (static IPv4).\n",
+        "# Managed at runtime by outbe-vm-agent vm-boot (static IPv4).\n",
         "[Network]\n",
         "DHCP=no\n",
         "IPv6AcceptRA=no\n",

@@ -42,7 +42,7 @@ use super::{
     fetch_host_staged_disks, fetch_host_vms, fetch_image_on_host, format_failed_host_checks,
     founder_vm_name, host_key, import_image_on_host, make_remote_temp_dir, member_node_ready,
     member_owner_tag, parse_host_check_output, query_members_and_orphans, query_vm_block_hash,
-    render_vm_status, resolve_bundled_outbe_up_sha256, resolve_image_source,
+    render_vm_status, resolve_image_source, resolve_state_or_bundled_outbe_up_sha256,
     shell_quote_tilde_path, DesiredMember, ExitCodeError, ImageSource, PublishContext,
     RemoteCleanStagingOutput, RemoteCleanStaleOutput, RemoteDiskPrepareOutput,
     RemoteHostStatusOutput, RemoteImagePublishOutput, RemoteListedImage, RemoteOutbeUp,
@@ -414,8 +414,6 @@ fn provision_member(
         "operator bundle changed after network build: {}",
         local_op_bundle.display()
     );
-    let outbe_up_sha256 = resolve_bundled_outbe_up_sha256(&build.root)?;
-
     let state_lock = NetworkVmState::lock(req.artifacts)?;
     let mut state = NetworkVmState::load_optional_locked(&state_lock, req.artifacts)?
         .ok_or_else(|| {
@@ -425,6 +423,7 @@ fn provision_member(
             )
         })?;
     state.ensure_matches_network(&build)?;
+    let outbe_up_sha256 = resolve_state_or_bundled_outbe_up_sha256(&build.root, Some(&state))?;
 
     let existing_members = build_all_desired_members(&build, Some(&state), None, None, None)?;
     let vmm_host = resolve_target_ssh(req.host, req.user, req.port, vm_defaults.vmm_host.as_ref())?;
@@ -1925,7 +1924,7 @@ async fn wait_for_joiner_verifier(
 }
 
 /// Verify two VMs agree on the exact canonical block hash at `min(a.finalized, b.finalized)`.
-fn verify_finalized_hash_match(
+pub(super) fn verify_finalized_hash_match(
     exec: &dyn HostExec,
     member_a: &DesiredMember,
     status_a: &VmMemberStatus,
@@ -1961,7 +1960,7 @@ fn verify_finalized_hash_match(
     Ok(hash_a == hash_b)
 }
 
-fn fetch_member_serial_tail(
+pub(super) fn fetch_member_serial_tail(
     exec: &dyn HostExec,
     member: &DesiredMember,
     vm_id: &str,

@@ -492,6 +492,22 @@ struct FakeHostState {
     joiner_mode_override: Option<(String, String)>, // (service_ip, mode)
     joiner_has_shares: bool,
     joiner_enclave_ready: Option<bool>,
+    vm_update_calls: Vec<(String, String, String, u64)>, // (vm_name, expect_vm_id, image_name, stop_timeout)
+    fail_rpc_for_ip_after_update: Option<String>,
+    drop_vm_update_response_once: Option<String>,
+    rpc_dead_ips: BTreeSet<String>,
+    rpc_dynamic_epoch_len: Option<u64>,
+    rpc_next_activation_override: Option<u64>,
+    rpc_randomness_preparing_until_height: Option<u64>,
+    rpc_omit_randomness_status: bool,
+    rpc_height_base: u64,
+    rpc_height_step: u64,
+    rpc_step_round: u64,
+    rpc_batch_seen_since_last_status: bool,
+    update_height_at_call: Vec<(String, u64)>,
+    kill_ip_after_vm_update_rounds: Option<(String, usize, String)>,
+    rounds_since_target_update: Option<usize>,
+    version_bins_queried: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -578,6 +594,7 @@ impl HostExec for FakeHostExec {
 
         if command.contains(" version --json") {
             let bin = extract_pinned_bin_name(command).unwrap_or_default();
+            g.version_bins_queried.push(bin.clone());
             let Some(sha) = g
                 .version_override_sha
                 .clone()
@@ -668,6 +685,21 @@ impl HostExec for FakeHostExec {
         }
 
         if command.contains(" vm status ") {
+            if g.rpc_height_step > 0 && g.rpc_batch_seen_since_last_status {
+                g.rpc_step_round += 1;
+                g.rpc_batch_seen_since_last_status = false;
+            }
+            if let Some(count) = g.rounds_since_target_update.as_mut() {
+                *count += 1;
+                let current = *count;
+                if let Some((_, threshold, ip)) = g.kill_ip_after_vm_update_rounds.clone() {
+                    if current >= threshold {
+                        g.kill_ip_after_vm_update_rounds = None;
+                        g.rounds_since_target_update = None;
+                        g.rpc_dead_ips.insert(ip);
+                    }
+                }
+            }
             let list: Vec<Value> = g
                 .vms
                 .values()
@@ -913,6 +945,86 @@ impl HostExec for FakeHostExec {
             .to_string());
         }
 
+        if command.contains(" vm update ") {
+            assert!(
+                !command.contains("--force"),
+                "vm update must never pass --force: {command}"
+            );
+            let name = extract_flag_value(command, "--name").unwrap();
+            let expect = extract_flag_value(command, "--expect-vm-id")
+                .ok_or_else(|| eyre::eyre!("vm update missing --expect-vm-id"))?;
+            let target_image_name =
+                extract_flag_value(command, "--image-name").unwrap_or_else(|| g.image_name.clone());
+            let stop_timeout: u64 = extract_flag_value(command, "--stop-timeout")
+                .unwrap_or_else(|| "120".to_owned())
+                .parse()
+                .unwrap();
+            let target_hash = g.os_image_hash.clone();
+            let cur_height = if g.rpc_height_step > 0 {
+                g.rpc_height_base + g.rpc_step_round * g.rpc_height_step
+            } else {
+                let vm_count = g.vms.len().max(1);
+                let poll_idx = g.rpc_poll_counter / vm_count;
+                *g.rpc_height_schedule
+                    .get(poll_idx)
+                    .or_else(|| g.rpc_height_schedule.last())
+                    .unwrap_or(&100)
+            };
+            let fail_ip = g.fail_rpc_for_ip_after_update.clone();
+            let vm = g
+                .vms
+                .get_mut(&name)
+                .ok_or_else(|| eyre::eyre!("vm update: `{name}` missing"))?;
+            if vm.vm_id != expect {
+                bail!(
+                    "vm_id_mismatch for `{name}`: expected {expect}, got {}",
+                    vm.vm_id
+                );
+            }
+            let prev_img = vm.image_name.clone();
+            let prev_hash = vm.os_image_hash.clone();
+            let already = prev_img == target_image_name && prev_hash == target_hash && vm.running;
+            vm.image_name = target_image_name.clone();
+            vm.os_image_hash = target_hash.clone();
+            vm.running = true;
+            vm.vmm_status = "running".to_owned();
+            let vm_id = vm.vm_id.clone();
+            let vm_ip = vm.service_ip.map(|ip| ip.to_string());
+            if fail_ip.is_some() && fail_ip == vm_ip {
+                if let Some(ip) = vm_ip {
+                    g.rpc_dead_ips.insert(ip);
+                }
+            }
+            g.vm_update_calls.push((
+                name.clone(),
+                expect,
+                target_image_name.clone(),
+                stop_timeout,
+            ));
+            g.update_height_at_call.push((name.clone(), cur_height));
+            if let Some((ref target_vm, _, _)) = g.kill_ip_after_vm_update_rounds {
+                if target_vm == &name {
+                    g.rounds_since_target_update = Some(0);
+                }
+            }
+            if g.drop_vm_update_response_once.as_deref() == Some(name.as_str()) {
+                g.drop_vm_update_response_once = None;
+                bail!("simulated SSH drop after host vm update succeeded for `{name}`");
+            }
+            return Ok(json!({
+                "name": name,
+                "vm_id": vm_id,
+                "previous_image_name": prev_img,
+                "previous_os_image_hash": prev_hash,
+                "image_name": target_image_name,
+                "os_image_hash": target_hash,
+                "image_reused": true,
+                "already_updated": already,
+                "vmm_status": "running",
+            })
+            .to_string());
+        }
+
         if command.contains(" vm remove ") {
             let name = extract_flag_value(command, "--name").unwrap();
             let expect = extract_flag_value(command, "--expect-vm-id");
@@ -1020,6 +1132,9 @@ impl HostExec for FakeHostExec {
         if command.contains("curl -fsS") {
             let url = sh_tokens(command).last().cloned().unwrap_or_default();
             g.rpc_urls_hit.push(url.clone());
+            if g.rpc_dead_ips.iter().any(|ip| url.contains(ip)) {
+                bail!("simulated dead RPC on {url}");
+            }
             let parsed: Value = serde_json::from_slice(stdin_bytes)?;
             if parsed.is_object() {
                 let height_hex = parsed
@@ -1040,25 +1155,43 @@ impl HostExec for FakeHostExec {
                 .as_array()
                 .ok_or_else(|| eyre::eyre!("expected JSON-RPC batch array"))?;
             assert_eq!(batch.len(), 4, "expected 4-call JSON-RPC batch");
-            let vm_count = g.vms.len().max(1);
+            let vm_count = g.vms.values().filter(|v| v.running).count().max(1);
             let poll_idx = g.rpc_poll_counter / vm_count;
             g.rpc_poll_counter += 1;
-            let height = *g
-                .rpc_height_schedule
-                .get(poll_idx)
-                .or_else(|| g.rpc_height_schedule.last())
-                .unwrap_or(&100);
-            let val_count = g
+            let height = if g.rpc_height_step > 0 {
+                g.rpc_batch_seen_since_last_status = true;
+                g.rpc_height_base + g.rpc_step_round * g.rpc_height_step
+            } else {
+                *g.rpc_height_schedule
+                    .get(poll_idx)
+                    .or_else(|| g.rpc_height_schedule.last())
+                    .unwrap_or(&100)
+            };
+            let running_val_count = g
                 .vms
                 .values()
                 .filter(|v| {
-                    !v.service_ip
-                        .is_some_and(|ip| g.full_node_ips.contains(&ip.to_string()))
+                    v.running
+                        && !v
+                            .service_ip
+                            .is_some_and(|ip| g.full_node_ips.contains(&ip.to_string()))
                 })
                 .count();
-            let peers = val_count.saturating_sub(1);
+            let peers = running_val_count.saturating_sub(1);
             let enclave_ready = g.rpc_enclave_ready;
-            let vrf_ver = g.rpc_vrf_version;
+            let (vrf_ver, computed_next_act, last_dkg_act) = match g.rpc_dynamic_epoch_len {
+                Some(epoch_len) => (
+                    height / epoch_len,
+                    ((height / epoch_len) + 1) * epoch_len,
+                    Some((height / epoch_len) * epoch_len),
+                ),
+                None => (g.rpc_vrf_version, 1200, Some(0)),
+            };
+            let next_activation = g.rpc_next_activation_override.unwrap_or(computed_next_act);
+            let randomness_status = match g.rpc_randomness_preparing_until_height {
+                Some(until) if height <= until => "preparing",
+                _ => "healthy",
+            };
             let is_full_node = g.full_node_ips.iter().any(|ip| url.contains(ip));
             let consensus_result = if is_full_node {
                 json!({
@@ -1080,12 +1213,13 @@ impl HostExec for FakeHostExec {
                     ),
                     _ => ("signer", true, enclave_ready),
                 };
-                json!({
+                let mut obj = json!({
                     "connectedPeers": peers,
                     "hasThresholdShares": shares,
                     "lastFinalizedBlock": height,
                     "vrfMaterialVersion": vrf_ver,
-                    "nextPlannedActivationHeight": 1200,
+                    "lastDkgActivationHeight": last_dkg_act,
+                    "nextPlannedActivationHeight": next_activation,
                     "isValidator": true,
                     "mode": mode,
                     "enclave": {
@@ -1093,7 +1227,11 @@ impl HostExec for FakeHostExec {
                         "ready": node_enclave_ready,
                         "offerKeyReady": node_enclave_ready,
                     }
-                })
+                });
+                if !g.rpc_omit_randomness_status {
+                    obj["randomnessStatus"] = json!(randomness_status);
+                }
+                obj
             };
             let resp = json!([
                 {"jsonrpc": "2.0", "id": 1, "result": format!("0x{:x}", 424_242_u64)},
@@ -1651,7 +1789,9 @@ fn c2_readiness_requires_growth_common_vrf_and_respects_no_tee() {
             has_threshold_shares: true,
             last_finalized_block: finalized,
             vrf_material_version: vrf,
+            last_dkg_activation_height: None,
             next_planned_activation_height: 1200,
+            randomness_status: None,
             is_validator: true,
             mode: "signer".to_owned(),
             enclave: outbe_operator_node_role::rpc::EnclaveHealth {
@@ -3058,5 +3198,981 @@ fn s4_boot_error_warning_vs_live_unhealthy() {
     assert_eq!(
         status_stopped.error.as_deref(),
         Some("dstack-guest-agent.service failed")
+    );
+}
+
+#[tokio::test]
+async fn s7_rolling_update_one_by_one_dkg_guard_software_bundle_and_boundary_crossing() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture =
+        build_test_vm_artifacts(dir.path(), "s7net", "~/.dstack-vmm", b"fake-outbe-up-v1");
+    let fake = FakeHostExec::new();
+    let exec: Arc<dyn HostExec> = Arc::new(fake.clone());
+
+    // 1. Deploy and start 4 founders + 1 keyless full node on image v1.
+    deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fixture.image_archive.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: false,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.full_node_ips.insert("10.77.0.30".to_owned());
+        g.rpc_poll_counter = 0;
+        g.rpc_height_schedule = vec![200, 210, 211, 212];
+    }
+    add_full_node_with_exec(
+        &AddFullNodeOptions {
+            artifacts: &fixture.root,
+            name: "fullnode-0",
+            host: "192.0.2.50",
+            user: Some("ubuntu"),
+            port: 22,
+            vmm_home: Some("~/.dstack-vmm"),
+            bridge: Some("obr0"),
+            bridge_ip: Ipv4Addr::new(10, 77, 0, 30),
+            advertise_ip: None,
+            image_source: None,
+            vcpu: None,
+            memory_gib: None,
+            disk_gib: None,
+            no_tee: false,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    // Record pre-update VM UUIDs and MACs to verify every VM keeps its identity.
+    let pre_identities: BTreeMap<String, (String, String)> = {
+        let g = fake.state.lock().unwrap();
+        g.vms
+            .iter()
+            .map(|(k, v)| (k.clone(), (v.vm_id.clone(), v.mac.clone())))
+            .collect()
+    };
+    assert_eq!(pre_identities.len(), 5);
+
+    // 2. Prepare image v2 archive + newer override software bundle (different outbe-up SHA-256).
+    let v2_image_archive = dir.path().join("image-v2.tar.zst");
+    fs::write(&v2_image_archive, b"fake-s7-image-v2-bytes").unwrap();
+    let v2_image_hash = "2222222222222222".repeat(4);
+    let v2_image_name = format!("outbe-vm-dev-{}", &v2_image_hash[..16]);
+
+    let v2_bundle = dir.path().join("software-bundle-v2.tar.zst");
+    let v2_outbe_up_sha = build_software_bundle_with_outbe_up(&v2_bundle, b"fake-outbe-up-v2");
+    assert_ne!(v2_outbe_up_sha, fixture.outbe_up_sha256);
+
+    // Start near a 300-block DKG boundary (height=1185, next_activation=1200, guard=30):
+    // network update MUST wait past 1200 before stopping validator-0, then roll all 5 VMs one by
+    // one, then wait until validators cross the next 300-block DKG boundary in lockstep.
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.image_name = v2_image_name.clone();
+        g.os_image_hash = v2_image_hash.clone();
+        g.rpc_poll_counter = 0;
+        g.rpc_height_base = 1185;
+        g.rpc_height_step = 15;
+        g.rpc_dynamic_epoch_len = Some(300);
+        g.vm_stop_calls.clear();
+    }
+
+    update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive.clone(),
+                sha256: None,
+            },
+            software_bundle: Some(&v2_bundle),
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(90),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    {
+        let g = fake.state.lock().unwrap();
+        // Override outbe-up v2 was installed on host.
+        assert!(g.installed_bins.values().any(|sha| sha == &v2_outbe_up_sha));
+        // Zero `vm stop` / forced calls.
+        assert!(g.vm_stop_calls.is_empty());
+        // Exactly 5 VMs updated one-by-one in deterministic order with stop_timeout=90.
+        let updated_names: Vec<&str> = g
+            .vm_update_calls
+            .iter()
+            .map(|(n, _, _, _)| n.as_str())
+            .collect();
+        assert_eq!(
+            updated_names,
+            vec![
+                "s7net-validator-0",
+                "s7net-validator-1",
+                "s7net-validator-2",
+                "s7net-validator-3",
+                "s7net-fullnode-0",
+            ]
+        );
+        for (_, _, img, stop_to) in &g.vm_update_calls {
+            assert_eq!(img, &v2_image_name);
+            assert_eq!(*stop_to, 90);
+        }
+        // DKG guard deferred validator-0 update until finalized > 1200!
+        assert!(
+            g.update_height_at_call[0].1 > 1200,
+            "validator-0 must not be stopped inside DKG guard window: {:?}",
+            g.update_height_at_call
+        );
+        // Every VM preserved its exact vm_id & MAC and now runs image v2.
+        for (vm_name, (orig_id, orig_mac)) in &pre_identities {
+            let vm = &g.vms[vm_name];
+            assert_eq!(&vm.vm_id, orig_id);
+            assert_eq!(&vm.mac, orig_mac);
+            assert_eq!(vm.image_name, v2_image_name);
+            assert_eq!(vm.os_image_hash, v2_image_hash);
+            assert!(vm.running);
+        }
+    }
+
+    // State persisted top-level, per-member v2 image hash, AND newly pinned `outbe_up_sha256`.
+    {
+        let lock = NetworkVmState::lock(&fixture.root).unwrap();
+        let st = NetworkVmState::load_optional_locked(&lock, &fixture.root)
+            .unwrap()
+            .unwrap();
+        assert_eq!(st.image_name, v2_image_name);
+        assert_eq!(st.image_hash, v2_image_hash);
+        assert_eq!(st.outbe_up_sha256, v2_outbe_up_sha);
+        assert_eq!(st.members.len(), 5);
+        for m in &st.members {
+            assert_eq!(m.image_hash, v2_image_hash);
+        }
+    }
+
+    // Subsequent `status` uses the newly recorded `v2_outbe_up_sha` pinned binary (NOT v1).
+    {
+        fake.state.lock().unwrap().version_bins_queried.clear();
+    }
+    status_with_exec(
+        &StatusOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            watch: false,
+            max_lag: 20,
+            json: true,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    {
+        let g = fake.state.lock().unwrap();
+        let expected_v2_bin = format!("outbe-up-{}", &v2_outbe_up_sha[..16]);
+        assert!(
+            g.version_bins_queried.iter().all(|b| b == &expected_v2_bin)
+                && !g.version_bins_queried.is_empty(),
+            "status after --software-bundle update must use {expected_v2_bin}, got {:?}",
+            g.version_bins_queried
+        );
+    }
+
+    // 3. Idempotent re-run performs ZERO additional `vm update` calls.
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.vm_update_calls.clear();
+    }
+    update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive,
+                sha256: None,
+            },
+            software_bundle: Some(&v2_bundle),
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(90),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    assert!(fake.state.lock().unwrap().vm_update_calls.is_empty());
+}
+
+#[tokio::test]
+async fn s7_rolling_update_aborts_on_member_failure_and_resumes_cleanly() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(dir.path(), "s7res", "~/.dstack-vmm", b"fake-outbe-up");
+    let fake = FakeHostExec::new();
+    let exec: Arc<dyn HostExec> = Arc::new(fake.clone());
+
+    deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fixture.image_archive.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: false,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    let v2_image_archive = dir.path().join("image-v2.tar.zst");
+    fs::write(&v2_image_archive, b"fake-s7-resume-v2-bytes").unwrap();
+    let v2_image_hash = "3333333333333333".repeat(4);
+    let v2_image_name = format!("outbe-vm-dev-{}", &v2_image_hash[..16]);
+
+    // Inject dead RPC on validator-1 (`10.77.0.11`) as soon as validator-1 is updated.
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.image_name = v2_image_name.clone();
+        g.os_image_hash = v2_image_hash.clone();
+        g.rpc_poll_counter = 0;
+        g.rpc_height_base = 500;
+        g.rpc_height_step = 30;
+        g.rpc_dynamic_epoch_len = Some(300);
+        g.fail_rpc_for_ip_after_update = Some("10.77.0.11".to_owned());
+    }
+
+    let err = update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive.clone(),
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_millis(250),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("rollout must abort when validator-1 fails recovery");
+    assert!(
+        format!("{err:#}").contains("stopping rollout before remaining VMs"),
+        "{err:#}"
+    );
+
+    // validator-2 and validator-3 MUST NOT have been touched yet!
+    {
+        let g = fake.state.lock().unwrap();
+        let called: Vec<&str> = g
+            .vm_update_calls
+            .iter()
+            .map(|(n, _, _, _)| n.as_str())
+            .collect();
+        assert_eq!(called, vec!["s7res-validator-0", "s7res-validator-1"]);
+        assert_eq!(g.vms["s7res-validator-0"].os_image_hash, v2_image_hash);
+        assert_eq!(g.vms["s7res-validator-1"].os_image_hash, v2_image_hash);
+        assert_ne!(g.vms["s7res-validator-2"].os_image_hash, v2_image_hash);
+        assert_ne!(g.vms["s7res-validator-3"].os_image_hash, v2_image_hash);
+    }
+
+    // Clear the RPC failure on validator-1 and resume `network update`!
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.fail_rpc_for_ip_after_update = None;
+        g.rpc_dead_ips.clear();
+        g.vm_update_calls.clear();
+    }
+    update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive,
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    // Resume MUST have skipped validator-0 & validator-1 and updated ONLY validator-2 & validator-3!
+    {
+        let g = fake.state.lock().unwrap();
+        let resumed: Vec<&str> = g
+            .vm_update_calls
+            .iter()
+            .map(|(n, _, _, _)| n.as_str())
+            .collect();
+        assert_eq!(resumed, vec!["s7res-validator-2", "s7res-validator-3"]);
+        for vm in g.vms.values() {
+            assert_eq!(vm.os_image_hash, v2_image_hash);
+        }
+    }
+}
+
+#[tokio::test]
+async fn s7_f1_scenario_a_resumes_after_lost_vm_update_response() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(dir.path(), "s7fa", "~/.dstack-vmm", b"fake-outbe-up");
+    let fake = FakeHostExec::new();
+    let exec: Arc<dyn HostExec> = Arc::new(fake.clone());
+
+    deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fixture.image_archive.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: false,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    let v2_image_archive = dir.path().join("image-v2.tar.zst");
+    fs::write(&v2_image_archive, b"fake-s7-f1a-v2-bytes").unwrap();
+    let v2_image_hash = "4444444444444444".repeat(4);
+    let v2_image_name = format!("outbe-vm-dev-{}", &v2_image_hash[..16]);
+
+    // Simulate SSH drop right AFTER `outbe-up vm update` succeeded on host for validator-1:
+    // host VM is running v2, but `network-vm-state.json` still records v1 for validator-1.
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.image_name = v2_image_name.clone();
+        g.os_image_hash = v2_image_hash.clone();
+        g.rpc_poll_counter = 0;
+        g.rpc_height_base = 500;
+        g.rpc_height_step = 30;
+        g.rpc_dynamic_epoch_len = Some(300);
+        g.drop_vm_update_response_once = Some("s7fa-validator-1".to_owned());
+    }
+
+    let err = update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive.clone(),
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("simulated SSH drop must abort first run");
+    assert!(format!("{err:#}").contains("simulated SSH drop"), "{err:#}");
+
+    // Confirm Scenario A state: host validator-1 is on v2, state still records v1!
+    {
+        let g = fake.state.lock().unwrap();
+        assert_eq!(g.vms["s7fa-validator-1"].os_image_hash, v2_image_hash);
+        let lock = NetworkVmState::lock(&fixture.root).unwrap();
+        let st = NetworkVmState::load_optional_locked(&lock, &fixture.root)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            st.member("s7fa-validator-0").unwrap().image_hash,
+            v2_image_hash
+        );
+        assert_ne!(
+            st.member("s7fa-validator-1").unwrap().image_hash,
+            v2_image_hash
+        );
+    }
+
+    // Resume MUST NOT reject validator-1 as Stale; must sync state and roll ONLY validator-2 & 3!
+    fake.state.lock().unwrap().vm_update_calls.clear();
+    update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive,
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    let g = fake.state.lock().unwrap();
+    let resumed: Vec<&str> = g
+        .vm_update_calls
+        .iter()
+        .map(|(n, _, _, _)| n.as_str())
+        .collect();
+    assert_eq!(resumed, vec!["s7fa-validator-2", "s7fa-validator-3"]);
+    let lock = NetworkVmState::lock(&fixture.root).unwrap();
+    let st = NetworkVmState::load_optional_locked(&lock, &fixture.root)
+        .unwrap()
+        .unwrap();
+    for m in &st.members {
+        assert_eq!(m.image_hash, v2_image_hash);
+    }
+}
+
+#[tokio::test]
+async fn s7_f1_scenario_b_resumes_single_stopped_vm_and_refuses_two_unhealthy() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(dir.path(), "s7fb", "~/.dstack-vmm", b"fake-outbe-up");
+    let fake = FakeHostExec::new();
+    let exec: Arc<dyn HostExec> = Arc::new(fake.clone());
+
+    deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fixture.image_archive.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: false,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    let v2_image_archive = dir.path().join("image-v2.tar.zst");
+    fs::write(&v2_image_archive, b"fake-s7-f1b-v2-bytes").unwrap();
+    let v2_image_hash = "5555555555555555".repeat(4);
+    let v2_image_name = format!("outbe-vm-dev-{}", &v2_image_hash[..16]);
+
+    // Case 1: TWO VMs stopped/unhealthy -> MUST refuse with ZERO vm update calls.
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.image_name = v2_image_name.clone();
+        g.os_image_hash = v2_image_hash.clone();
+        g.rpc_poll_counter = 0;
+        g.rpc_height_base = 500;
+        g.rpc_height_step = 30;
+        g.rpc_dynamic_epoch_len = Some(300);
+        for name in ["s7fb-validator-1", "s7fb-validator-2"] {
+            let vm = g.vms.get_mut(name).unwrap();
+            vm.running = false;
+            vm.vmm_status = "exited".to_owned();
+        }
+    }
+    let two_err = update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive.clone(),
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("must refuse when 2+ members are unhealthy");
+    assert!(
+        format!("{two_err:#}").contains("unhealthy member(s)"),
+        "{two_err:#}"
+    );
+    assert!(fake.state.lock().unwrap().vm_update_calls.is_empty());
+
+    // Case 2: Scenario B — exactly ONE VM (`validator-1`) is stopped on old image (e.g. after
+    // graceful stop timeout), while the other 3 validators are healthy at N-1 peers.
+    // Resume MUST finish `validator-1` FIRST, recover to full lockstep, then roll the remaining 3!
+    {
+        let mut g = fake.state.lock().unwrap();
+        let vm2 = g.vms.get_mut("s7fb-validator-2").unwrap();
+        vm2.running = true;
+        vm2.vmm_status = "running".to_owned();
+    }
+    update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive,
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    let g = fake.state.lock().unwrap();
+    let order: Vec<&str> = g
+        .vm_update_calls
+        .iter()
+        .map(|(n, _, _, _)| n.as_str())
+        .collect();
+    assert_eq!(
+        order,
+        vec![
+            "s7fb-validator-1",
+            "s7fb-validator-0",
+            "s7fb-validator-2",
+            "s7fb-validator-3",
+        ]
+    );
+    for vm in g.vms.values() {
+        assert_eq!(vm.os_image_hash, v2_image_hash);
+        assert!(vm.running);
+    }
+}
+
+#[tokio::test]
+async fn s7_f2_dkg_guard_time_based_ceremony_window_and_fail_closed() {
+    // 1. Verify time-based effective guard calculation & floor.
+    assert_eq!(
+        compute_effective_dkg_guard_blocks(Duration::from_secs(120), 30, 4.0),
+        735
+    );
+    assert_eq!(
+        compute_effective_dkg_guard_blocks(Duration::from_secs(10), 500, 1.0),
+        500
+    );
+    assert_eq!(
+        compute_effective_dkg_guard_blocks(Duration::from_secs(120), 30, 0.0),
+        195
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(dir.path(), "s7f2", "~/.dstack-vmm", b"fake-outbe-up");
+    let fake = FakeHostExec::new();
+    let exec: Arc<dyn HostExec> = Arc::new(fake.clone());
+
+    deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fixture.image_archive.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: false,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    let v2_image_archive = dir.path().join("image-v2.tar.zst");
+    fs::write(&v2_image_archive, b"fake-s7-f2-v2-bytes").unwrap();
+    let v2_image_hash = "6666666666666666".repeat(4);
+    let v2_image_name = format!("outbe-vm-dev-{}", &v2_image_hash[..16]);
+
+    // 2. Refuse `--dkg-guard-blocks 0`.
+    let zero_err = update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive.clone(),
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 0,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("dkg_guard_blocks=0 must be refused");
+    assert!(
+        format!("{zero_err:#}").contains("--dkg-guard-blocks 0"),
+        "{zero_err:#}"
+    );
+
+    // 3. Fail closed when `next_planned_activation_height == 0` (must NOT stop any VM).
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.image_name = v2_image_name.clone();
+        g.os_image_hash = v2_image_hash.clone();
+        g.rpc_poll_counter = 0;
+        g.rpc_height_base = 500;
+        g.rpc_height_step = 30;
+        g.rpc_next_activation_override = Some(0);
+    }
+    let fail_closed_err = update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive.clone(),
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("next_planned_activation_height==0 must fail closed");
+    assert!(
+        format!("{fail_closed_err:#}").contains("next_planned_activation_height"),
+        "{fail_closed_err:#}"
+    );
+    assert!(fake.state.lock().unwrap().vm_update_calls.is_empty());
+
+    // 3b. Missing `randomnessStatus` in `outbe_consensusStatus` must be treated as NOT healthy
+    //     (fail closed without stopping any VM).
+    {
+        let mk_val = |rs: Option<&str>| VmMemberStatus {
+            name: "validator-0".to_owned(),
+            role: MemberRole::Founder,
+            vm_name: "s7f2-validator-0".to_owned(),
+            vm_id: "id-0".to_owned(),
+            host: "192.0.2.50".to_owned(),
+            classification: VmClassKind::Ours,
+            classification_detail: None,
+            service_ip: Ipv4Addr::new(10, 77, 0, 10),
+            dhcp_ip: None,
+            mac: "52:54:00:00:00:01".to_owned(),
+            vmm_status: "running".to_owned(),
+            vmm_running: true,
+            no_tee: false,
+            chain_id: Some(424_242),
+            finalized: Some(500),
+            finalized_hash: Some("0xabc".to_owned()),
+            execution_peers: Some(3),
+            consensus_mode: Some("signer".to_owned()),
+            consensus_peers: Some(3),
+            has_threshold_shares: Some(true),
+            vrf_material_version: Some(1),
+            tee_ready: Some(true),
+            consensus: Some(ConsensusStatus {
+                randomness_status: rs.map(ToOwned::to_owned),
+                ..Default::default()
+            }),
+            boot_warning: None,
+            error: None,
+        };
+        assert!(!all_validators_randomness_healthy(&[mk_val(None)]));
+        assert!(!all_validators_randomness_healthy(&[mk_val(Some(
+            "preparing"
+        ))]));
+        assert!(all_validators_randomness_healthy(&[mk_val(Some(
+            "healthy"
+        ))]));
+    }
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.rpc_next_activation_override = None;
+        g.rpc_omit_randomness_status = true;
+        g.rpc_poll_counter = 0;
+        g.rpc_step_round = 0;
+        g.rpc_batch_seen_since_last_status = false;
+        g.rpc_height_base = 500;
+        g.rpc_height_step = 30;
+        g.rpc_dynamic_epoch_len = Some(300);
+    }
+    let missing_rs_err = update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive.clone(),
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_millis(120),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("missing randomnessStatus must fail closed without stopping any VM");
+    assert!(
+        format!("{missing_rs_err:#}")
+            .contains("timed out waiting to clear DKG activation boundary"),
+        "{missing_rs_err:#}"
+    );
+    assert!(fake.state.lock().unwrap().vm_update_calls.is_empty());
+
+    // 4. Active DKG ceremony (`randomnessStatus == "preparing"`) AND remaining=150 (> floor 30)
+    //    MUST defer stopping validator-0 until AFTER boundary 1200 when randomness is healthy!
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.rpc_next_activation_override = None;
+        g.rpc_omit_randomness_status = false;
+        g.rpc_poll_counter = 0;
+        g.rpc_step_round = 0;
+        g.rpc_batch_seen_since_last_status = false;
+        g.rpc_height_base = 1050;
+        g.rpc_height_step = 30;
+        g.rpc_dynamic_epoch_len = Some(300);
+        g.rpc_randomness_preparing_until_height = Some(1200);
+    }
+    update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive,
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(90),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    let g = fake.state.lock().unwrap();
+    assert!(
+        g.update_height_at_call[0].1 > 1200,
+        "validator-0 must defer past boundary 1200 during ceremony/time-guard: {:?}",
+        g.update_height_at_call
+    );
+}
+
+#[tokio::test]
+async fn s7_f4_fresh_health_recheck_aborts_before_stopping_second_validator() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(dir.path(), "s7f4", "~/.dstack-vmm", b"fake-outbe-up");
+    let fake = FakeHostExec::new();
+    let exec: Arc<dyn HostExec> = Arc::new(fake.clone());
+
+    deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fixture.image_archive.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: false,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    let v2_image_archive = dir.path().join("image-v2.tar.zst");
+    fs::write(&v2_image_archive, b"fake-s7-f4-v2-bytes").unwrap();
+    let v2_image_hash = "7777777777777777".repeat(4);
+    let v2_image_name = format!("outbe-vm-dev-{}", &v2_image_hash[..16]);
+
+    // Kill validator-3 (`10.77.0.13`) immediately AFTER validator-0 finishes its 3 post-update
+    // lockstep polling rounds (`baseline`, `+30` streak 1, `+60` streak 2), right when validator-1's
+    // pre-stop gate takes its fresh sample (round 4)!
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.image_name = v2_image_name.clone();
+        g.os_image_hash = v2_image_hash.clone();
+        g.rpc_poll_counter = 0;
+        g.rpc_step_round = 0;
+        g.rpc_batch_seen_since_last_status = false;
+        g.rpc_height_base = 500;
+        g.rpc_height_step = 30;
+        g.rpc_dynamic_epoch_len = Some(300);
+        g.kill_ip_after_vm_update_rounds =
+            Some(("s7f4-validator-0".to_owned(), 4, "10.77.0.13".to_owned()));
+    }
+
+    let err = update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive,
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("F4: must abort before stopping validator-1 when validator-3 fell over");
+    assert!(
+        format!("{err:#}").contains("pre-stop health check before updating `validator-1`"),
+        "{err:#}"
+    );
+    let g = fake.state.lock().unwrap();
+    let called: Vec<&str> = g
+        .vm_update_calls
+        .iter()
+        .map(|(n, _, _, _)| n.as_str())
+        .collect();
+    assert_eq!(
+        called,
+        vec!["s7f4-validator-0"],
+        "must NEVER stop validator-1 while validator-3 is unhealthy"
     );
 }

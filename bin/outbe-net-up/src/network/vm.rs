@@ -252,6 +252,24 @@ struct RemoteVmStopOutput {
     warning: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RemoteVmUpdateOutput {
+    #[allow(dead_code)]
+    name: String,
+    vm_id: String,
+    #[allow(dead_code)]
+    previous_image_name: String,
+    #[allow(dead_code)]
+    previous_os_image_hash: String,
+    image_name: String,
+    os_image_hash: String,
+    #[allow(dead_code)]
+    image_reused: bool,
+    already_updated: bool,
+    #[allow(dead_code)]
+    vmm_status: String,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct RemoteVmStatusOutput {
     pub(crate) name: String,
@@ -1107,12 +1125,12 @@ pub(crate) async fn start_with_exec(
     let build = NetworkArtifacts::load(options.artifacts)?;
     ensure_vm_deployment(&build)?;
 
-    let outbe_up_sha256 = resolve_bundled_outbe_up_sha256(&build.root)?;
     let state_lock = NetworkVmState::lock(options.artifacts)?;
     let mut state = NetworkVmState::load_optional_locked(&state_lock, options.artifacts)?;
     if let Some(st) = &state {
         st.ensure_matches_network(&build)?;
     }
+    let outbe_up_sha256 = resolve_state_or_bundled_outbe_up_sha256(&build.root, state.as_ref())?;
 
     let desired_members = build_all_desired_members(&build, state.as_ref(), None, None, None)?;
     let unique_hosts = collect_unique_hosts(&desired_members);
@@ -1346,7 +1364,6 @@ pub(crate) async fn stop_with_exec(
     let build = NetworkArtifacts::load(options.artifacts)?;
     ensure_vm_deployment(&build)?;
 
-    let outbe_up_sha256 = resolve_bundled_outbe_up_sha256(&build.root)?;
     let state = {
         let lock = NetworkVmState::lock(options.artifacts)?;
         NetworkVmState::load_optional_locked(&lock, options.artifacts)?
@@ -1354,6 +1371,7 @@ pub(crate) async fn stop_with_exec(
     if let Some(st) = &state {
         st.ensure_matches_network(&build)?;
     }
+    let outbe_up_sha256 = resolve_state_or_bundled_outbe_up_sha256(&build.root, state.as_ref())?;
     let desired_members = build_all_desired_members(&build, state.as_ref(), None, None, None)?;
     let unique_hosts = collect_unique_hosts(&desired_members);
     let tag_prefix =
@@ -1526,7 +1544,6 @@ pub(crate) async fn status_with_exec(
     let build = NetworkArtifacts::load(options.artifacts)?;
     ensure_vm_deployment(&build)?;
 
-    let outbe_up_sha256 = resolve_bundled_outbe_up_sha256(&build.root)?;
     let state = {
         let lock = NetworkVmState::lock(options.artifacts)?;
         NetworkVmState::load_optional_locked(&lock, options.artifacts)?
@@ -1534,6 +1551,7 @@ pub(crate) async fn status_with_exec(
     if let Some(st) = &state {
         st.ensure_matches_network(&build)?;
     }
+    let outbe_up_sha256 = resolve_state_or_bundled_outbe_up_sha256(&build.root, state.as_ref())?;
 
     let desired_members = build_all_desired_members(&build, state.as_ref(), None, None, None)?;
     let unique_hosts = collect_unique_hosts(&desired_members);
@@ -1677,12 +1695,12 @@ pub(crate) async fn remove_with_exec(
     let build = NetworkArtifacts::load(options.artifacts)?;
     ensure_vm_deployment(&build)?;
 
-    let outbe_up_sha256 = resolve_bundled_outbe_up_sha256(&build.root)?;
     let state_lock = NetworkVmState::lock(options.artifacts)?;
     let state = NetworkVmState::load_optional_locked(&state_lock, options.artifacts)?;
     if let Some(st) = &state {
         st.ensure_matches_network(&build)?;
     }
+    let outbe_up_sha256 = resolve_state_or_bundled_outbe_up_sha256(&build.root, state.as_ref())?;
 
     let desired_members = build_all_desired_members(&build, state.as_ref(), None, None, None)?;
     let unique_hosts = collect_unique_hosts(&desired_members);
@@ -1870,8 +1888,27 @@ impl RemoteOutbeUp {
 }
 
 fn resolve_bundled_outbe_up_sha256(artifacts: &Path) -> Result<String> {
-    let bundle_path = artifacts.join("software-bundle.tar.zst");
-    let manifest = verify_archive(&bundle_path).wrap_err_with(|| {
+    resolve_bundled_outbe_up_sha256_from_bundle(&artifacts.join("software-bundle.tar.zst"))
+}
+
+/// Prefer the `outbe_up_sha256` recorded in `network-vm-state.json` (e.g. after `network update
+/// --software-bundle` pinned a newer `outbe-up` on hosts), falling back to the artifacts' bundled
+/// `software-bundle.tar.zst`.
+fn resolve_state_or_bundled_outbe_up_sha256(
+    artifacts: &Path,
+    state: Option<&NetworkVmState>,
+) -> Result<String> {
+    if let Some(sha) = state
+        .map(|st| st.outbe_up_sha256.as_str())
+        .filter(|s| !s.is_empty())
+    {
+        return Ok(sha.to_owned());
+    }
+    resolve_bundled_outbe_up_sha256(artifacts)
+}
+
+fn resolve_bundled_outbe_up_sha256_from_bundle(bundle_path: &Path) -> Result<String> {
+    let manifest = verify_archive(bundle_path).wrap_err_with(|| {
         format!(
             "verify software bundle manifest at {}",
             bundle_path.display()
@@ -1890,13 +1927,15 @@ fn resolve_bundled_outbe_up_sha256(artifacts: &Path) -> Result<String> {
     Ok(entry.sha256.clone())
 }
 
-fn extract_bundled_outbe_up_bytes(artifacts: &Path, expected_sha256: &str) -> Result<Vec<u8>> {
-    let bundle_path = artifacts.join("software-bundle.tar.zst");
+fn extract_bundled_outbe_up_bytes_from_bundle(
+    bundle_path: &Path,
+    expected_sha256: &str,
+) -> Result<Vec<u8>> {
     let tmp = tempfile::Builder::new()
         .prefix("outbe-up-extract-")
         .tempdir()
         .wrap_err("create temp dir for outbe-up extraction")?;
-    verify_and_extract(&bundle_path, tmp.path())?;
+    verify_and_extract(bundle_path, tmp.path())?;
     let bin_path = tmp.path().join("bin/outbe-up");
     let actual_sha = sha256_file(&bin_path)?;
     ensure!(
@@ -1918,6 +1957,22 @@ fn ensure_pinned_outbe_up_on_host(
     exec: &dyn HostExec,
     ssh: &Ssh,
     artifacts: &Path,
+    expected_sha256: &str,
+    allow_install: bool,
+) -> Result<RemoteOutbeUp> {
+    ensure_pinned_outbe_up_on_host_from_bundle(
+        exec,
+        ssh,
+        &artifacts.join("software-bundle.tar.zst"),
+        expected_sha256,
+        allow_install,
+    )
+}
+
+fn ensure_pinned_outbe_up_on_host_from_bundle(
+    exec: &dyn HostExec,
+    ssh: &Ssh,
+    bundle_path: &Path,
     expected_sha256: &str,
     allow_install: bool,
 ) -> Result<RemoteOutbeUp> {
@@ -1950,7 +2005,7 @@ fn ensure_pinned_outbe_up_on_host(
     }
 
     // Install pinned binary into `<state>/outbe-up/bin/outbe-up-<sha16>` without touching `$PATH`.
-    let bytes = extract_bundled_outbe_up_bytes(artifacts, expected_sha256)?;
+    let bytes = extract_bundled_outbe_up_bytes_from_bundle(bundle_path, expected_sha256)?;
     let sha16 = &expected_sha256[..16];
     let install_cmd = format!(
         "set -eu; umask 077; dir={dir_expr}; state_dir=\"$(dirname \"$dir\")\"; mkdir -p \"$dir\"; chmod 0700 \"$state_dir\" \"$dir\"; tmp=\"$dir/.outbe-up-{sha16}.tmp.$$\"; cat > \"$tmp\"; chmod 0700 \"$tmp\"; mv -f \"$tmp\" {bin_expr}"
@@ -2050,22 +2105,25 @@ fn build_desired_members(
         let no_tee = no_tee_override
             .or_else(|| prev.map(|m| m.no_tee))
             .unwrap_or(false);
-        let eff_image_name = image_name.map(ToOwned::to_owned).or_else(|| {
-            state
-                .filter(|st| !st.image_name.is_empty())
-                .map(|st| st.image_name.clone())
-        });
         let eff_image_hash = image_hash
             .map(ToOwned::to_owned)
+            .or_else(|| {
+                prev.filter(|m| !m.image_hash.is_empty())
+                    .map(|m| m.image_hash.clone())
+            })
             .or_else(|| {
                 state
                     .filter(|st| !st.image_hash.is_empty())
                     .map(|st| st.image_hash.clone())
-            })
-            .or_else(|| {
-                prev.filter(|m| !m.image_hash.is_empty())
-                    .map(|m| m.image_hash.clone())
             });
+        let eff_image_name = image_name.map(ToOwned::to_owned).or_else(|| {
+            state
+                .filter(|st| {
+                    !st.image_name.is_empty()
+                        && eff_image_hash.as_deref().is_none_or(|h| h == st.image_hash)
+                })
+                .map(|st| st.image_name.clone())
+        });
         out.push(DesiredMember {
             index,
             role: MemberRole::Founder,
@@ -2244,6 +2302,7 @@ pub(crate) fn build_founder_tar_bytes(founder_tree: &Path) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+#[derive(Clone)]
 enum ResolvedImageSource {
     Archive { path: PathBuf, sha256: String },
     Url { url: String, sha256: String },
@@ -3208,12 +3267,19 @@ fn shell_quote_tilde_path(path: &str) -> String {
 
 #[path = "vm_members.rs"]
 mod members;
+#[path = "vm_update.rs"]
+mod update;
 
 pub use members::{add_full_node, add_validator, AddFullNodeOptions, AddValidatorOptions};
 #[cfg(test)]
 pub(crate) use members::{
     add_full_node_with_exec, add_validator_with_exec, ensure_local_member_keys, JoinChainDriver,
 };
+#[cfg(test)]
+pub(crate) use update::{
+    all_validators_randomness_healthy, compute_effective_dkg_guard_blocks, update_with_exec,
+};
+pub use update::{update, UpdateOptions};
 
 #[cfg(test)]
 #[path = "vm_tests.rs"]

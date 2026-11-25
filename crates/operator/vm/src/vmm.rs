@@ -67,6 +67,13 @@ pub struct PortMapping {
     pub host_address: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct UpdateVmRequest {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub image: Option<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 struct IdMessage {
     id: String,
@@ -890,14 +897,34 @@ impl<T: VmmTransport> VmmClient<T> {
     }
 
     pub fn start_vm(&self, vm_id: &str) -> Result<()> {
+        self.start_vm_with_deadline(vm_id, None)
+    }
+
+    pub fn start_vm_with_deadline(&self, vm_id: &str, deadline: Option<Instant>) -> Result<()> {
         validate_vm_id(vm_id)?;
         let _: serde_json::Value = self.prpc_call(
             "StartVm",
             &IdMessage {
                 id: vm_id.to_owned(),
             },
-            None,
+            deadline,
         )?;
+        Ok(())
+    }
+
+    /// Update an existing VM's manifest in-place via dstack VMM `UpdateVm` (e.g. switch `image`
+    /// while keeping the same VM UUID, MAC, networking, annotations, and `hda.img` data disk).
+    pub fn update_vm(&self, request: &UpdateVmRequest) -> Result<()> {
+        self.update_vm_with_deadline(request, None)
+    }
+
+    pub fn update_vm_with_deadline(
+        &self,
+        request: &UpdateVmRequest,
+        deadline: Option<Instant>,
+    ) -> Result<()> {
+        validate_vm_id(&request.id)?;
+        let _: serde_json::Value = self.prpc_call("UpdateVm", request, deadline)?;
         Ok(())
     }
 
@@ -1226,6 +1253,19 @@ mod tests {
         })
         .unwrap();
         assert_eq!(id_req, json!({"id": "abc-123"}));
+
+        let update_req = serde_json::to_value(&UpdateVmRequest {
+            id: "550e8400-e29b-41d4-a716-446655440000".into(),
+            image: Some("outbe-vm-dev-0123456789abcdef".into()),
+        })
+        .unwrap();
+        assert_eq!(
+            update_req,
+            json!({
+                "id": "550e8400-e29b-41d4-a716-446655440000",
+                "image": "outbe-vm-dev-0123456789abcdef",
+            })
+        );
 
         let status_req = serde_json::to_value(&StatusRequest {
             ids: vec!["vm-1".into()],

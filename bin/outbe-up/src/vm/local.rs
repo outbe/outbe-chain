@@ -19,9 +19,10 @@ use outbe_operator_vm::{
         create_local_vm_cancellable, default_state_dir, expand_tilde,
         logs_local_vm_with_expected_id, remove_local_vm, resolve_vmm_paths,
         start_local_vm_with_expected_id, status_all_local_vms, status_local_vm_with_expected_id,
-        stop_local_vm_with_expected_id, CreateLocalVmOptions, LocalVmStatusOutput, LocalVmStore,
-        RemoveLocalVmOptions, DEFAULT_CREATE_RECOVERY_GRACE, DEFAULT_LOCAL_DISK_GIB,
-        DEFAULT_LOCAL_FLAVOR, DEFAULT_LOCAL_MEMORY_GIB, DEFAULT_LOCAL_VCPU, DEFAULT_POLL_INTERVAL,
+        stop_local_vm_with_expected_id, update_local_vm_cancellable, CreateLocalVmOptions,
+        LocalVmStatusOutput, LocalVmStore, RemoveLocalVmOptions, UpdateLocalVmOptions,
+        DEFAULT_CREATE_RECOVERY_GRACE, DEFAULT_LOCAL_DISK_GIB, DEFAULT_LOCAL_FLAVOR,
+        DEFAULT_LOCAL_MEMORY_GIB, DEFAULT_LOCAL_VCPU, DEFAULT_POLL_INTERVAL,
     },
     vmm::{LocalUnixVmmTransport, VmmClient},
 };
@@ -242,6 +243,68 @@ pub fn stop(
         println!(
             "Gracefully stopped VM `{}` ({}) (status: {})",
             out.name, out.vm_id, out.vmm_status
+        );
+    }
+    Ok(())
+}
+
+#[derive(Clone, Debug)]
+pub struct LocalUpdateArgs {
+    pub name: String,
+    pub expect_vm_id: Option<String>,
+    pub image: PathBuf,
+    pub image_name: Option<String>,
+    pub flavor: Option<String>,
+    pub stop_timeout: u64,
+    pub conn: LocalConnectionArgs,
+}
+
+pub async fn update(args: LocalUpdateArgs) -> Result<()> {
+    let cancel = Arc::new(AtomicBool::new(false));
+    let cancel_signal = Arc::clone(&cancel);
+    let mut sigint = signal(SignalKind::interrupt()).wrap_err("register SIGINT handler")?;
+    let mut sigterm = signal(SignalKind::terminate()).wrap_err("register SIGTERM handler")?;
+    let watcher = tokio::spawn(async move {
+        tokio::select! {
+            _ = sigint.recv() => { cancel_signal.store(true, Ordering::SeqCst); }
+            _ = sigterm.recv() => { cancel_signal.store(true, Ordering::SeqCst); }
+        }
+    });
+
+    let (store, vmm, _, vmm_home) = open_local_context(&args.conn, Some(Arc::clone(&cancel)))?;
+    let opts = UpdateLocalVmOptions {
+        name: args.name,
+        expect_vm_id: args.expect_vm_id,
+        image: expand_tilde(&args.image)?,
+        image_name: args.image_name,
+        flavor: args
+            .flavor
+            .unwrap_or_else(|| DEFAULT_LOCAL_FLAVOR.to_owned()),
+        vmm_home,
+        stop_timeout: Duration::from_secs(args.stop_timeout),
+        poll_interval: DEFAULT_POLL_INTERVAL,
+    };
+
+    let cancel_worker = Arc::clone(&cancel);
+    let result = tokio::task::spawn_blocking(move || {
+        update_local_vm_cancellable(&store, &vmm, &opts, Some(&cancel_worker))
+    })
+    .await
+    .wrap_err("local VM update task panicked")?;
+    watcher.abort();
+    let out = result?;
+
+    if args.conn.json {
+        println!("{}", serde_json::to_string_pretty(&out)?);
+    } else if out.already_updated {
+        println!(
+            "VM `{}` ({}) is already running on image `{}` ({})",
+            out.name, out.vm_id, out.image_name, out.os_image_hash
+        );
+    } else {
+        println!(
+            "Updated VM `{}` ({}) image `{}` -> `{}` (status: {})",
+            out.name, out.vm_id, out.previous_image_name, out.image_name, out.vmm_status
         );
     }
     Ok(())

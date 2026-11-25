@@ -284,13 +284,48 @@ enum NetworkCommand {
         #[arg(long, default_value_t = 10)]
         min_finalized_blocks: u64,
     },
-    /// Rolling guest OS image upgrade across a running network (planned for S7).
+    /// Rolling guest OS image upgrade across a running VM network (one VM at a time, strictly graceful).
+    #[command(group(
+        ArgGroup::new("update_image_source")
+            .args(["image_archive", "image_url"])
+            .multiple(false)
+            .required(true)
+    ))]
     Update {
         #[arg(long)]
         artifacts: PathBuf,
-        /// Target guest OS image name or archive path.
+        /// Local guest OS image `.tar.zst` archive to upload and import on each VM host.
         #[arg(long)]
-        image: String,
+        image_archive: Option<PathBuf>,
+        /// HTTPS URL of a guest OS image `.tar.zst` archive for hosts to download via `outbe-up image fetch`.
+        #[arg(long, requires = "image_sha256")]
+        image_url: Option<String>,
+        /// Expected 64-hex SHA-256 of the guest OS image `.tar.zst` archive.
+        #[arg(long)]
+        image_sha256: Option<String>,
+        /// Optional software bundle overriding `<artifacts>/software-bundle.tar.zst` for pinning `outbe-up` on hosts.
+        #[arg(long)]
+        software_bundle: Option<PathBuf>,
+        #[arg(long)]
+        ssh_key: Option<PathBuf>,
+        /// Path to an SSH config file passed via `-F` (e.g. `--ssh-config /dev/null`).
+        #[arg(long)]
+        ssh_config: Option<PathBuf>,
+        /// Per-VM post-update recovery timeout (and post-rollout DKG boundary timeout) in seconds.
+        #[arg(long, default_value_t = 600)]
+        timeout: u64,
+        /// Graceful guest shutdown timeout in seconds passed to `outbe-up vm update` (never forced).
+        #[arg(long, default_value_t = 120)]
+        stop_timeout: u64,
+        /// Maximum acceptable execution-to-finalized block lag.
+        #[arg(long, default_value_t = 20)]
+        max_lag: u64,
+        /// Minimum finalized block growth required after each VM returns before advancing to the next VM.
+        #[arg(long, default_value_t = 10)]
+        min_finalized_blocks: u64,
+        /// Minimum DKG guard window in finalized blocks (must be >= 1; actual guard also accounts for stop-timeout + boot budget from measured block rate).
+        #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..))]
+        dkg_guard_blocks: u64,
     },
 }
 
@@ -579,11 +614,46 @@ impl Cli {
                     })
                     .await
                 }
-                NetworkCommand::Update { artifacts, image } => {
-                    bail!(
-                        "`outbe-net-up network update` (artifacts={}, image={image}) is not yet implemented (planned for S7 rolling VM image upgrade)",
-                        artifacts.display()
-                    );
+                NetworkCommand::Update {
+                    artifacts,
+                    image_archive,
+                    image_url,
+                    image_sha256,
+                    software_bundle,
+                    ssh_key,
+                    ssh_config,
+                    timeout,
+                    stop_timeout,
+                    max_lag,
+                    min_finalized_blocks,
+                    dkg_guard_blocks,
+                } => {
+                    let loaded = network::remote::NetworkArtifacts::load(&artifacts)?;
+                    match loaded.manifest.deployment {
+                        network::build::DeploymentKind::Vm => {
+                            let image_source =
+                                parse_optional_image_source(image_archive, image_url, image_sha256)
+                                    .expect("clap requires --image-archive or --image-url");
+                            network::vm::update(network::vm::UpdateOptions {
+                                artifacts: &artifacts,
+                                image_source,
+                                software_bundle: software_bundle.as_deref(),
+                                ssh_key: ssh_key.as_deref(),
+                                ssh_config: ssh_config.as_deref(),
+                                timeout: Duration::from_secs(timeout),
+                                stop_timeout: Duration::from_secs(stop_timeout),
+                                max_lag,
+                                min_finalized_blocks,
+                                dkg_guard_blocks,
+                            })
+                            .await
+                        }
+                        network::build::DeploymentKind::Host => {
+                            bail!(
+                                "`outbe-net-up network update` currently supports VM deployments only"
+                            );
+                        }
+                    }
                 }
             },
         }
@@ -770,9 +840,58 @@ mod tests {
             "update",
             "--artifacts",
             "artifacts",
-            "--image",
-            "outbe-vm-dev-0123456789abcdef",
+            "--image-archive",
+            "image-v2.tar.zst",
+            "--software-bundle",
+            "bundle-v2.tar.zst",
         ])
         .is_ok());
+        // `network update` must never accept `--force`, `--dkg-guard-blocks 0`, or `--skip-dkg-boundary-wait`,
+        // and must require an image source.
+        for bad_argv in [
+            vec![
+                "outbe-net-up",
+                "network",
+                "update",
+                "--artifacts",
+                "artifacts",
+            ],
+            vec![
+                "outbe-net-up",
+                "network",
+                "update",
+                "--artifacts",
+                "artifacts",
+                "--image-archive",
+                "image-v2.tar.zst",
+                "--force",
+            ],
+            vec![
+                "outbe-net-up",
+                "network",
+                "update",
+                "--artifacts",
+                "artifacts",
+                "--image-archive",
+                "image-v2.tar.zst",
+                "--dkg-guard-blocks",
+                "0",
+            ],
+            vec![
+                "outbe-net-up",
+                "network",
+                "update",
+                "--artifacts",
+                "artifacts",
+                "--image-archive",
+                "image-v2.tar.zst",
+                "--skip-dkg-boundary-wait",
+            ],
+        ] {
+            assert!(
+                Cli::try_parse_from(bad_argv.clone()).is_err(),
+                "expected CLI rejection for {bad_argv:?}"
+            );
+        }
     }
 }
