@@ -70,6 +70,7 @@ members = [
     "crates/core/common",
     # binaries
     "bin/outbe-up",
+    "bin/outbe-net-up",
     "bin/outbe-chain",
     "bin/outbe-genesis-cli",
     "bin/outbe-keygen",
@@ -160,6 +161,7 @@ default-members = [
     "crates/core/common",
     # binaries
     "bin/outbe-up",
+    "bin/outbe-net-up",
     "bin/outbe-chain",
     "bin/outbe-genesis-cli",
     "bin/outbe-keygen",

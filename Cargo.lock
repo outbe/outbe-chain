@@ -8494,6 +8494,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "outbe-net-up"
+version = "0.1.0"
+dependencies = [
+ "alloy-primitives",
+ "clap",
+ "eyre",
+ "hex",
+ "outbe-genesis-cli",
+ "outbe-operator-node-role",
+ "outbe-operator-remote",
+ "outbe-primitives",
+ "outbe-software-bundle",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "toml 0.8.23",
+ "walkdir",
+ "yaml_serde",
+]
+
+[[package]]
 name = "outbe-nod"
 version = "0.1.0"
 dependencies = [
@@ -8586,6 +8608,7 @@ version = "0.1.0"
 dependencies = [
  "eyre",
  "serde",
+ "serde_json",
  "tokio",
 ]
 
@@ -8616,6 +8639,7 @@ dependencies = [
  "hex",
  "outbe-operator-systemd",
  "outbe-software-bundle",
+ "rustix",
  "serde",
  "serde_json",
  "sha2 0.10.9",

@@ -3,10 +3,11 @@
 use std::{
     path::{Path, PathBuf},
     process::Command,
+    sync::Arc,
 };
 
 use eyre::{bail, ensure, Context, Result};
-use serde::{Deserialize, Serialize};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -224,6 +225,137 @@ impl SshOptions {
     }
 }
 
+/// Object-safe remote host execution interface implemented by [`SshOptions`] and fake test
+/// executors so multi-host orchestration (`outbe-net-up`) can be tested deterministically without
+/// real SSH servers.
+pub trait HostExec: Send + Sync {
+    /// Run a remote shell command and return trimmed stdout.
+    fn capture(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String>;
+
+    /// Run a remote shell command and return exact raw stdout (no trimming).
+    fn capture_raw(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String>;
+
+    /// Run a remote shell command with `stdin_bytes` piped to stdin and return raw stdout.
+    fn capture_stdin(
+        &self,
+        ssh: &Ssh,
+        label: &str,
+        command: &str,
+        stdin_bytes: &[u8],
+    ) -> Result<String>;
+
+    /// Run a remote shell command inheriting stdio.
+    fn run(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()>;
+
+    /// Run a remote shell command quietly, surfacing stdout+stderr only on failure.
+    fn run_quiet(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()>;
+
+    /// Copy one or more local paths to `destination` on the remote host.
+    fn copy_to(
+        &self,
+        ssh: &Ssh,
+        label: &str,
+        sources: &[&Path],
+        destination: &str,
+        recursive: bool,
+    ) -> Result<()>;
+}
+
+impl HostExec for SshOptions {
+    fn capture(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
+        self.capture_ssh(ssh, label, command)
+    }
+
+    fn capture_raw(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
+        self.capture_ssh_raw(ssh, label, command)
+    }
+
+    fn capture_stdin(
+        &self,
+        ssh: &Ssh,
+        label: &str,
+        command: &str,
+        stdin_bytes: &[u8],
+    ) -> Result<String> {
+        self.capture_ssh_stdin(ssh, label, command, stdin_bytes)
+    }
+
+    fn run(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()> {
+        self.run_ssh(ssh, label, command)
+    }
+
+    fn run_quiet(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()> {
+        self.run_quiet_ssh(ssh, label, command)
+    }
+
+    fn copy_to(
+        &self,
+        ssh: &Ssh,
+        label: &str,
+        sources: &[&Path],
+        destination: &str,
+        recursive: bool,
+    ) -> Result<()> {
+        self.copy_to_ssh(ssh, label, sources, destination, recursive)
+    }
+}
+
+impl<T: HostExec + ?Sized> HostExec for Arc<T> {
+    fn capture(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
+        (**self).capture(ssh, label, command)
+    }
+
+    fn capture_raw(&self, ssh: &Ssh, label: &str, command: &str) -> Result<String> {
+        (**self).capture_raw(ssh, label, command)
+    }
+
+    fn capture_stdin(
+        &self,
+        ssh: &Ssh,
+        label: &str,
+        command: &str,
+        stdin_bytes: &[u8],
+    ) -> Result<String> {
+        (**self).capture_stdin(ssh, label, command, stdin_bytes)
+    }
+
+    fn run(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()> {
+        (**self).run(ssh, label, command)
+    }
+
+    fn run_quiet(&self, ssh: &Ssh, label: &str, command: &str) -> Result<()> {
+        (**self).run_quiet(ssh, label, command)
+    }
+
+    fn copy_to(
+        &self,
+        ssh: &Ssh,
+        label: &str,
+        sources: &[&Path],
+        destination: &str,
+        recursive: bool,
+    ) -> Result<()> {
+        (**self).copy_to(ssh, label, sources, destination, recursive)
+    }
+}
+
+/// Run a remote command expected to emit JSON on stdout (such as `outbe-up ... --json`) and
+/// deserialize the result.
+pub fn run_host_json<E: HostExec + ?Sized, T: DeserializeOwned>(
+    exec: &E,
+    ssh: &Ssh,
+    label: &str,
+    command: &str,
+) -> Result<T> {
+    let raw = exec.capture_raw(ssh, label, command)?;
+    serde_json::from_str(&raw).wrap_err_with(|| {
+        format!(
+            "parse JSON output from `{label}` (stdout snippet: {:?})",
+            raw.chars().take(240).collect::<String>()
+        )
+    })
+}
+
 /// Execute `curl` on a remote host over SSH when a JSON-RPC endpoint is only reachable from that host.
 #[derive(Clone)]
 pub struct SshJsonRpc {
@@ -341,5 +473,69 @@ mod tests {
 
         // Missing config path fails closed.
         assert!(SshOptions::new(None, Some(Path::new("/nonexistent/outbe-ssh-config"))).is_err());
+    }
+
+    #[test]
+    fn host_exec_trait_supports_object_safe_fake_and_json_helper() {
+        struct FakeExec;
+        impl HostExec for FakeExec {
+            fn capture(&self, _ssh: &Ssh, _label: &str, command: &str) -> Result<String> {
+                Ok(command.trim().to_owned())
+            }
+            fn capture_raw(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<String> {
+                Ok(r#"{"name":"outbe-up","version":"0.1.0"}"#.to_owned())
+            }
+            fn capture_stdin(
+                &self,
+                _ssh: &Ssh,
+                _label: &str,
+                _command: &str,
+                stdin_bytes: &[u8],
+            ) -> Result<String> {
+                Ok(String::from_utf8_lossy(stdin_bytes).into_owned())
+            }
+            fn run(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<()> {
+                Ok(())
+            }
+            fn run_quiet(&self, _ssh: &Ssh, _label: &str, _command: &str) -> Result<()> {
+                Ok(())
+            }
+            fn copy_to(
+                &self,
+                _ssh: &Ssh,
+                _label: &str,
+                _sources: &[&Path],
+                _destination: &str,
+                _recursive: bool,
+            ) -> Result<()> {
+                Ok(())
+            }
+        }
+
+        #[derive(Debug, Deserialize, Eq, PartialEq)]
+        struct Resp {
+            name: String,
+            version: String,
+        }
+
+        let exec: Arc<dyn HostExec> = Arc::new(FakeExec);
+        let ssh = Ssh {
+            host: "192.0.2.50".into(),
+            user: "ubuntu".into(),
+            port: 22,
+        };
+        let parsed: Resp =
+            run_host_json(exec.as_ref(), &ssh, "amd", "outbe-up version --json").unwrap();
+        assert_eq!(
+            parsed,
+            Resp {
+                name: "outbe-up".into(),
+                version: "0.1.0".into(),
+            }
+        );
+        assert_eq!(
+            exec.capture_stdin(&ssh, "amd", "cat", b"hello").unwrap(),
+            "hello"
+        );
     }
 }
