@@ -57,7 +57,12 @@ interface IHyperlaneController {
     event CheckpointSubmitted(address indexed validator, uint32 indexed domain, uint32 index);
     event TargetCheckpointSubmitted(address indexed validator, uint32 indexed domain, uint32 index, bytes32 root);
     event TargetIndexSet(uint32 indexed domain, uint32 index);
-    event LivenessMiss(address indexed validator, uint32 misses);
+    event DeliveryIndexSet(uint32 indexed domain, uint32 index);
+    /// `reasons` is the sum of: 1 = no vote at the target index or a root
+    /// that is not the quorum root, 2 = a quorum named the validator in
+    /// `notServing`, 4 = a quorum named it in `notDelivered`, 8 = its report
+    /// did not name a validator that a quorum named.
+    event LivenessMiss(address indexed validator, uint32 misses, uint8 reasons);
     event LivenessJailed(address indexed validator);
     event ApprovedActionApplied(uint256 indexed proposalId);
     event ApprovedActionExpired(uint256 indexed proposalId);
@@ -162,22 +167,28 @@ interface IHyperlaneController {
     function submittedIndex(address validator, uint32 domain) external view returns (uint32);
 
     /// Checkpoint index that every validator must sign for `domain` in the
-    /// current liveness window. Zero when there is no target.
+    /// current liveness round. Zero when there is no target.
     function targetIndex(uint32 domain) external view returns (uint32);
+
+    /// The message index of `domain` at which the delivery check of the
+    /// current liveness round starts. The controller selects it at the
+    /// liveness verdict from the indexes that the target moved over. Zero
+    /// when the target did not move: there is no delivery check.
+    function deliveryIndex(uint32 domain) external view returns (uint32);
 
     /// Last vote of `validator` for `domain`: the root it signed at `index`.
     /// The vote counts only while `index` equals `targetIndex(domain)`.
     function targetVote(address validator, uint32 domain) external view returns (uint32 index, bytes32 root);
 
-    /// The current liveness round. It starts at 1. Each liveness verdict
-    /// adds 1.
+    /// The current liveness round. It starts at 1. The liveness verdict runs
+    /// in the first block of each epoch and adds 1.
     function livenessRound() external view returns (uint64);
 
     /// The liveness round of the last report of `validator` for `domain`.
     /// Zero when there is none.
     function reportedRound(address validator, uint32 domain) external view returns (uint64);
 
-    /// Consecutive liveness-window misses of `validator`.
+    /// Consecutive liveness misses of `validator`.
     function missCount(address validator) external view returns (uint32);
 
     /// The `IGasOracle` view of the Outbe IGP. The Oracle gas price is in

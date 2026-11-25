@@ -34,7 +34,7 @@ use outbe_system_common::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 ///  13: queued_approved_actions - approved proposal ids that the Vote
 ///      begin-block step has not applied yet
 ///  14: target_index - mapping(domain => checkpoint index that every
-///      validator must sign in the current liveness window). Zero = no target
+///      validator must sign in the current liveness round). Zero = no target
 ///  15: vote_root - mapping(validator_domain_key => root that the validator
 ///      signed at `vote_index`)
 ///  16: vote_index - mapping(validator_domain_key => index of that vote). The
@@ -48,6 +48,8 @@ use outbe_system_common::addresses::HYPERLANE_CONTROLLER_ADDRESS;
 ///  20: complaints - mapping(complaints_key => `round << 16 | count` of the
 ///      complaints about the accused validator). The count is valid only
 ///      while the round is the current round
+///  21: delivery_index - mapping(domain => message index at which the
+///      delivery check of the current round starts). Zero = no check
 #[storage_schema]
 #[contract(addr = HYPERLANE_CONTROLLER_ADDRESS)]
 pub struct HyperlaneControllerContract {
@@ -114,6 +116,9 @@ pub struct HyperlaneControllerContract {
 
     #[attribute(order = 20)]
     pub complaints: outbe_primitives::storage::dsl::Map<B256, u64>,
+
+    #[attribute(order = 21)]
+    pub delivery_index: outbe_primitives::storage::dsl::Map<u32, u32>,
 }
 
 /// Composite key for the per-(validator, domain) checkpoint maps.

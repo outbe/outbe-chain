@@ -34,7 +34,7 @@ mod vote_target;
 pub use gas::{GAS_MARKUP_BPS, TOKEN_EXCHANGE_RATE_SCALE};
 pub use lifecycle::HyperlaneModule;
 pub use liveness::{
-    checkpoint_digest, Report, SignedCheckpoint, GRACE_BLOCKS, LIVENESS_WINDOW_BLOCKS, MAX_MISSES,
+    checkpoint_digest, miss_reason, Report, SignedCheckpoint, GRACE_BLOCKS, MAX_MISSES,
     MAX_REPORT_ADDRESSES,
 };
 pub use runtime::{consensus_threshold, validate_validators, ControllerBootstrap};

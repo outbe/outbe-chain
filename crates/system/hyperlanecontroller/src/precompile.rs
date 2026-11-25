@@ -96,6 +96,7 @@ pub fn dispatch(
                         .read(&validator_domain_key(c.validator, c.domain))
                 }),
                 targetIndex(c) => view(c, |c| controller.target_index.read(&c.domain)),
+                deliveryIndex(c) => view(c, |c| controller.delivery_index.read(&c.domain)),
                 targetVote(c) => view(c, |c| {
                     let key = validator_domain_key(c.validator, c.domain);
                     Ok(IHyperlaneController::targetVoteReturn {

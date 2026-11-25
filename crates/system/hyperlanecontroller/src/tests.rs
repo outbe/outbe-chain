@@ -981,6 +981,31 @@ mod liveness {
         }
     }
 
+    /// Makes `block` the first block of an epoch.
+    fn start_epoch(storage: StorageHandle<'_>, block: u64) {
+        outbe_validatorset::hooks::advance_epoch(storage, 1_700_000_000, block).unwrap();
+    }
+
+    fn module_ctx(
+        block: u64,
+        storage: StorageHandle<'_>,
+    ) -> outbe_primitives::block::BlockRuntimeContext<'_> {
+        outbe_primitives::block::BlockRuntimeContext::new(
+            outbe_primitives::block::BlockContext {
+                block_gas_limit: 0,
+                user_gas_used: 0,
+                block_number: block,
+                timestamp: 1_700_000_000,
+                chain_id: CHAIN_ID,
+                genesis_hash: B256::ZERO,
+                genesis_timestamp: 1_700_000_000,
+                proposer: Address::ZERO,
+                validators: Vec::new(),
+            },
+            storage,
+        )
+    }
+
     fn four() -> [Address; 4] {
         [FIXTURE_VALIDATOR, v(2), v(3), v(4)]
     }
@@ -1327,7 +1352,6 @@ mod liveness {
 
     #[test]
     fn liveness_jail_waits_for_the_epoch_boundary_to_rotate() {
-        use crate::LIVENESS_WINDOW_BLOCKS;
         use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule};
 
         let mut p = liveness_provider();
@@ -1348,10 +1372,20 @@ mod liveness {
             }
         });
         let start = p.sub_call_inputs().len();
-        for window in 1..=u64::from(MAX_MISSES) {
-            let block = LIVENESS_WINDOW_BLOCKS * window;
+        for epoch in 1..=u64::from(MAX_MISSES) {
+            let block = 300 * epoch;
             p.set_block_number(block);
             StorageHandle::enter(&mut p, |storage| {
+                // A block that is not the first block of an epoch: no verdict.
+                let c = HyperlaneControllerContract::new(storage.clone());
+                let round = c.current_round().unwrap();
+                <crate::HyperlaneModule as ProtocolModule>::begin_block(&module_ctx(
+                    block,
+                    storage.clone(),
+                ))
+                .unwrap();
+                assert_eq!(c.current_round().unwrap(), round);
+                start_epoch(storage.clone(), block);
                 let ctx = BlockRuntimeContext::new(
                     BlockContext {
                         block_gas_limit: 0,
@@ -1382,6 +1416,125 @@ mod liveness {
         }));
     }
 
+    /// Four validators, quorum 3. Every validator has the anchor root on
+    /// LOCAL, so only the reports can give a miss.
+    fn voted_at_the_target(c: &HyperlaneControllerContract<'_>) {
+        c.target_index.write(&LOCAL, 500).unwrap();
+        for addr in four() {
+            let key = validator_domain_key(addr, LOCAL);
+            write_submission(c, key, 500, 100).unwrap();
+            write_vote(c, key, 500, ROOT_A).unwrap();
+            write_submission(c, validator_domain_key(addr, SEPOLIA), 5, 100).unwrap();
+        }
+    }
+
+    fn miss_events(p: &HashMapStorageProvider) -> Vec<(Address, u8)> {
+        p.get_events(HYPERLANE_CONTROLLER_ADDRESS)
+            .iter()
+            .filter_map(|log| IHyperlaneController::LivenessMiss::decode_log_data(log).ok())
+            .map(|miss| (miss.validator, miss.reasons))
+            .collect()
+    }
+
+    #[test]
+    fn a_quorum_of_complaints_is_a_miss_and_a_silent_reporter_gets_one_too() {
+        use crate::miss_reason::{NOT_DELIVERED, NOT_SERVING, NO_COMPLAINT};
+
+        let mut p = liveness_provider();
+        p.set_block_number(1_000);
+        StorageHandle::enter(&mut p, |storage| {
+            four_validators(storage.clone());
+            let mut c = HyperlaneControllerContract::new(storage);
+            voted_at_the_target(&c);
+            // v(3) does not serve: the three others name it. v(4) did not
+            // deliver: only two validators name it, this is no quorum.
+            let full = Report {
+                latest_index: 0,
+                not_serving: &[v(3)],
+                not_delivered: &[v(4)],
+            };
+            let serving_only = Report {
+                latest_index: 0,
+                not_serving: &[v(3)],
+                not_delivered: &[],
+            };
+            c.record_submission(FIXTURE_VALIDATOR, LOCAL, 500, ROOT_B, &full)
+                .unwrap();
+            c.record_submission(v(2), LOCAL, 500, ROOT_B, &full)
+                .unwrap();
+            c.record_submission(v(4), LOCAL, 500, ROOT_B, &serving_only)
+                .unwrap();
+            // Its own report is empty: v(3) did not name itself.
+            c.record_submission(v(3), LOCAL, 500, ROOT_B, &Report::default())
+                .unwrap();
+            assert!(c.check_liveness().unwrap().is_empty());
+            assert_eq!(c.miss_count.read(&v(3)).unwrap(), 1);
+            for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
+                assert_eq!(c.miss_count.read(&addr).unwrap(), 0, "{addr}");
+            }
+        });
+        // The accused validator gets one miss with one reason: it is not a
+        // silent reporter about itself.
+        assert_eq!(miss_events(&p), [(v(3), NOT_SERVING)]);
+
+        // Round 2: a quorum names v(4) in notDelivered. v(3) gave a report
+        // and did not name it. v(2) gave no report: no miss for silence.
+        StorageHandle::enter(&mut p, |storage| {
+            let mut c = HyperlaneControllerContract::new(storage);
+            let delivered = Report {
+                latest_index: 0,
+                not_serving: &[],
+                not_delivered: &[v(4)],
+            };
+            for addr in [FIXTURE_VALIDATOR, v(2), v(4)] {
+                c.record_submission(addr, LOCAL, 500, ROOT_A, &delivered)
+                    .unwrap();
+            }
+            c.record_submission(v(3), LOCAL, 500, ROOT_A, &Report::default())
+                .unwrap();
+            c.check_liveness().unwrap();
+            assert_eq!(c.miss_count.read(&v(4)).unwrap(), 1);
+            assert_eq!(c.miss_count.read(&v(3)).unwrap(), 2);
+            assert_eq!(c.miss_count.read(&v(2)).unwrap(), 0);
+        });
+        assert_eq!(
+            miss_events(&p)[1..],
+            [(v(3), NO_COMPLAINT), (v(4), NOT_DELIVERED)]
+        );
+    }
+
+    #[test]
+    fn the_delivery_index_is_in_the_indexes_that_the_target_moved_over() {
+        let mut p = liveness_provider();
+        p.set_block_number(1_000);
+        StorageHandle::enter(&mut p, |storage| {
+            four_validators(storage.clone());
+            let mut c = HyperlaneControllerContract::new(storage.clone());
+            voted_at_the_target(&c);
+            assert_eq!(c.delivery_index.read(&LOCAL).unwrap(), 0);
+            // The quorum is at 600: the target moves from 500 to 600.
+            for addr in [FIXTURE_VALIDATOR, v(2), v(3)] {
+                write_submission(&c, validator_domain_key(addr, LOCAL), 600, 100).unwrap();
+            }
+            c.check_liveness().unwrap();
+            assert_eq!(c.target_index.read(&LOCAL).unwrap(), 600);
+            let delivery = c.delivery_index.read(&LOCAL).unwrap();
+            assert!((501..=600).contains(&delivery), "{delivery}");
+            let view: Bytes = IHyperlaneController::deliveryIndexCall { domain: LOCAL }
+                .abi_encode()
+                .into();
+            let ret = dispatch(storage, &view, stranger(), U256::ZERO).unwrap();
+            assert_eq!(
+                IHyperlaneController::deliveryIndexCall::abi_decode_returns(&ret).unwrap(),
+                delivery
+            );
+            // The target does not move in the next round: no delivery check.
+            c.check_liveness().unwrap();
+            assert_eq!(c.target_index.read(&LOCAL).unwrap(), 600);
+            assert_eq!(c.delivery_index.read(&LOCAL).unwrap(), 0);
+        });
+    }
+
     #[test]
     fn removing_a_domain_clears_its_liveness_state() {
         let mut p = liveness_provider();
@@ -1402,18 +1555,21 @@ mod liveness {
 
     #[test]
     fn hyperlane_module_begin_block_runs_liveness_window() {
-        use crate::LIVENESS_WINDOW_BLOCKS;
         use outbe_primitives::block::{BlockContext, BlockRuntimeContext, ProtocolModule};
+        const EPOCH_START: u64 = 300;
 
         let mut provider = liveness_provider();
-        provider.set_block_number(LIVENESS_WINDOW_BLOCKS);
+        provider.set_block_number(EPOCH_START);
+        StorageHandle::enter(&mut provider, |storage| {
+            start_epoch(storage, EPOCH_START)
+        });
         provider.fail_mutation_at(0);
         let err = StorageHandle::enter(&mut provider, |storage| {
             let ctx = BlockRuntimeContext::new(
                 BlockContext {
                     block_gas_limit: 0,
                     user_gas_used: 0,
-                    block_number: LIVENESS_WINDOW_BLOCKS,
+                    block_number: EPOCH_START,
                     timestamp: 1_700_000_000,
                     chain_id: CHAIN_ID,
                     genesis_hash: alloy_primitives::B256::ZERO,
@@ -1437,7 +1593,7 @@ mod liveness {
                 BlockContext {
                     block_gas_limit: 0,
                     user_gas_used: 0,
-                    block_number: LIVENESS_WINDOW_BLOCKS,
+                    block_number: EPOCH_START,
                     timestamp: 1_700_000_000,
                     chain_id: CHAIN_ID,
                     genesis_hash: alloy_primitives::B256::ZERO,
