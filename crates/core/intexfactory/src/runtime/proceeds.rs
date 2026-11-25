@@ -53,8 +53,8 @@ pub fn receive_local_proceeds(
     if caller != TARGET_ROUTER_ADDRESS {
         return Err(IntexFactoryError::UnauthorizedProceedsCaller(caller).into());
     }
-    let local = u32::try_from(storage.chain_id()?)
-        .map_err(|_| IntexFactoryError::ChainIdExceedsU32)?;
+    let local =
+        u32::try_from(storage.chain_id()?).map_err(|_| IntexFactoryError::ChainIdExceedsU32)?;
     require_day_target(storage, emission_day, local)?;
     let returned = storage.call(
         WCOEN_ADDRESS,

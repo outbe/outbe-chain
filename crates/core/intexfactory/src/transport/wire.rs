@@ -177,7 +177,11 @@ pub fn encode_intex_series(
 pub fn encode_intex_auction_winners(
     winners: &IntexAuctionWinners,
 ) -> Result<Bytes, PrecompileError> {
-    check_page(MSG_INTEX_AUCTION_WINNERS, winners.page_index, winners.total_pages)?;
+    check_page(
+        MSG_INTEX_AUCTION_WINNERS,
+        winners.page_index,
+        winners.total_pages,
+    )?;
     if winners.winners.len() > MAX_PAYLOAD_ARRAY_LEN {
         return Err(invalid(MSG_INTEX_AUCTION_WINNERS));
     }

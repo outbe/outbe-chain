@@ -750,8 +750,12 @@ fn seeded_intex_targets_read_back_through_the_factory() {
     }"#;
     let (_tmp, genesis, _raw) =
         run_seed_genesis(FIXTURE_GENESIS, SEED, FIXTURE_VALIDATORS_4_PUBLIC_ONLY);
-    let own = u32::try_from(genesis["config"]["chainId"].as_u64().expect("numeric chainId"))
-        .expect("chain id fits u32");
+    let own = u32::try_from(
+        genesis["config"]["chainId"]
+            .as_u64()
+            .expect("numeric chainId"),
+    )
+    .expect("chain id fits u32");
     let mut provider = HashMapStorageProvider::new(u64::from(own));
     load_seeded_storage(
         &mut provider,
