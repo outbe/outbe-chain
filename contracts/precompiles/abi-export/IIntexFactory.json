@@ -701,6 +701,11 @@
   },
   {
     "type": "error",
+    "name": "ChainIdExceedsU32",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "DateStep",
     "inputs": [
       {
@@ -729,6 +734,17 @@
     "type": "error",
     "name": "InsufficientSettled",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InvalidWireMessage",
+    "inputs": [
+      {
+        "name": "msgType",
+        "type": "uint8",
+        "internalType": "uint8"
+      }
+    ]
   },
   {
     "type": "error",
@@ -768,6 +784,11 @@
   {
     "type": "error",
     "name": "PriceExceedsWireType",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ProceedsTransferRefused",
     "inputs": []
   },
   {
@@ -816,6 +837,11 @@
         "internalType": "bytes"
       }
     ]
+  },
+  {
+    "type": "error",
+    "name": "UndecodableProceedsData",
+    "inputs": []
   },
   {
     "type": "error",

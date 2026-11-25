@@ -34,7 +34,7 @@ pub fn receive_crosschain_proceeds(
         return Err(IntexFactoryError::UnauthorizedProceedsCaller(caller).into());
     }
     let (emission_day, page_index) = <(u32, u32)>::abi_decode_params(extra_data)
-        .map_err(|_| IntexFactoryError::UnexpectedProceedsSource(src_chain_id))?;
+        .map_err(|_| IntexFactoryError::UndecodableProceedsData)?;
     require_day_target(storage, emission_day, src_chain_id)?;
     if evm_chain_of(from, TARGET_ROUTER_ADDRESS) != Some(src_chain_id) {
         return Err(IntexFactoryError::UnauthorizedProceedsSender(from.to_vec().into()).into());
@@ -54,7 +54,7 @@ pub fn receive_local_proceeds(
         return Err(IntexFactoryError::UnauthorizedProceedsCaller(caller).into());
     }
     let local = u32::try_from(storage.chain_id()?)
-        .map_err(|_| IntexFactoryError::UnexpectedProceedsSource(u32::MAX))?;
+        .map_err(|_| IntexFactoryError::ChainIdExceedsU32)?;
     require_day_target(storage, emission_day, local)?;
     let returned = storage.call(
         WCOEN_ADDRESS,
@@ -68,9 +68,7 @@ pub fn receive_local_proceeds(
         .into(),
     )?;
     if transferFromCall::abi_decode_returns(&returned) != Ok(true) {
-        return Err(outbe_primitives::error::PrecompileError::revert(
-            "WCOEN refused the proceeds transfer",
-        ));
+        return Err(IntexFactoryError::ProceedsTransferRefused.into());
     }
     burn_wcoen_proceeds(storage, emission_day, page_index, local, amount)
 }

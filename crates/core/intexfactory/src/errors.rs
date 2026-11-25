@@ -32,6 +32,14 @@ pub enum IntexFactoryError {
     UnexpectedProceedsSource(u32),
     #[error("proceeds from a sender other than TargetRouter")]
     UnauthorizedProceedsSender(alloy_primitives::Bytes),
+    #[error("proceeds data does not decode as (emissionDay, pageIndex)")]
+    UndecodableProceedsData,
+    #[error("WCOEN refused the proceeds transfer")]
+    ProceedsTransferRefused,
+    #[error("chain id exceeds u32")]
+    ChainIdExceedsU32,
+    #[error("message of type {0} breaks its wire limits")]
+    InvalidWireMessage(u8),
 
     #[error("forfeited promis load overflow")]
     ForfeitedPromisLoadOverflow,
@@ -120,6 +128,16 @@ impl From<IntexFactoryError> for PrecompileError {
             }
             IntexFactoryError::UnauthorizedProceedsSender(from) => {
                 revert_with(I::UnauthorizedProceedsSender { from })
+            }
+            IntexFactoryError::UndecodableProceedsData => {
+                revert_with(I::UndecodableProceedsData {})
+            }
+            IntexFactoryError::ProceedsTransferRefused => {
+                revert_with(I::ProceedsTransferRefused {})
+            }
+            IntexFactoryError::ChainIdExceedsU32 => revert_with(I::ChainIdExceedsU32 {}),
+            IntexFactoryError::InvalidWireMessage(msg_type) => {
+                revert_with(I::InvalidWireMessage { msgType: msg_type })
             }
             IntexFactoryError::ForfeitedPromisLoadOverflow => {
                 revert_with(I::ForfeitedPromisLoadOverflow {})

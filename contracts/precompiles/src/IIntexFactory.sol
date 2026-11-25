@@ -23,6 +23,10 @@ interface IIntexFactory {
     error UnauthorizedProceedsCaller(address caller);
     error UnexpectedProceedsSource(uint32 srcChainId);
     error UnauthorizedProceedsSender(bytes from);
+    error UndecodableProceedsData();
+    error ProceedsTransferRefused();
+    error ChainIdExceedsU32();
+    error InvalidWireMessage(uint8 msgType);
     error ForfeitedPromisLoadOverflow();
     error IssuanceChunkCountExceedsU16();
     error PriceExceedsWireType();

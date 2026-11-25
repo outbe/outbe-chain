@@ -86,8 +86,8 @@ pub struct IntexAuctionWinners {
     pub partial_won: u16,
 }
 
-fn invalid(reason: &str) -> PrecompileError {
-    PrecompileError::Revert(format!("intex wire: {reason}"))
+fn invalid(msg_type: u8) -> PrecompileError {
+    crate::errors::IntexFactoryError::InvalidWireMessage(msg_type).into()
 }
 
 fn header(msg_type: u8) -> Vec<u8> {
@@ -100,17 +100,17 @@ fn with_body(msg_type: u8, body: Vec<u8>) -> Bytes {
     out.into()
 }
 
-fn check_page(page_index: u16, total_pages: u16) -> Result<(), PrecompileError> {
+fn check_page(msg_type: u8, page_index: u16, total_pages: u16) -> Result<(), PrecompileError> {
     if total_pages == 0 || total_pages > MAX_PAGES || page_index >= total_pages {
-        return Err(invalid("page out of range"));
+        return Err(invalid(msg_type));
     }
     Ok(())
 }
 
 pub fn encode_intex_auction_start(start: &IntexAuctionStart) -> Result<Bytes, PrecompileError> {
-    let rows = u8::try_from(start.prices.len()).map_err(|_| invalid("too many price rows"))?;
+    let rows = u8::try_from(start.prices.len()).map_err(|_| invalid(MSG_INTEX_AUCTION_START))?;
     if rows == 0 {
-        return Err(invalid("no reference prices"));
+        return Err(invalid(MSG_INTEX_AUCTION_START));
     }
     let mut out = header(MSG_INTEX_AUCTION_START);
     out.extend_from_slice(&start.emission_day.to_be_bytes());
@@ -163,12 +163,12 @@ pub fn encode_intex_series(
     total_pages: u16,
     series: &[IntexSeriesPayload],
 ) -> Result<Bytes, PrecompileError> {
-    check_page(page_index, total_pages)?;
+    check_page(MSG_INTEX_SERIES, page_index, total_pages)?;
     if series.is_empty() || series.len() > MAX_SERIES_PER_ISSUANCE {
-        return Err(invalid("series page size"));
+        return Err(invalid(MSG_INTEX_SERIES));
     }
     if series.iter().any(|s| s.emissionDay != emission_day) {
-        return Err(invalid("series of another day"));
+        return Err(invalid(MSG_INTEX_SERIES));
     }
     let body = (emission_day, page_index, total_pages, series.to_vec()).abi_encode_params();
     Ok(with_body(MSG_INTEX_SERIES, body))
@@ -177,12 +177,12 @@ pub fn encode_intex_series(
 pub fn encode_intex_auction_winners(
     winners: &IntexAuctionWinners,
 ) -> Result<Bytes, PrecompileError> {
-    check_page(winners.page_index, winners.total_pages)?;
+    check_page(MSG_INTEX_AUCTION_WINNERS, winners.page_index, winners.total_pages)?;
     if winners.winners.len() > MAX_PAYLOAD_ARRAY_LEN {
-        return Err(invalid("too many winners"));
+        return Err(invalid(MSG_INTEX_AUCTION_WINNERS));
     }
     if winners.partial_won != 0 && usize::from(winners.partial_index) >= winners.winners.len() {
-        return Err(invalid("partial fill outside the page"));
+        return Err(invalid(MSG_INTEX_AUCTION_WINNERS));
     }
     let body = (
         winners.emission_day,
@@ -204,7 +204,7 @@ pub fn encode_intex_series_call_notice(
     series_ids: &[FixedBytes<14>],
 ) -> Result<Bytes, PrecompileError> {
     if series_ids.is_empty() || series_ids.len() > MAX_SERIES_PER_CALL_NOTICE {
-        return Err(invalid("call notice page size"));
+        return Err(invalid(MSG_INTEX_SERIES_CALL_NOTICE));
     }
     let body = (emission_day, called_at, series_ids.to_vec()).abi_encode_params();
     Ok(with_body(MSG_INTEX_SERIES_CALL_NOTICE, body))
