@@ -36,7 +36,7 @@ pub struct IssueCredisParams {
     pub owner: Address,
     pub cca: Address,
     /// Main account whose pledged Gratis backs the Credis.
-    pub source: Address,
+    pub pledge_account: Address,
     pub asset: Address,
     /// ISO 4217 numeric code of the disbursed `asset`.
     pub issuance_currency: u16,
@@ -137,8 +137,8 @@ pub fn issue_in_series(
         if terms.iter().any(U256::is_zero) {
             return Err(CredisFactoryError::ZeroIssueTerm.into());
         }
-        if params.source.is_zero() {
-            return Err(CredisFactoryError::InvalidSource.into());
+        if params.pledge_account.is_zero() {
+            return Err(CredisFactoryError::InvalidPledgeAccount.into());
         }
         if params.owner.is_zero() {
             return Err(CredisFactoryError::InvalidOwner.into());
@@ -170,7 +170,7 @@ pub fn issue_in_series(
             asset: params.asset,
             issuance_currency: params.issuance_currency,
             reference_currency: params.reference_currency,
-            source: params.source,
+            pledge_account: params.pledge_account,
             amount_minor: params.amount_minor,
             outstanding_amount_minor: params.amount_minor,
             gratis_minor: params.gratis_minor,

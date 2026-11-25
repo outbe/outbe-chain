@@ -62,27 +62,20 @@ pub fn credis_reservation_of(
     crate::runtime::credis_reservation_of(storage, id)
 }
 
-/// `redeemCredisReservation`: bind `receiver` to the reserved account and pay the recorded
-/// CCA via an EVM sub-call. Any unused remainder returns to the origin vault.
+/// `redeemCredisReservation`: at the issue of `credis_id`, move the reservation's assets
+/// through an EVM sub-call to the vault router. Returns the amount.
 pub fn redeem_credis_reservation(
     storage: &StorageHandle<'_>,
     id: U256,
-    receiver: Address,
-    amount: U256,
+    credis_id: U256,
 ) -> Result<U256> {
     call_router(
         storage,
         IVaultRouter::redeemCredisReservationCall {
             credisReservationId: id,
-            receiver,
-            amountMinor: amount,
+            credisId: credis_id,
         },
     )
-}
-
-/// `returnReservation`: deposit the assets held under `id` back into their vault.
-pub fn return_reservation(storage: &StorageHandle<'_>, id: U256) -> Result<U256> {
-    call_router(storage, IVaultRouter::returnReservationCall { id })
 }
 
 /// `withdraw`: redeem `amount` of `asset` from its reserve vault and transfer

@@ -24,6 +24,19 @@ interface ICredis {
     /// ERC-4906: emitted over the whole id range when groups are called.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
+    event CredisIssued(
+        uint256 indexed credisId,
+        address indexed owner,
+        bytes14 indexed seriesId,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        address cca,
+        address asset,
+        uint256 amountMinor,
+        uint256 gratisMinor,
+        uint256 policyRate
+    );
+
     /// @notice A forfeited Credis is deleted: by its owner, or by the cleanup after its group's
     ///         deadline. Records the amount forfeited. Unpaid fee is left out of this
     ///         event and out of `settledFeeMinor`.
@@ -84,8 +97,6 @@ interface ICredis {
         /// ISO 4217 numeric code of the reference currency elected at origination
         /// and fixed for the Credis's life.
         uint16 referenceCurrency;
-        /// Main account whose pledged Gratis backs the Credis.
-        address source;
         /// P - the stablecoin amount disbursed. Never changes.
         uint256 amountMinor;
         /// P_out - decreases with each settlement; 0 once Settled or Forfeited.

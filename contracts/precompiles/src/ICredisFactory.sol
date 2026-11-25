@@ -3,12 +3,11 @@ pragma solidity ^0.8.30;
 
 interface ICredisFactory {
     error InvalidAmount();
-    error CcaStakeMismatch();
     error ReservationNotFound();
     error ReservationExpired();
-    error ReservationCcaMismatch();
+    error ReservationOwnerMismatch();
     error ZeroIssueTerm();
-    error InvalidSource();
+    error InvalidPledgeAccount();
     error InvalidOwner();
     error CredisAlreadyExists();
     error CredisClosed();
@@ -24,7 +23,6 @@ interface ICredisFactory {
     error AssetDecimalsUndecodable();
     error AssetCurrencyUndecodable();
     error AssetMetadataChanged();
-    error CoenStakeOverflow();
     error CredisChangedDuringIssuance();
     error CollateralIncreased();
     error CollateralReleaseMismatch();
@@ -42,18 +40,6 @@ interface ICredisFactory {
         uint64 callWindow,
         uint64 callThreshold,
         uint64 callNoticePeriod
-    );
-    event CredisIssued(
-        uint256 indexed credisId,
-        address indexed owner,
-        bytes14 indexed seriesId,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        address cca,
-        address asset,
-        uint256 amountMinor,
-        uint256 gratisMinor,
-        uint256 policyRate
     );
     /// Every unsettled Credis of the sub-series is called with its call group.
     event CredisSeriesCalled(
@@ -87,11 +73,15 @@ interface ICredisFactory {
         uint256 settledAmountMinor
     );
 
-    /// Use the reservation's pledge and every term it fixed, the call terms included.
-    /// The caller must be its CCA.
-    /// msg.value exactly matches reserved Gratis collateral in native COEN units.
-    function issueCredis(uint256 credisReservationId) external payable returns (uint256 credisId, uint256 amountMinor);
-    /// Any payer may repay. Freed collateral is released to the source's liquid Gratis.
+    /// Issue the Credis of the reservation with every term it fixed, the call terms included.
+    /// The caller must be its Credis owner and must have approved the amount of the asset to
+    /// the VaultRouter. `pledge` is the authorization of the main account, sealed to the
+    /// offer key: the main account and its MAC over the account, the Gratis quantity, the
+    /// reservation id and the chain id.
+    function issueCredis(uint256 credisReservationId, bytes calldata pledge)
+        external
+        returns (uint256 credisId, uint256 amountMinor);
+    /// Any payer may repay. Freed collateral goes back to the free Gratis of the main account.
     /// The payer approves the VaultRouter for the repayment first.
     function settleCredis(uint256 credisId, uint256 amountCapMinor)
         external

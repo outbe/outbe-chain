@@ -245,6 +245,39 @@ pub mod test_enclave {
         fixture_key()
     }
 
+    /// Pledge of `account` for one Credis reservation, MACed with the fixture key and sealed
+    /// to the development offer key.
+    pub fn sealed_pledge(
+        account: alloy_primitives::Address,
+        amount: alloy_primitives::U256,
+        credis_reservation_id: alloy_primitives::U256,
+        chain_id: u64,
+    ) -> Vec<u8> {
+        let keys = derive_account_keys(&state_key(), account).expect("account keys");
+        let message = crate::engine::credis_pledge_message(
+            account,
+            amount,
+            credis_reservation_id,
+            B256::from(alloy_primitives::U256::from(chain_id)),
+        );
+        let mac = outbe_tee::resident::compute_modify_mac(
+            &keys,
+            crate::engine::CREDIS_PLEDGE_MAC_TAG,
+            &message,
+        )
+        .expect("pledge mac");
+        let mut plaintext = account.to_vec();
+        plaintext.extend_from_slice(&mac);
+        outbe_tee::tee_encrypt::tee_encrypt(
+            &outbe_core_common::confidential_tee::offer_public_key(),
+            &outbe_core_common::confidential_tee::OFFER_HKDF_SALT,
+            outbe_core_common::confidential_tee::CREDIS_PLEDGE_HKDF_INFO,
+            &plaintext,
+        )
+        .expect("seal pledge")
+        .to_wire_bytes()
+    }
+
     /// Authorization bound to the installed fixture key.
     pub fn modify_auth(operation: ModifyOperation) -> ModifyAuth {
         let key = derive_account_keys(&state_key(), operation.account).expect("account keys");

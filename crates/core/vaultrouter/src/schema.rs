@@ -41,24 +41,31 @@ pub struct CredisReservation {
     pub asset_decimals: u8,
     #[attribute(order = 12)]
     pub reference_currency: u16,
-    #[attribute(order = 13)]
-    pub source: Address,
     /// The reservation's UTC day in its currencies.
-    #[attribute(order = 14)]
+    #[attribute(order = 13)]
     pub series_id: outbe_core_common::series_id::SeriesId,
     /// The reservation's UTC hour, 0-23.
-    #[attribute(order = 15)]
+    #[attribute(order = 14)]
     pub sub_series: u8,
-    #[attribute(order = 16)]
+    #[attribute(order = 15)]
     pub call_start_day: u32,
-    #[attribute(order = 17)]
+    #[attribute(order = 16)]
     pub call_rate: u16,
-    #[attribute(order = 18)]
+    #[attribute(order = 17)]
     pub call_window_seconds: u32,
-    #[attribute(order = 19)]
+    #[attribute(order = 18)]
     pub call_threshold_seconds: u32,
-    #[attribute(order = 20)]
+    #[attribute(order = 19)]
     pub call_notice_period_seconds: u32,
+    /// WCOEN the CCA put in for the pledged Gratis, 18 decimals.
+    #[attribute(order = 20)]
+    pub wcoen_minor: U256,
+    /// Account of the CCA that gets the stablecoins of the Credis owner.
+    #[attribute(order = 21)]
+    pub cca_receiver: Address,
+    /// Account of the card issuer that gets the escrow.
+    #[attribute(order = 22)]
+    pub omnibus: Address,
 }
 
 /// A pending governance action. A zero vault means the record is absent.
@@ -176,9 +183,11 @@ impl From<CredisReservation> for crate::precompile::IVaultRouter::CredisReservat
             issuanceCurrency: r.issuance_currency,
             assetDecimals: r.asset_decimals,
             referenceCurrency: r.reference_currency,
-            source: r.source,
             seriesId: r.series_id.into(),
             subSeries: r.sub_series,
+            wcoenMinor: r.wcoen_minor,
+            ccaReceiver: r.cca_receiver,
+            omnibus: r.omnibus,
         }
     }
 }

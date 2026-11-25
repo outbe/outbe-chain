@@ -283,15 +283,6 @@ fn folded_fidelity_section_failure_reverts_the_whole_op() {
     });
 }
 
-fn probe() -> FidelityOpSection {
-    FidelityOpSection {
-        op: FidelityCohortOp::Probe,
-        timestamp: 1_700_000_000,
-        first_qualified_start: 0,
-        current_blob: Vec::new(),
-    }
-}
-
 fn view_pledged(storage: StorageHandle<'_>, account: Address) -> U256 {
     let vk = derive_view_key(&test_enclave::state_key(), account).unwrap();
     let blob = api::pledged_ct(storage, account).unwrap();
@@ -310,18 +301,17 @@ fn pledge_release_and_burn_move_only_the_pledged_balance() {
         )
         .unwrap();
         let pledged = U256::from(600u64);
-        api::pledge_with_fidelity(
-            storage.clone(),
-            alice(),
+        api::pledge_sealed(
+            &storage,
+            &test_enclave::sealed_pledge(alice(), pledged, U256::from(1u64), CHAIN_ID),
+            U256::from(1u64),
             pledged,
-            auth(GratisOp::Pledge, alice(), pledged, 1),
-            probe(),
         )
         .unwrap();
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(400u64));
         assert_eq!(view_pledged(storage.clone(), alice()), pledged);
         assert_eq!(api::pledged_total_supply(storage.clone()).unwrap(), pledged);
-        assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 2);
+        assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 1);
 
         api::release_pledged(&storage, alice(), U256::from(100u64)).unwrap();
         assert_eq!(view_balance(storage.clone(), alice()), U256::from(500u64));
@@ -338,7 +328,7 @@ fn pledge_release_and_burn_move_only_the_pledged_balance() {
             api::pledged_total_supply(storage.clone()).unwrap(),
             U256::from(300u64)
         );
-        assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 2);
+        assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 1);
 
         assert!(api::release_pledged(&storage, alice(), U256::from(301u64)).is_err());
         assert!(api::burn_pledged(&storage, alice(), U256::from(301u64)).is_err());
@@ -351,7 +341,7 @@ fn pledge_release_and_burn_move_only_the_pledged_balance() {
 }
 
 #[test]
-fn pledge_needs_the_liquid_amount_and_a_fresh_authorization() {
+fn pledge_needs_the_liquid_amount_and_an_authorization_for_its_reservation() {
     with_env(|storage| {
         let amount = U256::from(100u64);
         api::mint(
@@ -362,22 +352,16 @@ fn pledge_needs_the_liquid_amount_and_a_fresh_authorization() {
         )
         .unwrap();
         let too_much = U256::from(101u64);
-        assert!(api::pledge_with_fidelity(
-            storage.clone(),
-            alice(),
+        assert!(api::pledge_sealed(
+            &storage,
+            &test_enclave::sealed_pledge(alice(), too_much, U256::from(1u64), CHAIN_ID),
+            U256::from(1u64),
             too_much,
-            auth(GratisOp::Pledge, alice(), too_much, 1),
-            probe(),
         )
         .is_err());
-        assert!(api::pledge_with_fidelity(
-            storage.clone(),
-            alice(),
-            amount,
-            auth(GratisOp::Burn, alice(), amount, 1),
-            probe(),
-        )
-        .is_err());
+        let other_reservation =
+            test_enclave::sealed_pledge(alice(), amount, U256::from(2u64), CHAIN_ID);
+        assert!(api::pledge_sealed(&storage, &other_reservation, U256::ONE, amount).is_err());
         assert_eq!(view_balance(storage.clone(), alice()), amount);
         assert_eq!(view_pledged(storage.clone(), alice()), U256::ZERO);
         assert_eq!(
@@ -399,12 +383,11 @@ fn precompile_pledged_of_returns_ciphertext() {
             auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
-        api::pledge_with_fidelity(
-            storage.clone(),
-            alice(),
+        api::pledge_sealed(
+            &storage,
+            &test_enclave::sealed_pledge(alice(), amount, U256::from(1u64), CHAIN_ID),
+            U256::from(1u64),
             amount,
-            auth(GratisOp::Pledge, alice(), amount, 1),
-            probe(),
         )
         .unwrap();
         let call = Bytes::from(
@@ -419,10 +402,10 @@ fn precompile_pledged_of_returns_ciphertext() {
 }
 
 #[test]
-fn burning_pledged_collateral_reports_the_supply_drop() {
+fn pledge_and_pledged_burn_emit_no_gratis_event() {
     test_enclave::install();
     let mut provider = HashMapStorageProvider::new(CHAIN_ID);
-    StorageHandle::enter(&mut provider, |storage| {
+    let minted_events = StorageHandle::enter(&mut provider, |storage| {
         let amount = U256::from(100u64);
         api::mint(
             storage.clone(),
@@ -431,35 +414,22 @@ fn burning_pledged_collateral_reports_the_supply_drop() {
             auth(GratisOp::Mint, alice(), amount, 0),
         )
         .unwrap();
-        api::pledge_with_fidelity(
-            storage.clone(),
-            alice(),
+        api::pledge_sealed(
+            &storage,
+            &test_enclave::sealed_pledge(alice(), amount, U256::ONE, CHAIN_ID),
+            U256::ONE,
             amount,
-            auth(GratisOp::Pledge, alice(), amount, 1),
-            probe(),
         )
         .unwrap();
         api::burn_pledged(&storage, alice(), U256::from(40u64)).unwrap();
+        1
     });
-    let vk = derive_view_key(&test_enclave::state_key(), alice()).unwrap();
     test_enclave::uninstall();
-    let liquid_burned: Vec<_> = provider
-        .get_events(outbe_system_common::addresses::GRATIS_ADDRESS)
-        .iter()
-        .filter_map(|log| IGratis::GratisBurned::decode_log_data(log).ok())
-        .collect();
-    assert!(liquid_burned.is_empty());
-
-    let burned: Vec<_> = provider
-        .get_events(outbe_system_common::addresses::GRATIS_ADDRESS)
-        .iter()
-        .filter_map(|log| IGratis::GratisBurnedFromPledge::decode_log_data(log).ok())
-        .collect();
-    assert_eq!(burned.len(), 1);
-    assert_eq!(burned[0].account, alice());
     assert_eq!(
-        decrypt_balance(&vk, alice(), &burned[0].encryptedAmountMinor).unwrap(),
-        U256::from(40u64)
+        provider
+            .get_events(outbe_system_common::addresses::GRATIS_ADDRESS)
+            .len(),
+        minted_events
     );
 }
 

@@ -319,8 +319,7 @@ fn declared_error_reservation_not_found() {
             storage.clone(),
             &IVaultRouter::redeemCredisReservationCall {
                 credisReservationId: id,
-                receiver: receiver(),
-                amountMinor: U256::from(10),
+                credisId: U256::ONE,
             }
             .abi_encode(),
             CREDIS_FACTORY_ADDRESS,

@@ -12,18 +12,16 @@ use thiserror::Error;
 pub enum CredisFactoryError {
     #[error("settlement amount is zero")]
     InvalidAmount,
-    #[error("attached COEN must equal the pledged collateral exactly")]
-    CcaStakeMismatch,
     #[error("reservation not found")]
     ReservationNotFound,
     #[error("reservation expired")]
     ReservationExpired,
-    #[error("reservation cca mismatch")]
-    ReservationCcaMismatch,
+    #[error("only the Credis owner of the reservation can issue it")]
+    ReservationOwnerMismatch,
     #[error("amount must be positive")]
     ZeroIssueTerm,
-    #[error("pledge source is zero")]
-    InvalidSource,
+    #[error("pledge account is zero")]
+    InvalidPledgeAccount,
     #[error("Credis owner is zero")]
     InvalidOwner,
     #[error("Credis already exists")]
@@ -54,8 +52,6 @@ pub enum CredisFactoryError {
     AssetCurrencyUndecodable,
     #[error("asset metadata changed")]
     AssetMetadataChanged,
-    #[error("COEN stake overflow")]
-    CoenStakeOverflow,
     #[error("Credis changed during issuance")]
     CredisChangedDuringIssuance,
     #[error("collateral increased")]
@@ -77,12 +73,13 @@ impl From<CredisFactoryError> for PrecompileError {
         use ICredisFactory as I;
         match err {
             CredisFactoryError::InvalidAmount => revert_with(I::InvalidAmount {}),
-            CredisFactoryError::CcaStakeMismatch => revert_with(I::CcaStakeMismatch {}),
             CredisFactoryError::ReservationNotFound => revert_with(I::ReservationNotFound {}),
             CredisFactoryError::ReservationExpired => revert_with(I::ReservationExpired {}),
-            CredisFactoryError::ReservationCcaMismatch => revert_with(I::ReservationCcaMismatch {}),
+            CredisFactoryError::ReservationOwnerMismatch => {
+                revert_with(I::ReservationOwnerMismatch {})
+            }
             CredisFactoryError::ZeroIssueTerm => revert_with(I::ZeroIssueTerm {}),
-            CredisFactoryError::InvalidSource => revert_with(I::InvalidSource {}),
+            CredisFactoryError::InvalidPledgeAccount => revert_with(I::InvalidPledgeAccount {}),
             CredisFactoryError::InvalidOwner => revert_with(I::InvalidOwner {}),
             CredisFactoryError::CredisAlreadyExists => revert_with(I::CredisAlreadyExists {}),
             CredisFactoryError::CredisClosed => revert_with(I::CredisClosed {}),
@@ -108,7 +105,6 @@ impl From<CredisFactoryError> for PrecompileError {
                 revert_with(I::AssetCurrencyUndecodable {})
             }
             CredisFactoryError::AssetMetadataChanged => revert_with(I::AssetMetadataChanged {}),
-            CredisFactoryError::CoenStakeOverflow => revert_with(I::CoenStakeOverflow {}),
             CredisFactoryError::CredisChangedDuringIssuance => {
                 revert_with(I::CredisChangedDuringIssuance {})
             }

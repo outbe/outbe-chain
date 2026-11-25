@@ -220,35 +220,6 @@ pub(crate) fn burn_with_fidelity(
     require_fidelity_outcome(burn_impl(storage, caller, amount, auth, Some(fidelity))?)
 }
 
-/// Move an owner-authorized amount into the pledged balance, with a read-only
-/// Fidelity eligibility probe in the same enclave round-trip.
-pub(crate) fn pledge_with_fidelity(
-    storage: StorageHandle<'_>,
-    caller: Address,
-    amount: U256,
-    auth: ModifyAuth,
-    fidelity: FidelityOpSection,
-) -> Result<FidelityOpOutcome> {
-    storage.with_checkpoint(|| {
-        let gratis = Gratis::new(storage.clone());
-        check_op_nonce(&gratis, caller, auth.op_nonce)?;
-        let next_nonce = auth.op_nonce.checked_add(1);
-        let mut req = base_request(GratisOp::Pledge, chain_id_b256(&storage)?, caller, amount);
-        req.modify_auth = auth;
-        req.fidelity = Some(fidelity);
-        let result = apply_collateral_op(&storage, req)?;
-        if next_nonce != Some(result.next_op_nonce) {
-            return Err(GratisFatalError::WrongOpNonce.into());
-        }
-        crate::state::account(&gratis, caller).set_op_nonce(result.next_op_nonce)?;
-        let pledged = crate::state::pledged_total_supply(&gratis)?
-            .checked_add(amount)
-            .ok_or(GratisError::PledgedSupplyOverflow)?;
-        crate::state::set_pledged_total_supply(&gratis, pledged)?;
-        require_fidelity_outcome(result.fidelity)
-    })
-}
-
 /// Open the sealed pledge of `credis_reservation_id` and pledge `amount` from the main account
 /// it names. Returns that account.
 pub(crate) fn pledge_sealed(
@@ -355,23 +326,13 @@ pub(crate) fn burn_pledged(
             account,
             amount,
         );
-        let result = apply_collateral_op(storage, req)?;
-        if result.encrypted_event_amount.is_empty() {
-            return Err(GratisFatalError::CollateralResultMismatch.into());
-        }
+        apply_collateral_op(storage, req)?;
         let gratis = Gratis::new(storage.clone());
         crate::state::set_pledged_total_supply(
             &gratis,
             crate::state::pledged_total_supply(&gratis)?
                 .checked_sub(amount)
                 .ok_or(GratisFatalError::PledgedSupplyUnderflow)?,
-        )?;
-        storage.emit_event(
-            GRATIS_ADDRESS,
-            SolEvent::encode_log_data(&IGratis::GratisBurnedFromPledge {
-                account,
-                encryptedAmountMinor: result.encrypted_event_amount.into(),
-            }),
         )
     })
 }

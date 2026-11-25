@@ -144,10 +144,10 @@ pub struct Credis {
     #[attribute(order = 16, default = 0)]
     pub call_threshold_seconds: u32,
 
-    /// Main account whose pledged Gratis backs the Credis. Repayments release
-    /// collateral to it and a default burns it from it.
+    /// Main account whose pledged Gratis backs the Credis. Settlements free its Gratis and a
+    /// forfeit burns it. No read, event or `tokenURI` shows it.
     #[attribute(order = 17)]
-    pub source: Address,
+    pub pledge_account: Address,
 
     /// ISO 4217 numeric code of `asset` (e.g. 840 = USD), read at issuance.
     /// Denominates the Credis and keys its policy rate.

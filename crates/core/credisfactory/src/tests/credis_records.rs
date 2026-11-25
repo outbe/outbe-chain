@@ -122,7 +122,7 @@ fn params(owner: Address) -> IssueCredisParams {
     IssueCredisParams {
         owner,
         cca: cca(),
-        source: source(),
+        pledge_account: source(),
         asset: settlement_asset(),
         issuance_currency: 840,
         reference_currency: 978,
@@ -202,44 +202,32 @@ fn forfeit_by_owner(
     outbe_gratis::enclave_client::test_enclave::install();
     outbe_fidelity::enclave_client::test_enclave::install();
     if let Ok(record) = CredisContract::new(storage.clone()).get_credis(id) {
-        let contract = outbe_gratisfactory::schema::GratisFactoryContract::new(storage.clone());
-        if !contract.collateral.exists(id)? && !record.outstanding_gratis_minor.is_zero() {
-            let source = record.source;
-            let amount = record.outstanding_gratis_minor;
-            let nonce = outbe_gratis::api::op_nonce(storage.clone(), source)?;
+        let account = record.pledge_account;
+        let needed = record.outstanding_gratis_minor;
+        let view = outbe_gratis::derive_view_key(
+            &outbe_gratis::enclave_client::test_enclave::state_key(),
+            account,
+        )
+        .unwrap();
+        let blob = outbe_gratis::api::pledged_ct(storage.clone(), account)?;
+        let pledged = if blob.is_empty() {
+            U256::ZERO
+        } else {
+            outbe_gratis::decrypt_pledged(&view, account, &blob).unwrap()
+        };
+        if pledged < needed {
+            let amount = needed - pledged;
+            let nonce = outbe_gratis::api::op_nonce(storage.clone(), account)?;
             outbe_gratis::api::mint(
                 storage.clone(),
-                source,
+                account,
                 amount,
-                super::auth(outbe_gratis::GratisOp::Mint, source, amount, nonce),
+                super::auth(outbe_gratis::GratisOp::Mint, account, amount, nonce),
             )?;
-            let now = storage.now_secs()?;
-            outbe_fidelity::api::cohort_in(
-                storage.clone(),
-                source,
-                U256::from(100u64),
-                now.saturating_sub(365 * DAY),
-            )?;
-            let probe = outbe_fidelity::api::cohort_section(
-                storage.clone(),
-                source,
-                outbe_fidelity::api::FidelityCohortOp::Probe,
-                now,
-            )?;
-            outbe_gratis::api::pledge_with_fidelity(
-                storage.clone(),
-                source,
-                amount,
-                super::auth(outbe_gratis::GratisOp::Pledge, source, amount, nonce + 1),
-                probe,
-            )?;
-            contract
-                .collateral
-                .create(&outbe_gratisfactory::schema::CollateralAllocation {
-                    credis_id: id,
-                    source,
-                    remaining_minor: amount,
-                })?;
+            let sealed = outbe_gratis::enclave_client::test_enclave::sealed_pledge(
+                account, amount, id, CHAIN_ID,
+            );
+            outbe_gratis::api::pledge_sealed(storage, &sealed, id, amount)?;
         }
     }
     crate::runtime::forfeit_by_owner(storage.clone(), caller, id)
@@ -311,7 +299,7 @@ fn issuance_seals_the_call_price_from_the_entry_price() {
             CredisState::Issued
         );
         assert_eq!(p.cca, cca());
-        assert_eq!(p.source, source());
+        assert_eq!(p.pledge_account, source());
     });
 }
 
@@ -341,15 +329,15 @@ fn issuance_rejects_duplicates_and_zero_amounts() {
 }
 
 #[test]
-fn issuance_requires_a_pledge_source() {
+fn issuance_requires_a_pledge_account() {
     with_credis(|storage| {
-        let mut no_source = params(alice());
-        no_source.source = Address::ZERO;
-        let err = rules::issue(&mut CredisContract::new(storage), no_source).unwrap_err();
+        let mut no_account = params(alice());
+        no_account.pledge_account = Address::ZERO;
+        let err = rules::issue(&mut CredisContract::new(storage), no_account).unwrap_err();
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::CredisFactoryError::InvalidSource
+                crate::errors::CredisFactoryError::InvalidPledgeAccount
             )
             .to_string()
         );
@@ -1654,7 +1642,6 @@ fn precompile_get_credis_returns_the_full_record() {
         assert_eq!(decoded.issuedAt, ORIGINATED_AT);
         assert_eq!(decoded.policyRate, policy_rate());
         assert_eq!(decoded.state, CredisState::Issued as u8);
-        assert_eq!(decoded.source, source());
         assert_eq!(
             (
                 decoded.call.callNoticePeriod,

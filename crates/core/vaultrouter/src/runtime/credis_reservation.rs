@@ -2,14 +2,16 @@
 
 use alloy_primitives::{Address, U256};
 use alloy_sol_types::SolCall;
+use outbe_core_common::addresses::WCOEN_ADDRESS;
 use outbe_credis::CredisContract;
 use outbe_oracle::api::{self, current_vwap_24h_snapshot, vwap_24h};
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::time::first_full_day;
+use outbe_system_common::units::checked_protocol_to_native;
 use outbe_system_common::{math::scaled_math::checked_quote, units::MAX_ASSET_DECIMALS};
 
-use super::calls::{erc20_transfer, vault_deposit, vault_withdraw};
+use super::calls::{erc20_transfer, erc20_transfer_from, vault_deposit, vault_withdraw};
 use super::{ensure_shares_cover, first_vault, SELF};
 use crate::constants::RESERVATION_TTL_SECS;
 use crate::errors::{date_step_error, VaultRouterError};
@@ -17,23 +19,27 @@ use crate::precompile::IVaultRouter;
 use crate::schema::{CredisReservation, VaultRouterContract};
 use crate::sol_ext::{IReferenceCurrency, IERC20};
 
-/// `createCredisReservation`: redeem `amount` of `asset` from its origin vault into this
-/// router's custody for `credis_owner`. Caller must be an active CCA.
+/// `createCredisReservation`: take the CCA's WCOEN for the pledged Gratis and redeem `amount` of
+/// `asset` from its origin vault into the escrow of the reservation. Caller must be an active CCA.
 pub(crate) fn create_credis_reservation(
     storage: StorageHandle<'_>,
     caller: Address,
     call: IVaultRouter::createCredisReservationCall,
 ) -> Result<U256> {
     let IVaultRouter::createCredisReservationCall {
-        credisOwner: credis_owner,
-        source,
+        owner,
         asset,
         amountMinor: amount,
         referenceCurrency: reference_currency,
+        ccaReceiver: cca_receiver,
+        omnibus,
     } = call;
     storage.with_checkpoint(|| {
         outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
-        if credis_owner.is_zero() || source.is_zero() || asset.is_zero() {
+        if [owner, asset, cca_receiver, omnibus]
+            .iter()
+            .any(|a| a.is_zero())
+        {
             return Err(VaultRouterError::ZeroAddress.into());
         }
         if amount.is_zero() {
@@ -61,6 +67,8 @@ pub(crate) fn create_credis_reservation(
         }
         ensure_shares_cover(&storage, vault, amount)?;
         let mut terms = quote(&storage, asset, amount, reference_currency)?;
+        let wcoen = checked_protocol_to_native(terms.gratis_minor)
+            .ok_or(VaultRouterError::InvalidReservationAmount)?;
 
         let nonce = contract
             .reservation_nonce
@@ -73,138 +81,156 @@ pub(crate) fn create_credis_reservation(
             return Err(VaultRouterError::ReservationExists(id).into());
         }
 
-        vault_withdraw(&storage, vault, amount, SELF, SELF)?;
+        erc20_transfer_from(&storage, WCOEN_ADDRESS, caller, SELF, wcoen)?;
+        let burned_shares = vault_withdraw(&storage, vault, amount, SELF, SELF)?;
         terms.id = id;
-        terms.credis_owner = credis_owner;
+        terms.credis_owner = owner;
         terms.cca = caller;
-        terms.source = source;
         terms.vault = vault;
         terms.expires_at = expires_at;
+        terms.wcoen_minor = wcoen;
+        terms.cca_receiver = cca_receiver;
+        terms.omnibus = omnibus;
         contract.reservations.create(&terms)?;
 
         let mut contract = VaultRouterContract::new(storage.clone());
-        contract.emit(IVaultRouter::ReservationCreated {
-            id,
-            credisOwner: credis_owner,
+        contract.emit(IVaultRouter::CredisReservationCreated {
+            credisReservationId: id,
+            owner,
             cca: caller,
             asset,
             vault,
             amountMinor: amount,
+            wcoenMinor: wcoen,
+            burnedShares: burned_shares,
             expiresAt: expires_at,
         })?;
         Ok(id)
     })
 }
 
-/// Validate the receiver as the reservation's Credis owner, pay the recorded CCA for COEN delivered to it,
-/// and return any unused remainder to the origin vault.
+/// `redeemCredisReservation`: at the issue of `credis_id`, delete the reservation, take the
+/// amount from the Credis owner to the receiving account of the CCA, and send the WCOEN to the
+/// Credis owner and the escrow to the omnibus account.
 pub(crate) fn redeem_credis_reservation(
     storage: StorageHandle<'_>,
     id: U256,
-    receiver: Address,
-    amount: U256,
+    credis_id: U256,
     target: IVaultRouter::StablecoinTarget,
 ) -> Result<U256> {
-    let error = if receiver.is_zero() {
-        VaultRouterError::ZeroAddress
-    } else if matches!(target, IVaultRouter::StablecoinTarget::Unknown) {
-        VaultRouterError::InvalidStablecoinTarget
-    } else if amount.is_zero() {
-        VaultRouterError::InvalidReservationAmount
-    } else {
-        return redeem_credis_reservation_checked(storage, id, receiver, amount);
-    };
-    Err(error.into())
-}
-
-fn redeem_credis_reservation_checked(
-    storage: StorageHandle<'_>,
-    id: U256,
-    receiver: Address,
-    amount: U256,
-) -> Result<U256> {
+    if matches!(target, IVaultRouter::StablecoinTarget::Unknown) {
+        return Err(VaultRouterError::InvalidStablecoinTarget.into());
+    }
     let now = storage.now_secs()?;
     storage.with_checkpoint(|| {
         let record = take_reservation(&storage, id)?;
-        ensure_releasable(&record, id, now, receiver, amount)?;
-
-        erc20_transfer(&storage, record.asset, record.cca, amount)?;
-
-        let excess = record.amount_minor - amount;
-        let mut returned_shares = U256::ZERO;
-        if !excess.is_zero() {
-            returned_shares = vault_deposit(&storage, record.vault, excess, SELF)?;
+        if now > record.expires_at {
+            return Err(VaultRouterError::ReservationExpired(id).into());
         }
+        erc20_transfer_from(
+            &storage,
+            record.asset,
+            record.credis_owner,
+            record.cca_receiver,
+            record.amount_minor,
+        )?;
+        erc20_transfer(
+            &storage,
+            WCOEN_ADDRESS,
+            record.credis_owner,
+            record.wcoen_minor,
+        )?;
+        erc20_transfer(&storage, record.asset, record.omnibus, record.amount_minor)?;
 
         let mut contract = VaultRouterContract::new(storage.clone());
-        contract.emit(IVaultRouter::ReservationReleased {
-            id,
+        contract.emit(IVaultRouter::CredisReservationRedeemed {
+            credisReservationId: id,
+            owner: record.credis_owner,
+            credisId: credis_id,
+            cca: record.cca,
+            ccaReceiver: record.cca_receiver,
+            omnibus: record.omnibus,
             asset: record.asset,
-            receiver: record.cca,
-            amountMinor: amount,
+            amountMinor: record.amount_minor,
         })?;
-        if !excess.is_zero() {
-            contract.emit(IVaultRouter::ReservationReturned {
-                id,
-                asset: record.asset,
-                vault: record.vault,
-                amountMinor: excess,
-                mintedShares: returned_shares,
-            })?;
-        }
-        Ok(amount)
+        Ok(record.amount_minor)
     })
 }
 
-/// Rejects a release that the reservation's expiry, Credis owner or amount does not cover.
-fn ensure_releasable(
-    record: &CredisReservation,
-    id: U256,
-    now: u64,
-    receiver: Address,
-    amount: U256,
-) -> Result<()> {
-    let error = if now > record.expires_at {
-        VaultRouterError::ReservationExpired(id)
-    } else if receiver != record.credis_owner {
-        VaultRouterError::CredisOwnerMismatch
-    } else if amount > record.amount_minor {
-        VaultRouterError::ReservationInsufficient {
-            available: record.amount_minor,
-            required: amount,
-        }
-    } else {
-        return Ok(());
-    };
-    Err(error.into())
-}
-
-/// `returnReservation`: deposit the assets held under `id` back into their origin
-/// vault. The originating CCA may unwind anytime. After expiry, anyone may.
+/// `cancelCredisReservation`: the CCA ends its unused reservation up to `expiresAt`.
 /// Idempotent: an unknown id returns zero.
-pub(crate) fn return_reservation(
+pub(crate) fn cancel_credis_reservation(
     storage: StorageHandle<'_>,
     caller: Address,
     id: U256,
 ) -> Result<U256> {
     let now = storage.now_secs()?;
+    end_unused_reservation(storage, id, |record| {
+        if caller != record.cca || now > record.expires_at {
+            return Err(VaultRouterError::Unauthorized.into());
+        }
+        Ok(Ended::Canceled)
+    })
+}
+
+/// `expireCredisReservation`: any account ends an unused reservation after `expiresAt`.
+/// Idempotent: an unknown id returns zero.
+pub(crate) fn expire_credis_reservation(storage: StorageHandle<'_>, id: U256) -> Result<U256> {
+    let now = storage.now_secs()?;
+    end_unused_reservation(storage, id, |record| {
+        if now <= record.expires_at {
+            return Err(VaultRouterError::Unauthorized.into());
+        }
+        Ok(Ended::Expired)
+    })
+}
+
+enum Ended {
+    Canceled,
+    Expired,
+}
+
+/// Delete an unused reservation, give the WCOEN back to the CCA and the escrow to its vault.
+fn end_unused_reservation(
+    storage: StorageHandle<'_>,
+    id: U256,
+    check: impl FnOnce(&CredisReservation) -> Result<Ended>,
+) -> Result<U256> {
     storage.with_checkpoint(|| {
         let Some(record) = take_reservation_if_held(&storage, id)? else {
             return Ok(U256::ZERO);
         };
-        if caller != record.cca && now <= record.expires_at {
-            return Err(VaultRouterError::Unauthorized.into());
-        }
-
+        let ended = check(&record)?;
+        erc20_transfer(&storage, WCOEN_ADDRESS, record.cca, record.wcoen_minor)?;
         let minted_shares = vault_deposit(&storage, record.vault, record.amount_minor, SELF)?;
         let mut contract = VaultRouterContract::new(storage.clone());
-        contract.emit(IVaultRouter::ReservationReturned {
-            id,
-            asset: record.asset,
-            vault: record.vault,
-            amountMinor: record.amount_minor,
-            mintedShares: minted_shares,
-        })?;
+        let (owner, cca, asset, vault, amount) = (
+            record.credis_owner,
+            record.cca,
+            record.asset,
+            record.vault,
+            record.amount_minor,
+        );
+        match ended {
+            Ended::Canceled => contract.emit(IVaultRouter::CredisReservationCanceled {
+                credisReservationId: id,
+                owner,
+                cca,
+                asset,
+                vault,
+                amountMinor: amount,
+                mintedShares: minted_shares,
+            })?,
+            Ended::Expired => contract.emit(IVaultRouter::CredisReservationExpired {
+                credisReservationId: id,
+                owner,
+                cca,
+                asset,
+                vault,
+                amountMinor: amount,
+                mintedShares: minted_shares,
+            })?,
+        }
         Ok(minted_shares)
     })
 }

@@ -89,15 +89,29 @@
   },
   {
     "type": "function",
+    "name": "cancelCredisReservation",
+    "inputs": [
+      {
+        "name": "credisReservationId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mintedShares",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "createCredisReservation",
     "inputs": [
       {
-        "name": "credisOwner",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "source",
+        "name": "owner",
         "type": "address",
         "internalType": "address"
       },
@@ -115,6 +129,16 @@
         "name": "referenceCurrency",
         "type": "uint16",
         "internalType": "uint16"
+      },
+      {
+        "name": "ccaReceiver",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "omnibus",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "outputs": [
@@ -173,6 +197,25 @@
     "outputs": [
       {
         "name": "shares",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "expireCredisReservation",
+    "inputs": [
+      {
+        "name": "credisReservationId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "mintedShares",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -261,11 +304,6 @@
             "internalType": "uint16"
           },
           {
-            "name": "source",
-            "type": "address",
-            "internalType": "address"
-          },
-          {
             "name": "seriesId",
             "type": "bytes14",
             "internalType": "bytes14"
@@ -274,6 +312,21 @@
             "name": "subSeries",
             "type": "uint8",
             "internalType": "uint8"
+          },
+          {
+            "name": "wcoenMinor",
+            "type": "uint256",
+            "internalType": "uint256"
+          },
+          {
+            "name": "ccaReceiver",
+            "type": "address",
+            "internalType": "address"
+          },
+          {
+            "name": "omnibus",
+            "type": "address",
+            "internalType": "address"
           }
         ]
       }
@@ -416,19 +469,14 @@
         "internalType": "uint256"
       },
       {
-        "name": "receiver",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "amountMinor",
+        "name": "credisId",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
     "outputs": [
       {
-        "name": "deliveredMinor",
+        "name": "amountMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -506,25 +554,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "returnReservation",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "mintedShares",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -669,16 +698,16 @@
   },
   {
     "type": "event",
-    "name": "ReservationCreated",
+    "name": "CredisReservationCanceled",
     "inputs": [
       {
-        "name": "id",
+        "name": "credisReservationId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
-        "name": "credisOwner",
+        "name": "owner",
         "type": "address",
         "indexed": true,
         "internalType": "address"
@@ -708,6 +737,67 @@
         "internalType": "uint256"
       },
       {
+        "name": "mintedShares",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CredisReservationCreated",
+    "inputs": [
+      {
+        "name": "credisReservationId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "cca",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "vault",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amountMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "wcoenMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "burnedShares",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
         "name": "expiresAt",
         "type": "uint64",
         "indexed": false,
@@ -718,55 +808,36 @@
   },
   {
     "type": "event",
-    "name": "ReservationReleased",
+    "name": "CredisReservationExpired",
     "inputs": [
       {
-        "name": "id",
+        "name": "credisReservationId",
         "type": "uint256",
         "indexed": true,
         "internalType": "uint256"
       },
       {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "cca",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
         "name": "asset",
         "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "receiver",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "amountMinor",
-        "type": "uint256",
         "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "ReservationReturned",
-    "inputs": [
-      {
-        "name": "id",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": true,
         "internalType": "address"
       },
       {
         "name": "vault",
         "type": "address",
-        "indexed": true,
+        "indexed": false,
         "internalType": "address"
       },
       {
@@ -777,6 +848,61 @@
       },
       {
         "name": "mintedShares",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CredisReservationRedeemed",
+    "inputs": [
+      {
+        "name": "credisReservationId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "credisId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "cca",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "ccaReceiver",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "omnibus",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"

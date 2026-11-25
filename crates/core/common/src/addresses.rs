@@ -15,3 +15,9 @@ pub const INTEX_NFT1155_ADDRESS: Address = address!("0x116063CF0558225D808d1C309
 pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x62C1EFaCBfB20a864342B61A6dEC6f4d80729D18");
 #[cfg(feature = "e2e-test")]
 pub const ORIGIN_ROUTER_ADDRESS: Address = address!("0x78639251937A333daee04233867A199E314D7Bbb");
+
+/// WCOEN on Outbe. CREATE3 proxy under salt "WCOENv7.0.0", same deployer and factory.
+#[cfg(not(feature = "e2e-test"))]
+pub const WCOEN_ADDRESS: Address = address!("0x3414f55f086Eb224135D9044299E6eBc6E841197");
+#[cfg(feature = "e2e-test")]
+pub const WCOEN_ADDRESS: Address = address!("0x5C8E0466cCD1f66A85f167Fa3ec75E5F48C7145F");

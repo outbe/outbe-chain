@@ -1,7 +1,8 @@
-//! Real issuance against a direct Gratis pledge with stateful ERC-20/vault calls.
+//! Real issue by the cash account with stateful ERC-20/vault calls and a sealed pledge.
 use alloy_primitives::{Address, Bytes, B256, U256};
 use alloy_sol_types::{sol, SolCall, SolEvent};
-use evm2::evm::{AccountInfo, CacheDB, EmptyDB};
+use evm2::evm::{CacheDB, EmptyDB};
+use outbe_core_common::addresses::WCOEN_ADDRESS;
 use outbe_credisfactory::precompile::ICredisFactory;
 use outbe_evm::test_support::{install_code, runtime_code, seed_storage, EvmWorld};
 use outbe_gratis::enclave_client::test_enclave;
@@ -10,7 +11,6 @@ use outbe_gratis::{
     decrypt_balance, decrypt_pledged, derive_account_keys, derive_view_key, modify_mac,
 };
 use outbe_gratis::{GratisOp, ModifyAuth};
-use outbe_gratisfactory::precompile::IGratisFactory;
 use outbe_oracle::{
     schema::OracleContract,
     test_support::{publish_day_type_rate, record_finalized_day_vwap},
@@ -20,8 +20,7 @@ use outbe_primitives::{
     storage::{StorageHandle, SubCallInput, SubCallStatus},
 };
 use outbe_system_common::addresses::{
-    CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS,
-    VAULT_ROUTER_ADDRESS,
+    CCA_REGISTRY_ADDRESS, CREDIS_FACTORY_ADDRESS, GRATIS_ADDRESS, VAULT_ROUTER_ADDRESS,
 };
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_vaultrouter::{
@@ -44,6 +43,8 @@ const CCA: Address = Address::new([0x22; 20]);
 const ASSET: Address = Address::new([0x33; 20]);
 const ACCOUNT: Address = Address::new([0x44; 20]);
 const VAULT: Address = Address::new([0x55; 20]);
+const OMNIBUS: Address = Address::new([0x66; 20]);
+const AMOUNT: u64 = 2_000_000;
 const NOW: u64 = 1_700_000_000;
 
 macro_rules! call {
@@ -68,13 +69,15 @@ struct PaymentObservation {
     before: Bytes,
     pledged: Bytes,
 }
+
+/// Each failure mode of the issue: 0 succeeds; 1 and 2 fail a token transfer; 5 brings a pledge
+/// sealed for another reservation; 6 and 7 change the asset metadata; 8 issues after expiry.
 #[test]
-fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
-    // Preserve the original success, payout/authorization/metadata failure and expiry cases.
-    for failure in [0, 1, 2, 4, 5, 6, 7, 8] {
+fn cash_account_issue_moves_every_asset_once_and_rolls_back_failures() {
+    for failure in [0, 1, 2, 5, 6, 7, 8] {
         test_enclave::install();
         let key = derive_account_keys(&test_enclave::state_key(), OWNER).unwrap();
-        let (mut db, stake) = issuance_database().expect("issuance database fixture succeeds");
+        let mut db = issuance_database();
         seed_storage(&mut db, NOW, OWNER, |storage| {
             seed_issuance_liquidity(storage.clone())
                 .expect("seed issuance liquidity fixture succeeds");
@@ -85,41 +88,43 @@ fn issuance_pays_cca_preserves_account_stables_and_rolls_back_failed_payouts() {
             EvmWorld::new(db, std::sync::Arc::new(outbe_runtime::OutbeRuntime::new())).at(NOW);
         prepare_issuance_counterparties(&mut evm, failure)
             .expect("prepare issuance counterparties fixture succeeds");
-        if failure != 5 {
-            pledge_reservation(&mut evm, &key).expect("pledge reservation fixture succeeds");
+        if failure == 8 {
+            let mut block = *evm.evm.block();
+            block.timestamp = U256::from(NOW + 901);
+            evm.evm.set_block(block);
         }
-        let (issue, out) =
-            issue_cca_payout(&mut evm, failure, stake).expect("issue cca payout fixture succeeds");
-        assert_issuance_state(&mut evm, failure, stake)
-            .expect("assert issuance state fixture succeeds");
-        retry_issuance_and_cancel_expired(&mut evm, failure, stake, issue, &key)
-            .expect("retry issuance and cancel expired fixture succeeds");
+        let pledge = sealed(if failure == 5 { 2 } else { 1 });
+        let out = issue(&mut evm, &pledge, failure == 0).expect("issue fixture succeeds");
+        assert_issuance_state(&mut evm, failure == 0).expect("issue state fixture succeeds");
+        reset_counterparties(&mut evm).expect("reset counterparties fixture succeeds");
         if failure == 0 {
+            // The reservation is gone, so the same pledge cannot issue twice.
+            issue(&mut evm, &pledge, false).expect("replayed issue fixture succeeds");
             settle_successful_issuance(&mut evm, &out)
                 .expect("settle successful issuance fixture succeeds");
+        } else if failure != 8 {
+            // A failed issue moved nothing, so the same reservation issues on retry.
+            issue(&mut evm, &sealed(1), true).expect("retried issue fixture succeeds");
+            assert_issuance_state(&mut evm, true).expect("retried issue state fixture succeeds");
         }
         test_enclave::uninstall();
     }
 }
 
-fn issuance_database() -> eyre::Result<(CacheDB<EmptyDB>, U256)> {
+fn issuance_database() -> CacheDB<EmptyDB> {
     let mut db = CacheDB::new(EmptyDB::default());
     let code = runtime_code(include_str!(
         "../../../testing/fixtures/evm/CredisIssuance.hex"
     ));
-    for addr in [ASSET, VAULT] {
+    for addr in [ASSET, VAULT, WCOEN_ADDRESS] {
         install_code(&mut db, addr, &code);
     }
-    let stake = U256::from(10).pow(U256::from(18));
-    db.insert_account_info(
-        &CCA,
-        AccountInfo {
-            balance: stake * U256::from(2),
-            ..Default::default()
-        },
-    );
+    db
+}
 
-    Ok((db, stake))
+fn wcoen() -> U256 {
+    outbe_system_common::units::checked_protocol_to_native(U256::from(GRATIS))
+        .expect("WCOEN of the fixture fits")
 }
 
 fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
@@ -145,25 +150,24 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         CREDIS_FACTORY_ADDRESS,
         IVaultRouter::StablecoinTarget::Credis,
     )?;
-    // Reserve before pledging. The code below funds the held assets through real ERC20 calls.
+    // The escrow and the WCOEN of the reservation are funded through real ERC20 calls below.
     let reservation_day = timestamp_to_date_key(NOW);
     let call_terms = outbe_credis::config::read(&storage)?;
     router.reservations.create(&CredisReservation {
         id: U256::ONE,
         asset: ASSET,
-        amount_minor: U256::from(2_000_000),
+        amount_minor: U256::from(AMOUNT),
         credis_owner: ACCOUNT,
         cca: CCA,
         vault: VAULT,
         expires_at: NOW + 900,
-        gratis_minor: U256::from(1_000_000),
+        gratis_minor: U256::from(GRATIS),
         snapshot_id: U256::from(17),
         entry_price_minor: U256::from(2_000_000),
         policy_rate: U256::from(43_000),
         issuance_currency: 840,
         asset_decimals: 6,
         reference_currency: 840,
-        source: OWNER,
         series_id: outbe_core_common::series_id::SeriesId::for_pair(reservation_day, 840, 840)
             .expect("series id"),
         sub_series: outbe_credis::CredisContract::sub_series_of(NOW),
@@ -172,6 +176,9 @@ fn seed_issuance_liquidity(storage: StorageHandle<'_>) -> eyre::Result<()> {
         call_window_seconds: call_terms.call_window_seconds,
         call_threshold_seconds: call_terms.call_threshold_seconds,
         call_notice_period_seconds: call_terms.call_notice_period_seconds,
+        wcoen_minor: wcoen(),
+        cca_receiver: CCA,
+        omnibus: OMNIBUS,
     })?;
 
     Ok(())
@@ -226,30 +233,15 @@ fn mint_source_gratis(
     Ok(())
 }
 
-fn pledge_reservation(
-    evm: &mut EvmWorld,
-    key: &outbe_tee::resident::AccountKeysHandle,
-) -> eyre::Result<()> {
-    let auth = source_auth(key, GratisOp::Pledge, 1);
-    let pledge = IGratisFactory::pledgeGratisCall {
-        reservationId: U256::ONE,
-        auth: IGratisFactory::ModifyAuth {
-            mac: auth.mac.into(),
-            opNonce: auth.op_nonce,
-        },
-    };
-    assert!(!matches!(
-        call!(evm, CCA, GRATIS_FACTORY_ADDRESS, U256::ZERO, pledge.clone()).status,
-        SubCallStatus::Success
-    ));
-    let out = call!(evm, OWNER, GRATIS_FACTORY_ADDRESS, U256::ZERO, pledge);
-    assert!(
-        matches!(out.status, SubCallStatus::Success),
-        "{}",
-        String::from_utf8_lossy(&out.returndata)
-    );
-
-    Ok(())
+/// The pledge of the main account for `credis_reservation_id`, sealed as a wallet seals it.
+fn sealed(credis_reservation_id: u64) -> Bytes {
+    test_enclave::sealed_pledge(
+        OWNER,
+        U256::from(GRATIS),
+        U256::from(credis_reservation_id),
+        CHAIN_ID,
+    )
+    .into()
 }
 
 fn pledged_blob(evm: &mut EvmWorld) -> eyre::Result<Bytes> {
@@ -263,7 +255,7 @@ fn pledged_blob(evm: &mut EvmWorld) -> eyre::Result<Bytes> {
     .returndata)
 }
 
-/// The source's decrypted liquid and pledged Gratis.
+/// The main account's decrypted liquid and pledged Gratis.
 fn source_gratis(evm: &mut EvmWorld) -> eyre::Result<(U256, U256)> {
     let view_key = derive_view_key(&test_enclave::state_key(), OWNER)?;
     let liquid = call!(
@@ -285,113 +277,139 @@ fn source_gratis(evm: &mut EvmWorld) -> eyre::Result<(U256, U256)> {
     ))
 }
 
+fn fixture_call(
+    evm: &mut EvmWorld,
+    caller: Address,
+    target: Address,
+    call: impl SolCall,
+) -> eyre::Result<()> {
+    let out = call!(evm, caller, target, U256::ZERO, call);
+    assert!(matches!(out.status, SubCallStatus::Success));
+    Ok(())
+}
+
 fn prepare_issuance_counterparties(evm: &mut EvmWorld, failure: u64) -> eyre::Result<()> {
-    for (account, amount) in [(ACCOUNT, 2_000_000), (VAULT_ROUTER_ADDRESS, 2_000_000)] {
-        assert!(matches!(
-            call!(
-                evm,
-                OWNER,
-                ASSET,
-                U256::ZERO,
-                IFixture::mintCall {
-                    account,
-                    amount: U256::from(amount)
-                }
-            )
-            .status,
-            SubCallStatus::Success
-        ));
-    }
-    assert!(matches!(
-        call!(
+    for (account, amount) in [(ACCOUNT, AMOUNT), (VAULT_ROUTER_ADDRESS, AMOUNT)] {
+        fixture_call(
             evm,
-            VAULT_ROUTER_ADDRESS,
+            OWNER,
             ASSET,
-            U256::ZERO,
-            IFixture::approveCall {
-                spender: VAULT,
-                amount: U256::MAX
-            }
-        )
-        .status,
-        SubCallStatus::Success
-    ));
-    if (1..=3).contains(&failure) || failure >= 6 {
-        let target = if failure == 3 { VAULT } else { ASSET };
-        assert!(matches!(
-            call!(
-                evm,
-                OWNER,
-                target,
-                U256::ZERO,
-                IFixture::configureCall {
-                    mode: U256::from(if failure == 8 { 1 } else { failure })
-                }
-            )
-            .status,
-            SubCallStatus::Success
-        ));
+            IFixture::mintCall {
+                account,
+                amount: U256::from(amount),
+            },
+        )?;
+    }
+    fixture_call(
+        evm,
+        OWNER,
+        WCOEN_ADDRESS,
+        IFixture::mintCall {
+            account: VAULT_ROUTER_ADDRESS,
+            amount: wcoen(),
+        },
+    )?;
+    fixture_call(
+        evm,
+        ACCOUNT,
+        ASSET,
+        IFixture::approveCall {
+            spender: VAULT_ROUTER_ADDRESS,
+            amount: U256::MAX,
+        },
+    )?;
+    fixture_call(
+        evm,
+        VAULT_ROUTER_ADDRESS,
+        ASSET,
+        IFixture::approveCall {
+            spender: VAULT,
+            amount: U256::MAX,
+        },
+    )?;
+    if [1, 2, 6, 7].contains(&failure) {
+        fixture_call(
+            evm,
+            OWNER,
+            ASSET,
+            IFixture::configureCall {
+                mode: U256::from(failure),
+            },
+        )?;
     }
 
     Ok(())
 }
 
-fn issue_cca_payout(
+fn reset_counterparties(evm: &mut EvmWorld) -> eyre::Result<()> {
+    for target in [ASSET, VAULT] {
+        call!(
+            evm,
+            OWNER,
+            target,
+            U256::ZERO,
+            IFixture::configureCall { mode: U256::ZERO }
+        );
+    }
+
+    Ok(())
+}
+
+fn issue(
     evm: &mut EvmWorld,
-    failure: u64,
-    stake: U256,
-) -> eyre::Result<(
-    ICredisFactory::issueCredisCall,
-    outbe_primitives::storage::SubCallOutput,
-)> {
+    pledge: &Bytes,
+    succeeds: bool,
+) -> eyre::Result<outbe_primitives::storage::SubCallOutput> {
     let issue = ICredisFactory::issueCredisCall {
         credisReservationId: U256::ONE,
+        pledge: pledge.clone(),
     };
-    let out = call!(
-        evm,
-        CCA,
-        CREDIS_FACTORY_ADDRESS,
-        if failure == 4 {
-            stake - U256::ONE
-        } else {
-            stake
-        },
-        issue.clone()
-    );
+    assert!(!matches!(
+        call!(evm, CCA, CREDIS_FACTORY_ADDRESS, U256::ZERO, issue.clone()).status,
+        SubCallStatus::Success
+    ));
+    let out = call!(evm, ACCOUNT, CREDIS_FACTORY_ADDRESS, U256::ZERO, issue);
     assert_eq!(
         matches!(out.status, SubCallStatus::Success),
-        failure == 0,
-        "failure mode {failure}: {:?} {}",
+        succeeds,
+        "{:?} {}",
         out.status,
         String::from_utf8_lossy(&out.returndata)
     );
 
-    Ok((issue, out))
+    Ok(out)
 }
 
-fn assert_issuance_state(evm: &mut EvmWorld, failure: u64, stake: U256) -> eyre::Result<()> {
-    assert_issuance_native_balances(evm, failure, stake)?;
+fn token_balance(evm: &mut EvmWorld, token: Address, account: Address) -> eyre::Result<U256> {
+    let balance = call!(
+        evm,
+        OWNER,
+        token,
+        U256::ZERO,
+        IFixture::balanceOfCall { account }
+    );
+    Ok(IFixture::balanceOfCall::abi_decode_returns(
+        &balance.returndata,
+    )?)
+}
+
+fn assert_issuance_state(evm: &mut EvmWorld, issued: bool) -> eyre::Result<()> {
+    let moved = |amount: u64| if issued { amount } else { 0 };
     for (account, expected) in [
-        (ACCOUNT, 2_000_000),
-        (CCA, if failure == 0 { 2_000_000 } else { 0 }),
+        (ACCOUNT, AMOUNT - moved(AMOUNT)),
+        (CCA, moved(AMOUNT)),
+        (OMNIBUS, moved(AMOUNT)),
+        (VAULT_ROUTER_ADDRESS, AMOUNT - moved(AMOUNT)),
         (VAULT, 0),
-        (
-            VAULT_ROUTER_ADDRESS,
-            if failure == 0 { 0 } else { 2_000_000 },
-        ),
     ] {
-        let balance = call!(
-            evm,
-            OWNER,
-            ASSET,
-            U256::ZERO,
-            IFixture::balanceOfCall { account }
-        );
-        assert_eq!(
-            IFixture::balanceOfCall::abi_decode_returns(&balance.returndata).unwrap(),
-            U256::from(expected)
-        );
+        assert_eq!(token_balance(evm, ASSET, account)?, U256::from(expected));
     }
+    let wcoen_moved = if issued { wcoen() } else { U256::ZERO };
+    assert_eq!(token_balance(evm, WCOEN_ADDRESS, ACCOUNT)?, wcoen_moved);
+    assert_eq!(
+        token_balance(evm, WCOEN_ADDRESS, VAULT_ROUTER_ADDRESS)?,
+        wcoen() - wcoen_moved
+    );
     let reservation = call!(
         evm,
         OWNER,
@@ -402,89 +420,19 @@ fn assert_issuance_state(evm: &mut EvmWorld, failure: u64, stake: U256) -> eyre:
         }
     );
     let held = IVaultRouter::getCredisReservationCall::abi_decode_returns(&reservation.returndata)?;
-    assert_eq!(
-        held.amountMinor,
-        if failure == 0 {
-            U256::ZERO
-        } else {
-            U256::from(2_000_000)
-        }
-    );
-    assert_issuance_payout_events(evm, failure)?;
-
-    Ok(())
-}
-
-fn retry_issuance_and_cancel_expired(
-    evm: &mut EvmWorld,
-    failure: u64,
-    stake: U256,
-    issue: ICredisFactory::issueCredisCall,
-    key: &outbe_tee::resident::AccountKeysHandle,
-) -> eyre::Result<()> {
-    // Reset counterparties and retry with the same pledge and exact contribution.
-    for target in [ASSET, VAULT] {
-        call!(
-            evm,
-            OWNER,
-            target,
-            U256::ZERO,
-            IFixture::configureCall { mode: U256::ZERO }
-        );
-    }
-    if failure == 5 {
-        pledge_reservation(evm, key)?;
-    }
-    let mut block = *evm.evm.block();
-    block.timestamp = U256::from(NOW + if failure == 8 { 901 } else { 900 });
-    evm.evm.set_block(block);
-    let retry = call!(evm, CCA, CREDIS_FACTORY_ADDRESS, stake, issue);
-    assert_eq!(
-        matches!(retry.status, SubCallStatus::Success),
-        failure != 0 && failure != 8,
-        "failed issuance must keep the pledge; success must prevent replay: {:?}",
-        retry.status
-    );
-    if failure == 8 {
-        assert_eq!(
-            &retry.returndata[..4],
-            &<ICredisFactory::ReservationExpired as alloy_sol_types::SolError>::SELECTOR
-        );
-        assert_eq!(source_gratis(evm)?, (U256::ZERO, U256::from(GRATIS)));
-        let cancel = IGratisFactory::cancelPledgeCall {
-            reservationId: U256::ONE,
-        };
-        assert!(!matches!(
-            call!(evm, CCA, GRATIS_FACTORY_ADDRESS, U256::ZERO, cancel.clone()).status,
-            SubCallStatus::Success
-        ));
-        assert!(matches!(
-            call!(
-                evm,
-                OWNER,
-                GRATIS_FACTORY_ADDRESS,
-                U256::ZERO,
-                cancel.clone()
-            )
-            .status,
-            SubCallStatus::Success
-        ));
-        let cancelled: Vec<_> = evm
-            .logs()
-            .iter()
-            .filter_map(|log| IGratisFactory::GratisPledgeCanceled::decode_log_data(&log.data).ok())
-            .collect();
-        assert_eq!(cancelled.len(), 1);
-        assert_eq!(
-            (cancelled[0].source, cancelled[0].gratisMinor),
-            (OWNER, U256::from(GRATIS))
-        );
-        assert_eq!(source_gratis(evm)?, (U256::from(GRATIS), U256::ZERO));
-        assert!(!matches!(
-            call!(evm, OWNER, GRATIS_FACTORY_ADDRESS, U256::ZERO, cancel).status,
-            SubCallStatus::Success
-        ));
-    }
+    assert_eq!(held.amountMinor.is_zero(), issued);
+    let pledged = if issued {
+        U256::from(GRATIS)
+    } else {
+        U256::ZERO
+    };
+    assert_eq!(source_gratis(evm)?, (U256::from(GRATIS) - pledged, pledged));
+    let redeemed = evm
+        .logs()
+        .iter()
+        .filter(|log| IVaultRouter::CredisReservationRedeemed::decode_log_data(&log.data).is_ok())
+        .count();
+    assert_eq!(redeemed, usize::from(issued));
 
     Ok(())
 }
@@ -596,42 +544,6 @@ fn settle_successful_issuance(
     );
     let half = U256::from(GRATIS / 2);
     assert_eq!(source_gratis(evm)?, (half, half));
-
-    Ok(())
-}
-
-fn assert_issuance_native_balances(
-    evm: &mut EvmWorld,
-    failure: u64,
-    stake: U256,
-) -> eyre::Result<()> {
-    assert_eq!(
-        evm.evm.state_mut().account(&ACCOUNT).unwrap().balance(),
-        if failure == 0 { stake } else { U256::ZERO }
-    );
-    assert_eq!(
-        evm.evm.state_mut().account(&CCA).unwrap().balance(),
-        if failure == 0 {
-            stake
-        } else {
-            stake * U256::from(2)
-        }
-    );
-
-    Ok(())
-}
-
-fn assert_issuance_payout_events(evm: &EvmWorld, failure: u64) -> eyre::Result<()> {
-    let payouts: Vec<_> = evm
-        .logs()
-        .iter()
-        .filter_map(|log| IVaultRouter::ReservationReleased::decode_log_data(&log.data).ok())
-        .collect();
-    assert_eq!(payouts.len(), usize::from(failure == 0));
-    if failure == 0 {
-        assert_eq!(payouts[0].receiver, CCA);
-        assert_eq!(payouts[0].amountMinor, U256::from(2_000_000));
-    }
 
     Ok(())
 }

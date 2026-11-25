@@ -54,7 +54,7 @@ fn day_back(at: u64, n: u32) -> u32 {
 /// Opens a Credis and publishes `days` closed days at `price`, ending at the
 /// day closed at `at`. Returns the Credis id.
 fn open_with_series(storage: &StorageHandle<'_>, at: u64, days: u32, price: U256) -> U256 {
-    let credis_id = open(storage, 1);
+    let credis_id = open(storage);
     advance_to(storage, at);
     fill_days(storage, last_closed_day(at), days, price);
     block_at(storage, at);
@@ -247,7 +247,7 @@ fn a_window_wider_than_the_profile_is_collected_in_full() {
         bootstrap(&storage, pledge_cost());
         const WIDE_DAYS: u32 = 40;
         let at = CREATED_AT + (WIDE_DAYS as u64 + 5) * DAY;
-        let credis_id = open(&storage, 1);
+        let credis_id = open(&storage);
         advance_to(&storage, at);
         fill_days(&storage, last_closed_day(at), WIDE_DAYS, above_call());
 
@@ -428,7 +428,7 @@ fn missing_days_do_not_count_as_breaches() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let credis_id = open(&storage, 1);
+        let credis_id = open(&storage);
         advance_to(&storage, at);
 
         // Publish one day short of the threshold and leave the rest of the window
@@ -460,7 +460,7 @@ fn a_breach_run_that_predates_the_credis_does_not_call_it() {
         // The series is long and fully breached, but the Credis is 3 days old,
         // so the window reaches back before it existed.
         let at = CREATED_AT + 3 * DAY;
-        let credis_id = open(&storage, 1);
+        let credis_id = open(&storage);
         advance_to(&storage, at);
         fill_days(
             &storage,
@@ -503,7 +503,7 @@ fn the_issuance_day_counts_only_for_a_credis_issued_at_midnight() {
             bootstrap(&storage, pledge_cost());
             let midnight = (CREATED_AT / DAY + 1) * DAY;
             advance_to(&storage, midnight + offset);
-            let credis_id = open(&storage, 1);
+            let credis_id = open(&storage);
 
             let at = midnight + u64::from(CALL_THRESHOLD_DAYS) * DAY;
             advance_to(&storage, at);
@@ -601,7 +601,7 @@ fn each_reference_currency_prices_off_its_own_daily_series() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let credis_id = open(&storage, 1);
+        let credis_id = open(&storage);
 
         // Re-point the Credis's group at an unregistered currency, so it prices off a
         // series that does not exist, and index it there.
@@ -646,7 +646,7 @@ fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let credis_id = open(&storage, 1);
+        let credis_id = open(&storage);
         assert_ne!(
             ISSUANCE_ISO, REFERENCE_ISO,
             "the fixture must keep the two codes distinct"
@@ -671,7 +671,7 @@ fn the_call_follows_the_reference_series_and_ignores_the_issuance_one() {
     StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let at = CREATED_AT + AFTER_WINDOW;
-        let credis_id = open(&storage, 1);
+        let credis_id = open(&storage);
 
         advance_to(&storage, at);
         fill_days_for(
@@ -700,14 +700,14 @@ fn open_three(storage: &StorageHandle<'_>) -> Vec<U256> {
     }
     owners
         .iter()
-        .map(|owner| open_for(storage, *owner, 1))
+        .map(|owner| open_for(storage, *owner))
         .collect()
 }
 
 /// Opens a Credis on the fixture's own call anchor, which every such Credis of the
 /// day shares a series on.
-fn open_on_fixture_anchor(storage: &StorageHandle<'_>, owner: Address, nonce: u64) -> U256 {
-    let reservation_id = seed_reservation(storage, owner, owner, pledge_stables());
+fn open_on_fixture_anchor(storage: &StorageHandle<'_>, owner: Address) -> U256 {
+    let reservation_id = seed_reservation(storage, owner, pledge_stables());
     let router = outbe_vaultrouter::VaultRouterContract::new(storage.clone());
     let mut reservation = router.reservations.get(reservation_id).unwrap().unwrap();
     reservation.entry_price_minor = oracle_rate();
@@ -718,11 +718,7 @@ fn open_on_fixture_anchor(storage: &StorageHandle<'_>, owner: Address, nonce: u6
     )
     .unwrap();
     router.reservations.update(&reservation).unwrap();
-    pledge(storage, owner, reservation_id, nonce);
-    fund_stake(storage, pledge_stake());
-    crate::runtime::issue_credis(storage.clone(), cca(), reservation_id, pledge_stake())
-        .unwrap()
-        .0
+    issue(storage, reservation_id, owner).unwrap().0
 }
 
 /// Groups of the reference currency's walk in flight still to visit in its bin.
@@ -1087,7 +1083,7 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
     let mut storage = env();
     let (credis_id, outstanding) = StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
-        let credis_id = open(&storage, 1);
+        let credis_id = open(&storage);
         call_by_hand(&storage, &[credis_id], CREATED_AT);
         assert_ne!(
             queued_at(&storage, group_of(&storage, credis_id)),
@@ -1141,7 +1137,7 @@ fn the_cleanup_budget_bounds_one_block_and_the_next_block_drains_the_rest() {
         .map(|nonce| {
             provider.set_block_number(BLOCK_NUMBER + nonce);
             StorageHandle::enter(&mut provider, |storage| {
-                open_on_fixture_anchor(&storage, alice(), nonce)
+                open_on_fixture_anchor(&storage, alice())
             })
         })
         .collect();
@@ -1244,7 +1240,7 @@ fn lapsed_group_of_three() -> (
         .map(|nonce| {
             provider.set_block_number(BLOCK_NUMBER + nonce);
             StorageHandle::enter(&mut provider, |storage| {
-                open_on_fixture_anchor(&storage, alice(), nonce)
+                open_on_fixture_anchor(&storage, alice())
             })
         })
         .collect();
@@ -1429,25 +1425,14 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
             })
             .filter(|event| event.to == Address::ZERO)
             .count();
-        let burned_gratis = provider
+        let gratis_burns = provider
             .get_events(GRATIS_ADDRESS)
             .iter()
-            .filter_map(|log| {
-                outbe_gratis::precompile::IGratis::GratisBurnedFromPledge::decode_log_data(log).ok()
+            .filter(|log| {
+                outbe_gratis::precompile::IGratis::GratisBurned::decode_log_data(log).is_ok()
             })
             .count();
-        let burned_pledges = provider
-            .get_events(outbe_system_common::addresses::GRATIS_FACTORY_ADDRESS)
-            .iter()
-            .filter_map(|log| {
-                outbe_gratisfactory::precompile::IGratisFactory::GratisPledgeBurned::decode_log_data(
-                    log,
-                )
-                .ok()
-            })
-            .count();
-        assert_eq!(burned_pledges, forfeited);
-        (groups, forfeited, burned_tokens, burned_gratis)
+        (groups, forfeited, burned_tokens, gratis_burns)
     };
     assert_eq!(
         count(&clean),
@@ -1461,13 +1446,12 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
             )],
             3,
             3,
-            3,
+            0,
         )
     );
     // R5d: verify exact per-Credis cleanup effect log ordering.
     // CredisSeriesClosed is emitted when the forfeit pass closes the series, before
-    // cleanup of each member: GratisBurnedFromPledge -> GratisPledgeBurned ->
-    // CredisForfeited -> Transfer(..., 0x0, id).
+    // cleanup of each member: CredisForfeited -> Transfer(..., 0x0, id). No Gratis event.
     let cleanup_tags: Vec<&'static str> = clean
         .get_ordered_events()
         .iter()
@@ -1475,17 +1459,9 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
             let addr = log.address;
             let data = &log.data;
             if addr == GRATIS_ADDRESS
-                && outbe_gratis::precompile::IGratis::GratisBurnedFromPledge::decode_log_data(data)
-                    .is_ok()
+                && outbe_gratis::precompile::IGratis::GratisBurned::decode_log_data(data).is_ok()
             {
-                Some("GratisBurnedFromPledge")
-            } else if addr == outbe_system_common::addresses::GRATIS_FACTORY_ADDRESS
-                && outbe_gratisfactory::precompile::IGratisFactory::GratisPledgeBurned::decode_log_data(
-                    data,
-                )
-                .is_ok()
-            {
-                Some("GratisPledgeBurned")
+                Some("GratisBurned")
             } else if addr == CREDIS_ADDRESS
                 && outbe_credis::precompile::ICredis::CredisForfeited::decode_log_data(data).is_ok()
             {
@@ -1509,16 +1485,10 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
         cleanup_tags,
         vec![
             "CredisSeriesClosed",
-            "GratisBurnedFromPledge",
-            "GratisPledgeBurned",
             "CredisForfeited",
             "BurnTransfer",
-            "GratisBurnedFromPledge",
-            "GratisPledgeBurned",
             "CredisForfeited",
             "BurnTransfer",
-            "GratisBurnedFromPledge",
-            "GratisPledgeBurned",
             "CredisForfeited",
             "BurnTransfer",
         ]
@@ -1536,14 +1506,6 @@ fn every_credis_forfeit_and_cleanup_mutation_rolls_back_then_retries_once() {
             outbe_gratis::api::pledged_total_supply(storage.clone()).unwrap(),
             U256::ZERO
         );
-        for id in &ids {
-            assert_eq!(
-                outbe_gratisfactory::api::collateral_of(&storage, *id)
-                    .unwrap()
-                    .remaining_minor,
-                U256::ZERO
-            );
-        }
     });
 
     for operation in 0..mutations {
@@ -1625,15 +1587,9 @@ fn credis_call_runs_on_call_groups() {
         let first = open_at(
             &storage,
             alice(),
-            1,
             Placement::hour(&storage, 3, oracle_rate()),
         );
-        let second = open_at(
-            &storage,
-            bob(),
-            1,
-            Placement::hour(&storage, 9, oracle_rate()),
-        );
+        let second = open_at(&storage, bob(), Placement::hour(&storage, 9, oracle_rate()));
         assert_eq!(group_of(&storage, first), group_of(&storage, second));
 
         advance_to(&storage, at);
@@ -1691,8 +1647,8 @@ fn sub_series_with_the_same_call_terms_are_in_one_call_group() {
             hour: 5,
             ..usd
         };
-        let in_usd = open_at(&storage, alice(), 1, usd);
-        let in_gbp = open_at(&storage, bob(), 1, gbp);
+        let in_usd = open_at(&storage, alice(), usd);
+        let in_gbp = open_at(&storage, bob(), gbp);
 
         let credis = CredisContract::new(storage.clone());
         let (usd_record, gbp_record) = (
@@ -1755,9 +1711,9 @@ fn sub_series_that_was_not_called_does_not_forfeit() {
             2,
             oracle_rate() + oracle_rate() / U256::from(2u64),
         );
-        let unsettled = open_at(&storage, alice(), 1, low);
-        let settled = open_at(&storage, bob(), 1, low);
-        let uncalled = open_at(&storage, cca(), 1, high);
+        let unsettled = open_at(&storage, alice(), low);
+        let settled = open_at(&storage, bob(), low);
+        let uncalled = open_at(&storage, cca(), high);
         assert_ne!(group_of(&storage, unsettled), group_of(&storage, uncalled));
 
         advance_to(&storage, at);

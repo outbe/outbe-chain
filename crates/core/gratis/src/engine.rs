@@ -159,7 +159,7 @@ fn rejected_reason(reason: GratisRejectReason) -> GratisOpResult {
 }
 
 fn owner_operation(op: GratisOp) -> bool {
-    matches!(op, GratisOp::Mint | GratisOp::Burn | GratisOp::Pledge)
+    matches!(op, GratisOp::Mint | GratisOp::Burn)
 }
 
 fn prepare_owner(
@@ -278,10 +278,7 @@ fn apply_op_inner(
     }
     [result.new_balance, result.new_pledged] = written;
     result.event_amount = req.amount;
-    if matches!(
-        req.op,
-        GratisOp::Mint | GratisOp::Burn | GratisOp::BurnPledged
-    ) {
+    if matches!(req.op, GratisOp::Mint | GratisOp::Burn) {
         result.encrypted_event_amount = cipher::write_amount(
             &view,
             BalanceTransition {
@@ -300,7 +297,6 @@ fn field_moves(op: GratisOp) -> (Option<bool>, Option<bool>) {
     match op {
         GratisOp::Mint => (Some(true), None),
         GratisOp::Burn => (Some(false), None),
-        GratisOp::Pledge => (Some(false), Some(true)),
         GratisOp::ReleasePledged => (Some(true), Some(false)),
         GratisOp::BurnPledged => (None, Some(false)),
         GratisOp::PledgeCollateral => (Some(false), Some(true)),

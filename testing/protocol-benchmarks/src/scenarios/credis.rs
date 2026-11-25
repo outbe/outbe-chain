@@ -12,7 +12,7 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::{
     gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, StorageHandle,
 };
-use outbe_system_common::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
 use outbe_system_common::time::timestamp_to_date_key;
 use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
@@ -55,6 +55,7 @@ impl CredisScenario {
 pub struct PreparedCredis {
     provider: HashMapStorageProvider,
     reservation_id: U256,
+    pledge: Vec<u8>,
 }
 
 fn pledge_stables() -> U256 {
@@ -65,8 +66,8 @@ fn pledge_cost() -> U256 {
     SCALE_1E6_U256
 }
 
-fn native_stake() -> U256 {
-    checked_protocol_to_native(pledge_cost()).expect("benchmark stake fits native COEN")
+fn wcoen_minor() -> U256 {
+    checked_protocol_to_native(pledge_cost()).expect("benchmark WCOEN fits 18 decimals")
 }
 
 fn oracle_rate() -> U256 {
@@ -174,7 +175,6 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
-            source: ALICE,
             series_id: outbe_core_common::series_id::SeriesId::for_pair(
                 reservation_day,
                 ISSUANCE_ISO,
@@ -188,17 +188,10 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
             call_window_seconds: profile.call_window_seconds,
             call_threshold_seconds: profile.call_threshold_seconds,
             call_notice_period_seconds: profile.call_notice_period_seconds,
+            wcoen_minor: wcoen_minor(),
+            cca_receiver: CCA,
+            omnibus: Address::repeat_byte(0x0b),
         })
-        .map_err(|error| error.to_string())?;
-    outbe_gratisfactory::runtime::pledge_gratis(
-        storage.clone(),
-        ALICE,
-        reservation_id,
-        auth(GratisOp::Pledge, pledge_cost(), 1),
-    )
-    .map_err(|error| error.to_string())?;
-    storage
-        .increase_balance(CREDIS_FACTORY_ADDRESS, native_stake())
         .map_err(|error| error.to_string())?;
     Ok(reservation_id)
 }
@@ -234,9 +227,11 @@ impl BenchmarkScenario for CredisScenario {
             iso_word(6),
         );
         let reservation_id = StorageHandle::enter(&mut provider, seed_world)?;
+        let pledge = gratis_enclave::sealed_pledge(ALICE, pledge_cost(), reservation_id, CHAIN_ID);
         Ok(PreparedCredis {
             provider,
             reservation_id,
+            pledge,
         })
     }
 
@@ -248,12 +243,13 @@ impl BenchmarkScenario for CredisScenario {
         let event_offset = provider.get_ordered_events().len();
         let calldata = ICredisFactory::issueCredisCall {
             credisReservationId: prepared.reservation_id,
+            pledge: prepared.pledge.clone().into(),
         }
         .abi_encode();
 
         let started = Instant::now();
         let output = StorageHandle::enter(&mut provider, |storage| {
-            outbe_credisfactory::precompile::dispatch(storage, &calldata, CCA, native_stake())
+            outbe_credisfactory::precompile::dispatch(storage, &calldata, ALICE, U256::ZERO)
                 .map_err(|error| error.to_string())
         })?;
         let latency_ns = elapsed_ns(started);
@@ -283,7 +279,7 @@ impl BenchmarkScenario for CredisScenario {
             Ok::<_, String>((record, pledged))
         })?;
         if record.owner != ALICE
-            || record.source != ALICE
+            || record.pledge_account != ALICE
             || pledged != pledge_cost()
             || decoded.amountMinor != pledge_stables()
         {

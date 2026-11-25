@@ -40,7 +40,7 @@ fn the_end_block_reserve_holds_both_private_passes_at_their_full_budget() {
         fidelity: None,
         inputs_canonical_hash: B256::repeat_byte(0x05),
         attestation_tag: vec![0x06; 64],
-        encrypted_event_amount: vec![0x07; GRATIS_BLOB_LEN],
+        encrypted_event_amount: Vec::new(),
         pledge_account: None,
     });
     assert!(nod_read_len <= outbe_nod::constants::GROUP_LOAD_READ_WITNESS_BYTES as usize);

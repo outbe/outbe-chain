@@ -1,4 +1,4 @@
-//! Atomic reservation, pledge and collateral transitions.
+//! Atomic issue, settlement and forfeit of a Credis.
 use crate::{
     errors::CredisFactoryError,
     precompile::ICredisFactory,
@@ -10,10 +10,10 @@ use outbe_credis::runtime::effective_state;
 use outbe_credis::{CredisContract, CredisState};
 
 use crate::rules::{self, Forfeit, IssueCredisParams};
-use outbe_gratisfactory::api as pledges;
+use outbe_credis::precompile::ICredis;
+use outbe_gratis::api as gratis;
 use outbe_primitives::{error::Result, storage::StorageHandle};
-use outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS;
-use outbe_system_common::units::checked_protocol_to_native;
+use outbe_system_common::addresses::{CREDIS_ADDRESS, CREDIS_FACTORY_ADDRESS};
 use outbe_vaultrouter::CredisReservation;
 
 /// The caller's live reservation. Returns it with the block time.
@@ -26,8 +26,8 @@ fn live_reservation(
     let now = storage.now_secs()?;
     let error = if r.asset.is_zero() {
         CredisFactoryError::ReservationNotFound
-    } else if r.cca != caller {
-        CredisFactoryError::ReservationCcaMismatch
+    } else if r.credis_owner != caller {
+        CredisFactoryError::ReservationOwnerMismatch
     } else if now > r.expires_at {
         CredisFactoryError::ReservationExpired
     } else {
@@ -53,30 +53,28 @@ fn ensure_asset_metadata(storage: &StorageHandle<'_>, r: &CredisReservation) -> 
     Ok(())
 }
 
-/// Issues a Credis on the reservation's pledge. Every term, the call terms included,
-/// comes from the reservation.
+/// The cash account issues the Credis of its reservation. The Gratis is pledged from the
+/// main account that the sealed `pledge` names. Every term, the call terms included, comes
+/// from the reservation.
 pub fn issue_credis(
     storage: StorageHandle<'_>,
     caller: Address,
     reservation_id: U256,
-    stake: U256,
+    pledge: &[u8],
 ) -> Result<(U256, U256)> {
     storage.with_checkpoint(|| {
-        outbe_ccaregistry::api::require_active_cca(&storage, caller)?;
         let (r, now) = live_reservation(&storage, caller, reservation_id)?;
+        outbe_ccaregistry::api::require_active_cca(&storage, r.cca)?;
         ensure_asset_metadata(&storage, &r)?;
-        let required = checked_protocol_to_native(r.gratis_minor)
-            .ok_or(CredisFactoryError::CoenStakeOverflow)?;
-        if stake != required {
-            return Err(CredisFactoryError::CcaStakeMismatch.into());
-        }
+        let pledge_account =
+            gratis::pledge_sealed(&storage, pledge, reservation_id, r.gratis_minor)?;
         let mut credis = CredisContract::new(storage.clone());
         let (id, newly_opened) = rules::issue_in_series(
             &mut credis,
             IssueCredisParams {
                 owner: r.credis_owner,
-                cca: caller,
-                source: r.source,
+                cca: r.cca,
+                pledge_account,
                 asset: r.asset,
                 issuance_currency: r.issuance_currency,
                 reference_currency: r.reference_currency,
@@ -94,15 +92,8 @@ pub fn issue_credis(
                 call_notice_period_seconds: r.call_notice_period_seconds,
             },
         )?;
-        pledges::send_to_credis(&storage, reservation_id, id, r.source, r.gratis_minor)?;
         let opened = credis.get_credis(id)?;
-        storage.transfer_balance(CREDIS_FACTORY_ADDRESS, r.credis_owner, stake)?;
-        let paid = outbe_vaultrouter::api::redeem_credis_reservation(
-            &storage,
-            reservation_id,
-            r.credis_owner,
-            r.amount_minor,
-        )?;
+        let paid = outbe_vaultrouter::api::redeem_credis_reservation(&storage, reservation_id, id)?;
         if paid != r.amount_minor || credis.get_credis(id)? != opened {
             return Err(CredisFactoryError::CredisChangedDuringIssuance.into());
         }
@@ -123,14 +114,14 @@ pub fn issue_credis(
             )?;
         }
         storage.emit_event(
-            CREDIS_FACTORY_ADDRESS,
-            alloy_sol_types::SolEvent::encode_log_data(&ICredisFactory::CredisIssued {
+            CREDIS_ADDRESS,
+            alloy_sol_types::SolEvent::encode_log_data(&ICredis::CredisIssued {
                 credisId: id,
                 owner: r.credis_owner,
                 seriesId: opened.series_id.into(),
                 issuanceCurrency: opened.issuance_currency,
                 referenceCurrency: opened.reference_currency,
-                cca: caller,
+                cca: r.cca,
                 asset: r.asset,
                 amountMinor: r.amount_minor,
                 gratisMinor: r.gratis_minor,
@@ -155,8 +146,8 @@ pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<
     }
 }
 
-/// Collect payment first, then return the released collateral to the source's
-/// liquid balance. No Fidelity mutation.
+/// Collect payment first, then free the settled share of the Gratis in the main account.
+/// No Fidelity mutation.
 pub fn settle_credis(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -189,7 +180,7 @@ pub fn settle_credis(
             return Err(CredisFactoryError::CredisChangedDuringPayment.into());
         }
         if !released.is_zero() {
-            pledges::release_from_credis(&storage, credis_id, released)?;
+            gratis::release_pledged(&storage, before.pledge_account, released)?;
         }
         Ok((repayment.settled_amount_minor, repayment.settled_fee_minor))
     })
@@ -212,8 +203,8 @@ pub fn forfeit_by_owner(
     })
 }
 
-/// Burns only this Credis's remaining collateral from the source's pledged balance and
-/// returns it to the Promis Reserve, together. Fidelity cohorts stay untouched.
+/// Burns only this Credis's remaining collateral from the pledged balance of its main account
+/// and returns it to the Promis Reserve, together. Fidelity cohorts stay untouched.
 fn burn_forfeited_collateral(
     storage: StorageHandle<'_>,
     credis_id: U256,
@@ -228,7 +219,7 @@ fn burn_forfeited_collateral(
         }
         let pledged = before.outstanding_gratis_minor;
         if !pledged.is_zero() {
-            pledges::burn_from_credis(&storage, credis_id, pledged)?;
+            gratis::burn_pledged(&storage, before.pledge_account, pledged)?;
             outbe_promislimit::PromisLimitContract::new(storage.clone())
                 .add(outbe_promislimit::LimitSource::Credis, pledged)?;
         }

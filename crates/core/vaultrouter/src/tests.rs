@@ -48,7 +48,7 @@ fn vault() -> Address {
 fn receiver() -> Address {
     address!("0x0000000000000000000000000000000000000999")
 }
-fn pledger() -> Address {
+fn omnibus() -> Address {
     address!("0x0000000000000000000000000000000000000501")
 }
 
@@ -2163,14 +2163,15 @@ fn with_reservable_asset<R>(
 }
 
 #[test]
-fn reserve_stables_rejects_an_inactive_caller() {
+fn create_credis_reservation_rejects_an_inactive_caller() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let err = runtime::create_credis_reservation(
             storage.clone(),
             stranger(),
             IVaultRouter::createCredisReservationCall {
-                credisOwner: receiver(),
-                source: pledger(),
+                owner: receiver(),
+                ccaReceiver: cca(),
+                omnibus: omnibus(),
                 asset: asset(),
                 amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
@@ -2189,14 +2190,15 @@ fn reserve_stables_rejects_an_inactive_caller() {
 }
 
 #[test]
-fn reserve_stables_requires_a_pledge_source() {
+fn a_reservation_requires_an_omnibus_account() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let err = runtime::create_credis_reservation(
             storage.clone(),
             cca(),
             IVaultRouter::createCredisReservationCall {
-                credisOwner: receiver(),
-                source: Address::ZERO,
+                owner: receiver(),
+                ccaReceiver: cca(),
+                omnibus: Address::ZERO,
                 asset: asset(),
                 amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
@@ -2215,8 +2217,9 @@ fn reserve_in(
         storage.clone(),
         cca(),
         IVaultRouter::createCredisReservationCall {
-            credisOwner: receiver(),
-            source: pledger(),
+            owner: receiver(),
+            ccaReceiver: cca(),
+            omnibus: omnibus(),
             asset: asset(),
             amountMinor: U256::from(10),
             referenceCurrency: reference_currency,
@@ -2319,14 +2322,15 @@ fn credis_prices_use_the_24_hour_vwap_of_the_reservation_hour() {
 }
 
 #[test]
-fn reserve_stables_requires_a_credis_owner() {
+fn create_credis_reservation_requires_a_credis_owner() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let err = runtime::create_credis_reservation(
             storage.clone(),
             cca(),
             IVaultRouter::createCredisReservationCall {
-                credisOwner: Address::ZERO,
-                source: receiver(),
+                owner: Address::ZERO,
+                ccaReceiver: cca(),
+                omnibus: omnibus(),
                 asset: asset(),
                 amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
@@ -2344,8 +2348,9 @@ fn a_reservation_holds_then_releases_once() {
             storage.clone(),
             cca(),
             IVaultRouter::createCredisReservationCall {
-                credisOwner: receiver(),
-                source: pledger(),
+                owner: receiver(),
+                ccaReceiver: cca(),
+                omnibus: omnibus(),
                 asset: asset(),
                 amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
@@ -2357,7 +2362,8 @@ fn a_reservation_holds_then_releases_once() {
         assert_eq!(held.amount_minor, U256::from(10));
         assert_eq!(held.credis_owner, receiver());
         assert_eq!(held.cca, cca());
-        assert_eq!(held.source, pledger());
+        assert_eq!(held.cca_receiver, cca());
+        assert_eq!(held.omnibus, omnibus());
         assert_eq!(held.vault, vault());
         assert_eq!(held.gratis_minor, U256::from(5));
         assert_eq!(held.asset_decimals, 6);
@@ -2371,8 +2377,7 @@ fn a_reservation_holds_then_releases_once() {
         let delivered = runtime::redeem_credis_reservation(
             storage.clone(),
             id,
-            receiver(),
-            U256::from(10),
+            U256::ONE,
             IVaultRouter::StablecoinTarget::Credis,
         )
         .unwrap();
@@ -2385,61 +2390,11 @@ fn a_reservation_holds_then_releases_once() {
         let err = runtime::redeem_credis_reservation(
             storage.clone(),
             id,
-            receiver(),
-            U256::from(10),
+            U256::ONE,
             IVaultRouter::StablecoinTarget::Credis,
         )
         .unwrap_err();
         assert_revert::<IVaultRouter::ReservationNotFound>(&err);
-    });
-}
-
-#[test]
-fn release_rejects_a_different_receiver_and_returns_excess_to_the_origin_vault() {
-    with_reservable_vault(U256::from(100u64), |storage| {
-        let id = runtime::create_credis_reservation(
-            storage.clone(),
-            cca(),
-            IVaultRouter::createCredisReservationCall {
-                credisOwner: receiver(),
-                source: pledger(),
-                asset: asset(),
-                amountMinor: U256::from(50),
-                referenceCurrency: USD_ISO_CODE,
-            },
-        )
-        .unwrap();
-
-        let err = runtime::redeem_credis_reservation(
-            storage.clone(),
-            id,
-            stranger(),
-            U256::from(10),
-            IVaultRouter::StablecoinTarget::Credis,
-        )
-        .unwrap_err();
-        assert_revert::<IVaultRouter::CredisOwnerMismatch>(&err);
-        assert_eq!(
-            runtime::credis_reservation_of(&storage, id)
-                .unwrap()
-                .amount_minor,
-            U256::from(50),
-            "failed release must leave the hold intact"
-        );
-
-        let delivered = runtime::redeem_credis_reservation(
-            storage.clone(),
-            id,
-            receiver(),
-            U256::from(10),
-            IVaultRouter::StablecoinTarget::Credis,
-        )
-        .unwrap();
-        assert_eq!(delivered, U256::from(10));
-        assert!(runtime::credis_reservation_of(&storage, id)
-            .unwrap()
-            .asset
-            .is_zero());
     });
 }
 
@@ -2450,22 +2405,23 @@ fn an_unspent_reservation_returns_to_the_origin_vault() {
             storage.clone(),
             cca(),
             IVaultRouter::createCredisReservationCall {
-                credisOwner: receiver(),
-                source: pledger(),
+                owner: receiver(),
+                ccaReceiver: cca(),
+                omnibus: omnibus(),
                 asset: asset(),
                 amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap();
-        let minted = runtime::return_reservation(storage.clone(), cca(), id).unwrap();
+        let minted = runtime::cancel_credis_reservation(storage.clone(), cca(), id).unwrap();
         assert_eq!(minted, U256::from(100));
         assert!(runtime::credis_reservation_of(&storage, id)
             .unwrap()
             .asset
             .is_zero());
         assert_eq!(
-            runtime::return_reservation(storage.clone(), cca(), id).unwrap(),
+            runtime::cancel_credis_reservation(storage.clone(), cca(), id).unwrap(),
             U256::ZERO
         );
     });
@@ -2478,15 +2434,16 @@ fn a_stranger_cannot_return_a_live_reservation() {
             storage.clone(),
             cca(),
             IVaultRouter::createCredisReservationCall {
-                credisOwner: receiver(),
-                source: pledger(),
+                owner: receiver(),
+                ccaReceiver: cca(),
+                omnibus: omnibus(),
                 asset: asset(),
                 amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
             },
         )
         .unwrap();
-        let err = runtime::return_reservation(storage.clone(), stranger(), id).unwrap_err();
+        let err = runtime::expire_credis_reservation(storage.clone(), id).unwrap_err();
         assert_revert::<IVaultRouter::Unauthorized>(&err);
         assert_eq!(
             runtime::credis_reservation_of(&storage, id)
@@ -2519,7 +2476,7 @@ fn seed_expired_reservation(storage: &StorageHandle<'_>) -> U256 {
 fn anyone_may_return_an_expired_reservation() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let id = seed_expired_reservation(&storage);
-        let minted = runtime::return_reservation(storage.clone(), stranger(), id).unwrap();
+        let minted = runtime::expire_credis_reservation(storage.clone(), id).unwrap();
         assert_eq!(minted, U256::from(100));
         assert!(runtime::credis_reservation_of(&storage, id)
             .unwrap()
@@ -2535,8 +2492,7 @@ fn release_rejects_an_expired_reservation() {
         let err = runtime::redeem_credis_reservation(
             storage.clone(),
             id,
-            receiver(),
-            U256::from(10),
+            U256::ONE,
             IVaultRouter::StablecoinTarget::Credis,
         )
         .unwrap_err();
@@ -2555,8 +2511,9 @@ fn reservations_are_gated_like_a_withdrawal() {
     with_reservable_vault(U256::from(100u64), |storage| {
         let reserve_call = IVaultRouter::createCredisReservationCall {
             referenceCurrency: USD_ISO_CODE,
-            credisOwner: receiver(),
-            source: pledger(),
+            owner: receiver(),
+            ccaReceiver: cca(),
+            omnibus: omnibus(),
             asset: asset(),
             amountMinor: U256::from(10),
         }
@@ -2566,8 +2523,7 @@ fn reservations_are_gated_like_a_withdrawal() {
 
         let release_call = IVaultRouter::redeemCredisReservationCall {
             credisReservationId: id,
-            receiver: receiver(),
-            amountMinor: U256::from(10),
+            credisId: U256::ONE,
         }
         .abi_encode();
         let err = dispatch(storage.clone(), &release_call, stranger(), U256::ZERO).unwrap_err();
@@ -2609,8 +2565,9 @@ fn a_reservation_cannot_exceed_the_vaults_shares() {
             storage.clone(),
             cca(),
             IVaultRouter::createCredisReservationCall {
-                credisOwner: receiver(),
-                source: pledger(),
+                owner: receiver(),
+                ccaReceiver: cca(),
+                omnibus: omnibus(),
                 asset: asset(),
                 amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
@@ -2646,8 +2603,9 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
             storage.clone(),
             cca(),
             IVaultRouter::createCredisReservationCall {
-                credisOwner: receiver(),
-                source: pledger(),
+                owner: receiver(),
+                ccaReceiver: cca(),
+                omnibus: omnibus(),
                 asset: asset(),
                 amountMinor: U256::from(10),
                 referenceCurrency: USD_ISO_CODE,
@@ -2658,7 +2616,7 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
             .unwrap()
             .expires_at;
         storage.set_block_timestamp(U256::from(expiry)).unwrap();
-        assert!(runtime::return_reservation(storage.clone(), stranger(), id).is_err());
+        assert!(runtime::expire_credis_reservation(storage.clone(), id).is_err());
         assert_eq!(
             runtime::credis_reservation_of(&storage, id)
                 .unwrap()
@@ -2667,11 +2625,11 @@ fn reservation_expiry_boundary_and_repeated_permissionless_return() {
         );
         storage.set_block_timestamp(U256::from(expiry + 1)).unwrap();
         assert_eq!(
-            runtime::return_reservation(storage.clone(), stranger(), id).unwrap(),
+            runtime::expire_credis_reservation(storage.clone(), id).unwrap(),
             U256::from(100)
         );
         assert_eq!(
-            runtime::return_reservation(storage.clone(), stranger(), id).unwrap(),
+            runtime::expire_credis_reservation(storage.clone(), id).unwrap(),
             U256::ZERO
         );
     });
@@ -2733,8 +2691,9 @@ fn same_utc_day_reservations_share_series_id_including_midnight_and_next_day_ope
                 storage.clone(),
                 cca(),
                 IVaultRouter::createCredisReservationCall {
-                    credisOwner: receiver(),
-                    source: pledger(),
+                    owner: receiver(),
+                    ccaReceiver: cca(),
+                    omnibus: omnibus(),
                     asset: asset(),
                     amountMinor: U256::from(10),
                     referenceCurrency: USD_ISO_CODE,
@@ -2806,8 +2765,9 @@ fn reserve_amount(
         storage.clone(),
         cca(),
         IVaultRouter::createCredisReservationCall {
-            credisOwner: receiver(),
-            source: pledger(),
+            owner: receiver(),
+            ccaReceiver: cca(),
+            omnibus: omnibus(),
             asset: asset(),
             amountMinor: amount,
             referenceCurrency: USD_ISO_CODE,

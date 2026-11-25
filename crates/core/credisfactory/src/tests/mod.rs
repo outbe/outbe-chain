@@ -114,46 +114,54 @@ pub fn pledge_cost() -> U256 {
     SCALE_1E6_U256
 }
 
-/// Native COEN stake matching [`pledge_cost`] GRATIS one for one by value.
-pub fn pledge_stake() -> U256 {
-    checked_protocol_to_native(pledge_cost()).expect("pledge fixture fits native U256")
+/// The account of the card issuer that the reservations name.
+pub fn omnibus() -> Address {
+    address!("0x0000000000000000000000000000000000000b0b")
 }
 
-pub fn open(storage: &StorageHandle<'_>, nonce: u64) -> U256 {
-    open_for(storage, alice(), nonce)
+pub fn open(storage: &StorageHandle<'_>) -> U256 {
+    open_for(storage, alice())
 }
-pub fn open_for(storage: &StorageHandle<'_>, who: Address, nonce: u64) -> U256 {
-    let reservation_id = seed_reservation(storage, who, who, pledge_stables());
-    pledge(storage, who, reservation_id, nonce);
-    fund_stake(storage, pledge_stake());
-    runtime::issue_credis(storage.clone(), cca(), reservation_id, pledge_stake())
-        .unwrap()
-        .0
+pub fn open_for(storage: &StorageHandle<'_>, who: Address) -> U256 {
+    let reservation_id = seed_reservation(storage, who, pledge_stables());
+    issue(storage, reservation_id, who).unwrap().0
 }
 
-/// Pledges the reservation's Gratis from `source` through the factory.
-pub fn pledge(storage: &StorageHandle<'_>, source: Address, reservation_id: U256, nonce: u64) {
-    outbe_gratisfactory::runtime::pledge_gratis(
-        storage.clone(),
-        source,
+/// The pledge of `main_account` for the reservation, sealed as a wallet seals it.
+pub fn sealed_pledge(
+    storage: &StorageHandle<'_>,
+    main_account: Address,
+    reservation_id: U256,
+) -> Vec<u8> {
+    let reservation =
+        outbe_vaultrouter::api::credis_reservation_of(storage, reservation_id).unwrap();
+    test_enclave::sealed_pledge(
+        main_account,
+        reservation.gratis_minor,
         reservation_id,
-        auth(GratisOp::Pledge, source, pledge_cost(), nonce),
+        CHAIN_ID,
     )
-    .unwrap();
 }
 
-/// Parks a live vault reservation for `credis_owner`, pledged by `source`, so
-/// `issue_credis` can consume it. This helper writes the hold through VaultRouter
+/// The cash account of the reservation issues its Credis on the Gratis of `main_account`.
+pub fn issue(
+    storage: &StorageHandle<'_>,
+    reservation_id: U256,
+    main_account: Address,
+) -> outbe_primitives::error::Result<(U256, U256)> {
+    let owner = outbe_vaultrouter::api::credis_reservation_of(storage, reservation_id)
+        .unwrap()
+        .credis_owner;
+    let pledge = sealed_pledge(storage, main_account, reservation_id);
+    runtime::issue_credis(storage.clone(), owner, reservation_id, &pledge)
+}
+
+/// Parks a live vault reservation for `credis_owner` so `issue_credis` can consume it. This helper writes the hold through VaultRouter
 /// storage, not the ABI, because these tests stub EVM sub-calls into the router.
 ///
 /// Each reservation's entry price sits a minor unit below the last one's, so every
 /// Credis opens a group of its own unless a test shares one.
-pub fn seed_reservation(
-    storage: &StorageHandle<'_>,
-    credis_owner: Address,
-    source: Address,
-    amount: U256,
-) -> U256 {
+pub fn seed_reservation(storage: &StorageHandle<'_>, credis_owner: Address, amount: U256) -> U256 {
     let now = storage.now_secs().unwrap();
     let expires_at = now + 15 * 60;
     let contract = VaultRouterContract::new(storage.clone());
@@ -190,7 +198,6 @@ pub fn seed_reservation(
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
-            source,
             series_id,
             sub_series: CredisContract::sub_series_of(now),
             call_start_day,
@@ -198,6 +205,10 @@ pub fn seed_reservation(
             call_window_seconds: call_terms.call_window_seconds,
             call_threshold_seconds: call_terms.call_threshold_seconds,
             call_notice_period_seconds: call_terms.call_notice_period_seconds,
+            wcoen_minor: checked_protocol_to_native(amount / U256::from(2))
+                .expect("reservation WCOEN fits"),
+            cca_receiver: cca(),
+            omnibus: omnibus(),
         })
         .unwrap();
     id
@@ -230,7 +241,7 @@ pub fn seed_reservation_at(
     credis_owner: Address,
     at: Placement,
 ) -> U256 {
-    let id = seed_reservation(storage, credis_owner, credis_owner, pledge_stables());
+    let id = seed_reservation(storage, credis_owner, pledge_stables());
     let router = VaultRouterContract::new(storage.clone());
     let mut reservation = router.reservations.get(id).unwrap().unwrap();
     reservation.series_id = outbe_core_common::series_id::SeriesId::for_pair(
@@ -247,13 +258,9 @@ pub fn seed_reservation_at(
     id
 }
 
-pub fn open_at(storage: &StorageHandle<'_>, who: Address, nonce: u64, at: Placement) -> U256 {
+pub fn open_at(storage: &StorageHandle<'_>, who: Address, at: Placement) -> U256 {
     let reservation_id = seed_reservation_at(storage, who, at);
-    pledge(storage, who, reservation_id, nonce);
-    fund_stake(storage, pledge_stake());
-    runtime::issue_credis(storage.clone(), cca(), reservation_id, pledge_stake())
-        .unwrap()
-        .0
+    issue(storage, reservation_id, who).unwrap().0
 }
 
 pub fn stub_asset(provider: &mut HashMapStorageProvider, asset: Address, iso: u16) {
@@ -793,12 +800,6 @@ pub fn bootstrap_for(storage: &StorageHandle<'_>, who: Address, amount: U256) {
 /// Tests drive `runtime::issue_credis` directly, below the precompile boundary that
 /// moves `msg.value`. Without this credit, the escrow would have a claim with no
 /// COEN behind it, and the release would underflow.
-pub fn fund_stake(storage: &StorageHandle<'_>, amount: U256) {
-    storage
-        .increase_balance(CREDIS_FACTORY_ADDRESS, amount)
-        .unwrap();
-}
-
 pub fn teardown() {
     fidelity_enclave::uninstall();
     test_enclave::uninstall();

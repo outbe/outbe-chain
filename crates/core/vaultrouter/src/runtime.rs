@@ -31,7 +31,8 @@ use calls::{
 };
 pub use credis_reservation::credis_reservation_of;
 pub(crate) use credis_reservation::{
-    create_credis_reservation, redeem_credis_reservation, return_reservation,
+    cancel_credis_reservation, create_credis_reservation, expire_credis_reservation,
+    redeem_credis_reservation,
 };
 pub(crate) use rebalance::{preview_rebalance, rebalance};
 pub(crate) use stablecoin::{

@@ -92,6 +92,11 @@
         "name": "credisReservationId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "pledge",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [
@@ -106,7 +111,7 @@
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "payable"
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -174,73 +179,6 @@
       }
     ],
     "stateMutability": "view"
-  },
-  {
-    "type": "event",
-    "name": "CredisIssued",
-    "inputs": [
-      {
-        "name": "credisId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
-      },
-      {
-        "name": "issuanceCurrency",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "referenceCurrency",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "cca",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "amountMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "gratisMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "policyRate",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
   },
   {
     "type": "event",
@@ -466,16 +404,6 @@
   },
   {
     "type": "error",
-    "name": "CcaStakeMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CoenStakeOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "CollateralIncreased",
     "inputs": []
   },
@@ -531,7 +459,7 @@
   },
   {
     "type": "error",
-    "name": "InvalidSource",
+    "name": "InvalidPledgeAccount",
     "inputs": []
   },
   {
@@ -561,17 +489,17 @@
   },
   {
     "type": "error",
-    "name": "ReservationCcaMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
     "name": "ReservationExpired",
     "inputs": []
   },
   {
     "type": "error",
     "name": "ReservationNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReservationOwnerMismatch",
     "inputs": []
   },
   {

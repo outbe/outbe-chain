@@ -133,7 +133,7 @@ define_exact_routes! {
     DESIS_ADDRESS => (outbe_desis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_desis::precompile::PAYABLE_SELECTORS),
     VAULT_ROUTER_ADDRESS => (outbe_vaultrouter::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_vaultrouter::precompile::PAYABLE_SELECTORS),
     CREDIS_ADDRESS => (outbe_credis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_credis::precompile::PAYABLE_SELECTORS),
-    CREDIS_FACTORY_ADDRESS => (outbe_credisfactory::precompile::dispatch, default_base_gas, ValuePolicy::Payable, outbe_credisfactory::precompile::PAYABLE_SELECTORS),
+    CREDIS_FACTORY_ADDRESS => (outbe_credisfactory::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_credisfactory::precompile::PAYABLE_SELECTORS),
     CCA_REGISTRY_ADDRESS => (outbe_ccaregistry::precompile::dispatch, default_base_gas, ValuePolicy::Payable, outbe_ccaregistry::precompile::PAYABLE_SELECTORS),
     WORLDWIDE_DAY_ADDRESS => (outbe_worldwideday::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_worldwideday::precompile::PAYABLE_SELECTORS),
     VALIDATOR_SET_ADDRESS => (outbe_validatorset::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_validatorset::precompile::PAYABLE_SELECTORS),

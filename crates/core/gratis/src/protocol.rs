@@ -15,8 +15,6 @@ pub enum GratisOp {
     Mint = 0,
     /// Debit the liquid balance.
     Burn = 1,
-    /// Move the authorized amount from liquid to pledged.
-    Pledge = 2,
     /// Move collateral from pledged back to liquid.
     ReleasePledged = 3,
     /// Burn collateral from the pledged balance.
@@ -105,7 +103,7 @@ pub struct GratisOpResult {
     pub inputs_canonical_hash: B256,
     /// Ed25519 tag. Cleared inside the witness payload.
     pub attestation_tag: Vec<u8>,
-    /// Owner-encrypted event amount for mint, burn, and pledged burn.
+    /// Owner-encrypted event amount for mint and burn.
     pub encrypted_event_amount: Vec<u8>,
     /// Main account an opened sealed pledge names. Empty for every other op.
     pub pledge_account: Option<Address>,

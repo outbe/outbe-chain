@@ -1,8 +1,7 @@
-//! Gratisfactory precompile at `0x2003`. This file does ABI dispatch only. Pledge,
-//! cancel, `mineCoen`, and `mineGratis` run in [`crate::runtime`]. `mineCoen` emits
-//! `CoenMinedFromGratis`; `mineGratis` is payable and emits `GratisMinedFromCoen`.
-//! The caller's Gratis modify key (`mac` and `opNonce`) authorizes pledge and both
-//! conversions. Only a pledge's source may cancel it.
+//! Gratisfactory precompile at `0x2003`. This file does ABI dispatch only. `mineCoen` and
+//! `mineGratis` run in [`crate::runtime`]. `mineCoen` emits `CoenMinedFromGratis`;
+//! `mineGratis` is payable and emits `GratisMinedFromCoen`. The caller's Gratis modify key
+//! (`mac` and `opNonce`) authorizes both conversions.
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{sol, SolCall, SolInterface};
@@ -10,8 +9,7 @@ use alloy_sol_types::{sol, SolCall, SolInterface};
 use outbe_core_common::erc::ERC165_INTERFACE_ID;
 use outbe_gratis::api::ModifyAuth;
 use outbe_primitives::dispatch::{
-    dispatch_call, mutate, mutate_payable, mutate_void, reject_value_unless_payable, view,
-    PayableCallContext,
+    dispatch_call, mutate, mutate_payable, reject_value_unless_payable, view, PayableCallContext,
 };
 use outbe_primitives::error::Result;
 use outbe_primitives::storage::StorageHandle;
@@ -40,34 +38,6 @@ pub fn dispatch(
         |call| {
             use IGratisFactory::IGratisFactoryCalls::*;
             match call {
-                pledgeGratis(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    runtime::pledge_gratis(
-                        storage.clone(),
-                        sender,
-                        c.reservationId,
-                        ModifyAuth {
-                            mac: c.auth.mac.0,
-                            op_nonce: c.auth.opNonce,
-                        },
-                    )
-                }),
-                cancelPledge(c) => mutate_void(&storage, c, caller, |sender, c| {
-                    runtime::cancel_pledge(storage.clone(), sender, c.reservationId)
-                }),
-                collateralOf(c) => view(c, |c| {
-                    let collateral = runtime::collateral_of(&storage, c.credisId)?;
-                    Ok(IGratisFactory::collateralOfReturn {
-                        source: collateral.source,
-                        remainingMinor: collateral.remaining_minor,
-                    })
-                }),
-                pledgeOf(c) => view(c, |c| {
-                    let pledge = runtime::pledge_of(&storage, c.reservationId)?;
-                    Ok(IGratisFactory::pledgeOfReturn {
-                        source: pledge.source,
-                        gratisMinor: pledge.gratis_minor,
-                    })
-                }),
                 mineCoen(c) => mutate(&storage, c, caller, |sender, c| {
                     let auth = ModifyAuth {
                         mac: c.mac.0,

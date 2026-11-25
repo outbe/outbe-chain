@@ -82,18 +82,6 @@ pub fn burn_with_fidelity(
     runtime::burn_with_fidelity(storage, caller, amount, auth, fidelity)
 }
 
-/// Move an owner-authorized amount into the pledged balance, with a read-only
-/// Fidelity eligibility probe.
-pub fn pledge_with_fidelity(
-    storage: StorageHandle<'_>,
-    caller: Address,
-    amount: U256,
-    auth: ModifyAuth,
-    fidelity: FidelityOpSection,
-) -> Result<FidelityOpOutcome> {
-    runtime::pledge_with_fidelity(storage, caller, amount, auth, fidelity)
-}
-
 /// Open the sealed pledge of `credis_reservation_id` and pledge `amount` from the main account
 /// it names. Returns that account.
 pub fn pledge_sealed(
