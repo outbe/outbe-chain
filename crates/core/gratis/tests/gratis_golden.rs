@@ -344,3 +344,41 @@ fn gratis_attestation_rejects_a_cross_domain_tag_a_bad_key_and_a_mutated_event()
     gratis.encrypted_event_amount[0] ^= 0xff;
     assert!(verify_gratis_op_attestation(&key, hash, &gratis, &gratis_tag).is_err());
 }
+
+#[test]
+fn mcp_credis_pledge_macs_match() {
+    let rows = [
+        (
+            "1111111111111111111111111111111111111111",
+            1_000u64,
+            7u64,
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+            "0865dba1363375d0985ebf12070881be5655f459f88f9c2f87fca1daa9a145f3",
+        ),
+        (
+            "63467B02a7382408A845a5EB85b5238b8a4dD0eD",
+            2_500_000,
+            42,
+            "00000000000000000000000000000000000000000000000000000000033ce4a9",
+            "6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b",
+            "45d57eb81a4c82b69a51291151841aa5de27422152ec4fbdcdfee4cdc21b44ce",
+        ),
+    ];
+    for (account, amount, reservation, chain_id, modify_key, mac) in rows {
+        let account: Address = account.parse().unwrap();
+        let message = outbe_gratis::engine::credis_pledge_message(
+            account,
+            U256::from(amount),
+            U256::from(reservation),
+            B256::from(hex_word(chain_id)),
+        );
+        let actual = outbe_tee::resident::compute_modify_mac(
+            &AccountKeysHandle::for_test(account, [0; 32], hex_word(modify_key)),
+            outbe_gratis::engine::CREDIS_PLEDGE_MAC_TAG,
+            &message,
+        )
+        .unwrap();
+        assert_eq!(hex::encode(actual), mac);
+    }
+}
