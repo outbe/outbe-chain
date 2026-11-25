@@ -338,8 +338,8 @@ contract IntexAuctionClaimsTest is Test {
     function test_TheAuctionClearsABidTheEscrowValvePaidOut() public {
         _bid(3, 1);
         _finalize(_winner(alice), 0, 0);
-        vm.warp(block.timestamp + escrow.RETURN_ABANDON_DELAY());
-        escrow.returnAbandonedIntexAuctionAsset(DAY, bob);
+        vm.warp(block.timestamp + escrow.ASSET_ESCROW_TIMEOUT());
+        escrow.returnIntexAuctionAssetAfterTimeout(DAY, bob);
 
         auction.returnIntexAuctionAsset(DAY, bob);
         assertFalse(auction.revealedIntexAuctionBidsByBidder(DAY, bob), "bid gone");

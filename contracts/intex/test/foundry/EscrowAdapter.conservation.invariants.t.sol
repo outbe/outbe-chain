@@ -76,8 +76,8 @@ contract EscrowConservationHandler is Test {
         try escrow.unlockIntexAuctionBidBond(_series(seriesSeed), _bidder(bidderSeed), 0) {} catch {}
     }
 
-    function claimAbandonedBond(uint256 seriesSeed, uint256 bidderSeed) external {
-        try escrow.unlockAbandonedIntexAuctionBidBond(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
+    function claimBondAfterTimeout(uint256 seriesSeed, uint256 bidderSeed) external {
+        try escrow.unlockIntexAuctionBidBondAfterTimeout(_series(seriesSeed), _bidder(bidderSeed)) {} catch {}
     }
 
     function warp(uint256 secondsSeed) external {
@@ -134,7 +134,7 @@ contract EscrowAdapterConservationInvariantTest is StdInvariant, Test {
         selectors[3] = EscrowConservationHandler.warp.selector;
         selectors[4] = EscrowConservationHandler.lockBond.selector;
         selectors[5] = EscrowConservationHandler.releaseBond.selector;
-        selectors[6] = EscrowConservationHandler.claimAbandonedBond.selector;
+        selectors[6] = EscrowConservationHandler.claimBondAfterTimeout.selector;
         targetSelector(FuzzSelector({addr: address(handler), selectors: selectors}));
         targetContract(address(handler));
     }

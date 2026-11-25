@@ -80,7 +80,7 @@ interface IEscrowAdapter {
         /// @notice Amount of payment-token bonded.
         uint128 amount;
         /// @notice Timestamp when the bond was locked (UNIX seconds). Anchors the
-        ///         escrow-local `unlockAbandonedIntexAuctionBidBond` safety window.
+        ///         escrow-local `unlockIntexAuctionBidBondAfterTimeout` safety window.
         uint32 lockedAt;
         /// @notice Asset version the bond was taken under.
         uint8 assetVersion;
@@ -211,10 +211,10 @@ interface IEscrowAdapter {
     error IntexAuctionBidBondAlreadyLocked();
     /// @notice No live commit bond exists for the series/bidder pair.
     error IntexAuctionBidBondNotFound();
-    /// @notice `unlockAbandonedIntexAuctionBidBond` was called before the escrow-local safety window elapsed.
+    /// @notice `unlockIntexAuctionBidBondAfterTimeout` was called before the escrow-local safety window elapsed.
     /// @param unlockableAt Earliest unix-seconds timestamp the bond can be claimed at.
     /// @param nowTs Current block timestamp.
-    error IntexAuctionBidBondNotYetAbandoned(uint32 unlockableAt, uint32 nowTs);
+    error IntexAuctionBidBondEscrowTimeoutNotOver(uint32 unlockableAt, uint32 nowTs);
 
     // --- Admin ---
 
@@ -316,26 +316,26 @@ interface IEscrowAdapter {
     /// @return finalized Whether the day is finalized.
     function returnIntexAuctionAsset(uint32 emissionDay, address bidder) external returns (bool closed, bool finalized);
 
-    /// @notice Escrow-local safety valve for a lock stranded past `RETURN_ABANDON_DELAY` (e.g. the
+    /// @notice Escrow-local safety valve for a lock stranded past `ASSET_ESCROW_TIMEOUT` (e.g. the
     ///         auction contract stopped working). It is time-based only and never consults the
     ///         auction. It pays the stored `bidder`, not `msg.sender`, and only money: a winner's
     ///         units stay in its lock.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose lock is being claimed.
-    function returnAbandonedIntexAuctionAsset(uint32 emissionDay, address bidder) external;
+    function returnIntexAuctionAssetAfterTimeout(uint32 emissionDay, address bidder) external;
 
-    /// @notice `returnAbandonedIntexAuctionAsset` was called before the escrow-local safety window elapsed.
+    /// @notice `returnIntexAuctionAssetAfterTimeout` was called before the escrow-local safety window elapsed.
     /// @param returnableAt Earliest unix-seconds timestamp the refund can be claimed at.
     /// @param nowTs Current block timestamp.
-    error ReturnNotYetAbandoned(uint32 returnableAt, uint32 nowTs);
+    error IntexAuctionAssetEscrowTimeoutNotOver(uint32 returnableAt, uint32 nowTs);
 
     /// @notice Escrow-local safety valve for a commit bond stranded past
-    ///         `BID_BOND_ABANDON_DELAY` (e.g. the auction contract was rotated away while the
+    ///         `BID_BOND_ESCROW_TIMEOUT` (e.g. the auction contract was rotated away while the
     ///         bond was live). It is time-based only and never consults the auction. It pays the
     ///         stored `bidder`, not `msg.sender`. The stage-aware fast path lives on IntexAuction.
     /// @param emissionDay Emission day (yyyymmdd).
     /// @param bidder Bidder whose bond is being claimed.
-    function unlockAbandonedIntexAuctionBidBond(uint32 emissionDay, address bidder) external;
+    function unlockIntexAuctionBidBondAfterTimeout(uint32 emissionDay, address bidder) external;
 
     // --- Views ---
 
