@@ -47,21 +47,21 @@ contract IntexNFT1155Router is
 
     /// @notice Snapshot of one batch item whose `token.crosschainMint` reverted. `exists`
     ///         distinguishes never-failed from failed-and-retried. The struct does not keep the
-    ///         revert data: neither `retryCrosschainMint` nor `reclaimToSource` reads it.
+    ///         revert data: neither `retryIntexCrosschainReceive` nor `sendBackToSource` reads it.
     ///         `IntexCrosschainReceiveFailed` carries it for whoever diagnoses the failure. The field order
     ///         lets the address, chain and flag share a slot.
-    struct FailedCrosschainMint {
+    struct FailedCrosschainReceive {
         address to;
         uint32 srcChainId;
         bool exists;
-        uint256 tokenId;
+        uint256 intexId;
         uint256 units;
     }
 
     /// @custom:storage-location erc7201:outbe.intex.IntexNFT1155Router
     struct IntexNFT1155RouterStorage {
         /// @dev Per-message map of items whose `token.crosschainMint` reverted.
-        mapping(bytes32 receiveId => mapping(uint256 idx => FailedCrosschainMint)) failedCrosschainMints;
+        mapping(bytes32 receiveId => mapping(uint256 idx => FailedCrosschainReceive)) failedCrosschainReceives;
         /// @dev ERC-7930 interoperable address of the matching adapter on a given chainId.
         mapping(uint32 chainId => bytes interop) remoteRouter;
     }
@@ -92,13 +92,13 @@ contract IntexNFT1155Router is
     function _authorizeUpgrade(address newImplementation) internal override onlyRole(DEFAULT_ADMIN_ROLE) {}
 
     /// @notice Failed crosschainMint snapshot for item `idx` of the message `receiveId`.
-    function failedCrosschainMints(bytes32 receiveId, uint256 idx)
+    function getFailedCrosschainReceive(bytes32 receiveId, uint256 idx)
         external
         view
-        returns (address to, uint256 tokenId, uint256 units, bool exists)
+        returns (address to, uint256 intexId, uint256 units, bool exists)
     {
-        FailedCrosschainMint storage f = _bs().failedCrosschainMints[receiveId][idx];
-        return (f.to, f.tokenId, f.units, f.exists);
+        FailedCrosschainReceive storage f = _bs().failedCrosschainReceives[receiveId][idx];
+        return (f.to, f.intexId, f.units, f.exists);
     }
 
     function supportsInterface(bytes4 interfaceId) public view override(AccessControlUpgradeable) returns (bool) {
@@ -145,10 +145,10 @@ contract IntexNFT1155Router is
     /// @inheritdoc IIntexNFT1155Router
     function send(SendParam calldata _sendParam) external payable nonReentrant returns (bytes32 sendId) {
         bytes memory message = _buildSingleMsg(_sendParam);
-        token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.tokenId, _sendParam.units);
+        token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.intexId, _sendParam.units);
         sendId = _sendPaidByCaller(_sendParam.dstChainId, message, IntexGas.nftMint(1));
         emit IntexCrosschainSent(
-            sendId, _sendParam.dstChainId, msg.sender, _sendParam.to, _sendParam.tokenId, _units32(_sendParam.units)
+            sendId, _sendParam.dstChainId, msg.sender, _sendParam.to, _sendParam.intexId, _units32(_sendParam.units)
         );
     }
 
@@ -163,7 +163,7 @@ contract IntexNFT1155Router is
         if (_sendParam.to == bytes32(0)) revert InvalidReceiver();
         return IntexNFT1155RouterCodec.encodeSingle(
             IntexNFT1155RouterCodec.SinglePayload({
-                to: _sendParam.to, intexId: _sendParam.tokenId, units: _sendParam.units
+                to: _sendParam.to, intexId: _sendParam.intexId, units: _sendParam.units
             })
         );
     }
@@ -172,35 +172,35 @@ contract IntexNFT1155Router is
     /// @inheritdoc IIntexNFT1155Router
     function quoteBatchSend(BatchSendParam calldata _sendParam) external view returns (uint256) {
         return
-            _quoteFee(_sendParam.dstChainId, _buildBatchMsg(_sendParam), IntexGas.nftMint(_sendParam.tokenIds.length));
+            _quoteFee(_sendParam.dstChainId, _buildBatchMsg(_sendParam), IntexGas.nftMint(_sendParam.intexIds.length));
     }
 
     /// @inheritdoc IIntexNFT1155Router
     function batchSend(BatchSendParam calldata _sendParam) external payable nonReentrant returns (bytes32 sendId) {
-        if (_sendParam.tokenIds.length == 0) revert EmptyBatch();
-        if (_sendParam.tokenIds.length != _sendParam.units.length) revert ArrayLengthMismatch();
+        if (_sendParam.intexIds.length == 0) revert EmptyBatch();
+        if (_sendParam.intexIds.length != _sendParam.units.length) revert ArrayLengthMismatch();
 
         // Build first: the zero-`to` and `MAX_BATCH_SIZE` guards fail fast before any burn.
         bytes memory message = _buildBatchMsg(_sendParam);
-        for (uint256 i = 0; i < _sendParam.tokenIds.length; i++) {
-            token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.tokenIds[i], _sendParam.units[i]);
+        for (uint256 i = 0; i < _sendParam.intexIds.length; i++) {
+            token.crosschainBurn(msg.sender, _toAddress(_sendParam.to), _sendParam.intexIds[i], _sendParam.units[i]);
         }
 
-        sendId = _sendPaidByCaller(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.tokenIds.length));
+        sendId = _sendPaidByCaller(_sendParam.dstChainId, message, IntexGas.nftMint(_sendParam.intexIds.length));
         emit IntexCrosschainBatchSent(
-            sendId, _sendParam.dstChainId, msg.sender, _sendParam.to, _sendParam.tokenIds, _units32(_sendParam.units)
+            sendId, _sendParam.dstChainId, msg.sender, _sendParam.to, _sendParam.intexIds, _units32(_sendParam.units)
         );
     }
 
     function _buildBatchMsg(BatchSendParam calldata _sendParam) internal pure returns (bytes memory) {
         IntexNFT1155RouterCodec.assertAddress(_sendParam.to);
         if (_sendParam.to == bytes32(0)) revert InvalidReceiver();
-        if (_sendParam.tokenIds.length > MAX_BATCH_SIZE) {
-            revert IntexNFT1155RouterCodec.BatchTooLarge(_sendParam.tokenIds.length, MAX_BATCH_SIZE);
+        if (_sendParam.intexIds.length > MAX_BATCH_SIZE) {
+            revert IntexNFT1155RouterCodec.BatchTooLarge(_sendParam.intexIds.length, MAX_BATCH_SIZE);
         }
         return IntexNFT1155RouterCodec.encodeBatch(
             IntexNFT1155RouterCodec.BatchPayload({
-                to: _sendParam.to, tokenIds: _sendParam.tokenIds, units: _sendParam.units
+                to: _sendParam.to, intexIds: _sendParam.intexIds, units: _sendParam.units
             })
         );
     }
@@ -221,14 +221,14 @@ contract IntexNFT1155Router is
     {
         uint256 len = _sendParam.recipients.length;
         if (len == 0) revert EmptyBatch();
-        if (len != _sendParam.tokenIds.length || len != _sendParam.units.length) revert ArrayLengthMismatch();
+        if (len != _sendParam.intexIds.length || len != _sendParam.units.length) revert ArrayLengthMismatch();
 
         bytes memory message = _buildMultiMsg(_sendParam);
         for (uint256 i = 0; i < len; i++) {
             IntexNFT1155RouterCodec.assertAddress(_sendParam.recipients[i]);
             if (_sendParam.recipients[i] == bytes32(0)) revert InvalidReceiver();
             token.crosschainBurn(
-                msg.sender, _toAddress(_sendParam.recipients[i]), _sendParam.tokenIds[i], _sendParam.units[i]
+                msg.sender, _toAddress(_sendParam.recipients[i]), _sendParam.intexIds[i], _sendParam.units[i]
             );
         }
 
@@ -238,7 +238,7 @@ contract IntexNFT1155Router is
             _sendParam.dstChainId,
             msg.sender,
             _sendParam.recipients,
-            _sendParam.tokenIds,
+            _sendParam.intexIds,
             _units32(_sendParam.units)
         );
     }
@@ -249,7 +249,7 @@ contract IntexNFT1155Router is
         }
         return IntexNFT1155RouterCodec.encodeMulti(
             IntexNFT1155RouterCodec.MultiPayload({
-                recipients: _sendParam.recipients, tokenIds: _sendParam.tokenIds, units: _sendParam.units
+                recipients: _sendParam.recipients, intexIds: _sendParam.intexIds, units: _sendParam.units
             })
         );
     }
@@ -303,7 +303,7 @@ contract IntexNFT1155Router is
         address toAddress = address(uint160(uint256(p.to)));
 
         // A failed mint is recorded with IntexCrosschainReceiveFailed, and its retry emits the receive.
-        if (_tryCrosschainMintOne(srcChainId, receiveId, 0, toAddress, p.intexId, p.units)) {
+        if (_tryCrosschainReceiveOne(srcChainId, receiveId, 0, toAddress, p.intexId, p.units)) {
             emit IntexCrosschainReceived(receiveId, srcChainId, toAddress, p.intexId, _units32(p.units));
         }
     }
@@ -315,11 +315,11 @@ contract IntexNFT1155Router is
         if (p.to == bytes32(0)) revert InvalidReceiver();
         address toAddress = address(uint160(uint256(p.to)));
 
-        for (uint256 i = 0; i < p.tokenIds.length; i++) {
-            _tryCrosschainMintOne(srcChainId, receiveId, i, toAddress, p.tokenIds[i], p.units[i]);
+        for (uint256 i = 0; i < p.intexIds.length; i++) {
+            _tryCrosschainReceiveOne(srcChainId, receiveId, i, toAddress, p.intexIds[i], p.units[i]);
         }
 
-        emit IntexCrosschainBatchReceived(receiveId, srcChainId, toAddress, p.tokenIds, _units32(p.units));
+        emit IntexCrosschainBatchReceived(receiveId, srcChainId, toAddress, p.intexIds, _units32(p.units));
     }
 
     function _handleMultiReceive(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal {
@@ -330,63 +330,63 @@ contract IntexNFT1155Router is
             IntexNFT1155RouterCodec.assertAddress(p.recipients[i]);
             if (p.recipients[i] == bytes32(0)) revert InvalidReceiver();
             recipients[i] = address(uint160(uint256(p.recipients[i])));
-            _tryCrosschainMintOne(srcChainId, receiveId, i, recipients[i], p.tokenIds[i], p.units[i]);
+            _tryCrosschainReceiveOne(srcChainId, receiveId, i, recipients[i], p.intexIds[i], p.units[i]);
         }
 
-        emit IntexCrosschainMultiReceived(receiveId, srcChainId, recipients, p.tokenIds, _units32(p.units));
+        emit IntexCrosschainMultiReceived(receiveId, srcChainId, recipients, p.intexIds, _units32(p.units));
     }
 
     /// @dev Isolate a per-item `token.crosschainMint` revert. Park a snapshot for
-    ///      `retryCrosschainMint` instead of failing the whole batch.
-    function _tryCrosschainMintOne(
+    ///      `retryIntexCrosschainReceive` instead of failing the whole batch.
+    function _tryCrosschainReceiveOne(
         uint32 srcChainId,
         bytes32 receiveId,
         uint256 idx,
         address to,
-        uint256 tokenId,
+        uint256 intexId,
         uint256 units
     ) internal returns (bool minted) {
-        try this.crosschainMintOne(to, tokenId, units) {
+        try this.crosschainReceiveOne(to, intexId, units) {
             minted = true;
         } catch (bytes memory reason) {
-            _bs().failedCrosschainMints[receiveId][idx] =
-                FailedCrosschainMint({to: to, srcChainId: srcChainId, exists: true, tokenId: tokenId, units: units});
-            emit IntexCrosschainReceiveFailed(receiveId, srcChainId, idx, to, tokenId, _units32(units), reason);
+            _bs().failedCrosschainReceives[receiveId][idx] =
+                FailedCrosschainReceive({to: to, srcChainId: srcChainId, exists: true, intexId: intexId, units: units});
+            emit IntexCrosschainReceiveFailed(receiveId, srcChainId, idx, to, intexId, _units32(units), reason);
         }
     }
 
-    /// @notice Self-call shim so a per-item mint revert lands in `_tryCrosschainMintOne`'s catch. Self-only.
-    function crosschainMintOne(address to, uint256 tokenId, uint256 units) external {
+    /// @notice Self-call shim so a per-item mint revert lands in `_tryCrosschainReceiveOne`'s catch. Self-only.
+    function crosschainReceiveOne(address to, uint256 intexId, uint256 units) external {
         if (msg.sender != address(this)) revert NotSelf();
-        token.crosschainMint(to, tokenId, units);
+        token.crosschainMint(to, intexId, units);
     }
 
     /// @notice Permissionless retry of a previously-failed crosschainMint. A success clears the
     ///         entry.
-    function retryCrosschainMint(bytes32 receiveId, uint256 idx) external nonReentrant {
+    function retryIntexCrosschainReceive(bytes32 receiveId, uint256 idx) external nonReentrant {
         IntexNFT1155RouterStorage storage $ = _bs();
-        FailedCrosschainMint memory f = $.failedCrosschainMints[receiveId][idx];
-        if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
-        delete $.failedCrosschainMints[receiveId][idx];
-        token.crosschainMint(f.to, f.tokenId, f.units);
-        emit IntexCrosschainReceived(receiveId, f.srcChainId, f.to, f.tokenId, _units32(f.units));
+        FailedCrosschainReceive memory f = $.failedCrosschainReceives[receiveId][idx];
+        if (!f.exists) revert NoSuchFailedCrosschainReceive(receiveId, idx);
+        delete $.failedCrosschainReceives[receiveId][idx];
+        token.crosschainMint(f.to, f.intexId, f.units);
+        emit IntexCrosschainReceived(receiveId, f.srcChainId, f.to, f.intexId, _units32(f.units));
     }
 
-    /// @notice Permissionless reclaim of a batch item that the destination gate rejects
+    /// @notice Permissionless send-back of a batch item that the destination gate rejects
     ///         terminally. It re-mints the owner on the origin chain via a reverse one-item
     ///         transfer. This is the only exit that does not re-hit the destination lifecycle gate.
-    ///         The caller pays the fee (see `quoteReclaimToSource`). It consumes the entry once (CEI delete first).
+    ///         The caller pays the fee (see `quoteSendBackToSource`). It consumes the entry once (CEI delete first).
     /// @param receiveId Inbound message id where the item's crosschainMint is stranded.
     /// @param idx Position of the stranded item in that batch.
-    function reclaimToSource(bytes32 receiveId, uint256 idx) external payable nonReentrant returns (bytes32 sendId) {
+    function sendBackToSource(bytes32 receiveId, uint256 idx) external payable nonReentrant returns (bytes32 sendId) {
         IntexNFT1155RouterStorage storage $ = _bs();
-        FailedCrosschainMint memory f = $.failedCrosschainMints[receiveId][idx];
-        if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
-        delete $.failedCrosschainMints[receiveId][idx];
+        FailedCrosschainReceive memory f = $.failedCrosschainReceives[receiveId][idx];
+        if (!f.exists) revert NoSuchFailedCrosschainReceive(receiveId, idx);
+        delete $.failedCrosschainReceives[receiveId][idx];
 
-        sendId = _sendPaidByCaller(f.srcChainId, _buildReclaimMsg(f), IntexGas.nftMint(1));
+        sendId = _sendPaidByCaller(f.srcChainId, _buildSendBackMsg(f), IntexGas.nftMint(1));
         emit IntexCrosschainSentBack(
-            sendId, f.srcChainId, receiveId, idx, bytes32(uint256(uint160(f.to))), f.tokenId, _units32(f.units)
+            sendId, f.srcChainId, receiveId, idx, bytes32(uint256(uint160(f.to))), f.intexId, _units32(f.units)
         );
     }
 
@@ -404,23 +404,23 @@ contract IntexNFT1155Router is
         }
     }
 
-    /// @notice Native fee that `reclaimToSource(receiveId, idx)` takes.
-    function quoteReclaimToSource(bytes32 receiveId, uint256 idx) external view returns (uint256) {
-        FailedCrosschainMint memory f = _bs().failedCrosschainMints[receiveId][idx];
-        if (!f.exists) revert NoSuchFailedCrosschainMint(receiveId, idx);
-        return _quoteFee(f.srcChainId, _buildReclaimMsg(f), IntexGas.nftMint(1));
+    /// @notice Native fee that `sendBackToSource(receiveId, idx)` takes.
+    function quoteSendBackToSource(bytes32 receiveId, uint256 idx) external view returns (uint256) {
+        FailedCrosschainReceive memory f = _bs().failedCrosschainReceives[receiveId][idx];
+        if (!f.exists) revert NoSuchFailedCrosschainReceive(receiveId, idx);
+        return _quoteFee(f.srcChainId, _buildSendBackMsg(f), IntexGas.nftMint(1));
     }
 
     /// @dev The reverse one-item transfer that returns a stranded item to its owner on the origin chain.
-    function _buildReclaimMsg(FailedCrosschainMint memory f) private pure returns (bytes memory) {
+    function _buildSendBackMsg(FailedCrosschainReceive memory f) private pure returns (bytes memory) {
         bytes32[] memory recipients = new bytes32[](1);
         recipients[0] = bytes32(uint256(uint160(f.to)));
-        uint256[] memory tokenIds = new uint256[](1);
-        tokenIds[0] = f.tokenId;
+        uint256[] memory intexIds = new uint256[](1);
+        intexIds[0] = f.intexId;
         uint256[] memory units = new uint256[](1);
         units[0] = f.units;
         return IntexNFT1155RouterCodec.encodeMulti(
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: units})
+            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: units})
         );
     }
 }

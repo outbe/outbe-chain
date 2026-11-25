@@ -82,7 +82,7 @@ contract PayNativeAccountingTest is CrossChainTest {
     /// @dev A 1-token bridge-out to Outbe. The entry path (payable `send`) burns it from `owner`.
     function _sendParam() internal view returns (SendParam memory) {
         return
-            SendParam({dstChainId: OUTBE_CHAIN_ID, to: bytes32(uint256(uint160(owner))), tokenId: TOKEN_ID, units: 1});
+            SendParam({dstChainId: OUTBE_CHAIN_ID, to: bytes32(uint256(uint160(owner))), intexId: TOKEN_ID, units: 1});
     }
 
     function _holderArrays() internal view returns (address[] memory owners, uint256[] memory amounts) {

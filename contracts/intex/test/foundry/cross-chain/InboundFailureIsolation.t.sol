@@ -13,9 +13,9 @@ import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
 /// @title InboundFailureIsolationTest
 /// @notice Behavioural coverage Pattern B on `IntexNFT1155Router`: a per-item
 ///         `token.crosschainMint` revert no longer reverts the whole batch. Instead:
-///         - the bridge records the failure as a `FailedCrosschainMint` snapshot,
+///         - the bridge records the failure as a `FailedCrosschainReceive` snapshot,
 ///         - the bridge emits `IntexCrosschainReceiveFailed`,
-///         - `retryCrosschainMint` re-attempts the crosschainMint after the upstream issue is
+///         - `retryIntexCrosschainReceive` re-attempts the crosschainMint after the upstream issue is
 ///           fixed.
 ///         This is the Critical funds-lock fix from the contract review (R-04).
 contract InboundFailureIsolationTest is CrossChainTest {
@@ -74,7 +74,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         amounts[1] = 75;
         return IntexNFT1155RouterCodec.encodeBatch(
             IntexNFT1155RouterCodec.BatchPayload({
-                to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, units: amounts
+                to: bytes32(uint256(uint160(recipient))), intexIds: tokenIds, units: amounts
             })
         );
     }
@@ -91,7 +91,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         amounts[0] = 50;
         amounts[1] = 75;
         return IntexNFT1155RouterCodec.encodeMulti(
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: amounts})
+            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: tokenIds, units: amounts})
         );
     }
 
@@ -109,19 +109,20 @@ contract InboundFailureIsolationTest is CrossChainTest {
         // Good item minted.
         assertEq(intex.balanceOf(recipient, TOKEN_GOOD), 50, "good item must be minted");
 
-        // Bad item recorded in failedCrosschainMints, NOT minted.
-        (address to, uint256 tokenId, uint256 amount, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        // Bad item recorded in failedCrosschainReceives, NOT minted.
+        (address to, uint256 tokenId, uint256 amount, bool exists) =
+            nftBridgeBnb.getFailedCrosschainReceive(receiveId, 1);
         assertEq(to, recipient, "failed entry.to");
         assertEq(tokenId, TOKEN_BAD, "failed entry.tokenId");
         assertEq(amount, 75, "failed entry.amount");
         assertTrue(exists, "failed entry must exist");
 
         // Item 0 did NOT fail - no entry for idx=0.
-        (,,, bool existsZero) = nftBridgeBnb.failedCrosschainMints(receiveId, 0);
+        (,,, bool existsZero) = nftBridgeBnb.getFailedCrosschainReceive(receiveId, 0);
         assertFalse(existsZero, "good item idx must have no failed entry");
     }
 
-    function test_BatchReceive_RetryCrosschainMintSucceedsAfterUpstreamFix() public {
+    function test_BatchReceive_RetryIntexCrosschainReceiveSucceedsAfterUpstreamFix() public {
         address recipient = address(0xCAFE);
         bytes memory packet = _batchPacket(recipient);
         bytes32 receiveId = _receiveId(packet);
@@ -129,7 +130,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         _deliverInbound(packet);
 
         // Initially the bad item is parked.
-        (,,, bool existsBefore) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (,,, bool existsBefore) = nftBridgeBnb.getFailedCrosschainReceive(receiveId, 1);
         assertTrue(existsBefore, "bad item parked");
 
         // Fix upstream: create SERIES_BAD now so crosschainMint can succeed.
@@ -137,17 +138,17 @@ contract InboundFailureIsolationTest is CrossChainTest {
 
         // Anyone can retry - no auth gate.
         vm.prank(address(0xDEAD));
-        nftBridgeBnb.retryCrosschainMint(receiveId, 1);
+        nftBridgeBnb.retryIntexCrosschainReceive(receiveId, 1);
 
         // Now minted.
         assertEq(intex.balanceOf(recipient, TOKEN_BAD), 75, "retried item must be minted");
 
         // Entry deleted.
-        (,,, bool existsAfter) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (,,, bool existsAfter) = nftBridgeBnb.getFailedCrosschainReceive(receiveId, 1);
         assertFalse(existsAfter, "entry deleted after retry");
     }
 
-    function test_BatchReceive_RetryCrosschainMintTwiceRevertsNoSuchFailedCrosschainMint() public {
+    function test_BatchReceive_RetryIntexCrosschainReceiveTwiceRevertsNoSuchFailedCrosschainReceive() public {
         address recipient = address(0xCAFE);
         bytes memory packet = _batchPacket(recipient);
         bytes32 receiveId = _receiveId(packet);
@@ -156,27 +157,29 @@ contract InboundFailureIsolationTest is CrossChainTest {
 
         // Fix upstream + retry once.
         intex.openSeries(CreateSeriesLib.params(SERIES_BAD_DAY, 10_000, 0));
-        nftBridgeBnb.retryCrosschainMint(receiveId, 1);
+        nftBridgeBnb.retryIntexCrosschainReceive(receiveId, 1);
 
         // Second retry must revert, because the slot has been deleted.
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainMint.selector, receiveId, 1));
-        nftBridgeBnb.retryCrosschainMint(receiveId, 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainReceive.selector, receiveId, 1)
+        );
+        nftBridgeBnb.retryIntexCrosschainReceive(receiveId, 1);
     }
 
-    function test_BatchReceive_ReclaimToSourceConsumesEntryAndSendsReverse() public {
+    function test_BatchReceive_SendBackToSourceConsumesEntryAndSendsReverse() public {
         address recipient = address(0xCAFE);
         bytes memory packet = _batchPacket(recipient);
         bytes32 receiveId = _receiveId(packet);
 
         _deliverInbound(packet);
 
-        (,,, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (,,, bool exists) = nftBridgeBnb.getFailedCrosschainReceive(receiveId, 1);
         assertTrue(exists, "bad item parked at idx 1");
 
         // Reclaim routes the stranded item back to its origin peer and consumes the entry.
-        nftBridgeBnb.reclaimToSource(receiveId, 1);
+        nftBridgeBnb.sendBackToSource(receiveId, 1);
 
-        (,,, bool existsAfter) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (,,, bool existsAfter) = nftBridgeBnb.getFailedCrosschainReceive(receiveId, 1);
         assertFalse(existsAfter, "entry consumed on reclaim");
 
         // The reverse packet is a one-item SEND_MULTI recorded on the bridge.
@@ -184,14 +187,18 @@ contract InboundFailureIsolationTest is CrossChainTest {
         assertEq(uint8(reverse[1]), IntexNFT1155RouterCodec.SEND_MULTI, "reverse is SEND_MULTI");
 
         // A second reclaim reverts - the entry is gone.
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainMint.selector, receiveId, 1));
-        nftBridgeBnb.reclaimToSource(receiveId, 1);
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainReceive.selector, receiveId, 1)
+        );
+        nftBridgeBnb.sendBackToSource(receiveId, 1);
     }
 
-    function test_BatchReceive_RetryCrosschainMintUnknownIdxRevertsNoSuchFailedCrosschainMint() public {
+    function test_BatchReceive_RetryIntexCrosschainReceiveUnknownIdxRevertsNoSuchFailedCrosschainReceive() public {
         bytes32 receiveId = bytes32(uint256(0xAAEE));
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainMint.selector, receiveId, 0));
-        nftBridgeBnb.retryCrosschainMint(receiveId, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainReceive.selector, receiveId, 0)
+        );
+        nftBridgeBnb.retryIntexCrosschainReceive(receiveId, 0);
     }
 
     // ---------------------------------------------------------------
@@ -210,7 +217,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         assertEq(intex.balanceOf(goodRecipient, TOKEN_GOOD), 50, "good recipient minted");
 
         // Bad recipient parked.
-        (address to,, uint256 amount, bool exists) = nftBridgeBnb.failedCrosschainMints(receiveId, 1);
+        (address to,, uint256 amount, bool exists) = nftBridgeBnb.getFailedCrosschainReceive(receiveId, 1);
         assertEq(to, badRecipient);
         assertEq(amount, 75);
         assertTrue(exists);
@@ -223,9 +230,9 @@ contract InboundFailureIsolationTest is CrossChainTest {
     // Self-call shim guard
     // ---------------------------------------------------------------
 
-    function test_CrosschainMintOne_ExternalCallerRevertsNotSelf() public {
+    function test_CrosschainReceiveOne_ExternalCallerRevertsNotSelf() public {
         vm.expectRevert(IIntexNFT1155Router.NotSelf.selector);
-        nftBridgeBnb.crosschainMintOne(address(0xCAFE), TOKEN_GOOD, 1);
+        nftBridgeBnb.crosschainReceiveOne(address(0xCAFE), TOKEN_GOOD, 1);
     }
 
     // ---------------------------------------------------------------
@@ -245,7 +252,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         amounts[0] = 100;
         bytes memory packet = IntexNFT1155RouterCodec.encodeBatch(
             IntexNFT1155RouterCodec.BatchPayload({
-                to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, units: amounts
+                to: bytes32(uint256(uint160(recipient))), intexIds: tokenIds, units: amounts
             })
         );
         _deliverInbound(packet);

@@ -204,7 +204,7 @@ contract GasBudgetTest is CrossChainTest {
 
         vm.prank(sender);
         src.multiSend(
-            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, tokenIds: ids, units: amounts})
+            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, intexIds: ids, units: amounts})
         );
 
         bytes memory payload = bridge.lastPayload();
@@ -250,7 +250,7 @@ contract GasBudgetTest is CrossChainTest {
 
         vm.prank(sender);
         src.multiSend(
-            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, tokenIds: ids, units: amounts})
+            MultiRecipientSendParam({dstChainId: OUTBE_CHAIN_ID, recipients: to, intexIds: ids, units: amounts})
         );
 
         bytes memory payload = bridge.lastPayload();

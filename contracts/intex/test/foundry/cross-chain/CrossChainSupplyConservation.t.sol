@@ -15,7 +15,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 ///     moves balances between chains but cannot inflate the global pool.
 ///   - SI-09: a `crosschainBurn` of `amount` on the source mints exactly `amount` on the
 ///     destination, even when the inbound crosschainMint fails. In that case the parked-amount
-///     `failedCrosschainMints[receiveId][idx].units` holds the in-flight units until retry. Thus
+///     `failedCrosschainReceives[receiveId][idx].units` holds the in-flight units until retry. Thus
 ///     the source-burned amount equals `destination-minted + destination-parked` at every step.
 contract CrossChainSupplyConservationTest is CrossChainTest {
     uint32 private constant A_CHAIN_ID = 1;
@@ -89,7 +89,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
     function test_ParkBranch_ConservesAcrossCrosschainBurnAndPark() public {
         // Pick a fresh series that exists on A but not on B: the inbound crosschainMint reverts
         // NonexistentToken and the transfer parks on B. Tokens are burned on A but not yet
-        // minted on B - the missing amount lives in failedCrosschainMints.
+        // minted on B - the missing amount lives in failedCrosschainReceives.
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
         uint256 parkTokenId = uint256(keccak256(abi.encodePacked(parkSeries)));
@@ -106,7 +106,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         assertEq(tokenB.totalSupply(parkTokenId), 0, "B not minted (series missing)");
 
         // Park entry holds the in-flight amount, so the global accounting still adds up.
-        (,, uint256 parkedAmount, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
+        (,, uint256 parkedAmount, bool exists) = adapterB.getFailedCrosschainReceive(receiveId, 0);
         assertTrue(exists, "park entry present");
         assertEq(parkedAmount, bridged, "park amount == bridged");
 
@@ -116,17 +116,17 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         // Fix the destination cause and retry - parked moves into B.totalSupply with no
         // change to the global sum.
         tokenB.openSeries(CreateSeriesLib.params(parkDay, ISSUED_UNITS, 0));
-        adapterB.retryCrosschainMint(receiveId, 0);
+        adapterB.retryIntexCrosschainReceive(receiveId, 0);
 
         assertEq(tokenB.totalSupply(parkTokenId), bridged, "B.totalSupply == bridged after retry");
-        (,,, bool stillExists) = adapterB.failedCrosschainMints(receiveId, 0);
+        (,,, bool stillExists) = adapterB.getFailedCrosschainReceive(receiveId, 0);
         assertFalse(stillExists, "park entry cleared on retry");
 
         uint256 totalAfterRetry = tokenA.totalSupply(parkTokenId) + tokenB.totalSupply(parkTokenId);
         assertEq(totalAfterRetry, minted, "SI-09: sum preserved after retry");
     }
 
-    function test_ReclaimToSource_ReMintsHolderOnOriginAndConservesSupply() public {
+    function test_SendBackToSource_ReMintsHolderOnOriginAndConservesSupply() public {
         // A series that exists on A but not B: bridging A->B parks on B (crosschainMint reverts).
         uint32 parkDay = 20260601;
         bytes14 parkSeries = "20260601-USD-U";
@@ -138,16 +138,16 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
 
         bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, parkTokenId, minted);
 
-        (,, uint256 parkedAmount, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
+        (,, uint256 parkedAmount, bool exists) = adapterB.getFailedCrosschainReceive(receiveId, 0);
         assertTrue(exists, "parked on B");
         assertEq(parkedAmount, minted, "park holds the in-flight units");
         assertEq(tokenA.totalSupply(parkTokenId), 0, "A burned the bridged units");
 
         // Retry can never clear it while B lacks the series. Reclaim to the origin is the only
         // exit.
-        adapterB.reclaimToSource(receiveId, 0);
+        adapterB.sendBackToSource(receiveId, 0);
 
-        (,,, bool stillExists) = adapterB.failedCrosschainMints(receiveId, 0);
+        (,,, bool stillExists) = adapterB.getFailedCrosschainReceive(receiveId, 0);
         assertFalse(stillExists, "entry consumed on reclaim");
 
         // Deliver the reverse SEND_MULTI on A -> owner re-minted, global supply conserved end-to-end.
@@ -157,23 +157,25 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         assertEq(tokenA.balanceOf(user, parkTokenId), minted, "owner whole on origin");
 
         // A second reclaim reverts - the entry is gone.
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainMint.selector, receiveId, 0));
-        adapterB.reclaimToSource(receiveId, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainReceive.selector, receiveId, 0)
+        );
+        adapterB.sendBackToSource(receiveId, 0);
     }
 
-    function test_LateReclaimParksOnTheCalledOriginAndConservesSupply() public {
+    function test_LateSendBackParksOnTheCalledOriginAndConservesSupply() public {
         uint32 day = 20260602;
         bytes14 series = "20260602-USD-U";
         uint256 id = uint256(keccak256(abi.encodePacked(series)));
         tokenA.openSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
         tokenA.issueIntex(user, 100, series);
         bytes32 receiveId = _send(adapterA, adapterB, A_CHAIN_ID, user, id, 60);
-        (,, uint256 parked, bool exists) = adapterB.failedCrosschainMints(receiveId, 0);
+        (,, uint256 parked, bool exists) = adapterB.getFailedCrosschainReceive(receiveId, 0);
         assertTrue(exists, "parked on B");
         assertEq(tokenA.totalSupply(id) + tokenB.totalSupply(id) + parked, 100);
 
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.NonexistentToken.selector, id));
-        adapterB.retryCrosschainMint(receiveId, 0);
+        adapterB.retryIntexCrosschainReceive(receiveId, 0);
 
         tokenB.openSeries(CreateSeriesLib.params(day, ISSUED_UNITS, 60));
         uint32 calledAt = uint32(block.timestamp);
@@ -182,17 +184,17 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint32 closeAt = calledAt + 60 + tokenB.getIntexSeries(series).callTrigger.transitMargin;
         vm.warp(uint256(closeAt) + 1);
         vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155.BridgeAfterDeadline.selector, id, closeAt));
-        adapterB.retryCrosschainMint(receiveId, 0);
+        adapterB.retryIntexCrosschainReceive(receiveId, 0);
 
         // Past the transit close the Called origin refuses the reclaim's mint, so it parks on A.
-        adapterB.reclaimToSource(receiveId, 0);
+        adapterB.sendBackToSource(receiveId, 0);
         bytes memory reclaim = bridge.lastPayload();
         bytes32 reclaimId = keccak256(abi.encode(_interop(B_CHAIN_ID, address(adapterB)), reclaim));
         _deliver(B_CHAIN_ID, address(adapterB), address(adapterA), reclaim);
-        (,,, exists) = adapterB.failedCrosschainMints(receiveId, 0);
+        (,,, exists) = adapterB.getFailedCrosschainReceive(receiveId, 0);
         assertFalse(exists, "entry consumed on reclaim");
         uint256 parkedOnA;
-        (,, parkedOnA, exists) = adapterA.failedCrosschainMints(reclaimId, 0);
+        (,, parkedOnA, exists) = adapterA.getFailedCrosschainReceive(reclaimId, 0);
         assertTrue(exists, "late reclaim parks on A");
         assertEq(parkedOnA, 60);
         assertEq(tokenA.totalSupply(id), 40, "A regains no supply past the transit close");
@@ -200,8 +202,10 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         assertEq(tokenB.totalSupply(id), 0);
         assertEq(tokenA.totalSupply(id) + tokenB.totalSupply(id) + parkedOnA, 100);
 
-        vm.expectRevert(abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainMint.selector, receiveId, 0));
-        adapterB.reclaimToSource(receiveId, 0);
+        vm.expectRevert(
+            abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainReceive.selector, receiveId, 0)
+        );
+        adapterB.sendBackToSource(receiveId, 0);
     }
 
     /// A hop inside the call window carries the units but never the clock. `calledAt` and the
@@ -251,7 +255,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         uint256[] memory amounts = new uint256[](1);
         amounts[0] = 60;
         BatchSendParam memory back = BatchSendParam({
-            dstChainId: A_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenIds: tokenIds, units: amounts
+            dstChainId: A_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexIds: tokenIds, units: amounts
         });
         uint256 fee = adapterB.quoteBatchSend(back);
         vm.prank(user);
@@ -291,7 +295,7 @@ contract CrossChainSupplyConservationTest is CrossChainTest {
         amounts[0] = amount;
 
         BatchSendParam memory params = BatchSendParam({
-            dstChainId: dstChainId, to: bytes32(uint256(uint160(recipient))), tokenIds: tokenIds, units: amounts
+            dstChainId: dstChainId, to: bytes32(uint256(uint160(recipient))), intexIds: tokenIds, units: amounts
         });
 
         uint256 fee = from.quoteBatchSend(params);

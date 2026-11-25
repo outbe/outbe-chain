@@ -39,7 +39,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
     }
 
     function _param(address to, uint256 amount) internal view returns (SendParam memory) {
-        return SendParam({dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(to))), tokenId: tokenId, units: amount});
+        return SendParam({dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(to))), intexId: tokenId, units: amount});
     }
 
     function test_ABridgeHopToAnotherAddressPasses() public {
@@ -59,7 +59,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
 
         vm.prank(owner);
         nftBridge.multiSend(
-            MultiRecipientSendParam({dstChainId: DST_CHAIN_ID, recipients: to, tokenIds: ids, units: amounts})
+            MultiRecipientSendParam({dstChainId: DST_CHAIN_ID, recipients: to, intexIds: ids, units: amounts})
         );
         assertEq(intex.balanceOf(owner, tokenId), 9);
     }
@@ -89,7 +89,7 @@ contract CalledSeriesTransfersTest is CrossChainTest {
         vm.prank(owner);
         nftBridge.send(
             SendParam({
-                dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(stranger))), tokenId: openTokenId, units: 2
+                dstChainId: DST_CHAIN_ID, to: bytes32(uint256(uint160(stranger))), intexId: openTokenId, units: 2
             })
         );
 

@@ -77,7 +77,7 @@ contract IntexNFT1155RouterCodecTest is Test {
         amounts[1] = 7;
 
         IntexNFT1155RouterCodec.BatchPayload memory p =
-            IntexNFT1155RouterCodec.BatchPayload({to: _bytes32(address(0xA11CE)), tokenIds: tokenIds, units: amounts});
+            IntexNFT1155RouterCodec.BatchPayload({to: _bytes32(address(0xA11CE)), intexIds: tokenIds, units: amounts});
 
         bytes memory encoded = IntexNFT1155RouterCodec.encodeBatch(p);
 
@@ -87,9 +87,9 @@ contract IntexNFT1155RouterCodecTest is Test {
 
         IntexNFT1155RouterCodec.BatchPayload memory decoded = harness.decodeBatch(encoded);
         assertEq(decoded.to, p.to, "to round-trips");
-        assertEq(decoded.tokenIds.length, 2, "tokenIds length");
-        assertEq(decoded.tokenIds[0], tokenIds[0], "tokenId 0");
-        assertEq(decoded.tokenIds[1], tokenIds[1], "tokenId 1");
+        assertEq(decoded.intexIds.length, 2, "tokenIds length");
+        assertEq(decoded.intexIds[0], tokenIds[0], "tokenId 0");
+        assertEq(decoded.intexIds[1], tokenIds[1], "tokenId 1");
         assertEq(decoded.units[0], amounts[0], "amount 0");
         assertEq(decoded.units[1], amounts[1], "amount 1");
     }
@@ -106,7 +106,7 @@ contract IntexNFT1155RouterCodecTest is Test {
         amounts[1] = 4;
 
         IntexNFT1155RouterCodec.MultiPayload memory p =
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, tokenIds: tokenIds, units: amounts});
+            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: tokenIds, units: amounts});
 
         bytes memory encoded = IntexNFT1155RouterCodec.encodeMulti(p);
         assertEq(uint8(encoded[0]), IntexNFT1155RouterCodec.BODY_VERSION_V1, "version byte V1");
@@ -116,7 +116,7 @@ contract IntexNFT1155RouterCodecTest is Test {
         assertEq(decoded.recipients.length, 2, "recipients length");
         assertEq(decoded.recipients[0], recipients[0], "recipient 0");
         assertEq(decoded.recipients[1], recipients[1], "recipient 1");
-        assertEq(decoded.tokenIds[0], tokenIds[0], "tokenId 0");
+        assertEq(decoded.intexIds[0], tokenIds[0], "tokenId 0");
         assertEq(decoded.units[1], amounts[1], "amount 1");
     }
 
@@ -140,7 +140,7 @@ contract IntexNFT1155RouterCodecTest is Test {
         IntexNFT1155RouterCodec.BatchPayload memory p = _batchOfSize(IntexNFT1155RouterCodec.MAX_BATCH_SIZE);
         IntexNFT1155RouterCodec.BatchPayload memory decoded =
             harness.decodeBatch(IntexNFT1155RouterCodec.encodeBatch(p));
-        assertEq(decoded.tokenIds.length, IntexNFT1155RouterCodec.MAX_BATCH_SIZE, "exactly MAX_BATCH_SIZE decodes");
+        assertEq(decoded.intexIds.length, IntexNFT1155RouterCodec.MAX_BATCH_SIZE, "exactly MAX_BATCH_SIZE decodes");
     }
 
     function test_DecodeBatch_OverCap_RevertsBatchTooLarge() public {
@@ -169,7 +169,7 @@ contract IntexNFT1155RouterCodecTest is Test {
 
     function test_DecodeBatch_MismatchedArrays_RevertsArrayLengthMismatch() public {
         IntexNFT1155RouterCodec.BatchPayload memory p = _emptyBatch();
-        p.tokenIds = new uint256[](2);
+        p.intexIds = new uint256[](2);
         p.units = new uint256[](1);
         bytes memory encoded = abi.encodePacked(
             IntexNFT1155RouterCodec.BODY_VERSION_V1, IntexNFT1155RouterCodec.SEND_BATCH, abi.encode(p)
@@ -232,7 +232,7 @@ contract IntexNFT1155RouterCodecTest is Test {
     function test_DecodeMulti_MismatchTokenIds_RevertsArrayLengthMismatch() public {
         IntexNFT1155RouterCodec.MultiPayload memory p = _emptyMulti();
         p.recipients = new bytes32[](2);
-        p.tokenIds = new uint256[](1);
+        p.intexIds = new uint256[](1);
         p.units = new uint256[](2);
         bytes memory encoded = abi.encodePacked(
             IntexNFT1155RouterCodec.BODY_VERSION_V1, IntexNFT1155RouterCodec.SEND_MULTI, abi.encode(p)
@@ -244,7 +244,7 @@ contract IntexNFT1155RouterCodecTest is Test {
     function test_DecodeMulti_MismatchAmounts_RevertsArrayLengthMismatch() public {
         IntexNFT1155RouterCodec.MultiPayload memory p = _emptyMulti();
         p.recipients = new bytes32[](2);
-        p.tokenIds = new uint256[](2);
+        p.intexIds = new uint256[](2);
         p.units = new uint256[](1);
         bytes memory encoded = abi.encodePacked(
             IntexNFT1155RouterCodec.BODY_VERSION_V1, IntexNFT1155RouterCodec.SEND_MULTI, abi.encode(p)
@@ -257,32 +257,32 @@ contract IntexNFT1155RouterCodecTest is Test {
 
     function _emptyBatch() internal pure returns (IntexNFT1155RouterCodec.BatchPayload memory) {
         return
-            IntexNFT1155RouterCodec.BatchPayload({to: bytes32(0), tokenIds: new uint256[](0), units: new uint256[](0)});
+            IntexNFT1155RouterCodec.BatchPayload({to: bytes32(0), intexIds: new uint256[](0), units: new uint256[](0)});
     }
 
     function _emptyMulti() internal pure returns (IntexNFT1155RouterCodec.MultiPayload memory) {
         return IntexNFT1155RouterCodec.MultiPayload({
-            recipients: new bytes32[](0), tokenIds: new uint256[](0), units: new uint256[](0)
+            recipients: new bytes32[](0), intexIds: new uint256[](0), units: new uint256[](0)
         });
     }
 
     function _batchOfSize(uint256 n) internal pure returns (IntexNFT1155RouterCodec.BatchPayload memory p) {
         p = IntexNFT1155RouterCodec.BatchPayload({
-            to: _bytes32(address(0xA11CE)), tokenIds: new uint256[](n), units: new uint256[](n)
+            to: _bytes32(address(0xA11CE)), intexIds: new uint256[](n), units: new uint256[](n)
         });
         for (uint256 i = 0; i < n; i++) {
-            p.tokenIds[i] = i + 1;
+            p.intexIds[i] = i + 1;
             p.units[i] = (i + 1) * 10;
         }
     }
 
     function _multiOfSize(uint256 n) internal pure returns (IntexNFT1155RouterCodec.MultiPayload memory p) {
         p = IntexNFT1155RouterCodec.MultiPayload({
-            recipients: new bytes32[](n), tokenIds: new uint256[](n), units: new uint256[](n)
+            recipients: new bytes32[](n), intexIds: new uint256[](n), units: new uint256[](n)
         });
         for (uint256 i = 0; i < n; i++) {
             p.recipients[i] = _bytes32(address(uint160(i + 1)));
-            p.tokenIds[i] = i + 1;
+            p.intexIds[i] = i + 1;
             p.units[i] = (i + 1) * 10;
         }
     }

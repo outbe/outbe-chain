@@ -5,7 +5,7 @@ pragma solidity 0.8.30;
 struct BatchSendParam {
     uint32 dstChainId;
     bytes32 to;
-    uint256[] tokenIds;
+    uint256[] intexIds;
     uint256[] units;
 }
 
@@ -14,7 +14,7 @@ struct BatchSendParam {
 struct MultiRecipientSendParam {
     uint32 dstChainId;
     bytes32[] recipients;
-    uint256[] tokenIds;
+    uint256[] intexIds;
     uint256[] units;
 }
 
@@ -22,7 +22,7 @@ struct MultiRecipientSendParam {
 struct SendParam {
     uint32 dstChainId;
     bytes32 to;
-    uint256 tokenId;
+    uint256 intexId;
     uint256 units;
 }
 
@@ -86,7 +86,7 @@ interface IIntexNFT1155Router {
     );
 
     /// @notice Emitted when one item of a received message cannot be minted, and the bridge keeps
-    ///         it for {retryCrosschainMint} or {reclaimToSource}.
+    ///         it for {retryIntexCrosschainReceive} or {sendBackToSource}.
     /// @param idx Position of the item in the message.
     /// @param errorData Raw revert data of `token.crosschainMint`.
     event IntexCrosschainReceiveFailed(
@@ -139,15 +139,15 @@ interface IIntexNFT1155Router {
     ///      `InvalidPayloadLength`, `ArrayLengthMismatch`) are owned by `IntexNFT1155RouterCodec`.
     /// @param got The unsupported message-type tag received.
     error UnknownMsgType(uint8 got);
-    /// @notice An external caller invoked `crosschainMintOne`. Only `address(this)` is allowed.
-    /// @dev `crosschainMintOne` is a self-call shim. The inbound handler uses it to isolate
+    /// @notice An external caller invoked `crosschainReceiveOne`. Only `address(this)` is allowed.
+    /// @dev `crosschainReceiveOne` is a self-call shim. The inbound handler uses it to isolate
     ///      per-item `token.crosschainMint` reverts. Exposing it externally would let anyone mint
     ///      tokens for arbitrary recipients.
     error NotSelf();
     /// @notice No failed-crosschainMint entry exists for `(receiveId, idx)`.
     /// @param receiveId Inbound bridge message id being retried.
     /// @param idx Position in the original batch with no parked failed-crosschainMint slot.
-    error NoSuchFailedCrosschainMint(bytes32 receiveId, uint256 idx);
+    error NoSuchFailedCrosschainReceive(bytes32 receiveId, uint256 idx);
 
     /// @notice Register (or clear) the matching adapter on `chainId` as an ERC-7930 interoperable
     ///         address.

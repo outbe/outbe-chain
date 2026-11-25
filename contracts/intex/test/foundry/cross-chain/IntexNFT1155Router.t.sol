@@ -125,7 +125,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         BatchSendParam memory p = BatchSendParam({
             dstChainId: DST_CHAIN_ID,
             to: bytes32(uint256(uint160(recipientA))),
-            tokenIds: _u256(TID_A, TID_B),
+            intexIds: _u256(TID_A, TID_B),
             units: _u256(5, 7)
         });
         vm.deal(address(srcBatch), 1 ether);
@@ -142,7 +142,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         recipients[0] = bytes32(uint256(uint160(recipientA)));
         recipients[1] = bytes32(uint256(uint160(recipientB)));
         MultiRecipientSendParam memory p = MultiRecipientSendParam({
-            dstChainId: DST_CHAIN_ID, recipients: recipients, tokenIds: _u256(TID_A, TID_B), units: _u256(5, 7)
+            dstChainId: DST_CHAIN_ID, recipients: recipients, intexIds: _u256(TID_A, TID_B), units: _u256(5, 7)
         });
         vm.deal(address(srcBatch), 1 ether);
 
@@ -157,7 +157,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         BatchSendParam memory p = BatchSendParam({
             dstChainId: DST_CHAIN_ID,
             to: bytes32(uint256(uint160(recipientA))),
-            tokenIds: _u256(TID_A, TID_B),
+            intexIds: _u256(TID_A, TID_B),
             units: _u256(5, 7)
         });
 
@@ -180,7 +180,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         BatchSendParam memory p = BatchSendParam({
             dstChainId: DST_CHAIN_ID,
             to: bytes32(uint256(uint160(recipientA))),
-            tokenIds: new uint256[](0),
+            intexIds: new uint256[](0),
             units: new uint256[](0)
         });
         vm.expectRevert(IIntexNFT1155Router.EmptyBatch.selector);
@@ -192,7 +192,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         BatchSendParam memory p = BatchSendParam({
             dstChainId: DST_CHAIN_ID,
             to: bytes32(uint256(uint160(recipientA))),
-            tokenIds: _u256(TID_A, TID_B),
+            intexIds: _u256(TID_A, TID_B),
             units: _u256One(5)
         });
         vm.expectRevert(IIntexNFT1155Router.ArrayLengthMismatch.selector);
@@ -205,7 +205,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         // InvalidReceiver inside `_buildBatchMsg`. The whole tx reverts, so the crosschainBurn
         // rolls back too.
         BatchSendParam memory p =
-            BatchSendParam({dstChainId: DST_CHAIN_ID, to: bytes32(0), tokenIds: _u256One(TID_A), units: _u256One(1)});
+            BatchSendParam({dstChainId: DST_CHAIN_ID, to: bytes32(0), intexIds: _u256One(TID_A), units: _u256One(1)});
         vm.expectRevert(IIntexNFT1155Router.InvalidReceiver.selector);
         vm.prank(sender);
         srcBatch.batchSend{value: FEE}(p);
@@ -219,7 +219,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         BatchSendParam memory p = BatchSendParam({
             dstChainId: DST_CHAIN_ID,
             to: bytes32(uint256(uint160(recipientA))),
-            tokenIds: _u256One(TID_A),
+            intexIds: _u256One(TID_A),
             units: _u256One(0)
         });
         uint256 fee = srcBatch.quoteBatchSend(p);
@@ -236,7 +236,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         BatchSendParam memory p = BatchSendParam({
             dstChainId: DST_CHAIN_ID,
             to: bytes32(uint256(uint160(recipientA))),
-            tokenIds: _u256(TID_A, TID_B),
+            intexIds: _u256(TID_A, TID_B),
             units: _u256(5, 7)
         });
         uint256 fee = srcBatch.quoteBatchSend(p);
@@ -250,7 +250,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         BatchSendParam memory p = BatchSendParam({
             dstChainId: DST_CHAIN_ID,
             to: bytes32(uint256(uint160(recipientA))),
-            tokenIds: _u256One(TID_A),
+            intexIds: _u256One(TID_A),
             units: _u256One(1)
         });
         uint256 fee = srcBatch.quoteBatchSend(p);
@@ -264,7 +264,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         BatchSendParam memory p = BatchSendParam({
             dstChainId: DST_CHAIN_ID,
             to: bytes32(uint256(uint160(recipientA))),
-            tokenIds: _u256One(TID_A),
+            intexIds: _u256One(TID_A),
             units: _u256One(1)
         });
         uint256 fee = srcBatch.quoteBatchSend(p);
@@ -289,7 +289,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         recipients[1] = bytes32(uint256(uint160(recipientB)));
 
         MultiRecipientSendParam memory p = MultiRecipientSendParam({
-            dstChainId: DST_CHAIN_ID, recipients: recipients, tokenIds: _u256(TID_A, TID_B), units: _u256(3, 4)
+            dstChainId: DST_CHAIN_ID, recipients: recipients, intexIds: _u256(TID_A, TID_B), units: _u256(3, 4)
         });
 
         uint256 fee = srcBatch.quoteMultiSend(p);
@@ -307,7 +307,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
 
     function test_MultiSend_RevertsEmptyBatch() public {
         MultiRecipientSendParam memory p = MultiRecipientSendParam({
-            dstChainId: DST_CHAIN_ID, recipients: new bytes32[](0), tokenIds: new uint256[](0), units: new uint256[](0)
+            dstChainId: DST_CHAIN_ID, recipients: new bytes32[](0), intexIds: new uint256[](0), units: new uint256[](0)
         });
         vm.expectRevert(IIntexNFT1155Router.EmptyBatch.selector);
         vm.prank(sender);
@@ -322,7 +322,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         MultiRecipientSendParam memory p = MultiRecipientSendParam({
             dstChainId: DST_CHAIN_ID,
             recipients: recipients,
-            tokenIds: _u256One(TID_A), // length 1 vs 2 recipients
+            intexIds: _u256One(TID_A), // length 1 vs 2 recipients
             units: _u256(3, 4)
         });
         vm.expectRevert(IIntexNFT1155Router.ArrayLengthMismatch.selector);
@@ -335,7 +335,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         recipients[0] = bytes32(0);
 
         MultiRecipientSendParam memory p = MultiRecipientSendParam({
-            dstChainId: DST_CHAIN_ID, recipients: recipients, tokenIds: _u256One(TID_A), units: _u256One(1)
+            dstChainId: DST_CHAIN_ID, recipients: recipients, intexIds: _u256One(TID_A), units: _u256One(1)
         });
         vm.expectRevert(IIntexNFT1155Router.InvalidReceiver.selector);
         vm.prank(sender);
@@ -346,7 +346,7 @@ contract IntexNFT1155RouterTest is CrossChainTest {
         bytes32[] memory recipients = new bytes32[](1);
         recipients[0] = bytes32(uint256(uint160(recipientA)));
         MultiRecipientSendParam memory p = MultiRecipientSendParam({
-            dstChainId: DST_CHAIN_ID, recipients: recipients, tokenIds: _u256One(TID_A), units: _u256One(1)
+            dstChainId: DST_CHAIN_ID, recipients: recipients, intexIds: _u256One(TID_A), units: _u256One(1)
         });
         uint256 fee = srcBatch.quoteMultiSend(p);
         assertEq(fee, FEE, "native fee quoted");

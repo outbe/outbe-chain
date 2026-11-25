@@ -60,7 +60,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
     function test_send_rejectsMalformedRecipientBeforeBurn() public {
         _expectMalformed();
         vm.prank(user);
-        adapter.send{value: FEE}(SendParam({dstChainId: B_CHAIN_ID, to: DIRTY, tokenId: TOKEN_ID, units: AMOUNT}));
+        adapter.send{value: FEE}(SendParam({dstChainId: B_CHAIN_ID, to: DIRTY, intexId: TOKEN_ID, units: AMOUNT}));
         assertEq(token.balanceOf(user, TOKEN_ID), AMOUNT, "no burn on malformed recipient");
     }
 
@@ -68,7 +68,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
         _expectMalformed();
         vm.prank(user);
         adapter.batchSend{value: FEE}(
-            BatchSendParam({dstChainId: B_CHAIN_ID, to: DIRTY, tokenIds: _ids(), units: _amounts()})
+            BatchSendParam({dstChainId: B_CHAIN_ID, to: DIRTY, intexIds: _ids(), units: _amounts()})
         );
         assertEq(token.balanceOf(user, TOKEN_ID), AMOUNT, "no burn on malformed recipient");
     }
@@ -80,7 +80,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
         vm.prank(user);
         adapter.multiSend{value: FEE}(
             MultiRecipientSendParam({
-                dstChainId: B_CHAIN_ID, recipients: recipients, tokenIds: _ids(), units: _amounts()
+                dstChainId: B_CHAIN_ID, recipients: recipients, intexIds: _ids(), units: _amounts()
             })
         );
         assertEq(token.balanceOf(user, TOKEN_ID), AMOUNT, "no burn on malformed recipient");
@@ -89,7 +89,7 @@ contract BridgeRecipientValidationTest is CrossChainTest {
     /// @notice A canonical recipient still passes the guard and burns on the source.
     function test_send_canonicalRecipientStillSends() public {
         SendParam memory p =
-            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, units: AMOUNT});
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), intexId: TOKEN_ID, units: AMOUNT});
         uint256 fee = adapter.quoteSend(p);
         vm.prank(user);
         adapter.send{value: fee}(p);
