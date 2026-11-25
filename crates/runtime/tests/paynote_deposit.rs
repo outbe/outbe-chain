@@ -1,13 +1,13 @@
 //! EVM-level integration test for `IPayNote.deposit`.
 //!
 //! The paynote crate's own tests cover only `deposit`'s pre-mutation guards,
-//! because its body moves real ERC20 balances that an in-memory storage
-//! provider cannot model. This test drives the precompile through the real EVM.
-//! The ERC20 counterparty is the stateful `FactorySettlement` fixture.
+//! because its body moves real ERC20 balances. An in-memory storage provider
+//! cannot model these balances. This test runs the precompile through the real
+//! EVM. The stateful `FactorySettlement` fixture is the ERC20 counterparty.
 //!
 //! What this pins that unit tests cannot:
-//!   * the deposited tokens land in the pool at `PAYNOTE_ADDRESS`, not in the
-//!     vault. A spend routes them into the vault later.
+//!   * the deposited tokens go into the pool at `PAYNOTE_ADDRESS`, not into
+//!     the vault. A spend routes them into the vault later.
 //!   * the asset must have a registered reserve vault.
 //!   * the pool must receive exactly the deposited amount.
 //!   * a revert anywhere in that chain rolls the tree back atomically.
@@ -54,8 +54,9 @@ fn expected_commitment(asset: Address, amount: U256) -> B256 {
     field_to_b256(&note_commitment(CHAIN_ID, serial(), asset, amount).unwrap()).unwrap()
 }
 
-/// `ALICE` holds and has approved both assets to the pool. `ASSET` has a vault
-/// and PayNote is a `PayNoteDeposit` source, as a live deployment would have.
+/// `ALICE` has both assets and approves the pool for both. `ASSET` has a
+/// vault. PayNote is a `PayNoteDeposit` source. A live deployment has the same
+/// setup.
 fn world() -> EvmWorld {
     let mut db = CacheDB::new(EmptyDB::default());
     let code = runtime_code(include_str!(
@@ -110,8 +111,8 @@ fn balances(world: &mut EvmWorld, asset: Address) -> [U256; 3] {
         .map(|account| world.view(ALICE, asset, IFixture::balanceOfCall { account }))
 }
 
-/// A revert anywhere in the deposit must roll it back. It must not leave a
-/// commitment behind for value the pool never received.
+/// A revert at any step of the deposit must roll back the full deposit. No
+/// commitment must stay for value that the pool did not receive.
 fn assert_pristine(world: &mut EvmWorld) {
     assert_eq!(leaf_count(world), 0);
     assert_eq!(
@@ -141,7 +142,7 @@ fn deposit_holds_full_width_amount_in_the_pool_and_appends_the_derived_commitmen
         alloy_primitives::hex::encode(&out.returndata),
     );
 
-    // The pool keeps custody. Only a spend routes value into the vault.
+    // The pool keeps the tokens. Only a spend routes value into the vault.
     assert_eq!(
         balances(&mut world, ASSET),
         [alice_before - amount, pool_before + amount, vault_before]

@@ -1,7 +1,7 @@
 //! PayNote — shielded ERC20 note pool (`0x…1019`).
 //!
 //! A **deposit** does these steps:
-//! 1. The pool pulls the ERC20 from the caller and holds it.
+//! 1. The pool pulls the ERC20 from the caller and keeps it.
 //! 2. It appends a note commitment to a depth-32 incremental Merkle tree.
 //!
 //! The runtime derives the commitment from the transfer it actually performed.
@@ -20,8 +20,8 @@
 //! statement. The caller recomputes it. The crate exposes spending only as
 //! [`api::consume`], an in-process Rust entry point for other precompile
 //! modules. That entry point is not on the Solidity ABI. It routes the spent
-//! amount from the pool into the asset's reserve vault through VaultRouter and
-//! returns the validated claim for the caller to settle.
+//! amount from the pool through VaultRouter into the reserve vault of the
+//! asset. Then it returns the validated claim. The caller settles the claim.
 //!
 //! The hash/tree formulas mirror the frozen noir circuit's `paynote.nr`. The
 //! runtime operates over persistent EVM storage.

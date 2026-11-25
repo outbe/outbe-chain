@@ -166,8 +166,9 @@ pub fn merge_proof(chain_id: u64, tree: &PayNoteTree, inputs: &[&Note], output: 
 /// sequence of deposits would have produced. Bypasses `deposit` because its
 /// ERC20/VaultRouter sub-calls cannot be served in-memory.
 ///
-/// Also stubs the sub-calls a spend makes: the ERC20 `approve` succeeds with
-/// empty returndata and VaultRouter `depositFrom` returns zero shares.
+/// It also stubs the sub-calls of a spend. The ERC20 `approve` call succeeds
+/// and returns empty data. The VaultRouter `depositFrom` call returns zero
+/// shares.
 pub fn seed_pool(provider: &mut HashMapStorageProvider, chain_id: u64, leaves: &[Field]) {
     provider.enable_sub_call_stub();
     provider.stub_sub_call_at(VAULT_ROUTER_ADDRESS, U256::ZERO.to_be_bytes::<32>().into());

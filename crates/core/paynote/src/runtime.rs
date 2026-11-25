@@ -204,8 +204,8 @@ pub(crate) fn append(
 }
 
 /// `deposit(asset, amount, noteSn)` — pull the ERC20 into the pool and append
-/// the derived note commitment. The tokens stay in the pool until a spend
-/// routes them into the asset's reserve vault.
+/// the derived note commitment. The tokens stay in the pool until a spend. The
+/// spend routes them into the reserve vault of the asset.
 pub(crate) fn deposit(
     storage: StorageHandle<'_>,
     caller: Address,
@@ -233,8 +233,8 @@ pub(crate) fn deposit(
     if leaf_count >= PAYNOTE_TREE_CAPACITY {
         return Err(PayNoteError::TreeFull.into());
     }
-    // A spend routes into the asset's vault. Refuse a note that no spend could
-    // settle.
+    // A spend routes the tokens into the vault of the asset. If the asset has
+    // no vault, no spend can settle the note. Thus, reject the deposit.
     if outbe_vaultrouter::api::asset_vaults_count(&storage, asset)?.is_zero() {
         return Err(PayNoteError::AssetVaultMissing.into());
     }
@@ -259,8 +259,8 @@ pub(crate) fn deposit(
     // Initialization and the first append are atomic, so an active tree never
     // observes `leaf_count == 0`.
     storage.with_checkpoint(|| {
-        // The caller approves the pool. The commitment is built from `amount`,
-        // so the pool must receive exactly that much. This also rejects a
+        // The caller must approve the pool. The commitment uses `amount`. Thus,
+        // the pool must receive exactly `amount`. This check also rejects a
         // fee-on-transfer token and a reentrant nested deposit.
         token::pull_exact(&storage, asset, caller, amount)?;
 
@@ -289,9 +289,10 @@ pub(crate) fn deposit(
     })
 }
 
-/// `consume(proof)` — verify a frozen `outbe.paynote@1.3.0` spend proof,
-/// nullify the note, append any change commitment, route `spend_amount` of the
-/// asset from the pool into its reserve vault, and return the validated claim.
+/// `consume(proof)` — verify a frozen `outbe.paynote@1.3.0` spend proof and
+/// return the validated claim. The function nullifies the note and appends the
+/// change commitment, if there is one. Then it routes `spend_amount` of the
+/// asset from the pool into the reserve vault of the asset.
 ///
 /// The proof is the single source of truth for the statement it carries.
 /// `context` is an opaque public word. The caller recomputes the settlement
@@ -377,8 +378,9 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         }
     }
 
-    // One rollback unit: nullifier, optional change append, vault routing,
-    // events. State is booked before the token sub-calls.
+    // These steps roll back as one unit: the nullifier, the optional change
+    // append, the vault routing and the events. The state changes occur before
+    // the token sub-calls.
     storage.with_checkpoint(|| {
         paynote.spent_nullifiers.write(&nullifier_word, true)?;
         let change_receipt = if partial {
@@ -388,8 +390,8 @@ pub(crate) fn consume(storage: &StorageHandle<'_>, proof: &[u8]) -> Result<PayNo
         } else {
             None
         };
-        // The router pulls exactly `spend_amount` from the pool, so the
-        // allowance is used up. The change value stays in the pool.
+        // The router pulls exactly `spend_amount` from the pool. Thus, no
+        // allowance stays after the call. The change value stays in the pool.
         token::approve(
             storage,
             claim.asset,

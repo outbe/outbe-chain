@@ -1,4 +1,4 @@
-//! ERC20 sub-calls for the pool's custody. From the token's perspective
+//! ERC20 sub-calls for the tokens that the pool keeps. For the token,
 //! `msg.sender` is the pool at `PAYNOTE_ADDRESS`.
 
 use alloy_primitives::{Address, U256};
@@ -10,9 +10,10 @@ use outbe_system_common::addresses::PAYNOTE_ADDRESS;
 use crate::errors::PayNoteError;
 use crate::sol_ext::IERC20;
 
-/// Pull exactly `amount` of `asset` from `from` into the pool. A note is built
-/// from `amount`, so anything else (a fee-on-transfer token, a reentrant
-/// nested deposit) would leave it unbacked.
+/// Pull exactly `amount` of `asset` from `from` into the pool. The note
+/// commitment uses `amount`. If the pool receives a different value, the note
+/// does not have full backing. A fee-on-transfer token or a reentrant nested
+/// deposit can cause this.
 pub(crate) fn pull_exact(
     storage: &StorageHandle<'_>,
     asset: Address,
@@ -42,7 +43,8 @@ pub(crate) fn approve(
     call(storage, asset, IERC20::approveCall { spender, amount })
 }
 
-/// Empty returndata (no-return tokens) or `true` counts as success.
+/// The call succeeds if it returns empty data or `true`. Some tokens return no
+/// data.
 fn call<C: SolCall>(storage: &StorageHandle<'_>, asset: Address, call: C) -> Result<()> {
     let ret = storage.call(asset, U256::ZERO, call.abi_encode().into())?;
     if !ret.is_empty() && ret.as_ref() != U256::ONE.to_be_bytes::<32>() {

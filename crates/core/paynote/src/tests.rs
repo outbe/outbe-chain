@@ -7,11 +7,12 @@
 //! the in-circuit ones and proving would fail. That failure is what pins the
 //! mirror.
 //!
-//! `deposit` performs VaultRouter and ERC20 sub-calls whose token state the
-//! in-memory storage provider cannot model. Thus these tests cover only its
-//! pre-mutation guards. The full custody path lives in the EVM-level
-//! `crates/runtime/tests/paynote_deposit.rs`. Spends run against stubbed
-//! sub-calls (see [`seed_pool`]), which pins the calls they issue.
+//! `deposit` makes VaultRouter and ERC20 sub-calls. The in-memory storage
+//! provider cannot model the token state of these calls. Thus, these tests
+//! cover only the pre-mutation guards of `deposit`. The EVM-level test
+//! `crates/runtime/tests/paynote_deposit.rs` covers the full custody path.
+//! Spends use stubbed sub-calls (see [`seed_pool`]). Thus, these tests pin the
+//! calls that a spend makes.
 
 mod merge;
 
@@ -396,8 +397,8 @@ fn a_spend_routes_exactly_the_spent_amount_into_the_vault() {
     seed_pool(&mut provider, CHAIN_ID, tree.leaves());
     provider.enter(|storage| runtime::consume(&storage, &proof).unwrap());
 
-    // The pool approves the router for the spent amount only, and the router
-    // pulls it from the pool. The 60 of change stays in the pool.
+    // The pool approves the router for only the spent amount. The router pulls
+    // that amount from the pool. The change of 60 stays in the pool.
     let calls: Vec<_> = provider
         .sub_call_inputs()
         .iter()

@@ -52,8 +52,8 @@ pub fn reference_currency_assets(
         .map_err(|_| VaultRouterError::RouterCallUndecodable("referenceCurrencyAssets").into())
 }
 
-/// `assetVaultsCount`: how many reserve vaults are registered for `asset`.
-/// Read-only, so this uses a staticcall.
+/// `assetVaultsCount`: the number of reserve vaults registered for `asset`.
+/// The call does not change state. Thus, it uses a staticcall.
 pub fn asset_vaults_count(storage: &StorageHandle<'_>, asset: Address) -> Result<U256> {
     let ret = storage.staticcall(
         VAULT_ROUTER_ADDRESS,
