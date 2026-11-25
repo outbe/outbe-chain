@@ -8168,7 +8168,7 @@ dependencies = [
  "hex",
  "k256 0.13.4",
  "outbe-core-common",
- "outbe-fidelity-math",
+ "outbe-fidelitymath",
  "outbe-macros",
  "outbe-primitives",
  "outbe-system-common",
@@ -8181,7 +8181,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-fidelity-math"
+name = "outbe-fidelitymath"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
