@@ -31,17 +31,24 @@ become healthy.
 `prepare` refuses to reinstall over an active validator target; `start` can be repeated for the
 same artifacts.
 
-`network.yaml` keeps SSH endpoints separate from node advertise/RPC addresses, supports four or
-more founders, prefunded accounts and explicit genesis overrides. `genesis.base` may reference a
-custom pre-TEE genesis JSON; `build` verifies its chain ID, copies it into the immutable artifacts,
-then applies the fresh founder set and network policy. Private consensus topologies must opt into
-`topology.use_local_defaults`; it is never inferred from the network name.
+`network.yaml` v2 declares bare-metal `machines` and assigns every founder a private VM address.
+`build` groups founders by machine and assigns deterministic port offsets, so one public IP can
+serve several VM validators. The first VM uses the standard Reth, consensus, Radicle, Hyperlane,
+and optional RPC ports; later VMs increment them. Resolved endpoints and neutral DNAT mappings are
+recorded in `network-manifest.json` and printed for the separately managed host firewall.
 
-Each founder needs a public checkpoint URL in `hyperlane_public_url`; TCP port `9000` must be
-reachable by Hyperlane relayers. The private health endpoint stays on `127.0.0.1:9003`. Shared
-origin-chain RPC and reorg settings live in the top-level `hyperlane` section. Devnet uses the
-self-contained deterministic feeder profile; testnet and mainnet keep the externally configured
-market profile.
+`prepare`, `start`, and `status` connect to each private VM through its bare-metal machine without
+requiring local SSH aliases. The operator's default SSH identity is used unless `--ssh-key` is
+provided. Host fingerprints are kept in `$XDG_STATE_HOME/outbe-up` (or
+`~/.local/state/outbe-up`), not inside the immutable artifact directory. Bare-metal SSH must permit
+forwarding to the configured VM port 22.
+
+`genesis.base` may reference a custom pre-TEE genesis JSON; `build` verifies its chain ID, copies it
+into the immutable artifacts, then applies the fresh founder set and network policy. Private
+consensus topologies must opt into `topology.use_local_defaults`; it is never inferred from the
+network name. Hyperlane public URLs are derived from the machine IP and resolved public port; its
+private health endpoint stays on `127.0.0.1:9003`. Devnet uses the self-contained deterministic
+feeder profile; testnet and mainnet keep the externally configured market profile.
 
 The built-in founding workflow uses `no-attestation-dev` on devnet and testnet only. It cannot
 bootstrap mainnet, which requires attestation. TEE keys remain in the node process; this

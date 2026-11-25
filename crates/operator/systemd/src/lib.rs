@@ -55,11 +55,11 @@ pub fn joining_units(outbe_up: &str) -> Vec<UnitFile> {
                 "ExecStart=/opt/outbe-chain/outbe-radicle \\",
                 "  --home /opt/outbe-chain/keys/radicle \\",
                 "  --control-socket /opt/outbe-chain/keys/radicle/node/outbe-control.sock \\",
-                "  --listen 0.0.0.0:8776 \\",
+                "  --listen 0.0.0.0:${OUTBE_RADICLE_PORT} \\",
                 "  --status-listen 127.0.0.1:8876 \\",
                 "  --max-validators 128 \\",
                 "  --external-inbound-reserve 16 \\",
-                "  --advertise ${OUTBE_EXTERNAL_IP}:8776",
+                "  --advertise ${OUTBE_EXTERNAL_IP}:${OUTBE_RADICLE_PORT}",
             ]),
             sandbox_directives: lines(&["ReadWritePaths=/opt/outbe-chain/keys"]),
             limit_nofile: 65_535,
@@ -215,11 +215,11 @@ fn joining_validator_spec(outbe_up: &str) -> ServiceSpec {
             "  --http.port 8545 \\",
             "  --http.api eth,net,web3,outbe \\",
             "  --authrpc.port 8551 \\",
-            "  --port 30303 \\",
-            "  --discovery.port 30303 \\",
+            "  --port ${OUTBE_RETH_P2P_PORT} \\",
+            "  --discovery.port ${OUTBE_RETH_P2P_PORT} \\",
             "  --nat extip:${OUTBE_EXTERNAL_IP} \\",
             "  --discovery.v5.addr 0.0.0.0 \\",
-            "  --discovery.v5.port 31303 \\",
+            "  --discovery.v5.port ${OUTBE_RETH_DISCOVERY_PORT} \\",
             "  --p2p-secret-key /opt/outbe-chain/keys/reth-p2p-secret.hex \\",
             "  --bootnodes ${OUTBE_BOOTNODES} \\",
             "  --metrics 127.0.0.1:9101 \\",
@@ -229,7 +229,8 @@ fn joining_validator_spec(outbe_up: &str) -> ServiceSpec {
             "  --consensus.signing-key /opt/outbe-chain/keys/signing-key.hex \\",
             "  --validator.evm-key /opt/outbe-chain/keys/evm-key.hex \\",
             "  --consensus.keys-dir /opt/outbe-chain/keys \\",
-            "  --consensus.listen-addr 0.0.0.0:30400 \\",
+            "  --consensus.listen-addr 0.0.0.0:${OUTBE_CONSENSUS_PORT} \\",
+            "  --tee-bootstrap-timeout-secs 300 \\",
             "  --consensus.peers ${OUTBE_CONSENSUS_PEERS} \\",
             "  $OUTBE_CONSENSUS_EXTRA_ARGS \\",
             "  --upstream ${OUTBE_CERTIFIED_RPC} \\",
@@ -396,6 +397,11 @@ mod tests {
             .contains("ExecStartPre=/usr/local/bin/outbe-up internal wait-validator-dependencies"));
         assert!(validator.contains("--validator"));
         assert!(validator.contains("radicle.control-socket"));
+        assert!(validator.contains("${OUTBE_RETH_P2P_PORT}"));
+        assert!(validator.contains("${OUTBE_RETH_DISCOVERY_PORT}"));
+        assert!(validator.contains("${OUTBE_CONSENSUS_PORT}"));
+        assert!(validator.contains("--tee-bootstrap-timeout-secs 300"));
+        assert!(unit(&joining, "outbe-radicle.service").contains("${OUTBE_RADICLE_PORT}"));
         assert!(unit(&founding, "outbe-validator.service")
             .contains("/opt/outbe-chain/validator-2/run-node.sh"));
 
