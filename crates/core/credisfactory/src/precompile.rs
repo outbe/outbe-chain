@@ -52,6 +52,7 @@ pub fn dispatch(
                         storage.clone(),
                         sender,
                         c.credisId,
+                        c.asset,
                         c.amountCapMinor,
                     )?;
                     Ok(ICredisFactory::settleCredisReturn {

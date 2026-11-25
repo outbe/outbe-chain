@@ -43,12 +43,30 @@ interface ICredis {
     event CredisForfeited(
         uint256 indexed credisId,
         address indexed owner,
-        address indexed cca,
-        address asset,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint256 forfeitedAmountMinor
+        address indexed cca,
+        address asset,
+        uint256 unsettledAmountMinor,
+        uint256 burnedGratisMinor
     );
+
+    /// @notice A settlement of a Credis. `amountMinor` is the whole payment, `feeMinor` its fee
+    ///         part, in the units of the Credis asset. `unpledgedGratisMinor` is free again in
+    ///         the main account. `asset` is the asset paid in.
+    event CredisSettled(
+        uint256 indexed credisId,
+        address indexed owner,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        address asset,
+        uint256 amountMinor,
+        uint256 feeMinor,
+        uint256 unpledgedGratisMinor
+    );
+
+    /// @notice The full settlement deleted the Credis.
+    event CredisBurned(uint256 indexed credisId, address indexed owner);
 
     /// @notice Lifecycle state of a Credis, mirroring the Rust `CredisState`.
     ///         `Issued -> (Called) -> Settled | Forfeited`. A Credis is settleable

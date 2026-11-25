@@ -460,6 +460,7 @@ fn assert_payment_rollback(
         U256::ZERO,
         ICredisFactory::settleCredisCall {
             credisId: observation.credis_id,
+            asset: Address::ZERO,
             amountCapMinor: U256::from(1_000_000)
         }
     );
@@ -534,6 +535,7 @@ fn settle_successful_issuance(
         U256::ZERO,
         ICredisFactory::settleCredisCall {
             credisId: credis_id,
+            asset: Address::ZERO,
             amountCapMinor: U256::from(1_000_000)
         }
     );

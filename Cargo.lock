@@ -7874,7 +7874,6 @@ dependencies = [
  "outbe-credis",
  "outbe-fidelity",
  "outbe-gratis",
- "outbe-gratisfactory",
  "outbe-oracle",
  "outbe-primitives",
  "outbe-promislimit",

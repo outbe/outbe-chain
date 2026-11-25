@@ -44,6 +44,10 @@ pub enum CredisFactoryError {
     NotCredisOwner,
     #[error("Credis cannot be forfeited in its issue block")]
     CannotForfeitInIssueBlock,
+    #[error("Credis cannot be fully settled in its issue block")]
+    CannotFullySettleInIssueBlock,
+    #[error("settlement asset not allowed")]
+    SettlementAssetNotAllowed,
     #[error("payoff overflow")]
     PayoffOverflow,
     #[error("asset decimals undecodable")]
@@ -94,6 +98,12 @@ impl From<CredisFactoryError> for PrecompileError {
             }
             CredisFactoryError::NothingOutstanding => revert_with(I::NothingOutstanding {}),
             CredisFactoryError::NotCredisOwner => revert_with(I::NotCredisOwner {}),
+            CredisFactoryError::CannotFullySettleInIssueBlock => {
+                revert_with(I::CannotFullySettleInIssueBlock {})
+            }
+            CredisFactoryError::SettlementAssetNotAllowed => {
+                revert_with(I::SettlementAssetNotAllowed {})
+            }
             CredisFactoryError::CannotForfeitInIssueBlock => {
                 revert_with(I::CannotForfeitInIssueBlock {})
             }

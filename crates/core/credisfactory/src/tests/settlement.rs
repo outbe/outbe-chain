@@ -18,6 +18,12 @@ fn record(storage: &StorageHandle<'_>, id: U256) -> outbe_credis::Credis {
     CredisContract::new(storage.clone()).get_credis(id).unwrap()
 }
 
+fn deleted(storage: &StorageHandle<'_>, id: U256) -> bool {
+    !CredisContract::new(storage.clone())
+        .credis_exists(id)
+        .unwrap()
+}
+
 /// What a reader of `id` sees now.
 fn shown(storage: &StorageHandle<'_>, id: U256) -> outbe_credis::Outcome {
     let now = storage.now_secs().unwrap();
@@ -82,12 +88,7 @@ fn settlement_releases_collateral_proportionally_and_closes_without_dust() {
     });
     settle_principal(&mut provider, alice(), id, half);
     StorageHandle::enter(&mut provider, |storage| {
-        let p = record(&storage, id);
-        assert_eq!(
-            outbe_credis::runtime::effective_state(&p, now_of(&storage)).unwrap(),
-            CredisState::Settled
-        );
-        assert!(p.outstanding_gratis_minor.is_zero());
+        assert!(deleted(&storage, id));
         assert_eq!(view_balance(&storage, alice()), pledge_cost());
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
     });
@@ -127,7 +128,7 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
             let payment = U256::from(payment);
             assert_eq!(
                 paying(&mut provider, id, payment, |storage| {
-                    runtime::settle_credis(storage, bob(), id, payment).unwrap()
+                    runtime::settle_credis(storage, bob(), id, Address::ZERO, payment).unwrap()
                 }),
                 (payment, U256::ZERO)
             );
@@ -178,16 +179,9 @@ fn rounded_returns_can_exhaust_collateral_before_repayment_or_forfeiture() {
         } else {
             let rest = U256::from(3u64);
             paying(&mut provider, id, rest, |storage| {
-                runtime::settle_credis(storage, bob(), id, rest).unwrap()
+                runtime::settle_credis(storage, bob(), id, Address::ZERO, rest).unwrap()
             });
-            StorageHandle::enter(&mut provider, |storage| {
-                let p = record(&storage, id);
-                assert_eq!(
-                    outbe_credis::runtime::effective_state(&p, now_of(&storage)).unwrap(),
-                    CredisState::Settled
-                );
-                assert!(shown(&storage, id).outstanding_amount_minor.is_zero());
-            });
+            StorageHandle::enter(&mut provider, |storage| assert!(deleted(&storage, id)));
         }
         StorageHandle::enter(&mut provider, |storage| {
             assert_eq!(view_balance(&storage, alice()), collateral);
@@ -229,6 +223,7 @@ fn the_settle_abi_returns_the_principal_and_interest_split() {
     let decoded = paying(&mut provider, id, interest + principal, |storage| {
         let data = ICredisFactory::settleCredisCall {
             credisId: id,
+            asset: Address::ZERO,
             amountCapMinor: interest + principal,
         }
         .abi_encode();
@@ -269,16 +264,9 @@ fn quote_settlement_is_the_payoff_that_closes_the_credis() {
     });
 
     paying(&mut provider, id, payoff, |storage| {
-        runtime::settle_credis(storage, alice(), id, payoff).unwrap()
+        runtime::settle_credis(storage, alice(), id, Address::ZERO, payoff).unwrap()
     });
-    StorageHandle::enter(&mut provider, |storage| {
-        assert_eq!(
-            outbe_credis::runtime::effective_state(&record(&storage, id), now_of(&storage))
-                .unwrap(),
-            CredisState::Settled
-        );
-        assert!(quote(&storage).is_zero());
-    });
+    StorageHandle::enter(&mut provider, |storage| assert!(deleted(&storage, id)));
     teardown();
 }
 
@@ -320,7 +308,7 @@ fn settle_takes_only_what_the_credis_needs() {
     });
     let offered = pledge_stables() * U256::from(1_000u64);
     let (amount_paid, fee_paid) = paying(&mut provider, id, offered, |storage| {
-        runtime::settle_credis(storage, alice(), id, offered).unwrap()
+        runtime::settle_credis(storage, alice(), id, Address::ZERO, offered).unwrap()
     });
     assert_eq!(amount_paid, pledge_stables());
     assert_eq!(fee_paid, interest);
@@ -475,6 +463,7 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
         let out = paying(&mut provider, id, amount, |storage| {
             let data = ICredisFactory::settleCredisCall {
                 credisId: id,
+                asset: Address::ZERO,
                 amountCapMinor: amount,
             }
             .abi_encode();
@@ -496,6 +485,7 @@ fn repayment_deadline_is_enforced_before_cleanup_through_the_abi() {
         advance_to(&storage, deadline + CLOSED_DAY_DELAY);
         let data = ICredisFactory::settleCredisCall {
             credisId: id,
+            asset: Address::ZERO,
             amountCapMinor: U256::MAX,
         }
         .abi_encode();
@@ -708,9 +698,14 @@ fn the_owner_forfeits_an_issued_credis_burning_its_main_accounts_pledge() {
         );
 
         assert!(forfeit_through_abi(&storage, bob(), credis_id, U256::ZERO).is_err());
-        assert!(
-            runtime::settle_credis(storage.clone(), bob(), credis_id, U256::from(1u64)).is_err()
-        );
+        assert!(runtime::settle_credis(
+            storage.clone(),
+            bob(),
+            credis_id,
+            Address::ZERO,
+            U256::from(1u64)
+        )
+        .is_err());
         assert_eq!(unallocated(&storage), pledge_cost());
     });
     teardown();

@@ -29,6 +29,8 @@ interface ICredisFactory {
     error CredisChangedDuringPayment();
     error ForfeitureCollateralMismatch();
     error CannotForfeitInIssueBlock();
+    error CannotFullySettleInIssueBlock();
+    error SettlementAssetNotAllowed();
 
     event CredisSeriesOpened(
         bytes14 indexed seriesId,
@@ -59,19 +61,6 @@ interface ICredisFactory {
         uint32 forfeitedCount,
         uint256 forfeitedAmountMinor
     );
-    /// @notice One successful settlement. `settledFeeMinor` and `settledAmountMinor`
-    ///         are this payment's fee and amount deltas, and `amountMinor` is their
-    ///         sum. A reverted settlement emits nothing and leaves the Credis unchanged.
-    event CredisSettled(
-        uint256 indexed credisId,
-        address indexed owner,
-        address asset,
-        uint16 issuanceCurrency,
-        uint16 referenceCurrency,
-        uint256 amountMinor,
-        uint256 settledFeeMinor,
-        uint256 settledAmountMinor
-    );
 
     /// Issue the Credis of the reservation with every term it fixed, the call terms included.
     /// The caller must be its Credis owner and must have approved the amount of the asset to
@@ -82,12 +71,16 @@ interface ICredisFactory {
         external
         returns (uint256 credisId, uint256 amountMinor);
     /// Any payer may repay. Freed collateral goes back to the free Gratis of the main account.
-    /// The payer approves the VaultRouter for the repayment first.
-    function settleCredis(uint256 credisId, uint256 amountCapMinor)
+    /// The payer approves the VaultRouter for the repayment first. `asset` zero pays in the
+    /// asset of the Credis. Another registered asset of the issuance currency is allowed only
+    /// while the asset of the Credis has no vault, at par. `amountCapMinor` is in the units of
+    /// the Credis asset. The full settlement deletes the Credis and fails in its issue block.
+    function settleCredis(uint256 credisId, address asset, uint256 amountCapMinor)
         external
         returns (uint256 settledAmountMinor, uint256 settledFeeMinor);
     /// What paying the Credis off now takes: its outstanding amount plus the fee
-    /// accrued since the last settlement. Zero once it is Settled or Forfeited. Fee
+    /// accrued since the last settlement. Zero once it is Forfeited by its deadline; a full
+    /// settlement or a forfeit deletes the Credis, and then the read reverts. Fee
     /// grows by whole days, so a payment landing a day later needs that day more;
     /// `settleCredis` takes only what is owed, so paying more is safe.
     function quoteSettlement(uint256 credisId) external view returns (uint256 payoffMinor);

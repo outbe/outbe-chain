@@ -634,6 +634,11 @@ pub fn paying<R>(
     let owed = StorageHandle::enter(provider, |storage| {
         runtime::quote_settlement(&storage, credis_id).unwrap()
     });
+    // A full settlement is not allowed in the issue block, so a payment comes a block later.
+    let block = StorageHandle::enter(provider, |storage| storage.block_number().unwrap());
+    if block == BLOCK_NUMBER {
+        provider.set_block_number(BLOCK_NUMBER + 1);
+    }
     let calls = provider.sub_call_inputs().len();
     let out = StorageHandle::enter(provider, pay);
     let pull = provider.sub_call_inputs()[calls..]
@@ -670,7 +675,7 @@ pub fn settle_principal(
 ) -> (U256, U256) {
     let amount = StorageHandle::enter(provider, |storage| fee_plus(&storage, credis_id, principal));
     paying(provider, credis_id, amount, |storage| {
-        runtime::settle_credis(storage, payer, credis_id, amount).unwrap()
+        runtime::settle_credis(storage, payer, credis_id, Address::ZERO, amount).unwrap()
     })
 }
 

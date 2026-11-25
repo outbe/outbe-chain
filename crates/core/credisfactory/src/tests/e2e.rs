@@ -1,7 +1,7 @@
 //! Issue by the cash account plus atomic repayment/forfeiture tests.
 use crate::{errors::CredisFactoryError, runtime, tests::*};
 use alloy_primitives::{Address, U256};
-use outbe_credis::{CredisContract, CredisState};
+use outbe_credis::CredisContract;
 use outbe_primitives::storage::StorageHandle;
 use outbe_promislimit::PromisLimitContract;
 use outbe_vaultrouter::VaultRouterContract;
@@ -124,7 +124,7 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
         (credis_id, fidelity, interest)
     });
     paying(&mut provider, credis_id, interest, |storage| {
-        runtime::settle_credis(storage, bob(), credis_id, interest).unwrap()
+        runtime::settle_credis(storage, bob(), credis_id, Address::ZERO, interest).unwrap()
     });
     StorageHandle::enter(&mut provider, |storage| {
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
@@ -165,13 +165,9 @@ fn repayments_return_collateral_to_the_source_and_interest_only_returns_nothing(
             pledge_cost()
         );
         assert_eq!(fidelity_of(&storage, alice()), fidelity);
-        let settled = CredisContract::new(storage.clone())
-            .get_credis(credis_id)
-            .unwrap();
-        assert_eq!(
-            outbe_credis::runtime::effective_state(&settled, now_of(&storage)).unwrap(),
-            CredisState::Settled
-        );
+        assert!(!CredisContract::new(storage.clone())
+            .credis_exists(credis_id)
+            .unwrap());
     });
     teardown();
 }
@@ -190,8 +186,11 @@ fn a_payment_the_router_refuses_rolls_back_credis_and_pledged_collateral() {
         let liquid = outbe_gratis::api::balance_ct(storage, alice()).unwrap();
         (id, record, pledged, liquid)
     });
+    provider.set_block_number(BLOCK_NUMBER + 1);
     StorageHandle::enter(&mut provider, |storage| {
-        let err = runtime::settle_credis(storage.clone(), bob(), id, pledge_stables()).unwrap_err();
+        let err =
+            runtime::settle_credis(storage.clone(), bob(), id, Address::ZERO, pledge_stables())
+                .unwrap_err();
         assert_eq!(
             err.to_string(),
             outbe_vaultrouter::test_support::unanswered_deposit_from().to_string()
@@ -403,14 +402,21 @@ fn credis_series_lifecycle_emits_open_issue_settle_call_close_and_forfeit_events
     });
 
     let settled: Vec<_> = provider
-        .get_events(CREDIS_FACTORY_ADDRESS)
+        .get_events(CREDIS_ADDRESS)
         .iter()
-        .filter_map(|log| ICredisFactory::CredisSettled::decode_log_data(log).ok())
+        .filter_map(|log| ICredis::CredisSettled::decode_log_data(log).ok())
         .collect();
     assert_eq!(settled.len(), 2);
     assert!(settled
         .iter()
-        .all(|ev| ev.credisId == id_settled && ev.settledAmountMinor == half));
+        .all(|ev| ev.credisId == id_settled && ev.amountMinor - ev.feeMinor == half));
+    assert_eq!(
+        settled
+            .iter()
+            .map(|ev| ev.unpledgedGratisMinor)
+            .sum::<U256>(),
+        pledge_cost()
+    );
 
     let series_called: Vec<_> = provider
         .get_events(CREDIS_FACTORY_ADDRESS)
@@ -448,28 +454,25 @@ fn credis_series_lifecycle_emits_open_issue_settle_call_close_and_forfeit_events
         vec![id_owner_forfeited, id_swept]
     );
 
-    // R5c: after the series has 0 live members (all settled or forfeited), getCredis(id_settled)
-    // still returns the settled record with preserved CallTerms.
+    // The full settlement deleted the settled Credis and emitted its burn.
     StorageHandle::enter(&mut provider, |storage| {
-        let credis = CredisContract::new(storage);
-        let settled_record = credis.get_credis(id_settled).unwrap();
-        let group = credis.group_of(&settled_record).unwrap();
-        assert_eq!(credis.group_member_count(group).unwrap(), 0);
-        assert!(settled_record.is_settled());
-        assert_eq!(settled_record.series_id, series_id);
-        assert_eq!(settled_record.entry_price_minor, oracle_rate());
-        assert!(settled_record.call_price_minor > oracle_rate());
-        assert!(settled_record.call_window_seconds > 0);
-        assert!(settled_record.call_threshold_seconds > 0);
-        assert!(settled_record.call_notice_period_seconds > 0);
+        assert!(!CredisContract::new(storage)
+            .credis_exists(id_settled)
+            .unwrap());
     });
+    let burned: Vec<_> = provider
+        .get_events(CREDIS_ADDRESS)
+        .iter()
+        .filter_map(|log| ICredis::CredisBurned::decode_log_data(log).ok())
+        .collect();
+    assert_eq!(burned.len(), 1);
+    assert_eq!(burned[0].credisId, id_settled);
 
     teardown();
 }
 
 #[test]
-fn reservation_snapshots_call_profile_terms_and_called_settled_record_retains_call_terms_after_series_close(
-) {
+fn reservation_snapshots_call_profile_terms_and_a_called_full_settlement_deletes_the_credis() {
     use outbe_credis::constants::CALL_LOOKBACK_DAYS;
     let mut provider = env();
     let (id_called_settled, series_id, prod_terms) =
@@ -509,33 +512,24 @@ fn reservation_snapshots_call_profile_terms_and_called_settled_record_retains_ca
             (id, record.series_id, prod_terms)
         });
 
-    let payoff = StorageHandle::enter(&mut provider, |storage| {
-        runtime::quote_settlement(&storage, id_called_settled).unwrap()
+    let (payoff, group) = StorageHandle::enter(&mut provider, |storage| {
+        let credis = CredisContract::new(storage.clone());
+        let record = credis.get_credis(id_called_settled).unwrap();
+        assert_eq!(record.series_id, series_id);
+        assert!(record.called_at > 0);
+        assert_eq!(record.call_window_seconds, prod_terms.call_window_seconds);
+        (
+            runtime::quote_settlement(&storage, id_called_settled).unwrap(),
+            credis.group_of(&record).unwrap(),
+        )
     });
     settle_principal(&mut provider, alice(), id_called_settled, payoff);
 
     StorageHandle::enter(&mut provider, |storage| {
         let credis = CredisContract::new(storage);
-        let record = credis.get_credis(id_called_settled).unwrap();
-        assert_eq!(record.series_id, series_id);
-        let group = credis.group_of(&record).unwrap();
+        assert!(!credis.credis_exists(id_called_settled).unwrap());
         assert_eq!(credis.group_member_count(group).unwrap(), 0);
-        assert!(record.is_settled());
-        assert!(record.called_at > 0);
-        let deadline = outbe_credis::runtime::settlement_deadline(&record);
-        assert_eq!(
-            deadline,
-            credis.group_settlement_deadline.read(&group).unwrap()
-        );
-        assert_eq!(record.call_window_seconds, prod_terms.call_window_seconds);
-        assert_eq!(
-            record.call_threshold_seconds,
-            prod_terms.call_threshold_seconds
-        );
-        assert_eq!(
-            record.call_notice_period_seconds,
-            prod_terms.call_notice_period_seconds
-        );
+        assert_ne!(credis.group_settlement_deadline.read(&group).unwrap(), 0);
     });
 
     teardown();
@@ -569,23 +563,27 @@ fn a_called_series_settled_before_its_deadline_closes_with_zero_forfeit() {
         (id, series_id)
     });
 
-    let payoff = StorageHandle::enter(&mut provider, |storage| {
-        runtime::quote_settlement(&storage, id).unwrap()
+    let (payoff, group, deadline) = StorageHandle::enter(&mut provider, |storage| {
+        let credis = CredisContract::new(storage.clone());
+        let record = credis.get_credis(id).unwrap();
+        (
+            runtime::quote_settlement(&storage, id).unwrap(),
+            credis.group_of(&record).unwrap(),
+            outbe_credis::settlement_deadline(&record),
+        )
     });
     settle_principal(&mut provider, alice(), id, payoff);
 
     StorageHandle::enter(&mut provider, |storage| {
         let credis = CredisContract::new(storage.clone());
-        let record = credis.get_credis(id).unwrap();
-        assert!(record.is_settled());
-        let group = credis.group_of(&record).unwrap();
+        assert!(!credis.credis_exists(id).unwrap());
         assert_eq!(credis.group_member_count(group).unwrap(), 0);
         assert_ne!(
             credis.called_group_slot.read(&group).unwrap(),
             0,
             "a called series stays queued until its deadline"
         );
-        let past = outbe_credis::settlement_deadline(&record) + CLOSED_DAY_DELAY;
+        let past = deadline + CLOSED_DAY_DELAY;
         advance_to(&storage, past);
         finalize_through(&storage, past);
         daily_pass(&storage, past).unwrap();

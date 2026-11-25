@@ -133,7 +133,7 @@ pub fn issue_credis(
 }
 
 /// What paying `credis_id` off now takes: outstanding amount plus accrued fee.
-/// Zero once it is Settled or Forfeited.
+/// Zero once it is Forfeited by its deadline. A deleted Credis has no record to quote.
 pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<U256> {
     let record = CredisContract::new(storage.clone()).get_credis(credis_id)?;
     let now = storage.now_secs()?;
@@ -147,11 +147,12 @@ pub fn quote_settlement(storage: &StorageHandle<'_>, credis_id: U256) -> Result<
 }
 
 /// Collect payment first, then free the settled share of the Gratis in the main account.
-/// No Fidelity mutation.
+/// A zero `asset` pays in the asset of the Credis. No Fidelity mutation.
 pub fn settle_credis(
     storage: StorageHandle<'_>,
     caller: Address,
     credis_id: U256,
+    asset: Address,
     amount: U256,
 ) -> Result<(U256, U256)> {
     storage.with_checkpoint(|| {
@@ -160,23 +161,35 @@ pub fn settle_credis(
         }
         let mut credis = CredisContract::new(storage.clone());
         let before = credis.get_credis(credis_id)?;
+        let paid_asset = if asset.is_zero() { before.asset } else { asset };
         let now = storage.now_secs()?;
-        let repayment = rules::settle(&mut credis, credis_id, amount, now)?;
-        let after = credis.get_credis(credis_id)?;
+        let repayment = rules::settle(&mut credis, credis_id, amount, now, paid_asset)?;
+        if repayment.closed && rules::in_issue_block(&credis, &before)? {
+            return Err(CredisFactoryError::CannotFullySettleInIssueBlock.into());
+        }
+        let after = if repayment.closed {
+            None
+        } else {
+            Some(credis.get_credis(credis_id)?)
+        };
+        let outstanding_after = after
+            .as_ref()
+            .map_or(U256::ZERO, |record| record.outstanding_gratis_minor);
         let released = before
             .outstanding_gratis_minor
-            .checked_sub(after.outstanding_gratis_minor)
+            .checked_sub(outstanding_after)
             .ok_or(CredisFactoryError::CollateralIncreased)?;
         if released != repayment.unpledged_gratis_minor {
             return Err(CredisFactoryError::CollateralReleaseMismatch.into());
         }
-        outbe_vaultrouter::settlement::collect(
-            &storage,
-            caller,
-            repayment.asset,
-            repayment.amount_minor,
-        )?;
-        if credis.get_credis(credis_id)? != after {
+        let payment = payment_in(&storage, &before, paid_asset, repayment.amount_minor)?;
+        outbe_vaultrouter::settlement::collect(&storage, caller, paid_asset, payment)?;
+        let now_record = if repayment.closed {
+            None
+        } else {
+            Some(credis.get_credis(credis_id)?)
+        };
+        if now_record != after || (repayment.closed && credis.credis_exists(credis_id)?) {
             return Err(CredisFactoryError::CredisChangedDuringPayment.into());
         }
         if !released.is_zero() {
@@ -184,6 +197,48 @@ pub fn settle_credis(
         }
         Ok((repayment.settled_amount_minor, repayment.settled_fee_minor))
     })
+}
+
+/// The payment of `amount_minor` (Credis asset units) in `paid_asset`. Another asset is
+/// allowed only while the Credis asset has no vault, and it pays at par in its own units.
+fn payment_in(
+    storage: &StorageHandle<'_>,
+    record: &outbe_credis::Credis,
+    paid_asset: Address,
+    amount_minor: U256,
+) -> Result<U256> {
+    if paid_asset == record.asset {
+        return Ok(amount_minor);
+    }
+    let router = outbe_vaultrouter::VaultRouterContract::new(storage.clone());
+    let allowed = router.first_vault(record.asset)?.is_none()
+        && router.first_vault(paid_asset)?.is_some()
+        && iso_code(storage, paid_asset)? == record.issuance_currency;
+    if !allowed {
+        return Err(CredisFactoryError::SettlementAssetNotAllowed.into());
+    }
+    outbe_core_common::settlement::floor_to_asset_units(
+        amount_minor,
+        U256::ONE,
+        decimals(storage, record.asset)?,
+        decimals(storage, paid_asset)?,
+    )
+    .map_err(|_| CredisFactoryError::SettlementAssetNotAllowed.into())
+}
+
+fn decimals(storage: &StorageHandle<'_>, asset: Address) -> Result<u8> {
+    let out = storage.staticcall(asset, IERC20::decimalsCall {}.abi_encode().into())?;
+    IERC20::decimalsCall::abi_decode_returns_validate(&out)
+        .map_err(|_| CredisFactoryError::AssetDecimalsUndecodable.into())
+}
+
+fn iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
+    let out = storage.staticcall(
+        asset,
+        IReferenceCurrency::isoCodeCall {}.abi_encode().into(),
+    )?;
+    IReferenceCurrency::isoCodeCall::abi_decode_returns_validate(&out)
+        .map_err(|_| CredisFactoryError::AssetCurrencyUndecodable.into())
 }
 
 /// Deletes a Credis of a forfeited group.

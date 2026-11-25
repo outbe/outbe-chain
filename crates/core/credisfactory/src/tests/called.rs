@@ -1081,7 +1081,7 @@ fn the_daily_pass_forfeits_without_the_daily_trigger() {
 #[test]
 fn settling_a_called_credis_in_full_leaves_the_queue() {
     let mut storage = env();
-    let (credis_id, outstanding) = StorageHandle::enter(&mut storage, |storage| {
+    let (credis_id, outstanding, group) = StorageHandle::enter(&mut storage, |storage| {
         bootstrap(&storage, pledge_cost());
         let credis_id = open(&storage);
         call_by_hand(&storage, &[credis_id], CREATED_AT);
@@ -1095,13 +1095,13 @@ fn settling_a_called_credis_in_full_leaves_the_queue() {
             .get_credis(credis_id)
             .unwrap()
             .outstanding_amount_minor;
-        (credis_id, outstanding)
+        (credis_id, outstanding, group_of(&storage, credis_id))
     });
     settle_principal(&mut storage, alice(), credis_id, outstanding);
     StorageHandle::enter(&mut storage, |storage| {
-        assert_eq!(state_of(&storage, credis_id), CredisState::Settled);
+        assert!(is_deleted(&storage, credis_id));
         assert_ne!(
-            queued_at(&storage, group_of(&storage, credis_id)),
+            queued_at(&storage, group),
             0,
             "a called series stays queued until its deadline"
         );
@@ -1739,7 +1739,7 @@ fn sub_series_that_was_not_called_does_not_forfeit() {
         assert_eq!(lapse(&storage, unsettled), 1);
         assert!(is_deleted(&storage, unsettled));
         let credis = CredisContract::new(storage.clone());
-        assert!(credis.get_credis(settled).unwrap().is_settled());
+        assert!(!credis.credis_exists(settled).unwrap());
         let record = credis.get_credis(uncalled).unwrap();
         assert_eq!(state_of(&storage, uncalled), CredisState::Issued);
         assert_eq!(record.called_at, 0);
