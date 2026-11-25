@@ -1,9 +1,11 @@
 //! Chain information commands.
 
 use alloy_primitives::U256;
+use alloy_sol_types::SolCall;
 use clap::Subcommand;
 use eyre::Result;
 
+use crate::abi::{self, IStaking, IValidatorSet};
 use crate::rpc::Rpc;
 
 #[derive(Subcommand)]
@@ -48,7 +50,7 @@ async fn status(client: &(impl Rpc + Sync)) -> Result<()> {
     println!("Block Number:   {}", ci.block);
     println!("Gas Price:      {} unit", ci.gas_price);
 
-    if let Ok(epoch_info) = client.outbe_get_epoch_info().await {
+    if let Ok(epoch_info) = fetch_epoch_status(client).await {
         print_epoch_status(&epoch_info);
     }
 
@@ -66,22 +68,65 @@ async fn status(client: &(impl Rpc + Sync)) -> Result<()> {
     Ok(())
 }
 
-fn print_epoch_status(epoch_info: &serde_json::Value) {
+struct EpochStatus {
+    epoch_number: U256,
+    epoch_start_timestamp: u64,
+    epoch_start_block: u64,
+    active_validator_count: u32,
+    total_staked: U256,
+}
+
+async fn call_contract<C: SolCall>(
+    client: &(impl Rpc + Sync),
+    to: alloy_primitives::Address,
+    call: C,
+) -> Result<C::Return> {
+    let result = client.eth_call(to, &call.abi_encode()).await?;
+    Ok(C::abi_decode_returns(&result)?)
+}
+
+async fn fetch_epoch_status(client: &(impl Rpc + Sync)) -> Result<EpochStatus> {
+    Ok(EpochStatus {
+        epoch_number: call_contract(
+            client,
+            abi::VALIDATOR_SET_ADDR,
+            IValidatorSet::getEpochNumberCall {},
+        )
+        .await?,
+        epoch_start_timestamp: call_contract(
+            client,
+            abi::VALIDATOR_SET_ADDR,
+            IValidatorSet::getEpochStartTimestampCall {},
+        )
+        .await?,
+        epoch_start_block: call_contract(
+            client,
+            abi::VALIDATOR_SET_ADDR,
+            IValidatorSet::getEpochStartBlockCall {},
+        )
+        .await?,
+        active_validator_count: call_contract(
+            client,
+            abi::VALIDATOR_SET_ADDR,
+            IValidatorSet::activeValidatorCountCall {},
+        )
+        .await?,
+        total_staked: call_contract(client, abi::STAKING_ADDR, IStaking::getTotalStakedCall {})
+            .await?,
+    })
+}
+
+fn print_epoch_status(epoch_info: &EpochStatus) {
     println!();
     println!("=== Epoch ===");
-    for (key, label) in [
-        ("epochNumber", "Epoch Number:  "),
-        ("epochStartTimestamp", "Epoch Start Time:"),
-        ("epochStartBlock", "Epoch Start Block:"),
-        ("activeValidatorCount", "Active Validators:"),
-    ] {
-        if let Some(val) = epoch_info.get(key).and_then(|v| v.as_u64()) {
-            println!("{label} {val}");
-        }
-    }
-    if let Some(s) = epoch_info.get("totalStaked").and_then(|v| v.as_str()) {
-        println!("Total Staked:   {s}");
-    }
+    println!("Epoch Number:   {}", epoch_info.epoch_number);
+    println!("Epoch Start Time: {}", epoch_info.epoch_start_timestamp);
+    println!("Epoch Start Block: {}", epoch_info.epoch_start_block);
+    println!("Active Validators: {}", epoch_info.active_validator_count);
+    println!(
+        "Total Staked:   {} COEN",
+        super::format_coen_amount(epoch_info.total_staked)
+    );
 }
 
 fn print_consensus_status(cs: &serde_json::Value, block_number: u64) {

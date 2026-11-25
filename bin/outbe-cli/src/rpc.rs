@@ -47,7 +47,6 @@ pub trait Rpc {
         raw_tx: &[u8],
     ) -> impl std::future::Future<Output = Result<String>> + Send;
     fn outbe_consensus_status(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
-    fn outbe_get_epoch_info(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn outbe_tee_renewal_schedule_v1(
         &self,
     ) -> impl std::future::Future<Output = Result<TeeRenewalScheduleV1>> + Send {
@@ -61,7 +60,6 @@ pub trait Rpc {
     fn eth_get_finalized_block(&self) -> impl std::future::Future<Output = Result<Value>> + Send {
         async { Err(RpcError::FinalizedBlockUnsupported.into()) }
     }
-    fn outbe_get_slash_config(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
 }
 
 const RPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -275,11 +273,6 @@ impl Rpc for RpcClient {
             .await
     }
 
-    async fn outbe_get_epoch_info(&self) -> Result<Value> {
-        self.call_rpc("outbe_getEpochInfo", serde_json::json!([]))
-            .await
-    }
-
     async fn outbe_tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
         serde_json::from_value(
             self.call_rpc("outbe_teeRenewalScheduleV1", serde_json::json!([]))
@@ -308,11 +301,6 @@ impl Rpc for RpcClient {
             serde_json::json!(["finalized", false]),
         )
         .await
-    }
-
-    async fn outbe_get_slash_config(&self) -> Result<Value> {
-        self.call_rpc("outbe_getSlashConfig", serde_json::json!([]))
-            .await
     }
 }
 
@@ -412,12 +400,10 @@ pub mod mock {
         /// Argument-sensitive responses take precedence over selector defaults.
         pub eth_call_overrides: std::collections::HashMap<(Address, Vec<u8>), Vec<u8>>,
         pub consensus_status: Result<Value>,
-        pub epoch_info: Result<Value>,
         pub latest_block: Result<Value>,
         pub finalized_block: Result<Value>,
         pub tee_renewal_schedule: Result<TeeRenewalScheduleV1>,
         pub block_by_number: Result<Value>,
-        pub slash_config: Result<Value>,
     }
 
     impl Default for MockRpc {
@@ -432,12 +418,10 @@ pub mod mock {
                 eth_call_map: None,
                 eth_call_overrides: std::collections::HashMap::new(),
                 consensus_status: Err(RpcError::NotMocked.into()),
-                epoch_info: Err(RpcError::NotMocked.into()),
                 latest_block: Err(RpcError::NotMocked.into()),
                 finalized_block: Err(RpcError::NotMocked.into()),
                 tee_renewal_schedule: Err(RpcError::TeeRenewalScheduleUnsupported.into()),
                 block_by_number: Err(RpcError::NotMocked.into()),
-                slash_config: Err(RpcError::NotMocked.into()),
             }
         }
     }
@@ -493,9 +477,6 @@ pub mod mock {
         async fn outbe_consensus_status(&self) -> Result<Value> {
             clone_result(&self.consensus_status)
         }
-        async fn outbe_get_epoch_info(&self) -> Result<Value> {
-            clone_result(&self.epoch_info)
-        }
         async fn eth_get_block_by_number(&self, _block: u64) -> Result<Value> {
             clone_result(&self.block_by_number)
         }
@@ -504,9 +485,6 @@ pub mod mock {
         }
         async fn eth_get_finalized_block(&self) -> Result<Value> {
             clone_result(&self.finalized_block)
-        }
-        async fn outbe_get_slash_config(&self) -> Result<Value> {
-            clone_result(&self.slash_config)
         }
     }
 
@@ -576,11 +554,6 @@ pub mod mock {
                 .into_value("outbe_consensusStatus")
         }
 
-        async fn outbe_get_epoch_info(&self) -> Result<Value> {
-            self.next_response(RecordedRpcCall::OutbeGetEpochInfo)?
-                .into_value("outbe_getEpochInfo")
-        }
-
         async fn eth_get_block_by_number(&self, block: u64) -> Result<Value> {
             self.next_response(RecordedRpcCall::EthGetBlockByNumber { block })?
                 .into_value("eth_getBlockByNumber")
@@ -589,11 +562,6 @@ pub mod mock {
         async fn eth_get_latest_block(&self) -> Result<Value> {
             self.next_response(RecordedRpcCall::EthGetLatestBlock)?
                 .into_value("eth_getBlockByNumber latest")
-        }
-
-        async fn outbe_get_slash_config(&self) -> Result<Value> {
-            self.next_response(RecordedRpcCall::OutbeGetSlashConfig)?
-                .into_value("outbe_getSlashConfig")
         }
     }
 }

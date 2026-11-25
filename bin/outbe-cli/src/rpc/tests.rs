@@ -334,15 +334,12 @@ async fn test_rpc_client_quantity_wrappers_send_exact_bodies_and_decode() {
 }
 
 #[tokio::test]
-async fn test_rpc_client_outbe_no_param_wrappers_send_exact_bodies() {
+async fn test_rpc_client_outbe_consensus_status_sends_exact_body() {
     let consensus = json!({"mode": "validator"});
-    let epoch = json!({"epoch": 3});
-    let slash = json!({"slashAmountPercent": 5});
-    let (url, mut body_rx) = serve_rpc_sequence([
+    let (url, body_rx) = serve_rpc_once(
+        "200 OK",
         json!({"jsonrpc": "2.0", "result": consensus, "id": 1}).to_string(),
-        json!({"jsonrpc": "2.0", "result": epoch, "id": 2}).to_string(),
-        json!({"jsonrpc": "2.0", "result": slash, "id": 3}).to_string(),
-    ])
+    )
     .await;
     let client = RpcClient::new(&url).expect("rpc client");
 
@@ -350,44 +347,15 @@ async fn test_rpc_client_outbe_no_param_wrappers_send_exact_bodies() {
         client.outbe_consensus_status().await.unwrap(),
         json!({"mode": "validator"})
     );
-    assert_eq!(
-        client.outbe_get_epoch_info().await.unwrap(),
-        json!({"epoch": 3})
-    );
-    assert_eq!(
-        client.outbe_get_slash_config().await.unwrap(),
-        json!({"slashAmountPercent": 5})
-    );
 
-    let first: Value = serde_json::from_str(&body_rx.recv().await.unwrap()).unwrap();
-    let second: Value = serde_json::from_str(&body_rx.recv().await.unwrap()).unwrap();
-    let third: Value = serde_json::from_str(&body_rx.recv().await.unwrap()).unwrap();
-
+    let body: Value = serde_json::from_str(&body_rx.await.unwrap()).unwrap();
     assert_eq!(
-        first,
+        body,
         json!({
             "jsonrpc": "2.0",
             "method": "outbe_consensusStatus",
             "params": [],
             "id": 1,
-        })
-    );
-    assert_eq!(
-        second,
-        json!({
-            "jsonrpc": "2.0",
-            "method": "outbe_getEpochInfo",
-            "params": [],
-            "id": 2,
-        })
-    );
-    assert_eq!(
-        third,
-        json!({
-            "jsonrpc": "2.0",
-            "method": "outbe_getSlashConfig",
-            "params": [],
-            "id": 3,
         })
     );
 }

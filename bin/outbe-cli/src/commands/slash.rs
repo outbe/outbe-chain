@@ -147,22 +147,37 @@ fn parse_evidence_hex(label: &'static str, value: &str) -> Result<Vec<u8>> {
 }
 
 async fn config(client: &(impl Rpc + Sync)) -> Result<()> {
-    let cfg = client.outbe_get_slash_config().await?;
-
-    let proposer_misd = cfg["proposerMisdemeanorThreshold"].as_u64().unwrap_or(0);
-    let proposer_felony = cfg["proposerFelonyThreshold"].as_u64().unwrap_or(0);
-    let voter_misd = cfg["voterMisdemeanorThreshold"].as_u64().unwrap_or(0);
-    let voter_felony = cfg["voterFelonyThreshold"].as_u64().unwrap_or(0);
-    let slash_pct = cfg["slashAmountPercent"].as_u64().unwrap_or(0);
-    let evidence_pct = cfg["evidenceRewardPercent"].as_u64().unwrap_or(0);
+    let call = ISlashIndicator::getConfigCall {};
+    let result = client
+        .eth_call(abi::SLASH_INDICATOR_ADDR, &call.abi_encode())
+        .await?;
+    let cfg = ISlashIndicator::getConfigCall::abi_decode_returns(&result)?;
 
     println!("=== Slashing Configuration ===");
-    println!("Proposer Misdemeanor Threshold: {proposer_misd}");
-    println!("Proposer Felony Threshold:      {proposer_felony}");
-    println!("Voter Misdemeanor Threshold:    {voter_misd}");
-    println!("Voter Felony Threshold:         {voter_felony}");
-    println!("Slash Amount:                   {slash_pct}%");
-    println!("Evidence Reward:                {evidence_pct}%");
+    println!(
+        "Proposer Misdemeanor Threshold: {}",
+        cfg.proposerMisdemeanorThreshold
+    );
+    println!(
+        "Proposer Felony Threshold:      {}",
+        cfg.proposerFelonyThreshold
+    );
+    println!(
+        "Voter Misdemeanor Threshold:    {}",
+        cfg.voterMisdemeanorThreshold
+    );
+    println!(
+        "Voter Felony Threshold:         {}",
+        cfg.voterFelonyThreshold
+    );
+    println!(
+        "Slash Amount:                   {}%",
+        cfg.slashAmountPercent
+    );
+    println!(
+        "Evidence Reward:                {}%",
+        cfg.evidenceRewardPercent
+    );
 
     Ok(())
 }
@@ -224,15 +239,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_slash_config_happy() {
+        let encoded = ISlashIndicator::SlashConfig {
+            proposerMisdemeanorThreshold: 10,
+            proposerFelonyThreshold: 50,
+            voterMisdemeanorThreshold: 10,
+            voterFelonyThreshold: 30,
+            slashAmountPercent: 5,
+            evidenceRewardPercent: 10,
+        };
+        let mut map = HashMap::new();
+        map.insert(
+            (
+                abi::SLASH_INDICATOR_ADDR,
+                ISlashIndicator::getConfigCall::SELECTOR,
+            ),
+            <ISlashIndicator::getConfigCall as SolCall>::abi_encode_returns(&encoded),
+        );
         let mock = MockRpc {
-            slash_config: Ok(serde_json::json!({
-                "proposerMisdemeanorThreshold": 10,
-                "proposerFelonyThreshold": 50,
-                "voterMisdemeanorThreshold": 10,
-                "voterFelonyThreshold": 30,
-                "slashAmountPercent": 5,
-                "evidenceRewardPercent": 10
-            })),
+            eth_call_map: Some(call_map(map)),
             ..Default::default()
         };
         config(&mock).await.unwrap();

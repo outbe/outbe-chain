@@ -130,6 +130,17 @@ pub fn dispatch(
                     let si = SlashIndicator::new(storage.clone());
                     si.get_felony_count(c.validator)
                 }),
+                getConfig(c) => view(c, |_| {
+                    let si = SlashIndicator::new(storage.clone());
+                    Ok(ISlashIndicator::SlashConfig {
+                        proposerMisdemeanorThreshold: si.proposer_misdemeanor_threshold()?,
+                        proposerFelonyThreshold: si.proposer_felony_threshold()?,
+                        voterMisdemeanorThreshold: si.voter_misdemeanor_threshold()?,
+                        voterFelonyThreshold: si.voter_felony_threshold()?,
+                        slashAmountPercent: si.slash_amount_percent()?,
+                        evidenceRewardPercent: si.evidence_reward_percent()?,
+                    })
+                }),
             }
         },
     )
@@ -138,6 +149,45 @@ pub fn dispatch(
 #[cfg(test)]
 mod gas_tests {
     use super::*;
+    use crate::constants::{
+        DEFAULT_EVIDENCE_REWARD_PERCENT, DEFAULT_PROPOSER_FELONY_THRESHOLD,
+        DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD, DEFAULT_SLASH_AMOUNT_PERCENT,
+        DEFAULT_VOTER_FELONY_THRESHOLD, DEFAULT_VOTER_MISDEMEANOR_THRESHOLD,
+    };
+    use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
+
+    #[test]
+    fn get_config_reports_runtime_defaults_for_zero_storage() {
+        let mut provider = HashMapStorageProvider::new(1);
+        let output = StorageHandle::enter(&mut provider, |storage| {
+            dispatch(
+                storage,
+                &ISlashIndicator::getConfigCall {}.abi_encode(),
+                Address::ZERO,
+                U256::ZERO,
+            )
+            .expect("dispatch getConfig")
+        });
+        let config = ISlashIndicator::getConfigCall::abi_decode_returns(&output).unwrap();
+        assert_eq!(
+            config.proposerMisdemeanorThreshold,
+            DEFAULT_PROPOSER_MISDEMEANOR_THRESHOLD
+        );
+        assert_eq!(
+            config.proposerFelonyThreshold,
+            DEFAULT_PROPOSER_FELONY_THRESHOLD
+        );
+        assert_eq!(
+            config.voterMisdemeanorThreshold,
+            DEFAULT_VOTER_MISDEMEANOR_THRESHOLD
+        );
+        assert_eq!(config.voterFelonyThreshold, DEFAULT_VOTER_FELONY_THRESHOLD);
+        assert_eq!(config.slashAmountPercent, DEFAULT_SLASH_AMOUNT_PERCENT);
+        assert_eq!(
+            config.evidenceRewardPercent,
+            DEFAULT_EVIDENCE_REWARD_PERCENT
+        );
+    }
 
     #[test]
     fn evidence_selectors_charge_heavy_base_gas() {
