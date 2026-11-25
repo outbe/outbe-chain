@@ -523,25 +523,10 @@ fn corrupt_emission_day(ctx: &BlockRuntimeContext<'_>, day: u32) {
     }
 }
 
-fn cycle_failure(
-    storage: &HashMapStorageProvider,
-    id: u32,
-) -> Option<crate::ICycle::CycleTaskFailed> {
-    storage.get_events(CYCLE_ADDRESS).iter().find_map(|log| {
-        crate::ICycle::CycleTaskFailed::decode_log_data(log)
-            .ok()
-            .filter(|event| event.id == id)
-    })
-}
-
-fn cycle_executed(
-    storage: &HashMapStorageProvider,
-    id: u32,
-) -> Option<crate::ICycle::CycleTaskExecuted> {
-    storage.get_events(CYCLE_ADDRESS).iter().find_map(|log| {
-        crate::ICycle::CycleTaskExecuted::decode_log_data(log)
-            .ok()
-            .filter(|event| event.id == id)
+fn cycle_completed(storage: &HashMapStorageProvider, id: u32) -> bool {
+    storage.get_events(CYCLE_ADDRESS).iter().any(|log| {
+        crate::ICycle::CycleTaskCompleted::decode_log_data(log)
+            .is_ok_and(|event| u32::from(event.task as u8) == id)
     })
 }
 
@@ -565,8 +550,7 @@ fn failed_terminal_dispatch_takes_the_allocation_fallback() {
         TaskId::CompleteAuctions.as_u32(),
         TaskId::ScheduleIntexCallPass.as_u32(),
     ] {
-        assert!(cycle_failure(&storage, id).is_none());
-        assert!(cycle_executed(&storage, id).is_some());
+        assert!(cycle_completed(&storage, id));
     }
     let failed = storage
         .get_events(CYCLE_ADDRESS)
@@ -691,7 +675,7 @@ fn invalid_active_utc_day_does_not_consume_the_slot_or_emit_failure() {
         assert!(matches!(err, PrecompileError::Fatal(_)));
         assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
     });
-    assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_none());
+    assert!(!cycle_completed(&storage, EMISSION_LIMIT_1_ID));
 }
 
 #[test]
@@ -705,7 +689,7 @@ fn storage_error_from_the_handler_does_not_consume_the_slot() {
         assert_eq!(last_executed_at(&fire), GENESIS_TS + 60);
         assert!(!is_day_allocated(&fire, 20_240_101));
     });
-    assert!(cycle_failure(&storage, EMISSION_LIMIT_1_ID).is_none());
+    assert!(!cycle_completed(&storage, EMISSION_LIMIT_1_ID));
 }
 
 fn prepared_settlement_storage() -> HashMapStorageProvider {

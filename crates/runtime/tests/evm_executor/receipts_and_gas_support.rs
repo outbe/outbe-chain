@@ -443,7 +443,7 @@ pub(super) fn run_prefix_checked(
         .flat_map(|receipt| receipt.logs.clone())
         .collect();
     if verify_deferred {
-        assert_deferred_task_logs(&logs, &samples, block, executor.system_tx_gross_gas);
+        assert_deferred_task_logs(&logs, &samples, executor.system_tx_gross_gas);
         let receipts_before = executor.receipts().len();
         let gross_before = executor.system_tx_gross_gas;
         executor
@@ -469,7 +469,7 @@ pub(super) fn run_prefix_checked(
             proposer,
             validators: vec![proposer],
         };
-        Some(assert_deferred_state(&mut state, &bundle, &logs, read_ctx))
+        Some(assert_deferred_state(&mut state, &bundle, read_ctx))
     } else {
         None
     };
@@ -618,53 +618,36 @@ pub(crate) fn queue_accepted_cleanup(storage: StorageHandle<'_>, chains: u32) {
     auction.queue_intake_cleanup(day).unwrap();
 }
 
-fn assert_deferred_task_logs(
-    logs: &[Log],
-    samples: &[(u32, u64)],
-    block: u64,
-    system_gross_gas: u64,
-) {
-    let over: Vec<_> = logs
-        .iter()
-        .filter_map(|log| outbe_cycle::ICycle::CycleTaskOverBudget::decode_log(log).ok())
-        .collect();
-    assert_eq!(over.len(), 1);
-    let over = &over[0].data;
-    assert_eq!(over.id, 4);
-    assert_eq!(over.blockNumber, block);
+pub(super) fn cycle_task_completed(logs: &[Log], task: outbe_cycle::tasks::TaskId) -> bool {
+    logs.iter().any(|log| {
+        outbe_cycle::ICycle::CycleTaskCompleted::decode_log(log)
+            .is_ok_and(|event| u32::from(event.data.task as u8) == task.as_u32())
+    })
+}
+
+fn assert_deferred_task_logs(logs: &[Log], samples: &[(u32, u64)], system_gross_gas: u64) {
+    use outbe_cycle::tasks::TaskId;
     let budget = outbe_cycle::tasks::ACTIVE_TASKS
         .iter()
         .find(|spec| spec.id == 4)
         .unwrap()
         .work_budget_gas();
-    assert_eq!(over.budgetGas, budget);
-    assert_eq!(
-        samples.iter().find(|(id, _)| *id == 4).unwrap().1,
-        over.consumedGas
-    );
-    assert!(over.consumedGas > budget / 2 && over.consumedGas <= budget);
-    assert!(system_gross_gas > over.consumedGas);
-    assert!(!logs.iter().any(
-        |log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log)
-            .is_ok_and(|event| event.data.id == 4)
-            || outbe_cycle::ICycle::CycleTaskFailed::decode_log(log)
-                .is_ok_and(|event| event.data.id == 4)
-    ));
-    for id in [5, 6] {
-        assert!(logs.iter().any(
-            |log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log)
-                .is_ok_and(|event| event.data.id == id)
-        ));
+    let consumed = samples.iter().find(|(id, _)| *id == 4).unwrap().1;
+    assert!(consumed > budget / 2 && consumed <= budget);
+    assert!(system_gross_gas > consumed);
+    assert!(!cycle_task_completed(logs, TaskId::CompleteAuctions));
+    for task in [TaskId::ScheduleCredisCallPass, TaskId::ScheduleNodCallPass] {
+        assert!(cycle_task_completed(logs, task));
     }
 }
 
 fn assert_deferred_state(
     state: &mut CalibrationState,
     bundle: &evm2::block::bundle_state::BundleState,
-    logs: &[Log],
     read_ctx: BlockContext,
 ) -> B256 {
     let block = read_ctx.block_number;
+    let timestamp = read_ctx.timestamp;
     let mut provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(state, read_ctx);
     StorageHandle::enter(&mut provider, |storage| {
@@ -672,13 +655,16 @@ fn assert_deferred_state(
         assert_eq!(cycle.last_executed_at.read(&4).unwrap(), GENESIS + 60);
         assert_eq!(cycle.last_executed_block_number.read(&4).unwrap(), 0);
         for id in [5, 6] {
-            let scheduled = logs
+            let spec = outbe_cycle::tasks::ACTIVE_TASKS
                 .iter()
-                .filter_map(|log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log).ok())
-                .find(|event| event.data.id == id)
-                .unwrap()
-                .data
-                .scheduledAt;
+                .find(|spec| spec.id == id)
+                .unwrap();
+            let scheduled = outbe_cycle::tasks::last_fire_at(
+                spec.period_seconds(),
+                spec.start_offset_seconds,
+                timestamp,
+            )
+            .unwrap();
             assert_eq!(cycle.last_executed_at.read(&id).unwrap(), scheduled);
             assert_eq!(cycle.last_executed_block_number.read(&id).unwrap(), block);
         }

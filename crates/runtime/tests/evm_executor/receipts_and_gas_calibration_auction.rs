@@ -8,11 +8,6 @@ fn calibration_populated_auction_handlers() {
     assert_eq!(samples.len(), 7);
     assert!(logs.iter().any(|log| log.data.topics().first()
         == Some(&keccak256("DesisCompleted(uint32,uint32,uint64,uint64)"))));
-    // The Cycle does not push parked router work. Any address pushes it.
-    assert!(!logs.iter().any(
-        |log| outbe_cycle::ICycle::CycleTaskExecuted::decode_log(log)
-            .is_ok_and(|event| event.data.id == 8)
-    ));
 }
 
 #[test]
@@ -344,9 +339,10 @@ fn due_auctions(steps: &[DueStep]) -> (u64, Vec<Log>) {
             });
         }),
     );
-    assert!(!logs
-        .iter()
-        .any(|log| outbe_cycle::ICycle::CycleTaskOverBudget::decode_log(log).is_ok()));
+    assert!(cycle_task_completed(
+        &logs,
+        outbe_cycle::tasks::TaskId::AdvanceAuctions
+    ));
     let gross = samples
         .iter()
         .find(|(id, _)| *id == outbe_cycle::tasks::TaskId::AdvanceAuctions.as_u32())
@@ -482,9 +478,10 @@ fn accepted_1088_bid_auction_completes_before_incremental_cycle_cleanup() {
             )
         }),
     );
-    assert!(!logs
-        .iter()
-        .any(|log| outbe_cycle::ICycle::CycleTaskOverBudget::decode_log(log).is_ok()));
+    assert!(cycle_task_completed(
+        &logs,
+        outbe_cycle::tasks::TaskId::CompleteAuctions
+    ));
     assert!(logs.iter().any(|log| {
         outbe_desis::precompile::IDesis::DesisCompleted::decode_log(log)
             .is_ok_and(|event| event.data.quantity == 3 && event.data.totalDemand == 1088)
@@ -577,9 +574,10 @@ fn accepted_bid_deadlines_retire_with_reverting_router_within_advance_budget() {
                 .count(),
             1
         );
-        assert!(!logs
-            .iter()
-            .any(|log| outbe_cycle::ICycle::CycleTaskOverBudget::decode_log(log).is_ok()));
+        assert!(cycle_task_completed(
+            &logs,
+            outbe_cycle::tasks::TaskId::AdvanceAuctions
+        ));
         let cost = samples.iter().find(|(id, _)| *id == 2).unwrap().1;
         let bound =
             outbe_desis::constants::ADVANCE_DAY_BASE_GAS + outbe_desis::constants::ADVANCE_FAIL_GAS;

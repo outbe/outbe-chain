@@ -148,12 +148,7 @@ pub(crate) fn run_isolated_cycle_worker(
             tracing::warn!(target: "outbe::cycle", worker_id = worker_id.as_u8(),
                 block_number = ctx.block.block_number, error = ?err,
                 "cycle worker failed; rolled back for retry");
-            ctx.storage
-                .contract::<Cycle<'_>>()
-                .emit(ICycle::CycleWorkerFailed {
-                    workerId: worker_id.as_u8(),
-                    blockNumber: ctx.block.block_number,
-                })
+            Ok(())
         }
         Err(other) => Err(other),
     }
@@ -265,13 +260,15 @@ fn run_due_task(
             consumed_gas,
             budget_gas,
         }) => {
-            let mut cycle = ctx.storage.contract::<Cycle<'_>>();
-            cycle.emit(ICycle::CycleTaskOverBudget {
-                id: spec.id,
-                consumedGas: consumed_gas,
-                budgetGas: budget_gas,
-                blockNumber: ctx.block.block_number,
-            })?;
+            tracing::warn!(
+                target: "outbe::cycle",
+                task_id = spec.id,
+                label = spec.label,
+                consumed_gas,
+                budget_gas,
+                block_number = ctx.block.block_number,
+                "cycle task over budget; rolled back and left pending"
+            );
             Ok(WalkOutcome::Pending)
         }
         Err(err @ (PrecompileError::Revert(_) | PrecompileError::RevertBytes(_))) => {
@@ -294,13 +291,15 @@ fn record_deferred(
     slot: DueSlot,
     reason: u8,
 ) -> Result<()> {
-    let mut cycle = ctx.storage.contract::<Cycle<'_>>();
-    cycle.emit(ICycle::CycleTaskDeferred {
-        id: spec.id,
-        scheduledAt: slot.recorded_at,
-        blockNumber: ctx.block.block_number,
+    tracing::debug!(
+        target: "outbe::cycle",
+        task_id = spec.id,
+        label = spec.label,
+        recorded_at = slot.recorded_at,
+        block_number = ctx.block.block_number,
         reason,
-    })?;
+        "cycle task deferred"
+    );
     Ok(())
 }
 
@@ -314,18 +313,17 @@ fn record_slot(ctx: &BlockRuntimeContext, spec: &TaskSpec, recorded_at: u64) -> 
     Ok(())
 }
 
-/// Records a successful slot and emits `CycleTaskExecuted`.
+/// Records a successful slot and emits `CycleTaskCompleted`.
 fn record_executed(ctx: &BlockRuntimeContext, spec: &TaskSpec, slot: DueSlot) -> Result<()> {
     let block_ts = ctx.block.timestamp;
     let block_number = ctx.block.block_number;
+    let task = u8::try_from(spec.id)
+        .ok()
+        .and_then(|id| ICycle::CycleTask::try_from(id).ok())
+        .ok_or(CycleError::InvalidTaskId { id: spec.id })?;
     record_slot(ctx, spec, slot.recorded_at)?;
     let mut cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
-    cycle.emit(ICycle::CycleTaskExecuted {
-        id: spec.id,
-        scheduledAt: slot.recorded_at,
-        blockTimestamp: block_ts,
-        blockNumber: block_number,
-    })?;
+    cycle.emit(ICycle::CycleTaskCompleted { task })?;
     tracing::info!(
         target: "outbe::cycle",
         task_id = spec.id,
@@ -339,7 +337,7 @@ fn record_executed(ctx: &BlockRuntimeContext, spec: &TaskSpec, slot: DueSlot) ->
     Ok(())
 }
 
-/// Records a reverted slot and emits `CycleTaskFailed` with no error text.
+/// Records a reverted slot. The node log gives the cause.
 fn record_failed(
     ctx: &BlockRuntimeContext,
     spec: &TaskSpec,
@@ -349,13 +347,6 @@ fn record_failed(
     let block_ts = ctx.block.timestamp;
     let block_number = ctx.block.block_number;
     record_slot(ctx, spec, slot.recorded_at)?;
-    let mut cycle: Cycle<'_> = ctx.storage.contract::<Cycle<'_>>();
-    cycle.emit(ICycle::CycleTaskFailed {
-        id: spec.id,
-        scheduledAt: slot.recorded_at,
-        blockTimestamp: block_ts,
-        blockNumber: block_number,
-    })?;
     tracing::error!(
         target: "outbe::cycle",
         task_id = spec.id,
