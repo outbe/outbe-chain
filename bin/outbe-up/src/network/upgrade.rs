@@ -106,8 +106,9 @@ systemctl start {TARGET}",
             let stop_error = ssh.run_quiet(founder, &fail_stop).err();
             let _ = cleanup;
             bail!(
-                "upgrade failed on {}; validator auto-start was disabled and it remains stopped; run `outbe-up validator start` after inspection: {error:#}{}",
+                "upgrade failed on {}; validator auto-start was disabled and it remains stopped; run `outbe-up network start --artifacts {}` after inspection: {error:#}{}",
                 founder.name,
+                options.artifacts.display(),
                 stop_error.map_or_else(String::new, |stop| format!("; fail-stop also failed: {stop:#}"))
             );
         }
@@ -126,8 +127,9 @@ systemctl start {TARGET}",
         {
             let stop_error = ssh.run_quiet(founder, &fail_stop_command()).err();
             bail!(
-                "upgraded {} failed health checks; validator auto-start was disabled and it was stopped; run `outbe-up validator start` after inspection: {error:#}{}",
+                "upgraded {} failed health checks; validator auto-start was disabled and it was stopped; run `outbe-up network start --artifacts {}` after inspection: {error:#}{}",
                 founder.name,
+                options.artifacts.display(),
                 stop_error.map_or_else(String::new, |stop| format!("; fail-stop also failed: {stop:#}"))
             );
         }

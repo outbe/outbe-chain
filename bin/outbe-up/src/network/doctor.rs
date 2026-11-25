@@ -1,6 +1,9 @@
 use std::{collections::BTreeSet, fs, path::Path};
 
 use eyre::{ensure, Result};
+use outbe_genesis_cli::launch_bundle::quote;
+use outbe_operator_systemd::{founding_units, FoundingConfig};
+use sha2::{Digest, Sha256};
 
 use crate::{support::progress::Progress, validator::doctor::write_archive};
 
@@ -73,7 +76,7 @@ fn collect_diagnostics<'a>(
         if !healthy(status, build.manifest.chain_id, required_peers) {
             issues.push(format!("{} is not healthy", founder.name));
         }
-        let output = match ssh.capture(founder, &host_diagnostics_command()) {
+        let output = match ssh.capture(founder, &host_diagnostics_command(founder.index)) {
             Ok(output) => output,
             Err(error) => {
                 issues.push(format!(
@@ -174,20 +177,35 @@ fn create_support_bundle(
     write_archive(staging.path(), output)
 }
 
-fn host_diagnostics_command() -> String {
-    "set -u; \
+fn host_diagnostics_command(founder_index: usize) -> String {
+    let mut command = "set -u; \
 disk=$(df -Pk /opt/outbe-chain 2>/dev/null | awk 'NR==2 {print $4}'); \
 time_sync=$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || true); \
 if [ \"$time_sync\" = yes ]; then time_sync=yes; \
 elif command -v chronyc >/dev/null 2>&1 && chronyc tracking 2>/dev/null | grep -q 'Leap status.*Normal'; then time_sync=yes; \
 else time_sync=no; fi; \
 printf 'disk_available_kib=%s\\ntime_synchronized=%s\\n' \"$disk\" \"$time_sync\"; \
-units_ok=yes; \
-for unit in outbe-validator.target outbe-validator.service outbe-radicle.service outbe-feeder.service outbe-hyperlane-validator.service; do cmp -s \"/opt/outbe-chain/systemd/$unit\" \"/etc/systemd/system/$unit\" || units_ok=no; done; \
+units_ok=yes; "
+        .to_owned();
+    for unit in founding_units(FoundingConfig {
+        base_dir: "/opt/outbe-chain",
+        validator_index: founder_index,
+    }) {
+        let path = format!("/etc/systemd/system/{}", unit.name);
+        let digest = hex::encode(Sha256::digest(unit.content.as_bytes()));
+        command.push_str(&format!(
+            "[ \"$(sha256sum {} 2>/dev/null | cut -d ' ' -f 1)\" = {} ] || units_ok=no; ",
+            quote(&path),
+            quote(&digest)
+        ));
+    }
+    command.push_str(
+        "\
 printf 'systemd_units_current=%s\\n' \"$units_ok\"; \
 printf 'outbe_chain_version='; /opt/outbe-chain/outbe-chain --version 2>/dev/null || true; \
 printf 'genesis_sha256='; sha256sum /opt/outbe-chain/genesis.json 2>/dev/null | cut -d ' ' -f 1 || true"
-        .to_owned()
+    );
+    command
 }
 
 fn journal_command() -> String {
@@ -233,5 +251,19 @@ mod tests {
             diagnostic_value(output, "outbe_chain_version"),
             Some("outbe-chain 1.2.3")
         );
+    }
+
+    #[test]
+    fn host_diagnostics_compare_units_with_rendered_policy() {
+        let command = host_diagnostics_command(3);
+        assert!(!command.contains("cmp -s"));
+        for unit in founding_units(FoundingConfig {
+            base_dir: "/opt/outbe-chain",
+            validator_index: 3,
+        }) {
+            let digest = hex::encode(Sha256::digest(unit.content.as_bytes()));
+            assert!(command.contains(&unit.name));
+            assert!(command.contains(&digest));
+        }
     }
 }

@@ -11,7 +11,8 @@ use serde::Serialize;
 use crate::support::process::{self, ROOT};
 
 use super::{
-    journal::Journal, rpc::RpcClient, status::sidecar_status, validator_address, VALIDATOR_TARGET,
+    assets, journal::Journal, rpc::RpcClient, status::sidecar_status, validator_address,
+    VALIDATOR_TARGET,
 };
 
 const SUPPORT_UNITS: &[&str] = &[
@@ -309,10 +310,13 @@ fn time_synchronized() -> Option<bool> {
 }
 
 fn systemd_units_current() -> bool {
-    SUPPORT_UNITS.iter().all(|unit| {
-        let managed = fs::read(Path::new(ROOT).join("systemd").join(unit));
-        let installed = fs::read(Path::new("/etc/systemd/system").join(unit));
-        matches!((managed, installed), (Ok(managed), Ok(installed)) if managed == installed)
+    assets::systemd_units()
+        .is_ok_and(|expected| units_match_expected(Path::new("/etc/systemd/system"), &expected))
+}
+
+fn units_match_expected(installed_dir: &Path, expected: &[(String, String)]) -> bool {
+    expected.iter().all(|(name, content)| {
+        fs::read(installed_dir.join(name)).is_ok_and(|installed| installed == content.as_bytes())
     })
 }
 
@@ -415,5 +419,19 @@ mod tests {
             fs::metadata(output).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[test]
+    fn unit_drift_is_compared_with_canonical_content() {
+        let installed = tempfile::tempdir().unwrap();
+        let expected = vec![("outbe-validator.service".to_owned(), "canonical".to_owned())];
+        fs::write(
+            installed.path().join("outbe-validator.service"),
+            "canonical",
+        )
+        .unwrap();
+        assert!(units_match_expected(installed.path(), &expected));
+        fs::write(installed.path().join("outbe-validator.service"), "stale").unwrap();
+        assert!(!units_match_expected(installed.path(), &expected));
     }
 }

@@ -97,7 +97,10 @@ pub async fn validate(
     let mut progress = Progress::new();
     progress.stage("checking snapshot validation safety");
     let (build, ssh, founder, required_peers) = preflight(&options).await?;
-    ssh.run_quiet(&founder, &format!("test -f {}", quote(options.archive)))?;
+    ssh.run_quiet(
+        &founder,
+        &as_root(&format!("test -f {}", quote(options.archive))),
+    )?;
     progress.stage(&format!("validating snapshot on {}", founder.name));
     let command = snapshot_command(
         SnapshotAction::Validate { expected_signer },

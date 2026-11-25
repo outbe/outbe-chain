@@ -123,8 +123,12 @@ fn validate_offline(archive: &Path, expected_signer: Option<&str>) -> Result<()>
 
 pub(crate) fn node_args(index: usize) -> Vec<String> {
     let root = process::ROOT;
-    let joining = index == 0 && Path::new(root).join("keys").is_dir();
+    let joining = is_joining_layout(Path::new(root), index);
     node_args_for_layout(root, index, joining)
+}
+
+fn is_joining_layout(root: &Path, index: usize) -> bool {
+    index == 0 && root.join("keys/evm-key.hex").is_file()
 }
 
 fn node_args_for_layout(root: &str, index: usize, joining: bool) -> Vec<String> {
@@ -225,5 +229,15 @@ mod tests {
         assert!(args
             .iter()
             .any(|value| value == "/opt/outbe-chain/keys/evm-key.hex"));
+    }
+
+    #[test]
+    fn joining_layout_requires_the_direct_validator_key() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir_all(root.path().join("keys/validator-0")).unwrap();
+        assert!(!is_joining_layout(root.path(), 0));
+        fs::write(root.path().join("keys/evm-key.hex"), "key").unwrap();
+        assert!(is_joining_layout(root.path(), 0));
+        assert!(!is_joining_layout(root.path(), 1));
     }
 }
