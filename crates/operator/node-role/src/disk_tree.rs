@@ -249,7 +249,7 @@ pub fn prepare_founder_tree_cancellable(
     );
 
     let (bin_dir, bundle, key_verified, keygen_source) =
-        resolve_founder_keygen(source, staging_parent, verify, cancel)?;
+        resolve_founder_keygen(Some(source), staging_parent, verify, cancel)?;
     ensure_not_canceled(cancel, "founder staging")?;
 
     if meta.is_dir() {
@@ -283,6 +283,68 @@ pub fn prepare_founder_tree_cancellable(
     let extract_root = staging.path().join("extract");
     create_dir_mode(&extract_root, 0o755)?;
     extract_founder_tar(source, &extract_root, cancel)?;
+    ensure_not_canceled(cancel, "founder staging")?;
+    let tree_path = resolve_extracted_founder_root(&extract_root)?;
+    fs::set_permissions(&tree_path, fs::Permissions::from_mode(0o755))?;
+
+    vm_boot::verify_static_tree_for_role_cancellable(
+        &tree_path,
+        NodeRole::Founder,
+        bin_dir.as_deref(),
+        cancel,
+    )?;
+    let validator = validator_address(&tree_path.join("keys/evm-key.hex"))?;
+    let hyperlane = validator_address(&tree_path.join("keys/hyperlane-key.hex"))?;
+
+    Ok(StagedDiskTree {
+        tree_path,
+        _staging: Some(staging),
+        _bundle: bundle,
+        role: NodeRole::Founder,
+        validator_address: Some(validator),
+        hyperlane_address: Some(hyperlane),
+        key_verified,
+        keygen_source,
+    })
+}
+
+/// Validate a founder VM data tree streamed as a tar archive (plain `.tar`, `.tar.zst`, or
+/// `.tar.gz`) from `reader`, extracting only into a private `0700` locked staging directory under
+/// `staging_parent`.
+///
+/// Non-cancellable convenience wrapper around [`prepare_founder_tree_from_reader_cancellable`].
+pub fn prepare_founder_tree_from_reader<R: Read + Send>(
+    reader: R,
+    staging_parent: &Path,
+    verify: FounderKeyVerify<'_>,
+) -> Result<StagedDiskTree> {
+    let cancel = AtomicBool::new(false);
+    prepare_founder_tree_from_reader_cancellable(reader, staging_parent, verify, &cancel)
+}
+
+/// Validate a founder VM data tree streamed as a tar archive (plain `.tar`, `.tar.zst`, or
+/// `.tar.gz`) from `reader` with cooperative signal cancellation and verified `outbe-keygen`
+/// BLS key verification (unless `FounderKeyVerify::Skip`).
+///
+/// `FounderKeyVerify::Auto` is refused because stdin has no filesystem path from which to
+/// auto-discover `<artifacts>/joining/outbe-validator-operator-bundle.tar.zst`; callers must pass
+/// `FounderKeyVerify::Bundle(...)`, `FounderKeyVerify::BinDir(...)`, or `FounderKeyVerify::Skip`.
+pub fn prepare_founder_tree_from_reader_cancellable<R: Read + Send>(
+    reader: R,
+    staging_parent: &Path,
+    verify: FounderKeyVerify<'_>,
+    cancel: &AtomicBool,
+) -> Result<StagedDiskTree> {
+    ensure_not_canceled(cancel, "founder staging")?;
+
+    let (bin_dir, bundle, key_verified, keygen_source) =
+        resolve_founder_keygen(None, staging_parent, verify, cancel)?;
+    ensure_not_canceled(cancel, "founder staging")?;
+
+    let staging = create_locked_staging_dir(staging_parent, ".outbe-disk-founder-")?;
+    let extract_root = staging.path().join("extract");
+    create_dir_mode(&extract_root, 0o755)?;
+    extract_founder_tar_reader(reader, &extract_root, cancel)?;
     ensure_not_canceled(cancel, "founder staging")?;
     let tree_path = resolve_extracted_founder_root(&extract_root)?;
     fs::set_permissions(&tree_path, fs::Permissions::from_mode(0o755))?;
@@ -467,7 +529,7 @@ pub fn prepare_full_node_tree_cancellable(
 
 #[allow(clippy::type_complexity)]
 fn resolve_founder_keygen(
-    source: &Path,
+    source: Option<&Path>,
     staging_parent: &Path,
     verify: FounderKeyVerify<'_>,
     cancel: &AtomicBool,
@@ -509,7 +571,14 @@ fn resolve_founder_keygen(
             ))
         }
         FounderKeyVerify::Auto => {
-            let Some(discovered) = discover_artifacts_operator_bundle(source)? else {
+            let Some(source_path) = source else {
+                bail!(
+                    "cannot auto-discover operator bundle when reading founder tar from stdin (`--source -`); \
+                     pass --bundle <operator-bundle.tar.zst> to run outbe-keygen verify or pass \
+                     --skip-key-verify to explicitly skip BLS key verification"
+                );
+            };
+            let Some(discovered) = discover_artifacts_operator_bundle(source_path)? else {
                 bail!(
                     "cannot verify founder signing-key.hex: no verified operator bundle found at \
                      <artifacts>/joining/outbe-validator-operator-bundle.tar.zst; pass --bundle \
@@ -1048,6 +1117,127 @@ fn extract_founder_tar(archive_path: &Path, destination: &Path, cancel: &AtomicB
     }
 
     extract_tar_stream(file, destination, cancel)
+}
+
+fn read_magic_prefix<R: Read>(reader: &mut R, cancel: &AtomicBool) -> Result<Vec<u8>> {
+    let mut prefix = Vec::with_capacity(4);
+    let mut buf = [0_u8; 4];
+    while prefix.len() < 4 {
+        ensure_not_canceled(cancel, "founder tar extraction")?;
+        let remaining = 4 - prefix.len();
+        match reader.read(&mut buf[..remaining]) {
+            Ok(0) => break,
+            Ok(n) => prefix.extend_from_slice(&buf[..n]),
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(err) => return Err(err).wrap_err("failed to read founder tar stream header"),
+        }
+    }
+    Ok(prefix)
+}
+
+fn extract_founder_tar_reader<R: Read + Send>(
+    mut reader: R,
+    destination: &Path,
+    cancel: &AtomicBool,
+) -> Result<()> {
+    ensure_not_canceled(cancel, "founder tar extraction")?;
+    let magic = read_magic_prefix(&mut reader, cancel)?;
+    ensure!(!magic.is_empty(), "founder tar stream is empty");
+    let chained = io::Cursor::new(magic.clone()).chain(reader);
+
+    if magic.len() >= 4 && magic[..4] == ZSTD_MAGIC {
+        let decoder =
+            zstd::Decoder::new(chained).wrap_err("failed to open zstd founder tar stream")?;
+        return extract_tar_stream(decoder, destination, cancel);
+    }
+
+    if magic.len() >= 2 && magic[..2] == GZIP_MAGIC {
+        let mut cmd = Command::new("gzip");
+        cmd.args(["-dc"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .process_group(0);
+        let mut child = cmd
+            .spawn()
+            .wrap_err("failed to spawn gzip -dc for founder tar.gz stream")?;
+        let child_pid = child.id();
+        let mut child_stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| eyre::eyre!("gzip stdin unavailable"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| eyre::eyre!("gzip stdout unavailable"))?;
+        let cancellable_stdout = match CancellableChildStdout::new(stdout, child_pid, cancel) {
+            Ok(reader) => reader,
+            Err(err) => {
+                drop(child_stdin);
+                terminate_process_group(child_pid);
+                let _ = child.wait();
+                return Err(err);
+            }
+        };
+        let extract_result = thread::scope(|scope| {
+            let feeder = scope.spawn(move || -> io::Result<()> {
+                let mut src = chained;
+                let mut buf = [0_u8; 16 * 1024];
+                let mut total_fed: u64 = 0;
+                loop {
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    let n = match src.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(n) => n,
+                        Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(err) => return Err(err),
+                    };
+                    total_fed = total_fed.saturating_add(n as u64);
+                    if total_fed > MAX_FOUNDER_TAR_BYTES {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!(
+                                "compressed founder tar stream exceeds maximum {MAX_FOUNDER_TAR_BYTES} bytes"
+                            ),
+                        ));
+                    }
+                    if let Err(err) = child_stdin.write_all(&buf[..n]) {
+                        if err.kind() == io::ErrorKind::BrokenPipe {
+                            break;
+                        }
+                        return Err(err);
+                    }
+                }
+                drop(child_stdin);
+                Ok(())
+            });
+            let res = extract_tar_stream(cancellable_stdout, destination, cancel);
+            if res.is_err() {
+                terminate_process_group(child_pid);
+            }
+            let feed_res = feeder
+                .join()
+                .map_err(|_| eyre::eyre!("gzip stdin feeder thread panicked"))?;
+            res?;
+            feed_res.wrap_err("failed to stream gzip founder tar to gzip -dc")?;
+            Ok(())
+        });
+        if extract_result.is_err() {
+            terminate_process_group(child_pid);
+            let _ = child.wait();
+            return extract_result;
+        }
+        let status = wait_child_cancellable(&mut child, cancel, "gzip -dc")?;
+        ensure!(
+            status.success(),
+            "gzip -dc failed on stdin stream ({status})"
+        );
+        return Ok(());
+    }
+
+    extract_tar_stream(chained, destination, cancel)
 }
 
 fn extract_tar_stream<R: Read>(reader: R, destination: &Path, cancel: &AtomicBool) -> Result<()> {
@@ -1785,6 +1975,164 @@ network:
         assert!(outside_dir.is_dir());
         assert!(fs::symlink_metadata(&symlink_dir).is_ok());
         drop(live_locked);
+    }
+
+    #[test]
+    fn founder_from_reader_accepts_plain_zstd_and_gzip_tar_and_rejects_attacks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let bundle = build_fake_operator_bundle(tmp.path(), 707);
+        let cfg = tmp.path().join("operator.yaml");
+        write_joining_config(&cfg, 707);
+        let joining = prepare_joining_validator_tree(&bundle, &cfg, None, tmp.path()).unwrap();
+        let founder_dir = tmp.path().join("founder-src");
+        copy_dir_plain(joining.tree_path(), &founder_dir);
+        fs::remove_file(founder_dir.join(NODE_ROLE_FILE)).unwrap();
+
+        // Build plain tar in memory.
+        let mut plain_tar = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut plain_tar);
+            builder.append_dir_all(".", &founder_dir).unwrap();
+            builder.finish().unwrap();
+        }
+
+        // 1. Auto key-verify is refused on stdin streams.
+        let err = prepare_founder_tree_from_reader(
+            io::Cursor::new(plain_tar.clone()),
+            tmp.path(),
+            FounderKeyVerify::Auto,
+        )
+        .err()
+        .expect("stdin tar with Auto key-verify must fail closed");
+        assert!(
+            err.to_string()
+                .contains("cannot auto-discover operator bundle"),
+            "{err}"
+        );
+
+        // 2. Plain tar succeeds with verified operator bundle.
+        let staged_plain = prepare_founder_tree_from_reader(
+            io::Cursor::new(plain_tar.clone()),
+            tmp.path(),
+            FounderKeyVerify::Bundle(&bundle),
+        )
+        .unwrap();
+        assert_eq!(staged_plain.role, NodeRole::Founder);
+        assert!(staged_plain.key_verified);
+        assert!(staged_plain.tree_path().join("genesis.json").is_file());
+        drop(staged_plain);
+
+        // 3. Zstd-compressed tar stream succeeds.
+        let zstd_tar = zstd::stream::encode_all(io::Cursor::new(&plain_tar), 1).unwrap();
+        let staged_zstd = prepare_founder_tree_from_reader(
+            io::Cursor::new(zstd_tar),
+            tmp.path(),
+            FounderKeyVerify::Bundle(&bundle),
+        )
+        .unwrap();
+        assert!(staged_zstd.key_verified);
+        drop(staged_zstd);
+
+        // 4. Gzip-compressed tar stream succeeds.
+        let mut gzip_child = Command::new("gzip")
+            .arg("-c")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        gzip_child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(&plain_tar)
+            .unwrap();
+        let gzip_out = gzip_child.wait_with_output().unwrap();
+        assert!(gzip_out.status.success());
+        let staged_gz = prepare_founder_tree_from_reader(
+            io::Cursor::new(gzip_out.stdout),
+            tmp.path(),
+            FounderKeyVerify::Bundle(&bundle),
+        )
+        .unwrap();
+        assert!(staged_gz.key_verified);
+        drop(staged_gz);
+
+        // 5. Reject path traversal (`..`), symlinks, and executable files in streamed tar.
+        let mut evil_traversal = Vec::new();
+        {
+            let mut h = tar::Header::new_gnu();
+            h.set_size(4);
+            h.set_mode(0o600);
+            h.set_entry_type(tar::EntryType::Regular);
+            h.as_gnu_mut().unwrap().name[..10].copy_from_slice(b"../escape\0");
+            h.set_cksum();
+            evil_traversal.extend_from_slice(h.as_bytes());
+            let mut block = [0u8; 512];
+            block[..4].copy_from_slice(b"evil");
+            evil_traversal.extend_from_slice(&block);
+            evil_traversal.extend_from_slice(&[0u8; 1024]);
+        }
+        let err = prepare_founder_tree_from_reader(
+            io::Cursor::new(evil_traversal),
+            tmp.path(),
+            FounderKeyVerify::Skip,
+        )
+        .err()
+        .expect("traversal tar stream must fail");
+        assert!(err.to_string().contains("unsafe path"), "{err}");
+
+        let mut evil_symlink = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut evil_symlink);
+            let mut h = tar::Header::new_gnu();
+            h.set_entry_type(tar::EntryType::Symlink);
+            h.set_size(0);
+            h.set_mode(0o777);
+            builder
+                .append_link(&mut h, "keys/link", "/etc/passwd")
+                .unwrap();
+            builder.finish().unwrap();
+        }
+        let err = prepare_founder_tree_from_reader(
+            io::Cursor::new(evil_symlink),
+            tmp.path(),
+            FounderKeyVerify::Skip,
+        )
+        .err()
+        .expect("symlink tar stream must fail");
+        assert!(err.to_string().contains("non-regular entry"), "{err}");
+
+        let mut evil_exec = Vec::new();
+        {
+            let mut builder = tar::Builder::new(&mut evil_exec);
+            let mut h = tar::Header::new_gnu();
+            h.set_size(4);
+            h.set_mode(0o755);
+            h.set_entry_type(tar::EntryType::Regular);
+            h.set_cksum();
+            builder
+                .append_data(&mut h, "run.sh", &b"#!/\n"[..])
+                .unwrap();
+            builder.finish().unwrap();
+        }
+        let err = prepare_founder_tree_from_reader(
+            io::Cursor::new(evil_exec),
+            tmp.path(),
+            FounderKeyVerify::Skip,
+        )
+        .err()
+        .expect("executable tar stream must fail");
+        assert!(err.to_string().contains("executable file"), "{err}");
+
+        // 6. Empty stream fails cleanly.
+        let err = prepare_founder_tree_from_reader(
+            io::Cursor::new(Vec::<u8>::new()),
+            tmp.path(),
+            FounderKeyVerify::Skip,
+        )
+        .err()
+        .expect("empty tar stream must fail");
+        assert!(err.to_string().contains("empty"), "{err}");
     }
 
     fn copy_dir_plain(src: &Path, dst: &Path) {

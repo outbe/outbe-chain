@@ -461,6 +461,7 @@ exit 0
             name: name.to_owned(),
             vm_id: TEST_VM_UUID.to_owned(),
             create_token: None,
+            owner_tag: None,
             vmm_socket: self.vmm_socket.clone(),
             vmm_home: self.vmm_home.clone(),
             image_name: "outbe-vm-dev-3485ca2592b7a0c3".to_owned(),

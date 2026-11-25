@@ -74,13 +74,13 @@ enum DiskCommand {
         ArgGroup::new("disk_target")
             .required(true)
             .multiple(false)
-            .args(["output", "device"])
+            .args(["output", "staging_name", "device"])
     ))]
     Prepare {
         /// Node role for this VM data disk.
         #[arg(long, value_enum)]
         role: DiskRoleArg,
-        /// Founder VM data tree directory or tar archive (.tar, .tar.gz, .tar.zst).
+        /// Founder VM data tree directory, tar archive (.tar, .tar.gz, .tar.zst), or `-` for tar stream on stdin.
         #[arg(long, conflicts_with_all = ["config", "keys_from"])]
         source: Option<PathBuf>,
         /// Verified operator bundle (.tar.zst) for joining-validator, full-node, or founder key verification.
@@ -104,9 +104,45 @@ enum DiskCommand {
         /// Output raw GPT+ext4 disk image path (refuses to overwrite existing files or symlinks).
         #[arg(long)]
         output: Option<PathBuf>,
+        /// Stage raw disk atomically at <state-dir>/staging/<name>/data.img (0700 dir, 0600 file; replaces prior staged image).
+        #[arg(long)]
+        staging_name: Option<String>,
+        /// Directory for local state and staging [default: ${XDG_STATE_HOME:-~/.local/state}/outbe-up].
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+        /// Tighten unsafe permissions on preexisting user-owned state/staging directories (0700/0600).
+        #[arg(long)]
+        fix_permissions: bool,
         /// Target block device path (not yet supported; see S3 probe / owner decision R-3).
         #[arg(long)]
         device: Option<PathBuf>,
+        /// Emit machine-readable JSON output.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Inspect or clean staged VM data disks under <state-dir>/staging.
+    #[command(group(
+        ArgGroup::new("clean_mode")
+            .required(true)
+            .multiple(false)
+            .args(["staging_name", "stale", "list"])
+    ))]
+    Clean {
+        /// Remove the staged disk directory <state-dir>/staging/<name> (idempotent if absent).
+        #[arg(long)]
+        staging_name: Option<String>,
+        /// Remove unlocked leftover temporary staging directories (.outbe-prepare-*, .outbe-disk-*, .outbe-vm-disk-*) under <state-dir>/staging.
+        #[arg(long)]
+        stale: bool,
+        /// List staged disks currently present under <state-dir>/staging.
+        #[arg(long)]
+        list: bool,
+        /// Directory for local state and staging [default: ${XDG_STATE_HOME:-~/.local/state}/outbe-up].
+        #[arg(long)]
+        state_dir: Option<PathBuf>,
+        /// Tighten unsafe permissions on preexisting user-owned state/staging directories (0700/0600).
+        #[arg(long)]
+        fix_permissions: bool,
         /// Emit machine-readable JSON output.
         #[arg(long)]
         json: bool,
@@ -572,6 +608,7 @@ struct VmArgs {
     command: VmCommand,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 enum VmCommand {
     /// Build a deterministic ext4 data disk image for one VM founder.
@@ -596,12 +633,36 @@ enum VmCommand {
         /// Local VM name (used as VMM name and state file stem).
         #[arg(long, group = "local_opts", required_unless_present = "artifacts")]
         name: Option<String>,
+        /// Optional ownership tag persisted in state and VMM annotations (e.g. `outbe-net:<net>:<hash8>:<member>`).
+        #[arg(long, group = "local_opts")]
+        owner_tag: Option<String>,
         /// Local guest OS image directory (published under its digest-qualified name).
         #[arg(long, group = "local_opts", required_unless_present = "artifacts")]
         image: Option<PathBuf>,
-        /// Raw data disk image (from `vm disk` or `disk prepare`), converted to qcow2 locally.
-        #[arg(long, group = "local_opts", required_unless_present = "artifacts")]
+        /// Raw data disk image (from `vm disk` or `disk prepare --output`), converted to qcow2 locally.
+        #[arg(
+            long,
+            group = "local_opts",
+            conflicts_with = "disk_staging",
+            required_unless_present_any = ["artifacts", "disk_staging"]
+        )]
         disk: Option<PathBuf>,
+        /// Staged raw data disk name under <state-dir>/staging/<name>/data.img (from `disk prepare --staging-name`).
+        #[arg(
+            long,
+            group = "local_opts",
+            conflicts_with = "disk",
+            required_unless_present_any = ["artifacts", "disk"]
+        )]
+        disk_staging: Option<String>,
+        /// Delete <state-dir>/staging/<name> ONLY after the VM reaches Ready (requires `--disk-staging`).
+        #[arg(
+            long,
+            group = "local_opts",
+            requires = "disk_staging",
+            conflicts_with = "disk"
+        )]
+        consume_staging: bool,
         /// Host bridge interface to attach (required in local mode, e.g. `obr0`).
         #[arg(long, group = "local_opts", required_unless_present = "artifacts")]
         bridge: Option<String>,
@@ -719,6 +780,9 @@ enum VmCommand {
         /// Local VM name to start.
         #[arg(long, group = "local_opts", required_unless_present = "artifacts")]
         name: Option<String>,
+        /// Expected VMM VM UUID verified under the per-VM lock before issuing any VMM RPC.
+        #[arg(long, group = "local_opts")]
+        expect_vm_id: Option<String>,
         /// Local dstack VMM Unix socket path [default: ~/.dstack-vmm/run/vmm.sock].
         #[arg(long, group = "local_opts")]
         vmm_socket: Option<PathBuf>,
@@ -758,6 +822,9 @@ enum VmCommand {
         /// Local VM name to stop.
         #[arg(long, group = "local_opts", required_unless_present = "artifacts")]
         name: Option<String>,
+        /// Expected VMM VM UUID verified under the per-VM lock before issuing any VMM RPC.
+        #[arg(long, group = "local_opts")]
+        expect_vm_id: Option<String>,
         /// Force-stop via StopVm (bypasses guest shutdown; warns about pending-DKG snapshot defect).
         #[arg(long, group = "local_opts")]
         force: bool,
@@ -793,6 +860,9 @@ enum VmCommand {
         /// Local VM name.
         #[arg(long)]
         name: String,
+        /// Expected VMM VM UUID verified under the per-VM lock before reading logs.
+        #[arg(long)]
+        expect_vm_id: Option<String>,
         /// Number of trailing lines to print.
         #[arg(long, default_value_t = 100)]
         lines: usize,
@@ -821,6 +891,9 @@ enum VmCommand {
         /// Local VM name to remove.
         #[arg(long, group = "local_opts", required_unless_present = "artifacts")]
         name: Option<String>,
+        /// Expected VMM VM UUID verified under the per-VM lock before issuing any VMM RPC.
+        #[arg(long, group = "local_opts")]
+        expect_vm_id: Option<String>,
         /// Force-stop if running before removal (warns about pending-DKG snapshot defect).
         #[arg(long, group = "local_opts")]
         force: bool,
@@ -866,6 +939,9 @@ enum VmCommand {
         /// Local VM name (omit to show all locally tracked VMs).
         #[arg(long, group = "local_opts")]
         name: Option<String>,
+        /// Expected VMM VM UUID verified under the per-VM lock before querying VMM (requires `--name`).
+        #[arg(long, group = "local_opts", requires = "name")]
+        expect_vm_id: Option<String>,
         /// Path to the host dnsmasq DHCP leases file [default: /var/lib/validator-vm/dhcp-leases].
         #[arg(long, group = "local_opts")]
         dhcp_leases: Option<PathBuf>,
@@ -943,6 +1019,9 @@ impl Cli {
                     cleanup_stale,
                     size_gib,
                     output,
+                    staging_name,
+                    state_dir,
+                    fix_permissions,
                     device,
                     json,
                 } => {
@@ -956,11 +1035,29 @@ impl Cli {
                         cleanup_stale,
                         size_gib,
                         output,
+                        staging_name,
+                        state_dir,
+                        fix_permissions,
                         device,
                         json,
                     })
                     .await
                 }
+                DiskCommand::Clean {
+                    staging_name,
+                    stale,
+                    list,
+                    state_dir,
+                    fix_permissions,
+                    json,
+                } => disk::clean(disk::CleanArgs {
+                    staging_name,
+                    stale,
+                    list,
+                    state_dir,
+                    fix_permissions,
+                    json,
+                }),
             },
             Command::Host(args) => match args.command {
                 HostCommand::Status {
@@ -1269,8 +1366,11 @@ impl Cli {
                 }
                 VmCommand::Create {
                     name,
+                    owner_tag,
                     image,
                     disk,
+                    disk_staging,
+                    consume_staging,
                     bridge,
                     vcpu,
                     memory_gib,
@@ -1311,10 +1411,13 @@ impl Cli {
                     None => {
                         vm::local::create(vm::local::LocalCreateArgs {
                             name: name.expect("clap enforces --name without --artifacts"),
+                            owner_tag,
                             image: image.expect("clap enforces --image without --artifacts"),
                             image_name,
                             flavor,
-                            disk: disk.expect("clap enforces --disk without --artifacts"),
+                            disk,
+                            disk_staging,
+                            consume_staging,
                             vcpu,
                             memory_gib,
                             disk_gib,
@@ -1383,6 +1486,7 @@ impl Cli {
                 }
                 VmCommand::Start {
                     name,
+                    expect_vm_id,
                     vmm_socket,
                     vmm_home,
                     state_dir,
@@ -1407,6 +1511,7 @@ impl Cli {
                     }
                     None => vm::local::start(
                         &name.expect("clap enforces --name without --artifacts"),
+                        expect_vm_id.as_deref(),
                         vm::local::LocalConnectionArgs {
                             vmm_socket,
                             vmm_home,
@@ -1418,6 +1523,7 @@ impl Cli {
                 },
                 VmCommand::Stop {
                     name,
+                    expect_vm_id,
                     force,
                     timeout,
                     vmm_socket,
@@ -1436,6 +1542,7 @@ impl Cli {
                     }
                     None => vm::local::stop(
                         &name.expect("clap enforces --name without --artifacts"),
+                        expect_vm_id.as_deref(),
                         force,
                         Duration::from_secs(timeout.unwrap_or(120)),
                         vm::local::LocalConnectionArgs {
@@ -1449,6 +1556,7 @@ impl Cli {
                 },
                 VmCommand::Logs {
                     name,
+                    expect_vm_id,
                     lines,
                     vmm_socket,
                     vmm_home,
@@ -1457,6 +1565,7 @@ impl Cli {
                     json,
                 } => vm::local::logs(
                     &name,
+                    expect_vm_id.as_deref(),
                     lines,
                     vm::local::LocalConnectionArgs {
                         vmm_socket,
@@ -1468,6 +1577,7 @@ impl Cli {
                 ),
                 VmCommand::Remove {
                     name,
+                    expect_vm_id,
                     force,
                     forget_intent,
                     vmm_socket,
@@ -1494,6 +1604,7 @@ impl Cli {
                     }
                     None => vm::local::remove(
                         &name.expect("clap enforces --name without --artifacts"),
+                        expect_vm_id,
                         force,
                         forget_intent,
                         Duration::from_secs(timeout),
@@ -1508,6 +1619,7 @@ impl Cli {
                 },
                 VmCommand::Status {
                     name,
+                    expect_vm_id,
                     dhcp_leases,
                     vmm_socket,
                     vmm_home,
@@ -1533,6 +1645,7 @@ impl Cli {
                     }
                     None => vm::local::status(
                         name.as_deref(),
+                        expect_vm_id.as_deref(),
                         dhcp_leases.as_deref(),
                         vm::local::LocalConnectionArgs {
                             vmm_socket,
@@ -2328,5 +2441,150 @@ mod tests {
         .is_ok());
         // `host publish` requires at least one `--port`.
         assert!(Cli::try_parse_from(["outbe-up", "host", "publish", "--vm", "node-a"]).is_err());
+    }
+
+    #[test]
+    fn c1_staging_owner_tag_expect_vm_id_and_disk_clean_parse() {
+        // disk prepare --source - --staging-name
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "disk",
+            "prepare",
+            "--role",
+            "founder",
+            "--source",
+            "-",
+            "--bundle",
+            "operator-bundle.tar.zst",
+            "--staging-name",
+            "validator-0",
+            "--state-dir",
+            "/tmp/state",
+            "--json",
+        ])
+        .is_ok());
+        // --output and --staging-name are mutually exclusive.
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "disk",
+            "prepare",
+            "--role",
+            "founder",
+            "--source",
+            "-",
+            "--output",
+            "a.img",
+            "--staging-name",
+            "validator-0",
+        ])
+        .is_err());
+
+        // disk clean modes (--staging-name / --stale / --list) are mutually exclusive, one required.
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "disk",
+            "clean",
+            "--staging-name",
+            "validator-0",
+            "--json",
+        ])
+        .is_ok());
+        assert!(Cli::try_parse_from(["outbe-up", "disk", "clean", "--stale", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["outbe-up", "disk", "clean", "--list", "--json"]).is_ok());
+        assert!(Cli::try_parse_from(["outbe-up", "disk", "clean"]).is_err());
+        assert!(Cli::try_parse_from(["outbe-up", "disk", "clean", "--stale", "--list"]).is_err());
+
+        // vm create with --disk-staging + --consume-staging + --owner-tag
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "vm",
+            "create",
+            "--name",
+            "validator-0",
+            "--owner-tag",
+            "outbe-net:devnet:01234567:validator-0",
+            "--image",
+            "./img",
+            "--disk-staging",
+            "validator-0",
+            "--consume-staging",
+            "--bridge",
+            "obr0",
+            "--json",
+        ])
+        .is_ok());
+        // --disk and --disk-staging conflict; --consume-staging requires --disk-staging.
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "vm",
+            "create",
+            "--name",
+            "validator-0",
+            "--image",
+            "./img",
+            "--disk",
+            "a.img",
+            "--disk-staging",
+            "validator-0",
+            "--bridge",
+            "obr0",
+        ])
+        .is_err());
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "vm",
+            "create",
+            "--name",
+            "validator-0",
+            "--image",
+            "./img",
+            "--disk",
+            "a.img",
+            "--consume-staging",
+            "--bridge",
+            "obr0",
+        ])
+        .is_err());
+        // Local mode requires either --disk or --disk-staging.
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "vm",
+            "create",
+            "--name",
+            "validator-0",
+            "--image",
+            "./img",
+            "--bridge",
+            "obr0",
+        ])
+        .is_err());
+
+        // --expect-vm-id on start, stop, remove, logs, status (--name required on status).
+        let uuid = "550e8400-e29b-41d4-a716-446655440010";
+        for sub in ["start", "stop", "remove", "logs", "status"] {
+            assert!(
+                Cli::try_parse_from([
+                    "outbe-up",
+                    "vm",
+                    sub,
+                    "--name",
+                    "validator-0",
+                    "--expect-vm-id",
+                    uuid,
+                    "--json",
+                ])
+                .is_ok(),
+                "vm {sub} --expect-vm-id failed to parse"
+            );
+        }
+        assert!(Cli::try_parse_from([
+            "outbe-up",
+            "vm",
+            "status",
+            "--expect-vm-id",
+            uuid,
+            "--json",
+        ])
+        .is_err());
     }
 }

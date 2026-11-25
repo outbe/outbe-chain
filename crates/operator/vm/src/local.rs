@@ -55,6 +55,10 @@ const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(25);
 /// `app_id` against our local journal.
 pub const CREATE_TOKEN_ANNOTATION: &str = "outbe-up.create-token";
 
+/// VMM manifest annotation key carrying an optional caller-assigned ownership tag
+/// (e.g. `outbe-net:<network>:<genesis8>:<member>`).
+pub const OWNER_TAG_ANNOTATION: &str = "outbe-up.owner-tag";
+
 /// Warning displayed when `--force` bypasses graceful guest shutdown (`ShutdownVm`).
 pub const FORCE_STOP_DKG_WARNING: &str = "WARNING: forced VM stop (--force) bypasses graceful guest shutdown and can lose a pending DKG boundary snapshot (see /home/ubuntu/tdx/12-defect-pending-dkg-snapshot.md).";
 
@@ -95,6 +99,8 @@ pub struct LocalVmState {
     pub vm_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub create_token: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_tag: Option<String>,
     pub vmm_socket: PathBuf,
     pub vmm_home: PathBuf,
     pub image_name: String,
@@ -132,6 +138,11 @@ impl LocalVmState {
 
     fn validate_identity(&self, path: &Path) -> Result<()> {
         validate_vm_name(&self.name)?;
+        if let Some(tag) = &self.owner_tag {
+            validate_owner_tag(tag).wrap_err_with(|| {
+                format!("VM state file {} has invalid owner_tag", path.display())
+            })?;
+        }
         if self.phase == LocalVmPhase::Creating {
             if !self.vm_id.is_empty() {
                 validate_vm_id(&self.vm_id).wrap_err_with(|| {
@@ -159,6 +170,37 @@ impl LocalVmState {
 /// descriptor.
 pub struct VmLockGuard {
     _file: fs::File,
+}
+
+/// Exclusive per-staging-name file lock (`O_CLOEXEC`) serializing `disk prepare --staging-name`,
+/// `vm create --disk-staging --consume-staging`, and `disk clean --staging-name`.
+pub struct StagingLockGuard {
+    _file: fs::File,
+}
+
+/// Metadata for one entry under `<state-dir>/staging/`.
+///
+/// Valid entries populate `path`, `sha256`, and `size_bytes` with `error: None`.
+/// Malformed or unsafe entries populate `error` so one bad entry never aborts listing valid siblings.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct StagedDiskInfo {
+    pub staging_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Result of removing one staged disk directory under `<state-dir>/staging/<staging_name>`.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CleanStagingOutput {
+    pub staging_name: String,
+    pub path: PathBuf,
+    pub removed: bool,
 }
 
 /// Per-VM state store rooted at `${XDG_STATE_HOME:-$HOME/.local/state}/outbe-up`.
@@ -431,6 +473,372 @@ impl LocalVmStore {
         names.sort();
         Ok(names)
     }
+
+    pub fn staging_root(&self) -> PathBuf {
+        self.root.join("staging")
+    }
+
+    pub fn staging_dir(&self, staging_name: &str) -> Result<PathBuf> {
+        validate_vm_name(staging_name)?;
+        Ok(self.staging_root().join(staging_name))
+    }
+
+    pub fn staged_disk_path(&self, staging_name: &str) -> Result<PathBuf> {
+        Ok(self.staging_dir(staging_name)?.join("data.img"))
+    }
+
+    fn staging_lock_path(&self, staging_name: &str) -> Result<PathBuf> {
+        validate_vm_name(staging_name)?;
+        Ok(self.staging_root().join(format!(".{staging_name}.lock")))
+    }
+
+    /// Ensure `<state-dir>` and `<state-dir>/staging` exist as private `0700` real directories
+    /// owned by the current UID.
+    pub fn ensure_staging_root(&self) -> Result<PathBuf> {
+        ensure_private_dir(&self.root, self.fix_permissions)?;
+        let root = self.staging_root();
+        ensure_private_dir(&root, self.fix_permissions)?;
+        Ok(root)
+    }
+
+    /// Ensure `<state-dir>/staging/<staging_name>` exists as a private `0700` real directory
+    /// owned by the current UID.
+    pub fn ensure_staging_dir(&self, staging_name: &str) -> Result<PathBuf> {
+        validate_vm_name(staging_name)?;
+        self.ensure_staging_root()?;
+        let dir = self.staging_dir(staging_name)?;
+        ensure_private_dir(&dir, self.fix_permissions)?;
+        Ok(dir)
+    }
+
+    /// Acquire an exclusive `O_CLOEXEC` `flock` on `<state-dir>/staging/.<staging_name>.lock`.
+    pub fn lock_staging(&self, staging_name: &str) -> Result<StagingLockGuard> {
+        self.lock_staging_with_options(staging_name, None, None)
+    }
+
+    /// Acquire an exclusive `O_CLOEXEC` `flock` on `<state-dir>/staging/.<staging_name>.lock`
+    /// using a non-blocking try-lock loop that honors both `deadline` and `cancel`.
+    pub fn lock_staging_with_options(
+        &self,
+        staging_name: &str,
+        deadline: Option<Instant>,
+        cancel: Option<&AtomicBool>,
+    ) -> Result<StagingLockGuard> {
+        validate_vm_name(staging_name)?;
+        check_canceled(
+            cancel,
+            &format!("acquiring staging lock for `{staging_name}`"),
+        )?;
+        self.ensure_staging_root()?;
+        let lock_path = self.staging_lock_path(staging_name)?;
+        let current_uid = rustix::process::getuid().as_raw();
+        if let Ok(meta) = fs::symlink_metadata(&lock_path) {
+            ensure_private_regular_file(
+                &lock_path,
+                &meta,
+                current_uid,
+                self.fix_permissions,
+                "disk staging lock",
+            )?;
+        }
+        let fd = openat(
+            CWD,
+            &lock_path,
+            OFlags::CREATE | OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::from_raw_mode(0o600),
+        )
+        .wrap_err_with(|| format!("open disk staging lock {}", lock_path.display()))?;
+        let file = fs::File::from(fd);
+        let meta = file
+            .metadata()
+            .wrap_err_with(|| format!("stat disk staging lock {}", lock_path.display()))?;
+        ensure_private_regular_file(
+            &lock_path,
+            &meta,
+            current_uid,
+            self.fix_permissions,
+            "disk staging lock",
+        )?;
+
+        if deadline.is_none() && cancel.is_none() {
+            flock(&file, FlockOperation::LockExclusive)
+                .wrap_err_with(|| format!("acquire exclusive lock on {}", lock_path.display()))?;
+            return Ok(StagingLockGuard { _file: file });
+        }
+
+        loop {
+            check_canceled(
+                cancel,
+                &format!("waiting for staging lock `{staging_name}`"),
+            )?;
+            match flock(&file, FlockOperation::NonBlockingLockExclusive) {
+                Ok(()) => return Ok(StagingLockGuard { _file: file }),
+                Err(rustix::io::Errno::WOULDBLOCK) => {
+                    if let Some(dl) = deadline {
+                        let now = Instant::now();
+                        if now >= dl {
+                            bail!(
+                                "timed out waiting for exclusive staging lock on {} for `{staging_name}`",
+                                lock_path.display()
+                            );
+                        }
+                        let wait = dl.saturating_duration_since(now).min(LOCK_POLL_INTERVAL);
+                        thread::sleep(wait);
+                    } else {
+                        thread::sleep(LOCK_POLL_INTERVAL);
+                    }
+                }
+                Err(err) => {
+                    return Err(err).wrap_err_with(|| {
+                        format!("acquire exclusive lock on {}", lock_path.display())
+                    });
+                }
+            }
+        }
+    }
+
+    /// Resolve and security-verify `<state-dir>/staging/<staging_name>/data.img` without creating
+    /// directories. Refuses symlinks, non-regular files, foreign UIDs, and unsafe permissions.
+    pub fn resolve_staged_disk(&self, staging_name: &str) -> Result<PathBuf> {
+        validate_vm_name(staging_name)?;
+        let staging_root = self.staging_root();
+        let staging_dir = self.staging_dir(staging_name)?;
+        let disk_path = self.staged_disk_path(staging_name)?;
+
+        verify_existing_private_dir(&self.root, self.fix_permissions, "state directory")?;
+        verify_existing_private_dir(
+            &staging_root,
+            self.fix_permissions,
+            "staging root directory",
+        )?;
+        verify_existing_private_dir(&staging_dir, self.fix_permissions, "staged disk directory")?;
+
+        let current_uid = rustix::process::getuid().as_raw();
+        let meta = fs::symlink_metadata(&disk_path).wrap_err_with(|| {
+            format!(
+                "staged disk image for `{staging_name}` does not exist at {}",
+                disk_path.display()
+            )
+        })?;
+        ensure_private_regular_file(
+            &disk_path,
+            &meta,
+            current_uid,
+            self.fix_permissions,
+            "staged disk image",
+        )?;
+        Ok(disk_path)
+    }
+
+    /// List all staged raw disk images under `<state-dir>/staging/*/data.img`.
+    ///
+    /// Invalid or unsafe child entries (symlinks, non-directories, unsafe permissions, unreadable
+    /// `data.img`) are reported with `error: Some(...)` instead of aborting the whole list.
+    pub fn list_staged_disks(&self) -> Result<Vec<StagedDiskInfo>> {
+        let staging_root = self.staging_root();
+        if fs::symlink_metadata(&self.root).is_err() {
+            return Ok(Vec::new());
+        }
+        verify_existing_private_dir(&self.root, self.fix_permissions, "state directory")?;
+        match fs::symlink_metadata(&staging_root) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(err) => {
+                return Err(err).wrap_err_with(|| {
+                    format!("stat staging root directory {}", staging_root.display())
+                });
+            }
+            Ok(_) => {}
+        }
+        verify_existing_private_dir(
+            &staging_root,
+            self.fix_permissions,
+            "staging root directory",
+        )?;
+
+        let current_uid = rustix::process::getuid().as_raw();
+        let mut disks = Vec::new();
+        for entry in fs::read_dir(&staging_root)
+            .wrap_err_with(|| format!("read staging root {}", staging_root.display()))?
+        {
+            let entry = entry?;
+            let file_name = entry.file_name();
+            let Some(name_str) = file_name.to_str() else {
+                continue;
+            };
+            if name_str.starts_with('.') {
+                continue;
+            }
+            let dir_path = entry.path();
+            if let Err(err) = validate_vm_name(name_str) {
+                disks.push(StagedDiskInfo {
+                    staging_name: name_str.to_owned(),
+                    path: Some(dir_path),
+                    sha256: None,
+                    size_bytes: None,
+                    error: Some(format!("{err:#}")),
+                });
+                continue;
+            }
+            if let Err(err) = verify_existing_private_dir(
+                &dir_path,
+                self.fix_permissions,
+                "staged disk directory",
+            ) {
+                disks.push(StagedDiskInfo {
+                    staging_name: name_str.to_owned(),
+                    path: Some(dir_path),
+                    sha256: None,
+                    size_bytes: None,
+                    error: Some(format!("{err:#}")),
+                });
+                continue;
+            }
+            let data_img = dir_path.join("data.img");
+            let meta = match fs::symlink_metadata(&data_img) {
+                Ok(m) => m,
+                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(err) => {
+                    disks.push(StagedDiskInfo {
+                        staging_name: name_str.to_owned(),
+                        path: Some(data_img),
+                        sha256: None,
+                        size_bytes: None,
+                        error: Some(format!("stat staged disk: {err}")),
+                    });
+                    continue;
+                }
+            };
+            if let Err(err) = ensure_private_regular_file(
+                &data_img,
+                &meta,
+                current_uid,
+                self.fix_permissions,
+                "staged disk image",
+            ) {
+                disks.push(StagedDiskInfo {
+                    staging_name: name_str.to_owned(),
+                    path: Some(data_img),
+                    sha256: None,
+                    size_bytes: None,
+                    error: Some(format!("{err:#}")),
+                });
+                continue;
+            }
+            match sha256_sparse_file(&data_img) {
+                Ok(sha256) => disks.push(StagedDiskInfo {
+                    staging_name: name_str.to_owned(),
+                    path: Some(data_img),
+                    sha256: Some(sha256),
+                    size_bytes: Some(meta.len()),
+                    error: None,
+                }),
+                Err(err) => disks.push(StagedDiskInfo {
+                    staging_name: name_str.to_owned(),
+                    path: Some(data_img),
+                    sha256: None,
+                    size_bytes: None,
+                    error: Some(format!("hash staged disk: {err:#}")),
+                }),
+            }
+        }
+        disks.sort_by(|a, b| a.staging_name.cmp(&b.staging_name));
+        Ok(disks)
+    }
+
+    /// Safely remove `<state-dir>/staging/<staging_name>` under its exclusive staging lock.
+    /// Idempotent (returns `removed: false`) when absent; refuses symlinks or foreign ownership.
+    pub fn clean_staging_dir(&self, staging_name: &str) -> Result<CleanStagingOutput> {
+        validate_vm_name(staging_name)?;
+        let staging_root = self.staging_root();
+        let dir_path = self.staging_dir(staging_name)?;
+        match fs::symlink_metadata(&self.root) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(CleanStagingOutput {
+                    staging_name: staging_name.to_owned(),
+                    path: dir_path,
+                    removed: false,
+                });
+            }
+            Err(err) => {
+                return Err(err)
+                    .wrap_err_with(|| format!("stat state directory {}", self.root.display()));
+            }
+            Ok(_) => {}
+        }
+        verify_existing_private_dir(&self.root, self.fix_permissions, "state directory")?;
+        match fs::symlink_metadata(&staging_root) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(CleanStagingOutput {
+                    staging_name: staging_name.to_owned(),
+                    path: dir_path,
+                    removed: false,
+                });
+            }
+            Err(err) => {
+                return Err(err).wrap_err_with(|| {
+                    format!("stat staging root directory {}", staging_root.display())
+                });
+            }
+            Ok(_) => {}
+        }
+        verify_existing_private_dir(
+            &staging_root,
+            self.fix_permissions,
+            "staging root directory",
+        )?;
+
+        let lock = self.lock_staging(staging_name)?;
+        self.clean_staging_dir_locked(&lock, staging_name)
+    }
+
+    /// Safely remove `<state-dir>/staging/<staging_name>` while the caller already holds
+    /// `lock_staging(staging_name)`.
+    pub fn clean_staging_dir_locked(
+        &self,
+        _lock: &StagingLockGuard,
+        staging_name: &str,
+    ) -> Result<CleanStagingOutput> {
+        validate_vm_name(staging_name)?;
+        let staging_root = self.staging_root();
+        let dir_path = self.staging_dir(staging_name)?;
+        let current_uid = rustix::process::getuid().as_raw();
+        let meta = match fs::symlink_metadata(&dir_path) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(CleanStagingOutput {
+                    staging_name: staging_name.to_owned(),
+                    path: dir_path,
+                    removed: false,
+                });
+            }
+            Err(err) => {
+                return Err(err).wrap_err_with(|| {
+                    format!("stat staged disk directory {}", dir_path.display())
+                });
+            }
+        };
+        ensure!(
+            meta.file_type().is_dir(),
+            "refusing to remove non-directory staging path: {}",
+            dir_path.display()
+        );
+        ensure!(
+            meta.uid() == current_uid,
+            "staging directory {} is owned by uid {}, expected current uid {current_uid}",
+            dir_path.display(),
+            meta.uid()
+        );
+        fs::remove_dir_all(&dir_path)
+            .wrap_err_with(|| format!("remove staged disk directory {}", dir_path.display()))?;
+        if let Ok(root_fd) = fs::File::open(&staging_root) {
+            let _ = root_fd.sync_all();
+        }
+        Ok(CleanStagingOutput {
+            staging_name: staging_name.to_owned(),
+            path: dir_path,
+            removed: true,
+        })
+    }
 }
 
 fn check_canceled(cancel: Option<&AtomicBool>, step: &str) -> Result<()> {
@@ -481,6 +889,38 @@ fn ensure_private_dir(path: &Path, fix_permissions: bool) -> Result<()> {
         }
         Err(err) => {
             return Err(err).wrap_err_with(|| format!("stat state directory {}", path.display()))
+        }
+    }
+    Ok(())
+}
+
+fn verify_existing_private_dir(path: &Path, fix_permissions: bool, label: &str) -> Result<()> {
+    let current_uid = rustix::process::getuid().as_raw();
+    let meta = fs::symlink_metadata(path)
+        .wrap_err_with(|| format!("{label} does not exist: {}", path.display()))?;
+    ensure!(
+        meta.file_type().is_dir(),
+        "{label} path is not a real directory: {}",
+        path.display()
+    );
+    ensure!(
+        meta.uid() == current_uid,
+        "{label} {} is owned by uid {}, expected current uid {current_uid}",
+        path.display(),
+        meta.uid()
+    );
+    let mode = meta.permissions().mode() & 0o7777;
+    if mode & 0o7077 != 0 {
+        if fix_permissions {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o700))
+                .wrap_err_with(|| format!("chmod 0700 {}", path.display()))?;
+        } else {
+            bail!(
+                "refusing {label} {} with unsafe mode {:04o} (expected 0700, no group/other access); run `chmod 0700 {}` or pass --fix-permissions",
+                path.display(),
+                mode,
+                path.display()
+            );
         }
     }
     Ok(())
@@ -545,6 +985,25 @@ pub fn validate_vm_name(name: &str) -> Result<()> {
     ensure!(
         chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_')),
         "VM name must use only ASCII letters, digits, `-`, or `_`, got '{name}'"
+    );
+    Ok(())
+}
+
+/// Validate an optional VM ownership tag (e.g. `outbe-net:<network>:<genesis8>:<member>`).
+pub fn validate_owner_tag(tag: &str) -> Result<()> {
+    ensure!(
+        !tag.is_empty() && tag.len() <= 128,
+        "owner tag must be 1..=128 characters, got '{tag}'"
+    );
+    let mut chars = tag.chars();
+    let first = chars.next().unwrap();
+    ensure!(
+        first.is_ascii_alphanumeric(),
+        "owner tag must start with an ASCII letter or digit, got '{tag}'"
+    );
+    ensure!(
+        chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '.')),
+        "owner tag must use only ASCII letters, digits, `-`, `_`, `:`, or `.`, got '{tag}'"
     );
     Ok(())
 }
@@ -628,10 +1087,19 @@ pub fn resolve_vmm_paths(
 #[derive(Clone, Debug)]
 pub struct CreateLocalVmOptions {
     pub name: String,
+    pub owner_tag: Option<String>,
     pub image_dir: PathBuf,
     pub image_name: Option<String>,
     pub flavor: String,
     pub disk_source: PathBuf,
+    /// Optional staging name under `<state-dir>/staging/<name>` (`--disk-staging <name>`).
+    /// When set, `create_local_vm*` holds `lock_staging(name)` BEFORE `lock_vm` across
+    /// resolution, SHA-256 hashing, `CreateVm`, disk conversion, and optional consumption so the
+    /// hashed bytes are guaranteed to match the converted bytes.
+    pub disk_staging_name: Option<String>,
+    /// When `true` (requires `disk_staging_name.is_some()`), deletes `<state-dir>/staging/<name>`
+    /// ONLY after `LocalVmPhase::Ready` is durably saved.
+    pub consume_staging: bool,
     pub vcpu: u32,
     pub memory_gib: u32,
     pub disk_gib: u32,
@@ -657,6 +1125,8 @@ pub struct CreateLocalVmOptions {
 pub struct CreateLocalVmOutput {
     pub name: String,
     pub vm_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_tag: Option<String>,
     pub image_name: String,
     pub os_image_hash: String,
     pub image_reused: bool,
@@ -668,6 +1138,10 @@ pub struct CreateLocalVmOutput {
     pub memory_gib: u32,
     pub disk_gib: u32,
     pub phase: LocalVmPhase,
+    #[serde(default)]
+    pub staging_consumed: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
     pub state_file: PathBuf,
 }
 
@@ -698,6 +1172,8 @@ pub struct StopLocalVmOutput {
 pub struct LocalVmStatusOutput {
     pub name: String,
     pub vm_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_tag: Option<String>,
     pub phase: LocalVmPhase,
     pub vmm_status: String,
     pub running: bool,
@@ -714,6 +1190,11 @@ pub struct LocalVmStatusOutput {
     pub os_image_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub disk_source_sha256: Option<String>,
+    pub app_id: String,
+    pub no_tee: bool,
+    pub vcpu: u32,
+    pub memory_gib: u32,
+    pub disk_gib: u32,
     pub bridge: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub boot_error: Option<String>,
@@ -801,16 +1282,50 @@ where
 
     check_canceled(cancel, "validating create inputs")?;
     validate_vm_name(&options.name)?;
+    if let Some(tag) = &options.owner_tag {
+        validate_owner_tag(tag)?;
+    }
+    if options.consume_staging {
+        ensure!(
+            options.disk_staging_name.is_some(),
+            "--consume-staging requires --disk-staging"
+        );
+    }
+    if let Some(staging_name) = &options.disk_staging_name {
+        validate_vm_name(staging_name)?;
+    }
     validate_iface_name(&options.bridge, "bridge")?;
     validate_flavor(&options.flavor)?;
     ensure!(options.vcpu > 0, "--vcpu must be positive");
     ensure!(options.memory_gib > 0, "--memory-gib must be positive");
     ensure!(options.disk_gib > 0, "--disk-gib must be positive");
-    ensure!(
-        options.disk_source.is_file(),
-        "raw disk image does not exist: {}",
-        options.disk_source.display()
-    );
+
+    // Lock order: staging lock FIRST (when `--disk-staging` is set), then per-VM lock, then
+    // per-image lock. `disk prepare` and `disk clean` take only the staging lock, so this order
+    // is strictly acyclic and prevents any concurrent prepare/clean from swapping `data.img`
+    // between SHA-256 hashing and `qemu-img convert`.
+    let (effective_disk_source, staging_held) = match &options.disk_staging_name {
+        Some(staging_name) => {
+            verify_existing_private_dir(&store.root, store.fix_permissions, "state directory")?;
+            verify_existing_private_dir(
+                &store.staging_root(),
+                store.fix_permissions,
+                "staging root directory",
+            )?;
+            let staging_lock =
+                store.lock_staging_with_options(staging_name, op_deadline, cancel)?;
+            let resolved = store.resolve_staged_disk(staging_name)?;
+            (resolved, Some((staging_name.clone(), staging_lock)))
+        }
+        None => {
+            ensure!(
+                options.disk_source.is_file(),
+                "raw disk image does not exist: {}",
+                options.disk_source.display()
+            );
+            (options.disk_source.clone(), None)
+        }
+    };
 
     let compose_file = match &options.app_compose_path {
         Some(path) => {
@@ -824,8 +1339,8 @@ where
     };
     let app_id = calc_app_id(&compose_file);
     check_canceled(cancel, "hashing raw disk image")?;
-    let disk_source_sha256 = sha256_sparse_file(&options.disk_source)
-        .wrap_err_with(|| format!("hash raw disk image {}", options.disk_source.display()))?;
+    let disk_source_sha256 = sha256_sparse_file(&effective_disk_source)
+        .wrap_err_with(|| format!("hash raw disk image {}", effective_disk_source.display()))?;
 
     let guard = store.lock_vm_with_options(&options.name, op_deadline, cancel)?;
 
@@ -862,6 +1377,7 @@ where
             ensure_immutable_create_params_match(
                 &prev,
                 options,
+                &effective_disk_source,
                 &published.name,
                 &published.digest,
                 &app_id,
@@ -959,11 +1475,12 @@ where
                 name: options.name.clone(),
                 vm_id: String::new(),
                 create_token: Some(create_token.clone()),
+                owner_tag: options.owner_tag.clone(),
                 vmm_socket: options.vmm_socket.clone(),
                 vmm_home: options.vmm_home.clone(),
                 image_name: published.name.clone(),
                 os_image_hash: published.digest.clone(),
-                disk_source: options.disk_source.clone(),
+                disk_source: effective_disk_source.clone(),
                 disk_source_sha256: Some(disk_source_sha256.clone()),
                 vcpu: options.vcpu,
                 memory_gib: options.memory_gib,
@@ -1069,9 +1586,33 @@ where
     }
     let state_file = store.save_locked(&guard, &state)?;
 
+    // Consume the staged raw disk ONLY AFTER `LocalVmPhase::Ready` has been durably saved so any
+    // failure or interruption before `Ready` preserves the staged disk for retry/resume. If
+    // consumption fails after durable Ready, emit a warning and `staging_consumed: false` (exit 0)
+    // so callers can clean it up explicitly with `disk clean --staging-name`.
+    let mut staging_consumed = false;
+    let mut warning = None;
+    if options.consume_staging {
+        if let Some((staging_name, staging_lock)) = staging_held.as_ref() {
+            match store.clean_staging_dir_locked(staging_lock, staging_name) {
+                Ok(cleaned) => {
+                    staging_consumed = cleaned.removed;
+                }
+                Err(err) => {
+                    warning = Some(format!(
+                        "WARNING: VM `{}` reached Ready, but failed to remove staged disk `{staging_name}` ({err:#}); run `outbe-up disk clean --staging-name {staging_name}`",
+                        state.name
+                    ));
+                }
+            }
+        }
+    }
+    drop(staging_held);
+
     Ok(CreateLocalVmOutput {
         name: state.name,
         vm_id: state.vm_id,
+        owner_tag: state.owner_tag,
         image_name: state.image_name,
         os_image_hash: state.os_image_hash,
         image_reused: published.reused,
@@ -1082,6 +1623,8 @@ where
         memory_gib: state.memory_gib,
         disk_gib: state.disk_gib,
         phase: state.phase,
+        staging_consumed,
+        warning,
         state_file,
     })
 }
@@ -1097,6 +1640,7 @@ fn compute_grace_deadline(grace: Duration, op_deadline: Option<Instant>) -> Inst
 fn ensure_immutable_create_params_match(
     prev: &LocalVmState,
     options: &CreateLocalVmOptions,
+    effective_disk_source: &Path,
     published_image_name: &str,
     published_image_hash: &str,
     app_id: &str,
@@ -1142,6 +1686,12 @@ fn ensure_immutable_create_params_match(
     if prev.app_id != app_id {
         mismatches.push(format!("app_id (`{}` vs `{app_id}`)", prev.app_id));
     }
+    if prev.owner_tag != options.owner_tag {
+        mismatches.push(format!(
+            "owner_tag ({:?} vs {:?})",
+            prev.owner_tag, options.owner_tag
+        ));
+    }
     if prev.intended_ip != options.intended_ip {
         mismatches.push(format!(
             "intended_ip ({:?} vs {:?})",
@@ -1162,11 +1712,11 @@ fn ensure_immutable_create_params_match(
             options.vmm_home.display()
         ));
     }
-    if prev.disk_source != options.disk_source {
+    if prev.disk_source != effective_disk_source {
         mismatches.push(format!(
             "disk_source (`{}` vs `{}`)",
             prev.disk_source.display(),
-            options.disk_source.display()
+            effective_disk_source.display()
         ));
     }
     match prev.disk_source_sha256.as_deref() {
@@ -1346,6 +1896,13 @@ fn verify_adopted_vm_matches_state(info: &VmInfo, state: &LocalVmState) -> Resul
             mismatches.push(format!("app_id (missing vs `{}`)", state.app_id));
         }
     }
+    if info.annotation(OWNER_TAG_ANNOTATION) != state.owner_tag.as_deref() {
+        mismatches.push(format!(
+            "owner_tag ({:?} vs {:?})",
+            info.annotation(OWNER_TAG_ANNOTATION),
+            state.owner_tag.as_deref()
+        ));
+    }
     ensure!(
         mismatches.is_empty(),
         "refusing to adopt token-matched VM {} for `{}`: VMM configuration does not match journal ({})",
@@ -1367,6 +1924,9 @@ fn issue_create_vm<T: VmmTransport>(
 ) -> Result<String> {
     let mut annotations = BTreeMap::new();
     annotations.insert(CREATE_TOKEN_ANNOTATION.to_owned(), create_token.to_owned());
+    if let Some(owner_tag) = &options.owner_tag {
+        annotations.insert(OWNER_TAG_ANNOTATION.to_owned(), owner_tag.clone());
+    }
     vmm.create_vm_with_deadline(
         &CreateVmRequest {
             name: options.name.clone(),
@@ -1411,14 +1971,47 @@ fn persist_created_or_cleanup<T: VmmTransport>(
     Ok(())
 }
 
+fn verify_expected_vm_id(state: &LocalVmState, expect_vm_id: Option<&str>) -> Result<()> {
+    let Some(expected) = expect_vm_id else {
+        return Ok(());
+    };
+    validate_vm_id(expected).wrap_err("invalid --expect-vm-id")?;
+    ensure!(
+        !state.vm_id.is_empty() && state.vm_id == expected,
+        "vm_id_mismatch for VM `{}`: expected `{expected}`, recorded `{}`",
+        state.name,
+        if state.vm_id.is_empty() {
+            "<none (creating)>"
+        } else {
+            &state.vm_id
+        }
+    );
+    Ok(())
+}
+
 /// Start one locally recorded VM.
 pub fn start_local_vm<T: VmmTransport>(
     store: &LocalVmStore,
     vmm: &VmmClient<T>,
     name: &str,
 ) -> Result<StartLocalVmOutput> {
+    start_local_vm_with_expected_id(store, vmm, name, None)
+}
+
+/// Start one locally recorded VM, verifying an optional `--expect-vm-id` under the per-VM lock
+/// before issuing any VMM RPC.
+pub fn start_local_vm_with_expected_id<T: VmmTransport>(
+    store: &LocalVmStore,
+    vmm: &VmmClient<T>,
+    name: &str,
+    expect_vm_id: Option<&str>,
+) -> Result<StartLocalVmOutput> {
+    if let Some(expected) = expect_vm_id {
+        validate_vm_id(expected).wrap_err("invalid --expect-vm-id")?;
+    }
     let guard = store.lock_vm(name)?;
     let mut state = store.load_locked(&guard, name)?;
+    verify_expected_vm_id(&state, expect_vm_id)?;
     ensure!(
         state.phase == LocalVmPhase::Ready,
         "VM `{name}` ({}) is in phase `{:?}`, not `Ready`; resume `outbe-up vm create` or clean up with `outbe-up vm remove --name {name}`",
@@ -1476,9 +2069,27 @@ pub fn stop_local_vm<T: VmmTransport>(
     timeout: Duration,
     poll_interval: Duration,
 ) -> Result<StopLocalVmOutput> {
+    stop_local_vm_with_expected_id(store, vmm, name, None, force, timeout, poll_interval)
+}
+
+/// Same as [`stop_local_vm`], verifying an optional `--expect-vm-id` under the per-VM lock before
+/// issuing any VMM RPC.
+pub fn stop_local_vm_with_expected_id<T: VmmTransport>(
+    store: &LocalVmStore,
+    vmm: &VmmClient<T>,
+    name: &str,
+    expect_vm_id: Option<&str>,
+    force: bool,
+    timeout: Duration,
+    poll_interval: Duration,
+) -> Result<StopLocalVmOutput> {
+    if let Some(expected) = expect_vm_id {
+        validate_vm_id(expected).wrap_err("invalid --expect-vm-id")?;
+    }
     let deadline = Instant::now() + timeout;
     let guard = store.lock_vm_with_options(name, Some(deadline), None)?;
     let mut state = store.load_locked(&guard, name)?;
+    verify_expected_vm_id(&state, expect_vm_id)?;
     ensure!(
         state.phase != LocalVmPhase::Creating,
         "VM `{name}` was interrupted during creation (no vm_id recorded); resume `outbe-up vm create` or clean up with `outbe-up vm remove --name {name}`"
@@ -1563,8 +2174,24 @@ pub fn status_local_vm<T: VmmTransport>(
     name: &str,
     dhcp_leases_path: &Path,
 ) -> Result<LocalVmStatusOutput> {
+    status_local_vm_with_expected_id(store, vmm, name, None, dhcp_leases_path)
+}
+
+/// Same as [`status_local_vm`], verifying an optional `--expect-vm-id` under the per-VM lock
+/// before issuing any VMM RPC.
+pub fn status_local_vm_with_expected_id<T: VmmTransport>(
+    store: &LocalVmStore,
+    vmm: &VmmClient<T>,
+    name: &str,
+    expect_vm_id: Option<&str>,
+    dhcp_leases_path: &Path,
+) -> Result<LocalVmStatusOutput> {
+    if let Some(expected) = expect_vm_id {
+        validate_vm_id(expected).wrap_err("invalid --expect-vm-id")?;
+    }
     let guard = store.lock_vm(name)?;
     let state = store.load_locked(&guard, name)?;
+    verify_expected_vm_id(&state, expect_vm_id)?;
     let leases_content = fs::read_to_string(dhcp_leases_path).ok();
     query_status_from_state(vmm, &state, leases_content.as_deref())
 }
@@ -1601,6 +2228,7 @@ fn query_status_from_state<T: VmmTransport>(
         return Ok(LocalVmStatusOutput {
             name: state.name.clone(),
             vm_id: String::new(),
+            owner_tag: state.owner_tag.clone(),
             phase: state.phase,
             vmm_status: "creating".to_owned(),
             running: false,
@@ -1613,6 +2241,11 @@ fn query_status_from_state<T: VmmTransport>(
             image_name: state.image_name.clone(),
             os_image_hash: state.os_image_hash.clone(),
             disk_source_sha256: state.disk_source_sha256.clone(),
+            app_id: state.app_id.clone(),
+            no_tee: state.no_tee,
+            vcpu: state.vcpu,
+            memory_gib: state.memory_gib,
+            disk_gib: state.disk_gib,
             bridge: state.bridge.clone(),
             boot_error: None,
             error: Some(
@@ -1628,6 +2261,7 @@ fn query_status_from_state<T: VmmTransport>(
         return Ok(LocalVmStatusOutput {
             name: state.name.clone(),
             vm_id: state.vm_id.clone(),
+            owner_tag: state.owner_tag.clone(),
             phase: state.phase,
             vmm_status: "missing".to_owned(),
             running: false,
@@ -1640,6 +2274,11 @@ fn query_status_from_state<T: VmmTransport>(
             image_name: state.image_name.clone(),
             os_image_hash: state.os_image_hash.clone(),
             disk_source_sha256: state.disk_source_sha256.clone(),
+            app_id: state.app_id.clone(),
+            no_tee: state.no_tee,
+            vcpu: state.vcpu,
+            memory_gib: state.memory_gib,
+            disk_gib: state.disk_gib,
             bridge: state.bridge.clone(),
             boot_error: None,
             error: Some(format!("VM {} not found on local VMM", state.vm_id)),
@@ -1664,6 +2303,7 @@ fn query_status_from_state<T: VmmTransport>(
     Ok(LocalVmStatusOutput {
         name: state.name.clone(),
         vm_id: state.vm_id.clone(),
+        owner_tag: state.owner_tag.clone(),
         phase: state.phase,
         vmm_status: info.status,
         running: info.running,
@@ -1676,6 +2316,11 @@ fn query_status_from_state<T: VmmTransport>(
         image_name,
         os_image_hash: state.os_image_hash.clone(),
         disk_source_sha256: state.disk_source_sha256.clone(),
+        app_id: state.app_id.clone(),
+        no_tee: state.no_tee,
+        vcpu: state.vcpu,
+        memory_gib: state.memory_gib,
+        disk_gib: state.disk_gib,
         bridge: state.bridge.clone(),
         boot_error,
         error,
@@ -1689,8 +2334,24 @@ pub fn logs_local_vm<T: VmmTransport>(
     name: &str,
     lines: usize,
 ) -> Result<LocalVmLogsOutput> {
+    logs_local_vm_with_expected_id(store, vmm, name, None, lines)
+}
+
+/// Same as [`logs_local_vm`], verifying an optional `--expect-vm-id` under the per-VM lock before
+/// reading the serial log.
+pub fn logs_local_vm_with_expected_id<T: VmmTransport>(
+    store: &LocalVmStore,
+    vmm: &VmmClient<T>,
+    name: &str,
+    expect_vm_id: Option<&str>,
+    lines: usize,
+) -> Result<LocalVmLogsOutput> {
+    if let Some(expected) = expect_vm_id {
+        validate_vm_id(expected).wrap_err("invalid --expect-vm-id")?;
+    }
     let guard = store.lock_vm(name)?;
     let state = store.load_locked(&guard, name)?;
+    verify_expected_vm_id(&state, expect_vm_id)?;
     ensure!(
         state.phase != LocalVmPhase::Creating && !state.vm_id.is_empty(),
         "VM `{name}` has no recorded VMM ID yet (phase: {:?})",
@@ -1706,12 +2367,14 @@ pub fn logs_local_vm<T: VmmTransport>(
 }
 
 /// Options controlling `remove_local_vm` behavior.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub struct RemoveLocalVmOptions {
     pub force: bool,
     /// Allow deleting an unresolved `Creating` intent when no token-matched VM appears within the
     /// grace polling window.
     pub forget_intent: bool,
+    /// Optional expected VM UUID verified under the per-VM exclusive lock before any VMM RPC.
+    pub expect_vm_id: Option<String>,
     pub timeout: Duration,
     pub recovery_grace: Duration,
     pub poll_interval: Duration,
@@ -1722,6 +2385,7 @@ impl Default for RemoveLocalVmOptions {
         Self {
             force: false,
             forget_intent: false,
+            expect_vm_id: None,
             timeout: Duration::from_secs(120),
             recovery_grace: DEFAULT_CREATE_RECOVERY_GRACE,
             poll_interval: DEFAULT_POLL_INTERVAL,
@@ -1743,9 +2407,13 @@ pub fn remove_local_vm<T: VmmTransport>(
     name: &str,
     options: RemoveLocalVmOptions,
 ) -> Result<RemoveLocalVmOutput> {
+    if let Some(expected) = options.expect_vm_id.as_deref() {
+        validate_vm_id(expected).wrap_err("invalid --expect-vm-id")?;
+    }
     let deadline = Instant::now() + options.timeout;
     let guard = store.lock_vm_with_options(name, Some(deadline), None)?;
     let mut state = store.load_locked(&guard, name)?;
+    verify_expected_vm_id(&state, options.expect_vm_id.as_deref())?;
 
     // Recover an interrupted `Creating` record strictly by our unique annotation token + config.
     if state.phase == LocalVmPhase::Creating && state.vm_id.is_empty() {
@@ -2285,10 +2953,13 @@ mod tests {
         let vmm_home = dir.join("vmm");
         CreateLocalVmOptions {
             name: "dev".into(),
+            owner_tag: None,
             image_dir: image_dir.to_path_buf(),
             image_name: None,
             flavor: "dev".into(),
             disk_source: raw_disk.to_path_buf(),
+            disk_staging_name: None,
+            consume_staging: false,
             vcpu: 3,
             memory_gib: 5,
             disk_gib: 10,
@@ -2309,6 +2980,7 @@ mod tests {
         RemoveLocalVmOptions {
             force: false,
             forget_intent: false,
+            expect_vm_id: None,
             timeout: Duration::from_secs(2),
             recovery_grace: Duration::from_millis(80),
             poll_interval: Duration::from_millis(10),
@@ -2334,6 +3006,7 @@ mod tests {
                     name: "dev".into(),
                     vm_id: String::new(),
                     create_token: Some("b".repeat(32)),
+                    owner_tag: None,
                     vmm_socket: opts.vmm_socket.clone(),
                     vmm_home: opts.vmm_home.clone(),
                     image_name: "outbe-vm-dev-0123456789abcdef".into(),
@@ -2441,6 +3114,7 @@ mod tests {
                     name: "dev".into(),
                     vm_id: String::new(),
                     create_token: Some("c".repeat(32)),
+                    owner_tag: None,
                     vmm_socket: opts.vmm_socket.clone(),
                     vmm_home: opts.vmm_home.clone(),
                     image_name: "outbe-vm-dev-0123456789abcdef".into(),
@@ -2491,6 +3165,7 @@ mod tests {
                     name: "dev".into(),
                     vm_id: String::new(),
                     create_token: Some(token.clone()),
+                    owner_tag: None,
                     vmm_socket: opts.vmm_socket.clone(),
                     vmm_home: opts.vmm_home.clone(),
                     image_name: "outbe-vm-dev-0123456789abcdef".into(),
@@ -2635,6 +3310,7 @@ mod tests {
                     name: "dev".into(),
                     vm_id: String::new(),
                     create_token: Some("a".repeat(32)),
+                    owner_tag: None,
                     vmm_socket: opts.vmm_socket.clone(),
                     vmm_home: opts.vmm_home.clone(),
                     image_name: "outbe-vm-dev-0123456789abcdef".into(),
@@ -3086,6 +3762,7 @@ mod tests {
             name: "race-vm".into(),
             vm_id: UUID_OWNED.into(),
             create_token: None,
+            owner_tag: None,
             vmm_socket: PathBuf::from("/tmp/vmm.sock"),
             vmm_home: PathBuf::from("/tmp/vmm"),
             image_name: "outbe-vm-dev-0123456789abcdef".into(),
@@ -3247,10 +3924,13 @@ mod tests {
         let store = LocalVmStore::new(state_dir);
         let opts = CreateLocalVmOptions {
             name: "race-vm".to_owned(),
+            owner_tag: None,
             image_dir: src_image,
             image_name: None,
             flavor: "dev".to_owned(),
             disk_source,
+            disk_staging_name: None,
+            consume_staging: false,
             bridge: "obr0".to_owned(),
             vcpu: 3,
             memory_gib: 5,
@@ -3317,5 +3997,477 @@ mod tests {
             published.target_dir.is_dir(),
             "referenced image directory must remain intact"
         );
+    }
+
+    #[test]
+    fn c1_owner_tag_persists_in_state_vmm_annotation_status_and_adoption_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let (image_dir, raw_disk) = make_image_and_disk(dir.path());
+        let store = LocalVmStore::new(dir.path().join("state"));
+        let stub = StubVmm::new();
+        let vmm = VmmClient::new(stub.clone(), "stub");
+        let tag = "outbe-net:devnet:01234567:validator-0".to_owned();
+
+        // Invalid owner tags are rejected before any VMM RPC.
+        let mut bad_opts = base_opts(dir.path(), &image_dir, &raw_disk);
+        bad_opts.owner_tag = Some("../evil tag".to_owned());
+        assert!(
+            create_local_vm_with_disk_stager(&store, &vmm, &bad_opts, |_, _, _, _| {
+                panic!("must not run disk stager on invalid owner tag")
+            })
+            .is_err()
+        );
+        assert!(stub.state.lock().unwrap().calls.is_empty());
+
+        // Drop CreateVm response once to verify owner_tag is persisted in Creating state AND
+        // sent in CreateVm annotations AND verified on adoption.
+        stub.state.lock().unwrap().drop_create_response_once = true;
+        let mut opts = base_opts(dir.path(), &image_dir, &raw_disk);
+        opts.owner_tag = Some(tag.clone());
+        assert!(
+            create_local_vm_with_disk_stager(&store, &vmm, &opts, |home, id, _, _| {
+                Ok(home.join("vm").join(id).join("hda.img"))
+            })
+            .is_err()
+        );
+
+        // Creating phase status must already expose owner_tag and resource fields.
+        let leases = dir.path().join("dhcp-leases");
+        let creating_status = status_local_vm(&store, &vmm, "dev", &leases).unwrap();
+        assert_eq!(creating_status.phase, LocalVmPhase::Creating);
+        assert_eq!(creating_status.owner_tag.as_deref(), Some(tag.as_str()));
+        assert_eq!(creating_status.app_id, calc_app_id(APP_COMPOSE_JSON));
+        assert!(!creating_status.no_tee);
+        assert_eq!(creating_status.vcpu, 3);
+        assert_eq!(creating_status.memory_gib, 5);
+        assert_eq!(creating_status.disk_gib, 10);
+
+        // VMM must have received OWNER_TAG_ANNOTATION on CreateVm.
+        {
+            let g = stub.state.lock().unwrap();
+            let vm = g.vms.get(UUID_OWNED).unwrap();
+            assert_eq!(
+                vm.annotations.get(OWNER_TAG_ANNOTATION).map(String::as_str),
+                Some(tag.as_str())
+            );
+        }
+
+        // Retrying with a different owner_tag must be rejected by immutable param check.
+        let mut wrong_tag_opts = opts.clone();
+        wrong_tag_opts.owner_tag = Some("outbe-net:other:89abcdef:validator-0".to_owned());
+        let err = create_local_vm_with_disk_stager(&store, &vmm, &wrong_tag_opts, |_, _, _, _| {
+            panic!("must not resume with mismatched owner_tag")
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("owner_tag"), "{err}");
+
+        // Tampering the VMM VM's owner_tag annotation must cause adoption to refuse.
+        stub.state
+            .lock()
+            .unwrap()
+            .vms
+            .get_mut(UUID_OWNED)
+            .unwrap()
+            .annotations
+            .insert(
+                OWNER_TAG_ANNOTATION.to_owned(),
+                "outbe-net:tampered:00000000:validator-0".to_owned(),
+            );
+        let err = create_local_vm_with_disk_stager(&store, &vmm, &opts, |_, _, _, _| {
+            panic!("must not adopt VM with mismatched owner_tag annotation")
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("owner_tag"), "{err}");
+
+        // Restore exact annotation -> adoption succeeds and Ready status reports all fields.
+        stub.state
+            .lock()
+            .unwrap()
+            .vms
+            .get_mut(UUID_OWNED)
+            .unwrap()
+            .annotations
+            .insert(OWNER_TAG_ANNOTATION.to_owned(), tag.clone());
+        let created = create_local_vm_with_disk_stager(&store, &vmm, &opts, |home, id, _, _| {
+            Ok(home.join("vm").join(id).join("hda.img"))
+        })
+        .unwrap();
+        assert_eq!(created.owner_tag.as_deref(), Some(tag.as_str()));
+        let ready_status = status_local_vm(&store, &vmm, "dev", &leases).unwrap();
+        assert_eq!(ready_status.owner_tag.as_deref(), Some(tag.as_str()));
+        assert_eq!(ready_status.app_id, calc_app_id(APP_COMPOSE_JSON));
+        assert!(!ready_status.no_tee);
+        assert_eq!(ready_status.vcpu, 3);
+        assert_eq!(ready_status.memory_gib, 5);
+        assert_eq!(ready_status.disk_gib, 10);
+    }
+
+    #[test]
+    fn c1_expect_vm_id_enforced_before_any_vmm_rpc() {
+        let dir = tempfile::tempdir().unwrap();
+        let (image_dir, raw_disk) = make_image_and_disk(dir.path());
+        let store = LocalVmStore::new(dir.path().join("state"));
+        let stub = StubVmm::new();
+        let vmm = VmmClient::new(stub.clone(), "stub");
+        let opts = base_opts(dir.path(), &image_dir, &raw_disk);
+
+        let created = create_local_vm_with_disk_stager(&store, &vmm, &opts, |home, id, _, _| {
+            Ok(home.join("vm").join(id).join("hda.img"))
+        })
+        .unwrap();
+        assert_eq!(created.vm_id, UUID_OWNED);
+
+        let leases = dir.path().join("dhcp-leases");
+        let calls_before = stub.state.lock().unwrap().calls.len();
+
+        // Wrong UUID fails closed on every lifecycle verb with ZERO VMM RPCs.
+        let err =
+            start_local_vm_with_expected_id(&store, &vmm, "dev", Some(UUID_FOREIGN)).unwrap_err();
+        assert!(err.to_string().contains("vm_id_mismatch"), "{err}");
+
+        let err = stop_local_vm_with_expected_id(
+            &store,
+            &vmm,
+            "dev",
+            Some(UUID_FOREIGN),
+            false,
+            Duration::from_secs(2),
+            Duration::from_millis(10),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("vm_id_mismatch"), "{err}");
+
+        let err =
+            status_local_vm_with_expected_id(&store, &vmm, "dev", Some(UUID_FOREIGN), &leases)
+                .unwrap_err();
+        assert!(err.to_string().contains("vm_id_mismatch"), "{err}");
+
+        let err = logs_local_vm_with_expected_id(&store, &vmm, "dev", Some(UUID_FOREIGN), 10)
+            .unwrap_err();
+        assert!(err.to_string().contains("vm_id_mismatch"), "{err}");
+
+        let mut rm_mismatch = fast_remove_opts();
+        rm_mismatch.expect_vm_id = Some(UUID_FOREIGN.to_owned());
+        let err = remove_local_vm(&store, &vmm, "dev", rm_mismatch).unwrap_err();
+        assert!(err.to_string().contains("vm_id_mismatch"), "{err}");
+
+        assert_eq!(
+            stub.state.lock().unwrap().calls.len(),
+            calls_before,
+            "mismatched --expect-vm-id must issue ZERO VMM RPCs"
+        );
+        // State file must still be Ready (not mutated to Removing).
+        let guard = store.lock_vm("dev").unwrap();
+        assert_eq!(
+            store.load_locked(&guard, "dev").unwrap().phase,
+            LocalVmPhase::Ready
+        );
+        drop(guard);
+
+        // Matching UUID succeeds across status -> start -> logs -> stop -> remove.
+        let st = status_local_vm_with_expected_id(&store, &vmm, "dev", Some(UUID_OWNED), &leases)
+            .unwrap();
+        assert_eq!(st.vm_id, UUID_OWNED);
+        start_local_vm_with_expected_id(&store, &vmm, "dev", Some(UUID_OWNED)).unwrap();
+        let logs =
+            logs_local_vm_with_expected_id(&store, &vmm, "dev", Some(UUID_OWNED), 5).unwrap();
+        assert!(logs.log.contains(UUID_OWNED));
+        stop_local_vm_with_expected_id(
+            &store,
+            &vmm,
+            "dev",
+            Some(UUID_OWNED),
+            false,
+            Duration::from_secs(2),
+            Duration::from_millis(10),
+        )
+        .unwrap();
+        let mut rm_match = fast_remove_opts();
+        rm_match.expect_vm_id = Some(UUID_OWNED.to_owned());
+        let removed = remove_local_vm(&store, &vmm, "dev", rm_match).unwrap();
+        assert_eq!(removed.vm_id, UUID_OWNED);
+    }
+
+    #[test]
+    fn c1_staging_store_list_clean_symlink_refusal_and_consume_only_on_ready() {
+        let dir = tempfile::tempdir().unwrap();
+        let (image_dir, _) = make_image_and_disk(dir.path());
+        let store = LocalVmStore::new(dir.path().join("state"));
+        let stub = StubVmm::new();
+        let vmm = VmmClient::new(stub.clone(), "stub");
+
+        // Empty store returns empty list and idempotent clean.
+        assert!(store.list_staged_disks().unwrap().is_empty());
+        let noop = store.clean_staging_dir("dev").unwrap();
+        assert!(!noop.removed);
+
+        // Populate a valid staged disk (0700 dir, 0600 data.img).
+        let staging_dir = store.ensure_staging_dir("dev").unwrap();
+        let staged_img = store.staged_disk_path("dev").unwrap();
+        fs::write(&staged_img, b"staged-raw-disk-bytes").unwrap();
+        fs::set_permissions(&staged_img, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let listed = store.list_staged_disks().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].staging_name, "dev");
+        assert_eq!(listed[0].path.as_deref(), Some(staged_img.as_path()));
+        assert_eq!(
+            listed[0].size_bytes,
+            Some(b"staged-raw-disk-bytes".len() as u64)
+        );
+        assert_eq!(
+            listed[0].sha256.as_deref(),
+            Some(sha256_sparse_file(&staged_img).unwrap().as_str())
+        );
+        assert!(listed[0].error.is_none());
+
+        // Symlink staging dir is refused by clean_staging_dir, while list_staged_disks reports it
+        // as an errored entry without aborting valid siblings (F5).
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        let evil_link = store.staging_root().join("evil");
+        std::os::unix::fs::symlink(&outside, &evil_link).unwrap();
+        assert!(store.clean_staging_dir("evil").is_err());
+        let listed_with_bad = store.list_staged_disks().unwrap();
+        assert_eq!(listed_with_bad.len(), 2);
+        let dev_entry = listed_with_bad
+            .iter()
+            .find(|e| e.staging_name == "dev")
+            .unwrap();
+        assert!(dev_entry.error.is_none());
+        let evil_entry = listed_with_bad
+            .iter()
+            .find(|e| e.staging_name == "evil")
+            .unwrap();
+        assert!(evil_entry.error.is_some());
+        assert!(evil_entry.sha256.is_none());
+        fs::remove_file(&evil_link).unwrap();
+
+        // Failed create with disk_staging + consume_staging MUST preserve staged disk for retry!
+        let mut opts = base_opts(dir.path(), &image_dir, &staged_img);
+        opts.disk_staging_name = Some("dev".to_owned());
+        opts.consume_staging = true;
+        let err = create_local_vm_with_disk_stager(&store, &vmm, &opts, |_, _, _, _| {
+            Err(eyre::eyre!("simulated qemu-img failure"))
+        })
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("simulated qemu-img failure"),
+            "{err}"
+        );
+        assert!(
+            staged_img.is_file(),
+            "staged disk must be preserved when vm create fails before Ready"
+        );
+        assert_eq!(store.list_staged_disks().unwrap().len(), 1);
+
+        // Successful resume reaches Ready and consumes the staging directory!
+        let created = create_local_vm_with_disk_stager(&store, &vmm, &opts, |home, id, _, _| {
+            Ok(home.join("vm").join(id).join("hda.img"))
+        })
+        .unwrap();
+        assert_eq!(created.phase, LocalVmPhase::Ready);
+        assert!(created.staging_consumed);
+        assert!(created.warning.is_none());
+        assert!(!staging_dir.exists());
+        assert!(store.list_staged_disks().unwrap().is_empty());
+    }
+
+    #[test]
+    fn c1_f2_vm_create_disk_staging_holds_staging_lock_across_hash_and_convert() {
+        use std::sync::mpsc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let (image_dir, _) = make_image_and_disk(dir.path());
+        let store = LocalVmStore::new(dir.path().join("state"));
+        let stub = StubVmm::new();
+
+        store.ensure_staging_dir("dev").unwrap();
+        let staged_img = store.staged_disk_path("dev").unwrap();
+        fs::write(&staged_img, b"original-staged-bytes").unwrap();
+        fs::set_permissions(&staged_img, fs::Permissions::from_mode(0o600)).unwrap();
+        let expected_sha = sha256_sparse_file(&staged_img).unwrap();
+
+        let (stager_entered_tx, stager_entered_rx) = mpsc::channel();
+        let (allow_stager_tx, allow_stager_rx) = mpsc::channel();
+
+        let store_create = store.clone();
+        let vmm_create = VmmClient::new(stub.clone(), "stub");
+        let mut opts = base_opts(dir.path(), &image_dir, &staged_img);
+        opts.disk_staging_name = Some("dev".to_owned());
+        // Even WITHOUT `--consume-staging`, `--disk-staging` MUST hold `lock_staging` across
+        // hashing and conversion so a concurrent prepare/clean cannot race or swap `data.img`.
+        opts.consume_staging = false;
+
+        let create_handle = thread::spawn(move || {
+            create_local_vm_with_disk_stager(
+                &store_create,
+                &vmm_create,
+                &opts,
+                |home, id, raw_disk, _| {
+                    stager_entered_tx.send(()).unwrap();
+                    allow_stager_rx.recv().unwrap();
+                    // Verify bytes converted match the exact hashed bytes untouched by races.
+                    assert_eq!(fs::read(raw_disk).unwrap(), b"original-staged-bytes");
+                    Ok(home.join("vm").join(id).join("hda.img"))
+                },
+            )
+        });
+
+        stager_entered_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("vm create did not reach disk_stager");
+
+        // Probe the staging lock directly: MUST fail with WOULDBLOCK while vm create is running!
+        let lock_path = store.staging_root().join(".dev.lock");
+        let probe_fd = openat(
+            CWD,
+            &lock_path,
+            OFlags::RDWR | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+            Mode::empty(),
+        )
+        .unwrap();
+        assert_eq!(
+            flock(&probe_fd, FlockOperation::NonBlockingLockExclusive),
+            Err(rustix::io::Errno::WOULDBLOCK),
+            "vm create --disk-staging must hold exclusive staging lock across hash and convert"
+        );
+        drop(probe_fd);
+
+        // Concurrent `clean_staging_dir("dev")` MUST block until vm create releases the lock.
+        let (clean_done_tx, clean_done_rx) = mpsc::channel();
+        let store_clean = store.clone();
+        let clean_handle = thread::spawn(move || {
+            let res = store_clean.clean_staging_dir("dev");
+            let _ = clean_done_tx.send(res);
+        });
+        assert!(
+            matches!(
+                clean_done_rx.recv_timeout(Duration::from_millis(150)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ),
+            "clean_staging_dir must block while vm create --disk-staging holds staging lock"
+        );
+
+        allow_stager_tx.send(()).unwrap();
+        let created = create_handle.join().unwrap().expect("vm create failed");
+        assert_eq!(created.phase, LocalVmPhase::Ready);
+
+        let cleaned = clean_done_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("clean_staging_dir did not finish after vm create released lock")
+            .unwrap();
+        clean_handle.join().unwrap();
+        assert!(cleaned.removed);
+
+        let g = store.lock_vm("dev").unwrap();
+        let st = store.load_locked(&g, "dev").unwrap();
+        assert_eq!(
+            st.disk_source_sha256.as_deref(),
+            Some(expected_sha.as_str())
+        );
+    }
+
+    #[test]
+    fn c1_f3_consume_staging_failure_after_ready_returns_ok_with_warning_and_false() {
+        let dir = tempfile::tempdir().unwrap();
+        let (image_dir, _) = make_image_and_disk(dir.path());
+        let store = LocalVmStore::new(dir.path().join("state"));
+        let stub = StubVmm::new();
+        let vmm = VmmClient::new(stub, "stub");
+
+        let staging_dir = store.ensure_staging_dir("dev").unwrap();
+        let staged_img = store.staged_disk_path("dev").unwrap();
+        fs::write(&staged_img, b"staged-raw-disk-bytes").unwrap();
+        fs::set_permissions(&staged_img, fs::Permissions::from_mode(0o600)).unwrap();
+
+        let outside = dir.path().join("outside-target");
+        fs::create_dir_all(&outside).unwrap();
+
+        let mut opts = base_opts(dir.path(), &image_dir, &staged_img);
+        opts.disk_staging_name = Some("dev".to_owned());
+        opts.consume_staging = true;
+
+        // Simulate a post-conversion filesystem/security failure during staging consumption by
+        // replacing `staging/dev` with a symlink after conversion completes. `LocalVmPhase::Ready`
+        // is saved durably; consume fails closed on the symlink, so `create` MUST still succeed
+        // (exit 0 equivalent) with `staging_consumed: false` and a clear warning.
+        let staging_dir_clone = staging_dir.clone();
+        let outside_clone = outside.clone();
+        let created = create_local_vm_with_disk_stager(&store, &vmm, &opts, |home, id, _, _| {
+            fs::remove_dir_all(&staging_dir_clone).unwrap();
+            std::os::unix::fs::symlink(&outside_clone, &staging_dir_clone).unwrap();
+            Ok(home.join("vm").join(id).join("hda.img"))
+        })
+        .expect("consume failure after durable Ready must not fail vm create");
+
+        assert_eq!(created.phase, LocalVmPhase::Ready);
+        assert!(!created.staging_consumed);
+        let warning = created
+            .warning
+            .as_deref()
+            .expect("consume failure must populate warning");
+        assert!(
+            warning.contains("disk clean --staging-name dev"),
+            "{warning}"
+        );
+        // Outside target was never touched and VM state is durably Ready.
+        assert!(outside.is_dir());
+        let g = store.lock_vm("dev").unwrap();
+        assert_eq!(
+            store.load_locked(&g, "dev").unwrap().phase,
+            LocalVmPhase::Ready
+        );
+    }
+
+    #[test]
+    fn c1_f5_disk_clean_list_reports_bad_entries_without_aborting_valid_siblings() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = LocalVmStore::new(dir.path().join("state"));
+
+        // Two valid staged disks.
+        for name in ["validator-0", "validator-1"] {
+            store.ensure_staging_dir(name).unwrap();
+            let img = store.staged_disk_path(name).unwrap();
+            fs::write(&img, format!("disk-bytes-{name}")).unwrap();
+            fs::set_permissions(&img, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        // 1. Unsafe mode (0755) directory.
+        let bad_mode = store.staging_root().join("bad-mode");
+        fs::create_dir_all(&bad_mode).unwrap();
+        fs::set_permissions(&bad_mode, fs::Permissions::from_mode(0o755)).unwrap();
+        // 2. Symlink entry.
+        let outside = dir.path().join("outside");
+        fs::create_dir_all(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, store.staging_root().join("evil-link")).unwrap();
+        // 3. Regular file directly under staging/.
+        fs::write(store.staging_root().join("stray-file"), b"junk").unwrap();
+        // 4. Valid dir with unsafe-mode (0644) data.img.
+        store.ensure_staging_dir("bad-img-mode").unwrap();
+        let bad_img = store.staged_disk_path("bad-img-mode").unwrap();
+        fs::write(&bad_img, b"loose").unwrap();
+        fs::set_permissions(&bad_img, fs::Permissions::from_mode(0o644)).unwrap();
+
+        let entries = store.list_staged_disks().unwrap();
+        assert_eq!(entries.len(), 6);
+
+        for ok_name in ["validator-0", "validator-1"] {
+            let e = entries.iter().find(|e| e.staging_name == ok_name).unwrap();
+            assert!(
+                e.error.is_none(),
+                "expected valid entry for {ok_name}: {e:?}"
+            );
+            assert!(e.sha256.as_deref().is_some_and(|s| s.len() == 64));
+            assert!(e.size_bytes.is_some());
+        }
+        for bad_name in ["bad-mode", "evil-link", "stray-file", "bad-img-mode"] {
+            let e = entries.iter().find(|e| e.staging_name == bad_name).unwrap();
+            assert!(
+                e.error.is_some(),
+                "expected error reported for {bad_name}: {e:?}"
+            );
+            assert!(e.sha256.is_none());
+            assert!(e.size_bytes.is_none());
+        }
     }
 }

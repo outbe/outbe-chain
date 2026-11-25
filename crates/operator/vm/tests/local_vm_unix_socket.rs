@@ -451,10 +451,13 @@ fn full_local_vm_lifecycle_over_fake_unix_socket() {
 
     let opts = CreateLocalVmOptions {
         name: "dev".into(),
+        owner_tag: None,
         image_dir,
         image_name: None,
         flavor: "dev".into(),
         disk_source: raw_disk,
+        disk_staging_name: None,
+        consume_staging: false,
         vcpu: 3,
         memory_gib: 5,
         disk_gib: 1,
@@ -580,6 +583,7 @@ fn full_local_vm_lifecycle_over_fake_unix_socket() {
         RemoveLocalVmOptions {
             force: false,
             forget_intent: false,
+            expect_vm_id: None,
             timeout: Duration::from_secs(2),
             recovery_grace: Duration::from_millis(100),
             poll_interval: Duration::from_millis(10),

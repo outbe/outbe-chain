@@ -16,9 +16,10 @@ use eyre::{Context, Result};
 use outbe_operator_vm::{
     dnsmasq::DEFAULT_DHCP_LEASES_FILE,
     local::{
-        create_local_vm_cancellable, default_state_dir, expand_tilde, logs_local_vm,
-        remove_local_vm, resolve_vmm_paths, start_local_vm, status_all_local_vms, status_local_vm,
-        stop_local_vm, CreateLocalVmOptions, LocalVmStatusOutput, LocalVmStore,
+        create_local_vm_cancellable, default_state_dir, expand_tilde,
+        logs_local_vm_with_expected_id, remove_local_vm, resolve_vmm_paths,
+        start_local_vm_with_expected_id, status_all_local_vms, status_local_vm_with_expected_id,
+        stop_local_vm_with_expected_id, CreateLocalVmOptions, LocalVmStatusOutput, LocalVmStore,
         RemoveLocalVmOptions, DEFAULT_CREATE_RECOVERY_GRACE, DEFAULT_LOCAL_DISK_GIB,
         DEFAULT_LOCAL_FLAVOR, DEFAULT_LOCAL_MEMORY_GIB, DEFAULT_LOCAL_VCPU, DEFAULT_POLL_INTERVAL,
     },
@@ -38,10 +39,13 @@ pub struct LocalConnectionArgs {
 #[derive(Clone, Debug)]
 pub struct LocalCreateArgs {
     pub name: String,
+    pub owner_tag: Option<String>,
     pub image: PathBuf,
     pub image_name: Option<String>,
     pub flavor: Option<String>,
-    pub disk: PathBuf,
+    pub disk: Option<PathBuf>,
+    pub disk_staging: Option<String>,
+    pub consume_staging: bool,
     pub vcpu: Option<u32>,
     pub memory_gib: Option<u32>,
     pub disk_gib: Option<u32>,
@@ -94,6 +98,25 @@ pub async fn create(args: LocalCreateArgs) -> Result<()> {
 
     let (store, vmm, vmm_socket, vmm_home) =
         open_local_context(&args.conn, Some(Arc::clone(&cancel)))?;
+    let (disk_source, disk_staging_name, consume_staging) = match (args.disk, args.disk_staging) {
+        (Some(disk), None) => {
+            eyre::ensure!(
+                !args.consume_staging,
+                "--consume-staging requires --disk-staging"
+            );
+            (expand_tilde(&disk)?, None, false)
+        }
+        (None, Some(staging_name)) => {
+            let expected_path = store.staged_disk_path(&staging_name)?;
+            (expected_path, Some(staging_name), args.consume_staging)
+        }
+        (Some(_), Some(_)) => return Err(eyre::eyre!("cannot combine --disk with --disk-staging")),
+        (None, None) => {
+            return Err(eyre::eyre!(
+                "either --disk or --disk-staging must be specified"
+            ))
+        }
+    };
     let timeout = args.timeout.map(Duration::from_secs);
     let recovery_grace = match timeout {
         Some(t) => DEFAULT_CREATE_RECOVERY_GRACE.min(t),
@@ -101,12 +124,15 @@ pub async fn create(args: LocalCreateArgs) -> Result<()> {
     };
     let opts = CreateLocalVmOptions {
         name: args.name,
+        owner_tag: args.owner_tag,
         image_dir: expand_tilde(&args.image)?,
         image_name: args.image_name,
         flavor: args
             .flavor
             .unwrap_or_else(|| DEFAULT_LOCAL_FLAVOR.to_owned()),
-        disk_source: expand_tilde(&args.disk)?,
+        disk_source,
+        disk_staging_name,
+        consume_staging,
         vcpu: args.vcpu.unwrap_or(DEFAULT_LOCAL_VCPU),
         memory_gib: args.memory_gib.unwrap_or(DEFAULT_LOCAL_MEMORY_GIB),
         disk_gib: args.disk_gib.unwrap_or(DEFAULT_LOCAL_DISK_GIB),
@@ -131,6 +157,9 @@ pub async fn create(args: LocalCreateArgs) -> Result<()> {
     watcher.abort();
     let out = result?;
 
+    if let Some(warning) = &out.warning {
+        eprintln!("{warning}");
+    }
     if args.conn.json {
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
@@ -153,9 +182,9 @@ pub async fn create(args: LocalCreateArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn start(name: &str, conn: LocalConnectionArgs) -> Result<()> {
+pub fn start(name: &str, expect_vm_id: Option<&str>, conn: LocalConnectionArgs) -> Result<()> {
     let (store, vmm, _, _) = open_local_context(&conn, None)?;
-    let out = start_local_vm(&store, &vmm, name)?;
+    let out = start_local_vm_with_expected_id(&store, &vmm, name, expect_vm_id)?;
     if conn.json {
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else if out.already_running {
@@ -172,9 +201,23 @@ pub fn start(name: &str, conn: LocalConnectionArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn stop(name: &str, force: bool, timeout: Duration, conn: LocalConnectionArgs) -> Result<()> {
+pub fn stop(
+    name: &str,
+    expect_vm_id: Option<&str>,
+    force: bool,
+    timeout: Duration,
+    conn: LocalConnectionArgs,
+) -> Result<()> {
     let (store, vmm, _, _) = open_local_context(&conn, None)?;
-    let out = stop_local_vm(&store, &vmm, name, force, timeout, DEFAULT_POLL_INTERVAL)?;
+    let out = stop_local_vm_with_expected_id(
+        &store,
+        &vmm,
+        name,
+        expect_vm_id,
+        force,
+        timeout,
+        DEFAULT_POLL_INTERVAL,
+    )?;
     if let Some(warning) = &out.warning {
         eprintln!("{warning}");
     }
@@ -206,6 +249,7 @@ pub fn stop(name: &str, force: bool, timeout: Duration, conn: LocalConnectionArg
 
 pub fn status(
     name: Option<&str>,
+    expect_vm_id: Option<&str>,
     dhcp_leases: Option<&Path>,
     conn: LocalConnectionArgs,
 ) -> Result<()> {
@@ -216,7 +260,13 @@ pub fn status(
     };
     match name {
         Some(vm_name) => {
-            let out = status_local_vm(&store, &vmm, vm_name, &leases_path)?;
+            let out = status_local_vm_with_expected_id(
+                &store,
+                &vmm,
+                vm_name,
+                expect_vm_id,
+                &leases_path,
+            )?;
             if conn.json {
                 println!("{}", serde_json::to_string_pretty(&out)?);
             } else {
@@ -237,9 +287,14 @@ pub fn status(
     Ok(())
 }
 
-pub fn logs(name: &str, lines: usize, conn: LocalConnectionArgs) -> Result<()> {
+pub fn logs(
+    name: &str,
+    expect_vm_id: Option<&str>,
+    lines: usize,
+    conn: LocalConnectionArgs,
+) -> Result<()> {
     let (store, vmm, _, _) = open_local_context(&conn, None)?;
-    let out = logs_local_vm(&store, &vmm, name, lines)?;
+    let out = logs_local_vm_with_expected_id(&store, &vmm, name, expect_vm_id, lines)?;
     if conn.json {
         println!("{}", serde_json::to_string_pretty(&out)?);
     } else {
@@ -253,6 +308,7 @@ pub fn logs(name: &str, lines: usize, conn: LocalConnectionArgs) -> Result<()> {
 
 pub fn remove(
     name: &str,
+    expect_vm_id: Option<String>,
     force: bool,
     forget_intent: bool,
     timeout: Duration,
@@ -266,6 +322,7 @@ pub fn remove(
         RemoveLocalVmOptions {
             force,
             forget_intent,
+            expect_vm_id,
             timeout,
             recovery_grace: DEFAULT_CREATE_RECOVERY_GRACE.min(timeout),
             poll_interval: DEFAULT_POLL_INTERVAL,
