@@ -8,17 +8,21 @@ where
 {
     pub(super) async fn complete_dkg(
         &mut self,
+        ctx: &E,
         dkg_result: Result<DkgTaskOutcome>,
     ) -> Result<EventAction> {
         self.rotation.reshare_in_progress = false;
         match dkg_result {
-            Ok(DkgTaskOutcome::Complete(complete)) => self.complete_player_ceremony(complete).await,
+            Ok(DkgTaskOutcome::Complete(complete)) => {
+                self.complete_player_ceremony(ctx, complete).await
+            }
             Ok(DkgTaskOutcome::DealerOnly(complete)) => self.complete_dealer_ceremony(complete),
             Err(error) => self.retry_failed_ceremony(error),
         }
     }
     async fn complete_player_ceremony(
         &mut self,
+        ctx: &E,
         dkg_complete: dkg_actor::DkgComplete,
     ) -> Result<EventAction> {
         let Some(target) = self.rotation.frozen_dkg_target.take() else {
@@ -126,21 +130,28 @@ where
             );
             return Ok(EventAction::Continue);
         }
-        self.channels.next_epoch_subchannels = Some(
+        let Some(next_subchannels) = super::supervisor::poll_mux_registration_until_stopped(
+            ctx,
             crate::epoch_subchannels::register_epoch_subchannels(
                 next_epoch,
                 &mut self.channels.vote_mux,
                 &mut self.channels.cert_mux,
                 &mut self.channels.res_mux,
-            )
-            .await
-            .wrap_err_with(|| {
-                format!(
-                    "pre-register next-epoch subchannels at DKG \
-                                         completion for epoch {next_epoch}"
-                )
-            })?,
-        );
+            ),
+        )
+        .await
+        .wrap_err_with(|| {
+            format!("pre-register next-epoch subchannels at DKG completion for epoch {next_epoch}")
+        })?
+        else {
+            info!(
+                epoch = %self.state.current_epoch,
+                next_epoch = %next_epoch,
+                "global stop received during next-epoch subchannel registration; draining simplex engine"
+            );
+            return Ok(EventAction::Outcome(EpochLoopOutcome::GlobalStop));
+        };
+        self.channels.next_epoch_subchannels = Some(next_subchannels);
 
         self.rotation.pending_dkg_activation = Some(PendingDkgActivation {
             target,

@@ -270,8 +270,25 @@ pub(super) fn methods(chain: std::sync::Arc<Mutex<RejoinChain>>) -> Methods {
         })
         .unwrap();
     module
-        .register_method("outbe_teeRenewalScheduleV1", |_, chain, _| {
-            serde_json::to_value(schedule_for(chain.lock().unwrap().finalized.tip)).unwrap()
+        .register_method("outbe_teeRenewalScheduleV1", |params, chain, _| {
+            let args: Vec<Value> = match params.as_str() {
+                None => Vec::new(),
+                Some(_) => params.parse()?,
+            };
+            let tip = chain.lock().unwrap().finalized.tip;
+            if let Some(value) = args.first().filter(|v| !v.is_null()) {
+                let hash: B256 = serde_json::from_value(value.clone()).map_err(|error| {
+                    ErrorObjectOwned::owned(-32602, format!("{error}"), None::<()>)
+                })?;
+                if hash != tip.hash {
+                    return Err(ErrorObjectOwned::owned(
+                        -32602,
+                        format!("unknown schedule checkpoint {hash}"),
+                        None::<()>,
+                    ));
+                }
+            }
+            Ok::<_, ErrorObjectOwned>(serde_json::to_value(schedule_for(tip)).unwrap())
         })
         .unwrap();
     module
