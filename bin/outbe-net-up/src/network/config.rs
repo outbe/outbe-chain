@@ -20,6 +20,12 @@ use serde::{Deserialize, Serialize};
 
 pub const CONFIG_VERSION: u32 = 1;
 pub const MIN_FOUNDERS: usize = 4;
+pub const DEFAULT_EPOCH_LENGTH_BLOCKS: u64 = 1200;
+pub const DEFAULT_DKG_PREPARE_WINDOW_BLOCKS: u64 = 300;
+pub const DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS: u64 = 300;
+/// Minimum safe DKG prepare/activation grace window in blocks.
+/// Shorter windows risk starving `ACK_COLLECTION_GRACE` (30s) at ~4 blocks/s.
+pub const MIN_DKG_WINDOW_BLOCKS: u64 = 120;
 pub const EXAMPLE: &str = include_str!("../../templates/network/network.example.yaml");
 
 pub const BASE_RPC_PORT: u16 = 8545;
@@ -604,8 +610,10 @@ impl NetworkConfig {
                 "prefunded amount must be positive for {address}"
             );
         }
+        if let Some(value) = self.genesis.epoch_length_blocks {
+            ensure!(value > 0, "genesis.epoch_length_blocks must be non-zero");
+        }
         for (name, value) in [
-            ("epoch_length_blocks", self.genesis.epoch_length_blocks),
             (
                 "dkg_prepare_window_blocks",
                 self.genesis.dkg_prepare_window_blocks,
@@ -616,7 +624,11 @@ impl NetworkConfig {
             ),
         ] {
             if let Some(value) = value {
-                ensure!(value > 0, "genesis.{name} must be non-zero");
+                ensure!(
+                    value >= MIN_DKG_WINDOW_BLOCKS,
+                    "genesis.{name} must be at least {MIN_DKG_WINDOW_BLOCKS} blocks (got {value}); \
+                     shorter windows risk starving DKG ACK_COLLECTION_GRACE (30s) at ~4 blocks/s"
+                );
             }
         }
         if self.genesis.base.is_some() {
@@ -626,6 +638,20 @@ impl NetworkConfig {
                     && self.genesis.dkg_prepare_window_blocks.is_none()
                     && self.genesis.dkg_activation_grace_blocks.is_none(),
                 "genesis timestamp, epoch, and DKG parameters must come from genesis.base when it is set"
+            );
+        } else {
+            let effective_epoch = self
+                .genesis
+                .epoch_length_blocks
+                .unwrap_or(DEFAULT_EPOCH_LENGTH_BLOCKS);
+            let effective_prepare = self
+                .genesis
+                .dkg_prepare_window_blocks
+                .unwrap_or(DEFAULT_DKG_PREPARE_WINDOW_BLOCKS);
+            ensure!(
+                effective_prepare < effective_epoch,
+                "genesis.dkg_prepare_window_blocks ({effective_prepare}) must be less than \
+                 genesis.epoch_length_blocks ({effective_epoch})"
             );
         }
         let reserved = reserved_genesis_keys();
@@ -1167,5 +1193,48 @@ genesis:
         leading_dash.name = "-leading".into();
         let err = leading_dash.validate().unwrap_err();
         assert!(err.to_string().contains("ASCII letter or digit"), "{err}");
+    }
+
+    #[test]
+    fn rejects_dkg_windows_below_minimum_and_accepts_floor_and_defaults() {
+        // Omitting epoch & DKG fields is valid (build applies safe 1200/300/300 defaults).
+        config_with(4).validate().unwrap();
+
+        // Prepare window < 120 blocks must be refused with a clear error.
+        for bad in [0, 30, 119] {
+            let mut cfg = config_with(4);
+            cfg.genesis.dkg_prepare_window_blocks = Some(bad);
+            let err = cfg.validate().unwrap_err().to_string();
+            assert!(
+                err.contains("dkg_prepare_window_blocks") && err.contains("120"),
+                "expected floor error for prepare={bad}, got: {err}"
+            );
+        }
+
+        // Activation grace < 120 blocks must be refused with a clear error.
+        for bad in [0, 30, 119] {
+            let mut cfg = config_with(4);
+            cfg.genesis.dkg_activation_grace_blocks = Some(bad);
+            let err = cfg.validate().unwrap_err().to_string();
+            assert!(
+                err.contains("dkg_activation_grace_blocks") && err.contains("120"),
+                "expected floor error for grace={bad}, got: {err}"
+            );
+        }
+
+        // Exact floor (120/120) is accepted.
+        let mut floor_cfg = config_with(4);
+        floor_cfg.genesis.dkg_prepare_window_blocks = Some(MIN_DKG_WINDOW_BLOCKS);
+        floor_cfg.genesis.dkg_activation_grace_blocks = Some(MIN_DKG_WINDOW_BLOCKS);
+        floor_cfg.validate().unwrap();
+
+        // Epoch shorter than or equal to effective prepare window must be refused.
+        let mut short_epoch = config_with(4);
+        short_epoch.genesis.epoch_length_blocks = Some(300);
+        let err = short_epoch.validate().unwrap_err().to_string();
+        assert!(
+            err.contains("dkg_prepare_window_blocks") && err.contains("epoch_length_blocks"),
+            "{err}"
+        );
     }
 }

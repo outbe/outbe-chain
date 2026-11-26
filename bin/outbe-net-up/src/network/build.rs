@@ -542,22 +542,31 @@ pub(super) fn genesis_cli_config(
     }
     if let Some(path) = base_genesis {
         root.insert("base_genesis".into(), json!(path));
+    } else {
+        root.insert(
+            "epoch_length_blocks".into(),
+            json!(config
+                .genesis
+                .epoch_length_blocks
+                .unwrap_or(super::config::DEFAULT_EPOCH_LENGTH_BLOCKS)),
+        );
+        root.insert(
+            "dkg_prepare_window_blocks".into(),
+            json!(config
+                .genesis
+                .dkg_prepare_window_blocks
+                .unwrap_or(super::config::DEFAULT_DKG_PREPARE_WINDOW_BLOCKS)),
+        );
+        root.insert(
+            "dkg_activation_grace_blocks".into(),
+            json!(config
+                .genesis
+                .dkg_activation_grace_blocks
+                .unwrap_or(super::config::DEFAULT_DKG_ACTIVATION_GRACE_BLOCKS)),
+        );
     }
-    for (key, value) in [
-        ("timestamp", config.genesis.timestamp),
-        ("epoch_length_blocks", config.genesis.epoch_length_blocks),
-        (
-            "dkg_prepare_window_blocks",
-            config.genesis.dkg_prepare_window_blocks,
-        ),
-        (
-            "dkg_activation_grace_blocks",
-            config.genesis.dkg_activation_grace_blocks,
-        ),
-    ] {
-        if let Some(value) = value {
-            root.insert(key.into(), json!(value));
-        }
+    if let Some(timestamp) = config.genesis.timestamp {
+        root.insert("timestamp".into(), json!(timestamp));
     }
     let balance = root
         .entry("balance")
@@ -1398,5 +1407,43 @@ genesis:
             outbe_operator_node_role::vm_boot::verify_tree_without_mount(&tree, &fake_bins)
                 .unwrap();
         }
+    }
+
+    #[test]
+    fn genesis_cli_config_defaults_epoch_and_dkg_windows_when_omitted() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut config: NetworkConfig =
+            serde_yaml_ng::from_str(super::super::config::EXAMPLE).unwrap();
+        config.genesis.epoch_length_blocks = None;
+        config.genesis.dkg_prepare_window_blocks = None;
+        config.genesis.dkg_activation_grace_blocks = None;
+        config.validate().unwrap();
+
+        let (keys, _) = feeder_keys(temp.path(), config.founders.len());
+        let defaulted = genesis_cli_config(&config, temp.path(), &keys, None).unwrap();
+        assert_eq!(defaulted["epoch_length_blocks"], 1200);
+        assert_eq!(defaulted["dkg_prepare_window_blocks"], 300);
+        assert_eq!(defaulted["dkg_activation_grace_blocks"], 300);
+        outbe_genesis_cli::network::validate_config(&defaulted).unwrap();
+
+        // Explicit valid values (>= 120) are preserved verbatim.
+        config.genesis.epoch_length_blocks = Some(2400);
+        config.genesis.dkg_prepare_window_blocks = Some(120);
+        config.genesis.dkg_activation_grace_blocks = Some(180);
+        config.validate().unwrap();
+        let explicit = genesis_cli_config(&config, temp.path(), &keys, None).unwrap();
+        assert_eq!(explicit["epoch_length_blocks"], 2400);
+        assert_eq!(explicit["dkg_prepare_window_blocks"], 120);
+        assert_eq!(explicit["dkg_activation_grace_blocks"], 180);
+
+        // When `base_genesis` is provided, epoch/DKG defaults are NOT injected.
+        config.genesis.epoch_length_blocks = None;
+        config.genesis.dkg_prepare_window_blocks = None;
+        config.genesis.dkg_activation_grace_blocks = None;
+        let base_path = temp.path().join("base-genesis.json");
+        let with_base = genesis_cli_config(&config, temp.path(), &keys, Some(&base_path)).unwrap();
+        assert!(with_base.get("epoch_length_blocks").is_none());
+        assert!(with_base.get("dkg_prepare_window_blocks").is_none());
+        assert!(with_base.get("dkg_activation_grace_blocks").is_none());
     }
 }

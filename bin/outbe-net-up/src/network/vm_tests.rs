@@ -507,6 +507,12 @@ struct FakeHostState {
     update_height_at_call: Vec<(String, u64)>,
     kill_ip_after_vm_update_rounds: Option<(String, usize, String)>,
     rounds_since_target_update: Option<usize>,
+    rpc_connected_peers_override: BTreeMap<String, u64>,
+    /// Optional per-call `missedVotes` schedule for validator-1 (`0x...0002`) returned by
+    /// `outbe_getParticipation` batches (pops front or repeats last).
+    rpc_participation_missed_schedule: Vec<u64>,
+    rpc_participation_calls: usize,
+    rpc_fail_participation: bool,
     version_bins_queried: Vec<String>,
 }
 
@@ -1137,6 +1143,32 @@ impl HostExec for FakeHostExec {
             }
             let parsed: Value = serde_json::from_slice(stdin_bytes)?;
             if parsed.is_object() {
+                let method = parsed.get("method").and_then(Value::as_str).unwrap_or("");
+                if method == "outbe_getValidators" {
+                    let vals: Vec<Value> = g
+                        .vms
+                        .values()
+                        .filter(|v| {
+                            !v.service_ip
+                                .is_some_and(|ip| g.full_node_ips.contains(&ip.to_string()))
+                        })
+                        .enumerate()
+                        .map(|(i, _)| {
+                            json!({
+                                "address": format!("0x{:040x}", i + 1),
+                                "consensusPubkey": format!("{:096x}", i + 1),
+                                "status": 1,
+                                "stake": "1000000000000000000"
+                            })
+                        })
+                        .collect();
+                    return Ok(json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": vals,
+                    })
+                    .to_string());
+                }
                 let height_hex = parsed
                     .pointer("/params/0")
                     .and_then(Value::as_str)
@@ -1154,6 +1186,57 @@ impl HostExec for FakeHostExec {
             let batch = parsed
                 .as_array()
                 .ok_or_else(|| eyre::eyre!("expected JSON-RPC batch array"))?;
+            if batch
+                .first()
+                .and_then(|item| item.get("method"))
+                .and_then(Value::as_str)
+                == Some("outbe_getParticipation")
+            {
+                let call_idx = g.rpc_participation_calls;
+                g.rpc_participation_calls += 1;
+                if g.rpc_fail_participation {
+                    let err_items: Vec<Value> = batch
+                        .iter()
+                        .map(|item| {
+                            json!({
+                                "jsonrpc": "2.0",
+                                "id": item["id"],
+                                "error": { "code": -32000, "message": "simulated participation RPC error" }
+                            })
+                        })
+                        .collect();
+                    return Ok(Value::Array(err_items).to_string());
+                }
+                let val1_addr = format!("0x{:040x}", 2usize);
+                let val1_missed = g
+                    .rpc_participation_missed_schedule
+                    .get(call_idx)
+                    .or_else(|| g.rpc_participation_missed_schedule.last())
+                    .copied()
+                    .unwrap_or(0);
+                let resp_items: Vec<Value> = batch
+                    .iter()
+                    .map(|item| {
+                        let addr = item
+                            .pointer("/params/0")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
+                        let missed = if addr == val1_addr { val1_missed } else { 0 };
+                        json!({
+                            "jsonrpc": "2.0",
+                            "id": item["id"],
+                            "result": {
+                                "address": addr,
+                                "blocksProposed": 10,
+                                "missedBlocks": 0,
+                                "missedVotes": missed,
+                            }
+                        })
+                    })
+                    .collect();
+                return Ok(Value::Array(resp_items).to_string());
+            }
             assert_eq!(batch.len(), 4, "expected 4-call JSON-RPC batch");
             let vm_count = g.vms.values().filter(|v| v.running).count().max(1);
             let poll_idx = g.rpc_poll_counter / vm_count;
@@ -1213,8 +1296,14 @@ impl HostExec for FakeHostExec {
                     ),
                     _ => ("signer", true, enclave_ready),
                 };
+                let consensus_peers = g
+                    .rpc_connected_peers_override
+                    .iter()
+                    .find(|(ip, _)| url.contains(ip.as_str()))
+                    .map(|(_, &p)| p)
+                    .unwrap_or(peers as u64);
                 let mut obj = json!({
-                    "connectedPeers": peers,
+                    "connectedPeers": consensus_peers,
                     "hasThresholdShares": shares,
                     "lastFinalizedBlock": height,
                     "vrfMaterialVersion": vrf_ver,
@@ -4175,4 +4264,320 @@ async fn s7_f4_fresh_health_recheck_aborts_before_stopping_second_validator() {
         vec!["s7f4-validator-0"],
         "must NEVER stop validator-1 while validator-3 is unhealthy"
     );
+}
+
+#[tokio::test]
+async fn s7_pre_stop_requires_every_validator_connected_peers_at_least_n_minus_1() {
+    // 1. Unit check on `check_validators_connected_peers` (fail closed on None or < n-1).
+    let mk_val = |name: &str, peers: Option<u64>| VmMemberStatus {
+        name: name.to_owned(),
+        role: MemberRole::Founder,
+        vm_name: format!("s7p-{name}"),
+        vm_id: format!("id-{name}"),
+        host: "192.0.2.50".to_owned(),
+        classification: VmClassKind::Ours,
+        classification_detail: None,
+        service_ip: Ipv4Addr::new(10, 77, 0, 10),
+        dhcp_ip: None,
+        mac: "52:54:00:00:00:01".to_owned(),
+        vmm_status: "running".to_owned(),
+        vmm_running: true,
+        no_tee: false,
+        chain_id: Some(424_242),
+        finalized: Some(500),
+        finalized_hash: Some("0xabc".to_owned()),
+        execution_peers: Some(3),
+        consensus_mode: Some("signer".to_owned()),
+        consensus_peers: peers,
+        has_threshold_shares: Some(true),
+        vrf_material_version: Some(1),
+        tee_ready: Some(true),
+        consensus: peers.map(|p| ConsensusStatus {
+            connected_peers: p,
+            is_validator: true,
+            mode: "signer".to_owned(),
+            has_threshold_shares: true,
+            randomness_status: Some("healthy".to_owned()),
+            ..Default::default()
+        }),
+        boot_warning: None,
+        error: None,
+    };
+    assert!(check_validators_connected_peers(&[mk_val("validator-0", None)], 3).is_err());
+    assert!(check_validators_connected_peers(&[mk_val("validator-0", Some(0))], 3).is_err());
+    let degraded_err = check_validators_connected_peers(
+        &[
+            mk_val("validator-0", Some(3)),
+            mk_val("validator-1", Some(2)),
+        ],
+        3,
+    )
+    .unwrap_err()
+    .to_string();
+    assert!(
+        degraded_err.contains("validator-1")
+            && degraded_err.contains("connectedPeers=2")
+            && degraded_err.contains("n-1=3"),
+        "{degraded_err}"
+    );
+    check_validators_connected_peers(
+        &[
+            mk_val("validator-0", Some(3)),
+            mk_val("validator-1", Some(4)),
+        ],
+        3,
+    )
+    .unwrap();
+
+    // 2. End-to-end `update_with_exec`: validator-2 reports `connectedPeers = 2` (> 0, < n-1 = 3)
+    //    while all 4 VMs are running and finalizing. Must fail closed BEFORE stopping any VM!
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(dir.path(), "s7p", "~/.dstack-vmm", b"fake-outbe-up");
+    let fake = FakeHostExec::new();
+    let exec: Arc<dyn HostExec> = Arc::new(fake.clone());
+
+    deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fixture.image_archive.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: false,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    let v2_image_archive = dir.path().join("image-v2.tar.zst");
+    fs::write(&v2_image_archive, b"fake-s7-peers-v2-bytes").unwrap();
+    let v2_image_hash = "8888888888888888".repeat(4);
+    let v2_image_name = format!("outbe-vm-dev-{}", &v2_image_hash[..16]);
+
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.image_name = v2_image_name;
+        g.os_image_hash = v2_image_hash;
+        g.rpc_poll_counter = 0;
+        g.rpc_height_base = 500;
+        g.rpc_height_step = 30;
+        g.rpc_dynamic_epoch_len = Some(1200);
+        // Degrade validator-2's consensus connectedPeers to 2 (> 0, but < n-1 = 3).
+        g.rpc_connected_peers_override
+            .insert("10.77.0.12".to_owned(), 2);
+    }
+
+    let err = update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive,
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("must refuse update when any validator has connectedPeers < n-1");
+    let msg = format!("{err:#}");
+    assert!(
+        msg.contains("validator-2") && msg.contains("connectedPeers=2") && msg.contains("n-1=3"),
+        "{msg}"
+    );
+    assert!(
+        fake.state.lock().unwrap().vm_update_calls.is_empty(),
+        "must NOT stop or update any VM when connectedPeers < n-1"
+    );
+}
+
+#[tokio::test]
+async fn s7_pre_stop_missed_votes_fails_closed_and_retries_across_epoch_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let fixture = build_test_vm_artifacts(dir.path(), "s7mv", "~/.dstack-vmm", b"fake-outbe-up");
+    let fake = FakeHostExec::new();
+    let exec: Arc<dyn HostExec> = Arc::new(fake.clone());
+
+    deploy_with_exec(
+        &DeployOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: fixture.image_archive.clone(),
+                sha256: None,
+            },
+            ssh_key: None,
+            ssh_config: None,
+            no_tee: false,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+    start_with_exec(
+        &StartOptions {
+            artifacts: &fixture.root,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    let v2_image_archive = dir.path().join("image-v2.tar.zst");
+    fs::write(&v2_image_archive, b"fake-s7-mv-v2-bytes").unwrap();
+    let v2_image_hash = "9999999999999999".repeat(4);
+    let v2_image_name = format!("outbe-vm-dev-{}", &v2_image_hash[..16]);
+
+    // 1. Non-zero missedVotes delta over the 60-block window (0 -> 2) -> fail closed with 0 stops!
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.image_name = v2_image_name.clone();
+        g.os_image_hash = v2_image_hash.clone();
+        g.rpc_poll_counter = 0;
+        g.rpc_step_round = 0;
+        g.rpc_batch_seen_since_last_status = false;
+        g.rpc_height_base = 100;
+        g.rpc_height_step = 30;
+        g.rpc_dynamic_epoch_len = Some(1200);
+        g.rpc_participation_calls = 0;
+        g.rpc_participation_missed_schedule = vec![0, 2];
+    }
+    let delta_err = update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive.clone(),
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("must refuse stop when any validator misses votes during the 60-block window");
+    let delta_msg = format!("{delta_err:#}");
+    assert!(
+        delta_msg.contains("missed votes") && delta_msg.contains("+2 (0 -> 2)"),
+        "{delta_msg}"
+    );
+    assert!(fake.state.lock().unwrap().vm_update_calls.is_empty());
+
+    // 2. Participation RPC error -> fail closed immediately with 0 stops!
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.rpc_poll_counter = 0;
+        g.rpc_step_round = 0;
+        g.rpc_batch_seen_since_last_status = false;
+        g.rpc_participation_calls = 0;
+        g.rpc_fail_participation = true;
+    }
+    let rpc_err = update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive.clone(),
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .expect_err("must fail closed when outbe_getParticipation returns an RPC error");
+    assert!(
+        format!("{rpc_err:#}").contains("outbe_getParticipation"),
+        "{rpc_err:#}"
+    );
+    assert!(fake.state.lock().unwrap().vm_update_calls.is_empty());
+
+    // 3. Epoch-boundary counter reset (`5 -> 0`) inside the 60-block window MUST retry the window
+    //    (requiring 3 participation queries for validator-0: initial=5, boundary-reset=0, clean=0)
+    //    and then succeed once 60 clean blocks pass with delta == 0!
+    {
+        let mut g = fake.state.lock().unwrap();
+        g.rpc_fail_participation = false;
+        g.rpc_poll_counter = 0;
+        g.rpc_step_round = 0;
+        g.rpc_batch_seen_since_last_status = false;
+        g.rpc_height_base = 100;
+        g.rpc_height_step = 30;
+        g.rpc_dynamic_epoch_len = Some(1200);
+        g.rpc_participation_calls = 0;
+        // Call 0: baseline missedVotes=5; Call 1 (60 blks later): epoch reset -> 0 (retries!);
+        // Call 2 (another 60 blks later): 0 (delta == 0 -> passes!); subsequent VMs: 0 -> 0.
+        g.rpc_participation_missed_schedule = vec![5, 0, 0];
+    }
+    update_with_exec(
+        &UpdateOptions {
+            artifacts: &fixture.root,
+            image_source: ImageSource::Archive {
+                path: v2_image_archive,
+                sha256: None,
+            },
+            software_bundle: None,
+            ssh_key: None,
+            ssh_config: None,
+            timeout: Duration::from_secs(30),
+            stop_timeout: Duration::from_secs(30),
+            max_lag: 20,
+            min_finalized_blocks: 10,
+            dkg_guard_blocks: 30,
+        },
+        Arc::clone(&exec),
+    )
+    .await
+    .unwrap();
+
+    let g = fake.state.lock().unwrap();
+    assert_eq!(g.vm_update_calls.len(), 4);
+    // 3 calls for validator-0 (retried after 5 -> 0 counter reset) + 2 calls each for val-1,2,3 = 9.
+    assert!(
+        g.rpc_participation_calls >= 9,
+        "expected >= 9 participation batches (including epoch-boundary retry), got {}",
+        g.rpc_participation_calls
+    );
+    for vm in g.vms.values() {
+        assert_eq!(vm.os_image_hash, v2_image_hash);
+    }
 }
