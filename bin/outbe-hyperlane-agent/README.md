@@ -323,11 +323,11 @@ is jailed:
 | `/status` | `"active": false`. This is not an error. |
 
 While `V` is active, the daemon sends one `submitReport` for each running
-domain in each epoch. It sends the call 60 blocks before the end of the epoch.
-If the epoch is shorter than 120 blocks, it sends the call at half the epoch.
-A validator that is behind thus has the full epoch to sign the target index.
-The daemon reads the start and the length of the epoch from the
-`ValidatorSet`.
+domain in each epoch. It sends the call in the last quarter of the epoch.
+A validator that is behind thus has three quarters of the epoch to sign the
+target index. The daemon reads the start and the length of the epoch from the
+`ValidatorSet`. `poll_interval_secs` must be much shorter than a quarter of
+the epoch: an agent that does not poll in that quarter loses its vote.
 
 The call has these parts:
 
@@ -361,7 +361,7 @@ The call has these parts:
 The two lists hold 23 addresses together. A validator that a quorum names in
 a list gets a liveness miss. A validator that gave a report and did not name
 that validator gets a miss too. When a check did not run, the daemon tries
-again on the next poll. From 35 blocks before the end of the epoch it sends
+again on the next poll. In the last eighth of the epoch it sends
 the call with no names, so the vote is not lost.
 
 The daemon sends no call when `reportedRound(V, domain)` is the current

@@ -11,10 +11,6 @@ use crate::schema::{
     complaint_key, complaints_key, validator_domain_key, Fault, HyperlaneControllerContract,
 };
 
-/// Submissions younger than this many blocks do not count towards the next
-/// per-domain target index. This way, the target is an index that most
-/// validators already signed when the round starts.
-pub const GRACE_BLOCKS: u64 = 30;
 /// Consecutive liveness misses before a validator is jailed.
 pub const MAX_MISSES: u32 = 3;
 
@@ -49,7 +45,7 @@ pub struct Report<'a> {
 }
 
 /// Reference index of one domain in a liveness round. It is `None` when too
-/// few settled submissions exist for that domain.
+/// few submissions exist for that domain.
 type DomainReference = (u32, Option<u32>);
 
 /// Target of one domain in a liveness round: the domain, its target index,
@@ -243,9 +239,9 @@ impl HyperlaneControllerContract<'_> {
     /// stamp, and the verdict evaluates it from the next round.
     ///
     /// Then the verdict sets the target of the next round: the
-    /// `threshold`-th highest latest index among active validators. Only
-    /// submissions older than [`GRACE_BLOCKS`] count. This way, one validator
-    /// cannot inflate the target. The target never decreases. The verdict
+    /// `threshold`-th highest latest index among active validators. This way,
+    /// one validator cannot inflate the target, and a quorum already signed
+    /// the target when the round starts. The target never decreases. The verdict
     /// also selects the delivery index of each domain from the indexes that
     /// the target moved over.
     /// Returns the validators jailed.
@@ -265,7 +261,7 @@ impl HyperlaneControllerContract<'_> {
         }
         let threshold = usize::from(consensus_threshold(active.len())?);
         let anchors = self.anchors(&active, threshold)?;
-        let references = self.reference_indexes(&active, threshold, now)?;
+        let references = self.reference_indexes(&active, threshold)?;
         let complaints = self.complaint_reasons(&active, threshold)?;
 
         let mut jailed = Vec::new();
@@ -409,34 +405,33 @@ impl HyperlaneControllerContract<'_> {
     }
 
     /// The reference index of every domain: the `threshold`-th highest
-    /// settled submission among `active`.
+    /// latest index among `active`.
     fn reference_indexes(
         &self,
         active: &[Address],
         threshold: usize,
-        now: u64,
     ) -> Result<Vec<DomainReference>> {
         let domains = self.domains.read_all()?;
         let mut references = Vec::with_capacity(domains.len());
         for domain in domains {
-            let mut settled = self.settled_indexes(active, domain, now)?;
-            settled.sort_unstable_by(|a, b| b.cmp(a));
-            references.push((domain, settled.get(threshold - 1).copied()));
+            let mut latest = self.latest_indexes(active, domain)?;
+            latest.sort_unstable_by(|a, b| b.cmp(a));
+            references.push((domain, latest.get(threshold - 1).copied()));
         }
         Ok(references)
     }
 
-    /// Submitted indexes on `domain` that are at least [`GRACE_BLOCKS`] old.
-    fn settled_indexes(&self, active: &[Address], domain: u32, now: u64) -> Result<Vec<u32>> {
-        let mut settled = Vec::with_capacity(active.len());
+    /// The latest index on `domain` of each validator of `active` that the
+    /// verdict already evaluates.
+    fn latest_indexes(&self, active: &[Address], domain: u32) -> Result<Vec<u32>> {
+        let mut latest = Vec::with_capacity(active.len());
         for validator in active {
             let key = validator_domain_key(*validator, domain);
-            let block = self.submitted_block.read(&key)?;
-            if block != 0 && block.saturating_add(GRACE_BLOCKS) <= now {
-                settled.push(self.submitted_index.read(&key)?);
+            if self.submitted_block.read(&key)? != 0 {
+                latest.push(self.submitted_index.read(&key)?);
             }
         }
-        Ok(settled)
+        Ok(latest)
     }
 
     /// Compares the vote of `validator` with every domain anchor. A domain

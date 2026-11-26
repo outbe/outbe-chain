@@ -35,15 +35,14 @@ pub const HYPERLANE_CONTROLLER_ADDRESS: Address =
 /// ValidatorSet precompile address (0xEE00).
 pub const VALIDATOR_SET_ADDRESS: Address =
     alloy_primitives::address!("0x000000000000000000000000000000000000EE00");
-/// The agent sends its call of the round this many blocks before the end of
-/// the epoch. An epoch shorter than two times this value: at half the epoch.
-/// The controller uses the latest index of a report only when it is 30 blocks
-/// old at the verdict (`GRACE_BLOCKS`), so the call must not be later.
-const REPORT_BLOCKS_BEFORE_END: u64 = 60;
-/// The controller uses the latest index of a report only when it is 30 blocks
-/// old at the verdict. From this many blocks before the end of the epoch, the
-/// agent does not wait for a check of the other validators that did not run.
-const LAST_CHANCE_BLOCKS: u64 = 35;
+/// The agent sends its call of the round in the last part of the epoch: the
+/// epoch length divided by this value. The poll interval must be much
+/// shorter than that part.
+const REPORT_EPOCH_PART: u64 = 4;
+/// In the last part of the epoch (the epoch length divided by this value),
+/// the agent does not wait for a check of the other validators that did not
+/// run.
+const LAST_CHANCE_EPOCH_PART: u64 = 8;
 /// The longest wait for the receipt of `submitReport`.
 const RECEIPT_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -165,13 +164,14 @@ impl Liveness {
                 IValidatorSet::getEpochLengthBlocksCall {},
             )
             .await?;
+        let length = u64::from(length);
         let block = provider.get_block_number().await?;
-        if block < report_from_block(start, u64::from(length)) {
+        if block < last_part_from(start, length, REPORT_EPOCH_PART) {
             return Ok(());
         }
-        // After this block a call can be too late for the verdict: the agent
-        // sends it also when a check of the other validators did not run.
-        let last_chance = block + LAST_CHANCE_BLOCKS >= start + u64::from(length);
+        // Near the end of the epoch the agent sends the call also when a
+        // check of the other validators did not run.
+        let last_chance = block >= last_part_from(start, length, LAST_CHANCE_EPOCH_PART);
         let round = self
             .view(
                 &provider,
@@ -448,10 +448,10 @@ impl Liveness {
     }
 }
 
-/// The first block at which the agent sends its call of the round, for an
-/// epoch that starts at `start` and has `length` blocks.
-fn report_from_block(start: u64, length: u64) -> u64 {
-    start + length.saturating_sub(REPORT_BLOCKS_BEFORE_END.min(length / 2))
+/// The first block of the last part of an epoch that starts at `start` and
+/// has `length` blocks. The part is `length / part` blocks.
+fn last_part_from(start: u64, length: u64, part: u64) -> u64 {
+    start + length - length / part
 }
 
 #[cfg(test)]
@@ -636,11 +636,12 @@ mod tests {
     }
 
     #[test]
-    fn the_call_of_the_round_goes_near_the_end_of_the_epoch() {
-        // An epoch of 300 blocks from block 900: 60 blocks before block 1200.
-        assert_eq!(report_from_block(900, 300), 1140);
-        // A short epoch: at half the epoch.
-        assert_eq!(report_from_block(900, 100), 950);
-        assert_eq!(report_from_block(900, 0), 900);
+    fn the_call_of_the_round_goes_in_the_last_part_of_the_epoch() {
+        // An epoch of 1200 blocks from block 900 ends before block 2100.
+        assert_eq!(last_part_from(900, 1200, REPORT_EPOCH_PART), 1800);
+        assert_eq!(last_part_from(900, 1200, LAST_CHANCE_EPOCH_PART), 1950);
+        // A very short epoch: the part has no blocks, so no call goes.
+        assert_eq!(last_part_from(900, 3, REPORT_EPOCH_PART), 903);
+        assert_eq!(last_part_from(900, 0, REPORT_EPOCH_PART), 900);
     }
 }

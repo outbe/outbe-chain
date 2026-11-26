@@ -620,7 +620,7 @@ mod sync {
 mod liveness {
     use super::*;
     use crate::schema::validator_domain_key;
-    use crate::{Report, GRACE_BLOCKS, MAX_MISSES};
+    use crate::{Report, MAX_MISSES};
     use alloy_primitives::b256;
 
     const FIXTURE_HOOK: Address = address!("0x6543cef9bbe42d66b5b36ccaf9374de2b55f9cbc");
@@ -1088,7 +1088,7 @@ mod liveness {
         });
     }
 
-    /// Four validators. The target is the third-highest settled index, so one
+    /// Four validators. The target is the third-highest latest index, so one
     /// inflated submission cannot move it. A validator is on time only when
     /// its root at the target equals the root of the quorum.
     #[test]
@@ -1097,14 +1097,15 @@ mod liveness {
         StorageHandle::enter(&mut p, |storage| {
             four_validators(storage.clone());
             let c = HyperlaneControllerContract::new(storage);
-            let old = 1_000 - GRACE_BLOCKS;
+            // A submission of the block before the verdict counts.
+            let old = 999;
             write_submission(&c, validator_domain_key(FIXTURE_VALIDATOR, LOCAL), 500, old).unwrap();
             write_submission(&c, validator_domain_key(v(2), LOCAL), 498, old).unwrap();
             write_submission(&c, validator_domain_key(v(3), LOCAL), 120, old).unwrap();
             write_submission(&c, validator_domain_key(v(4), LOCAL), 999_999, old).unwrap();
-            // SEPOLIA: fresh submissions do not make a target.
-            for addr in four() {
-                write_submission(&c, validator_domain_key(addr, SEPOLIA), 10, 999).unwrap();
+            // SEPOLIA: two submissions are fewer than the threshold.
+            for addr in [FIXTURE_VALIDATOR, v(2)] {
+                write_submission(&c, validator_domain_key(addr, SEPOLIA), 10, old).unwrap();
             }
         });
         p.set_block_number(1_000);
