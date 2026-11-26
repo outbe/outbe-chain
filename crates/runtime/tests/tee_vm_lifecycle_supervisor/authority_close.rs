@@ -281,7 +281,7 @@ async fn run_authority_case(
         context.network_encryption_public
     );
 
-    let transaction = private_tx(ledger.nonce_and_balance().0, timestamp);
+    let transaction = private_tx(ledger.nonce_and_balance().0, &producer_tee);
     let tx_hash = *transaction.tx_hash();
     let block = {
         let _producer =
@@ -399,20 +399,26 @@ fn stage_candidate(
     context
 }
 
-fn private_tx(nonce: u64, timestamp: u64) -> TransactionSigned {
+fn private_tx(nonce: u64, producer: &InProcessTeeContext) -> TransactionSigned {
     let signer = crate::test_signers().0;
     let account = signer.address();
-    let expiry = timestamp + 60;
-    let message = outbe_fidelity::fidelity_query_auth_message(
-        B256::from(U256::from(TEST_CHAIN_ID)),
-        account,
-        expiry,
+    let gratis_minor = U256::ONE;
+    let state_key = producer
+        .state_key_handle(outbe_core_common::confidential_tee::GRATIS.state_info(), 0)
+        .unwrap();
+    let mac = outbe_gratis::modify_mac(
+        &outbe_gratis::derive_account_keys(&state_key, account).unwrap(),
+        &outbe_gratis::ModifyOperation {
+            account,
+            op: outbe_gratis::GratisOp::Mint,
+            amount: gratis_minor,
+            op_nonce: 0,
+            chain_id: B256::from(U256::from(TEST_CHAIN_ID)),
+        },
     );
-    let signature = signer.sign_hash(&eip191_hash(&message)).unwrap();
-    let input = outbe_fidelity::precompile::IFidelity::getFidelityIndexCall {
-        account,
-        expiry,
-        signature: Bytes::copy_from_slice(&signature),
+    let input = outbe_gratisfactory::precompile::IGratisFactory::mineGratisCall {
+        mac: B256::from(mac),
+        opNonce: 0,
     }
     .abi_encode()
     .into();
@@ -422,7 +428,8 @@ fn private_tx(nonce: u64, timestamp: u64) -> TransactionSigned {
             nonce,
             gas_limit: 800_000,
             max_fee_per_gas: u128::from(MIN_PROTOCOL_BASE_FEE),
-            to: TxKind::Call(outbe_system_common::addresses::FIDELITY_ADDRESS),
+            to: TxKind::Call(outbe_system_common::addresses::GRATIS_FACTORY_ADDRESS),
+            value: gratis_minor * outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR,
             input,
             ..Default::default()
         })

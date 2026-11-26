@@ -7,12 +7,10 @@ use std::sync::{Arc, Mutex};
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::confidential_tee::{
-    LocalCryptoError, WitnessResponseTag, WitnessSchema, FIDELITY_ATTESTATION,
-    GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION,
+    LocalCryptoError, WitnessResponseTag, WitnessSchema, GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED,
+    PROMIS_OP_ATTESTATION,
 };
 use outbe_core_common::nod_encryption::NodTermsV1;
-use outbe_fidelity::enclave_client::snapshot_leagues;
-use outbe_fidelity::{FidelitySnapshotEntry, FidelitySnapshotRequest};
 use outbe_gratis::enclave_client::apply_gratis_op;
 use outbe_gratis::nod_mine::EncryptedNodMintRejectedV1;
 use outbe_gratis::{
@@ -51,7 +49,6 @@ struct Prepared {
     context: Arc<InProcessTeeContext>,
     gratis: GratisOpRequest,
     promis: PromisOpRequest,
-    fidelity: FidelitySnapshotRequest,
     nod: outbe_core_common::nod_encryption::EncryptedNodV1,
 }
 
@@ -141,17 +138,6 @@ fn promis_request() -> PromisOpRequest {
     }
 }
 
-fn fidelity_request() -> FidelitySnapshotRequest {
-    FidelitySnapshotRequest {
-        timestamp: 1_000_000,
-        first_qualified_start: 0,
-        entries: vec![FidelitySnapshotEntry {
-            owner: account(),
-            cohort_blob: Vec::new(),
-        }],
-    }
-}
-
 fn nod() -> outbe_core_common::nod_encryption::EncryptedNodV1 {
     let key = context(4, true)
         .state_key_handle(outbe_core_common::confidential_tee::NOD.state_info(), 0)
@@ -178,7 +164,6 @@ fn prepared() -> Prepared {
         context: context(4, true),
         gratis: gratis_request(Vec::new(), 0),
         promis: promis_request(),
-        fidelity: fidelity_request(),
         nod: nod(),
     }
 }
@@ -204,9 +189,6 @@ fn inactive_resident_key_is_local_unavailable_in_every_domain() {
     });
     latch(leader, "promis", || {
         drop(apply_promis_op(sample.promis.clone()))
-    });
-    latch(leader, "fidelity", || {
-        drop(snapshot_leagues(sample.fidelity.clone()))
     });
     latch(leader, "nod", || drop(read_nod_amount(&sample.nod)));
     latch(leader, "offer", || {
@@ -502,15 +484,11 @@ fn indexed_user_scopes_record_every_domain_and_match_replay() {
             outbe_promis::PromisOpStatus::Applied
         ));
     });
-    record_indexed(&state, 2, 4, || {
-        let leagues = snapshot_leagues(ready.fidelity.clone()).expect("fidelity");
-        assert_eq!(leagues.len(), 1);
-    });
-    record_indexed(&state, 3, 10, || {
+    record_indexed(&state, 2, 10, || {
         let amount = read_nod_amount(&ready.nod).expect("nod");
         assert_eq!(amount, U256::from(1_000_000u64));
     });
-    record_indexed(&state, 4, 22, || {
+    record_indexed(&state, 3, 22, || {
         let result = issue_nod_at_offer(offer_request(CHAIN)).expect("offer");
         assert!(result.nod.is_none());
     });
@@ -518,7 +496,7 @@ fn indexed_user_scopes_record_every_domain_and_match_replay() {
     drop(scope);
     drop(_runtime);
     assert!(tape.prefix.is_empty());
-    assert_eq!(tape.txs.len(), 5);
+    assert_eq!(tape.txs.len(), 4);
     for (index, tx) in tape.txs.iter().enumerate() {
         assert_eq!(tx.tx_index, index as u32);
         assert_eq!(tx.entries.len(), 1);
@@ -537,12 +515,9 @@ fn indexed_user_scopes_record_every_domain_and_match_replay() {
         apply_promis_op(ready.promis.clone()).expect("promis enclave");
     });
     replay_indexed(&state, 2, || {
-        snapshot_leagues(ready.fidelity.clone()).expect("fidelity enclave");
-    });
-    replay_indexed(&state, 3, || {
         read_nod_amount(&ready.nod).expect("nod enclave");
     });
-    replay_indexed(&state, 4, || {
+    replay_indexed(&state, 3, || {
         issue_nod_at_offer(offer_request(CHAIN)).expect("offer enclave");
     });
     assert!(state
@@ -563,12 +538,9 @@ fn indexed_user_scopes_record_every_domain_and_match_replay() {
         apply_promis_op(ready.promis.clone()).expect("promis replay");
     });
     replay_indexed(&state, 2, || {
-        snapshot_leagues(ready.fidelity.clone()).expect("fidelity replay");
-    });
-    replay_indexed(&state, 3, || {
         read_nod_amount(&ready.nod).expect("nod replay");
     });
-    replay_indexed(&state, 4, || {
+    replay_indexed(&state, 3, || {
         issue_nod_at_offer(offer_request(CHAIN)).expect("offer replay");
     });
     assert!(state
@@ -626,7 +598,6 @@ fn replay_indexed(state: &Arc<Mutex<WitnessState>>, index: u32, call: impl FnOnc
 
 fn uninstall_domain_standins() {
     outbe_gratis::enclave_client::test_enclave::uninstall();
-    outbe_fidelity::enclave_client::test_enclave::uninstall();
     // Nod's stand-in is crate-private and starts uninstalled.
     outbe_nod::test_support::uninstall();
 }
@@ -656,7 +627,6 @@ fn metric_classes_and_local_crypto_error_messages_remain_exact() {
     for (descriptor, expected) in [
         (GRATIS_OP_ATTESTATION, "gratis_op_attestation"),
         (PROMIS_OP_ATTESTATION, "promis_op_attestation"),
-        (FIDELITY_ATTESTATION, "fidelity_attestation"),
     ] {
         assert_eq!(
             TransportError::app_attestation(descriptor, bad_sig()).metric_class(),
@@ -739,14 +709,6 @@ fn assert_local_crypto_sentences() {
         (E::AeadKey(T::AeadKey), "aead key"),
         (E::AeadSeal(T::AeadSeal), "aead seal"),
         (E::AeadOutputLength, "aead seal"),
-        (
-            E::InvalidFidelityCohortEnvelope,
-            "invalid encrypted Fidelity cohort envelope",
-        ),
-        (
-            E::FidelityCohortDecryptionFailed(T::DecryptionFailed),
-            "Fidelity cohort decryption failed",
-        ),
         (E::InvalidGratisBalance, "invalid encrypted Gratis balance"),
         (
             E::GratisBalanceDecryptionFailed(T::DecryptionFailed),

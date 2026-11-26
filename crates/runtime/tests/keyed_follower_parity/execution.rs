@@ -144,7 +144,7 @@ fn execute_height(
         "user tx reverted at {number}"
     );
     if !users.is_empty() {
-        assert_five_domain_witness(&extra, begin.len(), number);
+        assert_domain_witness(&extra, begin.len(), number);
     }
     seal_height(
         Header {

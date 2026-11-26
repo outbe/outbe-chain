@@ -8152,37 +8152,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "outbe-fidelity"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "alloy-sol-types",
- "ed25519-dalek 2.2.0",
- "hex",
- "k256 0.13.4",
- "outbe-core-common",
- "outbe-fidelity-math",
- "outbe-macros",
- "outbe-primitives",
- "outbe-system-common",
- "outbe-tee",
- "postcard",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
- "zeroize",
-]
-
-[[package]]
-name = "outbe-fidelity-math"
-version = "0.1.0"
-dependencies = [
- "alloy-primitives",
- "outbe-system-common",
- "thiserror 2.0.21",
-]
-
-[[package]]
 name = "outbe-gem"
 version = "0.1.0"
 dependencies = [
@@ -8255,7 +8224,6 @@ dependencies = [
  "ed25519-dalek 2.2.0",
  "hex",
  "outbe-core-common",
- "outbe-fidelity",
  "outbe-macros",
  "outbe-nod",
  "outbe-primitives",
@@ -8443,7 +8411,6 @@ dependencies = [
  "outbe-core-common",
  "outbe-desis",
  "outbe-emission",
- "outbe-fidelity",
  "outbe-macros",
  "outbe-nod",
  "outbe-oracle",
@@ -8852,7 +8819,6 @@ dependencies = [
  "outbe-engine",
  "outbe-evm",
  "outbe-execution",
- "outbe-fidelity",
  "outbe-gem",
  "outbe-gemfactory",
  "outbe-genesis-cli",

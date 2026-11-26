@@ -8,7 +8,6 @@ publish.workspace = true
 [features]
 default = []
 production-enclave = [
-    "outbe-fidelity/production-enclave",
     "outbe-gratis/production-enclave",
     "outbe-promis/production-enclave",
     "outbe-nod/production-enclave",
@@ -32,7 +31,6 @@ outbe-desis.workspace = true
 outbe-emission.workspace = true
 outbe-engine.workspace = true
 outbe-evm.workspace = true
-outbe-fidelity.workspace = true
 outbe-gem.workspace = true
 outbe-gemfactory.workspace = true
 outbe-gratis.workspace = true
