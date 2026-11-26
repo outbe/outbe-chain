@@ -43,7 +43,9 @@ const CONFIG_FILES: &[&str] = &[
     "validator.env",
     "feeder-public.toml",
     "hyperlane-public.toml",
+    "reth.toml",
 ];
+const RETH_CONFIG: &str = "reth.toml";
 
 struct BootOptions<'a> {
     bin_dir: Option<&'a Path>,
@@ -236,6 +238,9 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
             let hyperlane_public = fs::read_to_string(root.join("hyperlane-public.toml"))
                 .wrap_err("failed to read hyperlane-public.toml")?;
             crate::config::validate_hyperlane_public_toml(&hyperlane_public, chain_id, true)?;
+            let reth =
+                fs::read_to_string(root.join(RETH_CONFIG)).wrap_err("failed to read reth.toml")?;
+            crate::config::validate_reth_toml(&reth)?;
             install::required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
 
             verify_secrets(root, options.bin_dir, options.cancel)?;
@@ -258,6 +263,10 @@ fn boot_root(root: &Path, mountinfo: &str, options: &BootOptions<'_>) -> Result<
             install::required_file(&root.join("genesis.json"))?;
             install::validate_genesis(root, &environment["OUTBE_CHAIN_ID"])?;
             install::required_file(&root.join(".bb-crs/bn254_g1.dat"))?;
+            verify_config_file(&root.join(RETH_CONFIG), options.require_root_owner)?;
+            let reth =
+                fs::read_to_string(root.join(RETH_CONFIG)).wrap_err("failed to read reth.toml")?;
+            crate::config::validate_reth_toml(&reth)?;
             environment
         }
     };

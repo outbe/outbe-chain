@@ -5407,7 +5407,7 @@ genesis:
 }
 
 #[tokio::test]
-async fn update_refuses_legacy_env_schema_disks_before_touching_hosts() {
+async fn update_refuses_pre_reth_runtime_schema_before_touching_hosts() {
     let tmp = tempfile::tempdir().unwrap();
     let fixture = build_test_vm_artifacts(tmp.path(), "legacyenv", "~/.dstack-vmm", b"outbe-up");
     let fake_image = tmp.path().join("img.tar.zst");
@@ -5431,10 +5431,10 @@ async fn update_refuses_legacy_env_schema_disks_before_touching_hosts() {
     .await
     .unwrap();
 
-    // Simulate a legacy `network-vm-state.json` written before `env_schema` existed (defaults to 1).
+    // Simulate v2 disks prepared before reth.toml became mandatory.
     let state_path = NetworkVmState::path(&fixture.root);
     let mut raw: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
-    raw.as_object_mut().unwrap().remove("env_schema");
+    raw["env_schema"] = json!(2);
     fs::write(&state_path, serde_json::to_vec_pretty(&raw).unwrap()).unwrap();
 
     fake.state.lock().unwrap().vm_update_calls.clear();
@@ -5457,10 +5457,10 @@ async fn update_refuses_legacy_env_schema_disks_before_touching_hosts() {
         Arc::clone(&exec),
     )
     .await
-    .expect_err("network update must refuse legacy env_schema v1 disks");
+    .expect_err("network update must refuse runtime schema v2 disks");
     assert!(
-        err.to_string().contains("validator.env schema v1")
-            && err.to_string().contains("requires schema v2"),
+        err.to_string().contains("runtime schema v2")
+            && err.to_string().contains("requires schema v3"),
         "{err}"
     );
     assert!(

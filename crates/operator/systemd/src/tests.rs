@@ -257,6 +257,7 @@ fn joining_units_match_pinned_output() {
                 "Environment=RUST_MIN_STACK=16777216\n",
                 "ExecStartPre=/usr/local/bin/outbe-up internal wait-validator-dependencies\n",
                 "ExecStart=/opt/outbe-chain/outbe-chain node \\\n",
+                "  --config /opt/outbe-chain/reth.toml \\\n",
                 "  --chain /opt/outbe-chain/genesis.json \\\n",
                 "  --datadir /opt/outbe-chain/validator-0/data \\\n",
                 "  --engine.persistence-threshold 0 \\\n",
@@ -518,6 +519,7 @@ fn vm_validator_args_match_pinned_founding_flags() {
     // Founding node_script flags in bin/outbe-genesis-cli/src/launch_bundle/scripts.rs.
     let expected_founding_flags: BTreeSet<&str> = [
         "--validator",
+        "--config",
         "--chain",
         "--datadir",
         "--engine.persistence-threshold",
@@ -583,6 +585,7 @@ fn vm_units_use_explicit_env_ports_for_listen_and_advertise_and_keep_fixed_ports
     };
 
     let validator = expand(unit(&vm, "outbe-validator.service"));
+    assert!(validator.contains("--config /opt/outbe-chain/reth.toml"));
     assert!(validator.contains("--consensus.listen-addr 0.0.0.0:30401"));
     assert!(validator.contains("--port 30304"));
     assert!(validator.contains("--discovery.port 30304"));
@@ -601,6 +604,7 @@ fn vm_units_use_explicit_env_ports_for_listen_and_advertise_and_keep_fixed_ports
     assert!(radicle.contains("--status-listen 127.0.0.1:8876"));
 
     let joining = expand(unit(&vm, "outbe-joining-validator.service"));
+    assert!(joining.contains("--config /opt/outbe-chain/reth.toml"));
     assert!(joining.contains("--http.port 8546"));
     assert!(joining.contains("--consensus.listen-addr 0.0.0.0:30401"));
     assert!(joining.contains("--port 30304"));
@@ -611,6 +615,7 @@ fn vm_units_use_explicit_env_ports_for_listen_and_advertise_and_keep_fixed_ports
     assert!(joining.contains("--upstream ${OUTBE_CERTIFIED_RPC}"));
 
     let full_node = expand(unit(&vm, "outbe-full-node.service"));
+    assert!(full_node.contains("--config /opt/outbe-chain/reth.toml"));
     assert!(full_node.contains("--port 30304"));
     assert!(full_node.contains("--discovery.port 30304"));
     assert!(full_node.contains("--discovery.v5.port 31304"));

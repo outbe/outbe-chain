@@ -306,9 +306,14 @@ fn full_node_stages_zero_keys_and_rejects_keys_from_or_validator_config() {
     assert!(tree.join("genesis.json").is_file());
     assert!(tree.join(".bb-crs/bn254_g1.dat").is_file());
     assert!(tree.join("validator.env").is_file());
+    assert!(tree.join("reth.toml").is_file());
     assert!(!tree.join("keys").exists());
     assert!(!tree.join("feeder-public.toml").exists());
     assert!(!tree.join("hyperlane-public.toml").exists());
+    assert_eq!(
+        fs::read_to_string(tree.join("reth.toml")).unwrap(),
+        "[peers]\nincoming_ip_throttle_duration = \"30s\"\n"
+    );
     assert!(!tree.join("outbe-chain").exists());
 
     let env_text = fs::read_to_string(tree.join("validator.env")).unwrap();

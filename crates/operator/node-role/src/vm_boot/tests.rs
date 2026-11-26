@@ -94,6 +94,11 @@ fn build_valid_root() -> tempfile::TempDir {
         0o640,
     );
     write_file_mode(
+        &root.join("reth.toml"),
+        b"[peers]\nincoming_ip_throttle_duration = \"30s\"\n",
+        0o640,
+    );
+    write_file_mode(
         &root.join("genesis.json"),
         br#"{"config":{"chainId":707}}"#,
         0o644,
@@ -413,6 +418,11 @@ fn build_valid_full_node_root() -> tempfile::TempDir {
         0o644,
     );
     write_file_mode(&root.join(".bb-crs/bn254_g1.dat"), b"crs", 0o644);
+    write_file_mode(
+        &root.join("reth.toml"),
+        b"[peers]\nincoming_ip_throttle_duration = \"30s\"\n",
+        0o640,
+    );
     dir
 }
 

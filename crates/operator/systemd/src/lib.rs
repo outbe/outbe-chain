@@ -366,6 +366,7 @@ pub fn founding_units(config: FoundingConfig<'_>) -> Vec<UnitFile> {
 fn common_node_exec_lines(bin_dir: &str, p2p_secret_key: Option<&str>) -> Vec<String> {
     let mut args = lines(&[
         &format!("ExecStart={bin_dir}/outbe-chain node \\"),
+        "  --config /opt/outbe-chain/reth.toml \\",
         "  --chain /opt/outbe-chain/genesis.json \\",
         "  --datadir /opt/outbe-chain/validator-0/data \\",
         "  --engine.persistence-threshold 0 \\",

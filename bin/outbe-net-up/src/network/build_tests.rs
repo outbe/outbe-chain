@@ -266,6 +266,10 @@ genesis:
 
     for index in 0..4 {
         let tree = staging_root.join(format!("vm/validator-{index}"));
+        assert_eq!(
+            fs::read_to_string(tree.join("reth.toml")).unwrap(),
+            "[peers]\nincoming_ip_throttle_duration = \"1s\"\n"
+        );
         outbe_operator_node_role::vm_boot::verify_tree_without_mount(&tree, &fake_bins).unwrap();
     }
 }
