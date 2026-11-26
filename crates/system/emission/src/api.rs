@@ -223,8 +223,8 @@ pub fn record_day_allocation(
     Ok(record)
 }
 
-/// Records a failed daily allocation: all of `emission_limit` lands in `promis_limit`,
-/// `metadosis_state` becomes `Cancelled`, and `state` becomes `Completed`.
+/// Records a failed daily allocation: all of `emission_limit` lands in `promis_limit` and the
+/// Metadosis limit is zero. The day stays `Processing` until its Metadosis settles the loads.
 pub fn record_failed_day_allocation(
     storage: StorageHandle<'_>,
     day: u32,
@@ -248,9 +248,8 @@ pub fn record_failed_day_allocation(
     record.cca = 0;
     record.nods = 0;
     record.promis_limit = limit_u128;
-    record.metadosis_state = metadosis_state::CANCELLED;
     check_conservation(&record)?;
-    record.state = emission_day_state::COMPLETED;
+    record.state = emission_day_state::PROCESSING;
     EmissionContract::new(storage)
         .emission_days
         .update(&record)?;
@@ -609,7 +608,7 @@ mod tests {
         let failed_day = 20261002;
         let failed =
             record_failed_day_allocation(storage.clone(), failed_day, U256::from(100u64)).unwrap();
-        assert_eq!(failed.state, emission_day_state::COMPLETED);
+        assert_eq!(failed.state, emission_day_state::PROCESSING);
         assert_eq!(failed.promis_limit, 100);
 
         let unknown_state = 20261003;

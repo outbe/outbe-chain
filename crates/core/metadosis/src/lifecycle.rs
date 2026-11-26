@@ -105,13 +105,35 @@ fn cancel_auction_of(metadosis: &MetadosisContract<'_>, day: u32) -> Result<()> 
     }
 }
 
+/// The settlement of the day's loads with `excess`, or `None` when the day sum cannot be read.
+fn settle_loads(
+    metadosis: &MetadosisContract<'_>,
+    pending: &EmissionDay,
+    excess: U256,
+) -> Result<Option<LoadsSettlement>> {
+    match crate::loads::day_loads(&metadosis.storage, pending.wwd) {
+        Ok(loads) => Ok(Some(LoadsSettlement::derive(
+            pending.metadosis_limit_minor(),
+            loads.loads_minor,
+            excess,
+        )?)),
+        // Only corrupt sealed data fails the read; the whole limit stays with the Nods.
+        Err(err) if err.record_pass_failure() == PassFailure::Skip => Ok(None),
+        Err(err) => Err(err),
+    }
+}
+
 pub(crate) fn cancel_metadosis(
     metadosis: &mut MetadosisContract<'_>,
     day: u32,
     reason: u8,
 ) -> Result<()> {
     cancel_auction_of(metadosis, day)?;
-    if metadosis.emission_days().get(day)?.is_some() {
+    if let Some(pending) = metadosis.emission_days().get(day)? {
+        let excess = outbe_emission::api::excess_nod_loads(metadosis.storage.clone())?;
+        if let Some(settlement) = settle_loads(metadosis, &pending, excess)? {
+            crate::loads::carry_excess(metadosis, day, excess, &settlement)?;
+        }
         let record =
             outbe_emission::api::record_metadosis_canceled(metadosis.storage.clone(), day)?;
         if !outbe_agentreward::distribution::has_pending_accruals_for_day(
@@ -138,16 +160,7 @@ pub(crate) fn fail_metadosis(
     cancel_auction_of(metadosis, day)?;
     if let Some(pending) = metadosis.emission_days().get(day)? {
         let excess = outbe_emission::api::excess_nod_loads(metadosis.storage.clone())?;
-        let settlement = match crate::loads::day_loads(&metadosis.storage, pending.wwd) {
-            Ok(loads) => Some(LoadsSettlement::derive(
-                pending.metadosis_limit_minor(),
-                loads.loads_minor,
-                excess,
-            )?),
-            // Only corrupt sealed data fails the read; the whole limit stays with the Nods.
-            Err(err) if err.record_pass_failure() == PassFailure::Skip => None,
-            Err(err) => return Err(err),
-        };
+        let settlement = settle_loads(metadosis, &pending, excess)?;
         let (record, limit_minor) = outbe_emission::api::record_metadosis_failed(
             metadosis.storage.clone(),
             day,

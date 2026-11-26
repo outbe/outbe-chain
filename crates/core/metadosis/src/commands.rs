@@ -31,16 +31,3 @@ pub fn fail_metadosis(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<()> {
         crate::constants::METADOSIS_FAILED_STEP_REVERTED,
     )
 }
-
-/// Emits `IMetadosis.MetadosisCanceled(day, 1)` after daily emission limit allocation reverts.
-pub fn emit_canceled_after_failed_allocation(
-    ctx: &BlockRuntimeContext<'_>,
-    day: u32,
-) -> Result<()> {
-    crate::schema::MetadosisContract::new(ctx.storage.clone()).emit(
-        crate::precompile::IMetadosis::MetadosisCanceled {
-            emissionDay: day,
-            reason: crate::constants::METADOSIS_CANCELED_NO_LIMIT,
-        },
-    )
-}

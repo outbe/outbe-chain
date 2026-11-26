@@ -354,11 +354,11 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
         let expected_cap = outbe_emission::day_emission::emission_limit_of_day(0);
         assert_eq!(
             rec.state,
-            outbe_emission::schema::emission_day_state::COMPLETED
+            outbe_emission::schema::emission_day_state::PROCESSING
         );
         assert_eq!(
             rec.metadosis_state,
-            outbe_emission::schema::metadosis_state::CANCELLED
+            outbe_emission::schema::metadosis_state::PENDING
         );
         assert_eq!(U256::from(rec.promis_limit), expected_cap);
         assert_eq!(
@@ -403,15 +403,10 @@ fn isolated_step_checkpoints_route_failed_allocation_and_failed_metadosis_to_pro
     assert_eq!(alloc_failed[0].emissionLimitMinor, expected_cap);
     assert_eq!(alloc_failed[0].reason, 1);
 
-    let metadosis_canceled: Vec<_> = storage
+    assert!(storage
         .get_ordered_events()
         .iter()
-        .filter_map(|log| IMetadosis::MetadosisCanceled::decode_log(log).ok())
-        .map(|ev| ev.data)
-        .collect();
-    assert_eq!(metadosis_canceled.len(), 1);
-    assert_eq!(metadosis_canceled[0].emissionDay, 20_240_101);
-    assert_eq!(metadosis_canceled[0].reason, 1);
+        .all(|log| IMetadosis::MetadosisCanceled::decode_log(log).is_err()));
 
     assert!(storage
         .get_ordered_events()

@@ -374,6 +374,30 @@ fn excess_above_the_next_limit_carries_on() {
     assert_eq!(record.state, emission_day_state::COMPLETED);
 }
 
+/// A day with no limit, as a failed allocation leaves it, cancels its Metadosis and carries
+/// all its loads.
+#[test]
+fn a_day_with_no_limit_carries_its_loads() {
+    let mut provider = fixture(0, &[NOMINAL]);
+    set_excess(&mut provider, 3);
+
+    run(&mut provider).unwrap();
+
+    let left = U256::from(load_of(NOMINAL) + 3);
+    assert_eq!(excess(&mut provider), left);
+    assert_eq!(exceeded(&provider)[0].excessMinor, left);
+    let canceled: Vec<_> = provider
+        .get_ordered_events()
+        .iter()
+        .filter_map(|event| IMetadosis::MetadosisCanceled::decode_log(event).ok())
+        .collect();
+    assert_eq!(canceled.len(), 1);
+    let record = record(&mut provider);
+    assert_eq!(record.metadosis_state, metadosis_state::CANCELLED);
+    assert_eq!(record.state, emission_day_state::COMPLETED);
+    assert_eq!(record.nods, 0);
+}
+
 fn fail(provider: &mut HashMapStorageProvider) {
     StorageHandle::enter(provider, |storage| {
         crate::commands::fail_metadosis(&block_at(storage), DAY).unwrap();
