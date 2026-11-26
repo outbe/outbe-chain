@@ -23,7 +23,7 @@ import {IntexCreate3} from "./IntexCreate3.sol";
 ///      the deploy. A proxy that already exists is kept, and a re-run only checks.
 ///
 ///   1. IntexNFT1155
-///   2. IntexNFT1155Router, paired with the other chains of `PEER_CHAIN_IDS`
+///   2. IntexNFT1155Router, paired with the other chains of `REMOTE_CHAIN_IDS`
 ///   3. EscrowAdapter, with WCOEN in The Compact
 ///   4. IntexAuction
 ///   5. IntexAuctionTargetRouter, for the Interchain Account of Outbe on this chain
@@ -31,7 +31,7 @@ import {IntexCreate3} from "./IntexCreate3.sol";
 /// Hyperlane must know this chain before this runs. 6_HandOver gives the contracts to governance.
 ///
 /// Env: `DEPLOYER_PK`, `CREATE3_FACTORY_ADDRESS`, `CONTRACT_SALT`, `OUTBE_CHAIN_ID`, `OUTBE_RPC_URL`,
-///   `BRIDGE_ADDRESS`, `WCOEN_BRIDGE`, `COMPACT_ADDRESS`, `WCOEN_TOKEN`, `PEER_CHAIN_IDS`.
+///   `BRIDGE_ADDRESS`, `WCOEN_BRIDGE`, `COMPACT_ADDRESS`, `WCOEN_TOKEN`, `REMOTE_CHAIN_IDS`.
 contract DeployAll is
     DeployIntexNFT1155,
     DeployIntexNFT1155Router,
@@ -45,7 +45,7 @@ contract DeployAll is
         bool outbe;
         address compact;
         address wcoen;
-        uint256[] peerChainIds;
+        uint256[] remoteChainIds;
         Transport transport;
     }
 
@@ -84,7 +84,7 @@ contract DeployAll is
             outbe: onOutbe(),
             compact: vm.envAddress("COMPACT_ADDRESS"),
             wcoen: vm.envAddress("WCOEN_TOKEN"),
-            peerChainIds: vm.envUint("PEER_CHAIN_IDS", ","),
+            remoteChainIds: vm.envUint("REMOTE_CHAIN_IDS", ","),
             transport: transport()
         });
     }
@@ -92,7 +92,7 @@ contract DeployAll is
     /// @dev Requires an active broadcast from `deployer`.
     function deployAll(address deployer, IntexCreate3.Stack memory s, Config memory c) public {
         deployIntexNFT1155(deployer, s, c.outbe);
-        deployIntexNFT1155Router(deployer, s, c.transport.bridge, c.peerChainIds);
+        deployIntexNFT1155Router(deployer, s, c.transport.bridge, c.remoteChainIds);
         deployEscrowAdapter(deployer, s, c.compact, c.wcoen);
         deployIntexAuction(deployer, s);
         deployIntexAuctionTargetRouter(deployer, s, c.transport);
@@ -110,14 +110,14 @@ contract DeployAll is
         IntexNFT1155Router nftRouter = IntexNFT1155Router(payable(s.intexNFT1155Router));
         _check(s.intexNFT1155Router, address(nftRouter.token()) == s.intexNFT1155, "token");
         _check(s.intexNFT1155Router, address(nftRouter.BRIDGE()) == c.transport.bridge, "BRIDGE");
-        for (uint256 i = 0; i < c.peerChainIds.length; i++) {
-            uint256 peer = c.peerChainIds[i];
-            if (peer == block.chainid) continue;
-            bytes memory expected = InteroperableAddress.formatEvmV1(peer, s.intexNFT1155Router);
-            // forge-lint: disable-next-line(unsafe-typecast) -- remoteRouters checked the peer fits uint32
+        for (uint256 i = 0; i < c.remoteChainIds.length; i++) {
+            uint256 chainId = c.remoteChainIds[i];
+            if (chainId == block.chainid) continue;
+            bytes memory expected = InteroperableAddress.formatEvmV1(chainId, s.intexNFT1155Router);
+            // forge-lint: disable-next-line(unsafe-typecast) -- remoteRouters checked the chain id fits uint32
             _check(
                 s.intexNFT1155Router,
-                keccak256(nftRouter.remoteRouter(uint32(peer))) == keccak256(expected),
+                keccak256(nftRouter.remoteRouter(uint32(chainId))) == keccak256(expected),
                 "remoteRouter"
             );
         }

@@ -35,7 +35,7 @@ contract HandOverTest is Test {
                 outbe: false,
                 compact: address(new MockTheCompact()),
                 wcoen: address(new MockWCOEN()),
-                peerChainIds: new uint256[](0),
+                remoteChainIds: new uint256[](0),
                 transport: DeployIntexAuctionTargetRouter.Transport({
                     bridge: address(0xB0B), outbeChainId: 1, wcoenBridge: address(0xC0E), outbeIca: GOVERNANCE_ICA
                 })

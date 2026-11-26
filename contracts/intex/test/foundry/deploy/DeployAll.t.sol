@@ -30,7 +30,7 @@ contract DeployAllTest is Test {
     address internal constant HUB = address(0xB0B);
     address internal constant WCOEN_BRIDGE = address(0xC0E);
     address internal constant OUTBE_ICA = address(0x1CA);
-    uint256 internal constant PEER = 97;
+    uint256 internal constant REMOTE_CHAIN_ID = 97;
 
     DeployAllHarness internal script;
     Create3Factory internal factory;
@@ -48,14 +48,14 @@ contract DeployAllTest is Test {
     }
 
     function _config(bool outbe) internal view returns (DeployAll.Config memory c) {
-        uint256[] memory peers = new uint256[](2);
-        peers[0] = block.chainid;
-        peers[1] = PEER;
+        uint256[] memory remoteChainIds = new uint256[](2);
+        remoteChainIds[0] = block.chainid;
+        remoteChainIds[1] = REMOTE_CHAIN_ID;
         c = DeployAll.Config({
             outbe: outbe,
             compact: address(compact),
             wcoen: address(wcoen),
-            peerChainIds: peers,
+            remoteChainIds: remoteChainIds,
             transport: DeployIntexAuctionTargetRouter.Transport({
                 bridge: HUB, outbeChainId: OUTBE_CHAIN_ID, wcoenBridge: WCOEN_BRIDGE, outbeIca: OUTBE_ICA
             })
@@ -96,9 +96,9 @@ contract DeployAllTest is Test {
         assertEq(nft.gemFactory(), GEM_FACTORY);
     }
 
-    function test_DeployAll_PairsTheNftRouterWithEveryOtherPeerInInitialize() public {
+    function test_DeployAll_SetsTheRemoteRouterOfEveryOtherChainInInitialize() public {
         address nftRouter = script.stack(deployer).intexNFT1155Router;
-        bytes memory peer = InteroperableAddress.formatEvmV1(PEER, nftRouter);
+        bytes memory remote = InteroperableAddress.formatEvmV1(REMOTE_CHAIN_ID, nftRouter);
         vm.recordLogs();
 
         script.deployWith(PK, _config(false));
@@ -110,11 +110,11 @@ contract DeployAllTest is Test {
                 continue;
             }
             found++;
-            assertEq(logs[i].topics[1], bytes32(PEER), "indexed chain id");
-            assertEq(abi.decode(logs[i].data, (bytes)), peer, "the router on the peer");
+            assertEq(logs[i].topics[1], bytes32(REMOTE_CHAIN_ID), "indexed chain id");
+            assertEq(abi.decode(logs[i].data, (bytes)), remote, "the router on the other chain");
         }
-        assertEq(found, 1, "one event per peer, none for this chain");
-        assertEq(IntexNFT1155Router(payable(nftRouter)).remoteRouter(uint32(PEER)), peer);
+        assertEq(found, 1, "one event per other chain, none for this chain");
+        assertEq(IntexNFT1155Router(payable(nftRouter)).remoteRouter(uint32(REMOTE_CHAIN_ID)), remote);
         assertEq(IntexNFT1155Router(payable(nftRouter)).remoteRouter(uint32(block.chainid)).length, 0, "no self pair");
     }
 

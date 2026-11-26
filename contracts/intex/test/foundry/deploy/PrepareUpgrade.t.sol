@@ -30,12 +30,12 @@ contract PrepareUpgradeTest is Test {
         deploy.setEnv(address(factory), SALT, true, address(0x1CA));
         script.setEnv(address(factory), SALT, true, address(0x1CA));
 
-        uint256[] memory peers = new uint256[](1);
-        peers[0] = 97;
+        uint256[] memory remoteChainIds = new uint256[](1);
+        remoteChainIds[0] = 97;
         config.outbe = true;
         config.compact = address(new MockTheCompact());
         config.wcoen = address(new MockWCOEN());
-        config.peerChainIds = peers;
+        config.remoteChainIds = remoteChainIds;
         config.transport = DeployIntexAuctionTargetRouter.Transport({
             bridge: address(0xB0B),
             outbeChainId: uint32(block.chainid),
