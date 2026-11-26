@@ -37,7 +37,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 /// This function resumes the coupled daily pass under this block height's shared allowance.
 /// It returns the number of called groups.
-pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn run_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut GemCallPass::new(ctx))
 }
 
@@ -173,7 +173,7 @@ pub(crate) fn call_currency(
                 if retire_settled_group(&mut gem, group, ctx.block.timestamp)? {
                     return Ok(1);
                 }
-                let calls = u32::from(call_if_breached(
+                let calls = u32::from(call_series_if_breached(
                     &mut gem,
                     window,
                     group,
@@ -214,7 +214,7 @@ fn retire_settled_group(gem: &mut GemContract<'_>, group: B256, now: u64) -> Res
 ///
 /// The terms were sealed when the group opened, so a later profile change cannot
 /// re-term it. Days before the group's first full day never count: no member existed yet.
-pub(crate) fn call_if_breached(
+pub(crate) fn call_series_if_breached(
     gem: &mut GemContract<'_>,
     window: &CallWindow,
     group: B256,
@@ -232,7 +232,7 @@ pub(crate) fn call_if_breached(
     if !window.breached(&breach_terms(&terms, start_day.value())) {
         return Ok(false);
     }
-    mark_called(gem, group, &terms, now)?;
+    call_series(gem, group, &terms, now)?;
     Ok(true)
 }
 
@@ -248,7 +248,7 @@ pub(crate) fn breach_terms(terms: &CallTerms, full_day_after_issue: u32) -> Brea
 
 /// `Issued -> Called` for every unsettled member at once: the group leaves the trie for the
 /// expiry queue, where it waits on its sealed notice period as one entry.
-pub(crate) fn mark_called(
+pub(crate) fn call_series(
     gem: &mut GemContract<'_>,
     group: B256,
     terms: &CallTerms,

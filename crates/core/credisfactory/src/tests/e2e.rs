@@ -75,7 +75,7 @@ fn cash_account_issues_the_credis_with_one_command() {
         assert_eq!(record.entry_price_minor, oracle_rate());
         assert_eq!(
             record.call_price_minor,
-            crate::rules::calc_call_price(oracle_rate(), outbe_credis::constants::CALL_RATE_PCT)
+            crate::rules::compute_call_price(oracle_rate(), outbe_credis::constants::CALL_RATE_PCT)
                 .unwrap()
         );
         assert_eq!(
@@ -296,7 +296,7 @@ fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
         assert_eq!(record.policy_rate, reservation.policy_rate);
         assert_eq!(
             record.call_price_minor,
-            crate::rules::calc_call_price(
+            crate::rules::compute_call_price(
                 reservation.entry_price_minor,
                 outbe_credis::constants::CALL_RATE_PCT
             )
@@ -490,7 +490,7 @@ fn reservation_snapshots_call_profile_terms_and_a_called_full_settlement_deletes
             let record = CredisContract::new(storage.clone()).get_credis(id).unwrap();
             assert_eq!(
                 record.call_price_minor,
-                crate::rules::calc_call_price(record.entry_price_minor, prod_terms.call_rate)
+                crate::rules::compute_call_price(record.entry_price_minor, prod_terms.call_rate)
                     .unwrap()
             );
             assert_eq!(
@@ -661,7 +661,7 @@ fn credis_series_opened_once_per_sub_series() {
     assert_eq!(opened[0].entryPriceMinor, oracle_rate());
     assert_eq!(
         opened[0].callPriceMinor,
-        crate::rules::calc_call_price(oracle_rate(), outbe_credis::constants::CALL_RATE_PCT)
+        crate::rules::compute_call_price(oracle_rate(), outbe_credis::constants::CALL_RATE_PCT)
             .unwrap()
     );
 

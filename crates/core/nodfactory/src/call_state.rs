@@ -6,11 +6,11 @@ use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_system_common::day_pass::PassDays;
 
-use crate::called::breach_terms;
+use crate::call::breach_terms;
 use crate::errors::NodFactoryError;
-use crate::precompile::INodFactory::CallProgress;
+use crate::precompile::INodFactory::CallState;
 
-pub(crate) fn call_progress(storage: &StorageHandle<'_>, nod_id: U256) -> Result<CallProgress> {
+pub(crate) fn call_state(storage: &StorageHandle<'_>, nod_id: U256) -> Result<CallState> {
     let item = outbe_nod::api::get_item(storage, nod_id)?.ok_or(NodFactoryError::NodNotFound)?;
     if outbe_nod::api::state_of(storage, &item)? != EffectiveState::Issued {
         return Err(NodFactoryError::NodNotIssued.into());
@@ -24,7 +24,7 @@ pub(crate) fn call_progress(storage: &StorageHandle<'_>, nod_id: U256) -> Result
     };
     let progress = CallWindow::progress(storage, call_terms.reference_currency, &terms, pass)?;
     let count = progress.count;
-    Ok(CallProgress {
+    Ok(CallState {
         callWindowDays: count.window_days,
         callThresholdDays: count.threshold_days,
         daysChecked: count.days_checked,

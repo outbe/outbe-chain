@@ -163,12 +163,12 @@ impl TaskHandler {
             #[cfg(test)]
             Self::Test(handler) => handler(ctx),
             Self::ProcessEmissionDay => return crate::handler::process_emission_day(ctx),
-            Self::ScheduleIntexCallPass => outbe_intexfactory::called::schedule_call_pass(ctx),
+            Self::ScheduleIntexCallPass => outbe_intexfactory::call::schedule_call_pass(ctx),
             Self::AdvanceAuctions => outbe_desis::advance_auctions(ctx),
-            Self::ScheduleGemCallPass => outbe_gemfactory::called::schedule_call_pass(ctx),
+            Self::ScheduleGemCallPass => outbe_gemfactory::call::schedule_call_pass(ctx),
             Self::CompleteAuctions => outbe_desis::complete_auctions(ctx),
-            Self::ScheduleCredisCallPass => outbe_credisfactory::called::schedule_call_pass(ctx),
-            Self::ScheduleNodCallPass => outbe_nodfactory::called::schedule_call_pass(ctx),
+            Self::ScheduleCredisCallPass => outbe_credisfactory::call::schedule_call_pass(ctx),
+            Self::ScheduleNodCallPass => outbe_nodfactory::call::schedule_call_pass(ctx),
         };
         done.map(|()| Readiness::Done)
     }

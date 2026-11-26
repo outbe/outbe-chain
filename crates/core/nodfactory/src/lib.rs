@@ -3,8 +3,8 @@
 //! [`outbe_system_common::addresses::NOD_ADDRESS`]; NodFactory carries no storage of its own.
 
 pub mod api;
-pub(crate) mod call_progress;
-pub mod called;
+pub mod call;
+pub(crate) mod call_state;
 pub mod close;
 pub mod errors;
 mod forfeit;

@@ -94,7 +94,7 @@ interface IGemFactory {
 
     /// @notice How close a right is to its group's call. The window ends at the last
     ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.
-    struct CallProgress {
+    struct CallState {
         uint32 callWindowDays;
         uint32 callThresholdDays;
         /// Window days since the group's start, priced or not.
@@ -112,7 +112,7 @@ interface IGemFactory {
 
     /// @notice Read the call progress of `gemId`. Reverts `GemNotFound`, or
     ///         `GemNotIssued` once it is Called, Settled or Forfeited.
-    function getCallProgress(uint256 gemId) external view returns (CallProgress memory);
+    function callState(uint256 gemId) external view returns (CallState memory);
 
     /// @notice A merchant's Intex in the Gem Factory: the pool Merchant gems are drawn from.
     struct GemFactoryPositionData {

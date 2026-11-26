@@ -1,31 +1,7 @@
 [
   {
     "type": "function",
-    "name": "createGemFactoryPosition",
-    "inputs": [
-      {
-        "name": "intexId",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
-        "name": "units",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "gemFactoryPositionId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "getCallProgress",
+    "name": "callState",
     "inputs": [
       {
         "name": "gemId",
@@ -37,7 +13,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct IGemFactory.CallProgress",
+        "internalType": "struct IGemFactory.CallState",
         "components": [
           {
             "name": "callWindowDays",
@@ -83,6 +59,30 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "createGemFactoryPosition",
+    "inputs": [
+      {
+        "name": "intexId",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "units",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "gemFactoryPositionId",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",

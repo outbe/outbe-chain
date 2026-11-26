@@ -86,7 +86,7 @@ pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         for slot in index..next {
             factory.notify_at.clear(&slot)?;
         }
-        crate::called::notify_called(&ctx.storage, emission_day, called_at, &run)?;
+        crate::call::notify_called(&ctx.storage, emission_day, called_at, &run)?;
         index = next;
     }
     if index >= tail {

@@ -9,7 +9,7 @@ use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::time::previous_date_key;
 use outbe_system_common::time::EmissionDate;
 
-use crate::called;
+use crate::call;
 use outbe_intex::IntexContract;
 use outbe_oracle::call_window::CallWindow;
 use outbe_system_common::call_breach::ScanTerms;
@@ -165,8 +165,8 @@ fn a_group_issued_inside_the_window_counts_only_its_own_days() {
         let window = window(&s);
         let group = crate::tests::group_of(&s, series);
         assert_eq!(
-            called::call_if_breached(
-                called::GroupCall {
+            call::call_series_if_breached(
+                call::GroupCall {
                     storage: &s,
                     intex: &mut f,
                     factory: &crate::schema::IntexFactoryContract::new(s.clone()),

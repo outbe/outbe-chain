@@ -2,7 +2,7 @@
 
 use alloy_primitives::{Address, U256};
 use outbe_nod::NodContract;
-use outbe_nodfactory::{called, hooks};
+use outbe_nodfactory::{call, hooks};
 use outbe_primitives::{
     block::{BlockContext, BlockRuntimeContext},
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
@@ -51,8 +51,8 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
             },
             storage.clone(),
         );
-        called::schedule_call_pass(&ctx).unwrap();
-        called::process_call_pass(&ctx).unwrap();
+        call::schedule_call_pass(&ctx).unwrap();
+        call::run_call_pass(&ctx).unwrap();
         assert_eq!(
             NodContract::new(storage).call_sweep_day.read().unwrap(),
             0,
@@ -76,7 +76,7 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
             },
             storage.clone(),
         );
-        called::process_call_pass(&ctx).unwrap();
+        call::run_call_pass(&ctx).unwrap();
         hooks::forfeit_through(&ctx).unwrap();
         let nod = NodContract::new(storage);
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
@@ -109,7 +109,7 @@ fn idle_daily_scans_do_not_reopen_a_completed_day() {
             },
             storage,
         );
-        called::process_call_pass(&ctx).unwrap();
+        call::run_call_pass(&ctx).unwrap();
         hooks::forfeit_through(&ctx).unwrap();
     });
     assert_eq!(

@@ -97,7 +97,7 @@ mod group_scans {
                 },
                 s.clone(),
             );
-            super::super::called::daily_pass(&ctx).unwrap();
+            super::super::call::daily_pass(&ctx).unwrap();
         });
 
         let called: Vec<_> = storage

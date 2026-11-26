@@ -1,7 +1,7 @@
 //! Daily price-path scan: the multi-week breach-count call, and the forfeit of a
 //! lapsed settlement window from the deadline queue.
 //!
-//! Tests drive [`crate::called::scan_and_call`] through the `scan` harness helper,
+//! Tests drive [`crate::call::scan_and_call`] through the `scan` harness helper,
 //! and later blocks' slices through `slice`, against a seeded finalized daily
 //! series. This series is the only price source the production trigger reads.
 
@@ -97,8 +97,8 @@ fn reterm(
     .unwrap();
 }
 
-fn call_progress_revert(storage: &StorageHandle<'_>, credis_id: U256) -> alloy_primitives::Bytes {
-    match crate::call_progress::call_progress(storage, credis_id) {
+fn call_state_revert(storage: &StorageHandle<'_>, credis_id: U256) -> alloy_primitives::Bytes {
+    match crate::call_state::call_state(storage, credis_id) {
         Err(outbe_primitives::error::PrecompileError::RevertBytes(reason)) => reason,
         Err(other) => panic!("expected a revert, got {other:?}"),
         Ok(_) => panic!("expected a revert"),
@@ -119,7 +119,7 @@ fn the_call_progress_is_one_day_short_until_the_group_is_called() {
             set_vwap(&storage, day_back(at, i), above_call());
         }
 
-        let progress = crate::call_progress::call_progress(&storage, credis_id).unwrap();
+        let progress = crate::call_state::call_state(&storage, credis_id).unwrap();
         assert_eq!(
             (progress.callWindowDays, progress.callThresholdDays),
             (CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS)
@@ -150,11 +150,11 @@ fn the_call_progress_is_one_day_short_until_the_group_is_called() {
         );
         assert_eq!(scan(&storage, at), 1);
         assert_eq!(
-            call_progress_revert(&storage, credis_id),
+            call_state_revert(&storage, credis_id),
             ICredisFactory::CredisNotIssued {}.abi_encode()
         );
         assert_eq!(
-            call_progress_revert(&storage, U256::from(1u64)),
+            call_state_revert(&storage, U256::from(1u64)),
             ICredisFactory::CredisNotFound {}.abi_encode()
         );
     });
@@ -283,7 +283,7 @@ fn a_node_local_failure_while_calling_a_credis_fails_the_scan() {
             },
             storage.clone(),
         );
-        crate::called::scan_and_call(&ctx)
+        crate::call::scan_and_call(&ctx)
     });
     storage.clear_mutation_failure();
     assert!(matches!(
@@ -1281,7 +1281,7 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
         let ctx = block_at(&storage, at);
         let credis = CredisContract::new(storage.clone());
         let day = last_closed_day(at);
-        crate::called::schedule_call_pass(&ctx).unwrap();
+        crate::call::schedule_call_pass(&ctx).unwrap();
         let mut allowance = BlockAllowance::new(ctx.block.block_number, day);
         assert!(allowance.budget.admit_writes(
             outbe_system_common::pass_budget::SWEEP_WRITES_PER_BLOCK - 1 - crate::PLEDGE_BURN_COST
@@ -1294,7 +1294,7 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
         };
         let before = reserve();
 
-        assert_eq!(crate::called::process_call_pass(&ctx).unwrap(), 0);
+        assert_eq!(crate::call::run_call_pass(&ctx).unwrap(), 0);
         assert_eq!(
             credis.daily_phase.read().unwrap(),
             2,
@@ -1313,7 +1313,7 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
             pledge_cost() * U256::from(2)
         );
         let saved = credis.daily_budget.read().unwrap();
-        assert_eq!(crate::called::process_call_pass(&ctx).unwrap(), 0);
+        assert_eq!(crate::call::run_call_pass(&ctx).unwrap(), 0);
         let before_allowance = BlockAllowance::unpack(saved).unwrap().unwrap();
         let after_allowance = BlockAllowance::unpack(credis.daily_budget.read().unwrap())
             .unwrap()
@@ -1329,14 +1329,14 @@ fn the_daily_pass_finishes_only_after_atomic_pledge_burns_and_credits() {
         );
 
         let next = block_at(&storage, at);
-        assert_eq!(crate::called::process_call_pass(&next).unwrap(), 0);
+        assert_eq!(crate::call::run_call_pass(&next).unwrap(), 0);
         assert_eq!(credis.call_sweep_day.read().unwrap(), 0);
         assert_eq!(reserve() - before, pledge_cost() * U256::from(3));
         assert_eq!(view_pledged(&storage, alice()), U256::ZERO);
         for id in &ids {
             assert!(is_deleted(&storage, *id));
         }
-        assert_eq!(crate::called::process_call_pass(&next).unwrap(), 0);
+        assert_eq!(crate::call::run_call_pass(&next).unwrap(), 0);
         assert_eq!(reserve() - before, pledge_cost() * U256::from(3));
     });
     teardown();
@@ -1349,7 +1349,7 @@ fn forfeit_block(
     timestamp: u64,
 ) -> outbe_primitives::error::Result<u32> {
     forfeited_by(storage, timestamp, || {
-        crate::called::process_call_pass(&block_at(storage, timestamp)).map(|_| ())
+        crate::call::run_call_pass(&block_at(storage, timestamp)).map(|_| ())
     })
 }
 

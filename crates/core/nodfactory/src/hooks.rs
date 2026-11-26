@@ -12,7 +12,7 @@ impl ProtocolModule for NodFactoryModule {
     const NAME: &'static str = "nod_factory";
 
     fn end_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-        crate::called::process_call_pass(ctx)?;
+        crate::call::run_call_pass(ctx)?;
         crate::forfeit::forfeit_through(ctx)?;
         Ok(())
     }

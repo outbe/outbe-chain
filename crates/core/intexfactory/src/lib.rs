@@ -3,8 +3,8 @@
 //! keeps.
 
 pub mod api;
-pub(crate) mod call_progress;
-pub mod called;
+pub mod call;
+pub(crate) mod call_state;
 pub(crate) mod close;
 pub mod constants;
 pub mod errors;

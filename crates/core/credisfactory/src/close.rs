@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 use outbe_core_common::deadline_queue::{self, DeadlineHandler, Due};
 use outbe_credis::{CloseQueue, CredisContract};
 
-use crate::called::emit;
+use crate::call::emit;
 use crate::precompile::ICredisFactory;
 use outbe_primitives::{block::BlockRuntimeContext, error::Result};
 use outbe_system_common::pass_budget::PassBudget;

@@ -397,8 +397,7 @@ fn call(storage: &StorageHandle<'_>, group: B256) -> (u64, u64) {
     let terms = nod.read_call_terms(group).unwrap();
     let called_at =
         outbe_system_common::time::date_key_to_utc_timestamp(GROUP_DAY).unwrap() + 86_400;
-    crate::called::mark_called(&mut nod, group, called_at, terms.call_notice_period_seconds)
-        .unwrap();
+    crate::call::call_series(&mut nod, group, called_at, terms.call_notice_period_seconds).unwrap();
     (
         called_at,
         nod_api::settlement_deadline_of(called_at, terms.call_notice_period_seconds),

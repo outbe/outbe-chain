@@ -1,6 +1,6 @@
 //! Daily call-scan tests: the 21-of-28 breach rule and the seven-day forfeit.
 //!
-//! Every test drives the real [`crate::called::scan_and_call`] and the forfeit
+//! Every test drives the real [`crate::call::scan_and_call`] and the forfeit
 //! queue through [`scan`] against seeded oracle history, so the breach count is
 //! recomputed from the finalized daily VWAP series exactly as it is in a block.
 
@@ -259,7 +259,7 @@ fn close_pass(storage: &StorageHandle<'_>, timestamp: u64) -> outbe_primitives::
     });
     let nod = NodContract::new(storage.clone());
     loop {
-        crate::called::process_call_pass(&block_at(storage, timestamp))?;
+        crate::call::run_call_pass(&block_at(storage, timestamp))?;
         let selected =
             outbe_system_common::pass_budget::BlockAllowance::unpack(nod.daily_budget.read()?)?
                 .map_or(0, |allowance| allowance.day);
@@ -636,8 +636,8 @@ fn one_breach_day_short_of_the_threshold_does_not_call() {
     });
 }
 
-fn call_progress_revert(storage: &StorageHandle<'_>, nod_id: U256) -> alloy_primitives::Bytes {
-    match crate::call_progress::call_progress(storage, nod_id) {
+fn call_state_revert(storage: &StorageHandle<'_>, nod_id: U256) -> alloy_primitives::Bytes {
+    match crate::call_state::call_state(storage, nod_id) {
         Err(outbe_primitives::error::PrecompileError::RevertBytes(reason)) => reason,
         other => panic!("expected a revert, got {other:?}"),
     }
@@ -655,7 +655,7 @@ fn the_call_progress_is_one_day_short_until_the_group_is_called() {
         fill_days(storage, latest, CALL_LOOKBACK_DAYS, below_call());
         fill_days(storage, latest, CALL_THRESHOLD_DAYS - 1, above_call());
 
-        let progress = crate::call_progress::call_progress(storage, item.nod_id).unwrap();
+        let progress = crate::call_state::call_state(storage, item.nod_id).unwrap();
         assert_eq!(
             (progress.callWindowDays, progress.callThresholdDays),
             (CALL_LOOKBACK_DAYS, CALL_THRESHOLD_DAYS)
@@ -675,11 +675,11 @@ fn the_call_progress_is_one_day_short_until_the_group_is_called() {
         fill_days(storage, latest, CALL_LOOKBACK_DAYS, above_call());
         assert_eq!(scan(storage, at), 1);
         assert_eq!(
-            call_progress_revert(storage, item.nod_id),
+            call_state_revert(storage, item.nod_id),
             INodFactory::NodNotIssued {}.abi_encode()
         );
         assert_eq!(
-            call_progress_revert(storage, U256::from(1u64)),
+            call_state_revert(storage, U256::from(1u64)),
             INodFactory::NodNotFound {}.abi_encode()
         );
     });
@@ -1152,10 +1152,10 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
         // Two visits: the young group on top, then the middle one, which is called.
         let mut visits = PassBudget::new(2, u32::MAX);
         assert_eq!(
-            crate::called::call_currency(
+            crate::call::call_currency(
                 &ctx,
                 &mut nod,
-                crate::called::CurrencyScan {
+                crate::call::CurrencyScan {
                     iso_code: ISO,
                     window: &window,
                     ceiling: MAX_BIN_ID,
@@ -1167,10 +1167,10 @@ fn a_bin_walk_that_runs_out_resumes_inside_the_bin() {
         );
         let mut visits = PassBudget::new(SWEEP_VISITS_PER_BLOCK, u32::MAX);
         assert_eq!(
-            crate::called::call_currency(
+            crate::call::call_currency(
                 &ctx,
                 &mut nod,
-                crate::called::CurrencyScan {
+                crate::call::CurrencyScan {
                     iso_code: ISO,
                     window: &window,
                     ceiling: MAX_BIN_ID,
@@ -1221,7 +1221,7 @@ fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
             .collect()
     });
     let ctx = block_at(storage, timestamp);
-    let called = crate::called::process_call_pass(&ctx).unwrap();
+    let called = crate::call::run_call_pass(&ctx).unwrap();
     crate::forfeit::forfeit_through(&ctx).unwrap();
     called
         + groups
@@ -1415,7 +1415,7 @@ fn pending_calls_hold_forfeits_and_same_height_reentry_keeps_the_allowance() {
             .unwrap();
 
         let ctx = block_at(storage, past);
-        assert_eq!(crate::called::process_call_pass(&ctx).unwrap(), 0);
+        assert_eq!(crate::call::run_call_pass(&ctx).unwrap(), 0);
         assert_eq!(
             nod.call_currency_cursor.read().unwrap(),
             u32::from(OTHER_ISO)
@@ -1427,7 +1427,7 @@ fn pending_calls_hold_forfeits_and_same_height_reentry_keeps_the_allowance() {
             "forfeits wait for all calls in the pinned day"
         );
         let allowance = nod.daily_budget.read().unwrap();
-        assert_eq!(crate::called::process_call_pass(&ctx).unwrap(), 0);
+        assert_eq!(crate::call::run_call_pass(&ctx).unwrap(), 0);
         assert_eq!(
             nod.daily_budget.read().unwrap(),
             allowance,
@@ -1775,7 +1775,7 @@ fn a_running_call_sweep_keeps_its_day() {
             },
             storage.clone(),
         );
-        crate::called::process_call_pass(&ctx).unwrap();
+        crate::call::run_call_pass(&ctx).unwrap();
         assert_eq!(called_at(storage, item.group_key), later);
         assert_eq!(
             nod.call_sweep_day.read().unwrap(),
@@ -1845,7 +1845,7 @@ fn a_node_local_failure_while_calling_a_group_fails_the_slice() {
             },
             storage.clone(),
         );
-        crate::called::process_call_pass(&ctx)
+        crate::call::run_call_pass(&ctx)
     });
     provider.clear_mutation_failure();
     assert!(matches!(
@@ -1878,7 +1878,7 @@ fn days_closed_behind_a_stalled_call_sweep_are_walked_in_order() {
         nod.call_bin_cursor.write(&ISO, 1).unwrap();
 
         // Only the newest day's trigger fires.
-        crate::called::schedule_call_pass(&block_at(storage, at + 2 * DAY)).unwrap();
+        crate::call::schedule_call_pass(&block_at(storage, at + 2 * DAY)).unwrap();
         assert_eq!(nod.call_sweep_day.read().unwrap(), closed[0]);
         assert_eq!(nod.call_latest_day.read().unwrap(), closed[2]);
         assert_eq!(

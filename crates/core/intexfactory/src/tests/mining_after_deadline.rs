@@ -213,7 +213,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
             },
             s.clone(),
         );
-        let block = super::called::daily_pass(&ctx).unwrap();
+        let block = super::call::daily_pass(&ctx).unwrap();
         crate::hooks::forfeit_through(&block).unwrap();
         let reserve = || {
             outbe_promislimit::PromisLimitContract::new(s.clone())
@@ -275,7 +275,7 @@ fn settled_units_mine_after_the_group_expired_without_moving_the_promis_limit() 
             },
             s.clone(),
         );
-        let block = super::called::daily_pass(&later).unwrap();
+        let block = super::call::daily_pass(&later).unwrap();
         crate::hooks::forfeit_through(&block).unwrap();
         assert_eq!(reserve(), forfeited);
     });

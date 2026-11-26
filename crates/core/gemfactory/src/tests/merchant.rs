@@ -775,7 +775,7 @@ fn gem_series_is_the_issue_day_with_a_sub_series_for_each_hour() {
         );
         let called_at = next_day + 2 * SECONDS_PER_DAY;
         let terms = gem.read_call_terms(group).unwrap();
-        crate::called::mark_called(&mut gem, group, &terms, called_at).unwrap();
+        crate::call::call_series(&mut gem, group, &terms, called_at).unwrap();
         let [first, second, other] = gems.each_ref().map(|g| gem_view(storage, g.gem_id));
         assert_eq!(first.group_called_at, called_at);
         assert_eq!(
@@ -867,7 +867,7 @@ fn forfeited_gem_loads_go_to_the_promis_limit_once() {
         }
         let mut gem = GemContract::new(storage.clone());
         let terms = gem.read_call_terms(group).unwrap();
-        crate::called::mark_called(&mut gem, group, &terms, T_NOW).unwrap();
+        crate::call::call_series(&mut gem, group, &terms, T_NOW).unwrap();
         let forfeited = gem_item(storage, merchant).promis_load_minor
             + gem_item(storage, reward).promis_load_minor;
         let before = unallocated(storage);

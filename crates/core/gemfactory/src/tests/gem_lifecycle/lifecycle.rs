@@ -428,7 +428,7 @@ fn group_and_terms_survive_until_unsettled_and_settled_are_zero() {
             view(storage, gem_id).terms.call_price_minor + U256::from(1u64),
             (outbe_gem::constants::CALL_WINDOW / SECONDS_PER_DAY_U32) as usize,
         );
-        assert!(!crate::called::call_if_breached(&mut scan, &window, group, T_NOW).unwrap());
+        assert!(!crate::call::call_series_if_breached(&mut scan, &window, group, T_NOW).unwrap());
 
         burn_settled(storage, gem_id);
         assert_eq!(

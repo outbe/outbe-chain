@@ -58,7 +58,7 @@ fn world() -> (HashMapStorageProvider, SeriesId) {
             .seed_called_group(id, DEADLINE)
             .unwrap();
         // The pass starts the day before the deadline, and the Oracle is final past its close.
-        super::called::prepare_daily_pass(&BlockRuntimeContext::new(
+        super::call::prepare_daily_pass(&BlockRuntimeContext::new(
             BlockContext {
                 block_gas_limit: 0,
                 user_gas_used: 0,
@@ -105,7 +105,7 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
             },
             s,
         );
-        super::called::daily_pass(&ctx)?;
+        super::call::daily_pass(&ctx)?;
         crate::notify::send_call_notices(&ctx)
     })
 }

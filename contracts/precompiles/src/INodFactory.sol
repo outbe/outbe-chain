@@ -130,7 +130,7 @@ interface INodFactory {
 
     /// @notice How close a right is to its group's call. The window ends at the last
     ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.
-    struct CallProgress {
+    struct CallState {
         uint32 callWindowDays;
         uint32 callThresholdDays;
         /// Window days since the group's start, priced or not.
@@ -148,7 +148,7 @@ interface INodFactory {
 
     /// @notice Read the call progress of `nodId`. Reverts `NodNotFound`, or
     ///         `NodNotIssued` once it is Called, Settled or Forfeited.
-    function getCallProgress(uint256 nodId) external view returns (CallProgress memory);
+    function callState(uint256 nodId) external view returns (CallState memory);
 
     /// @notice Mine a settled Nod and mint its Gratis load to the Nod owner.
     /// @param nonce PoW over

@@ -7,7 +7,7 @@
 //! EVM. So `enable_sub_call_stub` stubs the runtime's Rust -> Solidity sub-calls
 //! into `IVaultRouter` / `IERC20` (returns `default_success()`).
 
-mod called;
+mod call;
 mod credis_records;
 mod e2e;
 mod settlement;
@@ -459,14 +459,14 @@ fn block_at<'storage>(
 
 /// The daily trigger alone: it schedules the closed day and walks nothing.
 pub fn schedule(storage: &StorageHandle<'_>, timestamp: u64) {
-    crate::called::schedule_call_pass(&block_at(storage, timestamp)).unwrap()
+    crate::call::schedule_call_pass(&block_at(storage, timestamp)).unwrap()
 }
 
 pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     let credis = CredisContract::new(storage.clone());
     let mut called = 0;
     loop {
-        called += crate::called::scan_and_call(&block_at(storage, timestamp)).unwrap();
+        called += crate::call::scan_and_call(&block_at(storage, timestamp)).unwrap();
         let selected = outbe_system_common::pass_budget::BlockAllowance::unpack(
             credis.daily_budget.read().unwrap(),
         )
@@ -482,7 +482,7 @@ pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
 
 /// One later block's slice of the call sweep in flight.
 pub fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    crate::called::process_call_pass(&block_at(storage, timestamp)).unwrap()
+    crate::call::run_call_pass(&block_at(storage, timestamp)).unwrap()
 }
 
 /// Called groups still in the close queue up to the deadline day of `timestamp`.
@@ -527,7 +527,7 @@ pub fn daily_pass(
     prepare_daily_pass(storage, timestamp)?;
     let credis = CredisContract::new(storage.clone());
     loop {
-        crate::called::process_call_pass(&block_at(storage, timestamp))?;
+        crate::call::run_call_pass(&block_at(storage, timestamp))?;
         let selected =
             outbe_system_common::pass_budget::BlockAllowance::unpack(credis.daily_budget.read()?)?
                 .map_or(0, |allowance| allowance.day);

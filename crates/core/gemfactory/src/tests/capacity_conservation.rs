@@ -131,13 +131,13 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
             },
             s.clone(),
         );
-        crate::called::process_call_pass(&ctx).unwrap();
+        crate::call::run_call_pass(&ctx).unwrap();
         assert_eq!(
             PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(SWEEP_WRITES_PER_BLOCK)
         );
         assert_eq!(gem.daily_phase.read().unwrap(), 1);
-        crate::called::process_call_pass(&ctx).unwrap();
+        crate::call::run_call_pass(&ctx).unwrap();
         assert_eq!(
             PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(SWEEP_WRITES_PER_BLOCK)
@@ -156,7 +156,7 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
             },
             s.clone(),
         );
-        crate::called::process_call_pass(&next).unwrap();
+        crate::call::run_call_pass(&next).unwrap();
         assert_eq!(
             PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
             U256::from(u64::from(SWEEP_WRITES_PER_BLOCK) + 1 + REMAINDER)
@@ -169,7 +169,7 @@ fn daily_pass_shares_series_and_position_allowance_across_reentry() {
                 .unwrap(),
             U256::ZERO
         );
-        crate::called::process_call_pass(&next).unwrap();
+        crate::call::run_call_pass(&next).unwrap();
         assert_eq!(
             PromisLimitContract::new(s).promis_limit().unwrap(),
             U256::from(u64::from(SWEEP_WRITES_PER_BLOCK) + 1 + REMAINDER)

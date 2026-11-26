@@ -15,7 +15,7 @@ impl ProtocolModule for IntexFactoryModule {
     const NAME: &'static str = "intex_factory";
 
     fn end_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
-        crate::called::process_call_pass(ctx)?;
+        crate::call::run_call_pass(ctx)?;
         crate::notify::send_call_notices(ctx)?;
         crate::forfeit::forfeit_through(ctx)?;
         Ok(())

@@ -16,7 +16,7 @@ use outbe_system_common::time::EmissionDate;
 use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 
 use crate::precompile::IIntexFactory;
-use crate::tests::called;
+use crate::tests::call;
 use crate::tests::owner;
 use outbe_intex::IntexContract;
 use outbe_system_common::pass_budget::{SWEEP_VISITS_PER_BLOCK, SWEEP_WRITES_PER_BLOCK};
@@ -87,7 +87,7 @@ fn a_called_group_is_parked_with_its_members_and_call_time() {
             },
             s.clone(),
         );
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), 1);
 
         let factory = IntexContract::new(s.clone());
         let key = group_of(&s, series_of(20260101));
@@ -113,13 +113,13 @@ fn a_called_group_is_parked_with_its_members_and_call_time() {
     });
 }
 
-fn call_progress(
+fn call_state(
     s: &StorageHandle<'_>,
     intex_id: U256,
-) -> Result<IIntexFactory::CallProgress, alloy_primitives::Bytes> {
-    let call = IIntexFactory::getCallProgressCall { intexId: intex_id };
+) -> Result<IIntexFactory::CallState, alloy_primitives::Bytes> {
+    let call = IIntexFactory::callStateCall { intexId: intex_id };
     match crate::precompile::dispatch(s.clone(), &call.abi_encode(), owner(), U256::ZERO) {
-        Ok(out) => Ok(IIntexFactory::getCallProgressCall::abi_decode_returns(&out).unwrap()),
+        Ok(out) => Ok(IIntexFactory::callStateCall::abi_decode_returns(&out).unwrap()),
         Err(PrecompileError::RevertBytes(reason)) => Err(reason),
         Err(other) => panic!("unexpected error: {other:?}"),
     }
@@ -136,7 +136,7 @@ fn the_call_progress_counts_the_window_until_the_group_is_called() {
         seed_called_candidate(&s, 20260101);
         let intex_id = outbe_intex::intex_id(series_of(20260101));
 
-        let progress = call_progress(&s, intex_id).unwrap();
+        let progress = call_state(&s, intex_id).unwrap();
         assert_eq!(
             (progress.callWindowDays, progress.callThresholdDays),
             (WINDOW_DAYS, 21)
@@ -167,13 +167,13 @@ fn the_call_progress_counts_the_window_until_the_group_is_called() {
             },
             s.clone(),
         );
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), 1);
         assert_eq!(
-            call_progress(&s, intex_id).unwrap_err(),
+            call_state(&s, intex_id).unwrap_err(),
             IIntexFactory::SeriesNotIssued {}.abi_encode()
         );
         assert_eq!(
-            call_progress(&s, U256::from(1)).unwrap_err(),
+            call_state(&s, U256::from(1)).unwrap_err(),
             IIntexFactory::SeriesNotFound {}.abi_encode()
         );
     });
@@ -196,7 +196,7 @@ fn call_and_deadline(s: &StorageHandle<'_>, member: SeriesId, scan_ts: u64) -> u
         },
         s.clone(),
     );
-    called::scan_and_call(&ctx).unwrap();
+    call::scan_and_call(&ctx).unwrap();
     IntexContract::new(s.clone())
         .called_deadline
         .read(&group_of(s, member))
@@ -224,7 +224,7 @@ fn sweep_at(s: &StorageHandle<'_>, now: u64) {
         },
         s.clone(),
     );
-    called::daily_pass(&ctx).unwrap();
+    call::daily_pass(&ctx).unwrap();
 }
 
 fn unallocated(s: &StorageHandle<'_>) -> U256 {
@@ -494,8 +494,8 @@ fn a_backlog_larger_than_one_block_drains_over_the_next_ones() {
             },
             s.clone(),
         );
-        called::scan_and_call(&ctx).unwrap();
-        called::process_call_pass(&at_height(&ctx, 2)).unwrap();
+        call::scan_and_call(&ctx).unwrap();
+        call::run_call_pass(&at_height(&ctx, 2)).unwrap();
         assert_eq!(
             IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
             0
@@ -548,7 +548,7 @@ fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
         );
 
         // The daily trigger opens the sweep and takes what it can.
-        let first = called::scan_and_call(&ctx).unwrap();
+        let first = call::scan_and_call(&ctx).unwrap();
         assert_eq!(first, SWEEP_WRITES_PER_BLOCK);
         assert_ne!(
             IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
@@ -558,11 +558,11 @@ fn a_sweep_wider_than_one_run_finishes_over_the_next_blocks() {
 
         // The next block's slice finishes it and closes the sweep.
         assert_eq!(
-            called::process_call_pass(&ctx).unwrap(),
+            call::run_call_pass(&ctx).unwrap(),
             0,
             "same-height entry retains the spent allowance"
         );
-        let second = called::process_call_pass(&at_height(&ctx, 2)).unwrap();
+        let second = call::run_call_pass(&at_height(&ctx, 2)).unwrap();
         assert_eq!(first + second, groups);
         assert_eq!(called_count(&s, days), groups);
         assert_eq!(
@@ -619,7 +619,7 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
             },
             s.clone(),
         );
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), SWEEP_WRITES_PER_BLOCK);
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), SWEEP_WRITES_PER_BLOCK);
 
         // The next slice lands after midnight. Pinned to the day it opened on,
         // the sweep finishes on the terms it started with.
@@ -637,7 +637,7 @@ fn a_sweep_that_runs_past_midnight_keeps_deciding_against_its_own_day() {
             },
             s.clone(),
         );
-        assert_eq!(called::process_call_pass(&next_day).unwrap(), 1);
+        assert_eq!(call::run_call_pass(&next_day).unwrap(), 1);
         assert_eq!(called_count(&s, days), groups);
     });
 }
@@ -674,7 +674,7 @@ fn a_sweep_opened_a_day_later_sees_the_window_expire() {
             },
             s.clone(),
         );
-        assert_eq!(called::scan_and_call(&next_day).unwrap(), 0);
+        assert_eq!(call::scan_and_call(&next_day).unwrap(), 0);
         assert_eq!(called_count(&s, 20260101..20260102), 0);
     });
 }
@@ -704,9 +704,9 @@ fn a_slice_schedules_a_ready_day_without_waiting_for_a_trigger() {
             s.clone(),
         );
         // Every block retries scheduling, independently of daily trigger success.
-        assert_eq!(called::process_call_pass(&ctx).unwrap(), 1);
+        assert_eq!(call::run_call_pass(&ctx).unwrap(), 1);
         assert_eq!(called_count(&s, 20260101..20260102), 1);
-        assert_eq!(called::process_call_pass(&ctx).unwrap(), 0);
+        assert_eq!(call::run_call_pass(&ctx).unwrap(), 0);
     });
 }
 
@@ -736,7 +736,7 @@ fn a_sweep_that_fits_in_one_run_closes_at_once() {
             },
             s.clone(),
         );
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 4);
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), 4);
         assert_eq!(
             IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
             0
@@ -782,15 +782,11 @@ fn a_bin_of_undecided_groups_does_not_stall_the_sweep() {
             },
             s.clone(),
         );
-        assert_eq!(
-            called::scan_and_call(&ctx).unwrap(),
-            0,
-            "none is due a call"
-        );
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), 0, "none is due a call");
 
         // The next slices must reach the end of the range and close the sweep.
         for height in 2..=5 {
-            called::process_call_pass(&at_height(&ctx, height)).unwrap();
+            call::run_call_pass(&at_height(&ctx, height)).unwrap();
         }
         assert_eq!(
             IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
@@ -827,7 +823,7 @@ fn a_window_price_out_of_range_skips_the_currency() {
             },
             s.clone(),
         );
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 0, "nothing is called");
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), 0, "nothing is called");
         assert_eq!(called_count(&s, 20260101..20260102), 0);
         assert_eq!(
             IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),
@@ -873,7 +869,7 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
             s.clone(),
         );
         assert_eq!(
-            called::scan_and_call(&ctx).unwrap(),
+            call::scan_and_call(&ctx).unwrap(),
             SWEEP_WRITES_PER_BLOCK,
             "the slice stops once its calls spent the writes"
         );
@@ -905,14 +901,14 @@ fn a_new_sweep_walks_the_bins_the_last_one_stopped_above() {
             },
             s.clone(),
         );
-        called::scan_and_call(&later).unwrap();
+        call::scan_and_call(&later).unwrap();
         // The in-flight day finishes, then every day up to the new one is walked.
         let factory = IntexContract::new(s.clone());
         for height in 3..=66 {
             if factory.call_sweep_day.read().unwrap() == 0 {
                 break;
             }
-            called::process_call_pass(&at_height(&later, height)).unwrap();
+            call::run_call_pass(&at_height(&later, height)).unwrap();
         }
         assert_eq!(factory.call_sweep_day.read().unwrap(), 0);
 

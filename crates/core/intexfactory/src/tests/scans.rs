@@ -31,7 +31,7 @@ fn scan_and_call_force_calls_breached_series() {
             },
             s.clone(),
         );
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), 1);
         assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Called);
     });
 }
@@ -65,7 +65,7 @@ fn a_called_series_reports_its_settlement_deadline() {
             },
             s.clone(),
         );
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), 1);
         outbe_intex::api::get_series(&s, sid(7))
             .unwrap()
             .call_notice_period_seconds
@@ -133,7 +133,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
             },
             s.clone(),
         );
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 1);
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), 1);
         assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Called);
     });
 }
@@ -168,7 +168,7 @@ fn call_scan_does_not_halt_on_overflow_vwap() {
             s.clone(),
         );
         // Must not halt: returns Ok(0) and leaves the series Issued.
-        assert_eq!(called::scan_and_call(&ctx).unwrap(), 0);
+        assert_eq!(call::scan_and_call(&ctx).unwrap(), 0);
         assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Issued);
     });
 }
@@ -213,7 +213,7 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
             },
             s,
         );
-        called::process_call_pass(&ctx)
+        call::run_call_pass(&ctx)
     });
     provider.clear_mutation_failure();
     assert!(matches!(
@@ -336,17 +336,17 @@ fn call_survives_router_failure() {
 fn a_registry_edit_does_not_move_the_cursor_onto_another_currency() {
     let currencies = [840u16, 978u16];
     assert_eq!(
-        crate::called::currency_position(&currencies, u32::from(EUR_ISO)),
+        crate::call::currency_position(&currencies, u32::from(EUR_ISO)),
         1,
         "the cursor names a currency, not a slot"
     );
     assert_eq!(
-        crate::called::currency_position(&currencies[1..], u32::from(EUR_ISO)),
+        crate::call::currency_position(&currencies[1..], u32::from(EUR_ISO)),
         0,
         "dropping the currency ahead of it does not shift the cursor onto a stranger"
     );
     assert_eq!(
-        crate::called::currency_position(&currencies, 392),
+        crate::call::currency_position(&currencies, 392),
         0,
         "a currency the registry no longer carries restarts at the head"
     );
@@ -469,7 +469,7 @@ fn sweep_expiry(s: &StorageHandle<'_>, at: u64) {
         },
         s.clone(),
     );
-    called::daily_pass(&ctx).unwrap();
+    call::daily_pass(&ctx).unwrap();
 }
 
 #[test]
@@ -551,7 +551,7 @@ fn every_failed_pass_write_rolls_back(
         let member = StorageHandle::enter(&mut provider, |s| {
             select_prod_profile(&s);
             let member = arm(&s);
-            called::prepare_daily_pass(&BlockRuntimeContext::new(
+            call::prepare_daily_pass(&BlockRuntimeContext::new(
                 BlockContext {
                     block_gas_limit: 0,
                     user_gas_used: 0,
@@ -572,7 +572,7 @@ fn every_failed_pass_write_rolls_back(
     };
     let pass = |provider: &mut HashMapStorageProvider| {
         StorageHandle::enter(provider, |s| {
-            called::daily_pass(&BlockRuntimeContext::new(
+            call::daily_pass(&BlockRuntimeContext::new(
                 BlockContext {
                     block_gas_limit: 0,
                     user_gas_used: 0,
@@ -841,7 +841,7 @@ fn the_cleanup_deletes_a_spent_series_and_keeps_one_with_settled_units() {
             },
             s.clone(),
         );
-        let block = called::daily_pass(&ctx).unwrap();
+        let block = call::daily_pass(&ctx).unwrap();
         crate::hooks::forfeit_through(&block).unwrap();
 
         let f = IntexContract::new(s.clone());
@@ -890,10 +890,7 @@ fn an_unindexable_window_price_marks_the_currency_for_the_day() {
         let day = previous_date_key(timestamp_to_date_key(MATURE_TS)).expect("date step");
         fill_days(&oracle, day, pair, 30, U256::MAX);
 
-        assert_eq!(
-            called::scan_and_call(&block_at(&s, 1, MATURE_TS)).unwrap(),
-            0
-        );
+        assert_eq!(call::scan_and_call(&block_at(&s, 1, MATURE_TS)).unwrap(), 0);
         assert_eq!(series_state(&s, sid(7)), outbe_intex::IntexState::Issued);
         assert_eq!(
             IntexContract::new(s.clone())

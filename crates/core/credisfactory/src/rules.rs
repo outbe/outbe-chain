@@ -89,7 +89,7 @@ pub struct Forfeit {
 }
 
 /// The entry price marked up by `rate_pct` percentage points.
-pub fn calc_call_price(price: U256, rate_pct: u16) -> Result<U256> {
+pub fn compute_call_price(price: U256, rate_pct: u16) -> Result<U256> {
     outbe_core_common::markup::marked_up(price, rate_pct)
         .ok_or_else(|| CredisError::ArithmeticOverflow.into())
 }
@@ -152,7 +152,7 @@ pub fn issue_in_series(
                 Some(prices) => prices,
                 None => (
                     params.entry_price_minor,
-                    calc_call_price(params.entry_price_minor, params.call_rate)?,
+                    compute_call_price(params.entry_price_minor, params.call_rate)?,
                 ),
             };
 

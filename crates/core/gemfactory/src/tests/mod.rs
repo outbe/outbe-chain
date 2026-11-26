@@ -483,7 +483,7 @@ pub(crate) fn daily_pass<'s>(
             },
             ctx.storage.clone(),
         );
-        crate::called::process_call_pass(&block)?;
+        crate::call::run_call_pass(&block)?;
         let selected =
             outbe_system_common::pass_budget::BlockAllowance::unpack(gem.daily_budget.read()?)?
                 .map_or(0, |allowance| allowance.day);

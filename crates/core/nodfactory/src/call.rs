@@ -60,7 +60,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 /// This function runs the next coupled call and forfeit slice against its pinned observation day.
 /// The return value counts called groups, not forfeited groups.
-pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn run_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut NodCallPass::new(ctx))
 }
 
@@ -222,7 +222,7 @@ pub(crate) fn call_currency(
                 if retire_settled_group(nod, group_key, ctx.block.timestamp)? {
                     return Ok(1);
                 }
-                if !call_if_breached(nod, window, group_key, ctx.block.timestamp)? {
+                if !call_series_if_breached(nod, window, group_key, ctx.block.timestamp)? {
                     return Ok(0);
                 }
                 called += 1;
@@ -254,7 +254,7 @@ fn retire_settled_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) ->
 }
 
 /// Calls the group if the window breached its sealed terms. Returns whether it did.
-fn call_if_breached(
+fn call_series_if_breached(
     nod: &mut NodContract<'_>,
     window: &CallWindow,
     group_key: B256,
@@ -267,7 +267,7 @@ fn call_if_breached(
     if !window.breached(&breach_terms(nod, group_key, &terms)?) {
         return Ok(false);
     }
-    mark_called(nod, group_key, now, terms.call_notice_period_seconds)?;
+    call_series(nod, group_key, now, terms.call_notice_period_seconds)?;
     Ok(true)
 }
 
@@ -310,7 +310,7 @@ pub(crate) fn breach_terms(
 }
 
 /// Stamps the call and opens the settlement window the group sealed.
-pub(crate) fn mark_called(
+pub(crate) fn call_series(
     nod: &mut NodContract<'_>,
     group_key: B256,
     now: u64,
