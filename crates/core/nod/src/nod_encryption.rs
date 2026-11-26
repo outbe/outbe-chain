@@ -1,13 +1,10 @@
 //! Stateless NOD encryption under the `NOD` confidential domain.
-//!
-//! Tribute-day issuance (`encrypt_nod_for_tribute`, `issue_nod_from_tribute`)
-//! stays out of this crate. Callers in Tribute use the primitives below.
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::confidential_tee::{attestation, hash, SlotCipherDomain, TeeError, NOD};
 use outbe_core_common::nod_encryption::{
     EncryptedNodGroupLoadV1, EncryptedNodV1, NodQuoteContextV1, NodTermsV1, NOD_AMOUNT_NONCE_INFO,
-    NOD_QUOTE_NONCE_INFO,
+    NOD_NOMINAL_NONCE_INFO, NOD_QUOTE_NONCE_INFO,
 };
 use outbe_tee::resident::{ResidentOfferMaterial, StateKeyHandle};
 use serde::{Deserialize, Serialize};
@@ -16,6 +13,9 @@ use zeroize::Zeroizing;
 
 const AMOUNT: SlotCipherDomain = SlotCipherDomain {
     nonce_info: NOD_AMOUNT_NONCE_INFO,
+};
+const NOMINAL: SlotCipherDomain = SlotCipherDomain {
+    nonce_info: NOD_NOMINAL_NONCE_INFO,
 };
 const GROUP_LOAD: SlotCipherDomain = SlotCipherDomain {
     nonce_info: b"outbe/nod/group-load-nonce/v1",
@@ -93,6 +93,11 @@ pub enum NodGroupLoadOperationV1 {
         load_minor: U256,
         /// True to add, false to subtract.
         add: bool,
+    },
+    /// Add one encrypted NOD's nominal.
+    AddNodNominal {
+        /// Encrypted NOD whose nominal to add.
+        nod: Box<EncryptedNodV1>,
     },
 }
 
@@ -183,43 +188,66 @@ pub fn derive_view_key(
     Ok(NOD.account_keys.derive_view_key(state_key, owner)?)
 }
 
-/// Encrypt already authenticated immutable terms.
+/// Encrypt already authenticated immutable terms with the Gratis load and the nominal.
 pub fn encrypt_nod(
     nod_state_key: &StateKeyHandle,
     terms: NodTermsV1,
     amount: U256,
+    nominal: U256,
 ) -> Result<EncryptedNodV1, NodEncryptionError> {
     let mut nod = EncryptedNodV1 {
-        encryption_binding: binding(nod_state_key, &terms, amount)?,
+        encryption_binding: binding(nod_state_key, &terms, amount, nominal)?,
         terms,
         encrypted_gratis_amount: Vec::new(),
+        encrypted_nominal_amount: Vec::new(),
     };
     let key = amount_key(nod_state_key, &nod)?;
-    let plaintext = Zeroizing::new(amount.to_be_bytes::<32>());
+    let load = Zeroizing::new(amount.to_be_bytes::<32>());
     nod.encrypted_gratis_amount = AMOUNT
         .slot(&key, nod.crypto_slot(), 0)
-        .write_blob(0, plaintext.as_ref())?;
+        .write_blob(0, load.as_ref())?;
+    let nominal = Zeroizing::new(nominal.to_be_bytes::<32>());
+    nod.encrypted_nominal_amount = NOMINAL
+        .slot(&key, nod.crypto_slot(), 0)
+        .write_blob(0, nominal.as_ref())?;
     Ok(nod)
 }
 
-/// Open an [`EncryptedNodV1`] amount with the NOD state key.
+/// Open the Gratis load of an [`EncryptedNodV1`] with the NOD state key.
 pub fn decrypt_nod(
     nod_state_key: &StateKeyHandle,
     nod: &EncryptedNodV1,
 ) -> Result<U256, NodEncryptionError> {
+    Ok(open_nod(nod_state_key, nod)?.0)
+}
+
+/// Open the nominal of an [`EncryptedNodV1`] with the NOD state key.
+pub fn decrypt_nod_nominal(
+    nod_state_key: &StateKeyHandle,
+    nod: &EncryptedNodV1,
+) -> Result<U256, NodEncryptionError> {
+    Ok(open_nod(nod_state_key, nod)?.1)
+}
+
+fn open_nod(
+    nod_state_key: &StateKeyHandle,
+    nod: &EncryptedNodV1,
+) -> Result<(U256, U256), NodEncryptionError> {
     if !nod.has_valid_encoding() {
         return Err(decrypt_refused());
     }
     let key = amount_key(nod_state_key, nod)?;
-    let (_, plaintext) = AMOUNT
-        .slot(&key, nod.crypto_slot(), 0)
-        .read_blob(&nod.encrypted_gratis_amount)?;
-    let plaintext = Zeroizing::new(plaintext);
-    let amount = plaintext_amount(plaintext.as_slice())?;
-    if binding(nod_state_key, &nod.terms, amount)? != nod.encryption_binding {
+    let open = |domain: &SlotCipherDomain, blob: &[u8]| -> Result<U256, NodEncryptionError> {
+        let (_, plaintext) = domain.slot(&key, nod.crypto_slot(), 0).read_blob(blob)?;
+        let plaintext = Zeroizing::new(plaintext);
+        plaintext_amount(plaintext.as_slice())
+    };
+    let amount = open(&AMOUNT, &nod.encrypted_gratis_amount)?;
+    let nominal = open(&NOMINAL, &nod.encrypted_nominal_amount)?;
+    if binding(nod_state_key, &nod.terms, amount, nominal)? != nod.encryption_binding {
         return Err(decrypt_refused());
     }
-    Ok(amount)
+    Ok((amount, nominal))
 }
 
 /// Seal a group-load total under the NOD state key.
@@ -311,10 +339,15 @@ fn binding(
     nod_state_key: &StateKeyHandle,
     terms: &NodTermsV1,
     amount: U256,
+    nominal: U256,
 ) -> Result<B256, NodEncryptionError> {
     Ok(B256::from(nod_state_key.compute_domain_mac(
-        b"outbe/nod/issuance-binding/v2",
-        &[*terms.digest(), amount.to_be_bytes::<32>()],
+        b"outbe/nod/issuance-binding/v3",
+        &[
+            *terms.digest(),
+            amount.to_be_bytes::<32>(),
+            nominal.to_be_bytes::<32>(),
+        ],
     )?))
 }
 
@@ -358,6 +391,10 @@ fn operation_delta(
             Ok((decrypt_nod(nod_state_key, nod)?, false))
         }
         NodGroupLoadOperationV1::AdjustTransient { load_minor, add } => Ok((*load_minor, *add)),
+        NodGroupLoadOperationV1::AddNodNominal { nod } => {
+            same_chain(nod.terms.chain_id, request.chain_id)?;
+            Ok((decrypt_nod_nominal(nod_state_key, nod)?, true))
+        }
     }
 }
 

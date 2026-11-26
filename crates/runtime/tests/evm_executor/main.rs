@@ -70,7 +70,6 @@ use outbe_system_common::stablecoin::{
 use outbe_system_common::stablecoin_fork::STABLECOIN_CREATE_BOND;
 use outbe_system_common::time::WorldwideDay;
 use outbe_tee::witness::decode_witness_payload_v1;
-use outbe_tribute::{TributeContract, TributeData};
 use outbe_validatorset::{HistoryCounters, ValidatorHistory};
 use outbe_vote::{
     constants::VOTING_WINDOW_BLOCKS,

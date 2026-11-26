@@ -12,9 +12,11 @@ import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
 import {IERC7786TokenBridge} from "@tokens/interfaces/IERC7786TokenBridge.sol";
-import {IOriginRouter} from "../origin/interfaces/IOriginRouter.sol";
+import {InteroperableAddress} from "@openzeppelin/contracts/utils/draft-InteroperableAddress.sol";
+import {DESIS} from "@precompiles/IDesis.sol";
+import {IIntexFactory, INTEX_FACTORY} from "@precompiles/IIntexFactory.sol";
 import {ITargetRouter} from "./interfaces/ITargetRouter.sol";
-import {ERC7786MessengerBase} from "../shared/ERC7786MessengerBase.sol";
+import {ERC7786Sender} from "../shared/ERC7786Sender.sol";
 import {BridgeMsgCodec} from "../shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "../shared/libs/IntexGas.sol";
 import {TargetInbound} from "./libs/TargetInbound.sol";
@@ -28,16 +30,16 @@ import {
 
 /// @title TargetRouter
 /// @author Outbe
-/// @notice BNB-side router: sends BIDS_BATCH to Outbe and receives auction/series messages from
-///         Outbe over the protocol-agnostic ERC-7786 bridge (the `crosschain` hub). The bridge
-///         selects the active transport.
+/// @notice BNB-side router: sends BIDS_BATCH to Outbe over the protocol-agnostic ERC-7786 bridge (the
+///         `crosschain` hub), which selects the active transport, and receives auction/series messages
+///         from the Interchain Account of Outbe.
 /// @dev UUPS upgradeable behind an ERC1967 proxy. The bridge is an implementation immutable (from
-///      {ERC7786MessengerBase}), so every upgrade must pass the same bridge to the constructor.
+///      {ERC7786Sender}), so every upgrade must pass the same bridge to the constructor.
 ///      All auction/series auction messages are keyed by `emissionDay`. Series messages
 ///      (issuance/mark) are keyed by `seriesId`.
 contract TargetRouter is
     ITargetRouter,
-    ERC7786MessengerBase,
+    ERC7786Sender,
     AccessControlUpgradeable,
     ReentrancyGuardTransient,
     UUPSUpgradeable
@@ -47,9 +49,16 @@ contract TargetRouter is
     /// @notice Max BIDS_BATCH count per day's relay. The receiver's 256-bit arrival mask bounds it.
     uint16 internal constant MAX_BIDS_PAGES = 256;
 
+    /// @notice Gates `receiveFromOutbe`: the Interchain Account of Outbe on this chain.
+    bytes32 public constant OUTBE_ICA_ROLE = keccak256("OUTBE_ICA_ROLE");
+
     /// @notice Destination chainId of Outbe. It is the sole peer for every outbound send and the
     ///         only accepted source.
     uint32 public immutable OUTBE_CHAIN_ID;
+
+    /// @dev The ERC20Router of WCOEN, which carries the proceeds to Outbe. CREATE3 puts it at the
+    ///      same address on every chain.
+    IERC7786TokenBridge private immutable ERC20_ROUTER;
 
     // keccak256(abi.encode(uint256(keccak256("outbe.intex.TargetRouter")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant _STORAGE_SLOT = 0x69b6aeeb915a7ddfacf9fc7eeda850d126d37a2c760f56ea4c74fddcae77ba00;
@@ -61,8 +70,10 @@ contract TargetRouter is
     }
 
     /// @custom:oz-upgrades-unsafe-allow constructor
-    constructor(address bridge_, uint32 outbeChainId_) ERC7786MessengerBase(bridge_) {
+    constructor(address bridge_, uint32 outbeChainId_, address erc20Router_) ERC7786Sender(bridge_) {
+        if (erc20Router_ == address(0)) revert ZeroAddress("erc20Router");
         OUTBE_CHAIN_ID = outbeChainId_;
+        ERC20_ROUTER = IERC7786TokenBridge(erc20Router_);
         _disableInitializers();
     }
 
@@ -94,14 +105,9 @@ contract TargetRouter is
         return _ts().escrow;
     }
 
-    /// @notice Token bridge that routes auction proceeds to Outbe.
-    function tokenBridge() external view returns (IERC7786TokenBridge) {
-        return _ts().tokenBridge;
-    }
-
-    /// @notice OriginRouter address on Outbe that receives the proceeds.
-    function originRouter() external view returns (address) {
-        return _ts().originRouter;
+    /// @notice The ERC20Router of WCOEN that carries the proceeds to Outbe.
+    function erc20Router() external view returns (IERC7786TokenBridge) {
+        return ERC20_ROUTER;
     }
 
     /// @notice Parked proceeds route by enqueue index.
@@ -182,57 +188,36 @@ contract TargetRouter is
         emit TargetRouterDependenciesSet(_intexAuction, _intexContract, _escrow);
     }
 
-    /// @inheritdoc ITargetRouter
-    function registerRemoteMessenger(uint32 chainId, bytes calldata interop) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        _registerRemoteMessenger(chainId, interop);
-    }
-
-    /// @notice Set the composed-transfer token bridge and the OriginRouter recipient for proceeds
-    ///         routing.
-    function setProceedsRoute(address _tokenBridge, address _originRouter) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (_tokenBridge == address(0)) revert ZeroAddress("tokenBridge");
-        if (_originRouter == address(0)) revert ZeroAddress("originRouter");
-        TargetRouterStorage storage $ = _ts();
-        $.tokenBridge = IERC7786TokenBridge(_tokenBridge);
-        $.originRouter = _originRouter;
-        emit TargetRouterProceedsRouteSet(_tokenBridge, _originRouter);
-    }
-
     // --- Receive ---
-    /// @inheritdoc ERC7786MessengerBase
+    /// @inheritdoc ITargetRouter
     /// @dev nonReentrant guards against re-entry through downstream
     ///      `intexAuction`/`escrow`/`intexContract` calls.
-    function receiveMessage(bytes32 receiveId, bytes calldata sender, bytes calldata payload)
-        public
-        payable
-        override
-        nonReentrant
-        returns (bytes4)
-    {
-        return super.receiveMessage(receiveId, sender, payload);
+    function receiveFromOutbe(bytes calldata message) external onlyRole(OUTBE_ICA_ROLE) nonReentrant {
+        _dispatch(message);
     }
 
     /// @dev Dispatch by msgType. A premature message (prerequisite stage not applied) reverts. The
-    ///      bridge call reverts with it, and the transport redelivers once the prerequisite lands.
-    function _dispatch(uint32 srcChainId, bytes32 receiveId, bytes calldata message) internal override {
-        if (srcChainId != OUTBE_CHAIN_ID) revert UnexpectedSourceChain(srcChainId);
+    ///      Interchain Account call reverts with it, and the relayer redelivers once the prerequisite
+    ///      lands.
+    function _dispatch(bytes calldata message) private {
+        uint32 srcChainId = OUTBE_CHAIN_ID;
         uint8 msgType = BridgeMsgCodec.readHeader(message);
         BridgeMsgCodec.assertMinLength(message, msgType);
 
         if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_START) {
-            TargetInbound.handleIntexAuctionStart(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexAuctionStart(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_CLEARING_START) {
-            TargetInbound.handleIntexAuctionClearingStart(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexAuctionClearingStart(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_RESULT) {
-            TargetInbound.handleIntexAuctionResult(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexAuctionResult(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_CANCEL) {
-            TargetInbound.handleIntexAuctionCancel(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexAuctionCancel(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_SERIES) {
-            TargetInbound.handleIntexSeries(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexSeries(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_AUCTION_WINNERS) {
-            TargetInbound.handleIntexAuctionWinners(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexAuctionWinners(_ts(), srcChainId, message);
         } else if (msgType == BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE) {
-            TargetInbound.handleIntexSeriesCallNotice(_ts(), srcChainId, receiveId, message);
+            TargetInbound.handleIntexSeriesCallNotice(_ts(), srcChainId, message);
         } else {
             revert BridgeMsgCodec.UnknownMsgType(msgType);
         }
@@ -254,7 +239,7 @@ contract TargetRouter is
         IntexAuctionBidsSendState storage p = _ts().intexAuctionBidsSendState[emissionDay];
         bytes memory message =
             BridgeMsgCodec.encodeBidsPause(emissionDay, uint32(block.chainid), p.nextPage, p.totalPages);
-        bytes32 sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.BIDS_PAUSE);
+        bytes32 sendId = _sendTo(_desis(), message, IntexGas.BIDS_PAUSE);
         emit IntexAuctionBidsPauseSent(sendId, emissionDay, p.nextPage, p.totalPages);
     }
 
@@ -359,7 +344,7 @@ contract TargetRouter is
     function _sendIntexAuctionBidsTotals(uint32 emissionDay, uint16 totalPages, uint32 totalBids) internal {
         bytes memory message =
             BridgeMsgCodec.encodeBidsTotals(emissionDay, uint32(block.chainid), totalPages, totalBids);
-        bytes32 sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.BIDS_TOTALS);
+        bytes32 sendId = _sendTo(_desis(), message, IntexGas.BIDS_TOTALS);
         emit IntexAuctionBidsTotalsSent(sendId, emissionDay, totalPages, totalBids);
     }
 
@@ -376,7 +361,7 @@ contract TargetRouter is
         bytes memory message = BridgeMsgCodec.encodeBidsPage(
             emissionDay, uint32(block.chainid), pageIndex, totalPages, bidders, packedBids
         );
-        sendId = _send(OUTBE_CHAIN_ID, message, IntexGas.bidsPage(bidders.length));
+        sendId = _sendTo(_desis(), message, IntexGas.bidsPage(bidders.length));
         emit IntexAuctionBidsSent(sendId, emissionDay, pageIndex, totalPages, uint32(bidders.length));
     }
 
@@ -415,7 +400,12 @@ contract TargetRouter is
         _sendIntexAuctionProceeds(p.emissionDay, p.pageIndex, p.amount);
     }
 
-    /// @dev Route `amount` WCOEN of a chunk to the OriginRouter, which unwraps and distributes it.
+    /// @dev Desis on Outbe, the recipient of the bids.
+    function _desis() private view returns (bytes memory) {
+        return InteroperableAddress.formatEvmV1(OUTBE_CHAIN_ID, DESIS);
+    }
+
+    /// @dev Route `amount` WCOEN of a chunk to IntexFactory on Outbe, which burns it.
     function _sendIntexAuctionProceeds(uint32 emissionDay, uint16 pageIndex, uint128 amount) internal {
         bytes32 sendId;
         if (OUTBE_CHAIN_ID == block.chainid) _handOverProceeds(emissionDay, pageIndex, amount);
@@ -423,31 +413,29 @@ contract TargetRouter is
         emit IntexAuctionProceedsSent(sendId, emissionDay, pageIndex, amount);
     }
 
-    /// @dev On Outbe itself the OriginRouter sits on this chain and takes the WCOEN in one call.
-    function _handOverProceeds(uint32 emissionDay, uint16 pageIndex, uint128 amount) private {
-        TargetRouterStorage storage $ = _ts();
-        IOriginRouter origin = IOriginRouter($.originRouter);
-        IERC20 token = $.escrow.dayIntexAuctionAsset(emissionDay);
-        address wcoen = origin.wcoen();
-        if (address(token) != wcoen) revert ProceedsTokenNotBridged(address(token), wcoen);
+    /// @dev The WCOEN the escrow paid out for the day; the token bridge carries only its own token.
+    function _proceedsToken(uint32 emissionDay) private view returns (IERC20 token) {
+        token = _ts().escrow.dayIntexAuctionAsset(emissionDay);
+        IERC20 bridgeToken = ERC20_ROUTER.token();
+        if (token != bridgeToken) revert ProceedsTokenNotBridged(address(token), address(bridgeToken));
+    }
 
-        token.forceApprove(address(origin), amount);
-        origin.receiveLocalProceeds(emissionDay, pageIndex, amount);
+    /// @dev On Outbe itself IntexFactory sits on this chain and takes the WCOEN in one call.
+    function _handOverProceeds(uint32 emissionDay, uint16 pageIndex, uint128 amount) private {
+        _proceedsToken(emissionDay).forceApprove(INTEX_FACTORY, amount);
+        IIntexFactory(INTEX_FACTORY).receiveLocalProceeds(emissionDay, pageIndex, amount);
     }
 
     /// @dev The token bridge carries the WCOEN with the day and the page, and the relay float pays its fee.
     function _bridgeProceeds(uint32 emissionDay, uint16 pageIndex, uint128 amount) private returns (bytes32 sendId) {
-        TargetRouterStorage storage $ = _ts();
-        address to = $.originRouter;
         bytes memory extraData = abi.encode(emissionDay, uint32(pageIndex));
-        IERC20 token = $.escrow.dayIntexAuctionAsset(emissionDay);
-        IERC20 bridgeToken = $.tokenBridge.token();
-        if (token != bridgeToken) revert ProceedsTokenNotBridged(address(token), address(bridgeToken));
-
-        token.forceApprove(address($.tokenBridge), amount);
-        uint256 fee = $.tokenBridge.quoteSend(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
+        _proceedsToken(emissionDay).forceApprove(address(ERC20_ROUTER), amount);
+        uint256 fee =
+            ERC20_ROUTER.quoteSend(OUTBE_CHAIN_ID, INTEX_FACTORY, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
         // slither-disable-next-line arbitrary-send-eth
-        sendId = $.tokenBridge.sendAndCall{value: fee}(OUTBE_CHAIN_ID, to, amount, extraData, IntexGas.PROCEEDS_COMPOSE);
+        sendId = ERC20_ROUTER.sendAndCall{value: fee}(
+            OUTBE_CHAIN_ID, INTEX_FACTORY, amount, extraData, IntexGas.PROCEEDS_COMPOSE
+        );
     }
 
     /// @notice ERC-165 support check, resolving the AccessControl interface ids.

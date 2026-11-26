@@ -23,15 +23,7 @@ fn item(owner: Address) -> NodItemState {
             owner,
             gratis_load_minor: U256::from(11),
             emission_day: worldwide_day.value(),
-            league_id: 4,
-            group_key: crate::test_support::group_key(
-                date_key_to_utc_timestamp(
-                    previous_date_key(timestamp_to_date_key(NOW)).expect("date step"),
-                )
-                .expect("date step"),
-                U256::from(5),
-                978,
-            ),
+            group_key: crate::test_support::group_key(worldwide_day.value(), U256::from(5), 978),
             issuance_currency: 840,
             reference_currency: 978,
             // Midnight of the last UTC day closed at `NOW`.
@@ -145,6 +137,11 @@ fn group_record_survives_membership_changes_until_last_removal() {
         let nod = NodContract::new(storage.clone());
         assert_eq!(nod.group_nod_count.read(&first.group_key).unwrap(), 0);
         assert_eq!(api::balance_of(&storage, second.owner).unwrap(), 0);
+        assert!(
+            api::get_group(&storage, group_id).unwrap().is_some(),
+            "a group never called stays until NodFactory closes it"
+        );
+        assert!(api::close_empty_group(&storage, group_id).unwrap());
         assert!(api::get_group(&storage, group_id).unwrap().is_none());
     });
 }

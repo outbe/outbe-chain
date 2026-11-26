@@ -16,7 +16,7 @@
         "internalType": "uint256"
       },
       {
-        "name": "forfeitedPrincipalMinor",
+        "name": "forfeitedAmountMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -89,9 +89,14 @@
     "name": "issueCredis",
     "inputs": [
       {
-        "name": "reservationId",
+        "name": "credisReservationId",
         "type": "uint256",
         "internalType": "uint256"
+      },
+      {
+        "name": "pledge",
+        "type": "bytes",
+        "internalType": "bytes"
       }
     ],
     "outputs": [
@@ -101,12 +106,12 @@
         "internalType": "uint256"
       },
       {
-        "name": "principalMinor",
+        "name": "amountMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
     ],
-    "stateMutability": "payable"
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -137,6 +142,11 @@
         "internalType": "uint256"
       },
       {
+        "name": "asset",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
         "name": "amountCapMinor",
         "type": "uint256",
         "internalType": "uint256"
@@ -144,12 +154,12 @@
     ],
     "outputs": [
       {
-        "name": "principalSettledMinor",
+        "name": "settledAmountMinor",
         "type": "uint256",
         "internalType": "uint256"
       },
       {
-        "name": "interestSettledMinor",
+        "name": "settledFeeMinor",
         "type": "uint256",
         "internalType": "uint256"
       }
@@ -177,25 +187,19 @@
   },
   {
     "type": "event",
-    "name": "CredisIssued",
+    "name": "CredisSeriesCalled",
     "inputs": [
-      {
-        "name": "credisId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
       {
         "name": "seriesId",
         "type": "bytes14",
         "indexed": true,
         "internalType": "bytes14"
+      },
+      {
+        "name": "subSeries",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
       },
       {
         "name": "issuanceCurrency",
@@ -210,25 +214,56 @@
         "internalType": "uint16"
       },
       {
-        "name": "cca",
-        "type": "address",
+        "name": "calledAt",
+        "type": "uint64",
         "indexed": false,
-        "internalType": "address"
+        "internalType": "uint64"
       },
       {
-        "name": "asset",
-        "type": "address",
+        "name": "settlementDeadline",
+        "type": "uint64",
         "indexed": false,
-        "internalType": "address"
+        "internalType": "uint64"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "CredisSeriesClosed",
+    "inputs": [
+      {
+        "name": "seriesId",
+        "type": "bytes14",
+        "indexed": true,
+        "internalType": "bytes14"
       },
       {
-        "name": "principalMinor",
-        "type": "uint256",
+        "name": "subSeries",
+        "type": "uint8",
         "indexed": false,
-        "internalType": "uint256"
+        "internalType": "uint8"
       },
       {
-        "name": "gratisMinor",
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "forfeitedCount",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      },
+      {
+        "name": "forfeitedAmountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -247,6 +282,12 @@
         "internalType": "bytes14"
       },
       {
+        "name": "subSeries",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      },
+      {
         "name": "issuanceCurrency",
         "type": "uint16",
         "indexed": false,
@@ -257,6 +298,12 @@
         "type": "uint16",
         "indexed": false,
         "internalType": "uint16"
+      },
+      {
+        "name": "entryPriceMinor",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
       },
       {
         "name": "callPriceMinor",
@@ -281,67 +328,6 @@
         "type": "uint64",
         "indexed": false,
         "internalType": "uint64"
-      },
-      {
-        "name": "policyRate",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "CredisSettled",
-    "inputs": [
-      {
-        "name": "credisId",
-        "type": "uint256",
-        "indexed": true,
-        "internalType": "uint256"
-      },
-      {
-        "name": "owner",
-        "type": "address",
-        "indexed": true,
-        "internalType": "address"
-      },
-      {
-        "name": "asset",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "issuanceCurrency",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "referenceCurrency",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "amountMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "interestSettledMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
-      },
-      {
-        "name": "principalSettledMinor",
-        "type": "uint256",
-        "indexed": false,
-        "internalType": "uint256"
       }
     ],
     "anonymous": false
@@ -368,12 +354,7 @@
   },
   {
     "type": "error",
-    "name": "CcaStakeMismatch",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "CoenStakeOverflow",
+    "name": "CannotFullySettleInIssueBlock",
     "inputs": []
   },
   {
@@ -433,7 +414,7 @@
   },
   {
     "type": "error",
-    "name": "InvalidSource",
+    "name": "InvalidPledgeAccount",
     "inputs": []
   },
   {
@@ -453,17 +434,12 @@
   },
   {
     "type": "error",
-    "name": "PaymentBelowAccruedInterest",
+    "name": "PaymentBelowAccruedFee",
     "inputs": []
   },
   {
     "type": "error",
     "name": "PayoffOverflow",
-    "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "ReservationCcaMismatch",
     "inputs": []
   },
   {
@@ -474,6 +450,16 @@
   {
     "type": "error",
     "name": "ReservationNotFound",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "ReservationOwnerMismatch",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SettlementAssetNotAllowed",
     "inputs": []
   },
   {

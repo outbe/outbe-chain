@@ -314,15 +314,14 @@ pub(crate) fn seed_balance(storage: StorageHandle, addr: Address, amount: u64) {
 /// Registers a validator in ValidatorSet so cross-calls work correctly.
 /// Uses the explicit test-only bootstrap seam. Production registration requires PoP.
 pub(crate) fn register_validator(storage: StorageHandle, validator: Address) {
-    let owner = address!("0xffffffffffffffffffffffffffffffffffffffff");
     let mut val_set = ValidatorSet::new(storage.clone());
     val_set
-        .test_configure_registry(owner)
+        .test_configure_registry()
         .expect("configure registry");
     let mut consensus_pubkey = [0u8; 48];
     consensus_pubkey[..20].copy_from_slice(validator.as_slice());
     val_set
-        .test_register_validator_without_pop(validator, &consensus_pubkey)
+        .register_validator(validator, &consensus_pubkey)
         .expect("register_validator");
 }
 
@@ -399,7 +398,7 @@ fn test_stake_with_eighteen_decimal_native_coen_fixture() {
         let (pk, node_id, sig) = test_bls_registration_material(validator, 0x12);
 
         ValidatorSet::new(storage.clone())
-            .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
+            .test_configure_registry()
             .unwrap();
         s.config_min_stake.write(amount).unwrap();
         seed_staking_balance_u256(storage.clone(), amount);
@@ -455,7 +454,7 @@ fn test_stake_marks_registered_validator_pending() {
         let validator = address!("0x2222222222222222222222222222222222222222");
         let (pk, node_id, sig) = test_bls_registration_material(validator, 0x22);
         ValidatorSet::new(storage.clone())
-            .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
+            .test_configure_registry()
             .unwrap();
 
         // Initial status is Absent.
@@ -2040,7 +2039,7 @@ fn stake_registers_with_optional_or_v1_p2p_and_rejects_below_min_stake() {
 
     let logs = staking_session(0, 3_600, |storage, staking| {
         ValidatorSet::new(storage.clone())
-            .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
+            .test_configure_registry()
             .unwrap();
 
         // 1. Below min_stake reverts with BondedStakeBelowMinimum and writes nothing.
@@ -2141,7 +2140,7 @@ fn topup_requires_registered_eligible_lifecycle_and_emits_only_staked() {
 
     let logs = staking_session(0, 3_600, |storage, staking| {
         ValidatorSet::new(storage.clone())
-            .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
+            .test_configure_registry()
             .unwrap();
 
         // Absent validator rejected on topup with ValidatorNotRegistered.
@@ -2298,9 +2297,7 @@ fn reregistration_via_stake_blocks_same_epoch_even_when_cooldown_zero() {
     StorageHandle::enter(&mut provider, |storage| {
         let mut staking = staking_with_unbonding_period(storage.clone(), 0);
         let mut val_set = ValidatorSet::new(storage.clone());
-        val_set
-            .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
-            .unwrap();
+        val_set.test_configure_registry().unwrap();
         val_set
             .test_set_epoch_snapshot(EpochSnapshot {
                 number: U256::from(1u64),
@@ -2386,9 +2383,7 @@ fn reregistration_via_stake_blocks_epoch_zero_with_zero_and_elapsed_nonzero_cool
     StorageHandle::enter(&mut provider, |storage| {
         let mut staking = staking_with_unbonding_period(storage.clone(), 0);
         let mut val_set = ValidatorSet::new(storage.clone());
-        val_set
-            .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
-            .unwrap();
+        val_set.test_configure_registry().unwrap();
         // `epoch_start_block` intentionally stays at 0 (genesis epoch 0).
         assert_eq!(val_set.epoch_snapshot().unwrap().start_block, 0);
 
@@ -2474,7 +2469,7 @@ fn precompile_dispatch_rejects_msg_value_mismatch_for_stake_and_topup() {
         StorageHandle::enter(&mut provider, |storage| {
             let _staking = staking_with_unbonding_period(storage.clone(), 3600);
             ValidatorSet::new(storage.clone())
-                .test_configure_registry(address!("0xffffffffffffffffffffffffffffffffffffffff"))
+                .test_configure_registry()
                 .unwrap();
             seed_staking_balance_u256(storage.clone(), value);
         });
@@ -2595,7 +2590,7 @@ fn process_unbonding_rolls_back_stake_debit_when_enqueue_fails() {
         val_set
             .promote_pending_validator_for_test(validator)
             .unwrap();
-        val_set.deactivate_validator(validator, validator).unwrap();
+        val_set.deactivate_validator(validator).unwrap();
         val_set
             .activate_reshared_set(&[survivor], B256::with_last_byte(0x55))
             .unwrap();

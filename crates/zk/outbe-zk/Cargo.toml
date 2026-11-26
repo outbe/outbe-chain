@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
-description = "Tribute circuit statements, claim hashing, and verifier wire decoding."
+description = "Offer circuit statements, claim hashing, and verifier wire decoding."
 
 [features]
 alloy = ["dep:alloy-primitives"]

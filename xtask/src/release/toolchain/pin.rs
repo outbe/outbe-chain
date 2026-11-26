@@ -45,6 +45,7 @@ const EXPECTED_SYSTEM_PACKAGES: &[&str] = &[
     "build-essential",
     "clang",
     "cmake",
+    "curl",
     "gcc-14-base",
     "git",
     "libc++-dev",

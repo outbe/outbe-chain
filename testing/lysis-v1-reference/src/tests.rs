@@ -57,14 +57,14 @@ fn six_decimal_projection_has_the_frozen_twenty_five_unit_dust() {
         .into_iter()
         .find(|case| case.case_id == "fifteen-league-normalization")
         .unwrap();
-    let tributes = validate_and_sort(&case.input).unwrap();
-    let total_nominal = tributes
+    let offers = validate_and_sort(&case.input).unwrap();
+    let total_nominal = offers
         .iter()
-        .map(|tribute| decimal(&tribute.nominal).unwrap())
+        .map(|offer| decimal(&offer.nominal).unwrap())
         .sum::<BigUint>();
     let allocation = decimal(&case.input.lysis_limit_minor).unwrap();
     let (_, raw, normalized) =
-        fraction_table_with_projection(&tributes, &total_nominal, &allocation).unwrap();
+        fraction_table_with_projection(&offers, &total_nominal, &allocation).unwrap();
 
     assert_eq!(allocation, BigUint::from(4_800_000u64));
     // The share remainder belongs to the highest league, so this projection

@@ -30,6 +30,7 @@ interface IHyperlaneController {
     error ValidatorAnnounceLengthMismatch();
     error UnknownHook(uint32 domain);
     error NotActiveValidator(address caller);
+    error NotSystemTransaction(address caller);
     error SignerMismatch(address validator, address expected, address recovered);
     error SignerTaken(address signer, address validator);
     error StaleIndex(uint32 index, uint32 submitted);
@@ -53,6 +54,8 @@ interface IHyperlaneController {
     event ValidatorsAndThresholdApplied(uint8 threshold, uint256 validatorCount);
     event HyperlaneSignerSet(address indexed validator, address indexed signer);
     event CheckpointSubmitted(address indexed validator, uint32 indexed domain, uint32 index);
+    event TargetCheckpointSubmitted(address indexed validator, uint32 indexed domain, uint32 index, bytes32 root);
+    event TargetIndexSet(uint32 indexed domain, uint32 index);
     event LivenessMiss(address indexed validator, uint32 misses);
     event LivenessJailed(address indexed validator);
     event ApprovedActionApplied(uint256 indexed proposalId);
@@ -90,17 +93,24 @@ interface IHyperlaneController {
     function applyApproved(uint256 proposalId, bytes calldata payload) external;
 
     /// Liveness proof: an active validator or its Hyperlane delegate submits
-    /// its latest signed checkpoint for `domain`. The signature is
-    /// recovered over the Hyperlane digest and must match the validator's
-    /// Hyperlane signer. Only a higher `index` than the recorded one is accepted.
+    /// a signed checkpoint for `domain`. The signature is recovered over the
+    /// Hyperlane digest and must match the validator's Hyperlane signer.
+    /// The call does one or both of these:
+    /// - `index` equals `targetIndex(domain)`: `root` becomes the vote of the
+    ///   validator for this liveness window. A new vote replaces the old one.
+    /// - `index` is higher than `submittedIndex(validator, domain)`: `index`
+    ///   becomes the latest index of the validator. The next target comes
+    ///   from these indexes.
+    /// When neither applies, it reverts with `StaleIndex`.
     function submitCheckpoint(uint32 domain, bytes32 root, uint32 index, bytes32 messageId, bytes calldata signature)
         external;
 
     /// Mirrors the active Outbe validator set into every ISM: validators =
     /// active validators, threshold = ceil(2/3 * n). No-op when the local ISM
-    /// already matches. Permissionless: it only applies what consensus decided.
-    /// `CROSSCHAIN_BRIDGE` runs the ISM calls. Returns whether a rotation was
-    /// dispatched.
+    /// already matches. Only the epoch boundary system transaction can call
+    /// it, so at most one rotation per epoch is in flight. Other callers get
+    /// `NotSystemTransaction`. `CROSSCHAIN_BRIDGE` runs the ISM calls.
+    /// Returns whether a rotation was dispatched.
     function sync() external returns (bool changed);
 
     /// InterchainAccountRouter on Outbe.
@@ -122,6 +132,14 @@ interface IHyperlaneController {
 
     /// Latest submitted checkpoint index of `validator` for `domain`.
     function submittedIndex(address validator, uint32 domain) external view returns (uint32);
+
+    /// Checkpoint index that every validator must sign for `domain` in the
+    /// current liveness window. Zero when there is no target.
+    function targetIndex(uint32 domain) external view returns (uint32);
+
+    /// Last vote of `validator` for `domain`: the root it signed at `index`.
+    /// The vote counts only while `index` equals `targetIndex(domain)`.
+    function targetVote(address validator, uint32 domain) external view returns (uint32 index, bytes32 root);
 
     /// Consecutive liveness-window misses of `validator`.
     function missCount(address validator) external view returns (uint32);

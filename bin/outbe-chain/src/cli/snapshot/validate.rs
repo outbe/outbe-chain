@@ -12,7 +12,7 @@ use std::{
 #[derive(clap::Args)]
 pub(crate) struct ValidateArgs {
     /// Checks to run: all, or comma-separated files,provenance,headers,evm.
-    /// It does not read private Tribute amounts.
+    /// It does not read private Nod amounts.
     #[arg(long, default_value = "all")]
     pub checks: String,
     #[arg(long)]

@@ -26,7 +26,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
 
     TargetRouter internal router;
     IntexNFT1155 internal intex;
-    address internal originSender = makeAddr("originSender");
+    address internal outbeIca = makeAddr("outbeIca");
     bytes14 internal series;
 
     function setUp() public {
@@ -35,7 +35,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         // The origin-as-target shape: a mark is a pure state flip here as anywhere.
         router = DeployProxy.targetRouter(address(bridge), address(this), uint32(block.chainid));
 
-        router.registerRemoteMessenger(uint32(block.chainid), _interop(uint32(block.chainid), originSender));
+        _wireOutbeIca(router, outbeIca);
         router.setDependencies(makeAddr("auction"), address(intex), makeAddr("escrow"));
         intex.grantRole(intex.ROUTER_ROLE(), address(router));
         series = CreateSeriesLib.seriesId(DAY);
@@ -44,7 +44,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     // --- helpers ---
 
     function _deliver(bytes memory packet) internal {
-        _deliver(uint32(block.chainid), originSender, address(router), packet);
+        _deliver(uint32(block.chainid), outbeIca, address(router), packet);
     }
 
     function _called() internal view returns (bytes memory) {
@@ -70,13 +70,15 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
     }
 
     function _expectIgnored(uint8 msgType, uint8 reason) internal {
-        vm.expectEmit(false, true, false, true, address(router));
-        emit ITargetRouter.MessageIgnored(bytes32(0), uint32(block.chainid), reason);
+        vm.expectEmit(true, true, false, true, address(router));
+        emit ITargetRouter.IntexAuctionMessageIgnored(msgType, DAY, reason);
     }
 
     function _expectZeroCallTimeIgnored() internal {
-        vm.expectEmit(false, true, false, true, address(router));
-        emit ITargetRouter.MessageIgnored(bytes32(0), uint32(block.chainid), InboundReason.INVALID);
+        vm.expectEmit(true, true, false, true, address(router));
+        emit ITargetRouter.IntexAuctionMessageIgnored(
+            BridgeMsgCodec.MSG_INTEX_SERIES_CALL_NOTICE, DAY, InboundReason.INVALID
+        );
     }
 
     // --- unknown series: slot, then apply on creation ---
@@ -122,6 +124,40 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
             }
         }
         assertEq(called, 1, "the token reports the call once");
+    }
+
+    function _routerTopics() internal returns (bytes32[] memory topics) {
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        topics = new bytes32[](logs.length);
+        uint256 n;
+        for (uint256 i; i < logs.length; ++i) {
+            if (logs[i].emitter == address(router)) topics[n++] = logs[i].topics[0];
+        }
+        assembly ("memory-safe") {
+            mstore(topics, n)
+        }
+    }
+
+    function test_notice_router_emits_only_the_apply_failure() public {
+        vm.recordLogs();
+        _deliver(_called());
+        bytes32[] memory waiting = _routerTopics();
+        assertEq(waiting.length, 1, "a waiting notice gives one router event");
+        assertEq(waiting[0], ITargetRouter.IntexSeriesCallNoticeApplyFailed.selector);
+
+        vm.recordLogs();
+        _deliver(_issuance());
+        bytes32[] memory applied = _routerTopics();
+        assertEq(applied.length, 1, "the later apply gives no router event of the notice");
+        assertEq(applied[0], ITargetRouter.IntexSeriesAllReceived.selector);
+
+        vm.warp(block.timestamp + 1);
+        bytes14 other = CreateSeriesLib.seriesId(DAY + 1);
+        intex.createSeries(CreateSeriesLib.params(DAY + 1, 10, 0));
+        vm.recordLogs();
+        _deliver(BridgeMsgCodec.encodeIntexSeriesCallNotice(DAY + 1, uint32(block.timestamp), MarkBatchLib.one(other)));
+        assertEq(_routerTopics().length, 0, "a notice the token takes gives no router event");
+        assertEq(uint8(intex.readData(other).state), uint8(IIntexNFT1155.IntexState.Called));
     }
 
     /// @dev A series that lands after its deadline is still created, so the chain holds its terms.
@@ -195,7 +231,7 @@ contract TargetRouterMarkSlotTest is CrossChainTest {
         _deliver(_called());
         Vm.Log[] memory logs = vm.getRecordedLogs();
         for (uint256 i; i < logs.length; ++i) {
-            assertTrue(logs[i].topics[0] != ITargetRouter.MessageIgnored.selector, "no ignore event");
+            assertTrue(logs[i].topics[0] != ITargetRouter.IntexAuctionMessageIgnored.selector, "no ignore event");
             assertTrue(logs[i].topics[0] != ITargetRouter.IntexSeriesCallNoticeApplyFailed.selector, "no failure event");
         }
     }

@@ -11,6 +11,7 @@ use outbe_genesis_cli::seed_codec::{
     address_as_u256, address_bytes, asset_address, data_slot, first_worldwide_day, hex32,
     mapping_key, u32_bytes, StorageBuilder,
 };
+use outbe_genesis_cli::seed_intex::{seed_intex_targets, INTEX_FACTORY_TARGET_CHAINS_SLOT};
 use outbe_genesis_cli::seed_oracle::seed_oracle;
 use outbe_genesis_cli::seed_validators::{seed_staking, seed_validator_set};
 use serde_json::{json, Value};
@@ -256,11 +257,13 @@ fn founder_radicle_bindings_are_complete_unique_and_bidirectional() {
     let terms = ValidatorSeedTerms {
         epoch_length_blocks: 300,
         epoch_start_timestamp: 1,
-        min_stake: U256::from(1),
-        validator_stake: U256::from(1),
     };
     let mut storage = StorageBuilder::new();
     seed_validator_set(&mut storage, &validators, &json!({}), terms).expect("seed_validator_set");
+    assert_eq!(storage.entries[&hex32(0u64)], hex32(128u64));
+    assert_eq!(storage.entries[&hex32(1u64)], hex32(300u64));
+    assert_eq!(storage.entries[&hex32(2u64)], hex32(1u64));
+    assert_eq!(storage.entries[&hex32(16u64)], hex32(2u64));
 
     for validator in &validators {
         let addr_str = validator["address"].as_str().expect("addr");
@@ -268,21 +271,20 @@ fn founder_radicle_bindings_are_complete_unique_and_bidirectional() {
         let node_id =
             hex::decode(validator["radicle_node_id"].as_str().expect("node_id")).expect("hex");
         assert_eq!(
-            storage.entries[&mapping_key(&address, 50)],
+            storage.entries[&mapping_key(&address, 45)],
             format!("0x{}", hex::encode(&node_id))
         );
         assert_eq!(
-            storage.entries[&mapping_key(&node_id, 51)],
+            storage.entries[&mapping_key(&node_id, 46)],
             hex32(address_as_u256(addr_str).expect("u256"))
         );
-        assert!(!storage.entries.contains_key(&mapping_key(&address, 7)));
         let feeder = validator["feeder_address"].as_str().expect("feeder");
         let feeder_bytes = address_bytes(feeder).expect("feeder bytes");
         assert_eq!(
             storage.entries[&hex32(outbe_genesis_cli::seed_codec::nested_mapping_key(
                 &address,
                 &[1],
-                48,
+                43,
             ))],
             hex32(address_as_u256(feeder).expect("feeder u256"))
         );
@@ -290,7 +292,7 @@ fn founder_radicle_bindings_are_complete_unique_and_bidirectional() {
             storage.entries[&hex32(outbe_genesis_cli::seed_codec::nested_mapping_key(
                 &[1],
                 &feeder_bytes,
-                49,
+                44,
             ))],
             hex32(address_as_u256(addr_str).expect("validator u256"))
         );
@@ -338,4 +340,56 @@ fn founder_radicle_bindings_are_complete_unique_and_bidirectional() {
     let err = seed_validator_set(&mut StorageBuilder::new(), &zero, &json!({}), terms)
         .expect_err("zero node_id");
     assert!(err.to_string().contains("must not be zero"));
+
+    let with_owner = json!({"owner": "0x1111111111111111111111111111111111111111"});
+    let err = seed_validator_set(&mut StorageBuilder::new(), &validators, &with_owner, terms)
+        .expect_err("validator_set.owner must be rejected");
+    assert!(
+        err.to_string()
+            .contains("unknown validator_set key `owner`"),
+        "unexpected error: {err}"
+    );
+}
+
+#[test]
+fn intex_seed_writes_the_target_chains_and_their_modes_to_slot_1() {
+    let mut storage = StorageBuilder::new();
+    let cfg = json!({ "target_chains": [
+        { "chain_id": 97, "mode": "auctions" },
+        { "chain_id": 11155111, "mode": "series" },
+        { "chain_id": "own", "mode": "auctions" }
+    ] });
+    seed_intex_targets(&mut storage, &cfg, 54_322_345).expect("seed_intex_targets");
+
+    let slot = INTEX_FACTORY_TARGET_CHAINS_SLOT;
+    assert_eq!(storage.entries[&hex32(slot)], hex32(3u64));
+    for (index, word) in [
+        97u64 | (2 << 32),
+        11_155_111 | (1 << 32),
+        54_322_345 | (2 << 32),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert_eq!(
+            storage.entries[&hex32(data_slot(slot) + U256::from(index))],
+            hex32(word)
+        );
+    }
+}
+
+#[test]
+fn intex_seed_rejects_a_duplicate_an_off_chain_and_a_seventeenth_chain() {
+    let seed = |cfg: Value| seed_intex_targets(&mut StorageBuilder::new(), &cfg, 1);
+    assert!(seed(json!({ "target_chains": [
+        { "chain_id": 97, "mode": "auctions" },
+        { "chain_id": 97, "mode": "series" }
+    ] }))
+    .is_err());
+    assert!(seed(json!({ "target_chains": [{ "chain_id": 97, "mode": "off" }] })).is_err());
+    let seventeen: Vec<Value> = (1..=17)
+        .map(|chain| json!({ "chain_id": chain, "mode": "series" }))
+        .collect();
+    assert!(seed(json!({ "target_chains": seventeen })).is_err());
+    assert!(seed(json!({})).is_ok());
 }

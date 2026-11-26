@@ -10,54 +10,57 @@ fn symmetric_p2p(port: u16) -> Vec<u8> {
 }
 
 #[test]
-fn test_set_p2p_address_owner_or_self_and_get() {
+fn only_the_validator_can_set_its_p2p_address() {
     let val_addr = address!("0x2222222222222222222222222222222222222223");
+    let peer_addr = address!("0x2222222222222222222222222222222222222229");
     let pk = dummy_consensus_pubkey(23);
+    let peer_pk = dummy_consensus_pubkey(29);
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val_addr, &pk).unwrap();
+        vs.register_validator(val_addr, &pk).unwrap();
+        vs.register_validator(peer_addr, &peer_pk).unwrap();
 
         let encoded = symmetric_p2p(30400);
-        vs.set_p2p_address(OWNER, val_addr, P2P_ADDRESS_VERSION_V1, &encoded)
+        vs.set_p2p_address(val_addr, P2P_ADDRESS_VERSION_V1, &encoded)
             .unwrap();
         assert_eq!(
             vs.get_p2p_address(val_addr).unwrap(),
-            Some((P2P_ADDRESS_VERSION_V1, encoded.clone()))
+            Some((P2P_ADDRESS_VERSION_V1, encoded))
         );
+        assert_eq!(vs.get_p2p_address(peer_addr).unwrap(), None);
 
         let replacement = symmetric_p2p(30401);
-        vs.set_p2p_address(val_addr, val_addr, P2P_ADDRESS_VERSION_V1, &replacement)
+        vs.set_p2p_address(val_addr, P2P_ADDRESS_VERSION_V1, &replacement)
             .unwrap();
         assert_eq!(
             vs.get_p2p_address(val_addr).unwrap(),
             Some((P2P_ADDRESS_VERSION_V1, replacement))
         );
+        assert_eq!(vs.get_p2p_address(peer_addr).unwrap(), None);
     });
 }
 
 #[test]
-fn test_set_p2p_address_rejects_unauthorized_and_malformed() {
+fn test_set_p2p_address_rejects_unregistered_and_malformed() {
     let val_addr = address!("0x2222222222222222222222222222222222222224");
     let stranger = address!("0x9999999999999999999999999999999999999999");
     let pk = dummy_consensus_pubkey(24);
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val_addr, &pk).unwrap();
+        vs.register_validator(val_addr, &pk).unwrap();
         let encoded = symmetric_p2p(30400);
 
         let err = vs
-            .set_p2p_address(stranger, val_addr, P2P_ADDRESS_VERSION_V1, &encoded)
+            .set_p2p_address(stranger, P2P_ADDRESS_VERSION_V1, &encoded)
             .unwrap_err();
         match err {
             PrecompileError::RevertBytes(bytes) => {
-                assert_eq!(&bytes[..4], &I::UnauthorizedOwnerOrValidator::SELECTOR);
+                assert_eq!(&bytes[..4], &I::ValidatorNotRegistered::SELECTOR);
             }
             other => panic!("expected typed revert bytes, got {other:?}"),
         }
 
-        let err = vs
-            .set_p2p_address(OWNER, val_addr, 2, &encoded)
-            .unwrap_err();
+        let err = vs.set_p2p_address(val_addr, 2, &encoded).unwrap_err();
         match err {
             PrecompileError::RevertBytes(bytes) => {
                 let decoded = I::UnsupportedP2pAddressVersion::abi_decode(&bytes).expect("version");
@@ -68,7 +71,7 @@ fn test_set_p2p_address_rejects_unauthorized_and_malformed() {
 
         let malformed = [0u8; 3];
         let err = vs
-            .set_p2p_address(OWNER, val_addr, P2P_ADDRESS_VERSION_V1, &malformed)
+            .set_p2p_address(val_addr, P2P_ADDRESS_VERSION_V1, &malformed)
             .unwrap_err();
         match err {
             PrecompileError::RevertBytes(bytes) => {
@@ -91,11 +94,11 @@ fn test_set_p2p_address_rejects_oversized_and_accepts_asymmetric() {
     let pk = dummy_consensus_pubkey(25);
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val_addr, &pk).unwrap();
+        vs.register_validator(val_addr, &pk).unwrap();
 
         let oversized = vec![0u8; MAX_P2P_ADDRESS_ENCODED_LEN + 1];
         let err = vs
-            .set_p2p_address(OWNER, val_addr, P2P_ADDRESS_VERSION_V1, &oversized)
+            .set_p2p_address(val_addr, P2P_ADDRESS_VERSION_V1, &oversized)
             .unwrap_err();
         match err {
             PrecompileError::RevertBytes(bytes) => {
@@ -112,7 +115,7 @@ fn test_set_p2p_address_rejects_oversized_and_accepts_asymmetric() {
             },
             egress: SocketAddr::new(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 2)), 30401),
         });
-        vs.set_p2p_address(OWNER, val_addr, P2P_ADDRESS_VERSION_V1, &asymmetric)
+        vs.set_p2p_address(val_addr, P2P_ADDRESS_VERSION_V1, &asymmetric)
             .unwrap();
         assert_eq!(
             vs.get_p2p_address(val_addr).unwrap(),
@@ -127,7 +130,7 @@ fn malformed_p2p_fails_all_complete_record_projections_closed() {
     let pk = dummy_consensus_pubkey(6);
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val_addr, &pk).unwrap();
+        vs.register_validator(val_addr, &pk).unwrap();
         vs.val_p2p_address_version
             .write(&val_addr, P2P_ADDRESS_VERSION_V1)
             .unwrap();
@@ -236,14 +239,8 @@ fn radicle_node_id_registration_is_bidirectional_and_signature_bound() {
     let (public_key, signature) = signed_radicle_registration(0x31, CHAIN_ID, validator, node_id);
 
     with_vs_configured(10, |vs| {
-        vs.register_validator_with_sig(
-            validator,
-            validator,
-            &public_key,
-            node_id,
-            Some(&signature),
-        )
-        .unwrap();
+        vs.register_validator_with_sig(validator, &public_key, node_id, &signature)
+            .unwrap();
 
         assert_eq!(vs.get_radicle_node_id(validator).unwrap(), node_id);
         assert_eq!(vs.validator_by_radicle_node_id(node_id).unwrap(), validator);
@@ -256,13 +253,7 @@ fn radicle_node_id_registration_is_bidirectional_and_signature_bound() {
     let mut provider = registry_storage(1, 10).unwrap();
     at_height(&mut provider, 1, |vs| {
         let err = vs
-            .register_validator_with_sig(
-                validator,
-                validator,
-                &public_key,
-                other_node_id,
-                Some(&signature),
-            )
+            .register_validator_with_sig(validator, &public_key, other_node_id, &signature)
             .unwrap_err();
         match err {
             PrecompileError::RevertBytes(bytes) => assert_eq!(
@@ -287,13 +278,7 @@ fn radicle_node_id_rejects_zero_and_duplicate_without_partial_state() {
 
     with_vs_configured(10, |vs| {
         let zero = vs
-            .register_validator_with_sig(
-                second,
-                second,
-                &zero_key,
-                B256::ZERO,
-                Some(&zero_signature),
-            )
+            .register_validator_with_sig(second, &zero_key, B256::ZERO, &zero_signature)
             .unwrap_err();
         match zero {
             PrecompileError::RevertBytes(bytes) => {
@@ -303,16 +288,10 @@ fn radicle_node_id_rejects_zero_and_duplicate_without_partial_state() {
         }
         assert_eq!(vs.validator_count().unwrap(), 0);
 
-        vs.register_validator_with_sig(first, first, &first_key, node_id, Some(&first_signature))
+        vs.register_validator_with_sig(first, &first_key, node_id, &first_signature)
             .unwrap();
         let duplicate = vs
-            .register_validator_with_sig(
-                second,
-                second,
-                &second_key,
-                node_id,
-                Some(&second_signature),
-            )
+            .register_validator_with_sig(second, &second_key, node_id, &second_signature)
             .unwrap_err();
         match duplicate {
             PrecompileError::RevertBytes(bytes) => {
@@ -342,23 +321,16 @@ fn inactive_reregistration_preserves_node_id_until_final_cleanup() {
         signed_radicle_registration(0x36, CHAIN_ID, validator, second_node_id);
 
     with_vs_configured(10, |vs| {
-        vs.register_validator_with_sig(
-            validator,
-            validator,
-            &first_key,
-            first_node_id,
-            Some(&first_signature),
-        )
-        .unwrap();
+        vs.register_validator_with_sig(validator, &first_key, first_node_id, &first_signature)
+            .unwrap();
         make_inactive_for_test(vs, validator);
 
         let changed = vs
             .register_validator_with_sig(
                 validator,
-                validator,
                 &second_key,
                 second_node_id,
-                Some(&second_node_signature),
+                &second_node_signature,
             )
             .unwrap_err();
         match changed {
@@ -371,10 +343,9 @@ fn inactive_reregistration_preserves_node_id_until_final_cleanup() {
 
         vs.register_validator_with_sig(
             validator,
-            validator,
             &second_key,
             first_node_id,
-            Some(&first_node_signature),
+            &first_node_signature,
         )
         .unwrap();
         assert_eq!(vs.get_radicle_node_id(validator).unwrap(), first_node_id);
@@ -389,10 +360,9 @@ fn inactive_reregistration_preserves_node_id_until_final_cleanup() {
 
         vs.register_validator_with_sig(
             validator,
-            validator,
             &second_key,
             second_node_id,
-            Some(&second_node_signature),
+            &second_node_signature,
         )
         .unwrap();
         assert_eq!(vs.get_radicle_node_id(validator).unwrap(), second_node_id);
@@ -411,13 +381,7 @@ fn every_radicle_registration_mutation_rolls_back_atomically() {
     measured.fail_after_mutation_at(usize::MAX);
     StorageHandle::enter(&mut measured, |storage| {
         ValidatorSet::new(storage)
-            .register_validator_with_sig(
-                validator,
-                validator,
-                &public_key,
-                node_id,
-                Some(&signature),
-            )
+            .register_validator_with_sig(validator, &public_key, node_id, &signature)
             .unwrap();
     });
     let operation_count = measured.clear_mutation_failure();
@@ -428,13 +392,7 @@ fn every_radicle_registration_mutation_rolls_back_atomically() {
         provider.fail_after_mutation_at(failure_at);
         StorageHandle::enter(&mut provider, |storage| {
             assert!(ValidatorSet::new(storage)
-                .register_validator_with_sig(
-                    validator,
-                    validator,
-                    &public_key,
-                    node_id,
-                    Some(&signature),
-                )
+                .register_validator_with_sig(validator, &public_key, node_id, &signature)
                 .is_err());
         });
         provider.clear_mutation_failure();

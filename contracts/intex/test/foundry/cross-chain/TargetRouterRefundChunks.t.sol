@@ -72,21 +72,18 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
     TargetRouter internal target;
     CountingTokenBridge internal tokenBridge;
 
-    address internal originSender = makeAddr("originSender");
-    address internal originRouter = makeAddr("originRouter");
+    address internal outbeIca = makeAddr("outbeIca");
 
     function setUp() public {
         _setUpBridge();
-        target = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
-        vm.deal(address(target), 10 ether);
-
         MockWCOEN wcoen = new MockWCOEN();
         SummingEscrowAdapter escrow = new SummingEscrowAdapter(IERC20(address(wcoen)));
         tokenBridge = new CountingTokenBridge(IERC20(address(wcoen)));
 
+        target = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID, address(tokenBridge));
+        vm.deal(address(target), 10 ether);
         target.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
-        target.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
-        target.setProceedsRoute(address(tokenBridge), originRouter);
+        _wireOutbeIca(target, outbeIca);
     }
 
     function _deliverChunk(uint16 pageIndex, uint16 totalPages, uint128 paidAmount) internal {
@@ -94,22 +91,22 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         winners[0] = address(uint160(uint256(0xB1D) + pageIndex));
         bytes memory packet =
             BridgeMsgCodec.encodeIntexAuctionWinners(DAY, pageIndex, totalPages, 1_000_000, paidAmount, winners, 0, 0);
-        _deliver(OUTBE_CHAIN_ID, originSender, address(target), packet);
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(target), packet);
     }
 
     function test_EachChunkSendsItsOwnProceeds() public {
         vm.expectEmit(false, true, true, true, address(target));
         emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), DAY, 0, 40e6);
-        vm.expectEmit(false, true, true, true, address(target));
-        emit ITargetRouter.IntexAuctionWinnersReceived(bytes32(0), DAY, OUTBE_CHAIN_ID, 0, 2, 1);
+        vm.expectEmit(true, true, false, true, address(target));
+        emit ITargetRouter.IntexAuctionWinnersReceived(DAY, OUTBE_CHAIN_ID, 0, 2, 1);
         _deliverChunk(0, 2, 40e6);
         assertEq(tokenBridge.calls(), 1, "the first chunk routes at once");
         assertEq(tokenBridge.lastAmount(), 40e6);
 
         vm.expectEmit(false, true, true, true, address(target));
         emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), DAY, 1, 60e6);
-        vm.expectEmit(false, true, true, true, address(target));
-        emit ITargetRouter.IntexAuctionWinnersReceived(bytes32(0), DAY, OUTBE_CHAIN_ID, 1, 2, 1);
+        vm.expectEmit(true, true, false, true, address(target));
+        emit ITargetRouter.IntexAuctionWinnersReceived(DAY, OUTBE_CHAIN_ID, 1, 2, 1);
         _deliverChunk(1, 2, 60e6);
         assertEq(tokenBridge.calls(), 2, "the second chunk routes its own part");
         assertEq(tokenBridge.lastAmount(), 60e6);
@@ -193,7 +190,7 @@ contract TargetRouterRefundChunksTest is CrossChainTest {
         winners[0] = winner;
         _deliver(
             OUTBE_CHAIN_ID,
-            originSender,
+            outbeIca,
             address(target),
             BridgeMsgCodec.encodeIntexAuctionWinners(DAY, pageIndex, totalPages, 500_000, 1e6, winners, 0, 0)
         );

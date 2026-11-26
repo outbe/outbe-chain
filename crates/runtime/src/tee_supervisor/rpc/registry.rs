@@ -137,9 +137,7 @@ impl RpcLifecyclePort {
             nonce: pending.nonce,
         });
         let key_epoch = self.scalar(at, ITeeRegistryV1::keyEpochCall {}).await?;
-        let network_encryption_epoch = self
-            .scalar(at, ITeeRegistryV1::tributeOfferEpochCall {})
-            .await?;
+        let network_encryption_epoch = self.scalar(at, ITeeRegistryV1::offerEpochCall {}).await?;
         self.check(at).await?;
         Ok(LifecycleRegistryStateV1 {
             checkpoint: at,

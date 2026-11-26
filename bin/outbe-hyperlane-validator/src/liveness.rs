@@ -1,6 +1,7 @@
-//! Hyperlane liveness: submits this validator's latest signed checkpoint of
-//! each running domain from the local store to the HyperlaneController
-//! precompile.
+//! Hyperlane liveness: submits this validator's signed checkpoints of each
+//! running domain from the local store to the HyperlaneController precompile.
+//! Per domain it submits the checkpoint at the target index of the controller
+//! (the liveness vote) and the latest checkpoint.
 //!
 //! The controller accepts checkpoints only from active validators. While `V`
 //! is not in the active set (for example jailed), the daemon keeps signing
@@ -18,6 +19,7 @@ use eyre::{Context, Result};
 use tracing::{info, warn};
 
 use crate::abi::{IHyperlaneController, IValidatorSet};
+use crate::checkpoint::{CheckpointWithMessageId, Signed};
 use crate::client::{self, TxSender};
 use crate::config::{ChainConfig, HyperlaneConfig};
 use crate::errors::LivenessError;
@@ -127,6 +129,11 @@ impl Liveness {
         }
 
         for signer in self.health.running() {
+            // The target first: when the target is also the latest index, one
+            // transaction does both.
+            if let Err(error) = self.submit_target(&provider, &signer).await {
+                warn!(domain = signer.domain(), %error, "hyperlane target checkpoint submit failed");
+            }
             if let Err(error) = self.submit_latest(&provider, &signer).await {
                 warn!(domain = signer.domain(), %error, "hyperlane checkpoint submit failed");
             }
@@ -166,6 +173,46 @@ impl Liveness {
         client::eth_call(provider, to, data, BlockId::latest()).await
     }
 
+    /// Submits the signed checkpoint at `targetIndex(domain)`: the liveness
+    /// vote of this window. It does nothing when there is no target, when the
+    /// store does not have that index yet, or when the controller already
+    /// has this root as the vote.
+    async fn submit_target(&self, provider: &DynProvider, signer: &DomainSigner) -> Result<()> {
+        let domain = signer.domain();
+        let out = self
+            .call(
+                provider,
+                HYPERLANE_CONTROLLER_ADDRESS,
+                IHyperlaneController::targetIndexCall { domain }.abi_encode(),
+            )
+            .await
+            .with_context(|| "hyperlane targetIndex() failed")?;
+        let target = IHyperlaneController::targetIndexCall::abi_decode_returns(&out)?;
+        if target == 0 {
+            return Ok(());
+        }
+        let Some(checkpoint) = signer.signed_checkpoint(target)? else {
+            return Ok(());
+        };
+        let out = self
+            .call(
+                provider,
+                HYPERLANE_CONTROLLER_ADDRESS,
+                IHyperlaneController::targetVoteCall {
+                    validator: self.validator,
+                    domain,
+                }
+                .abi_encode(),
+            )
+            .await
+            .with_context(|| "hyperlane targetVote() failed")?;
+        let vote = IHyperlaneController::targetVoteCall::abi_decode_returns(&out)?;
+        if vote.index == target && vote.root == checkpoint.value.checkpoint.root {
+            return Ok(());
+        }
+        self.submit(provider, domain, target, &checkpoint).await
+    }
+
     /// Submits the latest signed checkpoint when its index is above
     /// `submittedIndex(V, domain)`. Index 0 is never submitted.
     async fn submit_latest(&self, provider: &DynProvider, signer: &DomainSigner) -> Result<()> {
@@ -192,6 +239,18 @@ impl Liveness {
         let Some(checkpoint) = signer.signed_checkpoint(index)? else {
             return Ok(());
         };
+        self.submit(provider, domain, index, &checkpoint).await
+    }
+
+    /// Sends `submitCheckpoint` for the stored `checkpoint` at `index` and
+    /// records the result in the health state.
+    async fn submit(
+        &self,
+        provider: &DynProvider,
+        domain: u32,
+        index: u32,
+        checkpoint: &Signed<CheckpointWithMessageId>,
+    ) -> Result<()> {
         let calldata = IHyperlaneController::submitCheckpointCall {
             domain,
             root: checkpoint.value.checkpoint.root,
@@ -249,9 +308,13 @@ mod tests {
     const V: Address = Address::repeat_byte(0x77);
 
     /// The controller and the validator set on Outbe. `hyperlaneSigner(V)`
-    /// returns the shared address. Each receipt has status 0 (reverted).
+    /// returns the shared address, `targetIndex` returns the shared target,
+    /// and `V` has no vote. Each receipt has status 0 (reverted).
     /// Returns the URL and the count of sent transactions.
-    async fn outbe(signer_of_v: Arc<Mutex<Address>>) -> (String, Arc<Mutex<u32>>) {
+    async fn outbe(
+        signer_of_v: Arc<Mutex<Address>>,
+        target: Arc<Mutex<u32>>,
+    ) -> (String, Arc<Mutex<u32>>) {
         let sent = Arc::new(Mutex::new(0));
         let count = sent.clone();
         let url = serve_json_rpc(move |req: &Value| {
@@ -295,6 +358,12 @@ mod tests {
                         (_, IHyperlaneController::hyperlaneSignerCall::SELECTOR) => {
                             signer_of_v.lock().unwrap().abi_encode()
                         }
+                        (_, IHyperlaneController::targetIndexCall::SELECTOR) => {
+                            target.lock().unwrap().abi_encode()
+                        }
+                        (_, IHyperlaneController::targetVoteCall::SELECTOR) => {
+                            (0u32, B256::ZERO).abi_encode()
+                        }
                         (_, IHyperlaneController::missCountCall::SELECTOR)
                         | (_, IHyperlaneController::submittedIndexCall::SELECTOR) => {
                             0u32.abi_encode()
@@ -315,7 +384,8 @@ mod tests {
     async fn signer_mismatch_blocks_and_a_reverted_receipt_is_a_failure() {
         let key = PrivateKeySigner::random();
         let signer_of_v = Arc::new(Mutex::new(Address::repeat_byte(0x99)));
-        let (url, sent) = outbe(signer_of_v.clone()).await;
+        let target = Arc::new(Mutex::new(0));
+        let (url, sent) = outbe(signer_of_v.clone(), target.clone()).await;
         let dir = tempfile::tempdir().unwrap();
         let store = Arc::new(Store::open(dir.path()).unwrap());
         let health = Arc::new(ValidatorHealth::new(store.clone()));
@@ -382,5 +452,11 @@ mod tests {
             .unwrap()
             .contains("reverted"));
         assert_eq!(status["last_submit_time"], 0);
+
+        // The controller has a target at index 1 and no vote of V: the tick
+        // sends the target checkpoint and then the latest checkpoint.
+        *target.lock().unwrap() = 1;
+        liveness.tick().await.unwrap();
+        assert_eq!(*sent.lock().unwrap(), 3);
     }
 }

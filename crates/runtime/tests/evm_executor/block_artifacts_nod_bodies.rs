@@ -48,7 +48,7 @@ fn assert_group_mutation_receipts(receipts: &[Receipt], expected_count: usize) {
             .iter()
             .any(|receipt| receipt.logs.iter().any(|log| {
                 log.address == NOD_ADDRESS
-                    && log.data.topics().first() == Some(&INod::NodSeriesClosed::SIGNATURE_HASH)
+                    && log.data.topics().first() == Some(&INod::NodForfeited::SIGNATURE_HASH)
             })),
         "fixture must forfeit a Nod during the block"
     );
@@ -174,7 +174,7 @@ fn independent_evm_states_produce_identical_full_block_state_receipts_and_balanc
     let issued_at = issued_at_on_protocol_floor(1);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::TESTNET,
-        issued_at,
+        worldwide_day.value(),
         entry_price_minor,
         840,
     );
@@ -191,7 +191,6 @@ fn independent_evm_states_produce_identical_full_block_state_receipts_and_balanc
                 owner: proposer,
                 gratis_load_minor: U256::from(1_000_000u64),
                 emission_day: worldwide_day.value(),
-                league_id: 1,
                 group_key,
                 issuance_currency: 840,
                 reference_currency: 840,
@@ -219,7 +218,7 @@ fn assert_call_event_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes:
         .position(|receipt| {
             receipt.logs.iter().any(|log| {
                 log.address == NOD_ADDRESS
-                    && log.data.topics().first() == Some(&INod::NodSeriesClosed::SIGNATURE_HASH)
+                    && log.data.topics().first() == Some(&INod::NodForfeited::SIGNATURE_HASH)
             })
         })
         .expect("NodFactory body mutation receipt");
@@ -242,18 +241,15 @@ fn assert_call_event_receipt_gas(receipts: &[Receipt], gas_used: u64, envelopes:
 
 #[test]
 fn proposer_validator_state_mints_and_rollbacks_match() {
-    let _enclave = outbe_tribute::enclave_client::test_enclave::scope();
+    let _enclave = outbe_nod::test_support::scope();
     let proposer = test_evm_signer().address();
     let day = WorldwideDay::new(20_260_716);
-    let tribute_owner = Address::repeat_byte(0x31);
-    let tribute_id =
-        outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(tribute_owner, day);
     let nod_owner = Address::repeat_byte(0x32);
     let nod_id = outbe_nod::test_support::nod_id_of(nod_owner, day.value(), 840, 978);
     let issued_at = issued_at_on_protocol_floor(15);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::TESTNET,
-        issued_at,
+        day.value(),
         U256::from(16),
         978,
     );
@@ -269,16 +265,6 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
         validators: vec![proposer],
     };
 
-    let tribute_fixture = || TributeData {
-        tribute_id,
-        owner: tribute_owner,
-        worldwide_day: day,
-        issuance_amount_minor: U256::from(10),
-        issuance_currency: 840,
-        nominal_amount_minor: U256::from(11),
-        reference_currency: 978,
-        tribute_price_minor: U256::from(12),
-    };
     let nod_fixture = || {
         outbe_nod::test_support::item(
             outbe_nod::test_support::NodItemFixture {
@@ -287,7 +273,6 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
                 owner: nod_owner,
                 gratis_load_minor: U256::from(1),
                 emission_day: day.value(),
-                league_id: 2,
                 group_key,
                 issuance_currency: 840,
                 reference_currency: 978,
@@ -303,10 +288,7 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
             state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
         let (changes, events) =
             super::run_atomic_storage_hooks(&mut state, ctx.clone(), |hook_ctx| {
-                let tribute = tribute_fixture();
-                let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
                 with_process_ready_frame(&hook_ctx.storage, || {
-                    tribute_contract.issue(&tribute)?;
                     outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
                     Ok(())
                 })
@@ -321,11 +303,6 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     let validator_result = run();
     assert_eq!(proposer_result, validator_result);
     assert!(proposer_result.1.iter().any(|event| {
-        event.address == outbe_system_common::addresses::TRIBUTE_ADDRESS
-            && event.data.topics()[0]
-                == outbe_tribute::precompile::ITribute::TributeOffered::SIGNATURE_HASH
-    }));
-    assert!(proposer_result.1.iter().any(|event| {
         event.address == NOD_ADDRESS && event.data.topics()[0] == INod::Transfer::SIGNATURE_HASH
     }));
 
@@ -333,10 +310,7 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     let mut failed_state =
         state_with_active_validators_seeded(&[(proposer, dummy_pubkey(0xA2))], |_| {});
     let error = super::run_atomic_storage_hooks(&mut failed_state, ctx.clone(), |hook_ctx| {
-        let tribute = tribute_fixture();
-        let mut tribute_contract = TributeContract::new(hook_ctx.storage.clone());
         with_process_ready_frame(&hook_ctx.storage, || {
-            tribute_contract.issue(&tribute)?;
             outbe_nod::test_support::add(&hook_ctx.storage, &nod_fixture())?;
             Err(outbe_primitives::error::PrecompileError::Fatal(
                 "later transaction stage failed".into(),
@@ -348,10 +322,6 @@ fn proposer_validator_state_mints_and_rollbacks_match() {
     let mut read_provider =
         outbe_primitives::storage::direct::DirectStorageProvider::new(&mut failed_state, ctx);
     StorageHandle::enter(&mut read_provider, |storage| {
-        let tribute = tribute_fixture();
-        assert!(TributeContract::new(storage.clone())
-            .get_record(tribute.tribute_id)?
-            .is_none());
         assert!(outbe_nod::api::get_item(&storage, nod_fixture().nod_id)?.is_none());
         Ok::<_, outbe_primitives::error::PrecompileError>(())
     })
@@ -623,7 +593,7 @@ fn the_forfeit_read_rides_the_end_block_witness_in_every_mode() {
     let issued_at = issued_at_on_protocol_floor(1);
     let group_key = outbe_nod::test_support::group_key_at(
         &outbe_nod::config::NodParams::TESTNET,
-        issued_at,
+        worldwide_day.value(),
         entry_price_minor,
         840,
     );
@@ -637,7 +607,6 @@ fn the_forfeit_read_rides_the_end_block_witness_in_every_mode() {
                 owner: proposer,
                 gratis_load_minor: U256::from(1_000_000u64),
                 emission_day: worldwide_day.value(),
-                league_id: 1,
                 group_key,
                 issuance_currency: 840,
                 reference_currency: 840,
@@ -653,11 +622,11 @@ fn the_forfeit_read_rides_the_end_block_witness_in_every_mode() {
             nod_id,
             owner: proposer,
             emission_day: worldwide_day.value(),
-            league_id: 1,
             entry_price_minor,
             issuance_currency: 840,
             reference_currency: 840,
         },
+        U256::from(1_000_000u64),
         U256::from(1_000_000u64),
     )
     .expect("seal the Nod under the resident state key");

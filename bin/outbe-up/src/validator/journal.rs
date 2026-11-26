@@ -27,6 +27,8 @@ pub struct Journal {
     #[serde(default)]
     pub feeder_delegate_transaction: Option<String>,
     #[serde(default)]
+    pub feeder_funding_transaction: Option<String>,
+    #[serde(default)]
     pub hyperlane_delegate_transaction: Option<String>,
     #[serde(default)]
     pub hyperlane_funding_transaction: Option<String>,
@@ -52,6 +54,7 @@ impl Journal {
             installed: false,
             stake_transaction: None,
             feeder_delegate_transaction: None,
+            feeder_funding_transaction: None,
             hyperlane_delegate_transaction: None,
             hyperlane_funding_transaction: None,
             hyperlane_signer_transaction: None,

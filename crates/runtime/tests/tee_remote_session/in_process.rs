@@ -18,7 +18,7 @@ fn direct_admission_requires_exact_resident_manifest_host_and_noise_at_finality(
         node_id: full_node(0x41),
         initialization_challenge: [3; 32],
         node_host_noise_x25519: [4; 32],
-        recipient_x25519: keys.tribute_offer_public(),
+        recipient_x25519: keys.recipient_public(),
         attestation_ed25519: keys.attestation_pub(),
         noise_responder_x25519: keys.noise_public(),
     };

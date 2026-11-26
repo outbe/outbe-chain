@@ -604,8 +604,6 @@ fn a_gem_id_is_its_raw_keccak_and_the_group_id_carries_the_day() {
 
 #[test]
 fn one_group_calls_and_closes_each_series_pair() {
-    use outbe_system_common::addresses::GEM_ADDRESS;
-
     let mut provider = provider_at(T_NOW);
     let expected = StorageHandle::enter(&mut provider, |storage| {
         let usd_id = add(&storage, sample_params(ALICE));
@@ -626,14 +624,18 @@ fn one_group_calls_and_closes_each_series_pair() {
         [usd, eur_item]
     });
 
-    let events = provider.get_events(GEM_ADDRESS);
+    let events = provider.get_events(outbe_system_common::addresses::GEM_FACTORY_ADDRESS);
     let called: Vec<_> = events
         .iter()
-        .filter_map(|log| IGem::GemSeriesCalled::decode_log_data(log).ok())
+        .filter_map(|log| {
+            crate::precompile::IGemFactory::GemSeriesCalled::decode_log_data(log).ok()
+        })
         .collect();
     let closed: Vec<_> = events
         .iter()
-        .filter_map(|log| IGem::GemSeriesClosed::decode_log_data(log).ok())
+        .filter_map(|log| {
+            crate::precompile::IGemFactory::GemSeriesClosed::decode_log_data(log).ok()
+        })
         .collect();
     assert_eq!(called.len(), 2);
     assert_eq!(closed.len(), 2);

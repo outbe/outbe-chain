@@ -1,8 +1,6 @@
 //! Transaction building and signing.
 
-use alloy_consensus::{SignableTransaction as _, TxEip7702};
-use alloy_eips::eip2718::Encodable2718 as _;
-use alloy_primitives::{keccak256, Address, Signature, U256};
+use alloy_primitives::{keccak256, Address, U256};
 use eyre::Result;
 use k256::ecdsa::signature::hazmat::PrehashSigner;
 use k256::ecdsa::SigningKey;
@@ -68,33 +66,6 @@ impl TxSigner {
         self.address
     }
 
-    /// Borrow the underlying secp256k1 signing key.
-    ///
-    /// Exposed so subcommands can sign payloads other than legacy
-    /// transactions - e.g. the `keccak(0x05 || rlp(chain_id, address,
-    /// nonce))` digest defined by EIP-7702. Keep new use-sites narrow.
-    pub fn key(&self) -> &SigningKey {
-        &self.key
-    }
-
-    /// Sign and EIP-2718 encode an EIP-7702 transaction.
-    pub(crate) fn sign_eip7702_tx(&self, tx: TxEip7702) -> Result<Vec<u8>> {
-        let hash = tx.signature_hash();
-        let (signature, recovery_id): (k256::ecdsa::Signature, k256::ecdsa::RecoveryId) = self
-            .key
-            .sign_prehash(hash.as_slice())
-            .map_err(TxError::Eip7702SigningFailed)?;
-        let signature = Signature::from_bytes_and_parity(
-            signature.to_bytes().as_slice(),
-            recovery_id.to_byte() != 0,
-        )
-        .normalized_s();
-        let signed = tx.into_signed(signature);
-        let mut raw_transaction = Vec::with_capacity(signed.encode_2718_len());
-        signed.encode_2718(&mut raw_transaction);
-        Ok(raw_transaction)
-    }
-
     /// Build, sign, and send a transaction to the given contract.
     pub async fn send_tx(
         &self,
@@ -124,32 +95,6 @@ impl TxSigner {
             chain_id,
         })?;
 
-        client.eth_send_raw_transaction(&raw_tx).await
-    }
-
-    /// Build, sign, and send a transaction with an explicit gas limit, skipping
-    /// `eth_estimateGas`. Useful when the call decrypts inside the enclave during
-    /// execution and `eth_estimateGas` cannot faithfully simulate that path.
-    pub async fn send_tx_with_gas(
-        &self,
-        client: &(impl Rpc + Sync),
-        to: Address,
-        data: Vec<u8>,
-        value: U256,
-        gas_limit: u64,
-    ) -> Result<String> {
-        let chain_id = client.eth_chain_id().await?;
-        let nonce = client.eth_get_transaction_count(self.address).await?;
-        let gas_price = buffered_gas_price(latest_base_fee(client).await?);
-        let raw_tx = self.sign_legacy_tx(LegacyTx {
-            nonce,
-            gas_price,
-            gas_limit,
-            to,
-            value,
-            data: &data,
-            chain_id,
-        })?;
         client.eth_send_raw_transaction(&raw_tx).await
     }
 

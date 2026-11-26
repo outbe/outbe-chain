@@ -35,8 +35,10 @@ pub(crate) fn token_uri(nod: &NodContract<'_>, item: &NodItemState, now: U256) -
     ));
     let mut traits = vec![
         Trait::text("State", state.label),
-        Trait::text("Series", item.series_id.to_string()),
-        Trait::integer("League", item.league_id),
+        Trait::text(
+            "Series",
+            format!("{}-{}", item.series_id, item.sub_series_id),
+        ),
         Trait::amount("Entry Price", item.entry_price_minor(), PRICE_PRECISION),
         Trait::amount("Call Price", call_price, PRICE_PRECISION),
     ];
@@ -66,11 +68,15 @@ pub(crate) fn token_uri(nod: &NodContract<'_>, item: &NodItemState, now: U256) -
     ))
 }
 
-fn encrypted_traits(item: &NodItemState) -> [Trait; 3] {
+fn encrypted_traits(item: &NodItemState) -> [Trait; 4] {
     [
         Trait::text(
             "Encrypted Gratis Load",
             alloy_primitives::hex::encode_prefixed(&item.encrypted.encrypted_gratis_amount),
+        ),
+        Trait::text(
+            "Encrypted Nominal",
+            alloy_primitives::hex::encode_prefixed(&item.encrypted.encrypted_nominal_amount),
         ),
         Trait::text(
             "Encryption Binding",

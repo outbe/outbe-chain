@@ -10,13 +10,13 @@ use zeroize::Zeroizing;
 const KEY_INFO: &[u8] = b"outbe/tee/onboarding-key/v1";
 const NONCE_INFO: &[u8] = b"outbe/tee/onboarding-nonce/v1";
 
-pub(crate) fn derive_tribute_offer_secret_from_group_sig(
+pub(crate) fn derive_offer_secret_from_group_sig(
     group_sig: Zeroizing<Vec<u8>>,
     chain_id: B256,
     key_epoch: u64,
-    tribute_offer_epoch: u64,
+    offer_epoch: u64,
 ) -> Result<ResidentOfferMaterial> {
-    ResidentOfferMaterial::from_group_signature(group_sig, chain_id, key_epoch, tribute_offer_epoch)
+    ResidentOfferMaterial::from_group_signature(group_sig, chain_id, key_epoch, offer_epoch)
 }
 
 /// There is no caller-selected plaintext: only the resident group signature is sealed.
@@ -50,11 +50,11 @@ pub(crate) fn decrypt_onboarding_artifact_v1(
     keys: &ResidentTeeKeys,
     artifact: &DcapOnboardingArtifactV1,
 ) -> Result<ResidentOfferMaterial> {
-    if keys.tribute_offer_public() != artifact.context.recipient_x25519 {
+    if keys.recipient_public() != artifact.context.recipient_x25519 {
         return Err(TeeCryptoError::InvalidContext);
     }
     let shared = shared(
-        &keys.tribute_offer_secret,
+        &keys.recipient_secret,
         &artifact.context.network_encryption_public,
     )?;
     let hash = artifact.context.context_hash();
@@ -66,7 +66,7 @@ pub(crate) fn decrypt_onboarding_artifact_v1(
         return Err(TeeCryptoError::InvalidContext);
     }
     let group_sig = open(&key, &expected, &artifact.ciphertext)?;
-    let material = derive_tribute_offer_secret_from_group_sig(
+    let material = derive_offer_secret_from_group_sig(
         group_sig,
         B256::from(artifact.context.chain_id),
         artifact.context.key_epoch,

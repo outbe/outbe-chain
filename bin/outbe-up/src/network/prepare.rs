@@ -8,7 +8,7 @@ use walkdir::WalkDir;
 
 use crate::support::progress::Progress;
 
-use super::remote::{NetworkBuild, SshOptions};
+use super::remote::{NetworkArtifacts, SshOptions};
 
 const INSTALLER: &str = r#"#!/bin/sh
 set -eu
@@ -56,8 +56,8 @@ as_root "$base/validator-${index}/install-systemd.sh" --prepare-only
 pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
     let mut progress = Progress::new();
     progress.stage("verifying network artifacts and software bundle");
-    let build = NetworkBuild::load(artifacts)?;
-    let ssh = SshOptions::new(ssh_key)?;
+    let build = NetworkArtifacts::load(artifacts)?;
+    let ssh = SshOptions::new(ssh_key, &build.manifest.genesis.final_sha256)?;
     let temporary = tempfile::tempdir()?;
     let software = temporary.path().join("software");
     fs::create_dir(&software)?;
@@ -73,13 +73,14 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
 
     progress.stage(&format!(
         "preparing {} founding validators",
-        build.config.founders.len()
+        build.manifest.founders.len()
     ));
     let mut tasks = JoinSet::new();
-    for (index, founder) in build.config.founders.into_iter().enumerate() {
+    for founder in build.manifest.founders.clone() {
         let ssh = ssh.clone();
-        let archive = build.root.join(format!("dist/validator-{index}.tgz"));
-        let archive_sha = build.manifest.founders[index].archive_sha256.clone();
+        let index = founder.index;
+        let archive = build.root.join(&founder.archive);
+        let archive_sha = founder.archive_sha256.clone();
         let binaries = software.join("bin");
         let installer = installer.clone();
         let genesis_sha = genesis_sha.clone();
@@ -117,7 +118,7 @@ pub async fn run(artifacts: &Path, ssh_key: Option<&Path>) -> Result<()> {
 
 struct PrepareFounder<'a> {
     ssh: &'a SshOptions,
-    founder: &'a super::config::Founder,
+    founder: &'a super::build::FounderArtifact,
     index: usize,
     binaries: &'a Path,
     archive: &'a Path,
@@ -128,27 +129,36 @@ struct PrepareFounder<'a> {
 }
 
 fn prepare_founder(input: PrepareFounder<'_>) -> Result<()> {
-    let advertise_ip = input.founder.advertise_ip;
-    let rpc_bind_check =
-        if input.founder.rpc_bind_ip.is_loopback() || input.founder.rpc_bind_ip == advertise_ip {
-            String::new()
-        } else {
-            format!(
-                "ip -4 -o addr show | grep -Fq ' {0}/' \
-|| {{ echo 'rpc_bind_ip {0} is not configured on this host' >&2; exit 1; }};",
-                input.founder.rpc_bind_ip,
-            )
-        };
+    let private_ip = input.founder.private_ip;
+    let ports = &input.founder.ports;
+    let required_ports = [
+        8_545,
+        ports.reth_p2p,
+        ports.reth_discovery,
+        ports.consensus,
+        ports.radicle,
+        8_551,
+        8_876,
+        9_002,
+        9_101,
+        9_000,
+        9_003,
+    ]
+    .map(|port| port.to_string())
+    .join(" ");
     let remote = input.ssh.capture(
         input.founder,
         &format!(
             "set -eu; test \"$(uname -s)\" = Linux; test \"$(uname -m)\" = x86_64; \
 command -v systemctl >/dev/null; command -v tar >/dev/null; command -v sha256sum >/dev/null; \
-command -v curl >/dev/null; command -v ip >/dev/null; \
+command -v curl >/dev/null; command -v ip >/dev/null; command -v ss >/dev/null; \
 if [ \"$(id -u)\" -ne 0 ]; then command -v sudo >/dev/null; sudo -n true; fi; \
-ip -4 -o addr show | grep -Fq ' {advertise_ip}/' \
-  || {{ echo 'advertise_ip {advertise_ip} is not configured on this host' >&2; exit 1; }}; \
-{rpc_bind_check} \
+ip -4 -o addr show | grep -Fq ' {private_ip}/' \
+  || {{ echo 'private_ip {private_ip} is not configured on this VM' >&2; exit 1; }}; \
+for port in {required_ports}; do \
+  ! ss -H -lntu | grep -Eq \"[:.]$port[[:space:]]\" \
+    || {{ echo \"required port $port is already in use\" >&2; exit 1; }}; \
+done; \
 available=\"$(df -Pk /opt 2>/dev/null | awk 'NR==2 {{print $4}}')\"; \
 [ -n \"$available\" ] || available=\"$(df -Pk / | awk 'NR==2 {{print $4}}')\"; \
 [ \"$available\" -ge {} ] \

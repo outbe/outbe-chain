@@ -44,10 +44,10 @@ macro_rules! impl_confidential_witness_schema {
 }
 
 /// Highest frozen V1 domain response discriminant.
-pub const V1_RESPONSE_TAG_MAX: u8 = 21;
+pub const V1_RESPONSE_TAG_MAX: u8 = 22;
 
 /// Domain response discriminants that must not be written to the witness tape.
-pub const NON_RECORDABLE_V1_TAGS: [u8; 3] = [0, 3, 6];
+pub const NON_RECORDABLE_V1_TAGS: [u8; 10] = [0, 3, 6, 7, 11, 12, 13, 14, 17, 18];
 
 /// Recordable frozen V1 domain response tag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,60 +61,42 @@ pub enum WitnessResponseTag {
     FidelityLeaguesSnapshotted = 4,
     /// `FidelityIndexQueried`.
     FidelityIndexQueried = 5,
-    /// `NodEncryptedForTributeV1`.
-    NodEncryptedForTributeV1 = 7,
     /// `EncryptedNodMintRejectedV1`.
     EncryptedNodMintRejectedV1 = 8,
     /// `EncryptedNodMinedV1`.
     EncryptedNodMinedV1 = 9,
     /// `NodAmountReadV1`.
     NodAmountReadV1 = 10,
-    /// `EncryptedTributeOfferBatchV2`.
-    EncryptedTributeOfferBatchV2 = 11,
-    /// `TributeAmountsReadV2`.
-    TributeAmountsReadV2 = 12,
-    /// `TributeDayOpAppliedV2`.
-    TributeDayOpAppliedV2 = 13,
-    /// `TributeDayAmountReadV2`.
-    TributeDayAmountReadV2 = 14,
     /// `FidelityQueryRejected`.
     FidelityQueryRejected = 15,
     /// `LysisFractionsExecutedV1`.
     LysisFractionsExecutedV1 = 16,
-    /// `TributeDayFractionsReadV1`.
-    TributeDayFractionsReadV1 = 17,
-    /// `NodIssuedFromTributeV1`.
-    NodIssuedFromTributeV1 = 18,
     /// `NodGroupLoadOpAppliedV1`.
     NodGroupLoadOpAppliedV1 = 19,
     /// `NodGroupLoadReadV1`.
     NodGroupLoadReadV1 = 20,
     /// `NodQuoteEncryptedV1`.
     NodQuoteEncryptedV1 = 21,
+    /// `NodIssuedAtOfferV1`.
+    NodIssuedAtOfferV1 = 22,
 }
 
 impl WitnessResponseTag {
     /// Every recordable V1 tag, in discriminant order.
-    pub const ALL: [Self; 19] = [
+    pub const ALL: [Self; 13] = [
         Self::GratisOpApplied,
         Self::PromisOpApplied,
         Self::FidelityLeaguesSnapshotted,
         Self::FidelityIndexQueried,
-        Self::NodEncryptedForTributeV1,
         Self::EncryptedNodMintRejectedV1,
         Self::EncryptedNodMinedV1,
         Self::NodAmountReadV1,
-        Self::EncryptedTributeOfferBatchV2,
-        Self::TributeAmountsReadV2,
-        Self::TributeDayOpAppliedV2,
-        Self::TributeDayAmountReadV2,
         Self::FidelityQueryRejected,
         Self::LysisFractionsExecutedV1,
-        Self::TributeDayFractionsReadV1,
-        Self::NodIssuedFromTributeV1,
         Self::NodGroupLoadOpAppliedV1,
         Self::NodGroupLoadReadV1,
         Self::NodQuoteEncryptedV1,
+        Self::NodIssuedAtOfferV1,
     ];
 
     /// Frozen postcard discriminant.
@@ -138,13 +120,13 @@ impl TryFrom<u8> for WitnessResponseTag {
 /// A V1 response tag cannot be placed on the consensus witness tape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
 pub enum WitnessTagError {
-    /// Tag is outside `0..=21`.
+    /// Tag is outside `0..=22`.
     #[error("witness response tag {tag} is outside the frozen V1 range 0..={V1_RESPONSE_TAG_MAX}")]
     OutOfRange {
         /// Observed tag byte.
         tag: u8,
     },
-    /// Tag is `0`, `3`, or `6`.
+    /// Tag is one of [`NON_RECORDABLE_V1_TAGS`].
     #[error("witness response tag {tag} is not recordable")]
     NonRecordable {
         /// Observed tag byte.

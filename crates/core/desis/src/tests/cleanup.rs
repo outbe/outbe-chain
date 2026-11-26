@@ -3,7 +3,6 @@ use outbe_primitives::storage::{hashmap::HashMapStorageProvider, StorageHandle};
 use outbe_system_common::time::EmissionDate;
 
 use crate::{
-    constants::ORIGIN_ROUTER_ADDRESS,
     run_cleanup,
     runtime::{collect_intex_auction_bids, complete_intex_auction_bids, Inbound},
     AuctionStage, DesisContract, IntexAuctionBidData,
@@ -111,7 +110,6 @@ fn cleanup_tracks_out_of_order_batches_and_done_only_chains_once() {
             .write_stage(DAY, AuctionStage::RevealingBids)
             .unwrap();
         let inbound = |chain| Inbound {
-            caller: ORIGIN_ROUTER_ADDRESS,
             receive_id: alloy_primitives::B256::ZERO,
             emission_day: DAY,
             src_chain_id: chain,
@@ -176,5 +174,29 @@ fn cleanup_page_rolls_back_partial_bid_deletion_on_storage_failure() {
             s.contract::<DesisContract>().cleanup_head.read().unwrap(),
             0
         );
+    });
+}
+
+#[test]
+fn cleanup_clears_the_clearing_gas_of_every_chain_of_the_day() {
+    let mut provider = HashMapStorageProvider::new(1);
+    StorageHandle::enter(&mut provider, |s| {
+        let factory = outbe_intexfactory::IntexFactoryContract::new(s.clone());
+        let contract = s.contract::<DesisContract>();
+        for chain in [97, 98] {
+            factory.day_targets.list(&DAY).push(chain).unwrap();
+            contract
+                .clearing_gas
+                .write(&DesisContract::chain_key(DAY, chain), 1)
+                .unwrap();
+        }
+        contract.write_stage(DAY, AuctionStage::Failed).unwrap();
+        contract.queue_intake_cleanup(DAY).unwrap();
+        run_cleanup(s.clone()).unwrap();
+        assert_eq!(contract.cleanup_pending.read(&DAY).unwrap(), 2);
+        for chain in [97, 98] {
+            let key = DesisContract::chain_key(DAY, chain);
+            assert_eq!(contract.clearing_gas.read(&key).unwrap(), 0);
+        }
     });
 }

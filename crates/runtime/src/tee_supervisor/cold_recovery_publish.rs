@@ -138,6 +138,11 @@ fn directory_marker_rejects_cold_recovery_before_any_publish() {
     let (root, host_key) = host_tree();
     let committee = FinalityCommitteeFixture::new(5);
     let (old, descriptor) = source_for_promotion(&host_key, &committee);
+    outbe_tee::node_host::ResidentStateStore::load_or_create(
+        root.path(),
+        &old.authorization_witness().unwrap(),
+    )
+    .unwrap();
     let candidate = fresh_candidate(&old, descriptor.clone()).unwrap();
     let attempt = admit_successor(&old, &candidate, &committee);
     std::fs::create_dir(root.path().join("tee-cold-recovery-v1")).unwrap();

@@ -18,14 +18,6 @@ pub(crate) enum CommandInputError {
     PrivateKeyRequired,
 }
 
-/// Errors for the `epoch` subcommand.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum EpochError {
-    /// The on-chain epoch number exceeds `u64::MAX`.
-    #[error("epoch number exceeds u64")]
-    EpochNumberOverflow,
-}
-
 /// Errors for the `monitor` subcommand.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum MonitorError {
@@ -44,23 +36,6 @@ pub(crate) enum MonitorError {
     /// Reading the response body from the metrics endpoint failed.
     #[error("failed to read metrics response: {0}")]
     MetricsReadFailed(reqwest::Error),
-}
-
-/// Errors for the `oracle` subcommand.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum OracleError {
-    /// The asset argument is not `COEN`, an ISO 4217 code, or a hex address.
-    #[error("{spec:?} is not COEN, an ISO 4217 code or a 0x address: {source}")]
-    InvalidAsset {
-        spec: String,
-        source: alloy_primitives::hex::FromHexError,
-    },
-    /// The latest block response does not contain a timestamp field.
-    #[error("latest block response is missing timestamp")]
-    MissingBlockTimestamp,
-    /// The block timestamp is not valid hexadecimal.
-    #[error("failed to parse timestamp: {0}")]
-    InvalidTimestamp(std::num::ParseIntError),
 }
 
 /// Errors for the `rad` subcommand.
@@ -96,11 +71,6 @@ pub(crate) enum RadError {
     /// The `kill` command failed to stop the running node process.
     #[error("failed to stop pid {0}")]
     StopProcessFailed(u32),
-}
-
-/// Errors for the `radicle` subcommand.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum RadicleError {
     /// The repository identifier is not valid hexadecimal.
     #[error("invalid RepoId hex: {0}")]
     InvalidRepoIdHex(hex::FromHexError),
@@ -115,43 +85,6 @@ pub(crate) enum SlashError {
     /// The decoded slashing evidence payload is empty.
     #[error("{0} evidence must be non-empty")]
     EmptyEvidence(&'static str),
-}
-
-/// Errors for the `stablecoin` subcommand.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum StablecoinError {
-    /// The policy administrator address is zero.
-    #[error("policy admin must not be the zero address")]
-    ZeroPolicyAdmin,
-}
-
-/// Errors for the `tribute` subcommand.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum TributeError {
-    /// The base amount is not a canonical unsigned 64-bit integer.
-    #[error("amount must be a canonical unsigned u64")]
-    InvalidAmountBase,
-    /// The micro remainder is not a canonical integer below 1,000,000.
-    #[error("amount_micro must be a canonical unsigned u64 below 1000000")]
-    InvalidAmountMicro,
-    /// The on-chain `TeeRegistry` has no bootstrapped offer key.
-    #[error("TeeRegistry is not bootstrapped yet - no offer key to encrypt to")]
-    TeeRegistryNotBootstrapped,
-    /// Encrypting the tribute offer payload failed.
-    #[error("offer encryption failed: {0}")]
-    OfferEncryptionFailed(outbe_core_common::confidential_tee::LocalCryptoError),
-    /// The command-line flag value is not valid hexadecimal.
-    #[error("{flag} is not valid hex: {source}")]
-    InvalidHexFlag {
-        flag: String,
-        source: hex::FromHexError,
-    },
-    /// The decoded `--zk-proof` byte slice is empty.
-    #[error("--zk-proof must not be empty")]
-    EmptyZkProof,
-    /// The decoded 32-byte hex argument has the wrong length.
-    #[error("{flag} must contain exactly 32 bytes, got {actual}")]
-    InvalidHex32Length { flag: String, actual: usize },
 }
 
 /// Errors for the `staking` subcommand.
@@ -268,18 +201,4 @@ pub(crate) enum VoteError {
     /// The chain identifier in the TEE policy does not match the RPC chain identifier.
     #[error("TEE policy chain identity mismatch")]
     TeePolicyChainMismatch,
-}
-
-/// Errors for the `zero-fee` subcommand.
-#[derive(Debug, thiserror::Error)]
-pub(crate) enum ZeroFeeError {
-    /// The signer account has zero balance for bootstrap.
-    #[error("ZeroFee bootstrap requires a positive balance (at least 0.000001 COEN)")]
-    ZeroBootstrapBalance,
-    /// Incrementing the account nonce for bootstrap authorization overflowed.
-    #[error("bootstrap authorization nonce overflow")]
-    BootstrapNonceOverflow,
-    /// Signing the EIP-7702 authorization digest failed.
-    #[error("EIP-7702 authorization signing failed: {0}")]
-    AuthorizationSigningFailed(k256::ecdsa::Error),
 }

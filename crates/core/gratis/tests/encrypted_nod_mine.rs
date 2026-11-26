@@ -42,12 +42,11 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
         nod_id: U256::from_be_bytes([4; 32]),
         owner: account,
         emission_day: day.value(),
-        league_id: 0,
         entry_price_minor: U256::ONE,
         issuance_currency: 840,
         reference_currency: 978,
     };
-    let nod = encrypt_nod(&network, terms, amount).unwrap();
+    let nod = encrypt_nod(&network, terms, amount, amount).unwrap();
     let modify_key = derive_account_keys(&key, account).unwrap();
     let chain = B256::from(U256::ONE);
     let auth = |op, value, nonce| ModifyAuth {
@@ -121,6 +120,7 @@ fn private_mine_replays_exactly_and_preserves_other_gratis_writers() {
         current_pledged: Vec::new(),
         modify_auth: auth(GratisOp::Burn, U256::from(23u64), 1),
         fidelity: None,
+        sealed_pledge: None,
     };
     let after = apply_op(&key, &burn);
     assert!(matches!(after.status, GratisOpStatus::Applied));
@@ -164,11 +164,11 @@ fn resident_dispatch_mines_and_signs_deterministic_refusals() {
             nod_id: U256::from_be_bytes([4; 32]),
             owner: account,
             emission_day: 20250115,
-            league_id: 0,
             entry_price_minor: U256::ONE,
             issuance_currency: 840,
             reference_currency: 978,
         },
+        amount,
         amount,
     )
     .unwrap();

@@ -11,26 +11,6 @@ pub enum RpcError {
     RadicleCounterOverflow,
 }
 
-/// Errors that occur when a registered validator record is incomplete.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Error)]
-pub enum RpcValidatorStateError {
-    /// A registered validator record has no consensus public key.
-    #[error("registered validator is missing consensus pubkey")]
-    MissingConsensusPubkey,
-    /// A registered validator record has no history record.
-    #[error("registered validator is missing history")]
-    MissingHistory,
-    /// A registered validator record has no persisted lifecycle status.
-    #[error("registered validator has no persisted status")]
-    MissingPersistedStatus,
-}
-
-impl From<RpcValidatorStateError> for PrecompileError {
-    fn from(error: RpcValidatorStateError) -> Self {
-        Self::Fatal(error.to_string())
-    }
-}
-
 /// Errors that occur when bridging Reth state storage into precompile storage.
 #[derive(Clone, Debug, Eq, PartialEq, Error)]
 pub enum RpcStateReadError {

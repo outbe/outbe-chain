@@ -46,13 +46,7 @@ pub trait Rpc {
         &self,
         raw_tx: &[u8],
     ) -> impl std::future::Future<Output = Result<String>> + Send;
-    fn eth_get_balance(
-        &self,
-        address: Address,
-    ) -> impl std::future::Future<Output = Result<U256>> + Send;
-    fn net_peer_count(&self) -> impl std::future::Future<Output = Result<u64>> + Send;
     fn outbe_consensus_status(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
-    fn outbe_get_epoch_info(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn outbe_tee_renewal_schedule_v1(
         &self,
         checkpoint_hash: alloy_primitives::B256,
@@ -68,16 +62,6 @@ pub trait Rpc {
     fn eth_get_finalized_block(&self) -> impl std::future::Future<Output = Result<Value>> + Send {
         async { Err(RpcError::FinalizedBlockUnsupported.into()) }
     }
-    fn outbe_get_vrf_seed(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
-    fn outbe_get_emission_info(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
-    fn outbe_get_slash_config(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
-    fn eth_get_logs(
-        &self,
-        address: Address,
-        topics: &[Option<String>],
-        from_block: &str,
-        to_block: &str,
-    ) -> impl std::future::Future<Output = Result<Vec<Value>>> + Send;
 }
 
 const RPC_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -186,13 +170,6 @@ impl RpcClient {
         let hex_str = hex_str.strip_prefix("0x").unwrap_or(hex_str);
         U256::from_str_radix(hex_str, 16).map_err(|e| RpcError::ParseU256(e).into())
     }
-
-    /// Call `outbe_getVrfSeed` with a specific block number.
-    #[allow(dead_code)]
-    pub async fn outbe_get_vrf_seed_at(&self, block_number: u64) -> Result<Value> {
-        self.call_rpc("outbe_getVrfSeed", serde_json::json!([block_number]))
-            .await
-    }
 }
 
 impl Rpc for RpcClient {
@@ -293,30 +270,8 @@ impl Rpc for RpcClient {
             .ok_or_else(|| RpcError::ExpectedTxHashString.into())
     }
 
-    async fn eth_get_balance(&self, address: Address) -> Result<U256> {
-        let result = self
-            .call_rpc(
-                "eth_getBalance",
-                serde_json::json!([format!("{address:?}"), "latest"]),
-            )
-            .await?;
-        Self::parse_hex_u256(&result)
-    }
-
-    async fn net_peer_count(&self) -> Result<u64> {
-        let result = self
-            .call_rpc("net_peerCount", serde_json::json!([]))
-            .await?;
-        Self::parse_hex_u64(&result)
-    }
-
     async fn outbe_consensus_status(&self) -> Result<Value> {
         self.call_rpc("outbe_consensusStatus", serde_json::json!([]))
-            .await
-    }
-
-    async fn outbe_get_epoch_info(&self) -> Result<Value> {
-        self.call_rpc("outbe_getEpochInfo", serde_json::json!([]))
             .await
     }
 
@@ -354,54 +309,6 @@ impl Rpc for RpcClient {
             serde_json::json!(["finalized", false]),
         )
         .await
-    }
-
-    async fn outbe_get_vrf_seed(&self) -> Result<Value> {
-        self.call_rpc("outbe_getVrfSeed", serde_json::json!([null]))
-            .await
-    }
-
-    async fn outbe_get_emission_info(&self) -> Result<Value> {
-        self.call_rpc("outbe_getEmissionInfo", serde_json::json!([]))
-            .await
-    }
-
-    async fn outbe_get_slash_config(&self) -> Result<Value> {
-        self.call_rpc("outbe_getSlashConfig", serde_json::json!([]))
-            .await
-    }
-
-    async fn eth_get_logs(
-        &self,
-        address: Address,
-        topics: &[Option<String>],
-        from_block: &str,
-        to_block: &str,
-    ) -> Result<Vec<Value>> {
-        let topics_json: Vec<Value> = topics
-            .iter()
-            .map(|t| match t {
-                Some(v) => Value::String(v.clone()),
-                None => Value::Null,
-            })
-            .collect();
-
-        let result = self
-            .call_rpc(
-                "eth_getLogs",
-                serde_json::json!([{
-                    "address": format!("{address:?}"),
-                    "topics": topics_json,
-                    "fromBlock": from_block,
-                    "toBlock": to_block,
-                }]),
-            )
-            .await?;
-
-        result
-            .as_array()
-            .cloned()
-            .ok_or_else(|| RpcError::ExpectedLogsArray.into())
     }
 }
 
@@ -494,8 +401,6 @@ pub mod mock {
         pub block_number: Result<u64>,
         pub chain_id: Result<u64>,
         pub gas_price: Result<U256>,
-        pub balance: Result<U256>,
-        pub peer_count: Result<u64>,
         pub tx_count: Result<u64>,
         pub estimate_gas: Result<u64>,
         pub send_raw_tx: Result<String>,
@@ -503,15 +408,10 @@ pub mod mock {
         /// Argument-sensitive responses take precedence over selector defaults.
         pub eth_call_overrides: std::collections::HashMap<(Address, Vec<u8>), Vec<u8>>,
         pub consensus_status: Result<Value>,
-        pub epoch_info: Result<Value>,
         pub latest_block: Result<Value>,
         pub finalized_block: Result<Value>,
         pub tee_renewal_schedule: Result<TeeRenewalScheduleV1>,
         pub block_by_number: Result<Value>,
-        pub vrf_seed: Result<Value>,
-        pub emission_info: Result<Value>,
-        pub slash_config: Result<Value>,
-        pub logs: Result<Vec<Value>>,
     }
 
     impl Default for MockRpc {
@@ -520,23 +420,16 @@ pub mod mock {
                 block_number: Err(RpcError::NotMocked.into()),
                 chain_id: Err(RpcError::NotMocked.into()),
                 gas_price: Err(RpcError::NotMocked.into()),
-                balance: Err(RpcError::NotMocked.into()),
-                peer_count: Err(RpcError::NotMocked.into()),
                 tx_count: Err(RpcError::NotMocked.into()),
                 estimate_gas: Err(RpcError::NotMocked.into()),
                 send_raw_tx: Err(RpcError::NotMocked.into()),
                 eth_call_map: None,
                 eth_call_overrides: std::collections::HashMap::new(),
                 consensus_status: Err(RpcError::NotMocked.into()),
-                epoch_info: Err(RpcError::NotMocked.into()),
                 latest_block: Err(RpcError::NotMocked.into()),
                 finalized_block: Err(RpcError::NotMocked.into()),
                 tee_renewal_schedule: Err(RpcError::TeeRenewalScheduleUnsupported.into()),
                 block_by_number: Err(RpcError::NotMocked.into()),
-                vrf_seed: Err(RpcError::NotMocked.into()),
-                emission_info: Err(RpcError::NotMocked.into()),
-                slash_config: Err(RpcError::NotMocked.into()),
-                logs: Err(RpcError::NotMocked.into()),
             }
         }
     }
@@ -592,17 +485,8 @@ pub mod mock {
         async fn eth_send_raw_transaction(&self, _raw_tx: &[u8]) -> Result<String> {
             clone_result(&self.send_raw_tx)
         }
-        async fn eth_get_balance(&self, _address: Address) -> Result<U256> {
-            clone_result(&self.balance)
-        }
-        async fn net_peer_count(&self) -> Result<u64> {
-            clone_result(&self.peer_count)
-        }
         async fn outbe_consensus_status(&self) -> Result<Value> {
             clone_result(&self.consensus_status)
-        }
-        async fn outbe_get_epoch_info(&self) -> Result<Value> {
-            clone_result(&self.epoch_info)
         }
         async fn eth_get_block_by_number(&self, _block: u64) -> Result<Value> {
             clone_result(&self.block_by_number)
@@ -612,24 +496,6 @@ pub mod mock {
         }
         async fn eth_get_finalized_block(&self) -> Result<Value> {
             clone_result(&self.finalized_block)
-        }
-        async fn outbe_get_vrf_seed(&self) -> Result<Value> {
-            clone_result(&self.vrf_seed)
-        }
-        async fn outbe_get_emission_info(&self) -> Result<Value> {
-            clone_result(&self.emission_info)
-        }
-        async fn outbe_get_slash_config(&self) -> Result<Value> {
-            clone_result(&self.slash_config)
-        }
-        async fn eth_get_logs(
-            &self,
-            _address: Address,
-            _topics: &[Option<String>],
-            _from_block: &str,
-            _to_block: &str,
-        ) -> Result<Vec<Value>> {
-            clone_result(&self.logs)
         }
     }
 
@@ -701,24 +567,9 @@ pub mod mock {
             .into_text("eth_sendRawTransaction")
         }
 
-        async fn eth_get_balance(&self, address: Address) -> Result<U256> {
-            self.next_response(RecordedRpcCall::EthGetBalance { address })?
-                .into_u256("eth_getBalance")
-        }
-
-        async fn net_peer_count(&self) -> Result<u64> {
-            self.next_response(RecordedRpcCall::NetPeerCount)?
-                .into_u64("net_peerCount")
-        }
-
         async fn outbe_consensus_status(&self) -> Result<Value> {
             self.next_response(RecordedRpcCall::OutbeConsensusStatus)?
                 .into_value("outbe_consensusStatus")
-        }
-
-        async fn outbe_get_epoch_info(&self) -> Result<Value> {
-            self.next_response(RecordedRpcCall::OutbeGetEpochInfo)?
-                .into_value("outbe_getEpochInfo")
         }
 
         async fn eth_get_block_by_number(&self, block: u64) -> Result<Value> {
@@ -729,37 +580,6 @@ pub mod mock {
         async fn eth_get_latest_block(&self) -> Result<Value> {
             self.next_response(RecordedRpcCall::EthGetLatestBlock)?
                 .into_value("eth_getBlockByNumber latest")
-        }
-
-        async fn outbe_get_vrf_seed(&self) -> Result<Value> {
-            self.next_response(RecordedRpcCall::OutbeGetVrfSeed)?
-                .into_value("outbe_getVrfSeed")
-        }
-
-        async fn outbe_get_emission_info(&self) -> Result<Value> {
-            self.next_response(RecordedRpcCall::OutbeGetEmissionInfo)?
-                .into_value("outbe_getEmissionInfo")
-        }
-
-        async fn outbe_get_slash_config(&self) -> Result<Value> {
-            self.next_response(RecordedRpcCall::OutbeGetSlashConfig)?
-                .into_value("outbe_getSlashConfig")
-        }
-
-        async fn eth_get_logs(
-            &self,
-            address: Address,
-            topics: &[Option<String>],
-            from_block: &str,
-            to_block: &str,
-        ) -> Result<Vec<Value>> {
-            self.next_response(RecordedRpcCall::EthGetLogs {
-                address,
-                topics: topics.to_vec(),
-                from_block: from_block.to_string(),
-                to_block: to_block.to_string(),
-            })?
-            .into_logs("eth_getLogs")
         }
     }
 }

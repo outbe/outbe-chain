@@ -3,7 +3,7 @@
 use outbe_primitives::block::{BlockRuntimeContext, ProtocolModule};
 use outbe_primitives::error::Result;
 
-/// Deletes the unpaid Nods of the forfeited groups.
+/// Deletes the unsettled Nods of the forfeited groups.
 pub use crate::cleanup::cleanup;
 
 pub struct NodFactoryModule;

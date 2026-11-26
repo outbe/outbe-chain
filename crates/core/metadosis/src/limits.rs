@@ -1,80 +1,105 @@
-//! Native Lysis capacity allocation and auction dispatch.
+//! The Metadosis limit of a day and its split: the loads of the Nods, the credit of the
+//! Promis Limit and the Desis Limit.
 
 use alloy_primitives::U256;
-use outbe_primitives::{error::Result, storage::StorageHandle};
+use outbe_primitives::{
+    block::BlockRuntimeContext, error::Result, storage::CycleLifecyclePurpose,
+    storage::StorageHandle,
+};
 use outbe_promislimit::PromisLimitContract;
+use outbe_system_common::metadosis_bindings::metadosis_cycle_allocation_binding;
+use outbe_system_common::time::date_key_to_utc_timestamp;
 
 use crate::errors::MetadosisError;
+use crate::precompile::IMetadosis;
+use crate::schema::MetadosisContract;
 
-/// The smaller of nominal minus Lysis and the unused day limit plus the draw, or `None` when
-/// Lysis exceeds either of them or the sum overflows.
+/// Records that Metadosis of `day` holds `amount`. The Cycle writes the amount to the record of `day`.
+pub(crate) fn set_metadosis_limit(ctx: &BlockRuntimeContext, day: u32, amount: U256) -> Result<()> {
+    let day_ts = date_key_to_utc_timestamp(day).map_err(crate::lifecycle::date_step_error)?;
+    let binding =
+        metadosis_cycle_allocation_binding(ctx.block.chain_id, ctx.block.block_number, day_ts);
+    crate::commit::commit_transition::<CycleLifecyclePurpose, _>(
+        ctx.storage.clone(),
+        binding,
+        |_| {
+            MetadosisContract::new(ctx.storage.clone()).emit(IMetadosis::MetadosisLimitSet {
+                emissionDay: day,
+                metadosisLimitMinor: amount,
+            })
+        },
+    )
+}
+
+/// The smaller of the nominal less the loads and the unused day limit plus the draw, or `None`
+/// when the loads exceed either of them or the sum overflows.
 pub(crate) fn desis_limit(
     nominal_total: U256,
-    lysis_limit_minor: U256,
+    nod_loads_minor: U256,
     day_limit: U256,
     promis_limit_draw: U256,
 ) -> Option<U256> {
     let available = day_limit
-        .checked_sub(lysis_limit_minor)?
+        .checked_sub(nod_loads_minor)?
         .checked_add(promis_limit_draw)?;
-    Some(nominal_total.checked_sub(lysis_limit_minor)?.min(available))
+    Some(nominal_total.checked_sub(nod_loads_minor)?.min(available))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct LimitSplit {
     /// The day's own emission plus what it drew from the Promis Limit.
     pub day_limit: U256,
-    /// Maximum Lysis capacity, in protocol units (1e6 per whole COEN).
-    pub lysis_limit_minor: U256,
+    /// The sum of the loads of the Nods of the day, in protocol units (1e6 per whole COEN).
+    pub nod_loads_minor: U256,
     /// Maximum Desis capacity, not actual Intex issuance, in protocol units.
     pub desis_limit_minor: U256,
-    /// What Lysis left of the day's own emission, credited before the auction draws.
-    pub promis_limit_credit: U256,
+    /// What the loads leave of the day's own emission, added before the auction draws.
+    pub promis_limit_add: U256,
 }
 
 impl LimitSplit {
-    /// The day's own emission bounds Lysis, and the Promis Limit receives the credit for what
-    /// Lysis leaves. The auction then draws from the Promis Limit: no more than the nominal beyond
+    /// The day's own emission bounds the loads, and the Promis Limit receives what the loads
+    /// leave. The auction then draws from the Promis Limit: no more than the nominal beyond
     /// the symbolic share, and no more than it holds.
     pub(crate) fn derive(
         base_limit: U256,
-        lysis_limit_minor: U256,
+        nod_loads_minor: U256,
         nominal_total: U256,
         promis_limit_before: U256,
     ) -> Result<Self> {
-        let invalid = || MetadosisError::InvalidLysisLimitSplit {
+        let invalid = || MetadosisError::InvalidMetadosisLimitSplit {
             day_limit: base_limit,
-            lysis_limit_minor,
+            nod_loads_minor,
         };
-        let promis_limit_credit = base_limit
-            .checked_sub(lysis_limit_minor)
+        let promis_limit_add = base_limit
+            .checked_sub(nod_loads_minor)
             .ok_or_else(invalid)?;
         let desis_limit_minor = desis_limit(
             nominal_total,
-            lysis_limit_minor,
+            nod_loads_minor,
             base_limit,
             promis_limit_before,
         )
         .ok_or_else(invalid)?;
         Self::assemble(
             base_limit,
-            lysis_limit_minor,
+            nod_loads_minor,
             desis_limit_minor,
-            promis_limit_credit,
+            promis_limit_add,
         )
     }
 
     fn assemble(
         base_limit: U256,
-        lysis_limit_minor: U256,
+        nod_loads_minor: U256,
         desis_limit_minor: U256,
-        promis_limit_credit: U256,
+        promis_limit_add: U256,
     ) -> Result<Self> {
-        let invalid = || MetadosisError::InvalidLysisLimitSplit {
+        let invalid = || MetadosisError::InvalidMetadosisLimitSplit {
             day_limit: base_limit,
-            lysis_limit_minor,
+            nod_loads_minor,
         };
-        if lysis_limit_minor.checked_add(promis_limit_credit) != Some(base_limit) {
+        if nod_loads_minor.checked_add(promis_limit_add) != Some(base_limit) {
             return Err(invalid().into());
         }
         let day_limit = base_limit
@@ -82,38 +107,26 @@ impl LimitSplit {
             .ok_or_else(invalid)?;
         Ok(Self {
             day_limit,
-            lysis_limit_minor,
+            nod_loads_minor,
             desis_limit_minor,
-            promis_limit_credit,
+            promis_limit_add,
         })
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct LysisLimitInput {
-    pub base_limit: U256,
-    pub lysis_limit_minor: U256,
-    pub nominal_total: U256,
-    /// What the Nods leave of the Lysis Limit; it goes back to the Promis Limit.
-    pub unused_lysis_minor: U256,
 }
 
 /// Reserve the successful day's allocation within the owning command checkpoint.
 pub(crate) fn allocate_day_metadosis_limit(
     storage: StorageHandle<'_>,
-    input: LysisLimitInput,
+    base_limit: U256,
+    nod_loads_minor: U256,
+    nominal_total: U256,
 ) -> Result<LimitSplit> {
     let carry_before = PromisLimitContract::new(storage.clone()).promis_limit()?;
-    let split = LimitSplit::derive(
-        input.base_limit,
-        input.lysis_limit_minor,
-        input.nominal_total,
-        carry_before,
-    )?;
-    if !split.promis_limit_credit.is_zero() {
+    let split = LimitSplit::derive(base_limit, nod_loads_minor, nominal_total, carry_before)?;
+    if !split.promis_limit_add.is_zero() {
         PromisLimitContract::new(storage.clone()).add(
             outbe_promislimit::LimitSource::MetadosisLimit,
-            split.promis_limit_credit,
+            split.promis_limit_add,
         )?;
     }
     let mut promis = PromisLimitContract::new(storage);
@@ -129,16 +142,12 @@ pub(crate) fn allocate_day_metadosis_limit(
         }
         .into());
     }
-    promis.add(
-        outbe_promislimit::LimitSource::LysisLimit,
-        input.unused_lysis_minor,
-    )?;
     Ok(split)
 }
 
 /// Briefs Desis and returns the Desis Limit the auction holds. A limit that Desis
 /// returns goes back to the Promis Limit.
-pub(crate) fn brief_auction(
+pub(crate) fn apply_desis_limit(
     storage: StorageHandle<'_>,
     emission_day: u32,
     split: &LimitSplit,
@@ -195,12 +204,9 @@ mod tests {
                     .unwrap();
                 let split = allocate_day_metadosis_limit(
                     storage.clone(),
-                    LysisLimitInput {
-                        base_limit: U256::from(base as u64),
-                        lysis_limit_minor: U256::from(lysis as u64),
-                        nominal_total: U256::from(nominal as u64),
-                        unused_lysis_minor: U256::ZERO,
-                    },
+                    U256::from(base as u64),
+                    U256::from(lysis as u64),
+                    U256::from(nominal as u64),
                 )
                 .unwrap();
                 assert_eq!(split.desis_limit_minor, U256::from(auction as u64));
@@ -212,7 +218,7 @@ mod tests {
                 );
                 let day = EmissionDate::new(20260101);
                 outbe_desis::api::schedule_auction(storage.clone(), day).unwrap();
-                brief_auction(storage.clone(), day.value(), &split).unwrap();
+                apply_desis_limit(storage.clone(), day.value(), &split).unwrap();
                 let desis = outbe_desis::DesisContract::new(storage.clone());
                 assert_eq!(
                     desis.pending_desis_limit_minor.read(&day).unwrap(),
@@ -246,16 +252,9 @@ mod tests {
             let events = provider.get_ordered_events().to_vec();
             let result = StorageHandle::enter(&mut provider, |storage| {
                 storage.with_checkpoint(|| {
-                    let split = allocate_day_metadosis_limit(
-                        storage.clone(),
-                        LysisLimitInput {
-                            base_limit: base,
-                            lysis_limit_minor: lysis,
-                            nominal_total: nominal,
-                            unused_lysis_minor: U256::ZERO,
-                        },
-                    )?;
-                    brief_auction(storage.clone(), 20260101, &split)
+                    let split =
+                        allocate_day_metadosis_limit(storage.clone(), base, lysis, nominal)?;
+                    apply_desis_limit(storage.clone(), 20260101, &split)
                 })
             });
             assert!(result.is_err());
@@ -269,21 +268,13 @@ mod tests {
         let mut provider = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut provider, |storage| {
             let base = U256::from(u128::MAX) + U256::from(3);
-            let split = allocate_day_metadosis_limit(
-                storage.clone(),
-                LysisLimitInput {
-                    base_limit: base,
-                    lysis_limit_minor: U256::ONE,
-                    nominal_total: U256::MAX,
-                    unused_lysis_minor: U256::ZERO,
-                },
-            )
-            .unwrap();
+            let split =
+                allocate_day_metadosis_limit(storage.clone(), base, U256::ONE, U256::MAX).unwrap();
             assert!(split.desis_limit_minor > U256::from(u128::MAX));
             let day = EmissionDate::new(20260101);
             outbe_desis::api::schedule_auction(storage.clone(), day).unwrap();
             assert_eq!(
-                brief_auction(storage.clone(), day.value(), &split).unwrap(),
+                apply_desis_limit(storage.clone(), day.value(), &split).unwrap(),
                 U256::ZERO
             );
             assert_eq!(

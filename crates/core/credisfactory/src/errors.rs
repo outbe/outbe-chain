@@ -12,26 +12,24 @@ use thiserror::Error;
 pub enum CredisFactoryError {
     #[error("settlement amount is zero")]
     InvalidAmount,
-    #[error("attached COEN must equal the pledged collateral exactly")]
-    CcaStakeMismatch,
     #[error("reservation not found")]
     ReservationNotFound,
     #[error("reservation expired")]
     ReservationExpired,
-    #[error("reservation cca mismatch")]
-    ReservationCcaMismatch,
+    #[error("only the Credis owner of the reservation can issue it")]
+    ReservationOwnerMismatch,
     #[error("amount must be positive")]
     ZeroIssueTerm,
-    #[error("pledge source is zero")]
-    InvalidSource,
+    #[error("pledge account is zero")]
+    InvalidPledgeAccount,
     #[error("Credis owner is zero")]
     InvalidOwner,
     #[error("Credis already exists")]
     CredisAlreadyExists,
     #[error("Credis is closed")]
     CredisClosed,
-    #[error("payment is below the interest accrued since the last settlement")]
-    PaymentBelowAccruedInterest,
+    #[error("payment is below the fee accrued since the last settlement")]
+    PaymentBelowAccruedFee,
     #[error("Credis is not called")]
     NotCalled,
     #[error("Credis is not Issued")]
@@ -40,12 +38,16 @@ pub enum CredisFactoryError {
     SettlementDeadlineNotPassed,
     #[error("settlement deadline has passed")]
     SettlementDeadlinePassed,
-    #[error("Credis has no outstanding principal")]
+    #[error("Credis has no outstanding amount")]
     NothingOutstanding,
     #[error("only the Credis owner can forfeit it")]
     NotCredisOwner,
     #[error("Credis cannot be forfeited in its issue block")]
     CannotForfeitInIssueBlock,
+    #[error("Credis cannot be fully settled in its issue block")]
+    CannotFullySettleInIssueBlock,
+    #[error("settlement asset not allowed")]
+    SettlementAssetNotAllowed,
     #[error("payoff overflow")]
     PayoffOverflow,
     #[error("asset decimals undecodable")]
@@ -54,8 +56,6 @@ pub enum CredisFactoryError {
     AssetCurrencyUndecodable,
     #[error("asset metadata changed")]
     AssetMetadataChanged,
-    #[error("COEN stake overflow")]
-    CoenStakeOverflow,
     #[error("Credis changed during issuance")]
     CredisChangedDuringIssuance,
     #[error("collateral increased")]
@@ -77,18 +77,17 @@ impl From<CredisFactoryError> for PrecompileError {
         use ICredisFactory as I;
         match err {
             CredisFactoryError::InvalidAmount => revert_with(I::InvalidAmount {}),
-            CredisFactoryError::CcaStakeMismatch => revert_with(I::CcaStakeMismatch {}),
             CredisFactoryError::ReservationNotFound => revert_with(I::ReservationNotFound {}),
             CredisFactoryError::ReservationExpired => revert_with(I::ReservationExpired {}),
-            CredisFactoryError::ReservationCcaMismatch => revert_with(I::ReservationCcaMismatch {}),
+            CredisFactoryError::ReservationOwnerMismatch => {
+                revert_with(I::ReservationOwnerMismatch {})
+            }
             CredisFactoryError::ZeroIssueTerm => revert_with(I::ZeroIssueTerm {}),
-            CredisFactoryError::InvalidSource => revert_with(I::InvalidSource {}),
+            CredisFactoryError::InvalidPledgeAccount => revert_with(I::InvalidPledgeAccount {}),
             CredisFactoryError::InvalidOwner => revert_with(I::InvalidOwner {}),
             CredisFactoryError::CredisAlreadyExists => revert_with(I::CredisAlreadyExists {}),
             CredisFactoryError::CredisClosed => revert_with(I::CredisClosed {}),
-            CredisFactoryError::PaymentBelowAccruedInterest => {
-                revert_with(I::PaymentBelowAccruedInterest {})
-            }
+            CredisFactoryError::PaymentBelowAccruedFee => revert_with(I::PaymentBelowAccruedFee {}),
             CredisFactoryError::NotCalled => revert_with(I::NotCalled {}),
             CredisFactoryError::CredisNotIssued => revert_with(I::CredisNotIssued {}),
             CredisFactoryError::SettlementDeadlineNotPassed => {
@@ -99,6 +98,12 @@ impl From<CredisFactoryError> for PrecompileError {
             }
             CredisFactoryError::NothingOutstanding => revert_with(I::NothingOutstanding {}),
             CredisFactoryError::NotCredisOwner => revert_with(I::NotCredisOwner {}),
+            CredisFactoryError::CannotFullySettleInIssueBlock => {
+                revert_with(I::CannotFullySettleInIssueBlock {})
+            }
+            CredisFactoryError::SettlementAssetNotAllowed => {
+                revert_with(I::SettlementAssetNotAllowed {})
+            }
             CredisFactoryError::CannotForfeitInIssueBlock => {
                 revert_with(I::CannotForfeitInIssueBlock {})
             }
@@ -110,7 +115,6 @@ impl From<CredisFactoryError> for PrecompileError {
                 revert_with(I::AssetCurrencyUndecodable {})
             }
             CredisFactoryError::AssetMetadataChanged => revert_with(I::AssetMetadataChanged {}),
-            CredisFactoryError::CoenStakeOverflow => revert_with(I::CoenStakeOverflow {}),
             CredisFactoryError::CredisChangedDuringIssuance => {
                 revert_with(I::CredisChangedDuringIssuance {})
             }

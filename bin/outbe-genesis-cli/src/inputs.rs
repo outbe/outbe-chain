@@ -28,10 +28,6 @@ pub struct ValidatorSeedTerms {
     pub epoch_length_blocks: u64,
     /// Genesis epoch start unix timestamp (`config.genesisTime`).
     pub epoch_start_timestamp: u64,
-    /// Minimum stake in COEN base units (`unit`, `U256`).
-    pub min_stake: U256,
-    /// Per-founder initial bonded stake in COEN base units (`unit`, `U256`).
-    pub validator_stake: U256,
 }
 
 /// Terms passed to `seed_staking`.

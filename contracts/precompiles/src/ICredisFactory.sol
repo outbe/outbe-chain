@@ -3,16 +3,15 @@ pragma solidity ^0.8.30;
 
 interface ICredisFactory {
     error InvalidAmount();
-    error CcaStakeMismatch();
     error ReservationNotFound();
     error ReservationExpired();
-    error ReservationCcaMismatch();
+    error ReservationOwnerMismatch();
     error ZeroIssueTerm();
-    error InvalidSource();
+    error InvalidPledgeAccount();
     error InvalidOwner();
     error CredisAlreadyExists();
     error CredisClosed();
-    error PaymentBelowAccruedInterest();
+    error PaymentBelowAccruedFee();
     error NotCalled();
     error CredisNotFound();
     error CredisNotIssued();
@@ -24,60 +23,64 @@ interface ICredisFactory {
     error AssetDecimalsUndecodable();
     error AssetCurrencyUndecodable();
     error AssetMetadataChanged();
-    error CoenStakeOverflow();
     error CredisChangedDuringIssuance();
     error CollateralIncreased();
     error CollateralReleaseMismatch();
     error CredisChangedDuringPayment();
     error ForfeitureCollateralMismatch();
     error CannotForfeitInIssueBlock();
+    error CannotFullySettleInIssueBlock();
+    error SettlementAssetNotAllowed();
 
     event CredisSeriesOpened(
         bytes14 indexed seriesId,
+        uint8 subSeries,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
+        uint256 entryPriceMinor,
         uint256 callPriceMinor,
         uint64 callWindow,
         uint64 callThreshold,
-        uint64 callNoticePeriod,
-        uint256 policyRate
+        uint64 callNoticePeriod
     );
-    event CredisIssued(
-        uint256 indexed credisId,
-        address indexed owner,
+    /// Every unsettled Credis of the sub-series is called with its call group.
+    event CredisSeriesCalled(
         bytes14 indexed seriesId,
+        uint8 subSeries,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        address cca,
-        address asset,
-        uint256 principalMinor,
-        uint256 gratisMinor
+        uint64 calledAt,
+        uint64 settlementDeadline
     );
-    /// @notice One successful settlement. `interestSettledMinor` and `principalSettledMinor`
-    ///         are this payment's interest and principal deltas, and `amountMinor` is their
-    ///         sum. A reverted settlement emits nothing and leaves the Credis unchanged.
-    event CredisSettled(
-        uint256 indexed credisId,
-        address indexed owner,
-        address asset,
+    /// The deadline of the call group passed: the unsettled Credis of the sub-series are forfeited.
+    event CredisSeriesClosed(
+        bytes14 indexed seriesId,
+        uint8 subSeries,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint256 amountMinor,
-        uint256 interestSettledMinor,
-        uint256 principalSettledMinor
+        uint32 forfeitedCount,
+        uint256 forfeitedAmountMinor
     );
 
-    /// Use the reservation's pledge and every term it fixed, the call terms included.
-    /// The caller must be its CCA.
-    /// msg.value exactly matches reserved Gratis collateral in native COEN units.
-    function issueCredis(uint256 reservationId) external payable returns (uint256 credisId, uint256 principalMinor);
-    /// Any payer may repay. Freed collateral is released to the source's liquid Gratis.
-    /// The payer approves the VaultRouter for the repayment first.
-    function settleCredis(uint256 credisId, uint256 amountCapMinor)
+    /// Issue the Credis of the reservation with every term it fixed, the call terms included.
+    /// The caller must be its Credis owner and must have approved the amount of the asset to
+    /// the VaultRouter. `pledge` is the authorization of the main account, sealed to the
+    /// offer key: the main account and its MAC over the account, the Gratis quantity, the
+    /// reservation id and the chain id.
+    function issueCredis(uint256 credisReservationId, bytes calldata pledge)
         external
-        returns (uint256 principalSettledMinor, uint256 interestSettledMinor);
-    /// What paying the Credis off now takes: its outstanding principal plus the interest
-    /// accrued since the last settlement. Zero once it is Settled or Forfeited. Interest
+        returns (uint256 credisId, uint256 amountMinor);
+    /// Any payer may repay. Freed collateral goes back to the free Gratis of the main account.
+    /// The payer approves the VaultRouter for the repayment first. `asset` zero pays in the
+    /// asset of the Credis. Another registered asset of the issuance currency is allowed only
+    /// while the asset of the Credis has no vault, at par. `amountCapMinor` is in the units of
+    /// the Credis asset. The full settlement deletes the Credis and fails in its issue block.
+    function settleCredis(uint256 credisId, address asset, uint256 amountCapMinor)
+        external
+        returns (uint256 settledAmountMinor, uint256 settledFeeMinor);
+    /// What paying the Credis off now takes: its outstanding amount plus the fee
+    /// accrued since the last settlement. Zero once it is Forfeited by its deadline; a full
+    /// settlement or a forfeit deletes the Credis, and then the read reverts. Fee
     /// grows by whole days, so a payment landing a day later needs that day more;
     /// `settleCredis` takes only what is owed, so paying more is safe.
     function quoteSettlement(uint256 credisId) external view returns (uint256 payoffMinor);
@@ -104,9 +107,9 @@ interface ICredisFactory {
     ///         `CredisNotIssued` once it is Called, Settled or Forfeited.
     function getCallProgress(uint256 credisId) external view returns (CallProgress memory);
     /// The owner gives up an Issued or Called Credis before its settlement deadline: its remaining
-    /// Gratis burns, the principal is forfeited and the Credis is deleted.
+    /// Gratis burns, the amount is forfeited and the Credis is deleted.
     function forfeitCredis(uint256 credisId)
         external
-        returns (uint256 forfeitedGratisMinor, uint256 forfeitedPrincipalMinor);
+        returns (uint256 forfeitedGratisMinor, uint256 forfeitedAmountMinor);
     function supportsInterface(bytes4 interfaceId) external view returns (bool);
 }

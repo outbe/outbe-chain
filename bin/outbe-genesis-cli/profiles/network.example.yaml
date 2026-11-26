@@ -27,18 +27,12 @@ validators:
 keys_dir: ./keys
 
 # Genesis does not automatically register a test L2 or deploy its inbox.
-# Before offering Tributes, register the L2 through validator governance and
+# Before sending offers, register the L2 through validator governance and
 # provide its BLS root-signing key (or an inbox exposing groupPubKey()). The ZKP
 # circuit version must also have a compiled binding for that L2 chain id.
 
 tee:
-  mode: no-attestation-dev            # | dcap-required
-  # dcap-required additionally needs the exact release measurements:
-  # mrenclave: "<32-byte hex>"
-  # mrsigner: "<32-byte hex>"
-  # isv_prod_id: 0
-  # minimum_isv_svn: 0
-  # minimum_tcb_evaluation_data_number: 0
+  mode: no-attestation-dev
 
 # --- Everything below is optional ----------------------------------------
 
@@ -156,6 +150,10 @@ tee:
 #     - pair_base: COEN
 #       pair_quote: "840"
 #       peak_price: "1000000"
+
+# intex:                              # target chains of Intex; the list replaces the baseline one
+#   target_chains:
+#     - { chain_id: own, mode: auctions } # own = this network; a mode is series or auctions
 
 # balance:                            # extra native-token balances
 #   "0x4FE927aB711793954B3a29969Ecd4A60D6D265d0": "1000000000000000000000"

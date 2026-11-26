@@ -13,7 +13,7 @@ fn test_register_validator() {
     let pk = dummy_consensus_pubkey(1);
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val_addr, &pk).unwrap();
+        vs.register_validator(val_addr, &pk).unwrap();
 
         // Index must be 1
         assert_eq!(vs.address_to_index.read(&val_addr).unwrap(), 1);
@@ -42,42 +42,6 @@ fn test_register_validator() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. test_register_self - self-registration now requires BLS proof
-// ---------------------------------------------------------------------------
-#[test]
-fn test_register_self_without_sig_rejected() {
-    let val_addr = address!("0x2222222222222222222222222222222222222222");
-    let pk = dummy_consensus_pubkey(2);
-
-    with_vs_configured(10, |vs| {
-        // Self-registration without BLS signature must fail
-        let result = vs.register_validator_with_sig(
-            val_addr,
-            val_addr,
-            &pk,
-            test_radicle_node_id(val_addr),
-            None,
-        );
-        assert!(
-            result.is_err(),
-            "self-registration without BLS sig must be rejected"
-        );
-    });
-}
-
-#[test]
-fn test_register_via_owner() {
-    let val_addr = address!("0x2222222222222222222222222222222222222222");
-    let pk = dummy_consensus_pubkey(2);
-
-    with_vs_configured(10, |vs| {
-        // Owner registration path - no BLS sig required
-        vs.register_validator(OWNER, val_addr, &pk).unwrap();
-        assert!(vs.is_validator(val_addr).unwrap());
-    });
-}
-
-// ---------------------------------------------------------------------------
 // 3. test_register_duplicate_fails
 // ---------------------------------------------------------------------------
 #[test]
@@ -86,8 +50,8 @@ fn test_register_duplicate_fails() {
     let pk = dummy_consensus_pubkey(3);
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val_addr, &pk).unwrap();
-        let result = vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(30));
+        vs.register_validator(val_addr, &pk).unwrap();
+        let result = vs.register_validator(val_addr, &dummy_consensus_pubkey(30));
         assert!(result.is_err(), "duplicate registration must fail");
     });
 }
@@ -104,7 +68,7 @@ fn test_register_max_validators() {
 
         register_validators(vs, &[(addr1, 11), (addr2, 22)]).unwrap();
 
-        let result = vs.register_validator(OWNER, addr3, &dummy_consensus_pubkey(33));
+        let result = vs.register_validator(addr3, &dummy_consensus_pubkey(33));
         assert!(result.is_err(), "should fail when max validators reached");
     });
 }
@@ -189,7 +153,7 @@ fn test_consensus_pubkey_roundtrip() {
     }
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val_addr, &pk).unwrap();
+        vs.register_validator(val_addr, &pk).unwrap();
         let record = vs.get_validator(val_addr).unwrap().unwrap();
         assert_eq!(record.consensus_pubkey, pk);
     });
@@ -204,7 +168,7 @@ fn test_pubkey_hash_lookup() {
     let pk = dummy_consensus_pubkey(0xF2);
 
     with_vs_configured(10, |vs| {
-        vs.register_validator(OWNER, val_addr, &pk).unwrap();
+        vs.register_validator(val_addr, &pk).unwrap();
 
         let pk_hash = ValidatorSet::consensus_pubkey_hash(&pk);
         let looked_up = vs.lookup_by_pubkey_hash(pk_hash).unwrap();
@@ -223,11 +187,11 @@ fn test_reregister_inactive_validator() {
 
     with_vs_configured(10, |vs| {
         // Register and transition to INACTIVE
-        vs.register_validator(OWNER, val_addr, &pk_old).unwrap();
+        vs.register_validator(val_addr, &pk_old).unwrap();
         make_inactive_for_test(vs, val_addr);
 
         // Re-register with a new pubkey
-        vs.register_validator(OWNER, val_addr, &pk_new).unwrap();
+        vs.register_validator(val_addr, &pk_new).unwrap();
 
         // Status reset to PENDING
         assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::PENDING);
@@ -272,7 +236,7 @@ fn test_reregister_inactive_rejected_in_epoch_zero_even_when_block_cooldown_elap
 
     let mut storage = registry_storage(5, 10).unwrap();
     at_height(&mut storage, 5, |vs| {
-        vs.register_validator(OWNER, val_addr, &pk_old).unwrap();
+        vs.register_validator(val_addr, &pk_old).unwrap();
         vs.record_stake_increase(val_addr, minimum, minimum)
             .unwrap();
         vs.record_unstake(val_addr, U256::ZERO, minimum, 10)
@@ -283,7 +247,7 @@ fn test_reregister_inactive_rejected_in_epoch_zero_even_when_block_cooldown_elap
         assert_eq!(vs.epoch_start_block.read().unwrap(), 0);
         assert_eq!(vs.config_reregistration_cooldown.read().unwrap(), 0);
 
-        let err = vs.register_validator(OWNER, val_addr, &pk_new).unwrap_err();
+        let err = vs.register_validator(val_addr, &pk_new).unwrap_err();
         assert_eq!(
             super::typed_revert(
                 crate::precompile::IValidatorSet::ReregistrationCooldownNotExpired {}.abi_encode()
@@ -298,7 +262,7 @@ fn test_reregister_inactive_rejected_in_epoch_zero_even_when_block_cooldown_elap
         vs.config_reregistration_cooldown.write(2).unwrap();
         assert_eq!(vs.epoch_start_block.read().unwrap(), 0);
 
-        let err = vs.register_validator(OWNER, val_addr, &pk_new).unwrap_err();
+        let err = vs.register_validator(val_addr, &pk_new).unwrap_err();
         assert_eq!(
             super::typed_revert(
                 crate::precompile::IValidatorSet::ReregistrationCooldownNotExpired {}.abi_encode()
@@ -310,7 +274,7 @@ fn test_reregister_inactive_rejected_in_epoch_zero_even_when_block_cooldown_elap
         );
 
         vs.epoch_start_block.write(5).unwrap();
-        vs.register_validator(OWNER, val_addr, &pk_new).unwrap();
+        vs.register_validator(val_addr, &pk_new).unwrap();
         assert_eq!(vs.val_status.read(&val_addr).unwrap(), status::PENDING);
     });
 }
@@ -326,7 +290,7 @@ fn test_reregister_active_fails() {
         register_boundary_active(vs, val_addr, 0x21).unwrap();
 
         // Re-registration of ACTIVE validator must fail
-        let result = vs.register_validator(OWNER, val_addr, &dummy_consensus_pubkey(0x22));
+        let result = vs.register_validator(val_addr, &dummy_consensus_pubkey(0x22));
         assert!(result.is_err());
     });
 }
@@ -342,9 +306,9 @@ fn test_duplicate_pubkey_rejected() {
         let val_b = address!("0x1919191919191919191919191919191919191919");
         let pk = dummy_consensus_pubkey(18);
 
-        vs.register_validator(OWNER, val_a, &pk).unwrap();
+        vs.register_validator(val_a, &pk).unwrap();
         // Same pubkey for different validator must fail
-        let result = vs.register_validator(OWNER, val_b, &pk);
+        let result = vs.register_validator(val_b, &pk);
         assert!(result.is_err(), "duplicate BLS pubkey must be rejected");
     });
 }
@@ -360,13 +324,7 @@ fn test_register_self_invalid_sig_rejected() {
         let pk = dummy_consensus_pubkey(45);
         let bad_sig = [0xFFu8; 96]; // garbage signature
 
-        let result = vs.register_validator_with_sig(
-            val,
-            val,
-            &pk,
-            test_radicle_node_id(val),
-            Some(&bad_sig),
-        );
+        let result = vs.register_validator_with_sig(val, &pk, test_radicle_node_id(val), &bad_sig);
         assert!(result.is_err(), "invalid BLS sig must be rejected");
     });
 }
@@ -388,7 +346,7 @@ fn test_register_self_valid_sig_accepted() {
         let sig = sk.sign(&message, VALIDATOR_REGISTRATION_DST, &[]);
         let sig_bytes: [u8; 96] = sig.to_bytes();
 
-        vs.register_validator_with_sig(val, val, &pk_bytes, node_id, Some(&sig_bytes))
+        vs.register_validator_with_sig(val, &pk_bytes, node_id, &sig_bytes)
             .unwrap();
         assert!(vs.is_validator(val).unwrap());
     });
@@ -411,9 +369,8 @@ fn registration_pop_cannot_be_replayed_on_another_chain() {
         let mut storage = HashMapStorageProvider::new(chain_id);
         StorageHandle::enter(&mut storage, |storage| {
             let mut vs = ValidatorSet::new(storage);
-            vs.config_owner.write(OWNER).unwrap();
             vs.config_max_validators.write(10).unwrap();
-            vs.register_validator_with_sig(val, val, &pk, node_id, Some(&sig))
+            vs.register_validator_with_sig(val, &pk, node_id, &sig)
         })
     };
 

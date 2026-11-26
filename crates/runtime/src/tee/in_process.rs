@@ -39,7 +39,7 @@ pub(super) fn initialize(
         node_id: NodeIdV1 { reth_p2p_public },
         initialization_challenge: restored.initialization_challenge,
         node_host_noise_x25519: authorization.node_host_noise_x25519,
-        recipient_x25519: keys.tribute_offer_public(),
+        recipient_x25519: keys.recipient_public(),
         attestation_ed25519: keys.attestation_pub(),
         noise_responder_x25519: keys.noise_public(),
     };
@@ -559,7 +559,7 @@ mod tests {
             node_id: auth_a.node_id.clone(),
             initialization_challenge: first.initialization_challenge,
             node_host_noise_x25519: auth_a.node_host_noise_x25519,
-            recipient_x25519: first.keys.tribute_offer_public(),
+            recipient_x25519: first.keys.recipient_public(),
             attestation_ed25519: first.keys.attestation_pub(),
             noise_responder_x25519: first.keys.noise_public(),
         }

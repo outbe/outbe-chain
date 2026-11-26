@@ -4,26 +4,20 @@ use super::*;
 
 /// Independent `(variant, discriminant)` table. Swapping two enum
 /// discriminants fails this list even though `value()` is `as u8`.
-const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 19] = [
+const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 13] = [
     (WitnessResponseTag::GratisOpApplied, 1),
     (WitnessResponseTag::PromisOpApplied, 2),
     (WitnessResponseTag::FidelityLeaguesSnapshotted, 4),
     (WitnessResponseTag::FidelityIndexQueried, 5),
-    (WitnessResponseTag::NodEncryptedForTributeV1, 7),
     (WitnessResponseTag::EncryptedNodMintRejectedV1, 8),
     (WitnessResponseTag::EncryptedNodMinedV1, 9),
     (WitnessResponseTag::NodAmountReadV1, 10),
-    (WitnessResponseTag::EncryptedTributeOfferBatchV2, 11),
-    (WitnessResponseTag::TributeAmountsReadV2, 12),
-    (WitnessResponseTag::TributeDayOpAppliedV2, 13),
-    (WitnessResponseTag::TributeDayAmountReadV2, 14),
     (WitnessResponseTag::FidelityQueryRejected, 15),
     (WitnessResponseTag::LysisFractionsExecutedV1, 16),
-    (WitnessResponseTag::TributeDayFractionsReadV1, 17),
-    (WitnessResponseTag::NodIssuedFromTributeV1, 18),
     (WitnessResponseTag::NodGroupLoadOpAppliedV1, 19),
     (WitnessResponseTag::NodGroupLoadReadV1, 20),
     (WitnessResponseTag::NodQuoteEncryptedV1, 21),
+    (WitnessResponseTag::NodIssuedAtOfferV1, 22),
 ];
 
 #[test]
@@ -53,8 +47,8 @@ fn recordable_tags_round_trip_and_reject_non_recordable_bytes() {
         ));
     }
     assert!(matches!(
-        WitnessResponseTag::try_from(22),
-        Err(WitnessTagError::OutOfRange { tag: 22 })
+        WitnessResponseTag::try_from(23),
+        Err(WitnessTagError::OutOfRange { tag: 23 })
     ));
     assert_eq!(
         (0..=V1_RESPONSE_TAG_MAX)

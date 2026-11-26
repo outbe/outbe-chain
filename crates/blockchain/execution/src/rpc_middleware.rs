@@ -56,7 +56,7 @@ pub struct OutbeRpcProtectionConfig {
     pub max_response_size_bytes: u32,
     /// Fail-fast concurrency permits for heavy EVM call/log methods.
     pub call_permits: usize,
-    /// Fail-fast concurrency permits for state/tribute proof methods.
+    /// Fail-fast concurrency permits for state proof methods.
     pub proof_permits: usize,
     /// Fail-fast concurrency permits for debug/trace/ots methods.
     pub trace_permits: usize,
@@ -164,7 +164,7 @@ fn classify_method(method: &str) -> Option<HeavyRpcClass> {
         | "eth_getFilterLogs"
         | "eth_getFilterChanges"
         | "eth_getBlockReceipts" => Some(HeavyRpcClass::Call),
-        "eth_getProof" | "outbe_getTributeStateSource" => Some(HeavyRpcClass::Proof),
+        "eth_getProof" => Some(HeavyRpcClass::Proof),
         _ if method.starts_with("debug_")
             || method.starts_with("trace_")
             || method.starts_with("ots_") =>

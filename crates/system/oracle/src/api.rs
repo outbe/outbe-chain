@@ -231,14 +231,14 @@ pub fn register_pair(storage: StorageHandle, pair: AddressPair) -> Result<PairIn
     oracle.register_pair(pair)
 }
 
-/// Public Oracle inputs used by the Tribute enclave.
+/// Public Oracle inputs of an offer, used by the enclave.
 ///
 /// Both VWAPs are the 24-hour VWAP of the hour of the offer, in the six-decimal
 /// COEN/ISO domain. The S-curve belongs only to the independently selected
 /// reference currency. The enclave owns the final
 /// `max(reference_vwap, reference_curve)` and cross-currency nominal arithmetic.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct TributePricingInputs {
+pub struct OfferPricingInputs {
     pub issuance_vwap_minor: U256,
     pub reference_vwap_minor: U256,
     pub reference_scurve_minor: U256,
@@ -249,14 +249,14 @@ pub struct TributePricingInputs {
 ///
 /// `None` means the issuance `COEN/<iso>` pair is not registered. Once the
 /// issuance pair exists, a zero VWAP means that the pair has no 24-hour VWAP
-/// in that hour, or that the reference pair is not registered. The Tribute host
+/// in that hour, or that the reference pair is not registered. The offer host
 /// can then reject the transient unpriced condition without collapsing it into
 /// an unsupported issuance.
-pub fn tribute_pricing_inputs(
+pub fn offer_pricing_inputs(
     storage: StorageHandle,
     issuance_currency: u16,
     reference_currency: u16,
-) -> Result<Option<TributePricingInputs>> {
+) -> Result<Option<OfferPricingInputs>> {
     let oracle: OracleContract<'_> = OracleContract::new(storage.clone());
     let issuance_pair = AddressPair::new_coen_to(issuance_currency);
     if oracle.pair_index_of(issuance_pair)? == 0 {
@@ -278,7 +278,7 @@ pub fn tribute_pricing_inputs(
                 scurve::scurve_value(&oracle, reference_pair, snapshot.cutoff())?,
             )
         };
-    Ok(Some(TributePricingInputs {
+    Ok(Some(OfferPricingInputs {
         issuance_vwap_minor,
         reference_vwap_minor,
         reference_scurve_minor,

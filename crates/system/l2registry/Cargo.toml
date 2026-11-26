@@ -26,7 +26,6 @@ commonware-math.workspace = true
 rand_core.workspace = true
 rand-commonware.workspace = true
 rand-core-commonware.workspace = true
-outbe-tributefactory.workspace = true
 reth-ethereum.workspace = true
 
 [lints]

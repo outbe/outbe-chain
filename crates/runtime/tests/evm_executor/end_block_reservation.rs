@@ -383,6 +383,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
     let expired_day = outbe_core_common::deadline_queue::deadline_day(expires_at).unwrap();
     let expired_capacity = U256::from(2_000_000u64);
     let stale_series = SeriesId::pack(20_240_101, *b"USD", b'U').unwrap();
+    let stale_group = alloy_primitives::B256::repeat_byte(0x5c);
 
     struct TestExpiryQueue<'a, 's>(&'a GemFactoryContract<'s>);
     outbe_core_common::impl_deadline_queue!(TestExpiryQueue<u64> {
@@ -423,7 +424,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
             credis.daily_phase.write(2).unwrap();
             outbe_core_common::deadline_queue::push(
                 &CredisCleanupQueue(&credis),
-                stale_series,
+                stale_group,
                 expires_at,
             )
             .unwrap();
@@ -563,7 +564,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
                 "OSCR (CredisFactory) must run cleanup_through and finish the pinned sweep day"
             );
             assert_eq!(
-                credis.cleanup_series_slot.read(&stale_series).unwrap(),
+                credis.cleanup_group_slot.read(&stale_group).unwrap(),
                 0,
                 "OSCR (CredisFactory) cleanup_through must drop due cleanup queue entry"
             );

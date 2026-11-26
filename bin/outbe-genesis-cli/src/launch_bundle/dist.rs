@@ -188,13 +188,9 @@ pub fn deploy_markdown(
         .map(|enode| format!("  - `{enode}`"))
         .collect::<Vec<_>>()
         .join("\n");
-    let dev_warning = if mode == "dcap-required" {
-        ""
-    } else {
-        "\n> **`no-attestation-dev`**: the node runs TEE operations without \
-hardware attestation. Use this mode only on devnet or testnet. Mainnet requires \
-`tee.mode: dcap-required` and a compatible attestation source.\n"
-    };
+    let dev_warning = "\n> **`no-attestation-dev`**: the node runs TEE operations without \
+hardware attestation. Use this mode only on devnet or testnet. Mainnet remains unavailable \
+until TDX/SNP attestation is implemented.\n";
 
     let reth_p2p_port = port_of(config, "reth_p2p_port")?;
     let reth_discv5_port = port_of(config, "reth_discv5_port")?;
@@ -208,7 +204,9 @@ hardware attestation. Use this mode only on devnet or testnet. Mainnet requires 
         .rsplit_once(':')
         .map(|(host, _)| host)
         .unwrap_or(first_p2p);
-    let rpc_bind = if config.get("rpc_bind_ip").and_then(Value::as_str) == Some("validator") {
+    let rpc_bind = if config.get("validator_runtime").is_some() {
+        "<per-validator-private-ip>".to_owned()
+    } else if config.get("rpc_bind_ip").and_then(Value::as_str) == Some("validator") {
         "<this-validator-private-ip>".to_owned()
     } else {
         rpc_bind_ip(config, first_host)?.to_string()
@@ -222,8 +220,9 @@ Chain id `{chain_id}`, {founder_count} founding validators, TEE mode `{mode}`.\n
 |---|---|---|---|\n\
 {rows_joined}\n\
 \n\
-Everything below was generated from your `network.yaml`. Ports are identical on\n\
-every machine, because each founder runs on its own host.\n\
+Everything below was generated from your `network.yaml`. When `validator_runtime`\n\
+is present, each generated validator script contains its resolved bind address and\n\
+ports; the network manifest is authoritative.\n\
 \n\
 ## 1. Copy the per-validator archive to each machine\n\
 \n\
@@ -245,7 +244,7 @@ Never copy one validator's archive or key directory to another machine.\n\
 \n\
 ## 2. Open the ports\n\
 \n\
-Between all founding machines:\n\
+Default ports between founding machines (per-validator runtime settings may override them):\n\
 \n\
 | Port | Purpose |\n\
 |---|---|\n\
@@ -323,9 +322,9 @@ number and `validator list` shows {founder_count} active validators.\n\
 \n\
 ## Storage configuration\n\
 \n\
-Tribute, Nod and Gem records, buckets and indexes live in the node's EVM state.\n\
-Metadosis reads Tribute from state, executes confidential Lysis in the enclave,\n\
-and saves the ready encrypted Nod records. No separate entity datasource is configured.\n\
+Nod and Gem records, buckets and indexes live in the node's EVM state.\n\
+Metadosis reads the encrypted sums of the Nods of the day in the enclave.\n\
+No separate entity datasource is configured.\n\
 \n\
 ## Notes\n\
 \n\

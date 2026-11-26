@@ -49,5 +49,10 @@
       }
     ],
     "anonymous": false
+  },
+  {
+    "type": "error",
+    "name": "WcoenBurnRefused",
+    "inputs": []
   }
 ]

@@ -81,6 +81,7 @@ fn issue_creates_series_in_registry() {
             callWindow: u64::from(28 * SECONDS_PER_DAY_U32),
             callThreshold: u64::from(21 * SECONDS_PER_DAY_U32),
             callNoticePeriod: u64::from(CALL_NOTICE_PERIOD),
+            transitMargin: 3_600,
             units: 100,
             unitPromisLoadMinor: U256::from(PROMIS_LOAD_MINOR),
         }]
@@ -178,10 +179,10 @@ fn issue_zero_winners_leaves_the_day_untouched() {
 }
 
 #[test]
-fn issue_sends_every_snapshot_chain_the_series() {
+fn issue_sends_every_target_chain_the_series() {
     with_factory(|s| {
         let mut p = sample(7);
-        p.snapshot_chains = vec![10, 20, 30];
+        p.target_chains = vec![10, 20, 30];
         let legs = runtime::issue_intex(&s, p).unwrap();
 
         let chains: Vec<u32> = legs.iter().map(|leg| leg.chain_id).collect();
@@ -239,7 +240,7 @@ fn coen_iso_wire_price_preserves_the_six_decimal_integer() {
 }
 
 fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
-    let payload = crate::sol_ext::IOriginRouter::IntexSeriesParams {
+    let payload = crate::transport::wire::IntexSeriesPayload {
         seriesId: sid(series).into(),
         emissionDay: day,
         issuedAt: ISSUED_AT,
@@ -257,9 +258,7 @@ fn leg(chain_id: u32, day: u32, series: u32) -> runtime::IssuanceLeg {
     runtime::IssuanceLeg { chain_id, payload }
 }
 
-fn shape(
-    messages: &[(u32, Vec<crate::sol_ext::IOriginRouter::IntexSeriesParams>)],
-) -> Vec<(u32, usize)> {
+fn shape(messages: &[(u32, Vec<crate::transport::wire::IntexSeriesPayload>)]) -> Vec<(u32, usize)> {
     messages
         .iter()
         .map(|(chain, series)| (*chain, series.len()))
@@ -359,7 +358,6 @@ pub(super) fn dual_currency_series(iso: u64) -> HashMapStorageProvider {
         IERC1155::balanceOfCall::SELECTOR,
         word(2),
     );
-    storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
         outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
         IVaultRouter::assetVaultsCountCall::SELECTOR,

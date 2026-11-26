@@ -75,8 +75,8 @@ pub(super) fn seed_dense_agent_recipients(
     for n in 0..address_count {
         let waa = numbered_test_address(0x10, n);
         let sra = numbered_test_address(0x11, n);
-        agent.increment_waa_tribute(prev_day.into(), waa)?;
-        agent.increment_sra_tribute(prev_day.into(), sra)?;
+        agent.increment_waa_offer(prev_day.into(), waa)?;
+        agent.increment_sra_offer(prev_day.into(), sra)?;
     }
     assert_eq!(
         agent.get_all_waa_counts(prev_day.into()).unwrap().len(),
@@ -530,8 +530,56 @@ pub(super) fn returning_contract(routes: Vec<([u8; 4], Vec<u8>)>) -> Bytecode {
     Bytecode::new_legacy(code.into())
 }
 
-pub(super) mod router_abi {
-    alloy_sol_types::sol!("../../contracts/intex/src/origin/interfaces/IOriginRouter.sol");
+/// Registers `chains` in Auctions in IntexFactory and as the chains of `days`, as the genesis and
+/// a START do.
+pub(super) fn seed_intex_targets(
+    storage: &StorageHandle<'_>,
+    chains: &[u32],
+    days: &[EmissionDate],
+) {
+    use outbe_intexfactory::targets::{pack_target, TargetMode};
+    let factory = outbe_intexfactory::IntexFactoryContract::new(storage.clone());
+    for &chain in chains {
+        factory
+            .target_chains
+            .push(pack_target(chain, TargetMode::Auctions))
+            .unwrap();
+    }
+    for day in days {
+        let list = factory.day_targets.list(day);
+        for &chain in chains {
+            list.push(chain).unwrap();
+        }
+    }
+}
+
+/// `InteroperableAddress.formatEvmV1(chain, TargetRouter)`, the sender of the bids at the hub.
+fn target_router_sender(chain: u32) -> Vec<u8> {
+    let reference: Vec<u8> = chain
+        .to_be_bytes()
+        .into_iter()
+        .skip_while(|byte| *byte == 0)
+        .collect();
+    let mut out = vec![0x00, 0x01, 0x00, 0x00, reference.len() as u8];
+    out.extend_from_slice(&reference);
+    out.push(20);
+    out.extend_from_slice(outbe_core_common::addresses::TARGET_ROUTER_ADDRESS.as_slice());
+    out
+}
+
+fn deliver_bids_message(storage: &StorageHandle<'_>, chain: u32, payload: Vec<u8>) {
+    let call = outbe_desis::precompile::IDesis::receiveMessageCall {
+        receiveId: alloy_primitives::B256::ZERO,
+        sender: target_router_sender(chain).into(),
+        payload: payload.into(),
+    };
+    outbe_desis::precompile::dispatch(
+        storage.clone(),
+        &call.abi_encode(),
+        outbe_core_common::addresses::ERC7786_HUB_ADDRESS,
+        U256::ZERO,
+    )
+    .unwrap();
 }
 
 pub(super) fn accept_auction_batches(
@@ -540,53 +588,36 @@ pub(super) fn accept_auction_batches(
     chain: u32,
     batches: u16,
 ) {
+    use alloy_sol_types::SolValue;
+    seed_intex_targets(&storage, &[chain], &[day]);
     for batch in 0..batches {
         let indices = (0..64u32).map(|offset| u32::from(batch) * 64 + offset);
-        let call = outbe_desis::precompile::IDesis::collectIntexAuctionBidsCall {
-            receiveId: alloy_primitives::B256::ZERO,
-            emissionDay: day.value(),
-            srcChainId: chain,
-            pageIndex: batch,
-            totalPages: batches,
-            bidders: indices
-                .clone()
-                .map(|index| {
-                    numbered_test_address(0xa3, u64::from(chain) * 16384 + u64::from(index + 1))
-                })
-                .collect(),
-            packedBids: indices
-                .map(|index| {
-                    U256::from_limbs([
-                        840 | (840 << 16) | (u64::from(index) << 32),
-                        2_000_000 | (1 << 32),
-                        0,
-                        0,
-                    ])
-                })
-                .collect(),
-        };
-        outbe_desis::precompile::dispatch(
-            storage.clone(),
-            &call.abi_encode(),
-            outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS,
-            U256::ZERO,
-        )
-        .unwrap();
+        let bidders: Vec<Address> = indices
+            .clone()
+            .map(|index| {
+                numbered_test_address(0xa3, u64::from(chain) * 16384 + u64::from(index + 1))
+            })
+            .collect();
+        let packed: Vec<U256> = indices
+            .map(|index| {
+                U256::from_limbs([
+                    840 | (840 << 16) | (u64::from(index) << 32),
+                    2_000_000 | (1 << 32),
+                    0,
+                    0,
+                ])
+            })
+            .collect();
+        let mut page = vec![1u8, outbe_intexfactory::transport::wire::MSG_BIDS_PAGE];
+        page.extend((day.value(), chain, batch, batches, bidders, packed).abi_encode_params());
+        deliver_bids_message(&storage, chain, page);
     }
-    let done = outbe_desis::precompile::IDesis::completeIntexAuctionBidsCall {
-        receiveId: alloy_primitives::B256::ZERO,
-        emissionDay: day.value(),
-        srcChainId: chain,
-        totalPages: batches,
-        totalBids: u32::from(batches) * 64,
-    };
-    outbe_desis::precompile::dispatch(
-        storage.clone(),
-        &done.abi_encode(),
-        outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS,
-        U256::ZERO,
-    )
-    .unwrap();
+    let mut totals = vec![1u8, outbe_intexfactory::transport::wire::MSG_BIDS_TOTALS];
+    totals.extend_from_slice(&day.value().to_be_bytes());
+    totals.extend_from_slice(&chain.to_be_bytes());
+    totals.extend_from_slice(&batches.to_be_bytes());
+    totals.extend_from_slice(&(u32::from(batches) * 64).to_be_bytes());
+    deliver_bids_message(&storage, chain, totals);
     let auction = outbe_desis::DesisContract::new(storage);
     let key = outbe_desis::DesisContract::chain_key(day, chain);
     assert_eq!(
@@ -682,24 +713,19 @@ fn assert_deferred_state(
             assert_eq!(cycle.last_executed_at.read(&id).unwrap(), scheduled);
             assert_eq!(cycle.last_executed_block_number.read(&id).unwrap(), block);
         }
-        let first_result = router_abi::IOriginRouter::sendIntexAuctionResultCall {
-            dstChainId: 1,
-            emissionDay: 20240101,
-            wonQuantity: 0,
-            wonBidsCount: 0,
-            quantity: 0,
-            clearingRate: 0,
-            totalDemand: 0,
-        }
-        .abi_encode();
-        let counter = U256::from_be_bytes(keccak256(first_result).0);
-        for address in [outbe_core_common::addresses::ORIGIN_ROUTER_ADDRESS, RELAY] {
-            assert_eq!(
-                storage.sload(address, counter).unwrap(),
-                U256::ZERO,
-                "rolled-back child economic state must not survive"
-            );
-        }
+        let rolled_back = outbe_desis::DesisContract::new(storage.clone())
+            .outbox()
+            .messages(1)
+            .unwrap()
+            .into_iter()
+            .any(|message| {
+                message.label.msg_type
+                    == outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_RESULT
+            });
+        assert!(
+            !rolled_back,
+            "a rolled-back clearing leaves no result in the outbox"
+        );
         let auction = outbe_desis::DesisContract::new(storage);
         let day = EmissionDate::new(20240101);
         assert_eq!(

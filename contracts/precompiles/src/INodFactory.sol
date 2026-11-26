@@ -21,9 +21,33 @@ interface INodFactory {
     error MissingGroupForCall(bytes32 groupKey);
     error CallPriceOverflow();
     error DateStep(uint8 kind, uint32 dateKey);
+    error EnclaveRejected(string reason);
+    error OfferEnclaveFailed(string reason);
+    error NodLoadBelowOneMinorUnit();
+    error ZkProofRequired();
+    error UnknownCircuitVersion(uint32 chainId, string version);
+    error UnsupportedZkCircuit();
+    error MalformedZkProof(string value);
+    error ZkPublicInputMismatch(string field);
+    error InvalidZkProof();
+    error ZkVerifierUnavailable(string value);
+    error InvalidWorldwideDay(uint32 worldwideDay);
+    error WorldwideDayNotOffering(uint32 worldwideDay);
+    error IssuanceCurrencyNotRegistered(uint16 issuanceCurrency);
+    error CurrencyPriceUnavailable(uint32 worldwideDay);
+    error EmptySuHashList();
+    error InvalidSuHashHex(string hash);
+    error InvalidSuHashLength(uint64 length);
+    error WalletAddressesRequiredWhenSraProvided();
+    error SraAddressesRequiredWhenWalletProvided();
+    error InvalidWalletAddressAtIndex(uint64 index, string walletAddress);
+    error InvalidSraAddressAtIndex(uint64 index, string sraAddress);
 
+    /// The first Nod of sub-series `subSeriesId` opened it with its entry price, its call
+    /// price and the call terms of its group.
     event NodSeriesOpened(
         bytes14 indexed seriesId,
+        uint16 indexed subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
         uint256 entryPriceMinor,
@@ -32,30 +56,53 @@ interface INodFactory {
         uint64 callThreshold,
         uint64 callNoticePeriod
     );
-
-    event NodIssued(
-        uint256 indexed nodId,
-        address indexed owner,
+    /// The daily call scan called the group of the sub-series. Every Nod in it must be
+    /// settled by `settlementDeadline`, or it is forfeited when the sub-series closes.
+    event NodSeriesCalled(
         bytes14 indexed seriesId,
+        uint16 indexed subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint16 leagueId,
-        bytes payload
+        uint64 calledAt,
+        uint64 settlementDeadline
     );
-
-    /// @notice Emitted when a Nod is settled.
-    event NodSettled(
-        uint256 indexed nodId,
-        address indexed owner,
-        address asset,
+    /// The settlement deadline lapsed: the `forfeitedCount` unsettled Nods of the sub-series
+    /// are forfeited and their `forfeitedAmountMinor` returned to the Promis Limit at once.
+    /// The cleanup deletes them after.
+    event NodSeriesClosed(
+        bytes14 indexed seriesId,
+        uint16 indexed subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint256 amountMinor
+        uint32 forfeitedCount,
+        uint256 forfeitedAmountMinor
     );
 
-    /// @notice Pay an uncalled Nod, or a called one at or before its settlement
+    /// @notice Offer the spends of `worldwideDay` and issue their Nod in this transaction.
+    /// The Nod gets its entry price, its call price and its Gratis load: 32% of the
+    /// nominal of the offer. Reverts with no Nod when a currency has no 24-hour VWAP at
+    /// the offer hour, or when the load is below one minor unit.
+    /// @param cipherText The offer payload, encrypted to the network offer key.
+    /// @param chainId The registered L2 that signed `zkMerkleRoot`.
+    /// @param version The exact L2 circuit version of `zkProof`.
+    /// @param signature The L2 committee's BLS MinSig signature in G1 over `zkMerkleRoot`.
+    function issueNod(
+        bytes calldata cipherText,
+        bytes calldata nonce,
+        uint256 ephemeralPubkey,
+        uint32 worldwideDay,
+        uint16 issuanceCurrency,
+        uint16 referenceCurrency,
+        bytes calldata zkProof,
+        uint32 chainId,
+        string calldata version,
+        bytes calldata zkMerkleRoot,
+        bytes calldata signature
+    ) external returns (uint256 nodId);
+
+    /// @notice Settle an uncalled Nod, or a called one at or before its settlement
     /// deadline, in ERC20 base units of `asset`. Any caller may pay. The Nod stays
-    /// with its owner. Approve the VaultRouter for the `quoteSettlement` amount first.
+    /// with its owner. Approve the VaultRouter for `amountCapMinor` first.
     /// The asset must have a reserve vault and report the Nod's reference or
     /// issuance ISO 4217 code. Issuance-currency payment converts the
     /// reference-currency entry cost at the COEN cross rate of the trailing VWAP
@@ -63,7 +110,10 @@ interface INodFactory {
     /// @param snapshotId The snapshot `quoteSettlement` returned. An
     /// issuance-currency payment naming any other snapshot reverts. Ignored on
     /// the reference rail.
-    function settleNod(uint256 nodId, address asset, uint256 snapshotId) external;
+    /// @param amountCapMinor The most the payer pays, in `asset` units. A payer whose
+    /// allowance or balance is below it reverts `InsufficientFunds`; a cost above
+    /// it reverts `CostAboveCap`. The call takes only the cost.
+    function settleNod(uint256 nodId, address asset, uint256 snapshotId, uint256 amountCapMinor) external;
 
     /// @notice What settling `nodId` with `asset` costs, and which of the Nod's
     /// two currencies that asset settles on. Only the Nod owner may call this
@@ -100,7 +150,7 @@ interface INodFactory {
     ///         `NodNotIssued` once it is Called, Settled or Forfeited.
     function getCallProgress(uint256 nodId) external view returns (CallProgress memory);
 
-    /// @notice Mine a paid Nod and mint its Gratis load to the Nod owner.
+    /// @notice Mine a settled Nod and mint its Gratis load to the Nod owner.
     /// @param nonce PoW over
     /// `sha256("OUTBE_NOD_MINING_V1" || nodId_be32 || owner_20 || miningSequence_be8 || nonce_be8)`
     /// with `miningSequence = 0` and the required leading zero bytes. The owner is the Nod owner.

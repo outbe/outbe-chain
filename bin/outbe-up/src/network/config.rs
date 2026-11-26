@@ -15,9 +15,16 @@ use serde::{Deserialize, Serialize};
 use crate::support::progress::Progress;
 use crate::validator::config::{HyperlaneConfig, HyperlaneOrigin};
 
-pub const CONFIG_VERSION: u32 = 1;
+pub const CONFIG_VERSION: u32 = 2;
 pub const MIN_FOUNDERS: usize = 4;
 pub const EXAMPLE: &str = include_str!("../../templates/network/network.example.yaml");
+
+const RETH_P2P_BASE_PORT: u16 = 30_303;
+const RETH_DISCOVERY_BASE_PORT: u16 = 31_303;
+const CONSENSUS_BASE_PORT: u16 = 30_400;
+const RADICLE_BASE_PORT: u16 = 8_776;
+const HYPERLANE_BASE_PORT: u16 = 9_000;
+const RPC_BASE_PORT: u16 = 8_545;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -27,6 +34,7 @@ pub struct NetworkConfig {
     pub network: Network,
     pub chain_id: u64,
     pub certified_rpc: String,
+    pub machines: BTreeMap<String, Machine>,
     pub founders: Vec<Founder>,
     pub hyperlane: HyperlaneNetworkConfig,
     #[serde(default)]
@@ -64,11 +72,56 @@ impl Network {
 #[serde(deny_unknown_fields)]
 pub struct Founder {
     pub name: String,
-    pub ssh: Ssh,
-    pub advertise_ip: Ipv4Addr,
-    #[serde(default = "loopback")]
-    pub rpc_bind_ip: Ipv4Addr,
-    pub hyperlane_public_url: String,
+    pub machine: String,
+    pub private_ip: Ipv4Addr,
+    #[serde(default)]
+    pub publish_rpc: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct Machine {
+    pub public_ip: Ipv4Addr,
+    #[serde(default = "default_ssh_user")]
+    pub ssh_user: String,
+    #[serde(default = "default_ssh_port")]
+    pub ssh_port: u16,
+    #[serde(default = "default_vm_ssh_user")]
+    pub vm_ssh_user: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResolvedFounder {
+    pub name: String,
+    pub machine: String,
+    pub public_ip: Ipv4Addr,
+    pub private_ip: Ipv4Addr,
+    pub offset: u16,
+    pub jump_user: String,
+    pub jump_port: u16,
+    pub vm_user: String,
+    pub ports: ResolvedPorts,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ResolvedPorts {
+    pub reth_p2p: u16,
+    pub reth_discovery: u16,
+    pub consensus: u16,
+    pub radicle: u16,
+    pub hyperlane_public: u16,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rpc_public: Option<u16>,
+}
+
+impl ResolvedFounder {
+    pub fn consensus_endpoint(&self) -> String {
+        format!("{}:{}", self.public_ip, self.ports.consensus)
+    }
+
+    pub fn hyperlane_public_url(&self) -> String {
+        format!("http://{}:{}", self.public_ip, self.ports.hyperlane_public)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -93,16 +146,6 @@ impl HyperlaneNetworkConfig {
             origins: self.origins.clone(),
         }
     }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct Ssh {
-    pub host: String,
-    #[serde(default = "default_ssh_user")]
-    pub user: String,
-    #[serde(default = "default_ssh_port")]
-    pub port: u16,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -169,9 +212,41 @@ impl NetworkConfig {
             "at least {MIN_FOUNDERS} founding validators are required"
         );
 
+        ensure!(
+            !self.machines.is_empty(),
+            "at least one machine is required"
+        );
+        let mut public_ips = BTreeSet::new();
+        for (name, machine) in &self.machines {
+            ensure!(safe_name(name), "invalid machine name: {name}");
+            ensure!(
+                !machine.public_ip.is_unspecified()
+                    && !machine.public_ip.is_multicast()
+                    && machine.public_ip != Ipv4Addr::BROADCAST,
+                "invalid public_ip for machine {name}: {}",
+                machine.public_ip
+            );
+            ensure!(
+                public_ips.insert(machine.public_ip),
+                "duplicate machine public_ip: {}",
+                machine.public_ip
+            );
+            ensure!(
+                safe_user(&machine.ssh_user),
+                "invalid SSH user for machine {name}"
+            );
+            ensure!(
+                safe_user(&machine.vm_ssh_user),
+                "invalid VM SSH user for machine {name}"
+            );
+            ensure!(
+                machine.ssh_port > 0,
+                "SSH port must be non-zero for machine {name}"
+            );
+        }
+
         let mut names = BTreeSet::new();
-        let mut ssh_targets = BTreeSet::new();
-        let mut advertise_ips = BTreeSet::new();
+        let mut private_ips = BTreeSet::new();
         for founder in &self.founders {
             ensure!(
                 safe_name(&founder.name),
@@ -184,41 +259,25 @@ impl NetworkConfig {
                 founder.name
             );
             ensure!(
-                safe_host(&founder.ssh.host),
-                "invalid SSH host for {}",
+                self.machines.contains_key(&founder.machine),
+                "unknown machine `{}` for {}",
+                founder.machine,
                 founder.name
             );
             ensure!(
-                safe_user(&founder.ssh.user),
-                "invalid SSH user for {}",
+                founder.private_ip.is_private(),
+                "private_ip for {} must be a private IPv4 address",
                 founder.name
             );
             ensure!(
-                founder.ssh.port > 0,
-                "SSH port must be non-zero for {}",
-                founder.name
+                private_ips.insert((&founder.machine, founder.private_ip)),
+                "duplicate private_ip {} on machine {}",
+                founder.private_ip,
+                founder.machine
             );
-            ensure!(
-                ssh_targets.insert((&founder.ssh.host, founder.ssh.port)),
-                "duplicate SSH target: {}:{}",
-                founder.ssh.host,
-                founder.ssh.port
-            );
-            ensure!(
-                advertise_ips.insert(founder.advertise_ip),
-                "duplicate advertise_ip: {}",
-                founder.advertise_ip
-            );
-            ensure!(
-                founder.rpc_bind_ip.is_loopback() || founder.rpc_bind_ip.is_private(),
-                "rpc_bind_ip for {} must be loopback or private",
-                founder.name
-            );
-            self.hyperlane
-                .for_public_url(founder.hyperlane_public_url.clone())
-                .validate()
-                .wrap_err_with(|| format!("invalid Hyperlane config for {}", founder.name))?;
         }
+
+        self.resolve_topology()?;
 
         for (address, amount) in &self.genesis.prefunded_accounts {
             Address::from_str(address)
@@ -266,6 +325,76 @@ impl NetworkConfig {
 
         Ok(())
     }
+
+    pub fn resolve_topology(&self) -> Result<Vec<ResolvedFounder>> {
+        let mut offsets = BTreeMap::<&str, u16>::new();
+        let mut endpoints = BTreeMap::<(Ipv4Addr, &'static str, u16), String>::new();
+        let mut resolved = Vec::with_capacity(self.founders.len());
+        for founder in &self.founders {
+            let machine = self
+                .machines
+                .get(&founder.machine)
+                .ok_or_else(|| eyre::eyre!("unknown machine `{}`", founder.machine))?;
+            let offset = *offsets.entry(&founder.machine).or_default();
+            offsets.insert(
+                &founder.machine,
+                offset
+                    .checked_add(1)
+                    .ok_or_else(|| eyre::eyre!("too many validators on {}", founder.machine))?,
+            );
+            let ports = ResolvedPorts {
+                reth_p2p: port_with_offset(RETH_P2P_BASE_PORT, offset, &founder.name)?,
+                reth_discovery: port_with_offset(RETH_DISCOVERY_BASE_PORT, offset, &founder.name)?,
+                consensus: port_with_offset(CONSENSUS_BASE_PORT, offset, &founder.name)?,
+                radicle: port_with_offset(RADICLE_BASE_PORT, offset, &founder.name)?,
+                hyperlane_public: port_with_offset(HYPERLANE_BASE_PORT, offset, &founder.name)?,
+                rpc_public: founder
+                    .publish_rpc
+                    .then(|| port_with_offset(RPC_BASE_PORT, offset, &founder.name))
+                    .transpose()?,
+            };
+            for (protocol, port) in [
+                ("tcp", ports.reth_p2p),
+                ("udp", ports.reth_p2p),
+                ("udp", ports.reth_discovery),
+                ("tcp", ports.consensus),
+                ("tcp", ports.radicle),
+                ("tcp", ports.hyperlane_public),
+            ]
+            .into_iter()
+            .chain(ports.rpc_public.map(|port| ("tcp", port)))
+            {
+                let key = (machine.public_ip, protocol, port);
+                ensure!(
+                    endpoints.insert(key, founder.name.clone()).is_none(),
+                    "public endpoint collision on {} {protocol}/{port}",
+                    machine.public_ip
+                );
+            }
+            let value = ResolvedFounder {
+                name: founder.name.clone(),
+                machine: founder.machine.clone(),
+                public_ip: machine.public_ip,
+                private_ip: founder.private_ip,
+                offset,
+                jump_user: machine.ssh_user.clone(),
+                jump_port: machine.ssh_port,
+                vm_user: machine.vm_ssh_user.clone(),
+                ports,
+            };
+            self.hyperlane
+                .for_public_url(value.hyperlane_public_url())
+                .validate()
+                .wrap_err_with(|| format!("invalid Hyperlane config for {}", founder.name))?;
+            resolved.push(value);
+        }
+        Ok(resolved)
+    }
+}
+
+fn port_with_offset(base: u16, offset: u16, founder: &str) -> Result<u16> {
+    base.checked_add(offset)
+        .ok_or_else(|| eyre::eyre!("port range exhausted for {founder}"))
 }
 
 pub fn init(path: &Path) -> Result<()> {
@@ -292,6 +421,7 @@ fn reserved_genesis_keys() -> BTreeSet<&'static str> {
         "network",
         "chain_id",
         "validators",
+        "validator_runtime",
         "keys_dir",
         "tee",
         "base_genesis",
@@ -309,6 +439,11 @@ fn reserved_genesis_keys() -> BTreeSet<&'static str> {
         "remote_base_dir",
         "remote_keys_dir",
         "rpc_bind_ip",
+        "reth_p2p_port",
+        "reth_discv5_port",
+        "radicle_port",
+        "consensus_p2p_port",
+        "hyperlane_public_urls",
         "consensus_use_local_defaults",
     ]
     .into_iter()
@@ -322,13 +457,6 @@ fn safe_name(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
-fn safe_host(value: &str) -> bool {
-    !value.is_empty()
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b':' | b'-' | b'_'))
-}
-
 fn safe_user(value: &str) -> bool {
     !value.is_empty()
         && value
@@ -336,12 +464,12 @@ fn safe_user(value: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
-const fn loopback() -> Ipv4Addr {
-    Ipv4Addr::LOCALHOST
-}
-
 fn default_ssh_user() -> String {
     "ubuntu".to_owned()
+}
+
+fn default_vm_ssh_user() -> String {
+    "root".to_owned()
 }
 
 const fn default_ssh_port() -> u16 {
@@ -363,11 +491,14 @@ mod tests {
     fn config_with(founder_count: usize) -> NetworkConfig {
         serde_yaml_ng::from_str(&format!(
             r#"
-version: 1
+version: 2
 name: local-testnet
 network: testnet
 chain_id: 54322345
 certified_rpc: "http://10.0.0.10:8545"
+machines:
+  host:
+    public_ip: 192.0.2.10
 founders:
 {}
 hyperlane:
@@ -383,10 +514,8 @@ genesis:
 "#,
             (0..founder_count)
                 .map(|index| format!(
-                    "  - name: validator-{index}\n    ssh:\n      host: 192.0.2.{}\n    advertise_ip: 10.0.0.{}\n    hyperlane_public_url: http://192.0.2.{}:9000",
+                    "  - name: validator-{index}\n    machine: host\n    private_ip: 10.0.0.{}",
                     index + 10,
-                    index + 10,
-                    index + 10
                 ))
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -414,5 +543,35 @@ genesis:
     fn example_is_valid() {
         let config: NetworkConfig = serde_yaml_ng::from_str(EXAMPLE).unwrap();
         config.validate().unwrap();
+    }
+
+    #[test]
+    fn resolves_offsets_per_machine() {
+        let config = config_with(4);
+        let founders = config.resolve_topology().unwrap();
+        assert_eq!(founders[0].ports.reth_p2p, 30303);
+        assert_eq!(founders[1].ports.reth_p2p, 30304);
+        assert_eq!(founders[3].ports.hyperlane_public, 9003);
+        assert_eq!(founders[0].ports.rpc_public, None);
+        assert_eq!(
+            founders[0].private_ip,
+            "10.0.0.10".parse::<Ipv4Addr>().unwrap()
+        );
+        assert_eq!(
+            founders[0].public_ip,
+            "192.0.2.10".parse::<Ipv4Addr>().unwrap()
+        );
+    }
+
+    #[test]
+    fn offsets_restart_on_each_machine() {
+        let config: NetworkConfig = serde_yaml_ng::from_str(EXAMPLE).unwrap();
+        let founders = config.resolve_topology().unwrap();
+        assert_eq!(founders[0].offset, 0);
+        assert_eq!(founders[1].offset, 1);
+        assert_eq!(founders[2].offset, 0);
+        assert_eq!(founders[3].offset, 1);
+        assert_eq!(founders[0].ports.rpc_public, Some(8545));
+        assert_eq!(founders[1].ports.rpc_public, None);
     }
 }

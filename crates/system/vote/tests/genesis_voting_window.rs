@@ -38,7 +38,6 @@ static REGISTRY: VoteTargetRegistry = VoteTargetRegistry::new(TARGETS);
 
 const REPLAY_CHILD: &str = "OUTBE_GOVERNANCE_REPLAY_CHILD";
 const PROPOSER: Address = Address::repeat_byte(0x11);
-const OWNER: Address = Address::repeat_byte(0xff);
 
 // Each replay gets its own immutable parameters and inherited environment.
 // No process-global environment mutation races with other tests.
@@ -115,7 +114,6 @@ fn governance_deadline_replay_child() {
     {
         let storage = StorageHandle::new(&mut provider);
         let mut validators = ValidatorSet::new(storage.clone());
-        validators.config_owner.write(OWNER).unwrap();
         validators.set_config_max_validators(4).unwrap();
         let mut key = [0u8; 48];
         key[0] = 1;
@@ -123,9 +121,7 @@ fn governance_deadline_replay_child() {
         validators
             .test_seed_authoritative_min_stake(minimum)
             .unwrap();
-        validators
-            .register_validator(OWNER, PROPOSER, &key)
-            .unwrap();
+        validators.register_validator(PROPOSER, &key).unwrap();
         validators
             .test_seed_authoritative_bonded(PROPOSER, minimum)
             .unwrap();

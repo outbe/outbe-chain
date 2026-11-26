@@ -1257,7 +1257,7 @@ fn file_backed_context(
     let (store, loaded) =
         outbe_tee::node_host::ResidentStateStore::load_or_create(dir, &authorization).unwrap();
     let mut manifest = template.manifest().clone();
-    manifest.recipient_x25519 = loaded.keys.tribute_offer_public();
+    manifest.recipient_x25519 = loaded.keys.recipient_public();
     manifest.attestation_ed25519 = loaded.keys.attestation_pub();
     manifest.noise_responder_x25519 = loaded.keys.noise_public();
     manifest.initialization_challenge = loaded.initialization_challenge;

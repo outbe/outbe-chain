@@ -53,12 +53,12 @@ fn response_postcard_vectors_round_trip_tags_1_8_and_9() {
     assert_tagged(
         &applied,
         WitnessResponseTag::GratisOpApplied,
-        "01000121012220000000000000000000000000000000000000000000000000000000000000001105010121017b072011111111111111111111111111111111111111111111111111111111111111110251520123",
+        "01000121012220000000000000000000000000000000000000000000000000000000000000001105010121017b07201111111111111111111111111111111111111111111111111111111111111111025152012300",
     );
     assert_tagged(
         &rejected,
         WitnessResponseTag::GratisOpApplied,
-        "01010f6772617469732072656a65637465640121012220000000000000000000000000000000000000000000000000000000000000001105010121017b072011111111111111111111111111111111111111111111111111111111111111110251520123",
+        "01010f6772617469732072656a65637465640121012220000000000000000000000000000000000000000000000000000000000000001105010121017b07201111111111111111111111111111111111111111111111111111111111111111025152012300",
     );
     assert_tagged(
         &nod_rejected,
@@ -74,22 +74,22 @@ fn response_postcard_vectors_round_trip_tags_1_8_and_9() {
 
 #[test]
 fn canonical_hash_and_attestation_vectors() {
-    let pledge: outbe_gratis::GratisOpRequest = serde_json::from_str(r#"{"op":"Pledge","chain_id":"0x1111111111111111111111111111111111111111111111111111111111111111","account":"0x2222222222222222222222222222222222222222","amount":"0x11","current_balance":[81,82],"current_pledged":[97],"modify_auth":{"mac":[51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51],"op_nonce":5},"fidelity":{"op":"Out","timestamp":123,"first_qualified_start":124,"current_blob":[65,66]}}"#).unwrap();
+    let pledge: outbe_gratis::GratisOpRequest = serde_json::from_str(r#"{"op":"PledgeCollateral","chain_id":"0x1111111111111111111111111111111111111111111111111111111111111111","account":"0x2222222222222222222222222222222222222222","amount":"0x11","current_balance":[81,82],"current_pledged":[97],"modify_auth":{"mac":[51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51],"op_nonce":5},"fidelity":{"op":"Out","timestamp":123,"first_qualified_start":124,"current_blob":[65,66]}}"#).unwrap();
     assert_eq!(
         hex::encode(gratis_op_canonical_hash(&pledge)),
-        "a80bc02929ffdf886b83af91c966299bb115dfc047bb9d0a3eba6e14a5b4e621"
+        "bf1ce7b5f21ae4dbe1d921b17304879b37280d4a8f29ce817dc1ac985c5cbdd3"
     );
     let applied: GratisOpResult = serde_json::from_str(r#"{"status":"Applied","new_balance":[33],"new_pledged":[34],"event_amount":"0x11","next_op_nonce":5,"fidelity":{"new_blob":[33],"qualified_start_initialized":123,"league":7},"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82],"encrypted_event_amount":[35]}"#).unwrap();
     let preimage = gratis_op_attestation_preimage(B256::repeat_byte(0x11), &applied).unwrap();
-    assert_eq!(hex::encode(&preimage), "6f757462652f7465652f6772617469732d6174746573746174696f6e2f763311111111111111111111111111111111111111111111111111111111111111110000013c7b22737461747573223a224170706c696564222c226e65775f62616c616e6365223a5b33335d2c226e65775f706c6564676564223a5b33345d2c226576656e745f616d6f756e74223a2230783131222c226e6578745f6f705f6e6f6e6365223a352c22666964656c697479223a7b226e65775f626c6f62223a5b33335d2c227175616c69666965645f73746172745f696e697469616c697a6564223a3132332c226c6561677565223a377d2c22696e707574735f63616e6f6e6963616c5f68617368223a22307831313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131222c226174746573746174696f6e5f746167223a5b5d2c22656e637279707465645f6576656e745f616d6f756e74223a5b33355d7d");
+    assert_eq!(hex::encode(&preimage), "6f757462652f7465652f6772617469732d6174746573746174696f6e2f76331111111111111111111111111111111111111111111111111111111111111111000001527b22737461747573223a224170706c696564222c226e65775f62616c616e6365223a5b33335d2c226e65775f706c6564676564223a5b33345d2c226576656e745f616d6f756e74223a2230783131222c226e6578745f6f705f6e6f6e6365223a352c22666964656c697479223a7b226e65775f626c6f62223a5b33335d2c227175616c69666965645f73746172745f696e697469616c697a6564223a3132332c226c6561677565223a377d2c22696e707574735f63616e6f6e6963616c5f68617368223a22307831313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131313131222c226174746573746174696f6e5f746167223a5b5d2c22656e637279707465645f6576656e745f616d6f756e74223a5b33355d2c22706c656467655f6163636f756e74223a6e756c6c7d");
     assert_eq!(
         hex::encode(keccak256(&preimage)),
-        "c712ea15201e08c9452b2fca321cbed2315754023a3ce667b46ceb4c6de64c92"
+        "35e6eec1df23322b323cbca676d337fda869cfb2258907240292cb7e6e1821b6"
     );
-    let mine_request: outbe_gratis::nod_mine::MineEncryptedNodRequestV1 = serde_json::from_str(r#"{"nod":{"terms":{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"league_id":7,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978},"encryption_binding":"0x3333333333333333333333333333333333333333333333333333333333333333","encrypted_gratis_amount":[65]},"current_balance":[81,82],"modify_auth":{"mac":[51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51],"op_nonce":5},"fidelity":{"op":"Out","timestamp":123,"first_qualified_start":124,"current_blob":[65,66]}}"#).unwrap();
+    let mine_request: outbe_gratis::nod_mine::MineEncryptedNodRequestV1 = serde_json::from_str(r#"{"nod":{"terms":{"chain_id":1,"nod_id":"0x2","owner":"0x2222222222222222222222222222222222222222","emission_day":20261116,"entry_price_minor":"0x3","issuance_currency":840,"reference_currency":978},"encryption_binding":"0x3333333333333333333333333333333333333333333333333333333333333333","encrypted_gratis_amount":[65],"encrypted_nominal_amount":[66]},"current_balance":[81,82],"modify_auth":{"mac":[51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51,51],"op_nonce":5},"fidelity":{"op":"Out","timestamp":123,"first_qualified_start":124,"current_blob":[65,66]}}"#).unwrap();
     assert_eq!(
         hex::encode(outbe_gratis::nod_mine::inputs_hash(&mine_request).unwrap()),
-        "5b2a54224b14481d7dd879f3b7a37547dcfae32f9190da9bd114d0b6f7ba82f2"
+        "e66620bdb18c3bed4b4f00a9d2c64efcb870fa3cff2d6cf6b3043541bf91f855"
     );
     let mine_result: MineEncryptedNodResultV1 = serde_json::from_str(r#"{"new_balance":[33],"next_op_nonce":5,"fidelity":{"new_blob":[33],"qualified_start_initialized":123,"league":7},"inputs_canonical_hash":"0x1111111111111111111111111111111111111111111111111111111111111111","attestation_tag":[81,82],"encrypted_event_amount":[35]}"#).unwrap();
     let mine_preimage = outbe_gratis::nod_mine::result_preimage(&mine_result).unwrap();
@@ -188,15 +188,6 @@ fn mcp_gratis_modify_macs_match() {
             "0000000000000000000000000000000000000000000000000000000000000001",
             "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
             "ec11651be45952198f63a0c982bbe045c3f3a31131c8afe655f76b243dc50aa1",
-        ),
-        (
-            "1111111111111111111111111111111111111111",
-            GratisOp::Pledge,
-            10_000_000,
-            3,
-            "0000000000000000000000000000000000000000000000000000000000000001",
-            "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
-            "f7d19e989e00dc99df7168cbca111ac11c7328fa0e12c4b0e7873b3ce4e84046",
         ),
         (
             "63467B02a7382408A845a5EB85b5238b8a4dD0eD",
@@ -318,6 +309,7 @@ fn gratis_attestation_rejects_a_cross_domain_tag_a_bad_key_and_a_mutated_event()
         inputs_canonical_hash: hash,
         attestation_tag: Vec::new(),
         encrypted_event_amount: vec![4, 5, 6, 7],
+        pledge_account: None,
     };
     let gratis_preimage = gratis_op_attestation_preimage(hash, &gratis).unwrap();
     let gratis_tag = signer.sign(&gratis_preimage).to_bytes();
@@ -351,4 +343,42 @@ fn gratis_attestation_rejects_a_cross_domain_tag_a_bad_key_and_a_mutated_event()
 
     gratis.encrypted_event_amount[0] ^= 0xff;
     assert!(verify_gratis_op_attestation(&key, hash, &gratis, &gratis_tag).is_err());
+}
+
+#[test]
+fn mcp_credis_pledge_macs_match() {
+    let rows = [
+        (
+            "1111111111111111111111111111111111111111",
+            1_000u64,
+            7u64,
+            "0000000000000000000000000000000000000000000000000000000000000001",
+            "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+            "0865dba1363375d0985ebf12070881be5655f459f88f9c2f87fca1daa9a145f3",
+        ),
+        (
+            "63467B02a7382408A845a5EB85b5238b8a4dD0eD",
+            2_500_000,
+            42,
+            "00000000000000000000000000000000000000000000000000000000033ce4a9",
+            "6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b6b",
+            "45d57eb81a4c82b69a51291151841aa5de27422152ec4fbdcdfee4cdc21b44ce",
+        ),
+    ];
+    for (account, amount, reservation, chain_id, modify_key, mac) in rows {
+        let account: Address = account.parse().unwrap();
+        let message = outbe_gratis::engine::credis_pledge_message(
+            account,
+            U256::from(amount),
+            U256::from(reservation),
+            B256::from(hex_word(chain_id)),
+        );
+        let actual = outbe_tee::resident::compute_modify_mac(
+            &AccountKeysHandle::for_test(account, [0; 32], hex_word(modify_key)),
+            outbe_gratis::engine::CREDIS_PLEDGE_MAC_TAG,
+            &message,
+        )
+        .unwrap();
+        assert_eq!(hex::encode(actual), mac);
+    }
 }

@@ -34,7 +34,7 @@ where
     }
 
     // Initialize the hash-pinned Barretenberg global CRS before block
-    // execution. Tribute admission is consensus-critical, so a node that
+    // execution. Offer admission is consensus-critical, so a node that
     // cannot initialize the verifier must not start. Database and other
     // operator commands never execute proofs and must remain offline.
     // CRS initialization blocks this thread and can use reqwest::blocking.
@@ -222,10 +222,7 @@ where
                     )
                     .with_radicle_status(radicle_status.clone())
                     .with_tee_enclave_health(tee_enclave_health.clone());
-                    let domain_api = crate::domain_rpc::OutbeDomainRpcHandler::new(
-                        provider,
-                        (proof_chain_id, genesis_hash),
-                    ).with_authority_watch(outbe_tee::tee_authority_watch()
+                    let domain_api = crate::domain_rpc::OutbeDomainRpcHandler::new().with_authority_watch(outbe_tee::tee_authority_watch()
                         .ok_or(outbe_consensus::protocol_state::EngineProtocolError::NotInstalled)?);
                     let outbe_rpc = outbe_api.into_rpc();
                     let domain_rpc = domain_api.into_rpc();

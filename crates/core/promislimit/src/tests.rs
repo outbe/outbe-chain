@@ -61,7 +61,6 @@ fn each_add_and_subtract_emits_its_code_from_the_promis_limit() {
     let sources = [
         LimitSource::DayEmissionLimit,
         LimitSource::MetadosisLimit,
-        LimitSource::LysisLimit,
         LimitSource::DesisLimit,
         LimitSource::RewardLimit,
         LimitSource::Nod,
@@ -80,7 +79,7 @@ fn each_add_and_subtract_emits_its_code_from_the_promis_limit() {
         assert!(contract
             .subtract(LimitTarget::DesisLimit, U256::from(10u64))
             .unwrap());
-        assert_eq!(contract.promis_limit().unwrap(), U256::from(56u64));
+        assert_eq!(contract.promis_limit().unwrap(), U256::from(45u64));
     });
 
     let mut expected: Vec<_> = sources
@@ -309,4 +308,72 @@ fn base_fees_wait_for_the_daily_step_with_the_burn_addresses() {
         promis_limit_logs(&storage),
         vec![(41, true, U256::from(2)), (46, true, U256::from(4))]
     );
+}
+
+fn wcoen_provider(answer: bool) -> HashMapStorageProvider {
+    use alloy_sol_types::SolValue;
+    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
+    storage.stub_sub_call_at(
+        outbe_core_common::addresses::WCOEN_ADDRESS,
+        alloy_primitives::Bytes::from(answer.abi_encode()),
+    );
+    storage
+}
+
+#[test]
+fn burn_wcoen_transfers_to_address_zero_and_adds_the_whole_minors() {
+    use alloy_primitives::Address;
+    use alloy_sol_types::SolCall;
+    use outbe_system_common::units::UNITS_PER_PROTOCOL_MINOR;
+
+    use crate::runtime::{BurnSource, IWCOEN};
+
+    let rest = U256::from(5u64);
+    let amount = U256::from(2u64) * UNITS_PER_PROTOCOL_MINOR + rest;
+    let mut storage = wcoen_provider(true);
+    StorageHandle::enter(&mut storage, |s| {
+        // The WCOEN transfer to address 0 leaves its native COEN there.
+        s.increase_balance(Address::ZERO, amount).unwrap();
+        let mut contract = PromisLimitContract::new(s.clone());
+        contract
+            .burn_wcoen(BurnSource::IntexAuctionProceeds, amount)
+            .unwrap();
+        assert_eq!(contract.promis_limit().unwrap(), U256::from(2u64));
+        assert_eq!(s.balance(Address::ZERO).unwrap(), rest);
+        assert_eq!(
+            contract
+                .burn_rest(BurnSource::IntexAuctionProceeds)
+                .unwrap(),
+            U256::ZERO
+        );
+    });
+    let transfer = storage
+        .sub_call_inputs()
+        .iter()
+        .find(|input| input.target == outbe_core_common::addresses::WCOEN_ADDRESS)
+        .map(|input| IWCOEN::transferCall::abi_decode(&input.calldata).unwrap())
+        .unwrap();
+    assert_eq!((transfer.dst, transfer.wad), (Address::ZERO, amount));
+    assert_eq!(
+        promis_limit_logs(&storage),
+        vec![(
+            BurnSource::IntexAuctionProceeds as u8,
+            true,
+            U256::from(2u64)
+        )]
+    );
+}
+
+#[test]
+fn burn_wcoen_refused_by_wcoen_changes_nothing() {
+    use crate::runtime::BurnSource;
+    let mut storage = wcoen_provider(false);
+    StorageHandle::enter(&mut storage, |s| {
+        let mut contract = PromisLimitContract::new(s.clone());
+        assert!(contract
+            .burn_wcoen(BurnSource::IntexAuctionProceeds, U256::from(1u64))
+            .is_err());
+        assert_eq!(contract.promis_limit().unwrap(), U256::ZERO);
+    });
+    assert!(promis_limit_logs(&storage).is_empty());
 }

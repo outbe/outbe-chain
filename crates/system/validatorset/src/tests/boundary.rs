@@ -157,7 +157,7 @@ fn test_exiting_to_unbonding_via_reshare() {
         assert_eq!(vs.val_status.read(&val2).unwrap(), status::ACTIVE);
 
         // val2 requests deactivation -> EXITING
-        vs.deactivate_validator(OWNER, val2).unwrap();
+        vs.deactivate_validator(val2).unwrap();
         assert_eq!(vs.val_status.read(&val2).unwrap(), status::EXITING);
 
         // Second reshare: only val1 in new set
@@ -186,7 +186,7 @@ fn test_deactivated_validator_stays_current_consensus_participant_until_reshare(
         vs.activate_reshared_set(&[val1, val2], B256::with_last_byte(0xD1))
             .unwrap();
 
-        vs.deactivate_validator(OWNER, val2).unwrap();
+        vs.deactivate_validator(val2).unwrap();
 
         assert_eq!(vs.val_status.read(&val2).unwrap(), status::EXITING);
         assert!(vs.val_has_bls_share.read(&val2).unwrap());
@@ -256,7 +256,7 @@ fn post_freeze_exit_is_retained_then_excluded_at_a_later_boundary() {
         activate_staked_for_test(vs, survivor);
         activate_staked_for_test(vs, exiting);
 
-        vs.deactivate_validator(OWNER, exiting).unwrap();
+        vs.deactivate_validator(exiting).unwrap();
         assert!(matches!(
             vs.validator_lifecycle(exiting).unwrap(),
             ValidatorLifecycle::Exiting(_)

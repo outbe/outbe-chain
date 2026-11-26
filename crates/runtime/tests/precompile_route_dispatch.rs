@@ -13,7 +13,7 @@ use outbe_stablecoinfactory::{
 use outbe_stablecoinpolicy::precompile::IStablecoinPolicyRegistry;
 use outbe_system_common::addresses::{
     STABLECOIN_ADDRESS_PREFIX, STABLECOIN_FACTORY_ADDRESS, STABLECOIN_MARKER_CODE,
-    STABLECOIN_POLICY_REGISTRY_ADDRESS, TEE_REGISTRY_ADDRESS, TRIBUTE_ADDRESS,
+    STABLECOIN_POLICY_REGISTRY_ADDRESS, TEE_REGISTRY_ADDRESS, WORLDWIDE_DAY_ADDRESS,
 };
 use outbe_system_common::stablecoin::StablecoinCreatePayload;
 
@@ -37,22 +37,21 @@ fn dispatch_at(
 }
 
 #[test]
-fn tribute_state_read_does_not_require_body_readers() {
+fn worldwide_day_read_does_not_require_body_readers() {
+    use outbe_worldwideday::precompile::IWorldwideDay;
     let mut provider = HashMapStorageProvider::new(1);
-    let call = outbe_tribute::precompile::ITribute::balanceOfCall {
-        owner: Address::repeat_byte(1),
-    };
     let output = dispatch_at(
         StorageHandle::new(&mut provider),
-        TRIBUTE_ADDRESS,
-        &call.abi_encode(),
+        WORLDWIDE_DAY_ADDRESS,
+        &IWorldwideDay::activeWorldwideDaysCall {}.abi_encode(),
         Address::ZERO,
         U256::ZERO,
     )
     .unwrap();
-    assert_eq!(
-        outbe_tribute::precompile::ITribute::balanceOfCall::abi_decode_returns(&output).unwrap(),
-        U256::ZERO
+    assert!(
+        IWorldwideDay::activeWorldwideDaysCall::abi_decode_returns(&output)
+            .unwrap()
+            .is_empty()
     );
 }
 

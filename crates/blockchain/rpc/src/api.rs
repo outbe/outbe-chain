@@ -1,40 +1,9 @@
 //! Outbe RPC API trait definition.
 
-use alloy_primitives::{Address, Bytes, B256, U256};
+use alloy_primitives::{Address, Bytes, B256};
 use jsonrpsee::proc_macros::rpc;
 use outbe_primitives::consensus::{ConsensusOperatingMode, RandomnessStatus};
 use outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1;
-
-/// Response type for validator information.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ValidatorInfo {
-    pub address: Address,
-    pub consensus_pubkey: String,
-    pub status: u8,
-    pub stake: U256,
-}
-
-/// Response type for epoch information.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EpochInfo {
-    pub epoch_number: U256,
-    pub epoch_start_timestamp: u64,
-    pub epoch_start_block: u64,
-    pub epoch_length_blocks: u32,
-    pub active_validator_count: u32,
-    pub total_staked: U256,
-}
-
-/// Response type for slash information.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SlashInfo {
-    pub proposer_miss_count: u64,
-    pub voter_miss_count: u64,
-    pub felony_count: u64,
-}
 
 /// Response type for consensus status.
 ///
@@ -116,65 +85,6 @@ impl Default for EnclaveHealthInfo {
             health_probe_supported: None,
         }
     }
-}
-
-/// Response type for reward emission parameters.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct EmissionInfo {
-    pub validator_reward_percent: u64,
-    pub fee_escrow_address: Address,
-}
-
-/// Response type for slashing configuration.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SlashConfig {
-    pub proposer_misdemeanor_threshold: u64,
-    pub proposer_felony_threshold: u64,
-    pub voter_misdemeanor_threshold: u64,
-    pub voter_felony_threshold: u64,
-    pub slash_amount_percent: u64,
-    pub evidence_reward_percent: u64,
-}
-
-/// Detailed validator information returned by `getValidator`.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ValidatorDetailInfo {
-    pub address: Address,
-    pub consensus_pubkey: String,
-    pub status: u8,
-    pub stake: U256,
-    pub slash_count: u64,
-    pub missed_blocks: u64,
-    pub missed_votes: u64,
-    pub blocks_proposed: u64,
-    pub joined_at_height: u64,
-    pub deactivated_at_height: u64,
-    pub unbonding_end: u64,
-    pub has_bls_share: bool,
-}
-
-/// Response type for validator participation statistics.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ParticipationInfo {
-    pub address: Address,
-    pub blocks_proposed: u64,
-    pub missed_blocks: u64,
-    pub missed_votes: u64,
-}
-
-/// Response type for node sync status.
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SyncStatusInfo {
-    pub is_syncing: bool,
-    pub current_block: u64,
-    pub highest_block: u64,
-    pub consensus_active: bool,
-    pub connected_peers: u32,
 }
 
 /// Response type for `getFinalization`: the finalized certificate + block for a
@@ -290,20 +200,6 @@ pub trait OutbeApi {
         proof: outbe_tee::upgrade_transfer::UpgradeKeyProofV1,
         legacy_direct_dev_source: bool,
     ) -> jsonrpsee::core::RpcResult<Bytes>;
-    /// Returns information about all active validators.
-    #[method(name = "getValidators")]
-    async fn get_validators(&self) -> jsonrpsee::core::RpcResult<Vec<ValidatorInfo>>;
-
-    /// Returns detailed information about a single validator by address.
-    #[method(name = "getValidator")]
-    async fn get_validator(
-        &self,
-        address: Address,
-    ) -> jsonrpsee::core::RpcResult<Option<ValidatorDetailInfo>>;
-
-    /// Returns current epoch information.
-    #[method(name = "getEpochInfo")]
-    async fn get_epoch_info(&self) -> jsonrpsee::core::RpcResult<EpochInfo>;
 
     /// Exact finalized epoch/freeze schedule for host-side TEE renewal alerts.
     #[method(name = "teeRenewalScheduleV1")]
@@ -312,48 +208,9 @@ pub trait OutbeApi {
         checkpoint_hash: Option<B256>,
     ) -> jsonrpsee::core::RpcResult<TeeRenewalScheduleV1>;
 
-    /// Returns the stake amount for a validator address.
-    #[method(name = "getStake")]
-    async fn get_stake(&self, address: Address) -> jsonrpsee::core::RpcResult<U256>;
-
-    /// Returns slash counters for a validator.
-    #[method(name = "getSlashInfo")]
-    async fn get_slash_info(&self, address: Address) -> jsonrpsee::core::RpcResult<SlashInfo>;
-
     /// Returns finalized consensus snapshot (view, certificate signers, shares, is_validator).
     #[method(name = "consensusStatus")]
     async fn consensus_status(&self) -> jsonrpsee::core::RpcResult<ConsensusStatusInfo>;
-
-    /// Returns the committed VRF seed (block header `mixHash` / prev_randao) for
-    /// the given block number. When the block number is omitted, returns the seed
-    /// for the latest canonical block. Under Outbe's fast finality, that is the
-    /// latest finalized block. Reads the authoritative committed header through
-    /// the provider, so the answer is identical on validators and full nodes.
-    /// Returns `None` if the block does not exist or carries no `mixHash`.
-    #[method(name = "getVrfSeed")]
-    async fn get_vrf_seed(
-        &self,
-        block_number: Option<u64>,
-    ) -> jsonrpsee::core::RpcResult<Option<B256>>;
-
-    /// Returns current reward emission parameters.
-    #[method(name = "getEmissionInfo")]
-    async fn get_emission_info(&self) -> jsonrpsee::core::RpcResult<EmissionInfo>;
-
-    /// Returns slashing configuration parameters.
-    #[method(name = "getSlashConfig")]
-    async fn get_slash_config(&self) -> jsonrpsee::core::RpcResult<SlashConfig>;
-
-    /// Returns participation statistics for a validator address.
-    #[method(name = "getParticipation")]
-    async fn get_participation(
-        &self,
-        address: Address,
-    ) -> jsonrpsee::core::RpcResult<ParticipationInfo>;
-
-    /// Returns the node's sync status.
-    #[method(name = "syncStatus")]
-    async fn sync_status(&self) -> jsonrpsee::core::RpcResult<SyncStatusInfo>;
 
     /// Immutable local Radicle integration health snapshot.
     #[method(name = "radicleStatus")]
@@ -527,59 +384,5 @@ mod tests {
         assert_eq!(deserialized.vrf_expiry_height, 21700);
         assert!(!deserialized.is_validator);
         assert_eq!(deserialized.mode, ConsensusOperatingMode::Follower);
-    }
-
-    #[test]
-    fn test_sync_status_info_full_node_semantics() {
-        use outbe_primitives::consensus::{
-            ConsensusExecutionBridge, ConsensusStatus, RandomnessStatus,
-        };
-        use std::sync::Arc;
-
-        // Plain EL full node (no consensus bridge): reports not syncing and consensus_active = false.
-        let full_node = crate::server::OutbeApiHandler::new(
-            Arc::new(()),
-            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
-        );
-        let full_node_status = full_node.sync_status_info();
-        assert!(!full_node_status.is_syncing);
-        assert!(!full_node_status.consensus_active);
-        assert_eq!(full_node_status.current_block, 0);
-        assert_eq!(full_node_status.highest_block, 0);
-        assert_eq!(full_node_status.connected_peers, 0);
-
-        // Bridge-backed node before first finalization (inactive consensus): is_syncing = true, consensus_active = false.
-        let inactive_bridge = ConsensusExecutionBridge::new();
-        let syncing_node = crate::server::OutbeApiHandler::with_bridge(
-            Arc::new(()),
-            inactive_bridge,
-            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
-        );
-        let syncing_status = syncing_node.sync_status_info();
-        assert!(syncing_status.is_syncing);
-        assert!(!syncing_status.consensus_active);
-
-        // Active bridge-backed node: is_syncing = false, consensus_active = true, finalized height reflected.
-        let active_bridge = ConsensusExecutionBridge::new();
-        active_bridge.set_consensus_status(ConsensusStatus {
-            current_view: 12,
-            connected_peers: 4,
-            last_finalized_block: 88,
-            randomness_status: RandomnessStatus::Healthy,
-            ..Default::default()
-        });
-        let active_node = crate::server::OutbeApiHandler::with_bridge(
-            Arc::new(()),
-            active_bridge,
-            std::sync::Arc::new(crate::state_reader::ClosedRpcReader),
-        );
-        let active_status = active_node.sync_status_info();
-        let json = serde_json::to_string(&active_status).unwrap();
-        let deserialized: SyncStatusInfo = serde_json::from_str(&json).unwrap();
-        assert!(!deserialized.is_syncing);
-        assert!(deserialized.consensus_active);
-        assert_eq!(deserialized.current_block, 88);
-        assert_eq!(deserialized.highest_block, 88);
-        assert_eq!(deserialized.connected_peers, 4);
     }
 }

@@ -93,15 +93,10 @@ impl ValidatorSet<'_> {
     /// codec. This function fully validates the payload before any storage write.
     pub fn set_p2p_address(
         &mut self,
-        caller: Address,
         validator_addr: Address,
         version: u8,
         encoded: &[u8],
     ) -> Result<()> {
-        let owner = self.config_owner.read()?;
-        if caller != owner && caller != validator_addr {
-            return Err(ValidatorSetError::UnauthorizedOwnerOrValidator.into());
-        }
         if self.address_to_index.read(&validator_addr)? == 0 {
             return Err(ValidatorSetError::ValidatorNotRegistered.into());
         }
@@ -143,23 +138,20 @@ impl ValidatorSet<'_> {
     /// `WaitingForReadiness` (`PENDING`).
     pub fn register_with_initial_stake(
         &mut self,
-        caller: Address,
         validator_addr: Address,
-        (consensus_pubkey, radicle_node_id, bls_signature): (&[u8; 48], B256, Option<&[u8; 96]>),
+        (consensus_pubkey, radicle_node_id, bls_signature): (&[u8; 48], B256, &[u8; 96]),
         (p2p_version, p2p_encoded): (u8, &[u8]),
         (bonded, minimum): (U256, U256),
     ) -> Result<()> {
         let p2p = decode_registration_p2p(p2p_version, p2p_encoded)?;
         self.register_validator_inner(&RegistrationRequest {
-            caller,
             validator: validator_addr,
             consensus_pubkey,
             radicle_node_id,
-            bls_signature,
+            proof: RegistrationProof::Bls(bls_signature),
             p2p,
             bonded,
             minimum,
-            allow_bootstrap_without_pop: false,
         })
     }
 
@@ -169,23 +161,20 @@ impl ValidatorSet<'_> {
     #[cfg(test)]
     pub fn register_validator_with_sig(
         &mut self,
-        caller: Address,
         validator_addr: Address,
         consensus_pubkey: &[u8; 48],
         radicle_node_id: B256,
-        bls_signature: Option<&[u8; 96]>,
+        bls_signature: &[u8; 96],
     ) -> Result<()> {
         let bonded = self.read_authoritative_bonded(&validator_addr)?;
         self.register_validator_inner(&RegistrationRequest {
-            caller,
             validator: validator_addr,
             consensus_pubkey,
             radicle_node_id,
-            bls_signature,
+            proof: RegistrationProof::Bls(bls_signature),
             p2p: P2pInfo::Unset,
             bonded,
             minimum: U256::ZERO,
-            allow_bootstrap_without_pop: false,
         })
     }
 
@@ -193,7 +182,7 @@ impl ValidatorSet<'_> {
         &mut self,
         request: &RegistrationRequest<'_>,
     ) -> Result<()> {
-        let radicle_owner = self.authorize_registration(request)?;
+        let radicle_owner = self.validate_registration(request)?;
         let target = RegistrationTarget {
             existing_state: self.validator_state(request.validator)?,
             radicle_owner,
@@ -208,16 +197,9 @@ impl ValidatorSet<'_> {
     /// Checks every registration precondition that does not depend on the
     /// registry state of the validator. Returns the current owner of the
     /// requested Radicle NodeId.
-    fn authorize_registration(&self, request: &RegistrationRequest<'_>) -> Result<Address> {
-        let owner = self.config_owner.read()?;
+    fn validate_registration(&self, request: &RegistrationRequest<'_>) -> Result<Address> {
         if *request.consensus_pubkey == [0; 48] {
             return Err(ValidatorSetError::ZeroConsensusPublicKey.into());
-        }
-
-        // Only the owner or the validator may register at the ValidatorSet
-        // boundary. External callers enter through Staking::stake.
-        if request.caller != owner && request.caller != request.validator {
-            return Err(ValidatorSetError::UnauthorizedOwnerOrValidator.into());
         }
         self.ensure_not_operational_delegate(request.validator)?;
         let radicle_owner = self.available_radicle_owner(request)?;
@@ -242,21 +224,18 @@ impl ValidatorSet<'_> {
     }
 
     /// Every runtime registration requires proof of possession. The only
-    /// no-PoP path is the feature-gated bootstrap/test helper. Normal owner
-    /// authority does not weaken the consensus-key invariant.
+    /// no-PoP path is the feature-gated test fixture helper.
     fn verify_proof_of_possession(&self, request: &RegistrationRequest<'_>) -> Result<()> {
-        if let Some(sig_bytes) = request.bls_signature {
-            verify_bls_registration_sig(
+        match request.proof {
+            RegistrationProof::Bls(sig_bytes) => verify_bls_registration_sig(
                 request.consensus_pubkey,
                 sig_bytes,
                 self.storage.chain_id()?,
                 request.validator,
                 request.radicle_node_id,
-            )
-        } else if !request.allow_bootstrap_without_pop {
-            Err(ValidatorSetError::RegistrationRequiresBlsPop.into())
-        } else {
-            Ok(())
+            ),
+            #[cfg(any(test, feature = "test-utils"))]
+            RegistrationProof::BootstrapWithoutPop => Ok(()),
         }
     }
 
@@ -455,19 +434,22 @@ impl ValidatorSet<'_> {
     }
 }
 
+/// Proof-of-possession mode for a validator registration request.
+pub(super) enum RegistrationProof<'a> {
+    Bls(&'a [u8; 96]),
+    #[cfg(any(test, feature = "test-utils"))]
+    BootstrapWithoutPop,
+}
+
 /// One validator registration request.
 pub(super) struct RegistrationRequest<'a> {
-    pub(super) caller: Address,
     pub(super) validator: Address,
     pub(super) consensus_pubkey: &'a [u8; 48],
     pub(super) radicle_node_id: B256,
-    pub(super) bls_signature: Option<&'a [u8; 96]>,
+    pub(super) proof: RegistrationProof<'a>,
     pub(super) p2p: P2pInfo,
     pub(super) bonded: U256,
     pub(super) minimum: U256,
-    /// Only the feature-gated bootstrap/test helper may skip proof of
-    /// possession.
-    pub(super) allow_bootstrap_without_pop: bool,
 }
 
 /// The registry facts read once before a registration selects its path.

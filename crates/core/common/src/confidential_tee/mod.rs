@@ -18,10 +18,10 @@ pub use confidential::{
     AccountKeyDerivation, BalanceTransition, Domain, EnvelopeCipherSpec, Ledger,
     ModifyAuthorization, ModifyDomain, ModifyOperation, OperationTag, SlotCipher, SlotCipherDomain,
     FIDELITY, FIDELITY_COHORT_ENVELOPE, FIELD_BALANCE, GRATIS, GRATIS_BALANCE_ENVELOPE, NOD,
-    PROMIS, PROMIS_BALANCE_ENVELOPE, TRIBUTE,
+    PROMIS, PROMIS_BALANCE_ENVELOPE,
 };
 pub use crypto::{
-    chacha20poly1305_decrypt, chacha20poly1305_encrypt, ecdhe_tribute_offer_decrypt, hkdf_sha256,
+    chacha20poly1305_decrypt, chacha20poly1305_encrypt, ecdhe_offer_decrypt, hkdf_sha256,
 };
 #[cfg(feature = "dev-keys")]
 pub use dev::encrypt_share;
@@ -32,14 +32,13 @@ pub use dev::{
     GRATIS_CHAIN, GRATIS_GROUP_SIG, OFFER_SECRET_KEY, PROMIS_CHAIN, PROMIS_GROUP_SIG,
 };
 pub use errors::{
-    map_consensus_transport_error, parse_tribute_draft_id, ComputeError, DraftIdHexError,
-    EnclaveClientError, LocalCryptoError, TeeError, TributeSourceError, FIDELITY_ATTESTATION,
-    GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION, TRIBUTE_OFFER_ATTESTATION,
-    TRIBUTE_SOURCE_REJECTED,
+    map_consensus_transport_error, parse_offer_draft_id, ComputeError, DraftIdHexError,
+    EnclaveClientError, LocalCryptoError, TeeError, FIDELITY_ATTESTATION, GRATIS_OP_ATTESTATION,
+    NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION,
 };
 pub use offer_encrypt::{
-    canary_offer_json, encrypt_tribute_offer, encrypt_tribute_offer_with, EncryptedOfferParts,
-    OFFER_HKDF_INFO, OFFER_HKDF_SALT,
+    canary_offer_json, encrypt_offer, encrypt_offer_with, EncryptedOfferParts,
+    CREDIS_PLEDGE_HKDF_INFO, OFFER_HKDF_INFO, OFFER_HKDF_SALT,
 };
 pub use response_auth::{
     attestation, hash, sign_attestation_tag, verify_app_attestation,
@@ -48,7 +47,7 @@ pub use response_auth::{
 };
 pub use v2_balance_decrypt::{
     decrypt_fidelity_cohorts, decrypt_gratis_balance, decrypt_nod_for_owner,
-    decrypt_nod_quote_for_owner, decrypt_promis_balance, decrypt_tribute_for_owner,
+    decrypt_nod_nominal_for_owner, decrypt_nod_quote_for_owner, decrypt_promis_balance,
 };
 pub use witness_envelope::{
     consensus_witness_call, decode_canonical_body, decode_tagged_payload,

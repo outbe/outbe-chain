@@ -443,9 +443,8 @@ mod equivocation {
                 waive_fee(storage.clone(), &transaction).unwrap_err().code(),
                 107
             );
-            let owner = Address::repeat_byte(0x99);
             let mut vs = ValidatorSet::new(storage.clone());
-            vs.test_configure_registry(owner).unwrap();
+            vs.test_configure_registry().unwrap();
             vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
             vs.test_register_active_validator(SIGNER, &[2; 48], U256::from(1))
                 .unwrap();
@@ -479,8 +478,7 @@ mod equivocation {
             si.evidence_processed.write(&key, false).unwrap();
             // A registered, never-activated accused must be rejected before snapshots/BLS.
             let inactive = Address::repeat_byte(0x66);
-            vs.test_register_validator_without_pop(inactive, &[3; 48])
-                .unwrap();
+            vs.register_validator(inactive, &[3; 48]).unwrap();
             let mut a = first.clone();
             let mut b = second.clone();
             a[..48].fill(3);
@@ -651,9 +649,8 @@ mod equivocation {
         ];
         let mut provider = HashMapStorageProvider::new(1);
         provider.enter(|storage| {
-            let owner = Address::repeat_byte(0x99);
             let mut vs = ValidatorSet::new(storage.clone());
-            vs.test_configure_registry(owner).unwrap();
+            vs.test_configure_registry().unwrap();
             vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
             vs.test_register_active_validator(SIGNER, &[2; 48], U256::from(1))
                 .unwrap();
@@ -667,7 +664,7 @@ mod equivocation {
                 )
                 .unwrap();
             }
-            vs.test_seed_committee_ring(owner, &snapshot).unwrap();
+            vs.test_seed_committee_ring(&snapshot).unwrap();
             let si = SlashIndicator::new(storage.clone());
             for (selector, first, second) in pairs {
                 let input = calldata(selector, &first, &second);

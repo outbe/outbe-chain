@@ -267,6 +267,7 @@ mod tests {
             IHyperlaneController::validatorAnnounceByDomainCall::SELECTOR => va.abi_encode(),
             IHyperlaneController::hyperlaneSignerCall::SELECTOR => Address::ZERO.abi_encode(),
             IHyperlaneController::submittedIndexCall::SELECTOR
+            | IHyperlaneController::targetIndexCall::SELECTOR
             | IHyperlaneController::missCountCall::SELECTOR => 0u32.abi_encode(),
             other => panic!("controller selector {other:?}"),
         }

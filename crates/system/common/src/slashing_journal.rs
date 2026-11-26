@@ -140,13 +140,11 @@ pub enum JournalRecord {
         failure_class: u16,
     },
 
-    /// Validator self-deactivated (or owner deactivated): ACTIVE->EXITING.
+    /// Validator voluntarily deactivated itself: ACTIVE->EXITING.
     ValidatorDeactivated {
         wall_clock: String,
         block_number: u64,
         validator: String,
-        caller: String,
-        self_initiated: bool,
     },
 
     /// Validator force-exited from a status path: ACTIVE->EXITING (or

@@ -11,16 +11,20 @@ pub mod errors;
 pub(crate) mod forfeited;
 pub mod hooks;
 pub mod notify;
+pub mod outbox;
 pub mod precompile;
 pub(crate) mod runtime;
 pub mod schema;
 pub(crate) mod sol_ext;
 pub(crate) mod state;
+pub mod targets;
+pub mod transport;
 
 pub use api::issue_intex;
 pub use errors::IntexFactoryError;
 pub use hooks::IntexFactoryModule;
 pub use outbe_intex::SeriesId;
+pub use outbox::IntexFactoryOutboxModule;
 pub use runtime::{marked_up, to_wire_price};
 pub use schema::{IntexFactoryContract, IssuanceParams};
 

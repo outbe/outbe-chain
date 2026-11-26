@@ -1,4 +1,8 @@
-use std::{fs, os::unix::fs::PermissionsExt, path::Path};
+use std::{
+    fs,
+    os::unix::fs::PermissionsExt,
+    path::{Path, PathBuf},
+};
 
 use alloy_primitives::{Address, U256};
 use eyre::{ensure, Context, Result};
@@ -12,15 +16,28 @@ use crate::{
         journal::{self, Journal},
         path_text,
         rpc::RpcClient,
-        validator_address,
+        validator_address, FEEDER_FUNDING_WEI,
     },
 };
 
 pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
     let _lock = process::LifecycleLock::acquire()?;
     let mut progress = Progress::new();
+    let root = Path::new(process::ROOT);
+    let prepared = root.exists() && journal::path().is_file();
+    let existing_empty_root = if prepared {
+        false
+    } else {
+        validate_unprepared_root(root)?
+    };
+    let staging_parent = if existing_empty_root {
+        root
+    } else {
+        root.parent().unwrap_or_else(|| Path::new("/opt"))
+    };
+
     progress.stage("verifying every operator bundle file");
-    let extracted = bundle::verify_and_extract(bundle_path, Path::new("/opt"))?;
+    let extracted = bundle::verify_and_extract(bundle_path, staging_parent)?;
     verify_bootstrap_binary(extracted.directory.path())?;
 
     progress.stage("validating operator configuration and remote network");
@@ -32,8 +49,7 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
         "certified RPC chain id does not match operator config"
     );
     let minimum_stake = remote.min_stake().await?;
-    let root = Path::new(process::ROOT);
-    if root.exists() && journal::path().is_file() {
+    if prepared {
         let mut journal = Journal::load()?;
         ensure!(
             journal.bundle_sha256 == extracted.archive_sha256
@@ -59,8 +75,6 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
         );
         return Ok(());
     }
-    remove_empty_unprepared_root(root)?;
-
     progress.stage("generating host-local validator identities");
     let staging = extracted.directory.path();
     let keys = staging.join("keys");
@@ -82,8 +96,7 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
 
     progress.stage("installing systemd services without starting them");
     let bundle_sha256 = extracted.archive_sha256;
-    let staging_path = extracted.directory.keep();
-    fs::rename(&staging_path, root).wrap_err("failed to publish /opt/outbe-chain")?;
+    publish_staging(extracted.directory, root, existing_empty_root)?;
     let mut journal = Journal::new(bundle_sha256, config_sha256, config);
     journal.save()?;
     install::run()?;
@@ -103,16 +116,69 @@ pub async fn run(bundle_path: &Path, config_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn remove_empty_unprepared_root(root: &Path) -> Result<()> {
+fn validate_unprepared_root(root: &Path) -> Result<bool> {
     if !root.exists() {
-        return Ok(());
+        return Ok(false);
     }
+    let metadata = fs::symlink_metadata(root)?;
     ensure!(
-        root.is_dir() && fs::read_dir(root)?.next().is_none(),
+        metadata.is_dir()
+            && !metadata.file_type().is_symlink()
+            && fs::read_dir(root)?.next().is_none(),
         "{} exists without a lifecycle journal and is not an empty directory",
         root.display()
     );
-    fs::remove_dir(root).wrap_err_with(|| format!("failed to remove empty {}", root.display()))
+    Ok(true)
+}
+
+fn publish_staging(
+    staging: tempfile::TempDir,
+    root: &Path,
+    existing_empty_root: bool,
+) -> Result<()> {
+    if !existing_empty_root {
+        let staging_path = staging.keep();
+        fs::rename(&staging_path, root).wrap_err("failed to publish /opt/outbe-chain")?;
+        return Ok(());
+    }
+
+    fs::set_permissions(root, fs::Permissions::from_mode(0o755))?;
+    let staging_root = staging.path().to_path_buf();
+    let mut entries = fs::read_dir(&staging_root)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<PathBuf>>>()?;
+    entries.sort();
+    let mut published = Vec::new();
+    for source in entries {
+        let name = source
+            .file_name()
+            .ok_or_else(|| eyre::eyre!("invalid staging entry: {}", source.display()))?;
+        let destination = root.join(name);
+        if destination.exists() {
+            for (source, destination) in published.iter().rev() {
+                let _ = fs::rename(destination, source);
+            }
+            eyre::bail!(
+                "cannot publish {}: {} already exists",
+                source.display(),
+                destination.display()
+            );
+        }
+        if let Err(error) = fs::rename(&source, &destination) {
+            for (source, destination) in published.iter().rev() {
+                let _ = fs::rename(destination, source);
+            }
+            return Err(error).wrap_err_with(|| {
+                format!(
+                    "failed to publish {} into {}",
+                    source.display(),
+                    root.display()
+                )
+            });
+        }
+        published.push((source, destination));
+    }
+    Ok(())
 }
 
 fn verify_bootstrap_binary(root: &Path) -> Result<()> {
@@ -145,7 +211,10 @@ fn print_summary(
     certified_rpc: &str,
     hyperlane_funding: U256,
 ) {
-    let funding = minimum_stake + hyperlane_funding + U256::from(1_000_000_000_000_000_000_u64);
+    let funding = minimum_stake
+        + hyperlane_funding
+        + U256::from(FEEDER_FUNDING_WEI)
+        + U256::from(1_000_000_000_000_000_000_u64);
     println!();
     println!("Validator files:");
     println!("  address:          {validator:#x}");
@@ -181,8 +250,8 @@ mod tests {
         let parent = tempfile::tempdir().unwrap();
         let root = parent.path().join("outbe-chain");
         fs::create_dir(&root).unwrap();
-        remove_empty_unprepared_root(&root).unwrap();
-        assert!(!root.exists());
+        assert!(validate_unprepared_root(&root).unwrap());
+        assert!(root.is_dir());
     }
 
     #[test]
@@ -191,6 +260,48 @@ mod tests {
         let root = parent.path().join("outbe-chain");
         fs::create_dir(&root).unwrap();
         fs::write(root.join("unexpected"), b"data").unwrap();
-        assert!(remove_empty_unprepared_root(&root).is_err());
+        assert!(validate_unprepared_root(&root).is_err());
+    }
+
+    #[test]
+    fn rejects_an_unjournaled_symlink_install_directory() {
+        use std::os::unix::fs::symlink;
+
+        let parent = tempfile::tempdir().unwrap();
+        let target = parent.path().join("target");
+        let root = parent.path().join("outbe-chain");
+        fs::create_dir(&target).unwrap();
+        symlink(&target, &root).unwrap();
+
+        assert!(validate_unprepared_root(&root).is_err());
+    }
+
+    #[test]
+    fn publishes_into_an_existing_empty_install_directory() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("outbe-chain");
+        fs::create_dir(&root).unwrap();
+        let staging = tempfile::tempdir_in(&root).unwrap();
+        fs::write(staging.path().join("file"), b"data").unwrap();
+
+        publish_staging(staging, &root, true).unwrap();
+
+        assert_eq!(fs::read(root.join("file")).unwrap(), b"data");
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn rolls_back_a_partial_publish() {
+        let parent = tempfile::tempdir().unwrap();
+        let root = parent.path().join("outbe-chain");
+        fs::create_dir(&root).unwrap();
+        let staging = tempfile::tempdir_in(&root).unwrap();
+        fs::write(staging.path().join("a"), b"first").unwrap();
+        fs::write(staging.path().join("b"), b"second").unwrap();
+        fs::write(root.join("b"), b"collision").unwrap();
+
+        assert!(publish_staging(staging, &root, true).is_err());
+        assert!(!root.join("a").exists());
+        assert_eq!(fs::read(root.join("b")).unwrap(), b"collision");
     }
 }

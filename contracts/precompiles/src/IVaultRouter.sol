@@ -22,7 +22,7 @@ interface IVaultRouter {
         RemoveVault
     }
 
-    struct LiquidityReservation {
+    struct CredisReservation {
         address asset;
         /// @dev In `asset`'s own minor units.
         uint256 amountMinor;
@@ -32,14 +32,21 @@ interface IVaultRouter {
         uint64 expiresAt;
         uint256 gratisMinor;
         uint256 snapshotId;
+        /// @dev 24-hour VWAP of COEN in `referenceCurrency` at the reservation hour, scale 1e6.
         uint256 entryPriceMinor;
-        uint256 valuationPriceMinor;
         uint256 policyRate;
         uint16 issuanceCurrency;
         uint8 assetDecimals;
         uint16 referenceCurrency;
-        uint256 callAnchorPriceMinor;
-        address source;
+        bytes14 seriesId;
+        /// @dev UTC hour of the reservation, 0-23.
+        uint8 subSeries;
+        /// @dev WCOEN the CCA put in for the pledged Gratis, 18 decimals.
+        uint256 wcoenMinor;
+        /// @dev The account of the CCA that gets the stablecoins of the Credis owner.
+        address ccaReceiver;
+        /// @dev The account of the card issuer that gets the escrow.
+        address omnibus;
     }
 
     error TokenOperationFailed();
@@ -49,6 +56,7 @@ interface IVaultRouter {
     error ReserveVaultAlreadyAdded();
     error ReserveVaultNotFound();
     error ReserveVaultHasShares(address vault, uint256 shares);
+    error ReserveVaultHasReservations(address vault, uint32 reservations);
     error ReserveVaultRemovalPending(address vault, uint256 proposalId);
     error ReserveVaultOwnerNotRenounced(address currentOwner);
     error StablecoinSourceNotFound();
@@ -62,8 +70,6 @@ interface IVaultRouter {
     error ReservationExists(uint256 id);
     error ReservationNotFound(uint256 id);
     error ReservationExpired(uint256 id);
-    error CredisOwnerMismatch();
-    error ReservationInsufficient(uint256 availableMinor, uint256 requiredMinor);
     error InvalidReservationAmount();
     error ZeroAddress();
     error Unauthorized();
@@ -77,8 +83,8 @@ interface IVaultRouter {
     error UnsupportedAssetDecimalsSimple();
     error InvalidAssetCurrency();
     error PledgePriceUnavailable();
-    error PreviousDayVwapUnavailable();
-    error ReferencePairUnavailable();
+    error PolicyRateTooOld();
+    error ReferencePriceUnavailable();
     error AssetVaultsCount();
     error AssetNotRegistered(address asset);
     error CurrencyMismatch(uint16 isoCode);
@@ -141,18 +147,44 @@ interface IVaultRouter {
         uint256 mintedShares
     );
 
-    event ReservationCreated(
-        uint256 indexed id,
-        address indexed credisOwner,
+    event CredisReservationCreated(
+        uint256 indexed credisReservationId,
+        address indexed owner,
         address indexed cca,
         address asset,
         address vault,
         uint256 amountMinor,
+        uint256 wcoenMinor,
+        uint256 burnedShares,
         uint64 expiresAt
     );
-    event ReservationReleased(uint256 indexed id, address indexed asset, address indexed receiver, uint256 amountMinor);
-    event ReservationReturned(
-        uint256 indexed id, address indexed asset, address indexed vault, uint256 amountMinor, uint256 mintedShares
+    event CredisReservationRedeemed(
+        uint256 indexed credisReservationId,
+        address indexed owner,
+        uint256 indexed credisId,
+        address cca,
+        address ccaReceiver,
+        address omnibus,
+        address asset,
+        uint256 amountMinor
+    );
+    event CredisReservationCanceled(
+        uint256 indexed credisReservationId,
+        address indexed owner,
+        address indexed cca,
+        address asset,
+        address vault,
+        uint256 amountMinor,
+        uint256 mintedShares
+    );
+    event CredisReservationExpired(
+        uint256 indexed credisReservationId,
+        address indexed owner,
+        address indexed cca,
+        address asset,
+        address vault,
+        uint256 amountMinor,
+        uint256 mintedShares
     );
 
     /// @notice Returns the number of assets.
@@ -254,43 +286,49 @@ interface IVaultRouter {
         returns (address assetFrom, address assetTo, uint256 assetsToMinor);
 
     /// @notice Whether the asset's reserve vault can currently fund a withdrawal of
-    ///         `amountMinor` of `asset`. This checks share coverage only; `reserveStables`
+    ///         `amountMinor` of `asset`. This checks share coverage only; `createCredisReservation`
     ///         also rejects pending vault removals. Returns false rather than reverting
     ///         when `asset` has no vault.
     function hasStablecoin(address asset, uint256 amountMinor) external view returns (bool sufficient);
 
-    /// @notice Redeems `amountMinor` of `asset` from its origin vault and holds it in this
-    ///         router's custody for `credisOwner`, guaranteeing it can later be
-    ///         delivered for 15 minutes. Caller must be an active CCA. Only `source`
-    ///         may pledge the Gratis collateral for this reservation. The quote fixes the
-    ///         pledge valuation and the Credis call terms: `referenceCurrency`, its previous
-    ///         closed UTC-day VWAP as the call anchor, and the issuance currency's policy rate.
-    ///         Reverts if the selected vault has a pending removal vault action, even after
-    ///         its deadline, until the action is cleared or superseded.
-    function reserveStables(
-        address credisOwner,
-        address source,
+    /// @notice Takes the WCOEN for the pledged Gratis from the CCA and redeems `amountMinor` of
+    ///         `asset` from its origin vault into the escrow of the reservation for 15 minutes.
+    ///         Caller must be an active CCA and must have approved the WCOEN to this router.
+    ///         The quote fixes the Gratis quantity and the Credis call terms: `referenceCurrency`,
+    ///         its 24-hour VWAP at the current hour as the entry price, and the issuance
+    ///         currency's policy rate. Reverts if the selected vault has a pending removal vault
+    ///         action, even after its deadline, until the action is cleared or superseded.
+    function createCredisReservation(
+        address owner,
         address asset,
         uint256 amountMinor,
-        uint16 referenceCurrency
-    ) external returns (uint256 reservationId);
+        uint16 referenceCurrency,
+        address ccaReceiver,
+        address omnibus
+    ) external returns (uint256 credisReservationId);
 
-    /// @notice Validates `receiver` as the reservation's Credis owner, pays `amountMinor` to
-    ///         the recorded CCA to cover COEN delivered to that owner, and
-    ///         returns any unused remainder to the origin vault. Caller must be a
-    ///         registered stablecoin target. `receiver` must be the Credis
-    ///         owner. Reverts if the reservation is missing, expired, or too small.
-    /// @dev Only CredisFactory may call. `receiver` binds the Credis owner.
-    ///      `receiver` cannot redirect the payout.
-    function releaseReservation(uint256 id, address receiver, uint256 amountMinor)
+    /// @notice Deletes the reservation, takes `amountMinor` of the asset from the Credis owner to
+    ///         the receiving account of the CCA, sends the WCOEN to the Credis owner and the
+    ///         escrow to the omnibus account. The Credis owner must have approved the asset to
+    ///         this router. Reverts if the reservation is missing or expired.
+    /// @dev Only CredisFactory may call, in the issue of `credisId`.
+    function redeemCredisReservation(uint256 credisReservationId, uint256 credisId)
         external
-        returns (uint256 deliveredMinor);
+        returns (uint256 amountMinor);
 
-    /// @notice Deposits an unused reservation back into its origin vault and deletes it.
-    ///         The originating CCA may call at any time. After expiry, anyone may call.
-    ///         Idempotent. An `id` that holds nothing returns 0 instead of reverting.
-    function returnReservation(uint256 id) external returns (uint256 mintedShares);
+    /// @notice The CCA ends its unused reservation up to `expiresAt`: the WCOEN goes back to the
+    ///         CCA and the escrow to its origin vault. Idempotent. An id that holds nothing
+    ///         returns 0.
+    function cancelCredisReservation(uint256 credisReservationId) external returns (uint256 mintedShares);
 
-    /// @notice The reservation held under `id`, or a zeroed struct if none.
-    function reservationOf(uint256 id) external view returns (LiquidityReservation memory reservation);
+    /// @notice Any account ends an unused reservation after `expiresAt`: the WCOEN goes back to
+    ///         the CCA and the escrow to its origin vault. Idempotent. An id that holds nothing
+    ///         returns 0.
+    function expireCredisReservation(uint256 credisReservationId) external returns (uint256 mintedShares);
+
+    /// @notice The reservation held under `credisReservationId`, or a zeroed struct if none.
+    function getCredisReservation(uint256 credisReservationId)
+        external
+        view
+        returns (CredisReservation memory reservation);
 }

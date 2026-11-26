@@ -34,7 +34,7 @@ impl StateKeyHandle {
     pub fn derive_subkey(&self, account: Address, info: &[u8]) -> Result<Self> {
         Ok(Self(derive(self.0.as_ref(), account.as_slice(), info)?))
     }
-    /// HKDF with this key as IKM, for digest-bound NOD/Tribute record keys.
+    /// HKDF with this key as IKM, for digest-bound NOD record keys.
     pub fn derive_with_salt(&self, salt: &[u8], info: &[u8]) -> Result<Self> {
         Ok(Self(derive(salt, self.0.as_ref(), info)?))
     }

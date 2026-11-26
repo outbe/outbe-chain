@@ -27,8 +27,13 @@ fn begin_block_system_tx_rejection_preserves_logs_and_begin_receipt_accounting()
             bootstrap: BootstrapFixture::Absent,
         },
     );
-    let cycle_tx = begin.last().unwrap().clone();
-    let ordinal = begin.len() - 1;
+    let ordinal = begin
+        .iter()
+        .position(|tx| {
+            SystemTx::decode(tx.tx().input()).unwrap() == SystemTx::BeginBlock { step_index: 8 }
+        })
+        .unwrap();
+    let cycle_tx = begin[ordinal].clone();
     let mut state = state_with_active_proposer(proposer);
     let evm = config.evm_with_env(&mut state, test_evm_env(2, REWARDS_ADDRESS));
     let mut ctx = execution_ctx(None, Bytes::new());

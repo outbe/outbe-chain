@@ -103,7 +103,7 @@ fn injected_payload_validation_runs_on_begin_and_end_steps() {
             })
         }
     }
-    const REJECT_BEGIN: &[crate::system_tx::ProtocolStep] = &[begin_step::<Reject>(); 9];
+    const REJECT_BEGIN: &[crate::system_tx::ProtocolStep] = &[begin_step::<Reject>(); 11];
     const REJECT_END: &[crate::system_tx::ProtocolStep] = &[end_step::<Reject>(); 5];
     let mut case = fixture("steady_disabled");
     for end in [false, true] {

@@ -12,11 +12,11 @@ use outbe_oracle::schema::OracleContract;
 use outbe_primitives::storage::{
     gas::PRECOMPILE_BASE_GAS, hashmap::HashMapStorageProvider, StorageHandle,
 };
-use outbe_system_common::addresses::{CREDIS_FACTORY_ADDRESS, VAULT_ROUTER_ADDRESS};
+use outbe_system_common::addresses::VAULT_ROUTER_ADDRESS;
+use outbe_system_common::time::timestamp_to_date_key;
 use outbe_system_common::time::SECONDS_PER_DAY;
-use outbe_system_common::time::{previous_date_key, timestamp_to_date_key};
 use outbe_system_common::units::{checked_protocol_to_native, SCALE_1E6_U256};
-use outbe_vaultrouter::{LiquidityReservation, VaultRouterContract};
+use outbe_vaultrouter::{CredisReservation, VaultRouterContract};
 
 use super::support::{capture_execution, elapsed_ns};
 use crate::{
@@ -55,6 +55,7 @@ impl CredisScenario {
 pub struct PreparedCredis {
     provider: HashMapStorageProvider,
     reservation_id: U256,
+    pledge: Vec<u8>,
 }
 
 fn pledge_stables() -> U256 {
@@ -65,8 +66,8 @@ fn pledge_cost() -> U256 {
     SCALE_1E6_U256
 }
 
-fn native_stake() -> U256 {
-    checked_protocol_to_native(pledge_cost()).expect("benchmark stake fits native COEN")
+fn wcoen_minor() -> U256 {
+    checked_protocol_to_native(pledge_cost()).expect("benchmark WCOEN fits 18 decimals")
 }
 
 fn oracle_rate() -> U256 {
@@ -152,28 +153,13 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
         .policy_rate_published_at
         .write(&ISSUANCE_ISO, 1)
         .map_err(|error| error.to_string())?;
-    // This scenario anchors to the issuance currency, a reference currency. The code
-    // above already seeds the COEN pair of that currency. Issuance also requires that
-    // pair's previous closed UTC-day VWAP.
-    let oracle = OracleContract::new(storage.clone());
-    let index = outbe_oracle::api::coen_pair_index_opt(storage.clone(), REFERENCE_ISO)
-        .map_err(|error| error.to_string())?
-        .ok_or("benchmark COEN pair is not registered")?;
-    let closed_day = previous_date_key(timestamp_to_date_key(CREATED_AT)).expect("date step");
-    oracle
-        .record_utc_day_vwap(closed_day, index, oracle_rate())
-        .map_err(|error| error.to_string())?;
-    oracle
-        .utc_day_vwap_last_finalized
-        .write(closed_day)
-        .map_err(|error| error.to_string())?;
+    let reservation_day = timestamp_to_date_key(CREATED_AT);
 
     let contract = VaultRouterContract::new(storage.clone());
     let profile = outbe_credis::config::read(&storage).map_err(|error| error.to_string())?;
     let reservation_id = U256::from(1);
     contract
-        .reservations
-        .create(&LiquidityReservation {
+        .hold_credis_reservation(&CredisReservation {
             id: reservation_id,
             asset: ASSET,
             amount_minor: pledge_stables(),
@@ -184,36 +170,27 @@ fn seed_world(storage: StorageHandle<'_>) -> Result<U256, String> {
             gratis_minor: pledge_cost(),
             snapshot_id: U256::from(17),
             entry_price_minor: oracle_rate(),
-            valuation_price_minor: oracle_rate(),
             policy_rate: U256::from(43_000),
             issuance_currency: ISSUANCE_ISO,
             asset_decimals: 6,
             reference_currency: REFERENCE_ISO,
-            call_anchor_price_minor: oracle_rate(),
-            source: ALICE,
             series_id: outbe_core_common::series_id::SeriesId::for_pair(
-                closed_day,
+                reservation_day,
                 ISSUANCE_ISO,
                 REFERENCE_ISO,
             )
             .expect("series id"),
+            sub_series: outbe_credis::CredisContract::sub_series_of(CREATED_AT),
             call_start_day: outbe_system_common::time::first_full_day(CREATED_AT)
                 .expect("date step"),
             call_rate: profile.call_rate,
             call_window_seconds: profile.call_window_seconds,
             call_threshold_seconds: profile.call_threshold_seconds,
             call_notice_period_seconds: profile.call_notice_period_seconds,
+            wcoen_minor: wcoen_minor(),
+            cca_receiver: CCA,
+            omnibus: Address::repeat_byte(0x0b),
         })
-        .map_err(|error| error.to_string())?;
-    outbe_gratisfactory::runtime::pledge_gratis(
-        storage.clone(),
-        ALICE,
-        reservation_id,
-        auth(GratisOp::Pledge, pledge_cost(), 1),
-    )
-    .map_err(|error| error.to_string())?;
-    storage
-        .increase_balance(CREDIS_FACTORY_ADDRESS, native_stake())
         .map_err(|error| error.to_string())?;
     Ok(reservation_id)
 }
@@ -249,9 +226,11 @@ impl BenchmarkScenario for CredisScenario {
             iso_word(6),
         );
         let reservation_id = StorageHandle::enter(&mut provider, seed_world)?;
+        let pledge = gratis_enclave::sealed_pledge(ALICE, pledge_cost(), reservation_id, CHAIN_ID);
         Ok(PreparedCredis {
             provider,
             reservation_id,
+            pledge,
         })
     }
 
@@ -262,13 +241,14 @@ impl BenchmarkScenario for CredisScenario {
         provider.enable_storage_trace();
         let event_offset = provider.get_ordered_events().len();
         let calldata = ICredisFactory::issueCredisCall {
-            reservationId: prepared.reservation_id,
+            credisReservationId: prepared.reservation_id,
+            pledge: prepared.pledge.clone().into(),
         }
         .abi_encode();
 
         let started = Instant::now();
         let output = StorageHandle::enter(&mut provider, |storage| {
-            outbe_credisfactory::precompile::dispatch(storage, &calldata, CCA, native_stake())
+            outbe_credisfactory::precompile::dispatch(storage, &calldata, ALICE, U256::ZERO)
                 .map_err(|error| error.to_string())
         })?;
         let latency_ns = elapsed_ns(started);
@@ -298,9 +278,9 @@ impl BenchmarkScenario for CredisScenario {
             Ok::<_, String>((record, pledged))
         })?;
         if record.owner != ALICE
-            || record.source != ALICE
+            || record.pledge_account != ALICE
             || pledged != pledge_cost()
-            || decoded.principalMinor != pledge_stables()
+            || decoded.amountMinor != pledge_stables()
         {
             return Err("Credis request postcondition does not match the sealed pledge".to_owned());
         }

@@ -91,11 +91,7 @@ fn assert_without_effect<T: std::fmt::Debug>(
 }
 
 fn register(vs: &mut ValidatorSet<'_>, validator: Address) -> Result<()> {
-    vs.register_validator(
-        OWNER,
-        validator,
-        &dummy_consensus_pubkey(validator.as_slice()[19]),
-    )
+    vs.register_validator(validator, &dummy_consensus_pubkey(validator.as_slice()[19]))
 }
 
 /// An ACTIVE validator with a live BLS share.
@@ -177,7 +173,7 @@ fn punishment_of_a_departed_validator_is_a_no_op() -> Result<()> {
     );
     let exiting = |vs: &mut ValidatorSet<'_>| {
         participant(vs, FIRST)?;
-        vs.deactivate_validator(OWNER, FIRST)
+        vs.deactivate_validator(FIRST)
     };
     assert_without_effect(
         &mut seeded(exiting)?,
@@ -273,7 +269,7 @@ fn set_changing_transitions_are_atomic_with_their_events() -> Result<()> {
                 if jail {
                     vs.jail_validator(FIRST)
                 } else {
-                    vs.deactivate_validator(OWNER, FIRST)
+                    vs.deactivate_validator(FIRST)
                 }
             },
             view,
@@ -291,7 +287,7 @@ fn set_changing_transitions_are_atomic_with_their_events() -> Result<()> {
 #[test]
 fn deactivation_unjail_and_tee_expiry_emit_their_events() -> Result<()> {
     let mut deactivated = seeded(|vs| participant(vs, FIRST))?;
-    let effect = call_effect(&mut deactivated, |vs| vs.deactivate_validator(OWNER, FIRST));
+    let effect = call_effect(&mut deactivated, |vs| vs.deactivate_validator(FIRST));
     assert_eq!(effect.outcome, "Ok(())");
     assert_eq!(
         effect.events,
@@ -338,7 +334,7 @@ fn unjail_and_tee_expiry_reject_ineligible_validators_without_effect() -> Result
     );
     let exiting = |vs: &mut ValidatorSet<'_>| {
         participant(vs, FIRST)?;
-        vs.deactivate_validator(OWNER, FIRST)
+        vs.deactivate_validator(FIRST)
     };
     assert_without_effect(
         &mut seeded(exiting)?,

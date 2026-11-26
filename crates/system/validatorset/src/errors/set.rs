@@ -256,10 +256,6 @@ pub enum ValidatorSetError {
     #[error("inactive cleanup height overflow")]
     InactiveCleanupHeightOverflow,
 
-    /// The caller is neither the configuration owner nor the validator.
-    #[error("unauthorized: caller must be owner or validator itself")]
-    UnauthorizedOwnerOrValidator,
-
     /// The target validator is not registered.
     #[error("validator not registered")]
     ValidatorNotRegistered,
@@ -510,10 +506,6 @@ pub enum ValidatorSetError {
     /// Another validator already registered this Radicle NodeId.
     #[error("Radicle NodeId already registered by another validator")]
     RadicleNodeIdAlreadyRegistered,
-
-    /// Validator registration lacks a required BLS proof-of-possession signature.
-    #[error("validator registration requires BLS proof-of-possession signature")]
-    RegistrationRequiresBlsPop,
 
     /// Another validator already registered this BLS consensus public key.
     #[error("BLS consensus pubkey already registered by another validator")]

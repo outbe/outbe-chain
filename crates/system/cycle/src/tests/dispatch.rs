@@ -194,7 +194,7 @@ fn end_to_end_emission_dispatch_marks_day_settled_and_credits_metadosis() {
             GENESIS_TS + SECONDS_PER_DAY + PROCESS_EMISSION_DAY_START_OFFSET_SECONDS
         );
 
-        // No tributes for any AgentReward pool: all three WAA/SRA/CCA
+        // No offers for any AgentReward pool: all three WAA/SRA/CCA
         // allocations return to terminal Metadosis and no native COEN moves.
         let agent_reward_balance = ctx_fire
             .storage
@@ -228,9 +228,7 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
         let recipient = |n: u64| Address::from_word(U256::from(n + 1).into());
         let mut agent_reward = outbe_agentreward::AgentRewardContract::new(handle.clone());
         for n in 0..recipients {
-            agent_reward
-                .increment_waa_tribute(day, recipient(n))
-                .unwrap();
+            agent_reward.increment_waa_offer(day, recipient(n)).unwrap();
         }
         let claimable = |n: u64| {
             outbe_agentreward::AgentRewardContract::new(handle.clone())
@@ -269,8 +267,12 @@ fn every_block_credits_a_queued_reward_slice_between_hourly_cycles() {
         run_cycle_tick(&ctx).unwrap();
         assert_eq!(claimable(slice - 1), U256::from(1_000u64));
         assert_eq!(claimable(slice), U256::ZERO);
-        let (failed, returned) =
-            outbe_emission::api::record_metadosis_failed(handle.clone(), day.value()).unwrap();
+        let (failed, returned) = outbe_emission::api::record_metadosis_failed(
+            handle.clone(),
+            day.value(),
+            alloy_primitives::U256::ZERO,
+        )
+        .unwrap();
         assert_eq!(returned, U256::ZERO);
         assert_eq!(
             failed.state,
@@ -314,9 +316,9 @@ fn next_day_cycle_settlement_pays_previous_utc_day_agent_activity() {
         let reward_day = outbe_system_common::time::WorldwideDay::new(REWARD_UTC_DAY);
         let mut agent_reward = outbe_agentreward::AgentRewardContract::new(handle.clone());
         agent_reward
-            .increment_waa_tribute(reward_day, wallet)
+            .increment_waa_offer(reward_day, wallet)
             .unwrap();
-        agent_reward.increment_sra_tribute(reward_day, sra).unwrap();
+        agent_reward.increment_sra_offer(reward_day, sra).unwrap();
 
         let fire_ts = GENESIS_TS + SECONDS_PER_DAY + 60;
         let ctx_fire = dispatch_at(handle, 2, fire_ts);

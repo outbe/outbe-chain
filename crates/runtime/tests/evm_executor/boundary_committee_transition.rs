@@ -17,7 +17,6 @@ fn test_reshare_activation_after_participation_decode() {
     storage.set_block_number(1);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 
@@ -49,7 +48,7 @@ fn test_reshare_activation_after_participation_decode() {
         // Step 4: NOW activate new reshare with [A, B, D] (C removed, D added).
         let new_hash = B256::with_last_byte(0x02);
         // First deactivate C (simulate EXITING).
-        vs.deactivate_validator(OWNER, val_c).unwrap();
+        vs.deactivate_validator(val_c).unwrap();
 
         // C is still in the current consensus set until the reshare outcome
         // is applied. This matches the still-running engine committee.
@@ -88,7 +87,6 @@ fn test_committee_size_change_participation_safety() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 
@@ -189,7 +187,6 @@ fn test_reshare_activation_idempotent() {
 
     StorageHandle::enter(&mut parent, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 
@@ -302,10 +299,9 @@ fn certified_delayed_boundary_atomically_advances_epoch_and_snapshot() {
     StorageHandle::enter(&mut storage, |storage| {
         let validator = address!("0x1111111111111111111111111111111111111111");
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
-        vs.register_validator(OWNER, validator, &dummy_pubkey(0xA1))
+        vs.register_validator(validator, &dummy_pubkey(0xA1))
             .unwrap();
         let minimum = U256::from(1_000u64);
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
@@ -393,10 +389,9 @@ fn boundary_rejects_skipped_epoch_without_mutating_current_state() {
     StorageHandle::enter(&mut storage, |storage| {
         let validator = address!("0x1111111111111111111111111111111111111111");
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
-        vs.register_validator(OWNER, validator, &dummy_pubkey(0xA1))
+        vs.register_validator(validator, &dummy_pubkey(0xA1))
             .unwrap();
         let minimum = U256::from(1_000u64);
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
@@ -433,7 +428,6 @@ fn apply_boundary_outcome_fatals_on_hash_change_without_set_change() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 
@@ -465,7 +459,6 @@ fn apply_boundary_outcome_activates_on_validator_set_change_with_hash_change() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 
@@ -508,7 +501,6 @@ fn apply_boundary_outcome_replays_narrow_certified_tee_expiry_demotion() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 
@@ -556,7 +548,6 @@ fn apply_boundary_outcome_rejects_tampered_tee_expiry_commitment() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
         let retained = address!("0x1111111111111111111111111111111111111111");
@@ -585,7 +576,6 @@ fn apply_boundary_outcome_writes_snapshot_when_hash_matches() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 
@@ -627,7 +617,6 @@ fn apply_boundary_outcome_rejects_committee_set_hash_mismatch() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     StorageHandle::enter(&mut storage, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(OWNER).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_is_initialized.write(true).unwrap();
 

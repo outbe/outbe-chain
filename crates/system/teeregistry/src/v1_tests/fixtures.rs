@@ -231,7 +231,7 @@ pub(super) fn register_validator(
     consensus_key: [u8; 48],
 ) {
     ValidatorSet::new(storage)
-        .register_validator(Address::ZERO, signer.address(), &consensus_key)
+        .register_validator(signer.address(), &consensus_key)
         .expect("genesis-owner validator registration");
 }
 

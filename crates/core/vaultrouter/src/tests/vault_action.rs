@@ -205,9 +205,9 @@ fn layout_preserves_old_slots_and_appends_pending_maps() {
         );
         assert_eq!(router.reservation_nonce.slot(), U256::from(12));
         assert_eq!(router.reservations.base_slot(), U256::from(13));
-        assert_eq!(router.vault_assets.base_slot(), U256::from(35));
-        assert_eq!(router.vault_actions.base_slot(), U256::from(36));
-        assert_eq!(router.pending_vault_proposals.base_slot(), U256::from(39));
+        assert_eq!(router.vault_assets.base_slot(), U256::from(36));
+        assert_eq!(router.vault_actions.base_slot(), U256::from(37));
+        assert_eq!(router.pending_vault_proposals.base_slot(), U256::from(40));
         assert_eq!(
             storage.sload(VAULT_ROUTER_ADDRESS, U256::ZERO).unwrap(),
             U256::ZERO
@@ -221,15 +221,14 @@ fn approvals_do_not_overwrite_reservations_with_the_same_id() {
     stub_vault(&mut provider);
     StorageHandle::enter(&mut provider, |storage| {
         let router = VaultRouterContract::new(storage.clone());
-        let reservation = LiquidityReservation {
+        let reservation = CredisReservation {
             id: U256::ONE,
             asset: asset(),
             amount_minor: U256::from(123),
             credis_owner: owner(),
-            source: source_account(),
             ..Default::default()
         };
-        router.reservations.create(&reservation).unwrap();
+        router.hold_credis_reservation(&reservation).unwrap();
         stage(&storage, 1, ADD_VAULT, 0);
         assert_eq!(
             router.reservations.get(U256::ONE).unwrap(),
@@ -780,25 +779,23 @@ fn pending_removal_does_not_block_settlement_of_existing_reservations() {
                 &reserve_in(&storage, USD_ISO_CODE).unwrap_err(),
             );
             if release {
-                // Partial release also redeposits the unused amount into the origin vault.
                 assert_eq!(
-                    runtime::release_reservation(
+                    runtime::redeem_credis_reservation(
                         storage.clone(),
                         id,
-                        receiver(),
-                        U256::from(4),
+                        U256::ONE,
                         IVaultRouter::StablecoinTarget::Credis,
                     )
                     .unwrap(),
-                    U256::from(4)
+                    U256::from(10)
                 );
             } else {
                 assert_eq!(
-                    runtime::return_reservation(storage.clone(), cca(), id).unwrap(),
+                    runtime::cancel_credis_reservation(storage.clone(), cca(), id).unwrap(),
                     U256::from(100)
                 );
             }
-            assert!(runtime::reservation_of(&storage, id)
+            assert!(runtime::credis_reservation_of(&storage, id)
                 .unwrap()
                 .asset
                 .is_zero());

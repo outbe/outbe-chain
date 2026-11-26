@@ -14,8 +14,6 @@ pub struct StoredNod {
     pub chain_id: u64,
     #[attribute(order = 2)]
     pub series_id: SeriesId,
-    #[attribute(order = 3)]
-    pub league_id: u16,
     #[attribute(order = 4)]
     pub entry_price_minor: U256,
     #[attribute(order = 5)]
@@ -32,6 +30,10 @@ pub struct StoredNod {
     pub encryption_binding: B256,
     #[attribute(order = 11)]
     pub encrypted_gratis_amount: Vec<u8>,
+    #[attribute(order = 12)]
+    pub encrypted_nominal_amount: Vec<u8>,
+    #[attribute(order = 13)]
+    pub sub_series_id: u16,
 }
 
 impl From<&crate::NodItemState> for StoredNod {
@@ -41,7 +43,6 @@ impl From<&crate::NodItemState> for StoredNod {
             owner: item.owner,
             chain_id: item.encrypted.terms.chain_id,
             series_id: item.series_id,
-            league_id: item.league_id,
             entry_price_minor: item.encrypted.terms.entry_price_minor,
             issuance_currency: item.issuance_currency,
             reference_currency: item.reference_currency,
@@ -50,6 +51,8 @@ impl From<&crate::NodItemState> for StoredNod {
             is_settled: item.is_settled,
             encryption_binding: item.encrypted.encryption_binding,
             encrypted_gratis_amount: item.encrypted.encrypted_gratis_amount.clone(),
+            encrypted_nominal_amount: item.encrypted.encrypted_nominal_amount.clone(),
+            sub_series_id: item.sub_series_id,
         }
     }
 }
@@ -60,7 +63,7 @@ impl From<StoredNod> for crate::NodItemState {
             nod_id: item.nod_id,
             owner: item.owner,
             series_id: item.series_id,
-            league_id: item.league_id,
+            sub_series_id: item.sub_series_id,
             group_key: item.group_key,
             issuance_currency: item.issuance_currency,
             reference_currency: item.reference_currency,
@@ -72,13 +75,13 @@ impl From<StoredNod> for crate::NodItemState {
                     nod_id: item.nod_id,
                     owner: item.owner,
                     emission_day: item.series_id.day(),
-                    league_id: item.league_id,
                     entry_price_minor: item.entry_price_minor,
                     issuance_currency: item.issuance_currency,
                     reference_currency: item.reference_currency,
                 },
                 encryption_binding: item.encryption_binding,
                 encrypted_gratis_amount: item.encrypted_gratis_amount,
+                encrypted_nominal_amount: item.encrypted_nominal_amount,
             },
         }
     }

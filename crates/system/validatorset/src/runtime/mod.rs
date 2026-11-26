@@ -1,12 +1,12 @@
 //! The in-process lifecycle and accounting hooks listed below trust their Rust caller.
 //!
-//! `config_owner` does not gate these hooks. Staking, evidence, the oracle,
-//! the executor, and the begin-block path call them after their own checks.
+//! Staking, evidence, the oracle, the executor, and the begin-block path call
+//! them after their own checks.
 //! An external account reaches ValidatorSet only through `IValidatorSet` and
 //! [`crate::precompile::dispatch`]. That route exposes the views plus
 //! `setDelegate`, `revokeDelegate`, `setP2pAddress`,
 //! `deactivateValidator`, and `confirmValidatorReady`.
-//! `confirmValidatorReady` uses the transaction sender. `activateResharedSet`
+//! Every external mutation uses the transaction sender. `activateResharedSet`
 //! is not an external selector.
 //!
 //! Production callers of the in-process methods:

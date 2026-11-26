@@ -11,6 +11,11 @@
         "name": "outbeChainId_",
         "type": "uint32",
         "internalType": "uint32"
+      },
+      {
+        "name": "erc20Router_",
+        "type": "address",
+        "internalType": "address"
       }
     ],
     "stateMutability": "nonpayable"
@@ -60,6 +65,19 @@
   },
   {
     "type": "function",
+    "name": "OUTBE_ICA_ROLE",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "bytes32",
+        "internalType": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
     "name": "UPGRADE_INTERFACE_VERSION",
     "inputs": [],
     "outputs": [
@@ -88,6 +106,19 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "erc20Router",
+    "inputs": [],
+    "outputs": [
+      {
+        "name": "",
+        "type": "address",
+        "internalType": "contract IERC7786TokenBridge"
+      }
+    ],
+    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -376,19 +407,6 @@
   },
   {
     "type": "function",
-    "name": "originRouter",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
     "name": "proxiableUUID",
     "inputs": [],
     "outputs": [
@@ -402,69 +420,16 @@
   },
   {
     "type": "function",
-    "name": "receiveMessage",
+    "name": "receiveFromOutbe",
     "inputs": [
       {
-        "name": "receiveId",
-        "type": "bytes32",
-        "internalType": "bytes32"
-      },
-      {
-        "name": "sender",
-        "type": "bytes",
-        "internalType": "bytes"
-      },
-      {
-        "name": "payload",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes4",
-        "internalType": "bytes4"
-      }
-    ],
-    "stateMutability": "payable"
-  },
-  {
-    "type": "function",
-    "name": "registerRemoteMessenger",
-    "inputs": [
-      {
-        "name": "chainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "interop",
+        "name": "message",
         "type": "bytes",
         "internalType": "bytes"
       }
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "remoteMessenger",
-    "inputs": [
-      {
-        "name": "chainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ],
-    "outputs": [
-      {
-        "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
@@ -615,24 +580,6 @@
   },
   {
     "type": "function",
-    "name": "setProceedsRoute",
-    "inputs": [
-      {
-        "name": "_tokenBridge",
-        "type": "address",
-        "internalType": "address"
-      },
-      {
-        "name": "_originRouter",
-        "type": "address",
-        "internalType": "address"
-      }
-    ],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
     "name": "supportsInterface",
     "inputs": [
       {
@@ -646,19 +593,6 @@
         "name": "",
         "type": "bool",
         "internalType": "bool"
-      }
-    ],
-    "stateMutability": "view"
-  },
-  {
-    "type": "function",
-    "name": "tokenBridge",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "address",
-        "internalType": "contract IERC7786TokenBridge"
       }
     ],
     "stateMutability": "view"
@@ -857,6 +791,31 @@
   },
   {
     "type": "event",
+    "name": "IntexAuctionMessageIgnored",
+    "inputs": [
+      {
+        "name": "msgType",
+        "type": "uint8",
+        "indexed": true,
+        "internalType": "uint8"
+      },
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "reason",
+        "type": "uint8",
+        "indexed": false,
+        "internalType": "uint8"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "IntexAuctionProceedsSendFailed",
     "inputs": [
       {
@@ -928,12 +887,6 @@
     "name": "IntexAuctionWinnersReceived",
     "inputs": [
       {
-        "name": "receiveId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
         "name": "emissionDay",
         "type": "uint32",
         "indexed": true,
@@ -968,6 +921,31 @@
   },
   {
     "type": "event",
+    "name": "IntexSeriesAllReceived",
+    "inputs": [
+      {
+        "name": "emissionDay",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "srcChainId",
+        "type": "uint32",
+        "indexed": true,
+        "internalType": "uint32"
+      },
+      {
+        "name": "totalPages",
+        "type": "uint32",
+        "indexed": false,
+        "internalType": "uint32"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
     "name": "IntexSeriesCallNoticeApplyFailed",
     "inputs": [
       {
@@ -984,88 +962,6 @@
       },
       {
         "name": "errorData",
-        "type": "bytes",
-        "indexed": false,
-        "internalType": "bytes"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "IssuanceCompleted",
-    "inputs": [
-      {
-        "name": "emissionDay",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "totalPages",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "IssuanceInstructionsReceived",
-    "inputs": [
-      {
-        "name": "srcChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "seriesId",
-        "type": "bytes14",
-        "indexed": true,
-        "internalType": "bytes14"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "MessageIgnored",
-    "inputs": [
-      {
-        "name": "receiveId",
-        "type": "bytes32",
-        "indexed": true,
-        "internalType": "bytes32"
-      },
-      {
-        "name": "srcChainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "reason",
-        "type": "uint8",
-        "indexed": false,
-        "internalType": "uint8"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
-    "name": "RemoteMessengerRegistered",
-    "inputs": [
-      {
-        "name": "chainId",
-        "type": "uint32",
-        "indexed": true,
-        "internalType": "uint32"
-      },
-      {
-        "name": "interop",
         "type": "bytes",
         "indexed": false,
         "internalType": "bytes"
@@ -1175,25 +1071,6 @@
   },
   {
     "type": "event",
-    "name": "TargetRouterProceedsRouteSet",
-    "inputs": [
-      {
-        "name": "tokenBridge",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      },
-      {
-        "name": "originRouter",
-        "type": "address",
-        "indexed": false,
-        "internalType": "address"
-      }
-    ],
-    "anonymous": false
-  },
-  {
-    "type": "event",
     "name": "Upgraded",
     "inputs": [
       {
@@ -1273,17 +1150,6 @@
     "type": "error",
     "name": "FailedCall",
     "inputs": []
-  },
-  {
-    "type": "error",
-    "name": "InteroperableAddressParsingError",
-    "inputs": [
-      {
-        "name": "",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ]
   },
   {
     "type": "error",
@@ -1441,33 +1307,6 @@
   },
   {
     "type": "error",
-    "name": "RemoteMessengerChainMismatch",
-    "inputs": [
-      {
-        "name": "chainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "embeddedChainId",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "RemoteMessengerNotSet",
-    "inputs": [
-      {
-        "name": "chainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      }
-    ]
-  },
-  {
-    "type": "error",
     "name": "ReturnFailed",
     "inputs": []
   },
@@ -1527,44 +1366,6 @@
         "name": "slot",
         "type": "bytes32",
         "internalType": "bytes32"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "UnauthorizedBridge",
-    "inputs": [
-      {
-        "name": "caller",
-        "type": "address",
-        "internalType": "address"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "UnauthorizedSourceMessenger",
-    "inputs": [
-      {
-        "name": "chainId",
-        "type": "uint32",
-        "internalType": "uint32"
-      },
-      {
-        "name": "sender",
-        "type": "bytes",
-        "internalType": "bytes"
-      }
-    ]
-  },
-  {
-    "type": "error",
-    "name": "UnexpectedSourceChain",
-    "inputs": [
-      {
-        "name": "srcChainId",
-        "type": "uint32",
-        "internalType": "uint32"
       }
     ]
   },

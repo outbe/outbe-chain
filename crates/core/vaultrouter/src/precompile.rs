@@ -1,7 +1,7 @@
 //! ABI dispatch for the vaultrouter precompile at `VAULT_ROUTER_ADDRESS`.
 
 use alloy_primitives::{Address, Bytes, U256};
-use alloy_sol_types::{sol, SolInterface};
+use alloy_sol_types::SolInterface;
 
 use outbe_primitives::dispatch::{dispatch_call, mutate, mutate_void, view};
 use outbe_primitives::error::Result;
@@ -11,7 +11,11 @@ use outbe_primitives::storage::StorageHandle;
 use crate::runtime;
 use crate::schema::VaultRouterContract;
 
-sol!("../../../contracts/precompiles/src/IVaultRouter.sol");
+#[allow(clippy::too_many_arguments)]
+mod abi {
+    alloy_sol_types::sol!("../../../contracts/precompiles/src/IVaultRouter.sol");
+}
+pub use abi::IVaultRouter;
 
 /// Selectors on this precompile that accept native value. The route table binds
 /// this to the address's `ValuePolicy` at compile time, so a selector added here
@@ -119,30 +123,32 @@ pub fn dispatch(
             hasStablecoin(c) => view(c, |c| {
                 runtime::has_stablecoin(&storage, c.asset, c.amountMinor)
             }),
-            reservationOf(c) => view(c, |c| {
-                let record = runtime::reservation_of(&storage, c.id)?;
+            getCredisReservation(c) => view(c, |c| {
+                let record = runtime::credis_reservation_of(&storage, c.credisReservationId)?;
                 Ok(record.into())
             }),
 
             // --- reservations ---
-            reserveStables(c) => mutate(&storage, c, caller, |sender, c| {
-                runtime::reserve_stables(storage.clone(), sender, c)
+            createCredisReservation(c) => mutate(&storage, c, caller, |sender, c| {
+                runtime::create_credis_reservation(storage.clone(), sender, c)
             }),
-            releaseReservation(c) => mutate(&storage, c, caller, |sender, c| {
+            redeemCredisReservation(c) => mutate(&storage, c, caller, |sender, c| {
                 if sender != outbe_system_common::addresses::CREDIS_FACTORY_ADDRESS {
                     return Err(crate::errors::VaultRouterError::Unauthorized.into());
                 }
                 let target = runtime::registered_stablecoin_target(&storage, sender)?;
-                runtime::release_reservation(
+                runtime::redeem_credis_reservation(
                     storage.clone(),
-                    c.id,
-                    c.receiver,
-                    c.amountMinor,
+                    c.credisReservationId,
+                    c.credisId,
                     target,
                 )
             }),
-            returnReservation(c) => mutate(&storage, c, caller, |sender, c| {
-                runtime::return_reservation(storage.clone(), sender, c.id)
+            cancelCredisReservation(c) => mutate(&storage, c, caller, |sender, c| {
+                runtime::cancel_credis_reservation(storage.clone(), sender, c.credisReservationId)
+            }),
+            expireCredisReservation(c) => mutate(&storage, c, caller, |_, c| {
+                runtime::expire_credis_reservation(storage.clone(), c.credisReservationId)
             }),
 
             // --- rebalance (CCA-gated; caller supplies the destination asset) ---

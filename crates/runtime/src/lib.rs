@@ -42,7 +42,7 @@ pub use system_tx::{
     ORACLE_SLASH_STEP_GAS_LIMIT,
 };
 #[cfg(any(test, feature = "test-hooks"))]
-pub use tee_canary_probe::TributeCanaryProbe;
+pub use tee_canary_probe::OfferCanaryProbe;
 #[cfg(feature = "test-hooks")]
 pub use tee_supervisor::test_hooks::{
     tee_launch_profile_for_test, LifecycleAuthorityProbe, LifecycleAuthorityProbeError,

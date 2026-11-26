@@ -1,5 +1,6 @@
 //! EmissionDay and WorldwideDay lifecycle orchestration.
 
+use alloy_primitives::U256;
 use outbe_emission::schema::metadosis_state;
 use outbe_primitives::{
     block::BlockRuntimeContext,
@@ -7,7 +8,7 @@ use outbe_primitives::{
 };
 use outbe_promislimit::PromisLimitContract;
 use outbe_system_common::time::WorldwideDay;
-use outbe_tributefactory::TributeFactoryContract;
+use outbe_worldwideday::WorldwideDayContract;
 
 use crate::{
     errors::{MetadosisCallerError, MetadosisStorageCorruptionError},
@@ -25,7 +26,7 @@ pub(crate) fn date_step_error(
 }
 
 pub(crate) fn validate_metadosis_timestamp(timestamp: u64) -> Result<()> {
-    outbe_tributefactory::worldwide_day::validate_wwd_timestamp(timestamp)
+    outbe_worldwideday::validate_wwd_timestamp(timestamp)
 }
 
 /// The record of `day` when its Metadosis is due: the allocation gave it its limit, and
@@ -44,12 +45,12 @@ pub(crate) fn ready_emission_day(
     {
         return Ok(None);
     }
-    verify_record_wwd_backlink(&TributeFactoryContract::new(ctx.storage.clone()), &record)?;
+    verify_record_wwd_backlink(&WorldwideDayContract::new(ctx.storage.clone()), &record)?;
     Ok(Some(record))
 }
 
 fn verify_record_wwd_backlink(
-    factory: &TributeFactoryContract<'_>,
+    factory: &WorldwideDayContract<'_>,
     record: &EmissionDay,
 ) -> Result<()> {
     if record.wwd.value() == 0 {
@@ -134,20 +135,21 @@ pub(crate) fn fail_metadosis(
     reason: u8,
 ) -> Result<()> {
     cancel_auction_of(metadosis, day)?;
-    if metadosis.emission_days().get(day)?.is_some() {
-        let (record, limit_minor) =
-            outbe_emission::api::record_metadosis_failed(metadosis.storage.clone(), day)?;
+    if let Some(pending) = metadosis.emission_days().get(day)? {
+        let loads_minor = match crate::loads::day_loads(&metadosis.storage, pending.wwd) {
+            Ok(loads) => loads.loads_minor,
+            // An unreadable day sum leaves the whole limit with the Nods: nothing goes back.
+            Err(err) if err.record_pass_failure() == PassFailure::Skip => U256::MAX,
+            Err(err) => return Err(err),
+        };
+        let (record, limit_minor) = outbe_emission::api::record_metadosis_failed(
+            metadosis.storage.clone(),
+            day,
+            loads_minor,
+        )?;
         if !limit_minor.is_zero() {
             PromisLimitContract::new(metadosis.storage.clone())
                 .add(outbe_promislimit::LimitSource::MetadosisLimit, limit_minor)?;
-        }
-        if record.wwd.value() != 0 {
-            let timestamp = metadosis.storage.timestamp()?.saturating_to::<u64>();
-            outbe_fidelity::api::finalize_wwd_max_fidelity(
-                metadosis.storage.clone(),
-                record.wwd,
-                timestamp,
-            )?;
         }
         if !outbe_agentreward::distribution::has_pending_accruals_for_day(
             &metadosis.storage,

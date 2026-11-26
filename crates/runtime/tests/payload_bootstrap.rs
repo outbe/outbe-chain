@@ -174,17 +174,11 @@ fn active_native_provider(
     funded_user: alloy_primitives::Address,
     genesis_hash: B256,
 ) -> TestProvider {
-    const OWNER: alloy_primitives::Address = address!("0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
-
     let mut seed =
         HashMapStorageProvider::new_with_chain_identity(chain_spec.chain().id(), genesis_hash);
     seed.set_block_number(1);
     StorageHandle::enter(&mut seed, |storage| {
         let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        validators
-            .config_owner
-            .write(OWNER)
-            .expect("validator owner seed succeeds");
         validators
             .config_max_validators
             .write(128)
@@ -202,7 +196,7 @@ fn active_native_provider(
             .test_seed_authoritative_min_stake(minimum)
             .expect("min stake seed succeeds");
         validators
-            .register_validator(OWNER, proposer, &TEST_CONSENSUS_PUBLIC_KEY)
+            .register_validator(proposer, &TEST_CONSENSUS_PUBLIC_KEY)
             .expect("proposer registration seed succeeds");
         validators
             .test_seed_authoritative_bonded(proposer, minimum)
@@ -423,7 +417,7 @@ fn bootstrap_payload_builder_ignores_nonempty_pool_and_replays_exactly() {
         [2, 3, 4]
             .into_iter()
             .map(SystemTxStepId::consensus)
-            .chain((0..9).map(SystemTxStepId::begin_block))
+            .chain((0..11).map(SystemTxStepId::begin_block))
             .collect::<Vec<_>>()
     );
     assert!(layout.user.is_empty());
@@ -434,7 +428,7 @@ fn bootstrap_payload_builder_ignores_nonempty_pool_and_replays_exactly() {
         .expect("builder exposes the exact executed payload");
     let receipts = &executed.execution_output.result.receipts;
     assert_eq!(receipts.len(), body.len());
-    assert_eq!(receipts.len(), 12);
+    assert_eq!(receipts.len(), 14);
     assert_eq!(case.rejected.load(Ordering::Relaxed), 0);
 
     let replay = case
@@ -498,7 +492,7 @@ fn bootstrap_payload_survives_repeated_block_one_proposal_attempts() {
         [2, 3, 4]
             .into_iter()
             .map(SystemTxStepId::consensus)
-            .chain((0..9).map(SystemTxStepId::begin_block))
+            .chain((0..11).map(SystemTxStepId::begin_block))
             .collect::<Vec<_>>()
     );
 }

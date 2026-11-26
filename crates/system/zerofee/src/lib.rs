@@ -77,7 +77,7 @@ mod test_support;
 
 pub use constants::{
     ELEVATED_SPONSORED_GAS, FREE_TX_BOOTSTRAP_GAS_LIMIT, FREE_TX_DAILY_CALLDATA_BYTES,
-    FREE_TX_DAILY_GAS_LIMIT, FREE_TX_DAILY_LIMIT, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT,
+    FREE_TX_DAILY_GAS_LIMIT, FREE_TX_DAILY_LIMIT, FREE_TX_ISSUE_NOD_GAS_LIMIT,
     MIN_FREE_TX_MAX_FEE_PER_GAS, SPONSORED_GAS_PER_BLOCK,
 };
 pub use equivocation::{SlashEquivocationHook, MAX_ZERO_FEE_SLASH_EQUIVOCATION_GAS_LIMIT};
@@ -113,13 +113,13 @@ mod sponsored_budget_tests {
     fn sponsored_budget_boundaries() {
         for (used, gas_limit, exceeds) in [
             (0, 0, false),
-            (0, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT, false),
+            (0, FREE_TX_ISSUE_NOD_GAS_LIMIT, false),
             (0, SPONSORED_GAS_PER_BLOCK, false),
             (SPONSORED_GAS_PER_BLOCK - 1, 1, false),
             (SPONSORED_GAS_PER_BLOCK, 0, false),
             (SPONSORED_GAS_PER_BLOCK, 1, true),
             (0, SPONSORED_GAS_PER_BLOCK + 1, true),
-            (13_000_000, FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT, true),
+            (13_000_000, FREE_TX_ISSUE_NOD_GAS_LIMIT, true),
             (13_000_000, FREE_TX_DAILY_GAS_LIMIT, false),
             (SPONSORED_GAS_PER_BLOCK + 1, 0, true),
         ] {
@@ -139,9 +139,10 @@ mod sponsored_budget_tests {
     }
 
     #[test]
-    fn sponsored_budget_fits_a_tribute_offer_and_stays_below_the_block() {
-        assert!((FREE_TX_TRIBUTE_FACTORY_GAS_LIMIT
-            ..outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT)
-            .contains(&SPONSORED_GAS_PER_BLOCK));
+    fn sponsored_budget_fits_an_offer_and_stays_below_the_block() {
+        assert!(
+            (FREE_TX_ISSUE_NOD_GAS_LIMIT..outbe_primitives::system_tx::STEADY_BLOCK_GAS_LIMIT)
+                .contains(&SPONSORED_GAS_PER_BLOCK)
+        );
     }
 }

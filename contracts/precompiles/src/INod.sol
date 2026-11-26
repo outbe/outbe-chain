@@ -16,8 +16,8 @@ interface INod {
     error GroupIdentityMismatch(bytes32 expected, bytes32 found);
     error NodAlreadyExists();
     error GroupExistenceDisagreesWithMemberCount(uint256 groupId, uint32 memberCount);
-    error GroupUnpaidLoadOverflow(bytes32 groupKey);
-    error GroupUnpaidLoadUnderflow(bytes32 groupKey);
+    error GroupUnsettledLoadOverflow(bytes32 groupKey);
+    error GroupUnsettledLoadUnderflow(bytes32 groupKey);
     error GroupSettledCountUnderflow(uint256 groupId);
     error AlreadySettled();
     error SettledCountOverflow();
@@ -30,6 +30,9 @@ interface INod {
     error DateStep(uint8 kind, uint32 dateKey);
     error NodNotForfeited();
     error NodAlreadySettled();
+    error SuHashAlreadyUsed();
+    error SuHashRingSeqOverflow();
+    error OfferAlreadyMade();
 
     /// Emitted when a Nod is issued and when it is burned by forfeit or mining.
     event Transfer(address indexed from, address indexed to, uint256 indexed tokenId);
@@ -43,40 +46,43 @@ interface INod {
     /// Nods of several series, so no narrower range covers it.
     event BatchMetadataUpdate(uint256 _fromTokenId, uint256 _toTokenId);
 
-    /// Series force-called by the daily Call scan: the reference price
-    /// exceeded the series' call price on enough of the trailing window. Every
-    /// Nod in the series must be settled by `settlementDeadline`. Otherwise it is
-    /// forfeited when the series closes.
-    event NodSeriesCalled(
+    /// A Nod was issued at its offer into sub-series `subSeriesId` of `seriesId`.
+    /// `payload` is its encrypted Gratis load.
+    event NodIssued(
+        uint256 indexed nodId,
+        address indexed owner,
         bytes14 indexed seriesId,
+        uint16 subSeriesId,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint64 calledAt,
-        uint64 settlementDeadline
+        bytes payload
     );
-
-    /// The series' settlement deadline lapsed: its `forfeitedCount` unpaid Nods and
-    /// `forfeitedTributeCount` unclaimed Tributes are forfeited and their
-    /// `forfeitedAmountMinor` returned to the Promis reserve at once. No Gratis is
-    /// minted. The cleanup deletes them after.
-    event NodSeriesClosed(
-        bytes14 indexed seriesId,
+    /// A Nod's cost was settled into the Reserve: `amountMinor` of `asset`.
+    event NodSettled(
+        uint256 indexed nodId,
+        address indexed owner,
         uint16 issuanceCurrency,
         uint16 referenceCurrency,
-        uint32 forfeitedCount,
-        uint32 forfeitedTributeCount,
-        uint256 forfeitedAmountMinor
+        address asset,
+        uint256 amountMinor
     );
+    /// Gratis was mined from the Nod. Its end event.
+    event NodBurned(uint256 indexed nodId, address indexed owner);
+    /// The cleanup deleted the forfeited unsettled Nod. Its end event. The load stays private.
+    event NodForfeited(uint256 indexed nodId, address indexed owner, uint16 issuanceCurrency, uint16 referenceCurrency);
 
     struct NodData {
         // keccak256(seriesId || owner).
         uint256 nodId;
         address owner;
-        /// The emission day `YYYYMMDD` and the currencies of the Tribute the Nod comes from.
+        /// The emission day `YYYYMMDD` and the currencies of the offer the Nod comes from.
         bytes14 seriesId;
-        uint16 leagueId;
+        /// The offer hour of the Nod, 0 to 49 from the start of the offering window.
+        uint16 subSeriesId;
         /// Encrypted Gratis entitlement, readable by the owner and enclave.
         bytes encryptedGratisAmount;
+        /// Encrypted nominal of the offer, readable by the owner and enclave.
+        bytes encryptedNominalAmount;
         bytes32 encryptionBinding;
         uint64 chainId;
         /// Price of one whole COEN in referenceCurrency at six-decimal precision.
@@ -89,7 +95,7 @@ interface INod {
         uint64 calledAt;
         bool isSettled;
         /// Read-time state: 0 Issued, 1 Called, 2 Settled, 3 Forfeited.
-        /// Paid entitlements remain Settled after expiry. Forfeited items stay
+        /// Settled entitlements remain Settled after expiry. Forfeited items stay
         /// in storage until cleanup. Reads of deleted items revert with NodNotFound.
         uint8 effectiveState;
         /// Group terms sealed at issuance, independent of current defaults.

@@ -100,12 +100,17 @@
             "internalType": "bytes14"
           },
           {
-            "name": "leagueId",
+            "name": "subSeriesId",
             "type": "uint16",
             "internalType": "uint16"
           },
           {
             "name": "encryptedGratisAmount",
+            "type": "bytes",
+            "internalType": "bytes"
+          },
+          {
+            "name": "encryptedNominalAmount",
             "type": "bytes",
             "internalType": "bytes"
           },
@@ -496,50 +501,81 @@
   },
   {
     "type": "event",
-    "name": "NodSeriesCalled",
+    "name": "NodBurned",
     "inputs": [
       {
-        "name": "seriesId",
-        "type": "bytes14",
+        "name": "nodId",
+        "type": "uint256",
         "indexed": true,
-        "internalType": "bytes14"
+        "internalType": "uint256"
       },
       {
-        "name": "issuanceCurrency",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "referenceCurrency",
-        "type": "uint16",
-        "indexed": false,
-        "internalType": "uint16"
-      },
-      {
-        "name": "calledAt",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
-      },
-      {
-        "name": "settlementDeadline",
-        "type": "uint64",
-        "indexed": false,
-        "internalType": "uint64"
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       }
     ],
     "anonymous": false
   },
   {
     "type": "event",
-    "name": "NodSeriesClosed",
+    "name": "NodForfeited",
     "inputs": [
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NodIssued",
+    "inputs": [
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
+      },
+      {
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
       {
         "name": "seriesId",
         "type": "bytes14",
         "indexed": true,
         "internalType": "bytes14"
+      },
+      {
+        "name": "subSeriesId",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
       },
       {
         "name": "issuanceCurrency",
@@ -554,19 +590,50 @@
         "internalType": "uint16"
       },
       {
-        "name": "forfeitedCount",
-        "type": "uint32",
+        "name": "payload",
+        "type": "bytes",
         "indexed": false,
-        "internalType": "uint32"
+        "internalType": "bytes"
+      }
+    ],
+    "anonymous": false
+  },
+  {
+    "type": "event",
+    "name": "NodSettled",
+    "inputs": [
+      {
+        "name": "nodId",
+        "type": "uint256",
+        "indexed": true,
+        "internalType": "uint256"
       },
       {
-        "name": "forfeitedTributeCount",
-        "type": "uint32",
-        "indexed": false,
-        "internalType": "uint32"
+        "name": "owner",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
       },
       {
-        "name": "forfeitedAmountMinor",
+        "name": "issuanceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "referenceCurrency",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      },
+      {
+        "name": "asset",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amountMinor",
         "type": "uint256",
         "indexed": false,
         "internalType": "uint256"
@@ -745,7 +812,7 @@
   },
   {
     "type": "error",
-    "name": "GroupUnpaidLoadOverflow",
+    "name": "GroupUnsettledLoadOverflow",
     "inputs": [
       {
         "name": "groupKey",
@@ -756,7 +823,7 @@
   },
   {
     "type": "error",
-    "name": "GroupUnpaidLoadUnderflow",
+    "name": "GroupUnsettledLoadUnderflow",
     "inputs": [
       {
         "name": "groupKey",
@@ -823,12 +890,27 @@
   },
   {
     "type": "error",
+    "name": "OfferAlreadyMade",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "QueryLimitExceeded",
     "inputs": []
   },
   {
     "type": "error",
     "name": "SettledCountOverflow",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuHashAlreadyUsed",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SuHashRingSeqOverflow",
     "inputs": []
   },
   {

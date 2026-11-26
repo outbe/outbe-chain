@@ -502,10 +502,9 @@ mod tests {
         provider.enter(|storage| {
             let caller = Address::repeat_byte(0x11);
             let accused = Address::repeat_byte(0x22);
-            let owner = Address::repeat_byte(0x33);
             let (sk, pk) = test_signing::keypair(77).unwrap();
             let mut vs = ValidatorSet::new(storage.clone());
-            vs.test_configure_registry(owner).unwrap();
+            vs.test_configure_registry().unwrap();
             let mut epoch = vs.epoch_snapshot().unwrap();
             epoch.number = U256::from(1);
             vs.test_set_epoch_snapshot(epoch).unwrap();
@@ -541,7 +540,7 @@ mod tests {
                 )
                 .unwrap();
             }
-            vs.test_seed_committee_ring(owner, &snapshot).unwrap();
+            vs.test_seed_committee_ring(&snapshot).unwrap();
             let ns = outbe_primitives::proof::notarize_namespace(&committee);
             let valid_block = |digest| {
                 test_signing::signed_evidence(

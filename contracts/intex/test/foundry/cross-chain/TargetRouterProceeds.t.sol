@@ -4,28 +4,12 @@ pragma solidity 0.8.30;
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {TargetRouter} from "@contracts/target/TargetRouter.sol";
-import {OriginRouter} from "@contracts/origin/OriginRouter.sol";
 import {ITargetRouter} from "@contracts/target/interfaces/ITargetRouter.sol";
 import {BridgeMsgCodec} from "@contracts/shared/libs/BridgeMsgCodec.sol";
 import {IntexGas} from "@contracts/shared/libs/IntexGas.sol";
 import {MockWCOEN} from "@test-mocks/MockWCOEN.sol";
+import {IIntexFactory, INTEX_FACTORY} from "@precompiles/IIntexFactory.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-/// @dev An OriginRouter on Outbe itself: it names WCOEN and records the local hand-over.
-contract LocalOriginRouter {
-    address public wcoen;
-    uint32 public lastEmissionDay;
-    uint32 public lastPageIndex;
-    uint256 public lastAmount;
-
-    constructor(address token) {
-        wcoen = token;
-    }
-
-    function receiveLocalProceeds(uint32 emissionDay, uint32 pageIndex, uint256 amount) external {
-        (lastEmissionDay, lastPageIndex, lastAmount) = (emissionDay, pageIndex, amount);
-    }
-}
 
 /// @dev Minimal EscrowAdapter stand-in. `chargeIntexAuctionAsset` returns a configured totalPaid. The mock
 ///      also exposes `paymentToken`.
@@ -113,41 +97,52 @@ contract TargetRouterProceedsTest is CrossChainTest {
     MockTokenBridge internal tokenBridge;
     MockWCOEN internal wcoen;
 
-    address internal originSender = makeAddr("originSender"); // inbound message source on Outbe
-    address internal originRouter = makeAddr("originRouter"); // proceeds recipient on Outbe
+    address internal outbeIca = makeAddr("outbeIca");
     address internal bidder = makeAddr("bidder");
 
     function setUp() public {
         _setUpBridge();
-        target = DeployProxy.targetRouter(address(bridge), address(this), OUTBE_CHAIN_ID);
-        vm.deal(address(target), 10 ether); // relay float for bridge fees
-
         wcoen = new MockWCOEN();
         escrow = new MockEscrowAdapter(IERC20(address(wcoen)));
         tokenBridge = new MockTokenBridge(IERC20(address(wcoen)));
 
-        target.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
-        target.registerRemoteMessenger(OUTBE_CHAIN_ID, _interop(OUTBE_CHAIN_ID, originSender));
-        target.setProceedsRoute(address(tokenBridge), originRouter);
+        target = _targetOn(OUTBE_CHAIN_ID, address(tokenBridge));
+        vm.deal(address(target), 10 ether); // relay float for bridge fees
+    }
+
+    /// @dev The IntexFactory precompile takes the local hand-over of the proceeds.
+    function _mockIntexFactory() internal {
+        vm.etch(INTEX_FACTORY, hex"00");
+        vm.mockCall(INTEX_FACTORY, abi.encodeWithSelector(IIntexFactory.receiveLocalProceeds.selector), "");
+    }
+
+    function _targetOn(uint32 outbeChainId, address erc20Router) internal returns (TargetRouter router) {
+        router = DeployProxy.targetRouter(address(bridge), address(this), outbeChainId, erc20Router);
+        router.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
+        _wireOutbeIca(router, outbeIca);
+    }
+
+    function _winnersPage(uint32 emissionDay, uint16 pageIndex, uint16 totalPages)
+        internal
+        view
+        returns (bytes memory)
+    {
+        address[] memory winners = new address[](1);
+        winners[0] = bidder;
+        return BridgeMsgCodec.encodeIntexAuctionWinners(emissionDay, pageIndex, totalPages, 600_000, 1e6, winners, 0, 0);
     }
 
     function _deliverRefund(uint32 emissionDay) internal {
-        address[] memory winners = new address[](1);
-        winners[0] = bidder;
-        bytes memory packet = BridgeMsgCodec.encodeIntexAuctionWinners(emissionDay, 0, 1, 600_000, 1e6, winners, 0, 0);
-        _deliver(OUTBE_CHAIN_ID, originSender, address(target), packet);
+        _deliver(OUTBE_CHAIN_ID, outbeIca, address(target), _winnersPage(emissionDay, 0, 1));
     }
 
-    function test_SetProceedsRoute_Getters() public view {
-        assertEq(address(target.tokenBridge()), address(tokenBridge));
-        assertEq(target.originRouter(), originRouter);
+    function test_erc20Router_is_the_wcoen_token_bridge() public view {
+        assertEq(address(target.erc20Router()), address(tokenBridge));
     }
 
-    function test_RevertWhen_SetProceedsRouteZero() public {
-        vm.expectRevert();
-        target.setProceedsRoute(address(0), originRouter);
-        vm.expectRevert();
-        target.setProceedsRoute(address(tokenBridge), address(0));
+    function test_RevertWhen_Erc20RouterZero() public {
+        vm.expectRevert(abi.encodeWithSelector(ITargetRouter.ZeroAddress.selector, "erc20Router"));
+        new TargetRouter(address(bridge), OUTBE_CHAIN_ID, address(0));
     }
 
     function test_proceeds_of_a_page_carry_the_page_index() public {
@@ -157,7 +152,7 @@ contract TargetRouterProceedsTest is CrossChainTest {
 
         assertEq(tokenBridge.calls(), 1);
         assertEq(tokenBridge.lastDomain(), OUTBE_CHAIN_ID);
-        assertEq(tokenBridge.lastTo(), originRouter);
+        assertEq(tokenBridge.lastTo(), INTEX_FACTORY, "the proceeds go to IntexFactory");
         assertEq(tokenBridge.lastAmount(), AMOUNT);
         assertEq(tokenBridge.lastExtraData(), abi.encode(SERIES_ID, uint32(0)));
         assertEq(tokenBridge.lastGas(), IntexGas.PROCEEDS_COMPOSE);
@@ -191,7 +186,8 @@ contract TargetRouterProceedsTest is CrossChainTest {
     function test_RefundInstructions_ParksProceedsTheBridgeDoesNotMove() public {
         escrow.setTotalPaid(AMOUNT);
         MockTokenBridge otherBridge = new MockTokenBridge(IERC20(address(new MockWCOEN())));
-        target.setProceedsRoute(address(otherBridge), originRouter);
+        target = _targetOn(OUTBE_CHAIN_ID, address(otherBridge));
+        vm.deal(address(target), 10 ether);
 
         _deliverRefund(SERIES_ID);
 
@@ -204,54 +200,39 @@ contract TargetRouterProceedsTest is CrossChainTest {
         assertFalse(done);
     }
 
-    function test_on_outbe_the_proceeds_of_a_page_go_to_the_origin_router_with_no_send_id() public {
+    function test_on_outbe_the_proceeds_of_a_page_go_to_intex_factory_with_no_send_id() public {
         uint32 local = uint32(block.chainid);
-        LocalOriginRouter origin = new LocalOriginRouter(address(wcoen));
-        TargetRouter outbeTarget = DeployProxy.targetRouter(address(bridge), address(this), local);
-        outbeTarget.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
-        outbeTarget.registerRemoteMessenger(local, _interop(local, originSender));
-        outbeTarget.setProceedsRoute(address(tokenBridge), address(origin));
+        _mockIntexFactory();
+        TargetRouter outbeTarget = _targetOn(local, address(tokenBridge));
         escrow.setTotalPaid(AMOUNT);
+        vm.expectCall(INTEX_FACTORY, abi.encodeCall(IIntexFactory.receiveLocalProceeds, (SERIES_ID, 1, AMOUNT)), 1);
 
-        address[] memory winners = new address[](1);
-        winners[0] = bidder;
-        bytes memory packet = BridgeMsgCodec.encodeIntexAuctionWinners(SERIES_ID, 1, 2, 600_000, 1e6, winners, 0, 0);
         vm.expectEmit(true, true, true, true, address(outbeTarget));
         emit ITargetRouter.IntexAuctionProceedsSent(bytes32(0), SERIES_ID, 1, AMOUNT);
-        _deliver(local, originSender, address(outbeTarget), packet);
+        _deliver(local, outbeIca, address(outbeTarget), _winnersPage(SERIES_ID, 1, 2));
 
         assertEq(tokenBridge.calls(), 0, "the Outbe route does not use the token bridge");
-        assertEq(origin.lastEmissionDay(), SERIES_ID);
-        assertEq(origin.lastPageIndex(), 1, "the hand-over carries the page");
-        assertEq(origin.lastAmount(), AMOUNT);
-        assertEq(wcoen.allowance(address(outbeTarget), address(origin)), AMOUNT, "the origin router may pull it");
+        assertEq(wcoen.allowance(address(outbeTarget), INTEX_FACTORY), AMOUNT, "IntexFactory may pull it");
     }
 
     function test_RefundInstructions_OnOutbeParksProceedsNotInWcoen() public {
         uint32 local = uint32(block.chainid);
-        OriginRouter origin = DeployProxy.originRouter(address(bridge), address(this));
-        MockWCOEN originWcoen = new MockWCOEN();
-        origin.setProceedsRoute(address(tokenBridge), address(originWcoen));
-        TargetRouter outbeTarget = DeployProxy.targetRouter(address(bridge), address(this), local);
-        outbeTarget.setDependencies(makeAddr("auction"), makeAddr("intex"), address(escrow));
-        outbeTarget.registerRemoteMessenger(local, _interop(local, originSender));
-        outbeTarget.setProceedsRoute(address(tokenBridge), address(origin));
+        _mockIntexFactory();
+        vm.expectCall(INTEX_FACTORY, abi.encodeWithSelector(IIntexFactory.receiveLocalProceeds.selector), 0);
+        MockWCOEN otherWcoen = new MockWCOEN();
+        TargetRouter outbeTarget = _targetOn(local, address(new MockTokenBridge(IERC20(address(otherWcoen)))));
         escrow.setTotalPaid(AMOUNT);
 
-        address[] memory winners = new address[](1);
-        winners[0] = bidder;
-        bytes memory packet = BridgeMsgCodec.encodeIntexAuctionWinners(SERIES_ID, 0, 1, 600_000, 1e6, winners, 0, 0);
         vm.expectEmit(true, true, false, true, address(outbeTarget));
         emit ITargetRouter.IntexAuctionProceedsSendFailed(
             0,
             SERIES_ID,
             0,
             AMOUNT,
-            abi.encodeWithSelector(ITargetRouter.ProceedsTokenNotBridged.selector, address(wcoen), address(originWcoen))
+            abi.encodeWithSelector(ITargetRouter.ProceedsTokenNotBridged.selector, address(wcoen), address(otherWcoen))
         );
-        _deliver(local, originSender, address(outbeTarget), packet);
+        _deliver(local, outbeIca, address(outbeTarget), _winnersPage(SERIES_ID, 0, 1));
 
-        assertEq(tokenBridge.calls(), 0, "the Outbe route does not use the token bridge");
         (uint32 s,, uint128 a, bool exists, bool done) = outbeTarget.getFailedIntexAuctionProceedsSend(0);
         assertEq(s, SERIES_ID);
         assertEq(a, AMOUNT);

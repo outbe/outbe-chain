@@ -219,12 +219,10 @@ fn dispatch(chain: &MovingChain, to: Address, data: &[u8]) -> Result<Vec<u8>, Mo
         || data.starts_with(&ITeeRegistryV1::nodeHostEnclaveBindingCall::SELECTOR)
     {
         Some(ITeeRegistryV1::validatorEnclaveBindingCall::abi_encode_returns(&chain.binding))
-    } else if data.starts_with(&ITeeRegistryV1::tributeOfferPublicKeyCall::SELECTOR) {
-        Some(
-            ITeeRegistryV1::tributeOfferPublicKeyCall::abi_encode_returns(&U256::from_be_bytes(
-                chain.public_key,
-            )),
-        )
+    } else if data.starts_with(&ITeeRegistryV1::offerPublicKeyCall::SELECTOR) {
+        Some(ITeeRegistryV1::offerPublicKeyCall::abi_encode_returns(
+            &U256::from_be_bytes(chain.public_key),
+        ))
     } else if data.starts_with(&ITeeRegistryV1::enclaveUpgradeV1Call::SELECTOR) {
         Some(ITeeRegistryV1::enclaveUpgradeV1Call::abi_encode_returns(
             &ITeeRegistryV1::enclaveUpgradeV1Return {
@@ -248,7 +246,7 @@ fn dispatch(chain: &MovingChain, to: Address, data: &[u8]) -> Result<Vec<u8>, Mo
             ),
         )
     } else if data.starts_with(&ITeeRegistryV1::keyEpochCall::SELECTOR)
-        || data.starts_with(&ITeeRegistryV1::tributeOfferEpochCall::SELECTOR)
+        || data.starts_with(&ITeeRegistryV1::offerEpochCall::SELECTOR)
     {
         Some(U256::ZERO.abi_encode())
     } else if to == VALIDATOR_SET_ADDRESS

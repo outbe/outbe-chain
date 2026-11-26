@@ -112,7 +112,6 @@ const PARENT: TestFinalizedParent = TestFinalizedParent {
 const CHILD_BLOCK_HASH: B256 =
     b256!("0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc");
 
-const OWNER: Address = address!("0xCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC");
 const SUBMITTER: Address = address!("0xDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDDD");
 const STAKE_AMOUNT: u64 = 1_000_000_000_000u64;
 
@@ -274,7 +273,7 @@ fn setup_storage(
     current_epoch: u64,
 ) {
     let mut vs = ValidatorSet::new(storage.clone());
-    vs.test_configure_registry(OWNER).unwrap();
+    vs.test_configure_registry().unwrap();
     set_current_epoch(&mut vs, current_epoch);
     let stake = U256::from(STAKE_AMOUNT);
     let proposer_pubkey = snapshot
@@ -284,15 +283,14 @@ fn setup_storage(
         .expect("proposer belongs to snapshot")
         .consensus_pubkey;
     vs.test_seed_authoritative_min_stake(U256::from(1)).unwrap();
-    vs.register_validator(OWNER, proposer, &proposer_pubkey)
-        .unwrap();
+    vs.register_validator(proposer, &proposer_pubkey).unwrap();
     vs.test_set_stake_projection(proposer, StakeProjection::new(stake, None))
         .unwrap();
     vs.activate_validator_via_boundary_for_test(proposer)
         .unwrap();
     for member in &snapshot.committee {
         if !vs.is_validator(member.address).unwrap() {
-            vs.register_validator(OWNER, member.address, &member.consensus_pubkey)
+            vs.register_validator(member.address, &member.consensus_pubkey)
                 .unwrap();
             vs.test_seed_authoritative_bonded(member.address, U256::from(1))
                 .unwrap();
@@ -338,10 +336,10 @@ fn register_submitter_as_active(storage: StorageHandle) {
     let mut vs = ValidatorSet::new(storage);
     let mut pk = [0u8; 48];
     pk[0] = 0x77;
-    vs.test_configure_registry(OWNER).unwrap();
+    vs.test_configure_registry().unwrap();
     let minimum = U256::from(1_000u64);
     vs.test_seed_authoritative_min_stake(minimum).unwrap();
-    vs.register_validator(OWNER, SUBMITTER, &pk).unwrap();
+    vs.register_validator(SUBMITTER, &pk).unwrap();
     vs.test_seed_authoritative_bonded(SUBMITTER, minimum)
         .unwrap();
     vs.activate_validator_via_boundary_for_test(SUBMITTER)
@@ -450,10 +448,10 @@ fn invalid_vrf_evidence_rejects_non_active_submitter() {
         let mut vs = ValidatorSet::new(storage.clone());
         let mut pk = [0u8; 48];
         pk[0] = 0x44;
-        vs.test_configure_registry(OWNER).unwrap();
+        vs.test_configure_registry().unwrap();
         let minimum = U256::from(1_000u64);
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
-        vs.register_validator(OWNER, SUBMITTER, &pk).unwrap();
+        vs.register_validator(SUBMITTER, &pk).unwrap();
         vs.test_seed_authoritative_bonded(SUBMITTER, minimum)
             .unwrap();
         vs.activate_validator_via_boundary_for_test(SUBMITTER)

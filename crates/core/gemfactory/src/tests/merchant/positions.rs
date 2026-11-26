@@ -277,3 +277,46 @@ fn a_position_from_an_unknown_source_series_is_refused() {
         );
     });
 }
+
+#[test]
+fn intex_units_sent_to_the_gem_factory_end_with_their_event() {
+    use alloy_sol_types::{SolCall, SolEvent};
+    use outbe_core_common::addresses::INTEX_NFT1155_ADDRESS;
+
+    let mut provider = test_storage(Some(six_decimal_unit()));
+    let id = StorageHandle::enter(&mut provider, |storage| {
+        seed_source_series(
+            &storage,
+            six_decimal_unit(),
+            six_decimal_u128(),
+            outbe_intex::IntexCallTrigger::default(),
+        );
+        send_whole_holding(&storage).unwrap()
+    });
+
+    let sends: Vec<_> = provider
+        .sub_call_inputs()
+        .iter()
+        .filter(|input| input.target == INTEX_NFT1155_ADDRESS)
+        .filter_map(|input| {
+            crate::sol_ext::IIntexNFT1155::sendIntexToGemFactoryCall::abi_decode(&input.calldata)
+                .ok()
+        })
+        .map(|call| (call.owner, call.units, call.gemFactoryPositionId))
+        .collect();
+    assert_eq!(sends, vec![(ALICE, U256::from(SENT_UNITS), id)]);
+
+    let created: Vec<_> = provider
+        .get_events(outbe_system_common::addresses::GEM_FACTORY_ADDRESS)
+        .iter()
+        .filter_map(|log| {
+            crate::precompile::IGemFactory::GemFactoryPositionCreated::decode_log_data(log).ok()
+        })
+        .map(|event| event.gemFactoryPositionId)
+        .collect();
+    assert_eq!(
+        created,
+        vec![id],
+        "the token's event links to this position"
+    );
+}

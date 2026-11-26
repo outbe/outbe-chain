@@ -2,6 +2,7 @@
 pragma solidity 0.8.30;
 
 import {CrossChainTest} from "../helpers/CrossChainTest.sol";
+import {Vm} from "forge-std/Vm.sol";
 import {IntexNFT1155} from "@contracts/shared/IntexNFT1155.sol";
 import {DeployProxy} from "../helpers/DeployProxy.sol";
 import {CreateSeriesLib} from "../helpers/CreateSeriesLib.sol";
@@ -9,6 +10,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155Bridge} from "@contracts/shared/IntexNFT1155Bridge.sol";
 import {IIntexNFT1155Bridge, SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Bridge.sol";
 import {ERC7786MessengerBase} from "@contracts/shared/ERC7786MessengerBase.sol";
+import {ERC7786Sender} from "@contracts/shared/ERC7786Sender.sol";
 
 /// @title IntexNFT1155BridgeSingleTest
 /// @notice Foundry tests for IntexNFT1155Bridge with IntexNFT1155 token.
@@ -89,7 +91,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
 
     /// @notice A zero bridge address is caught by the `ERC7786MessengerBase` constructor guard.
     function test_constructor_revertsZeroBridge() public {
-        vm.expectRevert(ERC7786MessengerBase.InvalidBridge.selector);
+        vm.expectRevert(ERC7786Sender.InvalidBridge.selector);
         new IntexNFT1155Bridge(address(tokenA), address(0));
     }
 
@@ -115,13 +117,62 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         assertEq(tokenB.balanceOf(user, TOKEN_ID), AMOUNT);
     }
 
+    function test_a_single_send_has_its_own_message_and_arrives_as_one_receive() public {
+        SendParam memory sendParam =
+            SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, units: 40});
+        uint256 fee = adapterA.quoteSend(sendParam);
+        vm.prank(user);
+        adapterA.send{value: fee}(sendParam);
+
+        bytes memory packet = bridge.lastPayload();
+        assertEq(uint8(packet[1]), adapterA.SEND_ONE(), "its own message type");
+        bytes32 receiveId = keccak256(abi.encode(_interop(A_CHAIN_ID, address(adapterA)), packet));
+
+        vm.recordLogs();
+        vm.expectEmit(true, true, true, true, address(adapterB));
+        emit IIntexNFT1155Bridge.IntexCrosschainReceived(receiveId, A_CHAIN_ID, user, TOKEN_ID, 40);
+        _deliverAToB();
+        assertEq(_countTopic(IIntexNFT1155Bridge.IntexCrosschainBatchReceived.selector), 0, "no batch event");
+        assertEq(tokenB.balanceOf(user, TOKEN_ID), 40);
+    }
+
+    function test_a_failed_single_receive_is_reported_received_on_its_retry() public {
+        uint32 failDay = 20260402;
+        bytes14 failSeries = "20260402-USD-U";
+        uint256 failTokenId = uint256(keccak256(abi.encodePacked(failSeries)));
+        tokenA.createSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        tokenA.issueIntex(user, AMOUNT, failSeries);
+        SendParam memory sendParam = SendParam({
+            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: failTokenId, units: AMOUNT
+        });
+        uint256 fee = adapterA.quoteSend(sendParam);
+        vm.prank(user);
+        adapterA.send{value: fee}(sendParam);
+        bytes32 receiveId = keccak256(abi.encode(_interop(A_CHAIN_ID, address(adapterA)), bridge.lastPayload()));
+
+        vm.recordLogs();
+        _deliverAToB();
+        Vm.Log[] memory logs = vm.getRecordedLogs();
+        uint256 failed;
+        for (uint256 i; i < logs.length; ++i) {
+            assertTrue(logs[i].topics[0] != IIntexNFT1155Bridge.IntexCrosschainReceived.selector, "not received yet");
+            if (logs[i].topics[0] == IIntexNFT1155Bridge.IntexCrosschainReceiveFailed.selector) failed++;
+        }
+        assertEq(failed, 1);
+
+        tokenB.createSeries(CreateSeriesLib.params(failDay, ISSUED_UNITS, 0));
+        vm.expectEmit(true, true, true, true, address(adapterB));
+        emit IIntexNFT1155Bridge.IntexCrosschainReceived(receiveId, A_CHAIN_ID, user, failTokenId, uint32(AMOUNT));
+        adapterB.retryCrosschainMint(receiveId, 0);
+    }
+
     function test_send_without_the_fee_does_not_use_the_float() public {
         SendParam memory sendParam =
             SendParam({dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(user))), tokenId: TOKEN_ID, units: AMOUNT});
         vm.deal(address(adapterA), 1 ether);
 
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, 0, FEE));
+        vm.expectRevert(abi.encodeWithSelector(ERC7786Sender.MsgValueBelowFee.selector, 0, FEE));
         adapterA.send(sendParam);
 
         assertEq(address(adapterA).balance, 1 ether, "the float is untouched");
@@ -302,7 +353,7 @@ contract IntexNFT1155BridgeSingleTest is CrossChainTest {
         assertEq(adapterB.quoteReclaimToSource(receiveId, 0), FEE);
         vm.deal(address(adapterB), 1 ether);
         vm.prank(user);
-        vm.expectRevert(abi.encodeWithSelector(ERC7786MessengerBase.MsgValueBelowFee.selector, 0, FEE));
+        vm.expectRevert(abi.encodeWithSelector(ERC7786Sender.MsgValueBelowFee.selector, 0, FEE));
         adapterB.reclaimToSource(receiveId, 0);
 
         // Reclaim: B sends the transfer back to its origin A - the only exit that skips B's gate.

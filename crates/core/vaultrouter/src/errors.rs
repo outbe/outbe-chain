@@ -38,6 +38,8 @@ pub enum VaultRouterError {
     ReserveVaultNotFound,
     #[error("reserve vault has router shares: vault={vault}, shares={shares}")]
     ReserveVaultHasShares { vault: Address, shares: U256 },
+    #[error("reserve vault holds the escrow of open reservations: vault={vault}, reservations={reservations}")]
+    ReserveVaultHasReservations { vault: Address, reservations: u32 },
     #[error("reserve vault removal pending: vault={vault}, proposal_id={proposal_id}")]
     ReserveVaultRemovalPending { vault: Address, proposal_id: U256 },
     #[error("reserve vault owner not renounced: {0}")]
@@ -70,10 +72,6 @@ pub enum VaultRouterError {
     ReservationNotFound(U256),
     #[error("reservation expired: {0}")]
     ReservationExpired(U256),
-    #[error("Credis owner mismatch")]
-    CredisOwnerMismatch,
-    #[error("reservation amount exceeds hold: available={available}, required={required}")]
-    ReservationInsufficient { available: U256, required: U256 },
     #[error("block timestamp does not fit unix seconds")]
     TimestampOverflow,
     #[error("{0} undecodable")]
@@ -90,10 +88,10 @@ pub enum VaultRouterError {
     InvalidAssetCurrency,
     #[error("pledge price unavailable")]
     PledgePriceUnavailable,
-    #[error("previous day VWAP unavailable")]
-    PreviousDayVwapUnavailable,
-    #[error("reference pair unavailable")]
-    ReferencePairUnavailable,
+    #[error("policy rate is older than the maximum rate age")]
+    PolicyRateTooOld,
+    #[error("reference price unavailable")]
+    ReferencePriceUnavailable,
     #[error("date step kind {kind} from date key {date_key}")]
     DateStep { kind: u8, date_key: u32 },
 }
@@ -138,6 +136,13 @@ impl From<VaultRouterError> for PrecompileError {
             VaultRouterError::ReserveVaultHasShares { vault, shares } => {
                 revert_with(I::ReserveVaultHasShares { vault, shares })
             }
+            VaultRouterError::ReserveVaultHasReservations {
+                vault,
+                reservations,
+            } => revert_with(I::ReserveVaultHasReservations {
+                vault,
+                reservations,
+            }),
             VaultRouterError::ReserveVaultRemovalPending { vault, proposal_id } => {
                 revert_with(I::ReserveVaultRemovalPending {
                     vault,
@@ -180,14 +185,6 @@ impl From<VaultRouterError> for PrecompileError {
             VaultRouterError::ReservationExists(id) => revert_with(I::ReservationExists { id }),
             VaultRouterError::ReservationNotFound(id) => revert_with(I::ReservationNotFound { id }),
             VaultRouterError::ReservationExpired(id) => revert_with(I::ReservationExpired { id }),
-            VaultRouterError::CredisOwnerMismatch => revert_with(I::CredisOwnerMismatch {}),
-            VaultRouterError::ReservationInsufficient {
-                available,
-                required,
-            } => revert_with(I::ReservationInsufficient {
-                availableMinor: available,
-                requiredMinor: required,
-            }),
             VaultRouterError::InvalidReservationAmount => {
                 revert_with(I::InvalidReservationAmount {})
             }
@@ -211,11 +208,9 @@ impl From<VaultRouterError> for PrecompileError {
             }
             VaultRouterError::InvalidAssetCurrency => revert_with(I::InvalidAssetCurrency {}),
             VaultRouterError::PledgePriceUnavailable => revert_with(I::PledgePriceUnavailable {}),
-            VaultRouterError::PreviousDayVwapUnavailable => {
-                revert_with(I::PreviousDayVwapUnavailable {})
-            }
-            VaultRouterError::ReferencePairUnavailable => {
-                revert_with(I::ReferencePairUnavailable {})
+            VaultRouterError::PolicyRateTooOld => revert_with(I::PolicyRateTooOld {}),
+            VaultRouterError::ReferencePriceUnavailable => {
+                revert_with(I::ReferencePriceUnavailable {})
             }
             VaultRouterError::DateStep { kind, date_key } => revert_with(I::DateStep {
                 kind,

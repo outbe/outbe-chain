@@ -78,9 +78,10 @@ fn forfeit_deletes_the_gem_and_returns_promis_load() {
         })
         .expect("the burn is announced");
     assert_eq!((burned.from, burned.tokenId), (ALICE, gem_id));
-    let forfeited = events
+    let forfeited = provider
+        .get_events(outbe_system_common::addresses::GEM_FACTORY_ADDRESS)
         .iter()
-        .find_map(|log| IGem::GemSeriesClosed::decode_log_data(log).ok())
+        .find_map(|log| crate::precompile::IGemFactory::GemSeriesClosed::decode_log_data(log).ok())
         .unwrap();
     assert_eq!(
         (forfeited.forfeitedCount, forfeited.forfeitedAmountMinor),
@@ -128,9 +129,11 @@ fn a_fully_settled_group_closes_with_zero_forfeit() {
     });
 
     let closed: Vec<_> = provider
-        .get_events(GEM_ADDRESS)
+        .get_events(outbe_system_common::addresses::GEM_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|log| IGem::GemSeriesClosed::decode_log_data(log).ok())
+        .filter_map(|log| {
+            crate::precompile::IGemFactory::GemSeriesClosed::decode_log_data(log).ok()
+        })
         .collect();
     assert_eq!(closed.len(), 1);
     assert_eq!(
@@ -434,4 +437,69 @@ fn a_corrupt_record_read_fails_the_forfeit_sweep() {
             PassFailure::Propagate
         );
     });
+}
+
+#[test]
+fn each_upton_item_has_one_end_event() {
+    let mut provider = provider_at(T_NOW);
+    let (mined, forfeited) = StorageHandle::enter(&mut provider, |storage| {
+        let mined = add(&storage, sample_params(BOB));
+        settle(&storage, mined);
+        burn_settled(&storage, mined);
+
+        let forfeited = mature_gem(&storage);
+        call_gem(&storage, forfeited, T_NOW);
+        begin_block_at(&storage, first_due_block(&storage, forfeited));
+        assert!(item(&storage, forfeited).is_none());
+        (mined, forfeited)
+    });
+
+    let events = provider.get_events(GEM_ADDRESS);
+    let burned: Vec<_> = events
+        .iter()
+        .filter_map(|log| IGem::GemBurned::decode_log_data(log).ok())
+        .map(|event| (event.gemId, event.owner))
+        .collect();
+    let lost: Vec<_> = events
+        .iter()
+        .filter_map(|log| IGem::GemForfeited::decode_log_data(log).ok())
+        .map(|event| {
+            (
+                event.gemId,
+                event.owner,
+                event.issuanceCurrency,
+                event.referenceCurrency,
+            )
+        })
+        .collect();
+    assert_eq!(burned, vec![(mined, BOB)]);
+    assert_eq!(lost, vec![(forfeited, ALICE, USD, USD)]);
+}
+
+#[test]
+fn series_events_come_from_the_factory() {
+    use crate::precompile::IGemFactory::{GemSeriesCalled, GemSeriesClosed};
+    use outbe_system_common::addresses::GEM_FACTORY_ADDRESS;
+
+    let mut provider = provider_at(T_NOW);
+    StorageHandle::enter(&mut provider, |storage| {
+        let gem_id = mature_gem(&storage);
+        call_gem(&storage, gem_id, T_NOW);
+        begin_block_at(&storage, first_due_block(&storage, gem_id));
+    });
+
+    let count = |address| {
+        let events = provider.get_events(address);
+        let called = events
+            .iter()
+            .filter(|log| GemSeriesCalled::decode_log_data(log).is_ok())
+            .count();
+        let closed = events
+            .iter()
+            .filter(|log| GemSeriesClosed::decode_log_data(log).is_ok())
+            .count();
+        (called, closed)
+    };
+    assert_eq!(count(GEM_FACTORY_ADDRESS), (1, 1));
+    assert_eq!(count(GEM_ADDRESS), (0, 0));
 }

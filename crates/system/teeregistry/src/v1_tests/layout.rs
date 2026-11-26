@@ -7,7 +7,7 @@ fn finalized_admission_slot_contract_matches_the_physical_registry_layout() {
     StorageHandle::enter(&mut provider, |storage| {
         let registry = TeeRegistry::new(storage);
         assert_eq!(
-            registry.tribute_offer_public_key.slot(),
+            registry.offer_public_key.slot(),
             U256::from(TEE_REGISTRY_OFFER_PUBLIC_SLOT_V1)
         );
         assert_eq!(
@@ -15,7 +15,7 @@ fn finalized_admission_slot_contract_matches_the_physical_registry_layout() {
             U256::from(TEE_REGISTRY_KEY_EPOCH_SLOT_V1)
         );
         assert_eq!(
-            registry.tribute_offer_epoch.slot(),
+            registry.offer_epoch.slot(),
             U256::from(TEE_REGISTRY_OFFER_EPOCH_SLOT_V1)
         );
         assert_eq!(
@@ -70,9 +70,9 @@ fn finalized_admission_slot_contract_matches_the_physical_registry_layout() {
         assert_eq!(
             outbe_tee::finalized_admission::upgrade_registry_slots_v1(&context),
             [
-                direct(registry.tribute_offer_public_key.slot()),
+                direct(registry.offer_public_key.slot()),
                 direct(registry.key_epoch.slot()),
-                direct(registry.tribute_offer_epoch.slot()),
+                direct(registry.offer_epoch.slot()),
                 mapped(registry.upgrade_candidate_context.base_slot()),
                 mapped(registry.upgrade_candidate_expiry.base_slot()),
                 mapped(registry.upgrade_candidate_source.base_slot()),

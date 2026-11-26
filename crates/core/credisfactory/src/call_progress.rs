@@ -6,7 +6,6 @@ use outbe_oracle::call_window::CallWindow;
 use outbe_primitives::{error::Result, storage::StorageHandle};
 use outbe_system_common::day_pass::PassDays;
 
-use crate::called::breach_terms;
 use crate::errors::CredisFactoryError;
 use crate::precompile::ICredisFactory::CallProgress;
 
@@ -17,7 +16,7 @@ pub(crate) fn call_progress(storage: &StorageHandle<'_>, credis_id: U256) -> Res
     {
         return Err(CredisFactoryError::CredisNotIssued.into());
     }
-    let terms = breach_terms(&credis, record.series_id)?;
+    let terms = credis.group_breach_terms(credis.group_of(&record)?)?;
     let pass = PassDays {
         current: credis.call_sweep_day.read()?,
         latest: credis.call_latest_day.read()?,

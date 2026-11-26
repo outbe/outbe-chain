@@ -7,9 +7,8 @@ use std::sync::{Arc, Mutex};
 
 use alloy_primitives::{Address, B256, U256};
 use outbe_core_common::confidential_tee::{
-    EnclaveClientError, LocalCryptoError, TributeSourceError, WitnessResponseTag, WitnessSchema,
-    FIDELITY_ATTESTATION, GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION,
-    TRIBUTE_OFFER_ATTESTATION, TRIBUTE_SOURCE_REJECTED,
+    LocalCryptoError, WitnessResponseTag, WitnessSchema, FIDELITY_ATTESTATION,
+    GRATIS_OP_ATTESTATION, NOD_MINT_REJECTED, PROMIS_OP_ATTESTATION,
 };
 use outbe_core_common::nod_encryption::NodTermsV1;
 use outbe_fidelity::enclave_client::snapshot_leagues;
@@ -21,7 +20,12 @@ use outbe_gratis::{
     ModifyAuth, ModifyOperation as GratisModify,
 };
 use outbe_nod::nod_encryption::encrypt_nod;
+use outbe_nod::nod_encryption::{NodGroupLoadOpRequestV1, NodGroupLoadOperationV1};
 use outbe_nod::nod_host::read_nod_amount;
+use outbe_nod::nod_host::{
+    apply_nod_group_load_operation, issue_nod_at_offer, read_nod_group_load,
+};
+use outbe_nod::offer::issue::IssueNodAtOfferRequestV1;
 use outbe_primitives::tee_attestation_v1::{AttestationMode, NetworkBindingV1};
 use outbe_promis::enclave_client::apply_promis_op;
 use outbe_promis::{
@@ -36,10 +40,6 @@ use outbe_tee::witness::{
     TxWitnessV1, WitnessExecutionMode, WitnessExecutionScope, WitnessPolicy, WitnessState,
 };
 use outbe_tee::{TeeAttestationError, TransportError};
-use outbe_tribute::confidential::host::{
-    apply_day_operation, process_encrypted_offer_batch, read_day_amount,
-};
-use outbe_tribute::confidential::{TributeDayOpRequestV2, TributeDayOperationV2};
 
 #[path = "witness_seam/account_query.rs"]
 mod account_query;
@@ -110,6 +110,7 @@ fn gratis_request(balance: Vec<u8>, nonce: u64) -> GratisOpRequest {
             op_nonce: nonce,
         },
         fidelity: None,
+        sealed_pledge: None,
     }
 }
 
@@ -163,11 +164,11 @@ fn nod() -> outbe_core_common::nod_encryption::EncryptedNodV1 {
             nod_id: U256::ONE,
             owner: account(),
             emission_day: 20250115,
-            league_id: 2,
             entry_price_minor: U256::ONE,
             issuance_currency: 840,
             reference_currency: 840,
         },
+        U256::from(1_000_000u64),
         U256::from(1_000_000u64),
     )
     .expect("encrypt nod")
@@ -209,8 +210,8 @@ fn inactive_resident_key_is_local_unavailable_in_every_domain() {
         drop(snapshot_leagues(sample.fidelity.clone()))
     });
     latch(leader, "nod", || drop(read_nod_amount(&sample.nod)));
-    latch(leader, "tribute", || {
-        drop(process_encrypted_offer_batch(CHAIN, Vec::new()))
+    latch(leader, "offer", || {
+        drop(issue_nod_at_offer(offer_request(CHAIN)))
     });
 }
 
@@ -246,8 +247,7 @@ fn active_resident_chain_mismatch_is_unsigned_on_a_user_tx_and_tape_invalid_on_p
         guard.tx_index = Some(0);
         guard.is_user_candidate = true;
     }
-    let user_error =
-        process_encrypted_offer_batch(778, Vec::new()).expect_err("user chain mismatch");
+    let user_error = issue_nod_at_offer(offer_request(778)).expect_err("user chain mismatch");
     assert!(!user_error.is_node_local(), "{user_error}");
     let user_guard = user_state.lock().expect("witness lock");
     assert_eq!(
@@ -264,8 +264,7 @@ fn active_resident_chain_mismatch_is_unsigned_on_a_user_tx_and_tape_invalid_on_p
         leader,
         EnclaveWitnessTapeV1::default(),
     );
-    let prefix_error =
-        process_encrypted_offer_batch(778, Vec::new()).expect_err("prefix chain mismatch");
+    let prefix_error = issue_nod_at_offer(offer_request(778)).expect_err("prefix chain mismatch");
     assert!(!prefix_error.is_node_local(), "{prefix_error}");
     let prefix_guard = prefix_state.lock().expect("witness lock");
     assert_eq!(
@@ -276,13 +275,36 @@ fn active_resident_chain_mismatch_is_unsigned_on_a_user_tx_and_tape_invalid_on_p
     assert!(prefix_guard.staged.is_empty());
 }
 
-fn day_freeze(chain_id: u64) -> TributeDayOpRequestV2 {
-    TributeDayOpRequestV2 {
+fn offer_request(chain_id: u64) -> IssueNodAtOfferRequestV1 {
+    IssueNodAtOfferRequestV1 {
         chain_id,
-        worldwide_day: outbe_system_common::time::WorldwideDay::new(20_250_115),
+        offer: outbe_nod::offer::protocol::EncryptedOffer {
+            owner: Address::repeat_byte(0xCA),
+            cipher_text: Vec::new(),
+            nonce: vec![0; 12],
+            ephemeral_pubkey: U256::ZERO,
+            worldwide_day: outbe_system_common::time::WorldwideDay::new(20_250_115),
+            issuance_currency: 840,
+            reference_currency: 840,
+            issuance_wwd_vwap_minor: U256::from(1_000_000u64),
+            reference_wwd_vwap_minor: U256::from(1_000_000u64),
+            reference_scurve_minor: U256::ZERO,
+            zk_context: None,
+        },
+        emission_day: 20_250_116,
+        entry_price_minor: U256::from(1_000_000u64),
+    }
+}
+
+fn group_load_seed(chain_id: u64) -> NodGroupLoadOpRequestV1 {
+    NodGroupLoadOpRequestV1 {
+        chain_id,
+        scope: B256::repeat_byte(0x5c),
         previous: None,
-        public_state_hash: B256::ZERO,
-        operation: TributeDayOperationV2::Freeze,
+        operation: NodGroupLoadOperationV1::AdjustTransient {
+            load_minor: U256::from(7u64),
+            add: true,
+        },
     }
 }
 
@@ -300,7 +322,7 @@ fn open_tx(
 }
 
 #[test]
-fn day_write_refuses_a_foreign_chain_and_a_cold_key() {
+fn group_load_write_refuses_a_foreign_chain_and_a_cold_key() {
     let _policy = ClearWitnessPolicy;
     outbe_tee::witness::set_witness_policy_for_test(Some(WitnessPolicy::EnclaveBacked));
     let hot = context(4, true);
@@ -311,8 +333,8 @@ fn day_write_refuses_a_foreign_chain_and_a_cold_key() {
         leader,
         EnclaveWitnessTapeV1::default(),
     );
-    record_indexed(&state, 0, 13, || {
-        apply_day_operation(day_freeze(CHAIN)).expect("tag 13");
+    record_indexed(&state, 0, 19, || {
+        apply_nod_group_load_operation(group_load_seed(CHAIN)).expect("tag 19");
     });
     let tape = state.lock().expect("witness lock").tape.clone();
     drop((scope, _runtime));
@@ -353,7 +375,8 @@ fn day_write_refuses_a_foreign_chain_and_a_cold_key() {
             EnclaveWitnessTapeV1::default()
         };
         let (state, _scope) = open_tx(mode, leader, recorded);
-        let error = apply_day_operation(day_freeze(chain_id)).expect_err("day write");
+        let error = apply_nod_group_load_operation(group_load_seed(chain_id))
+            .expect_err("group load write");
         let guard = state.lock().expect("witness lock");
         let proposer = mode == WitnessExecutionMode::ProposerRecord;
         assert!(guard.staged.is_empty());
@@ -387,23 +410,23 @@ fn day_write_refuses_a_foreign_chain_and_a_cold_key() {
 }
 
 #[test]
-fn verifier_with_enclave_latches_local_unavailable_on_a_tribute_day_read() {
+fn verifier_with_enclave_latches_local_unavailable_on_a_nod_group_load_read() {
     let _policy = ClearWitnessPolicy;
     uninstall_domain_standins();
     let leader_ctx = context(4, true);
     let leader = leader_ctx.attestation_public();
     let _runtime = set_in_process_tee_context_for_test(Some(Arc::clone(&leader_ctx)));
-    let seeded = apply_day_operation(day_freeze(CHAIN)).expect("seed day amount");
+    let seeded = apply_nod_group_load_operation(group_load_seed(CHAIN)).expect("seed group load");
     outbe_tee::witness::set_witness_policy_for_test(Some(WitnessPolicy::EnclaveBacked));
     let (state, scope) = open_tx(
         WitnessExecutionMode::ProposerRecord,
         leader,
         EnclaveWitnessTapeV1::default(),
     );
-    record_indexed(&state, 0, 14, || {
+    record_indexed(&state, 0, 20, || {
         assert_eq!(
-            read_day_amount(seeded.clone()).expect("leader day read"),
-            U256::ZERO
+            read_nod_group_load(&seeded).expect("leader group load read"),
+            U256::from(7u64)
         );
     });
     let tape = state.lock().expect("witness lock").tape.clone();
@@ -418,7 +441,7 @@ fn verifier_with_enclave_latches_local_unavailable_on_a_tribute_day_read() {
             leader,
             tape.clone(),
         );
-        let error = read_day_amount(seeded.clone()).expect_err(label);
+        let error = read_nod_group_load(&seeded).expect_err(label);
         let guard = state.lock().expect("witness lock");
         assert!(
             guard.candidate_rejection.is_none() && guard.staged.is_empty(),
@@ -452,7 +475,7 @@ fn resident_on(seed: u8, chain: u64, active: bool) -> Arc<InProcessTeeContext> {
 }
 
 #[test]
-fn indexed_user_scopes_record_five_domains_and_match_replay() {
+fn indexed_user_scopes_record_every_domain_and_match_replay() {
     let _policy = ClearWitnessPolicy;
     uninstall_domain_standins();
     outbe_tee::witness::set_witness_policy_for_test(Some(WitnessPolicy::EnclaveBacked));
@@ -488,9 +511,9 @@ fn indexed_user_scopes_record_five_domains_and_match_replay() {
         let amount = read_nod_amount(&ready.nod).expect("nod");
         assert_eq!(amount, U256::from(1_000_000u64));
     });
-    record_indexed(&state, 4, 11, || {
-        let offers = process_encrypted_offer_batch(CHAIN, Vec::new()).expect("tribute");
-        assert!(offers.is_empty());
+    record_indexed(&state, 4, 22, || {
+        let result = issue_nod_at_offer(offer_request(CHAIN)).expect("offer");
+        assert!(result.nod.is_none());
     });
     let tape = state.lock().expect("witness lock").tape.clone();
     drop(scope);
@@ -521,7 +544,7 @@ fn indexed_user_scopes_record_five_domains_and_match_replay() {
         read_nod_amount(&ready.nod).expect("nod enclave");
     });
     replay_indexed(&state, 4, || {
-        process_encrypted_offer_batch(CHAIN, Vec::new()).expect("tribute enclave");
+        issue_nod_at_offer(offer_request(CHAIN)).expect("offer enclave");
     });
     assert!(state
         .lock()
@@ -547,7 +570,7 @@ fn indexed_user_scopes_record_five_domains_and_match_replay() {
         read_nod_amount(&ready.nod).expect("nod replay");
     });
     replay_indexed(&state, 4, || {
-        process_encrypted_offer_batch(CHAIN, Vec::new()).expect("tribute replay");
+        issue_nod_at_offer(offer_request(CHAIN)).expect("offer replay");
     });
     assert!(state
         .lock()
@@ -607,7 +630,6 @@ fn uninstall_domain_standins() {
     outbe_fidelity::enclave_client::test_enclave::uninstall();
     // Nod's stand-in is crate-private and starts uninstalled.
     outbe_nod::test_support::uninstall();
-    outbe_tribute::enclave_client::test_enclave::uninstall();
 }
 
 struct ClearWitnessPolicy;
@@ -633,7 +655,6 @@ impl std::error::Error for Reason {}
 fn metric_classes_and_local_crypto_error_messages_remain_exact() {
     let bad_sig = || TeeAttestationError::InvalidSignatureLength { actual: 3 };
     for (descriptor, expected) in [
-        (TRIBUTE_OFFER_ATTESTATION, "tribute_offer_attestation"),
         (GRATIS_OP_ATTESTATION, "gratis_op_attestation"),
         (PROMIS_OP_ATTESTATION, "promis_op_attestation"),
         (FIDELITY_ATTESTATION, "fidelity_attestation"),
@@ -643,21 +664,9 @@ fn metric_classes_and_local_crypto_error_messages_remain_exact() {
             expected
         );
     }
-    for (descriptor, expected) in [
-        (TRIBUTE_SOURCE_REJECTED, "tribute_source_rejected"),
-        (NOD_MINT_REJECTED, "nod_mint_rejected"),
-    ] {
-        assert_eq!(
-            TransportError::app_rejected(descriptor, Reason("rejected")).metric_class(),
-            expected
-        );
-    }
-    let source =
-        TransportError::app_rejected(TRIBUTE_SOURCE_REJECTED, TributeSourceError::ContextMismatch);
-    assert_eq!(source.metric_class(), "tribute_source_rejected");
     assert_eq!(
-        source.to_string(),
-        "Tribute source rejected: Tribute source context mismatch"
+        TransportError::app_rejected(NOD_MINT_REJECTED, Reason("rejected")).metric_class(),
+        "nod_mint_rejected"
     );
     let rejected = EncryptedNodMintRejectedV1 {
         reason: "bad nonce".into(),
@@ -675,10 +684,6 @@ fn metric_classes_and_local_crypto_error_messages_remain_exact() {
         format!("encrypted NOD mint rejected: {}", rejected.reason)
     );
     assert_local_crypto_sentences();
-    assert_eq!(
-        EnclaveClientError::TributeSourceRejected(TributeSourceError::ContextMismatch).to_string(),
-        "Tribute source rejected: Tribute source context mismatch"
-    );
 }
 
 #[test]
@@ -770,22 +775,6 @@ fn assert_local_crypto_sentences() {
         (
             E::InvalidNodAmountLength(plain(32)),
             "invalid NOD amount length",
-        ),
-        (
-            E::InvalidTributeEncoding,
-            "invalid encrypted Tribute encoding",
-        ),
-        (
-            E::InvalidTributeAmountKey(T::AeadKey),
-            "invalid Tribute amount key",
-        ),
-        (
-            E::TributeAmountDecryptionFailed(T::DecryptionFailed),
-            "Tribute amount decryption failed",
-        ),
-        (
-            E::InvalidTributeAmountLength(plain(64)),
-            "invalid Tribute amount length",
         ),
     ] {
         assert_eq!(error.to_string(), expected);

@@ -202,7 +202,6 @@ fn with_payment_token<R>(
     storage.set_timestamp(U256::from(ISSUED_AT));
     fund_payer(&mut storage, settlement_asset());
     storage.stub_sub_call_at(crate::constants::INTEX_NFT1155_ADDRESS, word(0));
-    storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
         outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
         IVaultRouter::assetVaultsCountCall::SELECTOR,
@@ -316,7 +315,6 @@ fn erc20_series() -> HashMapStorageProvider {
         IERC1155::balanceOfCall::SELECTOR,
         word(2),
     );
-    storage.stub_sub_call_at(crate::constants::ORIGIN_ROUTER_ADDRESS, word(0));
     storage.stub_sub_call_at_selector(
         outbe_system_common::addresses::VAULT_ROUTER_ADDRESS,
         IVaultRouter::assetVaultsCountCall::SELECTOR,
@@ -466,11 +464,6 @@ fn settle_rejects_expired_deadline() {
     storage.set_timestamp(U256::from(now));
     storage.stub_sub_call_at(
         crate::constants::INTEX_NFT1155_ADDRESS,
-        alloy_primitives::Bytes::from(vec![0u8; 32]),
-    );
-    // Stub OriginRouter: send* calls return bytes32 sendId (32 bytes). The value is ignored.
-    storage.stub_sub_call_at(
-        crate::constants::ORIGIN_ROUTER_ADDRESS,
         alloy_primitives::Bytes::from(vec![0u8; 32]),
     );
     StorageHandle::enter(&mut storage, |s| {

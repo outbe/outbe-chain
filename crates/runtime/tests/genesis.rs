@@ -5,7 +5,7 @@
 //! 1. `outbe-genesis-cli` writes `ACCOUNTING_PROGRESS_ADDRESS = 0xEE04`
 //!    with the canonical `0xef` marker bytecode and `slot 0 = 0`.
 //! 2. The genesis seeder must not write any `ValidatorSet` storage entry at
-//!    the direct slots 31..40. Those slots are reserved for the runtime
+//!    the direct slots 27..=35. Those slots are reserved for the runtime
 //!    `CommitteeSnapshotStore`, whose first writer is block 1's
 //!    `BoundaryOutcome` system transaction.
 //! 3. The genesis JSON that the seeder produces must not embed private DKG
@@ -166,28 +166,26 @@ fn accounting_progress_address_seeded_with_marker_and_zero_slot0() {
 }
 
 /// `outbe-genesis-cli` does not write any direct-slot
-/// storage entry at `ValidatorSet` slots 31..40. This matches the Rust schema in
-/// `crates/system/validatorset/src/schema.rs`. In that schema, slots 31..39 are
-/// mappings with no base-slot value. Slot 40 is a reserved `Slot<B256>` that
-/// must be zero at genesis.
+/// storage entry at `ValidatorSet` slots 27..=35. This matches the Rust schema in
+/// `crates/system/validatorset/src/schema.rs`. In that schema, slots 27..=35 are
+/// mappings with no base-slot value.
 ///
 /// This protects the invariant that genesis carries no committee-snapshot
 /// material. Block 1's `BoundaryOutcome` system tx is the first writer.
 #[test]
-fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() {
+fn seed_genesis_writes_committee_snapshot_slots_27_to_35_matching_rust_schema() {
     // 1. Rust-schema sanity: the slot indices on the contract facade must be
-    //    exactly 31..40. If schema drift moves them, this test fails loudly.
+    //    exactly 27..=35. If schema drift moves them, this test fails loudly.
     let mut storage = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut storage, |storage| {
         let vs = ValidatorSet::new(storage);
         outbe_validatorset::test_support::assert_committee_snapshot_schema_slots(&vs);
     });
 
-    // 2. Seeder-output check: for each slot in 31..=40, the corresponding
+    // 2. Seeder-output check: for each slot in 27..=35, the corresponding
     //    direct slot key (`hex32(N)`) must be absent from the seeded
-    //    `VALIDATOR_SET_ADDRESS` storage. Mappings (slots 31..39) write at
-    //    keccak-derived keys and never the base slot itself. The reserved
-    //    `Slot<B256>` at 40 must be untouched.
+    //    `VALIDATOR_SET_ADDRESS` storage. Mappings (slots 27..=35) write at
+    //    keccak-derived keys and never the base slot itself.
     let (_tmp, genesis, _raw) = run_seed_genesis(
         FIXTURE_GENESIS,
         FIXTURE_SEED,
@@ -195,14 +193,135 @@ fn seed_genesis_writes_committee_snapshot_slots_31_to_40_matching_rust_schema() 
     );
     let entry = alloc_entry(&genesis, VALIDATOR_SET_ADDRESS_HEX);
     let keys = storage_keys(entry);
-    for slot in 31u64..=40 {
+    for slot in 27u64..=35 {
         let hex = format!("0x{:064x}", slot);
         assert!(
             !keys.iter().any(|k| k == &hex),
             "outbe-genesis-cli wrote direct-slot entry at ValidatorSet slot {slot} \
-             ({hex}); slots 31..40 are reserved for runtime CommitteeSnapshotStore"
+             ({hex}); slots 27..=35 are reserved for runtime CommitteeSnapshotStore"
         );
     }
+}
+
+/// Round-trips the `outbe-genesis-cli` seeded `alloc` into `ValidatorSet` and
+/// `Staking` facades, catching any slot-index drift between the seeder's raw
+/// slot numbers and `crates/system/validatorset/src/schema.rs` (`0..=46`).
+#[test]
+fn seeded_genesis_round_trips_through_validator_set_and_staking_facade() {
+    use alloy_primitives::{B256, U256};
+    use outbe_primitives::consensus::{GenesisValidator, GenesisValidators};
+    use outbe_primitives::consensus_p2p::{encode_v1, P2pAddress, P2P_ADDRESS_VERSION_V1};
+    use outbe_system_common::addresses::{STAKING_ADDRESS, VALIDATOR_SET_ADDRESS};
+    use outbe_validatorset::delegation::ValidatorDelegateRole;
+    use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+
+    let validators_with_p2p = r#"[
+      { "address": "0x1111111111111111111111111111111111111111",
+        "feeder_address": "0x5555555555555555555555555555555555555555",
+        "public_key": "111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111",
+        "radicle_node_id": "1111111111111111111111111111111111111111111111111111111111111111",
+        "p2p_address": { "symmetric": "10.0.0.1:30400" } },
+      { "address": "0x2222222222222222222222222222222222222222",
+        "feeder_address": "0x6666666666666666666666666666666666666666",
+        "public_key": "222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222",
+        "radicle_node_id": "2222222222222222222222222222222222222222222222222222222222222222" }
+    ]"#;
+    let seed_cfg =
+        r#"{ "validator_set": { "max_validators": 64, "reregistration_cooldown_blocks": 42 } }"#;
+    let (_tmp, genesis, _raw) = run_seed_genesis(FIXTURE_GENESIS, seed_cfg, validators_with_p2p);
+
+    let mut provider = HashMapStorageProvider::new(512_215);
+    for (hex_addr, target) in [
+        (VALIDATOR_SET_ADDRESS_HEX, VALIDATOR_SET_ADDRESS),
+        ("000000000000000000000000000000000000ee02", STAKING_ADDRESS),
+    ] {
+        let storage_map = alloc_entry(&genesis, hex_addr)
+            .get("storage")
+            .and_then(Value::as_object)
+            .expect("storage map");
+        for (slot_hex, val_json) in storage_map {
+            let slot: U256 = slot_hex.parse().expect("slot u256");
+            let val: U256 = val_json
+                .as_str()
+                .expect("val str")
+                .parse()
+                .expect("val u256");
+            provider.storage.insert((target, slot), val);
+        }
+    }
+
+    let expected_founders = [
+        (
+            Address::repeat_byte(0x11),
+            Address::repeat_byte(0x55),
+            [0x11u8; 48],
+            B256::repeat_byte(0x11),
+            Some((
+                P2P_ADDRESS_VERSION_V1,
+                encode_v1(&P2pAddress::Symmetric(SocketAddr::new(
+                    IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1)),
+                    30_400,
+                ))),
+            )),
+        ),
+        (
+            Address::repeat_byte(0x22),
+            Address::repeat_byte(0x66),
+            [0x22u8; 48],
+            B256::repeat_byte(0x22),
+            None,
+        ),
+    ];
+
+    let genesis_validators = GenesisValidators {
+        epoch_length_blocks: 120,
+        validators: expected_founders
+            .iter()
+            .map(|(address, _, pubkey, _, _)| GenesisValidator {
+                address: *address,
+                consensus_pubkey: *pubkey,
+            })
+            .collect(),
+    };
+
+    StorageHandle::enter(&mut provider, |storage| {
+        outbe_staking::genesis::validate_genesis_state(storage.clone(), &genesis_validators)
+            .expect("validate_genesis_state must accept seeded storage");
+
+        let vs = ValidatorSet::new(storage);
+        assert_eq!(vs.config_max_validators.read().unwrap(), 64);
+        assert_eq!(vs.config_epoch_length_blocks.read().unwrap(), 120);
+        assert!(vs.config_is_initialized.read().unwrap());
+        assert_eq!(vs.config_reregistration_cooldown.read().unwrap(), 42);
+        assert_eq!(vs.validator_count().unwrap(), 2);
+        assert_eq!(vs.active_consensus_count().unwrap(), 2);
+
+        for (idx, (addr, feeder, pubkey, node_id, expected_p2p)) in
+            expected_founders.iter().enumerate()
+        {
+            assert_eq!(
+                vs.validator_address_at((idx + 1) as u64).unwrap(),
+                Some(*addr)
+            );
+            let record = vs.get_validator(*addr).unwrap().unwrap();
+            assert_eq!(record.validator_address, *addr);
+            assert_eq!(record.consensus_pubkey, *pubkey);
+            assert!(record.has_bls_share);
+            assert_eq!(vs.get_radicle_node_id(*addr).unwrap(), *node_id);
+            assert_eq!(vs.validator_by_radicle_node_id(*node_id).unwrap(), *addr);
+            assert_eq!(
+                vs.get_delegate(*addr, ValidatorDelegateRole::Oracle)
+                    .unwrap(),
+                *feeder
+            );
+            assert_eq!(
+                vs.resolve_validator_for_role(*feeder, ValidatorDelegateRole::Oracle)
+                    .unwrap(),
+                Some(*addr)
+            );
+            assert_eq!(vs.get_p2p_address(*addr).unwrap(), *expected_p2p);
+        }
+    });
 }
 
 /// Cross-checks all sources of the EIP-161 preservation contract. Every
@@ -345,7 +464,6 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
     };
 
     let validator = Address::repeat_byte(0x11);
-    let owner = Address::repeat_byte(0xAA);
     let consensus_pubkey = [7u8; 48];
     let vrf_group_public_key_bytes = vec![0x42u8; 96];
     let expected_snapshot = outbe_validatorset::CommitteeSnapshot {
@@ -371,13 +489,11 @@ fn block1_boundary_outcome_writes_epoch0_snapshot_before_block2() {
     provider.set_beneficiary(validator);
     StorageHandle::enter(&mut provider, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(owner).unwrap();
         vs.set_config_max_validators(128).unwrap();
         vs.config_epoch_length_blocks.write(60).unwrap();
         let minimum = U256::from(1_000u64);
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
-        vs.register_validator(owner, validator, &consensus_pubkey)
-            .unwrap();
+        vs.register_validator(validator, &consensus_pubkey).unwrap();
         vs.test_seed_authoritative_bonded(validator, minimum)
             .unwrap();
         vs.mark_pending(validator).unwrap();
@@ -465,12 +581,12 @@ fn runtime_genesis_dkg_boundary_seeds_epoch0_vrf_snapshot_before_block2() {
     let expected_block1 = [2, 3, 4]
         .into_iter()
         .map(SystemTxStepId::consensus)
-        .chain((0..9).map(SystemTxStepId::begin_block))
+        .chain((0..11).map(SystemTxStepId::begin_block))
         .collect::<Vec<_>>();
     assert_eq!(
         block1, expected_block1,
         "block 1 pins to BoundaryOutcome, TeeBootstrap, \
-         ValidatorLiveness, and the nine begin-block steps; \
+         ValidatorLiveness, and the eleven begin-block steps; \
          CertifiedParentAccounting is absent"
     );
 
@@ -618,6 +734,38 @@ fn seeded_profiles_and_gems_read_back_through_their_schemas() {
                 .unwrap(),
             alloy_primitives::U256::ZERO,
             "genesis carries no Gem bodies"
+        );
+    });
+}
+
+/// The seeded target chains read back through the IntexFactory schema, `own` as this network.
+#[test]
+fn seeded_intex_targets_read_back_through_the_factory() {
+    use outbe_intexfactory::targets::{target_chains, TargetMode};
+    const SEED: &str = r#"{
+      "intex": { "target_chains": [
+        { "chain_id": "own", "mode": "auctions" },
+        { "chain_id": 97, "mode": "series" }
+      ] }
+    }"#;
+    let (_tmp, genesis, _raw) =
+        run_seed_genesis(FIXTURE_GENESIS, SEED, FIXTURE_VALIDATORS_4_PUBLIC_ONLY);
+    let own = u32::try_from(
+        genesis["config"]["chainId"]
+            .as_u64()
+            .expect("numeric chainId"),
+    )
+    .expect("chain id fits u32");
+    let mut provider = HashMapStorageProvider::new(u64::from(own));
+    load_seeded_storage(
+        &mut provider,
+        &genesis,
+        outbe_system_common::addresses::INTEX_FACTORY_ADDRESS,
+    );
+    StorageHandle::enter(&mut provider, |storage| {
+        assert_eq!(
+            target_chains(&storage).unwrap(),
+            vec![(own, TargetMode::Auctions), (97, TargetMode::Series)]
         );
     });
 }

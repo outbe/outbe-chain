@@ -32,7 +32,7 @@ pub const MAX_GENESIS_AGE_SECONDS: i64 = 6 * 60 * 60;
 
 const PACKAGED_ASSETS: &str = "share/outbe-genesis";
 
-pub const SEED_SECTIONS: [&str; 14] = [
+pub const SEED_SECTIONS: [&str; 15] = [
     "protocol_constants",
     "balance",
     "staking",
@@ -41,6 +41,7 @@ pub const SEED_SECTIONS: [&str; 14] = [
     "code_registry",
     "oracle",
     "intex_profile",
+    "intex",
     "gem_profile",
     "nod_profile",
     "credis_profile",
@@ -49,18 +50,12 @@ pub const SEED_SECTIONS: [&str; 14] = [
     "hyperlane_controller",
 ];
 
-pub const TEE_KEYS: [&str; 6] = [
-    "mode",
-    "mrenclave",
-    "mrsigner",
-    "isv_prod_id",
-    "minimum_isv_svn",
-    "minimum_tcb_evaluation_data_number",
-];
+pub const TEE_KEYS: [&str; 1] = ["mode"];
 
-const STATIC_TOP_LEVEL_KEYS: [&str; 43] = [
+const STATIC_TOP_LEVEL_KEYS: [&str; 44] = [
     "network",
     "validators",
+    "validator_runtime",
     "keys_dir",
     "chain_id",
     "tee",
@@ -199,9 +194,94 @@ pub fn validate_config(config: &Value) -> Result<(), GenesisError> {
         )));
     }
     validate_founders(obj)?;
+    validate_validator_runtime(config, obj)?;
     validate_tee(config, obj)?;
     rpc_bind_ip(config, "127.0.0.1")?;
     validate_ports(obj)
+}
+
+fn validate_validator_runtime(
+    config: &Value,
+    obj: &Map<String, Value>,
+) -> Result<(), GenesisError> {
+    let Some(runtime) = obj.get("validator_runtime") else {
+        return Ok(());
+    };
+    let entries = runtime
+        .as_array()
+        .ok_or_else(|| GenesisError::validation("validator_runtime must be a list"))?;
+    let validator_count = obj
+        .get("validators")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    if entries.len() != validator_count {
+        return Err(GenesisError::validation(format!(
+            "validator_runtime must contain one entry per validator ({validator_count})"
+        )));
+    }
+    let allowed: BTreeSet<&str> = [
+        "rpc_bind_ip",
+        "reth_p2p_port",
+        "reth_discv5_port",
+        "radicle_port",
+        "consensus_p2p_port",
+    ]
+    .into_iter()
+    .collect();
+    let validators = obj
+        .get("validators")
+        .and_then(Value::as_array)
+        .expect("validate_founders already checked validators");
+    let default_consensus = obj
+        .get("consensus_p2p_port")
+        .map(parse_i128)
+        .transpose()?
+        .unwrap_or_else(|| i128::from(DEFAULT_CONSENSUS_P2P_PORT));
+    for (index, entry) in entries.iter().enumerate() {
+        let fields = entry.as_object().ok_or_else(|| {
+            GenesisError::validation(format!("validator_runtime[{index}] must be a mapping"))
+        })?;
+        if let Some(key) = fields.keys().find(|key| !allowed.contains(key.as_str())) {
+            return Err(GenesisError::validation(format!(
+                "unknown validator_runtime[{index}] key: {key}"
+            )));
+        }
+        let advertised_consensus = validators[index]
+            .as_str()
+            .and_then(|value| value.rsplit_once(':'))
+            .map(|(_, port)| port.parse::<i128>())
+            .transpose()
+            .map_err(|_| {
+                GenesisError::validation(format!("invalid consensus port in validators[{index}]"))
+            })?
+            .unwrap_or(default_consensus);
+        let runtime_consensus = fields
+            .get("consensus_p2p_port")
+            .map(parse_i128)
+            .transpose()?
+            .unwrap_or(default_consensus);
+        if runtime_consensus != advertised_consensus {
+            return Err(GenesisError::validation(format!(
+                "validator_runtime[{index}].consensus_p2p_port must match validators[{index}]"
+            )));
+        }
+        let mut merged = config.clone();
+        {
+            let merged_obj = merged
+                .as_object_mut()
+                .expect("validated network config is an object");
+            for (key, value) in fields {
+                merged_obj.insert(key.clone(), value.clone());
+            }
+        }
+        rpc_bind_ip(&merged, "127.0.0.1")?;
+        validate_ports(
+            merged
+                .as_object()
+                .expect("validated network config is an object"),
+        )?;
+    }
+    Ok(())
 }
 
 /// Resolve the RPC bind for one founder. `validator` selects that founder's
@@ -281,42 +361,16 @@ fn validate_tee(config: &Value, obj: &Map<String, Value>) -> Result<(), GenesisE
     let (network, _, _) = network_identity(config)?;
     let mode = tee.get("mode").and_then(Value::as_str).unwrap_or("");
     if network == "mainnet" {
-        validate_mainnet(obj, mode)?;
+        return Err(GenesisError::validation(
+            "Mainnet requires TDX/SNP attestation, which is not implemented",
+        ));
     }
     match mode {
-        "no-attestation-dev" | "dcap-required" => Ok(()),
+        "no-attestation-dev" => Ok(()),
         _ => Err(GenesisError::validation(
-            "tee.mode must be no-attestation-dev or dcap-required",
+            "tee.mode must be no-attestation-dev",
         )),
     }
-}
-
-fn validate_mainnet(obj: &Map<String, Value>, mode: &str) -> Result<(), GenesisError> {
-    if mode != "dcap-required" {
-        return Err(GenesisError::validation(
-            "Mainnet requires tee.mode dcap-required",
-        ));
-    }
-    if obj.contains_key("protocol_constants") {
-        return Err(GenesisError::validation(
-            "Mainnet forbids protocol_constants overrides and uses canonical production defaults",
-        ));
-    }
-    let endpoint = obj
-        .get("price_feed_rest")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    if endpoint.is_empty() {
-        return Err(GenesisError::validation(
-            "Mainnet requires an explicit production price feed REST endpoint",
-        ));
-    }
-    if endpoint.to_ascii_lowercase().contains("testnet") {
-        return Err(GenesisError::validation(
-            "Mainnet may not use a testnet price endpoint",
-        ));
-    }
-    Ok(())
 }
 
 fn validate_ports(obj: &Map<String, Value>) -> Result<(), GenesisError> {

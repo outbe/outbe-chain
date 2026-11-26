@@ -328,7 +328,7 @@ fn a_validator_deactivated_after_submission_does_not_count_toward_tally_quorum()
                 .unwrap();
         }
         outbe_validatorset::contract::ValidatorSet::new(storage)
-            .deactivate_validator(Address::ZERO, voters[1])
+            .deactivate_validator(voters[1])
             .unwrap();
 
         // Three validators remain active, so two observations are required.

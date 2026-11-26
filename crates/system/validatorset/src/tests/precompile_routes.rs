@@ -31,10 +31,10 @@ fn routed_storage() -> Result<HashMapStorageProvider> {
     let mut storage = configured_storage(10);
     storage.enter(|storage| -> Result<()> {
         let mut vs = ValidatorSet::new(storage);
-        vs.register_validator(OWNER, FIRST, &dummy_consensus_pubkey(0xF1))?;
+        vs.register_validator(FIRST, &dummy_consensus_pubkey(0xF1))?;
         activate_staked_for_test(&mut vs, FIRST);
         vs.val_has_bls_share.write(&FIRST, true)?;
-        vs.register_validator(OWNER, SECOND, &dummy_consensus_pubkey(0xF2))?;
+        vs.register_validator(SECOND, &dummy_consensus_pubkey(0xF2))?;
         vs.set_delegate(FIRST, ValidatorDelegateRole::Oracle, DELEGATE)
     })?;
     Ok(storage)
@@ -52,7 +52,7 @@ fn send<T: SolCall>(
 fn assert_returns<T: SolCall>(storage: &mut HashMapStorageProvider, call: T, expected: T::Return) {
     let encoded = Bytes::from(T::abi_encode_returns(&expected));
     assert_eq!(
-        send(storage, OWNER, &call).ok(),
+        send(storage, UNKNOWN, &call).ok(),
         Some(encoded),
         "{}",
         T::SIGNATURE
@@ -97,10 +97,10 @@ fn validator_views_route_by_address_and_index() -> Result<()> {
         .ok_or_else(|| PrecompileError::Fatal("fixture validator is absent".into()))?;
     let by_address = send(
         &mut storage,
-        OWNER,
+        UNKNOWN,
         &I::validatorByAddressCall { addr: FIRST },
     )?;
-    let by_index = send(&mut storage, OWNER, &I::validatorByIndexCall { index: 1 })?;
+    let by_index = send(&mut storage, UNKNOWN, &I::validatorByIndexCall { index: 1 })?;
     assert_eq!(by_address, by_index);
     let decoded = I::validatorByAddressCall::abi_decode_returns(&by_address)
         .map_err(|error| PrecompileError::Fatal(format!("decode validator view: {error}")))?;
@@ -126,7 +126,7 @@ fn validator_views_route_by_address_and_index() -> Result<()> {
     assert_eq!(
         outcome_text(send(
             &mut storage,
-            OWNER,
+            UNKNOWN,
             &I::validatorByAddressCall { addr: UNKNOWN }
         )),
         super::typed_revert(I::ValidatorNotFound {}.abi_encode())
@@ -134,7 +134,7 @@ fn validator_views_route_by_address_and_index() -> Result<()> {
     assert_eq!(
         outcome_text(send(
             &mut storage,
-            OWNER,
+            UNKNOWN,
             &I::validatorByIndexCall { index: 9 }
         )),
         super::typed_revert(I::ValidatorNotFoundAtIndex {}.abi_encode())
@@ -186,7 +186,7 @@ fn delegate_routes_decode_the_role_first() -> Result<()> {
     assert_eq!(
         outcome_text(send(
             &mut storage,
-            OWNER,
+            UNKNOWN,
             &I::getDelegateCall {
                 validator: FIRST,
                 role: bad_role
@@ -246,29 +246,69 @@ fn p2p_lifecycle_and_value_routes_keep_their_results() -> Result<()> {
     let unset = I::getP2pAddressCall {
         validatorAddress: FIRST,
     };
-    let encoded = send(&mut storage, OWNER, &unset)?;
+    let encoded = send(&mut storage, UNKNOWN, &unset)?;
     assert_eq!(
         encoded,
         Bytes::from(I::getP2pAddressCall::abi_encode_returns(
             &(0u8, Bytes::new()).into()
         ))
     );
-    let data = I::deactivateValidatorCall {
-        validatorAddress: FIRST,
-    }
-    .abi_encode();
+    let p2p_bytes = encode_v1(&P2pAddress::Symmetric(SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::LOCALHOST),
+        30_400,
+    )));
     assert_eq!(
-        outcome_text(storage.enter(|storage| dispatch(storage, &data, OWNER, U256::from(1)))),
-        "Revert: non-payable function called with value"
+        outcome_text(send(
+            &mut storage,
+            UNKNOWN,
+            &I::setP2pAddressCall {
+                version: P2P_ADDRESS_VERSION_V1,
+                encoded: p2p_bytes.clone().into(),
+            }
+        )),
+        super::typed_revert(I::ValidatorNotRegistered {}.abi_encode())
     );
     assert_eq!(
         outcome_text(send(
             &mut storage,
-            OWNER,
-            &I::deactivateValidatorCall {
-                validatorAddress: FIRST
+            FIRST,
+            &I::setP2pAddressCall {
+                version: P2P_ADDRESS_VERSION_V1,
+                encoded: p2p_bytes.clone().into(),
             }
         )),
+        "Ok(0x)"
+    );
+    assert_eq!(
+        send(&mut storage, UNKNOWN, &unset)?,
+        Bytes::from(I::getP2pAddressCall::abi_encode_returns(
+            &(P2P_ADDRESS_VERSION_V1, Bytes::from(p2p_bytes)).into()
+        ))
+    );
+    assert_eq!(
+        send(
+            &mut storage,
+            UNKNOWN,
+            &I::getP2pAddressCall {
+                validatorAddress: SECOND
+            }
+        )?,
+        Bytes::from(I::getP2pAddressCall::abi_encode_returns(
+            &(0u8, Bytes::new()).into()
+        ))
+    );
+
+    let data = I::deactivateValidatorCall {}.abi_encode();
+    assert_eq!(
+        outcome_text(storage.enter(|storage| dispatch(storage, &data, FIRST, U256::from(1)))),
+        "Revert: non-payable function called with value"
+    );
+    assert_eq!(
+        outcome_text(send(&mut storage, UNKNOWN, &I::deactivateValidatorCall {})),
+        super::typed_revert(I::ValidatorNotRegistered {}.abi_encode())
+    );
+    assert_eq!(
+        outcome_text(send(&mut storage, FIRST, &I::deactivateValidatorCall {})),
         "Ok(0x)"
     );
     assert_eq!(
@@ -288,7 +328,7 @@ fn selector_outside_the_allow_list_writes_nothing() -> Result<()> {
         .try_into()
         .unwrap();
     let outcome =
-        outcome_text(storage.enter(|storage| dispatch(storage, &selector, OWNER, U256::ZERO)));
+        outcome_text(storage.enter(|storage| dispatch(storage, &selector, UNKNOWN, U256::ZERO)));
     assert!(outcome.starts_with("Revert: decode error:"), "{outcome}");
     assert_eq!(storage.clear_mutation_failure(), 0);
     assert_eq!(storage.get_ordered_events().len(), events_before);

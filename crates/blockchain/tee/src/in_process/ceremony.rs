@@ -220,7 +220,7 @@ impl InProcessTeeContext {
                 self.with_dkg_session(&ceremony_id.0, |s| {
                     Ok(EnclaveResponse::DkgNetworkKeyPartial {
                         sealed: s
-                            .tribute_offer_partials_sealed()?
+                            .offer_partials_sealed()?
                             .into_iter()
                             .map(|(pk, blob)| (pk.encode().to_vec(), blob.to_wire_bytes()))
                             .collect(),

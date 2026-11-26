@@ -3,7 +3,7 @@ use crate::precompile::INod;
 use crate::schema::{CallTerms, NodContract, NodGroupState, NodItemState};
 use crate::storage_records::{StoredNod, StoredNodEntryExt};
 use alloy_primitives::{Address, B256, U256};
-use outbe_core_common::{nod_encryption::NOD_BLOB_LEN, series_id::SeriesId};
+use outbe_core_common::nod_encryption::NOD_BLOB_LEN;
 use outbe_primitives::{
     error::{PrecompileError, Result},
     storage::StorageHandle,
@@ -68,31 +68,9 @@ pub fn add_item(
     storage: &StorageHandle<'_>,
     item: &NodItemState,
     terms: Option<CallTerms>,
-    gratis_load_minor: U256,
 ) -> Result<()> {
-    storage.with_checkpoint(|| {
-        NodContract::new(storage.clone()).record_nod_issued_state(
-            item,
-            terms,
-            gratis_load_minor,
-            None,
-        )
-    })
-}
-pub fn add_series_item(
-    storage: &StorageHandle<'_>,
-    item: &NodItemState,
-    terms: Option<CallTerms>,
-    series_id: SeriesId,
-) -> Result<()> {
-    storage.with_checkpoint(|| {
-        NodContract::new(storage.clone()).record_nod_issued_state(
-            item,
-            terms,
-            U256::ZERO,
-            Some(series_id),
-        )
-    })
+    storage
+        .with_checkpoint(|| NodContract::new(storage.clone()).record_nod_issued_state(item, terms))
 }
 pub fn clean_item(storage: &StorageHandle<'_>, nod_id: U256) -> Result<()> {
     storage.with_checkpoint(|| {
@@ -107,6 +85,25 @@ pub fn clean_item(storage: &StorageHandle<'_>, nod_id: U256) -> Result<()> {
         }
         let group = load_group(storage, group_key)?.ok_or(NodError::GroupNotFound)?;
         NodContract::new(storage.clone()).record_nod_removed_state(item, group)
+    })
+}
+/// Closes `group_key` when it holds no Nod and was never called. Returns whether it did.
+pub fn close_empty_group(storage: &StorageHandle<'_>, group_key: B256) -> Result<bool> {
+    storage.with_checkpoint(|| {
+        let mut nod = NodContract::new(storage.clone());
+        let Some(group) = nod.groups.get(group_key)? else {
+            return Ok(false);
+        };
+        if group.settled_nods != 0
+            || nod.group_nod_count.read(&group_key)? != 0
+            || nod.group_called_at.read(&group_key)? != 0
+        {
+            return Ok(false);
+        }
+        nod.group_nod_count.clear(&group_key)?;
+        nod.close_group(group_key)?;
+        nod.groups.delete(group_key)?;
+        Ok(true)
     })
 }
 pub fn record_settled(
@@ -144,20 +141,13 @@ impl NodContract<'_> {
         &mut self,
         item: &NodItemState,
         call_terms: Option<CallTerms>,
-        gratis_load_minor: U256,
-        series_id: Option<SeriesId>,
     ) -> Result<()> {
-        let series_group = match series_id {
-            Some(series_id) => Some(
-                self.sealed_series_group(series_id)?
-                    .ok_or_else(|| PrecompileError::fatal("a Nod claims an unsealed series"))?,
-            ),
-            None => None,
-        };
+        let sub_series_group = Some(self.sub_series_group.read(&item.sub_series_key())?)
+            .filter(|group_key| !group_key.is_zero());
         crate::issuance::validate_item(
             item,
             call_terms.map_or(U256::ZERO, |terms| terms.call_price_minor),
-            series_group,
+            sub_series_group,
         )?;
         if self.records.get(item.nod_id)?.is_some() {
             return Err(NodError::NodAlreadyExists.into());
@@ -167,9 +157,7 @@ impl NodContract<'_> {
         let current_group = self.groups.get(item.group_key)?;
         let member_count = self.group_nod_count.read(&item.group_key)?;
         let settled_count = current_group.as_ref().map_or(0, |group| group.settled_nods);
-        let unclaimed_count = self.group_unclaimed_tribute_count.read(&item.group_key)?;
-        if current_group.is_some() != (member_count > 0 || settled_count > 0 || unclaimed_count > 0)
-        {
+        if current_group.is_none() && (member_count > 0 || settled_count > 0) {
             return Err(NodError::GroupExistenceDisagreesWithMemberCount {
                 group_id,
                 member_count,
@@ -195,18 +183,13 @@ impl NodContract<'_> {
 
         self.register_group_series(
             item.group_key,
-            item.series_id,
-            item.issuance_currency,
-            item.reference_currency,
+            (item.series_id, item.sub_series_id),
+            (item.issuance_currency, item.reference_currency),
+            item.entry_price_minor(),
         )?;
-        if let Some(series_id) = series_id {
-            self.consume_unclaimed_tribute_from_series(series_id, item.group_key)?;
-        } else {
-            let _ = gratis_load_minor;
-            self.add_nod_to_open_load(item.group_key, &item.encrypted)?;
-            self.add_nod_to_series_open_load(item.group_key, item.series_id, &item.encrypted)?;
-        }
-        self.increment_series_nod_count(item.group_key, item.series_id)?;
+        self.add_nod_to_open_load(item.group_key, &item.encrypted)?;
+        self.add_nod_to_series_open_load(item.group_key, item.sub_series_key(), &item.encrypted)?;
+        self.increment_series_nod_count(item.group_key, item.sub_series_key())?;
         self.insert_group_member(item.group_key, item.nod_id)?;
         self.insert_state_record(&StoredNod::from(item))?;
         if let Some(group) = new_group {
@@ -235,9 +218,9 @@ impl NodContract<'_> {
             .checked_add(1)
             .ok_or(NodError::SettledCountOverflow)?;
         self.remove_group_member(item.group_key, item.nod_id)?;
-        self.decrement_series_nod_count(item.group_key, item.series_id)?;
+        self.decrement_series_nod_count(item.group_key, item.sub_series_key())?;
         self.sub_nod_from_open_load(item.group_key, &item.encrypted)?;
-        self.sub_nod_from_series_open_load(item.group_key, item.series_id, &item.encrypted)?;
+        self.sub_nod_from_series_open_load(item.group_key, item.sub_series_key(), &item.encrypted)?;
         item.is_settled = true;
         self.records.update(&StoredNod::from(&item))?;
         self.groups.update(&group)?;
@@ -262,20 +245,34 @@ impl NodContract<'_> {
                 .ok_or(NodError::GroupSettledCountUnderflow { group_id })?;
             self.group_nod_count.read(&item.group_key)?
         } else {
-            // An unpaid Nod leaves only through its forfeited group's cleanup, after the
-            // group's whole unpaid load was returned. So its load stays on the total.
-            self.decrement_series_nod_count(item.group_key, item.series_id)?;
+            // An unsettled Nod leaves only through its forfeited group's cleanup, after the
+            // group's whole unsettled load was returned. So its load stays on the total.
+            self.decrement_series_nod_count(item.group_key, item.sub_series_key())?;
             self.remove_group_member(item.group_key, item.nod_id)?
         };
         self.delete_state_record(item.nod_id)?;
-        let unclaimed_count = self.group_unclaimed_tribute_count.read(&item.group_key)?;
-        let empty = remaining == 0 && group.settled_nods == 0 && unclaimed_count == 0;
-        if empty && !self.waiting_for_forfeit(item.group_key)? {
+        // A group that was never called stays open for the rest of its offering window:
+        // NodFactory closes it once no Nod can join it.
+        let empty = remaining == 0 && group.settled_nods == 0;
+        if empty && self.group_is_forfeited.read(&item.group_key)? {
             self.group_nod_count.clear(&item.group_key)?;
             self.close_group(item.group_key)?;
             self.groups.delete(group.group_key)?;
         } else if item.is_settled {
             self.groups.update(&group)?;
+        }
+        if item.is_settled {
+            self.emit(INod::NodBurned {
+                nodId: item.nod_id,
+                owner: item.owner,
+            })?;
+        } else {
+            self.emit(INod::NodForfeited {
+                nodId: item.nod_id,
+                owner: item.owner,
+                issuanceCurrency: item.issuance_currency,
+                referenceCurrency: item.reference_currency,
+            })?;
         }
         self.emit(INod::Transfer {
             from: item.owner,
@@ -289,6 +286,7 @@ impl NodContract<'_> {
 mod tests {
     use super::*;
     use crate::{test_support, NodIssueParams};
+    use outbe_core_common::series_id::SeriesId;
     use outbe_primitives::storage::hashmap::HashMapStorageProvider;
     use outbe_system_common::time::date_key_to_utc_timestamp;
 
@@ -300,6 +298,7 @@ mod tests {
         record.series_id = SeriesId::for_pair(20261015, 840, 978).unwrap();
         record.encrypted_gratis_amount = vec![0; NOD_BLOB_LEN];
         record.encrypted_gratis_amount[..8].copy_from_slice(&1u64.to_be_bytes());
+        record.encrypted_nominal_amount = record.encrypted_gratis_amount.clone();
         record
     }
 
@@ -309,7 +308,6 @@ mod tests {
             nod_id: U256::from_be_bytes([7; 32]),
             owner: Address::repeat_byte(1),
             chain_id: 2,
-            league_id: 3,
             entry_price_minor: U256::from(4),
             issuance_currency: 5,
             reference_currency: 6,
@@ -317,6 +315,8 @@ mod tests {
             issued_at: 9,
             is_settled: true,
             encryption_binding: B256::repeat_byte(10),
+            encrypted_nominal_amount: vec![12; NOD_BLOB_LEN],
+            sub_series_id: 0,
             encrypted_gratis_amount: vec![12; NOD_BLOB_LEN],
             series_id: SeriesId::for_pair(20261016, 840, 978).unwrap(),
         };
@@ -384,7 +384,6 @@ mod tests {
             let params = NodIssueParams {
                 owner: Address::repeat_byte(1),
                 emission_day: 20261015,
-                league_id: 1,
                 gratis_load_minor: U256::from(5_000_000),
                 entry_price_minor: U256::from(1_000_000),
                 issuance_currency: 840,
@@ -399,20 +398,19 @@ mod tests {
                     params.issuance_currency,
                     params.reference_currency,
                 ),
-                league_id: params.league_id,
+                sub_series_id: 0,
                 group_key: crate::identity::group_key(
-                    date_key_to_utc_timestamp(20_200_101).unwrap(),
+                    params.emission_day,
                     U256::ZERO,
                     params.reference_currency,
-                )
-                .expect("date step"),
+                ),
                 issuance_currency: params.issuance_currency,
                 reference_currency: params.reference_currency,
                 issued_at: date_key_to_utc_timestamp(20_200_101).unwrap(),
                 is_settled: false,
                 encrypted,
             };
-            add_item(&storage, &item, None, params.gratis_load_minor).unwrap();
+            add_item(&storage, &item, None).unwrap();
             let contract = NodContract::new(storage.clone());
             assert_eq!(contract.state_records(item.owner).unwrap().len(), 1);
             let stale_item = load_item(&storage, item.nod_id).unwrap().unwrap();
@@ -441,6 +439,8 @@ mod tests {
             )
             .unwrap();
             assert!(contract.state_records(item.owner).unwrap().is_empty());
+            assert!(contract.groups.get(item.group_key).unwrap().is_some());
+            assert!(close_empty_group(&storage, item.group_key).unwrap());
             assert!(contract.groups.get(item.group_key).unwrap().is_none());
         });
     }

@@ -409,7 +409,7 @@ pub(crate) fn start_runtime_workers(
     };
     let tee_canary_handle = (args.tee_canary_interval_secs > 0).then(|| {
         tokio::spawn(shutdown.track_task("TEE canary worker", async move {
-            crate::tee_canary_probe::TributeCanaryProbe::run_in_process_worker(
+            crate::tee_canary_probe::OfferCanaryProbe::run_in_process_worker(
                 context,
                 canary_config,
                 tee_canary_status,

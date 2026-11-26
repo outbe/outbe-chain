@@ -100,7 +100,7 @@ pub enum RightState {
 }
 
 /// Derives the lifecycle state of every right from its own facts:
-/// - `Settled`: `is_settled` is true (Nod and Gem stored `is_settled`, Intex Settled token, Credis `outstanding_principal == 0`).
+/// - `Settled`: `is_settled` is true (Nod and Gem stored `is_settled`, Intex Settled token, Credis `outstanding_amount_minor == 0`).
 /// - `Forfeited`: not settled, the series or group is called (`called_at != 0`), and `now > deadline`.
 /// - `Called`: not settled, the series or group is called (`called_at != 0`), and `now <= deadline`.
 /// - `Issued`: all other cases.

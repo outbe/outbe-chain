@@ -11,13 +11,12 @@ use outbe_evm::precompiles::{
 use outbe_runtime::precompiles::outbe_exact_precompile_addresses;
 use outbe_system_common::addresses::*;
 
-fn expected_exact_addresses() -> [Address; 39] {
+fn expected_exact_addresses() -> [Address; 38] {
     [
         GRATIS_ADDRESS,
         GRATIS_FACTORY_ADDRESS,
         PROMIS_ADDRESS,
         PROMIS_FACTORY_ADDRESS,
-        TRIBUTE_ADDRESS,
         NOD_ADDRESS,
         NOD_FACTORY_ADDRESS,
         GEM_ADDRESS,
@@ -29,7 +28,7 @@ fn expected_exact_addresses() -> [Address; 39] {
         CREDIS_ADDRESS,
         CREDIS_FACTORY_ADDRESS,
         CCA_REGISTRY_ADDRESS,
-        TRIBUTE_FACTORY_ADDRESS,
+        WORLDWIDE_DAY_ADDRESS,
         VALIDATOR_SET_ADDRESS,
         SLASH_INDICATOR_ADDRESS,
         STAKING_ADDRESS,

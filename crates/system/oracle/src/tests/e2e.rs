@@ -1429,18 +1429,18 @@ fn policy_rate_precompile_enumerates_and_rejects_absence() {
 }
 
 // -----------------------------------------------------------------------
-// Tribute pricing inputs (`api::tribute_pricing_inputs`)
+// Offer pricing inputs (`api::offer_pricing_inputs`)
 // -----------------------------------------------------------------------
 
 /// `None` distinguishes "this chain cannot price that currency at all" from
 /// `Some(0)`, "the pair exists but has no 24-hour VWAP in this hour".
-/// TributeFactory maps the first to `IssuanceCurrencyNotRegistered` and the
+/// The Nod factory maps the first to `IssuanceCurrencyNotRegistered` and the
 /// second to `CurrencyPriceUnavailable`, so the two must not collapse.
 #[test]
-fn tribute_pricing_separates_an_unregistered_issuance_from_unpriced_inputs() {
+fn offer_pricing_separates_an_unregistered_issuance_from_unpriced_inputs() {
     with_storage_at(ATOMIC_DAY_START + 24 * 3_600, |storage| {
         assert_eq!(
-            crate::api::tribute_pricing_inputs(storage.clone(), 840, 978).unwrap(),
+            crate::api::offer_pricing_inputs(storage.clone(), 840, 978).unwrap(),
             None,
             "no COEN/840 pair is registered"
         );
@@ -1449,8 +1449,8 @@ fn tribute_pricing_separates_an_unregistered_issuance_from_unpriced_inputs() {
             .register_pair(AddressPair::new_coen_to(840))
             .unwrap();
         assert_eq!(
-            crate::api::tribute_pricing_inputs(storage, 840, 978).unwrap(),
-            Some(crate::api::TributePricingInputs {
+            crate::api::offer_pricing_inputs(storage, 840, 978).unwrap(),
+            Some(crate::api::OfferPricingInputs {
                 issuance_vwap_minor: U256::ZERO,
                 reference_vwap_minor: U256::ZERO,
                 reference_scurve_minor: U256::ZERO,
@@ -1489,8 +1489,8 @@ fn offer_reads_the_24_hour_vwaps_and_the_reference_curve_of_its_hour() {
         crate::scurve::store_scurve_entry(&mut oracle, eur, ATOMIC_DAY_START, coen_iso(7)).unwrap();
 
         assert_eq!(
-            crate::api::tribute_pricing_inputs(storage, 978, 840).unwrap(),
-            Some(crate::api::TributePricingInputs {
+            crate::api::offer_pricing_inputs(storage, 978, 840).unwrap(),
+            Some(crate::api::OfferPricingInputs {
                 issuance_vwap_minor: coen_iso(3),
                 reference_vwap_minor: coen_iso(2),
                 reference_scurve_minor: crate::scurve::compute_scurve_value(coen_iso(5), 1),

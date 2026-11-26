@@ -3,6 +3,7 @@
 mod advance_sweep;
 mod clearing_cleanup;
 mod deadline_cleanup;
+mod hub_and_outbox;
 
 use alloy_primitives::{Address, Bytes, U256};
 use alloy_sol_types::{SolCall, SolEvent};
@@ -15,8 +16,8 @@ use outbe_system_common::time::{previous_date_key, timestamp_to_date_key, Emissi
 use outbe_system_common::units::SCALE_1E6_U128;
 
 use crate::api::{DesisLimitReceipt, DesisLimitRejectionReason};
+use crate::constants::IGNORED_NOT_FOUND;
 use crate::constants::{IGNORED_CONFLICT, IGNORED_OBSOLETE};
-use crate::constants::{IGNORED_NOT_FOUND, ORIGIN_ROUTER_ADDRESS};
 use crate::runtime;
 use crate::schema::{AuctionConfig, AuctionStage, DesisContract, IntexAuctionBidData};
 
@@ -110,9 +111,60 @@ fn bidder(n: u8) -> Address {
     Address::from(bytes)
 }
 
-/// ABI-encoded `targetsOf` return, so the OriginRouter staticcall in clearing sees this target set.
-fn targets_stub(chains: &[u32]) -> Bytes {
-    Bytes::from(crate::sol_ext::IOriginRouter::targetsOfCall::abi_encode_returns(&chains.to_vec()))
+/// Registers `chains` in Auctions in IntexFactory and as the chains of the fixture days, as the
+/// genesis and a START do.
+fn seed_targets(storage: &mut HashMapStorageProvider, chains: &[u32]) {
+    let mut days = vec![NEXT_EMISSION_DAY, EMISSION_DAY];
+    for _ in 0..3 {
+        let last = days.last().unwrap().value();
+        days.push(EmissionDate::new(previous_date_key(last).unwrap()));
+    }
+    seed_targets_for(storage, chains, &days);
+}
+
+fn seed_targets_for(storage: &mut HashMapStorageProvider, chains: &[u32], days: &[EmissionDate]) {
+    use outbe_intexfactory::targets::{pack_target, TargetMode};
+    StorageHandle::enter(storage, |s| {
+        let factory = outbe_intexfactory::IntexFactoryContract::new(s.clone());
+        factory.target_chains.clear().unwrap();
+        for &chain in chains {
+            factory
+                .target_chains
+                .push(pack_target(chain, TargetMode::Auctions))
+                .unwrap();
+        }
+        for day in days {
+            let list = factory.day_targets.list(day);
+            list.clear().unwrap();
+            for &chain in chains {
+                list.push(chain).unwrap();
+            }
+        }
+    });
+}
+
+/// Every message in the outbox of Desis, chain by chain.
+fn outbox_messages(
+    storage: &mut HashMapStorageProvider,
+) -> Vec<outbe_intexfactory::transport::outbox::Message> {
+    StorageHandle::enter(storage, |s| {
+        let outbox = s.contract::<DesisContract>().outbox();
+        outbe_intexfactory::targets::series_target_chains(&s)
+            .unwrap()
+            .into_iter()
+            .flat_map(|chain| outbox.messages(chain).unwrap())
+            .collect()
+    })
+}
+
+fn outbox_of_type(
+    storage: &mut HashMapStorageProvider,
+    msg_type: u8,
+) -> Vec<outbe_intexfactory::transport::outbox::Message> {
+    outbox_messages(storage)
+        .into_iter()
+        .filter(|message| message.label.msg_type == msg_type)
+        .collect()
 }
 
 fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
@@ -124,8 +176,7 @@ fn with_targets<R>(chains: &[u32], f: impl FnOnce(StorageHandle) -> R) -> R {
 fn fixture_provider(chains: &[u32]) -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    // Stub OriginRouter: `targetsOf` returns the snapshot. The runtime ignores send* returns.
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(chains));
+    seed_targets(&mut storage, chains);
     // Stub IntexNFT1155: createSeries/burnIntex are void. balanceOf returns 0 (32 bytes).
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
@@ -298,7 +349,6 @@ fn mark_done(s: &StorageHandle, chain: u32, total_pages: u16, total_bids: u32) {
     runtime::complete_intex_auction_bids(
         s.clone(),
         runtime::Inbound {
-            caller: ORIGIN_ROUTER_ADDRESS,
             receive_id: alloy_primitives::B256::ZERO,
             emission_day: EMISSION_DAY,
             src_chain_id: chain,
@@ -320,7 +370,6 @@ fn relay_bids(s: &StorageHandle, chain: u32, n: u8, rate: u32) {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: chain,
@@ -393,7 +442,6 @@ fn priced_bids(rates: &[u32]) -> Vec<IntexAuctionBidData> {
 
 fn origin(chain: u32) -> runtime::Inbound {
     runtime::Inbound {
-        caller: ORIGIN_ROUTER_ADDRESS,
         receive_id: alloy_primitives::B256::ZERO,
         emission_day: EMISSION_DAY,
         src_chain_id: chain,
@@ -818,26 +866,24 @@ fn invalid_day_and_anchor_overflow_are_errors_without_business_events() {
 
 // --- Start by the date and cancel before the result ---
 
-/// The reason of every AUCTION_CANCEL the provider sent.
-fn sent_cancels(storage: &HashMapStorageProvider) -> Vec<u8> {
-    use crate::sol_ext::IOriginRouter::sendIntexAuctionCancelCall;
-    storage
-        .sub_call_inputs()
-        .iter()
-        .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-        .filter_map(|input| sendIntexAuctionCancelCall::abi_decode(&input.calldata).ok())
-        .map(|call| call.reason)
-        .collect()
+/// The reason of every AUCTION_CANCEL in the outbox.
+fn sent_cancels(storage: &mut HashMapStorageProvider) -> Vec<u8> {
+    outbox_of_type(
+        storage,
+        outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_CANCEL,
+    )
+    .into_iter()
+    .map(|message| message.payload[6])
+    .collect()
 }
 
-/// Whether the provider sent a COLLECTING_BIDS round.
-fn sent_clearing_start(storage: &HashMapStorageProvider) -> bool {
-    use crate::sol_ext::IOriginRouter::sendIntexAuctionClearingStartCall;
-    storage
-        .sub_call_inputs()
-        .iter()
-        .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-        .any(|input| sendIntexAuctionClearingStartCall::abi_decode(&input.calldata).is_ok())
+/// Whether a COLLECTING_BIDS round is in the outbox.
+fn sent_clearing_start(storage: &mut HashMapStorageProvider) -> bool {
+    !outbox_of_type(
+        storage,
+        outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_CLEARING_START,
+    )
+    .is_empty()
 }
 
 fn stage_of(s: &StorageHandle) -> AuctionStage {
@@ -864,7 +910,7 @@ fn started_without_brief() -> HashMapStorageProvider {
 #[test]
 fn auction_starts_before_its_size() {
     let mut provider = started_without_brief();
-    assert_eq!(sent_starts(&provider), vec![EMISSION_DAY.value()]);
+    assert_eq!(sent_starts(&mut provider), vec![EMISSION_DAY.value()]);
     StorageHandle::enter(&mut provider, |s| {
         let brief_at = ANCHOR + 12 * 3600;
         runtime::schedule_tick(&s, brief_at).unwrap();
@@ -887,8 +933,8 @@ fn auction_starts_before_its_size() {
             7
         );
     });
-    assert!(sent_clearing_start(&provider));
-    assert!(sent_cancels(&provider).is_empty());
+    assert!(sent_clearing_start(&mut provider));
+    assert!(sent_cancels(&mut provider).is_empty());
 }
 
 #[test]
@@ -912,11 +958,11 @@ fn cancel_before_the_result() {
         limit
     });
     assert_eq!(
-        sent_cancels(&provider),
+        sent_cancels(&mut provider),
         vec![crate::constants::CANCELED_BELOW_ONE_UNIT]
     );
     assert_eq!(desis_limit_returns(&provider), vec![returned]);
-    assert!(!sent_clearing_start(&provider));
+    assert!(!sent_clearing_start(&mut provider));
 }
 
 #[test]
@@ -928,7 +974,7 @@ fn a_brief_with_no_limit_cancels_the_started_auction() {
         assert_eq!(stage_of(&s), AuctionStage::Canceled);
     });
     assert_eq!(
-        sent_cancels(&provider),
+        sent_cancels(&mut provider),
         vec![crate::constants::CANCELED_NO_LIMIT]
     );
 }
@@ -948,10 +994,10 @@ fn no_brief_at_the_end_of_the_reveal_stage_cancels_the_auction() {
         );
     });
     assert_eq!(
-        sent_cancels(&provider),
+        sent_cancels(&mut provider),
         vec![crate::constants::CANCELED_NO_LIMIT]
     );
-    assert!(!sent_clearing_start(&provider));
+    assert!(!sent_clearing_start(&mut provider));
 }
 
 #[test]
@@ -970,7 +1016,7 @@ fn a_failed_metadosis_cancels_the_started_auction() {
         assert_eq!(stage_of(&s), AuctionStage::Canceled);
     });
     assert_eq!(
-        sent_cancels(&provider),
+        sent_cancels(&mut provider),
         vec![crate::constants::CANCELED_NO_LIMIT]
     );
 }
@@ -984,8 +1030,8 @@ fn a_cancel_of_a_day_that_never_started_sends_no_message() {
         runtime::schedule_tick(&s, NOW).unwrap();
         assert_eq!(stage_of(&s), AuctionStage::Canceled);
     });
-    assert!(sent_cancels(&provider).is_empty());
-    assert!(sent_starts(&provider).is_empty());
+    assert!(sent_cancels(&mut provider).is_empty());
+    assert!(sent_starts(&mut provider).is_empty());
 }
 
 #[test]
@@ -1003,7 +1049,7 @@ fn a_cancel_after_the_clearing_start_has_no_effect() {
             0
         );
     });
-    assert!(sent_cancels(&provider).is_empty());
+    assert!(sent_cancels(&mut provider).is_empty());
 }
 
 #[test]
@@ -1100,7 +1146,7 @@ fn start_at(
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(start));
     if router {
-        storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+        seed_targets(&mut storage, &[SRC_CHAIN]);
     }
     let (stage, pool) = StorageHandle::enter(&mut storage, |s| {
         brief(&s);
@@ -1401,7 +1447,7 @@ fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_messag
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    seed_targets(&mut storage, &[SRC_CHAIN]);
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
@@ -1417,16 +1463,8 @@ fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_messag
             AuctionStage::CollectingBids
         );
     });
-    let router_sends = |storage: &HashMapStorageProvider| {
-        use crate::sol_ext::IOriginRouter::targetsOfCall;
-        storage
-            .sub_call_inputs()
-            .iter()
-            .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-            .filter(|input| !input.calldata.starts_with(&targetsOfCall::SELECTOR))
-            .count()
-    };
-    let sends_before = router_sends(&storage);
+    let router_sends = |storage: &mut HashMapStorageProvider| outbox_messages(storage).len();
+    let sends_before = router_sends(&mut storage);
     StorageHandle::enter(&mut storage, |s| {
         use outbe_promislimit::PromisLimitContract;
         runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
@@ -1443,7 +1481,7 @@ fn a_started_day_with_no_result_fails_at_its_last_clearing_time_without_a_messag
         );
     });
     assert_eq!(
-        router_sends(&storage),
+        router_sends(&mut storage),
         sends_before,
         "a failed day sends nothing to the other chains"
     );
@@ -1533,7 +1571,7 @@ fn failed_auction_needs_no_message() {
     use crate::constants::BIDS_FANIN_TIMEOUT_SECS;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    seed_targets(&mut storage, &[SRC_CHAIN]);
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
@@ -1553,16 +1591,8 @@ fn failed_auction_needs_no_message() {
             ANCHOR + 2 * SECONDS_PER_DAY + BIDS_FANIN_TIMEOUT_SECS
         );
     });
-    let sends = |storage: &HashMapStorageProvider| {
-        use crate::sol_ext::IOriginRouter::targetsOfCall;
-        storage
-            .sub_call_inputs()
-            .iter()
-            .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-            .filter(|input| !input.calldata.starts_with(&targetsOfCall::SELECTOR))
-            .count()
-    };
-    let sends_before = sends(&storage);
+    let sends = |storage: &mut HashMapStorageProvider| outbox_messages(storage).len();
+    let sends_before = sends(&mut storage);
     StorageHandle::enter(&mut storage, |s| {
         runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
         assert_eq!(
@@ -1572,7 +1602,7 @@ fn failed_auction_needs_no_message() {
             AuctionStage::Failed
         );
     });
-    assert_eq!(sends(&storage), sends_before);
+    assert_eq!(sends(&mut storage), sends_before);
 }
 
 #[test]
@@ -1600,36 +1630,6 @@ fn desis_deletes_bids_of_closed_auction() {
             assert!(!holds_bids(&s, SRC_CHAIN, 3));
         });
     }
-}
-
-#[test]
-fn a_day_fails_even_when_the_router_cannot_name_its_chains() {
-    use crate::sol_ext::IOriginRouter::targetsOfCall;
-    use alloy_sol_types::SolCall;
-
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(NOW));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
-    StorageHandle::enter(&mut storage, |s| {
-        brief(&s, true);
-        runtime::schedule_tick(&s, NOW).unwrap();
-        runtime::schedule_tick(&s, LAST_CLEARING - 1).unwrap();
-    });
-    storage.stub_sub_call_at_selector(ORIGIN_ROUTER_ADDRESS, targetsOfCall::SELECTOR, Bytes::new());
-    StorageHandle::enter(&mut storage, |s| {
-        use outbe_promislimit::PromisLimitContract;
-        runtime::schedule_tick(&s, LAST_CLEARING).unwrap();
-        assert_eq!(
-            s.contract::<DesisContract>()
-                .read_stage(EMISSION_DAY)
-                .unwrap(),
-            AuctionStage::Failed
-        );
-        assert_eq!(
-            PromisLimitContract::new(s.clone()).promis_limit().unwrap(),
-            U256::from(10 * LOAD_MINOR)
-        );
-    });
 }
 
 #[test]
@@ -1735,37 +1735,13 @@ fn schedule_derives_min_bid_qty_from_prior_clearing() {
     });
 }
 
-// --- Origin gate (OriginRouter-only entries) ---
+// --- Bid intake gate ---
 
 #[test]
 fn process_bids_in_non_revealing_stage_fails() {
     with_storage(|s| {
         // Stage is Started, not Revealing. The call must be rejected.
         reject_batch_before_reveal(&s, 2);
-    });
-}
-
-#[test]
-fn process_bids_rejects_non_origin_caller() {
-    with_storage(|s| {
-        open_revealing(&s);
-        // Series is in Revealing, so the only admission gate left is the caller check.
-        let attacker = bidder(99);
-        assert!(runtime::collect_intex_auction_bids(
-            s.clone(),
-            runtime::Inbound {
-                caller: attacker,
-                receive_id: alloy_primitives::B256::ZERO,
-                emission_day: EMISSION_DAY,
-                src_chain_id: SRC_CHAIN
-            },
-            0,
-            1,
-            bids(3, 200)
-        )
-        .is_err());
-        let contract = s.contract::<DesisContract>();
-        assert_eq!(contract.day_bid_count.read(&EMISSION_DAY).unwrap(), 0);
     });
 }
 
@@ -1778,7 +1754,6 @@ fn process_bids_rejects_an_oversized_batch() {
         let error = runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -1816,7 +1791,6 @@ fn process_bids_accumulate_across_batches() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -1829,7 +1803,6 @@ fn process_bids_accumulate_across_batches() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -1883,7 +1856,6 @@ fn marker_arriving_before_batches_still_finalizes() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -1914,7 +1886,6 @@ fn a_redelivered_batch_counts_once() {
             runtime::collect_intex_auction_bids(
                 s.clone(),
                 runtime::Inbound {
-                    caller: ORIGIN_ROUTER_ADDRESS,
                     receive_id: alloy_primitives::B256::ZERO,
                     emission_day: EMISSION_DAY,
                     src_chain_id: SRC_CHAIN,
@@ -1943,7 +1914,6 @@ fn a_batch_declaring_another_total_is_refused() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -1956,7 +1926,6 @@ fn a_batch_declaring_another_total_is_refused() {
         assert!(runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN
@@ -1981,7 +1950,6 @@ fn no_bids_clears_as_no_sale() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -2018,7 +1986,6 @@ fn clearing_allocates_up_to_the_limit() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -2042,7 +2009,6 @@ fn clearing_transitions_to_cleared() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -2075,7 +2041,7 @@ fn start_day(
 ) {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    seed_targets(&mut storage, &[SRC_CHAIN]);
     let (stage, unallocated) = StorageHandle::enter(&mut storage, |s| {
         brief_at(&s, EMISSION_DAY, desis_limit_minor, has_limit);
         runtime::schedule_tick(&s, NOW).unwrap();
@@ -2113,7 +2079,7 @@ fn below_one_unit(
 fn the_load_steps_on_a_day_the_new_load_cancels() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    seed_targets(&mut storage, &[SRC_CHAIN]);
     StorageHandle::enter(&mut storage, |s| {
         brief_at(&s, EMISSION_DAY, 10 * LOAD_MINOR, true);
         runtime::schedule_tick(&s, NOW).unwrap();
@@ -2194,7 +2160,7 @@ fn overflow_limit_events(logs: &[alloy_primitives::LogData]) -> Vec<U256> {
     ]
 }
 
-/// Amounts that Desis adds back to the Promis Limit with code 14.
+/// Amounts that Desis adds back to the Promis Limit with code 13.
 pub(crate) fn desis_limit_returns(storage: &HashMapStorageProvider) -> Vec<U256> {
     use alloy_sol_types::SolEvent;
     use outbe_promislimit::precompile::IPromisLimit::PromisLimitAdded;
@@ -2245,7 +2211,7 @@ fn a_day_cancelled_at_start_records_a_zero_desis_allocation() {
 fn a_failed_day_records_a_zero_desis_allocation() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    seed_targets(&mut storage, &[SRC_CHAIN]);
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
@@ -2276,23 +2242,22 @@ fn a_zero_limit_briefed_with_a_limit_is_cancelled_below_one_unit() {
     assert!(returns.is_empty());
 }
 
-/// The emission day of every AUCTION_STAGE_START message the provider sent.
-fn sent_starts(storage: &HashMapStorageProvider) -> Vec<u32> {
-    use crate::sol_ext::IOriginRouter::sendIntexAuctionStartCall;
-    storage
-        .sub_call_inputs()
-        .iter()
-        .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-        .filter_map(|input| sendIntexAuctionStartCall::abi_decode(&input.calldata).ok())
-        .map(|call| call.params.emissionDay)
-        .collect()
+/// The emission day of every AUCTION_STAGE_START message in the outbox.
+fn sent_starts(storage: &mut HashMapStorageProvider) -> Vec<u32> {
+    outbox_of_type(
+        storage,
+        outbe_intexfactory::transport::wire::MSG_INTEX_AUCTION_START,
+    )
+    .into_iter()
+    .map(|message| message.label.emission_day)
+    .collect()
 }
 
 #[test]
 fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    seed_targets(&mut storage, &[SRC_CHAIN]);
     let stage = StorageHandle::enter(&mut storage, |s| {
         brief_at(&s, EMISSION_DAY, 0, false);
         unprice_day(&s, NOW);
@@ -2308,7 +2273,7 @@ fn a_day_briefed_with_no_limit_is_cancelled_with_no_limit() {
         .clone();
 
     assert_eq!(stage, AuctionStage::Canceled);
-    assert!(sent_starts(&storage).is_empty());
+    assert!(sent_starts(&mut storage).is_empty());
     assert!(below_one_unit(&events).is_none());
     assert!(events.iter().any(|log| {
         use alloy_sol_types::SolEvent;
@@ -2361,7 +2326,6 @@ fn clear_bids_below_min_price_skipped() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -2405,7 +2369,6 @@ fn clear_refunds_equal_locked_minus_paid() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -2487,7 +2450,6 @@ fn clearing_returns_the_unused_limit_and_dust_to_promis() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -2556,7 +2518,6 @@ fn force_clear_waits_then_fires_when_all_done() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: chain_a,
@@ -2582,7 +2543,6 @@ fn force_clear_waits_then_fires_when_all_done() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: chain_b,
@@ -2612,7 +2572,7 @@ fn clearing_reports_the_desis_allocation_and_the_unused_limit() {
 
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    seed_targets(&mut storage, &[SRC_CHAIN]);
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
@@ -2654,7 +2614,7 @@ fn force_clear_skips_missing_chain_after_deadline() {
     let chain_b = 20u32;
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[chain_a, chain_b]));
+    seed_targets(&mut storage, &[chain_a, chain_b]);
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
@@ -2666,7 +2626,6 @@ fn force_clear_skips_missing_chain_after_deadline() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: chain_a,
@@ -2706,68 +2665,6 @@ fn force_clear_skips_missing_chain_after_deadline() {
     );
 }
 
-/// A clearing start that fails is reported once and not sent again: the chain's bids expire.
-#[test]
-fn clearing_start_send_failure_is_final() {
-    use crate::precompile::IDesis;
-    use crate::sol_ext::IOriginRouter;
-    use alloy_sol_types::{SolCall, SolEvent};
-
-    let mut storage = HashMapStorageProvider::new(CHAIN_ID);
-    storage.set_timestamp(U256::from(NOW));
-    // Every router call answers but the clearing start, left unanswered (NotAvailable), so its send fails.
-    storage.stub_sub_call_at_selector(
-        ORIGIN_ROUTER_ADDRESS,
-        IOriginRouter::targetsOfCall::SELECTOR,
-        targets_stub(&[SRC_CHAIN]),
-    );
-    for selector in [
-        IOriginRouter::sendIntexAuctionStartCall::SELECTOR,
-        IOriginRouter::sendIntexAuctionResultCall::SELECTOR,
-        IOriginRouter::sendIntexAuctionWinnersCall::SELECTOR,
-    ] {
-        storage.stub_sub_call_at_selector(ORIGIN_ROUTER_ADDRESS, selector, Bytes::new());
-    }
-    storage.stub_sub_call_at(
-        outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
-        Bytes::from(vec![0u8; 32]),
-    );
-
-    let deadline = ANCHOR + 2 * SECONDS_PER_DAY + crate::constants::BIDS_FANIN_TIMEOUT_SECS;
-    StorageHandle::enter(&mut storage, |s| {
-        open_clearing(&s, 2);
-        runtime::schedule_tick(&s, deadline - 1).unwrap();
-        runtime::force_clear(s.clone(), EMISSION_DAY, deadline + 1)
-            .unwrap()
-            .expect("cleared without the chain");
-    });
-
-    let attempts = storage
-        .sub_call_inputs()
-        .iter()
-        .filter(|input| input.target == ORIGIN_ROUTER_ADDRESS)
-        .filter(|input| {
-            IOriginRouter::sendIntexAuctionClearingStartCall::abi_decode(&input.calldata).is_ok()
-        })
-        .count();
-    assert_eq!(attempts, 1, "the refused clearing start is not sent again");
-
-    let events = storage.get_events(outbe_system_common::addresses::DESIS_ADDRESS);
-    let failures: Vec<_> = events
-        .iter()
-        .filter_map(|log| IDesis::IntexAuctionClearingStartSendFailed::decode_log_data(log).ok())
-        .collect();
-    assert_eq!(failures.len(), 1);
-    assert_eq!(failures[0].emissionDay, EMISSION_DAY.value());
-    assert_eq!(failures[0].dstChainId, SRC_CHAIN);
-    let expired = events
-        .iter()
-        .filter_map(|log| IDesis::IntexAuctionBidsExpired::decode_log_data(log).ok())
-        .filter(|event| event.srcChainId == SRC_CHAIN)
-        .count();
-    assert_eq!(expired, 1, "the chain's bids expire at the clearing");
-}
-
 #[test]
 fn complete_auctions_without_active_days_is_noop() {
     use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
@@ -2798,7 +2695,6 @@ fn complete_auctions_clears_a_ready_day() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -2879,7 +2775,6 @@ fn clearing_issues_one_series_per_winning_currency_pair() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: chain,
@@ -3048,7 +2943,6 @@ fn clearing_marks_the_bid_supply_ran_out_in() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -3158,7 +3052,6 @@ fn a_relayed_bid_naming_an_unspellable_currency_is_refused_at_intake() {
         let err = runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: chain,
@@ -3184,7 +3077,7 @@ const UNBRIEFED_DAY: EmissionDate = EmissionDate::new(20260202);
 fn inbound_storage() -> HashMapStorageProvider {
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(NOW));
-    storage.stub_sub_call_at(ORIGIN_ROUTER_ADDRESS, targets_stub(&[SRC_CHAIN]));
+    seed_targets(&mut storage, &[SRC_CHAIN]);
     storage.stub_sub_call_at(
         outbe_intexfactory::constants::INTEX_NFT1155_ADDRESS,
         Bytes::from(vec![0u8; 32]),
@@ -3214,7 +3107,6 @@ fn a_batch_for_a_day_never_briefed_is_acknowledged() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: UNBRIEFED_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -3239,7 +3131,6 @@ fn a_batch_after_clearing_is_acknowledged_as_obsolete() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -3254,7 +3145,6 @@ fn a_batch_after_clearing_is_acknowledged_as_obsolete() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -3288,7 +3178,6 @@ fn an_early_marker_stands_against_a_conflicting_one() {
             runtime::complete_intex_auction_bids(
                 s.clone(),
                 runtime::Inbound {
-                    caller: ORIGIN_ROUTER_ADDRESS,
                     receive_id: alloy_primitives::B256::ZERO,
                     emission_day: EMISSION_DAY,
                     src_chain_id: SRC_CHAIN,
@@ -3301,7 +3190,6 @@ fn an_early_marker_stands_against_a_conflicting_one() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -3327,7 +3215,6 @@ fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
         runtime::collect_intex_auction_bids(
             s.clone(),
             runtime::Inbound {
-                caller: ORIGIN_ROUTER_ADDRESS,
                 receive_id: alloy_primitives::B256::ZERO,
                 emission_day: EMISSION_DAY,
                 src_chain_id: SRC_CHAIN,
@@ -3343,7 +3230,6 @@ fn a_repeated_marker_is_a_no_op_and_a_differing_one_is_reported() {
             runtime::complete_intex_auction_bids(
                 s.clone(),
                 runtime::Inbound {
-                    caller: ORIGIN_ROUTER_ADDRESS,
                     receive_id: alloy_primitives::B256::ZERO,
                     emission_day: EMISSION_DAY,
                     src_chain_id: SRC_CHAIN,

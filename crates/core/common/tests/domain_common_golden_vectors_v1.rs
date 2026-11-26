@@ -26,7 +26,6 @@ fn owner_derive_account_keys_eip191_vectors() {
         (Ledger::Gratis, "6f757462652f6772617469732f6465726976652d6b6579732f763122222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333", "77543b6a6a9d609001a95b206671a7546f624787aa3ddad02db4ff553ae0a114"),
         (Ledger::Promis, "6f757462652f70726f6d69732f6465726976652d6b6579732f763122222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333", "4358a5160a44f31ab9bd747e2829922960336f30d54af3d1e2b62c5b00708326"),
         (Ledger::Fidelity, "6f757462652f666964656c6974792f6465726976652d6b6579732f763122222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333", "0253bd228725e355d543f755abffbaae4b7a317d9d6c7cd09ffd8213abdb15cb"),
-        (Ledger::Tribute, "6f757462652f747269627574652f6465726976652d6b6579732f763122222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333", "44dc4c5ed328d65e056f5cee5156dea2005c20ecf49fd604a0e21c29b0b1ba69"),
         (Ledger::Nod, "6f757462652f6e6f642f6465726976652d6b6579732f763122222222222222222222222222222222222222223333333333333333333333333333333333333333333333333333333333333333", "4bc1efbf18d8381d779979ea9dfdb8d87b1cdb2acc6cef8b42ee5ef60652af8b"),
     ] {
         let message = derive_account_keys_message(
@@ -69,13 +68,6 @@ fn confidential_ledger_domain_vectors() {
             "8ac47b1effa55d1c7b8d287055a49a4ced9b67214cb2d7e0e51750b7b5d0f1d0",
             "a7c69dcb52cf5651c2031e5a4594f62dd243c7525f9f02f12445bd459afb6cd3",
             "77f9857ad831c6e5950e73549fae8e9e37a1e8421fb8d0f9910e5da319832c01",
-        ),
-        (
-            Ledger::Tribute,
-            "d874becdca15a3e897070aac769e39397c2293526e702bc930c9e58ed6836e3c",
-            "80909ae81fb557fc5a4b11de87fa17aaaf10ca2db4e0265e4676e7448d605925",
-            "e9c40040205c342b36d1d76affe9aa28b488274ceb5c828c5ee780499209dabf",
-            "2089316487fe407b9584c368a62244d9b187a3b69eb41b04c658fa99750bd4bf",
         ),
         (
             Ledger::Nod,
@@ -252,26 +244,20 @@ fn resident_attestation_tag_round_trips() {
 
 /// Independent `(variant, discriminant)` table copied from the frozen V1
 /// response golden. A swapped enum discriminant fails `literal`, not `value()`.
-const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 19] = [
+const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 13] = [
     (WitnessResponseTag::GratisOpApplied, 1),
     (WitnessResponseTag::PromisOpApplied, 2),
     (WitnessResponseTag::FidelityLeaguesSnapshotted, 4),
     (WitnessResponseTag::FidelityIndexQueried, 5),
-    (WitnessResponseTag::NodEncryptedForTributeV1, 7),
     (WitnessResponseTag::EncryptedNodMintRejectedV1, 8),
     (WitnessResponseTag::EncryptedNodMinedV1, 9),
     (WitnessResponseTag::NodAmountReadV1, 10),
-    (WitnessResponseTag::EncryptedTributeOfferBatchV2, 11),
-    (WitnessResponseTag::TributeAmountsReadV2, 12),
-    (WitnessResponseTag::TributeDayOpAppliedV2, 13),
-    (WitnessResponseTag::TributeDayAmountReadV2, 14),
     (WitnessResponseTag::FidelityQueryRejected, 15),
     (WitnessResponseTag::LysisFractionsExecutedV1, 16),
-    (WitnessResponseTag::TributeDayFractionsReadV1, 17),
-    (WitnessResponseTag::NodIssuedFromTributeV1, 18),
     (WitnessResponseTag::NodGroupLoadOpAppliedV1, 19),
     (WitnessResponseTag::NodGroupLoadReadV1, 20),
     (WitnessResponseTag::NodQuoteEncryptedV1, 21),
+    (WitnessResponseTag::NodIssuedAtOfferV1, 22),
 ];
 
 #[test]

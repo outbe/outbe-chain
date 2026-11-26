@@ -449,12 +449,10 @@ impl ColdChain {
                 &self.binding,
             );
             Some(ITeeRegistryV1::validatorEnclaveBindingCall::abi_encode_returns(&view))
-        } else if data.starts_with(&ITeeRegistryV1::tributeOfferPublicKeyCall::SELECTOR) {
-            Some(
-                ITeeRegistryV1::tributeOfferPublicKeyCall::abi_encode_returns(
-                    &U256::from_be_bytes(self.public_key),
-                ),
-            )
+        } else if data.starts_with(&ITeeRegistryV1::offerPublicKeyCall::SELECTOR) {
+            Some(ITeeRegistryV1::offerPublicKeyCall::abi_encode_returns(
+                &U256::from_be_bytes(self.public_key),
+            ))
         } else if data.starts_with(&ITeeRegistryV1::enclaveUpgradeV1Call::SELECTOR) {
             Some(ITeeRegistryV1::enclaveUpgradeV1Call::abi_encode_returns(
                 &upgrade,
@@ -462,7 +460,7 @@ impl ColdChain {
         } else if data.starts_with(&ITeeRegistryV1::pendingEnclaveUpgradeCall::SELECTOR) {
             Some(ITeeRegistryV1::pendingEnclaveUpgradeCall::abi_encode_returns(&pending))
         } else if data.starts_with(&ITeeRegistryV1::keyEpochCall::SELECTOR)
-            || data.starts_with(&ITeeRegistryV1::tributeOfferEpochCall::SELECTOR)
+            || data.starts_with(&ITeeRegistryV1::offerEpochCall::SELECTOR)
         {
             Some(U256::ZERO.abi_encode())
         } else if to == VALIDATOR_SET_ADDRESS

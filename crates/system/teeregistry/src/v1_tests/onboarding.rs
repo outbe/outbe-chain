@@ -94,10 +94,7 @@ fn public_v1_registration_emits_onboarding_only_for_created_binding() {
     let sealed = sealed_offer_artifact(&validator.initial, offer_public, 0x42);
     let node_id_hash = validator.initial.node_id.node_id_hash().unwrap();
     let mut provider = validator.run_as_validator(|_storage, registry| {
-        registry
-            .tribute_offer_public_key
-            .write(offer_public)
-            .unwrap();
+        registry.offer_public_key.write(offer_public).unwrap();
     });
 
     let created = dispatch_onboarding(&mut provider, &validator, &call, |recipient| {
@@ -135,10 +132,7 @@ fn verified_onboarding_artifact_must_match_the_committed_binding_exactly() {
     let offer_public = B256::repeat_byte(0x96);
     let artifact = offer_artifact(&validator.initial, offer_public, 0x97, 0x98);
     let mut provider = validator.run_as_validator(|_storage, mut registry| {
-        registry
-            .tribute_offer_public_key
-            .write(offer_public)
-            .unwrap();
+        registry.offer_public_key.write(offer_public).unwrap();
         let registration = registry
             .register_enclave_after_verifier_for_test(
                 signed_intent.with_verdict(verdict(DcapPlatformTcbStatusV1::UpToDate)),

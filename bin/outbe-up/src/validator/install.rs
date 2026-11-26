@@ -16,6 +16,10 @@ use crate::{
 const ENV_KEYS: &[&str] = &[
     "OUTBE_EXTERNAL_IP",
     "OUTBE_RPC_BIND_IP",
+    "OUTBE_RETH_P2P_PORT",
+    "OUTBE_RETH_DISCOVERY_PORT",
+    "OUTBE_CONSENSUS_PORT",
+    "OUTBE_RADICLE_PORT",
     "OUTBE_CERTIFIED_RPC",
     "OUTBE_VALIDATOR_ADDRESS",
     "OUTBE_BOOTNODES",
@@ -127,6 +131,17 @@ fn validate_environment(values: &BTreeMap<String, String>) -> Result<()> {
         rpc_bind.is_loopback() || rpc_bind.is_private(),
         "OUTBE_RPC_BIND_IP must be a loopback or private IPv4 address"
     );
+    for name in [
+        "OUTBE_RETH_P2P_PORT",
+        "OUTBE_RETH_DISCOVERY_PORT",
+        "OUTBE_CONSENSUS_PORT",
+        "OUTBE_RADICLE_PORT",
+    ] {
+        ensure!(
+            values[name].parse::<u16>().is_ok_and(|port| port > 0),
+            "{name} must be a positive TCP/UDP port"
+        );
+    }
     let rpc = &values["OUTBE_CERTIFIED_RPC"];
     ensure!(
         (rpc.starts_with("http://") || rpc.starts_with("https://"))

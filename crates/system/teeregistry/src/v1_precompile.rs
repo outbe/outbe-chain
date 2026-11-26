@@ -143,7 +143,7 @@ fn dispatch_registry_call(
     let caller = active_policy_call.caller;
     match call {
         isBootstrapped(call) => view(call, |_| registry.is_bootstrapped()),
-        tributeOfferPublicKey(call) => view(call, |_| {
+        offerPublicKey(call) => view(call, |_| {
             registry
                 .offer_public_key()
                 .map(|value| U256::from_be_bytes(value.0))
@@ -154,7 +154,7 @@ fn dispatch_registry_call(
                 .map(|value| U256::from_be_bytes(value.0))
         }),
         keyEpoch(call) => view(call, |_| registry.key_epoch().map(U256::from)),
-        tributeOfferEpoch(call) => view(call, |_| registry.tribute_offer_epoch().map(U256::from)),
+        offerEpoch(call) => view(call, |_| registry.offer_epoch().map(U256::from)),
         activePolicyV1(call) => active_policy_view(registry, call),
         enclaveUpgradeV1(call) => enclave_upgrade_view(registry, call),
         stagedSuccessorPolicyV1(call) => staged_successor_policy_view(registry, call),

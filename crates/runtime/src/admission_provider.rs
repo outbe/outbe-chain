@@ -213,7 +213,6 @@ pub(crate) fn build_tee_admission_mock_provider(
     let chain_id = 676_u64;
     let genesis_hash = B256::repeat_byte(0x11);
     let validator = Address::with_last_byte(0x31);
-    let owner = Address::repeat_byte(0xA0);
     let reth_p2p_public: [u8; 33] = k256::ecdsa::SigningKey::from_bytes((&[0x31; 32]).into())
         .unwrap()
         .verifying_key()
@@ -229,7 +228,6 @@ pub(crate) fn build_tee_admission_mock_provider(
     storage_provider.set_block_number(blocks.last().map_or(1, |(n, _)| *n));
     StorageHandle::enter(&mut storage_provider, |storage| {
         let mut vs = outbe_validatorset::contract::ValidatorSet::new(storage.clone());
-        vs.config_owner.write(owner).unwrap();
         vs.config_is_initialized.write(true).unwrap();
         vs.set_config_max_validators(128).unwrap();
         let key = bls12381::PrivateKey::from_seed(31);
@@ -238,7 +236,7 @@ pub(crate) fn build_tee_admission_mock_provider(
         pubkey.copy_from_slice(&encoded[..48]);
         let minimum = U256::from(1_000u64);
         vs.test_seed_authoritative_min_stake(minimum).unwrap();
-        vs.register_validator(owner, validator, &pubkey).unwrap();
+        vs.register_validator(validator, &pubkey).unwrap();
         vs.test_seed_authoritative_bonded(validator, minimum)
             .unwrap();
         vs.activate_validator_via_boundary_for_test(validator)
@@ -266,7 +264,7 @@ pub(crate) fn build_tee_admission_mock_provider(
             .unwrap();
         if !state_cfg.offer_key.is_zero() {
             registry
-                .tribute_offer_public_key
+                .offer_public_key
                 .write(state_cfg.offer_key)
                 .unwrap();
         }

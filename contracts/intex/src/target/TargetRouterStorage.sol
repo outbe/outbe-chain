@@ -4,7 +4,6 @@ pragma solidity 0.8.30;
 import {IIntexAuction} from "./interfaces/IIntexAuction.sol";
 import {IIntexNFT1155} from "../shared/interfaces/IIntexNFT1155.sol";
 import {IEscrowAdapter} from "./interfaces/IEscrowAdapter.sol";
-import {IERC7786TokenBridge} from "@tokens/interfaces/IERC7786TokenBridge.sol";
 
 /// @notice Progress of a day's bids relay: the span that the first round froze, the next chunk to
 ///         send, and whether the completeness marker has left. Five bytes, so one slot.
@@ -34,10 +33,6 @@ struct TargetRouterStorage {
     IIntexNFT1155 intexContract;
     /// @dev EscrowAdapter contract that refund instructions are forwarded to for finalization.
     IEscrowAdapter escrow;
-    /// @dev Composed-transfer token bridge that routes auction proceeds to Outbe.
-    IERC7786TokenBridge tokenBridge;
-    /// @dev OriginRouter address on Outbe that receives and distributes the proceeds.
-    address originRouter;
     /// @dev Per-day bids relay progress: a redelivered CLEARING resumes it rather than starting over.
     mapping(uint32 emissionDay => IntexAuctionBidsSendState) intexAuctionBidsSendState;
     /// @dev Issuance-run progress for a day on this chain: the span the first applied chunk declared and

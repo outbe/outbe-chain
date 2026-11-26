@@ -522,15 +522,13 @@ pub(super) fn register_validator(storage: StorageHandle, addr: Address, stake: U
     if !vs.config_is_initialized.read().unwrap() {
         vs.config_is_initialized.write(true).unwrap();
         vs.set_config_max_validators(128).unwrap();
-        vs.config_min_stake.write(native_coen(1)).unwrap();
         vs.config_epoch_length_blocks.write(3600).unwrap();
-        vs.config_owner.write(Address::ZERO).unwrap();
     }
 
     // Generate unique pubkey from address
     let mut pubkey = [0u8; 48];
     pubkey[..20].copy_from_slice(addr.as_slice());
-    vs.register_validator(Address::ZERO, addr, &pubkey).unwrap();
+    vs.register_validator(addr, &pubkey).unwrap();
     vs.test_activate_validator_canonically(addr, StakeProjection::new(stake, None), U256::ZERO)
         .unwrap();
 }
@@ -542,14 +540,11 @@ pub(super) fn register_waiting_for_readiness(storage: StorageHandle, addr: Addre
     if !vs.config_is_initialized.read().unwrap() {
         vs.config_is_initialized.write(true).unwrap();
         vs.config_max_validators.write(128).unwrap();
-        vs.config_min_stake.write(native_coen(1)).unwrap();
         vs.config_epoch_length_blocks.write(3600).unwrap();
-        vs.config_owner.write(Address::ZERO).unwrap();
     }
 
     let mut pubkey = [0u8; 48];
     pubkey[..20].copy_from_slice(addr.as_slice());
-    vs.test_register_validator_without_pop(addr, &pubkey)
-        .unwrap();
+    vs.register_validator(addr, &pubkey).unwrap();
     vs.record_stake_increase(addr, stake, stake).unwrap();
 }

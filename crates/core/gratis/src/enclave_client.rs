@@ -18,12 +18,12 @@ use outbe_tee::{CallMeta, TransportError};
 use thiserror::Error;
 
 use crate::attest::verify_gratis_op_attestation;
-use crate::engine::{apply_op, rejected_result};
+use crate::engine::{apply_op, open_sealed_pledge, rejected_result};
 use crate::errors::{map_consensus_error, GratisFatalError};
 use crate::nod_mine::{self, MineEncryptedNodRequestV1, MineEncryptedNodResultV1};
 use crate::protocol::{
-    gratis_op_attestation_preimage, gratis_op_canonical_hash, GratisOpRequest, GratisOpResult,
-    GratisOpStatus,
+    gratis_op_attestation_preimage, gratis_op_canonical_hash, GratisOp, GratisOpRequest,
+    GratisOpResult, GratisOpStatus,
 };
 use crate::resident::resident_state_key;
 
@@ -113,7 +113,15 @@ fn execute_apply(
     req: &GratisOpRequest,
 ) -> std::result::Result<GratisOpResult, TransportError> {
     let key = resident_state_key(context, &GRATIS, STATE_EPOCH)?;
-    let mut result = apply_op(&key, req);
+    let mut result = if req.op == GratisOp::OpenSealedPledge {
+        context
+            .with_offer_key_handle(|offer| open_sealed_pledge(&key, offer, req))
+            .map_err(|error| {
+                TransportError::from(outbe_tee::InProcessDispatchError::Resident(error))
+            })?
+    } else {
+        apply_op(&key, req)
+    };
     if let (GratisOpStatus::Applied, Some(section)) = (&result.status, &req.fidelity) {
         let fidelity_key = resident_state_key(context, &FIDELITY, STATE_EPOCH)?;
         match apply_cohort_section(&fidelity_key, req.account, req.amount, section) {
@@ -237,6 +245,50 @@ pub mod test_enclave {
         fixture_key()
     }
 
+    /// Pledge of `account` for one Credis reservation, MACed with the fixture key and sealed
+    /// to the development offer key.
+    pub fn sealed_pledge(
+        account: alloy_primitives::Address,
+        amount: alloy_primitives::U256,
+        credis_reservation_id: alloy_primitives::U256,
+        chain_id: u64,
+    ) -> Vec<u8> {
+        sealed_pledge_by(account, account, amount, credis_reservation_id, chain_id)
+    }
+
+    /// [`sealed_pledge`] that names `account` with the MAC of `signer`'s modify key.
+    pub fn sealed_pledge_by(
+        signer: alloy_primitives::Address,
+        account: alloy_primitives::Address,
+        amount: alloy_primitives::U256,
+        credis_reservation_id: alloy_primitives::U256,
+        chain_id: u64,
+    ) -> Vec<u8> {
+        let keys = derive_account_keys(&state_key(), signer).expect("account keys");
+        let message = crate::engine::credis_pledge_message(
+            account,
+            amount,
+            credis_reservation_id,
+            B256::from(alloy_primitives::U256::from(chain_id)),
+        );
+        let mac = outbe_tee::resident::compute_modify_mac(
+            &keys,
+            crate::engine::CREDIS_PLEDGE_MAC_TAG,
+            &message,
+        )
+        .expect("pledge mac");
+        let mut plaintext = account.to_vec();
+        plaintext.extend_from_slice(&mac);
+        outbe_tee::tee_encrypt::tee_encrypt(
+            &outbe_core_common::confidential_tee::offer_public_key(),
+            &outbe_core_common::confidential_tee::OFFER_HKDF_SALT,
+            outbe_core_common::confidential_tee::CREDIS_PLEDGE_HKDF_INFO,
+            &plaintext,
+        )
+        .expect("seal pledge")
+        .to_wire_bytes()
+    }
+
     /// Authorization bound to the installed fixture key.
     pub fn modify_auth(operation: ModifyOperation) -> ModifyAuth {
         let key = derive_account_keys(&state_key(), operation.account).expect("account keys");
@@ -269,6 +321,10 @@ pub mod test_enclave {
     pub(crate) fn try_apply(req: &GratisOpRequest) -> Option<GratisOpResult> {
         STATE_KEY.with(|slot| {
             slot.borrow().as_ref().map(|key| {
+                if req.op == GratisOp::OpenSealedPledge {
+                    let offer = outbe_core_common::confidential_tee::offer_key();
+                    return open_sealed_pledge(key, &offer, req);
+                }
                 let mut result = apply_op(key, req);
                 if let (GratisOpStatus::Applied, Some(section)) = (&result.status, &req.fidelity) {
                     let fidelity = derive_fidelity_key().expect("derive dev fidelity state key");
@@ -360,6 +416,7 @@ mod executing_context {
                 op_nonce: 0,
             },
             fidelity: None,
+            sealed_pledge: None,
         }
     }
 

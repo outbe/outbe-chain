@@ -92,7 +92,7 @@ fn status_rpc() -> MockRpc {
             NodeEnclaveBindingV1View::default().abi_encode(),
         ),
         (
-            ITeeRegistry::tributeOfferPublicKeyCall::SELECTOR,
+            ITeeRegistry::offerPublicKeyCall::SELECTOR,
             U256::from(7).abi_encode(),
         ),
         (
@@ -588,17 +588,8 @@ async fn status_forwards_exact_finalized_hash_and_skips_schedule_on_malformed_he
         async fn eth_send_raw_transaction(&self, raw_tx: &[u8]) -> eyre::Result<String> {
             self.inner.eth_send_raw_transaction(raw_tx).await
         }
-        async fn eth_get_balance(&self, address: Address) -> eyre::Result<U256> {
-            self.inner.eth_get_balance(address).await
-        }
-        async fn net_peer_count(&self) -> eyre::Result<u64> {
-            self.inner.net_peer_count().await
-        }
         async fn outbe_consensus_status(&self) -> eyre::Result<serde_json::Value> {
             self.inner.outbe_consensus_status().await
-        }
-        async fn outbe_get_epoch_info(&self) -> eyre::Result<serde_json::Value> {
-            self.inner.outbe_get_epoch_info().await
         }
         async fn outbe_tee_renewal_schedule_v1(
             &self,
@@ -617,26 +608,6 @@ async fn status_forwards_exact_finalized_hash_and_skips_schedule_on_malformed_he
         }
         async fn eth_get_finalized_block(&self) -> eyre::Result<serde_json::Value> {
             self.inner.eth_get_finalized_block().await
-        }
-        async fn outbe_get_vrf_seed(&self) -> eyre::Result<serde_json::Value> {
-            self.inner.outbe_get_vrf_seed().await
-        }
-        async fn outbe_get_emission_info(&self) -> eyre::Result<serde_json::Value> {
-            self.inner.outbe_get_emission_info().await
-        }
-        async fn outbe_get_slash_config(&self) -> eyre::Result<serde_json::Value> {
-            self.inner.outbe_get_slash_config().await
-        }
-        async fn eth_get_logs(
-            &self,
-            address: Address,
-            topics: &[Option<String>],
-            from_block: &str,
-            to_block: &str,
-        ) -> eyre::Result<Vec<serde_json::Value>> {
-            self.inner
-                .eth_get_logs(address, topics, from_block, to_block)
-                .await
         }
     }
 

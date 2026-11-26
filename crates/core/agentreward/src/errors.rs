@@ -13,8 +13,8 @@ pub enum AgentRewardError {
     DaySealed(u32),
     #[error("agentreward queue or job invariant violated")]
     InvalidJob,
-    #[error("agentreward tribute counter overflow")]
-    TributeCounterOverflow,
+    #[error("agentreward offer counter overflow")]
+    OfferCounterOverflow,
     #[error("agentreward distribute_daily overflow")]
     DistributeDailyOverflow,
     #[error("reward distribution arithmetic overflow")]
@@ -58,7 +58,7 @@ impl From<AgentRewardError> for PrecompileError {
             AgentRewardError::DaySealed(_) | AgentRewardError::InvalidJob => {
                 PrecompileError::Fatal(err.to_string())
             }
-            AgentRewardError::TributeCounterOverflow => revert_with(I::TributeCounterOverflow {}),
+            AgentRewardError::OfferCounterOverflow => revert_with(I::OfferCounterOverflow {}),
             AgentRewardError::DistributeDailyOverflow => revert_with(I::DistributeDailyOverflow {}),
             AgentRewardError::DistributionOverflow => revert_with(I::DistributionOverflow {}),
             AgentRewardError::ClaimableTotalOverflow => revert_with(I::ClaimableTotalOverflow {}),
@@ -130,8 +130,8 @@ mod tests {
                 IAgentReward::EntryPriceOverflow {}.abi_encode(),
             ),
             (
-                AgentRewardError::TributeCounterOverflow,
-                IAgentReward::TributeCounterOverflow {}.abi_encode(),
+                AgentRewardError::OfferCounterOverflow,
+                IAgentReward::OfferCounterOverflow {}.abi_encode(),
             ),
         ] {
             let err = PrecompileError::from(error);

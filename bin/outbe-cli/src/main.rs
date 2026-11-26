@@ -1,7 +1,8 @@
 //! Outbe chain management CLI.
 //!
 //! Client-side tool for interacting with a running outbe-chain node via JSON-RPC.
-//! Supports validator management, staking, rewards, slashing evidence, and monitoring.
+//! Supports validator management, staking, slashing evidence, monitoring, TEE status,
+//! governance votes, and local Radicle setup.
 
 use std::path::{Path, PathBuf};
 
@@ -46,16 +47,6 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::staking::StakingCmd,
     },
-    /// Rewards management
-    Rewards {
-        #[command(subcommand)]
-        cmd: commands::rewards::RewardsCmd,
-    },
-    /// Epoch information
-    Epoch {
-        #[command(subcommand)]
-        cmd: commands::epoch::EpochCmd,
-    },
     /// Slash information and evidence submission
     Slash {
         #[command(subcommand)]
@@ -71,21 +62,6 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::monitor::MonitorCmd,
     },
-    /// Oracle: exchange rates, VWAP, voting, feeder delegation.
-    Oracle {
-        #[command(subcommand)]
-        cmd: commands::oracle::OracleCmd,
-    },
-    /// Tribute: metadata and day-level reporting.
-    Tribute {
-        #[command(subcommand)]
-        cmd: commands::tribute::TributeCmd,
-    },
-    /// ZeroFee paymaster: EIP-7702 authorization signing.
-    ZeroFee {
-        #[command(subcommand)]
-        cmd: commands::zerofee::ZeroFeeCmd,
-    },
     /// TEE: read registry, policy, upgrade status and node-reported enclave health.
     Tee {
         #[command(subcommand)]
@@ -96,17 +72,7 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::vote::VoteCmd,
     },
-    /// Stablecoin policies, deterministic identity and bonded proposals.
-    Stablecoin {
-        #[command(subcommand)]
-        cmd: commands::stablecoin::StablecoinCmd,
-    },
-    /// Public Radicle repository registry.
-    Radicle {
-        #[command(subcommand)]
-        cmd: commands::radicle::RadicleCmd,
-    },
-    /// Local Radicle client: configure and run a node against this chain.
+    /// Local Radicle client and public repository registry.
     Rad {
         #[command(subcommand)]
         cmd: commands::rad::RadCmd,
@@ -123,19 +89,12 @@ async fn main() -> Result<()> {
     match cli.command {
         Commands::Validator { cmd } => cmd.run(&client, private_key).await,
         Commands::Staking { cmd } => cmd.run(&client, private_key).await,
-        Commands::Rewards { cmd } => cmd.run(&client, private_key).await,
-        Commands::Epoch { cmd } => cmd.run(&client).await,
         Commands::Slash { cmd } => cmd.run(&client, private_key).await,
         Commands::Chain { cmd } => cmd.run(&client).await,
         Commands::Monitor { cmd } => cmd.run(&client).await,
-        Commands::Oracle { cmd } => cmd.run(&client, private_key).await,
-        Commands::Tribute { cmd } => cmd.run(&client, private_key).await,
-        Commands::ZeroFee { cmd } => cmd.run(&client, private_key).await,
         Commands::Tee { cmd } => cmd.run(&client).await,
         Commands::Vote { cmd } => cmd.run(&client, private_key).await,
-        Commands::Stablecoin { cmd } => cmd.run(&client, private_key).await,
-        Commands::Radicle { cmd } => cmd.run(&client, private_key).await,
-        Commands::Rad { cmd } => cmd.run(&client).await,
+        Commands::Rad { cmd } => cmd.run(&client, private_key).await,
     }
 }
 
@@ -180,9 +139,9 @@ mod tests {
     use clap::Parser;
 
     #[test]
-    fn test_cli_parse_chain_info() {
-        let cli = Cli::try_parse_from(["outbe-cli", "chain", "info"]);
-        assert!(cli.is_ok());
+    fn test_cli_parse_chain_status() {
+        assert!(Cli::try_parse_from(["outbe-cli", "chain", "status"]).is_ok());
+        assert!(Cli::try_parse_from(["outbe-cli", "chain", "consensus"]).is_ok());
     }
 
     #[test]
@@ -209,51 +168,28 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_rewards_emission() {
-        // `rewards emission` is a remaining valid subcommand.
-        let cli = Cli::try_parse_from(["outbe-cli", "rewards", "emission"]);
-        assert!(cli.is_ok());
-    }
-
-    #[test]
-    fn test_cli_rejects_removed_rewards_claim_and_pending() {
-        // Validator emission is claimed from AgentReward. The dead `claim` /
-        // `pending` subcommands were removed and must no longer parse.
-        assert!(Cli::try_parse_from(["outbe-cli", "rewards", "claim"]).is_err());
+    fn tee_status_parses_without_socket_or_signer() {
+        assert!(Cli::try_parse_from(["outbe-cli", "tee", "status"]).is_ok());
         assert!(Cli::try_parse_from([
             "outbe-cli",
-            "rewards",
-            "pending",
-            "0x1111111111111111111111111111111111111111",
+            "tee",
+            "status",
+            "--node-data-dir",
+            "/tmp/node",
+            "--warning-blocks",
+            "600",
+            "--critical-blocks",
+            "120",
         ])
-        .is_err());
-    }
-
-    #[test]
-    fn tee_status_parses_without_socket_or_signer() {
-        for command in ["status", "upgrade-status"] {
-            assert!(Cli::try_parse_from(["outbe-cli", "tee", command]).is_ok());
-            assert!(Cli::try_parse_from([
-                "outbe-cli",
-                "tee",
-                command,
-                "--node-data-dir",
-                "/tmp/node",
-                "--warning-blocks",
-                "600",
-                "--critical-blocks",
-                "120",
-            ])
-            .is_ok());
-            for flag in ["--warning-blocks", "--critical-blocks"] {
-                let error = Cli::try_parse_from(["outbe-cli", "tee", command, flag, "1"])
-                    .err()
-                    .unwrap();
-                assert_eq!(
-                    error.kind(),
-                    clap::error::ErrorKind::MissingRequiredArgument
-                );
-            }
+        .is_ok());
+        for flag in ["--warning-blocks", "--critical-blocks"] {
+            let error = Cli::try_parse_from(["outbe-cli", "tee", "status", flag, "1"])
+                .err()
+                .unwrap();
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::MissingRequiredArgument
+            );
         }
     }
 
@@ -264,6 +200,7 @@ mod tests {
             "renew",
             "renew-now",
             "pubkey",
+            "upgrade-status",
             "upgrade-prepare",
             "upgrade-provision",
             "upgrade-copy-root",
@@ -283,25 +220,23 @@ mod tests {
 
     #[test]
     fn tee_status_rejects_removed_socket_flags() {
-        for command in ["status", "upgrade-status"] {
-            for flag in ["--enclave-socket", "--candidate-enclave-socket"] {
-                let error = Cli::try_parse_from([
-                    "outbe-cli",
-                    "tee",
-                    command,
-                    "--node-data-dir",
-                    "/tmp/node",
-                    flag,
-                    "/tmp/enclave.sock",
-                ])
-                .err()
-                .unwrap();
-                assert_eq!(
-                    error.kind(),
-                    clap::error::ErrorKind::UnknownArgument,
-                    "{command} {flag}"
-                );
-            }
+        for flag in ["--enclave-socket", "--candidate-enclave-socket"] {
+            let error = Cli::try_parse_from([
+                "outbe-cli",
+                "tee",
+                "status",
+                "--node-data-dir",
+                "/tmp/node",
+                flag,
+                "/tmp/enclave.sock",
+            ])
+            .err()
+            .unwrap();
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::UnknownArgument,
+                "{flag}"
+            );
         }
     }
 
@@ -334,54 +269,45 @@ mod tests {
     }
 
     #[test]
-    fn test_cli_parse_epoch_info() {
-        let cli = Cli::try_parse_from(["outbe-cli", "epoch", "info"]);
-        assert!(cli.is_ok());
-    }
-
-    #[test]
     fn test_cli_parse_slash_config() {
         let cli = Cli::try_parse_from(["outbe-cli", "slash", "config"]);
         assert!(cli.is_ok());
     }
 
     #[test]
-    fn test_cli_parse_oracle_params() {
-        let cli = Cli::try_parse_from(["outbe-cli", "oracle", "params"]);
-        assert!(cli.is_ok());
-    }
-
-    #[test]
-    fn test_cli_parse_tribute_show() {
-        let cli = Cli::try_parse_from([
-            "outbe-cli",
-            "tribute",
-            "show",
-            "0x1111111111111111111111111111111111111111111111111111111111111111",
-        ]);
-        assert!(cli.is_ok());
-    }
-
-    #[test]
-    fn test_cli_parse_tribute_day_totals() {
-        let cli = Cli::try_parse_from(["outbe-cli", "tribute", "day-totals", "20241220"]);
-        assert!(cli.is_ok());
-    }
-
-    #[test]
-    fn test_cli_parse_stablecoin_predict() {
-        let cli = Cli::try_parse_from([
-            "outbe-cli",
+    fn test_cli_rejects_removed_subcommands() {
+        for command in [
+            "oracle",
             "stablecoin",
-            "predict",
-            "--chain-id",
-            "1337",
-            "--issuer",
-            "0x1111111111111111111111111111111111111111",
-            "--ticker",
-            "EXUSD",
-        ]);
-        assert!(cli.is_ok());
+            "radicle",
+            "rewards",
+            "epoch",
+            "zero-fee",
+        ] {
+            let error = Cli::try_parse_from(["outbe-cli", command]).err().unwrap();
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::InvalidSubcommand,
+                "{command}"
+            );
+        }
+
+        for nested in [
+            ["outbe-cli", "slash", "history"],
+            ["outbe-cli", "validator", "fund-operational-key"],
+            ["outbe-cli", "chain", "info"],
+            ["outbe-cli", "chain", "balance"],
+            ["outbe-cli", "chain", "block"],
+            ["outbe-cli", "chain", "vrf-seed"],
+            ["outbe-cli", "chain", "network"],
+        ] {
+            let error = Cli::try_parse_from(nested).err().unwrap();
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::InvalidSubcommand,
+                "{nested:?}"
+            );
+        }
     }
 
     #[test]
@@ -391,7 +317,7 @@ mod tests {
             "--rpc-url",
             "http://localhost:9545",
             "chain",
-            "info",
+            "status",
         ])
         .unwrap();
         assert_eq!(cli.rpc_url, "http://localhost:9545");
@@ -405,7 +331,7 @@ mod tests {
 
     #[test]
     fn test_cli_default_rpc_url() {
-        let cli = Cli::try_parse_from(["outbe-cli", "chain", "info"]).unwrap();
+        let cli = Cli::try_parse_from(["outbe-cli", "chain", "status"]).unwrap();
         assert_eq!(cli.rpc_url, "http://localhost:8545");
     }
 }

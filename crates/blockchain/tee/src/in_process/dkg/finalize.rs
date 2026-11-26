@@ -5,7 +5,7 @@ use commonware_cryptography::Secret;
 
 impl DkgSession {
     /// Seam F: threshold-sign the fixed offer message and seal each partial to every participant.
-    pub fn tribute_offer_partials_sealed(&self) -> Result<Vec<(PubKey, EncryptedShare)>> {
+    pub fn offer_partials_sealed(&self) -> Result<Vec<(PubKey, EncryptedShare)>> {
         let share = self
             .recovered_share
             .as_ref()
@@ -29,11 +29,11 @@ impl DkgSession {
             .collect()
     }
 
-    pub(crate) fn recover_tribute_offer_material(
+    pub(crate) fn recover_offer_material(
         &self,
         sealed_for_me: &[Vec<u8>],
         chain_id: B256,
-        tribute_offer_epoch: u64,
+        offer_epoch: u64,
     ) -> Result<crate::resident::ResidentOfferMaterial> {
         let output = self
             .group_output
@@ -77,7 +77,7 @@ impl DkgSession {
                 sigma,
                 chain_id,
                 0,
-                tribute_offer_epoch,
+                offer_epoch,
             )?,
         )
     }

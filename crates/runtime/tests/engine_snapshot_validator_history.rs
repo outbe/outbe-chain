@@ -18,7 +18,6 @@ mod copied_genesis_validator_history {
     };
     use std::{collections::BTreeSet, path::Path};
 
-    const OWNER: Address = Address::repeat_byte(0xa0);
     const FOUNDER: Address = Address::with_last_byte(0x11);
     const JOINER: Address = Address::with_last_byte(0x22);
 
@@ -35,9 +34,7 @@ mod copied_genesis_validator_history {
             validators
                 .test_seed_authoritative_min_stake(minimum)
                 .unwrap();
-            validators
-                .register_validator(OWNER, address, &public_key)
-                .unwrap();
+            validators.register_validator(address, &public_key).unwrap();
             validators
                 .test_seed_authoritative_bonded(address, minimum)
                 .unwrap();
@@ -54,7 +51,6 @@ mod copied_genesis_validator_history {
         let mut contract = HashMapStorageProvider::new(1);
         StorageHandle::enter(&mut contract, |storage| {
             let mut validators = outbe_validatorset::contract::ValidatorSet::new(storage);
-            validators.config_owner.write(OWNER).unwrap();
             validators.config_is_initialized.write(true).unwrap();
             validators.set_config_max_validators(128).unwrap();
         });

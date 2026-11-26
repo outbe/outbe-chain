@@ -333,8 +333,8 @@ fn missing_deadlines_and_time_overflow_fail_without_partial_credits() {
 fn zero_address_waa_and_sra_distribution_establishes_deadlines() {
     with_contract_mut(|storage, contract| {
         let day = WorldwideDay::new(timestamp_to_date_key(T_NOW));
-        contract.increment_waa_tribute(day, Address::ZERO).unwrap();
-        contract.increment_sra_tribute(day, Address::ZERO).unwrap();
+        contract.increment_waa_offer(day, Address::ZERO).unwrap();
+        contract.increment_sra_offer(day, Address::ZERO).unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
                 block_gas_limit: 0,

@@ -18,9 +18,8 @@ import {TargetRouter} from "@contracts/target/TargetRouter.sol";
 ///         including the origin chain as a loopback target (origin==target). There, the shared
 ///         NFT/bridge result from the idempotent CREATE3 deploy. The bridge meshes only with OTHER
 ///         targets, so it never self-peers.
-/// @dev Env: DEPLOYER_PK, BRIDGE_ADDRESS, ORIGIN_CHAIN_ID (where OriginRouter lives),
-///      TARGET_CHAIN_IDS (comma-separated, for the NFT-bridge mesh), optional WCOEN_BRIDGE
-///      (proceeds route). The deployer is admin + delegate. The auction gets its collection and
+/// @dev Env: DEPLOYER_PK, BRIDGE_ADDRESS, ORIGIN_CHAIN_ID (Outbe), TARGET_CHAIN_IDS
+///      (comma-separated, for the NFT-bridge mesh), WCOEN_BRIDGE (the token bridge of the proceeds). The deployer is admin + delegate. The auction gets its collection and
 ///      the issue role here. ConfigureTarget wires the rest (escrow/compact, router and bridge roles).
 ///      Peers are CREATE3-deterministic across chains.
 contract DeployTarget is BaseScript {
@@ -31,6 +30,7 @@ contract DeployTarget is BaseScript {
         address delegate = deployer;
         address bridge = vm.envAddress("BRIDGE_ADDRESS");
         uint32 originChainId = uint32(vm.envUint("ORIGIN_CHAIN_ID"));
+        address wcoenBridge = vm.envAddress("WCOEN_BRIDGE");
         uint256[] memory targetChainIds = vm.envUint("TARGET_CHAIN_IDS", ",");
         uint32 local = uint32(block.chainid);
 
@@ -84,7 +84,7 @@ contract DeployTarget is BaseScript {
             factory,
             deployer,
             "TargetRouter",
-            address(new TargetRouter(bridge, originChainId)),
+            address(new TargetRouter(bridge, originChainId, wcoenBridge)),
             abi.encodeCall(TargetRouter.initialize, (delegate))
         );
         requireDeployerAdmin(nft, deployer);
@@ -98,13 +98,6 @@ contract DeployTarget is BaseScript {
         bytes32 issueRole = IntexNFT1155(nft).AUCTION_ROLE();
         if (!IntexNFT1155(nft).hasRole(issueRole, auction)) IntexNFT1155(nft).grantRole(issueRole, auction);
 
-        // Peer the router with the OriginRouter (same address on every chain via CREATE3).
-        TargetRouter(payable(router))
-            .registerRemoteMessenger(
-                originChainId,
-                InteroperableAddress.formatEvmV1(originChainId, predictProxy(factory, deployer, "OriginRouter"))
-            );
-
         // Mesh the NFT bridge with every OTHER target's bridge (all at the same CREATE3 address).
         // Skipping `local` means the origin loopback target never self-peers the bridge.
         address bridgePeer = predictProxy(factory, deployer, "IntexNFT1155Bridge");
@@ -115,14 +108,8 @@ contract DeployTarget is BaseScript {
                 .registerRemoteMessenger(cid, InteroperableAddress.formatEvmV1(cid, bridgePeer));
         }
 
-        // Proceeds route: the escrow hands finalized proceeds to the router, which bridges them
-        // to the OriginRouter to be burned. The script skips this step when
-        // WCOEN_BRIDGE is unset.
-        address wcoenBridge = vm.envOr("WCOEN_BRIDGE", address(0));
-        if (wcoenBridge != address(0)) {
-            EscrowAdapter(payable(escrow)).setProceedsRecipient(router);
-            TargetRouter(payable(router)).setProceedsRoute(wcoenBridge, predictProxy(factory, deployer, "OriginRouter"));
-        }
+        // The escrow hands finalized proceeds to the router, which sends them to IntexFactory on Outbe.
+        EscrowAdapter(payable(escrow)).setProceedsRecipient(router);
 
         vm.stopBroadcast();
 

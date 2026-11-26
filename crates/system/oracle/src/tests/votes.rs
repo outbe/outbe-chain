@@ -47,7 +47,7 @@ fn submit_vote_rejects_a_validator_that_is_no_longer_active() {
     with_coen840_oracle(|storage, oracle, _pair| {
         let validator = register_voter(&storage);
         outbe_validatorset::contract::ValidatorSet::new(storage)
-            .deactivate_validator(Address::ZERO, validator)
+            .deactivate_validator(validator)
             .unwrap();
 
         let err = oracle

@@ -14,7 +14,6 @@ use outbe_primitives::{
     storage::{hashmap::HashMapStorageProvider, StorageHandle},
 };
 use outbe_promislimit::PromisLimitContract;
-use outbe_system_common::addresses::INTEX_ADDRESS;
 use outbe_system_common::time::EmissionDate;
 use outbe_system_common::time::SECONDS_PER_DAY_U32;
 
@@ -163,9 +162,11 @@ fn partial_intex_expiry_returns_only_five_unpaid_units_and_never_paid_or_convert
     sweep(&mut p, due + DAY).unwrap();
     ledger(&mut p, id, true);
     let events = p
-        .get_events(INTEX_ADDRESS)
+        .get_events(outbe_system_common::addresses::INTEX_FACTORY_ADDRESS)
         .iter()
-        .filter_map(|e| outbe_intex::precompile::IIntex::IntexSeriesClosed::decode_log_data(e).ok())
+        .filter_map(|e| {
+            crate::precompile::IIntexFactory::IntexSeriesClosed::decode_log_data(e).ok()
+        })
         .collect::<Vec<_>>();
     assert_eq!(events.len(), 1);
     assert_eq!(SeriesId::from(events[0].seriesId), id);
@@ -197,10 +198,10 @@ fn every_intex_expiry_write_failure_preserves_credit_debt_and_retries_exactly_on
             sweep(&mut p, due + DAY).unwrap();
             ledger(&mut p, id, true);
             let closed = p
-                .get_events(INTEX_ADDRESS)
+                .get_events(outbe_system_common::addresses::INTEX_FACTORY_ADDRESS)
                 .iter()
                 .filter_map(|e| {
-                    outbe_intex::precompile::IIntex::IntexSeriesClosed::decode_log_data(e).ok()
+                    crate::precompile::IIntexFactory::IntexSeriesClosed::decode_log_data(e).ok()
                 })
                 .count();
             assert_eq!(closed, 1);

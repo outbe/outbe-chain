@@ -18,28 +18,19 @@ use outbe_primitives::{
 };
 use reth_ethereum::primitives::AlloyBlockHeader as _;
 use reth_ethereum::storage::{
-    BlockNumReader, HeaderProvider, StateProvider as _, StateProviderBox, StateProviderFactory,
+    HeaderProvider, StateProvider as _, StateProviderBox, StateProviderFactory,
 };
 use reth_provider::BlockIdReader;
 use std::sync::Arc;
 
 use crate::api::{
-    ConsensusStatusInfo, EmissionInfo, EpochInfo, FinalizationProof, OutbeApiServer,
-    ParticipationInfo, RadiclePeerInfo, RadiclePhaseErrorInfo, RadiclePhaseInfo,
-    RadicleRepositoryInfo, RadicleRepositoryStateInfo, RadicleStatusInfo, SlashConfig, SlashInfo,
-    SyncStatusInfo, ValidatorDetailInfo, ValidatorInfo,
+    ConsensusStatusInfo, FinalizationProof, OutbeApiServer, RadiclePeerInfo, RadiclePhaseErrorInfo,
+    RadiclePhaseInfo, RadicleRepositoryInfo, RadicleRepositoryStateInfo, RadicleStatusInfo,
 };
 use outbe_radicle::integration::{
     RadicleRepositoryState, RadicleStatusHandle, RadicleStatusSnapshot, RadicleVotingGate,
     RadicleVotingGateError,
 };
-
-fn read_effective_slash_config(
-    reader: &dyn crate::state_reader::OutbeRpcStateReader,
-    storage: StorageHandle<'_>,
-) -> Result<SlashConfig, outbe_primitives::error::PrecompileError> {
-    reader.slash_config(storage)
-}
 
 /// Bridge from Reth's `StateProvider` to outbe's `StorageReader` trait.
 struct RethStateReader<'a> {
@@ -147,32 +138,6 @@ impl<P> OutbeApiHandler<P> {
     pub fn with_tee_enclave_health(mut self, channel: outbe_tee::TeeEnclaveHealthChannel) -> Self {
         self.tee_enclave_health = channel;
         self
-    }
-
-    pub(crate) fn sync_status_info(&self) -> SyncStatusInfo {
-        match &self.bridge {
-            Some(b) => {
-                let consensus = b.consensus_status();
-                SyncStatusInfo {
-                    is_syncing: !consensus.is_active(),
-                    current_block: consensus.last_finalized_block,
-                    highest_block: consensus.last_finalized_block,
-                    consensus_active: consensus.is_active(),
-                    connected_peers: consensus.connected_peers,
-                }
-            }
-            None => {
-                // Full-node mode: DevP2P handles sync (eth_syncing).
-                // Report not syncing because this node has no consensus bridge.
-                SyncStatusInfo {
-                    is_syncing: false,
-                    current_block: 0,
-                    highest_block: 0,
-                    consensus_active: false,
-                    connected_peers: 0,
-                }
-            }
-        }
     }
 }
 
@@ -334,50 +299,16 @@ fn canonical_endpoint(address: &outbe_radicle::endpoint::EndpointAddress) -> Str
     }
 }
 
-impl<P> OutbeApiHandler<P>
-where
-    P: StateProviderFactory + HeaderProvider<Header = OutbeHeader> + Send + Sync + 'static,
-{
-    /// Read precompile state at the latest block using a closure.
-    fn with_latest_state<R>(
-        &self,
-        f: impl FnOnce(StorageHandle) -> Result<R, outbe_primitives::error::PrecompileError>,
-    ) -> RpcResult<R> {
-        let state = self.provider.latest().map_err(|e| {
-            internal_err(crate::errors::RpcInternalError::latest_state_read_failed(e))
-        })?;
-
-        let reader = RethStateReader { state: &state };
-        let mut provider = ReadOnlyStorageProvider::new(reader);
-        let storage = StorageHandle::new(&mut provider);
-
-        f(storage).map_err(|e| internal_err(crate::errors::RpcInternalError::Precompile(e)))
-    }
-}
-
 #[jsonrpsee::core::async_trait]
 impl<P> OutbeApiServer for OutbeApiHandler<P>
 where
     P: StateProviderFactory
         + HeaderProvider<Header = OutbeHeader>
-        + BlockNumReader
         + BlockIdReader
         + Send
         + Sync
         + 'static,
 {
-    async fn get_validators(&self) -> RpcResult<Vec<ValidatorInfo>> {
-        self.with_latest_state(|storage| self.reader.validators(storage))
-    }
-
-    async fn get_validator(&self, address: Address) -> RpcResult<Option<ValidatorDetailInfo>> {
-        self.with_latest_state(|storage| self.reader.validator(storage, address))
-    }
-
-    async fn get_epoch_info(&self) -> RpcResult<EpochInfo> {
-        self.with_latest_state(|storage| self.reader.epoch(storage))
-    }
-
     async fn upgrade_key_v1(
         &self,
         context: Bytes,
@@ -395,14 +326,6 @@ where
     ) -> RpcResult<TeeRenewalScheduleV1> {
         tee::TeeRpc::new(&*self.provider, self.chain_identity, self.reader.as_ref())
             .renewal_schedule(self.tee_renewal_schedule, checkpoint_hash)
-    }
-
-    async fn get_stake(&self, address: Address) -> RpcResult<U256> {
-        self.with_latest_state(|storage| self.reader.stake(storage, address))
-    }
-
-    async fn get_slash_info(&self, address: Address) -> RpcResult<SlashInfo> {
-        self.with_latest_state(|storage| self.reader.slash_info(storage, address))
     }
 
     async fn consensus_status(&self) -> RpcResult<ConsensusStatusInfo> {
@@ -440,45 +363,6 @@ where
                     .unwrap_or(0),
             ),
         })
-    }
-
-    async fn get_vrf_seed(&self, block_number: Option<u64>) -> RpcResult<Option<B256>> {
-        // Read the committed VRF seed from the target block header's `mixHash`
-        // (prev_randao) through the provider. Honor `block_number`. This is the
-        // authoritative committed value, and it is consistent across nodes. It is not
-        // the process-local in-memory consensus seed. A full node never has that
-        // seed, and that seed can diverge between nodes. `None` resolves to the
-        // latest canonical block. Under Outbe's fast finality, that is the latest
-        // finalized block.
-        let target = match block_number {
-            Some(n) => n,
-            None => self.provider.best_block_number().map_err(|e| {
-                internal_err(crate::errors::RpcInternalError::latest_block_number_read_failed(e))
-            })?,
-        };
-        let header = self.provider.header_by_number(target).map_err(|e| {
-            internal_err(crate::errors::RpcInternalError::block_header_read_failed(
-                target, e,
-            ))
-        })?;
-        // `mix_hash()` is itself `Option<B256>`. A missing block also yields None.
-        Ok(header.and_then(|h| h.mix_hash()))
-    }
-
-    async fn get_emission_info(&self) -> RpcResult<EmissionInfo> {
-        Ok(self.reader.emission_info())
-    }
-
-    async fn get_slash_config(&self) -> RpcResult<SlashConfig> {
-        self.with_latest_state(|storage| read_effective_slash_config(self.reader.as_ref(), storage))
-    }
-
-    async fn get_participation(&self, address: Address) -> RpcResult<ParticipationInfo> {
-        self.with_latest_state(|storage| self.reader.participation(storage, address))
-    }
-
-    async fn sync_status(&self) -> RpcResult<SyncStatusInfo> {
-        Ok(self.sync_status_info())
     }
 
     async fn radicle_status(&self) -> RpcResult<RadicleStatusInfo> {

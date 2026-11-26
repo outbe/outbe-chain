@@ -23,13 +23,53 @@ use crate::seed_p2p::encode_p2p_address_payload;
 pub const CONSENSUS_VALIDATOR_BOUND: u64 = 256;
 const ORACLE_DELEGATE_ROLE: u8 = 1;
 
-/// Seed the ValidatorSet precompile storage layout.
+const VALIDATOR_SET_ALLOWED_KEYS: &[&str] = &[
+    "max_validators",
+    "epoch_number",
+    "epoch_start_timestamp",
+    "epoch_start_block",
+    "active_consensus_set_hash",
+    "reregistration_cooldown_blocks",
+];
+
+fn validate_validator_set_config(config: &Value) -> Result<(), GenesisError> {
+    if config.get("epoch_duration").is_some() {
+        return Err(GenesisError::validation(
+            "validator_set.epoch_duration is deprecated; use config.epochLengthBlocks",
+        ));
+    }
+    if config.get("epoch_length_blocks").is_some() {
+        return Err(GenesisError::validation(
+            "validator_set.epoch_length_blocks is deprecated; use config.epochLengthBlocks",
+        ));
+    }
+    match config {
+        Value::Null => Ok(()),
+        Value::Object(map) => {
+            for key in map.keys() {
+                if !VALIDATOR_SET_ALLOWED_KEYS.contains(&key.as_str()) {
+                    return Err(GenesisError::validation(format!(
+                        "unknown validator_set key `{key}`"
+                    )));
+                }
+            }
+            Ok(())
+        }
+        _ => Err(GenesisError::validation(
+            "validator_set must be a JSON object",
+        )),
+    }
+}
+
+/// Seed the ValidatorSet precompile storage layout (`0..=46`).
 pub fn seed_validator_set(
     storage: &mut StorageBuilder,
     validators: &[Value],
     config: &Value,
     terms: ValidatorSeedTerms,
 ) -> Result<(), GenesisError> {
+    validate_validator_set_config(config)?;
+
     let mut radicle_node_ids = Vec::with_capacity(validators.len());
     let mut unique_node_ids = BTreeSet::new();
     for (index, validator) in validators.iter().enumerate() {
@@ -42,12 +82,6 @@ pub fn seed_validator_set(
         radicle_node_ids.push(node_id);
     }
 
-    let owner = config
-        .get("owner")
-        .and_then(Value::as_str)
-        .unwrap_or("0x0000000000000000000000000000000000000000");
-    storage.set_slot(0u64, address_as_u256(owner)?);
-
     let max_validators = config
         .get("max_validators")
         .map(parse_u64)
@@ -58,25 +92,12 @@ pub fn seed_validator_set(
             "validator_set.max_validators {max_validators} exceeds the consensus bound {CONSENSUS_VALIDATOR_BOUND}"
         )));
     }
-    storage.set_slot(1u64, max_validators);
-
-    if config.get("epoch_duration").is_some() {
-        return Err(GenesisError::validation(
-            "validator_set.epoch_duration is deprecated; use config.epochLengthBlocks",
-        ));
-    }
-    if config.get("epoch_length_blocks").is_some() {
-        return Err(GenesisError::validation(
-            "validator_set.epoch_length_blocks is deprecated; use config.epochLengthBlocks",
-        ));
-    }
-
-    storage.set_slot(2u64, terms.epoch_length_blocks);
-    storage.set_slot(3u64, terms.min_stake);
-    storage.set_slot(4u64, 1u64);
-    storage.set_slot(20u64, validators.len());
+    storage.set_slot(0u64, max_validators);
+    storage.set_slot(1u64, terms.epoch_length_blocks);
+    storage.set_slot(2u64, 1u64);
+    storage.set_slot(16u64, validators.len());
     storage.set_slot(
-        21u64,
+        17u64,
         config
             .get("epoch_number")
             .map(parse_u64)
@@ -84,7 +105,7 @@ pub fn seed_validator_set(
             .unwrap_or(0),
     );
     storage.set_slot(
-        22u64,
+        18u64,
         config
             .get("epoch_start_timestamp")
             .map(parse_u64)
@@ -92,16 +113,16 @@ pub fn seed_validator_set(
             .unwrap_or(terms.epoch_start_timestamp),
     );
     storage.set_slot(
-        23u64,
+        19u64,
         config
             .get("epoch_start_block")
             .map(parse_u64)
             .transpose()?
             .unwrap_or(0),
     );
-    storage.set_slot(25u64, 0u64);
+    storage.set_slot(21u64, 0u64);
     storage.set_slot(
-        26u64,
+        22u64,
         config
             .get("active_consensus_set_hash")
             .map(parse_u256)
@@ -109,7 +130,7 @@ pub fn seed_validator_set(
             .unwrap_or(U256::ZERO),
     );
     storage.set_slot(
-        27u64,
+        23u64,
         config
             .get("reregistration_cooldown_blocks")
             .map(parse_u64)
@@ -144,29 +165,29 @@ pub fn seed_validator_set(
         let feeder_bytes = address_bytes(feeder)?;
         let feeder_u256 = address_as_u256(feeder)?;
 
-        storage.set_mapping_b256(5, &addr_bytes, &pk_lo);
-        storage.set_mapping_b256(6, &addr_bytes, &pk_hi);
-        storage.set_mapping(8, &addr_bytes, 2u64);
-        storage.set_mapping(13, &addr_bytes, 0u64);
-        storage.set_mapping(16, &addr_bytes, index);
-        storage.set_mapping(17, &u64_bytes(index), addr_u256);
-        storage.set_mapping(18, &pk_hash, addr_u256);
-        storage.set_mapping(24, &addr_bytes, 1u64);
-        storage.set_mapping_b256(50, &addr_bytes, radicle_node_id);
-        storage.set_mapping(51, radicle_node_id, addr_u256);
+        storage.set_mapping_b256(3, &addr_bytes, &pk_lo);
+        storage.set_mapping_b256(4, &addr_bytes, &pk_hi);
+        storage.set_mapping(5, &addr_bytes, 2u64);
+        storage.set_mapping(10, &addr_bytes, 0u64);
+        storage.set_mapping(13, &addr_bytes, index);
+        storage.set_mapping(14, &u64_bytes(index), addr_u256);
+        storage.set_mapping(15, &pk_hash, addr_u256);
+        storage.set_mapping(20, &addr_bytes, 1u64);
+        storage.set_mapping_b256(45, &addr_bytes, radicle_node_id);
+        storage.set_mapping(46, radicle_node_id, addr_u256);
         storage.set_raw_slot(
-            nested_mapping_key(&addr_bytes, &[ORACLE_DELEGATE_ROLE], 48),
+            nested_mapping_key(&addr_bytes, &[ORACLE_DELEGATE_ROLE], 43),
             feeder_u256,
         );
         storage.set_raw_slot(
-            nested_mapping_key(&[ORACLE_DELEGATE_ROLE], &feeder_bytes, 49),
+            nested_mapping_key(&[ORACLE_DELEGATE_ROLE], &feeder_bytes, 44),
             addr_u256,
         );
 
         if let Some((version, payload)) = encode_p2p_address_payload(validator.get("p2p_address"))?
         {
-            storage.set_mapping(28, &addr_bytes, version);
-            write_mapping_bytes(storage, 29, &addr_bytes, &payload)?;
+            storage.set_mapping(24, &addr_bytes, version);
+            write_mapping_bytes(storage, 25, &addr_bytes, &payload)?;
         }
     }
     Ok(())
@@ -286,8 +307,6 @@ pub fn seed_founders(
         ValidatorSeedTerms {
             epoch_length_blocks,
             epoch_start_timestamp,
-            min_stake,
-            validator_stake,
         },
     )?;
     merge_storage_into_alloc(alloc, VALIDATOR_SET_ADDRESS, &validator_storage)?;
