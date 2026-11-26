@@ -21,8 +21,8 @@ pub fn set_metadosis_limit(ctx: &BlockRuntimeContext<'_>, day: u32, amount: U256
     crate::limits::set_metadosis_limit(ctx, day, amount)
 }
 
-/// Marks Metadosis of `day` as `Failed` (returning its Metadosis limit to `PromisLimit`
-/// once and emitting `IMetadosis.MetadosisFailed(day, 1)`).
+/// Marks Metadosis of `day` as `Failed` (returning the part of its Metadosis limit that the
+/// loads do not take to `PromisLimit` once and emitting `IMetadosis.MetadosisFailed(day, 1)`).
 pub fn fail_metadosis(ctx: &BlockRuntimeContext<'_>, day: u32) -> Result<()> {
     let mut metadosis = crate::schema::MetadosisContract::new(ctx.storage.clone());
     crate::lifecycle::fail_metadosis(

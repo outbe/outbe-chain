@@ -264,8 +264,8 @@ pub struct MetadosisCompletedAmounts {
     pub promis_limit_added: U256,
 }
 
-/// Marks Metadosis of `day` as `Completed` after the Desis brief, recording `desis_limit`,
-/// `nods` (the loads of the Nods), and the part of the Metadosis limit added to `PromisLimit`.
+/// Marks Metadosis of `day` as `Completed` after the Desis brief, recording `desis_limit`, `nods`
+/// (the part of the Metadosis limit that covers Nod loads), and the part added to `PromisLimit`.
 pub fn record_metadosis_completed(
     storage: StorageHandle<'_>,
     day: u32,
@@ -318,8 +318,7 @@ pub fn record_metadosis_canceled(storage: StorageHandle<'_>, day: u32) -> Result
     Ok(record)
 }
 
-/// Marks Metadosis of `day` as `Failed` and routes `metadosis_limit` to `promis_limit`.
-/// Records a failed Metadosis of `day`. The Nods of the day keep `nods_minor`, so the
+/// Records a failed Metadosis of `day`. `nods_minor` of the limit covers Nod loads, so the
 /// Promis Limit gets only the rest of the limit. Returns that rest.
 pub fn record_metadosis_failed(
     storage: StorageHandle<'_>,
