@@ -28,6 +28,8 @@ mod reconcile;
 mod retry;
 mod stall;
 
+pub(crate) use self::apply::build_cn_record;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::sync::Arc;

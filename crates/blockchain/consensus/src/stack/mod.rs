@@ -159,11 +159,13 @@ pub use epoch::watchdog::{
 use follower::{run_follow_stack, spawn_finalization_drainer};
 
 use recovery::anchor::{
-    durable_recovery_anchor_height, reconcile_recovered_execution_head,
-    unfinalized_head_lead_is_recoverable,
+    durable_recovery_anchor_height, reconcile_authenticated_execution_head,
+    unfinalized_head_lead_is_recoverable, NodeCanonicalHistory, RecoveryCommitteeConfig,
 };
 
-use recovery::forkchoice::{confirm_recovered_forkchoice, recover_application_finalized_round};
+use recovery::forkchoice::{
+    confirm_recovered_forkchoice, recover_authenticated_application_finalization,
+};
 
 use services::EngineHandle;
 
