@@ -315,9 +315,10 @@ mod tests {
         };
         let data: Bytes = serde_json::from_value(input.clone()).unwrap();
         let selector: [u8; 4] = data[..4].try_into().unwrap();
-        let (ica, domains, hook, va, ism) = state.lock().unwrap().clone();
+        let state = state.lock().unwrap().clone();
+        let va = state.3;
         let out = if to == HYPERLANE_CONTROLLER_ADDRESS {
-            controller_call(selector, ica, domains, hook, va, ism)
+            controller_call(selector, state)
         } else if to == VALIDATOR_SET_ADDRESS {
             assert_eq!(selector, IValidatorSet::getActiveValidatorsCall::SELECTOR);
             Vec::<Address>::new().abi_encode()
@@ -331,11 +332,7 @@ mod tests {
 
     fn controller_call(
         selector: [u8; 4],
-        ica: Address,
-        domains: Vec<u32>,
-        hook: Address,
-        va: Address,
-        ism: Address,
+        (ica, domains, hook, va, ism): (Address, Vec<u32>, Address, Address, Address),
     ) -> Vec<u8> {
         match selector {
             IHyperlaneController::icaRouterCall::SELECTOR => ica.abi_encode(),

@@ -76,13 +76,10 @@ fn base_url(location: &str) -> Result<Url, RelayError> {
     let url: Url = format!("{}/", base.trim_end_matches('/'))
         .parse()
         .map_err(|_| bad())?;
-    if !matches!(url.scheme(), "http" | "https")
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.host_str().is_none()
-    {
+    let web = matches!(url.scheme(), "http" | "https") && url.host_str().is_some();
+    let no_credentials = url.username().is_empty() && url.password().is_none();
+    let only_a_path = url.query().is_none() && url.fragment().is_none();
+    if !(web && no_credentials && only_a_path) {
         return Err(bad());
     }
     Ok(url)
@@ -102,11 +99,10 @@ fn storage(validator: Address, locations: &[String]) -> Option<Url> {
 /// True when `signed` is the wanted checkpoint and `validator` signed it.
 fn is_wanted(signed: &Signed<CheckpointWithMessageId>, want: &Want, validator: Address) -> bool {
     let c = &signed.value.checkpoint;
-    c.index == want.index
-        && c.mailbox_domain == want.domain
-        && c.merkle_tree_hook_address == want.hook.into_word()
-        && signed.value.message_id == want.message_id
-        && signed.recover().ok() == Some(validator)
+    let same_tree =
+        c.mailbox_domain == want.domain && c.merkle_tree_hook_address == want.hook.into_word();
+    let same_leaf = c.index == want.index && signed.value.message_id == want.message_id;
+    same_tree && same_leaf && signed.recover().ok() == Some(validator)
 }
 
 /// Reads checkpoints over HTTP.

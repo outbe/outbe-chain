@@ -24,11 +24,13 @@ pub mod precompile;
 pub mod schema;
 pub mod sol_ext;
 
+mod complaints;
 mod gas;
 mod ism;
 mod liveness;
 mod runtime;
 mod signer;
+mod targets;
 mod vote_target;
 
 pub use gas::{GAS_MARKUP_BPS, TOKEN_EXCHANGE_RATE_SCALE};

@@ -473,7 +473,7 @@ mod tests {
 
     use super::*;
     use crate::store::Store;
-    use crate::sync::tests::serve_json_rpc;
+    use crate::sync::tests::{receipt_json, serve_json_rpc};
     use crate::sync::{Origin, SyncedLeaf, VerifiedBatch};
 
     const V: Address = Address::repeat_byte(0x77);
@@ -501,22 +501,9 @@ mod tests {
                     *count.lock().unwrap() += 1;
                     json!(B256::repeat_byte(0xab))
                 }
-                "eth_getTransactionReceipt" => json!({
-                    "transactionHash": B256::repeat_byte(0xab),
-                    "transactionIndex": "0x0",
-                    "blockHash": B256::repeat_byte(3),
-                    "blockNumber": "0x1",
-                    "from": V,
-                    "to": HYPERLANE_CONTROLLER_ADDRESS,
-                    "cumulativeGasUsed": "0x5208",
-                    "gasUsed": "0x5208",
-                    "effectiveGasPrice": "0x1",
-                    "contractAddress": null,
-                    "logs": [],
-                    "logsBloom": format!("0x{}", "00".repeat(256)),
-                    "status": "0x0",
-                    "type": "0x2",
-                }),
+                "eth_getTransactionReceipt" => {
+                    receipt_json(V, HYPERLANE_CONTROLLER_ADDRESS, 1, false)
+                }
                 "eth_call" => {
                     let call = &req["params"][0];
                     let to: Address = serde_json::from_value(call["to"].clone()).unwrap();
