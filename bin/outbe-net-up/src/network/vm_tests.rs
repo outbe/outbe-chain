@@ -511,6 +511,8 @@ struct FakeHostState {
     /// Optional per-call `missedVotes` schedule for validator-1 (`0x...0002`) returned by
     /// `outbe_getParticipation` batches (pops front or repeats last).
     rpc_participation_missed_schedule: Vec<u64>,
+    /// If non-zero, validator-1's `missedVotes` increments by this amount on every participation call.
+    rpc_participation_persistent_step: u64,
     rpc_participation_calls: usize,
     rpc_fail_participation: bool,
     version_bins_queried: Vec<String>,
@@ -1208,12 +1210,15 @@ impl HostExec for FakeHostExec {
                     return Ok(Value::Array(err_items).to_string());
                 }
                 let val1_addr = format!("0x{:040x}", 2usize);
-                let val1_missed = g
-                    .rpc_participation_missed_schedule
-                    .get(call_idx)
-                    .or_else(|| g.rpc_participation_missed_schedule.last())
-                    .copied()
-                    .unwrap_or(0);
+                let val1_missed = if g.rpc_participation_persistent_step > 0 {
+                    (call_idx as u64) * g.rpc_participation_persistent_step
+                } else {
+                    g.rpc_participation_missed_schedule
+                        .get(call_idx)
+                        .or_else(|| g.rpc_participation_missed_schedule.last())
+                        .copied()
+                        .unwrap_or(0)
+                };
                 let resp_items: Vec<Value> = batch
                     .iter()
                     .map(|item| {
@@ -4455,7 +4460,8 @@ async fn s7_pre_stop_missed_votes_fails_closed_and_retries_across_epoch_boundary
     let v2_image_hash = "9999999999999999".repeat(4);
     let v2_image_name = format!("outbe-vm-dev-{}", &v2_image_hash[..16]);
 
-    // 1. Non-zero missedVotes delta over the 60-block window (0 -> 2) -> fail closed with 0 stops!
+    // 1. Persistent missed votes (+2 every window) -> retries until per-VM deadline, then fails
+    //    closed with the last offending delta and 0 VM stops!
     {
         let mut g = fake.state.lock().unwrap();
         g.image_name = v2_image_name.clone();
@@ -4465,9 +4471,10 @@ async fn s7_pre_stop_missed_votes_fails_closed_and_retries_across_epoch_boundary
         g.rpc_batch_seen_since_last_status = false;
         g.rpc_height_base = 100;
         g.rpc_height_step = 30;
-        g.rpc_dynamic_epoch_len = Some(1200);
+        // Large epoch so Phase 1 passes immediately and Phase 2 retries persistent +2 until deadline.
+        g.rpc_dynamic_epoch_len = Some(10_000);
         g.rpc_participation_calls = 0;
-        g.rpc_participation_missed_schedule = vec![0, 2];
+        g.rpc_participation_persistent_step = 2;
     }
     let delta_err = update_with_exec(
         &UpdateOptions {
@@ -4479,7 +4486,7 @@ async fn s7_pre_stop_missed_votes_fails_closed_and_retries_across_epoch_boundary
             software_bundle: None,
             ssh_key: None,
             ssh_config: None,
-            timeout: Duration::from_secs(30),
+            timeout: Duration::from_millis(250),
             stop_timeout: Duration::from_secs(30),
             max_lag: 20,
             min_finalized_blocks: 10,
@@ -4488,10 +4495,10 @@ async fn s7_pre_stop_missed_votes_fails_closed_and_retries_across_epoch_boundary
         Arc::clone(&exec),
     )
     .await
-    .expect_err("must refuse stop when any validator misses votes during the 60-block window");
+    .expect_err("must fail closed on deadline when missed votes persist across retries");
     let delta_msg = format!("{delta_err:#}");
     assert!(
-        delta_msg.contains("missed votes") && delta_msg.contains("+2 (0 -> 2)"),
+        delta_msg.contains("missed") && delta_msg.contains("+2"),
         "{delta_msg}"
     );
     assert!(fake.state.lock().unwrap().vm_update_calls.is_empty());
@@ -4503,6 +4510,7 @@ async fn s7_pre_stop_missed_votes_fails_closed_and_retries_across_epoch_boundary
         g.rpc_step_round = 0;
         g.rpc_batch_seen_since_last_status = false;
         g.rpc_participation_calls = 0;
+        g.rpc_participation_persistent_step = 0;
         g.rpc_fail_participation = true;
     }
     let rpc_err = update_with_exec(
@@ -4531,9 +4539,9 @@ async fn s7_pre_stop_missed_votes_fails_closed_and_retries_across_epoch_boundary
     );
     assert!(fake.state.lock().unwrap().vm_update_calls.is_empty());
 
-    // 3. Epoch-boundary counter reset (`5 -> 0`) inside the 60-block window MUST retry the window
-    //    (requiring 3 participation queries for validator-0: initial=5, boundary-reset=0, clean=0)
-    //    and then succeed once 60 clean blocks pass with delta == 0!
+    // 3. Transient missed votes (`0 -> 2 -> 2`) AND epoch-boundary counter reset (`5 -> 0 -> 0`)
+    //    MUST retry the 60-block window, re-check the DKG guard, and succeed once 60 clean blocks
+    //    pass with delta == 0!
     {
         let mut g = fake.state.lock().unwrap();
         g.rpc_fail_participation = false;
@@ -4544,9 +4552,10 @@ async fn s7_pre_stop_missed_votes_fails_closed_and_retries_across_epoch_boundary
         g.rpc_height_step = 30;
         g.rpc_dynamic_epoch_len = Some(1200);
         g.rpc_participation_calls = 0;
-        // Call 0: baseline missedVotes=5; Call 1 (60 blks later): epoch reset -> 0 (retries!);
-        // Call 2 (another 60 blks later): 0 (delta == 0 -> passes!); subsequent VMs: 0 -> 0.
-        g.rpc_participation_missed_schedule = vec![5, 0, 0];
+        // Validator-0: call 0=0, call 1=2 (transient +2 -> retries!), call 2=2 (delta==0 -> passes!).
+        // Validator-1: call 3=5, call 4=0 (epoch counter reset -> retries!), call 5=0 (passes!).
+        // Validator-2 & 3: 0 -> 0 (2 calls each). Total >= 10 participation batches!
+        g.rpc_participation_missed_schedule = vec![0, 2, 2, 5, 0, 0];
     }
     update_with_exec(
         &UpdateOptions {
@@ -4571,10 +4580,9 @@ async fn s7_pre_stop_missed_votes_fails_closed_and_retries_across_epoch_boundary
 
     let g = fake.state.lock().unwrap();
     assert_eq!(g.vm_update_calls.len(), 4);
-    // 3 calls for validator-0 (retried after 5 -> 0 counter reset) + 2 calls each for val-1,2,3 = 9.
     assert!(
-        g.rpc_participation_calls >= 9,
-        "expected >= 9 participation batches (including epoch-boundary retry), got {}",
+        g.rpc_participation_calls >= 10,
+        "expected >= 10 participation batches (transient retry + boundary retry), got {}",
         g.rpc_participation_calls
     );
     for vm in g.vms.values() {

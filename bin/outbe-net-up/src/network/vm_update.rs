@@ -955,6 +955,11 @@ async fn measure_blocks_per_sec(
     }
 }
 
+enum MissedVoteOutcome {
+    Clean,
+    NeedsDkgWait(Option<String>),
+}
+
 /// Pre-stop gate run immediately before EVERY VM stop (F2 + F4 + forward missed-vote gate):
 /// - Phase 1: takes a fresh `NetworkSample`, refuses to stop if ANY member is unhealthy, lagging,
 ///   split on VRF, missing `outbe_consensusStatus`, has validator `connectedPeers < n - 1`, or an
@@ -963,8 +968,10 @@ async fn measure_blocks_per_sec(
 ///   `next_planned_activation_height`.
 /// - Phase 2: observes `MISSED_VOTE_OBSERVATION_BLOCKS` (60) finalized blocks across all active
 ///   validators via `outbe_getValidators` + `outbe_getParticipation` and requires `missedVotes`
-///   delta == 0 for every validator (retrying the 60-block window if an epoch boundary / counter
-///   reset falls inside; failing closed immediately on any non-zero missed-vote delta or RPC error).
+///   delta == 0 for every validator. If an epoch boundary falls inside OR any validator records a
+///   non-zero missed-vote delta, resets the baseline, re-checks the DKG guard (returning to
+///   Phase 1 if inside the guard/ceremony), and retries the 60-block window until `deadline`.
+///   Fails closed on RPC/health/peer error or on `deadline` with the last offending deltas.
 async fn pre_stop_health_and_dkg_gate(
     ctx: &PollContext<'_>,
     member: &DesiredMember,
@@ -972,132 +979,164 @@ async fn pre_stop_health_and_dkg_gate(
     deadline: Instant,
     progress: &mut Progress,
 ) -> Result<()> {
-    let initial_sample = if member.role == MemberRole::FullNode {
-        let sample = sample_network(ctx).await?;
-        ensure_all_members_healthy(
-            ctx.build,
-            &sample,
-            ctx.required_peers,
-            ctx.max_lag,
-            &format!("pre-stop health check before updating `{}`", member.name),
-        )?;
-        check_validators_connected_peers(&sample.statuses, ctx.required_peers)?;
-        sample
-    } else {
-        let mut waited_boundary: Option<u64> = None;
-        let outcome = poll_network_until(ctx, deadline, progress, |sample| {
-            // F4: before entering a boundary wait, any unhealthy network state or degraded validator
-            // consensus peer count (`connectedPeers < n - 1`) aborts immediately rather than
-            // stopping another validator.
-            if waited_boundary.is_none() {
-                ensure_all_members_healthy(
-                    ctx.build,
-                    sample,
-                    ctx.required_peers,
-                    ctx.max_lag,
-                    &format!("pre-stop health check before updating `{}`", member.name),
-                )?;
-                check_validators_connected_peers(&sample.statuses, ctx.required_peers)?;
-            }
+    let mut last_offenders: Option<String> = None;
 
-            let target_status = sample
-                .statuses
-                .iter()
-                .find(|s| s.vm_name == member.vm_name)
-                .ok_or_else(|| {
+    loop {
+        let initial_sample = if member.role == MemberRole::FullNode {
+            let sample = sample_network(ctx).await?;
+            ensure_all_members_healthy(
+                ctx.build,
+                &sample,
+                ctx.required_peers,
+                ctx.max_lag,
+                &format!("pre-stop health check before updating `{}`", member.name),
+            )?;
+            check_validators_connected_peers(&sample.statuses, ctx.required_peers)?;
+            sample
+        } else {
+            let mut waited_boundary: Option<u64> = None;
+            let outcome = poll_network_until(ctx, deadline, progress, |sample| {
+                // F4: before entering a boundary wait, any unhealthy network state or degraded
+                // validator consensus peer count (`connectedPeers < n - 1`) aborts immediately
+                // rather than stopping another validator.
+                if waited_boundary.is_none() {
+                    ensure_all_members_healthy(
+                        ctx.build,
+                        sample,
+                        ctx.required_peers,
+                        ctx.max_lag,
+                        &format!("pre-stop health check before updating `{}`", member.name),
+                    )?;
+                    check_validators_connected_peers(&sample.statuses, ctx.required_peers)?;
+                }
+
+                let target_status = sample
+                    .statuses
+                    .iter()
+                    .find(|s| s.vm_name == member.vm_name)
+                    .ok_or_else(|| {
+                        eyre::eyre!(
+                            "refusing to stop validator `{}`: missing member status (fail-closed DKG guard)",
+                            member.name
+                        )
+                    })?;
+                let consensus = target_status.consensus.as_ref().ok_or_else(|| {
                     eyre::eyre!(
-                        "refusing to stop validator `{}`: missing member status (fail-closed DKG guard)",
+                        "refusing to stop validator `{}`: missing `outbe_consensusStatus` (fail-closed DKG guard)",
                         member.name
                     )
                 })?;
-            let consensus = target_status.consensus.as_ref().ok_or_else(|| {
-                eyre::eyre!(
-                    "refusing to stop validator `{}`: missing `outbe_consensusStatus` (fail-closed DKG guard)",
+                let finalized = target_status.finalized.ok_or_else(|| {
+                    eyre::eyre!(
+                        "refusing to stop validator `{}`: missing finalized block height (fail-closed DKG guard)",
+                        member.name
+                    )
+                })?;
+                let next_act = consensus.next_planned_activation_height;
+                ensure!(
+                    next_act > 0,
+                    "refusing to stop validator `{}`: `next_planned_activation_height` is 0 or missing in `outbe_consensusStatus` (fail-closed DKG guard)",
                     member.name
-                )
-            })?;
-            let finalized = target_status.finalized.ok_or_else(|| {
-                eyre::eyre!(
-                    "refusing to stop validator `{}`: missing finalized block height (fail-closed DKG guard)",
-                    member.name
-                )
-            })?;
-            let next_act = consensus.next_planned_activation_height;
-            ensure!(
-                next_act > 0,
-                "refusing to stop validator `{}`: `next_planned_activation_height` is 0 or missing in `outbe_consensusStatus` (fail-closed DKG guard)",
-                member.name
-            );
-            let randomness_healthy = all_validators_randomness_healthy(&sample.statuses);
-
-            if let Some(boundary) = waited_boundary {
-                if sample.fully_healthy()
-                    && check_validators_connected_peers(&sample.statuses, ctx.required_peers).is_ok()
-                    && randomness_healthy
-                    && finalized > boundary
-                    && next_act > boundary
-                {
-                    return Ok(PollStep::Done(sample.clone_light()));
-                }
-                return Ok(PollStep::Continue(format!(
-                    "waiting past DKG boundary {boundary} before updating `{}` (finalized={finalized}, next_activation={next_act}, randomness_healthy={randomness_healthy})",
-                    member.name
-                )));
-            }
-
-            let remaining = next_act.saturating_sub(finalized);
-            let in_ceremony = !randomness_healthy
-                || consensus
-                    .last_dkg_activation_height
-                    .is_some_and(|last| last >= next_act);
-            let guard_with_obs = effective_dkg_guard.saturating_add(MISSED_VOTE_OBSERVATION_BLOCKS);
-            if in_ceremony || remaining <= guard_with_obs {
-                waited_boundary = Some(next_act);
-                return Ok(PollStep::Continue(format!(
-                    "deferring stop of `{}` near/during DKG ceremony (finalized={finalized}, next_activation={next_act}, remaining={remaining}, effective_guard={effective_dkg_guard}, observation_window={MISSED_VOTE_OBSERVATION_BLOCKS}, randomness_healthy={randomness_healthy})",
-                    member.name
-                )));
-            }
-
-            // Fresh sample just passed health/peer checks and is outside guard/ceremony.
-            Ok(PollStep::Done(sample.clone_light()))
-        })
-        .await?;
-
-        match outcome {
-            Ok(sample) => sample,
-            Err(sample) => {
-                bail!(
-                    "timed out waiting to clear DKG activation boundary {:?} before updating `{}`:\n\n{}",
-                    waited_boundary,
-                    member.name,
-                    render_vm_status(ctx.build, &sample.statuses, &sample.orphans, ctx.max_lag)
                 );
+                let randomness_healthy = all_validators_randomness_healthy(&sample.statuses);
+
+                if let Some(boundary) = waited_boundary {
+                    if sample.fully_healthy()
+                        && check_validators_connected_peers(&sample.statuses, ctx.required_peers)
+                            .is_ok()
+                        && randomness_healthy
+                        && finalized > boundary
+                        && next_act > boundary
+                    {
+                        return Ok(PollStep::Done(sample.clone_light()));
+                    }
+                    return Ok(PollStep::Continue(format!(
+                        "waiting past DKG boundary {boundary} before updating `{}` (finalized={finalized}, next_activation={next_act}, randomness_healthy={randomness_healthy})",
+                        member.name
+                    )));
+                }
+
+                let remaining = next_act.saturating_sub(finalized);
+                let in_ceremony = !randomness_healthy
+                    || consensus
+                        .last_dkg_activation_height
+                        .is_some_and(|last| last >= next_act);
+                let guard_with_obs =
+                    effective_dkg_guard.saturating_add(MISSED_VOTE_OBSERVATION_BLOCKS);
+                if in_ceremony || remaining <= guard_with_obs {
+                    waited_boundary = Some(next_act);
+                    return Ok(PollStep::Continue(format!(
+                        "deferring stop of `{}` near/during DKG ceremony (finalized={finalized}, next_activation={next_act}, remaining={remaining}, effective_guard={effective_dkg_guard}, observation_window={MISSED_VOTE_OBSERVATION_BLOCKS}, randomness_healthy={randomness_healthy})",
+                        member.name
+                    )));
+                }
+
+                // Fresh sample just passed health/peer checks and is outside guard/ceremony.
+                Ok(PollStep::Done(sample.clone_light()))
+            })
+            .await?;
+
+            match outcome {
+                Ok(sample) => sample,
+                Err(sample) => {
+                    let offenders_note = last_offenders
+                        .as_deref()
+                        .map(|o| format!("; last missed-vote deltas: {o}"))
+                        .unwrap_or_default();
+                    bail!(
+                        "timed out waiting to clear DKG activation boundary {:?} before updating `{}`{offenders_note}:\n\n{}",
+                        waited_boundary,
+                        member.name,
+                        render_vm_status(ctx.build, &sample.statuses, &sample.orphans, ctx.max_lag)
+                    );
+                }
+            }
+        };
+
+        if !initial_sample.has_validators {
+            return Ok(());
+        }
+
+        // Phase 2: Forward 60-block missed-vote observation (`outbe_getParticipation` delta == 0 for
+        // every validator; retries window on epoch boundary or transient missed votes up to
+        // `deadline`, re-checking DKG guard each retry).
+        match observe_zero_missed_votes_window(
+            ctx,
+            member,
+            &initial_sample,
+            effective_dkg_guard,
+            deadline,
+            progress,
+            &mut last_offenders,
+        )
+        .await?
+        {
+            MissedVoteOutcome::Clean => return Ok(()),
+            MissedVoteOutcome::NeedsDkgWait(note) => {
+                if let Some(msg) = note {
+                    progress.update(&msg);
+                }
+                continue;
             }
         }
-    };
-
-    if !initial_sample.has_validators {
-        return Ok(());
     }
-
-    // Phase 2: Forward 60-block missed-vote observation (`outbe_getParticipation` delta == 0 for
-    // every validator; retry window if an epoch boundary falls inside; fail closed otherwise).
-    observe_zero_missed_votes_window(ctx, member, &initial_sample, deadline, progress).await
 }
 
 /// Forward observation before stopping `member`: snapshot `outbe_getParticipation` for every
 /// active validator, wait `MISSED_VOTE_OBSERVATION_BLOCKS` (60) finalized blocks, and snapshot
-/// again. Requires `missedVotes` delta == 0 for every validator. Retries the 60-block window if
-/// an epoch boundary / counter reset occurs during the window; fails closed on any missed vote,
-/// degraded health/peers, or RPC error.
+/// again. Requires `missedVotes` delta == 0 for every validator. Retries the 60-block window up
+/// to `deadline` on epoch boundaries / counter resets or transient missed votes (re-checking the
+/// DKG guard before each retry and returning `NeedsDkgWait` if inside the ceremony/guard window).
+/// Fails closed on RPC/health/peer error or on `deadline` with the last offending deltas.
 async fn observe_zero_missed_votes_window(
     ctx: &PollContext<'_>,
     member: &DesiredMember,
     initial_sample: &NetworkSample,
+    effective_dkg_guard: u64,
     deadline: Instant,
     progress: &mut Progress,
-) -> Result<()> {
+    last_offenders: &mut Option<String>,
+) -> Result<MissedVoteOutcome> {
     let probe = ctx
         .desired_members
         .iter()
@@ -1146,6 +1185,7 @@ async fn observe_zero_missed_votes_window(
         member.name
     ));
 
+    let guard_with_obs = effective_dkg_guard.saturating_add(MISSED_VOTE_OBSERVATION_BLOCKS);
     let outcome = poll_network_until(ctx, deadline, progress, |sample| {
         ensure_all_members_healthy(
             ctx.build,
@@ -1172,8 +1212,55 @@ async fn observe_zero_missed_votes_window(
             )
         })?;
 
-        // Epoch boundary fell inside the window -> retry the 60-block window cleanly.
+        // Check whether a validator has drifted into an active DKG ceremony during observation.
+        let validator_needs_dkg_wait = |check_guard_margin: bool| -> Result<bool> {
+            if member.role == MemberRole::FullNode {
+                return Ok(false);
+            }
+            let target_status = sample
+                .statuses
+                .iter()
+                .find(|s| s.vm_name == member.vm_name)
+                .ok_or_else(|| {
+                    eyre::eyre!(
+                        "refusing to stop validator `{}`: missing member status (fail-closed DKG guard)",
+                        member.name
+                    )
+                })?;
+            let consensus = target_status.consensus.as_ref().ok_or_else(|| {
+                eyre::eyre!(
+                    "refusing to stop validator `{}`: missing `outbe_consensusStatus` (fail-closed DKG guard)",
+                    member.name
+                )
+            })?;
+            let next_act = consensus.next_planned_activation_height;
+            ensure!(
+                next_act > 0,
+                "refusing to stop validator `{}`: `next_planned_activation_height` is 0 or missing in `outbe_consensusStatus` (fail-closed DKG guard)",
+                member.name
+            );
+            let randomness_healthy = all_validators_randomness_healthy(&sample.statuses);
+            let in_ceremony = !randomness_healthy
+                || consensus
+                    .last_dkg_activation_height
+                    .is_some_and(|last| last >= next_act);
+            if in_ceremony {
+                return Ok(true);
+            }
+            if check_guard_margin {
+                let remaining = next_act.saturating_sub(cur_height);
+                if remaining <= guard_with_obs {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        };
+
+        // Epoch boundary fell inside the window -> re-check DKG guard and retry 60 blocks cleanly.
         if cur_vrf != start_vrf {
+            if validator_needs_dkg_wait(true)? {
+                return Ok(PollStep::Done(MissedVoteOutcome::NeedsDkgWait(None)));
+            }
             start_height = cur_height;
             start_vrf = cur_vrf;
             start_missed = query_validators_missed_votes(
@@ -1216,7 +1303,7 @@ async fn observe_zero_missed_votes_window(
         })?;
 
         // Detect an epoch-boundary counter reset (`end < start`) or validator-set change at an
-        // epoch boundary -> retry the 60-block window cleanly.
+        // epoch boundary -> re-check DKG guard and retry the 60-block window cleanly.
         let counter_reset = start_missed.iter().any(|(addr, &before)| {
             end_missed
                 .get(addr)
@@ -1224,6 +1311,9 @@ async fn observe_zero_missed_votes_window(
         }) || end_missed.len() != start_missed.len()
             || !start_missed.keys().all(|k| end_missed.contains_key(k));
         if counter_reset {
+            if validator_needs_dkg_wait(true)? {
+                return Ok(PollStep::Done(MissedVoteOutcome::NeedsDkgWait(None)));
+            }
             start_height = cur_height;
             start_vrf = cur_vrf;
             start_missed = end_missed;
@@ -1233,7 +1323,9 @@ async fn observe_zero_missed_votes_window(
             )));
         }
 
-        // Fail closed if ANY validator missed >= 1 vote during the 60-block window.
+        // Check missed-vote deltas across all validators. If any validator missed >= 1 vote,
+        // record the offending deltas, re-check the DKG guard, reset the baseline, and retry
+        // another 60-block window until `deadline`.
         let elapsed = cur_height.saturating_sub(start_height);
         let mut offenders = Vec::new();
         for (addr, &before) in &start_missed {
@@ -1244,32 +1336,48 @@ async fn observe_zero_missed_votes_window(
             }
         }
         if !offenders.is_empty() {
-            bail!(
-                "refusing to stop `{}`: validator(s) recorded missed votes over {elapsed} finalized blocks ({start_height}..={cur_height}): {}",
-                member.name,
+            let summary = format!(
+                "{} over {elapsed} finalized blocks ({start_height}..={cur_height})",
                 offenders.join(", ")
             );
+            *last_offenders = Some(summary.clone());
+            if validator_needs_dkg_wait(true)? {
+                return Ok(PollStep::Done(MissedVoteOutcome::NeedsDkgWait(Some(
+                    format!(
+                        "missed votes observed before updating `{}` ({summary}); deferring past next DKG boundary before retrying",
+                        member.name
+                    ),
+                ))));
+            }
+            start_height = cur_height;
+            start_vrf = cur_vrf;
+            start_missed = end_missed;
+            return Ok(PollStep::Continue(format!(
+                "missed votes observed before updating `{}` ({summary}); retrying {} blocks from height {start_height} (vrf={start_vrf})",
+                member.name, MISSED_VOTE_OBSERVATION_BLOCKS
+            )));
         }
 
-        if member.role != MemberRole::FullNode && !all_validators_randomness_healthy(&sample.statuses)
-        {
-            bail!(
-                "refusing to stop `{}`: randomness_status became unhealthy during missed-vote observation (fail-closed DKG guard)",
-                member.name
-            );
+        // Verify we did not drift into an active DKG ceremony while observing the clean window.
+        if validator_needs_dkg_wait(false)? {
+            return Ok(PollStep::Done(MissedVoteOutcome::NeedsDkgWait(None)));
         }
 
-        Ok(PollStep::Done(()))
+        Ok(PollStep::Done(MissedVoteOutcome::Clean))
     })
     .await?;
 
     match outcome {
-        Ok(()) => Ok(()),
+        Ok(res) => Ok(res),
         Err(sample) => {
+            let offenders_detail = last_offenders
+                .as_deref()
+                .map(|o| format!("; last offending missed-vote deltas: {o}"))
+                .unwrap_or_default();
             bail!(
-                "timed out observing {} clean finalized blocks with 0 missed votes before updating `{}` (start_height={start_height}, start_vrf={start_vrf}):\n\n{}",
-                MISSED_VOTE_OBSERVATION_BLOCKS,
+                "refusing to stop `{}`: timed out observing {} clean finalized blocks with 0 missed votes (start_height={start_height}, start_vrf={start_vrf}{offenders_detail}):\n\n{}",
                 member.name,
+                MISSED_VOTE_OBSERVATION_BLOCKS,
                 render_vm_status(ctx.build, &sample.statuses, &sample.orphans, ctx.max_lag)
             );
         }
