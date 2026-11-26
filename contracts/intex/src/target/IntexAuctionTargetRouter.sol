@@ -339,7 +339,7 @@ contract IntexAuctionTargetRouter is
         _sendOneIntexAuctionBidsPage(emissionDay, pageIndex, totalPages, bidders, packedBids);
     }
 
-    /// @dev Encode and `_send` the BIDS_TOTALS completeness marker for a day. Carries this chain's
+    /// @dev Encode and `_sendTo` the BIDS_TOTALS completeness marker for a day. Carries this chain's
     ///      chainId as its source. The receiver cross-checks it against the authenticated source.
     function _sendIntexAuctionBidsTotals(uint32 emissionDay, uint16 totalPages, uint32 totalBids) internal {
         bytes memory message =
@@ -348,7 +348,7 @@ contract IntexAuctionTargetRouter is
         emit IntexAuctionBidsTotalsSent(sendId, emissionDay, totalPages, totalBids);
     }
 
-    /// @dev Encode and `_send` a single BIDS_BATCH to Outbe. The body carries this chain's chainId
+    /// @dev Encode and `_sendTo` a single BIDS_BATCH to Outbe. The body carries this chain's chainId
     ///      as its source (cross-checked by the receiver against the authenticated source). The
     ///      relay float funds the send.
     function _sendOneIntexAuctionBidsPage(
