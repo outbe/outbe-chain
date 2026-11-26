@@ -13,11 +13,7 @@ use outbe_gratis::{GratisOp, ModifyAuth};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
 use outbe_primitives::storage::StorageHandle;
 use outbe_system_common::addresses::{GRATIS_ADDRESS, GRATIS_FACTORY_ADDRESS};
-use outbe_system_common::time::SECONDS_PER_DAY;
 use outbe_system_common::units::checked_protocol_to_native;
-
-use outbe_fidelity::enclave_client::test_enclave as fidelity_enclave;
-use outbe_fidelity::{MAX_LEAGUE, MIN_LEAGUE};
 
 use crate::precompile::{dispatch, IGratisFactory};
 use crate::runtime;
@@ -53,43 +49,18 @@ fn view_balance(s: &StorageHandle<'_>, a: Address) -> U256 {
     decrypt_balance(&vk, a, &blob).unwrap()
 }
 
-/// Mint gratis and drop the fidelity outcome, so no cohort is persisted.
-/// `outbe_gratis::api::mint` is visible only inside that crate's own tests.
-fn mint_without_cohort(storage: StorageHandle<'_>, amount: U256) {
-    let now = storage.now_secs().unwrap();
-    let section = outbe_fidelity::api::cohort_section(
-        storage.clone(),
-        alice(),
-        outbe_fidelity::api::FidelityCohortOp::In,
-        now,
-    )
-    .unwrap();
-    outbe_gratis::api::mint_with_fidelity(
+fn mint_gratis(storage: StorageHandle<'_>, amount: U256) {
+    outbe_gratis::api::mint(
         storage,
         alice(),
         amount,
         auth(GratisOp::Mint, alice(), amount, 0),
-        section,
-    )
-    .unwrap();
-}
-
-/// Give `account` a positive Fidelity index so `pledge_gratis` clears the
-/// eligibility gate.
-fn seed_fidelity(storage: StorageHandle<'_>, account: Address) {
-    const ONE_YEAR_SECS: u64 = 365 * SECONDS_PER_DAY;
-    outbe_fidelity::api::cohort_in(
-        storage,
-        account,
-        U256::from(100u64),
-        CREATED_AT - ONE_YEAR_SECS,
     )
     .unwrap();
 }
 
 fn test_storage() -> HashMapStorageProvider {
     test_enclave::install();
-    fidelity_enclave::install();
     let mut storage = HashMapStorageProvider::new(CHAIN_ID);
     storage.set_timestamp(U256::from(CREATED_AT));
     storage
@@ -98,22 +69,14 @@ fn test_storage() -> HashMapStorageProvider {
 fn with_env<R>(f: impl FnOnce(StorageHandle<'_>) -> R) -> R {
     let mut storage = test_storage();
     let out = StorageHandle::enter(&mut storage, f);
-    fidelity_enclave::uninstall();
     test_enclave::uninstall();
     out
 }
 
 #[test]
-fn mine_mints_gratis_and_records_fidelity_cohort() {
-    const ONE_YEAR_SECS: u64 = 365 * SECONDS_PER_DAY;
+fn mine_mints_gratis() {
     with_env(|storage| {
         let amount = U256::from(1_000u64);
-        let later = CREATED_AT + ONE_YEAR_SECS;
-        // No cohort yet: no account has qualified, so the league is the floor.
-        let league_before =
-            outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
-        assert_eq!(league_before, MIN_LEAGUE);
-
         runtime::mint(
             storage.clone(),
             alice(),
@@ -123,9 +86,6 @@ fn mine_mints_gratis_and_records_fidelity_cohort() {
         .unwrap();
 
         assert_eq!(view_balance(&storage, alice()), amount);
-        // The acquisition cohort was recorded: sole holder, no sales -> top league.
-        let league_after = outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap();
-        assert_eq!(league_after, MAX_LEAGUE);
     });
 }
 
@@ -152,20 +112,10 @@ fn mine_rejects_zero_amount() {
 }
 
 #[test]
-fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
-    const ONE_YEAR_SECS: u64 = 365 * SECONDS_PER_DAY;
+fn mine_coen_burns_gratis_and_mints_native() {
     with_env(|storage| {
         let amount = U256::from(1_000u64);
-        mint_without_cohort(storage.clone(), amount);
-        outbe_fidelity::api::cohort_in(
-            storage.clone(),
-            alice(),
-            amount,
-            CREATED_AT - ONE_YEAR_SECS,
-        )
-        .unwrap();
-        let league_before = outbe_fidelity::api::league(storage.clone(), alice()).unwrap();
-        assert_eq!(league_before, MAX_LEAGUE);
+        mint_gratis(storage.clone(), amount);
 
         // mineCoen burns gratis (op = Burn) at op-nonce 1.
         let call = Bytes::from(
@@ -183,17 +133,13 @@ fn mine_coen_burns_gratis_mints_native_and_records_sale_cohort() {
 
         assert_eq!(view_balance(&storage, alice()), U256::ZERO);
         assert_eq!(storage.balance(alice()).unwrap(), native_amount);
-
-        // Fully sold -> efficiency 0 -> league drops to the floor.
-        let league_after = outbe_fidelity::api::league(storage.clone(), alice()).unwrap();
-        assert_eq!(league_after, MIN_LEAGUE);
     });
 }
 
 #[test]
 fn mine_coen_rejects_insufficient_balance() {
     with_env(|storage| {
-        mint_without_cohort(storage.clone(), U256::from(100u64));
+        mint_gratis(storage.clone(), U256::from(100u64));
 
         let amount = U256::from(200u64);
         let call = Bytes::from(
@@ -288,7 +234,6 @@ fn pledged_gratis_cannot_be_mined_into_coen() {
             auth(GratisOp::Mint, alice(), minted, 0),
         )
         .unwrap();
-        seed_fidelity(storage.clone(), alice());
         let pledged = U256::from(PLEDGED);
         let sealed = test_enclave::sealed_pledge(alice(), pledged, U256::ONE, CHAIN_ID);
         outbe_gratis::api::pledge_sealed(&storage, &sealed, U256::ONE, pledged).unwrap();
@@ -325,7 +270,7 @@ fn pledged_gratis_cannot_be_mined_into_coen() {
 }
 
 #[test]
-fn encrypted_nod_mint_preserves_nonce_and_combined_fidelity_state() {
+fn encrypted_nod_mint_preserves_nonce_and_balance() {
     with_env(|storage| {
         let amount = U256::from(123);
         let nod = encrypted_nod(amount);
@@ -336,21 +281,16 @@ fn encrypted_nod_mint_preserves_nonce_and_combined_fidelity_state() {
             outbe_gratis::api::op_nonce(storage.clone(), alice()).unwrap(),
             1
         );
-        let fidelity = outbe_fidelity::FidelityContract::new(storage.clone());
-        let cohorts = fidelity.cohorts_ct_of(alice()).unwrap();
-        assert!(!cohorts.is_empty());
         let balance = crate::api::encrypted_balance(storage.clone(), alice()).unwrap();
         assert!(crate::api::mint_encrypted_nod(storage.clone(), &nod, authorization).is_err());
         assert_eq!(
             crate::api::encrypted_balance(storage.clone(), alice()).unwrap(),
             balance
         );
-        assert_eq!(fidelity.cohorts_ct_of(alice()).unwrap(), cohorts);
         assert_eq!(outbe_gratis::api::op_nonce(storage, alice()).unwrap(), 1);
     });
 }
 
-/// One second past the largest block timestamp that fits in `u64`.
 fn encrypted_nod(amount: U256) -> outbe_core_common::nod_encryption::EncryptedNodV1 {
     use outbe_core_common::nod_encryption::NodTermsV1;
     use outbe_system_common::time::WorldwideDay;
@@ -372,63 +312,13 @@ fn encrypted_nod(amount: U256) -> outbe_core_common::nod_encryption::EncryptedNo
     .unwrap()
 }
 
-fn timestamp_above_u64() -> U256 {
-    U256::from(u64::MAX) + U256::from(1)
-}
-
-fn assert_timestamp_overflow(err: impl std::fmt::Display) {
-    let err = err.to_string();
-    assert!(err.contains("timestamp exceeds u64"), "got: {err}");
-}
-
-#[test]
-fn mint_reverts_when_the_timestamp_exceeds_u64() {
-    with_env(|storage| {
-        storage.set_block_timestamp(timestamp_above_u64()).unwrap();
-        let amount = U256::from(1_000u64);
-        let err = runtime::mint(
-            storage.clone(),
-            alice(),
-            amount,
-            auth(GratisOp::Mint, alice(), amount, 0),
-        )
-        .unwrap_err();
-        assert_timestamp_overflow(err);
-        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
-    });
-}
-
-#[test]
-fn mine_coen_reverts_when_the_timestamp_exceeds_u64() {
-    with_env(|storage| {
-        let amount = U256::from(1_000u64);
-        mint_without_cohort(storage.clone(), amount);
-        storage.set_block_timestamp(timestamp_above_u64()).unwrap();
-
-        let call = Bytes::from(
-            IGratisFactory::IGratisFactoryCalls::mineCoen(IGratisFactory::mineCoenCall {
-                gratisMinor: amount,
-                mac: FixedBytes(auth(GratisOp::Burn, alice(), amount, 1).mac),
-                opNonce: 1,
-            })
-            .abi_encode(),
-        );
-        let err = dispatch(storage.clone(), &call, alice(), U256::ZERO).unwrap_err();
-        assert_timestamp_overflow(err);
-
-        // No COEN minted, gratis untouched.
-        assert_eq!(storage.balance(alice()).unwrap(), U256::ZERO);
-        assert_eq!(view_balance(&storage, alice()), amount);
-    });
-}
-
 /// Gratis burn and native COEN mint are one sale: both logs are present together.
 #[test]
 fn mine_coen_emits_gratis_burned_and_coen_mined() {
     let mut provider = test_storage();
     let amount = U256::from(1_000u64);
     StorageHandle::enter(&mut provider, |storage| {
-        mint_without_cohort(storage.clone(), amount);
+        mint_gratis(storage.clone(), amount);
         let call = Bytes::from(
             IGratisFactory::IGratisFactoryCalls::mineCoen(IGratisFactory::mineCoenCall {
                 gratisMinor: amount,
@@ -451,7 +341,6 @@ fn mine_coen_emits_gratis_burned_and_coen_mined() {
         .iter()
         .filter_map(|log| IGratisFactory::CoenMinedFromGratis::decode_log_data(log).ok())
         .collect();
-    fidelity_enclave::uninstall();
     test_enclave::uninstall();
 
     assert_eq!(burned.len(), 1);
@@ -464,25 +353,6 @@ fn mine_coen_emits_gratis_burned_and_coen_mined() {
         mined[0].amountMinor,
         checked_protocol_to_native(amount).unwrap()
     );
-}
-
-#[test]
-fn encrypted_nod_mint_reverts_when_the_timestamp_exceeds_u64() {
-    with_env(|storage| {
-        let amount = U256::from(123);
-        let nod = encrypted_nod(amount);
-        storage.set_block_timestamp(timestamp_above_u64()).unwrap();
-
-        let err = crate::api::mint_encrypted_nod(
-            storage.clone(),
-            &nod,
-            auth(GratisOp::Mint, alice(), amount, 0),
-        )
-        .unwrap_err();
-        assert_timestamp_overflow(err);
-        assert_eq!(view_balance(&storage, alice()), U256::ZERO);
-        assert_eq!(outbe_gratis::api::op_nonce(storage, alice()).unwrap(), 0);
-    });
 }
 
 fn token_deltas(logs: &[alloy_primitives::LogData], account: Address) -> Vec<(bool, U256)> {
@@ -532,11 +402,9 @@ fn promis_limit(storage: &StorageHandle<'_>) -> U256 {
         .unwrap()
 }
 
-/// 2 COEN in, 2 Gratis out. The COEN is burned into the Promis Limit and the
-/// mint records the acquisition cohort.
+/// 2 COEN in, 2 Gratis out. The COEN is burned into the Promis Limit.
 #[test]
 fn mine_gratis_burns_coen_into_the_promis_limit_and_mints_gratis() {
-    const ONE_YEAR_SECS: u64 = 365 * SECONDS_PER_DAY;
     let mut provider = test_storage();
     let gratis_minor = U256::from(2_000_000u64);
     let value = checked_protocol_to_native(gratis_minor).unwrap();
@@ -546,11 +414,6 @@ fn mine_gratis_burns_coen_into_the_promis_limit_and_mints_gratis() {
         assert_eq!(view_balance(&storage, alice()), gratis_minor);
         assert_eq!(storage.balance(GRATIS_FACTORY_ADDRESS).unwrap(), U256::ZERO);
         assert_eq!(promis_limit(&storage), gratis_minor);
-        let later = CREATED_AT + ONE_YEAR_SECS;
-        assert_eq!(
-            outbe_fidelity::api::league_at(storage.clone(), alice(), later).unwrap(),
-            MAX_LEAGUE
-        );
     });
     let mined: Vec<_> = provider
         .get_events(GRATIS_FACTORY_ADDRESS)
@@ -565,7 +428,6 @@ fn mine_gratis_burns_coen_into_the_promis_limit_and_mints_gratis() {
         })
         .collect();
     let deltas = token_deltas(provider.get_events(GRATIS_ADDRESS), alice());
-    fidelity_enclave::uninstall();
     test_enclave::uninstall();
 
     assert_eq!(mined.len(), 1);

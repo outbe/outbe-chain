@@ -209,7 +209,6 @@ fn forfeit_by_owner(
     caller: Address,
 ) -> outbe_primitives::error::Result<rules::Forfeit> {
     outbe_gratis::enclave_client::test_enclave::install();
-    outbe_fidelity::enclave_client::test_enclave::install();
     if let Ok(record) = CredisContract::new(storage.clone()).get_credis(id) {
         let account = record.pledge_account;
         let needed = record.outstanding_gratis_minor;

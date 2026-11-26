@@ -4,26 +4,23 @@
 //! hash is fixed before the call and checked again inside `execute` against
 //! the same context that signed. `outbe_deriveGratisKeys` is session-only.
 
-use std::fmt::Write as _;
-
 use alloy_primitives::{Address, B256};
 use outbe_core_common::confidential_tee::{
     consensus_witness_call, seal_resident_account_keys, session_witness_call,
-    verify_bound_witness_attestation, FIDELITY, GRATIS,
+    verify_bound_witness_attestation, GRATIS,
 };
-use outbe_fidelity::apply_cohort_section;
 use outbe_primitives::error::{PrecompileError, Result};
 use outbe_tee::in_process::InProcessTeeContext;
 use outbe_tee::{CallMeta, TransportError};
 use thiserror::Error;
 
 use crate::attest::verify_gratis_op_attestation;
-use crate::engine::{apply_op, open_sealed_pledge, rejected_result};
+use crate::engine::{apply_op, open_sealed_pledge};
 use crate::errors::{map_consensus_error, GratisFatalError};
 use crate::nod_mine::{self, MineEncryptedNodRequestV1, MineEncryptedNodResultV1};
 use crate::protocol::{
     gratis_op_attestation_preimage, gratis_op_canonical_hash, GratisOp, GratisOpRequest,
-    GratisOpResult, GratisOpStatus,
+    GratisOpResult,
 };
 use crate::resident::resident_state_key;
 
@@ -61,7 +58,7 @@ enum DeriveKeysError {
     OwnerSignatureLength,
 }
 
-/// Enclave witness one collateral op (pledge, release, pledge burn) records at most; it carries no fidelity section.
+/// Enclave witness one collateral op (pledge, release, pledge burn) records at most.
 pub const COLLATERAL_OP_WITNESS_BYTES: u32 = 460;
 
 /// Run one Gratis op. A business rejection stays inside the returned result.
@@ -122,24 +119,11 @@ fn execute_apply(
     } else {
         apply_op(&key, req)
     };
-    if let (GratisOpStatus::Applied, Some(section)) = (&result.status, &req.fidelity) {
-        let fidelity_key = resident_state_key(context, &FIDELITY, STATE_EPOCH)?;
-        match apply_cohort_section(&fidelity_key, req.account, req.amount, section) {
-            Ok(outcome) => result.fidelity = Some(outcome),
-            Err(error) => result = rejected_result(fidelity_reason(&error), expected),
-        }
-    }
     let preimage = gratis_op_attestation_preimage(result.inputs_canonical_hash, &result)
         .map_err(TransportError::codec)?;
     result.attestation_tag = context.sign_domain_attestation(&preimage).to_vec();
     authenticate_apply(expected, &context.attestation_public(), &result)?;
     Ok(result)
-}
-
-fn fidelity_reason(error: &impl std::fmt::Display) -> String {
-    let mut reason = String::from("fidelity section failed: ");
-    let _ = write!(&mut reason, "{error}");
-    reason
 }
 
 impl From<(Address, outbe_tee::resident::SealedAccountKeysExport)> for SealedGratisKeys {
@@ -200,9 +184,7 @@ pub mod test_enclave {
         static STATE_KEY: RefCell<Option<outbe_tee::resident::StateKeyHandle>> = const { RefCell::new(None) };
     }
 
-    use outbe_core_common::confidential_tee::{
-        fidelity_chain, FIDELITY_GROUP_SIG, GRATIS_CHAIN, GRATIS_GROUP_SIG,
-    };
+    use outbe_core_common::confidential_tee::{GRATIS_CHAIN, GRATIS_GROUP_SIG};
 
     const DEV_EPOCH: u64 = 0;
 
@@ -303,17 +285,9 @@ pub mod test_enclave {
     ) -> Option<Result<MineEncryptedNodResultV1>> {
         STATE_KEY.with(|slot| {
             slot.borrow().as_ref().map(|gratis| {
-                let fidelity = derive_fidelity_key()?;
                 let nod = outbe_tee::resident::StateKeyHandle::for_test([0x5a; 32]);
-                nod_mine::apply(
-                    nod_mine::MineKeys {
-                        nod: &nod,
-                        gratis,
-                        fidelity: &fidelity,
-                    },
-                    request,
-                )
-                .map_err(nod_mine::map_stand_in)
+                nod_mine::apply(nod_mine::MineKeys { nod: &nod, gratis }, request)
+                    .map_err(nod_mine::map_stand_in)
             })
         })
     }
@@ -325,34 +299,9 @@ pub mod test_enclave {
                     let offer = outbe_core_common::confidential_tee::offer_key();
                     return open_sealed_pledge(key, &offer, req);
                 }
-                let mut result = apply_op(key, req);
-                if let (GratisOpStatus::Applied, Some(section)) = (&result.status, &req.fidelity) {
-                    let fidelity = derive_fidelity_key().expect("derive dev fidelity state key");
-                    match apply_cohort_section(&fidelity, req.account, req.amount, section) {
-                        Ok(outcome) => result.fidelity = Some(outcome),
-                        Err(error) => {
-                            result = rejected_result(
-                                fidelity_reason(&error),
-                                result.inputs_canonical_hash,
-                            );
-                        }
-                    }
-                }
-                result
+                apply_op(key, req)
             })
         })
-    }
-
-    fn derive_fidelity_key() -> Result<outbe_tee::resident::StateKeyHandle> {
-        let material = offer(FIDELITY_GROUP_SIG, fidelity_chain())?;
-        outbe_fidelity::derive_fidelity_state_key(&material, fidelity_chain(), DEV_EPOCH).map_err(
-            |error| {
-                GratisFatalError::TestEnclave {
-                    source: Box::new(error),
-                }
-                .into()
-            },
-        )
     }
 }
 
@@ -415,7 +364,6 @@ mod executing_context {
                 mac: modify_mac(&keys, &operation),
                 op_nonce: 0,
             },
-            fidelity: None,
             sealed_pledge: None,
         }
     }

@@ -1,7 +1,6 @@
 //! Stateless balance operations and pledged-collateral transitions.
 use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::SolEvent;
-use outbe_fidelity::{FidelityOpOutcome, FidelityOpSection};
 
 use crate::nod_mine::MineEncryptedNodRequestV1;
 use crate::protocol::{
@@ -15,12 +14,6 @@ use crate::enclave_client::apply_gratis_op;
 use crate::errors::{GratisError, GratisFatalError};
 use crate::precompile::IGratis;
 use crate::schema::Gratis;
-
-/// A co-located fidelity section was sent, so the enclave must return its
-/// outcome. A missing outcome is an enclave/transport fault.
-fn require_fidelity_outcome(outcome: Option<FidelityOpOutcome>) -> Result<FidelityOpOutcome> {
-    outcome.ok_or_else(|| GratisFatalError::MissingFidelityOutcome.into())
-}
 
 /// The chain id the enclave binds a modify-auth to, as a `B256` (host and client
 /// must agree on this encoding). The account's modify key is already chain-bound
@@ -47,7 +40,6 @@ fn base_request(op: GratisOp, chain_id: B256, account: Address, amount: U256) ->
         current_balance: Vec::new(),
         current_pledged: Vec::new(),
         modify_auth: no_auth(),
-        fidelity: None,
         sealed_pledge: None,
     }
 }
@@ -115,10 +107,7 @@ fn ensure_next_nonce(op_nonce: u64, next_op_nonce: u64) -> Result<()> {
 
 /// Apply an owner-authorized balance movement. A burn emits `GratisBurned`; a mint emits
 /// nothing here, because the factory that mints emits its own event.
-fn apply_owner_movement(
-    storage: StorageHandle<'_>,
-    mut request: GratisOpRequest,
-) -> Result<Option<FidelityOpOutcome>> {
+fn apply_owner_movement(storage: StorageHandle<'_>, mut request: GratisOpRequest) -> Result<()> {
     let gratis = Gratis::new(storage.clone());
     let account = request.account;
     let (amount, op_nonce) = (request.amount, request.modify_auth.op_nonce);
@@ -142,59 +131,18 @@ fn apply_owner_movement(
         )?,
         _ => return Err(GratisFatalError::InvalidOwnerMovement.into()),
     }
-    Ok(result.fidelity)
-}
-
-/// Mint `amount` gratis to `caller` (owner-authorized), optionally carrying a
-/// co-located fidelity cohort section applied in the SAME enclave round-trip.
-fn mint_impl(
-    storage: StorageHandle<'_>,
-    caller: Address,
-    amount: U256,
-    auth: ModifyAuth,
-    fidelity: Option<FidelityOpSection>,
-) -> Result<Option<FidelityOpOutcome>> {
-    let mut request = base_request(GratisOp::Mint, chain_id_b256(&storage)?, caller, amount);
-    request.modify_auth = auth;
-    request.fidelity = fidelity;
-    apply_owner_movement(storage, request)
+    Ok(())
 }
 
 /// Mint `amount` gratis to `caller` (owner-authorized).
-#[cfg(any(test, feature = "test-utils"))]
 pub(crate) fn mint(
     storage: StorageHandle<'_>,
     caller: Address,
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<()> {
-    mint_impl(storage, caller, amount, auth, None).map(|_| ())
-}
-
-/// Mint gratis and apply a co-located fidelity cohort acquisition in one
-/// enclave round-trip. Returns the fidelity outcome for the caller to persist.
-pub(crate) fn mint_with_fidelity(
-    storage: StorageHandle<'_>,
-    caller: Address,
-    amount: U256,
-    auth: ModifyAuth,
-    fidelity: FidelityOpSection,
-) -> Result<FidelityOpOutcome> {
-    require_fidelity_outcome(mint_impl(storage, caller, amount, auth, Some(fidelity))?)
-}
-
-/// Burn `amount` gratis from `caller` (owner-authorized), optionally carrying a
-/// co-located fidelity cohort section. Returns the Fidelity outcome.
-fn burn_impl(
-    storage: StorageHandle<'_>,
-    caller: Address,
-    amount: U256,
-    auth: ModifyAuth,
-    fidelity: Option<FidelityOpSection>,
-) -> Result<Option<FidelityOpOutcome>> {
-    let mut request = base_request(GratisOp::Burn, chain_id_b256(&storage)?, caller, amount);
+    let mut request = base_request(GratisOp::Mint, chain_id_b256(&storage)?, caller, amount);
     request.modify_auth = auth;
-    request.fidelity = fidelity;
     apply_owner_movement(storage, request)
 }
 
@@ -205,19 +153,9 @@ pub(crate) fn burn(
     amount: U256,
     auth: ModifyAuth,
 ) -> Result<()> {
-    burn_impl(storage, caller, amount, auth, None).map(|_| ())
-}
-
-/// Burn gratis and apply a co-located fidelity cohort sale in one enclave
-/// round-trip. Returns the fidelity outcome for the caller to persist.
-pub(crate) fn burn_with_fidelity(
-    storage: StorageHandle<'_>,
-    caller: Address,
-    amount: U256,
-    auth: ModifyAuth,
-    fidelity: FidelityOpSection,
-) -> Result<FidelityOpOutcome> {
-    require_fidelity_outcome(burn_impl(storage, caller, amount, auth, Some(fidelity))?)
+    let mut request = base_request(GratisOp::Burn, chain_id_b256(&storage)?, caller, amount);
+    request.modify_auth = auth;
+    apply_owner_movement(storage, request)
 }
 
 /// Open the sealed pledge of `credis_reservation_id` and pledge `amount` from the main account
@@ -298,7 +236,7 @@ pub(crate) fn release_pledged(
     take_pledged(storage, GratisOp::ReleasePledged, account, amount)
 }
 
-/// Burn pledged collateral of a defaulted position. Fidelity is unchanged.
+/// Burn pledged collateral of a defaulted position.
 pub(crate) fn burn_pledged(
     storage: &StorageHandle<'_>,
     account: Address,
@@ -331,8 +269,7 @@ pub(crate) fn mint_encrypted_nod(
     storage: StorageHandle<'_>,
     nod: &outbe_core_common::nod_encryption::EncryptedNodV1,
     auth: ModifyAuth,
-    fidelity: FidelityOpSection,
-) -> Result<FidelityOpOutcome> {
+) -> Result<()> {
     if nod.terms.chain_id != storage.chain_id()? {
         return Err(GratisError::NodChainMismatch.into());
     }
@@ -343,7 +280,6 @@ pub(crate) fn mint_encrypted_nod(
         nod: nod.clone(),
         current_balance: crate::state::account(&gratis, nod.terms.owner).balance_ct()?,
         modify_auth: auth,
-        fidelity,
     };
     let _context = outbe_tee::call_context::ContextScope::from_storage(&storage)?;
     let result = crate::enclave_client::mine_encrypted_nod(request)?;
@@ -360,6 +296,5 @@ pub(crate) fn mint_encrypted_nod(
             account: nod.terms.owner,
             encryptedAmountMinor: result.encrypted_event_amount.into(),
         }),
-    )?;
-    Ok(result.fidelity)
+    )
 }

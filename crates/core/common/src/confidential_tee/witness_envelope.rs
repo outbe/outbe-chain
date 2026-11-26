@@ -5,10 +5,10 @@
 //! `body` is the canonical tag-free postcard of the response. The inner
 //! `attestation_tag` field is empty (`0x00`) and the inner
 //! `inputs_canonical_hash` equals the entry's own hash. The Ed25519 signature
-//! lives only in the entry's `attestation_tag`. Tags `0`, `3`, and `6` are not
-//! recordable and never enter the tape. `QueryFidelityIndex` uses tag `5` or `15`.
-//! `MineEncryptedNodV1` uses tag `9` or `8`. Those pairs are different postcard
-//! schemas. The outer tag selects the schema. The body has no second discriminant.
+//! lives only in the entry's `attestation_tag`. The tags of [`NON_RECORDABLE_V1_TAGS`]
+//! never enter the tape. `MineEncryptedNodV1` uses tag `9` or `8`.
+//! Those tags are different postcard schemas. The outer tag selects the schema.
+//! The body has no second discriminant.
 
 use alloy_primitives::{Address, B256};
 use outbe_tee::in_process::InProcessTeeContext;
@@ -47,7 +47,7 @@ macro_rules! impl_confidential_witness_schema {
 pub const V1_RESPONSE_TAG_MAX: u8 = 22;
 
 /// Domain response discriminants that must not be written to the witness tape.
-pub const NON_RECORDABLE_V1_TAGS: [u8; 10] = [0, 3, 6, 7, 11, 12, 13, 14, 17, 18];
+pub const NON_RECORDABLE_V1_TAGS: [u8; 14] = [0, 3, 4, 5, 6, 7, 11, 12, 13, 14, 15, 16, 17, 18];
 
 /// Recordable frozen V1 domain response tag.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,20 +57,12 @@ pub enum WitnessResponseTag {
     GratisOpApplied = 1,
     /// `PromisOpApplied`.
     PromisOpApplied = 2,
-    /// `FidelityLeaguesSnapshotted`.
-    FidelityLeaguesSnapshotted = 4,
-    /// `FidelityIndexQueried`.
-    FidelityIndexQueried = 5,
     /// `EncryptedNodMintRejectedV1`.
     EncryptedNodMintRejectedV1 = 8,
     /// `EncryptedNodMinedV1`.
     EncryptedNodMinedV1 = 9,
     /// `NodAmountReadV1`.
     NodAmountReadV1 = 10,
-    /// `FidelityQueryRejected`.
-    FidelityQueryRejected = 15,
-    /// `LysisFractionsExecutedV1`.
-    LysisFractionsExecutedV1 = 16,
     /// `NodGroupLoadOpAppliedV1`.
     NodGroupLoadOpAppliedV1 = 19,
     /// `NodGroupLoadReadV1`.
@@ -83,16 +75,12 @@ pub enum WitnessResponseTag {
 
 impl WitnessResponseTag {
     /// Every recordable V1 tag, in discriminant order.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 9] = [
         Self::GratisOpApplied,
         Self::PromisOpApplied,
-        Self::FidelityLeaguesSnapshotted,
-        Self::FidelityIndexQueried,
         Self::EncryptedNodMintRejectedV1,
         Self::EncryptedNodMinedV1,
         Self::NodAmountReadV1,
-        Self::FidelityQueryRejected,
-        Self::LysisFractionsExecutedV1,
         Self::NodGroupLoadOpAppliedV1,
         Self::NodGroupLoadReadV1,
         Self::NodQuoteEncryptedV1,
@@ -167,8 +155,8 @@ impl WitnessTagError {
     }
 }
 
-/// One encoded witness response. The tag is chosen here, including the pairs
-/// `QueryFidelityIndex` `5|15` and `MineEncryptedNodV1` `9|8`.
+/// One encoded witness response. The tag is chosen here, including the pair
+/// `MineEncryptedNodV1` `9|8`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaggedWitnessParts {
     /// Recordable V1 response tag.

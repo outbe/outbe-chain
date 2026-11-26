@@ -435,7 +435,6 @@ fn wrong_payload_tags_are_tape_invalid_before_the_cursor_moves() {
             new_pledged: Vec::new(),
             event_amount: U256::ZERO,
             next_op_nonce: 0,
-            fidelity: None,
             inputs_canonical_hash: B256::ZERO,
             attestation_tag: Vec::new(),
             encrypted_event_amount: Vec::new(),

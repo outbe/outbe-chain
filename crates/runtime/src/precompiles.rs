@@ -143,7 +143,6 @@ define_exact_routes! {
     AGENT_REWARD_ADDRESS => (outbe_agentreward::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_agentreward::precompile::PAYABLE_SELECTORS),
     EMISSION_ADDRESS => (outbe_emission::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_emission::precompile::PAYABLE_SELECTORS),
     METADOSIS_ADDRESS => (outbe_metadosis::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_metadosis::precompile::PAYABLE_SELECTORS),
-    FIDELITY_ADDRESS => (outbe_fidelity::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_fidelity::precompile::PAYABLE_SELECTORS),
     PROMIS_LIMIT_ADDRESS => (outbe_promislimit::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_promislimit::precompile::PAYABLE_SELECTORS),
     ORACLE_ADDRESS => (outbe_oracle::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_oracle::precompile::PAYABLE_SELECTORS),
     ZEROFEE_ADDRESS => (outbe_zerofee::precompile::dispatch, default_base_gas, ValuePolicy::Reject, outbe_zerofee::precompile::PAYABLE_SELECTORS),

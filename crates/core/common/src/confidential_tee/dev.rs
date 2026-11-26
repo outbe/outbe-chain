@@ -3,7 +3,7 @@
 //! These fixtures are compiled for tests and the `dev-keys` feature. They are
 //! not part of a release build.
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 use super::crypto::chacha20poly1305_decrypt;
@@ -12,10 +12,6 @@ use super::crypto::chacha20poly1305_encrypt;
 use super::crypto::hkdf_sha256;
 use super::errors::TeeError;
 
-/// Shared dev group signature for the fidelity test-enclave key.
-pub const FIDELITY_GROUP_SIG: &[u8] = b"outbe-dev-fidelity-group-signature-fixed-seed";
-/// Shared dev chain id for the fidelity test-enclave key.
-pub const FIDELITY_CHAIN_ID: u64 = outbe_primitives::chain::DEVNET_CHAIN_ID;
 /// Shared dev group signature for the gratis test-enclave key.
 pub const GRATIS_GROUP_SIG: &[u8] = b"outbe-dev-gratis-group-signature-fixed-seed!!";
 /// Shared dev chain id for the gratis test-enclave key.
@@ -69,12 +65,6 @@ impl EncryptedShare {
             ciphertext: bytes[44..].to_vec(),
         })
     }
-}
-
-/// The fidelity dev chain id in the runtime's `B256` encoding.
-#[must_use]
-pub fn fidelity_chain() -> B256 {
-    B256::from(U256::from(FIDELITY_CHAIN_ID))
 }
 
 /// Public key corresponding to [`OFFER_SECRET_KEY`].

@@ -4,16 +4,12 @@ use super::*;
 
 /// Independent `(variant, discriminant)` table. Swapping two enum
 /// discriminants fails this list even though `value()` is `as u8`.
-const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 13] = [
+const RECORDABLE_V1_TAG_LITERALS: [(WitnessResponseTag, u8); 9] = [
     (WitnessResponseTag::GratisOpApplied, 1),
     (WitnessResponseTag::PromisOpApplied, 2),
-    (WitnessResponseTag::FidelityLeaguesSnapshotted, 4),
-    (WitnessResponseTag::FidelityIndexQueried, 5),
     (WitnessResponseTag::EncryptedNodMintRejectedV1, 8),
     (WitnessResponseTag::EncryptedNodMinedV1, 9),
     (WitnessResponseTag::NodAmountReadV1, 10),
-    (WitnessResponseTag::FidelityQueryRejected, 15),
-    (WitnessResponseTag::LysisFractionsExecutedV1, 16),
     (WitnessResponseTag::NodGroupLoadOpAppliedV1, 19),
     (WitnessResponseTag::NodGroupLoadReadV1, 20),
     (WitnessResponseTag::NodQuoteEncryptedV1, 21),
@@ -436,7 +432,7 @@ struct RejectedProbe {
 }
 
 impl WitnessSchema for AppliedProbe {
-    const TAG: WitnessResponseTag = WitnessResponseTag::FidelityIndexQueried;
+    const TAG: WitnessResponseTag = WitnessResponseTag::EncryptedNodMinedV1;
 
     fn inputs_canonical_hash(&self) -> B256 {
         self.inputs_canonical_hash
@@ -452,7 +448,7 @@ impl WitnessSchema for AppliedProbe {
 }
 
 impl WitnessSchema for RejectedProbe {
-    const TAG: WitnessResponseTag = WitnessResponseTag::FidelityQueryRejected;
+    const TAG: WitnessResponseTag = WitnessResponseTag::EncryptedNodMintRejectedV1;
 
     fn inputs_canonical_hash(&self) -> B256 {
         self.inputs_canonical_hash
@@ -492,12 +488,12 @@ fn dual_answer_encodes_the_selected_schema_without_a_second_discriminant() {
     let cases = [
         (
             DualWitnessAnswer::<AppliedProbe, RejectedProbe>::Applied(applied.clone()),
-            WitnessResponseTag::FidelityIndexQueried,
+            WitnessResponseTag::EncryptedNodMinedV1,
             postcard::to_allocvec(&cleared_applied).unwrap(),
         ),
         (
             DualWitnessAnswer::Rejected(rejected.clone()),
-            WitnessResponseTag::FidelityQueryRejected,
+            WitnessResponseTag::EncryptedNodMintRejectedV1,
             postcard::to_allocvec(&cleared_rejected).unwrap(),
         ),
     ];

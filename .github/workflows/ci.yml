@@ -229,7 +229,7 @@ jobs:
               exit 1
             fi
           done
-          for crate in outbe-fidelity outbe-gratis outbe-promis outbe-nod; do
+          for crate in outbe-gratis outbe-promis outbe-nod; do
             crate_features="$(cargo tree --locked --package outbe-chain --features outbe-chain/production-enclave -e=features,no-dev -i "${crate}" --depth 1)"
             if ! grep -Eq "${crate} feature \"production-enclave\"" <<<"${crate_features}"; then
               echo "error: ${crate} is missing feature \"production-enclave\" under outbe-chain/production-enclave" >&2
@@ -243,7 +243,7 @@ jobs:
           forbidden='feature "(dev-keys|test-utils|test-enclave|sgx-noattest)"'
           for graph in chain_tree prod_tree; do
             tree="${!graph}"
-            for crate in outbe-core-common outbe-fidelity outbe-gratis outbe-promis outbe-nod outbe-tee outbe-dcap; do
+            for crate in outbe-core-common outbe-gratis outbe-promis outbe-nod outbe-tee outbe-dcap; do
               if grep -Eq "${crate} ${forbidden}" <<<"${tree}"; then
                 echo "error: ${crate} enables a forbidden feature in ${graph}" >&2
                 exit 1
@@ -251,12 +251,12 @@ jobs:
             done
           done
           cli_tree="$(cargo tree --locked --package outbe-cli -e=features,no-dev)"
-          if grep -Eq 'feature "(test-enclave|e2e-test)"|outbe-(fidelity|gratis|promis|nod) feature "(dev-keys|test-utils|test-enclave|production-enclave)"|outbe-core-common feature "(dev-keys|test-utils)"|outbe-tee feature "test-utils"|outbe-dcap feature "(sgx-noattest|test-utils)"' <<<"${cli_tree}"; then
+          if grep -Eq 'feature "(test-enclave|e2e-test)"|outbe-(gratis|promis|nod) feature "(dev-keys|test-utils|test-enclave|production-enclave)"|outbe-core-common feature "(dev-keys|test-utils)"|outbe-tee feature "test-utils"|outbe-dcap feature "(sgx-noattest|test-utils)"' <<<"${cli_tree}"; then
             echo "error: test-only or forbidden feature is enabled in outbe-cli production dependency graph" >&2
             exit 1
           fi
           cli_normal_tree="$(cargo tree --locked --package outbe-cli -e normal --prefix none)"
-          if grep -Eq '^outbe-(fidelity|gratis|promis|nod) v' <<<"${cli_normal_tree}"; then
+          if grep -Eq '^outbe-(gratis|promis|nod) v' <<<"${cli_normal_tree}"; then
             echo "error: confidential domain crate appears in outbe-cli normal dependency graph" >&2
             exit 1
           fi

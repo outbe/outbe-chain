@@ -8,7 +8,6 @@ publish.workspace = true
 [dependencies]
 outbe-system-common.workspace = true
 outbe-core-common.workspace = true
-outbe-fidelity.workspace = true
 outbe-nod.workspace = true
 outbe-macros.workspace = true
 outbe-primitives.workspace = true
@@ -35,7 +34,6 @@ outbe-primitives = { workspace = true, features = ["test-utils"] }
 default = []
 # Deterministic development keys. Never in a release build.
 dev-keys = ["outbe-core-common/dev-keys"]
-test-utils = ["outbe-primitives/test-utils"]
 # Enabled by the node binary in release builds. Asserts, at compile time, that
 # the attestation-skipping in-process stand-in is not in this build.
 production-enclave = []
@@ -44,7 +42,6 @@ production-enclave = []
 test-enclave = [
     "outbe-tee/test-utils",
     "outbe-core-common/dev-keys",
-    "outbe-fidelity/test-enclave",
     "outbe-nod/test-enclave",
 ]
 

@@ -5,7 +5,6 @@
 
 use alloy_primitives::{address, Address, Bytes, B256, U256};
 use alloy_sol_types::{SolCall, SolEvent, SolInterface};
-use outbe_fidelity::{FidelityCohortOp, FidelityOpSection};
 
 use crate::engine::{
     decrypt_balance, decrypt_pledged, derive_account_keys, derive_view_key, modify_mac,
@@ -245,44 +244,6 @@ fn precompile_balance_of_returns_ciphertext() {
     test_enclave::uninstall();
 }
 
-#[test]
-fn folded_fidelity_section_failure_reverts_the_whole_op() {
-    with_env(|storage| {
-        let amount = U256::from(1_000u64);
-        // A folded mint whose fidelity section carries an UNDECRYPTABLE cohort
-        // blob. The gratis mint half would succeed, but the enclave rejects the
-        // WHOLE op when the section fails. So nothing is committed.
-        let bad_section = FidelityOpSection {
-            op: FidelityCohortOp::In,
-            timestamp: 1_000_000,
-            first_qualified_start: 0,
-            current_blob: vec![0xAB; 56], // valid length, garbage ciphertext/tag
-        };
-        let err = api::mint_with_fidelity(
-            storage.clone(),
-            alice(),
-            amount,
-            auth(GratisOp::Mint, alice(), amount, 0),
-            bad_section,
-        )
-        .unwrap_err();
-        let outbe_primitives::error::PrecompileError::RevertBytes(bytes) = &err else {
-            panic!("expected RevertBytes, got: {err:?}");
-        };
-        let decoded = <IGratis::Rejected as alloy_sol_types::SolError>::abi_decode(bytes)
-            .expect("expected IGratis::Rejected");
-        assert!(
-            decoded.value.contains("fidelity section failed"),
-            "expected a fidelity-section rejection, got: {}",
-            decoded.value
-        );
-
-        // Atomic revert: no gratis state was written (balance, op_nonce).
-        assert_eq!(view_balance(storage.clone(), alice()), U256::ZERO);
-        assert_eq!(api::op_nonce(storage.clone(), alice()).unwrap(), 0);
-    });
-}
-
 fn view_pledged(storage: StorageHandle<'_>, account: Address) -> U256 {
     let vk = derive_view_key(&test_enclave::state_key(), account).unwrap();
     let blob = api::pledged_ct(storage, account).unwrap();
@@ -440,7 +401,6 @@ fn an_owner_result_that_differs_from_the_request_is_refused() {
         event_amount: U256::from(event_amount),
         encrypted_event_amount: vec![1],
         next_op_nonce,
-        fidelity: None,
         inputs_canonical_hash: B256::ZERO,
         attestation_tag: Vec::new(),
         pledge_account: None,
@@ -501,19 +461,6 @@ fn encrypted_nod(
     .unwrap()
 }
 
-fn acquisition(
-    timestamp: u64,
-    first_qualified_start: u64,
-    current_blob: Vec<u8>,
-) -> FidelityOpSection {
-    FidelityOpSection {
-        op: FidelityCohortOp::In,
-        timestamp,
-        first_qualified_start,
-        current_blob,
-    }
-}
-
 /// The first NOD mint seals the event amount apart from the stored balance.
 /// A later mint's event opens to the operation delta, not the cumulative balance.
 #[test]
@@ -523,11 +470,10 @@ fn nod_mint_event_amount_differs_from_balance_and_opens_to_the_delta() {
     let first_amount = U256::from(1_000u64);
     let second_amount = U256::from(250u64);
     let (first_balance, second_balance) = StorageHandle::enter(&mut provider, |storage| {
-        let outcome = api::mint_encrypted_nod(
+        api::mint_encrypted_nod(
             storage.clone(),
             &encrypted_nod(first_amount, 7),
             auth(GratisOp::Mint, alice(), first_amount, 0),
-            acquisition(1_700_000_000, 0, Vec::new()),
         )
         .unwrap();
         let first_balance = api::balance_ct(storage.clone(), alice()).unwrap();
@@ -535,11 +481,6 @@ fn nod_mint_event_amount_differs_from_balance_and_opens_to_the_delta() {
             storage.clone(),
             &encrypted_nod(second_amount, 8),
             auth(GratisOp::Mint, alice(), second_amount, 1),
-            acquisition(
-                1_700_086_400,
-                outcome.qualified_start_initialized.unwrap_or(0),
-                outcome.new_blob,
-            ),
         )
         .unwrap();
         let second_balance = api::balance_ct(storage, alice()).unwrap();

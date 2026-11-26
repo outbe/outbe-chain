@@ -147,26 +147,12 @@ fn group_record_survives_membership_changes_until_last_removal() {
 }
 
 #[test]
-fn issuance_rejects_legacy_and_mismatched_digests_without_writes() {
+fn issuance_rejects_mismatched_ids_without_writes() {
     let body = item(Address::repeat_byte(0x42));
     let mut provider = HashMapStorageProvider::new(1);
     StorageHandle::enter(&mut provider, |storage| {
         super::seed_production_nod_genesis(&storage);
-        let legacy = outbe_core_common::wwd_entity_id::derive_poseidon_entity_id(
-            body.owner,
-            WorldwideDay::new(body.series_id.day()),
-        )
-        .to_u256();
-        assert_ne!(body.nod_id, legacy);
         for invalid_id in [
-            legacy,
-            U256::from_be_bytes(
-                outbe_core_common::wwd_entity_id::derive_poseidon_digest(
-                    body.owner,
-                    WorldwideDay::new(body.series_id.day()),
-                )
-                .0,
-            ),
             crate::identity::generate_nod_id(body.series_id, Address::repeat_byte(0x43)),
             crate::test_support::nod_id_of(
                 body.owner,

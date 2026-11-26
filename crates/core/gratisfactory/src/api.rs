@@ -18,23 +18,13 @@ pub fn mint(
     storage.with_checkpoint(|| crate::runtime::mint(storage.clone(), to, amount, auth))
 }
 
-/// Mint the exact encrypted NOD entitlement and acquire its Fidelity cohort.
+/// Mint the exact encrypted NOD entitlement.
 pub fn mint_encrypted_nod(
     storage: StorageHandle<'_>,
     nod: &outbe_core_common::nod_encryption::EncryptedNodV1,
     auth: ModifyAuth,
 ) -> Result<()> {
-    storage.with_checkpoint(|| {
-        let now = storage.now_secs()?;
-        let section = outbe_fidelity::api::cohort_section(
-            storage.clone(),
-            nod.terms.owner,
-            outbe_fidelity::api::FidelityCohortOp::In,
-            now,
-        )?;
-        let outcome = outbe_gratis::api::mint_encrypted_nod(storage.clone(), nod, auth, section)?;
-        outbe_fidelity::api::apply_fidelity_outcome(storage.clone(), nod.terms.owner, &outcome)
-    })
+    storage.with_checkpoint(|| outbe_gratis::api::mint_encrypted_nod(storage.clone(), nod, auth))
 }
 
 pub fn encrypted_balance(
