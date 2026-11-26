@@ -14,24 +14,22 @@ use outbe_system_common::time::{
     date_key_to_utc_timestamp, previous_date_key, timestamp_to_date_key,
 };
 
-mod called {
+mod call {
     use super::*;
-    pub(crate) use crate::called::{call_if_breached, GroupCall};
+    pub(crate) use crate::call::{call_series_if_breached, GroupCall};
 
     pub(super) fn scan_and_call(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<u32> {
-        crate::called::scan_and_call(ctx)
+        crate::call::scan_and_call(ctx)
     }
 
-    pub(super) fn process_call_pass(
-        ctx: &BlockRuntimeContext,
-    ) -> outbe_primitives::error::Result<u32> {
-        crate::called::process_call_pass(ctx)
+    pub(super) fn run_call_pass(ctx: &BlockRuntimeContext) -> outbe_primitives::error::Result<u32> {
+        crate::call::run_call_pass(ctx)
     }
 
     pub(super) fn schedule_call_pass(
         ctx: &BlockRuntimeContext,
     ) -> outbe_primitives::error::Result<()> {
-        crate::called::schedule_call_pass(ctx)
+        crate::call::schedule_call_pass(ctx)
     }
 
     /// Finalizes the Oracle through the UTC day before `ctx`.
@@ -57,7 +55,7 @@ mod called {
         let intex = IntexContract::new(ctx.storage.clone());
         loop {
             let mut height = ctx.block.block_number;
-            for packed in [intex.daily_budget.read()?, intex.cleanup_budget.read()?] {
+            for packed in [intex.daily_budget.read()?, intex.forfeit_budget.read()?] {
                 if let Some(previous) =
                     outbe_system_common::pass_budget::BlockAllowance::unpack(packed)?
                 {
@@ -71,7 +69,7 @@ mod called {
                 },
                 ctx.storage.clone(),
             );
-            crate::called::process_call_pass(&block)?;
+            crate::call::run_call_pass(&block)?;
             let selected = outbe_system_common::pass_budget::BlockAllowance::unpack(
                 intex.daily_budget.read()?,
             )?
@@ -227,12 +225,12 @@ fn call_group<'s>(
         return 0;
     }
     let factory = IntexFactoryContract::new(s.clone());
-    let call = called::GroupCall {
+    let call = call::GroupCall {
         storage: s,
         intex: f,
         factory: &factory,
     };
-    called::call_if_breached(call, group, &window, now_ts).unwrap()
+    call::call_series_if_breached(call, group, &window, now_ts).unwrap()
 }
 
 /// The PROD call trigger: what the auction start fixes while the PROD profile is live.

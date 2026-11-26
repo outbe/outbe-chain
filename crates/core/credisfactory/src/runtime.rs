@@ -252,7 +252,7 @@ fn iso_code(storage: &StorageHandle<'_>, asset: Address) -> Result<u16> {
         .map_err(|_| CredisFactoryError::AssetCurrencyUndecodable.into())
 }
 
-/// Deletes a Credis of a forfeited group.
+/// Deletes a Credis of a closed group.
 pub(crate) fn delete_forfeited_credis(storage: StorageHandle<'_>, credis_id: U256) -> Result<()> {
     burn_forfeited_collateral(storage, credis_id, |_, _| Ok(()))?;
     Ok(())

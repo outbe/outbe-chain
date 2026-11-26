@@ -311,7 +311,7 @@ fn issue_merchant_gem_after_expiry_rejects() {
                 owner: ALICE,
                 source_series_id: source_series_id(),
                 remaining_capacity_minor: U256::from(100u64) * six_decimal_unit(),
-                issued_at: T_NOW - POSITION_VALIDITY_SECONDS - 1,
+                issued_at: T_NOW - GEM_FACTORY_POSITION_VALIDITY_SECONDS - 1,
                 expires_at: T_NOW - 1,
             })
             .unwrap();
@@ -343,7 +343,9 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
     let mut provider = test_storage(Some(rate));
     let (id, expires_at) = StorageHandle::enter(&mut provider, |storage| {
         let id = seed_and_send(&storage, six_decimal_unit(), six_decimal_u128());
-        let expires_at = runtime::position_data(&storage, id).unwrap().expiresAt;
+        let expires_at = runtime::gem_factory_position_data(&storage, id)
+            .unwrap()
+            .expiresAt;
         storage
             .set_block_timestamp(U256::from(expires_at - 1))
             .unwrap();
@@ -364,7 +366,7 @@ fn a_merchant_gem_issues_until_the_second_its_position_expires() {
                     reference_currency: 840,
                 },
             );
-            let remaining = runtime::position_data(&storage, id)
+            let remaining = runtime::gem_factory_position_data(&storage, id)
                 .unwrap()
                 .remainingCapacityMinor;
             (issued, remaining)
@@ -544,7 +546,7 @@ fn issue_merchant_gem_without_a_vwap_of_its_hour_takes_no_capacity() {
             .to_string()
         );
         assert_eq!(
-            runtime::position_data(storage, id)
+            runtime::gem_factory_position_data(storage, id)
                 .unwrap()
                 .remainingCapacityMinor,
             capacity
@@ -785,7 +787,7 @@ fn gem_series_is_the_issue_day_with_a_sub_series_for_each_hour() {
         );
         let called_at = next_day + 2 * SECONDS_PER_DAY;
         let terms = gem.read_call_terms(group).unwrap();
-        crate::called::mark_called(&mut gem, group, &terms, called_at).unwrap();
+        crate::call::call_series(&mut gem, group, &terms, called_at).unwrap();
         let [first, second, other] = gems.each_ref().map(|g| gem_view(storage, g.gem_id));
         assert_eq!(first.group_called_at, called_at);
         assert_eq!(
@@ -877,7 +879,7 @@ fn forfeited_gem_loads_go_to_the_promis_limit_once() {
         }
         let mut gem = GemContract::new(storage.clone());
         let terms = gem.read_call_terms(group).unwrap();
-        crate::called::mark_called(&mut gem, group, &terms, T_NOW).unwrap();
+        crate::call::call_series(&mut gem, group, &terms, T_NOW).unwrap();
         let forfeited = gem_item(storage, merchant).promis_load_minor
             + gem_item(storage, reward).promis_load_minor;
         let before = unallocated(storage);

@@ -33,6 +33,7 @@ contract CodecHarness {
 ///         `BatchPayload`/`MultiPayload` structs. Exercises the deep-module behaviour directly:
 ///         round-trip, version gating, batch-size cap, and the malformed-address reject.
 contract IntexNFT1155RouterCodecTest is Test {
+    address internal constant OWNER = address(0x5E4D);
     CodecHarness internal harness;
 
     function setUp() public {
@@ -47,11 +48,12 @@ contract IntexNFT1155RouterCodecTest is Test {
 
     function test_SingleRoundTrip_PreservesFields() public view {
         IntexNFT1155RouterCodec.SinglePayload memory p =
-            IntexNFT1155RouterCodec.SinglePayload({to: _bytes32(address(0xBEEF)), intexId: 7, units: 3});
+            IntexNFT1155RouterCodec.SinglePayload({owner: OWNER, to: _bytes32(address(0xBEEF)), intexId: 7, units: 3});
         bytes memory encoded = IntexNFT1155RouterCodec.encodeSingle(p);
         assertEq(uint8(encoded[0]), IntexNFT1155RouterCodec.BODY_VERSION_V1);
         assertEq(uint8(encoded[1]), IntexNFT1155RouterCodec.SEND_ONE);
         IntexNFT1155RouterCodec.SinglePayload memory d = harness.decodeSingle(encoded);
+        assertEq(d.owner, OWNER);
         assertEq(d.to, p.to);
         assertEq(d.intexId, 7);
         assertEq(d.units, 3);
@@ -60,7 +62,9 @@ contract IntexNFT1155RouterCodecTest is Test {
     function test_DecodeSingle_RevertsOnTrailingBytes() public {
         bytes memory encoded = abi.encodePacked(
             IntexNFT1155RouterCodec.encodeSingle(
-                IntexNFT1155RouterCodec.SinglePayload({to: _bytes32(address(0xBEEF)), intexId: 7, units: 3})
+                IntexNFT1155RouterCodec.SinglePayload({
+                    owner: OWNER, to: _bytes32(address(0xBEEF)), intexId: 7, units: 3
+                })
             ),
             bytes32(0)
         );
@@ -76,8 +80,9 @@ contract IntexNFT1155RouterCodecTest is Test {
         amounts[0] = 5;
         amounts[1] = 7;
 
-        IntexNFT1155RouterCodec.BatchPayload memory p =
-            IntexNFT1155RouterCodec.BatchPayload({to: _bytes32(address(0xA11CE)), intexIds: intexIds, units: amounts});
+        IntexNFT1155RouterCodec.BatchPayload memory p = IntexNFT1155RouterCodec.BatchPayload({
+            owner: OWNER, to: _bytes32(address(0xA11CE)), intexIds: intexIds, units: amounts
+        });
 
         bytes memory encoded = IntexNFT1155RouterCodec.encodeBatch(p);
 
@@ -86,6 +91,7 @@ contract IntexNFT1155RouterCodecTest is Test {
         assertEq(uint8(encoded[1]), IntexNFT1155RouterCodec.SEND_BATCH, "msgType SEND_BATCH");
 
         IntexNFT1155RouterCodec.BatchPayload memory decoded = harness.decodeBatch(encoded);
+        assertEq(decoded.owner, OWNER, "owner round-trips");
         assertEq(decoded.to, p.to, "to round-trips");
         assertEq(decoded.intexIds.length, 2, "intexIds length");
         assertEq(decoded.intexIds[0], intexIds[0], "intexId 0");
@@ -105,14 +111,16 @@ contract IntexNFT1155RouterCodecTest is Test {
         amounts[0] = 3;
         amounts[1] = 4;
 
-        IntexNFT1155RouterCodec.MultiPayload memory p =
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: amounts});
+        IntexNFT1155RouterCodec.MultiPayload memory p = IntexNFT1155RouterCodec.MultiPayload({
+            owner: OWNER, recipients: recipients, intexIds: intexIds, units: amounts
+        });
 
         bytes memory encoded = IntexNFT1155RouterCodec.encodeMulti(p);
         assertEq(uint8(encoded[0]), IntexNFT1155RouterCodec.BODY_VERSION_V1, "version byte V1");
         assertEq(uint8(encoded[1]), IntexNFT1155RouterCodec.SEND_MULTI, "msgType SEND_MULTI");
 
         IntexNFT1155RouterCodec.MultiPayload memory decoded = harness.decodeMulti(encoded);
+        assertEq(decoded.owner, OWNER, "owner round-trips");
         assertEq(decoded.recipients.length, 2, "recipients length");
         assertEq(decoded.recipients[0], recipients[0], "recipient 0");
         assertEq(decoded.recipients[1], recipients[1], "recipient 1");
@@ -256,19 +264,20 @@ contract IntexNFT1155RouterCodecTest is Test {
     // --- fixtures ---
 
     function _emptyBatch() internal pure returns (IntexNFT1155RouterCodec.BatchPayload memory) {
-        return
-            IntexNFT1155RouterCodec.BatchPayload({to: bytes32(0), intexIds: new uint256[](0), units: new uint256[](0)});
+        return IntexNFT1155RouterCodec.BatchPayload({
+            owner: OWNER, to: bytes32(0), intexIds: new uint256[](0), units: new uint256[](0)
+        });
     }
 
     function _emptyMulti() internal pure returns (IntexNFT1155RouterCodec.MultiPayload memory) {
         return IntexNFT1155RouterCodec.MultiPayload({
-            recipients: new bytes32[](0), intexIds: new uint256[](0), units: new uint256[](0)
+            owner: OWNER, recipients: new bytes32[](0), intexIds: new uint256[](0), units: new uint256[](0)
         });
     }
 
     function _batchOfSize(uint256 n) internal pure returns (IntexNFT1155RouterCodec.BatchPayload memory p) {
         p = IntexNFT1155RouterCodec.BatchPayload({
-            to: _bytes32(address(0xA11CE)), intexIds: new uint256[](n), units: new uint256[](n)
+            owner: OWNER, to: _bytes32(address(0xA11CE)), intexIds: new uint256[](n), units: new uint256[](n)
         });
         for (uint256 i = 0; i < n; i++) {
             p.intexIds[i] = i + 1;
@@ -278,7 +287,7 @@ contract IntexNFT1155RouterCodecTest is Test {
 
     function _multiOfSize(uint256 n) internal pure returns (IntexNFT1155RouterCodec.MultiPayload memory p) {
         p = IntexNFT1155RouterCodec.MultiPayload({
-            recipients: new bytes32[](n), intexIds: new uint256[](n), units: new uint256[](n)
+            owner: OWNER, recipients: new bytes32[](n), intexIds: new uint256[](n), units: new uint256[](n)
         });
         for (uint256 i = 0; i < n; i++) {
             p.recipients[i] = _bytes32(address(uint160(i + 1)));

@@ -74,11 +74,11 @@ pub enum GemFactoryError {
     #[error("promis load must be positive")]
     ZeroPromisLoad,
 
-    #[error("gem group {group_key} has an empty member slot during cleanup")]
-    EmptyMemberSlotDuringCleanup { group_key: B256 },
+    #[error("gem group {group_key} has an empty member slot during forfeit")]
+    EmptyMemberSlotDuringForfeit { group_key: B256 },
 
-    #[error("gem group {group_key} member {gem_id} has no record during cleanup")]
-    MissingMemberRecordDuringCleanup { group_key: B256, gem_id: U256 },
+    #[error("gem group {group_key} member {gem_id} has no record during forfeit")]
+    MissingMemberRecordDuringForfeit { group_key: B256, gem_id: U256 },
 
     #[error("gem group {group} has no record to call")]
     MissingGroupForCall { group: B256 },
@@ -143,13 +143,13 @@ impl From<GemFactoryError> for PrecompileError {
             GemFactoryError::InvalidOwner => revert_with(I::InvalidOwner {}),
             GemFactoryError::Overflow => revert_with(I::Overflow {}),
             GemFactoryError::ZeroPromisLoad => revert_with(I::ZeroPromisLoad {}),
-            GemFactoryError::EmptyMemberSlotDuringCleanup { group_key } => {
-                revert_with(I::EmptyMemberSlotDuringCleanup {
+            GemFactoryError::EmptyMemberSlotDuringForfeit { group_key } => {
+                revert_with(I::EmptyMemberSlotDuringForfeit {
                     groupKey: group_key,
                 })
             }
-            GemFactoryError::MissingMemberRecordDuringCleanup { group_key, gem_id } => {
-                revert_with(I::MissingMemberRecordDuringCleanup {
+            GemFactoryError::MissingMemberRecordDuringForfeit { group_key, gem_id } => {
+                revert_with(I::MissingMemberRecordDuringForfeit {
                     groupKey: group_key,
                     gemId: gem_id,
                 })

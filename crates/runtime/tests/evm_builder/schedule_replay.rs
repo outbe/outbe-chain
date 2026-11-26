@@ -5,7 +5,7 @@
 // `BEGIN_BLOCK_ORDER` is Vote, Update, EnclaveUpgradeDeadline, Rewards,
 // Staking, Oracle, OracleSlash, HyperlaneSlash, and CycleTick.
 // `END_BLOCK_ORDER` is NodFactory, GemFactory, IntexFactory, CredisFactory,
-// and GemCleanup.
+// and GemForfeit.
 
 use alloy_primitives::{Address, Bytes, U256};
 use evm2::evm::{AccountInfo, CacheDB, EmptyDB};

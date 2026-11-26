@@ -120,7 +120,7 @@ fn the_hourly_rollover_at_the_settlement_deadline_grants_no_grace() {
         .unwrap()
         .cutoff()
         + 3_600;
-    world.mark_called(nod_id, deadline - u64::from(CALL_NOTICE_PERIOD));
+    world.call_series(nod_id, deadline - u64::from(CALL_NOTICE_PERIOD));
 
     world.set_timestamp(deadline);
     let (_, _, required) = quote(&mut world);

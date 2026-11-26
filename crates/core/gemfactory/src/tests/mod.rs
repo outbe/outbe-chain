@@ -16,7 +16,8 @@ use outbe_vaultrouter::settlement::SettlementPayment;
 
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 
-const POSITION_VALIDITY_SECONDS: u64 = outbe_gem::GemParams::MAINNET.position_validity;
+const GEM_FACTORY_POSITION_VALIDITY_SECONDS: u64 =
+    outbe_gem::GemParams::MAINNET.gem_factory_position_validity;
 use crate::position_expiry;
 use crate::runtime;
 use crate::schema::{GemFactoryContract, GemFactoryPosition, GemIssueParams};
@@ -469,7 +470,7 @@ pub(crate) fn daily_pass<'s>(
     let gem = GemContract::new(ctx.storage.clone());
     let mut height = ctx.block.block_number;
     loop {
-        for packed in [gem.daily_budget.read()?, gem.cleanup_budget.read()?] {
+        for packed in [gem.daily_budget.read()?, gem.forfeit_budget.read()?] {
             if let Some(previous) =
                 outbe_system_common::pass_budget::BlockAllowance::unpack(packed)?
             {
@@ -483,7 +484,7 @@ pub(crate) fn daily_pass<'s>(
             },
             ctx.storage.clone(),
         );
-        crate::called::process_call_pass(&block)?;
+        crate::call::run_call_pass(&block)?;
         let selected =
             outbe_system_common::pass_budget::BlockAllowance::unpack(gem.daily_budget.read()?)?
                 .map_or(0, |allowance| allowance.day);

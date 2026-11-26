@@ -8,7 +8,7 @@
 use alloy_primitives::{FixedBytes, U256};
 use alloy_sol_types::SolValue;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::notify::{pack_call_notice, send_call_notices};
+use outbe_intexfactory::call_notice::{pack_call_notice, send_call_notices};
 use outbe_intexfactory::targets::{pack_target, TargetMode};
 use outbe_intexfactory::transport::outbox::Message;
 use outbe_intexfactory::transport::wire::MSG_INTEX_SERIES_CALL_NOTICE;

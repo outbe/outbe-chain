@@ -9,8 +9,7 @@ use outbe_system_common::time::SECONDS_PER_DAY_U32;
 use outbe_system_common::units::SCALE_1E6_U128;
 
 use crate::constants::{
-    CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, COMMIT_BOND_MINOR,
-    TRANSIT_MARGIN,
+    BID_BOND_MINOR, CALL_NOTICE_PERIOD, CALL_RATE_PCT, CALL_THRESHOLD, CALL_WINDOW, TRANSIT_MARGIN,
 };
 use crate::errors::IntexError;
 use crate::schema::IntexContract;
@@ -40,7 +39,7 @@ impl IntexParams {
         call_notice_period_seconds: CALL_NOTICE_PERIOD,
         transit_margin_seconds: TRANSIT_MARGIN,
         call_rate: CALL_RATE_PCT,
-        bid_bond_minor: COMMIT_BOND_MINOR,
+        bid_bond_minor: BID_BOND_MINOR,
         promis_load_launch_exponent: 12,
     };
 

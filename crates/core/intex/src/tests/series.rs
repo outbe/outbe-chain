@@ -87,7 +87,7 @@ fn a_spent_series_is_deleted_and_leaves_the_enumeration() {
 }
 
 /// Past its deadline a series' unpaid units wait for the group's expiry to return them,
-/// so the series is spent only once the group handed it to the cleanup.
+/// so the series is spent only once the group handed it to the forfeit pass.
 #[test]
 fn a_forfeited_series_is_spent_once_its_group_returned_its_units() {
     with_registry(|s| {
@@ -108,7 +108,7 @@ fn a_forfeited_series_is_spent_once_its_group_returned_its_units() {
             .group_key()
             .expect("date step");
         IntexContract::new(s.clone())
-            .hand_to_cleanup(group)
+            .hand_to_forfeit(group)
             .unwrap();
         assert!(api::release_if_spent(&s, sid(11)).unwrap());
     });
@@ -133,7 +133,7 @@ fn a_fully_mined_called_series_stays_until_its_group_is_returned() {
             .group_key()
             .expect("date step");
         IntexContract::new(s.clone())
-            .hand_to_cleanup(group)
+            .hand_to_forfeit(group)
             .unwrap();
         assert!(api::release_if_spent(&s, sid(11)).unwrap());
         assert!(!api::series_exists(&s, sid(11)).unwrap());

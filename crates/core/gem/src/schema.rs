@@ -12,7 +12,7 @@ pub enum GemState {
     Issued = 0,
     Called = 1,
     Settled = 2,
-    /// Read-time only: a Called gem past its notice period, until the cleanup deletes it.
+    /// Read-time only: a Called gem past its notice period, until the forfeit pass deletes it.
     Forfeited = 3,
 }
 
@@ -210,7 +210,7 @@ impl GemView {
 #[storage_schema]
 #[contract(addr = GEM_ADDRESS)]
 pub struct GemContract {
-    // --- Group membership: unsettled gems for the cleanup, with a count,
+    // --- Group membership: unsettled gems for the forfeit pass, with a count,
     // positional map and reverse map for swap removal.
     #[attribute(order = 1)]
     pub group_gem_count: outbe_primitives::storage::dsl::Map<B256, u32>,
@@ -264,20 +264,20 @@ pub struct GemContract {
     // --- Called groups, queued by the hour their notice period closes in. Price
     // drives calling and only time drives expiry, so the two stages stay separate.
     #[attribute(order = 20)]
-    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub close_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 21)]
-    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub close_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 22)]
-    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub close_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     /// This value counts all slots ever used in a day.
     /// Retirement sets slots to zero without compacting them.
     #[attribute(order = 23)]
-    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub close_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 24)]
-    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub close_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     /// `keccak256(hour_be32 ++ slot_be32)` -> a called group's key.
     #[attribute(order = 25)]
-    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub close_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     /// Group key -> `(hour << 32) | slot`. 0 = not queued.
     #[attribute(order = 26)]
     pub called_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
@@ -285,9 +285,9 @@ pub struct GemContract {
     #[attribute(order = 27)]
     pub called_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 28)]
-    pub forfeit_pass_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub close_pass_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 29)]
-    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub close_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
     // --- Call sweep scheduling.
     /// Currency the unfinished call pass resumes at.
@@ -326,35 +326,35 @@ pub struct GemContract {
     #[attribute(order = 42)]
     pub group_unsettled_load_minor: outbe_primitives::storage::dsl::Map<B256, U256>,
 
-    // --- This queue stores forfeited groups whose unsettled gems await deletion.
-    // It schedules groups by day, like the forfeit queue.
+    // --- This queue stores closed groups whose unsettled gems await deletion.
+    // It schedules groups by day, like the close queue.
     #[attribute(order = 43)]
-    pub cleanup_tree_root: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_tree_root: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 44)]
-    pub cleanup_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_mid: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 45)]
-    pub cleanup_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
+    pub forfeit_tree_leaf: outbe_primitives::storage::dsl::Map<u32, U256>,
     #[attribute(order = 46)]
-    pub cleanup_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_len: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 47)]
-    pub cleanup_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
+    pub forfeit_day_live: outbe_primitives::storage::dsl::Map<u32, u32>,
     #[attribute(order = 48)]
-    pub cleanup_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
+    pub forfeit_day_at: outbe_primitives::storage::dsl::Map<B256, B256>,
     #[attribute(order = 49)]
-    pub cleanup_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub forfeit_group_slot: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 50)]
-    pub cleanup_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
+    pub forfeit_deadline: outbe_primitives::storage::dsl::Map<B256, u64>,
     #[attribute(order = 51)]
-    pub cleanup_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
+    pub forfeit_sweep_day: outbe_primitives::storage::dsl::Value<u32>,
     #[attribute(order = 52)]
-    pub cleanup_cursor: outbe_primitives::storage::dsl::Value<u64>,
+    pub forfeit_cursor: outbe_primitives::storage::dsl::Value<u64>,
 
     #[attribute(order = 53)]
     pub daily_phase: outbe_primitives::storage::dsl::Value<u8>,
     #[attribute(order = 54)]
     pub daily_budget: outbe_primitives::storage::dsl::Value<U256>,
     #[attribute(order = 56)]
-    pub cleanup_budget: outbe_primitives::storage::dsl::Value<U256>,
+    pub forfeit_budget: outbe_primitives::storage::dsl::Value<U256>,
 
     /// The number the next new call price of a series gets. 0 = none yet, so it starts at 24;
     /// the last one a series gives is 65534.

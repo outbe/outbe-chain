@@ -69,7 +69,7 @@ fn cash_account_issues_the_credis_with_one_command() {
         assert_eq!(record.entry_price_minor, oracle_rate());
         assert_eq!(
             record.call_price_minor,
-            crate::rules::calc_call_price(oracle_rate(), outbe_credis::constants::CALL_RATE_PCT)
+            crate::rules::compute_call_price(oracle_rate(), outbe_credis::constants::CALL_RATE_PCT)
                 .unwrap()
         );
         assert_eq!(
@@ -286,7 +286,7 @@ fn issuance_uses_reserved_terms_across_midnight_and_oracle_changes() {
         assert_eq!(record.policy_rate, reservation.policy_rate);
         assert_eq!(
             record.call_price_minor,
-            crate::rules::calc_call_price(
+            crate::rules::compute_call_price(
                 reservation.entry_price_minor,
                 outbe_credis::constants::CALL_RATE_PCT
             )
@@ -378,7 +378,7 @@ fn credis_series_lifecycle_emits_open_issue_settle_call_close_and_forfeit_events
     provider.set_block_number(BLOCK_NUMBER + 2);
     StorageHandle::enter(&mut provider, |storage| {
         runtime::forfeit_by_owner(storage.clone(), alice(), id_owner_forfeited).unwrap();
-        // Breach the call window via `scan`, then let `id_swept` lapse through close and cleanup.
+        // Breach the call window via `scan`, then let `id_swept` lapse through close and forfeit.
         let at = CREATED_AT + (u64::from(CALL_LOOKBACK_DAYS) + 2) * DAY;
         advance_to(&storage, at);
         fill_days(
@@ -480,7 +480,7 @@ fn reservation_snapshots_call_profile_terms_and_a_called_full_settlement_deletes
             let record = CredisContract::new(storage.clone()).get_credis(id).unwrap();
             assert_eq!(
                 record.call_price_minor,
-                crate::rules::calc_call_price(record.entry_price_minor, prod_terms.call_rate)
+                crate::rules::compute_call_price(record.entry_price_minor, prod_terms.call_rate)
                     .unwrap()
             );
             assert_eq!(
@@ -588,7 +588,7 @@ fn a_called_series_settled_before_its_deadline_closes_with_zero_forfeit() {
         finalize_through(&storage, past);
         daily_pass(&storage, past).unwrap();
         assert_eq!(credis.called_group_slot.read(&group).unwrap(), 0);
-        assert_eq!(credis.cleanup_group_slot.read(&group).unwrap(), 0);
+        assert_eq!(credis.forfeit_group_slot.read(&group).unwrap(), 0);
     });
 
     let closed: Vec<_> = provider
@@ -651,7 +651,7 @@ fn credis_series_opened_once_per_sub_series() {
     assert_eq!(opened[0].entryPriceMinor, oracle_rate());
     assert_eq!(
         opened[0].callPriceMinor,
-        crate::rules::calc_call_price(oracle_rate(), outbe_credis::constants::CALL_RATE_PCT)
+        crate::rules::compute_call_price(oracle_rate(), outbe_credis::constants::CALL_RATE_PCT)
             .unwrap()
     );
 

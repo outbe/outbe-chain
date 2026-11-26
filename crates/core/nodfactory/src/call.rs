@@ -5,8 +5,8 @@
 //! A group is called, walking each currency's call-price trie, when the reference
 //! price exceeded its call price on at least its `call_threshold_seconds` of the
 //! trailing `call_window_seconds`. The call queues it on its deadline, and the daily pass
-//! forfeits the groups whose `call_notice_period_seconds` lapsed
-//! (`forfeited::forfeit_through`).
+//! closes the groups whose `call_notice_period_seconds` lapsed
+//! (`close::close_through`).
 //!
 //! Issuance seals all four terms onto the group, and this scan reads them back
 //! from it. Retuning a constant therefore leaves every issued group on the
@@ -59,8 +59,8 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 }
 
 /// This function runs the next coupled call and forfeit slice against its pinned observation day.
-/// The return value counts called groups, not forfeited groups.
-pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
+/// The return value counts called groups, not closed groups.
+pub fn run_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut NodCallPass::new(ctx))
 }
 
@@ -97,7 +97,7 @@ impl<'storage> CallPass<'storage> for NodCallPass<'storage> {
         let pinned_ts = outbe_system_common::time::date_key_to_utc_timestamp(pinned_day)
             .map_err(crate::errors::date_step_error)?;
         let through_day = outbe_core_common::deadline_queue::deadline_day(pinned_ts)?;
-        crate::forfeited::forfeit_through(ctx, through_day, budget)
+        crate::close::close_through(ctx, through_day, budget)
     }
 
     type Bins<'a>
@@ -222,7 +222,7 @@ pub(crate) fn call_currency(
                 if retire_settled_group(nod, group_key, ctx.block.timestamp)? {
                     return Ok(1);
                 }
-                if !call_if_breached(nod, window, group_key, ctx.block.timestamp)? {
+                if !call_series_if_breached(nod, window, group_key, ctx.block.timestamp)? {
                     return Ok(0);
                 }
                 called += 1;
@@ -254,7 +254,7 @@ fn retire_settled_group(nod: &mut NodContract<'_>, group_key: B256, now: u64) ->
 }
 
 /// Calls the group if the window breached its sealed terms. Returns whether it did.
-fn call_if_breached(
+fn call_series_if_breached(
     nod: &mut NodContract<'_>,
     window: &CallWindow,
     group_key: B256,
@@ -267,7 +267,7 @@ fn call_if_breached(
     if !window.breached(&breach_terms(nod, group_key, &terms)?) {
         return Ok(false);
     }
-    mark_called(nod, group_key, now, terms.call_notice_period_seconds)?;
+    call_series(nod, group_key, now, terms.call_notice_period_seconds)?;
     Ok(true)
 }
 
@@ -310,7 +310,7 @@ pub(crate) fn breach_terms(
 }
 
 /// Stamps the call and opens the settlement window the group sealed.
-pub(crate) fn mark_called(
+pub(crate) fn call_series(
     nod: &mut NodContract<'_>,
     group_key: B256,
     now: u64,

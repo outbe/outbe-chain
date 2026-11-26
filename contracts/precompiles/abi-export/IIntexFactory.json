@@ -1,14 +1,7 @@
 [
   {
     "type": "function",
-    "name": "flush",
-    "inputs": [],
-    "outputs": [],
-    "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "getCallProgress",
+    "name": "callState",
     "inputs": [
       {
         "name": "intexId",
@@ -20,7 +13,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct IIntexFactory.CallProgress",
+        "internalType": "struct IIntexFactory.CallState",
         "components": [
           {
             "name": "callWindowDays",
@@ -66,6 +59,13 @@
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "flush",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -737,6 +737,11 @@
   },
   {
     "type": "error",
+    "name": "IntexSeriesPageCountExceedsU16",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidWireMessage",
     "inputs": [
       {
@@ -745,11 +750,6 @@
         "internalType": "uint8"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "IssuanceChunkCountExceedsU16",
-    "inputs": []
   },
   {
     "type": "error",

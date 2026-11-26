@@ -26,7 +26,7 @@ use outbe_intex::{CallBins, IntexContract};
 
 pub(crate) mod group;
 
-pub(crate) use group::{breach_terms, call_if_breached, GroupCall};
+pub(crate) use group::{breach_terms, call_series_if_breached, GroupCall};
 
 /// Cycle daily-trigger entry: schedules the day the Oracle has just finalized.
 pub fn schedule_call_pass(ctx: &BlockRuntimeContext) -> Result<()> {
@@ -41,7 +41,7 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
 
 /// This function resumes the coupled daily pass with the same observation day and shared block allowance.
 /// It returns the number of called series.
-pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
+pub fn run_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut IntexCallPass::new(ctx))
 }
 
@@ -79,7 +79,7 @@ impl<'storage> CallPass<'storage> for IntexCallPass<'storage> {
         let pinned_ts = outbe_system_common::time::date_key_to_utc_timestamp(pinned_day)
             .map_err(crate::errors::date_step_error)?;
         let through_day = outbe_core_common::deadline_queue::deadline_day(pinned_ts)?;
-        crate::forfeited::forfeit_through(ctx, through_day, budget)
+        crate::close::close_through(ctx, through_day, budget)
     }
 
     type Bins<'a>
@@ -163,7 +163,7 @@ fn call_currency(
                     intex: &mut intex,
                     factory: &factory,
                 };
-                let applied = call_if_breached(call, group, window, ctx.block.timestamp)?;
+                let applied = call_series_if_breached(call, group, window, ctx.block.timestamp)?;
                 called += applied;
                 Ok(applied)
             })

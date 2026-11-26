@@ -10,6 +10,7 @@ import {IIntexNFT1155} from "@contracts/shared/interfaces/IIntexNFT1155.sol";
 import {IntexNFT1155Router} from "@contracts/shared/IntexNFT1155Router.sol";
 import {IIntexNFT1155Router, SendParam} from "@contracts/shared/interfaces/IIntexNFT1155Router.sol";
 import {ERC7786Sender} from "@contracts/shared/ERC7786Sender.sol";
+import {RevertingERC1155Receiver} from "@test-mocks/RevertingERC1155Receiver.sol";
 
 /// @title IntexNFT1155RouterSingleTest
 /// @notice Foundry tests for IntexNFT1155Router with IntexNFT1155 token.
@@ -374,6 +375,27 @@ contract IntexNFT1155RouterSingleTest is CrossChainTest {
             abi.encodeWithSelector(IIntexNFT1155Router.NoSuchFailedCrosschainReceive.selector, receiveId, 0)
         );
         adapterB.sendBackToSource(receiveId, 0);
+    }
+
+    function test_sendBackToSource_returnsTheUnitsToTheOwnerNotTheRecipient() public {
+        RevertingERC1155Receiver recipient = new RevertingERC1155Receiver();
+        SendParam memory sendParam = SendParam({
+            dstChainId: B_CHAIN_ID, to: bytes32(uint256(uint160(address(recipient)))), intexId: INTEX_ID, units: AMOUNT
+        });
+        uint256 fee = adapterA.quoteSend(sendParam);
+        vm.prank(user);
+        adapterA.send{value: fee}(sendParam);
+        bytes32 receiveId = keccak256(abi.encode(_interop(A_CHAIN_ID, address(adapterA)), bridge.lastPayload()));
+        _deliverAToB();
+
+        (,,, bool parked) = adapterB.getFailedCrosschainReceive(receiveId, 0);
+        assertTrue(parked, "the recipient rejects the mint");
+
+        adapterB.sendBackToSource{value: FEE}(receiveId, 0);
+        _deliverBToA();
+
+        assertEq(tokenA.balanceOf(user, INTEX_ID), AMOUNT, "the owner gets the units back");
+        assertEq(tokenA.balanceOf(address(recipient), INTEX_ID), 0, "the recipient gets nothing on the source");
     }
 
     function test_retryIntexCrosschainReceive_revertsForUnknownReceiveId() public {

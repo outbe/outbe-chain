@@ -47,9 +47,9 @@ pub fn scan_and_call(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx))
 }
 
-/// This function runs calls, group forfeits, and cleanup that moves value in pinned-day order.
-/// The return value counts called groups, not forfeited groups or deleted members.
-pub fn process_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
+/// This function runs calls, group closes, and the forfeit pass that moves value in pinned-day order.
+/// The return value counts called groups, not closed groups or deleted members.
+pub fn run_call_pass(ctx: &BlockRuntimeContext) -> Result<u32> {
     call_pass::continue_day(ctx, &mut CredisCallPass::new(ctx))
 }
 
@@ -87,8 +87,8 @@ impl<'storage> CallPass<'storage> for CredisCallPass<'storage> {
             .map_err(crate::rules::date_step_error)?;
         let through_day = outbe_core_common::deadline_queue::deadline_day(pinned_ts)?;
         match phase {
-            1 => crate::forfeited::forfeit_through(ctx, through_day, budget),
-            _ => crate::cleanup::cleanup_through(ctx, through_day, budget),
+            1 => crate::close::close_through(ctx, through_day, budget),
+            _ => crate::forfeit::forfeit_through(ctx, through_day, budget),
         }
     }
 
@@ -138,7 +138,7 @@ impl<'storage> CallPass<'storage> for CredisCallPass<'storage> {
                     budget,
                     |group, budget| {
                         call_pass::call_entry::<Self>(&ctx.storage, budget, group, || {
-                            let calls = u32::from(call_if_breached(
+                            let calls = u32::from(call_series_if_breached(
                                 &mut caller,
                                 window,
                                 group,
@@ -166,7 +166,7 @@ pub(crate) fn emit(storage: &StorageHandle<'_>, event: &impl SolEvent) -> Result
     storage.emit_event(CREDIS_FACTORY_ADDRESS, SolEvent::encode_log_data(event))
 }
 
-fn call_if_breached(
+fn call_series_if_breached(
     credis: &mut CredisContract<'_>,
     window: &CallWindow,
     group: B256,

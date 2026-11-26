@@ -1,13 +1,13 @@
 //! NodFactory: encrypted Nod issuance, settlement and mining, and the Nod call
-//! and forfeit sweeps. Nod data lives in the Nod entity store at
+//! and close sweeps. Nod data lives in the Nod entity store at
 //! [`outbe_system_common::addresses::NOD_ADDRESS`]; NodFactory carries no storage of its own.
 
 pub mod api;
-pub(crate) mod call_progress;
-pub mod called;
-mod cleanup;
+pub mod call;
+pub(crate) mod call_state;
+pub mod close;
 pub mod errors;
-pub mod forfeited;
+mod forfeit;
 pub mod hooks;
 pub mod offer;
 pub mod precompile;

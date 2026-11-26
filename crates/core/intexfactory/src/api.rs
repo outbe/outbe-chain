@@ -1,6 +1,6 @@
 //! Cross-module API for IntexFactory.
 //!
-//! `issue_intex` is the issuance hand-off of the clearing engine (Desis). It is a
+//! `open_intex_series` is the issuance hand-off of the clearing engine (Desis). It is a
 //! Rust-to-Rust call, not a precompile selector, and it mirrors the Intex write
 //! API. The user-facing surface (settle / minePromis) lives in the precompile.
 
@@ -31,11 +31,11 @@ pub fn call_terms(storage: &StorageHandle<'_>) -> Result<IntexCallTerms> {
 /// target chain must be told. The clearing engine calls this after a cleared auction,
 /// with the conditions the day fixed at its auction start.
 /// The clearing engine then packs the day's legs into messages and sends them.
-pub fn issue_intex(
+pub fn open_intex_series(
     storage: &StorageHandle<'_>,
     params: IssuanceParams,
 ) -> Result<Vec<runtime::IssuanceLeg>> {
-    runtime::issue_intex(storage, params)
+    runtime::open_intex_series(storage, params)
 }
 
 /// Send a day's issuance legs, packed into as few per-chain messages as the wire allows.
