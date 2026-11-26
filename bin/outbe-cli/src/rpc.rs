@@ -49,7 +49,9 @@ pub trait Rpc {
     fn outbe_consensus_status(&self) -> impl std::future::Future<Output = Result<Value>> + Send;
     fn outbe_tee_renewal_schedule_v1(
         &self,
+        checkpoint_hash: alloy_primitives::B256,
     ) -> impl std::future::Future<Output = Result<TeeRenewalScheduleV1>> + Send {
+        let _ = checkpoint_hash;
         async { Err(RpcError::TeeRenewalScheduleUnsupported.into()) }
     }
     fn eth_get_block_by_number(
@@ -273,10 +275,16 @@ impl Rpc for RpcClient {
             .await
     }
 
-    async fn outbe_tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
+    async fn outbe_tee_renewal_schedule_v1(
+        &self,
+        checkpoint_hash: alloy_primitives::B256,
+    ) -> Result<TeeRenewalScheduleV1> {
         serde_json::from_value(
-            self.call_rpc("outbe_teeRenewalScheduleV1", serde_json::json!([]))
-                .await?,
+            self.call_rpc(
+                "outbe_teeRenewalScheduleV1",
+                serde_json::json!([checkpoint_hash]),
+            )
+            .await?,
         )
         .wrap_err("decode outbe_teeRenewalScheduleV1")
     }
@@ -434,7 +442,10 @@ pub mod mock {
     }
 
     impl Rpc for MockRpc {
-        async fn outbe_tee_renewal_schedule_v1(&self) -> Result<TeeRenewalScheduleV1> {
+        async fn outbe_tee_renewal_schedule_v1(
+            &self,
+            _checkpoint_hash: alloy_primitives::B256,
+        ) -> Result<TeeRenewalScheduleV1> {
             clone_result(&self.tee_renewal_schedule)
         }
 
@@ -489,6 +500,13 @@ pub mod mock {
     }
 
     impl Rpc for RecordingRpc {
+        async fn outbe_tee_renewal_schedule_v1(
+            &self,
+            _checkpoint_hash: alloy_primitives::B256,
+        ) -> Result<TeeRenewalScheduleV1> {
+            Err(RpcError::TeeRenewalScheduleUnsupported.into())
+        }
+
         async fn eth_call_at(&self, to: Address, data: &[u8], block_tag: &str) -> Result<Vec<u8>> {
             self.next_response(RecordedRpcCall::EthCallAt {
                 to,

@@ -28,7 +28,8 @@ pub enum EngineValidatorQuery {
     ReshareTarget,
     /// Pending joiners admitted as secondary peers.
     PendingValidators,
-    /// Pending and jailed validators admitted as secondary peers.
+    /// Pending, retired (`Unbonding`, `Inactive`), and jailed validators
+    /// admitted as secondary peers.
     AdmittedNonConsensus,
 }
 

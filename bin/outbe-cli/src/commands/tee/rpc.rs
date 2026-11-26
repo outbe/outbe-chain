@@ -1,6 +1,6 @@
 //! Read-only adapter for finalized TEE registry queries.
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256};
 use outbe_tee::registry_view::{ChainRpc, FinalizedStateRpc, RegistryRpc};
 
 use crate::rpc::Rpc;
@@ -40,10 +40,11 @@ impl<R: Rpc + Sync> FinalizedStateRpc for CliFinalityRpc<'_, R> {
 impl<R: Rpc + Sync> RegistryRpc for CliFinalityRpc<'_, R> {
     async fn tee_renewal_schedule_v1(
         &self,
+        finalized_hash: B256,
     ) -> std::result::Result<outbe_primitives::tee_operator_v1::TeeRenewalScheduleV1, Self::Error>
     {
         self.0
-            .outbe_tee_renewal_schedule_v1()
+            .outbe_tee_renewal_schedule_v1(finalized_hash)
             .await
             .map_err(CliRpcReport)
     }

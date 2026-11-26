@@ -9,6 +9,7 @@ pub(super) struct RecoveredMarshal<E: Clock + CryptoRng + Spawner + Storage + Me
     pub(super) actor: MarshalActor<E>,
     pub(super) mailbox: MarshalMailbox,
     pub(super) processed_height: Height,
+    pub(super) archive_ceiling: u64,
     pub(super) epocher: crate::follow::FollowerEpocher,
 }
 
@@ -57,6 +58,12 @@ where
     let view_retention_timeout = u64::from(config::ACTIVITY_TIMEOUT)
         .checked_mul(config::VIEW_RETENTION_MULTIPLIER)
         .ok_or(crate::errors::StackEpochError::ViewRetentionTimeoutOverflow)?;
+
+    let archive_finalization_tip =
+        marshal::store::Certificates::last_index(&finalizations_archive).map_or(0, Height::get);
+    let archive_block_tip =
+        marshal::store::Blocks::last_index(&blocks_archive).map_or(0, Height::get);
+    let archive_ceiling = archive_finalization_tip.max(archive_block_tip);
 
     let marshal_genesis_anchor = genesis_consensus_block(node)?;
     let (marshal_actor, marshal_mailbox, last_consensus_finalized_opt) =
@@ -112,6 +119,7 @@ where
         actor: marshal_actor,
         mailbox: marshal_mailbox,
         processed_height: last_consensus_finalized,
+        archive_ceiling,
         epocher,
     })
 }

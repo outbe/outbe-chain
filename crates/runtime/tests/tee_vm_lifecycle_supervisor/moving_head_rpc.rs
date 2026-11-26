@@ -176,6 +176,8 @@ struct MovingChain {
     binding: NodeEnclaveBindingV1View,
     public_key: [u8; 32],
     head_index: AtomicUsize,
+    advance_on_schedule_read: bool,
+    advance_on_proof: bool,
 }
 
 pub(super) fn block_json(at: LifecycleCheckpointV1, parent: B256, extra: &[u8]) -> Value {
@@ -294,6 +296,18 @@ impl MovingChain {
         self.certified[self.head_index.load(Ordering::SeqCst)].at
     }
 
+    fn advance_head_once(&self) {
+        let current = self.head_index.load(Ordering::SeqCst);
+        if current + 1 < self.certified.len() {
+            let _ = self.head_index.compare_exchange(
+                current,
+                current + 1,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            );
+        }
+    }
+
     fn header(&self, tag: &str) -> Result<Value, ErrorObjectOwned> {
         let height = if tag == "finalized" {
             self.head().height
@@ -305,6 +319,49 @@ impl MovingChain {
         self.blocks.get(height as usize).cloned().ok_or_else(|| {
             ErrorObjectOwned::owned(-32000, format!("missing block {tag}"), None::<()>)
         })
+    }
+
+    fn schedule_by_params(&self, args: &[Value]) -> Result<TeeRenewalScheduleV1, ErrorObjectOwned> {
+        if self.advance_on_schedule_read {
+            self.advance_head_once();
+        }
+        let target = match args.first() {
+            None | Some(Value::Null) => self.head(),
+            Some(value) => {
+                let hash: B256 = serde_json::from_value(value.clone()).map_err(|error| {
+                    ErrorObjectOwned::owned(
+                        -32602,
+                        format!("invalid checkpoint hash: {error}"),
+                        None::<()>,
+                    )
+                })?;
+                let found = self
+                    .certified
+                    .iter()
+                    .find(|entry| entry.at.hash == hash)
+                    .map(|entry| entry.at)
+                    .ok_or_else(|| {
+                        ErrorObjectOwned::owned(
+                            -32602,
+                            format!("unknown schedule checkpoint {hash}"),
+                            None::<()>,
+                        )
+                    })?;
+                if found.height > self.head().height {
+                    return Err(ErrorObjectOwned::owned(
+                        -32602,
+                        format!(
+                            "height {} is above the node's finalized height {}",
+                            found.height,
+                            self.head().height
+                        ),
+                        None::<()>,
+                    ));
+                }
+                found
+            }
+        };
+        Ok(schedule_for(target))
     }
 
     fn proof(
@@ -326,7 +383,7 @@ impl MovingChain {
         if self.certified[i].at.height > self.head().height {
             return Err(MovingRpcError::UnknownBlock(selector.block_hash));
         }
-        if i + 1 < self.certified.len() {
+        if self.advance_on_proof && i + 1 < self.certified.len() {
             let _ = self
                 .head_index
                 .compare_exchange(i, i + 1, Ordering::SeqCst, Ordering::SeqCst);
@@ -394,11 +451,16 @@ fn in_process_methods(chain: Arc<MovingChain>) -> (jsonrpsee::Methods, Calls) {
     let state = chain.clone();
     let seen = calls.clone();
     module
-        .register_method("outbe_teeRenewalScheduleV1", move |_, _, _| {
+        .register_method("outbe_teeRenewalScheduleV1", move |params, _, _| {
+            let args: Vec<Value> = match params.as_str() {
+                None => Vec::new(),
+                Some(_) => params.parse()?,
+            };
             seen.lock()
                 .unwrap()
-                .push(("outbe_teeRenewalScheduleV1".into(), Vec::new()));
-            Ok::<_, ErrorObjectOwned>(serde_json::to_value(schedule_for(state.head())).unwrap())
+                .push(("outbe_teeRenewalScheduleV1".into(), args.clone()));
+            let schedule = state.schedule_by_params(&args)?;
+            Ok::<_, ErrorObjectOwned>(serde_json::to_value(schedule).unwrap())
         })
         .unwrap();
     let seen = calls.clone();
@@ -603,6 +665,8 @@ async fn moving_head_upgrade_proof_and_130_block_rollover_use_incremental_histor
         binding: (&binding_for(&intent)).into(),
         public_key: context.network_encryption_public,
         head_index: AtomicUsize::new(0),
+        advance_on_schedule_read: false,
+        advance_on_proof: true,
     });
     let (methods, calls) = in_process_methods(Arc::clone(&chain));
     let dir = tempfile::tempdir().unwrap();
@@ -644,6 +708,153 @@ async fn moving_head_upgrade_proof_and_130_block_rollover_use_incremental_histor
     assert_incremental_history(&calls, h1.height, far.height);
 }
 
+#[tokio::test]
+async fn moving_head_schedule_stays_pinned_for_validator_and_node_host_reads() {
+    use outbe_consensus::finalized_admission_test_utils::FinalityCommitteeFixture;
+    outbe_consensus::config::init_consensus_chain_id(crate::TEST_CHAIN_ID).ok();
+    let committee = FinalityCommitteeFixture::new(11);
+    let descriptor = proof::descriptor(&committee);
+    let live = Arc::new(proof::context(9, &descriptor));
+    let donor = Arc::new(proof::context(8, &descriptor));
+    donor
+        .activate_for_test(
+            ResidentOfferMaterial::for_test(
+                vec![7; 96],
+                B256::from(donor.manifest().chain_id),
+                0,
+                0,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let policy =
+        no_attestation_dev_policy_v1(crate::TEST_CHAIN_ID, live.manifest().genesis_hash).unwrap();
+    let intent = RegistrationIntentFixture {
+        operation: AttestationOperationV1::RegisterEnclave,
+        policy_hash: policy.policy_hash().unwrap(),
+        binding_id: B256::repeat_byte(0x43),
+        binding_version: 1,
+        registration_version: 1,
+        renewal_nonce: 0,
+        transition_nonce: 0,
+        requested_valid_until: 50_000,
+    }
+    .for_manifest(live.manifest())
+    .unwrap();
+    let context = proof::onboarding_context(&intent, donor.network_encryption_public().unwrap());
+    let artifact = donor
+        .prepare_no_attestation_dev_onboarding_artifact_v2(context)
+        .unwrap()
+        .onboarding_artifact;
+    let slots = onboarding_registry_slots_v1(&context);
+    let openings = [
+        Opening::new(slots, onboarding_values(&context), 1),
+        Opening::new(slots, onboarding_values(&context), 2),
+        Opening::new(slots, onboarding_values(&context), 3),
+    ];
+    let (certified, blocks) =
+        canonical_chain_with_heights(&committee, context.genesis_hash, &openings, [2, 3, 4]);
+    let tx = B256::repeat_byte(0x5a);
+    let event = ITeeRegistryV1::OfferKeySealedForRegistryV1 {
+        nodeIdHash: context.node_id_hash,
+        sealedOfferKey: Bytes::from(artifact),
+    };
+    let encoded = event.encode_log_data();
+    let log = json!({
+        "address": TEE_REGISTRY_ADDRESS,
+        "topics": encoded.topics(),
+        "data": encoded.data,
+        "blockNumber": format!("0x{:x}", certified[0].at.height),
+        "blockHash": certified[0].at.hash,
+        "transactionHash": tx,
+        "removed": false,
+    });
+    let chain = Arc::new(MovingChain {
+        certified,
+        openings,
+        blocks,
+        log,
+        policy,
+        binding: (&binding_for(&intent)).into(),
+        public_key: context.network_encryption_public,
+        head_index: AtomicUsize::new(0),
+        advance_on_schedule_read: true,
+        advance_on_proof: false,
+    });
+    let (methods, calls) = in_process_methods(Arc::clone(&chain));
+    let dir = tempfile::tempdir().unwrap();
+    provision_host_key(dir.path());
+    let mut supervisor = outbe_runtime::LifecycleSupervisorProbe::new(
+        methods,
+        test_signers(),
+        (Arc::clone(&live), dir.path().to_owned(), descriptor),
+    )
+    .unwrap();
+    let [h1, h2, h3] = chain.certified.each_ref().map(|entry| entry.at);
+    assert_eq!(chain.head(), h1);
+
+    let outcome = supervisor
+        .observe_enrollment()
+        .await
+        .expect("pinned Validator and NodeHost schedule reads must succeed while head advances");
+    let Some(EnrollmentOutcome::Admitted { anchor }) = outcome else {
+        panic!("expected admission at pinned checkpoint H, got {outcome:?}");
+    };
+    assert_eq!(anchor.finalized_height, h2.height);
+    assert_eq!(anchor.finalized_hash, h2.hash);
+    assert_eq!(
+        chain.head(),
+        h3,
+        "external finalized head must have advanced past H during observation"
+    );
+
+    let recorded = calls.lock().unwrap();
+    let schedule_calls: Vec<_> = recorded
+        .iter()
+        .filter(|(name, _)| name == "outbe_teeRenewalScheduleV1")
+        .map(|(_, args)| args.clone())
+        .collect();
+    assert_eq!(
+        schedule_calls,
+        vec![
+            vec![json!(h1.hash)],
+            vec![json!(h2.hash)],
+            vec![json!(h2.hash)],
+        ],
+        "network_view and Validator/NodeHost preflight reads must each request schedule at their immutable pinned hash"
+    );
+
+    let expected_tag = json!({"blockHash": h2.hash, "requireCanonical": true});
+    let validator_selector = hex_prefixed(&ITeeRegistryV1::validatorEnclaveBindingCall::SELECTOR);
+    let node_host_selector = hex_prefixed(&ITeeRegistryV1::nodeHostEnclaveBindingCall::SELECTOR);
+    let saw_validator_at_h = recorded.iter().any(|(name, args)| {
+        name == "eth_call"
+            && args.get(1) == Some(&expected_tag)
+            && args
+                .first()
+                .and_then(|v| v.get("data"))
+                .and_then(Value::as_str)
+                .is_some_and(|data| data.starts_with(&validator_selector))
+    });
+    let saw_node_host_at_h = recorded.iter().any(|(name, args)| {
+        name == "eth_call"
+            && args.get(1) == Some(&expected_tag)
+            && args
+                .first()
+                .and_then(|v| v.get("data"))
+                .and_then(Value::as_str)
+                .is_some_and(|data| data.starts_with(&node_host_selector))
+    });
+    assert!(
+        saw_validator_at_h,
+        "expected Validator binding eth_call at H"
+    );
+    assert!(
+        saw_node_host_at_h,
+        "expected NodeHost binding eth_call at H"
+    );
+}
+
 fn assert_proved_at(proof: &UpgradeKeyProofV1, expected: LifecycleCheckpointV1) {
     let witness = FinalizedAdmissionWitnessV1::decode_canonical(&proof.admission).unwrap();
     let header: Header =
@@ -678,7 +889,15 @@ fn canonical_chain(
     genesis: B256,
     openings: &[Opening; 3],
 ) -> ([CertifiedHead; 3], Vec<Value>) {
-    const HEIGHTS: [u64; 3] = [2, 3, 132];
+    canonical_chain_with_heights(committee, genesis, openings, [2, 3, 132])
+}
+
+fn canonical_chain_with_heights(
+    committee: &finality::FinalityCommitteeFixture,
+    genesis: B256,
+    openings: &[Opening; 3],
+    heights: [u64; 3],
+) -> ([CertifiedHead; 3], Vec<Value>) {
     let base = Header {
         base_fee_per_gas: Some(1),
         ..Default::default()
@@ -691,8 +910,8 @@ fn canonical_chain(
     let mut certified = Vec::new();
     let mut parent = genesis;
     let mut state_root = B256::ZERO;
-    for number in 1..=HEIGHTS[2] {
-        let index = HEIGHTS.iter().position(|&height| height == number);
+    for number in 1..=heights[2] {
+        let index = heights.iter().position(|&height| height == number);
         if let Some(i) = index {
             state_root = openings[i].root;
         }
@@ -701,7 +920,7 @@ fn canonical_chain(
             timestamp: 1000 + number,
             parent_hash: parent,
             state_root,
-            extra_data: if number == HEIGHTS[0] {
+            extra_data: if number == heights[0] {
                 boundary_extra(committee).into()
             } else {
                 Bytes::new()
