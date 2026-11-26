@@ -14,7 +14,7 @@ use alloy_primitives::B256;
 pub const MAX_RETRIES: u32 = 66;
 /// The first retries that wait only for validator signatures are fast: the
 /// validators sign a new leaf within seconds.
-const SIGNATURE_FAST_RETRIES: u32 = 3;
+pub const SIGNATURE_FAST_RETRIES: u32 = 3;
 const SIGNATURE_FAST_PAUSE: u64 = 2;
 
 /// The pause after failed attempt number `attempts` (from 1). `None`: the

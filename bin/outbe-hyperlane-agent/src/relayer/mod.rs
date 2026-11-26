@@ -35,7 +35,7 @@ use deliver::{
 };
 use fetch::{Fetcher, Quorum, Want};
 use message::{message_id, Message};
-use retry::backoff;
+use retry::{backoff, SIGNATURE_FAST_RETRIES};
 
 /// Leaves that one take-in reads at most.
 const TAKE_IN_BATCH: usize = 256;
@@ -444,7 +444,14 @@ impl Relayer {
                     // tick started: one tick can run for minutes.
                     Some(pause) => {
                         row.next_attempt = unix_now() + pause.as_secs();
-                        warn!(domain, index, %id, attempts = row.attempts, pause = pause.as_secs(), reason, "delivery attempt failed");
+                        let (attempts, pause) = (row.attempts, pause.as_secs());
+                        // The relayer is often faster than the signatures of
+                        // the validators: the fast retries are no warning.
+                        if fast && attempts <= SIGNATURE_FAST_RETRIES {
+                            debug!(domain, index, %id, attempts, pause, reason, "delivery attempt failed");
+                        } else {
+                            warn!(domain, index, %id, attempts, pause, reason, "delivery attempt failed");
+                        }
                     }
                     None => {
                         row.dropped = true;
