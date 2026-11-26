@@ -496,6 +496,7 @@ mod tests {
                 "eth_chainId" => json!("0x5"),
                 "eth_getTransactionCount" => json!("0x0"),
                 "eth_gasPrice" => json!("0x3b9aca00"),
+                "eth_estimateGas" => json!("0x10000"),
                 "eth_sendRawTransaction" => {
                     *count.lock().unwrap() += 1;
                     json!(B256::repeat_byte(0xab))

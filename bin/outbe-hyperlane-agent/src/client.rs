@@ -56,15 +56,26 @@ pub struct TxSender<'a> {
 /// its hash without waiting for inclusion. With `gasless`, the function shapes
 /// the transaction for the ZeroFee txpool policy. The priority fee is zero. The
 /// fee cap is at the protocol minimum, so Reth's public txpool checks still pass.
+///
+/// The gas limit is the estimate of the node plus one half. The pool accepts
+/// a transaction only when the balance of the sender is the gas limit times
+/// the fee cap or more, also when ZeroFee takes no fee. A limit near the real
+/// use keeps that balance low. A call that reverts fails here, at the
+/// estimate, and not after the wait for a receipt.
 pub async fn send_tx(sender: &TxSender<'_>, to: Address, calldata: &[u8]) -> Result<B256> {
     let provider = ProviderBuilder::new()
         .wallet(sender.wallet.clone())
         .connect_provider(sender.provider.clone());
     let mut tx = TransactionRequest::default()
+        .from(sender.wallet.default_signer().address())
         .to(to)
-        .input(Bytes::copy_from_slice(calldata).into())
-        .gas_limit(1_000_000);
+        .input(Bytes::copy_from_slice(calldata).into());
     tx.set_chain_id(sender.chain_id);
+    let gas = provider
+        .estimate_gas(tx.clone())
+        .await
+        .map_err(|e| LivenessError::TransactionFailed(format!("gas estimate: {e:#}")))?;
+    tx = tx.gas_limit(gas + gas / 2);
     if sender.gasless {
         let fee_cap = provider
             .get_gas_price()
