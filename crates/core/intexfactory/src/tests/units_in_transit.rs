@@ -183,12 +183,18 @@ impl Bridges {
     }
 }
 
+/// The paths of item 3 of OIP-00416. Each path starts with a failed mint of k units.
 #[derive(Clone, Copy, Debug)]
 enum Path {
+    /// a. The destination mints the k units before the deadline.
     RetryInTime,
+    /// b. The source mints the k units again before the deadline.
     ReclaimInTime,
+    /// c. No retry and no reclaim. The series forfeits after its transit close.
     Forfeit,
+    /// d. As c, then a retry after the forfeit.
     RetryAfterForfeit,
+    /// e. As c, then a reclaim after the forfeit.
     ReclaimAfterForfeit,
 }
 
