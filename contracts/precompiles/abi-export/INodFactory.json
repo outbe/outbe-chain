@@ -1,7 +1,7 @@
 [
   {
     "type": "function",
-    "name": "getCallProgress",
+    "name": "callState",
     "inputs": [
       {
         "name": "nodId",
@@ -13,7 +13,7 @@
       {
         "name": "",
         "type": "tuple",
-        "internalType": "struct INodFactory.CallProgress",
+        "internalType": "struct INodFactory.CallState",
         "components": [
           {
             "name": "callWindowDays",
@@ -406,7 +406,7 @@
   },
   {
     "type": "error",
-    "name": "EmptyGroupMemberSlotDuringCleanup",
+    "name": "EmptyGroupMemberSlotDuringForfeit",
     "inputs": [
       {
         "name": "groupKey",
@@ -577,7 +577,7 @@
   },
   {
     "type": "error",
-    "name": "MissingGroupMemberRecordDuringCleanup",
+    "name": "MissingGroupMemberRecordDuringForfeit",
     "inputs": [
       {
         "name": "groupKey",
@@ -593,7 +593,7 @@
   },
   {
     "type": "error",
-    "name": "MissingGroupRecordDuringCleanup",
+    "name": "MissingGroupRecordDuringForfeit",
     "inputs": [
       {
         "name": "groupKey",

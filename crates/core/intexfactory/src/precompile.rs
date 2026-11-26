@@ -100,9 +100,7 @@ pub fn dispatch(
                 ownerBalances(c) => view(c, |c| {
                     runtime::owner_balances(&storage, series_of(&storage, c.intexId)?, c.owner)
                 }),
-                getCallProgress(c) => view(c, |c| {
-                    crate::call_progress::call_progress(&storage, c.intexId)
-                }),
+                callState(c) => view(c, |c| crate::call_state::call_state(&storage, c.intexId)),
                 targetChains(_) => metadata::<IIntexFactory::targetChainsCall>(|| {
                     let (chain_ids, modes) = crate::targets::target_chains(&storage)?
                         .into_iter()

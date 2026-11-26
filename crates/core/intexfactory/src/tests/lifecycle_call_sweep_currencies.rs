@@ -13,7 +13,7 @@ use super::{
     called_count, fill_window, seed_called_candidate, setup_pair, CHAIN_ID, DAY, ISSUED_AT,
     REFERENCE_ISO, SECONDS_PER_DAY_U32, TRIGGER, WINDOW_DAYS,
 };
-use crate::tests::{at_height, called};
+use crate::tests::{at_height, call};
 
 const SECOND_ISO: u16 = 978;
 const SECOND_PAIR_ID: u32 = 2;
@@ -71,7 +71,7 @@ fn a_slice_resumes_at_the_currency_it_gave_out_on() {
             },
             s.clone(),
         );
-        called::scan_and_call(&ctx).unwrap();
+        call::scan_and_call(&ctx).unwrap();
 
         // The rotation is [840, 978]. The budget was exhausted on the last one, so
         // that is where the cursor stands.
@@ -117,7 +117,7 @@ fn a_trigger_during_a_running_sweep_queues_its_day() {
             },
             s.clone(),
         );
-        called::scan_and_call(&ctx).unwrap();
+        call::scan_and_call(&ctx).unwrap();
         let cursor = factory.call_bin_cursor.read(&REFERENCE_ISO).unwrap();
         assert_ne!(cursor, 0, "the first slice gave out inside the range");
 
@@ -138,7 +138,7 @@ fn a_trigger_during_a_running_sweep_queues_its_day() {
             },
             s.clone(),
         );
-        called::schedule_call_pass(&next).unwrap();
+        call::schedule_call_pass(&next).unwrap();
         assert_eq!(factory.call_sweep_day.read().unwrap(), day);
         assert_eq!(factory.call_latest_day.read().unwrap(), next_day);
         assert_eq!(
@@ -148,7 +148,7 @@ fn a_trigger_during_a_running_sweep_queues_its_day() {
         );
 
         // The next slice finishes the old day and hands the sweep to the queued one.
-        called::process_call_pass(&next).unwrap();
+        call::run_call_pass(&next).unwrap();
         assert_eq!(called_count(&s, days), groups);
         assert_eq!(factory.call_sweep_day.read().unwrap(), next_day);
         assert_eq!(factory.call_latest_day.read().unwrap(), next_day);
@@ -186,8 +186,8 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
             );
             // Only the first trigger's block walks: the later days arrive meanwhile.
             match offset {
-                0 => called::scan_and_call(&ctx).map(drop),
-                _ => called::schedule_call_pass(&ctx),
+                0 => call::scan_and_call(&ctx).map(drop),
+                _ => call::schedule_call_pass(&ctx),
             }
             .unwrap();
             closed.push(day);
@@ -215,7 +215,7 @@ fn days_closed_behind_a_running_call_sweep_are_walked_in_order() {
             if walked.last() == Some(&0) {
                 break;
             }
-            called::process_call_pass(&at_height(&ctx, height)).unwrap();
+            call::run_call_pass(&at_height(&ctx, height)).unwrap();
             let day = factory.call_sweep_day.read().unwrap();
             if walked.last() != Some(&day) {
                 walked.push(day);
@@ -260,9 +260,9 @@ fn a_sweep_over_several_currencies_always_ends() {
             },
             s.clone(),
         );
-        called::scan_and_call(&ctx).unwrap();
+        call::scan_and_call(&ctx).unwrap();
         for height in 2..=4 {
-            called::process_call_pass(&at_height(&ctx, height)).unwrap();
+            call::run_call_pass(&at_height(&ctx, height)).unwrap();
         }
         assert_eq!(
             IntexContract::new(s.clone()).call_sweep_day.read().unwrap(),

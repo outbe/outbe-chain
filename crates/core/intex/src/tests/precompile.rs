@@ -8,12 +8,12 @@ fn precompile_series_data_round_trip() {
     with_registry(|s| {
         api::create_series(&s, sample_params(7)).unwrap();
 
-        let call = IIntex::getIntexSeriesCall {
+        let call = IIntex::getIntexCall {
             intexId: crate::schema::intex_id(sid(7)),
         }
         .abi_encode();
         let out = dispatch(s.clone(), &call, Address::ZERO, U256::ZERO).unwrap();
-        let data = IIntex::getIntexSeriesCall::abi_decode_returns(&out).unwrap();
+        let data = IIntex::getIntexCall::abi_decode_returns(&out).unwrap();
 
         assert_eq!(data.seriesId, alloy_primitives::FixedBytes::from(sid(7)));
         assert_eq!(data.promisLoadMinor, U256::from(PROMIS_LOAD_MINOR));
@@ -31,7 +31,7 @@ fn precompile_series_data_round_trip() {
 #[test]
 fn precompile_series_data_missing_reverts() {
     with_registry(|s| {
-        let call = IIntex::getIntexSeriesCall {
+        let call = IIntex::getIntexCall {
             intexId: crate::schema::intex_id(sid(99)),
         }
         .abi_encode();

@@ -5,8 +5,8 @@
 
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
+use outbe_intexfactory::call_notice::{joins_run, pack_call_notice, send_call_notices};
 use outbe_intexfactory::constants::MAX_SERIES_PER_CALL_NOTICE;
-use outbe_intexfactory::notify::{joins_run, pack_call_notice, send_call_notices};
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;

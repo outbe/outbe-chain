@@ -26,8 +26,8 @@ interface IGemFactory {
     error InvalidOwner();
     error Overflow();
     error ZeroPromisLoad();
-    error EmptyMemberSlotDuringCleanup(bytes32 groupKey);
-    error MissingMemberRecordDuringCleanup(bytes32 groupKey, uint256 gemId);
+    error EmptyMemberSlotDuringForfeit(bytes32 groupKey);
+    error MissingMemberRecordDuringForfeit(bytes32 groupKey, uint256 gemId);
     error MissingGroupForCall(bytes32 group);
     error IneligibleGroupMember(bytes32 groupKey, uint256 gemId);
     error CallPriceOverflow();
@@ -75,7 +75,7 @@ interface IGemFactory {
     /// @notice Cumulative totals since genesis. `totalCapacityMinor` counts all Promis
     ///         capacity ever sent there. A position that drains or expires does not
     ///         reduce it.
-    function getStatistics() external view returns (uint256 totalGemsIssued, uint256 totalCapacityMinor);
+    function statistics() external view returns (uint256 totalGemsIssued, uint256 totalCapacityMinor);
 
     /// @notice What settling `gemId` with `asset` costs, and which of the gem's
     ///         two currencies that asset settles on. Reverts for an asset the
@@ -97,7 +97,7 @@ interface IGemFactory {
 
     /// @notice How close a right is to its group's call. The window ends at the last
     ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.
-    struct CallProgress {
+    struct CallState {
         uint32 callWindowDays;
         uint32 callThresholdDays;
         /// Window days since the group's start, priced or not.
@@ -115,7 +115,7 @@ interface IGemFactory {
 
     /// @notice Read the call progress of `gemId`. Reverts `GemNotFound`, or
     ///         `GemNotIssued` once it is Called, Settled or Forfeited.
-    function getCallProgress(uint256 gemId) external view returns (CallProgress memory);
+    function callState(uint256 gemId) external view returns (CallState memory);
 
     /// @notice A merchant's Intex in the Gem Factory: the pool Merchant gems are drawn from.
     struct GemFactoryPositionData {
@@ -174,8 +174,11 @@ interface IGemFactory {
         uint16 referenceCurrency,
         bytes payload
     );
-    /// @notice The position `gemFactoryPositionId` issued the Merchant gem `gemId`.
-    event GemFactoryPositionGemIssued(uint256 indexed gemFactoryPositionId, uint256 indexed gemId);
+    /// @notice The owner of the position `gemFactoryPositionId` redeemed `promisLoadMinor` of its
+    ///         capacity into the Merchant gem `gemId`.
+    event GemFactoryPositionRedeemed(
+        uint256 indexed gemFactoryPositionId, address indexed owner, uint256 promisLoadMinor, uint256 gemId
+    );
     /// @notice The deletion removed an expired position. The capacity its day never issued
     ///         returned before, in one `PromisLimitAdded` of the Promis Limit.
     event GemFactoryPositionExpired(uint256 indexed gemFactoryPositionId, address indexed owner);

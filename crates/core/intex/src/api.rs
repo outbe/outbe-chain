@@ -73,8 +73,8 @@ pub fn release_if_spent(storage: &StorageHandle<'_>, series_id: SeriesId) -> Res
     let unpaid = forfeitable_units(storage, &record)?.units;
     // Past the deadline the unpaid units still wait for the group's expiry to return them.
     let group = record.group_key().map_err(date_step_error)?;
-    let returned = registry.group_forfeited(group)?;
-    // A called series stays until IntexForfeit emits IntexSeriesClosed, including (0, 0).
+    let returned = registry.group_closed(group)?;
+    // A called series stays until IntexClose emits IntexSeriesClosed, including (0, 0).
     if registry.call_group_called_at.read(&group)? != 0 && !returned {
         return Ok(false);
     }

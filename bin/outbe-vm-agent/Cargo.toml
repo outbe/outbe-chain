@@ -1,0 +1,19 @@
+[package]
+name = "outbe-vm-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "outbe-vm-agent"
+path = "src/main.rs"
+
+[dependencies]
+clap.workspace = true
+eyre.workspace = true
+outbe-operator-node-role.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

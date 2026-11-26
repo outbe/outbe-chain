@@ -8,7 +8,8 @@ pragma solidity 0.8.30;
  * @dev Wire layout: `[bodyVersion(1)][msgType(1)][abi.encode(payload)]`, single-pass
  *      `abi.encode`/`abi.decode` over named structs. `MAX_BATCH_SIZE` caps the decoded array
  *      length. Address well-formedness and the zero-recipient reject stay with the adapter (it owns
- *      the crosschainMint semantics).
+ *      the crosschainMint semantics). Every body carries `owner`, the account the source burned from,
+ *      who gets back an item that the destination cannot mint.
  */
 library IntexNFT1155RouterCodec {
     /// @notice Active body version emitted by the encoders and required by every decoder.
@@ -37,6 +38,7 @@ library IntexNFT1155RouterCodec {
 
     /// @notice Single-recipient, multi-token batch body (`SEND_BATCH`).
     struct BatchPayload {
+        address owner;
         bytes32 to;
         uint256[] intexIds;
         uint256[] units;
@@ -44,6 +46,7 @@ library IntexNFT1155RouterCodec {
 
     /// @notice Single transfer body (`SEND_ONE`).
     struct SinglePayload {
+        address owner;
         bytes32 to;
         uint256 intexId;
         uint256 units;
@@ -51,6 +54,7 @@ library IntexNFT1155RouterCodec {
 
     /// @notice Multi-recipient batch body (`SEND_MULTI`): each entry has its own recipient.
     struct MultiPayload {
+        address owner;
         bytes32[] recipients;
         uint256[] intexIds;
         uint256[] units;

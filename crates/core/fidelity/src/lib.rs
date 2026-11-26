@@ -48,8 +48,8 @@ pub(crate) mod state;
 
 /// Shared fixed-point RCFI decay math. This crate re-exports it so existing
 /// `crate::math::*` paths keep working after the arithmetic moved to the leaf
-/// crate `outbe-fidelity-math`. The enclave engine also uses that crate.
-pub use outbe_fidelity_math as math;
+/// crate `outbe-fidelitymath`. The enclave engine also uses that crate.
+pub use outbe_fidelitymath as math;
 
 pub use attest::{
     verify_fidelity_cohort_attestation, verify_fidelity_query_attestation,
@@ -62,7 +62,7 @@ pub use engine::{
     snapshot_leagues,
 };
 pub use errors::{CohortError, EngineError};
-pub use outbe_fidelity_math::{MAX_LEAGUE, MIN_LEAGUE};
+pub use outbe_fidelitymath::{MAX_LEAGUE, MIN_LEAGUE};
 pub use protocol::{
     eip191_hash, fidelity_cohort_attestation_preimage, fidelity_cohort_canonical_hash,
     fidelity_query_attestation_preimage, fidelity_query_auth_message,

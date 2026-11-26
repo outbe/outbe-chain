@@ -180,7 +180,7 @@ fn agentreward_dense_daily_distribution_completes_and_clears_indexes() {
 
         let contract = AgentRewardContract::new(storage.clone());
         let waa_claimable_total = waa_addresses.iter().fold(U256::ZERO, |total, address| {
-            let claimable = contract.get_claimable_reward(*address).unwrap();
+            let claimable = contract.agent_reward_total(*address).unwrap();
             assert!(
                 !claimable.is_zero(),
                 "GAS-06: dense WAA recipient {address} received zero claimable reward"
@@ -188,7 +188,7 @@ fn agentreward_dense_daily_distribution_completes_and_clears_indexes() {
             total + claimable
         });
         let sra_claimable_total = sra_addresses.iter().fold(U256::ZERO, |total, address| {
-            let claimable = contract.get_claimable_reward(*address).unwrap();
+            let claimable = contract.agent_reward_total(*address).unwrap();
             assert!(
                 !claimable.is_zero(),
                 "GAS-06: dense SRA recipient {address} received zero claimable reward"
@@ -261,7 +261,7 @@ fn a_day_beyond_one_slice_is_credited_over_several_blocks_in_queue_order() {
         contract.increment_sra_offer(sra_day, sra).unwrap();
         let claimable = |n: u64| {
             AgentRewardContract::new(storage.clone())
-                .get_pool_claimable_reward(RewardPool::Waa, numbered_address(1 + n))
+                .get_agent_reward(RewardPool::Waa, numbered_address(1 + n))
                 .unwrap()
         };
 
@@ -275,11 +275,13 @@ fn a_day_beyond_one_slice_is_credited_over_several_blocks_in_queue_order() {
         let credited = U256::from(slice * 1_000);
         let contract = AgentRewardContract::new(storage.clone());
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Waa).unwrap(),
             credited
         );
         assert_eq!(
-            contract.pool_pending_total(RewardPool::Waa).unwrap(),
+            contract
+                .pool_pending_agent_reward_total(RewardPool::Waa)
+                .unwrap(),
             waa_pool - credited
         );
         assert_eq!(credit_next_block(&ctx).unwrap(), U256::ZERO);
@@ -296,9 +298,7 @@ fn a_day_beyond_one_slice_is_credited_over_several_blocks_in_queue_order() {
         assert_eq!(credit_next_block(&ctx).unwrap(), U256::ZERO);
         let contract = AgentRewardContract::new(storage.clone());
         assert_eq!(
-            contract
-                .get_pool_claimable_reward(RewardPool::Sra, sra)
-                .unwrap(),
+            contract.get_agent_reward(RewardPool::Sra, sra).unwrap(),
             sra_pool
         );
         assert_eq!(
@@ -306,11 +306,13 @@ fn a_day_beyond_one_slice_is_credited_over_several_blocks_in_queue_order() {
             contract.accrual_tail.read().unwrap()
         );
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Waa).unwrap(),
             waa_pool - U256::from(7u64)
         );
         assert_eq!(
-            contract.pool_pending_total(RewardPool::Waa).unwrap(),
+            contract
+                .pool_pending_agent_reward_total(RewardPool::Waa)
+                .unwrap(),
             U256::ZERO
         );
         assert_eq!(credit_next_block(&ctx).unwrap(), U256::ZERO);
@@ -664,19 +666,19 @@ fn claiming_a_pool_issues_its_gem() {
     with_contract_mut(|storage, contract| {
         seed_oracle(&storage, ONE_COEN);
         contract
-            .add_claimable_reward(RewardPool::Waa, alice, load)
+            .add_agent_reward(RewardPool::Waa, alice, load)
             .unwrap();
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Waa).unwrap(),
             load
         );
 
         let gem_id = contract
-            .claim_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
+            .redeem_agent_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
             .unwrap();
         assert!(!gem_id.is_zero());
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Waa).unwrap(),
             U256::ZERO
         );
 
@@ -689,7 +691,7 @@ fn claiming_a_pool_issues_its_gem() {
             outbe_core_common::markup::marked_up(ONE_COEN, call_rate).unwrap()
         );
 
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
+        assert_eq!(contract.agent_reward_total(alice).unwrap(), U256::ZERO);
     });
 }
 
@@ -703,13 +705,13 @@ fn same_block_claims_with_different_currencies_have_distinct_ids() {
         price_coen_in(&storage, EUR, ONE_COEN);
         let mut remaining = load * U256::from(4);
         contract
-            .add_claimable_reward(RewardPool::Waa, alice, remaining)
+            .add_agent_reward(RewardPool::Waa, alice, remaining)
             .unwrap();
 
         let mut ids = Vec::new();
         for currencies in [(USD, USD), (EUR, USD), (USD, EUR)] {
             let gem_id = contract
-                .claim_reward(RewardPool::Waa, alice, load, currencies)
+                .redeem_agent_reward(RewardPool::Waa, alice, load, currencies)
                 .unwrap();
             assert!(!ids.contains(&gem_id));
             ids.push(gem_id);
@@ -719,15 +721,15 @@ fn same_block_claims_with_different_currencies_have_distinct_ids() {
             assert_eq!(gem.issuance_currency, currencies.0);
             assert_eq!(gem.reference_currency, currencies.1);
             remaining -= load;
-            assert_eq!(contract.get_claimable_reward(alice).unwrap(), remaining);
+            assert_eq!(contract.agent_reward_total(alice).unwrap(), remaining);
             assert_eq!(
-                contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+                contract.pool_agent_reward_total(RewardPool::Waa).unwrap(),
                 remaining
             );
         }
 
         let error = contract
-            .claim_reward(RewardPool::Waa, alice, load, (USD, USD))
+            .redeem_agent_reward(RewardPool::Waa, alice, load, (USD, USD))
             .unwrap_err();
         assert!(matches!(
             error,
@@ -736,9 +738,9 @@ fn same_block_claims_with_different_currencies_have_distinct_ids() {
                     &outbe_gem::precompile::IGem::AlreadyExists {}
                 ).as_slice()
         ));
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), remaining);
+        assert_eq!(contract.agent_reward_total(alice).unwrap(), remaining);
         assert_eq!(
-            contract.pool_claimable_total(RewardPool::Waa).unwrap(),
+            contract.pool_agent_reward_total(RewardPool::Waa).unwrap(),
             remaining
         );
         let owned = outbe_gem::api::list_by_owner(&storage, alice).unwrap();
@@ -758,11 +760,11 @@ fn the_sra_pool_issues_a_gem_of_the_whole_load() {
     with_contract_mut(|storage, contract| {
         seed_oracle(&storage, ONE_COEN);
         contract
-            .add_claimable_reward(RewardPool::Sra, alice, load)
+            .add_agent_reward(RewardPool::Sra, alice, load)
             .unwrap();
 
         contract
-            .claim_reward(RewardPool::Sra, alice, U256::ZERO, (USD, USD))
+            .redeem_agent_reward(RewardPool::Sra, alice, U256::ZERO, (USD, USD))
             .unwrap();
         let sra_gem = gem_of(&storage, alice);
         assert_eq!(sra_gem.item.promis_load_minor, load);
@@ -785,9 +787,9 @@ fn claim_waa_in(
     reference_currency: u16,
 ) -> outbe_primitives::error::Result<U256> {
     contract
-        .add_claimable_reward(RewardPool::Waa, alice, load)
+        .add_agent_reward(RewardPool::Waa, alice, load)
         .unwrap();
-    contract.claim_reward(
+    contract.redeem_agent_reward(
         RewardPool::Waa,
         alice,
         U256::ZERO,
@@ -845,11 +847,11 @@ fn a_claim_without_a_vwap_of_its_hour_keeps_the_balance() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::AgentRewardError::ClaimPriceUnavailable(USD)
+                crate::errors::AgentRewardError::RedeemPriceUnavailable(USD)
             )
             .to_string()
         );
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), load);
+        assert_eq!(contract.agent_reward_total(alice).unwrap(), load);
     });
 }
 
@@ -861,20 +863,20 @@ fn a_claim_with_no_priced_pair_keeps_the_balance() {
     with_contract_mut(|_storage, contract| {
         // USD is a reference currency, with no pair and no window.
         contract
-            .add_claimable_reward(RewardPool::Waa, alice, load)
+            .add_agent_reward(RewardPool::Waa, alice, load)
             .unwrap();
 
         let err = contract
-            .claim_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
+            .redeem_agent_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
             .unwrap_err();
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::AgentRewardError::ClaimPriceUnavailable(USD)
+                crate::errors::AgentRewardError::RedeemPriceUnavailable(USD)
             )
             .to_string()
         );
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), load);
+        assert_eq!(contract.agent_reward_total(alice).unwrap(), load);
     });
 }
 
@@ -913,7 +915,7 @@ fn a_claim_refuses_a_reference_outside_the_reference_set() {
                 )
                 .to_string()
             );
-            assert_eq!(contract.get_claimable_reward(alice).unwrap(), load);
+            assert_eq!(contract.agent_reward_total(alice).unwrap(), load);
         });
     }
 }
@@ -929,11 +931,11 @@ fn a_claim_in_an_unpriced_reference_keeps_the_balance() {
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::AgentRewardError::ClaimPriceUnavailable(EUR)
+                crate::errors::AgentRewardError::RedeemPriceUnavailable(EUR)
             )
             .to_string()
         );
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), load);
+        assert_eq!(contract.agent_reward_total(alice).unwrap(), load);
     });
 }
 
@@ -955,7 +957,7 @@ fn a_claim_refuses_an_issuance_that_is_not_an_iso_code() {
                 )
                 .to_string()
             );
-            assert_eq!(contract.get_claimable_reward(alice).unwrap(), load);
+            assert_eq!(contract.agent_reward_total(alice).unwrap(), load);
         });
     }
 }
@@ -969,13 +971,13 @@ fn a_load_whose_cost_rounds_to_zero_still_claims() {
         // Entry 1 minor unit x load 1 minor unit floors below one minor unit.
         seed_oracle(&storage, U256::from(1u64));
         contract
-            .add_claimable_reward(RewardPool::Waa, alice, dust)
+            .add_agent_reward(RewardPool::Waa, alice, dust)
             .unwrap();
 
         contract
-            .claim_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
+            .redeem_agent_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
             .unwrap();
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), U256::ZERO);
+        assert_eq!(contract.agent_reward_total(alice).unwrap(), U256::ZERO);
         let gem = gem_of(&storage, alice);
         assert_eq!(gem.item.entry_price_minor, U256::ONE);
         assert_eq!(gem.item.promis_load_minor, U256::ONE);
@@ -991,18 +993,18 @@ fn a_partial_claim_mints_only_what_was_asked_for() {
     with_contract_mut(|storage, contract| {
         seed_oracle(&storage, ONE_COEN);
         contract
-            .add_claimable_reward(RewardPool::Waa, alice, load)
+            .add_agent_reward(RewardPool::Waa, alice, load)
             .unwrap();
 
         contract
-            .claim_reward(RewardPool::Waa, alice, taken, (USD, USD))
+            .redeem_agent_reward(RewardPool::Waa, alice, taken, (USD, USD))
             .unwrap();
         assert_eq!(
             gem_of(&storage, alice).item.promis_load_minor,
             U256::from(200u64)
         );
         // The rest stays a balance, which cannot be Called and cannot be forfeited.
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), load - taken);
+        assert_eq!(contract.agent_reward_total(alice).unwrap(), load - taken);
     });
 }
 
@@ -1014,20 +1016,20 @@ fn claiming_more_than_the_pool_holds_is_refused() {
     with_contract_mut(|storage, contract| {
         seed_oracle(&storage, ONE_COEN);
         contract
-            .add_claimable_reward(RewardPool::Waa, alice, load)
+            .add_agent_reward(RewardPool::Waa, alice, load)
             .unwrap();
 
         let err = contract
-            .claim_reward(RewardPool::Waa, alice, load + U256::from(1u64), (USD, USD))
+            .redeem_agent_reward(RewardPool::Waa, alice, load + U256::from(1u64), (USD, USD))
             .unwrap_err();
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::AgentRewardError::InsufficientClaimableBalance
+                crate::errors::AgentRewardError::InsufficientAgentReward
             )
             .to_string()
         );
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), load);
+        assert_eq!(contract.agent_reward_total(alice).unwrap(), load);
     });
 }
 
@@ -1038,16 +1040,16 @@ fn claiming_an_empty_pool_is_refused() {
     with_contract_mut(|storage, contract| {
         seed_oracle(&storage, ONE_COEN);
         contract
-            .add_claimable_reward(RewardPool::Waa, alice, U256::from(500u64))
+            .add_agent_reward(RewardPool::Waa, alice, U256::from(500u64))
             .unwrap();
 
         let err = contract
-            .claim_reward(RewardPool::Sra, alice, U256::ZERO, (USD, USD))
+            .redeem_agent_reward(RewardPool::Sra, alice, U256::ZERO, (USD, USD))
             .unwrap_err();
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::AgentRewardError::NoClaimableBalance
+                crate::errors::AgentRewardError::NoAgentReward
             )
             .to_string()
         );
@@ -1063,26 +1065,22 @@ fn the_pools_are_claimed_apart() {
     with_contract_mut(|storage, contract| {
         seed_oracle(&storage, ONE_COEN);
         contract
-            .add_claimable_reward(RewardPool::Waa, alice, waa)
+            .add_agent_reward(RewardPool::Waa, alice, waa)
             .unwrap();
         contract
-            .add_claimable_reward(RewardPool::Sra, alice, sra)
+            .add_agent_reward(RewardPool::Sra, alice, sra)
             .unwrap();
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), waa + sra);
+        assert_eq!(contract.agent_reward_total(alice).unwrap(), waa + sra);
 
         contract
-            .claim_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
+            .redeem_agent_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
             .unwrap();
         assert_eq!(
-            contract
-                .get_pool_claimable_reward(RewardPool::Waa, alice)
-                .unwrap(),
+            contract.get_agent_reward(RewardPool::Waa, alice).unwrap(),
             U256::ZERO
         );
         assert_eq!(
-            contract
-                .get_pool_claimable_reward(RewardPool::Sra, alice)
-                .unwrap(),
+            contract.get_agent_reward(RewardPool::Sra, alice).unwrap(),
             sra
         );
     });
@@ -1093,27 +1091,27 @@ fn the_pools_are_claimed_apart() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_add_claimable_reward_rejects_overflow() {
+fn test_add_agent_reward_rejects_overflow() {
     with_contract_mut(|_storage, contract| {
         let alice = address!("0x1111111111111111111111111111111111111111");
         let near_max = U256::MAX - U256::from(10u64);
 
         contract
-            .add_claimable_reward(RewardPool::Waa, alice, near_max)
+            .add_agent_reward(RewardPool::Waa, alice, near_max)
             .unwrap();
 
         let err = contract
-            .add_claimable_reward(RewardPool::Waa, alice, U256::from(100u64))
+            .add_agent_reward(RewardPool::Waa, alice, U256::from(100u64))
             .unwrap_err();
         assert_eq!(
             err.to_string(),
             outbe_primitives::error::PrecompileError::from(
-                crate::errors::AgentRewardError::ClaimableRewardsOverflow
+                crate::errors::AgentRewardError::AgentRewardOverflow
             )
             .to_string()
         );
 
-        assert_eq!(contract.get_claimable_reward(alice).unwrap(), near_max);
+        assert_eq!(contract.agent_reward_total(alice).unwrap(), near_max);
     });
 }
 
@@ -1231,9 +1229,7 @@ mod distribute_daily_tests {
         let mut credited = U256::ZERO;
         for &(byte, _, expected) in recipients {
             let address = Address::repeat_byte(byte);
-            let reward = contract
-                .get_pool_claimable_reward(reward_pool, address)
-                .unwrap();
+            let reward = contract.get_agent_reward(reward_pool, address).unwrap();
             assert_eq!(reward, U256::from(expected));
             credited += reward;
             let counts = match kind {
@@ -1360,7 +1356,7 @@ mod distribute_daily_tests {
             );
             assert_eq!(
                 AgentRewardContract::new(ctx.storage.clone())
-                    .get_pool_claimable_reward(RewardPool::Cca, cca)
+                    .get_agent_reward(RewardPool::Cca, cca)
                     .unwrap(),
                 U256::from(150u64)
             );
@@ -1388,7 +1384,7 @@ mod distribute_daily_tests {
 
             assert_eq!(excess, U256::from(600u64)); // 500 + 100
             let c2 = AgentRewardContract::new(ctx.storage.clone());
-            assert_eq!(c2.get_claimable_reward(alice).unwrap(), U256::from(1000u64));
+            assert_eq!(c2.agent_reward_total(alice).unwrap(), U256::from(1000u64));
             assert_eq!(
                 ctx.storage
                     .balance(outbe_system_common::addresses::CCA_REGISTRY_ADDRESS)
@@ -1441,9 +1437,9 @@ mod distribute_daily_tests {
             .unwrap();
 
             let c2 = AgentRewardContract::new(ctx.storage.clone());
-            let claimable_total = c2.get_claimable_reward(alice).unwrap()
-                + c2.get_claimable_reward(bob).unwrap()
-                + c2.get_claimable_reward(signer).unwrap();
+            let claimable_total = c2.agent_reward_total(alice).unwrap()
+                + c2.agent_reward_total(bob).unwrap()
+                + c2.agent_reward_total(signer).unwrap();
             assert_eq!(claimable_total + excess, U256::from(2000u64));
             assert_eq!(
                 ctx.storage
@@ -1463,7 +1459,7 @@ fn distribution_failure_restores_prior_pools_and_counts() {
         contract.increment_waa_offer(day, alice).unwrap();
         contract.increment_sra_offer(day, alice).unwrap();
         contract
-            .add_claimable_reward(RewardPool::Sra, alice, U256::MAX)
+            .add_agent_reward(RewardPool::Sra, alice, U256::MAX)
             .unwrap();
         let ctx = outbe_primitives::block::BlockRuntimeContext::new(
             outbe_primitives::block::BlockContext {
@@ -1489,15 +1485,11 @@ fn distribution_failure_restores_prior_pools_and_counts() {
         )
         .is_err());
         assert_eq!(
-            contract
-                .get_pool_claimable_reward(RewardPool::Waa, alice)
-                .unwrap(),
+            contract.get_agent_reward(RewardPool::Waa, alice).unwrap(),
             U256::ZERO
         );
         assert_eq!(
-            contract
-                .get_pool_claimable_reward(RewardPool::Sra, alice)
-                .unwrap(),
+            contract.get_agent_reward(RewardPool::Sra, alice).unwrap(),
             U256::MAX
         );
         assert_eq!(contract.get_all_waa_counts(day).unwrap(), vec![(alice, 1)]);
@@ -1555,30 +1547,30 @@ fn accrual_and_claim_emit_their_events_for_any_pool() {
         );
         distribute_and_credit(&ctx, day, &[(PoolKind::Waa, U256::from(500u64))]).unwrap();
         contract
-            .claim_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
+            .redeem_agent_reward(RewardPool::Waa, alice, U256::ZERO, (USD, USD))
             .unwrap()
     });
     let logs = provider.get_events(outbe_system_common::addresses::AGENT_REWARD_ADDRESS);
     let accrued: Vec<_> = logs
         .iter()
-        .filter_map(|log| IAgentReward::RewardAccrued::decode_log_data(log).ok())
+        .filter_map(|log| IAgentReward::AgentRewardAdded::decode_log_data(log).ok())
         .collect();
     assert_eq!(
         accrued,
-        vec![IAgentReward::RewardAccrued {
+        vec![IAgentReward::AgentRewardAdded {
             account: alice,
             pool: RewardPool::Waa as u8,
-            utcDay: day.value(),
+            emissionDay: day.value(),
             promisLoadMinor: U256::from(500u64),
         }]
     );
     let claimed: Vec<_> = logs
         .iter()
-        .filter_map(|log| IAgentReward::RewardsClaimed::decode_log_data(log).ok())
+        .filter_map(|log| IAgentReward::AgentRewardRedeemed::decode_log_data(log).ok())
         .collect();
     assert_eq!(
         claimed,
-        vec![IAgentReward::RewardsClaimed {
+        vec![IAgentReward::AgentRewardRedeemed {
             account: alice,
             pool: RewardPool::Waa as u8,
             promisLoadMinor: U256::from(500u64),
@@ -1650,9 +1642,7 @@ fn assert_retry_credits(
         let contract = AgentRewardContract::new(storage);
         for (reward_pool, address, credit) in expected {
             assert_eq!(
-                contract
-                    .get_pool_claimable_reward(*reward_pool, *address)
-                    .unwrap(),
+                contract.get_agent_reward(*reward_pool, *address).unwrap(),
                 U256::from(*credit),
                 "failure {failure_at}"
             );
@@ -1734,7 +1724,7 @@ fn a_distribution_that_fails_after_any_write_reverts_and_credits_once_on_retry()
                 .iter()
                 .filter(|log| {
                     use alloy_sol_types::SolEvent;
-                    crate::precompile::IAgentReward::RewardAccrued::decode_log_data(log).is_ok()
+                    crate::precompile::IAgentReward::AgentRewardAdded::decode_log_data(log).is_ok()
                 })
                 .count(),
             expected.len(),

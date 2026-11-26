@@ -19,26 +19,26 @@ pub enum AgentRewardError {
     DistributeDailyOverflow,
     #[error("reward distribution arithmetic overflow")]
     DistributionOverflow,
-    #[error("agentreward claimable total overflow")]
-    ClaimableTotalOverflow,
+    #[error("agentreward total overflow")]
+    AgentRewardTotalOverflow,
     #[error("agentreward pool total disagrees with its balances")]
     PoolTotalMismatch,
-    #[error("agentreward claimable_rewards overflow")]
-    ClaimableRewardsOverflow,
-    #[error("no claimable balance in this pool")]
-    NoClaimableBalance,
-    #[error("insufficient claimable balance")]
-    InsufficientClaimableBalance,
-    #[error("reward claim deadline {0} has passed")]
-    ClaimDeadlinePassed(u64),
-    #[error("reward balance has not expired at deadline {0}")]
-    RewardBalanceNotExpired(u64),
+    #[error("agentreward pool reward overflow")]
+    AgentRewardOverflow,
+    #[error("no agent reward in this pool")]
+    NoAgentReward,
+    #[error("insufficient agent reward")]
+    InsufficientAgentReward,
+    #[error("agent reward deadline {0} has passed")]
+    AgentRewardDeadlinePassed(u64),
+    #[error("agent reward has not expired at deadline {0}")]
+    AgentRewardNotExpired(u64),
     #[error("reward balance deadline overflow")]
     RewardDeadlineOverflow,
     #[error("nonempty reward balance has no deadline")]
     RewardDeadlineMissing,
-    #[error("agentreward has no 24-hour COEN price in {0} at the claim hour")]
-    ClaimPriceUnavailable(u16),
+    #[error("agentreward has no 24-hour COEN price in {0} at the redemption hour")]
+    RedeemPriceUnavailable(u16),
     #[error("agentreward entry price overflow")]
     EntryPriceOverflow,
     #[error("agentreward unknown reward pool {0}")]
@@ -61,25 +61,23 @@ impl From<AgentRewardError> for PrecompileError {
             AgentRewardError::OfferCounterOverflow => revert_with(I::OfferCounterOverflow {}),
             AgentRewardError::DistributeDailyOverflow => revert_with(I::DistributeDailyOverflow {}),
             AgentRewardError::DistributionOverflow => revert_with(I::DistributionOverflow {}),
-            AgentRewardError::ClaimableTotalOverflow => revert_with(I::ClaimableTotalOverflow {}),
+            AgentRewardError::AgentRewardTotalOverflow => {
+                revert_with(I::AgentRewardTotalOverflow {})
+            }
             AgentRewardError::PoolTotalMismatch => revert_with(I::PoolTotalMismatch {}),
-            AgentRewardError::ClaimableRewardsOverflow => {
-                revert_with(I::ClaimableRewardsOverflow {})
+            AgentRewardError::AgentRewardOverflow => revert_with(I::AgentRewardOverflow {}),
+            AgentRewardError::NoAgentReward => revert_with(I::NoAgentReward {}),
+            AgentRewardError::InsufficientAgentReward => revert_with(I::InsufficientAgentReward {}),
+            AgentRewardError::AgentRewardDeadlinePassed(deadline) => {
+                revert_with(I::AgentRewardDeadlinePassed { deadline })
             }
-            AgentRewardError::NoClaimableBalance => revert_with(I::NoClaimableBalance {}),
-            AgentRewardError::InsufficientClaimableBalance => {
-                revert_with(I::InsufficientClaimableBalance {})
-            }
-            AgentRewardError::ClaimDeadlinePassed(deadline) => {
-                revert_with(I::ClaimDeadlinePassed { deadline })
-            }
-            AgentRewardError::RewardBalanceNotExpired(deadline) => {
-                revert_with(I::RewardBalanceNotExpired { deadline })
+            AgentRewardError::AgentRewardNotExpired(deadline) => {
+                revert_with(I::AgentRewardNotExpired { deadline })
             }
             AgentRewardError::RewardDeadlineOverflow => revert_with(I::RewardDeadlineOverflow {}),
             AgentRewardError::RewardDeadlineMissing => revert_with(I::RewardDeadlineMissing {}),
-            AgentRewardError::ClaimPriceUnavailable(iso_code) => {
-                revert_with(I::ClaimPriceUnavailable { isoCode: iso_code })
+            AgentRewardError::RedeemPriceUnavailable(iso_code) => {
+                revert_with(I::RedeemPriceUnavailable { isoCode: iso_code })
             }
             AgentRewardError::EntryPriceOverflow => revert_with(I::EntryPriceOverflow {}),
             AgentRewardError::UnknownRewardPool(value) => {
@@ -103,12 +101,12 @@ mod tests {
     fn agent_reward_error_converts_to_canonical_abi_revert_bytes() {
         for (error, expected) in [
             (
-                AgentRewardError::ClaimDeadlinePassed(u64::MAX),
-                IAgentReward::ClaimDeadlinePassed { deadline: u64::MAX }.abi_encode(),
+                AgentRewardError::AgentRewardDeadlinePassed(u64::MAX),
+                IAgentReward::AgentRewardDeadlinePassed { deadline: u64::MAX }.abi_encode(),
             ),
             (
-                AgentRewardError::RewardBalanceNotExpired(31_536_000),
-                IAgentReward::RewardBalanceNotExpired {
+                AgentRewardError::AgentRewardNotExpired(31_536_000),
+                IAgentReward::AgentRewardNotExpired {
                     deadline: 31_536_000,
                 }
                 .abi_encode(),
@@ -122,8 +120,8 @@ mod tests {
                 IAgentReward::RewardDeadlineMissing {}.abi_encode(),
             ),
             (
-                AgentRewardError::ClaimPriceUnavailable(840),
-                IAgentReward::ClaimPriceUnavailable { isoCode: 840 }.abi_encode(),
+                AgentRewardError::RedeemPriceUnavailable(840),
+                IAgentReward::RedeemPriceUnavailable { isoCode: 840 }.abi_encode(),
             ),
             (
                 AgentRewardError::EntryPriceOverflow,

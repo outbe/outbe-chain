@@ -7,7 +7,7 @@
 //! EVM. So `enable_sub_call_stub` stubs the runtime's Rust -> Solidity sub-calls
 //! into `IVaultRouter` / `IERC20` (returns `default_success()`).
 
-mod called;
+mod call;
 mod credis_records;
 mod e2e;
 mod settlement;
@@ -459,14 +459,14 @@ fn block_at<'storage>(
 
 /// The daily trigger alone: it schedules the closed day and walks nothing.
 pub fn schedule(storage: &StorageHandle<'_>, timestamp: u64) {
-    crate::called::schedule_call_pass(&block_at(storage, timestamp)).unwrap()
+    crate::call::schedule_call_pass(&block_at(storage, timestamp)).unwrap()
 }
 
 pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
     let credis = CredisContract::new(storage.clone());
     let mut called = 0;
     loop {
-        called += crate::called::scan_and_call(&block_at(storage, timestamp)).unwrap();
+        called += crate::call::scan_and_call(&block_at(storage, timestamp)).unwrap();
         let selected = outbe_system_common::pass_budget::BlockAllowance::unpack(
             credis.daily_budget.read().unwrap(),
         )
@@ -482,24 +482,24 @@ pub fn scan(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
 
 /// One later block's slice of the call sweep in flight.
 pub fn slice(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    crate::called::process_call_pass(&block_at(storage, timestamp)).unwrap()
+    crate::call::run_call_pass(&block_at(storage, timestamp)).unwrap()
 }
 
-/// Called groups still in the forfeit queue up to the deadline day of `timestamp`.
-pub fn queued_for_forfeit(
+/// Called groups still in the close queue up to the deadline day of `timestamp`.
+pub fn queued_for_close(
     storage: &StorageHandle<'_>,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<u32> {
     let credis = CredisContract::new(storage.clone());
     let Some(mut day) =
-        outbe_core_common::deadline_queue::first_day(&outbe_credis::ForfeitQueue(&credis))?
+        outbe_core_common::deadline_queue::first_day(&outbe_credis::CloseQueue(&credis))?
     else {
         return Ok(0);
     };
     let last = outbe_core_common::deadline_queue::deadline_day(timestamp)?;
     let mut live = 0;
     while day <= last {
-        live += credis.forfeit_day_live.read(&day)?;
+        live += credis.close_day_live.read(&day)?;
         day += 1;
     }
     Ok(live)
@@ -519,7 +519,7 @@ pub fn prepare_daily_pass(
 }
 
 /// The daily pass through the UTC day before `timestamp`, as the Cycle runs it: its calls,
-/// forfeits and cleanup, one block for each closed day it still has to catch up.
+/// closes and forfeit pass, one block for each closed day it still has to catch up.
 pub fn daily_pass(
     storage: &StorageHandle<'_>,
     timestamp: u64,
@@ -527,7 +527,7 @@ pub fn daily_pass(
     prepare_daily_pass(storage, timestamp)?;
     let credis = CredisContract::new(storage.clone());
     loop {
-        crate::called::process_call_pass(&block_at(storage, timestamp))?;
+        crate::call::run_call_pass(&block_at(storage, timestamp))?;
         let selected =
             outbe_system_common::pass_budget::BlockAllowance::unpack(credis.daily_budget.read()?)?
                 .map_or(0, |allowance| allowance.day);
@@ -542,17 +542,17 @@ pub fn daily_pass(
     }
 }
 
-fn due_forfeit_groups(
+fn due_close_groups(
     credis: &CredisContract<'_>,
     timestamp: u64,
 ) -> outbe_primitives::error::Result<Vec<B256>> {
-    let queue = outbe_credis::ForfeitQueue(credis);
+    let queue = outbe_credis::CloseQueue(credis);
     let mut due = Vec::new();
     let Some(first) = outbe_core_common::deadline_queue::first_day(&queue)? else {
         return Ok(due);
     };
     for day in first..=outbe_core_common::deadline_queue::deadline_day(timestamp)? {
-        for slot in 0..credis.forfeit_day_len.read(&day)? {
+        for slot in 0..credis.close_day_len.read(&day)? {
             let Some(group) = outbe_core_common::deadline_queue::entry_at(&queue, day, slot)?
             else {
                 continue;
@@ -565,20 +565,20 @@ fn due_forfeit_groups(
     Ok(due)
 }
 
-/// Runs `pass` and returns the groups due by `timestamp` it forfeited: they left the forfeit
-/// queue for the cleanup, which may have deleted their Credis already.
-pub fn forfeited_by(
+/// Runs `pass` and returns the groups due by `timestamp` it closed: they left the close
+/// queue for the forfeit pass, which may have deleted their Credis already.
+pub fn closed_by(
     storage: &StorageHandle<'_>,
     timestamp: u64,
     pass: impl FnOnce() -> outbe_primitives::error::Result<()>,
 ) -> outbe_primitives::error::Result<u32> {
     let credis = CredisContract::new(storage.clone());
-    let due = due_forfeit_groups(&credis, timestamp)?;
+    let due = due_close_groups(&credis, timestamp)?;
     pass()?;
     let mut forfeited = 0;
     for group in due {
         if credis.called_group_slot.read(&group)? == 0
-            && (credis.cleanup_group_slot.read(&group)? != 0
+            && (credis.forfeit_group_slot.read(&group)? != 0
                 || credis.group_member_count(group)? == 0)
         {
             forfeited += 1;
@@ -587,9 +587,9 @@ pub fn forfeited_by(
     Ok(forfeited)
 }
 
-/// The daily pass at `timestamp`. Returns the called groups it forfeited.
+/// The daily pass at `timestamp`. Returns the called groups it closed.
 pub fn expire(storage: &StorageHandle<'_>, timestamp: u64) -> u32 {
-    forfeited_by(storage, timestamp, || daily_pass(storage, timestamp)).unwrap()
+    closed_by(storage, timestamp, || daily_pass(storage, timestamp)).unwrap()
 }
 
 /// Calls the Credis's group at `now`, as the call scan does. Returns whether it moved.
@@ -604,7 +604,7 @@ pub fn call_credis(storage: &StorageHandle<'_>, id: U256, now: u64) -> bool {
 }
 
 /// This function moves the clock past the day that contains the called Credis's deadline.
-/// It runs that block's forfeit and cleanup. The return value counts forfeited groups.
+/// It runs that block's close and forfeit pass. The return value counts closed groups.
 pub fn lapse(storage: &StorageHandle<'_>, id: U256) -> u32 {
     let record = CredisContract::new(storage.clone()).get_credis(id).unwrap();
     let past = outbe_credis::settlement_deadline(&record) + CLOSED_DAY_DELAY;

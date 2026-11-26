@@ -28,7 +28,7 @@ interface IIntexFactory {
     error ChainIdExceedsU32();
     error InvalidWireMessage(uint8 msgType);
     error ForfeitedPromisLoadOverflow();
-    error IssuanceChunkCountExceedsU16();
+    error IntexSeriesPageCountExceedsU16();
     error PriceExceedsWireType();
     error MarkedUpPriceOverflow();
     error OwnerUnitsExceedU32();
@@ -126,7 +126,7 @@ interface IIntexFactory {
 
     /// @notice How close a right is to its group's call. The window ends at the last
     ///         finalized UTC day. Prices are COEN in `referenceCurrency` at scale 1e6.
-    struct CallProgress {
+    struct CallState {
         uint32 callWindowDays;
         uint32 callThresholdDays;
         /// Window days since the group's start, priced or not.
@@ -144,7 +144,7 @@ interface IIntexFactory {
 
     /// @notice Read the call progress of `intexId`. Reverts `SeriesNotFound`, or
     ///         `SeriesNotIssued` once the series is Called or Forfeited.
-    function getCallProgress(uint256 intexId) external view returns (CallProgress memory);
+    function callState(uint256 intexId) external view returns (CallState memory);
 
     /// @notice The target chains that are not Off, with their modes: 1 Series, 2 Auctions.
     function targetChains() external view returns (uint32[] memory chainIds, uint8[] memory modes);

@@ -1,0 +1,18 @@
+From: outbe-vm-dev <dev@outbe.network>
+Subject: [PATCH 3/3] Force squashfs root directory mode to 0755
+
+Ensure the guest root filesystem `/` always has mode `0755` regardless of
+the host mkosi workspace directory permissions, so non-root services such
+as `outbe` can traverse `/` and run binaries under `/usr/local/bin`.
+
+--- a/os/mkosi/scripts/make-release-artifacts.sh
++++ b/os/mkosi/scripts/make-release-artifacts.sh
+@@ -36,7 +36,7 @@
+   --mtime="@$SOURCE_DATE_EPOCH" --owner=0 --group=0 --numeric-owner \
+   --mode=g-s --hard-dereference -cf - .) | \
+   env -u SOURCE_DATE_EPOCH mksquashfs - "$rootfs" -tar \
+-    -noappend -all-root -no-progress -exports -no-hardlinks -no-tailends \
++    -noappend -all-root -root-mode 0755 -no-progress -exports -no-hardlinks -no-tailends \
+     -no-xattrs -processors "${JOBS:-1}" -comp zstd -mkfs-time "$SOURCE_DATE_EPOCH" \
+     -all-time "$SOURCE_DATE_EPOCH" >/dev/null
+ data_size=$(stat -c %s "$rootfs")

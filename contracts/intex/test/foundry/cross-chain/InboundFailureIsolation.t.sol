@@ -19,6 +19,7 @@ import {OpenSeriesLib} from "../helpers/OpenSeriesLib.sol";
 ///           fixed.
 ///         This is the Critical funds-lock fix from the contract review (R-04).
 contract InboundFailureIsolationTest is CrossChainTest {
+    address internal constant OWNER = address(0x5E4D);
     uint32 internal constant BNB_CHAIN_ID = 1;
     uint32 internal constant OUTBE_CHAIN_ID = 2;
 
@@ -75,7 +76,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         amounts[1] = 75;
         return IntexNFT1155RouterCodec.encodeBatch(
             IntexNFT1155RouterCodec.BatchPayload({
-                to: bytes32(uint256(uint160(recipient))), intexIds: intexIds, units: amounts
+                owner: OWNER, to: bytes32(uint256(uint160(recipient))), intexIds: intexIds, units: amounts
             })
         );
     }
@@ -92,7 +93,9 @@ contract InboundFailureIsolationTest is CrossChainTest {
         amounts[0] = 50;
         amounts[1] = 75;
         return IntexNFT1155RouterCodec.encodeMulti(
-            IntexNFT1155RouterCodec.MultiPayload({recipients: recipients, intexIds: intexIds, units: amounts})
+            IntexNFT1155RouterCodec.MultiPayload({
+                owner: OWNER, recipients: recipients, intexIds: intexIds, units: amounts
+            })
         );
     }
 
@@ -253,7 +256,7 @@ contract InboundFailureIsolationTest is CrossChainTest {
         amounts[0] = 100;
         bytes memory packet = IntexNFT1155RouterCodec.encodeBatch(
             IntexNFT1155RouterCodec.BatchPayload({
-                to: bytes32(uint256(uint160(recipient))), intexIds: intexIds, units: amounts
+                owner: OWNER, to: bytes32(uint256(uint160(recipient))), intexIds: intexIds, units: amounts
             })
         );
         _deliverInbound(packet);

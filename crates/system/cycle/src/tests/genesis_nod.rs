@@ -110,7 +110,7 @@ fn nod_daily_calls_and_does_not_repeat_between_utc_days() {
                 if nod.call_sweep_day.read()? == 0 {
                     break;
                 }
-                outbe_nodfactory::called::process_call_pass(&BlockRuntimeContext::new(
+                outbe_nodfactory::call::run_call_pass(&BlockRuntimeContext::new(
                     block_ctx(height, late),
                     storage.clone(),
                 ))?;
@@ -173,7 +173,7 @@ fn call_across_a_halt(price_on_d: bool) -> (u64, u32, u64) {
                 if nod.call_sweep_day.read()? == 0 {
                     break;
                 }
-                outbe_nodfactory::called::process_call_pass(&BlockRuntimeContext::new(
+                outbe_nodfactory::call::run_call_pass(&BlockRuntimeContext::new(
                     block_ctx(height, restart),
                     storage.clone(),
                 ))?;
@@ -239,7 +239,7 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
             storage.clone(),
         ))
         .unwrap();
-        outbe_nodfactory::called::process_call_pass(&BlockRuntimeContext::new(
+        outbe_nodfactory::call::run_call_pass(&BlockRuntimeContext::new(
             block_ctx(3, day_start + 11 * 3_600),
             storage.clone(),
         ))
@@ -256,7 +256,7 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
             storage.clone(),
         ))
         .unwrap();
-        outbe_nodfactory::called::process_call_pass(&BlockRuntimeContext::new(
+        outbe_nodfactory::call::run_call_pass(&BlockRuntimeContext::new(
             block_ctx(4, closed_at),
             storage.clone(),
         ))
@@ -273,11 +273,11 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
             .unwrap();
         let ready = BlockRuntimeContext::new(block_ctx(5, closed_at + 1), storage.clone());
         run_cycle_tick(&ready).unwrap();
-        outbe_nodfactory::called::process_call_pass(&ready).unwrap();
+        outbe_nodfactory::call::run_call_pass(&ready).unwrap();
         assert_eq!(reserve.promis_limit().unwrap(), before + U256::from(11));
         assert_eq!(nod.call_sweep_day.read().unwrap(), 0);
         run_cycle_tick(&ready).unwrap();
-        outbe_nodfactory::called::process_call_pass(&ready).unwrap();
+        outbe_nodfactory::call::run_call_pass(&ready).unwrap();
         assert_eq!(reserve.promis_limit().unwrap(), before + U256::from(11));
 
         // The queue retains the next day's deadline even though calls have no work.
@@ -290,7 +290,7 @@ fn cycle_retries_oracle_lag_and_expires_only_the_closed_deadline_day() {
             storage.clone(),
         ))
         .unwrap();
-        outbe_nodfactory::called::process_call_pass(&BlockRuntimeContext::new(
+        outbe_nodfactory::call::run_call_pass(&BlockRuntimeContext::new(
             block_ctx(6, closed_at + SECONDS_PER_DAY),
             storage.clone(),
         ))
@@ -381,6 +381,6 @@ fn issue_nod(
 /// Runs the Cycle dispatcher at `ctx`, then the Nod call slice.
 fn dispatch_and_call(ctx: &BlockRuntimeContext<'_>) -> outbe_primitives::error::Result<()> {
     run_due_tasks(ctx)?;
-    outbe_nodfactory::called::process_call_pass(ctx)?;
+    outbe_nodfactory::call::run_call_pass(ctx)?;
     Ok(())
 }
