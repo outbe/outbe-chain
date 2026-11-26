@@ -5,8 +5,8 @@
 
 use alloy_primitives::U256;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::constants::MAX_SERIES_PER_MARK;
-use outbe_intexfactory::notify::{joins_run, pack_call_notice, send_call_notices};
+use outbe_intexfactory::call_notice::{joins_run, pack_call_notice, send_call_notices};
+use outbe_intexfactory::constants::MAX_SERIES_PER_CALL_NOTICE;
 use outbe_intexfactory::IntexFactoryContract;
 use outbe_primitives::block::{BlockContext, BlockRuntimeContext};
 use outbe_primitives::storage::hashmap::HashMapStorageProvider;
@@ -121,7 +121,7 @@ fn a_run_never_reaches_past_the_chunk_limit() {
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         // One coalesced run: the wire cap turns every eight entries into one call.
-        let run_cap = SWEEP_WRITES_PER_BLOCK * MAX_SERIES_PER_MARK as u32;
+        let run_cap = SWEEP_WRITES_PER_BLOCK * MAX_SERIES_PER_CALL_NOTICE as u32;
         let queued = run_cap + 5;
         for index in 0..queued {
             push_called(&handle, index, CALLED_AT);

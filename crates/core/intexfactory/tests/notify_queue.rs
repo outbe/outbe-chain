@@ -8,7 +8,7 @@
 use alloy_primitives::{FixedBytes, U256};
 use alloy_sol_types::SolValue;
 use outbe_intex::SeriesId;
-use outbe_intexfactory::notify::{pack_call_notice, send_call_notices};
+use outbe_intexfactory::call_notice::{pack_call_notice, send_call_notices};
 use outbe_intexfactory::targets::{pack_target, TargetMode};
 use outbe_intexfactory::transport::outbox::Message;
 use outbe_intexfactory::transport::wire::MSG_INTEX_SERIES_CALL_NOTICE;
@@ -213,13 +213,13 @@ fn a_notice_goes_to_every_chain_that_is_not_off() {
 
 #[test]
 fn a_run_of_one_day_and_call_time_rides_one_message_up_to_the_wire_cap() {
-    use outbe_intexfactory::constants::MAX_SERIES_PER_MARK;
+    use outbe_intexfactory::constants::MAX_SERIES_PER_CALL_NOTICE;
 
     let mut storage = provider();
     StorageHandle::enter(&mut storage, |handle| {
         let day = EmissionDate::new(20_260_101);
         let factory = IntexFactoryContract::new(handle.clone());
-        let width = MAX_SERIES_PER_MARK as u32 + 1;
+        let width = MAX_SERIES_PER_CALL_NOTICE as u32 + 1;
         let mut run = Vec::new();
         for index in 0..width {
             let id = SeriesId::pack(day.value(), *b"USD", b'A' + index as u8).unwrap();
@@ -237,11 +237,11 @@ fn a_run_of_one_day_and_call_time_rides_one_message_up_to_the_wire_cap() {
         assert_eq!(messages.len(), 2);
         assert_eq!(
             notice_of(&messages[0]).1,
-            run[..MAX_SERIES_PER_MARK].to_vec()
+            run[..MAX_SERIES_PER_CALL_NOTICE].to_vec()
         );
         assert_eq!(
             notice_of(&messages[1]).1,
-            run[MAX_SERIES_PER_MARK..].to_vec()
+            run[MAX_SERIES_PER_CALL_NOTICE..].to_vec()
         );
     });
 }

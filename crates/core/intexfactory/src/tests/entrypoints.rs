@@ -70,7 +70,7 @@ fn config_dev_profile_drives_issuance() {
             call_trigger: terms.call_trigger,
             ..sample(7)
         };
-        runtime::issue_intex(&s, params).unwrap();
+        runtime::open_intex_series(&s, params).unwrap();
 
         // Issuance captures the dev call-trigger and dev-derived prices.
         let dev = outbe_intex::config::IntexParams::TESTNET;

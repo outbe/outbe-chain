@@ -227,7 +227,7 @@ fn clear_inner(
             emission_day,
             &outbe_intexfactory::targets::series_target_chains(&storage)?,
         )? {
-            legs.extend(outbe_intexfactory::api::issue_intex(&storage, group)?);
+            legs.extend(outbe_intexfactory::api::open_intex_series(&storage, group)?);
         }
 
         outbe_intexfactory::api::send_issuance(&storage, legs)?;

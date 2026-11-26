@@ -45,7 +45,10 @@ pub(crate) fn call_series_if_breached(
     // The notices leave after the slice, once every group of the block is decided.
     for &series_id in &members {
         let member = outbe_intex::api::get_series(storage, series_id)?;
-        crate::notify::enqueue_notice(factory, crate::notify::pack_call_notice(series_id, now_ts))?;
+        crate::call_notice::enqueue_notice(
+            factory,
+            crate::call_notice::pack_call_notice(series_id, now_ts),
+        )?;
         crate::runtime::emit_event(
             storage,
             IIntexFactory::IntexSeriesCalled {

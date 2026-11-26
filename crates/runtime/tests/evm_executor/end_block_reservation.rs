@@ -414,7 +414,7 @@ fn end_block_order_executes_interleaved_factory_passes_and_gem_expire_through_be
                 .notify_at
                 .write(
                     &0,
-                    outbe_intexfactory::notify::pack_call_notice(stale_series, expires_at),
+                    outbe_intexfactory::call_notice::pack_call_notice(stale_series, expires_at),
                 )
                 .unwrap();
             // Seed CredisFactory forfeit queue in phase 2 for OSCR (forfeit_through).

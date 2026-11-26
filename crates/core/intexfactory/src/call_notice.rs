@@ -8,7 +8,7 @@ use outbe_primitives::{block::BlockRuntimeContext, error::Result, storage::Stora
 use outbe_system_common::pass_budget::PassBudget;
 use outbe_system_common::time::EmissionDate;
 
-use crate::constants::MAX_SERIES_PER_MARK;
+use crate::constants::MAX_SERIES_PER_CALL_NOTICE;
 use crate::schema::IntexFactoryContract;
 
 /// A Called entry packs its call time into the low bytes the 14-byte `SeriesId` leaves
@@ -66,7 +66,7 @@ pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
         // Each batch of the run is one outbox message to each chain.
         let run_cap = (budget.writes_left() as usize / chains)
             .max(1)
-            .saturating_mul(MAX_SERIES_PER_MARK);
+            .saturating_mul(MAX_SERIES_PER_CALL_NOTICE);
         let mut run = vec![first_id];
         let mut next = index + 1;
         while next < tail && run.len() < run_cap {
@@ -79,7 +79,7 @@ pub fn send_call_notices(ctx: &BlockRuntimeContext) -> Result<()> {
             run.push(id);
             next += 1;
         }
-        let messages = run.len().div_ceil(MAX_SERIES_PER_MARK) * chains;
+        let messages = run.len().div_ceil(MAX_SERIES_PER_CALL_NOTICE) * chains;
         if !budget.admit_writes(messages as u32) {
             break;
         }

@@ -7,5 +7,5 @@ pub use outbe_core_common::addresses::INTEX_NFT1155_ADDRESS;
 pub const MAX_SERIES_PER_MESSAGE: usize = 16;
 
 /// Series one MARK_CALLED message may carry. Mirrors the
-/// codec's `MAX_SERIES_PER_MARK`. A wider group is sent in several messages.
-pub const MAX_SERIES_PER_MARK: usize = 8;
+/// codec's `MAX_SERIES_PER_CALL_NOTICE`. A wider group is sent in several messages.
+pub const MAX_SERIES_PER_CALL_NOTICE: usize = 8;

@@ -28,7 +28,7 @@ pub(crate) fn emit_event<E: SolEvent>(storage: &StorageHandle<'_>, event: E) -> 
 /// The auction fixed them at its start, so this reads no profile value.
 /// Return issuance legs for the caller to broadcast through `send_issuance`.
 /// The broadcast creates IntexNFT1155 series on each target chain, including the origin.
-pub fn issue_intex(
+pub fn open_intex_series(
     storage: &StorageHandle<'_>,
     params: IssuanceParams,
 ) -> Result<Vec<IssuanceLeg>> {
@@ -141,10 +141,10 @@ pub fn pack_issuance_messages(legs: Vec<IssuanceLeg>) -> Vec<(u32, Vec<IntexSeri
 /// chain's run.
 pub fn send_issuance(storage: &StorageHandle<'_>, legs: Vec<IssuanceLeg>) -> Result<()> {
     for ((chain_id, emission_day), messages) in
-        chunk_issuance_messages(pack_issuance_messages(legs))
+        page_intex_series_messages(pack_issuance_messages(legs))
     {
         let total_chunks = u16::try_from(messages.len())
-            .map_err(|_| IntexFactoryError::IssuanceChunkCountExceedsU16)?;
+            .map_err(|_| IntexFactoryError::IntexSeriesPageCountExceedsU16)?;
         for (chunk_index, series) in messages.into_iter().enumerate() {
             let payload = crate::transport::wire::encode_intex_series(
                 emission_day,
@@ -179,7 +179,7 @@ pub(crate) type IssuanceRun = ((u32, u32), Vec<Vec<IntexSeriesParams>>);
 /// Group packed messages into the runs the chunk header numbers: one per (chain, day), the pair
 /// the receiver counts chunks against. Callers pass one day's legs (clearing does). This is also
 /// what keeps `pack_issuance_messages` from batching two days into one message.
-pub(crate) fn chunk_issuance_messages(
+pub(crate) fn page_intex_series_messages(
     packed: Vec<(u32, Vec<IntexSeriesParams>)>,
 ) -> Vec<IssuanceRun> {
     let mut runs: Vec<IssuanceRun> = Vec::new();

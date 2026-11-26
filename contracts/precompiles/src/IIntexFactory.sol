@@ -28,7 +28,7 @@ interface IIntexFactory {
     error ChainIdExceedsU32();
     error InvalidWireMessage(uint8 msgType);
     error ForfeitedPromisLoadOverflow();
-    error IssuanceChunkCountExceedsU16();
+    error IntexSeriesPageCountExceedsU16();
     error PriceExceedsWireType();
     error MarkedUpPriceOverflow();
     error OwnerUnitsExceedU32();

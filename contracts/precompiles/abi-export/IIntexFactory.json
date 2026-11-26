@@ -737,6 +737,11 @@
   },
   {
     "type": "error",
+    "name": "IntexSeriesPageCountExceedsU16",
+    "inputs": []
+  },
+  {
+    "type": "error",
     "name": "InvalidWireMessage",
     "inputs": [
       {
@@ -745,11 +750,6 @@
         "internalType": "uint8"
       }
     ]
-  },
-  {
-    "type": "error",
-    "name": "IssuanceChunkCountExceedsU16",
-    "inputs": []
   },
   {
     "type": "error",

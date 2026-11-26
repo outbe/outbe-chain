@@ -37,7 +37,7 @@ mod group_scans {
     /// Issue one day's series, one per issuance currency.
     fn issue_day(s: &StorageHandle<'_>, emission_day: u32) {
         for issuance in ISSUANCES {
-            runtime::issue_intex(s, params(emission_day, issuance)).unwrap();
+            runtime::open_intex_series(s, params(emission_day, issuance)).unwrap();
         }
     }
 
@@ -149,7 +149,7 @@ mod group_scans {
         let id = super::super::sid(7);
         StorageHandle::enter(&mut storage, |s| {
             super::super::select_prod_profile(&s);
-            runtime::issue_intex(&s, super::super::sample(7)).unwrap();
+            runtime::open_intex_series(&s, super::super::sample(7)).unwrap();
             outbe_intex::api::call_group_of(&s, id, super::super::ISSUED_AT).unwrap();
             outbe_intex::api::record_settled_units(&s, id, super::super::owner(), 100).unwrap();
             outbe_intex::api::record_mined_units(&s, id, super::super::owner(), 100).unwrap();
@@ -214,7 +214,7 @@ mod group_scans {
         let owner = super::super::owner();
         StorageHandle::enter(&mut storage, |s| {
             super::super::select_prod_profile(&s);
-            runtime::issue_intex(&s, super::super::sample(7)).unwrap();
+            runtime::open_intex_series(&s, super::super::sample(7)).unwrap();
             outbe_intex::api::call_group_of(&s, id, super::super::ISSUED_AT).unwrap();
             outbe_intex::api::record_settled_units(&s, id, owner, 60).unwrap();
             outbe_intex::api::record_mined_units(&s, id, owner, 60).unwrap();

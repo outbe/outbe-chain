@@ -16,7 +16,7 @@ impl ProtocolModule for IntexFactoryModule {
 
     fn end_block(ctx: &BlockRuntimeContext<'_>) -> Result<()> {
         crate::call::run_call_pass(ctx)?;
-        crate::notify::send_call_notices(ctx)?;
+        crate::call_notice::send_call_notices(ctx)?;
         crate::forfeit::forfeit_through(ctx)?;
         Ok(())
     }

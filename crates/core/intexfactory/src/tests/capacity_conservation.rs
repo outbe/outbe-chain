@@ -106,7 +106,7 @@ fn sweep(p: &mut HashMapStorageProvider, at: u64) -> Result<()> {
             s,
         );
         super::call::daily_pass(&ctx)?;
-        crate::notify::send_call_notices(&ctx)
+        crate::call_notice::send_call_notices(&ctx)
     })
 }
 

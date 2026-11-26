@@ -9,7 +9,7 @@ const MATURE_TS: u64 = ISSUED_AT + 21 * DAY + 1;
 #[test]
 fn scan_and_call_force_calls_breached_series() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT + 60 * DAY;
@@ -44,7 +44,7 @@ fn a_called_series_reports_its_settlement_deadline() {
     let mut storage = factory_provider();
     let notice = StorageHandle::enter(&mut storage, |s| {
         select_prod_profile(&s);
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
@@ -96,7 +96,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
     // stays unfinalized. So a read of any other day, or of any other store, drops
     // below the threshold and fails the call.
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         setup_pair(&oracle);
         // Exact midnight UTC, well past issuance.
@@ -145,7 +145,7 @@ fn scan_and_call_reads_daily_vwap_at_midnight() {
 #[test]
 fn call_scan_does_not_halt_on_overflow_vwap() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         let scan_ts = ISSUED_AT + 60 * DAY;
@@ -180,7 +180,7 @@ fn a_node_local_failure_while_calling_fails_the_scan() {
     let last_closed_day = previous_date_key(timestamp_to_date_key(scan_ts)).expect("date step");
     StorageHandle::enter(&mut provider, |s| {
         select_prod_profile(&s);
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         let oracle = OracleContract::new(s.clone());
         let pair = setup_pair(&oracle);
         fill_days(
@@ -529,7 +529,7 @@ fn a_group_waits_for_its_transit_close_before_it_forfeits() {
 #[test]
 fn an_uncalled_group_never_enters_the_deadline_queue() {
     with_factory(|s| {
-        runtime::issue_intex(&s, sample(7)).unwrap();
+        runtime::open_intex_series(&s, sample(7)).unwrap();
         sweep_expiry(&s, ISSUED_AT + 400 * DAY);
         let f = IntexContract::new(s.clone());
         assert_eq!(f.first_expiry_day().unwrap(), None);
