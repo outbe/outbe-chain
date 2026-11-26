@@ -12,7 +12,7 @@ use outbe_worldwideday::WorldwideDayContract;
 
 use crate::{
     errors::{MetadosisCallerError, MetadosisStorageCorruptionError},
-    limits::LoadsSettlement,
+    limits::LoadsCoverage,
     precompile::IMetadosis,
     schema::{EmissionDay, MetadosisContract},
 };
@@ -105,14 +105,14 @@ fn cancel_auction_of(metadosis: &MetadosisContract<'_>, day: u32) -> Result<()> 
     }
 }
 
-/// The settlement of the day's loads with `excess`, or `None` when the day sum cannot be read.
-fn settle_loads(
+/// How the limit of the day covers its loads and `excess`, or `None` when the day sum cannot be read.
+fn cover_loads(
     metadosis: &MetadosisContract<'_>,
     pending: &EmissionDay,
     excess: U256,
-) -> Result<Option<LoadsSettlement>> {
+) -> Result<Option<LoadsCoverage>> {
     match crate::loads::day_loads(&metadosis.storage, pending.wwd) {
-        Ok(loads) => Ok(Some(LoadsSettlement::derive(
+        Ok(loads) => Ok(Some(LoadsCoverage::of(
             pending.metadosis_limit_minor(),
             loads.loads_minor,
             excess,
@@ -131,8 +131,8 @@ pub(crate) fn cancel_metadosis(
     cancel_auction_of(metadosis, day)?;
     if let Some(pending) = metadosis.emission_days().get(day)? {
         let excess = outbe_emission::api::excess_nod_loads(metadosis.storage.clone())?;
-        if let Some(settlement) = settle_loads(metadosis, &pending, excess)? {
-            crate::loads::carry_excess(metadosis, day, excess, &settlement)?;
+        if let Some(coverage) = cover_loads(metadosis, &pending, excess)? {
+            crate::loads::carry_excess(metadosis, day, excess, &coverage)?;
         }
         let record =
             outbe_emission::api::record_metadosis_canceled(metadosis.storage.clone(), day)?;
@@ -160,18 +160,18 @@ pub(crate) fn fail_metadosis(
     cancel_auction_of(metadosis, day)?;
     if let Some(pending) = metadosis.emission_days().get(day)? {
         let excess = outbe_emission::api::excess_nod_loads(metadosis.storage.clone())?;
-        let settlement = settle_loads(metadosis, &pending, excess)?;
+        let coverage = cover_loads(metadosis, &pending, excess)?;
         let (record, limit_minor) = outbe_emission::api::record_metadosis_failed(
             metadosis.storage.clone(),
             day,
-            settlement.map_or(U256::MAX, |settlement| settlement.nods_minor),
+            coverage.map_or(U256::MAX, |coverage| coverage.covered_minor),
         )?;
         if !limit_minor.is_zero() {
             PromisLimitContract::new(metadosis.storage.clone())
                 .add(outbe_promislimit::LimitSource::MetadosisLimit, limit_minor)?;
         }
-        if let Some(settlement) = settlement {
-            crate::loads::carry_excess(metadosis, day, excess, &settlement)?;
+        if let Some(coverage) = coverage {
+            crate::loads::carry_excess(metadosis, day, excess, &coverage)?;
         }
         if !outbe_agentreward::distribution::has_pending_accruals_for_day(
             &metadosis.storage,
